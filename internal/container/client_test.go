@@ -1,0 +1,548 @@
+package container
+
+import (
+	"bufio"
+	"bytes"
+	"context"
+	"errors"
+	"io"
+	"net"
+	"testing"
+	"time"
+
+	"github.com/docker/docker/api/types"
+	containertypes "github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
+	"github.com/docker/docker/api/types/network"
+	"github.com/docker/docker/pkg/stdcopy"
+	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+)
+
+// mockDockerAPI implements the dockerAPI interface for testing.
+type mockDockerAPI struct {
+	mock.Mock
+}
+
+func (m *mockDockerAPI) ContainerCreate(ctx context.Context, config *containertypes.Config, hostConfig *containertypes.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (containertypes.CreateResponse, error) {
+	args := m.Called(ctx, config, hostConfig, networkingConfig, platform, containerName)
+	return args.Get(0).(containertypes.CreateResponse), args.Error(1)
+}
+
+func (m *mockDockerAPI) ContainerAttach(ctx context.Context, container string, options containertypes.AttachOptions) (types.HijackedResponse, error) {
+	args := m.Called(ctx, container, options)
+	return args.Get(0).(types.HijackedResponse), args.Error(1)
+}
+
+func (m *mockDockerAPI) ContainerStart(ctx context.Context, container string, options containertypes.StartOptions) error {
+	args := m.Called(ctx, container, options)
+	return args.Error(0)
+}
+
+func (m *mockDockerAPI) ContainerWait(ctx context.Context, container string, condition containertypes.WaitCondition) (<-chan containertypes.WaitResponse, <-chan error) {
+	args := m.Called(ctx, container, condition)
+	return args.Get(0).(<-chan containertypes.WaitResponse), args.Get(1).(<-chan error)
+}
+
+func (m *mockDockerAPI) ContainerRemove(ctx context.Context, container string, options containertypes.RemoveOptions) error {
+	args := m.Called(ctx, container, options)
+	return args.Error(0)
+}
+
+func (m *mockDockerAPI) ContainerList(ctx context.Context, options containertypes.ListOptions) ([]containertypes.Summary, error) {
+	args := m.Called(ctx, options)
+	return args.Get(0).([]containertypes.Summary), args.Error(1)
+}
+
+func (m *mockDockerAPI) ImageList(ctx context.Context, options image.ListOptions) ([]image.Summary, error) {
+	args := m.Called(ctx, options)
+	return args.Get(0).([]image.Summary), args.Error(1)
+}
+
+func (m *mockDockerAPI) ImagePull(ctx context.Context, refStr string, options image.PullOptions) (io.ReadCloser, error) {
+	args := m.Called(ctx, refStr, options)
+	var rc io.ReadCloser
+	if v := args.Get(0); v != nil {
+		rc = v.(io.ReadCloser)
+	}
+	return rc, args.Error(1)
+}
+
+func (m *mockDockerAPI) Close() error {
+	args := m.Called()
+	return args.Error(0)
+}
+
+// fakeConn is a minimal net.Conn for testing HijackedResponse.
+type fakeConn struct {
+	bytes.Buffer
+}
+
+func (f *fakeConn) Close() error { return nil }
+
+// LocalAddr, RemoteAddr and other net.Conn methods needed to satisfy the interface.
+func (f *fakeConn) LocalAddr() net.Addr                { return nil }
+func (f *fakeConn) RemoteAddr() net.Addr               { return nil }
+func (f *fakeConn) SetDeadline(_ time.Time) error      { return nil }
+func (f *fakeConn) SetReadDeadline(_ time.Time) error  { return nil }
+func (f *fakeConn) SetWriteDeadline(_ time.Time) error { return nil }
+
+type ClientSuite struct {
+	suite.Suite
+	api    *mockDockerAPI
+	client *Client
+}
+
+func TestClientSuite(t *testing.T) {
+	suite.Run(t, new(ClientSuite))
+}
+
+func (s *ClientSuite) SetupTest() {
+	s.api = new(mockDockerAPI)
+	s.client = &Client{api: s.api}
+}
+
+func (s *ClientSuite) TestNewDockerClientFuncDefault() {
+	// Exercise the default newDockerClientFunc to cover the production code path.
+	// client.NewClientWithOpts succeeds without a running Docker daemon.
+	api, err := newDockerClientFunc()
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), api)
+	_ = api.Close()
+}
+
+func (s *ClientSuite) TestNewClient() {
+	original := newDockerClientFunc
+	defer func() { newDockerClientFunc = original }()
+
+	mockAPI := new(mockDockerAPI)
+	newDockerClientFunc = func() (dockerAPI, error) {
+		return mockAPI, nil
+	}
+
+	c, err := NewClient()
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), c)
+	require.Equal(s.T(), mockAPI, c.api)
+}
+
+func (s *ClientSuite) TestNewClientError() {
+	original := newDockerClientFunc
+	defer func() { newDockerClientFunc = original }()
+
+	newDockerClientFunc = func() (dockerAPI, error) {
+		return nil, errors.New("connection refused")
+	}
+
+	c, err := NewClient()
+	require.Nil(s.T(), c)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating docker client")
+}
+
+func (s *ClientSuite) TestClose() {
+	s.api.On("Close").Return(nil)
+
+	err := s.client.Close()
+	require.NoError(s.T(), err)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestCloseError() {
+	s.api.On("Close").Return(errors.New("close failed"))
+
+	err := s.client.Close()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "close failed")
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerCreate() {
+	ctx := context.Background()
+	cfg := &ContainerConfig{
+		Image:    "my-image:latest",
+		MemoryMB: 512,
+		CPUs:     1.5,
+		Env:      []string{"FOO=bar"},
+	}
+
+	expectedConfig := &containertypes.Config{
+		Image:        "my-image:latest",
+		AttachStdout: true,
+		AttachStderr: true,
+		Labels:       map[string]string{"app": "loop-agent"},
+		Env:          []string{"FOO=bar"},
+	}
+	expectedHostConfig := &containertypes.HostConfig{
+		Resources: containertypes.Resources{
+			Memory:    512 * 1024 * 1024,
+			CPUQuota:  150000,
+			CPUPeriod: 100000,
+		},
+		Binds:      nil,
+		ExtraHosts: []string{"host.docker.internal:host-gateway"},
+	}
+
+	s.api.On("ContainerCreate", ctx, expectedConfig, expectedHostConfig, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "my-container").
+		Return(containertypes.CreateResponse{ID: "abc123"}, nil)
+
+	id, err := s.client.ContainerCreate(ctx, cfg, "my-container")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "abc123", id)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerCreateEmptyName() {
+	ctx := context.Background()
+	cfg := &ContainerConfig{
+		Image:    "img:latest",
+		MemoryMB: 256,
+		CPUs:     0.5,
+	}
+
+	s.api.On("ContainerCreate", ctx, mock.AnythingOfType("*container.Config"), mock.AnythingOfType("*container.HostConfig"), (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "").
+		Return(containertypes.CreateResponse{ID: "xyz789"}, nil)
+
+	id, err := s.client.ContainerCreate(ctx, cfg, "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "xyz789", id)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerCreateError() {
+	ctx := context.Background()
+	cfg := &ContainerConfig{Image: "img:latest"}
+
+	s.api.On("ContainerCreate", ctx, mock.Anything, mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "").
+		Return(containertypes.CreateResponse{}, errors.New("create failed"))
+
+	id, err := s.client.ContainerCreate(ctx, cfg, "")
+	require.Error(s.T(), err)
+	require.Empty(s.T(), id)
+	require.Contains(s.T(), err.Error(), "create failed")
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerAttach() {
+	ctx := context.Background()
+	conn := &fakeConn{}
+
+	// Build stdcopy-formatted stream data.
+	var streamBuf bytes.Buffer
+	w := stdcopy.NewStdWriter(&streamBuf, stdcopy.Stdout)
+	_, err := w.Write([]byte("output"))
+	require.NoError(s.T(), err)
+
+	reader := bufio.NewReader(&streamBuf)
+
+	hijacked := types.HijackedResponse{
+		Conn:   conn,
+		Reader: reader,
+	}
+
+	s.api.On("ContainerAttach", ctx, "cid-1", containertypes.AttachOptions{
+		Stream: true,
+		Stdout: true,
+		Stderr: true,
+	}).Return(hijacked, nil)
+
+	r, err := s.client.ContainerAttach(ctx, "cid-1")
+	require.NoError(s.T(), err)
+
+	data, readErr := io.ReadAll(r)
+	require.NoError(s.T(), readErr)
+	require.Equal(s.T(), "output", string(data))
+
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerAttachError() {
+	ctx := context.Background()
+
+	s.api.On("ContainerAttach", ctx, "cid-1", containertypes.AttachOptions{
+		Stream: true,
+		Stdout: true,
+		Stderr: true,
+	}).Return(types.HijackedResponse{}, errors.New("attach failed"))
+
+	r, err := s.client.ContainerAttach(ctx, "cid-1")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), r)
+	require.Contains(s.T(), err.Error(), "attach failed")
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerStart() {
+	ctx := context.Background()
+
+	s.api.On("ContainerStart", ctx, "cid-1", containertypes.StartOptions{}).Return(nil)
+
+	err := s.client.ContainerStart(ctx, "cid-1")
+	require.NoError(s.T(), err)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerStartError() {
+	ctx := context.Background()
+
+	s.api.On("ContainerStart", ctx, "cid-1", containertypes.StartOptions{}).Return(errors.New("start failed"))
+
+	err := s.client.ContainerStart(ctx, "cid-1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "start failed")
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerWaitSuccess() {
+	ctx := context.Background()
+
+	dockerWaitCh := make(chan containertypes.WaitResponse, 1)
+	dockerErrCh := make(chan error, 1)
+	dockerWaitCh <- containertypes.WaitResponse{StatusCode: 0}
+
+	s.api.On("ContainerWait", ctx, "cid-1", containertypes.WaitConditionNotRunning).
+		Return((<-chan containertypes.WaitResponse)(dockerWaitCh), (<-chan error)(dockerErrCh))
+
+	waitCh, errCh := s.client.ContainerWait(ctx, "cid-1")
+
+	wr := <-waitCh
+	require.Equal(s.T(), int64(0), wr.StatusCode)
+	require.NoError(s.T(), wr.Error)
+
+	// errCh should be closed without error
+	err, ok := <-errCh
+	require.False(s.T(), ok)
+	require.Nil(s.T(), err)
+
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerWaitWithExitError() {
+	ctx := context.Background()
+
+	dockerWaitCh := make(chan containertypes.WaitResponse, 1)
+	dockerErrCh := make(chan error, 1)
+	dockerWaitCh <- containertypes.WaitResponse{
+		StatusCode: 1,
+		Error:      &containertypes.WaitExitError{Message: "exit code 1"},
+	}
+
+	s.api.On("ContainerWait", ctx, "cid-1", containertypes.WaitConditionNotRunning).
+		Return((<-chan containertypes.WaitResponse)(dockerWaitCh), (<-chan error)(dockerErrCh))
+
+	waitCh, errCh := s.client.ContainerWait(ctx, "cid-1")
+
+	wr := <-waitCh
+	require.Equal(s.T(), int64(1), wr.StatusCode)
+	require.Error(s.T(), wr.Error)
+	require.Contains(s.T(), wr.Error.Error(), "exit code 1")
+
+	// errCh should be closed without error
+	err, ok := <-errCh
+	require.False(s.T(), ok)
+	require.Nil(s.T(), err)
+
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerWaitError() {
+	ctx := context.Background()
+
+	dockerWaitCh := make(chan containertypes.WaitResponse, 1)
+	dockerErrCh := make(chan error, 1)
+	dockerErrCh <- errors.New("wait failed")
+
+	s.api.On("ContainerWait", ctx, "cid-1", containertypes.WaitConditionNotRunning).
+		Return((<-chan containertypes.WaitResponse)(dockerWaitCh), (<-chan error)(dockerErrCh))
+
+	waitCh, errCh := s.client.ContainerWait(ctx, "cid-1")
+
+	err := <-errCh
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "wait failed")
+
+	// waitCh should be closed without a response
+	wr, ok := <-waitCh
+	require.False(s.T(), ok)
+	require.Zero(s.T(), wr)
+
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerWaitDockerWaitChClosed() {
+	ctx := context.Background()
+
+	dockerWaitCh := make(chan containertypes.WaitResponse)
+	dockerErrCh := make(chan error)
+	close(dockerWaitCh)
+
+	s.api.On("ContainerWait", ctx, "cid-1", containertypes.WaitConditionNotRunning).
+		Return((<-chan containertypes.WaitResponse)(dockerWaitCh), (<-chan error)(dockerErrCh))
+
+	waitCh, errCh := s.client.ContainerWait(ctx, "cid-1")
+
+	// Both channels should be closed
+	_, ok := <-waitCh
+	require.False(s.T(), ok)
+	_, ok = <-errCh
+	require.False(s.T(), ok)
+
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerWaitDockerErrChClosed() {
+	ctx := context.Background()
+
+	dockerWaitCh := make(chan containertypes.WaitResponse)
+	dockerErrCh := make(chan error)
+	close(dockerErrCh)
+
+	s.api.On("ContainerWait", ctx, "cid-1", containertypes.WaitConditionNotRunning).
+		Return((<-chan containertypes.WaitResponse)(dockerWaitCh), (<-chan error)(dockerErrCh))
+
+	waitCh, errCh := s.client.ContainerWait(ctx, "cid-1")
+
+	// Both channels should be closed
+	_, ok := <-waitCh
+	require.False(s.T(), ok)
+	_, ok = <-errCh
+	require.False(s.T(), ok)
+
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerRemove() {
+	ctx := context.Background()
+
+	s.api.On("ContainerRemove", ctx, "cid-1", containertypes.RemoveOptions{Force: true}).Return(nil)
+
+	err := s.client.ContainerRemove(ctx, "cid-1")
+	require.NoError(s.T(), err)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerRemoveError() {
+	ctx := context.Background()
+
+	s.api.On("ContainerRemove", ctx, "cid-1", containertypes.RemoveOptions{Force: true}).Return(errors.New("remove failed"))
+
+	err := s.client.ContainerRemove(ctx, "cid-1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "remove failed")
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestImageList() {
+	ctx := context.Background()
+
+	s.api.On("ImageList", ctx, mock.MatchedBy(func(opts image.ListOptions) bool {
+		return opts.Filters.Get("reference")[0] == "my-image:latest"
+	})).Return([]image.Summary{
+		{ID: "sha256:aaa"},
+		{ID: "sha256:bbb"},
+	}, nil)
+
+	ids, err := s.client.ImageList(ctx, "my-image:latest")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"sha256:aaa", "sha256:bbb"}, ids)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestImageListEmpty() {
+	ctx := context.Background()
+
+	s.api.On("ImageList", ctx, mock.Anything).Return([]image.Summary{}, nil)
+
+	ids, err := s.client.ImageList(ctx, "nonexistent:latest")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), ids)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestImageListError() {
+	ctx := context.Background()
+
+	s.api.On("ImageList", ctx, mock.Anything).Return([]image.Summary(nil), errors.New("list failed"))
+
+	ids, err := s.client.ImageList(ctx, "my-image:latest")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), ids)
+	require.Contains(s.T(), err.Error(), "list failed")
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestImagePull() {
+	ctx := context.Background()
+
+	s.api.On("ImagePull", ctx, "my-image:latest", image.PullOptions{}).
+		Return(io.NopCloser(bytes.NewReader([]byte("pulling..."))), nil)
+
+	err := s.client.ImagePull(ctx, "my-image:latest")
+	require.NoError(s.T(), err)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestImagePullError() {
+	ctx := context.Background()
+
+	s.api.On("ImagePull", ctx, "my-image:latest", image.PullOptions{}).
+		Return(nil, errors.New("pull failed"))
+
+	err := s.client.ImagePull(ctx, "my-image:latest")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "pull failed")
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestImagePullDrainError() {
+	ctx := context.Background()
+
+	s.api.On("ImagePull", ctx, "my-image:latest", image.PullOptions{}).
+		Return(io.NopCloser(&errReader{err: errors.New("read error")}), nil)
+
+	err := s.client.ImagePull(ctx, "my-image:latest")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "read error")
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerList() {
+	ctx := context.Background()
+
+	s.api.On("ContainerList", ctx, mock.MatchedBy(func(opts containertypes.ListOptions) bool {
+		return opts.All && opts.Filters.Get("label")[0] == "app=loop-agent"
+	})).Return([]containertypes.Summary{
+		{ID: "cid-1"},
+		{ID: "cid-2"},
+	}, nil)
+
+	ids, err := s.client.ContainerList(ctx, "app", "loop-agent")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"cid-1", "cid-2"}, ids)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerListEmpty() {
+	ctx := context.Background()
+
+	s.api.On("ContainerList", ctx, mock.Anything).Return([]containertypes.Summary{}, nil)
+
+	ids, err := s.client.ContainerList(ctx, "app", "loop-agent")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), ids)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerListError() {
+	ctx := context.Background()
+
+	s.api.On("ContainerList", ctx, mock.Anything).Return([]containertypes.Summary(nil), errors.New("list failed"))
+
+	ids, err := s.client.ContainerList(ctx, "app", "loop-agent")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), ids)
+	require.Contains(s.T(), err.Error(), "list failed")
+	s.api.AssertExpectations(s.T())
+}

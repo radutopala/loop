@@ -1,0 +1,265 @@
+package api
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"errors"
+	"io"
+	"log/slog"
+	"net/http"
+	"net/http/httptest"
+	"testing"
+	"time"
+
+	"github.com/radutopala/loop/internal/db"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+)
+
+type MockScheduler struct {
+	mock.Mock
+}
+
+func (m *MockScheduler) Start(ctx context.Context) error {
+	return m.Called(ctx).Error(0)
+}
+
+func (m *MockScheduler) Stop() error {
+	return m.Called().Error(0)
+}
+
+func (m *MockScheduler) AddTask(ctx context.Context, task *db.ScheduledTask) (int64, error) {
+	args := m.Called(ctx, task)
+	return args.Get(0).(int64), args.Error(1)
+}
+
+func (m *MockScheduler) RemoveTask(ctx context.Context, taskID int64) error {
+	return m.Called(ctx, taskID).Error(0)
+}
+
+func (m *MockScheduler) ListTasks(ctx context.Context, channelID string) ([]*db.ScheduledTask, error) {
+	args := m.Called(ctx, channelID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.ScheduledTask), args.Error(1)
+}
+
+type ServerSuite struct {
+	suite.Suite
+	scheduler *MockScheduler
+	srv       *Server
+	mux       *http.ServeMux
+}
+
+func TestServerSuite(t *testing.T) {
+	suite.Run(t, new(ServerSuite))
+}
+
+func (s *ServerSuite) SetupTest() {
+	s.scheduler = new(MockScheduler)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s.srv = NewServer(s.scheduler, logger)
+
+	s.mux = http.NewServeMux()
+	s.mux.HandleFunc("POST /api/tasks", s.srv.handleCreateTask)
+	s.mux.HandleFunc("GET /api/tasks", s.srv.handleListTasks)
+	s.mux.HandleFunc("DELETE /api/tasks/{id}", s.srv.handleDeleteTask)
+}
+
+func (s *ServerSuite) TestNewServer() {
+	require.NotNil(s.T(), s.srv)
+	require.NotNil(s.T(), s.srv.scheduler)
+	require.NotNil(s.T(), s.srv.logger)
+}
+
+// --- CreateTask tests ---
+
+func (s *ServerSuite) TestCreateTaskSuccess() {
+	s.scheduler.On("AddTask", mock.Anything, mock.MatchedBy(func(task *db.ScheduledTask) bool {
+		return task.ChannelID == "ch1" && task.Schedule == "0 9 * * *" &&
+			task.Type == db.TaskTypeCron && task.Prompt == "check standup"
+	})).Return(int64(42), nil)
+
+	body := `{"channel_id":"ch1","schedule":"0 9 * * *","type":"cron","prompt":"check standup"}`
+	req := httptest.NewRequest("POST", "/api/tasks", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+
+	var resp createTaskResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(s.T(), int64(42), resp.ID)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCreateTaskInvalidBody() {
+	req := httptest.NewRequest("POST", "/api/tasks", bytes.NewBufferString("not json"))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestCreateTaskSchedulerError() {
+	s.scheduler.On("AddTask", mock.Anything, mock.Anything).Return(int64(0), errors.New("bad schedule"))
+
+	body := `{"channel_id":"ch1","schedule":"bad","type":"cron","prompt":"test"}`
+	req := httptest.NewRequest("POST", "/api/tasks", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+// --- ListTasks tests ---
+
+func (s *ServerSuite) TestListTasksSuccess() {
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	tasks := []*db.ScheduledTask{
+		{ID: 1, ChannelID: "ch1", Schedule: "0 9 * * *", Type: db.TaskTypeCron, Prompt: "task1", Enabled: true, NextRunAt: now},
+		{ID: 2, ChannelID: "ch1", Schedule: "5m", Type: db.TaskTypeInterval, Prompt: "task2", Enabled: true, NextRunAt: now},
+	}
+	s.scheduler.On("ListTasks", mock.Anything, "ch1").Return(tasks, nil)
+
+	req := httptest.NewRequest("GET", "/api/tasks?channel_id=ch1", nil)
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []taskResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 2)
+	require.Equal(s.T(), int64(1), resp[0].ID)
+	require.Equal(s.T(), "task1", resp[0].Prompt)
+	require.Equal(s.T(), int64(2), resp[1].ID)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestListTasksEmpty() {
+	s.scheduler.On("ListTasks", mock.Anything, "ch1").Return([]*db.ScheduledTask{}, nil)
+
+	req := httptest.NewRequest("GET", "/api/tasks?channel_id=ch1", nil)
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []taskResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Empty(s.T(), resp)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestListTasksMissingChannelID() {
+	req := httptest.NewRequest("GET", "/api/tasks", nil)
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestListTasksSchedulerError() {
+	s.scheduler.On("ListTasks", mock.Anything, "ch1").Return(nil, errors.New("db error"))
+
+	req := httptest.NewRequest("GET", "/api/tasks?channel_id=ch1", nil)
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+// --- DeleteTask tests ---
+
+func (s *ServerSuite) TestDeleteTaskSuccess() {
+	s.scheduler.On("RemoveTask", mock.Anything, int64(42)).Return(nil)
+
+	req := httptest.NewRequest("DELETE", "/api/tasks/42", nil)
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestDeleteTaskInvalidID() {
+	req := httptest.NewRequest("DELETE", "/api/tasks/abc", nil)
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestDeleteTaskSchedulerError() {
+	s.scheduler.On("RemoveTask", mock.Anything, int64(42)).Return(errors.New("not found"))
+
+	req := httptest.NewRequest("DELETE", "/api/tasks/42", nil)
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+// --- Start / Stop tests ---
+
+func (s *ServerSuite) TestStartAndStop() {
+	err := s.srv.Start("127.0.0.1:0")
+	require.NoError(s.T(), err)
+
+	err = s.srv.Stop(context.Background())
+	require.NoError(s.T(), err)
+}
+
+func (s *ServerSuite) TestStartListenError() {
+	// Start on port 0 to get a random port first
+	err := s.srv.Start("127.0.0.1:0")
+	require.NoError(s.T(), err)
+	addr := s.srv.server.Addr
+	defer func() { _ = s.srv.Stop(context.Background()) }()
+
+	// Try to start another server — won't get the same port, but
+	// we can test with an invalid address
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv2 := NewServer(s.scheduler, logger)
+	err = srv2.Start("invalid-addr-no-port")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "listening on")
+	_ = addr
+}
+
+func (s *ServerSuite) TestStopNilServer() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewServer(s.scheduler, logger)
+
+	err := srv.Stop(context.Background())
+	require.NoError(s.T(), err)
+}
+
+func (s *ServerSuite) TestStartServeError() {
+	// Exercise the goroutine error path by closing the listener underneath the server.
+	err := s.srv.Start("127.0.0.1:0")
+	require.NoError(s.T(), err)
+
+	// Close the listener directly — this causes Serve to return a non-ErrServerClosed error.
+	require.NoError(s.T(), s.srv.listener.Close())
+
+	// Give the goroutine time to log the error.
+	time.Sleep(50 * time.Millisecond)
+}

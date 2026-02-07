@@ -1,0 +1,91 @@
+package discord
+
+import "github.com/bwmarrin/discordgo"
+
+// Commands returns the slash command definitions for the bot.
+func Commands() []*discordgo.ApplicationCommand {
+	return []*discordgo.ApplicationCommand{
+		{
+			Name:        "loop",
+			Description: "Loop AI assistant commands",
+			Options: []*discordgo.ApplicationCommandOption{
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "ask",
+					Description: "Ask the AI a question",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "prompt",
+							Description: "Your question or prompt",
+							Required:    true,
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "register",
+					Description: "Register this channel for the bot",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "unregister",
+					Description: "Unregister this channel from the bot",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "schedule",
+					Description: "Schedule a task",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "schedule",
+							Description: "Schedule expression (cron, interval, or timestamp)",
+							Required:    true,
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "prompt",
+							Description: "The prompt to execute",
+							Required:    true,
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "type",
+							Description: "Schedule type",
+							Required:    true,
+							Choices: []*discordgo.ApplicationCommandOptionChoice{
+								{Name: "cron", Value: "cron"},
+								{Name: "interval", Value: "interval"},
+								{Name: "once", Value: "once"},
+							},
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "tasks",
+					Description: "List scheduled tasks",
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "cancel",
+					Description: "Cancel a scheduled task",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionInteger,
+							Name:        "task_id",
+							Description: "ID of the task to cancel",
+							Required:    true,
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "status",
+					Description: "Show bot status",
+				},
+			},
+		},
+	}
+}

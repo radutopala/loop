@@ -1,0 +1,179 @@
+package container
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"regexp"
+	"strings"
+
+	"github.com/radutopala/loop/internal/agent"
+	"github.com/radutopala/loop/internal/config"
+)
+
+// claudeResponse represents the JSON output from claude --output-format json.
+type claudeResponse struct {
+	Result    string `json:"result"`
+	SessionID string `json:"session_id"`
+	IsError   bool   `json:"is_error"`
+}
+
+var ansiRegexp = regexp.MustCompile(`\x1b(?:\[[0-9;?]*[a-zA-Z<>]|\][^\x07]*(?:\x07|\x1b\\)|\(B)|\r`)
+
+// ContainerConfig holds settings for creating a container.
+type ContainerConfig struct {
+	Image    string
+	MemoryMB int64
+	CPUs     float64
+	Env      []string
+	Cmd      []string
+	Binds    []string
+}
+
+// WaitResponse represents the result of waiting for a container to finish.
+type WaitResponse struct {
+	StatusCode int64
+	Error      error
+}
+
+// DockerClient abstracts the Docker SDK methods used by DockerRunner.
+type DockerClient interface {
+	ContainerCreate(ctx context.Context, cfg *ContainerConfig, name string) (string, error)
+	ContainerAttach(ctx context.Context, containerID string) (io.Reader, error)
+	ContainerStart(ctx context.Context, containerID string) error
+	ContainerWait(ctx context.Context, containerID string) (<-chan WaitResponse, <-chan error)
+	ContainerRemove(ctx context.Context, containerID string) error
+	ImageList(ctx context.Context, image string) ([]string, error)
+	ImagePull(ctx context.Context, image string) error
+	ContainerList(ctx context.Context, labelKey, labelValue string) ([]string, error)
+}
+
+// Runner executes agent requests inside containers.
+type Runner interface {
+	Run(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error)
+	Cleanup(ctx context.Context) error
+}
+
+// DockerRunner implements Runner using Docker containers.
+type DockerRunner struct {
+	client DockerClient
+	cfg    *config.Config
+}
+
+// NewDockerRunner creates a new DockerRunner with the given Docker client and config.
+func NewDockerRunner(client DockerClient, cfg *config.Config) *DockerRunner {
+	return &DockerRunner{
+		client: client,
+		cfg:    cfg,
+	}
+}
+
+const containerLabel = "loop-agent"
+const sessionVolume = "loop-sessions:/home/agent/.claude"
+
+// Run executes an agent request by running claude directly in a Docker container.
+// The prompt is passed as a command argument; the JSON response is read from stdout.
+func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
+	prompt := agent.BuildPrompt(req.Messages, req.SystemPrompt)
+
+	env := []string{
+		"CHANNEL_ID=" + req.ChannelID,
+		"API_URL=http://host.docker.internal" + r.cfg.APIAddr,
+	}
+	if req.SessionID != "" {
+		env = append(env, "SESSION_ID="+req.SessionID)
+	}
+	if r.cfg.ClaudeCodeOAuthToken != "" {
+		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+r.cfg.ClaudeCodeOAuthToken)
+	}
+
+	containerCfg := &ContainerConfig{
+		Image:    r.cfg.ContainerImage,
+		MemoryMB: r.cfg.ContainerMemoryMB,
+		CPUs:     r.cfg.ContainerCPUs,
+		Env:      env,
+		Cmd:      []string{prompt},
+		Binds:    []string{sessionVolume, r.cfg.WorkDir + ":/work"},
+	}
+
+	containerID, err := r.client.ContainerCreate(ctx, containerCfg, "")
+	if err != nil {
+		return nil, fmt.Errorf("creating container: %w", err)
+	}
+	defer func() {
+		_ = r.client.ContainerRemove(ctx, containerID)
+	}()
+
+	reader, err := r.client.ContainerAttach(ctx, containerID)
+	if err != nil {
+		return nil, fmt.Errorf("attaching to container: %w", err)
+	}
+
+	if err := r.client.ContainerStart(ctx, containerID); err != nil {
+		return nil, fmt.Errorf("starting container: %w", err)
+	}
+
+	waitCh, errCh := r.client.ContainerWait(ctx, containerID)
+
+	var exitCode int64
+	select {
+	case <-ctx.Done():
+		return nil, fmt.Errorf("container execution timed out: %w", ctx.Err())
+	case err := <-errCh:
+		if err != nil {
+			return nil, fmt.Errorf("waiting for container: %w", err)
+		}
+	case wr := <-waitCh:
+		if wr.Error != nil {
+			return nil, fmt.Errorf("container exited with error: %w", wr.Error)
+		}
+		exitCode = wr.StatusCode
+	}
+
+	var buf bytes.Buffer
+	if _, err := io.Copy(&buf, reader); err != nil {
+		return nil, fmt.Errorf("reading container output: %w", err)
+	}
+
+	output := stripANSI(buf.String())
+
+	var claudeResp claudeResponse
+	if err := json.Unmarshal([]byte(output), &claudeResp); err != nil {
+		if exitCode != 0 {
+			return nil, fmt.Errorf("container exited with code %d: %w", exitCode, err)
+		}
+		return nil, fmt.Errorf("parsing claude response: %w", err)
+	}
+
+	if claudeResp.IsError {
+		return nil, fmt.Errorf("claude returned error: %s", claudeResp.Result)
+	}
+
+	return &agent.AgentResponse{
+		Response:  claudeResp.Result,
+		SessionID: claudeResp.SessionID,
+	}, nil
+}
+
+// stripANSI removes ANSI escape sequences from TTY output.
+func stripANSI(s string) string {
+	return strings.TrimSpace(ansiRegexp.ReplaceAllString(s, ""))
+}
+
+// Cleanup removes any lingering containers with the loop-agent label.
+func (r *DockerRunner) Cleanup(ctx context.Context) error {
+	containers, err := r.client.ContainerList(ctx, "app", containerLabel)
+	if err != nil {
+		return fmt.Errorf("listing containers: %w", err)
+	}
+
+	var lastErr error
+	for _, id := range containers {
+		if err := r.client.ContainerRemove(ctx, id); err != nil {
+			lastErr = fmt.Errorf("removing container %s: %w", id, err)
+		}
+	}
+	return lastErr
+}
