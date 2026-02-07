@@ -15,6 +15,18 @@ import (
 	"github.com/radutopala/loop/internal/config"
 )
 
+// mcpConfig represents the .mcp.json structure written to the container work directory.
+type mcpConfig struct {
+	MCPServers map[string]mcpServerEntry `json:"mcpServers"`
+}
+
+// mcpServerEntry represents a single MCP server in .mcp.json.
+type mcpServerEntry struct {
+	Command string            `json:"command"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+}
+
 // claudeResponse represents the JSON output from claude --output-format json.
 type claudeResponse struct {
 	Result    string `json:"result"`
@@ -77,6 +89,7 @@ const sessionVolume = "loop-sessions:/home/agent/.claude"
 
 var mkdirAll = os.MkdirAll
 var getenv = os.Getenv
+var writeFile = os.WriteFile
 
 // Run executes an agent request in a Docker container.
 // If a session ID is set and the run fails, it retries without --resume
@@ -96,13 +109,34 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 	return retryResp, nil
 }
 
+// buildMCPConfig creates the merged MCP config with the built-in loop-scheduler
+// and any user-defined servers from the config. The built-in loop-scheduler always
+// takes precedence over a user-defined server with the same name.
+func buildMCPConfig(channelID, apiURL string, userServers map[string]config.MCPServerConfig) mcpConfig {
+	servers := make(map[string]mcpServerEntry, len(userServers)+1)
+	for name, srv := range userServers {
+		servers[name] = mcpServerEntry{
+			Command: srv.Command,
+			Args:    srv.Args,
+			Env:     srv.Env,
+		}
+	}
+	// Built-in loop-scheduler always overrides any user-defined server with that name.
+	servers["loop-scheduler"] = mcpServerEntry{
+		Command: "/usr/local/bin/loop",
+		Args:    []string{"mcp", "--channel-id", channelID, "--api-url", apiURL},
+	}
+	return mcpConfig{MCPServers: servers}
+}
+
 // runOnce executes a single container run.
 func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
 	prompt := agent.BuildPrompt(req.Messages, req.SystemPrompt)
 
+	apiURL := "http://host.docker.internal" + r.cfg.APIAddr
 	env := []string{
 		"CHANNEL_ID=" + req.ChannelID,
-		"API_URL=http://host.docker.internal" + r.cfg.APIAddr,
+		"API_URL=" + apiURL,
 	}
 	if req.SessionID != "" {
 		env = append(env, "SESSION_ID="+req.SessionID)
@@ -122,6 +156,12 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		if err := mkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("creating host directory %s: %w", dir, err)
 		}
+	}
+
+	mcpCfg := buildMCPConfig(req.ChannelID, apiURL, r.cfg.MCPServers)
+	mcpJSON, _ := json.MarshalIndent(mcpCfg, "", "  ")
+	if err := writeFile(filepath.Join(workDir, ".mcp.json"), mcpJSON, 0o644); err != nil {
+		return nil, fmt.Errorf("writing mcp config: %w", err)
 	}
 
 	containerCfg := &ContainerConfig{

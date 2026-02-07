@@ -1,14 +1,21 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"time"
 )
 
-// Config holds all application configuration loaded from environment variables.
+// MCPServerConfig represents a single MCP server entry in the config.
+type MCPServerConfig struct {
+	Command string            `json:"command"`
+	Args    []string          `json:"args,omitempty"`
+	Env     map[string]string `json:"env,omitempty"`
+}
+
+// Config holds all application configuration loaded from config.json.
 type Config struct {
 	DiscordToken         string
 	DiscordAppID         string
@@ -25,198 +32,117 @@ type Config struct {
 	APIAddr              string
 	ClaudeCodeOAuthToken string
 	LoopDir              string
+	MCPServers           map[string]MCPServerConfig
+}
+
+// jsonConfig is an intermediate struct for JSON unmarshalling.
+// Pointer types for numerics distinguish "missing" (nil) from "zero".
+type jsonConfig struct {
+	DiscordToken         string         `json:"discord_token"`
+	DiscordAppID         string         `json:"discord_app_id"`
+	ClaudeCodeOAuthToken string         `json:"claude_code_oauth_token"`
+	LogLevel             string         `json:"log_level"`
+	LogFormat            string         `json:"log_format"`
+	DBPath               string         `json:"db_path"`
+	ContainerImage       string         `json:"container_image"`
+	ContainerTimeoutSec  *int           `json:"container_timeout_sec"`
+	ContainerMemoryMB    *int64         `json:"container_memory_mb"`
+	ContainerCPUs        *float64       `json:"container_cpus"`
+	PollIntervalSec      *int           `json:"poll_interval_sec"`
+	MountAllowlist       []string       `json:"mount_allowlist"`
+	APIAddr              string         `json:"api_addr"`
+	MCP                  *jsonMCPConfig `json:"mcp"`
+}
+
+type jsonMCPConfig struct {
+	Servers map[string]MCPServerConfig `json:"servers"`
 }
 
 // userHomeDir is a package-level variable to allow overriding in tests.
 var userHomeDir = os.UserHomeDir
 
-// DefaultEnvFilePath returns the default path to the .env file (~/.loop/.env).
-func DefaultEnvFilePath() (string, error) {
-	home, err := userHomeDir()
-	if err != nil {
-		return "", fmt.Errorf("getting home directory: %w", err)
-	}
-	return filepath.Join(home, ".loop", ".env"), nil
-}
+// readFile is a package-level variable to allow overriding in tests.
+var readFile = os.ReadFile
 
-// loadEnvFile reads a .env file and sets environment variables that are not already set.
-// Lines starting with # are comments. Blank lines are ignored.
-// Format: KEY=VALUE (values may optionally be wrapped in single or double quotes).
-func loadEnvFile(path string) error {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return fmt.Errorf("reading env file: %w", err)
-	}
-
-	lines := splitOn(string(data), '\n')
-	for _, line := range lines {
-		line = trimSpace(line)
-		if line == "" || line[0] == '#' {
-			continue
-		}
-		eqIdx := -1
-		for i := 0; i < len(line); i++ {
-			if line[i] == '=' {
-				eqIdx = i
-				break
-			}
-		}
-		if eqIdx < 0 {
-			continue
-		}
-
-		key := trimSpace(line[:eqIdx])
-		value := trimSpace(line[eqIdx+1:])
-
-		// Strip matching quotes
-		if len(value) >= 2 {
-			if (value[0] == '"' && value[len(value)-1] == '"') ||
-				(value[0] == '\'' && value[len(value)-1] == '\'') {
-				value = value[1 : len(value)-1]
-			}
-		}
-
-		// Only set if not already present in environment
-		if os.Getenv(key) == "" {
-			if err := os.Setenv(key, value); err != nil {
-				return fmt.Errorf("setting env var %s: %w", key, err)
-			}
-		}
-	}
-	return nil
-}
-
-// Load reads configuration from ~/.loop/.env (if present) then from environment variables.
-// Environment variables take precedence over the .env file.
+// Load reads configuration from ~/.loop/config.json and returns a Config.
 func Load() (*Config, error) {
 	home, err := userHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("getting home directory: %w", err)
 	}
 	loopDir := filepath.Join(home, ".loop")
-	if err := loadEnvFile(filepath.Join(loopDir, ".env")); err != nil {
-		return nil, err
+	configPath := filepath.Join(loopDir, "config.json")
+
+	data, err := readFile(configPath)
+	if err != nil {
+		return nil, fmt.Errorf("reading config file: %w", err)
 	}
 
-	cfg := &Config{}
+	var jc jsonConfig
+	if err := json.Unmarshal(data, &jc); err != nil {
+		return nil, fmt.Errorf("parsing config file: %w", err)
+	}
+
+	cfg := &Config{
+		DiscordToken:         jc.DiscordToken,
+		DiscordAppID:         jc.DiscordAppID,
+		ClaudeBinPath:        "claude",
+		ClaudeCodeOAuthToken: jc.ClaudeCodeOAuthToken,
+		LogLevel:             stringDefault(jc.LogLevel, "info"),
+		LogFormat:            stringDefault(jc.LogFormat, "text"),
+		DBPath:               stringDefault(jc.DBPath, filepath.Join(loopDir, "loop.db")),
+		ContainerImage:       stringDefault(jc.ContainerImage, "loop-agent:latest"),
+		ContainerTimeout:     time.Duration(intPtrDefault(jc.ContainerTimeoutSec, 300)) * time.Second,
+		ContainerMemoryMB:    int64PtrDefault(jc.ContainerMemoryMB, 512),
+		ContainerCPUs:        floatPtrDefault(jc.ContainerCPUs, 1.0),
+		PollInterval:         time.Duration(intPtrDefault(jc.PollIntervalSec, 30)) * time.Second,
+		MountAllowlist:       jc.MountAllowlist,
+		APIAddr:              stringDefault(jc.APIAddr, ":8222"),
+		LoopDir:              loopDir,
+	}
+
+	if jc.MCP != nil && len(jc.MCP.Servers) > 0 {
+		cfg.MCPServers = jc.MCP.Servers
+	}
 
 	var missing []string
-
-	cfg.DiscordToken = os.Getenv("DISCORD_TOKEN")
 	if cfg.DiscordToken == "" {
-		missing = append(missing, "DISCORD_TOKEN")
+		missing = append(missing, "discord_token")
 	}
-
-	cfg.DiscordAppID = os.Getenv("DISCORD_APP_ID")
 	if cfg.DiscordAppID == "" {
-		missing = append(missing, "DISCORD_APP_ID")
+		missing = append(missing, "discord_app_id")
 	}
-
-	cfg.ClaudeBinPath = getEnvDefault("CLAUDE_BIN_PATH", "claude")
-
 	if len(missing) > 0 {
-		return nil, fmt.Errorf("missing required environment variables: %v", missing)
+		return nil, fmt.Errorf("missing required config fields: %v", missing)
 	}
-
-	cfg.DBPath = getEnvDefault("DB_PATH", filepath.Join(loopDir, "loop.db"))
-	cfg.LogLevel = getEnvDefault("LOG_LEVEL", "info")
-	cfg.LogFormat = getEnvDefault("LOG_FORMAT", "text")
-	cfg.ContainerImage = getEnvDefault("CONTAINER_IMAGE", "loop-agent:latest")
-
-	timeoutSec, err := getEnvInt("CONTAINER_TIMEOUT_SEC", 300)
-	if err != nil {
-		return nil, fmt.Errorf("invalid CONTAINER_TIMEOUT_SEC: %w", err)
-	}
-	cfg.ContainerTimeout = time.Duration(timeoutSec) * time.Second
-
-	memMB, err := getEnvInt("CONTAINER_MEMORY_MB", 512)
-	if err != nil {
-		return nil, fmt.Errorf("invalid CONTAINER_MEMORY_MB: %w", err)
-	}
-	cfg.ContainerMemoryMB = int64(memMB)
-
-	cpus, err := getEnvFloat("CONTAINER_CPUS", 1.0)
-	if err != nil {
-		return nil, fmt.Errorf("invalid CONTAINER_CPUS: %w", err)
-	}
-	cfg.ContainerCPUs = cpus
-
-	pollSec, err := getEnvInt("POLL_INTERVAL_SEC", 30)
-	if err != nil {
-		return nil, fmt.Errorf("invalid POLL_INTERVAL_SEC: %w", err)
-	}
-	cfg.PollInterval = time.Duration(pollSec) * time.Second
-
-	if v := os.Getenv("MOUNT_ALLOWLIST"); v != "" {
-		cfg.MountAllowlist = splitAndTrim(v)
-	}
-
-	cfg.APIAddr = getEnvDefault("API_ADDR", ":8222")
-	cfg.ClaudeCodeOAuthToken = os.Getenv("CLAUDE_CODE_OAUTH_TOKEN")
-
-	cfg.LoopDir = loopDir
 
 	return cfg, nil
 }
 
-func getEnvDefault(key, defaultVal string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
+func stringDefault(val, def string) string {
+	if val != "" {
+		return val
 	}
-	return defaultVal
+	return def
 }
 
-func getEnvInt(key string, defaultVal int) (int, error) {
-	v := os.Getenv(key)
-	if v == "" {
-		return defaultVal, nil
+func intPtrDefault(val *int, def int) int {
+	if val != nil {
+		return *val
 	}
-	return strconv.Atoi(v)
+	return def
 }
 
-func getEnvFloat(key string, defaultVal float64) (float64, error) {
-	v := os.Getenv(key)
-	if v == "" {
-		return defaultVal, nil
+func int64PtrDefault(val *int64, def int64) int64 {
+	if val != nil {
+		return *val
 	}
-	return strconv.ParseFloat(v, 64)
+	return def
 }
 
-func splitAndTrim(s string) []string {
-	var result []string
-	for _, part := range splitOn(s, ',') {
-		trimmed := trimSpace(part)
-		if trimmed != "" {
-			result = append(result, trimmed)
-		}
+func floatPtrDefault(val *float64, def float64) float64 {
+	if val != nil {
+		return *val
 	}
-	return result
-}
-
-func splitOn(s string, sep byte) []string {
-	var parts []string
-	start := 0
-	for i := 0; i < len(s); i++ {
-		if s[i] == sep {
-			parts = append(parts, s[start:i])
-			start = i + 1
-		}
-	}
-	parts = append(parts, s[start:])
-	return parts
-}
-
-func trimSpace(s string) string {
-	start := 0
-	for start < len(s) && (s[start] == ' ' || s[start] == '\t') {
-		start++
-	}
-	end := len(s)
-	for end > start && (s[end-1] == ' ' || s[end-1] == '\t') {
-		end--
-	}
-	return s[start:end]
+	return def
 }

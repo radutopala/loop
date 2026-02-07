@@ -3,6 +3,7 @@ package container
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -69,11 +70,12 @@ func (m *MockDockerClient) ContainerList(ctx context.Context, labelKey, labelVal
 
 type RunnerSuite struct {
 	suite.Suite
-	client       *MockDockerClient
-	runner       *DockerRunner
-	cfg          *config.Config
-	origMkdirAll func(string, os.FileMode) error
-	origGetenv   func(string) string
+	client        *MockDockerClient
+	runner        *DockerRunner
+	cfg           *config.Config
+	origMkdirAll  func(string, os.FileMode) error
+	origGetenv    func(string) string
+	origWriteFile func(string, []byte, os.FileMode) error
 }
 
 func TestRunnerSuite(t *testing.T) {
@@ -85,6 +87,8 @@ func (s *RunnerSuite) SetupTest() {
 	mkdirAll = func(_ string, _ os.FileMode) error { return nil }
 	s.origGetenv = getenv
 	getenv = func(_ string) string { return "" }
+	s.origWriteFile = writeFile
+	writeFile = func(_ string, _ []byte, _ os.FileMode) error { return nil }
 	s.client = new(MockDockerClient)
 	s.cfg = &config.Config{
 		ContainerImage:    "loop-agent:latest",
@@ -100,6 +104,7 @@ func (s *RunnerSuite) SetupTest() {
 func (s *RunnerSuite) TearDownTest() {
 	mkdirAll = s.origMkdirAll
 	getenv = s.origGetenv
+	writeFile = s.origWriteFile
 }
 
 func (s *RunnerSuite) TestNewDockerRunner() {
@@ -678,6 +683,112 @@ func (s *RunnerSuite) TestLocalhostToDockerHost() {
 			require.Equal(s.T(), tc.want, localhostToDockerHost(tc.input))
 		})
 	}
+}
+
+func (s *RunnerSuite) TestBuildMCPConfig() {
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", nil)
+	require.Len(s.T(), cfg.MCPServers, 1)
+	ls := cfg.MCPServers["loop-scheduler"]
+	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
+	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222"}, ls.Args)
+	require.Nil(s.T(), ls.Env)
+}
+
+func (s *RunnerSuite) TestBuildMCPConfigWithUserServers() {
+	userServers := map[string]config.MCPServerConfig{
+		"custom-tool": {
+			Command: "/path/to/binary",
+			Args:    []string{"--flag"},
+			Env:     map[string]string{"API_KEY": "secret"},
+		},
+	}
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", userServers)
+	require.Len(s.T(), cfg.MCPServers, 2)
+
+	custom := cfg.MCPServers["custom-tool"]
+	require.Equal(s.T(), "/path/to/binary", custom.Command)
+	require.Equal(s.T(), []string{"--flag"}, custom.Args)
+	require.Equal(s.T(), map[string]string{"API_KEY": "secret"}, custom.Env)
+
+	ls := cfg.MCPServers["loop-scheduler"]
+	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
+}
+
+func (s *RunnerSuite) TestBuildMCPConfigBuiltinOverridesUser() {
+	userServers := map[string]config.MCPServerConfig{
+		"loop-scheduler": {
+			Command: "/user/fake/binary",
+			Args:    []string{"--user-flag"},
+		},
+	}
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", userServers)
+	require.Len(s.T(), cfg.MCPServers, 1)
+	ls := cfg.MCPServers["loop-scheduler"]
+	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
+	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222"}, ls.Args)
+}
+
+func (s *RunnerSuite) TestRunMCPConfigWriteError() {
+	writeFile = func(_ string, _ []byte, _ os.FileMode) error {
+		return errors.New("write failed")
+	}
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{ChannelID: "ch-1"}
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Nil(s.T(), resp)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing mcp config")
+}
+
+func (s *RunnerSuite) TestRunMCPConfigWritten() {
+	var writtenPath string
+	var writtenData []byte
+	writeFile = func(path string, data []byte, _ os.FileMode) error {
+		writtenPath = path
+		writtenData = data
+		return nil
+	}
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	jsonOutput := `{"result":"ok","session_id":"s1","is_error":false}`
+	reader := bytes.NewReader([]byte(jsonOutput))
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
+	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	_, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+
+	require.Equal(s.T(), "/home/testuser/.loop/ch-1/work/.mcp.json", writtenPath)
+
+	var cfg mcpConfig
+	require.NoError(s.T(), json.Unmarshal(writtenData, &cfg))
+	require.Contains(s.T(), cfg.MCPServers, "loop-scheduler")
+	ls := cfg.MCPServers["loop-scheduler"]
+	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
+	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222"}, ls.Args)
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestDefaultWriteFile() {
+	tmpDir := s.T().TempDir()
+	err := s.origWriteFile(tmpDir+"/test.txt", []byte("hello"), 0o644)
+	require.NoError(s.T(), err)
 }
 
 // errReader always returns an error on Read.
