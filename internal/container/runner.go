@@ -112,7 +112,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 	}
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"} {
 		if v := getenv(key); v != "" {
-			env = append(env, key+"="+v)
+			env = append(env, key+"="+localhostToDockerHost(v))
 		}
 	}
 
@@ -190,6 +190,31 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		Response:  claudeResp.Result,
 		SessionID: claudeResp.SessionID,
 	}, nil
+}
+
+// localhostToDockerHost rewrites localhost proxy addresses so they resolve
+// inside the container. E.g. ":3128" → "http://host.docker.internal:3128",
+// "http://127.0.0.1:3128" → "http://host.docker.internal:3128".
+func localhostToDockerHost(v string) string {
+	// Bare port like ":3128"
+	if strings.HasPrefix(v, ":") {
+		return "http://host.docker.internal" + v
+	}
+
+	r := strings.NewReplacer(
+		"://localhost:", "://host.docker.internal:",
+		"://localhost/", "://host.docker.internal/",
+		"://127.0.0.1:", "://host.docker.internal:",
+		"://127.0.0.1/", "://host.docker.internal/",
+	)
+	result := r.Replace(v)
+	// Handle trailing-slash-less variants like "http://localhost"
+	for _, suffix := range []string{"://localhost", "://127.0.0.1"} {
+		if before, ok := strings.CutSuffix(result, suffix); ok {
+			result = before + "://host.docker.internal"
+		}
+	}
+	return result
 }
 
 // stripANSI removes ANSI escape sequences from TTY output.

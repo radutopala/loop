@@ -657,6 +657,29 @@ func (s *RunnerSuite) TestDefaultGetenv() {
 	require.NotEmpty(s.T(), result)
 }
 
+func (s *RunnerSuite) TestLocalhostToDockerHost() {
+	tests := []struct {
+		name  string
+		input string
+		want  string
+	}{
+		{"bare port", ":3128", "http://host.docker.internal:3128"},
+		{"localhost with port", "http://localhost:3128", "http://host.docker.internal:3128"},
+		{"127.0.0.1 with port", "http://127.0.0.1:3128", "http://host.docker.internal:3128"},
+		{"https localhost", "https://localhost:3128", "https://host.docker.internal:3128"},
+		{"localhost no port", "http://localhost", "http://host.docker.internal"},
+		{"127.0.0.1 no port", "http://127.0.0.1", "http://host.docker.internal"},
+		{"localhost with path", "http://localhost/proxy", "http://host.docker.internal/proxy"},
+		{"remote proxy unchanged", "http://proxy.corp:8080", "http://proxy.corp:8080"},
+		{"empty string", "", ""},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.want, localhostToDockerHost(tc.input))
+		})
+	}
+}
+
 // errReader always returns an error on Read.
 type errReader struct {
 	err error
