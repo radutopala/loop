@@ -51,8 +51,9 @@ func newRootCmd() *cobra.Command {
 
 func newServeCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "serve",
-		Short: "Start the Discord bot",
+		Use:     "serve",
+		Aliases: []string{"s"},
+		Short:   "Start the Discord bot",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return serve()
 		},
@@ -63,8 +64,9 @@ func newMCPCmd() *cobra.Command {
 	var channelID, apiURL string
 
 	cmd := &cobra.Command{
-		Use:   "mcp",
-		Short: "Run as an MCP server over stdio",
+		Use:     "mcp",
+		Aliases: []string{"m"},
+		Short:   "Run as an MCP server over stdio",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runMCP(channelID, apiURL)
 		},
@@ -93,13 +95,15 @@ var (
 
 func newDaemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "daemon",
-		Short: "Manage the Loop background service",
+		Use:     "daemon",
+		Aliases: []string{"d"},
+		Short:   "Manage the Loop background service",
 	}
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "start",
-		Short: "Install and start the daemon",
+		Use:     "start",
+		Aliases: []string{"up"},
+		Short:   "Install and start the daemon",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if err := daemonStart(newSystem()); err != nil {
 				return err
@@ -110,8 +114,9 @@ func newDaemonCmd() *cobra.Command {
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "stop",
-		Short: "Stop and uninstall the daemon",
+		Use:     "stop",
+		Aliases: []string{"down"},
+		Short:   "Stop and uninstall the daemon",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if err := daemonStop(newSystem()); err != nil {
 				return err
@@ -122,8 +127,9 @@ func newDaemonCmd() *cobra.Command {
 	})
 
 	cmd.AddCommand(&cobra.Command{
-		Use:   "status",
-		Short: "Show daemon status",
+		Use:     "status",
+		Aliases: []string{"st"},
+		Short:   "Show daemon status",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			status, err := daemonStatus(newSystem())
 			if err != nil {

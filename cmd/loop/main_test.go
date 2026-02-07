@@ -345,6 +345,7 @@ func (s *MainSuite) TestNewRootCmd() {
 func (s *MainSuite) TestNewServeCmd() {
 	cmd := newServeCmd()
 	require.Equal(s.T(), "serve", cmd.Use)
+	require.Equal(s.T(), []string{"s"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.RunE)
 
 	// Exercise the RunE closure to cover it.
@@ -360,6 +361,7 @@ func (s *MainSuite) TestNewServeCmd() {
 func (s *MainSuite) TestNewMCPCmd() {
 	cmd := newMCPCmd()
 	require.Equal(s.T(), "mcp", cmd.Use)
+	require.Equal(s.T(), []string{"m"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.RunE)
 
 	// Flags should be registered
@@ -866,24 +868,21 @@ func (s *MainSuite) TestDefaultNewDockerClient() {
 func (s *MainSuite) TestNewDaemonCmd() {
 	cmd := newDaemonCmd()
 	require.Equal(s.T(), "daemon", cmd.Use)
+	require.Equal(s.T(), []string{"d"}, cmd.Aliases)
 	require.True(s.T(), cmd.HasSubCommands())
 
-	foundStart := false
-	foundStop := false
-	foundStatus := false
 	for _, sub := range cmd.Commands() {
 		switch sub.Use {
 		case "start":
-			foundStart = true
+			require.Equal(s.T(), []string{"up"}, sub.Aliases)
 		case "stop":
-			foundStop = true
+			require.Equal(s.T(), []string{"down"}, sub.Aliases)
 		case "status":
-			foundStatus = true
+			require.Equal(s.T(), []string{"st"}, sub.Aliases)
+		default:
+			s.T().Fatalf("unexpected subcommand: %s", sub.Use)
 		}
 	}
-	require.True(s.T(), foundStart)
-	require.True(s.T(), foundStop)
-	require.True(s.T(), foundStatus)
 }
 
 func (s *MainSuite) TestDaemonStartSuccess() {
