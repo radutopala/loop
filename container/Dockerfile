@@ -4,10 +4,10 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN go build -o /loop ./cmd/loop
-RUN go install github.com/radutopala/tk@latest
+RUN go install github.com/radutopala/ticket/cmd/tk@latest
 
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates nodejs npm
+RUN apk add --no-cache bash ca-certificates git nodejs npm
 RUN npm install -g @anthropic-ai/claude-code
 COPY --from=builder /loop /usr/local/bin/loop
 COPY --from=builder /go/bin/tk /usr/local/bin/tk
