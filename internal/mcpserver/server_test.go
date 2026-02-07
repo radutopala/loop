@@ -44,7 +44,7 @@ func TestMCPServerSuite(t *testing.T) {
 
 func (s *MCPServerSuite) SetupTest() {
 	s.httpClient = &mockHTTPClient{}
-	s.srv = New("test-channel", "http://localhost:8222", s.httpClient)
+	s.srv = New("test-channel", "http://localhost:8222", s.httpClient, nil)
 	s.ctx = context.Background()
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)

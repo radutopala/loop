@@ -16,6 +16,7 @@ import (
 	"github.com/radutopala/loop/internal/api"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
+	"github.com/radutopala/loop/internal/daemon"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/discord"
 	"github.com/radutopala/loop/internal/logging"
@@ -24,6 +25,10 @@ import (
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/spf13/cobra"
 )
+
+func init() {
+	cobra.EnablePrefixMatching = true
+}
 
 var osExit = os.Exit
 
@@ -40,6 +45,7 @@ func newRootCmd() *cobra.Command {
 	}
 	root.AddCommand(newServeCmd())
 	root.AddCommand(newMCPCmd())
+	root.AddCommand(newDaemonCmd())
 	return root
 }
 
@@ -74,8 +80,72 @@ func newMCPCmd() *cobra.Command {
 
 var newMCPServer = mcpserver.New
 
+var mcpLogOpen = func() (*os.File, error) {
+	return os.OpenFile("/mcp/mcp.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+}
+
+var (
+	daemonStart  = daemon.Start
+	daemonStop   = daemon.Stop
+	daemonStatus = daemon.Status
+	newSystem    = func() daemon.System { return daemon.RealSystem{} }
+)
+
+func newDaemonCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "daemon",
+		Short: "Manage the Loop background service",
+	}
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "start",
+		Short: "Install and start the daemon",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if err := daemonStart(newSystem()); err != nil {
+				return err
+			}
+			fmt.Println("Daemon started.")
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "stop",
+		Short: "Stop and uninstall the daemon",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			if err := daemonStop(newSystem()); err != nil {
+				return err
+			}
+			fmt.Println("Daemon stopped.")
+			return nil
+		},
+	})
+
+	cmd.AddCommand(&cobra.Command{
+		Use:   "status",
+		Short: "Show daemon status",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			status, err := daemonStatus(newSystem())
+			if err != nil {
+				return err
+			}
+			fmt.Println(status)
+			return nil
+		},
+	})
+
+	return cmd
+}
+
 func runMCP(channelID, apiURL string) error {
-	srv := newMCPServer(channelID, apiURL, http.DefaultClient)
+	f, err := mcpLogOpen()
+	if err != nil {
+		return fmt.Errorf("opening mcp log: %w", err)
+	}
+	defer f.Close()
+
+	logger := slog.New(slog.NewTextHandler(f, nil))
+	srv := newMCPServer(channelID, apiURL, http.DefaultClient, logger)
 	return srv.Run(context.Background(), &mcp.StdioTransport{})
 }
 

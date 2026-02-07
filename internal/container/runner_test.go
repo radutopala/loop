@@ -5,6 +5,8 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -67,9 +69,10 @@ func (m *MockDockerClient) ContainerList(ctx context.Context, labelKey, labelVal
 
 type RunnerSuite struct {
 	suite.Suite
-	client *MockDockerClient
-	runner *DockerRunner
-	cfg    *config.Config
+	client       *MockDockerClient
+	runner       *DockerRunner
+	cfg          *config.Config
+	origMkdirAll func(string, os.FileMode) error
 }
 
 func TestRunnerSuite(t *testing.T) {
@@ -77,6 +80,8 @@ func TestRunnerSuite(t *testing.T) {
 }
 
 func (s *RunnerSuite) SetupTest() {
+	s.origMkdirAll = mkdirAll
+	mkdirAll = func(_ string, _ os.FileMode) error { return nil }
 	s.client = new(MockDockerClient)
 	s.cfg = &config.Config{
 		ContainerImage:    "loop-agent:latest",
@@ -84,9 +89,13 @@ func (s *RunnerSuite) SetupTest() {
 		ContainerCPUs:     1.0,
 		ContainerTimeout:  30 * time.Second,
 		APIAddr:           ":8222",
-		WorkDir:           "/home/testuser/.loop/work",
+		LoopDir:           "/home/testuser/.loop",
 	}
 	s.runner = NewDockerRunner(s.client, s.cfg)
+}
+
+func (s *RunnerSuite) TearDownTest() {
+	mkdirAll = s.origMkdirAll
 }
 
 func (s *RunnerSuite) TestNewDockerRunner() {
@@ -119,7 +128,10 @@ func (s *RunnerSuite) TestRunHappyPath() {
 				hasSessionEnv = true
 			}
 		}
-		hasBinds := len(cfg.Binds) == 2 && cfg.Binds[0] == sessionVolume && cfg.Binds[1] == "/home/testuser/.loop/work:/work"
+		hasBinds := len(cfg.Binds) == 3 &&
+			cfg.Binds[0] == sessionVolume &&
+			cfg.Binds[1] == "/home/testuser/.loop/ch-1/work:/work" &&
+			cfg.Binds[2] == "/home/testuser/.loop/ch-1/mcp:/mcp"
 		return hasSessionEnv && hasBinds
 	}), "").Return("container-123", nil)
 	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
@@ -473,6 +485,124 @@ func (s *RunnerSuite) TestCleanupNoContainers() {
 	require.NoError(s.T(), err)
 
 	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunRetryWithoutSession() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID: "stale-sess",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	// First attempt (with session) — non-JSON output, exit code 1
+	failReader := bytes.NewReader([]byte("No session found"))
+	failWaitCh := make(chan WaitResponse, 1)
+	failWaitCh <- WaitResponse{StatusCode: 1}
+	failErrCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Env, "SESSION_ID=stale-sess")
+	}), "").Return("container-fail", nil).Once()
+	s.client.On("ContainerAttach", ctx, "container-fail").Return(failReader, nil)
+	s.client.On("ContainerStart", ctx, "container-fail").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-fail").Return((<-chan WaitResponse)(failWaitCh), (<-chan error)(failErrCh))
+	s.client.On("ContainerRemove", ctx, "container-fail").Return(nil)
+
+	// Retry (without session) — succeeds
+	okJSON := `{"result":"Hello!","session_id":"new-sess","is_error":false}`
+	okReader := bytes.NewReader([]byte(okJSON))
+	okWaitCh := make(chan WaitResponse, 1)
+	okWaitCh <- WaitResponse{StatusCode: 0}
+	okErrCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		for _, e := range cfg.Env {
+			if strings.HasPrefix(e, "SESSION_ID=") {
+				return false
+			}
+		}
+		return true
+	}), "").Return("container-ok", nil).Once()
+	s.client.On("ContainerAttach", ctx, "container-ok").Return(okReader, nil)
+	s.client.On("ContainerStart", ctx, "container-ok").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-ok").Return((<-chan WaitResponse)(okWaitCh), (<-chan error)(okErrCh))
+	s.client.On("ContainerRemove", ctx, "container-ok").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Hello!", resp.Response)
+	require.Equal(s.T(), "new-sess", resp.SessionID)
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunRetryAlsoFails() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID: "stale-sess",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	// First attempt (with session) — fails
+	failReader1 := bytes.NewReader([]byte("No session found"))
+	failWaitCh1 := make(chan WaitResponse, 1)
+	failWaitCh1 <- WaitResponse{StatusCode: 1}
+	failErrCh1 := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Env, "SESSION_ID=stale-sess")
+	}), "").Return("container-fail1", nil).Once()
+	s.client.On("ContainerAttach", ctx, "container-fail1").Return(failReader1, nil)
+	s.client.On("ContainerStart", ctx, "container-fail1").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-fail1").Return((<-chan WaitResponse)(failWaitCh1), (<-chan error)(failErrCh1))
+	s.client.On("ContainerRemove", ctx, "container-fail1").Return(nil)
+
+	// Retry (without session) — also fails
+	failReader2 := bytes.NewReader([]byte("some other error"))
+	failWaitCh2 := make(chan WaitResponse, 1)
+	failWaitCh2 <- WaitResponse{StatusCode: 1}
+	failErrCh2 := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		for _, e := range cfg.Env {
+			if strings.HasPrefix(e, "SESSION_ID=") {
+				return false
+			}
+		}
+		return true
+	}), "").Return("container-fail2", nil).Once()
+	s.client.On("ContainerAttach", ctx, "container-fail2").Return(failReader2, nil)
+	s.client.On("ContainerStart", ctx, "container-fail2").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-fail2").Return((<-chan WaitResponse)(failWaitCh2), (<-chan error)(failErrCh2))
+	s.client.On("ContainerRemove", ctx, "container-fail2").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Nil(s.T(), resp)
+	require.Error(s.T(), err)
+	// Returns original error (from first attempt)
+	require.Contains(s.T(), err.Error(), "container exited with code 1")
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunMkdirAllError() {
+	mkdirAll = func(_ string, _ os.FileMode) error { return errors.New("mkdir fail") }
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{ChannelID: "ch-1"}
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Nil(s.T(), resp)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating host directory")
+}
+
+func (s *RunnerSuite) TestDefaultMkdirAll() {
+	tmpDir := s.T().TempDir()
+	err := s.origMkdirAll(tmpDir+"/a/b", 0o755)
+	require.NoError(s.T(), err)
 }
 
 // errReader always returns an error on Read.

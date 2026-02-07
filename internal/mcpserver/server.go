@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -37,7 +38,7 @@ type cancelTaskInput struct {
 type listTasksInput struct{}
 
 // New creates a new MCP server with scheduler tools.
-func New(channelID, apiURL string, httpClient HTTPClient) *Server {
+func New(channelID, apiURL string, httpClient HTTPClient, logger *slog.Logger) *Server {
 	s := &Server{
 		channelID:  channelID,
 		apiURL:     apiURL,
@@ -47,7 +48,7 @@ func New(channelID, apiURL string, httpClient HTTPClient) *Server {
 	s.mcpServer = mcp.NewServer(&mcp.Implementation{
 		Name:    "loop-scheduler",
 		Version: "1.0.0",
-	}, nil)
+	}, &mcp.ServerOptions{Logger: logger})
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "schedule_task",

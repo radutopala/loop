@@ -64,7 +64,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Equal(s.T(), "test-token", cfg.DiscordToken)
 	require.Equal(s.T(), "test-app-id", cfg.DiscordAppID)
 	require.Equal(s.T(), "claude", cfg.ClaudeBinPath)
-	require.Equal(s.T(), "loop.db", cfg.DBPath)
+	require.Contains(s.T(), cfg.DBPath, filepath.Join(".loop", "loop.db"))
 	require.Equal(s.T(), "info", cfg.LogLevel)
 	require.Equal(s.T(), "text", cfg.LogFormat)
 	require.Equal(s.T(), "loop-agent:latest", cfg.ContainerImage)
@@ -74,7 +74,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Equal(s.T(), 30*time.Second, cfg.PollInterval)
 	require.Empty(s.T(), cfg.MountAllowlist)
 	require.Equal(s.T(), ":8222", cfg.APIAddr)
-	require.Contains(s.T(), cfg.WorkDir, filepath.Join(".loop", "work"))
+	require.Contains(s.T(), cfg.LoopDir, ".loop")
 }
 
 func (s *ConfigSuite) TestLoadCustomValues() {

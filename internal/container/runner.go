@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 
@@ -73,9 +75,28 @@ func NewDockerRunner(client DockerClient, cfg *config.Config) *DockerRunner {
 const containerLabel = "loop-agent"
 const sessionVolume = "loop-sessions:/home/agent/.claude"
 
-// Run executes an agent request by running claude directly in a Docker container.
-// The prompt is passed as a command argument; the JSON response is read from stdout.
+var mkdirAll = os.MkdirAll
+
+// Run executes an agent request in a Docker container.
+// If a session ID is set and the run fails, it retries without --resume
+// (stale session IDs cause Claude to output non-JSON errors).
 func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
+	resp, err := r.runOnce(ctx, req)
+	if err == nil || req.SessionID == "" {
+		return resp, err
+	}
+
+	retryReq := *req
+	retryReq.SessionID = ""
+	retryResp, retryErr := r.runOnce(ctx, &retryReq)
+	if retryErr != nil {
+		return nil, err
+	}
+	return retryResp, nil
+}
+
+// runOnce executes a single container run.
+func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
 	prompt := agent.BuildPrompt(req.Messages, req.SystemPrompt)
 
 	env := []string{
@@ -89,13 +110,21 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+r.cfg.ClaudeCodeOAuthToken)
 	}
 
+	workDir := filepath.Join(r.cfg.LoopDir, req.ChannelID, "work")
+	mcpDir := filepath.Join(r.cfg.LoopDir, req.ChannelID, "mcp")
+	for _, dir := range []string{workDir, mcpDir} {
+		if err := mkdirAll(dir, 0o755); err != nil {
+			return nil, fmt.Errorf("creating host directory %s: %w", dir, err)
+		}
+	}
+
 	containerCfg := &ContainerConfig{
 		Image:    r.cfg.ContainerImage,
 		MemoryMB: r.cfg.ContainerMemoryMB,
 		CPUs:     r.cfg.ContainerCPUs,
 		Env:      env,
 		Cmd:      []string{prompt},
-		Binds:    []string{sessionVolume, r.cfg.WorkDir + ":/work"},
+		Binds:    []string{sessionVolume, workDir + ":/work", mcpDir + ":/mcp"},
 	}
 
 	containerID, err := r.client.ContainerCreate(ctx, containerCfg, "")

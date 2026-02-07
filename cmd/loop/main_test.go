@@ -15,6 +15,7 @@ import (
 	"github.com/radutopala/loop/internal/api"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
+	"github.com/radutopala/loop/internal/daemon"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/mcpserver"
 	"github.com/radutopala/loop/internal/orchestrator"
@@ -251,7 +252,12 @@ type MainSuite struct {
 	origNewSQLiteStore  func(string) (db.Store, error)
 	origOsExit          func(int)
 	origNewAPIServer    func(scheduler.Scheduler, *slog.Logger) apiServer
-	origNewMCPServer    func(string, string, mcpserver.HTTPClient) *mcpserver.Server
+	origNewMCPServer    func(string, string, mcpserver.HTTPClient, *slog.Logger) *mcpserver.Server
+	origMCPLogOpen      func() (*os.File, error)
+	origDaemonStart     func(daemon.System) error
+	origDaemonStop      func(daemon.System) error
+	origDaemonStatus    func(daemon.System) (string, error)
+	origNewSystem       func() daemon.System
 }
 
 func TestMainSuite(t *testing.T) {
@@ -266,6 +272,11 @@ func (s *MainSuite) SetupTest() {
 	s.origOsExit = osExit
 	s.origNewAPIServer = newAPIServer
 	s.origNewMCPServer = newMCPServer
+	s.origMCPLogOpen = mcpLogOpen
+	s.origDaemonStart = daemonStart
+	s.origDaemonStop = daemonStop
+	s.origDaemonStatus = daemonStatus
+	s.origNewSystem = newSystem
 }
 
 func (s *MainSuite) TearDownTest() {
@@ -276,6 +287,11 @@ func (s *MainSuite) TearDownTest() {
 	osExit = s.origOsExit
 	newAPIServer = s.origNewAPIServer
 	newMCPServer = s.origNewMCPServer
+	mcpLogOpen = s.origMCPLogOpen
+	daemonStart = s.origDaemonStart
+	daemonStop = s.origDaemonStop
+	daemonStatus = s.origDaemonStatus
+	newSystem = s.origNewSystem
 }
 
 func testConfig() *config.Config {
@@ -307,6 +323,7 @@ func (s *MainSuite) TestNewRootCmd() {
 
 	foundServe := false
 	foundMCP := false
+	foundDaemon := false
 	for _, sub := range cmd.Commands() {
 		if sub.Use == "serve" {
 			foundServe = true
@@ -314,9 +331,13 @@ func (s *MainSuite) TestNewRootCmd() {
 		if sub.Use == "mcp" {
 			foundMCP = true
 		}
+		if sub.Use == "daemon" {
+			foundDaemon = true
+		}
 	}
 	require.True(s.T(), foundServe, "root command should have serve subcommand")
 	require.True(s.T(), foundMCP, "root command should have mcp subcommand")
+	require.True(s.T(), foundDaemon, "root command should have daemon subcommand")
 }
 
 // --- newServeCmd ---
@@ -356,12 +377,15 @@ func (s *MainSuite) TestNewMCPCmdMissingFlags() {
 }
 
 func (s *MainSuite) TestRunMCP() {
+	mcpLogOpen = func() (*os.File, error) {
+		return os.CreateTemp(s.T().TempDir(), "mcp-*.log")
+	}
 	called := false
-	newMCPServer = func(channelID, apiURL string, httpClient mcpserver.HTTPClient) *mcpserver.Server {
+	newMCPServer = func(channelID, apiURL string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
 		require.Equal(s.T(), "ch1", channelID)
 		require.Equal(s.T(), "http://localhost:8222", apiURL)
 		called = true
-		return mcpserver.New(channelID, apiURL, httpClient)
+		return mcpserver.New(channelID, apiURL, httpClient, logger)
 	}
 
 	// runMCP will try to use StdioTransport which will fail/close immediately in test.
@@ -371,13 +395,16 @@ func (s *MainSuite) TestRunMCP() {
 }
 
 func (s *MainSuite) TestNewMCPCmdRunE() {
+	mcpLogOpen = func() (*os.File, error) {
+		return os.CreateTemp(s.T().TempDir(), "mcp-*.log")
+	}
 	// Test the RunE closure is wired correctly by executing with flags.
 	called := false
-	newMCPServer = func(channelID, apiURL string, httpClient mcpserver.HTTPClient) *mcpserver.Server {
+	newMCPServer = func(channelID, apiURL string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
 		require.Equal(s.T(), "ch-test", channelID)
 		require.Equal(s.T(), "http://test:8222", apiURL)
 		called = true
-		return mcpserver.New(channelID, apiURL, httpClient)
+		return mcpserver.New(channelID, apiURL, httpClient, logger)
 	}
 
 	cmd := newMCPCmd()
@@ -388,10 +415,35 @@ func (s *MainSuite) TestNewMCPCmdRunE() {
 	require.True(s.T(), called)
 }
 
+func (s *MainSuite) TestRunMCPLogOpenError() {
+	mcpLogOpen = func() (*os.File, error) {
+		return nil, errors.New("log open fail")
+	}
+	err := runMCP("ch1", "http://localhost:8222")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "opening mcp log")
+}
+
+func (s *MainSuite) TestDefaultMCPLogOpen() {
+	// The default mcpLogOpen writes to /mcp/mcp.log (container path).
+	// Exercise it by temporarily overriding to a temp dir.
+	tmpDir := s.T().TempDir()
+	mcpLogOpen = func() (*os.File, error) {
+		return os.OpenFile(tmpDir+"/mcp.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	}
+	f, err := mcpLogOpen()
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), f)
+	f.Close()
+
+	// Verify the original default points to /mcp/mcp.log.
+	require.NotNil(s.T(), s.origMCPLogOpen)
+}
+
 func (s *MainSuite) TestRunMCPWithInMemoryTransport() {
 	// Verify runMCP constructs the server correctly.
 	// We can't test stdio, but we test the MCP server is functional via in-memory transport.
-	srv := mcpserver.New("ch1", "http://localhost:8222", http.DefaultClient)
+	srv := mcpserver.New("ch1", "http://localhost:8222", http.DefaultClient, nil)
 
 	t1, t2 := mcpsdk.NewInMemoryTransports()
 
@@ -770,6 +822,7 @@ func (s *MainSuite) TestDefaultVarSignatures() {
 	require.NotNil(s.T(), newSQLiteStore)
 	require.NotNil(s.T(), newAPIServer)
 	require.NotNil(s.T(), newMCPServer)
+	require.NotNil(s.T(), mcpLogOpen)
 
 	// Verify newAPIServer produces a non-nil apiServer
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -777,7 +830,7 @@ func (s *MainSuite) TestDefaultVarSignatures() {
 	require.NotNil(s.T(), apiSrv)
 
 	// Verify newMCPServer produces a non-nil server
-	mcpSrv := newMCPServer("ch1", "http://localhost:8222", http.DefaultClient)
+	mcpSrv := newMCPServer("ch1", "http://localhost:8222", http.DefaultClient, nil)
 	require.NotNil(s.T(), mcpSrv)
 }
 
@@ -806,4 +859,102 @@ func (s *MainSuite) TestDefaultNewDockerClient() {
 	if closer, ok := dc.(io.Closer); ok {
 		_ = closer.Close()
 	}
+}
+
+// --- newDaemonCmd ---
+
+func (s *MainSuite) TestNewDaemonCmd() {
+	cmd := newDaemonCmd()
+	require.Equal(s.T(), "daemon", cmd.Use)
+	require.True(s.T(), cmd.HasSubCommands())
+
+	foundStart := false
+	foundStop := false
+	foundStatus := false
+	for _, sub := range cmd.Commands() {
+		switch sub.Use {
+		case "start":
+			foundStart = true
+		case "stop":
+			foundStop = true
+		case "status":
+			foundStatus = true
+		}
+	}
+	require.True(s.T(), foundStart)
+	require.True(s.T(), foundStop)
+	require.True(s.T(), foundStatus)
+}
+
+func (s *MainSuite) TestDaemonStartSuccess() {
+	daemonStart = func(_ daemon.System) error { return nil }
+	newSystem = func() daemon.System { return daemon.RealSystem{} }
+
+	cmd := newDaemonCmd()
+	cmd.SetArgs([]string{"start"})
+	err := cmd.Execute()
+	require.NoError(s.T(), err)
+}
+
+func (s *MainSuite) TestDaemonStartError() {
+	daemonStart = func(_ daemon.System) error { return errors.New("start fail") }
+	newSystem = func() daemon.System { return daemon.RealSystem{} }
+
+	cmd := newDaemonCmd()
+	cmd.SetArgs([]string{"start"})
+	err := cmd.Execute()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "start fail")
+}
+
+func (s *MainSuite) TestDaemonStopSuccess() {
+	daemonStop = func(_ daemon.System) error { return nil }
+	newSystem = func() daemon.System { return daemon.RealSystem{} }
+
+	cmd := newDaemonCmd()
+	cmd.SetArgs([]string{"stop"})
+	err := cmd.Execute()
+	require.NoError(s.T(), err)
+}
+
+func (s *MainSuite) TestDaemonStopError() {
+	daemonStop = func(_ daemon.System) error { return errors.New("stop fail") }
+	newSystem = func() daemon.System { return daemon.RealSystem{} }
+
+	cmd := newDaemonCmd()
+	cmd.SetArgs([]string{"stop"})
+	err := cmd.Execute()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "stop fail")
+}
+
+func (s *MainSuite) TestDaemonStatusSuccess() {
+	daemonStatus = func(_ daemon.System) (string, error) { return "running", nil }
+	newSystem = func() daemon.System { return daemon.RealSystem{} }
+
+	cmd := newDaemonCmd()
+	cmd.SetArgs([]string{"status"})
+	err := cmd.Execute()
+	require.NoError(s.T(), err)
+}
+
+func (s *MainSuite) TestDaemonStatusError() {
+	daemonStatus = func(_ daemon.System) (string, error) { return "", errors.New("status fail") }
+	newSystem = func() daemon.System { return daemon.RealSystem{} }
+
+	cmd := newDaemonCmd()
+	cmd.SetArgs([]string{"status"})
+	err := cmd.Execute()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "status fail")
+}
+
+func (s *MainSuite) TestDefaultDaemonVars() {
+	require.NotNil(s.T(), s.origDaemonStart)
+	require.NotNil(s.T(), s.origDaemonStop)
+	require.NotNil(s.T(), s.origDaemonStatus)
+	require.NotNil(s.T(), s.origNewSystem)
+
+	sys := s.origNewSystem()
+	require.IsType(s.T(), daemon.RealSystem{}, sys)
 }

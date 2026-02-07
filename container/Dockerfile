@@ -13,7 +13,7 @@ COPY container/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 RUN adduser -D -h /home/agent agent
 RUN mkdir -p /home/agent/.claude && chown -R agent:agent /home/agent/.claude
+RUN mkdir -p /work /mcp && chown agent:agent /work /mcp
 WORKDIR /work
-RUN chown agent:agent /work
 USER agent
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

@@ -24,7 +24,7 @@ type Config struct {
 	MountAllowlist       []string
 	APIAddr              string
 	ClaudeCodeOAuthToken string
-	WorkDir              string
+	LoopDir              string
 }
 
 // userHomeDir is a package-level variable to allow overriding in tests.
@@ -121,7 +121,7 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("missing required environment variables: %v", missing)
 	}
 
-	cfg.DBPath = getEnvDefault("DB_PATH", "loop.db")
+	cfg.DBPath = getEnvDefault("DB_PATH", filepath.Join(loopDir, "loop.db"))
 	cfg.LogLevel = getEnvDefault("LOG_LEVEL", "info")
 	cfg.LogFormat = getEnvDefault("LOG_FORMAT", "text")
 	cfg.ContainerImage = getEnvDefault("CONTAINER_IMAGE", "loop-agent:latest")
@@ -157,7 +157,7 @@ func Load() (*Config, error) {
 	cfg.APIAddr = getEnvDefault("API_ADDR", ":8222")
 	cfg.ClaudeCodeOAuthToken = os.Getenv("CLAUDE_CODE_OAUTH_TOKEN")
 
-	cfg.WorkDir = filepath.Join(loopDir, "work")
+	cfg.LoopDir = loopDir
 
 	return cfg, nil
 }
