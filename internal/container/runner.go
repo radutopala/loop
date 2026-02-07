@@ -76,6 +76,7 @@ const containerLabel = "loop-agent"
 const sessionVolume = "loop-sessions:/home/agent/.claude"
 
 var mkdirAll = os.MkdirAll
+var getenv = os.Getenv
 
 // Run executes an agent request in a Docker container.
 // If a session ID is set and the run fails, it retries without --resume
@@ -108,6 +109,11 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 	}
 	if r.cfg.ClaudeCodeOAuthToken != "" {
 		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+r.cfg.ClaudeCodeOAuthToken)
+	}
+	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"} {
+		if v := getenv(key); v != "" {
+			env = append(env, key+"="+v)
+		}
 	}
 
 	workDir := filepath.Join(r.cfg.LoopDir, req.ChannelID, "work")

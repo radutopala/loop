@@ -73,6 +73,7 @@ type RunnerSuite struct {
 	runner       *DockerRunner
 	cfg          *config.Config
 	origMkdirAll func(string, os.FileMode) error
+	origGetenv   func(string) string
 }
 
 func TestRunnerSuite(t *testing.T) {
@@ -82,6 +83,8 @@ func TestRunnerSuite(t *testing.T) {
 func (s *RunnerSuite) SetupTest() {
 	s.origMkdirAll = mkdirAll
 	mkdirAll = func(_ string, _ os.FileMode) error { return nil }
+	s.origGetenv = getenv
+	getenv = func(_ string) string { return "" }
 	s.client = new(MockDockerClient)
 	s.cfg = &config.Config{
 		ContainerImage:    "loop-agent:latest",
@@ -96,6 +99,7 @@ func (s *RunnerSuite) SetupTest() {
 
 func (s *RunnerSuite) TearDownTest() {
 	mkdirAll = s.origMkdirAll
+	getenv = s.origGetenv
 }
 
 func (s *RunnerSuite) TestNewDockerRunner() {
@@ -363,6 +367,49 @@ func (s *RunnerSuite) TestRunNoSessionID() {
 	s.client.AssertExpectations(s.T())
 }
 
+func (s *RunnerSuite) TestRunProxyEnvForwarding() {
+	getenv = func(key string) string {
+		switch key {
+		case "HTTP_PROXY":
+			return "http://proxy:8080"
+		case "HTTPS_PROXY":
+			return "http://proxy:8443"
+		case "NO_PROXY":
+			return "localhost,127.0.0.1"
+		}
+		return ""
+	}
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	jsonOutput := `{"result":"ok","session_id":"s1","is_error":false}`
+	reader := bytes.NewReader([]byte(jsonOutput))
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Env, "HTTP_PROXY=http://proxy:8080") &&
+			slices.Contains(cfg.Env, "HTTPS_PROXY=http://proxy:8443") &&
+			slices.Contains(cfg.Env, "NO_PROXY=localhost,127.0.0.1")
+	}), "").Return("container-123", nil)
+	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp.Response)
+
+	s.client.AssertExpectations(s.T())
+}
+
 func (s *RunnerSuite) TestRunJSONParseError() {
 	ctx := context.Background()
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
@@ -603,6 +650,11 @@ func (s *RunnerSuite) TestDefaultMkdirAll() {
 	tmpDir := s.T().TempDir()
 	err := s.origMkdirAll(tmpDir+"/a/b", 0o755)
 	require.NoError(s.T(), err)
+}
+
+func (s *RunnerSuite) TestDefaultGetenv() {
+	result := s.origGetenv("PATH")
+	require.NotEmpty(s.T(), result)
 }
 
 // errReader always returns an error on Read.
