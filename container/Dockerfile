@@ -4,11 +4,13 @@ COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
 RUN go build -o /loop ./cmd/loop
+RUN go install github.com/radutopala/tk@latest
 
 FROM alpine:3.21
 RUN apk add --no-cache ca-certificates nodejs npm
 RUN npm install -g @anthropic-ai/claude-code
 COPY --from=builder /loop /usr/local/bin/loop
+COPY --from=builder /go/bin/tk /usr/local/bin/tk
 COPY container/entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 RUN adduser -D -h /home/agent agent
