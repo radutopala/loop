@@ -18,6 +18,7 @@ import (
 	"github.com/radutopala/loop/internal/api"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
+	containerimage "github.com/radutopala/loop/internal/container/image"
 	"github.com/radutopala/loop/internal/daemon"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/discord"
@@ -194,11 +195,23 @@ func onboard(force bool) error {
 		return fmt.Errorf("writing config file: %w", err)
 	}
 
+	// Flush embedded container files
+	containerDir := filepath.Join(loopDir, "container")
+	if err := osMkdirAll(containerDir, 0755); err != nil {
+		return fmt.Errorf("creating container directory: %w", err)
+	}
+	if err := osWriteFile(filepath.Join(containerDir, "Dockerfile"), containerimage.Dockerfile, 0644); err != nil {
+		return fmt.Errorf("writing container Dockerfile: %w", err)
+	}
+	if err := osWriteFile(filepath.Join(containerDir, "entrypoint.sh"), containerimage.Entrypoint, 0644); err != nil {
+		return fmt.Errorf("writing container entrypoint: %w", err)
+	}
+
 	fmt.Printf("✓ Created config at %s\n", configPath)
 	fmt.Println("\nNext steps:")
 	fmt.Println("1. Edit config.json and add your discord_token and discord_app_id")
 	fmt.Println("2. Run 'loop serve' to start the bot")
-	fmt.Println("3. Use '/loop template add <name>' in Discord to load task templates")
+	fmt.Println("3. Customize the Dockerfile at ~/.loop/container/ if needed")
 
 	return nil
 }
@@ -253,6 +266,35 @@ type apiServer interface {
 	Stop(ctx context.Context) error
 }
 
+var ensureImage = func(ctx context.Context, client container.DockerClient, cfg *config.Config) error {
+	containerDir := filepath.Join(cfg.LoopDir, "container")
+
+	// Write embedded files if they don't exist (first-run fallback)
+	dockerfilePath := filepath.Join(containerDir, "Dockerfile")
+	if _, err := osStat(dockerfilePath); os.IsNotExist(err) {
+		if err := osMkdirAll(containerDir, 0755); err != nil {
+			return fmt.Errorf("creating container directory: %w", err)
+		}
+		if err := osWriteFile(dockerfilePath, containerimage.Dockerfile, 0644); err != nil {
+			return fmt.Errorf("writing Dockerfile: %w", err)
+		}
+		if err := osWriteFile(filepath.Join(containerDir, "entrypoint.sh"), containerimage.Entrypoint, 0644); err != nil {
+			return fmt.Errorf("writing entrypoint: %w", err)
+		}
+	}
+
+	// Skip build if image already exists
+	ids, err := client.ImageList(ctx, cfg.ContainerImage)
+	if err != nil {
+		return fmt.Errorf("listing images: %w", err)
+	}
+	if len(ids) > 0 {
+		return nil
+	}
+
+	return client.ImageBuild(ctx, containerDir, cfg.ContainerImage)
+}
+
 var (
 	configLoad     = config.Load
 	newSQLiteStore = func(path string) (db.Store, error) {
@@ -301,6 +343,15 @@ func serve() error {
 	if closer, ok := dockerClient.(io.Closer); ok {
 		defer closer.Close()
 	}
+
+	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer cancel()
+
+	logger.Info("ensuring agent image", "image", cfg.ContainerImage)
+	if err := ensureImage(ctx, dockerClient, cfg); err != nil {
+		return fmt.Errorf("ensuring agent image: %w", err)
+	}
+
 	runner := container.NewDockerRunner(dockerClient, cfg)
 
 	executor := orchestrator.NewTaskExecutor(runner, bot, store, logger)
@@ -317,9 +368,6 @@ func serve() error {
 	}
 
 	orch := orchestrator.New(store, bot, runner, sched, logger, cfg.TaskTemplates)
-
-	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer cancel()
 
 	if err := orch.Start(ctx); err != nil {
 		_ = apiSrv.Stop(context.Background())

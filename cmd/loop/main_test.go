@@ -192,6 +192,10 @@ func (m *mockDockerClient) ImagePull(ctx context.Context, image string) error {
 	return m.Called(ctx, image).Error(0)
 }
 
+func (m *mockDockerClient) ImageBuild(ctx context.Context, contextDir, tag string) error {
+	return m.Called(ctx, contextDir, tag).Error(0)
+}
+
 func (m *mockDockerClient) ContainerList(ctx context.Context, labelKey, labelValue string) ([]string, error) {
 	args := m.Called(ctx, labelKey, labelValue)
 	if args.Get(0) == nil {
@@ -282,6 +286,7 @@ type MainSuite struct {
 	origDaemonStatus      func(daemon.System) (string, error)
 	origNewSystem         func() daemon.System
 	origEnsureChannelFunc func(string, string) (string, error)
+	origEnsureImage       func(context.Context, container.DockerClient, *config.Config) error
 	origUserHomeDir       func() (string, error)
 	origOsStat            func(string) (os.FileInfo, error)
 	origOsMkdirAll        func(string, os.FileMode) error
@@ -305,6 +310,7 @@ func (s *MainSuite) SetupTest() {
 	s.origDaemonStatus = daemonStatus
 	s.origNewSystem = newSystem
 	s.origEnsureChannelFunc = ensureChannelFunc
+	s.origEnsureImage = ensureImage
 	s.origUserHomeDir = userHomeDir
 	s.origOsStat = osStat
 	s.origOsMkdirAll = osMkdirAll
@@ -324,6 +330,7 @@ func (s *MainSuite) TearDownTest() {
 	daemonStatus = s.origDaemonStatus
 	newSystem = s.origNewSystem
 	ensureChannelFunc = s.origEnsureChannelFunc
+	ensureImage = s.origEnsureImage
 	userHomeDir = s.origUserHomeDir
 	osStat = s.origOsStat
 	osMkdirAll = s.origOsMkdirAll
@@ -651,6 +658,34 @@ func (s *MainSuite) TestServeDockerClientError() {
 	store.AssertExpectations(s.T())
 }
 
+func (s *MainSuite) TestServeEnsureImageError() {
+	store := new(mockStore)
+	store.On("Close").Return(nil)
+	bot := new(mockBot)
+	dockerClient := new(mockDockerClient)
+
+	configLoad = func() (*config.Config, error) {
+		return testConfig(), nil
+	}
+	newSQLiteStore = func(_ string) (db.Store, error) {
+		return store, nil
+	}
+	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
+		return bot, nil
+	}
+	newDockerClient = func() (container.DockerClient, error) {
+		return dockerClient, nil
+	}
+	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
+		return errors.New("image build failed")
+	}
+
+	err := serve()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "ensuring agent image")
+	store.AssertExpectations(s.T())
+}
+
 func (s *MainSuite) TestServeAPIServerStartError() {
 	store := new(mockStore)
 	store.On("Close").Return(nil)
@@ -670,6 +705,9 @@ func (s *MainSuite) TestServeAPIServerStartError() {
 	}
 	newDockerClient = func() (container.DockerClient, error) {
 		return dockerClient, nil
+	}
+	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
+		return nil
 	}
 	newAPIServer = fakeAPIServer()
 
@@ -701,6 +739,9 @@ func (s *MainSuite) TestServeOrchestratorStartError() {
 	}
 	newDockerClient = func() (container.DockerClient, error) {
 		return dockerClient, nil
+	}
+	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
+		return nil
 	}
 	newAPIServer = fakeAPIServer()
 
@@ -736,6 +777,9 @@ func (s *MainSuite) TestServeHappyPathShutdown() {
 	}
 	newDockerClient = func() (container.DockerClient, error) {
 		return dockerClient, nil
+	}
+	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
+		return nil
 	}
 	newAPIServer = fakeAPIServer()
 
@@ -788,6 +832,9 @@ func (s *MainSuite) TestServeHappyPathWithGuildID() {
 	}
 	newDockerClient = func() (container.DockerClient, error) {
 		return dockerClient, nil
+	}
+	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
+		return nil
 	}
 	channelsCh := make(chan api.ChannelEnsurer, 1)
 	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, logger *slog.Logger) apiServer {
@@ -846,6 +893,9 @@ func (s *MainSuite) TestServeHappyPathShutdownWithStopError() {
 	newDockerClient = func() (container.DockerClient, error) {
 		return dockerClient, nil
 	}
+	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
+		return nil
+	}
 	newAPIServer = fakeAPIServer()
 
 	errCh := make(chan error, 1)
@@ -899,6 +949,9 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 	newDockerClient = func() (container.DockerClient, error) {
 		return dockerClient, nil
 	}
+	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
+		return nil
+	}
 	newAPIServer = func(_ scheduler.Scheduler, _ api.ChannelEnsurer, _ *slog.Logger) apiServer {
 		return mockAPI
 	}
@@ -951,6 +1004,9 @@ func (s *MainSuite) TestServeDockerClientCloserCalled() {
 	}
 	newDockerClient = func() (container.DockerClient, error) {
 		return dockerClient, nil
+	}
+	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
+		return nil
 	}
 	newAPIServer = fakeAPIServer()
 
@@ -1161,6 +1217,17 @@ func (s *MainSuite) TestOnboardSuccess() {
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), string(data), "discord_token")
 	require.Contains(s.T(), string(data), "task_templates")
+
+	// Verify container files were written
+	dockerfilePath := filepath.Join(tmpDir, ".loop", "container", "Dockerfile")
+	dockerfileData, err := os.ReadFile(dockerfilePath)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(dockerfileData), "FROM golang:")
+
+	entrypointPath := filepath.Join(tmpDir, ".loop", "container", "entrypoint.sh")
+	entrypointData, err := os.ReadFile(entrypointPath)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(entrypointData), "su-exec agent claude")
 }
 
 func (s *MainSuite) TestOnboardConfigAlreadyExists() {
@@ -1298,6 +1365,219 @@ func (s *MainSuite) TestOnboardCmdWithForceFlag() {
 	data, err := os.ReadFile(configPath)
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), string(data), "discord_token")
+}
+
+func (s *MainSuite) TestOnboardContainerDirError() {
+	tmpDir := s.T().TempDir()
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	calls := 0
+	osMkdirAll = func(path string, perm os.FileMode) error {
+		calls++
+		if calls == 2 {
+			return errors.New("container mkdir error")
+		}
+		return os.MkdirAll(path, perm)
+	}
+	osWriteFile = os.WriteFile
+
+	err := onboard(false)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating container directory")
+}
+
+func (s *MainSuite) TestOnboardContainerDockerfileWriteError() {
+	tmpDir := s.T().TempDir()
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	calls := 0
+	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
+		calls++
+		if calls == 2 { // Second write is Dockerfile
+			return errors.New("dockerfile write error")
+		}
+		return os.WriteFile(path, data, perm)
+	}
+
+	err := onboard(false)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing container Dockerfile")
+}
+
+func (s *MainSuite) TestOnboardContainerEntrypointWriteError() {
+	tmpDir := s.T().TempDir()
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	calls := 0
+	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
+		calls++
+		if calls == 3 { // Third write is entrypoint.sh
+			return errors.New("entrypoint write error")
+		}
+		return os.WriteFile(path, data, perm)
+	}
+
+	err := onboard(false)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing container entrypoint")
+}
+
+// --- ensureImage tests ---
+
+func (s *MainSuite) TestEnsureImageSkipsWhenExists() {
+	dockerClient := new(mockDockerClient)
+	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:abc"}, nil)
+
+	cfg := &config.Config{
+		LoopDir:        s.T().TempDir(),
+		ContainerImage: "loop-agent:latest",
+	}
+	// Create container dir with Dockerfile so it doesn't try to write
+	containerDir := filepath.Join(cfg.LoopDir, "container")
+	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
+
+	osStat = os.Stat
+	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
+	require.NoError(s.T(), err)
+	dockerClient.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestEnsureImageBuildsWhenMissing() {
+	dockerClient := new(mockDockerClient)
+	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{}, nil)
+	dockerClient.On("ImageBuild", mock.Anything, mock.Anything, "loop-agent:latest").Return(nil)
+
+	cfg := &config.Config{
+		LoopDir:        s.T().TempDir(),
+		ContainerImage: "loop-agent:latest",
+	}
+	// Create container dir with Dockerfile
+	containerDir := filepath.Join(cfg.LoopDir, "container")
+	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
+
+	osStat = os.Stat
+	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
+	require.NoError(s.T(), err)
+	dockerClient.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestEnsureImageWritesEmbeddedFiles() {
+	dockerClient := new(mockDockerClient)
+	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:abc"}, nil)
+
+	cfg := &config.Config{
+		LoopDir:        s.T().TempDir(),
+		ContainerImage: "loop-agent:latest",
+	}
+
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	osWriteFile = os.WriteFile
+
+	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
+	require.NoError(s.T(), err)
+
+	// Verify embedded files were written
+	containerDir := filepath.Join(cfg.LoopDir, "container")
+	dockerfileData, err := os.ReadFile(filepath.Join(containerDir, "Dockerfile"))
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(dockerfileData), "FROM golang:")
+
+	entrypointData, err := os.ReadFile(filepath.Join(containerDir, "entrypoint.sh"))
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(entrypointData), "su-exec agent claude")
+
+	dockerClient.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestEnsureImageListError() {
+	dockerClient := new(mockDockerClient)
+	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return(nil, errors.New("list error"))
+
+	cfg := &config.Config{
+		LoopDir:        s.T().TempDir(),
+		ContainerImage: "loop-agent:latest",
+	}
+	containerDir := filepath.Join(cfg.LoopDir, "container")
+	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
+
+	osStat = os.Stat
+	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "listing images")
+	dockerClient.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestEnsureImageMkdirError() {
+	dockerClient := new(mockDockerClient)
+
+	cfg := &config.Config{
+		LoopDir:        s.T().TempDir(),
+		ContainerImage: "loop-agent:latest",
+	}
+
+	osStat = os.Stat
+	osMkdirAll = func(_ string, _ os.FileMode) error {
+		return errors.New("mkdir error")
+	}
+
+	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating container directory")
+}
+
+func (s *MainSuite) TestEnsureImageDockerfileWriteError() {
+	dockerClient := new(mockDockerClient)
+
+	cfg := &config.Config{
+		LoopDir:        s.T().TempDir(),
+		ContainerImage: "loop-agent:latest",
+	}
+
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	osWriteFile = func(_ string, _ []byte, _ os.FileMode) error {
+		return errors.New("write error")
+	}
+
+	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing Dockerfile")
+}
+
+func (s *MainSuite) TestEnsureImageEntrypointWriteError() {
+	dockerClient := new(mockDockerClient)
+
+	cfg := &config.Config{
+		LoopDir:        s.T().TempDir(),
+		ContainerImage: "loop-agent:latest",
+	}
+
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	calls := 0
+	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
+		calls++
+		if calls == 2 { // Second write is entrypoint.sh
+			return errors.New("entrypoint write error")
+		}
+		return os.WriteFile(path, data, perm)
+	}
+
+	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing entrypoint")
 }
 
 func (s *MainSuite) TestRootCmdHasOnboard() {

@@ -63,6 +63,11 @@ func (m *MockDockerClient) ImagePull(ctx context.Context, image string) error {
 	return args.Error(0)
 }
 
+func (m *MockDockerClient) ImageBuild(ctx context.Context, contextDir, tag string) error {
+	args := m.Called(ctx, contextDir, tag)
+	return args.Error(0)
+}
+
 func (m *MockDockerClient) ContainerList(ctx context.Context, labelKey, labelValue string) ([]string, error) {
 	args := m.Called(ctx, labelKey, labelValue)
 	return args.Get(0).([]string), args.Error(1)

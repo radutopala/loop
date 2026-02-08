@@ -132,6 +132,14 @@ Paths starting with `~/` are automatically expanded to the user's home directory
 
 **Important**: Project directories (`workDir`) and MCP logs (`mcpDir`) are automatically mounted at their actual paths (not `/work` or `/mcp`), ensuring Claude sessions reference correct absolute paths.
 
+### Container Image
+
+The agent Docker image is auto-built on first `loop serve` / `loop daemon start` if it doesn't exist. The Dockerfile and entrypoint are embedded in the binary and flushed to `~/.loop/container/` during `loop onboard`.
+
+You can customize the container by editing `~/.loop/container/Dockerfile` and `~/.loop/container/entrypoint.sh`. To trigger a rebuild, remove the existing image (`docker rmi loop-agent:latest`) and restart the daemon.
+
+For **development** (building from local source), use `make docker-build` which uses `container/Dockerfile`.
+
 ### Build
 
 ```sh
@@ -141,14 +149,14 @@ make build
 # Install to GOPATH/bin
 make install
 
-# Build the Docker agent image
+# Build the Docker agent image (dev, from local source)
 make docker-build
 ```
 
 ### Run
 
 ```sh
-# Run directly
+# Run directly (auto-builds image if missing)
 loop serve
 
 # Or run as a background daemon

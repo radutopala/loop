@@ -50,7 +50,14 @@ func (s *TaskExecutorSuite) TestHappyPathWithSession() {
 		ID:        1,
 		ChannelID: "ch1",
 		Prompt:    "do stuff",
+		Type:      db.TaskTypeCron,
+		Schedule:  "0 * * * *",
 	}
+
+	// Expect notification message first
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch1" && msg.Content != "" && msg.Content != "done!"
+	})).Return(nil).Once()
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ChannelID: "ch1",
@@ -69,9 +76,10 @@ func (s *TaskExecutorSuite) TestHappyPathWithSession() {
 		SessionID: "new-session",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch1", "new-session").Return(nil)
+	// Expect response message second
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
 		return msg.ChannelID == "ch1" && msg.Content == "done!"
-	})).Return(nil)
+	})).Return(nil).Once()
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
@@ -87,7 +95,14 @@ func (s *TaskExecutorSuite) TestHappyPathWithoutSession() {
 		ID:        2,
 		ChannelID: "ch2",
 		Prompt:    "hello",
+		Type:      db.TaskTypeInterval,
+		Schedule:  "5m",
 	}
+
+	// Expect notification message first
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch2" && msg.Content != "" && msg.Content != "hi!"
+	})).Return(nil).Once()
 
 	s.store.On("GetChannel", s.ctx, "ch2").Return(nil, nil)
 	s.runner.On("Run", s.ctx, mock.MatchedBy(func(req *agent.AgentRequest) bool {
@@ -97,9 +112,10 @@ func (s *TaskExecutorSuite) TestHappyPathWithoutSession() {
 		SessionID: "fresh-session",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch2", "fresh-session").Return(nil)
+	// Expect response message second
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
 		return msg.ChannelID == "ch2" && msg.Content == "hi!"
-	})).Return(nil)
+	})).Return(nil).Once()
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
@@ -113,7 +129,14 @@ func (s *TaskExecutorSuite) TestRunnerError() {
 		ID:        3,
 		ChannelID: "ch3",
 		Prompt:    "fail",
+		Type:      db.TaskTypeOnce,
+		Schedule:  "10s",
 	}
+
+	// Expect notification message to be sent even though runner will fail
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch3"
+	})).Return(nil).Once()
 
 	s.store.On("GetChannel", s.ctx, "ch3").Return(nil, nil)
 	s.runner.On("Run", s.ctx, mock.Anything).Return(nil, errors.New("runner broke"))
@@ -123,7 +146,7 @@ func (s *TaskExecutorSuite) TestRunnerError() {
 	require.Contains(s.T(), err.Error(), "running agent")
 	require.Empty(s.T(), resp)
 
-	s.bot.AssertNotCalled(s.T(), "SendMessage", mock.Anything, mock.Anything)
+	s.bot.AssertExpectations(s.T())
 }
 
 func (s *TaskExecutorSuite) TestAgentResponseError() {
@@ -131,7 +154,14 @@ func (s *TaskExecutorSuite) TestAgentResponseError() {
 		ID:        4,
 		ChannelID: "ch4",
 		Prompt:    "error",
+		Type:      db.TaskTypeCron,
+		Schedule:  "*/5 * * * *",
 	}
+
+	// Expect notification message to be sent even though agent will return error
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch4"
+	})).Return(nil).Once()
 
 	s.store.On("GetChannel", s.ctx, "ch4").Return(nil, nil)
 	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
@@ -144,7 +174,7 @@ func (s *TaskExecutorSuite) TestAgentResponseError() {
 	require.Empty(s.T(), resp)
 
 	s.store.AssertNotCalled(s.T(), "UpdateSessionID", mock.Anything, mock.Anything, mock.Anything)
-	s.bot.AssertNotCalled(s.T(), "SendMessage", mock.Anything, mock.Anything)
+	s.bot.AssertExpectations(s.T())
 }
 
 func (s *TaskExecutorSuite) TestSessionUpsertErrorStillSucceeds() {
@@ -152,7 +182,14 @@ func (s *TaskExecutorSuite) TestSessionUpsertErrorStillSucceeds() {
 		ID:        5,
 		ChannelID: "ch5",
 		Prompt:    "test",
+		Type:      db.TaskTypeInterval,
+		Schedule:  "1h",
 	}
+
+	// Expect notification message first
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch5" && msg.Content != "ok"
+	})).Return(nil).Once()
 
 	s.store.On("GetChannel", s.ctx, "ch5").Return(nil, nil)
 	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
@@ -160,7 +197,10 @@ func (s *TaskExecutorSuite) TestSessionUpsertErrorStillSucceeds() {
 		SessionID: "sess",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, mock.Anything, mock.Anything).Return(errors.New("upsert failed"))
-	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	// Expect response message second
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch5" && msg.Content == "ok"
+	})).Return(nil).Once()
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
@@ -175,7 +215,12 @@ func (s *TaskExecutorSuite) TestBotSendErrorStillSucceeds() {
 		ID:        6,
 		ChannelID: "ch6",
 		Prompt:    "test",
+		Type:      db.TaskTypeOnce,
+		Schedule:  "30s",
 	}
+
+	// Both notification and response messages may fail
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(errors.New("send failed"))
 
 	s.store.On("GetChannel", s.ctx, "ch6").Return(nil, nil)
 	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
@@ -183,7 +228,6 @@ func (s *TaskExecutorSuite) TestBotSendErrorStillSucceeds() {
 		SessionID: "sess",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, mock.Anything, mock.Anything).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(errors.New("send failed"))
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
@@ -197,7 +241,14 @@ func (s *TaskExecutorSuite) TestGetSessionErrorStillWorks() {
 		ID:        7,
 		ChannelID: "ch7",
 		Prompt:    "test",
+		Type:      db.TaskTypeCron,
+		Schedule:  "0 0 * * *",
 	}
+
+	// Expect notification message first
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch7" && msg.Content != "ok"
+	})).Return(nil).Once()
 
 	s.store.On("GetChannel", s.ctx, "ch7").Return(nil, errors.New("session err"))
 	s.runner.On("Run", s.ctx, mock.MatchedBy(func(req *agent.AgentRequest) bool {
@@ -207,11 +258,47 @@ func (s *TaskExecutorSuite) TestGetSessionErrorStillWorks() {
 		SessionID: "sess",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, mock.Anything, mock.Anything).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	// Expect response message second
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch7" && msg.Content == "ok"
+	})).Return(nil).Once()
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "ok", resp)
 
 	s.store.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestNotificationFailureDoesNotStopExecution() {
+	task := &db.ScheduledTask{
+		ID:        8,
+		ChannelID: "ch8",
+		Prompt:    "task prompt",
+		Type:      db.TaskTypeInterval,
+		Schedule:  "15m",
+	}
+
+	// Notification fails but execution continues
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch8" && msg.Content != "success"
+	})).Return(errors.New("notification failed")).Once()
+
+	s.store.On("GetChannel", s.ctx, "ch8").Return(nil, nil)
+	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
+		Response:  "success",
+		SessionID: "sess8",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch8", "sess8").Return(nil)
+	// Response message should still be sent
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch8" && msg.Content == "success"
+	})).Return(nil).Once()
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "success", resp)
+
+	s.runner.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
 }

@@ -1,16 +1,19 @@
 package container
 
 import (
+	"archive/tar"
 	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"io"
 	"net"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/docker/docker/api/types"
+	"github.com/docker/docker/api/types/build"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
@@ -68,6 +71,11 @@ func (m *mockDockerAPI) ImagePull(ctx context.Context, refStr string, options im
 		rc = v.(io.ReadCloser)
 	}
 	return rc, args.Error(1)
+}
+
+func (m *mockDockerAPI) ImageBuild(ctx context.Context, buildContext io.Reader, options build.ImageBuildOptions) (build.ImageBuildResponse, error) {
+	args := m.Called(ctx, buildContext, options)
+	return args.Get(0).(build.ImageBuildResponse), args.Error(1)
 }
 
 func (m *mockDockerAPI) Close() error {
@@ -545,4 +553,192 @@ func (s *ClientSuite) TestContainerListError() {
 	require.Nil(s.T(), ids)
 	require.Contains(s.T(), err.Error(), "list failed")
 	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestImageBuild() {
+	ctx := context.Background()
+	dir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(dir+"/Dockerfile", []byte("FROM alpine"), 0644))
+	require.NoError(s.T(), os.WriteFile(dir+"/entrypoint.sh", []byte("#!/bin/sh"), 0644))
+
+	bodyJSON := `{"stream":"Step 1/1 : FROM alpine"}` + "\n"
+	respBody := io.NopCloser(bytes.NewReader([]byte(bodyJSON)))
+
+	s.api.On("ImageBuild", ctx, mock.Anything, build.ImageBuildOptions{
+		Tags:   []string{"test:latest"},
+		Remove: true,
+	}).Return(build.ImageBuildResponse{Body: respBody}, nil)
+
+	err := s.client.ImageBuild(ctx, dir, "test:latest")
+	require.NoError(s.T(), err)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestImageBuildAPIError() {
+	ctx := context.Background()
+	dir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(dir+"/Dockerfile", []byte("FROM alpine"), 0644))
+
+	s.api.On("ImageBuild", ctx, mock.Anything, mock.Anything).
+		Return(build.ImageBuildResponse{}, errors.New("build failed"))
+
+	err := s.client.ImageBuild(ctx, dir, "test:latest")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "building image")
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestImageBuildResponseError() {
+	ctx := context.Background()
+	dir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(dir+"/Dockerfile", []byte("FROM alpine"), 0644))
+
+	bodyJSON := `{"error":"something went wrong"}` + "\n"
+	respBody := io.NopCloser(bytes.NewReader([]byte(bodyJSON)))
+
+	s.api.On("ImageBuild", ctx, mock.Anything, mock.Anything).
+		Return(build.ImageBuildResponse{Body: respBody}, nil)
+
+	err := s.client.ImageBuild(ctx, dir, "test:latest")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "build error: something went wrong")
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestImageBuildTarError() {
+	ctx := context.Background()
+
+	err := s.client.ImageBuild(ctx, "/nonexistent/dir", "test:latest")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating build context")
+}
+
+func (s *ClientSuite) TestImageBuildReadFileError() {
+	origReadFile := readFile
+	defer func() { readFile = origReadFile }()
+
+	readFile = func(_ string) ([]byte, error) {
+		return nil, errors.New("read error")
+	}
+
+	ctx := context.Background()
+	dir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(dir+"/Dockerfile", []byte("FROM alpine"), 0644))
+
+	err := s.client.ImageBuild(ctx, dir, "test:latest")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading file")
+}
+
+func (s *ClientSuite) TestImageBuildDecodeError() {
+	ctx := context.Background()
+	dir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(dir+"/Dockerfile", []byte("FROM alpine"), 0644))
+
+	respBody := io.NopCloser(bytes.NewReader([]byte("not json")))
+
+	s.api.On("ImageBuild", ctx, mock.Anything, mock.Anything).
+		Return(build.ImageBuildResponse{Body: respBody}, nil)
+
+	err := s.client.ImageBuild(ctx, dir, "test:latest")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading build output")
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestBuildTarSkipsDirectories() {
+	dir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(dir+"/Dockerfile", []byte("FROM alpine"), 0644))
+	require.NoError(s.T(), os.Mkdir(dir+"/subdir", 0755))
+
+	reader, err := buildTar(dir)
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), reader)
+}
+
+// mockTarWriter is a mock tar writer for testing error paths.
+type mockTarWriter struct {
+	mock.Mock
+}
+
+func (m *mockTarWriter) WriteHeader(hdr *tar.Header) error {
+	return m.Called(hdr).Error(0)
+}
+
+func (m *mockTarWriter) Write(b []byte) (int, error) {
+	args := m.Called(b)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *mockTarWriter) Close() error {
+	return m.Called().Error(0)
+}
+
+func (s *ClientSuite) TestBuildTarWriteHeaderError() {
+	origNewTarWriter := newTarWriter
+	defer func() { newTarWriter = origNewTarWriter }()
+
+	mtw := new(mockTarWriter)
+	mtw.On("WriteHeader", mock.Anything).Return(errors.New("header error"))
+	newTarWriter = func(_ io.Writer) tarWriter { return mtw }
+
+	dir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(dir+"/Dockerfile", []byte("FROM alpine"), 0644))
+
+	_, err := buildTar(dir)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing tar header")
+}
+
+func (s *ClientSuite) TestBuildTarWriteError() {
+	origNewTarWriter := newTarWriter
+	defer func() { newTarWriter = origNewTarWriter }()
+
+	mtw := new(mockTarWriter)
+	mtw.On("WriteHeader", mock.Anything).Return(nil)
+	mtw.On("Write", mock.Anything).Return(0, errors.New("write error"))
+	newTarWriter = func(_ io.Writer) tarWriter { return mtw }
+
+	dir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(dir+"/Dockerfile", []byte("FROM alpine"), 0644))
+
+	_, err := buildTar(dir)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing tar data")
+}
+
+func (s *ClientSuite) TestBuildTarCloseError() {
+	origNewTarWriter := newTarWriter
+	defer func() { newTarWriter = origNewTarWriter }()
+
+	mtw := new(mockTarWriter)
+	mtw.On("Close").Return(errors.New("close error"))
+	newTarWriter = func(_ io.Writer) tarWriter { return mtw }
+
+	dir := s.T().TempDir()
+	// No files, so it skips the loop and goes straight to Close
+
+	_, err := buildTar(dir)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "closing tar")
+}
+
+func (s *ClientSuite) TestDefaultNewTarWriter() {
+	var buf bytes.Buffer
+	tw := newTarWriter(&buf)
+	require.NotNil(s.T(), tw)
+	require.NoError(s.T(), tw.Close())
+}
+
+func (s *ClientSuite) TestDefaultReadDirAndReadFile() {
+	dir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(dir+"/test.txt", []byte("hello"), 0644))
+
+	entries, err := readDir(dir)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), entries, 1)
+
+	data, err := readFile(dir + "/test.txt")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "hello", string(data))
 }

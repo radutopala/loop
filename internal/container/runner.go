@@ -63,6 +63,7 @@ type DockerClient interface {
 	ContainerRemove(ctx context.Context, containerID string) error
 	ImageList(ctx context.Context, image string) ([]string, error)
 	ImagePull(ctx context.Context, image string) error
+	ImageBuild(ctx context.Context, contextDir, tag string) error
 	ContainerList(ctx context.Context, labelKey, labelValue string) ([]string, error)
 }
 

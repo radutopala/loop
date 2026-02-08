@@ -25,6 +25,17 @@ func NewTaskExecutor(runner Runner, bot Bot, store db.Store, logger *slog.Logger
 
 // ExecuteTask runs an agent for the given scheduled task and sends the result to Discord.
 func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) (string, error) {
+	// Send notification message before executing the task
+	notificationMsg := fmt.Sprintf("🕒 Running scheduled task (ID: %d)\nType: %s\nSchedule: %s\nPrompt: %s",
+		task.ID, task.Type, task.Schedule, task.Prompt)
+	if err := e.bot.SendMessage(ctx, &OutgoingMessage{
+		ChannelID: task.ChannelID,
+		Content:   notificationMsg,
+	}); err != nil {
+		e.logger.Error("sending task notification", "error", err, "task_id", task.ID, "channel_id", task.ChannelID)
+		// Continue with task execution even if notification fails
+	}
+
 	channel, err := e.store.GetChannel(ctx, task.ChannelID)
 	if err != nil {
 		e.logger.Error("getting channel for task", "error", err, "channel_id", task.ChannelID)
