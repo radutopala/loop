@@ -52,10 +52,19 @@ A Discord bot powered by Claude that runs AI agents in Docker containers.
 
 ### Prerequisites
 
-- Go 1.25+
-- Docker
+**Host (build & run):**
+
+- [Go 1.25+](https://go.dev/dl/)
+- [Docker](https://docs.docker.com/get-docker/)
 - A Discord bot token and application ID
-- Claude Code CLI (`@anthropic-ai/claude-code`)
+
+**Container image (bundled automatically via `make docker-build`):**
+
+- [Claude Code CLI](https://www.npmjs.com/package/@anthropic-ai/claude-code) (`@anthropic-ai/claude-code`)
+- Go 1.25+ toolchain (for agent code execution)
+- Node.js & npm (Claude Code runtime)
+- Docker CLI (for Docker-in-Docker via socket mount)
+- git, bash, curl
 
 ### Discord Bot Setup
 
@@ -176,7 +185,7 @@ loop mcp --dir <path> --api-url <url>         # Auto-create channel for director
 - **On the host** — registered in your local Claude Code so you can schedule tasks from your IDE
 - **Inside containers** — automatically injected into every agent container so scheduled tasks can themselves schedule follow-up tasks
 
-When using `--dir`, Loop automatically registers a channel (and creates a Discord channel in the configured guild) for that directory. The project directory is then mounted to `/work` inside agent containers.
+When using `--dir`, Loop automatically registers a channel (and creates a Discord channel in the configured guild) for that directory. The project directory is then mounted at its original path inside agent containers.
 
 To register it in your local Claude Code, add to `.mcp.json` (project-level or `~/.claude/.mcp.json`):
 
