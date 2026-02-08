@@ -54,10 +54,6 @@ func (m *mockStore) GetChannelByDirPath(ctx context.Context, dirPath string) (*d
 	return args.Get(0).(*db.Channel), args.Error(1)
 }
 
-func (m *mockStore) SetChannelActive(ctx context.Context, channelID string, active bool) error {
-	return m.Called(ctx, channelID, active).Error(0)
-}
-
 func (m *mockStore) IsChannelActive(ctx context.Context, channelID string) (bool, error) {
 	args := m.Called(ctx, channelID)
 	return args.Bool(0), args.Error(1)
@@ -139,14 +135,6 @@ func (m *mockStore) InsertTaskRunLog(ctx context.Context, trl *db.TaskRunLog) (i
 
 func (m *mockStore) UpdateTaskRunLog(ctx context.Context, trl *db.TaskRunLog) error {
 	return m.Called(ctx, trl).Error(0)
-}
-
-func (m *mockStore) GetRegisteredChannels(ctx context.Context) ([]*db.Channel, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.Channel), args.Error(1)
 }
 
 func (m *mockStore) Close() error {

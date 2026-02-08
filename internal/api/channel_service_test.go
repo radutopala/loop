@@ -36,10 +36,6 @@ func (m *MockStore) GetChannelByDirPath(ctx context.Context, dirPath string) (*d
 	return args.Get(0).(*db.Channel), args.Error(1)
 }
 
-func (m *MockStore) SetChannelActive(ctx context.Context, channelID string, active bool) error {
-	return m.Called(ctx, channelID, active).Error(0)
-}
-
 func (m *MockStore) IsChannelActive(ctx context.Context, channelID string) (bool, error) {
 	args := m.Called(ctx, channelID)
 	return args.Bool(0), args.Error(1)
@@ -47,14 +43,6 @@ func (m *MockStore) IsChannelActive(ctx context.Context, channelID string) (bool
 
 func (m *MockStore) UpdateSessionID(ctx context.Context, channelID string, sessionID string) error {
 	return m.Called(ctx, channelID, sessionID).Error(0)
-}
-
-func (m *MockStore) GetRegisteredChannels(ctx context.Context) ([]*db.Channel, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.Channel), args.Error(1)
 }
 
 func (m *MockStore) InsertMessage(ctx context.Context, msg *db.Message) error {

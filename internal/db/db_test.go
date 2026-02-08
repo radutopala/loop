@@ -151,24 +151,6 @@ func (s *StoreSuite) TestGetChannelByDirPathError() {
 	require.Nil(s.T(), ch)
 }
 
-func (s *StoreSuite) TestSetChannelActive() {
-	s.mock.ExpectExec(`UPDATE channels SET active`).
-		WithArgs(0, sqlmock.AnyArg(), "ch1").
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err := s.store.SetChannelActive(context.Background(), "ch1", false)
-	require.NoError(s.T(), err)
-}
-
-func (s *StoreSuite) TestSetChannelActiveError() {
-	s.mock.ExpectExec(`UPDATE channels SET active`).
-		WithArgs(1, sqlmock.AnyArg(), "ch1").
-		WillReturnError(sql.ErrConnDone)
-
-	err := s.store.SetChannelActive(context.Background(), "ch1", true)
-	require.Error(s.T(), err)
-}
-
 func (s *StoreSuite) TestIsChannelActive() {
 	s.mock.ExpectQuery(`SELECT COUNT`).
 		WithArgs("ch1").
@@ -215,41 +197,6 @@ func (s *StoreSuite) TestUpdateSessionIDError() {
 
 	err := s.store.UpdateSessionID(context.Background(), "ch1", "new-sess")
 	require.Error(s.T(), err)
-}
-
-func (s *StoreSuite) TestGetRegisteredChannels() {
-	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "active", "session_id", "created_at", "updated_at"}).
-		AddRow(1, "ch1", "g1", "test1", "", 1, "", now, now).
-		AddRow(2, "ch2", "g1", "test2", "/path", 1, "", now, now)
-	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE active = 1`).
-		WillReturnRows(rows)
-
-	channels, err := s.store.GetRegisteredChannels(context.Background())
-	require.NoError(s.T(), err)
-	require.Len(s.T(), channels, 2)
-	require.True(s.T(), channels[0].Active)
-	require.Equal(s.T(), "/path", channels[1].DirPath)
-}
-
-func (s *StoreSuite) TestGetRegisteredChannelsError() {
-	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE active = 1`).
-		WillReturnError(sql.ErrConnDone)
-
-	channels, err := s.store.GetRegisteredChannels(context.Background())
-	require.Error(s.T(), err)
-	require.Nil(s.T(), channels)
-}
-
-func (s *StoreSuite) TestGetRegisteredChannelsScanError() {
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "active", "session_id", "created_at", "updated_at"}).
-		AddRow("not-an-int", "ch1", "g1", "test", "", 1, "", time.Now().UTC(), time.Now().UTC())
-	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE active = 1`).
-		WillReturnRows(rows)
-
-	channels, err := s.store.GetRegisteredChannels(context.Background())
-	require.Error(s.T(), err)
-	require.Nil(s.T(), channels)
 }
 
 // --- Message tests ---

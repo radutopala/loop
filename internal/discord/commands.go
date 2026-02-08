@@ -24,16 +24,6 @@ func Commands() []*discordgo.ApplicationCommand {
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
-					Name:        "register",
-					Description: "Register this channel for the bot",
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionSubCommand,
-					Name:        "unregister",
-					Description: "Unregister this channel from the bot",
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "schedule",
 					Description: "Schedule a task",
 					Options: []*discordgo.ApplicationCommandOption{

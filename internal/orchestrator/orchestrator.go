@@ -346,10 +346,6 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, interaction any) {
 	switch inter.CommandName {
 	case "ask":
 		o.handleAskInteraction(ctx, inter)
-	case "register":
-		o.handleRegisterInteraction(ctx, inter)
-	case "unregister":
-		o.handleUnregisterInteraction(ctx, inter)
 	case "schedule":
 		o.handleScheduleInteraction(ctx, inter)
 	case "tasks":
@@ -386,40 +382,6 @@ func (o *Orchestrator) handleAskInteraction(ctx context.Context, inter *Interact
 		Timestamp:    time.Now().UTC(),
 	}
 	o.HandleMessage(ctx, msg)
-}
-
-func (o *Orchestrator) handleRegisterInteraction(ctx context.Context, inter *Interaction) {
-	if err := o.store.UpsertChannel(ctx, &db.Channel{
-		ChannelID: inter.ChannelID,
-		GuildID:   inter.GuildID,
-		Active:    true,
-	}); err != nil {
-		o.logger.Error("registering channel", "error", err, "channel_id", inter.ChannelID)
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Failed to register channel.",
-		})
-		return
-	}
-	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID: inter.ChannelID,
-		Content:   "Channel registered successfully.",
-	})
-}
-
-func (o *Orchestrator) handleUnregisterInteraction(ctx context.Context, inter *Interaction) {
-	if err := o.store.SetChannelActive(ctx, inter.ChannelID, false); err != nil {
-		o.logger.Error("unregistering channel", "error", err, "channel_id", inter.ChannelID)
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Failed to unregister channel.",
-		})
-		return
-	}
-	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID: inter.ChannelID,
-		Content:   "Channel unregistered successfully.",
-	})
 }
 
 func (o *Orchestrator) handleScheduleInteraction(ctx context.Context, inter *Interaction) {

@@ -43,11 +43,6 @@ func (m *MockStore) GetChannelByDirPath(ctx context.Context, dirPath string) (*d
 	return args.Get(0).(*db.Channel), args.Error(1)
 }
 
-func (m *MockStore) SetChannelActive(ctx context.Context, channelID string, active bool) error {
-	args := m.Called(ctx, channelID, active)
-	return args.Error(0)
-}
-
 func (m *MockStore) IsChannelActive(ctx context.Context, channelID string) (bool, error) {
 	args := m.Called(ctx, channelID)
 	return args.Bool(0), args.Error(1)
@@ -56,14 +51,6 @@ func (m *MockStore) IsChannelActive(ctx context.Context, channelID string) (bool
 func (m *MockStore) UpdateSessionID(ctx context.Context, channelID string, sessionID string) error {
 	args := m.Called(ctx, channelID, sessionID)
 	return args.Error(0)
-}
-
-func (m *MockStore) GetRegisteredChannels(ctx context.Context) ([]*db.Channel, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.Channel), args.Error(1)
 }
 
 func (m *MockStore) InsertMessage(ctx context.Context, msg *db.Message) error {
@@ -818,67 +805,6 @@ func (s *OrchestratorSuite) TestHandleInteractionUnknownCommand() {
 		CommandName: "unknown",
 	})
 	// Should not panic, just log warning
-}
-
-func (s *OrchestratorSuite) TestHandleInteractionRegister() {
-	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
-		return ch.ChannelID == "ch1" && ch.GuildID == "g1" && ch.Active
-	})).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return out.Content == "Channel registered successfully."
-	})).Return(nil)
-
-	s.orch.HandleInteraction(s.ctx, &Interaction{
-		ChannelID:   "ch1",
-		GuildID:     "g1",
-		CommandName: "register",
-	})
-
-	s.store.AssertExpectations(s.T())
-	s.bot.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleInteractionRegisterError() {
-	s.store.On("UpsertChannel", s.ctx, mock.Anything).Return(errors.New("db err"))
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return out.Content == "Failed to register channel."
-	})).Return(nil)
-
-	s.orch.HandleInteraction(s.ctx, &Interaction{
-		ChannelID:   "ch1",
-		GuildID:     "g1",
-		CommandName: "register",
-	})
-
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleInteractionUnregister() {
-	s.store.On("SetChannelActive", s.ctx, "ch1", false).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return out.Content == "Channel unregistered successfully."
-	})).Return(nil)
-
-	s.orch.HandleInteraction(s.ctx, &Interaction{
-		ChannelID:   "ch1",
-		CommandName: "unregister",
-	})
-
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleInteractionUnregisterError() {
-	s.store.On("SetChannelActive", s.ctx, "ch1", false).Return(errors.New("db err"))
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return out.Content == "Failed to unregister channel."
-	})).Return(nil)
-
-	s.orch.HandleInteraction(s.ctx, &Interaction{
-		ChannelID:   "ch1",
-		CommandName: "unregister",
-	})
-
-	s.store.AssertExpectations(s.T())
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionSchedule() {

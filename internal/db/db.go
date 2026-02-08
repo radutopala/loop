@@ -14,10 +14,8 @@ type Store interface {
 	UpsertChannel(ctx context.Context, ch *Channel) error
 	GetChannel(ctx context.Context, channelID string) (*Channel, error)
 	GetChannelByDirPath(ctx context.Context, dirPath string) (*Channel, error)
-	SetChannelActive(ctx context.Context, channelID string, active bool) error
 	IsChannelActive(ctx context.Context, channelID string) (bool, error)
 	UpdateSessionID(ctx context.Context, channelID string, sessionID string) error
-	GetRegisteredChannels(ctx context.Context) ([]*Channel, error)
 	InsertMessage(ctx context.Context, msg *Message) error
 	GetUnprocessedMessages(ctx context.Context, channelID string) ([]*Message, error)
 	MarkMessagesProcessed(ctx context.Context, ids []int64) error
@@ -132,14 +130,6 @@ func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string) (
 	return ch, nil
 }
 
-func (s *SQLiteStore) SetChannelActive(ctx context.Context, channelID string, active bool) error {
-	_, err := s.db.ExecContext(ctx,
-		`UPDATE channels SET active = ?, updated_at = ? WHERE channel_id = ?`,
-		boolToInt(active), time.Now().UTC(), channelID,
-	)
-	return err
-}
-
 func (s *SQLiteStore) IsChannelActive(ctx context.Context, channelID string) (bool, error) {
 	var count int
 	err := s.db.QueryRowContext(ctx,
@@ -158,28 +148,6 @@ func (s *SQLiteStore) UpdateSessionID(ctx context.Context, channelID string, ses
 		sessionID, time.Now().UTC(), channelID,
 	)
 	return err
-}
-
-func (s *SQLiteStore) GetRegisteredChannels(ctx context.Context) ([]*Channel, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, active, session_id, created_at, updated_at FROM channels WHERE active = 1`,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-
-	var channels []*Channel
-	for rows.Next() {
-		ch := &Channel{}
-		var active int
-		if err := rows.Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
-			return nil, err
-		}
-		ch.Active = active == 1
-		channels = append(channels, ch)
-	}
-	return channels, rows.Err()
 }
 
 func (s *SQLiteStore) InsertMessage(ctx context.Context, msg *Message) error {

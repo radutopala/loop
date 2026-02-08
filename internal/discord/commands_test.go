@@ -32,15 +32,13 @@ func (s *CommandsSuite) TestSubcommands() {
 	root := cmds[0]
 
 	expected := map[string]bool{
-		"ask":        true,
-		"register":   true,
-		"unregister": true,
-		"schedule":   true,
-		"tasks":      true,
-		"cancel":     true,
-		"toggle":     true,
-		"edit":       true,
-		"status":     true,
+		"ask":      true,
+		"schedule": true,
+		"tasks":    true,
+		"cancel":   true,
+		"toggle":   true,
+		"edit":     true,
+		"status":   true,
 	}
 
 	require.Len(s.T(), root.Options, len(expected))
@@ -142,9 +140,9 @@ func (s *CommandsSuite) TestEditSubcommand() {
 	require.False(s.T(), optNames["prompt"].Required)
 }
 
-func (s *CommandsSuite) TestRegisterUnregisterTasksStatusHaveNoOptions() {
+func (s *CommandsSuite) TestTasksStatusHaveNoOptions() {
 	cmds := Commands()
-	for _, name := range []string{"register", "unregister", "tasks", "status"} {
+	for _, name := range []string{"tasks", "status"} {
 		sub := findSubcommand(cmds[0], name)
 		require.NotNil(s.T(), sub, "subcommand %s should exist", name)
 		require.Empty(s.T(), sub.Options, "subcommand %s should have no options", name)

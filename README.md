@@ -67,8 +67,6 @@ A Discord bot powered by Claude that runs AI agents in Docker containers.
    https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot%20applications.commands&permissions=68624
    ```
 
-4. After the bot is running, use `/loop register` in each channel where you want it to respond
-
 ### Configuration
 
 Create `~/.loop/config.json` (HJSON — comments and trailing commas are allowed):
@@ -138,13 +136,33 @@ loop mcp --channel-id <id> --api-url <url>   # Attach to existing channel
 loop mcp --dir <path> --api-url <url>         # Auto-create channel for directory
 ```
 
+### Using with Claude Code
+
+`loop mcp` is the same MCP server used in both contexts:
+
+- **On the host** — registered in your local Claude Code so you can schedule tasks from your IDE
+- **Inside containers** — automatically injected into every agent container so scheduled tasks can themselves schedule follow-up tasks
+
+When using `--dir`, Loop automatically registers a channel (and creates a Discord channel in the configured guild) for that directory. The project directory is then mounted to `/work` inside agent containers.
+
+To register it in your local Claude Code, add to `.mcp.json` (project-level or `~/.claude/.mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "loop": {
+      "command": "loop",
+      "args": ["mcp", "--dir", "/path/to/your/project", "--api-url", "http://localhost:8222"]
+    }
+  }
+}
+```
+
 ## Discord Commands
 
 | Command | Description |
 |---|---|
 | `/loop ask <prompt>` | Ask the AI a question |
-| `/loop register` | Register the current channel |
-| `/loop unregister` | Unregister the current channel |
 | `/loop schedule <schedule> <prompt> <type>` | Schedule a task (cron/interval/once) |
 | `/loop tasks` | List scheduled tasks with status |
 | `/loop cancel <task_id>` | Cancel a scheduled task |
