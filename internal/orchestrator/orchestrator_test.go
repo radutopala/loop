@@ -461,7 +461,7 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredFullFlow() {
 	// First GetChannel (in HandleMessage)
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true, SessionID: "session123"}, nil)
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return(recentMsgs, nil)
 	// Second GetChannel (in processTriggeredMessage for session data) — returns same object
 	s.runner.On("Run", s.ctx, mock.MatchedBy(func(req *agent.AgentRequest) bool {
@@ -497,7 +497,7 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredWithNilSession() {
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 	s.runner.On("Run", s.ctx, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.SessionID == "" && len(req.Messages) == 0
@@ -528,7 +528,7 @@ func (s *OrchestratorSuite) TestHandleMessageGetRecentMessagesError() {
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return(nil, errors.New("db err"))
 
 	s.orch.HandleMessage(s.ctx, msg)
@@ -551,7 +551,7 @@ func (s *OrchestratorSuite) TestHandleMessageGetSessionError() {
 	// First GetChannel (in HandleMessage) succeeds
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Once()
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 	// Second GetChannel (for session data in processTriggeredMessage) returns error
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("session err")).Once()
@@ -575,7 +575,7 @@ func (s *OrchestratorSuite) TestHandleMessageRunnerError() {
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 	s.runner.On("Run", s.ctx, mock.Anything).Return(nil, errors.New("runner err"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
@@ -631,7 +631,7 @@ func (s *OrchestratorSuite) TestHandleMessageUpdateSessionIDError() {
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
 		Response:  "ok",
@@ -662,7 +662,7 @@ func (s *OrchestratorSuite) TestHandleMessageSendResponseError() {
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
 		Response: "ok",
@@ -690,7 +690,7 @@ func (s *OrchestratorSuite) TestHandleMessageMarkProcessedError() {
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{
 		{ID: 5, AuthorName: "Alice", Content: "hello"},
 	}, nil)
@@ -751,7 +751,7 @@ func (s *OrchestratorSuite) TestHandleMessageInsertBotResponseError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Once()
 	// First InsertMessage (user message) succeeds
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil).Once()
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 	// Second GetChannel (for session data in processTriggeredMessage) succeeds
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Once()
@@ -784,7 +784,7 @@ func (s *OrchestratorSuite) TestHandleMessageInsertBotResponseInsertError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
 	// First InsertMessage (user message) succeeds
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil).Once()
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
 		Response: "ok",
@@ -1139,7 +1139,7 @@ func (s *OrchestratorSuite) TestHandleInteractionStatus() {
 // --- refreshTyping test ---
 
 func (s *OrchestratorSuite) TestRefreshTypingCancellation() {
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 
 	// Use a very short interval so the ticker fires during test
 	s.orch.typingInterval = 10 * time.Millisecond
