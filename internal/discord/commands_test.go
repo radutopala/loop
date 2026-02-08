@@ -32,7 +32,6 @@ func (s *CommandsSuite) TestSubcommands() {
 	root := cmds[0]
 
 	expected := map[string]bool{
-		"ask":      true,
 		"schedule": true,
 		"tasks":    true,
 		"cancel":   true,
@@ -48,16 +47,6 @@ func (s *CommandsSuite) TestSubcommands() {
 		require.True(s.T(), expected[opt.Name], "unexpected subcommand: %s", opt.Name)
 		require.NotEmpty(s.T(), opt.Description, "subcommand %s should have description", opt.Name)
 	}
-}
-
-func (s *CommandsSuite) TestAskSubcommand() {
-	cmds := Commands()
-	ask := findSubcommand(cmds[0], "ask")
-	require.NotNil(s.T(), ask)
-	require.Len(s.T(), ask.Options, 1)
-	require.Equal(s.T(), "prompt", ask.Options[0].Name)
-	require.Equal(s.T(), discordgo.ApplicationCommandOptionString, ask.Options[0].Type)
-	require.True(s.T(), ask.Options[0].Required)
 }
 
 func (s *CommandsSuite) TestScheduleSubcommand() {

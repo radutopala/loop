@@ -688,7 +688,7 @@ func (s *RunnerSuite) TestLocalhostToDockerHost() {
 func (s *RunnerSuite) TestBuildMCPConfig() {
 	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", nil)
 	require.Len(s.T(), cfg.MCPServers, 1)
-	ls := cfg.MCPServers["loop-scheduler"]
+	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
 	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222", "--log", "/mcp/mcp.log"}, ls.Args)
 	require.Nil(s.T(), ls.Env)
@@ -710,20 +710,20 @@ func (s *RunnerSuite) TestBuildMCPConfigWithUserServers() {
 	require.Equal(s.T(), []string{"--flag"}, custom.Args)
 	require.Equal(s.T(), map[string]string{"API_KEY": "secret"}, custom.Env)
 
-	ls := cfg.MCPServers["loop-scheduler"]
+	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
 }
 
 func (s *RunnerSuite) TestBuildMCPConfigBuiltinOverridesUser() {
 	userServers := map[string]config.MCPServerConfig{
-		"loop-scheduler": {
+		"loop": {
 			Command: "/user/fake/binary",
 			Args:    []string{"--user-flag"},
 		},
 	}
 	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", userServers)
 	require.Len(s.T(), cfg.MCPServers, 1)
-	ls := cfg.MCPServers["loop-scheduler"]
+	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
 	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222", "--log", "/mcp/mcp.log"}, ls.Args)
 }
@@ -842,8 +842,8 @@ func (s *RunnerSuite) TestRunMCPConfigWritten() {
 
 	var cfg mcpConfig
 	require.NoError(s.T(), json.Unmarshal(writtenData, &cfg))
-	require.Contains(s.T(), cfg.MCPServers, "loop-scheduler")
-	ls := cfg.MCPServers["loop-scheduler"]
+	require.Contains(s.T(), cfg.MCPServers, "loop")
+	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
 	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222", "--log", "/mcp/mcp.log"}, ls.Args)
 

@@ -11,19 +11,6 @@ func Commands() []*discordgo.ApplicationCommand {
 			Options: []*discordgo.ApplicationCommandOption{
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
-					Name:        "ask",
-					Description: "Ask the AI a question",
-					Options: []*discordgo.ApplicationCommandOption{
-						{
-							Type:        discordgo.ApplicationCommandOptionString,
-							Name:        "prompt",
-							Description: "Your question or prompt",
-							Required:    true,
-						},
-					},
-				},
-				{
-					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "schedule",
 					Description: "Schedule a task",
 					Options: []*discordgo.ApplicationCommandOption{

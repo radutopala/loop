@@ -109,8 +109,8 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 	return retryResp, nil
 }
 
-// buildMCPConfig creates the merged MCP config with the built-in loop-scheduler
-// and any user-defined servers from the config. The built-in loop-scheduler always
+// buildMCPConfig creates the merged MCP config with the built-in loop
+// and any user-defined servers from the config. The built-in loop always
 // takes precedence over a user-defined server with the same name.
 func buildMCPConfig(channelID, apiURL string, userServers map[string]config.MCPServerConfig) mcpConfig {
 	servers := make(map[string]mcpServerEntry, len(userServers)+1)
@@ -121,8 +121,8 @@ func buildMCPConfig(channelID, apiURL string, userServers map[string]config.MCPS
 			Env:     srv.Env,
 		}
 	}
-	// Built-in loop-scheduler always overrides any user-defined server with that name.
-	servers["loop-scheduler"] = mcpServerEntry{
+	// Built-in loop always overrides any user-defined server with that name.
+	servers["loop"] = mcpServerEntry{
 		Command: "/usr/local/bin/loop",
 		Args:    []string{"mcp", "--channel-id", channelID, "--api-url", apiURL, "--log", "/mcp/mcp.log"},
 	}

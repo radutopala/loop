@@ -58,7 +58,7 @@ func New(channelID, apiURL string, httpClient HTTPClient, logger *slog.Logger) *
 	}
 
 	s.mcpServer = mcp.NewServer(&mcp.Implementation{
-		Name:    "loop-scheduler",
+		Name:    "loop",
 		Version: "1.0.0",
 	}, &mcp.ServerOptions{Logger: logger})
 

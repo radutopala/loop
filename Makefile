@@ -1,4 +1,4 @@
-.PHONY: help build install test lint coverage coverage-check docker-build run clean restart
+.PHONY: help build install test lint coverage coverage-check docker-build run clean restart docker-shell
 .DEFAULT_GOAL := help
 
 help: ## Show available targets
@@ -32,9 +32,20 @@ docker-build: ## Build the Docker container image
 run: build ## Build and run the bot
 	./bin/loop serve
 
-restart: install ## Install, stop and start the daemon
+restart: install docker-build ## Install, rebuild image, stop and start the daemon
 	loop daemon stop || true
 	loop daemon start
+
+docker-shell: ## Start a bash shell in the agent container
+	@mkdir -p /tmp/loop-shell-mcp
+	@printf '{"mcpServers":{"loop":{"command":"/usr/local/bin/loop","args":["mcp","--dir","$(CURDIR)","--api-url","http://host.docker.internal:8222","--log","/mcp/mcp.log"]}}}\n' > $(CURDIR)/.mcp.json
+	docker run --rm -it --entrypoint bash \
+		--add-host=host.docker.internal:host-gateway \
+		-v loop-sessions:/home/agent/.claude \
+		-v $(CURDIR):/work \
+		-v /tmp/loop-shell-mcp:/mcp \
+		-e CLAUDE_CODE_OAUTH_TOKEN=$$(grep claude_code_oauth_token ~/.loop/config.json | awk -F'"' '{print $$4}') \
+		loop-agent:latest
 
 clean: ## Remove build artifacts
 	rm -rf bin/ coverage.out coverage.html

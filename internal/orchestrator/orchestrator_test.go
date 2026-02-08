@@ -1127,43 +1127,6 @@ func (s *OrchestratorSuite) TestHandleInteractionStatus() {
 	s.bot.AssertExpectations(s.T())
 }
 
-func (s *OrchestratorSuite) TestHandleInteractionAsk() {
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
-	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil)
-	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
-	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
-		Response: "answer",
-	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch1", "").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
-	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
-
-	s.orch.HandleInteraction(s.ctx, &Interaction{
-		ChannelID:   "ch1",
-		GuildID:     "g1",
-		CommandName: "ask",
-		Options:     map[string]string{"prompt": "what is Go?"},
-	})
-
-	s.runner.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleInteractionAskEmptyPrompt() {
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return out.Content == "Please provide a prompt."
-	})).Return(nil)
-
-	s.orch.HandleInteraction(s.ctx, &Interaction{
-		ChannelID:   "ch1",
-		CommandName: "ask",
-		Options:     map[string]string{},
-	})
-
-	s.bot.AssertExpectations(s.T())
-}
-
 // --- refreshTyping test ---
 
 func (s *OrchestratorSuite) TestRefreshTypingCancellation() {

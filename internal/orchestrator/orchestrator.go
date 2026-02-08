@@ -344,8 +344,6 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, interaction any) {
 	}
 
 	switch inter.CommandName {
-	case "ask":
-		o.handleAskInteraction(ctx, inter)
 	case "schedule":
 		o.handleScheduleInteraction(ctx, inter)
 	case "tasks":
@@ -361,27 +359,6 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, interaction any) {
 	default:
 		o.logger.Warn("unknown command", "command", inter.CommandName)
 	}
-}
-
-func (o *Orchestrator) handleAskInteraction(ctx context.Context, inter *Interaction) {
-	prompt := inter.Options["prompt"]
-	if prompt == "" {
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Please provide a prompt.",
-		})
-		return
-	}
-
-	msg := &IncomingMessage{
-		ChannelID:    inter.ChannelID,
-		GuildID:      inter.GuildID,
-		Content:      prompt,
-		AuthorName:   "user",
-		IsBotMention: true,
-		Timestamp:    time.Now().UTC(),
-	}
-	o.HandleMessage(ctx, msg)
 }
 
 func (o *Orchestrator) handleScheduleInteraction(ctx context.Context, inter *Interaction) {

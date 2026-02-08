@@ -33,7 +33,7 @@ A Discord bot powered by Claude that runs AI agents in Docker containers.
           │ claude --print      │
           │   /work (project)   │
           │   /mcp  (logs)      │
-          │   MCP: loop-scheduler
+          │   MCP: loop
           └─────────┬───────────┘
                     │
          MCP tool calls (schedule, list, cancel…)
@@ -162,7 +162,6 @@ To register it in your local Claude Code, add to `.mcp.json` (project-level or `
 
 | Command | Description |
 |---|---|
-| `/loop ask <prompt>` | Ask the AI a question |
 | `/loop schedule <schedule> <prompt> <type>` | Schedule a task (cron/interval/once) |
 | `/loop tasks` | List scheduled tasks with status |
 | `/loop cancel <task_id>` | Cancel a scheduled task |
