@@ -47,9 +47,32 @@ func (m *MockScheduler) ListTasks(ctx context.Context, channelID string) ([]*db.
 	return args.Get(0).([]*db.ScheduledTask), args.Error(1)
 }
 
+func (m *MockScheduler) SetTaskEnabled(ctx context.Context, taskID int64, enabled bool) error {
+	return m.Called(ctx, taskID, enabled).Error(0)
+}
+
+func (m *MockScheduler) ToggleTask(ctx context.Context, taskID int64) (bool, error) {
+	args := m.Called(ctx, taskID)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockScheduler) EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string) error {
+	return m.Called(ctx, taskID, schedule, taskType, prompt).Error(0)
+}
+
+type MockChannelEnsurer struct {
+	mock.Mock
+}
+
+func (m *MockChannelEnsurer) EnsureChannel(ctx context.Context, dirPath string) (string, error) {
+	args := m.Called(ctx, dirPath)
+	return args.String(0), args.Error(1)
+}
+
 type ServerSuite struct {
 	suite.Suite
 	scheduler *MockScheduler
+	channels  *MockChannelEnsurer
 	srv       *Server
 	mux       *http.ServeMux
 }
@@ -60,18 +83,22 @@ func TestServerSuite(t *testing.T) {
 
 func (s *ServerSuite) SetupTest() {
 	s.scheduler = new(MockScheduler)
+	s.channels = new(MockChannelEnsurer)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.srv = NewServer(s.scheduler, logger)
+	s.srv = NewServer(s.scheduler, s.channels, logger)
 
 	s.mux = http.NewServeMux()
+	s.mux.HandleFunc("POST /api/channels", s.srv.handleEnsureChannel)
 	s.mux.HandleFunc("POST /api/tasks", s.srv.handleCreateTask)
 	s.mux.HandleFunc("GET /api/tasks", s.srv.handleListTasks)
 	s.mux.HandleFunc("DELETE /api/tasks/{id}", s.srv.handleDeleteTask)
+	s.mux.HandleFunc("PATCH /api/tasks/{id}", s.srv.handleUpdateTask)
 }
 
 func (s *ServerSuite) TestNewServer() {
 	require.NotNil(s.T(), s.srv)
 	require.NotNil(s.T(), s.srv.scheduler)
+	require.NotNil(s.T(), s.srv.channels)
 	require.NotNil(s.T(), s.srv.logger)
 }
 
@@ -217,6 +244,103 @@ func (s *ServerSuite) TestDeleteTaskSchedulerError() {
 	s.scheduler.AssertExpectations(s.T())
 }
 
+// --- UpdateTask tests ---
+
+func (s *ServerSuite) TestUpdateTaskDisable() {
+	s.scheduler.On("SetTaskEnabled", mock.Anything, int64(42), false).Return(nil)
+
+	body := `{"enabled":false}`
+	req := httptest.NewRequest("PATCH", "/api/tasks/42", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestUpdateTaskEnable() {
+	s.scheduler.On("SetTaskEnabled", mock.Anything, int64(42), true).Return(nil)
+
+	body := `{"enabled":true}`
+	req := httptest.NewRequest("PATCH", "/api/tasks/42", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestUpdateTaskInvalidID() {
+	req := httptest.NewRequest("PATCH", "/api/tasks/abc", bytes.NewBufferString(`{"enabled":true}`))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestUpdateTaskInvalidBody() {
+	req := httptest.NewRequest("PATCH", "/api/tasks/42", bytes.NewBufferString("not json"))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestUpdateTaskNoFields() {
+	body := `{}`
+	req := httptest.NewRequest("PATCH", "/api/tasks/42", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestUpdateTaskEditPrompt() {
+	s.scheduler.On("EditTask", mock.Anything, int64(42), (*string)(nil), (*string)(nil), mock.MatchedBy(func(p *string) bool {
+		return p != nil && *p == "new prompt"
+	})).Return(nil)
+
+	body := `{"prompt":"new prompt"}`
+	req := httptest.NewRequest("PATCH", "/api/tasks/42", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestUpdateTaskEditSchedulerError() {
+	s.scheduler.On("EditTask", mock.Anything, int64(42), mock.Anything, mock.Anything, mock.Anything).Return(errors.New("edit error"))
+
+	body := `{"prompt":"new"}`
+	req := httptest.NewRequest("PATCH", "/api/tasks/42", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestUpdateTaskSchedulerError() {
+	s.scheduler.On("SetTaskEnabled", mock.Anything, int64(42), true).Return(errors.New("db error"))
+
+	body := `{"enabled":true}`
+	req := httptest.NewRequest("PATCH", "/api/tasks/42", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
 // --- Start / Stop tests ---
 
 func (s *ServerSuite) TestStartAndStop() {
@@ -237,7 +361,7 @@ func (s *ServerSuite) TestStartListenError() {
 	// Try to start another server — won't get the same port, but
 	// we can test with an invalid address
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv2 := NewServer(s.scheduler, logger)
+	srv2 := NewServer(s.scheduler, nil, logger)
 	err = srv2.Start("invalid-addr-no-port")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "listening on")
@@ -246,7 +370,7 @@ func (s *ServerSuite) TestStartListenError() {
 
 func (s *ServerSuite) TestStopNilServer() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(s.scheduler, logger)
+	srv := NewServer(s.scheduler, nil, logger)
 
 	err := srv.Stop(context.Background())
 	require.NoError(s.T(), err)
@@ -262,4 +386,73 @@ func (s *ServerSuite) TestStartServeError() {
 
 	// Give the goroutine time to log the error.
 	time.Sleep(50 * time.Millisecond)
+}
+
+// --- EnsureChannel tests ---
+
+func (s *ServerSuite) TestEnsureChannelSuccess() {
+	s.channels.On("EnsureChannel", mock.Anything, "/home/user/dev/loop").
+		Return("ch-123", nil)
+
+	body := `{"dir_path":"/home/user/dev/loop"}`
+	req := httptest.NewRequest("POST", "/api/channels", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp ensureChannelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(s.T(), "ch-123", resp.ChannelID)
+	s.channels.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestEnsureChannelMissingDirPath() {
+	body := `{"dir_path":""}`
+	req := httptest.NewRequest("POST", "/api/channels", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestEnsureChannelInvalidBody() {
+	req := httptest.NewRequest("POST", "/api/channels", bytes.NewBufferString("not json"))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestEnsureChannelError() {
+	s.channels.On("EnsureChannel", mock.Anything, "/path").
+		Return("", errors.New("ensure failed"))
+
+	body := `{"dir_path":"/path"}`
+	req := httptest.NewRequest("POST", "/api/channels", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.channels.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestEnsureChannelNilEnsurer() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewServer(s.scheduler, nil, logger)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/channels", srv.handleEnsureChannel)
+
+	body := `{"dir_path":"/path"}`
+	req := httptest.NewRequest("POST", "/api/channels", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }

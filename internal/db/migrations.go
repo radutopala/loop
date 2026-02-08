@@ -104,6 +104,8 @@ var migrations = []string{
 	`DROP TABLE IF EXISTS chats`,
 	`DROP TABLE IF EXISTS sessions`,
 	`DROP TABLE IF EXISTS registered_channels`,
+	`ALTER TABLE channels ADD COLUMN dir_path TEXT NOT NULL DEFAULT ''`,
+	`CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dir_path ON channels(dir_path) WHERE dir_path != ''`,
 }
 
 // RunMigrations executes all pending schema migrations.

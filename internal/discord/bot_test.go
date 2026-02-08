@@ -108,6 +108,14 @@ func (m *MockSession) FollowupMessageCreate(interaction *discordgo.Interaction, 
 	return args.Get(0).(*discordgo.Message), args.Error(1)
 }
 
+func (m *MockSession) GuildChannelCreate(guildID string, name string, ctype discordgo.ChannelType, options ...discordgo.RequestOption) (*discordgo.Channel, error) {
+	args := m.Called(guildID, name, ctype, options)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*discordgo.Channel), args.Error(1)
+}
+
 // --- Test Suite ---
 
 type BotSuite struct {
@@ -1184,6 +1192,28 @@ func (s *BotSuite) TestSendMessageWithPendingInteractionFollowupError() {
 	})
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "discord followup create")
+}
+
+// --- CreateChannel ---
+
+func (s *BotSuite) TestCreateChannelSuccess() {
+	s.session.On("GuildChannelCreate", "g-1", "loop", discordgo.ChannelTypeGuildText, mock.Anything).
+		Return(&discordgo.Channel{ID: "new-ch-1"}, nil)
+
+	channelID, err := s.bot.CreateChannel(context.Background(), "g-1", "loop")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "new-ch-1", channelID)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestCreateChannelError() {
+	s.session.On("GuildChannelCreate", "g-1", "loop", discordgo.ChannelTypeGuildText, mock.Anything).
+		Return(nil, errors.New("create failed"))
+
+	channelID, err := s.bot.CreateChannel(context.Background(), "g-1", "loop")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "discord create channel")
+	require.Empty(s.T(), channelID)
 }
 
 // --- Verify Bot interface compliance ---

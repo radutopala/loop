@@ -690,7 +690,7 @@ func (s *RunnerSuite) TestBuildMCPConfig() {
 	require.Len(s.T(), cfg.MCPServers, 1)
 	ls := cfg.MCPServers["loop-scheduler"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
-	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222"}, ls.Args)
+	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222", "--log", "/mcp/mcp.log"}, ls.Args)
 	require.Nil(s.T(), ls.Env)
 }
 
@@ -725,7 +725,7 @@ func (s *RunnerSuite) TestBuildMCPConfigBuiltinOverridesUser() {
 	require.Len(s.T(), cfg.MCPServers, 1)
 	ls := cfg.MCPServers["loop-scheduler"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
-	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222"}, ls.Args)
+	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222", "--log", "/mcp/mcp.log"}, ls.Args)
 }
 
 func (s *RunnerSuite) TestRunMCPConfigWriteError() {
@@ -780,7 +780,7 @@ func (s *RunnerSuite) TestRunMCPConfigWritten() {
 	require.Contains(s.T(), cfg.MCPServers, "loop-scheduler")
 	ls := cfg.MCPServers["loop-scheduler"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
-	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222"}, ls.Args)
+	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222", "--log", "/mcp/mcp.log"}, ls.Args)
 
 	s.client.AssertExpectations(s.T())
 }

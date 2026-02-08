@@ -27,38 +27,39 @@ Discord ─▶ Bot ─▶ Orchestrator ─▶ DockerRunner ─▶ Container (cla
 ### Discord Bot Setup
 
 1. Create an application at https://discord.com/developers/applications
-2. Copy the **Application ID** and **Bot Token** into your `.env` file
+2. Copy the **Application ID** and **Bot Token** into your `config.json`
 3. Invite the bot to your server using this OAuth2 URL (replace `YOUR_APP_ID`):
 
    ```
-   https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot%20applications.commands&permissions=68608
+   https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot%20applications.commands&permissions=68624
    ```
 
 4. After the bot is running, use `/loop register` in each channel where you want it to respond
 
 ### Configuration
 
-Create `~/.loop/.env`:
+Create `~/.loop/config.json` (HJSON — comments and trailing commas are allowed):
 
-```env
-# Required
-DISCORD_TOKEN=your-discord-bot-token
-DISCORD_APP_ID=your-discord-app-id
+```jsonc
+{
+  // Required
+  "discord_token": "your-discord-bot-token",
+  "discord_app_id": "your-discord-app-id",
 
-# Optional (defaults shown)
-CLAUDE_BIN_PATH=claude
-DB_PATH=loop.db
-LOG_LEVEL=info
-LOG_FORMAT=text
-CONTAINER_IMAGE=loop-agent:latest
-CONTAINER_TIMEOUT_SEC=300
-CONTAINER_MEMORY_MB=512
-CONTAINER_CPUS=1.0
-POLL_INTERVAL_SEC=30
-MOUNT_ALLOWLIST=/path/one,/path/two
+  // Optional — enables auto-creation of Discord channels via `loop mcp --dir`
+  "discord_guild_id": "your-discord-guild-id",
+
+  // Optional (defaults shown)
+  "log_level": "info",
+  "log_format": "text",
+  "container_image": "loop-agent:latest",
+  "container_timeout_sec": 300,
+  "container_memory_mb": 512,
+  "container_cpus": 1.0,
+  "poll_interval_sec": 30,
+  "mount_allowlist": ["/path/one", "/path/two"],
+}
 ```
-
-Environment variables override values from the `.env` file.
 
 ### Build
 

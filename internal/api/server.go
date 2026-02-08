@@ -18,17 +18,28 @@ import (
 // Server exposes a lightweight HTTP API for task CRUD operations.
 type Server struct {
 	scheduler scheduler.Scheduler
+	channels  ChannelEnsurer
 	logger    *slog.Logger
 	server    *http.Server
 	listener  net.Listener
 }
 
-// NewServer creates a new API server.
-func NewServer(sched scheduler.Scheduler, logger *slog.Logger) *Server {
+// NewServer creates a new API server. The channels parameter may be nil
+// if channel creation is not configured.
+func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, logger *slog.Logger) *Server {
 	return &Server{
 		scheduler: sched,
+		channels:  channels,
 		logger:    logger,
 	}
+}
+
+type ensureChannelRequest struct {
+	DirPath string `json:"dir_path"`
+}
+
+type ensureChannelResponse struct {
+	ChannelID string `json:"channel_id"`
 }
 
 type createTaskRequest struct {
@@ -40,6 +51,13 @@ type createTaskRequest struct {
 
 type createTaskResponse struct {
 	ID int64 `json:"id"`
+}
+
+type updateTaskRequest struct {
+	Enabled  *bool   `json:"enabled"`
+	Schedule *string `json:"schedule"`
+	Type     *string `json:"type"`
+	Prompt   *string `json:"prompt"`
 }
 
 type taskResponse struct {
@@ -55,9 +73,11 @@ type taskResponse struct {
 // Start starts the HTTP server on the given address.
 func (s *Server) Start(addr string) error {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/channels", s.handleEnsureChannel)
 	mux.HandleFunc("POST /api/tasks", s.handleCreateTask)
 	mux.HandleFunc("GET /api/tasks", s.handleListTasks)
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.handleDeleteTask)
+	mux.HandleFunc("PATCH /api/tasks/{id}", s.handleUpdateTask)
 
 	s.server = &http.Server{
 		Addr:    addr,
@@ -158,4 +178,67 @@ func (s *Server) handleDeleteTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	taskID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid task id", http.StatusBadRequest)
+		return
+	}
+
+	var req updateTaskRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Enabled == nil && req.Schedule == nil && req.Type == nil && req.Prompt == nil {
+		http.Error(w, "at least one field is required", http.StatusBadRequest)
+		return
+	}
+
+	if req.Enabled != nil {
+		if err := s.scheduler.SetTaskEnabled(r.Context(), taskID, *req.Enabled); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	if req.Schedule != nil || req.Type != nil || req.Prompt != nil {
+		if err := s.scheduler.EditTask(r.Context(), taskID, req.Schedule, req.Type, req.Prompt); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+	}
+
+	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
+	if s.channels == nil {
+		http.Error(w, "channel creation not configured (discord_guild_id not set)", http.StatusNotImplemented)
+		return
+	}
+
+	var req ensureChannelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.DirPath == "" {
+		http.Error(w, "dir_path is required", http.StatusBadRequest)
+		return
+	}
+
+	channelID, err := s.channels.EnsureChannel(r.Context(), req.DirPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(ensureChannelResponse{ChannelID: channelID})
 }

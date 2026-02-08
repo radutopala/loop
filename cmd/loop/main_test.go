@@ -2,11 +2,14 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"syscall"
 	"testing"
 	"time"
@@ -37,6 +40,14 @@ func (m *mockStore) UpsertChannel(ctx context.Context, ch *db.Channel) error {
 
 func (m *mockStore) GetChannel(ctx context.Context, channelID string) (*db.Channel, error) {
 	args := m.Called(ctx, channelID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*db.Channel), args.Error(1)
+}
+
+func (m *mockStore) GetChannelByDirPath(ctx context.Context, dirPath string) (*db.Channel, error) {
+	args := m.Called(ctx, dirPath)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -107,6 +118,18 @@ func (m *mockStore) ListScheduledTasks(ctx context.Context, channelID string) ([
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*db.ScheduledTask), args.Error(1)
+}
+
+func (m *mockStore) UpdateScheduledTaskEnabled(ctx context.Context, id int64, enabled bool) error {
+	return m.Called(ctx, id, enabled).Error(0)
+}
+
+func (m *mockStore) GetScheduledTask(ctx context.Context, id int64) (*db.ScheduledTask, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*db.ScheduledTask), args.Error(1)
 }
 
 func (m *mockStore) InsertTaskRunLog(ctx context.Context, trl *db.TaskRunLog) (int64, error) {
@@ -221,6 +244,11 @@ func (m *mockBot) BotUserID() string {
 	return m.Called().String(0)
 }
 
+func (m *mockBot) CreateChannel(ctx context.Context, guildID, name string) (string, error) {
+	args := m.Called(ctx, guildID, name)
+	return args.String(0), args.Error(1)
+}
+
 type closableDockerClient struct {
 	*mockDockerClient
 	closeFn func() error
@@ -246,18 +274,18 @@ func (m *mockAPIServer) Stop(ctx context.Context) error {
 
 type MainSuite struct {
 	suite.Suite
-	origConfigLoad      func() (*config.Config, error)
-	origNewDiscordBot   func(string, string, *slog.Logger) (orchestrator.Bot, error)
-	origNewDockerClient func() (container.DockerClient, error)
-	origNewSQLiteStore  func(string) (db.Store, error)
-	origOsExit          func(int)
-	origNewAPIServer    func(scheduler.Scheduler, *slog.Logger) apiServer
-	origNewMCPServer    func(string, string, mcpserver.HTTPClient, *slog.Logger) *mcpserver.Server
-	origMCPLogOpen      func() (*os.File, error)
-	origDaemonStart     func(daemon.System) error
-	origDaemonStop      func(daemon.System) error
-	origDaemonStatus    func(daemon.System) (string, error)
-	origNewSystem       func() daemon.System
+	origConfigLoad        func() (*config.Config, error)
+	origNewDiscordBot     func(string, string, *slog.Logger) (orchestrator.Bot, error)
+	origNewDockerClient   func() (container.DockerClient, error)
+	origNewSQLiteStore    func(string) (db.Store, error)
+	origOsExit            func(int)
+	origNewAPIServer      func(scheduler.Scheduler, api.ChannelEnsurer, *slog.Logger) apiServer
+	origNewMCPServer      func(string, string, mcpserver.HTTPClient, *slog.Logger) *mcpserver.Server
+	origDaemonStart       func(daemon.System) error
+	origDaemonStop        func(daemon.System) error
+	origDaemonStatus      func(daemon.System) (string, error)
+	origNewSystem         func() daemon.System
+	origEnsureChannelFunc func(string, string) (string, error)
 }
 
 func TestMainSuite(t *testing.T) {
@@ -272,11 +300,11 @@ func (s *MainSuite) SetupTest() {
 	s.origOsExit = osExit
 	s.origNewAPIServer = newAPIServer
 	s.origNewMCPServer = newMCPServer
-	s.origMCPLogOpen = mcpLogOpen
 	s.origDaemonStart = daemonStart
 	s.origDaemonStop = daemonStop
 	s.origDaemonStatus = daemonStatus
 	s.origNewSystem = newSystem
+	s.origEnsureChannelFunc = ensureChannelFunc
 }
 
 func (s *MainSuite) TearDownTest() {
@@ -287,11 +315,11 @@ func (s *MainSuite) TearDownTest() {
 	osExit = s.origOsExit
 	newAPIServer = s.origNewAPIServer
 	newMCPServer = s.origNewMCPServer
-	mcpLogOpen = s.origMCPLogOpen
 	daemonStart = s.origDaemonStart
 	daemonStop = s.origDaemonStop
 	daemonStatus = s.origDaemonStatus
 	newSystem = s.origNewSystem
+	ensureChannelFunc = s.origEnsureChannelFunc
 }
 
 func testConfig() *config.Config {
@@ -308,9 +336,9 @@ func testConfig() *config.Config {
 
 // fakeAPIServer returns a newAPIServer func that creates a real api.Server
 // but binds to a random port (127.0.0.1:0).
-func fakeAPIServer() func(scheduler.Scheduler, *slog.Logger) apiServer {
-	return func(sched scheduler.Scheduler, logger *slog.Logger) apiServer {
-		return api.NewServer(sched, logger)
+func fakeAPIServer() func(scheduler.Scheduler, api.ChannelEnsurer, *slog.Logger) apiServer {
+	return func(sched scheduler.Scheduler, channels api.ChannelEnsurer, logger *slog.Logger) apiServer {
+		return api.NewServer(sched, channels, logger)
 	}
 }
 
@@ -367,7 +395,9 @@ func (s *MainSuite) TestNewMCPCmd() {
 	// Flags should be registered
 	f := cmd.Flags()
 	require.NotNil(s.T(), f.Lookup("channel-id"))
+	require.NotNil(s.T(), f.Lookup("dir"))
 	require.NotNil(s.T(), f.Lookup("api-url"))
+	require.NotNil(s.T(), f.Lookup("log"))
 }
 
 func (s *MainSuite) TestNewMCPCmdMissingFlags() {
@@ -375,13 +405,18 @@ func (s *MainSuite) TestNewMCPCmdMissingFlags() {
 	cmd.SetArgs([]string{})
 	err := cmd.Execute()
 	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "required")
+}
+
+func (s *MainSuite) TestNewMCPCmdMutuallyExclusive() {
+	cmd := newMCPCmd()
+	cmd.SetArgs([]string{"--channel-id", "ch1", "--dir", "/path", "--api-url", "http://localhost:8222"})
+	err := cmd.Execute()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "if any flags in the group [channel-id dir] are set none of the others can be")
 }
 
 func (s *MainSuite) TestRunMCP() {
-	mcpLogOpen = func() (*os.File, error) {
-		return os.CreateTemp(s.T().TempDir(), "mcp-*.log")
-	}
+	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
 	called := false
 	newMCPServer = func(channelID, apiURL string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
 		require.Equal(s.T(), "ch1", channelID)
@@ -392,14 +427,12 @@ func (s *MainSuite) TestRunMCP() {
 
 	// runMCP will try to use StdioTransport which will fail/close immediately in test.
 	// We just verify the function is wired correctly.
-	_ = runMCP("ch1", "http://localhost:8222")
+	_ = runMCP("ch1", "http://localhost:8222", "", logPath)
 	require.True(s.T(), called)
 }
 
 func (s *MainSuite) TestNewMCPCmdRunE() {
-	mcpLogOpen = func() (*os.File, error) {
-		return os.CreateTemp(s.T().TempDir(), "mcp-*.log")
-	}
+	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
 	// Test the RunE closure is wired correctly by executing with flags.
 	called := false
 	newMCPServer = func(channelID, apiURL string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
@@ -410,7 +443,8 @@ func (s *MainSuite) TestNewMCPCmdRunE() {
 	}
 
 	cmd := newMCPCmd()
-	cmd.SetArgs([]string{"--channel-id", "ch-test", "--api-url", "http://test:8222"})
+	cmd.SetArgs([]string{"--channel-id", "ch-test", "--api-url", "http://test:8222", "--log", logPath})
+	// Note: this calls runMCP via RunE which now takes 4 args
 	// Execute will invoke RunE -> runMCP which tries StdioTransport.
 	// That will return an error in test context, which is fine.
 	_ = cmd.Execute()
@@ -418,28 +452,9 @@ func (s *MainSuite) TestNewMCPCmdRunE() {
 }
 
 func (s *MainSuite) TestRunMCPLogOpenError() {
-	mcpLogOpen = func() (*os.File, error) {
-		return nil, errors.New("log open fail")
-	}
-	err := runMCP("ch1", "http://localhost:8222")
+	err := runMCP("ch1", "http://localhost:8222", "", "/nonexistent/dir/mcp.log")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "opening mcp log")
-}
-
-func (s *MainSuite) TestDefaultMCPLogOpen() {
-	// The default mcpLogOpen writes to /mcp/mcp.log (container path).
-	// Exercise it by temporarily overriding to a temp dir.
-	tmpDir := s.T().TempDir()
-	mcpLogOpen = func() (*os.File, error) {
-		return os.OpenFile(tmpDir+"/mcp.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	}
-	f, err := mcpLogOpen()
-	require.NoError(s.T(), err)
-	require.NotNil(s.T(), f)
-	f.Close()
-
-	// Verify the original default points to /mcp/mcp.log.
-	require.NotNil(s.T(), s.origMCPLogOpen)
 }
 
 func (s *MainSuite) TestRunMCPWithInMemoryTransport() {
@@ -460,7 +475,103 @@ func (s *MainSuite) TestRunMCPWithInMemoryTransport() {
 
 	res, err := session.ListTools(context.Background(), nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 3)
+	require.Len(s.T(), res.Tools, 5)
+}
+
+func (s *MainSuite) TestEnsureChannelSuccess() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(s.T(), "POST", r.Method)
+		require.Equal(s.T(), "/api/channels", r.URL.Path)
+
+		var req struct {
+			DirPath string `json:"dir_path"`
+		}
+		require.NoError(s.T(), json.NewDecoder(r.Body).Decode(&req))
+		require.Equal(s.T(), "/home/user/dev/loop", req.DirPath)
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"channel_id": "ch-resolved"})
+	}))
+	defer ts.Close()
+
+	channelID, err := ensureChannel(ts.URL, "/home/user/dev/loop")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ch-resolved", channelID)
+}
+
+func (s *MainSuite) TestEnsureChannelServerError() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "something failed", http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	_, err := ensureChannel(ts.URL, "/path")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "ensure channel API returned 500")
+}
+
+func (s *MainSuite) TestEnsureChannelConnectionError() {
+	_, err := ensureChannel("http://127.0.0.1:1", "/path")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "calling ensure channel API")
+}
+
+func (s *MainSuite) TestEnsureChannelInvalidJSON() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer ts.Close()
+
+	_, err := ensureChannel(ts.URL, "/path")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "decoding ensure channel response")
+}
+
+func (s *MainSuite) TestRunMCPWithDir() {
+	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
+	called := false
+	newMCPServer = func(channelID, apiURL string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
+		require.Equal(s.T(), "resolved-ch", channelID)
+		called = true
+		return mcpserver.New(channelID, apiURL, httpClient, logger)
+	}
+	ensureChannelFunc = func(apiURL, dirPath string) (string, error) {
+		require.Equal(s.T(), "http://localhost:8222", apiURL)
+		require.Equal(s.T(), "/home/user/dev/loop", dirPath)
+		return "resolved-ch", nil
+	}
+
+	_ = runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath)
+	require.True(s.T(), called)
+}
+
+func (s *MainSuite) TestRunMCPWithDirEnsureError() {
+	ensureChannelFunc = func(_, _ string) (string, error) {
+		return "", errors.New("ensure failed")
+	}
+
+	err := runMCP("", "http://localhost:8222", "/path", "/tmp/mcp.log")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "ensuring channel for dir")
+}
+
+func (s *MainSuite) TestNewMCPCmdWithDirFlag() {
+	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
+	called := false
+	newMCPServer = func(channelID, apiURL string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
+		require.Equal(s.T(), "resolved-ch", channelID)
+		called = true
+		return mcpserver.New(channelID, apiURL, httpClient, logger)
+	}
+	ensureChannelFunc = func(_, _ string) (string, error) {
+		return "resolved-ch", nil
+	}
+
+	cmd := newMCPCmd()
+	cmd.SetArgs([]string{"--dir", "/home/user/dev/loop", "--api-url", "http://test:8222", "--log", logPath})
+	_ = cmd.Execute()
+	require.True(s.T(), called)
 }
 
 // --- serve() error cases ---
@@ -642,6 +753,65 @@ func (s *MainSuite) TestServeHappyPathShutdown() {
 	bot.AssertExpectations(s.T())
 }
 
+func (s *MainSuite) TestServeHappyPathWithGuildID() {
+	store := new(mockStore)
+	store.On("Close").Return(nil)
+
+	bot := new(mockBot)
+	bot.On("OnMessage", mock.Anything).Return()
+	bot.On("OnInteraction", mock.Anything).Return()
+	bot.On("RegisterCommands", mock.Anything).Return(nil)
+	bot.On("Start", mock.Anything).Return(nil)
+	bot.On("Stop").Return(nil)
+
+	dockerClient := new(mockDockerClient)
+	dockerClient.On("ContainerList", mock.Anything, "app", "loop-agent").Return([]string{}, nil)
+
+	cfg := testConfig()
+	cfg.DiscordGuildID = "guild-123"
+	configLoad = func() (*config.Config, error) {
+		return cfg, nil
+	}
+	newSQLiteStore = func(_ string) (db.Store, error) {
+		return store, nil
+	}
+	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
+		return bot, nil
+	}
+	newDockerClient = func() (container.DockerClient, error) {
+		return dockerClient, nil
+	}
+	channelsCh := make(chan api.ChannelEnsurer, 1)
+	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, logger *slog.Logger) apiServer {
+		channelsCh <- channels
+		return api.NewServer(sched, channels, logger)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- serve()
+	}()
+
+	gotChannels := <-channelsCh
+	require.NotNil(s.T(), gotChannels)
+
+	// Wait for serve() to set up signal handler via signal.NotifyContext.
+	time.Sleep(100 * time.Millisecond)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+
+	store.AssertExpectations(s.T())
+	bot.AssertExpectations(s.T())
+}
+
 func (s *MainSuite) TestServeHappyPathShutdownWithStopError() {
 	store := new(mockStore)
 	store.On("Close").Return(nil)
@@ -721,7 +891,7 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 	newDockerClient = func() (container.DockerClient, error) {
 		return dockerClient, nil
 	}
-	newAPIServer = func(_ scheduler.Scheduler, _ *slog.Logger) apiServer {
+	newAPIServer = func(_ scheduler.Scheduler, _ api.ChannelEnsurer, _ *slog.Logger) apiServer {
 		return mockAPI
 	}
 
@@ -824,11 +994,10 @@ func (s *MainSuite) TestDefaultVarSignatures() {
 	require.NotNil(s.T(), newSQLiteStore)
 	require.NotNil(s.T(), newAPIServer)
 	require.NotNil(s.T(), newMCPServer)
-	require.NotNil(s.T(), mcpLogOpen)
 
 	// Verify newAPIServer produces a non-nil apiServer
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	apiSrv := newAPIServer(nil, logger)
+	apiSrv := newAPIServer(nil, nil, logger)
 	require.NotNil(s.T(), apiSrv)
 
 	// Verify newMCPServer produces a non-nil server

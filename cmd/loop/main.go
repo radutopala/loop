@@ -2,14 +2,15 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
-
-	"net/http"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -61,30 +62,29 @@ func newServeCmd() *cobra.Command {
 }
 
 func newMCPCmd() *cobra.Command {
-	var channelID, apiURL string
+	var channelID, apiURL, logPath, dirPath string
 
 	cmd := &cobra.Command{
 		Use:     "mcp",
 		Aliases: []string{"m"},
 		Short:   "Run as an MCP server over stdio",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runMCP(channelID, apiURL)
+			return runMCP(channelID, apiURL, dirPath, logPath)
 		},
 	}
 
 	cmd.Flags().StringVar(&channelID, "channel-id", "", "Discord channel ID")
+	cmd.Flags().StringVar(&dirPath, "dir", "", "Project directory path (auto-creates Discord channel)")
 	cmd.Flags().StringVar(&apiURL, "api-url", "", "Loop API base URL")
-	_ = cmd.MarkFlagRequired("channel-id")
+	cmd.Flags().StringVar(&logPath, "log", "/mcp/mcp.log", "Path to MCP log file")
+	cmd.MarkFlagsOneRequired("channel-id", "dir")
+	cmd.MarkFlagsMutuallyExclusive("channel-id", "dir")
 	_ = cmd.MarkFlagRequired("api-url")
 
 	return cmd
 }
 
 var newMCPServer = mcpserver.New
-
-var mcpLogOpen = func() (*os.File, error) {
-	return os.OpenFile("/mcp/mcp.log", os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-}
 
 var (
 	daemonStart  = daemon.Start
@@ -143,8 +143,18 @@ func newDaemonCmd() *cobra.Command {
 	return cmd
 }
 
-func runMCP(channelID, apiURL string) error {
-	f, err := mcpLogOpen()
+var ensureChannelFunc = ensureChannel
+
+func runMCP(channelID, apiURL, dirPath, logPath string) error {
+	if dirPath != "" {
+		resolved, err := ensureChannelFunc(apiURL, dirPath)
+		if err != nil {
+			return fmt.Errorf("ensuring channel for dir %s: %w", dirPath, err)
+		}
+		channelID = resolved
+	}
+
+	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
 	if err != nil {
 		return fmt.Errorf("opening mcp log: %w", err)
 	}
@@ -153,6 +163,28 @@ func runMCP(channelID, apiURL string) error {
 	logger := slog.New(slog.NewTextHandler(f, nil))
 	srv := newMCPServer(channelID, apiURL, http.DefaultClient, logger)
 	return srv.Run(context.Background(), &mcp.StdioTransport{})
+}
+
+func ensureChannel(apiURL, dirPath string) (string, error) {
+	body := fmt.Sprintf(`{"dir_path":%q}`, dirPath)
+	resp, err := http.Post(apiURL+"/api/channels", "application/json", strings.NewReader(body))
+	if err != nil {
+		return "", fmt.Errorf("calling ensure channel API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("ensure channel API returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var result struct {
+		ChannelID string `json:"channel_id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decoding ensure channel response: %w", err)
+	}
+	return result.ChannelID, nil
 }
 
 // apiServer is the interface used by serve() to decouple from api.Server for testing.
@@ -177,8 +209,8 @@ var (
 	newDockerClient = func() (container.DockerClient, error) {
 		return container.NewClient()
 	}
-	newAPIServer = func(sched scheduler.Scheduler, logger *slog.Logger) apiServer {
-		return api.NewServer(sched, logger)
+	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, logger *slog.Logger) apiServer {
+		return api.NewServer(sched, channels, logger)
 	}
 )
 
@@ -214,7 +246,12 @@ func serve() error {
 	executor := orchestrator.NewTaskExecutor(runner, bot, store, logger)
 	sched := scheduler.NewTaskScheduler(store, executor, cfg.PollInterval, logger)
 
-	apiSrv := newAPIServer(sched, logger)
+	var channelSvc api.ChannelEnsurer
+	if cfg.DiscordGuildID != "" {
+		channelSvc = api.NewChannelService(store, bot, cfg.DiscordGuildID)
+	}
+
+	apiSrv := newAPIServer(sched, channelSvc, logger)
 	if err := apiSrv.Start(cfg.APIAddr); err != nil {
 		return fmt.Errorf("starting api server: %w", err)
 	}

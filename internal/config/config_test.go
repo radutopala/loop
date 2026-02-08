@@ -59,6 +59,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Equal(s.T(), ":8222", cfg.APIAddr)
 	require.Equal(s.T(), "/home/testuser/.loop", cfg.LoopDir)
 	require.Empty(s.T(), cfg.ClaudeCodeOAuthToken)
+	require.Empty(s.T(), cfg.DiscordGuildID)
 	require.Nil(s.T(), cfg.MCPServers)
 }
 
@@ -68,6 +69,7 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 			"discord_token": "custom-token",
 			"discord_app_id": "custom-app-id",
 			"claude_code_oauth_token": "sk-oauth",
+			"discord_guild_id": "guild-123",
 			"log_level": "debug",
 			"log_format": "json",
 			"db_path": "/tmp/test.db",
@@ -86,6 +88,7 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 	require.Equal(s.T(), "custom-token", cfg.DiscordToken)
 	require.Equal(s.T(), "custom-app-id", cfg.DiscordAppID)
 	require.Equal(s.T(), "sk-oauth", cfg.ClaudeCodeOAuthToken)
+	require.Equal(s.T(), "guild-123", cfg.DiscordGuildID)
 	require.Equal(s.T(), "debug", cfg.LogLevel)
 	require.Equal(s.T(), "json", cfg.LogFormat)
 	require.Equal(s.T(), "/tmp/test.db", cfg.DBPath)
@@ -149,6 +152,15 @@ func (s *ConfigSuite) TestReadError() {
 func (s *ConfigSuite) TestInvalidJSON() {
 	readFile = func(_ string) ([]byte, error) {
 		return []byte(`{not valid json`), nil
+	}
+	_, err := Load()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "parsing config file")
+}
+
+func (s *ConfigSuite) TestInvalidJSONTypes() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{"discord_token": 123}`), nil
 	}
 	_, err := Load()
 	require.Error(s.T(), err)
@@ -232,6 +244,26 @@ func (s *ConfigSuite) TestZeroNumericValues() {
 	require.Equal(s.T(), int64(0), cfg.ContainerMemoryMB)
 	require.Equal(s.T(), 0.0, cfg.ContainerCPUs)
 	require.Equal(s.T(), time.Duration(0), cfg.PollInterval)
+}
+
+func (s *ConfigSuite) TestJSONWithComments() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			// Required credentials
+			"discord_token": "tok",
+			"discord_app_id": "app",
+			/* Optional settings */
+			"log_level": "debug",
+			// Trailing comma support
+			"api_addr": ":9999",
+		}`), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "tok", cfg.DiscordToken)
+	require.Equal(s.T(), "debug", cfg.LogLevel)
+	require.Equal(s.T(), ":9999", cfg.APIAddr)
 }
 
 func (s *ConfigSuite) TestDefaultHelpers() {

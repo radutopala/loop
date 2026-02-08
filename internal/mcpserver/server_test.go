@@ -85,7 +85,7 @@ func (s *MCPServerSuite) TestMCPServer() {
 func (s *MCPServerSuite) TestListTools() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 3)
+	require.Len(s.T(), res.Tools, 5)
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -94,6 +94,8 @@ func (s *MCPServerSuite) TestListTools() {
 	require.True(s.T(), names["schedule_task"])
 	require.True(s.T(), names["list_tasks"])
 	require.True(s.T(), names["cancel_task"])
+	require.True(s.T(), names["toggle_task"])
+	require.True(s.T(), names["edit_task"])
 }
 
 // --- schedule_task ---
@@ -291,6 +293,155 @@ func (s *MCPServerSuite) TestCancelTaskHTTPError() {
 	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
 		Name:      "cancel_task",
 		Arguments: map[string]any{"task_id": float64(1)},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "calling API")
+}
+
+// --- edit_task ---
+
+func (s *MCPServerSuite) TestEditTaskSuccess() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "PATCH", req.Method)
+		require.Contains(s.T(), req.URL.String(), "/api/tasks/42")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader(nil)),
+		}, nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "edit_task",
+		Arguments: map[string]any{"task_id": float64(42), "prompt": "new prompt"},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "Task 42 updated")
+}
+
+func (s *MCPServerSuite) TestEditTaskAPIError() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusInternalServerError, "not found"), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "edit_task",
+		Arguments: map[string]any{"task_id": float64(99), "schedule": "bad"},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "API error")
+}
+
+func (s *MCPServerSuite) TestEditTaskHTTPError() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("connection refused")
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "edit_task",
+		Arguments: map[string]any{"task_id": float64(1), "prompt": "new"},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "calling API")
+}
+
+func (s *MCPServerSuite) TestEditTaskWithTypeAndSchedule() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "PATCH", req.Method)
+		require.Contains(s.T(), req.URL.String(), "/api/tasks/10")
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"type"`)
+		require.Contains(s.T(), string(body), `"schedule"`)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader(nil)),
+		}, nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "edit_task",
+		Arguments: map[string]any{"task_id": float64(10), "type": "interval", "schedule": "30m"},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "Task 10 updated")
+}
+
+func (s *MCPServerSuite) TestEditTaskNoFields() {
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "edit_task",
+		Arguments: map[string]any{"task_id": float64(1)},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "at least one")
+}
+
+// --- toggle_task ---
+
+func (s *MCPServerSuite) TestToggleTaskDisableSuccess() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "PATCH", req.Method)
+		require.Contains(s.T(), req.URL.String(), "/api/tasks/42")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader(nil)),
+		}, nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "toggle_task",
+		Arguments: map[string]any{"task_id": float64(42), "enabled": false},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "Task 42 disabled")
+}
+
+func (s *MCPServerSuite) TestToggleTaskEnableSuccess() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "PATCH", req.Method)
+		require.Contains(s.T(), req.URL.String(), "/api/tasks/10")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader(nil)),
+		}, nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "toggle_task",
+		Arguments: map[string]any{"task_id": float64(10), "enabled": true},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "Task 10 enabled")
+}
+
+func (s *MCPServerSuite) TestToggleTaskAPIError() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusInternalServerError, "not found"), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "toggle_task",
+		Arguments: map[string]any{"task_id": float64(99), "enabled": true},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "API error")
+}
+
+func (s *MCPServerSuite) TestToggleTaskHTTPError() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("connection refused")
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "toggle_task",
+		Arguments: map[string]any{"task_id": float64(1), "enabled": false},
 	})
 	require.NoError(s.T(), err)
 	require.True(s.T(), res.IsError)

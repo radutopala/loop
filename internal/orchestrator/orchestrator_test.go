@@ -35,6 +35,14 @@ func (m *MockStore) GetChannel(ctx context.Context, channelID string) (*db.Chann
 	return args.Get(0).(*db.Channel), args.Error(1)
 }
 
+func (m *MockStore) GetChannelByDirPath(ctx context.Context, dirPath string) (*db.Channel, error) {
+	args := m.Called(ctx, dirPath)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*db.Channel), args.Error(1)
+}
+
 func (m *MockStore) SetChannelActive(ctx context.Context, channelID string, active bool) error {
 	args := m.Called(ctx, channelID, active)
 	return args.Error(0)
@@ -115,6 +123,18 @@ func (m *MockStore) ListScheduledTasks(ctx context.Context, channelID string) ([
 	return args.Get(0).([]*db.ScheduledTask), args.Error(1)
 }
 
+func (m *MockStore) UpdateScheduledTaskEnabled(ctx context.Context, id int64, enabled bool) error {
+	return m.Called(ctx, id, enabled).Error(0)
+}
+
+func (m *MockStore) GetScheduledTask(ctx context.Context, id int64) (*db.ScheduledTask, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*db.ScheduledTask), args.Error(1)
+}
+
 func (m *MockStore) InsertTaskRunLog(ctx context.Context, trl *db.TaskRunLog) (int64, error) {
 	args := m.Called(ctx, trl)
 	return args.Get(0).(int64), args.Error(1)
@@ -177,6 +197,11 @@ func (m *MockBot) BotUserID() string {
 	return args.String(0)
 }
 
+func (m *MockBot) CreateChannel(ctx context.Context, guildID, name string) (string, error) {
+	args := m.Called(ctx, guildID, name)
+	return args.String(0), args.Error(1)
+}
+
 type MockRunner struct {
 	mock.Mock
 }
@@ -224,6 +249,19 @@ func (m *MockScheduler) ListTasks(ctx context.Context, channelID string) ([]*db.
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*db.ScheduledTask), args.Error(1)
+}
+
+func (m *MockScheduler) SetTaskEnabled(ctx context.Context, taskID int64, enabled bool) error {
+	return m.Called(ctx, taskID, enabled).Error(0)
+}
+
+func (m *MockScheduler) ToggleTask(ctx context.Context, taskID int64) (bool, error) {
+	args := m.Called(ctx, taskID)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockScheduler) EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string) error {
+	return m.Called(ctx, taskID, schedule, taskType, prompt).Error(0)
 }
 
 // --- Test Suite ---
@@ -567,7 +605,7 @@ func (s *OrchestratorSuite) TestHandleMessageAgentResponseError() {
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
 		Error: "agent broke",
@@ -578,7 +616,9 @@ func (s *OrchestratorSuite) TestHandleMessageAgentResponseError() {
 
 	s.orch.HandleMessage(s.ctx, msg)
 
-	s.bot.AssertExpectations(s.T())
+	s.bot.AssertCalled(s.T(), "SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Agent error: agent broke"
+	}))
 }
 
 func (s *OrchestratorSuite) TestHandleMessageUpdateSessionIDError() {
@@ -907,16 +947,24 @@ func (s *OrchestratorSuite) TestHandleInteractionScheduleError() {
 func (s *OrchestratorSuite) TestHandleInteractionTasks() {
 	nextRun := time.Now().Add(30 * time.Minute)
 	tasks := []*db.ScheduledTask{
-		{ID: 1, Prompt: "task1", Schedule: "0 * * * *", Type: db.TaskTypeCron, NextRunAt: nextRun},
-		{ID: 2, Prompt: "task2", Schedule: "5m", Type: db.TaskTypeInterval, NextRunAt: nextRun.Add(5 * time.Minute)},
+		{ID: 1, Prompt: "task1", Schedule: "0 * * * *", Type: db.TaskTypeCron, Enabled: true, NextRunAt: nextRun},
+		{ID: 2, Prompt: "task2", Schedule: "5m", Type: db.TaskTypeInterval, Enabled: false, NextRunAt: nextRun.Add(5 * time.Minute)},
+		{ID: 3, Prompt: "task3", Schedule: "10m", Type: db.TaskTypeOnce, Enabled: true, NextRunAt: nextRun.Add(10 * time.Minute)},
 	}
 	s.scheduler.On("ListTasks", s.ctx, "ch1").Return(tasks, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.ChannelID == "ch1" &&
-			strings.Contains(out.Content, "Active scheduled tasks:") &&
+			strings.Contains(out.Content, "Scheduled tasks:") &&
 			strings.Contains(out.Content, "ID 1") &&
 			strings.Contains(out.Content, "[cron]") &&
+			strings.Contains(out.Content, "[enabled]") &&
+			strings.Contains(out.Content, "`0 * * * *`") &&
 			strings.Contains(out.Content, "task1") &&
+			strings.Contains(out.Content, "[disabled]") &&
+			strings.Contains(out.Content, "`5m`") &&
+			strings.Contains(out.Content, "[once]") &&
+			strings.Contains(out.Content, "UTC") &&
+			!strings.Contains(out.Content, "`10m`") &&
 			strings.Contains(out.Content, "next: in ")
 	})).Return(nil)
 
@@ -931,7 +979,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTasks() {
 func (s *OrchestratorSuite) TestHandleInteractionTasksEmpty() {
 	s.scheduler.On("ListTasks", s.ctx, "ch1").Return([]*db.ScheduledTask{}, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return out.Content == "No active scheduled tasks."
+		return out.Content == "No scheduled tasks."
 	})).Return(nil)
 
 	s.orch.HandleInteraction(s.ctx, &Interaction{
@@ -995,6 +1043,146 @@ func (s *OrchestratorSuite) TestHandleInteractionCancelError() {
 		ChannelID:   "ch1",
 		CommandName: "cancel",
 		Options:     map[string]string{"task_id": "42"},
+	})
+
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionToggleEnable() {
+	s.scheduler.On("ToggleTask", s.ctx, int64(42)).Return(true, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Task 42 enabled."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "toggle",
+		Options:     map[string]string{"task_id": "42"},
+	})
+
+	s.scheduler.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionToggleDisable() {
+	s.scheduler.On("ToggleTask", s.ctx, int64(42)).Return(false, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Task 42 disabled."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "toggle",
+		Options:     map[string]string{"task_id": "42"},
+	})
+
+	s.scheduler.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionToggleInvalidID() {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Invalid task ID."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "toggle",
+		Options:     map[string]string{"task_id": "abc"},
+	})
+
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionToggleError() {
+	s.scheduler.On("ToggleTask", s.ctx, int64(42)).Return(false, errors.New("toggle err"))
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Failed to toggle task."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "toggle",
+		Options:     map[string]string{"task_id": "42"},
+	})
+
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionEditSuccess() {
+	schedule := "0 9 * * *"
+	s.scheduler.On("EditTask", s.ctx, int64(42), &schedule, (*string)(nil), (*string)(nil)).Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Task 42 updated."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "edit",
+		Options:     map[string]string{"task_id": "42", "schedule": "0 9 * * *"},
+	})
+
+	s.scheduler.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionEditWithTypeAndPrompt() {
+	taskType := "interval"
+	prompt := "new prompt"
+	s.scheduler.On("EditTask", s.ctx, int64(10), (*string)(nil), &taskType, &prompt).Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Task 10 updated."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "edit",
+		Options:     map[string]string{"task_id": "10", "type": "interval", "prompt": "new prompt"},
+	})
+
+	s.scheduler.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionEditInvalidID() {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Invalid task ID."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "edit",
+		Options:     map[string]string{"task_id": "abc"},
+	})
+
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionEditNoFields() {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "At least one of schedule, type, or prompt is required."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "edit",
+		Options:     map[string]string{"task_id": "42"},
+	})
+
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionEditError() {
+	prompt := "new"
+	s.scheduler.On("EditTask", s.ctx, int64(42), (*string)(nil), (*string)(nil), &prompt).Return(errors.New("edit err"))
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Failed to edit task."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "edit",
+		Options:     map[string]string{"task_id": "42", "prompt": "new"},
 	})
 
 	s.scheduler.AssertExpectations(s.T())

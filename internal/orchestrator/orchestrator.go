@@ -25,6 +25,7 @@ type Bot interface {
 	OnMessage(handler func(ctx context.Context, msg *IncomingMessage))
 	OnInteraction(handler func(ctx context.Context, i any))
 	BotUserID() string
+	CreateChannel(ctx context.Context, guildID, name string) (string, error)
 }
 
 // IncomingMessage from Discord.
@@ -62,6 +63,9 @@ type Scheduler interface {
 	AddTask(ctx context.Context, task *db.ScheduledTask) (int64, error)
 	RemoveTask(ctx context.Context, taskID int64) error
 	ListTasks(ctx context.Context, channelID string) ([]*db.ScheduledTask, error)
+	SetTaskEnabled(ctx context.Context, taskID int64, enabled bool) error
+	ToggleTask(ctx context.Context, taskID int64) (bool, error)
+	EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string) error
 }
 
 // Interaction represents a Discord slash command interaction.
@@ -346,6 +350,10 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, interaction any) {
 		o.handleTasksInteraction(ctx, inter)
 	case "cancel":
 		o.handleCancelInteraction(ctx, inter)
+	case "toggle":
+		o.handleToggleInteraction(ctx, inter)
+	case "edit":
+		o.handleEditInteraction(ctx, inter)
 	case "status":
 		o.handleStatusInteraction(ctx, inter)
 	default:
@@ -447,17 +455,27 @@ func (o *Orchestrator) handleTasksInteraction(ctx context.Context, inter *Intera
 	if len(tasks) == 0 {
 		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
 			ChannelID: inter.ChannelID,
-			Content:   "No active scheduled tasks.",
+			Content:   "No scheduled tasks.",
 		})
 		return
 	}
 
 	now := time.Now()
 	var sb strings.Builder
-	sb.WriteString("Active scheduled tasks:\n")
+	sb.WriteString("Scheduled tasks:\n")
 	for _, t := range tasks {
+		status := "enabled"
+		if !t.Enabled {
+			status = "disabled"
+		}
+		var schedule string
+		if t.Type == db.TaskTypeOnce {
+			schedule = t.NextRunAt.UTC().Format("2006-01-02 15:04 UTC")
+		} else {
+			schedule = fmt.Sprintf("`%s`", t.Schedule)
+		}
 		nextRun := formatDuration(t.NextRunAt.Sub(now))
-		fmt.Fprintf(&sb, "- **ID %d** [%s] `%s` — %s (next: %s)\n", t.ID, t.Type, t.Schedule, t.Prompt, nextRun)
+		fmt.Fprintf(&sb, "- **ID %d** [%s] [%s] %s — %s (next: %s)\n", t.ID, t.Type, status, schedule, t.Prompt, nextRun)
 	}
 	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
 		ChannelID: inter.ChannelID,
@@ -487,6 +505,82 @@ func (o *Orchestrator) handleCancelInteraction(ctx context.Context, inter *Inter
 	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
 		ChannelID: inter.ChannelID,
 		Content:   fmt.Sprintf("Task %d cancelled.", taskID),
+	})
+}
+
+func (o *Orchestrator) handleToggleInteraction(ctx context.Context, inter *Interaction) {
+	idStr := inter.Options["task_id"]
+	taskID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "Invalid task ID.",
+		})
+		return
+	}
+
+	newEnabled, err := o.scheduler.ToggleTask(ctx, taskID)
+	if err != nil {
+		o.logger.Error("toggling task", "error", err, "channel_id", inter.ChannelID)
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "Failed to toggle task.",
+		})
+		return
+	}
+
+	state := "disabled"
+	if newEnabled {
+		state = "enabled"
+	}
+	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+		ChannelID: inter.ChannelID,
+		Content:   fmt.Sprintf("Task %d %s.", taskID, state),
+	})
+}
+
+func (o *Orchestrator) handleEditInteraction(ctx context.Context, inter *Interaction) {
+	idStr := inter.Options["task_id"]
+	taskID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "Invalid task ID.",
+		})
+		return
+	}
+
+	var schedule, taskType, prompt *string
+	if v, ok := inter.Options["schedule"]; ok {
+		schedule = &v
+	}
+	if v, ok := inter.Options["type"]; ok {
+		taskType = &v
+	}
+	if v, ok := inter.Options["prompt"]; ok {
+		prompt = &v
+	}
+
+	if schedule == nil && taskType == nil && prompt == nil {
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "At least one of schedule, type, or prompt is required.",
+		})
+		return
+	}
+
+	if err := o.scheduler.EditTask(ctx, taskID, schedule, taskType, prompt); err != nil {
+		o.logger.Error("editing task", "error", err, "channel_id", inter.ChannelID)
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "Failed to edit task.",
+		})
+		return
+	}
+
+	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+		ChannelID: inter.ChannelID,
+		Content:   fmt.Sprintf("Task %d updated.", taskID),
 	})
 }
 

@@ -23,6 +23,9 @@ type Scheduler interface {
 	AddTask(ctx context.Context, task *db.ScheduledTask) (int64, error)
 	RemoveTask(ctx context.Context, taskID int64) error
 	ListTasks(ctx context.Context, channelID string) ([]*db.ScheduledTask, error)
+	SetTaskEnabled(ctx context.Context, taskID int64, enabled bool) error
+	ToggleTask(ctx context.Context, taskID int64) (bool, error)
+	EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string) error
 }
 
 // TaskScheduler implements Scheduler using a polling loop.
@@ -82,6 +85,59 @@ func (s *TaskScheduler) RemoveTask(ctx context.Context, taskID int64) error {
 // ListTasks returns all tasks for a channel.
 func (s *TaskScheduler) ListTasks(ctx context.Context, channelID string) ([]*db.ScheduledTask, error) {
 	return s.store.ListScheduledTasks(ctx, channelID)
+}
+
+// SetTaskEnabled enables or disables a scheduled task.
+func (s *TaskScheduler) SetTaskEnabled(ctx context.Context, taskID int64, enabled bool) error {
+	return s.store.UpdateScheduledTaskEnabled(ctx, taskID, enabled)
+}
+
+// ToggleTask flips a scheduled task's enabled state and returns the new state.
+func (s *TaskScheduler) ToggleTask(ctx context.Context, taskID int64) (bool, error) {
+	task, err := s.store.GetScheduledTask(ctx, taskID)
+	if err != nil {
+		return false, fmt.Errorf("getting task: %w", err)
+	}
+	if task == nil {
+		return false, fmt.Errorf("task %d not found", taskID)
+	}
+
+	newEnabled := !task.Enabled
+	if err := s.store.UpdateScheduledTaskEnabled(ctx, taskID, newEnabled); err != nil {
+		return false, err
+	}
+	return newEnabled, nil
+}
+
+// EditTask updates a scheduled task's schedule, type, and/or prompt.
+func (s *TaskScheduler) EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string) error {
+	task, err := s.store.GetScheduledTask(ctx, taskID)
+	if err != nil {
+		return fmt.Errorf("getting task: %w", err)
+	}
+	if task == nil {
+		return fmt.Errorf("task %d not found", taskID)
+	}
+
+	if schedule != nil {
+		task.Schedule = *schedule
+	}
+	if taskType != nil {
+		task.Type = db.TaskType(*taskType)
+	}
+	if prompt != nil {
+		task.Prompt = *prompt
+	}
+
+	if schedule != nil || taskType != nil {
+		nextRun, err := calculateNextRun(task.Type, task.Schedule, time.Now())
+		if err != nil {
+			return fmt.Errorf("calculating next run: %w", err)
+		}
+		task.NextRunAt = nextRun
+	}
+
+	return s.store.UpdateScheduledTask(ctx, task)
 }
 
 func (s *TaskScheduler) pollLoop(ctx context.Context) {

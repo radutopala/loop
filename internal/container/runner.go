@@ -124,7 +124,7 @@ func buildMCPConfig(channelID, apiURL string, userServers map[string]config.MCPS
 	// Built-in loop-scheduler always overrides any user-defined server with that name.
 	servers["loop-scheduler"] = mcpServerEntry{
 		Command: "/usr/local/bin/loop",
-		Args:    []string{"mcp", "--channel-id", channelID, "--api-url", apiURL},
+		Args:    []string{"mcp", "--channel-id", channelID, "--api-url", apiURL, "--log", "/mcp/mcp.log"},
 	}
 	return mcpConfig{MCPServers: servers}
 }

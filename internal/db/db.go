@@ -13,6 +13,7 @@ import (
 type Store interface {
 	UpsertChannel(ctx context.Context, ch *Channel) error
 	GetChannel(ctx context.Context, channelID string) (*Channel, error)
+	GetChannelByDirPath(ctx context.Context, dirPath string) (*Channel, error)
 	SetChannelActive(ctx context.Context, channelID string, active bool) error
 	IsChannelActive(ctx context.Context, channelID string) (bool, error)
 	UpdateSessionID(ctx context.Context, channelID string, sessionID string) error
@@ -26,6 +27,8 @@ type Store interface {
 	UpdateScheduledTask(ctx context.Context, task *ScheduledTask) error
 	DeleteScheduledTask(ctx context.Context, id int64) error
 	ListScheduledTasks(ctx context.Context, channelID string) ([]*ScheduledTask, error)
+	UpdateScheduledTaskEnabled(ctx context.Context, id int64, enabled bool) error
+	GetScheduledTask(ctx context.Context, id int64) (*ScheduledTask, error)
 	InsertTaskRunLog(ctx context.Context, log *TaskRunLog) (int64, error)
 	UpdateTaskRunLog(ctx context.Context, log *TaskRunLog) error
 	Close() error
@@ -82,14 +85,15 @@ func (s *SQLiteStore) Close() error {
 
 func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO channels (channel_id, guild_id, name, active, updated_at)
-		 VALUES (?, ?, ?, ?, ?)
+		`INSERT INTO channels (channel_id, guild_id, name, dir_path, active, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(channel_id) DO UPDATE SET
 		   guild_id = excluded.guild_id,
 		   name = excluded.name,
+		   dir_path = excluded.dir_path,
 		   active = excluded.active,
 		   updated_at = excluded.updated_at`,
-		ch.ChannelID, ch.GuildID, ch.Name, boolToInt(ch.Active), time.Now().UTC(),
+		ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, boolToInt(ch.Active), time.Now().UTC(),
 	)
 	return err
 }
@@ -98,9 +102,26 @@ func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channe
 	ch := &Channel{}
 	var active int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, active, session_id, created_at, updated_at FROM channels WHERE channel_id = ?`,
+		`SELECT id, channel_id, guild_id, name, dir_path, active, session_id, created_at, updated_at FROM channels WHERE channel_id = ?`,
 		channelID,
-	).Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt)
+	).Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	ch.Active = active == 1
+	return ch, nil
+}
+
+func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string) (*Channel, error) {
+	ch := &Channel{}
+	var active int
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, channel_id, guild_id, name, dir_path, active, session_id, created_at, updated_at FROM channels WHERE dir_path = ?`,
+		dirPath,
+	).Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -141,7 +162,7 @@ func (s *SQLiteStore) UpdateSessionID(ctx context.Context, channelID string, ses
 
 func (s *SQLiteStore) GetRegisteredChannels(ctx context.Context) ([]*Channel, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, channel_id, guild_id, name, active, session_id, created_at, updated_at FROM channels WHERE active = 1`,
+		`SELECT id, channel_id, guild_id, name, dir_path, active, session_id, created_at, updated_at FROM channels WHERE active = 1`,
 	)
 	if err != nil {
 		return nil, err
@@ -152,7 +173,7 @@ func (s *SQLiteStore) GetRegisteredChannels(ctx context.Context) ([]*Channel, er
 	for rows.Next() {
 		ch := &Channel{}
 		var active int
-		if err := rows.Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
+		if err := rows.Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
 			return nil, err
 		}
 		ch.Active = active == 1
@@ -262,7 +283,7 @@ func (s *SQLiteStore) DeleteScheduledTask(ctx context.Context, id int64) error {
 func (s *SQLiteStore) ListScheduledTasks(ctx context.Context, channelID string) ([]*ScheduledTask, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at
-		 FROM scheduled_tasks WHERE channel_id = ? AND enabled = 1 ORDER BY next_run_at ASC`,
+		 FROM scheduled_tasks WHERE channel_id = ? ORDER BY next_run_at ASC`,
 		channelID,
 	)
 	if err != nil {
@@ -270,6 +291,36 @@ func (s *SQLiteStore) ListScheduledTasks(ctx context.Context, channelID string) 
 	}
 	defer rows.Close()
 	return scanScheduledTasks(rows)
+}
+
+func (s *SQLiteStore) UpdateScheduledTaskEnabled(ctx context.Context, id int64, enabled bool) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE scheduled_tasks SET enabled = ?, updated_at = ? WHERE id = ?`,
+		boolToInt(enabled), time.Now().UTC(), id,
+	)
+	return err
+}
+
+func (s *SQLiteStore) GetScheduledTask(ctx context.Context, id int64) (*ScheduledTask, error) {
+	task := &ScheduledTask{}
+	var enabled int
+	var taskType string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at
+		 FROM scheduled_tasks WHERE id = ?`,
+		id,
+	).Scan(&task.ID, &task.ChannelID, &task.GuildID, &task.Schedule,
+		&taskType, &task.Prompt, &enabled, &task.NextRunAt,
+		&task.CreatedAt, &task.UpdatedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	task.Type = TaskType(taskType)
+	task.Enabled = enabled == 1
+	return task, nil
 }
 
 func (s *SQLiteStore) InsertTaskRunLog(ctx context.Context, trl *TaskRunLog) (int64, error) {

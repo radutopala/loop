@@ -35,6 +35,18 @@ type cancelTaskInput struct {
 	TaskID int64 `json:"task_id" jsonschema:"The ID of the task to cancel"`
 }
 
+type toggleTaskInput struct {
+	TaskID  int64 `json:"task_id" jsonschema:"The ID of the task to enable or disable"`
+	Enabled bool  `json:"enabled" jsonschema:"Whether to enable (true) or disable (false) the task"`
+}
+
+type editTaskInput struct {
+	TaskID   int64   `json:"task_id" jsonschema:"The ID of the task to edit"`
+	Schedule *string `json:"schedule,omitempty" jsonschema:"New schedule expression (cron or Go duration)"`
+	Type     *string `json:"type,omitempty" jsonschema:"New task type: cron, interval, or once"`
+	Prompt   *string `json:"prompt,omitempty" jsonschema:"New prompt to execute on schedule"`
+}
+
 type listTasksInput struct{}
 
 // New creates a new MCP server with scheduler tools.
@@ -64,6 +76,16 @@ func New(channelID, apiURL string, httpClient HTTPClient, logger *slog.Logger) *
 		Name:        "cancel_task",
 		Description: "Cancel a scheduled task by its ID.",
 	}, s.handleCancelTask)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "toggle_task",
+		Description: "Enable or disable a scheduled task by its ID.",
+	}, s.handleToggleTask)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "edit_task",
+		Description: "Edit a scheduled task's schedule, type, and/or prompt.",
+	}, s.handleEditTask)
 
 	return s
 }
@@ -187,6 +209,66 @@ func (s *Server) handleCancelTask(_ context.Context, _ *mcp.CallToolRequest, inp
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: fmt.Sprintf("Task %d cancelled successfully.", input.TaskID)},
+		},
+	}, nil, nil
+}
+
+func (s *Server) handleEditTask(_ context.Context, _ *mcp.CallToolRequest, input editTaskInput) (*mcp.CallToolResult, any, error) {
+	body := map[string]any{}
+	if input.Schedule != nil {
+		body["schedule"] = *input.Schedule
+	}
+	if input.Type != nil {
+		body["type"] = *input.Type
+	}
+	if input.Prompt != nil {
+		body["prompt"] = *input.Prompt
+	}
+
+	if len(body) == 0 {
+		return errorResult("at least one of schedule, type, or prompt is required"), nil, nil
+	}
+
+	data, _ := json.Marshal(body)
+
+	respBody, status, err := s.doRequest("PATCH", fmt.Sprintf("%s/api/tasks/%d", s.apiURL, input.TaskID), data)
+	if err != nil {
+		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
+	}
+
+	if status != http.StatusOK {
+		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: fmt.Sprintf("Task %d updated successfully.", input.TaskID)},
+		},
+	}, nil, nil
+}
+
+func (s *Server) handleToggleTask(_ context.Context, _ *mcp.CallToolRequest, input toggleTaskInput) (*mcp.CallToolResult, any, error) {
+	data, _ := json.Marshal(map[string]bool{
+		"enabled": input.Enabled,
+	})
+
+	respBody, status, err := s.doRequest("PATCH", fmt.Sprintf("%s/api/tasks/%d", s.apiURL, input.TaskID), data)
+	if err != nil {
+		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
+	}
+
+	if status != http.StatusOK {
+		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
+	}
+
+	state := "disabled"
+	if input.Enabled {
+		state = "enabled"
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: fmt.Sprintf("Task %d %s.", input.TaskID, state)},
 		},
 	}, nil, nil
 }

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/tailscale/hujson"
 )
 
 // MCPServerConfig represents a single MCP server entry in the config.
@@ -31,6 +33,7 @@ type Config struct {
 	MountAllowlist       []string
 	APIAddr              string
 	ClaudeCodeOAuthToken string
+	DiscordGuildID       string
 	LoopDir              string
 	MCPServers           map[string]MCPServerConfig
 }
@@ -41,6 +44,7 @@ type jsonConfig struct {
 	DiscordToken         string         `json:"discord_token"`
 	DiscordAppID         string         `json:"discord_app_id"`
 	ClaudeCodeOAuthToken string         `json:"claude_code_oauth_token"`
+	DiscordGuildID       string         `json:"discord_guild_id"`
 	LogLevel             string         `json:"log_level"`
 	LogFormat            string         `json:"log_format"`
 	DBPath               string         `json:"db_path"`
@@ -78,8 +82,13 @@ func Load() (*Config, error) {
 		return nil, fmt.Errorf("reading config file: %w", err)
 	}
 
+	standardJSON, err := hujson.Standardize(data)
+	if err != nil {
+		return nil, fmt.Errorf("parsing config file: %w", err)
+	}
+
 	var jc jsonConfig
-	if err := json.Unmarshal(data, &jc); err != nil {
+	if err := json.Unmarshal(standardJSON, &jc); err != nil {
 		return nil, fmt.Errorf("parsing config file: %w", err)
 	}
 
@@ -88,6 +97,7 @@ func Load() (*Config, error) {
 		DiscordAppID:         jc.DiscordAppID,
 		ClaudeBinPath:        "claude",
 		ClaudeCodeOAuthToken: jc.ClaudeCodeOAuthToken,
+		DiscordGuildID:       jc.DiscordGuildID,
 		LogLevel:             stringDefault(jc.LogLevel, "info"),
 		LogFormat:            stringDefault(jc.LogFormat, "text"),
 		DBPath:               stringDefault(jc.DBPath, filepath.Join(loopDir, "loop.db")),

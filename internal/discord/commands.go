@@ -82,6 +82,55 @@ func Commands() []*discordgo.ApplicationCommand {
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "toggle",
+					Description: "Toggle a scheduled task on or off",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionInteger,
+							Name:        "task_id",
+							Description: "The ID of the task to toggle",
+							Required:    true,
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "edit",
+					Description: "Edit a scheduled task",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionInteger,
+							Name:        "task_id",
+							Description: "The ID of the task to edit",
+							Required:    true,
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "schedule",
+							Description: "New schedule expression (cron or duration)",
+							Required:    false,
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "type",
+							Description: "New schedule type",
+							Required:    false,
+							Choices: []*discordgo.ApplicationCommandOptionChoice{
+								{Name: "cron", Value: "cron"},
+								{Name: "interval", Value: "interval"},
+								{Name: "once", Value: "once"},
+							},
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "prompt",
+							Description: "New prompt to execute",
+							Required:    false,
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "status",
 					Description: "Show bot status",
 				},

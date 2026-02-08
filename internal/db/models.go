@@ -8,6 +8,7 @@ type Channel struct {
 	ChannelID string    `json:"channel_id"`
 	GuildID   string    `json:"guild_id"`
 	Name      string    `json:"name"`
+	DirPath   string    `json:"dir_path"`
 	Active    bool      `json:"active"`
 	SessionID string    `json:"session_id"`
 	CreatedAt time.Time `json:"created_at"`

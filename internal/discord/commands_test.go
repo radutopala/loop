@@ -38,6 +38,8 @@ func (s *CommandsSuite) TestSubcommands() {
 		"schedule":   true,
 		"tasks":      true,
 		"cancel":     true,
+		"toggle":     true,
+		"edit":       true,
 		"status":     true,
 	}
 
@@ -99,6 +101,45 @@ func (s *CommandsSuite) TestCancelSubcommand() {
 	require.Equal(s.T(), "task_id", cancel.Options[0].Name)
 	require.Equal(s.T(), discordgo.ApplicationCommandOptionInteger, cancel.Options[0].Type)
 	require.True(s.T(), cancel.Options[0].Required)
+}
+
+func (s *CommandsSuite) TestToggleSubcommand() {
+	cmds := Commands()
+	toggle := findSubcommand(cmds[0], "toggle")
+	require.NotNil(s.T(), toggle)
+	require.Len(s.T(), toggle.Options, 1)
+	require.Equal(s.T(), "task_id", toggle.Options[0].Name)
+	require.Equal(s.T(), discordgo.ApplicationCommandOptionInteger, toggle.Options[0].Type)
+	require.True(s.T(), toggle.Options[0].Required)
+}
+
+func (s *CommandsSuite) TestEditSubcommand() {
+	cmds := Commands()
+	edit := findSubcommand(cmds[0], "edit")
+	require.NotNil(s.T(), edit)
+	require.Len(s.T(), edit.Options, 4)
+
+	optNames := map[string]*discordgo.ApplicationCommandOption{}
+	for _, o := range edit.Options {
+		optNames[o.Name] = o
+	}
+
+	require.Contains(s.T(), optNames, "task_id")
+	require.Equal(s.T(), discordgo.ApplicationCommandOptionInteger, optNames["task_id"].Type)
+	require.True(s.T(), optNames["task_id"].Required)
+
+	require.Contains(s.T(), optNames, "schedule")
+	require.Equal(s.T(), discordgo.ApplicationCommandOptionString, optNames["schedule"].Type)
+	require.False(s.T(), optNames["schedule"].Required)
+
+	require.Contains(s.T(), optNames, "type")
+	require.Equal(s.T(), discordgo.ApplicationCommandOptionString, optNames["type"].Type)
+	require.False(s.T(), optNames["type"].Required)
+	require.Len(s.T(), optNames["type"].Choices, 3)
+
+	require.Contains(s.T(), optNames, "prompt")
+	require.Equal(s.T(), discordgo.ApplicationCommandOptionString, optNames["prompt"].Type)
+	require.False(s.T(), optNames["prompt"].Required)
 }
 
 func (s *CommandsSuite) TestRegisterUnregisterTasksStatusHaveNoOptions() {

@@ -34,6 +34,7 @@ type DiscordSession interface {
 	InteractionRespond(interaction *discordgo.Interaction, resp *discordgo.InteractionResponse, options ...discordgo.RequestOption) error
 	InteractionResponseEdit(interaction *discordgo.Interaction, newresp *discordgo.WebhookEdit, options ...discordgo.RequestOption) (*discordgo.Message, error)
 	FollowupMessageCreate(interaction *discordgo.Interaction, wait bool, data *discordgo.WebhookParams, options ...discordgo.RequestOption) (*discordgo.Message, error)
+	GuildChannelCreate(guildID string, name string, ctype discordgo.ChannelType, options ...discordgo.RequestOption) (*discordgo.Channel, error)
 }
 
 // Bot defines the interface for a Discord bot.
@@ -233,6 +234,16 @@ func (b *DiscordBot) OnInteraction(handler InteractionHandler) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.interactionHandlers = append(b.interactionHandlers, handler)
+}
+
+// CreateChannel creates a new text channel in the given guild.
+func (b *DiscordBot) CreateChannel(ctx context.Context, guildID, name string) (string, error) {
+	ch, err := b.session.GuildChannelCreate(guildID, name, discordgo.ChannelTypeGuildText)
+	if err != nil {
+		return "", fmt.Errorf("discord create channel: %w", err)
+	}
+	b.logger.InfoContext(ctx, "created discord channel", "channel_id", ch.ID, "name", name, "guild_id", guildID)
+	return ch.ID, nil
 }
 
 // BotUserID returns the bot's Discord user ID.
