@@ -137,10 +137,9 @@ func (s *RunnerSuite) TestRunHappyPath() {
 				hasSessionEnv = true
 			}
 		}
-		hasBinds := len(cfg.Binds) == 3 &&
-			cfg.Binds[0] == sessionVolume &&
-			cfg.Binds[1] == "/home/testuser/.loop/ch-1/work:/work" &&
-			cfg.Binds[2] == "/home/testuser/.loop/ch-1/mcp:/mcp"
+		hasBinds := len(cfg.Binds) == 2 &&
+			cfg.Binds[0] == "/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work" &&
+			cfg.Binds[1] == "/home/testuser/.loop/ch-1/mcp:/home/testuser/.loop/ch-1/mcp"
 		return hasSessionEnv && hasBinds
 	}), "").Return("container-123", nil)
 	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
@@ -744,10 +743,9 @@ func (s *RunnerSuite) TestRunWithDirPath() {
 	errCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		return len(cfg.Binds) == 3 &&
-			cfg.Binds[0] == sessionVolume &&
-			cfg.Binds[1] == "/home/user/project:/work" &&
-			cfg.Binds[2] == "/home/testuser/.loop/ch-1/mcp:/mcp"
+		return len(cfg.Binds) == 2 &&
+			cfg.Binds[0] == "/home/user/project:/home/user/project" &&
+			cfg.Binds[1] == "/home/testuser/.loop/ch-1/mcp:/home/testuser/.loop/ch-1/mcp"
 	}), "").Return("container-123", nil)
 	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
@@ -776,10 +774,9 @@ func (s *RunnerSuite) TestRunWithoutDirPathUsesDefault() {
 	errCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		return len(cfg.Binds) == 3 &&
-			cfg.Binds[0] == sessionVolume &&
-			cfg.Binds[1] == "/home/testuser/.loop/ch-1/work:/work" &&
-			cfg.Binds[2] == "/home/testuser/.loop/ch-1/mcp:/mcp"
+		return len(cfg.Binds) == 2 &&
+			cfg.Binds[0] == "/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work" &&
+			cfg.Binds[1] == "/home/testuser/.loop/ch-1/mcp:/home/testuser/.loop/ch-1/mcp"
 	}), "").Return("container-123", nil)
 	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
@@ -863,4 +860,277 @@ type errReader struct {
 
 func (r *errReader) Read([]byte) (int, error) {
 	return 0, r.err
+}
+
+// --- Tests for new mount processing functions ---
+
+func TestExpandPath(t *testing.T) {
+	origUserHomeDir := userHomeDir
+	defer func() { userHomeDir = origUserHomeDir }()
+
+	userHomeDir = func() (string, error) {
+		return "/home/testuser", nil
+	}
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+		wantErr  bool
+	}{
+		{
+			name:     "expand tilde path",
+			input:    "~/.claude",
+			expected: "/home/testuser/.claude",
+			wantErr:  false,
+		},
+		{
+			name:     "absolute path unchanged",
+			input:    "/absolute/path",
+			expected: "/absolute/path",
+			wantErr:  false,
+		},
+		{
+			name:     "relative path unchanged",
+			input:    "relative/path",
+			expected: "relative/path",
+			wantErr:  false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := expandPath(tt.input)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestExpandPathHomeDirError(t *testing.T) {
+	origUserHomeDir := userHomeDir
+	defer func() { userHomeDir = origUserHomeDir }()
+
+	userHomeDir = func() (string, error) {
+		return "", errors.New("home dir error")
+	}
+
+	_, err := expandPath("~/.claude")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "home dir error")
+}
+
+func TestProcessMount(t *testing.T) {
+	origUserHomeDir := userHomeDir
+	origOsStat := osStat
+	defer func() {
+		userHomeDir = origUserHomeDir
+		osStat = origOsStat
+	}()
+
+	userHomeDir = func() (string, error) {
+		return "/home/testuser", nil
+	}
+
+	osStat = func(name string) (os.FileInfo, error) {
+		if name == "/home/testuser/.claude" || name == "/home/testuser/.gitconfig" {
+			return nil, nil // Path exists
+		}
+		return nil, os.ErrNotExist
+	}
+
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+		wantErr  bool
+	}{
+		{
+			name:     "valid mount with expansion",
+			input:    "~/.claude:/home/agent/.claude",
+			expected: "/home/testuser/.claude:/home/agent/.claude",
+			wantErr:  false,
+		},
+		{
+			name:     "valid mount with readonly flag",
+			input:    "~/.gitconfig:/home/agent/.gitconfig:ro",
+			expected: "/home/testuser/.gitconfig:/home/agent/.gitconfig:ro",
+			wantErr:  false,
+		},
+		{
+			name:     "non-existent path returns empty",
+			input:    "~/.nonexistent:/target",
+			expected: "",
+			wantErr:  false,
+		},
+		{
+			name:     "invalid format",
+			input:    "invalid",
+			expected: "",
+			wantErr:  true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			result, err := processMount(tt.input)
+			if tt.wantErr {
+				require.Error(t, err)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.expected, result)
+			}
+		})
+	}
+}
+
+func TestProcessMountExpandPathError(t *testing.T) {
+	origUserHomeDir := userHomeDir
+	defer func() { userHomeDir = origUserHomeDir }()
+
+	userHomeDir = func() (string, error) {
+		return "", errors.New("home dir error")
+	}
+
+	result, err := processMount("~/.claude:/home/agent/.claude")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "expanding path")
+	require.Empty(t, result)
+}
+
+func (s *RunnerSuite) TestRunWithInvalidMount() {
+	s.cfg.Mounts = []string{"invalid-mount-no-colon"}
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	jsonOutput := `{"result":"ok","session_id":"s1","is_error":false}`
+	reader := bytes.NewReader([]byte(jsonOutput))
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		// Invalid mount should be skipped, only workDir and mcpDir binds
+		return len(cfg.Binds) == 2
+	}), "").Return("container-123", nil)
+	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp.Response)
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunWithCustomMounts() {
+	origUserHomeDir := userHomeDir
+	origOsStat := osStat
+	defer func() {
+		userHomeDir = origUserHomeDir
+		osStat = origOsStat
+	}()
+
+	userHomeDir = func() (string, error) {
+		return "/home/testuser", nil
+	}
+
+	osStat = func(name string) (os.FileInfo, error) {
+		if name == "/home/testuser/.claude" || name == "/home/testuser/.gitconfig" {
+			return nil, nil // Path exists
+		}
+		return nil, os.ErrNotExist
+	}
+
+	s.cfg.Mounts = []string{
+		"~/.claude:/home/agent/.claude",
+		"~/.gitconfig:/home/agent/.gitconfig:ro",
+		"~/.ssh:/home/agent/.ssh:ro", // This will be skipped as non-existent
+	}
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID:    "sess-1",
+		Messages:     []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		SystemPrompt: "You are helpful",
+		ChannelID:    "ch-1",
+	}
+
+	jsonOutput := `{"type":"result","result":"Hello!","session_id":"sess-new-1","is_error":false}`
+	reader := bytes.NewReader([]byte(jsonOutput))
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		// Check that binds include custom mounts and preserve paths
+		expectedBinds := []string{
+			"/home/testuser/.claude:/home/agent/.claude",
+			"/home/testuser/.gitconfig:/home/agent/.gitconfig:ro",
+			"/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work",
+			"/home/testuser/.loop/ch-1/mcp:/home/testuser/.loop/ch-1/mcp",
+		}
+		bindsMatch := slices.Equal(cfg.Binds, expectedBinds)
+		workDirMatch := cfg.WorkingDir == "/home/testuser/.loop/ch-1/work"
+		return bindsMatch && workDirMatch
+	}), "").Return("container-123", nil)
+	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), resp)
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunWithDirPathPreservesPath() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID:    "sess-1",
+		Messages:     []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		SystemPrompt: "You are helpful",
+		ChannelID:    "ch-1",
+		DirPath:      "/custom/project/path",
+	}
+
+	jsonOutput := `{"type":"result","result":"Hello!","session_id":"sess-new-1","is_error":false}`
+	reader := bytes.NewReader([]byte(jsonOutput))
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		// Verify workDir is mounted at same path and WorkingDir is set correctly
+		workDirBind := "/custom/project/path:/custom/project/path"
+		mcpDirBind := "/home/testuser/.loop/ch-1/mcp:/home/testuser/.loop/ch-1/mcp"
+		hasCorrectBinds := slices.Contains(cfg.Binds, workDirBind) && slices.Contains(cfg.Binds, mcpDirBind)
+		hasCorrectWorkingDir := cfg.WorkingDir == "/custom/project/path"
+		return hasCorrectBinds && hasCorrectWorkingDir
+	}), "").Return("container-123", nil)
+	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), resp)
+
+	s.client.AssertExpectations(s.T())
 }

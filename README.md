@@ -25,14 +25,14 @@ A Discord bot powered by Claude that runs AI agents in Docker containers.
           │  create container   │
           │  mount dir_path or  │
           │  ~/.loop/<ch>/work  │
-          │  → /work            │
+          │  (path-preserving)  │
           └──────────┬──────────┘
                      ▼
               Container (Docker)
           ┌─────────────────────┐
           │ claude --print      │
-          │   /work (project)   │
-          │   /mcp  (logs)      │
+          │   workDir (project) │
+          │   mcpDir  (logs)    │
           │   MCP: loop
           └─────────┬───────────┘
                     │
@@ -42,7 +42,7 @@ A Discord bot powered by Claude that runs AI agents in Docker containers.
 ```
 
 - **Orchestrator** coordinates message handling, channel registration, session management, and scheduled tasks
-- **DockerRunner** mounts the channel's `dir_path` to `/work` (falling back to `~/.loop/<channelID>/work`), then runs `claude --print` inside a Docker container
+- **DockerRunner** mounts the channel's `dir_path` (falling back to `~/.loop/<channelID>/work`) at its original path inside the container, then runs `claude --print`
 - **Scheduler** polls for due tasks (cron, interval, once) and executes them via DockerRunner
 - **MCP Server** (inside the container) gives Claude tools to schedule/manage tasks — calls loop back through the API server
 - **API Server** exposes REST endpoints for task and channel management
@@ -96,8 +96,32 @@ Alternatively, manually create `~/.loop/config.json` (HJSON — comments and tra
   "container_memory_mb": 512,
   "container_cpus": 1.0,
   "poll_interval_sec": 30,
+
+  // Mounts for all containers (optional)
+  // Format: "host_path:container_path" or "host_path:container_path:ro"
+  "mounts": [
+    "~/.claude:/home/agent/.claude",           // Writable - for Claude sessions
+    "~/.gitconfig:/home/agent/.gitconfig:ro",  // Read-only - for git identity
+    "~/.ssh:/home/agent/.ssh:ro",              // Read-only - for SSH keys
+    "/var/run/docker.sock:/var/run/docker.sock" // Docker access
+  ]
 }
 ```
+
+### Container Mounts
+
+The `mounts` configuration allows you to mount host directories into all agent containers. This enables:
+
+- **Session Portability**: Share Claude sessions between host and containers by mounting `~/.claude`
+- **Git Identity**: Inherit git config (user.name, user.email) from the host by mounting `~/.gitconfig`
+- **SSH Access**: Use host SSH keys for git operations by mounting `~/.ssh`
+- **Docker Access**: Run Docker commands inside containers by mounting `/var/run/docker.sock` (the host socket's GID is auto-detected and added to the container process)
+
+Mount format: `"host_path:container_path[:mode]"` where mode is `ro` for read-only (optional).
+
+Paths starting with `~/` are automatically expanded to the user's home directory. Non-existent paths are silently skipped.
+
+**Important**: Project directories (`workDir`) and MCP logs (`mcpDir`) are automatically mounted at their actual paths (not `/work` or `/mcp`), ensuring Claude sessions reference correct absolute paths.
 
 ### Build
 

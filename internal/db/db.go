@@ -204,10 +204,11 @@ func (s *SQLiteStore) GetRecentMessages(ctx context.Context, channelID string, l
 }
 
 func (s *SQLiteStore) CreateScheduledTask(ctx context.Context, task *ScheduledTask) (int64, error) {
+	now := time.Now().UTC()
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO scheduled_tasks (channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, updated_at, template_name)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		task.ChannelID, task.GuildID, task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, time.Now().UTC(), task.TemplateName,
+		`INSERT INTO scheduled_tasks (channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		task.ChannelID, task.GuildID, task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, now, now, task.TemplateName,
 	)
 	if err != nil {
 		return 0, err

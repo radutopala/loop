@@ -62,6 +62,7 @@ func (c *Client) ContainerCreate(ctx context.Context, cfg *ContainerConfig, name
 		Labels:       map[string]string{"app": "loop-agent"},
 		Env:          cfg.Env,
 		Cmd:          cfg.Cmd,
+		WorkingDir:   cfg.WorkingDir,
 	}
 
 	hostCfg := &containertypes.HostConfig{
@@ -71,6 +72,7 @@ func (c *Client) ContainerCreate(ctx context.Context, cfg *ContainerConfig, name
 			CPUPeriod: 100000,
 		},
 		Binds:      cfg.Binds,
+		GroupAdd:   cfg.GroupAdd,
 		ExtraHosts: []string{"host.docker.internal:host-gateway"},
 	}
 

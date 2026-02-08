@@ -38,12 +38,14 @@ var ansiRegexp = regexp.MustCompile(`\x1b(?:\[[0-9;?]*[a-zA-Z<>]|\][^\x07]*(?:\x
 
 // ContainerConfig holds settings for creating a container.
 type ContainerConfig struct {
-	Image    string
-	MemoryMB int64
-	CPUs     float64
-	Env      []string
-	Cmd      []string
-	Binds    []string
+	Image      string
+	MemoryMB   int64
+	CPUs       float64
+	Env        []string
+	Cmd        []string
+	Binds      []string
+	WorkingDir string
+	GroupAdd   []string
 }
 
 // WaitResponse represents the result of waiting for a container to finish.
@@ -85,11 +87,12 @@ func NewDockerRunner(client DockerClient, cfg *config.Config) *DockerRunner {
 }
 
 const containerLabel = "loop-agent"
-const sessionVolume = "loop-sessions:/home/agent/.claude"
 
 var mkdirAll = os.MkdirAll
 var getenv = os.Getenv
 var writeFile = os.WriteFile
+var userHomeDir = os.UserHomeDir
+var osStat = os.Stat
 
 // Run executes an agent request in a Docker container.
 // If a session ID is set and the run fails, it retries without --resume
@@ -127,6 +130,47 @@ func buildMCPConfig(channelID, apiURL string, userServers map[string]config.MCPS
 		Args:    []string{"mcp", "--channel-id", channelID, "--api-url", apiURL, "--log", "/mcp/mcp.log"},
 	}
 	return mcpConfig{MCPServers: servers}
+}
+
+// expandPath expands ~ in paths to the user's home directory.
+func expandPath(path string) (string, error) {
+	if !strings.HasPrefix(path, "~/") {
+		return path, nil
+	}
+	home, err := userHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, path[2:]), nil
+}
+
+// processMount processes a single mount specification and returns the expanded bind string.
+// Returns empty string if the mount should be skipped.
+func processMount(mount string) (string, error) {
+	parts := strings.Split(mount, ":")
+	if len(parts) < 2 {
+		return "", fmt.Errorf("invalid mount format: %s", mount)
+	}
+
+	hostPath := parts[0]
+	expanded, err := expandPath(hostPath)
+	if err != nil {
+		return "", fmt.Errorf("expanding path %s: %w", hostPath, err)
+	}
+
+	// Check if path exists
+	if _, err := osStat(expanded); os.IsNotExist(err) {
+		// Skip non-existent paths silently
+		return "", nil
+	}
+
+	// Reconstruct mount with expanded path
+	containerPath := parts[1]
+	mode := ""
+	if len(parts) > 2 {
+		mode = ":" + parts[2]
+	}
+	return expanded + ":" + containerPath + mode, nil
 }
 
 // runOnce executes a single container run.
@@ -167,13 +211,33 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		return nil, fmt.Errorf("writing mcp config: %w", err)
 	}
 
+	var binds []string
+
+	// Add mounts from config
+	for _, mount := range r.cfg.Mounts {
+		bind, err := processMount(mount)
+		if err != nil {
+			// Log warning but continue (don't fail the container)
+			fmt.Fprintf(os.Stderr, "Warning: skipping mount %s: %v\n", mount, err)
+			continue
+		}
+		if bind != "" {
+			binds = append(binds, bind)
+		}
+	}
+
+	// Mount workDir and mcpDir at same paths in container
+	binds = append(binds, workDir+":"+workDir)
+	binds = append(binds, mcpDir+":"+mcpDir)
+
 	containerCfg := &ContainerConfig{
-		Image:    r.cfg.ContainerImage,
-		MemoryMB: r.cfg.ContainerMemoryMB,
-		CPUs:     r.cfg.ContainerCPUs,
-		Env:      env,
-		Cmd:      []string{prompt},
-		Binds:    []string{sessionVolume, workDir + ":/work", mcpDir + ":/mcp"},
+		Image:      r.cfg.ContainerImage,
+		MemoryMB:   r.cfg.ContainerMemoryMB,
+		CPUs:       r.cfg.ContainerCPUs,
+		Env:        env,
+		Cmd:        []string{prompt},
+		Binds:      binds,
+		WorkingDir: workDir,
 	}
 
 	containerID, err := r.client.ContainerCreate(ctx, containerCfg, "")

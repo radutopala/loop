@@ -412,7 +412,7 @@ func (o *Orchestrator) handleTasksInteraction(ctx context.Context, inter *Intera
 		return
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	var sb strings.Builder
 	sb.WriteString("Scheduled tasks:\n")
 	for _, t := range tasks {

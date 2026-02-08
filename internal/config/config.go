@@ -45,6 +45,7 @@ type Config struct {
 	LoopDir              string
 	MCPServers           map[string]MCPServerConfig
 	TaskTemplates        []TaskTemplate
+	Mounts               []string
 }
 
 // jsonConfig is an intermediate struct for JSON unmarshalling.
@@ -65,6 +66,7 @@ type jsonConfig struct {
 	APIAddr              string         `json:"api_addr"`
 	MCP                  *jsonMCPConfig `json:"mcp"`
 	TaskTemplates        []TaskTemplate `json:"task_templates"`
+	Mounts               []string       `json:"mounts"`
 }
 
 type jsonMCPConfig struct {
@@ -124,6 +126,7 @@ func Load() (*Config, error) {
 	}
 
 	cfg.TaskTemplates = jc.TaskTemplates
+	cfg.Mounts = jc.Mounts
 
 	var missing []string
 	if cfg.DiscordToken == "" {
