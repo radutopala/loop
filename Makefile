@@ -1,4 +1,4 @@
-.PHONY: help build install test lint coverage coverage-check docker-build run clean
+.PHONY: help build install test lint coverage coverage-check docker-build run clean restart
 .DEFAULT_GOAL := help
 
 help: ## Show available targets
@@ -31,6 +31,10 @@ docker-build: ## Build the Docker container image
 
 run: build ## Build and run the bot
 	./bin/loop serve
+
+restart: install ## Install, stop and start the daemon
+	loop daemon stop || true
+	loop daemon start
 
 clean: ## Remove build artifacts
 	rm -rf bin/ coverage.out coverage.html
