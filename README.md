@@ -275,3 +275,7 @@ make coverage-check   # Enforce 100% test coverage
 make coverage         # Generate HTML coverage report
 make clean            # Remove build artifacts
 ```
+
+## License
+
+This project is licensed under the [GNU General Public License v3.0](LICENSE).
