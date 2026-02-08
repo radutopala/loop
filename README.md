@@ -69,7 +69,15 @@ A Discord bot powered by Claude that runs AI agents in Docker containers.
 
 ### Configuration
 
-Create `~/.loop/config.json` (HJSON — comments and trailing commas are allowed):
+Initialize your configuration with the onboard command:
+
+```sh
+loop onboard
+```
+
+This creates `~/.loop/config.json` from the embedded example config. Edit it to add your Discord credentials.
+
+Alternatively, manually create `~/.loop/config.json` (HJSON — comments and trailing commas are allowed):
 
 ```jsonc
 {
@@ -123,6 +131,7 @@ make restart
 
 | Command | Alias | Description |
 |---|---|---|
+| `loop onboard` | | Initialize Loop configuration (copy config.example.json to ~/.loop/config.json) |
 | `loop serve` | `s` | Start the Discord bot |
 | `loop mcp` | `m` | Run as an MCP server over stdio |
 | `loop daemon start` | `d up` | Install and start the daemon |
@@ -168,8 +177,41 @@ To register it in your local Claude Code, add to `.mcp.json` (project-level or `
 | `/loop toggle <task_id>` | Toggle a scheduled task on or off |
 | `/loop edit <task_id> [schedule] [type] [prompt]` | Edit a scheduled task |
 | `/loop status` | Show bot status |
+| `/loop template add <name>` | Load a task template into the current channel |
+| `/loop template list` | List available task templates from config |
 
 The bot also responds to `@mentions`, replies to its own messages, and messages prefixed with `!loop`.
+
+### Task Templates
+
+The config.json file can include a `task_templates` array with reusable task patterns. Use `/loop template add <name>` in Discord to load a template as a scheduled task in the current channel. Templates are idempotent — adding the same template twice to a channel is a no-op.
+
+Example templates in config.json:
+
+```jsonc
+{
+  // ... other config ...
+
+  "task_templates": [
+    {
+      "name": "tk-auto-worker",
+      "description": "Automatically work on ready tickets from tk queue",
+      "schedule": "*/5 * * * *",
+      "type": "cron",
+      "prompt": "Check the tk ticket queue with 'tk ready'. Find any tickets that are marked as ready to start. If you find a ready ticket, use 'tk start <id>' to begin working on it, implement the solution following the ticket's requirements, and when complete use 'tk close <id>' to mark it as done. If no tickets are ready, report the current queue status."
+    },
+    {
+      "name": "daily-summary",
+      "description": "Generate a daily summary of completed tickets",
+      "schedule": "0 17 * * *",
+      "type": "cron",
+      "prompt": "Generate a summary of all tickets closed today using 'tk list --status=closed'. Include ticket IDs, titles, and brief descriptions of what was accomplished."
+    }
+  ]
+}
+```
+
+To use a template, copy its schedule, type, and prompt values into the `/loop schedule` command in Discord.
 
 ## REST API
 

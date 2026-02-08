@@ -284,3 +284,77 @@ func (s *ConfigSuite) TestDefaultReadFile() {
 	_, err := s.origReadFile("/nonexistent/path/config.json")
 	require.Error(s.T(), err)
 }
+
+func (s *ConfigSuite) TestTaskTemplatesLoaded() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"discord_token": "tok",
+			"discord_app_id": "app",
+			"task_templates": [
+				{
+					"name": "tk-auto-worker",
+					"description": "Auto work on tickets",
+					"schedule": "*/5 * * * *",
+					"type": "cron",
+					"prompt": "Check tk queue and work on ready tickets"
+				},
+				{
+					"name": "daily-summary",
+					"description": "Daily summary",
+					"schedule": "0 17 * * *",
+					"type": "cron",
+					"prompt": "Generate summary"
+				}
+			]
+		}`), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Len(s.T(), cfg.TaskTemplates, 2)
+
+	tmpl1 := cfg.TaskTemplates[0]
+	require.Equal(s.T(), "tk-auto-worker", tmpl1.Name)
+	require.Equal(s.T(), "Auto work on tickets", tmpl1.Description)
+	require.Equal(s.T(), "*/5 * * * *", tmpl1.Schedule)
+	require.Equal(s.T(), "cron", tmpl1.Type)
+	require.Equal(s.T(), "Check tk queue and work on ready tickets", tmpl1.Prompt)
+
+	tmpl2 := cfg.TaskTemplates[1]
+	require.Equal(s.T(), "daily-summary", tmpl2.Name)
+	require.Equal(s.T(), "Daily summary", tmpl2.Description)
+	require.Equal(s.T(), "0 17 * * *", tmpl2.Schedule)
+	require.Equal(s.T(), "cron", tmpl2.Type)
+	require.Equal(s.T(), "Generate summary", tmpl2.Prompt)
+}
+
+func (s *ConfigSuite) TestTaskTemplatesAbsent() {
+	readFile = func(_ string) ([]byte, error) {
+		return s.minimalJSON(), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), cfg.TaskTemplates)
+}
+
+func (s *ConfigSuite) TestTaskTemplatesEmpty() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"discord_token": "tok",
+			"discord_app_id": "app",
+			"task_templates": []
+		}`), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), cfg.TaskTemplates)
+}
+
+func (s *ConfigSuite) TestExampleConfigEmbedded() {
+	// Verify the embedded ExampleConfig is not empty
+	require.NotEmpty(s.T(), ExampleConfig)
+	require.Contains(s.T(), string(ExampleConfig), "discord_token")
+	require.Contains(s.T(), string(ExampleConfig), "task_templates")
+}

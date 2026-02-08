@@ -111,6 +111,31 @@ func Commands() []*discordgo.ApplicationCommand {
 					Name:        "status",
 					Description: "Show bot status",
 				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommandGroup,
+					Name:        "template",
+					Description: "Manage task templates",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionSubCommand,
+							Name:        "add",
+							Description: "Load a task template into this channel",
+							Options: []*discordgo.ApplicationCommandOption{
+								{
+									Type:        discordgo.ApplicationCommandOptionString,
+									Name:        "name",
+									Description: "Template name from config",
+									Required:    true,
+								},
+							},
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionSubCommand,
+							Name:        "list",
+							Description: "List available task templates",
+						},
+					},
+				},
 			},
 		},
 	}

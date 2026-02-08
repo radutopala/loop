@@ -123,6 +123,14 @@ func (m *MockStore) Close() error {
 	return m.Called().Error(0)
 }
 
+func (m *MockStore) GetScheduledTaskByTemplateName(ctx context.Context, channelID, templateName string) (*db.ScheduledTask, error) {
+	args := m.Called(ctx, channelID, templateName)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*db.ScheduledTask), args.Error(1)
+}
+
 type MockCreator struct {
 	mock.Mock
 }

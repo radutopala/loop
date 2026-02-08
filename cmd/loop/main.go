@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 
@@ -47,6 +48,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newServeCmd())
 	root.AddCommand(newMCPCmd())
 	root.AddCommand(newDaemonCmd())
+	root.AddCommand(newOnboardCmd())
 	return root
 }
 
@@ -141,6 +143,64 @@ func newDaemonCmd() *cobra.Command {
 	})
 
 	return cmd
+}
+
+func newOnboardCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "onboard",
+		Short: "Initialize Loop configuration",
+		Long:  "Copies config.example.json to ~/.loop/config.json for first-time setup",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			force, _ := cmd.Flags().GetBool("force")
+			return onboard(force)
+		},
+	}
+
+	cmd.Flags().Bool("force", false, "Overwrite existing config")
+
+	return cmd
+}
+
+var (
+	userHomeDir = os.UserHomeDir
+	osStat      = os.Stat
+	osMkdirAll  = os.MkdirAll
+	osWriteFile = os.WriteFile
+)
+
+func onboard(force bool) error {
+	home, err := userHomeDir()
+	if err != nil {
+		return fmt.Errorf("getting home directory: %w", err)
+	}
+
+	loopDir := filepath.Join(home, ".loop")
+	configPath := filepath.Join(loopDir, "config.json")
+
+	// Check if config already exists
+	if _, err := osStat(configPath); err == nil {
+		if !force {
+			return fmt.Errorf("config already exists at %s (use --force to overwrite)", configPath)
+		}
+	}
+
+	// Create ~/.loop directory if it doesn't exist
+	if err := osMkdirAll(loopDir, 0755); err != nil {
+		return fmt.Errorf("creating loop directory: %w", err)
+	}
+
+	// Write embedded example config
+	if err := osWriteFile(configPath, config.ExampleConfig, 0600); err != nil {
+		return fmt.Errorf("writing config file: %w", err)
+	}
+
+	fmt.Printf("✓ Created config at %s\n", configPath)
+	fmt.Println("\nNext steps:")
+	fmt.Println("1. Edit config.json and add your discord_token and discord_app_id")
+	fmt.Println("2. Run 'loop serve' to start the bot")
+	fmt.Println("3. Use '/loop template add <name>' in Discord to load task templates")
+
+	return nil
 }
 
 var ensureChannelFunc = ensureChannel
@@ -256,7 +316,7 @@ func serve() error {
 		return fmt.Errorf("starting api server: %w", err)
 	}
 
-	orch := orchestrator.New(store, bot, runner, sched, logger)
+	orch := orchestrator.New(store, bot, runner, sched, logger, cfg.TaskTemplates)
 
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()

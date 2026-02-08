@@ -296,12 +296,22 @@ func (b *DiscordBot) handleInteraction(_ *discordgo.Session, i *discordgo.Intera
 	data := i.ApplicationCommandData()
 
 	// Subcommands: Options[0] is the subcommand, its Options hold the params.
+	// Subcommand groups: Options[0] is the group, Options[0].Options[0] is the subcommand.
 	var commandName string
 	var opts []*discordgo.ApplicationCommandInteractionDataOption
-	if len(data.Options) > 0 && data.Options[0].Type == discordgo.ApplicationCommandOptionSubCommand {
+	switch {
+	case len(data.Options) > 0 && data.Options[0].Type == discordgo.ApplicationCommandOptionSubCommandGroup:
+		group := data.Options[0]
+		if len(group.Options) > 0 {
+			commandName = group.Name + "-" + group.Options[0].Name
+			opts = group.Options[0].Options
+		} else {
+			commandName = group.Name
+		}
+	case len(data.Options) > 0 && data.Options[0].Type == discordgo.ApplicationCommandOptionSubCommand:
 		commandName = data.Options[0].Name
 		opts = data.Options[0].Options
-	} else {
+	default:
 		commandName = data.Name
 		opts = data.Options
 	}

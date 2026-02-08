@@ -17,6 +17,15 @@ type MCPServerConfig struct {
 	Env     map[string]string `json:"env,omitempty"`
 }
 
+// TaskTemplate represents a reusable task template with schedule and prompt.
+type TaskTemplate struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Schedule    string `json:"schedule"`
+	Type        string `json:"type"`
+	Prompt      string `json:"prompt"`
+}
+
 // Config holds all application configuration loaded from config.json.
 type Config struct {
 	DiscordToken         string
@@ -35,6 +44,7 @@ type Config struct {
 	DiscordGuildID       string
 	LoopDir              string
 	MCPServers           map[string]MCPServerConfig
+	TaskTemplates        []TaskTemplate
 }
 
 // jsonConfig is an intermediate struct for JSON unmarshalling.
@@ -54,6 +64,7 @@ type jsonConfig struct {
 	PollIntervalSec      *int           `json:"poll_interval_sec"`
 	APIAddr              string         `json:"api_addr"`
 	MCP                  *jsonMCPConfig `json:"mcp"`
+	TaskTemplates        []TaskTemplate `json:"task_templates"`
 }
 
 type jsonMCPConfig struct {
@@ -111,6 +122,8 @@ func Load() (*Config, error) {
 	if jc.MCP != nil && len(jc.MCP.Servers) > 0 {
 		cfg.MCPServers = jc.MCP.Servers
 	}
+
+	cfg.TaskTemplates = jc.TaskTemplates
 
 	var missing []string
 	if cfg.DiscordToken == "" {

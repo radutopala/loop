@@ -1,0 +1,34 @@
+{
+  // Required
+  "discord_token": "your-discord-bot-token-here",
+  "discord_app_id": "your-discord-app-id-here",
+  // Enables auto-creation of Discord channels via `loop mcp --dir`
+  "discord_guild_id": "your-discord-guild-id-here",
+
+  // Optional (defaults shown)
+  //"log_level": "info",
+  //"log_format": "text",
+  //"container_image": "loop-agent:latest",
+  //"container_timeout_sec": 300,
+  //"container_memory_mb": 512,
+  //"container_cpus": 1.0,
+  //"poll_interval_sec": 30,
+
+  // Task templates
+  "task_templates": [
+    {
+      "name": "tk-auto-worker",
+      "description": "Automatically work on ready tickets from tk queue",
+      "schedule": "*/5 * * * *",
+      "type": "cron",
+      "prompt": "Check the tk ticket queue with 'tk ready'. Find any tickets that are marked as ready to start. If you find a ready ticket, use 'tk start <id>' to begin working on it, implement the solution following the ticket's requirements, and when complete use 'tk close <id>' to mark it as done. If no tickets are ready, report the current queue status."
+    },
+    {
+      "name": "daily-summary",
+      "description": "Generate a daily summary of completed tickets",
+      "schedule": "0 17 * * *",
+      "type": "cron",
+      "prompt": "Generate a summary of all tickets closed today using 'tk list --status=closed'. Include ticket IDs, titles, and brief descriptions of what was accomplished."
+    }
+  ]
+}

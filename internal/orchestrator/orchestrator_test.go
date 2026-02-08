@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/radutopala/loop/internal/agent"
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -135,6 +136,14 @@ func (m *MockStore) UpdateTaskRunLog(ctx context.Context, trl *db.TaskRunLog) er
 func (m *MockStore) Close() error {
 	args := m.Called()
 	return args.Error(0)
+}
+
+func (m *MockStore) GetScheduledTaskByTemplateName(ctx context.Context, channelID, templateName string) (*db.ScheduledTask, error) {
+	args := m.Called(ctx, channelID, templateName)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*db.ScheduledTask), args.Error(1)
 }
 
 type MockBot struct {
@@ -275,7 +284,7 @@ func (s *OrchestratorSuite) SetupTest() {
 	s.ctx = context.Background()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, nil)
 }
 
 func (s *OrchestratorSuite) TestNew() {
@@ -1235,4 +1244,151 @@ func (s *OrchestratorSuite) TestFormatDuration() {
 			require.Equal(s.T(), tc.expected, formatDuration(tc.d))
 		})
 	}
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSuccess() {
+	templates := []config.TaskTemplate{
+		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates)
+
+	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
+	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
+		return task.ChannelID == "ch1" && task.TemplateName == "daily-check" && task.Schedule == "0 9 * * *" && task.Type == db.TaskTypeCron && task.Prompt == "check stuff"
+	})).Return(int64(10), nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Template 'daily-check' loaded (task ID: 10)."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		GuildID:     "g1",
+		CommandName: "template-add",
+		Options:     map[string]string{"name": "daily-check"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.scheduler.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTemplateAddIdempotent() {
+	templates := []config.TaskTemplate{
+		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates)
+
+	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(&db.ScheduledTask{ID: 5, TemplateName: "daily-check"}, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Template 'daily-check' already loaded (task ID: 5)."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "template-add",
+		Options:     map[string]string{"name": "daily-check"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTemplateAddUnknown() {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Unknown template: nonexistent"
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "template-add",
+		Options:     map[string]string{"name": "nonexistent"},
+	})
+
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTemplateAddStoreError() {
+	templates := []config.TaskTemplate{
+		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates)
+
+	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, errors.New("db error"))
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Failed to check existing templates."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "template-add",
+		Options:     map[string]string{"name": "daily-check"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSchedulerError() {
+	templates := []config.TaskTemplate{
+		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates)
+
+	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
+	s.scheduler.On("AddTask", s.ctx, mock.Anything).Return(int64(0), errors.New("sched error"))
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Failed to add template task."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "template-add",
+		Options:     map[string]string{"name": "daily-check"},
+	})
+
+	s.scheduler.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTemplateList() {
+	templates := []config.TaskTemplate{
+		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
+		{Name: "weekly-report", Description: "Weekly report", Schedule: "0 17 * * 5", Type: "cron", Prompt: "generate report"},
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates)
+
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return strings.Contains(out.Content, "Available templates:") &&
+			strings.Contains(out.Content, "**daily-check**") &&
+			strings.Contains(out.Content, "**weekly-report**") &&
+			strings.Contains(out.Content, "[cron]") &&
+			strings.Contains(out.Content, "`0 9 * * *`") &&
+			strings.Contains(out.Content, "Daily check")
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "template-list",
+	})
+
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTemplateListEmpty() {
+	// s.orch already has nil templates from SetupTest
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "No templates configured."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "template-list",
+	})
+
+	s.bot.AssertExpectations(s.T())
 }

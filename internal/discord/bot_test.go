@@ -448,6 +448,78 @@ func (s *BotSuite) TestOnInteractionWithOptions() {
 	require.Equal(s.T(), "cron", received.Options["type"])
 }
 
+func (s *BotSuite) TestOnInteractionSubcommandGroup() {
+	var received *orchestrator.Interaction
+	s.bot.OnInteraction(func(_ context.Context, i any) {
+		received = i.(*orchestrator.Interaction)
+	})
+
+	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	ic := &discordgo.InteractionCreate{
+		Interaction: &discordgo.Interaction{
+			ChannelID: "ch-1",
+			GuildID:   "g-1",
+			Type:      discordgo.InteractionApplicationCommand,
+			Data: discordgo.ApplicationCommandInteractionData{
+				Name: "loop",
+				Options: []*discordgo.ApplicationCommandInteractionDataOption{
+					{
+						Name: "template",
+						Type: discordgo.ApplicationCommandOptionSubCommandGroup,
+						Options: []*discordgo.ApplicationCommandInteractionDataOption{
+							{
+								Name: "add",
+								Type: discordgo.ApplicationCommandOptionSubCommand,
+								Options: []*discordgo.ApplicationCommandInteractionDataOption{
+									{Name: "name", Type: discordgo.ApplicationCommandOptionString, Value: "daily-check"},
+								},
+							},
+						},
+					},
+				},
+			},
+		},
+	}
+	s.bot.handleInteraction(nil, ic)
+
+	require.NotNil(s.T(), received)
+	require.Equal(s.T(), "template-add", received.CommandName)
+	require.Equal(s.T(), "daily-check", received.Options["name"])
+	require.Equal(s.T(), "ch-1", received.ChannelID)
+	require.Equal(s.T(), "g-1", received.GuildID)
+}
+
+func (s *BotSuite) TestOnInteractionSubcommandGroupNoSub() {
+	var received *orchestrator.Interaction
+	s.bot.OnInteraction(func(_ context.Context, i any) {
+		received = i.(*orchestrator.Interaction)
+	})
+
+	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	ic := &discordgo.InteractionCreate{
+		Interaction: &discordgo.Interaction{
+			ChannelID: "ch-1",
+			Type:      discordgo.InteractionApplicationCommand,
+			Data: discordgo.ApplicationCommandInteractionData{
+				Name: "loop",
+				Options: []*discordgo.ApplicationCommandInteractionDataOption{
+					{
+						Name:    "template",
+						Type:    discordgo.ApplicationCommandOptionSubCommandGroup,
+						Options: []*discordgo.ApplicationCommandInteractionDataOption{},
+					},
+				},
+			},
+		},
+	}
+	s.bot.handleInteraction(nil, ic)
+
+	require.NotNil(s.T(), received)
+	require.Equal(s.T(), "template", received.CommandName)
+}
+
 func (s *BotSuite) TestOnInteractionTopLevelCommand() {
 	var received *orchestrator.Interaction
 	s.bot.OnInteraction(func(_ context.Context, i any) {

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/radutopala/loop/internal/agent"
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 )
 
@@ -85,10 +86,11 @@ type Orchestrator struct {
 	queue          *ChannelQueue
 	logger         *slog.Logger
 	typingInterval time.Duration
+	templates      []config.TaskTemplate
 }
 
 // New creates a new Orchestrator.
-func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *slog.Logger) *Orchestrator {
+func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *slog.Logger, templates []config.TaskTemplate) *Orchestrator {
 	return &Orchestrator{
 		store:          store,
 		bot:            bot,
@@ -97,6 +99,7 @@ func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *sl
 		queue:          NewChannelQueue(),
 		logger:         logger,
 		typingInterval: typingRefreshInterval,
+		templates:      templates,
 	}
 }
 
@@ -356,6 +359,10 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, interaction any) {
 		o.handleEditInteraction(ctx, inter)
 	case "status":
 		o.handleStatusInteraction(ctx, inter)
+	case "template-add":
+		o.handleTemplateAddInteraction(ctx, inter)
+	case "template-list":
+		o.handleTemplateListInteraction(ctx, inter)
 	default:
 		o.logger.Warn("unknown command", "command", inter.CommandName)
 	}
@@ -533,6 +540,86 @@ func (o *Orchestrator) handleStatusInteraction(ctx context.Context, inter *Inter
 	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
 		ChannelID: inter.ChannelID,
 		Content:   "Loop bot is running.",
+	})
+}
+
+func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *Interaction) {
+	name := inter.Options["name"]
+
+	var tmpl *config.TaskTemplate
+	for i := range o.templates {
+		if o.templates[i].Name == name {
+			tmpl = &o.templates[i]
+			break
+		}
+	}
+	if tmpl == nil {
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   fmt.Sprintf("Unknown template: %s", name),
+		})
+		return
+	}
+
+	existing, err := o.store.GetScheduledTaskByTemplateName(ctx, inter.ChannelID, name)
+	if err != nil {
+		o.logger.Error("checking template", "error", err, "channel_id", inter.ChannelID)
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "Failed to check existing templates.",
+		})
+		return
+	}
+	if existing != nil {
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   fmt.Sprintf("Template '%s' already loaded (task ID: %d).", name, existing.ID),
+		})
+		return
+	}
+
+	task := &db.ScheduledTask{
+		ChannelID:    inter.ChannelID,
+		GuildID:      inter.GuildID,
+		Schedule:     tmpl.Schedule,
+		Prompt:       tmpl.Prompt,
+		Type:         db.TaskType(tmpl.Type),
+		Enabled:      true,
+		TemplateName: name,
+	}
+
+	id, err := o.scheduler.AddTask(ctx, task)
+	if err != nil {
+		o.logger.Error("adding template task", "error", err, "channel_id", inter.ChannelID)
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "Failed to add template task.",
+		})
+		return
+	}
+	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+		ChannelID: inter.ChannelID,
+		Content:   fmt.Sprintf("Template '%s' loaded (task ID: %d).", name, id),
+	})
+}
+
+func (o *Orchestrator) handleTemplateListInteraction(ctx context.Context, inter *Interaction) {
+	if len(o.templates) == 0 {
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "No templates configured.",
+		})
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Available templates:\n")
+	for _, t := range o.templates {
+		fmt.Fprintf(&sb, "- **%s** [%s] `%s` — %s\n", t.Name, t.Type, t.Schedule, t.Description)
+	}
+	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+		ChannelID: inter.ChannelID,
+		Content:   sb.String(),
 	})
 }
 

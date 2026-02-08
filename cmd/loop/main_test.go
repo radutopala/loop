@@ -141,6 +141,14 @@ func (m *mockStore) Close() error {
 	return m.Called().Error(0)
 }
 
+func (m *mockStore) GetScheduledTaskByTemplateName(ctx context.Context, channelID, templateName string) (*db.ScheduledTask, error) {
+	args := m.Called(ctx, channelID, templateName)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*db.ScheduledTask), args.Error(1)
+}
+
 type mockDockerClient struct {
 	mock.Mock
 }
@@ -274,6 +282,10 @@ type MainSuite struct {
 	origDaemonStatus      func(daemon.System) (string, error)
 	origNewSystem         func() daemon.System
 	origEnsureChannelFunc func(string, string) (string, error)
+	origUserHomeDir       func() (string, error)
+	origOsStat            func(string) (os.FileInfo, error)
+	origOsMkdirAll        func(string, os.FileMode) error
+	origOsWriteFile       func(string, []byte, os.FileMode) error
 }
 
 func TestMainSuite(t *testing.T) {
@@ -293,6 +305,10 @@ func (s *MainSuite) SetupTest() {
 	s.origDaemonStatus = daemonStatus
 	s.origNewSystem = newSystem
 	s.origEnsureChannelFunc = ensureChannelFunc
+	s.origUserHomeDir = userHomeDir
+	s.origOsStat = osStat
+	s.origOsMkdirAll = osMkdirAll
+	s.origOsWriteFile = osWriteFile
 }
 
 func (s *MainSuite) TearDownTest() {
@@ -308,6 +324,10 @@ func (s *MainSuite) TearDownTest() {
 	daemonStatus = s.origDaemonStatus
 	newSystem = s.origNewSystem
 	ensureChannelFunc = s.origEnsureChannelFunc
+	userHomeDir = s.origUserHomeDir
+	osStat = s.origOsStat
+	osMkdirAll = s.origOsMkdirAll
+	osWriteFile = s.origOsWriteFile
 }
 
 func testConfig() *config.Config {
@@ -1113,4 +1133,181 @@ func (s *MainSuite) TestDefaultDaemonVars() {
 
 	sys := s.origNewSystem()
 	require.IsType(s.T(), daemon.RealSystem{}, sys)
+}
+
+// --- newOnboardCmd ---
+
+func (s *MainSuite) TestNewOnboardCmd() {
+	cmd := newOnboardCmd()
+	require.Equal(s.T(), "onboard", cmd.Use)
+	require.NotNil(s.T(), cmd.RunE)
+	require.NotNil(s.T(), cmd.Flags().Lookup("force"))
+}
+
+func (s *MainSuite) TestOnboardSuccess() {
+	tmpDir := s.T().TempDir()
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	osWriteFile = os.WriteFile
+
+	err := onboard(false)
+	require.NoError(s.T(), err)
+
+	configPath := filepath.Join(tmpDir, ".loop", "config.json")
+	data, err := os.ReadFile(configPath)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(data), "discord_token")
+	require.Contains(s.T(), string(data), "task_templates")
+}
+
+func (s *MainSuite) TestOnboardConfigAlreadyExists() {
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	configPath := filepath.Join(loopDir, "config.json")
+
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0755))
+	require.NoError(s.T(), os.WriteFile(configPath, []byte("existing"), 0600))
+
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	osWriteFile = os.WriteFile
+
+	err := onboard(false)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "config already exists")
+	require.Contains(s.T(), err.Error(), "--force")
+
+	// Verify original content is unchanged
+	data, err := os.ReadFile(configPath)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "existing", string(data))
+}
+
+func (s *MainSuite) TestOnboardForceOverwrite() {
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	configPath := filepath.Join(loopDir, "config.json")
+
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0755))
+	require.NoError(s.T(), os.WriteFile(configPath, []byte("old config"), 0600))
+
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	osWriteFile = os.WriteFile
+
+	err := onboard(true)
+	require.NoError(s.T(), err)
+
+	// Verify config was overwritten
+	data, err := os.ReadFile(configPath)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(data), "discord_token")
+	require.Contains(s.T(), string(data), "task_templates")
+	require.NotContains(s.T(), string(data), "old config")
+}
+
+func (s *MainSuite) TestOnboardHomeDirError() {
+	userHomeDir = func() (string, error) {
+		return "", errors.New("home dir error")
+	}
+
+	err := onboard(false)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "getting home directory")
+}
+
+func (s *MainSuite) TestOnboardMkdirAllError() {
+	tmpDir := s.T().TempDir()
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = func(_ string, _ os.FileMode) error {
+		return errors.New("mkdir error")
+	}
+
+	err := onboard(false)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating loop directory")
+}
+
+func (s *MainSuite) TestOnboardWriteFileError() {
+	tmpDir := s.T().TempDir()
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	osWriteFile = func(_ string, _ []byte, _ os.FileMode) error {
+		return errors.New("write error")
+	}
+
+	err := onboard(false)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing config file")
+}
+
+func (s *MainSuite) TestOnboardCmdRunE() {
+	tmpDir := s.T().TempDir()
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	osWriteFile = os.WriteFile
+
+	cmd := newOnboardCmd()
+	cmd.SetArgs([]string{})
+	err := cmd.Execute()
+	require.NoError(s.T(), err)
+
+	configPath := filepath.Join(tmpDir, ".loop", "config.json")
+	_, err = os.Stat(configPath)
+	require.NoError(s.T(), err)
+}
+
+func (s *MainSuite) TestOnboardCmdWithForceFlag() {
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	configPath := filepath.Join(loopDir, "config.json")
+
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0755))
+	require.NoError(s.T(), os.WriteFile(configPath, []byte("old"), 0600))
+
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	osWriteFile = os.WriteFile
+
+	cmd := newOnboardCmd()
+	cmd.SetArgs([]string{"--force"})
+	err := cmd.Execute()
+	require.NoError(s.T(), err)
+
+	data, err := os.ReadFile(configPath)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(data), "discord_token")
+}
+
+func (s *MainSuite) TestRootCmdHasOnboard() {
+	cmd := newRootCmd()
+	foundOnboard := false
+	for _, sub := range cmd.Commands() {
+		if sub.Use == "onboard" {
+			foundOnboard = true
+			break
+		}
+	}
+	require.True(s.T(), foundOnboard, "root command should have onboard subcommand")
 }

@@ -31,21 +31,23 @@ func (s *CommandsSuite) TestSubcommands() {
 	cmds := Commands()
 	root := cmds[0]
 
-	expected := map[string]bool{
-		"schedule": true,
-		"tasks":    true,
-		"cancel":   true,
-		"toggle":   true,
-		"edit":     true,
-		"status":   true,
+	expected := map[string]discordgo.ApplicationCommandOptionType{
+		"schedule": discordgo.ApplicationCommandOptionSubCommand,
+		"tasks":    discordgo.ApplicationCommandOptionSubCommand,
+		"cancel":   discordgo.ApplicationCommandOptionSubCommand,
+		"toggle":   discordgo.ApplicationCommandOptionSubCommand,
+		"edit":     discordgo.ApplicationCommandOptionSubCommand,
+		"status":   discordgo.ApplicationCommandOptionSubCommand,
+		"template": discordgo.ApplicationCommandOptionSubCommandGroup,
 	}
 
 	require.Len(s.T(), root.Options, len(expected))
 
 	for _, opt := range root.Options {
-		require.Equal(s.T(), discordgo.ApplicationCommandOptionSubCommand, opt.Type, "option %s should be subcommand", opt.Name)
-		require.True(s.T(), expected[opt.Name], "unexpected subcommand: %s", opt.Name)
-		require.NotEmpty(s.T(), opt.Description, "subcommand %s should have description", opt.Name)
+		expectedType, exists := expected[opt.Name]
+		require.True(s.T(), exists, "unexpected option: %s", opt.Name)
+		require.Equal(s.T(), expectedType, opt.Type, "option %s has wrong type", opt.Name)
+		require.NotEmpty(s.T(), opt.Description, "option %s should have description", opt.Name)
 	}
 }
 
@@ -136,6 +138,40 @@ func (s *CommandsSuite) TestTasksStatusHaveNoOptions() {
 		require.NotNil(s.T(), sub, "subcommand %s should exist", name)
 		require.Empty(s.T(), sub.Options, "subcommand %s should have no options", name)
 	}
+}
+
+func (s *CommandsSuite) TestTemplateSubcommandGroup() {
+	cmds := Commands()
+	root := cmds[0]
+
+	var templateGroup *discordgo.ApplicationCommandOption
+	for _, opt := range root.Options {
+		if opt.Name == "template" {
+			templateGroup = opt
+			break
+		}
+	}
+	require.NotNil(s.T(), templateGroup)
+	require.Equal(s.T(), discordgo.ApplicationCommandOptionSubCommandGroup, templateGroup.Type)
+	require.Len(s.T(), templateGroup.Options, 2)
+
+	subNames := map[string]*discordgo.ApplicationCommandOption{}
+	for _, sub := range templateGroup.Options {
+		subNames[sub.Name] = sub
+		require.Equal(s.T(), discordgo.ApplicationCommandOptionSubCommand, sub.Type)
+	}
+
+	require.Contains(s.T(), subNames, "add")
+	require.Contains(s.T(), subNames, "list")
+
+	// "add" should have a required "name" option
+	require.Len(s.T(), subNames["add"].Options, 1)
+	require.Equal(s.T(), "name", subNames["add"].Options[0].Name)
+	require.Equal(s.T(), discordgo.ApplicationCommandOptionString, subNames["add"].Options[0].Type)
+	require.True(s.T(), subNames["add"].Options[0].Required)
+
+	// "list" should have no options
+	require.Empty(s.T(), subNames["list"].Options)
 }
 
 func findSubcommand(root *discordgo.ApplicationCommand, name string) *discordgo.ApplicationCommandOption {
