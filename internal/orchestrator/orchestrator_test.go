@@ -976,43 +976,6 @@ func (s *OrchestratorSuite) TestHandleInteractionTasks() {
 	s.scheduler.AssertExpectations(s.T())
 }
 
-func (s *OrchestratorSuite) TestHandleInteractionTasksExpiredOnceFiltered() {
-	tasks := []*db.ScheduledTask{
-		{ID: 1, Prompt: "cron task", Schedule: "0 * * * *", Type: db.TaskTypeCron, Enabled: true, NextRunAt: time.Now().Add(30 * time.Minute)},
-		{ID: 2, Prompt: "expired once", Schedule: "5m", Type: db.TaskTypeOnce, Enabled: false, NextRunAt: time.Now().Add(-1 * time.Hour)},
-	}
-	s.scheduler.On("ListTasks", s.ctx, "ch1").Return(tasks, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return strings.Contains(out.Content, "ID 1") &&
-			!strings.Contains(out.Content, "ID 2") &&
-			!strings.Contains(out.Content, "expired once")
-	})).Return(nil)
-
-	s.orch.HandleInteraction(s.ctx, &Interaction{
-		ChannelID:   "ch1",
-		CommandName: "tasks",
-	})
-
-	s.scheduler.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleInteractionTasksAllExpiredOnce() {
-	tasks := []*db.ScheduledTask{
-		{ID: 1, Prompt: "old once", Schedule: "5m", Type: db.TaskTypeOnce, Enabled: false, NextRunAt: time.Now().Add(-1 * time.Hour)},
-	}
-	s.scheduler.On("ListTasks", s.ctx, "ch1").Return(tasks, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return out.Content == "No scheduled tasks."
-	})).Return(nil)
-
-	s.orch.HandleInteraction(s.ctx, &Interaction{
-		ChannelID:   "ch1",
-		CommandName: "tasks",
-	})
-
-	s.scheduler.AssertExpectations(s.T())
-}
-
 func (s *OrchestratorSuite) TestHandleInteractionTasksEmpty() {
 	s.scheduler.On("ListTasks", s.ctx, "ch1").Return([]*db.ScheduledTask{}, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {

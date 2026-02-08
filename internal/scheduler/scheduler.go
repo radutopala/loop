@@ -68,7 +68,7 @@ func (s *TaskScheduler) Stop() error {
 
 // AddTask calculates next_run_at, enables the task, and stores it.
 func (s *TaskScheduler) AddTask(ctx context.Context, task *db.ScheduledTask) (int64, error) {
-	nextRun, err := calculateNextRun(task.Type, task.Schedule, time.Now())
+	nextRun, err := calculateNextRun(task.Type, task.Schedule, time.Now().UTC())
 	if err != nil {
 		return 0, fmt.Errorf("calculating next run: %w", err)
 	}
@@ -130,7 +130,7 @@ func (s *TaskScheduler) EditTask(ctx context.Context, taskID int64, schedule, ta
 	}
 
 	if schedule != nil || taskType != nil {
-		nextRun, err := calculateNextRun(task.Type, task.Schedule, time.Now())
+		nextRun, err := calculateNextRun(task.Type, task.Schedule, time.Now().UTC())
 		if err != nil {
 			return fmt.Errorf("calculating next run: %w", err)
 		}
@@ -157,7 +157,7 @@ func (s *TaskScheduler) pollLoop(ctx context.Context) {
 }
 
 func (s *TaskScheduler) processDueTasks(ctx context.Context) {
-	tasks, err := s.store.GetDueTasks(ctx, time.Now())
+	tasks, err := s.store.GetDueTasks(ctx, time.Now().UTC())
 	if err != nil {
 		s.logger.Error("failed to get due tasks", "error", err)
 		return
@@ -172,7 +172,7 @@ func (s *TaskScheduler) executeAndUpdate(ctx context.Context, task *db.Scheduled
 	runLog := &db.TaskRunLog{
 		TaskID:    task.ID,
 		Status:    db.RunStatusRunning,
-		StartedAt: time.Now(),
+		StartedAt: time.Now().UTC(),
 	}
 	logID, err := s.store.InsertTaskRunLog(ctx, runLog)
 	if err != nil {
@@ -183,7 +183,7 @@ func (s *TaskScheduler) executeAndUpdate(ctx context.Context, task *db.Scheduled
 
 	response, execErr := s.executor.ExecuteTask(ctx, task)
 
-	runLog.FinishedAt = time.Now()
+	runLog.FinishedAt = time.Now().UTC()
 	if execErr != nil {
 		runLog.Status = db.RunStatusFailed
 		runLog.ErrorText = execErr.Error()
@@ -196,7 +196,7 @@ func (s *TaskScheduler) executeAndUpdate(ctx context.Context, task *db.Scheduled
 		s.logger.Error("failed to update task run log", "task_id", task.ID, "error", err)
 	}
 
-	now := time.Now()
+	now := time.Now().UTC()
 	switch task.Type {
 	case db.TaskTypeCron:
 		nextRun, err := calculateNextRun(db.TaskTypeCron, task.Schedule, now)

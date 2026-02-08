@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 )
 
 // migrations holds all schema migration SQL statements in order.
@@ -108,6 +109,12 @@ var migrations = []string{
 	`CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dir_path ON channels(dir_path) WHERE dir_path != ''`,
 }
 
+// dataMigrations holds Go functions for data migrations that can't be expressed in SQL.
+// Keys are version numbers that continue from the SQL migrations slice.
+var dataMigrations = map[int]func(ctx context.Context, db *sql.DB) error{
+	len(migrations): migrateTimestampsToUTC,
+}
+
 // RunMigrations executes all pending schema migrations.
 func RunMigrations(ctx context.Context, sqlDB *sql.DB) error {
 	// Ensure schema_migrations table exists (migration 0)
@@ -132,6 +139,97 @@ func RunMigrations(ctx context.Context, sqlDB *sql.DB) error {
 
 		if _, err := sqlDB.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES (?)", version); err != nil {
 			return fmt.Errorf("recording migration %d: %w", version, err)
+		}
+	}
+
+	for version, fn := range dataMigrations {
+		var count int
+		err := sqlDB.QueryRowContext(ctx, "SELECT COUNT(*) FROM schema_migrations WHERE version = ?", version).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("checking migration version %d: %w", version, err)
+		}
+		if count > 0 {
+			continue
+		}
+
+		if err := fn(ctx, sqlDB); err != nil {
+			return fmt.Errorf("executing data migration %d: %w", version, err)
+		}
+
+		if _, err := sqlDB.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES (?)", version); err != nil {
+			return fmt.Errorf("recording migration %d: %w", version, err)
+		}
+	}
+
+	return nil
+}
+
+// migrateTimestampsToUTC rewrites all scheduled_tasks and task_run_logs timestamps to UTC.
+func migrateTimestampsToUTC(ctx context.Context, sqlDB *sql.DB) error {
+	// Migrate scheduled_tasks
+	rows, err := sqlDB.QueryContext(ctx, `SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`)
+	if err != nil {
+		return fmt.Errorf("querying scheduled_tasks: %w", err)
+	}
+	defer rows.Close()
+
+	type taskRow struct {
+		id        int64
+		nextRunAt time.Time
+		createdAt time.Time
+		updatedAt time.Time
+	}
+	var taskRows []taskRow
+	for rows.Next() {
+		var r taskRow
+		if err := rows.Scan(&r.id, &r.nextRunAt, &r.createdAt, &r.updatedAt); err != nil {
+			return fmt.Errorf("scanning scheduled_task: %w", err)
+		}
+		taskRows = append(taskRows, r)
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating scheduled_tasks: %w", err)
+	}
+
+	for _, r := range taskRows {
+		if _, err := sqlDB.ExecContext(ctx,
+			`UPDATE scheduled_tasks SET next_run_at = ?, created_at = ?, updated_at = ? WHERE id = ?`,
+			r.nextRunAt.UTC(), r.createdAt.UTC(), r.updatedAt.UTC(), r.id,
+		); err != nil {
+			return fmt.Errorf("updating scheduled_task %d: %w", r.id, err)
+		}
+	}
+
+	// Migrate task_run_logs
+	logRows, err := sqlDB.QueryContext(ctx, `SELECT id, started_at, finished_at FROM task_run_logs`)
+	if err != nil {
+		return fmt.Errorf("querying task_run_logs: %w", err)
+	}
+	defer logRows.Close()
+
+	type logRow struct {
+		id         int64
+		startedAt  time.Time
+		finishedAt time.Time
+	}
+	var logRowList []logRow
+	for logRows.Next() {
+		var r logRow
+		if err := logRows.Scan(&r.id, &r.startedAt, &r.finishedAt); err != nil {
+			return fmt.Errorf("scanning task_run_log: %w", err)
+		}
+		logRowList = append(logRowList, r)
+	}
+	if err := logRows.Err(); err != nil {
+		return fmt.Errorf("iterating task_run_logs: %w", err)
+	}
+
+	for _, r := range logRowList {
+		if _, err := sqlDB.ExecContext(ctx,
+			`UPDATE task_run_logs SET started_at = ?, finished_at = ? WHERE id = ?`,
+			r.startedAt.UTC(), r.finishedAt.UTC(), r.id,
+		); err != nil {
+			return fmt.Errorf("updating task_run_log %d: %w", r.id, err)
 		}
 	}
 

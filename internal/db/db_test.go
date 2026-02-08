@@ -517,7 +517,7 @@ func (s *StoreSuite) TestListScheduledTasks() {
 		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check", 1, now, now, now).
 		AddRow(2, "ch1", "g1", "30m", "interval", "ping", 0, now.Add(time.Hour), now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE channel_id`).
-		WithArgs("ch1").
+		WithArgs("ch1", sqlmock.AnyArg()).
 		WillReturnRows(rows)
 
 	tasks, err := s.store.ListScheduledTasks(context.Background(), "ch1")
@@ -529,7 +529,7 @@ func (s *StoreSuite) TestListScheduledTasks() {
 
 func (s *StoreSuite) TestListScheduledTasksError() {
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE channel_id`).
-		WithArgs("ch1").
+		WithArgs("ch1", sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
 
 	tasks, err := s.store.ListScheduledTasks(context.Background(), "ch1")
@@ -675,9 +675,13 @@ func (s *StoreSuite) TestInitDBSuccess() {
 	mock.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnResult(sqlmock.NewResult(0, 0))
 	// schema_migrations creation
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS schema_migrations`).WillReturnResult(sqlmock.NewResult(0, 0))
-	// Each migration check + apply
+	// Each SQL migration check (already applied)
 	for i := 1; i < len(migrations); i++ {
 		mock.ExpectQuery(`SELECT COUNT`).WithArgs(i).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	}
+	// Each data migration check (already applied)
+	for version := range dataMigrations {
+		mock.ExpectQuery(`SELECT COUNT`).WithArgs(version).WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	}
 
 	err = initDB(db)
@@ -721,6 +725,175 @@ func (s *StoreSuite) TestInitDBMigrationsError() {
 	err = initDB(db)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "running migrations")
+}
+
+func (s *StoreSuite) TestMigrateTimestampsToUTC() {
+	db, mock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	defer db.Close()
+
+	localTime := time.Date(2026, 2, 8, 11, 0, 0, 0, time.FixedZone("EET", 2*60*60))
+
+	// scheduled_tasks query
+	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}).
+			AddRow(1, localTime, localTime, localTime))
+	mock.ExpectExec(`UPDATE scheduled_tasks SET next_run_at`).
+		WithArgs(localTime.UTC(), localTime.UTC(), localTime.UTC(), int64(1)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	// task_run_logs query
+	mock.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "started_at", "finished_at"}).
+			AddRow(10, localTime, localTime))
+	mock.ExpectExec(`UPDATE task_run_logs SET started_at`).
+		WithArgs(localTime.UTC(), localTime.UTC(), int64(10)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err = migrateTimestampsToUTC(context.Background(), db)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestMigrateTimestampsToUTCEmpty() {
+	db, mock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	defer db.Close()
+
+	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}))
+	mock.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "started_at", "finished_at"}))
+
+	err = migrateTimestampsToUTC(context.Background(), db)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestMigrateTimestampsToUTCQueryError() {
+	db, mock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	defer db.Close()
+
+	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
+		WillReturnError(sql.ErrConnDone)
+
+	err = migrateTimestampsToUTC(context.Background(), db)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "querying scheduled_tasks")
+}
+
+func (s *StoreSuite) TestMigrateTimestampsToUTCUpdateError() {
+	db, mock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	defer db.Close()
+
+	now := time.Now().UTC()
+	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}).
+			AddRow(1, now, now, now))
+	mock.ExpectExec(`UPDATE scheduled_tasks SET next_run_at`).
+		WillReturnError(sql.ErrConnDone)
+
+	err = migrateTimestampsToUTC(context.Background(), db)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "updating scheduled_task 1")
+}
+
+func (s *StoreSuite) TestMigrateTimestampsToUTCLogQueryError() {
+	db, mock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	defer db.Close()
+
+	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}))
+	mock.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).
+		WillReturnError(sql.ErrConnDone)
+
+	err = migrateTimestampsToUTC(context.Background(), db)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "querying task_run_logs")
+}
+
+func (s *StoreSuite) TestMigrateTimestampsToUTCScanError() {
+	db, mock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	defer db.Close()
+
+	// Return rows with wrong type to trigger scan error
+	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}).
+			AddRow("not-an-int", "bad", "bad", "bad"))
+
+	err = migrateTimestampsToUTC(context.Background(), db)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "scanning scheduled_task")
+}
+
+func (s *StoreSuite) TestMigrateTimestampsToUTCRowsError() {
+	db, mock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	defer db.Close()
+
+	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}).
+			CloseError(fmt.Errorf("rows iteration error")))
+
+	err = migrateTimestampsToUTC(context.Background(), db)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "iterating scheduled_tasks")
+}
+
+func (s *StoreSuite) TestMigrateTimestampsToUTCLogScanError() {
+	db, mock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	defer db.Close()
+
+	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}))
+	// Return rows with wrong type to trigger scan error
+	mock.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "started_at", "finished_at"}).
+			AddRow("not-an-int", "bad", "bad"))
+
+	err = migrateTimestampsToUTC(context.Background(), db)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "scanning task_run_log")
+}
+
+func (s *StoreSuite) TestMigrateTimestampsToUTCLogRowsError() {
+	db, mock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	defer db.Close()
+
+	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}))
+	mock.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "started_at", "finished_at"}).
+			CloseError(fmt.Errorf("log rows iteration error")))
+
+	err = migrateTimestampsToUTC(context.Background(), db)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "iterating task_run_logs")
+}
+
+func (s *StoreSuite) TestMigrateTimestampsToUTCLogUpdateError() {
+	db, mock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	defer db.Close()
+
+	now := time.Now().UTC()
+	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}))
+	mock.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "started_at", "finished_at"}).
+			AddRow(10, now, now))
+	mock.ExpectExec(`UPDATE task_run_logs SET started_at`).
+		WillReturnError(sql.ErrConnDone)
+
+	err = migrateTimestampsToUTC(context.Background(), db)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "updating task_run_log 10")
 }
 
 // --- NewSQLiteStore tests ---

@@ -463,12 +463,7 @@ func (o *Orchestrator) handleTasksInteraction(ctx context.Context, inter *Intera
 	now := time.Now()
 	var sb strings.Builder
 	sb.WriteString("Scheduled tasks:\n")
-	count := 0
 	for _, t := range tasks {
-		if t.Type == db.TaskTypeOnce && !t.NextRunAt.After(now) {
-			continue
-		}
-		count++
 		status := "enabled"
 		if !t.Enabled {
 			status = "disabled"
@@ -481,13 +476,6 @@ func (o *Orchestrator) handleTasksInteraction(ctx context.Context, inter *Intera
 		}
 		nextRun := formatDuration(t.NextRunAt.Sub(now))
 		fmt.Fprintf(&sb, "- **ID %d** [%s] [%s] %s — %s (next: %s)\n", t.ID, t.Type, status, schedule, t.Prompt, nextRun)
-	}
-	if count == 0 {
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "No scheduled tasks.",
-		})
-		return
 	}
 	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
 		ChannelID: inter.ChannelID,
