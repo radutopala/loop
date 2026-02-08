@@ -517,7 +517,7 @@ func (s *StoreSuite) TestListScheduledTasks() {
 		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check", 1, now, now, now).
 		AddRow(2, "ch1", "g1", "30m", "interval", "ping", 0, now.Add(time.Hour), now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE channel_id`).
-		WithArgs("ch1").
+		WithArgs("ch1", sqlmock.AnyArg()).
 		WillReturnRows(rows)
 
 	tasks, err := s.store.ListScheduledTasks(context.Background(), "ch1")
@@ -529,7 +529,7 @@ func (s *StoreSuite) TestListScheduledTasks() {
 
 func (s *StoreSuite) TestListScheduledTasksError() {
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE channel_id`).
-		WithArgs("ch1").
+		WithArgs("ch1", sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
 
 	tasks, err := s.store.ListScheduledTasks(context.Background(), "ch1")
