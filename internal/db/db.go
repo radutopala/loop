@@ -283,8 +283,8 @@ func (s *SQLiteStore) DeleteScheduledTask(ctx context.Context, id int64) error {
 func (s *SQLiteStore) ListScheduledTasks(ctx context.Context, channelID string) ([]*ScheduledTask, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at
-		 FROM scheduled_tasks WHERE channel_id = ? AND (type != 'once' OR next_run_at > ?) ORDER BY next_run_at ASC`,
-		channelID, time.Now().UTC(),
+		 FROM scheduled_tasks WHERE channel_id = ? ORDER BY next_run_at ASC`,
+		channelID,
 	)
 	if err != nil {
 		return nil, err
