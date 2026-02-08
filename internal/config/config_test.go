@@ -55,7 +55,6 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Equal(s.T(), int64(512), cfg.ContainerMemoryMB)
 	require.Equal(s.T(), 1.0, cfg.ContainerCPUs)
 	require.Equal(s.T(), 30*time.Second, cfg.PollInterval)
-	require.Nil(s.T(), cfg.MountAllowlist)
 	require.Equal(s.T(), ":8222", cfg.APIAddr)
 	require.Equal(s.T(), "/home/testuser/.loop", cfg.LoopDir)
 	require.Empty(s.T(), cfg.ClaudeCodeOAuthToken)
@@ -78,7 +77,6 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 			"container_memory_mb": 1024,
 			"container_cpus": 2.5,
 			"poll_interval_sec": 60,
-			"mount_allowlist": ["/home/user", "/tmp/data", "/var/log"],
 			"api_addr": ":9999"
 		}`), nil
 	}
@@ -97,7 +95,6 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 	require.Equal(s.T(), int64(1024), cfg.ContainerMemoryMB)
 	require.Equal(s.T(), 2.5, cfg.ContainerCPUs)
 	require.Equal(s.T(), 60*time.Second, cfg.PollInterval)
-	require.Equal(s.T(), []string{"/home/user", "/tmp/data", "/var/log"}, cfg.MountAllowlist)
 	require.Equal(s.T(), ":9999", cfg.APIAddr)
 }
 

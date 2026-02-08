@@ -55,10 +55,12 @@ func (s *TaskExecutorSuite) TestHappyPathWithSession() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ChannelID: "ch1",
 		SessionID: "existing-session",
+		DirPath:   "/home/user/project",
 	}, nil)
 	s.runner.On("Run", s.ctx, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.SessionID == "existing-session" &&
 			req.ChannelID == "ch1" &&
+			req.DirPath == "/home/user/project" &&
 			len(req.Messages) == 1 &&
 			req.Messages[0].Role == "user" &&
 			req.Messages[0].Content == "do stuff"
@@ -89,7 +91,7 @@ func (s *TaskExecutorSuite) TestHappyPathWithoutSession() {
 
 	s.store.On("GetChannel", s.ctx, "ch2").Return(nil, nil)
 	s.runner.On("Run", s.ctx, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		return req.SessionID == "" && req.ChannelID == "ch2"
+		return req.SessionID == "" && req.ChannelID == "ch2" && req.DirPath == ""
 	})).Return(&agent.AgentResponse{
 		Response:  "hi!",
 		SessionID: "fresh-session",

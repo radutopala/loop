@@ -322,10 +322,16 @@ func (o *Orchestrator) buildAgentRequest(channelID string, recent []*db.Message,
 		sessionID = channel.SessionID
 	}
 
+	dirPath := ""
+	if channel != nil {
+		dirPath = channel.DirPath
+	}
+
 	return &agent.AgentRequest{
 		SessionID: sessionID,
 		Messages:  messages,
 		ChannelID: channelID,
+		DirPath:   dirPath,
 	}
 }
 

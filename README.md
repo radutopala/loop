@@ -5,18 +5,47 @@ A Discord bot powered by Claude that runs AI agents in Docker containers.
 ## Architecture
 
 ```
-Discord ─▶ Bot ─▶ Orchestrator ─▶ DockerRunner ─▶ Container (claude --print)
-                       │
-                   Scheduler ◀─▶ SQLite
-                       │
-                   API Server ◀─▶ MCP Server
+                   Discord
+                     │
+              @mention / reply / !loop / DM
+                     ▼
+                    Bot
+                     │
+                     ▼
+               Orchestrator ◀──────────────── Scheduler (poll loop)
+                     │                              │
+            build AgentRequest              due task? execute it
+            (messages + session +           (cron / interval / once)
+             channel dir_path)                      │
+                     │                              │
+                     ▼                              ▼
+               DockerRunner ◄───────────────────────┘
+                     │
+          ┌──────────┴──────────┐
+          │  create container   │
+          │  mount dir_path or  │
+          │  ~/.loop/<ch>/work  │
+          │  → /work            │
+          └──────────┬──────────┘
+                     ▼
+              Container (Docker)
+          ┌─────────────────────┐
+          │ claude --print      │
+          │   /work (project)   │
+          │   /mcp  (logs)      │
+          │   MCP: loop-scheduler
+          └─────────┬───────────┘
+                    │
+         MCP tool calls (schedule, list, cancel…)
+                    ▼
+              API Server ◀──▶ SQLite
 ```
 
 - **Orchestrator** coordinates message handling, channel registration, session management, and scheduled tasks
-- **DockerRunner** executes `claude --print` directly inside Docker containers — plain text in, plain text out
-- **Scheduler** runs cron, interval, and one-shot tasks
+- **DockerRunner** mounts the channel's `dir_path` to `/work` (falling back to `~/.loop/<channelID>/work`), then runs `claude --print` inside a Docker container
+- **Scheduler** polls for due tasks (cron, interval, once) and executes them via DockerRunner
+- **MCP Server** (inside the container) gives Claude tools to schedule/manage tasks — calls loop back through the API server
 - **API Server** exposes REST endpoints for task and channel management
-- **MCP Server** provides tools for Claude agents to manage scheduled tasks
 - **SQLite** stores channels, messages, scheduled tasks, and run logs
 
 ## Setup
@@ -61,7 +90,6 @@ Create `~/.loop/config.json` (HJSON — comments and trailing commas are allowed
   "container_memory_mb": 512,
   "container_cpus": 1.0,
   "poll_interval_sec": 30,
-  "mount_allowlist": ["/path/one", "/path/two"],
 }
 ```
 

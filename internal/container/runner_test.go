@@ -728,6 +728,71 @@ func (s *RunnerSuite) TestBuildMCPConfigBuiltinOverridesUser() {
 	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222", "--log", "/mcp/mcp.log"}, ls.Args)
 }
 
+func (s *RunnerSuite) TestRunWithDirPath() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+		DirPath:   "/home/user/project",
+	}
+
+	jsonOutput := `{"result":"ok","session_id":"s1","is_error":false}`
+	reader := bytes.NewReader([]byte(jsonOutput))
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return len(cfg.Binds) == 3 &&
+			cfg.Binds[0] == sessionVolume &&
+			cfg.Binds[1] == "/home/user/project:/work" &&
+			cfg.Binds[2] == "/home/testuser/.loop/ch-1/mcp:/mcp"
+	}), "").Return("container-123", nil)
+	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp.Response)
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunWithoutDirPathUsesDefault() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	jsonOutput := `{"result":"ok","session_id":"s1","is_error":false}`
+	reader := bytes.NewReader([]byte(jsonOutput))
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return len(cfg.Binds) == 3 &&
+			cfg.Binds[0] == sessionVolume &&
+			cfg.Binds[1] == "/home/testuser/.loop/ch-1/work:/work" &&
+			cfg.Binds[2] == "/home/testuser/.loop/ch-1/mcp:/mcp"
+	}), "").Return("container-123", nil)
+	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp.Response)
+
+	s.client.AssertExpectations(s.T())
+}
+
 func (s *RunnerSuite) TestRunMCPConfigWriteError() {
 	writeFile = func(_ string, _ []byte, _ os.FileMode) error {
 		return errors.New("write failed")

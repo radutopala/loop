@@ -151,6 +151,9 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 	}
 
 	workDir := filepath.Join(r.cfg.LoopDir, req.ChannelID, "work")
+	if req.DirPath != "" {
+		workDir = req.DirPath
+	}
 	mcpDir := filepath.Join(r.cfg.LoopDir, req.ChannelID, "mcp")
 	for _, dir := range []string{workDir, mcpDir} {
 		if err := mkdirAll(dir, 0o755); err != nil {

@@ -31,8 +31,10 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	}
 
 	sessionID := ""
+	dirPath := ""
 	if channel != nil {
 		sessionID = channel.SessionID
+		dirPath = channel.DirPath
 	}
 
 	req := &agent.AgentRequest{
@@ -41,6 +43,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			{Role: "user", Content: task.Prompt},
 		},
 		ChannelID: task.ChannelID,
+		DirPath:   dirPath,
 	}
 
 	resp, err := e.runner.Run(ctx, req)

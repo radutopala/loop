@@ -1304,12 +1304,14 @@ func (s *OrchestratorSuite) TestBuildAgentRequest() {
 	channel := &db.Channel{
 		ChannelID: "ch1",
 		SessionID: "sess-data",
+		DirPath:   "/home/user/project",
 	}
 
 	req := s.orch.buildAgentRequest("ch1", recent, channel)
 
 	require.Equal(s.T(), "sess-data", req.SessionID)
 	require.Equal(s.T(), "ch1", req.ChannelID)
+	require.Equal(s.T(), "/home/user/project", req.DirPath)
 	require.Len(s.T(), req.Messages, 2)
 	// Messages should be reversed (oldest first)
 	require.Equal(s.T(), "assistant", req.Messages[0].Role)
@@ -1320,6 +1322,7 @@ func (s *OrchestratorSuite) TestBuildAgentRequestNilSession() {
 	req := s.orch.buildAgentRequest("ch1", nil, nil)
 
 	require.Equal(s.T(), "", req.SessionID)
+	require.Equal(s.T(), "", req.DirPath)
 	require.Empty(s.T(), req.Messages)
 }
 

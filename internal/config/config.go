@@ -30,7 +30,6 @@ type Config struct {
 	ContainerMemoryMB    int64
 	ContainerCPUs        float64
 	PollInterval         time.Duration
-	MountAllowlist       []string
 	APIAddr              string
 	ClaudeCodeOAuthToken string
 	DiscordGuildID       string
@@ -53,7 +52,6 @@ type jsonConfig struct {
 	ContainerMemoryMB    *int64         `json:"container_memory_mb"`
 	ContainerCPUs        *float64       `json:"container_cpus"`
 	PollIntervalSec      *int           `json:"poll_interval_sec"`
-	MountAllowlist       []string       `json:"mount_allowlist"`
 	APIAddr              string         `json:"api_addr"`
 	MCP                  *jsonMCPConfig `json:"mcp"`
 }
@@ -106,7 +104,6 @@ func Load() (*Config, error) {
 		ContainerMemoryMB:    int64PtrDefault(jc.ContainerMemoryMB, 512),
 		ContainerCPUs:        floatPtrDefault(jc.ContainerCPUs, 1.0),
 		PollInterval:         time.Duration(intPtrDefault(jc.PollIntervalSec, 30)) * time.Second,
-		MountAllowlist:       jc.MountAllowlist,
 		APIAddr:              stringDefault(jc.APIAddr, ":8222"),
 		LoopDir:              loopDir,
 	}
