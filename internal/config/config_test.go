@@ -54,6 +54,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Equal(s.T(), 300*time.Second, cfg.ContainerTimeout)
 	require.Equal(s.T(), int64(512), cfg.ContainerMemoryMB)
 	require.Equal(s.T(), 1.0, cfg.ContainerCPUs)
+	require.Equal(s.T(), 300*time.Second, cfg.ContainerKeepAlive)
 	require.Equal(s.T(), 30*time.Second, cfg.PollInterval)
 	require.Equal(s.T(), ":8222", cfg.APIAddr)
 	require.Equal(s.T(), "/home/testuser/.loop", cfg.LoopDir)
@@ -76,6 +77,7 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 			"container_timeout_sec": 600,
 			"container_memory_mb": 1024,
 			"container_cpus": 2.5,
+			"container_keep_alive_sec": 120,
 			"poll_interval_sec": 60,
 			"api_addr": ":9999"
 		}`), nil
@@ -94,6 +96,7 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 	require.Equal(s.T(), 600*time.Second, cfg.ContainerTimeout)
 	require.Equal(s.T(), int64(1024), cfg.ContainerMemoryMB)
 	require.Equal(s.T(), 2.5, cfg.ContainerCPUs)
+	require.Equal(s.T(), 120*time.Second, cfg.ContainerKeepAlive)
 	require.Equal(s.T(), 60*time.Second, cfg.PollInterval)
 	require.Equal(s.T(), ":9999", cfg.APIAddr)
 }
@@ -231,6 +234,7 @@ func (s *ConfigSuite) TestZeroNumericValues() {
 			"container_timeout_sec": 0,
 			"container_memory_mb": 0,
 			"container_cpus": 0,
+			"container_keep_alive_sec": 0,
 			"poll_interval_sec": 0
 		}`), nil
 	}
@@ -240,6 +244,7 @@ func (s *ConfigSuite) TestZeroNumericValues() {
 	require.Equal(s.T(), time.Duration(0), cfg.ContainerTimeout)
 	require.Equal(s.T(), int64(0), cfg.ContainerMemoryMB)
 	require.Equal(s.T(), 0.0, cfg.ContainerCPUs)
+	require.Equal(s.T(), time.Duration(0), cfg.ContainerKeepAlive)
 	require.Equal(s.T(), time.Duration(0), cfg.PollInterval)
 }
 

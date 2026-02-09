@@ -39,6 +39,7 @@ type Config struct {
 	ContainerTimeout     time.Duration
 	ContainerMemoryMB    int64
 	ContainerCPUs        float64
+	ContainerKeepAlive   time.Duration
 	PollInterval         time.Duration
 	APIAddr              string
 	ClaudeCodeOAuthToken string
@@ -53,23 +54,24 @@ type Config struct {
 // jsonConfig is an intermediate struct for JSON unmarshalling.
 // Pointer types for numerics distinguish "missing" (nil) from "zero".
 type jsonConfig struct {
-	DiscordToken         string         `json:"discord_token"`
-	DiscordAppID         string         `json:"discord_app_id"`
-	ClaudeCodeOAuthToken string         `json:"claude_code_oauth_token"`
-	DiscordGuildID       string         `json:"discord_guild_id"`
-	LogLevel             string         `json:"log_level"`
-	LogFormat            string         `json:"log_format"`
-	DBPath               string         `json:"db_path"`
-	ContainerImage       string         `json:"container_image"`
-	ContainerTimeoutSec  *int           `json:"container_timeout_sec"`
-	ContainerMemoryMB    *int64         `json:"container_memory_mb"`
-	ContainerCPUs        *float64       `json:"container_cpus"`
-	PollIntervalSec      *int           `json:"poll_interval_sec"`
-	APIAddr              string         `json:"api_addr"`
-	MCP                  *jsonMCPConfig `json:"mcp"`
-	TaskTemplates        []TaskTemplate `json:"task_templates"`
-	Mounts               []string       `json:"mounts"`
-	ClaudeModel          string         `json:"claude_model"`
+	DiscordToken          string         `json:"discord_token"`
+	DiscordAppID          string         `json:"discord_app_id"`
+	ClaudeCodeOAuthToken  string         `json:"claude_code_oauth_token"`
+	DiscordGuildID        string         `json:"discord_guild_id"`
+	LogLevel              string         `json:"log_level"`
+	LogFormat             string         `json:"log_format"`
+	DBPath                string         `json:"db_path"`
+	ContainerImage        string         `json:"container_image"`
+	ContainerTimeoutSec   *int           `json:"container_timeout_sec"`
+	ContainerMemoryMB     *int64         `json:"container_memory_mb"`
+	ContainerCPUs         *float64       `json:"container_cpus"`
+	ContainerKeepAliveSec *int           `json:"container_keep_alive_sec"`
+	PollIntervalSec       *int           `json:"poll_interval_sec"`
+	APIAddr               string         `json:"api_addr"`
+	MCP                   *jsonMCPConfig `json:"mcp"`
+	TaskTemplates         []TaskTemplate `json:"task_templates"`
+	Mounts                []string       `json:"mounts"`
+	ClaudeModel           string         `json:"claude_model"`
 }
 
 type jsonMCPConfig struct {
@@ -127,6 +129,7 @@ func Load() (*Config, error) {
 		ContainerTimeout:     time.Duration(intPtrDefault(jc.ContainerTimeoutSec, 300)) * time.Second,
 		ContainerMemoryMB:    int64PtrDefault(jc.ContainerMemoryMB, 512),
 		ContainerCPUs:        floatPtrDefault(jc.ContainerCPUs, 1.0),
+		ContainerKeepAlive:   time.Duration(intPtrDefault(jc.ContainerKeepAliveSec, 300)) * time.Second,
 		PollInterval:         time.Duration(intPtrDefault(jc.PollIntervalSec, 30)) * time.Second,
 		APIAddr:              stringDefault(jc.APIAddr, ":8222"),
 		LoopDir:              loopDir,
