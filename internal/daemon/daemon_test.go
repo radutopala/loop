@@ -62,6 +62,7 @@ type DaemonSuite struct {
 	suite.Suite
 	origGetUID       func() int
 	origEvalSymlinks func(string) (string, error)
+	origOsGetenv     func(string) string
 }
 
 func TestDaemonSuite(t *testing.T) {
@@ -71,13 +72,16 @@ func TestDaemonSuite(t *testing.T) {
 func (s *DaemonSuite) SetupTest() {
 	s.origGetUID = getUID
 	s.origEvalSymlinks = evalSymlinks
+	s.origOsGetenv = osGetenv
 	getUID = func() int { return 501 }
 	evalSymlinks = func(path string) (string, error) { return path, nil }
+	osGetenv = func(string) string { return "" }
 }
 
 func (s *DaemonSuite) TearDownTest() {
 	getUID = s.origGetUID
 	evalSymlinks = s.origEvalSymlinks
+	osGetenv = s.origOsGetenv
 }
 
 // --- Start tests ---
@@ -93,6 +97,35 @@ func (s *DaemonSuite) TestStartSuccess() {
 		Return([]byte(""), nil)
 	sys.On("RunCommand", "launchctl", []string{"bootstrap", "gui/501", "/home/test/Library/LaunchAgents/com.loop.agent.plist"}).
 		Return([]byte(""), nil)
+
+	err := Start(sys)
+	require.NoError(s.T(), err)
+	sys.AssertExpectations(s.T())
+}
+
+func (s *DaemonSuite) TestStartWithProxyEnv() {
+	osGetenv = func(key string) string {
+		switch key {
+		case "HTTP_PROXY":
+			return "http://127.0.0.1:3128"
+		case "HTTPS_PROXY":
+			return "http://127.0.0.1:3128"
+		default:
+			return ""
+		}
+	}
+
+	sys := new(mockSystem)
+	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("UserHomeDir").Return("/home/test", nil)
+	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("WriteFile", "/home/test/Library/LaunchAgents/com.loop.agent.plist", mock.MatchedBy(func(data []byte) bool {
+		s := string(data)
+		return strings.Contains(s, "<key>HTTP_PROXY</key>") &&
+			strings.Contains(s, "<key>HTTPS_PROXY</key>") &&
+			strings.Contains(s, "http://127.0.0.1:3128")
+	}), os.FileMode(0o644)).Return(nil)
+	sys.On("RunCommand", "launchctl", mock.Anything).Return([]byte(""), nil)
 
 	err := Start(sys)
 	require.NoError(s.T(), err)
@@ -339,7 +372,7 @@ func (s *DaemonSuite) TestStatusStatError() {
 // --- generatePlist test ---
 
 func (s *DaemonSuite) TestGeneratePlist() {
-	plist := generatePlist("/usr/local/bin/loop", "/home/test/.loop/logs")
+	plist := generatePlist("/usr/local/bin/loop", "/home/test/.loop/logs", nil)
 	require.Contains(s.T(), plist, "<string>com.loop.agent</string>")
 	require.Contains(s.T(), plist, "<string>/usr/local/bin/loop</string>")
 	require.Contains(s.T(), plist, "<string>serve</string>")
@@ -349,6 +382,18 @@ func (s *DaemonSuite) TestGeneratePlist() {
 	require.NotContains(s.T(), plist, "loop.out.log")
 	require.NotContains(s.T(), plist, "loop.err.log")
 	require.Contains(s.T(), plist, "/opt/homebrew/bin")
+}
+
+func (s *DaemonSuite) TestGeneratePlistWithProxyEnv() {
+	env := map[string]string{
+		"HTTP_PROXY":  "http://127.0.0.1:3128",
+		"HTTPS_PROXY": "http://127.0.0.1:3128",
+	}
+	plist := generatePlist("/usr/local/bin/loop", "/home/test/.loop/logs", env)
+	require.Contains(s.T(), plist, "<key>HTTP_PROXY</key>")
+	require.Contains(s.T(), plist, "<string>http://127.0.0.1:3128</string>")
+	require.Contains(s.T(), plist, "<key>HTTPS_PROXY</key>")
+	require.Contains(s.T(), plist, "<key>PATH</key>")
 }
 
 // --- RealSystem tests ---

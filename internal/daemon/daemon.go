@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -45,6 +46,12 @@ var getUID = os.Getuid
 // evalSymlinks is a package-level variable to allow overriding in tests.
 var evalSymlinks = filepath.EvalSymlinks
 
+// osGetenv is a package-level variable to allow overriding in tests.
+var osGetenv = os.Getenv
+
+// proxyKeys lists the environment variable names forwarded to the launchd plist.
+var proxyKeys = []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"}
+
 // Start installs and bootstraps the launchd service.
 func Start(sys System) error {
 	exe, err := sys.Executable()
@@ -71,7 +78,14 @@ func Start(sys System) error {
 		return fmt.Errorf("creating log directory: %w", err)
 	}
 
-	plist := generatePlist(binPath, logDir)
+	extraEnv := make(map[string]string)
+	for _, key := range proxyKeys {
+		if v := osGetenv(key); v != "" {
+			extraEnv[key] = v
+		}
+	}
+
+	plist := generatePlist(binPath, logDir, extraEnv)
 	if err := sys.WriteFile(plistPath, []byte(plist), 0o644); err != nil {
 		return fmt.Errorf("writing plist: %w", err)
 	}
@@ -153,8 +167,20 @@ func Status(sys System) (string, error) {
 	return "stopped", nil
 }
 
-func generatePlist(binaryPath, logDir string) string {
+func generatePlist(binaryPath, logDir string, extraEnv map[string]string) string {
 	logFile := logDir + "/loop.log"
+
+	var envEntries string
+	// Sort keys for deterministic output.
+	keys := make([]string, 0, len(extraEnv))
+	for k := range extraEnv {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, k := range keys {
+		envEntries += fmt.Sprintf("\t\t<key>%s</key>\n\t\t<string>%s</string>\n", k, extraEnv[k])
+	}
+
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -178,8 +204,8 @@ func generatePlist(binaryPath, logDir string) string {
 	<dict>
 		<key>PATH</key>
 		<string>/usr/local/bin:/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
-	</dict>
+%s	</dict>
 </dict>
 </plist>
-`, serviceLabel, binaryPath, logFile, logFile)
+`, serviceLabel, binaryPath, logFile, logFile, envEntries)
 }
