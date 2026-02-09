@@ -199,7 +199,7 @@ func newOnboardGlobalCmd() *cobra.Command {
 		Use:     "onboard:global",
 		Aliases: []string{"o:global", "setup"},
 		Short:   "Initialize global Loop configuration at ~/.loop/",
-		Long:  "Copies config.example.json to ~/.loop/config.json for first-time setup",
+		Long:    "Copies config.example.json to ~/.loop/config.json for first-time setup",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			force, _ := cmd.Flags().GetBool("force")
 			return onboardGlobal(force)
@@ -214,7 +214,7 @@ func newOnboardLocalCmd() *cobra.Command {
 		Use:     "onboard:local",
 		Aliases: []string{"o:local", "init"},
 		Short:   "Register Loop MCP server in the current project",
-		Long:  "Writes .mcp.json with the loop MCP server for Claude Code integration",
+		Long:    "Writes .mcp.json with the loop MCP server for Claude Code integration",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			apiURL, _ := cmd.Flags().GetString("api-url")
 			return onboardLocal(apiURL)
@@ -305,23 +305,30 @@ func onboardLocal(apiURL string) error {
 	// Check if loop is already registered
 	if _, exists := servers["loop"]; exists {
 		fmt.Println("loop MCP server is already registered in .mcp.json")
-		return nil
+	} else {
+		// Add loop server
+		servers["loop"] = map[string]any{
+			"command": "loop",
+			"args":    []string{"mcp", "--dir", dir, "--api-url", apiURL, "--log", filepath.Join(dir, ".loop", "mcp.log")},
+		}
+		existing["mcpServers"] = servers
+
+		mcpJSON, _ := json.MarshalIndent(existing, "", "  ")
+		if err := osWriteFile(mcpPath, append(mcpJSON, '\n'), 0644); err != nil {
+			return fmt.Errorf("writing .mcp.json: %w", err)
+		}
+
+		fmt.Printf("Added loop MCP server to %s\n", mcpPath)
+		fmt.Println("\nMake sure 'loop serve' or 'loop daemon:start' is running.")
 	}
 
-	// Add loop server
-	servers["loop"] = map[string]any{
-		"command": "loop",
-		"args":    []string{"mcp", "--dir", dir, "--api-url", apiURL, "--log", filepath.Join(dir, ".loop", "mcp.log")},
+	// Eagerly create the Discord channel so it's ready immediately
+	channelID, err := ensureChannelFunc(apiURL, dir)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: could not register channel (is 'loop serve' running?): %v\n", err)
+	} else {
+		fmt.Printf("Discord channel ready: %s\n", channelID)
 	}
-	existing["mcpServers"] = servers
-
-	mcpJSON, _ := json.MarshalIndent(existing, "", "  ")
-	if err := osWriteFile(mcpPath, append(mcpJSON, '\n'), 0644); err != nil {
-		return fmt.Errorf("writing .mcp.json: %w", err)
-	}
-
-	fmt.Printf("Added loop MCP server to %s\n", mcpPath)
-	fmt.Println("\nMake sure 'loop serve' or 'loop daemon:start' is running.")
 
 	return nil
 }

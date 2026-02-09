@@ -42,18 +42,20 @@ restart: install docker-build ## Install, stop and start the daemon
 	loop daemon:start
 
 docker-shell: ## Start a bash shell in the agent container
-	docker run --rm -it --entrypoint bash \
+	docker run --rm -it \
 		--add-host=host.docker.internal:host-gateway \
 		-v $(CURDIR):$(CURDIR) \
-		-v $(HOME)/.claude:/home/agent/.claude \
-		-v $(HOME)/.gitconfig:/home/agent/.gitconfig:ro \
+		-v $(HOME)/.claude:$(HOME)/.claude \
+		-v $(HOME)/.gitconfig:$(HOME)/.gitconfig:ro \
 		-v $(HOME)/.gitignore_global:$(HOME)/.gitignore_global:ro \
-		-v $(HOME)/.ssh:/home/agent/.ssh:ro \
-		-v $(HOME)/.aws:/home/agent/.aws \
+		-v $(HOME)/.ssh:$(HOME)/.ssh:ro \
+		-v $(HOME)/.aws:$(HOME)/.aws \
 		-v /var/run/docker.sock:/var/run/docker.sock \
 		-w $(CURDIR) \
+		-e HOME=$(HOME) \
+		-e HOST_USER=$(USER) \
 		-e CLAUDE_CODE_OAUTH_TOKEN=$$(grep claude_code_oauth_token ~/.loop/config.json | awk -F'"' '{print $$4}') \
-		loop-agent:latest
+		loop-agent:latest bash
 
 clean: ## Remove build artifacts
 	rm -rf bin/ coverage.out coverage.html

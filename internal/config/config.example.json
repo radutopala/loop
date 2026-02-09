@@ -21,13 +21,13 @@
   // Format: "host_path:container_path" or "host_path:container_path:ro"
   "mounts": [
     // Mount Claude code and config to allow agents to use Claude for reasoning and decision-making
-    "~/.claude:/home/agent/.claude",
+    "~/.claude:~/.claude",
     // Mount Git config read-only to allow agents to perform Git operations with correct user identity without risking modification of the host's Git config
-    "~/.gitconfig:/home/agent/.gitconfig:ro",
+    "~/.gitconfig:~/.gitconfig:ro",
     // Mount SSH keys read-only to allow agents to perform Git operations with authentication (e.g. cloning private repos, pushing commits)
-    "~/.ssh:/home/agent/.ssh:ro",
+    "~/.ssh:~/.ssh:ro",
     // Mount AWS credentials read-only to allow agents to interact with AWS services
-    "~/.aws:/home/agent/.aws",
+    "~/.aws:~/.aws",
     // Mount Docker socket to allow agents to run Docker commands (e.g. for testing or deployment)
     "/var/run/docker.sock:/var/run/docker.sock"
   ],

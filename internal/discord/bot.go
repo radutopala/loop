@@ -274,7 +274,7 @@ func (b *DiscordBot) handleMessage(_ *discordgo.Session, m *discordgo.MessageCre
 	b.mu.RUnlock()
 
 	for _, h := range handlers {
-		h(context.Background(), msg)
+		go h(context.Background(), msg)
 	}
 }
 
@@ -334,7 +334,7 @@ func (b *DiscordBot) handleInteraction(_ *discordgo.Session, i *discordgo.Intera
 	b.mu.RUnlock()
 
 	for _, h := range handlers {
-		h(context.Background(), inter)
+		go h(context.Background(), inter)
 	}
 }
 

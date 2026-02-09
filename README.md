@@ -115,10 +115,10 @@ Alternatively, manually create `~/.loop/config.json` (HJSON — comments and tra
   // Mounts for all containers (optional)
   // Format: "host_path:container_path" or "host_path:container_path:ro"
   "mounts": [
-    "~/.claude:/home/agent/.claude",           // Writable - for Claude sessions
-    "~/.gitconfig:/home/agent/.gitconfig:ro",          // Read-only - for git identity
-    "~/.ssh:/home/agent/.ssh:ro",              // Read-only - for SSH keys
-    "~/.aws:/home/agent/.aws",                // Writable - for AWS credentials and cache
+    "~/.claude:~/.claude",                     // Writable - for Claude sessions
+    "~/.gitconfig:~/.gitconfig:ro",            // Read-only - for git identity
+    "~/.ssh:~/.ssh:ro",                        // Read-only - for SSH keys
+    "~/.aws:~/.aws",                           // Writable - for AWS credentials and cache
     "/var/run/docker.sock:/var/run/docker.sock" // Docker access
   ]
 }

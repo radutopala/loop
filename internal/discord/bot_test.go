@@ -353,8 +353,10 @@ func (s *BotSuite) TestRemoveCommandsDeleteError() {
 
 func (s *BotSuite) TestOnMessageRegistersHandler() {
 	var received *IncomingMessage
+	done := make(chan struct{})
 	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
 		received = msg
+		close(done)
 	})
 
 	s.bot.mu.Lock()
@@ -372,6 +374,7 @@ func (s *BotSuite) TestOnMessageRegistersHandler() {
 		},
 	}
 	s.bot.handleMessage(nil, m)
+	<-done
 
 	require.NotNil(s.T(), received)
 	require.Equal(s.T(), "hello", received.Content)
@@ -380,8 +383,10 @@ func (s *BotSuite) TestOnMessageRegistersHandler() {
 
 func (s *BotSuite) TestOnInteractionRegistersHandler() {
 	var received *orchestrator.Interaction
+	done := make(chan struct{})
 	s.bot.OnInteraction(func(_ context.Context, i any) {
 		received = i.(*orchestrator.Interaction)
+		close(done)
 	})
 
 	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -404,6 +409,7 @@ func (s *BotSuite) TestOnInteractionRegistersHandler() {
 		},
 	}
 	s.bot.handleInteraction(nil, ic)
+	<-done
 
 	require.NotNil(s.T(), received)
 	require.Equal(s.T(), "register", received.CommandName)
@@ -413,8 +419,10 @@ func (s *BotSuite) TestOnInteractionRegistersHandler() {
 
 func (s *BotSuite) TestOnInteractionWithOptions() {
 	var received *orchestrator.Interaction
+	done := make(chan struct{})
 	s.bot.OnInteraction(func(_ context.Context, i any) {
 		received = i.(*orchestrator.Interaction)
+		close(done)
 	})
 
 	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -440,6 +448,7 @@ func (s *BotSuite) TestOnInteractionWithOptions() {
 		},
 	}
 	s.bot.handleInteraction(nil, ic)
+	<-done
 
 	require.NotNil(s.T(), received)
 	require.Equal(s.T(), "schedule", received.CommandName)
@@ -450,8 +459,10 @@ func (s *BotSuite) TestOnInteractionWithOptions() {
 
 func (s *BotSuite) TestOnInteractionSubcommandGroup() {
 	var received *orchestrator.Interaction
+	done := make(chan struct{})
 	s.bot.OnInteraction(func(_ context.Context, i any) {
 		received = i.(*orchestrator.Interaction)
+		close(done)
 	})
 
 	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -482,6 +493,7 @@ func (s *BotSuite) TestOnInteractionSubcommandGroup() {
 		},
 	}
 	s.bot.handleInteraction(nil, ic)
+	<-done
 
 	require.NotNil(s.T(), received)
 	require.Equal(s.T(), "template-add", received.CommandName)
@@ -492,8 +504,10 @@ func (s *BotSuite) TestOnInteractionSubcommandGroup() {
 
 func (s *BotSuite) TestOnInteractionSubcommandGroupNoSub() {
 	var received *orchestrator.Interaction
+	done := make(chan struct{})
 	s.bot.OnInteraction(func(_ context.Context, i any) {
 		received = i.(*orchestrator.Interaction)
+		close(done)
 	})
 
 	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -515,6 +529,7 @@ func (s *BotSuite) TestOnInteractionSubcommandGroupNoSub() {
 		},
 	}
 	s.bot.handleInteraction(nil, ic)
+	<-done
 
 	require.NotNil(s.T(), received)
 	require.Equal(s.T(), "template", received.CommandName)
@@ -522,8 +537,10 @@ func (s *BotSuite) TestOnInteractionSubcommandGroupNoSub() {
 
 func (s *BotSuite) TestOnInteractionTopLevelCommand() {
 	var received *orchestrator.Interaction
+	done := make(chan struct{})
 	s.bot.OnInteraction(func(_ context.Context, i any) {
 		received = i.(*orchestrator.Interaction)
+		close(done)
 	})
 
 	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
@@ -540,6 +557,7 @@ func (s *BotSuite) TestOnInteractionTopLevelCommand() {
 		},
 	}
 	s.bot.handleInteraction(nil, ic)
+	<-done
 
 	require.NotNil(s.T(), received)
 	require.Equal(s.T(), "ping", received.CommandName)
@@ -547,8 +565,10 @@ func (s *BotSuite) TestOnInteractionTopLevelCommand() {
 
 func (s *BotSuite) TestOnInteractionRespondError() {
 	var received *orchestrator.Interaction
+	done := make(chan struct{})
 	s.bot.OnInteraction(func(_ context.Context, i any) {
 		received = i.(*orchestrator.Interaction)
+		close(done)
 	})
 
 	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("respond failed"))
@@ -569,6 +589,7 @@ func (s *BotSuite) TestOnInteractionRespondError() {
 		},
 	}
 	s.bot.handleInteraction(nil, ic)
+	<-done
 
 	// Interaction should still be processed even if acknowledge fails.
 	require.NotNil(s.T(), received)
@@ -653,8 +674,10 @@ func (s *BotSuite) TestHandleMessageDMAlwaysTriggered() {
 	s.bot.mu.Unlock()
 
 	var received *IncomingMessage
+	done := make(chan struct{})
 	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
 		received = msg
+		close(done)
 	})
 
 	m := &discordgo.MessageCreate{
@@ -667,6 +690,7 @@ func (s *BotSuite) TestHandleMessageDMAlwaysTriggered() {
 		},
 	}
 	s.bot.handleMessage(nil, m)
+	<-done
 
 	require.NotNil(s.T(), received)
 	require.Equal(s.T(), "hello in DM", received.Content)
@@ -678,16 +702,19 @@ func (s *BotSuite) TestHandleMessageMultipleHandlers() {
 	s.bot.botUserID = "bot-123"
 	s.bot.mu.Unlock()
 
+	var wg sync.WaitGroup
 	var mu sync.Mutex
 	count := 0
 	handler := func(_ context.Context, _ *IncomingMessage) {
 		mu.Lock()
 		count++
 		mu.Unlock()
+		wg.Done()
 	}
 	s.bot.OnMessage(handler)
 	s.bot.OnMessage(handler)
 
+	wg.Add(2)
 	m := &discordgo.MessageCreate{
 		Message: &discordgo.Message{
 			ID:      "msg-1",
@@ -696,24 +723,28 @@ func (s *BotSuite) TestHandleMessageMultipleHandlers() {
 		},
 	}
 	s.bot.handleMessage(nil, m)
+	wg.Wait()
 	mu.Lock()
 	require.Equal(s.T(), 2, count)
 	mu.Unlock()
 }
 
 func (s *BotSuite) TestHandleInteractionMultipleHandlers() {
+	var wg sync.WaitGroup
 	var mu sync.Mutex
 	count := 0
 	handler := func(_ context.Context, _ any) {
 		mu.Lock()
 		count++
 		mu.Unlock()
+		wg.Done()
 	}
 	s.bot.OnInteraction(handler)
 	s.bot.OnInteraction(handler)
 
 	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
+	wg.Add(2)
 	ic := &discordgo.InteractionCreate{
 		Interaction: &discordgo.Interaction{
 			Type: discordgo.InteractionApplicationCommand,
@@ -726,6 +757,7 @@ func (s *BotSuite) TestHandleInteractionMultipleHandlers() {
 		},
 	}
 	s.bot.handleInteraction(nil, ic)
+	wg.Wait()
 	mu.Lock()
 	require.Equal(s.T(), 2, count)
 	mu.Unlock()

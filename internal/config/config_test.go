@@ -368,7 +368,7 @@ func (s *ConfigSuite) TestLoadProjectConfigNoFile() {
 	}
 
 	mainCfg := &Config{
-		Mounts:     []string{"~/.gitconfig:/home/agent/.gitconfig:ro"},
+		Mounts:     []string{"~/.gitconfig:~/.gitconfig:ro"},
 		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
 	}
 
@@ -433,7 +433,7 @@ func (s *ConfigSuite) TestLoadProjectConfigMountsOnly() {
 	}
 
 	mainCfg := &Config{
-		Mounts:     []string{"~/.gitconfig:/home/agent/.gitconfig:ro"},
+		Mounts:     []string{"~/.gitconfig:~/.gitconfig:ro"},
 		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
 	}
 
@@ -442,7 +442,7 @@ func (s *ConfigSuite) TestLoadProjectConfigMountsOnly() {
 
 	// Check mounts: main + project with resolved paths
 	require.Len(s.T(), merged.Mounts, 3)
-	require.Equal(s.T(), "~/.gitconfig:/home/agent/.gitconfig:ro", merged.Mounts[0])
+	require.Equal(s.T(), "~/.gitconfig:~/.gitconfig:ro", merged.Mounts[0])
 	require.Equal(s.T(), "/project/data:/app/data", merged.Mounts[1])
 	require.Equal(s.T(), "/project/logs:/app/logs:ro", merged.Mounts[2])
 
@@ -470,7 +470,7 @@ func (s *ConfigSuite) TestLoadProjectConfigMCPServersOnly() {
 	}
 
 	mainCfg := &Config{
-		Mounts:     []string{"~/.gitconfig:/home/agent/.gitconfig:ro"},
+		Mounts:     []string{"~/.gitconfig:~/.gitconfig:ro"},
 		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
 	}
 
@@ -479,7 +479,7 @@ func (s *ConfigSuite) TestLoadProjectConfigMCPServersOnly() {
 
 	// Mounts unchanged
 	require.Len(s.T(), merged.Mounts, 1)
-	require.Equal(s.T(), "~/.gitconfig:/home/agent/.gitconfig:ro", merged.Mounts[0])
+	require.Equal(s.T(), "~/.gitconfig:~/.gitconfig:ro", merged.Mounts[0])
 
 	// MCP servers merged
 	require.Len(s.T(), merged.MCPServers, 2)
@@ -505,7 +505,7 @@ func (s *ConfigSuite) TestLoadProjectConfigBothMountsAndMCP() {
 	}
 
 	mainCfg := &Config{
-		Mounts:     []string{"~/.gitconfig:/home/agent/.gitconfig:ro"},
+		Mounts:     []string{"~/.gitconfig:~/.gitconfig:ro"},
 		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
 	}
 
@@ -514,7 +514,7 @@ func (s *ConfigSuite) TestLoadProjectConfigBothMountsAndMCP() {
 
 	// Check mounts
 	require.Len(s.T(), merged.Mounts, 2)
-	require.Equal(s.T(), "~/.gitconfig:/home/agent/.gitconfig:ro", merged.Mounts[0])
+	require.Equal(s.T(), "~/.gitconfig:~/.gitconfig:ro", merged.Mounts[0])
 	require.Equal(s.T(), "/project/data:/app/data", merged.Mounts[1])
 
 	// Check MCP servers
@@ -599,7 +599,7 @@ func (s *ConfigSuite) TestLoadProjectConfigEmptyConfig() {
 	}
 
 	mainCfg := &Config{
-		Mounts:     []string{"~/.gitconfig:/home/agent/.gitconfig:ro"},
+		Mounts:     []string{"~/.gitconfig:~/.gitconfig:ro"},
 		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
 	}
 
@@ -608,7 +608,7 @@ func (s *ConfigSuite) TestLoadProjectConfigEmptyConfig() {
 
 	// Main config should be unchanged
 	require.Len(s.T(), merged.Mounts, 1)
-	require.Equal(s.T(), "~/.gitconfig:/home/agent/.gitconfig:ro", merged.Mounts[0])
+	require.Equal(s.T(), "~/.gitconfig:~/.gitconfig:ro", merged.Mounts[0])
 	require.Len(s.T(), merged.MCPServers, 1)
 	require.Equal(s.T(), "/bin/main", merged.MCPServers["main-srv"].Command)
 }
@@ -711,7 +711,7 @@ func (s *ConfigSuite) TestLoadProjectConfigDoesNotMutateMain() {
 	}
 
 	mainCfg := &Config{
-		Mounts:     []string{"~/.gitconfig:/home/agent/.gitconfig:ro"},
+		Mounts:     []string{"~/.gitconfig:~/.gitconfig:ro"},
 		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
 	}
 
@@ -720,7 +720,7 @@ func (s *ConfigSuite) TestLoadProjectConfigDoesNotMutateMain() {
 
 	// Verify main config was not mutated
 	require.Len(s.T(), mainCfg.Mounts, 1)
-	require.Equal(s.T(), "~/.gitconfig:/home/agent/.gitconfig:ro", mainCfg.Mounts[0])
+	require.Equal(s.T(), "~/.gitconfig:~/.gitconfig:ro", mainCfg.Mounts[0])
 	require.Len(s.T(), mainCfg.MCPServers, 1)
 	require.Equal(s.T(), "/bin/main", mainCfg.MCPServers["main-srv"].Command)
 

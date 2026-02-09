@@ -169,8 +169,11 @@ func processMount(mount string) (string, error) {
 		return "", nil
 	}
 
-	// Reconstruct mount with expanded path
-	containerPath := parts[1]
+	// Expand ~ in the container path too — container HOME matches host HOME.
+	containerPath, err := expandPath(parts[1])
+	if err != nil {
+		return "", fmt.Errorf("expanding container path %s: %w", parts[1], err)
+	}
 	mode := ""
 	if len(parts) > 2 {
 		mode = ":" + parts[2]
@@ -206,14 +209,8 @@ func gitExcludesMount() string {
 		return ""
 	}
 
-	// Container path: ~/foo → /home/agent/foo (git expands ~ to agent home),
-	// absolute paths stay as-is (git uses them literally from .gitconfig).
-	containerPath := hostPath
-	if strings.HasPrefix(raw, "~/") {
-		containerPath = filepath.Join("/home/agent", raw[2:])
-	}
-
-	return hostPath + ":" + containerPath + ":ro"
+	// Container HOME matches host HOME, so the expanded host path works in both.
+	return hostPath + ":" + hostPath + ":ro"
 }
 
 // runOnce executes a single container run.
@@ -239,10 +236,17 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		return nil, fmt.Errorf("loading project config: %w", err)
 	}
 
+	hostHome, err := userHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("getting home directory: %w", err)
+	}
+
 	apiURL := "http://host.docker.internal" + cfg.APIAddr
 	env := []string{
 		"CHANNEL_ID=" + req.ChannelID,
 		"API_URL=" + apiURL,
+		"HOME=" + hostHome,
+		"HOST_USER=" + getenv("USER"),
 	}
 	if cfg.ClaudeCodeOAuthToken != "" {
 		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+cfg.ClaudeCodeOAuthToken)
@@ -290,9 +294,9 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 	// Mount workDir at same path in container
 	binds = append(binds, workDir+":"+workDir)
 
-	// Build full Claude CLI args — --mcp-config must come before --print
-	// to avoid Claude Code hanging.
-	cmd := []string{"--mcp-config", mcpConfigPath}
+	// Build full Claude CLI command — entrypoint runs whatever CMD is passed.
+	// --mcp-config must come before --print to avoid Claude Code hanging.
+	cmd := []string{"claude", "--mcp-config", mcpConfigPath}
 	if cfg.ClaudeModel != "" {
 		cmd = append(cmd, "--model", cfg.ClaudeModel)
 	}

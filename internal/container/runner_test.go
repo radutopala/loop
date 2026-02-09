@@ -82,6 +82,7 @@ type RunnerSuite struct {
 	origMkdirAll    func(string, os.FileMode) error
 	origGetenv      func(string) string
 	origWriteFile   func(string, []byte, os.FileMode) error
+	origUserHomeDir func() (string, error)
 	origOsStat      func(string) (os.FileInfo, error)
 	origExecCommand func(string, ...string) *exec.Cmd
 }
@@ -94,9 +95,16 @@ func (s *RunnerSuite) SetupTest() {
 	s.origMkdirAll = mkdirAll
 	mkdirAll = func(_ string, _ os.FileMode) error { return nil }
 	s.origGetenv = getenv
-	getenv = func(_ string) string { return "" }
+	getenv = func(key string) string {
+		if key == "USER" {
+			return "testuser"
+		}
+		return ""
+	}
 	s.origWriteFile = writeFile
 	writeFile = func(_ string, _ []byte, _ os.FileMode) error { return nil }
+	s.origUserHomeDir = userHomeDir
+	userHomeDir = func() (string, error) { return "/home/testuser", nil }
 	s.origOsStat = osStat
 	osStat = func(_ string) (os.FileInfo, error) { return nil, os.ErrNotExist }
 	s.origExecCommand = execCommand
@@ -119,6 +127,7 @@ func (s *RunnerSuite) TearDownTest() {
 	mkdirAll = s.origMkdirAll
 	getenv = s.origGetenv
 	writeFile = s.origWriteFile
+	userHomeDir = s.origUserHomeDir
 	osStat = s.origOsStat
 	execCommand = s.origExecCommand
 }
@@ -150,7 +159,9 @@ func (s *RunnerSuite) TestRunHappyPath() {
 		hasResume := slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "sess-1")
 		hasBinds := len(cfg.Binds) == 1 &&
 			cfg.Binds[0] == "/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work"
-		return hasResume && hasBinds
+		hasHome := slices.Contains(cfg.Env, "HOME=/home/testuser")
+		hasHostUser := slices.Contains(cfg.Env, "HOST_USER=testuser")
+		return hasResume && hasBinds && hasHome && hasHostUser
 	}), "").Return("container-123", nil)
 	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
@@ -372,6 +383,8 @@ func (s *RunnerSuite) TestRunNoSessionID() {
 func (s *RunnerSuite) TestRunProxyEnvForwarding() {
 	getenv = func(key string) string {
 		switch key {
+		case "USER":
+			return "testuser"
 		case "HTTP_PROXY":
 			return "http://proxy:8080"
 		case "HTTPS_PROXY":
@@ -626,6 +639,18 @@ func (s *RunnerSuite) TestRunRetryAlsoFails() {
 	s.client.AssertExpectations(s.T())
 }
 
+func (s *RunnerSuite) TestRunHomeDirError() {
+	userHomeDir = func() (string, error) { return "", errors.New("home dir error") }
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{ChannelID: "ch-1"}
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Nil(s.T(), resp)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "getting home directory")
+}
+
 func (s *RunnerSuite) TestRunMkdirAllError() {
 	mkdirAll = func(_ string, _ os.FileMode) error { return errors.New("mkdir fail") }
 
@@ -647,6 +672,12 @@ func (s *RunnerSuite) TestDefaultMkdirAll() {
 func (s *RunnerSuite) TestDefaultGetenv() {
 	result := s.origGetenv("PATH")
 	require.NotEmpty(s.T(), result)
+}
+
+func (s *RunnerSuite) TestDefaultUserHomeDir() {
+	home, err := s.origUserHomeDir()
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), home)
 }
 
 func (s *RunnerSuite) TestLocalhostToDockerHost() {
@@ -936,15 +967,15 @@ func TestProcessMount(t *testing.T) {
 		wantErr  bool
 	}{
 		{
-			name:     "valid mount with expansion",
-			input:    "~/.claude:/home/agent/.claude",
-			expected: "/home/testuser/.claude:/home/agent/.claude",
+			name:     "valid mount with tilde expansion on both sides",
+			input:    "~/.claude:~/.claude",
+			expected: "/home/testuser/.claude:/home/testuser/.claude",
 			wantErr:  false,
 		},
 		{
 			name:     "valid mount with readonly flag",
-			input:    "~/.gitconfig:/home/agent/.gitconfig:ro",
-			expected: "/home/testuser/.gitconfig:/home/agent/.gitconfig:ro",
+			input:    "~/.gitconfig:~/.gitconfig:ro",
+			expected: "/home/testuser/.gitconfig:/home/testuser/.gitconfig:ro",
 			wantErr:  false,
 		},
 		{
@@ -982,9 +1013,37 @@ func TestProcessMountExpandPathError(t *testing.T) {
 		return "", errors.New("home dir error")
 	}
 
-	result, err := processMount("~/.claude:/home/agent/.claude")
+	result, err := processMount("~/.claude:~/.claude")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "expanding path")
+	require.Empty(t, result)
+}
+
+func TestProcessMountContainerPathExpandError(t *testing.T) {
+	origUserHomeDir := userHomeDir
+	origOsStat := osStat
+	defer func() {
+		userHomeDir = origUserHomeDir
+		osStat = origOsStat
+	}()
+
+	callCount := 0
+	userHomeDir = func() (string, error) {
+		callCount++
+		if callCount == 1 {
+			return "/home/testuser", nil // host tilde expansion succeeds
+		}
+		return "", errors.New("home dir error") // container tilde expansion fails
+	}
+
+	osStat = func(_ string) (os.FileInfo, error) {
+		return nil, nil // path exists
+	}
+
+	// Host uses ~ (triggers first userHomeDir call), container uses ~ (triggers second call that fails)
+	result, err := processMount("~/.claude:~/.claude")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "expanding container path")
 	require.Empty(t, result)
 }
 
@@ -1040,9 +1099,9 @@ func (s *RunnerSuite) TestRunWithCustomMounts() {
 	}
 
 	s.cfg.Mounts = []string{
-		"~/.claude:/home/agent/.claude",
-		"~/.gitconfig:/home/agent/.gitconfig:ro",
-		"~/.ssh:/home/agent/.ssh:ro", // This will be skipped as non-existent
+		"~/.claude:~/.claude",
+		"~/.gitconfig:~/.gitconfig:ro",
+		"~/.ssh:~/.ssh:ro", // This will be skipped as non-existent
 	}
 
 	ctx := context.Background()
@@ -1063,8 +1122,8 @@ func (s *RunnerSuite) TestRunWithCustomMounts() {
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		// Check that binds include custom mounts and preserve paths
 		expectedBinds := []string{
-			"/home/testuser/.claude:/home/agent/.claude",
-			"/home/testuser/.gitconfig:/home/agent/.gitconfig:ro",
+			"/home/testuser/.claude:/home/testuser/.claude",
+			"/home/testuser/.gitconfig:/home/testuser/.gitconfig:ro",
 			"/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work",
 		}
 		bindsMatch := slices.Equal(cfg.Binds, expectedBinds)
@@ -1143,7 +1202,7 @@ func TestGitExcludesMount(t *testing.T) {
 			gitOutput:  "~/.gitignore_global\n",
 			homeDir:    "/home/testuser",
 			fileExists: true,
-			expected:   "/home/testuser/.gitignore_global:/home/agent/.gitignore_global:ro",
+			expected:   "/home/testuser/.gitignore_global:/home/testuser/.gitignore_global:ro",
 		},
 		{
 			name:       "absolute path stays as-is",
@@ -1313,7 +1372,7 @@ func (s *RunnerSuite) TestRunWithGitExcludesMount() {
 	errCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		return slices.Contains(cfg.Binds, "/home/testuser/.gitignore_global:/home/agent/.gitignore_global:ro")
+		return slices.Contains(cfg.Binds, "/home/testuser/.gitignore_global:/home/testuser/.gitignore_global:ro")
 	}), "").Return("container-123", nil)
 	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)

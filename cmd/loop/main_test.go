@@ -479,6 +479,35 @@ func (s *MainSuite) TestRunMCPLogOpenError() {
 	require.Contains(s.T(), err.Error(), "opening mcp log")
 }
 
+func (s *MainSuite) TestRunMCPWithConfigLoad() {
+	// Test that runMCP successfully loads config for log level/format
+	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
+
+	// Mock configLoad to return a config
+	origConfigLoad := configLoad
+	configLoad = func() (*config.Config, error) {
+		return &config.Config{
+			LogLevel:  "debug",
+			LogFormat: "json",
+		}, nil
+	}
+	defer func() { configLoad = origConfigLoad }()
+
+	// Mock newMCPServer to avoid actually running the server
+	called := false
+	newMCPServer = func(channelID, apiURL string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
+		called = true
+		// Verify logger was created (we can't easily inspect its level, but at least it was called)
+		require.NotNil(s.T(), logger)
+		// Return a real server that we won't run
+		return mcpserver.New(channelID, apiURL, httpClient, logger)
+	}
+
+	// This will fail to run the server (no stdio), but that's OK - we just want to test config loading
+	_ = runMCP("ch1", "http://localhost:8222", "", logPath)
+	require.True(s.T(), called)
+}
+
 func (s *MainSuite) TestRunMCPWithInMemoryTransport() {
 	// Verify runMCP constructs the server correctly.
 	// We can't test stdio, but we test the MCP server is functional via in-memory transport.
@@ -1240,7 +1269,7 @@ func (s *MainSuite) TestOnboardGlobalSuccess() {
 	entrypointPath := filepath.Join(tmpDir, ".loop", "container", "entrypoint.sh")
 	entrypointData, err := os.ReadFile(entrypointPath)
 	require.NoError(s.T(), err)
-	require.Contains(s.T(), string(entrypointData), "su-exec agent claude")
+	require.Contains(s.T(), string(entrypointData), `su-exec "$AGENT_USER" "$@"`)
 }
 
 func (s *MainSuite) TestOnboardGlobalConfigAlreadyExists() {
@@ -1449,6 +1478,7 @@ func (s *MainSuite) TestOnboardLocalSuccess() {
 	osGetwd = func() (string, error) { return tmpDir, nil }
 	osReadFile = os.ReadFile
 	osWriteFile = os.WriteFile
+	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
 
 	err := onboardLocal("http://localhost:8222")
 	require.NoError(s.T(), err)
@@ -1482,6 +1512,7 @@ func (s *MainSuite) TestOnboardLocalMergesExisting() {
 	osGetwd = func() (string, error) { return tmpDir, nil }
 	osReadFile = os.ReadFile
 	osWriteFile = os.WriteFile
+	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
 
 	err := onboardLocal("http://localhost:8222")
 	require.NoError(s.T(), err)
@@ -1505,6 +1536,7 @@ func (s *MainSuite) TestOnboardLocalAlreadyRegistered() {
 	osGetwd = func() (string, error) { return tmpDir, nil }
 	osReadFile = os.ReadFile
 	osWriteFile = os.WriteFile
+	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
 
 	err := onboardLocal("http://localhost:8222")
 	require.NoError(s.T(), err)
@@ -1553,6 +1585,7 @@ func (s *MainSuite) TestOnboardLocalCmdRunE() {
 	osGetwd = func() (string, error) { return tmpDir, nil }
 	osReadFile = os.ReadFile
 	osWriteFile = os.WriteFile
+	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
 
 	cmd := newOnboardLocalCmd()
 	err := cmd.Execute()
@@ -1568,6 +1601,7 @@ func (s *MainSuite) TestOnboardLocalCustomAPIURL() {
 	osGetwd = func() (string, error) { return tmpDir, nil }
 	osReadFile = os.ReadFile
 	osWriteFile = os.WriteFile
+	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
 
 	err := onboardLocal("http://custom:9999")
 	require.NoError(s.T(), err)
@@ -1584,6 +1618,58 @@ func (s *MainSuite) TestOnboardLocalCustomAPIURL() {
 	require.Equal(s.T(), "http://custom:9999", args[4])
 	require.Equal(s.T(), "--log", args[5])
 	require.Equal(s.T(), filepath.Join(tmpDir, ".loop", "mcp.log"), args[6])
+}
+
+func (s *MainSuite) TestOnboardLocalEnsuresChannel() {
+	tmpDir := s.T().TempDir()
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = os.WriteFile
+
+	var calledAPIURL, calledDir string
+	ensureChannelFunc = func(apiURL, dir string) (string, error) {
+		calledAPIURL = apiURL
+		calledDir = dir
+		return "ch-123", nil
+	}
+
+	err := onboardLocal("http://localhost:8222")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "http://localhost:8222", calledAPIURL)
+	require.Equal(s.T(), tmpDir, calledDir)
+}
+
+func (s *MainSuite) TestOnboardLocalEnsureChannelFailsGracefully() {
+	tmpDir := s.T().TempDir()
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = os.WriteFile
+	ensureChannelFunc = func(_, _ string) (string, error) {
+		return "", errors.New("server not running")
+	}
+
+	err := onboardLocal("http://localhost:8222")
+	require.NoError(s.T(), err, "onboardLocal should succeed even when ensureChannel fails")
+}
+
+func (s *MainSuite) TestOnboardLocalAlreadyRegisteredStillEnsuresChannel() {
+	tmpDir := s.T().TempDir()
+	existing := `{"mcpServers":{"loop":{"command":"loop","args":["mcp","--dir","` + tmpDir + `","--api-url","http://localhost:8222"]}}}`
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, ".mcp.json"), []byte(existing), 0644))
+
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = os.WriteFile
+
+	called := false
+	ensureChannelFunc = func(_, _ string) (string, error) {
+		called = true
+		return "ch-456", nil
+	}
+
+	err := onboardLocal("http://localhost:8222")
+	require.NoError(s.T(), err)
+	require.True(s.T(), called, "ensureChannelFunc should be called even when loop is already registered")
 }
 
 // --- ensureImage tests ---
@@ -1651,7 +1737,7 @@ func (s *MainSuite) TestEnsureImageWritesEmbeddedFiles() {
 
 	entrypointData, err := os.ReadFile(filepath.Join(containerDir, "entrypoint.sh"))
 	require.NoError(s.T(), err)
-	require.Contains(s.T(), string(entrypointData), "su-exec agent claude")
+	require.Contains(s.T(), string(entrypointData), `su-exec "$AGENT_USER" "$@"`)
 
 	dockerClient.AssertExpectations(s.T())
 }
