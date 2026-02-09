@@ -23,6 +23,7 @@ type Server struct {
 	apiURL     string
 	mcpServer  *mcp.Server
 	httpClient HTTPClient
+	logger     *slog.Logger
 }
 
 type scheduleTaskInput struct {
@@ -51,10 +52,14 @@ type listTasksInput struct{}
 
 // New creates a new MCP server with scheduler tools.
 func New(channelID, apiURL string, httpClient HTTPClient, logger *slog.Logger) *Server {
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
 	s := &Server{
 		channelID:  channelID,
 		apiURL:     apiURL,
 		httpClient: httpClient,
+		logger:     logger,
 	}
 
 	s.mcpServer = mcp.NewServer(&mcp.Implementation{
@@ -101,6 +106,8 @@ func (s *Server) MCPServer() *mcp.Server {
 }
 
 func (s *Server) doRequest(method, url string, body []byte) ([]byte, int, error) {
+	s.logger.Info("mcp api request", "method", method, "url", url, "body", string(body))
+
 	var bodyReader io.Reader
 	if body != nil {
 		bodyReader = bytes.NewReader(body)
@@ -115,15 +122,19 @@ func (s *Server) doRequest(method, url string, body []byte) ([]byte, int, error)
 
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
+		s.logger.Error("mcp api error", "method", method, "url", url, "error", err)
 		return nil, 0, err
 	}
 	defer resp.Body.Close()
 
 	respBody, _ := io.ReadAll(resp.Body)
+	s.logger.Info("mcp api response", "method", method, "url", url, "status", resp.StatusCode, "body", string(respBody))
 	return respBody, resp.StatusCode, nil
 }
 
 func (s *Server) handleScheduleTask(_ context.Context, _ *mcp.CallToolRequest, input scheduleTaskInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "schedule_task", "schedule", input.Schedule, "type", input.Type, "prompt", input.Prompt)
+
 	data, _ := json.Marshal(map[string]string{
 		"channel_id": s.channelID,
 		"schedule":   input.Schedule,
@@ -155,6 +166,8 @@ func (s *Server) handleScheduleTask(_ context.Context, _ *mcp.CallToolRequest, i
 }
 
 func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ listTasksInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "list_tasks", "channel_id", s.channelID)
+
 	respBody, status, err := s.doRequest("GET", fmt.Sprintf("%s/api/tasks?channel_id=%s", s.apiURL, s.channelID), nil)
 	if err != nil {
 		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
@@ -197,6 +210,8 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 }
 
 func (s *Server) handleCancelTask(_ context.Context, _ *mcp.CallToolRequest, input cancelTaskInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "cancel_task", "task_id", input.TaskID)
+
 	respBody, status, err := s.doRequest("DELETE", fmt.Sprintf("%s/api/tasks/%d", s.apiURL, input.TaskID), nil)
 	if err != nil {
 		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
@@ -214,6 +229,8 @@ func (s *Server) handleCancelTask(_ context.Context, _ *mcp.CallToolRequest, inp
 }
 
 func (s *Server) handleEditTask(_ context.Context, _ *mcp.CallToolRequest, input editTaskInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "edit_task", "task_id", input.TaskID)
+
 	body := map[string]any{}
 	if input.Schedule != nil {
 		body["schedule"] = *input.Schedule
@@ -248,6 +265,8 @@ func (s *Server) handleEditTask(_ context.Context, _ *mcp.CallToolRequest, input
 }
 
 func (s *Server) handleToggleTask(_ context.Context, _ *mcp.CallToolRequest, input toggleTaskInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "toggle_task", "task_id", input.TaskID, "enabled", input.Enabled)
+
 	data, _ := json.Marshal(map[string]bool{
 		"enabled": input.Enabled,
 	})

@@ -12,9 +12,4 @@ if [ -S /var/run/docker.sock ]; then
     addgroup agent "$GROUP_NAME" 2>/dev/null || true
 fi
 
-CLAUDE_ARGS="--print --output-format json --dangerously-skip-permissions"
-if [ -n "$SESSION_ID" ]; then
-    CLAUDE_ARGS="$CLAUDE_ARGS --resume $SESSION_ID"
-fi
-
-exec su-exec agent claude $CLAUDE_ARGS "$@"
+exec su-exec agent claude "$@"

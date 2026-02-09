@@ -358,3 +358,315 @@ func (s *ConfigSuite) TestExampleConfigEmbedded() {
 	require.Contains(s.T(), string(ExampleConfig), "discord_token")
 	require.Contains(s.T(), string(ExampleConfig), "task_templates")
 }
+
+func (s *ConfigSuite) TestLoadProjectConfigNoFile() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return nil, os.ErrNotExist
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		Mounts:     []string{"~/.gitconfig:/home/agent/.gitconfig:ro"},
+		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), mainCfg, merged) // Should return same config
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigReadError() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return nil, errors.New("permission denied")
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{}
+	_, err := LoadProjectConfig("/project", mainCfg)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading project config file")
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigInvalidJSON() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{invalid json`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{}
+	_, err := LoadProjectConfig("/project", mainCfg)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "parsing project config file")
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigInvalidJSONTypes() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{"mounts": "not-an-array"}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{}
+	_, err := LoadProjectConfig("/project", mainCfg)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "parsing project config file")
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigMountsOnly() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"mounts": [
+					"./data:/app/data",
+					"./logs:/app/logs:ro"
+				]
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		Mounts:     []string{"~/.gitconfig:/home/agent/.gitconfig:ro"},
+		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+
+	// Check mounts: main + project with resolved paths
+	require.Len(s.T(), merged.Mounts, 3)
+	require.Equal(s.T(), "~/.gitconfig:/home/agent/.gitconfig:ro", merged.Mounts[0])
+	require.Equal(s.T(), "/project/data:/app/data", merged.Mounts[1])
+	require.Equal(s.T(), "/project/logs:/app/logs:ro", merged.Mounts[2])
+
+	// MCP servers unchanged
+	require.Len(s.T(), merged.MCPServers, 1)
+	require.Equal(s.T(), "/bin/main", merged.MCPServers["main-srv"].Command)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigMCPServersOnly() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"mcp": {
+					"servers": {
+						"project-db": {
+							"command": "npx",
+							"args": ["-y", "@modelcontextprotocol/server-postgres"],
+							"env": {"DB_URL": "postgresql://localhost/db"}
+						}
+					}
+				}
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		Mounts:     []string{"~/.gitconfig:/home/agent/.gitconfig:ro"},
+		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+
+	// Mounts unchanged
+	require.Len(s.T(), merged.Mounts, 1)
+	require.Equal(s.T(), "~/.gitconfig:/home/agent/.gitconfig:ro", merged.Mounts[0])
+
+	// MCP servers merged
+	require.Len(s.T(), merged.MCPServers, 2)
+	require.Equal(s.T(), "/bin/main", merged.MCPServers["main-srv"].Command)
+	require.Equal(s.T(), "npx", merged.MCPServers["project-db"].Command)
+	require.Equal(s.T(), []string{"-y", "@modelcontextprotocol/server-postgres"}, merged.MCPServers["project-db"].Args)
+	require.Equal(s.T(), map[string]string{"DB_URL": "postgresql://localhost/db"}, merged.MCPServers["project-db"].Env)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigBothMountsAndMCP() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"mounts": ["./data:/app/data"],
+				"mcp": {
+					"servers": {
+						"project-tool": {"command": "/bin/tool"}
+					}
+				}
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		Mounts:     []string{"~/.gitconfig:/home/agent/.gitconfig:ro"},
+		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+
+	// Check mounts
+	require.Len(s.T(), merged.Mounts, 2)
+	require.Equal(s.T(), "~/.gitconfig:/home/agent/.gitconfig:ro", merged.Mounts[0])
+	require.Equal(s.T(), "/project/data:/app/data", merged.Mounts[1])
+
+	// Check MCP servers
+	require.Len(s.T(), merged.MCPServers, 2)
+	require.Equal(s.T(), "/bin/main", merged.MCPServers["main-srv"].Command)
+	require.Equal(s.T(), "/bin/tool", merged.MCPServers["project-tool"].Command)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigMCPOverride() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"mcp": {
+					"servers": {
+						"main-srv": {"command": "/bin/override"}
+					}
+				}
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+
+	// Project MCP server should override main
+	require.Len(s.T(), merged.MCPServers, 1)
+	require.Equal(s.T(), "/bin/override", merged.MCPServers["main-srv"].Command)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigAbsolutePath() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"mounts": [
+					"/absolute/path:/app/data",
+					"~/home/path:/app/home"
+				]
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+
+	// Absolute and tilde paths should not be modified
+	require.Len(s.T(), merged.Mounts, 2)
+	require.Equal(s.T(), "/absolute/path:/app/data", merged.Mounts[0])
+	require.Equal(s.T(), "~/home/path:/app/home", merged.Mounts[1])
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigInvalidMountFormat() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"mounts": ["invalid-mount-format"]
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{}
+
+	_, err := LoadProjectConfig("/project", mainCfg)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "invalid mount format")
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigEmptyConfig() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		Mounts:     []string{"~/.gitconfig:/home/agent/.gitconfig:ro"},
+		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+
+	// Main config should be unchanged
+	require.Len(s.T(), merged.Mounts, 1)
+	require.Equal(s.T(), "~/.gitconfig:/home/agent/.gitconfig:ro", merged.Mounts[0])
+	require.Len(s.T(), merged.MCPServers, 1)
+	require.Equal(s.T(), "/bin/main", merged.MCPServers["main-srv"].Command)
+}
+
+func (s *ConfigSuite) TestSetReadFile() {
+	// Test the test helper function
+	mockCalled := false
+	mockFn := func(_ string) ([]byte, error) {
+		mockCalled = true
+		return []byte("test"), nil
+	}
+
+	// Set mock
+	orig := TestSetReadFile(mockFn)
+	require.NotNil(s.T(), orig)
+
+	// Call to verify it's set
+	data, err := readFile("test")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []byte("test"), data)
+	require.True(s.T(), mockCalled)
+
+	// Restore
+	TestSetReadFile(orig)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigDoesNotMutateMain() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"mounts": ["./data:/app/data"],
+				"mcp": {
+					"servers": {
+						"project-srv": {"command": "/bin/project"}
+					}
+				}
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		Mounts:     []string{"~/.gitconfig:/home/agent/.gitconfig:ro"},
+		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+
+	// Verify main config was not mutated
+	require.Len(s.T(), mainCfg.Mounts, 1)
+	require.Equal(s.T(), "~/.gitconfig:/home/agent/.gitconfig:ro", mainCfg.Mounts[0])
+	require.Len(s.T(), mainCfg.MCPServers, 1)
+	require.Equal(s.T(), "/bin/main", mainCfg.MCPServers["main-srv"].Command)
+
+	// Verify merged config has new values
+	require.Len(s.T(), merged.Mounts, 2)
+	require.Len(s.T(), merged.MCPServers, 2)
+	require.Equal(s.T(), "/bin/main", merged.MCPServers["main-srv"].Command)
+	require.Equal(s.T(), "/bin/project", merged.MCPServers["project-srv"].Command)
+}

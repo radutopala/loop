@@ -1,17 +1,13 @@
 package container
 
 import (
-	"archive/tar"
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
+	"os/exec"
+	"strings"
 
 	"github.com/docker/docker/api/types"
-	"github.com/docker/docker/api/types/build"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -31,7 +27,6 @@ type dockerAPI interface {
 	ContainerList(ctx context.Context, options containertypes.ListOptions) ([]containertypes.Summary, error)
 	ImageList(ctx context.Context, options image.ListOptions) ([]image.Summary, error)
 	ImagePull(ctx context.Context, refStr string, options image.PullOptions) (io.ReadCloser, error)
-	ImageBuild(ctx context.Context, buildContext io.Reader, options build.ImageBuildOptions) (build.ImageBuildResponse, error)
 	Close() error
 }
 
@@ -185,90 +180,18 @@ func (c *Client) ImagePull(ctx context.Context, imageName string) error {
 	return err
 }
 
-// buildErrorLine represents a JSON message from the Docker build stream that may contain an error.
-type buildErrorLine struct {
-	Error string `json:"error"`
-}
-
-// readDir is a variable for testing.
-var readDir = os.ReadDir
-
-// readFile is a variable for testing.
-var readFile = os.ReadFile
-
-// tarWriter abstracts the tar.Writer methods for testing.
-type tarWriter interface {
-	WriteHeader(hdr *tar.Header) error
-	Write(b []byte) (int, error)
-	Close() error
-}
-
-// newTarWriter creates a new tar writer. Can be overridden in tests.
-var newTarWriter = func(w io.Writer) tarWriter {
-	return tar.NewWriter(w)
-}
-
-// buildTar creates a tar archive from all files in dir.
-func buildTar(dir string) (io.Reader, error) {
-	entries, err := readDir(dir)
-	if err != nil {
-		return nil, fmt.Errorf("reading context dir: %w", err)
-	}
-
-	var buf bytes.Buffer
-	tw := newTarWriter(&buf)
-	for _, entry := range entries {
-		if entry.IsDir() {
-			continue
-		}
-		data, err := readFile(filepath.Join(dir, entry.Name()))
-		if err != nil {
-			return nil, fmt.Errorf("reading file %s: %w", entry.Name(), err)
-		}
-		hdr := &tar.Header{
-			Name: entry.Name(),
-			Mode: 0644,
-			Size: int64(len(data)),
-		}
-		if err := tw.WriteHeader(hdr); err != nil {
-			return nil, fmt.Errorf("writing tar header for %s: %w", entry.Name(), err)
-		}
-		if _, err := tw.Write(data); err != nil {
-			return nil, fmt.Errorf("writing tar data for %s: %w", entry.Name(), err)
-		}
-	}
-	if err := tw.Close(); err != nil {
-		return nil, fmt.Errorf("closing tar: %w", err)
-	}
-	return &buf, nil
+// dockerBuildCmd executes `docker build` via the CLI. Using the CLI instead of
+// the Docker SDK avoids "configured logging driver does not support reading"
+// errors because the CLI uses BuildKit by default.
+var dockerBuildCmd = func(ctx context.Context, contextDir, tag string) ([]byte, error) {
+	return exec.CommandContext(ctx, "docker", "build", "-t", tag, contextDir).CombinedOutput()
 }
 
 // ImageBuild builds a Docker image from the given context directory.
 func (c *Client) ImageBuild(ctx context.Context, contextDir, tag string) error {
-	tarReader, err := buildTar(contextDir)
+	output, err := dockerBuildCmd(ctx, contextDir, tag)
 	if err != nil {
-		return fmt.Errorf("creating build context: %w", err)
-	}
-
-	resp, err := c.api.ImageBuild(ctx, tarReader, build.ImageBuildOptions{
-		Tags:   []string{tag},
-		Remove: true,
-	})
-	if err != nil {
-		return fmt.Errorf("building image: %w", err)
-	}
-	defer resp.Body.Close()
-
-	// Drain response and check for error messages
-	decoder := json.NewDecoder(resp.Body)
-	for decoder.More() {
-		var line buildErrorLine
-		if err := decoder.Decode(&line); err != nil {
-			return fmt.Errorf("reading build output: %w", err)
-		}
-		if line.Error != "" {
-			return fmt.Errorf("build error: %s", line.Error)
-		}
+		return fmt.Errorf("building image: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return nil
 }

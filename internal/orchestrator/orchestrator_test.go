@@ -284,7 +284,7 @@ func (s *OrchestratorSuite) SetupTest() {
 	s.ctx = context.Background()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, nil)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, nil, 5*time.Minute)
 }
 
 func (s *OrchestratorSuite) TestNew() {
@@ -464,7 +464,7 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredFullFlow() {
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return(recentMsgs, nil)
 	// Second GetChannel (in processTriggeredMessage for session data) — returns same object
-	s.runner.On("Run", s.ctx, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.ChannelID == "ch1" && req.SessionID == "session123" && len(req.Messages) == 2
 	})).Return(&agent.AgentResponse{
 		Response:  "Hello Alice!",
@@ -499,7 +499,7 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredWithNilSession() {
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
-	s.runner.On("Run", s.ctx, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.SessionID == "" && len(req.Messages) == 0
 	})).Return(&agent.AgentResponse{
 		Response:  "Hi!",
@@ -577,7 +577,7 @@ func (s *OrchestratorSuite) TestHandleMessageRunnerError() {
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
-	s.runner.On("Run", s.ctx, mock.Anything).Return(nil, errors.New("runner err"))
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("runner err"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Sorry, I encountered an error processing your request."
 	})).Return(nil)
@@ -603,7 +603,7 @@ func (s *OrchestratorSuite) TestHandleMessageAgentResponseError() {
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
-	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 		Error: "agent broke",
 	}, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
@@ -633,7 +633,7 @@ func (s *OrchestratorSuite) TestHandleMessageUpdateSessionIDError() {
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
-	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 		Response:  "ok",
 		SessionID: "data",
 	}, nil)
@@ -664,7 +664,7 @@ func (s *OrchestratorSuite) TestHandleMessageSendResponseError() {
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
-	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 		Response: "ok",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch1", "").Return(nil)
@@ -694,7 +694,7 @@ func (s *OrchestratorSuite) TestHandleMessageMarkProcessedError() {
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{
 		{ID: 5, AuthorName: "Alice", Content: "hello"},
 	}, nil)
-	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 		Response: "ok",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch1", "").Return(nil)
@@ -722,7 +722,7 @@ func (s *OrchestratorSuite) TestHandleMessageTypingError() {
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(errors.New("typing err"))
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
-	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 		Response: "ok",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch1", "").Return(nil)
@@ -755,7 +755,7 @@ func (s *OrchestratorSuite) TestHandleMessageInsertBotResponseError() {
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 	// Second GetChannel (for session data in processTriggeredMessage) succeeds
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Once()
-	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 		Response: "ok",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch1", "").Return(nil)
@@ -786,7 +786,7 @@ func (s *OrchestratorSuite) TestHandleMessageInsertBotResponseInsertError() {
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil).Once()
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
-	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 		Response: "ok",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch1", "").Return(nil)
@@ -1251,7 +1251,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSuccess() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute)
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
@@ -1278,7 +1278,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddIdempotent() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute)
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(&db.ScheduledTask{ID: 5, TemplateName: "daily-check"}, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
@@ -1314,7 +1314,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddStoreError() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute)
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, errors.New("db error"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
@@ -1336,7 +1336,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSchedulerError() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute)
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.Anything).Return(int64(0), errors.New("sched error"))
@@ -1360,7 +1360,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateList() {
 		{Name: "weekly-report", Description: "Weekly report", Schedule: "0 17 * * 5", Type: "cron", Prompt: "generate report"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute)
 
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return strings.Contains(out.Content, "Available templates:") &&

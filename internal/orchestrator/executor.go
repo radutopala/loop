@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/db"
@@ -12,15 +13,16 @@ import (
 // TaskExecutor implements scheduler.TaskExecutor by running an agent and
 // delivering the response to Discord.
 type TaskExecutor struct {
-	runner Runner
-	bot    Bot
-	store  db.Store
-	logger *slog.Logger
+	runner           Runner
+	bot              Bot
+	store            db.Store
+	logger           *slog.Logger
+	containerTimeout time.Duration
 }
 
 // NewTaskExecutor creates a new TaskExecutor.
-func NewTaskExecutor(runner Runner, bot Bot, store db.Store, logger *slog.Logger) *TaskExecutor {
-	return &TaskExecutor{runner: runner, bot: bot, store: store, logger: logger}
+func NewTaskExecutor(runner Runner, bot Bot, store db.Store, logger *slog.Logger, containerTimeout time.Duration) *TaskExecutor {
+	return &TaskExecutor{runner: runner, bot: bot, store: store, logger: logger, containerTimeout: containerTimeout}
 }
 
 // ExecuteTask runs an agent for the given scheduled task and sends the result to Discord.
@@ -57,7 +59,10 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		DirPath:   dirPath,
 	}
 
-	resp, err := e.runner.Run(ctx, req)
+	runCtx, runCancel := context.WithTimeout(ctx, e.containerTimeout)
+	defer runCancel()
+
+	resp, err := e.runner.Run(runCtx, req)
 	if err != nil {
 		return "", fmt.Errorf("running agent: %w", err)
 	}

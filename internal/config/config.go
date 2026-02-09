@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/tailscale/hujson"
@@ -78,6 +79,14 @@ var userHomeDir = os.UserHomeDir
 
 // readFile is a package-level variable to allow overriding in tests.
 var readFile = os.ReadFile
+
+// TestSetReadFile is a test helper to override the readFile function.
+// Returns the original function so it can be restored.
+func TestSetReadFile(fn func(string) ([]byte, error)) func(string) ([]byte, error) {
+	orig := readFile
+	readFile = fn
+	return orig
+}
 
 // Load reads configuration from ~/.loop/config.json and returns a Config.
 func Load() (*Config, error) {
@@ -168,4 +177,92 @@ func floatPtrDefault(val *float64, def float64) float64 {
 		return *val
 	}
 	return def
+}
+
+// projectConfig is the structure for project-specific .loop/config.json files.
+// Only mounts and mcp_servers can be specified for security reasons.
+type projectConfig struct {
+	Mounts []string       `json:"mounts"`
+	MCP    *jsonMCPConfig `json:"mcp"`
+}
+
+// LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
+// and merges it with the main config. Only mounts and mcp_servers are loaded from
+// the project config for security reasons.
+//
+// Merge behavior:
+// - Mounts: Project mounts are appended to main config mounts
+// - MCP Servers: Merged with project servers taking precedence over main config
+//
+// Relative paths in project mounts are resolved relative to workDir.
+// If the project config file doesn't exist, returns the main config unchanged.
+func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
+	projectConfigPath := filepath.Join(workDir, ".loop", "config.json")
+
+	data, err := readFile(projectConfigPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			// No project config, use main config as-is
+			return mainConfig, nil
+		}
+		return nil, fmt.Errorf("reading project config file: %w", err)
+	}
+
+	standardJSON, err := hujson.Standardize(data)
+	if err != nil {
+		return nil, fmt.Errorf("parsing project config file: %w", err)
+	}
+
+	var pc projectConfig
+	if err := json.Unmarshal(standardJSON, &pc); err != nil {
+		return nil, fmt.Errorf("parsing project config file: %w", err)
+	}
+
+	// Create a copy of main config to avoid mutating it
+	merged := *mainConfig
+
+	// Merge mounts: append project mounts to main mounts
+	// Resolve relative paths relative to workDir
+	if len(pc.Mounts) > 0 {
+		resolvedMounts := make([]string, 0, len(pc.Mounts))
+		for _, mount := range pc.Mounts {
+			parts := strings.Split(mount, ":")
+			if len(parts) < 2 {
+				return nil, fmt.Errorf("invalid mount format in project config: %s", mount)
+			}
+
+			hostPath := parts[0]
+			// Resolve relative paths relative to workDir
+			if !filepath.IsAbs(hostPath) && !strings.HasPrefix(hostPath, "~") {
+				hostPath = filepath.Join(workDir, hostPath)
+			}
+
+			// Reconstruct mount with resolved path
+			containerPath := parts[1]
+			mode := ""
+			if len(parts) > 2 {
+				mode = ":" + parts[2]
+			}
+			resolvedMounts = append(resolvedMounts, hostPath+":"+containerPath+mode)
+		}
+
+		// Append project mounts to main mounts
+		merged.Mounts = append(append([]string{}, mainConfig.Mounts...), resolvedMounts...)
+	}
+
+	// Merge MCP servers: project takes precedence
+	if pc.MCP != nil && len(pc.MCP.Servers) > 0 {
+		// Start with main config servers
+		mergedServers := make(map[string]MCPServerConfig)
+		for name, srv := range mainConfig.MCPServers {
+			mergedServers[name] = srv
+		}
+		// Override with project servers
+		for name, srv := range pc.MCP.Servers {
+			mergedServers[name] = srv
+		}
+		merged.MCPServers = mergedServers
+	}
+
+	return &merged, nil
 }

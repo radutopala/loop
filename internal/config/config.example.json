@@ -5,7 +5,6 @@
   // Enables auto-creation of Discord channels via `loop mcp --dir`
   "discord_guild_id": "your-discord-guild-id-here",
 
-  // Optional (defaults shown)
   //"log_level": "info",
   //"log_format": "text",
   //"container_image": "loop-agent:latest",
@@ -13,6 +12,9 @@
   //"container_memory_mb": 512,
   //"container_cpus": 1.0,
   //"poll_interval_sec": 30,
+
+  // MCP server configurations. Each entry defines a separate MCP server that agents can connect to. The key is an arbitrary name for the server, and the value specifies how to start the server (e.g. command and args).
+  "mcp": {},
 
   // Mounts for all containers
   // Format: "host_path:container_path" or "host_path:container_path:ro"

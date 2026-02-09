@@ -26,5 +26,4 @@ func (s *EmbedSuite) TestEntrypointNotEmpty() {
 	require.NotEmpty(s.T(), Entrypoint)
 	require.Contains(s.T(), string(Entrypoint), "#!/bin/sh")
 	require.Contains(s.T(), string(Entrypoint), "su-exec agent claude")
-	require.Contains(s.T(), string(Entrypoint), "dangerously-skip-permissions")
 }

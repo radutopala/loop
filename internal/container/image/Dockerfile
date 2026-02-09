@@ -1,4 +1,5 @@
 FROM golang:1.25-alpine AS builder
+RUN apk add --no-cache git
 ENV GOTOOLCHAIN=auto
 RUN go install github.com/radutopala/loop/cmd/loop@latest
 RUN go install github.com/radutopala/ticket/cmd/tk@latest

@@ -79,27 +79,29 @@ type Interaction struct {
 
 // Orchestrator coordinates all components of the loop bot.
 type Orchestrator struct {
-	store          db.Store
-	bot            Bot
-	runner         Runner
-	scheduler      Scheduler
-	queue          *ChannelQueue
-	logger         *slog.Logger
-	typingInterval time.Duration
-	templates      []config.TaskTemplate
+	store            db.Store
+	bot              Bot
+	runner           Runner
+	scheduler        Scheduler
+	queue            *ChannelQueue
+	logger           *slog.Logger
+	typingInterval   time.Duration
+	templates        []config.TaskTemplate
+	containerTimeout time.Duration
 }
 
 // New creates a new Orchestrator.
-func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *slog.Logger, templates []config.TaskTemplate) *Orchestrator {
+func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *slog.Logger, templates []config.TaskTemplate, containerTimeout time.Duration) *Orchestrator {
 	return &Orchestrator{
-		store:          store,
-		bot:            bot,
-		runner:         runner,
-		scheduler:      scheduler,
-		queue:          NewChannelQueue(),
-		logger:         logger,
-		typingInterval: typingRefreshInterval,
-		templates:      templates,
+		store:            store,
+		bot:              bot,
+		runner:           runner,
+		scheduler:        scheduler,
+		queue:            NewChannelQueue(),
+		logger:           logger,
+		typingInterval:   typingRefreshInterval,
+		templates:        templates,
+		containerTimeout: containerTimeout,
 	}
 }
 
@@ -223,7 +225,10 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *Incomin
 
 	req := o.buildAgentRequest(msg.ChannelID, recent, channel)
 
-	resp, err := o.runner.Run(ctx, req)
+	runCtx, runCancel := context.WithTimeout(ctx, o.containerTimeout)
+	defer runCancel()
+
+	resp, err := o.runner.Run(runCtx, req)
 	if err != nil {
 		o.logger.Error("running agent", "error", err, "channel_id", msg.ChannelID)
 		_ = o.bot.SendMessage(ctx, &OutgoingMessage{

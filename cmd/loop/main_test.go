@@ -291,6 +291,8 @@ type MainSuite struct {
 	origOsStat            func(string) (os.FileInfo, error)
 	origOsMkdirAll        func(string, os.FileMode) error
 	origOsWriteFile       func(string, []byte, os.FileMode) error
+	origOsGetwd           func() (string, error)
+	origOsReadFile        func(string) ([]byte, error)
 }
 
 func TestMainSuite(t *testing.T) {
@@ -315,6 +317,8 @@ func (s *MainSuite) SetupTest() {
 	s.origOsStat = osStat
 	s.origOsMkdirAll = osMkdirAll
 	s.origOsWriteFile = osWriteFile
+	s.origOsGetwd = osGetwd
+	s.origOsReadFile = osReadFile
 }
 
 func (s *MainSuite) TearDownTest() {
@@ -335,6 +339,8 @@ func (s *MainSuite) TearDownTest() {
 	osStat = s.origOsStat
 	osMkdirAll = s.origOsMkdirAll
 	osWriteFile = s.origOsWriteFile
+	osGetwd = s.origOsGetwd
+	osReadFile = s.origOsReadFile
 }
 
 func testConfig() *config.Config {
@@ -364,23 +370,23 @@ func (s *MainSuite) TestNewRootCmd() {
 	require.Equal(s.T(), "loop", cmd.Use)
 	require.True(s.T(), cmd.HasSubCommands())
 
-	foundServe := false
-	foundMCP := false
-	foundDaemon := false
+	want := map[string]bool{
+		"serve":          false,
+		"mcp":            false,
+		"daemon:start":   false,
+		"daemon:stop":    false,
+		"daemon:status":  false,
+		"onboard:global": false,
+		"onboard:local":  false,
+	}
 	for _, sub := range cmd.Commands() {
-		if sub.Use == "serve" {
-			foundServe = true
-		}
-		if sub.Use == "mcp" {
-			foundMCP = true
-		}
-		if sub.Use == "daemon" {
-			foundDaemon = true
+		if _, ok := want[sub.Use]; ok {
+			want[sub.Use] = true
 		}
 	}
-	require.True(s.T(), foundServe, "root command should have serve subcommand")
-	require.True(s.T(), foundMCP, "root command should have mcp subcommand")
-	require.True(s.T(), foundDaemon, "root command should have daemon subcommand")
+	for name, found := range want {
+		require.True(s.T(), found, "root command should have %s subcommand", name)
+	}
 }
 
 // --- newServeCmd ---
@@ -1096,34 +1102,31 @@ func (s *MainSuite) TestDefaultNewDockerClient() {
 	}
 }
 
-// --- newDaemonCmd ---
+// --- daemon commands ---
 
-func (s *MainSuite) TestNewDaemonCmd() {
-	cmd := newDaemonCmd()
-	require.Equal(s.T(), "daemon", cmd.Use)
-	require.Equal(s.T(), []string{"d"}, cmd.Aliases)
-	require.True(s.T(), cmd.HasSubCommands())
+func (s *MainSuite) TestNewDaemonStartCmd() {
+	cmd := newDaemonStartCmd()
+	require.Equal(s.T(), "daemon:start", cmd.Use)
+	require.NotNil(s.T(), cmd.RunE)
+}
 
-	for _, sub := range cmd.Commands() {
-		switch sub.Use {
-		case "start":
-			require.Equal(s.T(), []string{"up"}, sub.Aliases)
-		case "stop":
-			require.Equal(s.T(), []string{"down"}, sub.Aliases)
-		case "status":
-			require.Equal(s.T(), []string{"st"}, sub.Aliases)
-		default:
-			s.T().Fatalf("unexpected subcommand: %s", sub.Use)
-		}
-	}
+func (s *MainSuite) TestNewDaemonStopCmd() {
+	cmd := newDaemonStopCmd()
+	require.Equal(s.T(), "daemon:stop", cmd.Use)
+	require.NotNil(s.T(), cmd.RunE)
+}
+
+func (s *MainSuite) TestNewDaemonStatusCmd() {
+	cmd := newDaemonStatusCmd()
+	require.Equal(s.T(), "daemon:status", cmd.Use)
+	require.NotNil(s.T(), cmd.RunE)
 }
 
 func (s *MainSuite) TestDaemonStartSuccess() {
 	daemonStart = func(_ daemon.System) error { return nil }
 	newSystem = func() daemon.System { return daemon.RealSystem{} }
 
-	cmd := newDaemonCmd()
-	cmd.SetArgs([]string{"start"})
+	cmd := newDaemonStartCmd()
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
 }
@@ -1132,8 +1135,7 @@ func (s *MainSuite) TestDaemonStartError() {
 	daemonStart = func(_ daemon.System) error { return errors.New("start fail") }
 	newSystem = func() daemon.System { return daemon.RealSystem{} }
 
-	cmd := newDaemonCmd()
-	cmd.SetArgs([]string{"start"})
+	cmd := newDaemonStartCmd()
 	err := cmd.Execute()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "start fail")
@@ -1143,8 +1145,7 @@ func (s *MainSuite) TestDaemonStopSuccess() {
 	daemonStop = func(_ daemon.System) error { return nil }
 	newSystem = func() daemon.System { return daemon.RealSystem{} }
 
-	cmd := newDaemonCmd()
-	cmd.SetArgs([]string{"stop"})
+	cmd := newDaemonStopCmd()
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
 }
@@ -1153,8 +1154,7 @@ func (s *MainSuite) TestDaemonStopError() {
 	daemonStop = func(_ daemon.System) error { return errors.New("stop fail") }
 	newSystem = func() daemon.System { return daemon.RealSystem{} }
 
-	cmd := newDaemonCmd()
-	cmd.SetArgs([]string{"stop"})
+	cmd := newDaemonStopCmd()
 	err := cmd.Execute()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "stop fail")
@@ -1164,8 +1164,7 @@ func (s *MainSuite) TestDaemonStatusSuccess() {
 	daemonStatus = func(_ daemon.System) (string, error) { return "running", nil }
 	newSystem = func() daemon.System { return daemon.RealSystem{} }
 
-	cmd := newDaemonCmd()
-	cmd.SetArgs([]string{"status"})
+	cmd := newDaemonStatusCmd()
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
 }
@@ -1174,8 +1173,7 @@ func (s *MainSuite) TestDaemonStatusError() {
 	daemonStatus = func(_ daemon.System) (string, error) { return "", errors.New("status fail") }
 	newSystem = func() daemon.System { return daemon.RealSystem{} }
 
-	cmd := newDaemonCmd()
-	cmd.SetArgs([]string{"status"})
+	cmd := newDaemonStatusCmd()
 	err := cmd.Execute()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "status fail")
@@ -1191,16 +1189,25 @@ func (s *MainSuite) TestDefaultDaemonVars() {
 	require.IsType(s.T(), daemon.RealSystem{}, sys)
 }
 
-// --- newOnboardCmd ---
+// --- onboard:global ---
 
-func (s *MainSuite) TestNewOnboardCmd() {
-	cmd := newOnboardCmd()
-	require.Equal(s.T(), "onboard", cmd.Use)
+func (s *MainSuite) TestNewOnboardGlobalCmd() {
+	cmd := newOnboardGlobalCmd()
+	require.Equal(s.T(), "onboard:global", cmd.Use)
 	require.NotNil(s.T(), cmd.RunE)
 	require.NotNil(s.T(), cmd.Flags().Lookup("force"))
 }
 
-func (s *MainSuite) TestOnboardSuccess() {
+func (s *MainSuite) TestNewOnboardLocalCmd() {
+	cmd := newOnboardLocalCmd()
+	require.Equal(s.T(), "onboard:local", cmd.Use)
+	require.NotNil(s.T(), cmd.RunE)
+	f := cmd.Flags().Lookup("api-url")
+	require.NotNil(s.T(), f)
+	require.Equal(s.T(), "http://localhost:8222", f.DefValue)
+}
+
+func (s *MainSuite) TestOnboardGlobalSuccess() {
 	tmpDir := s.T().TempDir()
 	userHomeDir = func() (string, error) {
 		return tmpDir, nil
@@ -1209,7 +1216,7 @@ func (s *MainSuite) TestOnboardSuccess() {
 	osMkdirAll = os.MkdirAll
 	osWriteFile = os.WriteFile
 
-	err := onboard(false)
+	err := onboardGlobal(false)
 	require.NoError(s.T(), err)
 
 	configPath := filepath.Join(tmpDir, ".loop", "config.json")
@@ -1230,7 +1237,7 @@ func (s *MainSuite) TestOnboardSuccess() {
 	require.Contains(s.T(), string(entrypointData), "su-exec agent claude")
 }
 
-func (s *MainSuite) TestOnboardConfigAlreadyExists() {
+func (s *MainSuite) TestOnboardGlobalConfigAlreadyExists() {
 	tmpDir := s.T().TempDir()
 	loopDir := filepath.Join(tmpDir, ".loop")
 	configPath := filepath.Join(loopDir, "config.json")
@@ -1245,7 +1252,7 @@ func (s *MainSuite) TestOnboardConfigAlreadyExists() {
 	osMkdirAll = os.MkdirAll
 	osWriteFile = os.WriteFile
 
-	err := onboard(false)
+	err := onboardGlobal(false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "config already exists")
 	require.Contains(s.T(), err.Error(), "--force")
@@ -1256,7 +1263,7 @@ func (s *MainSuite) TestOnboardConfigAlreadyExists() {
 	require.Equal(s.T(), "existing", string(data))
 }
 
-func (s *MainSuite) TestOnboardForceOverwrite() {
+func (s *MainSuite) TestOnboardGlobalForceOverwrite() {
 	tmpDir := s.T().TempDir()
 	loopDir := filepath.Join(tmpDir, ".loop")
 	configPath := filepath.Join(loopDir, "config.json")
@@ -1271,7 +1278,7 @@ func (s *MainSuite) TestOnboardForceOverwrite() {
 	osMkdirAll = os.MkdirAll
 	osWriteFile = os.WriteFile
 
-	err := onboard(true)
+	err := onboardGlobal(true)
 	require.NoError(s.T(), err)
 
 	// Verify config was overwritten
@@ -1282,17 +1289,17 @@ func (s *MainSuite) TestOnboardForceOverwrite() {
 	require.NotContains(s.T(), string(data), "old config")
 }
 
-func (s *MainSuite) TestOnboardHomeDirError() {
+func (s *MainSuite) TestOnboardGlobalHomeDirError() {
 	userHomeDir = func() (string, error) {
 		return "", errors.New("home dir error")
 	}
 
-	err := onboard(false)
+	err := onboardGlobal(false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "getting home directory")
 }
 
-func (s *MainSuite) TestOnboardMkdirAllError() {
+func (s *MainSuite) TestOnboardGlobalMkdirAllError() {
 	tmpDir := s.T().TempDir()
 	userHomeDir = func() (string, error) {
 		return tmpDir, nil
@@ -1302,12 +1309,12 @@ func (s *MainSuite) TestOnboardMkdirAllError() {
 		return errors.New("mkdir error")
 	}
 
-	err := onboard(false)
+	err := onboardGlobal(false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating loop directory")
 }
 
-func (s *MainSuite) TestOnboardWriteFileError() {
+func (s *MainSuite) TestOnboardGlobalWriteFileError() {
 	tmpDir := s.T().TempDir()
 	userHomeDir = func() (string, error) {
 		return tmpDir, nil
@@ -1318,12 +1325,12 @@ func (s *MainSuite) TestOnboardWriteFileError() {
 		return errors.New("write error")
 	}
 
-	err := onboard(false)
+	err := onboardGlobal(false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing config file")
 }
 
-func (s *MainSuite) TestOnboardCmdRunE() {
+func (s *MainSuite) TestOnboardGlobalCmdRunE() {
 	tmpDir := s.T().TempDir()
 	userHomeDir = func() (string, error) {
 		return tmpDir, nil
@@ -1332,8 +1339,7 @@ func (s *MainSuite) TestOnboardCmdRunE() {
 	osMkdirAll = os.MkdirAll
 	osWriteFile = os.WriteFile
 
-	cmd := newOnboardCmd()
-	cmd.SetArgs([]string{})
+	cmd := newOnboardGlobalCmd()
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
 
@@ -1342,7 +1348,7 @@ func (s *MainSuite) TestOnboardCmdRunE() {
 	require.NoError(s.T(), err)
 }
 
-func (s *MainSuite) TestOnboardCmdWithForceFlag() {
+func (s *MainSuite) TestOnboardGlobalCmdWithForceFlag() {
 	tmpDir := s.T().TempDir()
 	loopDir := filepath.Join(tmpDir, ".loop")
 	configPath := filepath.Join(loopDir, "config.json")
@@ -1357,7 +1363,7 @@ func (s *MainSuite) TestOnboardCmdWithForceFlag() {
 	osMkdirAll = os.MkdirAll
 	osWriteFile = os.WriteFile
 
-	cmd := newOnboardCmd()
+	cmd := newOnboardGlobalCmd()
 	cmd.SetArgs([]string{"--force"})
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
@@ -1367,7 +1373,7 @@ func (s *MainSuite) TestOnboardCmdWithForceFlag() {
 	require.Contains(s.T(), string(data), "discord_token")
 }
 
-func (s *MainSuite) TestOnboardContainerDirError() {
+func (s *MainSuite) TestOnboardGlobalContainerDirError() {
 	tmpDir := s.T().TempDir()
 	userHomeDir = func() (string, error) {
 		return tmpDir, nil
@@ -1383,12 +1389,12 @@ func (s *MainSuite) TestOnboardContainerDirError() {
 	}
 	osWriteFile = os.WriteFile
 
-	err := onboard(false)
+	err := onboardGlobal(false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating container directory")
 }
 
-func (s *MainSuite) TestOnboardContainerDockerfileWriteError() {
+func (s *MainSuite) TestOnboardGlobalContainerDockerfileWriteError() {
 	tmpDir := s.T().TempDir()
 	userHomeDir = func() (string, error) {
 		return tmpDir, nil
@@ -1404,12 +1410,12 @@ func (s *MainSuite) TestOnboardContainerDockerfileWriteError() {
 		return os.WriteFile(path, data, perm)
 	}
 
-	err := onboard(false)
+	err := onboardGlobal(false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing container Dockerfile")
 }
 
-func (s *MainSuite) TestOnboardContainerEntrypointWriteError() {
+func (s *MainSuite) TestOnboardGlobalContainerEntrypointWriteError() {
 	tmpDir := s.T().TempDir()
 	userHomeDir = func() (string, error) {
 		return tmpDir, nil
@@ -1425,9 +1431,153 @@ func (s *MainSuite) TestOnboardContainerEntrypointWriteError() {
 		return os.WriteFile(path, data, perm)
 	}
 
-	err := onboard(false)
+	err := onboardGlobal(false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing container entrypoint")
+}
+
+// --- onboard:local ---
+
+func (s *MainSuite) TestOnboardLocalSuccess() {
+	tmpDir := s.T().TempDir()
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = os.WriteFile
+
+	err := onboardLocal("http://localhost:8222")
+	require.NoError(s.T(), err)
+
+	mcpPath := filepath.Join(tmpDir, ".mcp.json")
+	data, err := os.ReadFile(mcpPath)
+	require.NoError(s.T(), err)
+
+	var result map[string]any
+	require.NoError(s.T(), json.Unmarshal(data, &result))
+
+	servers := result["mcpServers"].(map[string]any)
+	loop := servers["loop"].(map[string]any)
+	require.Equal(s.T(), "loop", loop["command"])
+
+	args := loop["args"].([]any)
+	require.Equal(s.T(), "mcp", args[0])
+	require.Equal(s.T(), "--dir", args[1])
+	require.Equal(s.T(), tmpDir, args[2])
+	require.Equal(s.T(), "--api-url", args[3])
+	require.Equal(s.T(), "http://localhost:8222", args[4])
+	require.Equal(s.T(), "--log", args[5])
+	require.Equal(s.T(), filepath.Join(tmpDir, ".loop", "mcp.log"), args[6])
+}
+
+func (s *MainSuite) TestOnboardLocalMergesExisting() {
+	tmpDir := s.T().TempDir()
+	existing := `{"mcpServers":{"other":{"command":"other-cmd"}}}`
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, ".mcp.json"), []byte(existing), 0644))
+
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = os.WriteFile
+
+	err := onboardLocal("http://localhost:8222")
+	require.NoError(s.T(), err)
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".mcp.json"))
+	require.NoError(s.T(), err)
+
+	var result map[string]any
+	require.NoError(s.T(), json.Unmarshal(data, &result))
+
+	servers := result["mcpServers"].(map[string]any)
+	require.Contains(s.T(), servers, "other", "existing server should be preserved")
+	require.Contains(s.T(), servers, "loop", "loop server should be added")
+}
+
+func (s *MainSuite) TestOnboardLocalAlreadyRegistered() {
+	tmpDir := s.T().TempDir()
+	existing := `{"mcpServers":{"loop":{"command":"loop","args":["mcp"]}}}`
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, ".mcp.json"), []byte(existing), 0644))
+
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = os.WriteFile
+
+	err := onboardLocal("http://localhost:8222")
+	require.NoError(s.T(), err)
+
+	// Verify file was NOT modified (still has original content)
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".mcp.json"))
+	require.NoError(s.T(), err)
+	require.JSONEq(s.T(), existing, string(data))
+}
+
+func (s *MainSuite) TestOnboardLocalInvalidExistingJSON() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, ".mcp.json"), []byte("not json"), 0644))
+
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+
+	err := onboardLocal("http://localhost:8222")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "parsing existing .mcp.json")
+}
+
+func (s *MainSuite) TestOnboardLocalGetwdError() {
+	osGetwd = func() (string, error) { return "", errors.New("getwd error") }
+
+	err := onboardLocal("http://localhost:8222")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "getting working directory")
+}
+
+func (s *MainSuite) TestOnboardLocalWriteError() {
+	tmpDir := s.T().TempDir()
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = func(_ string, _ []byte, _ os.FileMode) error {
+		return errors.New("write error")
+	}
+
+	err := onboardLocal("http://localhost:8222")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing .mcp.json")
+}
+
+func (s *MainSuite) TestOnboardLocalCmdRunE() {
+	tmpDir := s.T().TempDir()
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = os.WriteFile
+
+	cmd := newOnboardLocalCmd()
+	err := cmd.Execute()
+	require.NoError(s.T(), err)
+
+	mcpPath := filepath.Join(tmpDir, ".mcp.json")
+	_, err = os.Stat(mcpPath)
+	require.NoError(s.T(), err)
+}
+
+func (s *MainSuite) TestOnboardLocalCustomAPIURL() {
+	tmpDir := s.T().TempDir()
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = os.WriteFile
+
+	err := onboardLocal("http://custom:9999")
+	require.NoError(s.T(), err)
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".mcp.json"))
+	require.NoError(s.T(), err)
+
+	var result map[string]any
+	require.NoError(s.T(), json.Unmarshal(data, &result))
+
+	servers := result["mcpServers"].(map[string]any)
+	loop := servers["loop"].(map[string]any)
+	args := loop["args"].([]any)
+	require.Equal(s.T(), "http://custom:9999", args[4])
+	require.Equal(s.T(), "--log", args[5])
+	require.Equal(s.T(), filepath.Join(tmpDir, ".loop", "mcp.log"), args[6])
 }
 
 // --- ensureImage tests ---
@@ -1580,14 +1730,18 @@ func (s *MainSuite) TestEnsureImageEntrypointWriteError() {
 	require.Contains(s.T(), err.Error(), "writing entrypoint")
 }
 
-func (s *MainSuite) TestRootCmdHasOnboard() {
+func (s *MainSuite) TestRootCmdHasOnboardCommands() {
 	cmd := newRootCmd()
-	foundOnboard := false
+	foundGlobal := false
+	foundLocal := false
 	for _, sub := range cmd.Commands() {
-		if sub.Use == "onboard" {
-			foundOnboard = true
-			break
+		if sub.Use == "onboard:global" {
+			foundGlobal = true
+		}
+		if sub.Use == "onboard:local" {
+			foundLocal = true
 		}
 	}
-	require.True(s.T(), foundOnboard, "root command should have onboard subcommand")
+	require.True(s.T(), foundGlobal, "root command should have onboard:global subcommand")
+	require.True(s.T(), foundLocal, "root command should have onboard:local subcommand")
 }

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log/slog"
 	"testing"
+	"time"
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/db"
@@ -34,7 +35,7 @@ func (s *TaskExecutorSuite) SetupTest() {
 	s.ctx = context.Background()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.executor = NewTaskExecutor(s.runner, s.bot, s.store, logger)
+	s.executor = NewTaskExecutor(s.runner, s.bot, s.store, logger, 5*time.Minute)
 }
 
 func (s *TaskExecutorSuite) TestNew() {
@@ -64,7 +65,7 @@ func (s *TaskExecutorSuite) TestHappyPathWithSession() {
 		SessionID: "existing-session",
 		DirPath:   "/home/user/project",
 	}, nil)
-	s.runner.On("Run", s.ctx, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.SessionID == "existing-session" &&
 			req.ChannelID == "ch1" &&
 			req.DirPath == "/home/user/project" &&
@@ -105,7 +106,7 @@ func (s *TaskExecutorSuite) TestHappyPathWithoutSession() {
 	})).Return(nil).Once()
 
 	s.store.On("GetChannel", s.ctx, "ch2").Return(nil, nil)
-	s.runner.On("Run", s.ctx, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.SessionID == "" && req.ChannelID == "ch2" && req.DirPath == ""
 	})).Return(&agent.AgentResponse{
 		Response:  "hi!",
@@ -139,7 +140,7 @@ func (s *TaskExecutorSuite) TestRunnerError() {
 	})).Return(nil).Once()
 
 	s.store.On("GetChannel", s.ctx, "ch3").Return(nil, nil)
-	s.runner.On("Run", s.ctx, mock.Anything).Return(nil, errors.New("runner broke"))
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("runner broke"))
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.Error(s.T(), err)
@@ -164,7 +165,7 @@ func (s *TaskExecutorSuite) TestAgentResponseError() {
 	})).Return(nil).Once()
 
 	s.store.On("GetChannel", s.ctx, "ch4").Return(nil, nil)
-	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 		Error: "agent broke",
 	}, nil)
 
@@ -192,7 +193,7 @@ func (s *TaskExecutorSuite) TestSessionUpsertErrorStillSucceeds() {
 	})).Return(nil).Once()
 
 	s.store.On("GetChannel", s.ctx, "ch5").Return(nil, nil)
-	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 		Response:  "ok",
 		SessionID: "sess",
 	}, nil)
@@ -223,7 +224,7 @@ func (s *TaskExecutorSuite) TestBotSendErrorStillSucceeds() {
 	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(errors.New("send failed"))
 
 	s.store.On("GetChannel", s.ctx, "ch6").Return(nil, nil)
-	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 		Response:  "ok",
 		SessionID: "sess",
 	}, nil)
@@ -251,7 +252,7 @@ func (s *TaskExecutorSuite) TestGetSessionErrorStillWorks() {
 	})).Return(nil).Once()
 
 	s.store.On("GetChannel", s.ctx, "ch7").Return(nil, errors.New("session err"))
-	s.runner.On("Run", s.ctx, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.SessionID == ""
 	})).Return(&agent.AgentResponse{
 		Response:  "ok",
@@ -285,7 +286,7 @@ func (s *TaskExecutorSuite) TestNotificationFailureDoesNotStopExecution() {
 	})).Return(errors.New("notification failed")).Once()
 
 	s.store.On("GetChannel", s.ctx, "ch8").Return(nil, nil)
-	s.runner.On("Run", s.ctx, mock.Anything).Return(&agent.AgentResponse{
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 		Response:  "success",
 		SessionID: "sess8",
 	}, nil)

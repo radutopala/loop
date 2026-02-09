@@ -81,6 +81,7 @@ type RunnerSuite struct {
 	origMkdirAll  func(string, os.FileMode) error
 	origGetenv    func(string) string
 	origWriteFile func(string, []byte, os.FileMode) error
+	origOsStat    func(string) (os.FileInfo, error)
 }
 
 func TestRunnerSuite(t *testing.T) {
@@ -94,6 +95,8 @@ func (s *RunnerSuite) SetupTest() {
 	getenv = func(_ string) string { return "" }
 	s.origWriteFile = writeFile
 	writeFile = func(_ string, _ []byte, _ os.FileMode) error { return nil }
+	s.origOsStat = osStat
+	osStat = func(_ string) (os.FileInfo, error) { return nil, os.ErrNotExist }
 	s.client = new(MockDockerClient)
 	s.cfg = &config.Config{
 		ContainerImage:    "loop-agent:latest",
@@ -110,6 +113,7 @@ func (s *RunnerSuite) TearDownTest() {
 	mkdirAll = s.origMkdirAll
 	getenv = s.origGetenv
 	writeFile = s.origWriteFile
+	osStat = s.origOsStat
 }
 
 func (s *RunnerSuite) TestNewDockerRunner() {
@@ -136,16 +140,10 @@ func (s *RunnerSuite) TestRunHappyPath() {
 	errCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		hasSessionEnv := false
-		for _, e := range cfg.Env {
-			if e == "SESSION_ID=sess-1" {
-				hasSessionEnv = true
-			}
-		}
-		hasBinds := len(cfg.Binds) == 2 &&
-			cfg.Binds[0] == "/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work" &&
-			cfg.Binds[1] == "/home/testuser/.loop/ch-1/mcp:/home/testuser/.loop/ch-1/mcp"
-		return hasSessionEnv && hasBinds
+		hasResume := slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "sess-1")
+		hasBinds := len(cfg.Binds) == 1 &&
+			cfg.Binds[0] == "/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work"
+		return hasResume && hasBinds
 	}), "").Return("container-123", nil)
 	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
@@ -317,16 +315,9 @@ func (s *RunnerSuite) TestRunWithOAuthToken() {
 	errCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		hasOAuth := false
-		for _, e := range cfg.Env {
-			if e == "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-test-token" {
-				hasOAuth = true
-			}
-			if strings.HasPrefix(e, "SESSION_ID=") {
-				return false // SESSION_ID should NOT be set for empty session
-			}
-		}
-		return hasOAuth
+		hasOAuth := slices.Contains(cfg.Env, "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-test-token")
+		noResume := !slices.Contains(cfg.Cmd, "--resume")
+		return hasOAuth && noResume
 	}), "").Return("container-123", nil)
 	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
@@ -356,12 +347,7 @@ func (s *RunnerSuite) TestRunNoSessionID() {
 	errCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		for _, e := range cfg.Env {
-			if strings.HasPrefix(e, "SESSION_ID=") {
-				return false
-			}
-		}
-		return true
+		return !slices.Contains(cfg.Cmd, "--resume")
 	}), "").Return("container-123", nil)
 	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
@@ -558,7 +544,7 @@ func (s *RunnerSuite) TestRunRetryWithoutSession() {
 	failErrCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		return slices.Contains(cfg.Env, "SESSION_ID=stale-sess")
+		return slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "stale-sess")
 	}), "").Return("container-fail", nil).Once()
 	s.client.On("ContainerAttach", ctx, "container-fail").Return(failReader, nil)
 	s.client.On("ContainerStart", ctx, "container-fail").Return(nil)
@@ -573,12 +559,7 @@ func (s *RunnerSuite) TestRunRetryWithoutSession() {
 	okErrCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		for _, e := range cfg.Env {
-			if strings.HasPrefix(e, "SESSION_ID=") {
-				return false
-			}
-		}
-		return true
+		return !slices.Contains(cfg.Cmd, "--resume")
 	}), "").Return("container-ok", nil).Once()
 	s.client.On("ContainerAttach", ctx, "container-ok").Return(okReader, nil)
 	s.client.On("ContainerStart", ctx, "container-ok").Return(nil)
@@ -608,7 +589,7 @@ func (s *RunnerSuite) TestRunRetryAlsoFails() {
 	failErrCh1 := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		return slices.Contains(cfg.Env, "SESSION_ID=stale-sess")
+		return slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "stale-sess")
 	}), "").Return("container-fail1", nil).Once()
 	s.client.On("ContainerAttach", ctx, "container-fail1").Return(failReader1, nil)
 	s.client.On("ContainerStart", ctx, "container-fail1").Return(nil)
@@ -622,12 +603,7 @@ func (s *RunnerSuite) TestRunRetryAlsoFails() {
 	failErrCh2 := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		for _, e := range cfg.Env {
-			if strings.HasPrefix(e, "SESSION_ID=") {
-				return false
-			}
-		}
-		return true
+		return !slices.Contains(cfg.Cmd, "--resume")
 	}), "").Return("container-fail2", nil).Once()
 	s.client.On("ContainerAttach", ctx, "container-fail2").Return(failReader2, nil)
 	s.client.On("ContainerStart", ctx, "container-fail2").Return(nil)
@@ -690,11 +666,11 @@ func (s *RunnerSuite) TestLocalhostToDockerHost() {
 }
 
 func (s *RunnerSuite) TestBuildMCPConfig() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", nil)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", nil)
 	require.Len(s.T(), cfg.MCPServers, 1)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
-	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222", "--log", "/mcp/mcp.log"}, ls.Args)
+	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222", "--log", "/home/user/project/.loop/mcp.log"}, ls.Args)
 	require.Nil(s.T(), ls.Env)
 }
 
@@ -706,7 +682,7 @@ func (s *RunnerSuite) TestBuildMCPConfigWithUserServers() {
 			Env:     map[string]string{"API_KEY": "secret"},
 		},
 	}
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", userServers)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", userServers)
 	require.Len(s.T(), cfg.MCPServers, 2)
 
 	custom := cfg.MCPServers["custom-tool"]
@@ -718,18 +694,18 @@ func (s *RunnerSuite) TestBuildMCPConfigWithUserServers() {
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
 }
 
-func (s *RunnerSuite) TestBuildMCPConfigBuiltinOverridesUser() {
+func (s *RunnerSuite) TestBuildMCPConfigUserLoopPreserved() {
 	userServers := map[string]config.MCPServerConfig{
 		"loop": {
-			Command: "/user/fake/binary",
-			Args:    []string{"--user-flag"},
+			Command: "/user/custom/loop",
+			Args:    []string{"--custom-flag"},
 		},
 	}
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", userServers)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", userServers)
 	require.Len(s.T(), cfg.MCPServers, 1)
 	ls := cfg.MCPServers["loop"]
-	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
-	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222", "--log", "/mcp/mcp.log"}, ls.Args)
+	require.Equal(s.T(), "/user/custom/loop", ls.Command)
+	require.Equal(s.T(), []string{"--custom-flag"}, ls.Args)
 }
 
 func (s *RunnerSuite) TestRunWithDirPath() {
@@ -748,9 +724,8 @@ func (s *RunnerSuite) TestRunWithDirPath() {
 	errCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		return len(cfg.Binds) == 2 &&
-			cfg.Binds[0] == "/home/user/project:/home/user/project" &&
-			cfg.Binds[1] == "/home/testuser/.loop/ch-1/mcp:/home/testuser/.loop/ch-1/mcp"
+		return len(cfg.Binds) == 1 &&
+			cfg.Binds[0] == "/home/user/project:/home/user/project"
 	}), "").Return("container-123", nil)
 	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
@@ -779,9 +754,8 @@ func (s *RunnerSuite) TestRunWithoutDirPathUsesDefault() {
 	errCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		return len(cfg.Binds) == 2 &&
-			cfg.Binds[0] == "/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work" &&
-			cfg.Binds[1] == "/home/testuser/.loop/ch-1/mcp:/home/testuser/.loop/ch-1/mcp"
+		return len(cfg.Binds) == 1 &&
+			cfg.Binds[0] == "/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work"
 	}), "").Return("container-123", nil)
 	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
@@ -840,14 +814,14 @@ func (s *RunnerSuite) TestRunMCPConfigWritten() {
 	_, err := s.runner.Run(ctx, req)
 	require.NoError(s.T(), err)
 
-	require.Equal(s.T(), "/home/testuser/.loop/ch-1/work/.mcp.json", writtenPath)
+	require.Equal(s.T(), "/home/testuser/.loop/ch-1/work/.loop/mcp.json", writtenPath)
 
 	var cfg mcpConfig
 	require.NoError(s.T(), json.Unmarshal(writtenData, &cfg))
 	require.Contains(s.T(), cfg.MCPServers, "loop")
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
-	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222", "--log", "/mcp/mcp.log"}, ls.Args)
+	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222", "--log", "/home/testuser/.loop/ch-1/work/.loop/mcp.log"}, ls.Args)
 
 	s.client.AssertExpectations(s.T())
 }
@@ -1024,8 +998,8 @@ func (s *RunnerSuite) TestRunWithInvalidMount() {
 	errCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		// Invalid mount should be skipped, only workDir and mcpDir binds
-		return len(cfg.Binds) == 2
+		// Invalid mount should be skipped, only workDir bind
+		return len(cfg.Binds) == 1
 	}), "").Return("container-123", nil)
 	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
@@ -1085,7 +1059,6 @@ func (s *RunnerSuite) TestRunWithCustomMounts() {
 			"/home/testuser/.claude:/home/agent/.claude",
 			"/home/testuser/.gitconfig:/home/agent/.gitconfig:ro",
 			"/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work",
-			"/home/testuser/.loop/ch-1/mcp:/home/testuser/.loop/ch-1/mcp",
 		}
 		bindsMatch := slices.Equal(cfg.Binds, expectedBinds)
 		workDirMatch := cfg.WorkingDir == "/home/testuser/.loop/ch-1/work"
@@ -1123,8 +1096,7 @@ func (s *RunnerSuite) TestRunWithDirPathPreservesPath() {
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		// Verify workDir is mounted at same path and WorkingDir is set correctly
 		workDirBind := "/custom/project/path:/custom/project/path"
-		mcpDirBind := "/home/testuser/.loop/ch-1/mcp:/home/testuser/.loop/ch-1/mcp"
-		hasCorrectBinds := slices.Contains(cfg.Binds, workDirBind) && slices.Contains(cfg.Binds, mcpDirBind)
+		hasCorrectBinds := len(cfg.Binds) == 1 && slices.Contains(cfg.Binds, workDirBind)
 		hasCorrectWorkingDir := cfg.WorkingDir == "/custom/project/path"
 		return hasCorrectBinds && hasCorrectWorkingDir
 	}), "").Return("container-123", nil)
@@ -1138,4 +1110,29 @@ func (s *RunnerSuite) TestRunWithDirPathPreservesPath() {
 	require.NotNil(s.T(), resp)
 
 	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunProjectConfigError() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID:    "sess-1",
+		Messages:     []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		SystemPrompt: "You are helpful",
+		ChannelID:    "ch-1",
+		DirPath:      "/project/path",
+	}
+
+	// Mock readFile to simulate project config error
+	origReadFile := config.TestSetReadFile(func(path string) ([]byte, error) {
+		if strings.Contains(path, ".loop/config.json") {
+			return nil, errors.New("permission denied")
+		}
+		return nil, os.ErrNotExist
+	})
+	defer config.TestSetReadFile(origReadFile)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Error(s.T(), err)
+	require.Nil(s.T(), resp)
+	require.Contains(s.T(), err.Error(), "loading project config")
 }

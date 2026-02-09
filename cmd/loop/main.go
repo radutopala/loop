@@ -48,8 +48,11 @@ func newRootCmd() *cobra.Command {
 	}
 	root.AddCommand(newServeCmd())
 	root.AddCommand(newMCPCmd())
-	root.AddCommand(newDaemonCmd())
-	root.AddCommand(newOnboardCmd())
+	root.AddCommand(newDaemonStartCmd())
+	root.AddCommand(newDaemonStopCmd())
+	root.AddCommand(newDaemonStatusCmd())
+	root.AddCommand(newOnboardGlobalCmd())
+	root.AddCommand(newOnboardLocalCmd())
 	return root
 }
 
@@ -79,7 +82,7 @@ func newMCPCmd() *cobra.Command {
 	cmd.Flags().StringVar(&channelID, "channel-id", "", "Discord channel ID")
 	cmd.Flags().StringVar(&dirPath, "dir", "", "Project directory path (auto-creates Discord channel)")
 	cmd.Flags().StringVar(&apiURL, "api-url", "", "Loop API base URL")
-	cmd.Flags().StringVar(&logPath, "log", "/mcp/mcp.log", "Path to MCP log file")
+	cmd.Flags().StringVar(&logPath, "log", ".loop/mcp.log", "Path to MCP log file")
 	cmd.MarkFlagsOneRequired("channel-id", "dir")
 	cmd.MarkFlagsMutuallyExclusive("channel-id", "dir")
 	_ = cmd.MarkFlagRequired("api-url")
@@ -96,17 +99,10 @@ var (
 	newSystem    = func() daemon.System { return daemon.RealSystem{} }
 )
 
-func newDaemonCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:     "daemon",
-		Aliases: []string{"d"},
-		Short:   "Manage the Loop background service",
-	}
-
-	cmd.AddCommand(&cobra.Command{
-		Use:     "start",
-		Aliases: []string{"up"},
-		Short:   "Install and start the daemon",
+func newDaemonStartCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "daemon:start",
+		Short: "Install and start the daemon",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if err := daemonStart(newSystem()); err != nil {
 				return err
@@ -114,12 +110,13 @@ func newDaemonCmd() *cobra.Command {
 			fmt.Println("Daemon started.")
 			return nil
 		},
-	})
+	}
+}
 
-	cmd.AddCommand(&cobra.Command{
-		Use:     "stop",
-		Aliases: []string{"down"},
-		Short:   "Stop and uninstall the daemon",
+func newDaemonStopCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "daemon:stop",
+		Short: "Stop and uninstall the daemon",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if err := daemonStop(newSystem()); err != nil {
 				return err
@@ -127,12 +124,13 @@ func newDaemonCmd() *cobra.Command {
 			fmt.Println("Daemon stopped.")
 			return nil
 		},
-	})
+	}
+}
 
-	cmd.AddCommand(&cobra.Command{
-		Use:     "status",
-		Aliases: []string{"st"},
-		Short:   "Show daemon status",
+func newDaemonStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "daemon:status",
+		Short: "Show daemon status",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			status, err := daemonStatus(newSystem())
 			if err != nil {
@@ -141,24 +139,34 @@ func newDaemonCmd() *cobra.Command {
 			fmt.Println(status)
 			return nil
 		},
-	})
-
-	return cmd
+	}
 }
 
-func newOnboardCmd() *cobra.Command {
+func newOnboardGlobalCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "onboard",
-		Short: "Initialize Loop configuration",
+		Use:   "onboard:global",
+		Short: "Initialize global Loop configuration at ~/.loop/",
 		Long:  "Copies config.example.json to ~/.loop/config.json for first-time setup",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			force, _ := cmd.Flags().GetBool("force")
-			return onboard(force)
+			return onboardGlobal(force)
 		},
 	}
-
 	cmd.Flags().Bool("force", false, "Overwrite existing config")
+	return cmd
+}
 
+func newOnboardLocalCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "onboard:local",
+		Short: "Register Loop MCP server in the current project",
+		Long:  "Writes .mcp.json with the loop MCP server for Claude Code integration",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			apiURL, _ := cmd.Flags().GetString("api-url")
+			return onboardLocal(apiURL)
+		},
+	}
+	cmd.Flags().String("api-url", "http://localhost:8222", "Loop API base URL")
 	return cmd
 }
 
@@ -167,9 +175,11 @@ var (
 	osStat      = os.Stat
 	osMkdirAll  = os.MkdirAll
 	osWriteFile = os.WriteFile
+	osGetwd     = os.Getwd
+	osReadFile  = os.ReadFile
 )
 
-func onboard(force bool) error {
+func onboardGlobal(force bool) error {
 	home, err := userHomeDir()
 	if err != nil {
 		return fmt.Errorf("getting home directory: %w", err)
@@ -216,6 +226,52 @@ func onboard(force bool) error {
 	return nil
 }
 
+func onboardLocal(apiURL string) error {
+	dir, err := osGetwd()
+	if err != nil {
+		return fmt.Errorf("getting working directory: %w", err)
+	}
+
+	mcpPath := filepath.Join(dir, ".mcp.json")
+
+	// Read existing .mcp.json if it exists, merge into it
+	existing := make(map[string]any)
+	if data, err := osReadFile(mcpPath); err == nil {
+		if err := json.Unmarshal(data, &existing); err != nil {
+			return fmt.Errorf("parsing existing .mcp.json: %w", err)
+		}
+	}
+
+	// Ensure mcpServers key exists
+	servers, _ := existing["mcpServers"].(map[string]any)
+	if servers == nil {
+		servers = make(map[string]any)
+	}
+
+	// Check if loop is already registered
+	if _, exists := servers["loop"]; exists {
+		fmt.Println("loop MCP server is already registered in .mcp.json")
+		return nil
+	}
+
+	// Add loop server
+	servers["loop"] = map[string]any{
+		"command": "loop",
+		"args":    []string{"mcp", "--dir", dir, "--api-url", apiURL, "--log", filepath.Join(dir, ".loop", "mcp.log")},
+	}
+	existing["mcpServers"] = servers
+
+	mcpJSON, _ := json.MarshalIndent(existing, "", "  ")
+	if err := osWriteFile(mcpPath, append(mcpJSON, '\n'), 0644); err != nil {
+		return fmt.Errorf("writing .mcp.json: %w", err)
+	}
+
+	fmt.Printf("Added loop MCP server to %s\n", mcpPath)
+	fmt.Println("\nMake sure 'loop serve' or 'loop daemon:start' is running.")
+
+	return nil
+}
+
 var ensureChannelFunc = ensureChannel
 
 func runMCP(channelID, apiURL, dirPath, logPath string) error {
@@ -233,7 +289,13 @@ func runMCP(channelID, apiURL, dirPath, logPath string) error {
 	}
 	defer f.Close()
 
-	logger := slog.New(slog.NewTextHandler(f, nil))
+	logLevel, logFormat := "info", "text"
+	if cfg, err := configLoad(); err == nil {
+		logLevel = cfg.LogLevel
+		logFormat = cfg.LogFormat
+	}
+
+	logger := logging.NewLoggerWithWriter(logLevel, logFormat, f)
 	srv := newMCPServer(channelID, apiURL, http.DefaultClient, logger)
 	return srv.Run(context.Background(), &mcp.StdioTransport{})
 }
@@ -354,7 +416,7 @@ func serve() error {
 
 	runner := container.NewDockerRunner(dockerClient, cfg)
 
-	executor := orchestrator.NewTaskExecutor(runner, bot, store, logger)
+	executor := orchestrator.NewTaskExecutor(runner, bot, store, logger, cfg.ContainerTimeout)
 	sched := scheduler.NewTaskScheduler(store, executor, cfg.PollInterval, logger)
 
 	var channelSvc api.ChannelEnsurer
@@ -367,7 +429,7 @@ func serve() error {
 		return fmt.Errorf("starting api server: %w", err)
 	}
 
-	orch := orchestrator.New(store, bot, runner, sched, logger, cfg.TaskTemplates)
+	orch := orchestrator.New(store, bot, runner, sched, logger, cfg.TaskTemplates, cfg.ContainerTimeout)
 
 	if err := orch.Start(ctx); err != nil {
 		_ = apiSrv.Stop(context.Background())

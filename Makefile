@@ -32,17 +32,16 @@ docker-build: ## Build the Docker container image
 run: build ## Build and run the bot
 	./bin/loop serve
 
-restart: install docker-build ## Install, rebuild image, stop and start the daemon
-	loop daemon stop || true
-	loop daemon start
+restart: install docker-build ## Install, stop and start the daemon
+	loop daemon:stop || true
+	loop daemon:start
 
 docker-shell: ## Start a bash shell in the agent container
-	@mkdir -p /tmp/loop-shell-mcp
-	@printf '{"mcpServers":{"loop":{"command":"/usr/local/bin/loop","args":["mcp","--dir","$(CURDIR)","--api-url","http://host.docker.internal:8222","--log","$(CURDIR)/mcp/mcp.log"]}}}\n' > $(CURDIR)/.mcp.json
+	@mkdir -p $(CURDIR)/.loop
+	@printf '{"mcpServers":{"loop":{"command":"/usr/local/bin/loop","args":["mcp","--dir","$(CURDIR)","--api-url","http://host.docker.internal:8222","--log","$(CURDIR)/.loop/mcp.log"]}}}\n' > $(CURDIR)/.loop/mcp.json
 	docker run --rm -it --entrypoint bash \
 		--add-host=host.docker.internal:host-gateway \
 		-v $(CURDIR):$(CURDIR) \
-		-v /tmp/loop-shell-mcp:$(CURDIR)/mcp \
 		-w $(CURDIR) \
 		-e CLAUDE_CODE_OAUTH_TOKEN=$$(grep claude_code_oauth_token ~/.loop/config.json | awk -F'"' '{print $$4}') \
 		loop-agent:latest

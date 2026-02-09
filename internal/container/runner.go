@@ -15,12 +15,12 @@ import (
 	"github.com/radutopala/loop/internal/config"
 )
 
-// mcpConfig represents the .mcp.json structure written to the container work directory.
+// mcpConfig represents the MCP config structure written to .loop/mcp.json.
 type mcpConfig struct {
 	MCPServers map[string]mcpServerEntry `json:"mcpServers"`
 }
 
-// mcpServerEntry represents a single MCP server in .mcp.json.
+// mcpServerEntry represents a single MCP server in the config.
 type mcpServerEntry struct {
 	Command string            `json:"command"`
 	Args    []string          `json:"args,omitempty"`
@@ -116,7 +116,7 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 // buildMCPConfig creates the merged MCP config with the built-in loop
 // and any user-defined servers from the config. The built-in loop always
 // takes precedence over a user-defined server with the same name.
-func buildMCPConfig(channelID, apiURL string, userServers map[string]config.MCPServerConfig) mcpConfig {
+func buildMCPConfig(channelID, apiURL, workDir string, userServers map[string]config.MCPServerConfig) mcpConfig {
 	servers := make(map[string]mcpServerEntry, len(userServers)+1)
 	for name, srv := range userServers {
 		servers[name] = mcpServerEntry{
@@ -125,10 +125,12 @@ func buildMCPConfig(channelID, apiURL string, userServers map[string]config.MCPS
 			Env:     srv.Env,
 		}
 	}
-	// Built-in loop always overrides any user-defined server with that name.
-	servers["loop"] = mcpServerEntry{
-		Command: "/usr/local/bin/loop",
-		Args:    []string{"mcp", "--channel-id", channelID, "--api-url", apiURL, "--log", "/mcp/mcp.log"},
+	// Add built-in loop only if the user hasn't defined one.
+	if _, exists := userServers["loop"]; !exists {
+		servers["loop"] = mcpServerEntry{
+			Command: "/usr/local/bin/loop",
+			Args:    []string{"mcp", "--channel-id", channelID, "--api-url", apiURL, "--log", filepath.Join(workDir, ".loop", "mcp.log")},
+		}
 	}
 	return mcpConfig{MCPServers: servers}
 }
@@ -176,18 +178,34 @@ func processMount(mount string) (string, error) {
 
 // runOnce executes a single container run.
 func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
-	prompt := agent.BuildPrompt(req.Messages, req.SystemPrompt)
+	// When resuming a session, Claude already has the conversation history —
+	// only send the latest message to avoid a huge redundant prompt.
+	var prompt string
+	if req.SessionID != "" && len(req.Messages) > 0 {
+		last := req.Messages[len(req.Messages)-1]
+		prompt = last.Content
+	} else {
+		prompt = agent.BuildPrompt(req.Messages, req.SystemPrompt)
+	}
 
-	apiURL := "http://host.docker.internal" + r.cfg.APIAddr
+	workDir := filepath.Join(r.cfg.LoopDir, req.ChannelID, "work")
+	if req.DirPath != "" {
+		workDir = req.DirPath
+	}
+
+	// Load and merge project-specific config if it exists
+	cfg, err := config.LoadProjectConfig(workDir, r.cfg)
+	if err != nil {
+		return nil, fmt.Errorf("loading project config: %w", err)
+	}
+
+	apiURL := "http://host.docker.internal" + cfg.APIAddr
 	env := []string{
 		"CHANNEL_ID=" + req.ChannelID,
 		"API_URL=" + apiURL,
 	}
-	if req.SessionID != "" {
-		env = append(env, "SESSION_ID="+req.SessionID)
-	}
-	if r.cfg.ClaudeCodeOAuthToken != "" {
-		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+r.cfg.ClaudeCodeOAuthToken)
+	if cfg.ClaudeCodeOAuthToken != "" {
+		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+cfg.ClaudeCodeOAuthToken)
 	}
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY"} {
 		if v := getenv(key); v != "" {
@@ -195,27 +213,24 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		}
 	}
 
-	workDir := filepath.Join(r.cfg.LoopDir, req.ChannelID, "work")
-	if req.DirPath != "" {
-		workDir = req.DirPath
-	}
-	mcpDir := filepath.Join(r.cfg.LoopDir, req.ChannelID, "mcp")
-	for _, dir := range []string{workDir, mcpDir} {
+	for _, dir := range []string{workDir, filepath.Join(workDir, ".loop")} {
 		if err := mkdirAll(dir, 0o755); err != nil {
 			return nil, fmt.Errorf("creating host directory %s: %w", dir, err)
 		}
 	}
 
-	mcpCfg := buildMCPConfig(req.ChannelID, apiURL, r.cfg.MCPServers)
+	// Write .loop/mcp.json for Claude's --mcp-config (always regenerated from merged config).
+	mcpConfigPath := filepath.Join(workDir, ".loop", "mcp.json")
+	mcpCfg := buildMCPConfig(req.ChannelID, apiURL, workDir, cfg.MCPServers)
 	mcpJSON, _ := json.MarshalIndent(mcpCfg, "", "  ")
-	if err := writeFile(filepath.Join(workDir, ".mcp.json"), mcpJSON, 0o644); err != nil {
+	if err := writeFile(mcpConfigPath, mcpJSON, 0o644); err != nil {
 		return nil, fmt.Errorf("writing mcp config: %w", err)
 	}
 
 	var binds []string
 
-	// Add mounts from config
-	for _, mount := range r.cfg.Mounts {
+	// Add mounts from merged config (includes project-specific mounts)
+	for _, mount := range cfg.Mounts {
 		bind, err := processMount(mount)
 		if err != nil {
 			// Log warning but continue (don't fail the container)
@@ -227,16 +242,23 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		}
 	}
 
-	// Mount workDir and mcpDir at same paths in container
+	// Mount workDir at same path in container
 	binds = append(binds, workDir+":"+workDir)
-	binds = append(binds, mcpDir+":"+mcpDir)
+
+	// Build full Claude CLI args — --mcp-config must come before --print
+	// to avoid Claude Code hanging.
+	cmd := []string{"--mcp-config", mcpConfigPath, "--print", "--output-format", "json", "--dangerously-skip-permissions"}
+	if req.SessionID != "" {
+		cmd = append(cmd, "--resume", req.SessionID)
+	}
+	cmd = append(cmd, prompt)
 
 	containerCfg := &ContainerConfig{
-		Image:      r.cfg.ContainerImage,
-		MemoryMB:   r.cfg.ContainerMemoryMB,
-		CPUs:       r.cfg.ContainerCPUs,
+		Image:      cfg.ContainerImage,
+		MemoryMB:   cfg.ContainerMemoryMB,
+		CPUs:       cfg.ContainerCPUs,
 		Env:        env,
-		Cmd:        []string{prompt},
+		Cmd:        cmd,
 		Binds:      binds,
 		WorkingDir: workDir,
 	}
