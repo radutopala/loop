@@ -331,7 +331,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 
 	// Build full Claude CLI command — entrypoint runs whatever CMD is passed.
 	// --mcp-config must come before --print to avoid Claude Code hanging.
-	cmd := []string{"claude", "--mcp-config", mcpConfigPath}
+	cmd := []string{cfg.ClaudeBinPath, "--mcp-config", mcpConfigPath}
 	if cfg.ClaudeModel != "" {
 		cmd = append(cmd, "--model", cfg.ClaudeModel)
 	}

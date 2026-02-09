@@ -186,11 +186,11 @@ func floatPtrDefault(val *float64, def float64) float64 {
 }
 
 // projectConfig is the structure for project-specific .loop/config.json files.
-// Only mounts, mcp_servers, and claude_model can be specified for security reasons.
 type projectConfig struct {
-	Mounts      []string       `json:"mounts"`
-	MCP         *jsonMCPConfig `json:"mcp"`
-	ClaudeModel string         `json:"claude_model"`
+	Mounts        []string       `json:"mounts"`
+	MCP           *jsonMCPConfig `json:"mcp"`
+	ClaudeModel   string         `json:"claude_model"`
+	ClaudeBinPath string         `json:"claude_bin_path"`
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
@@ -272,6 +272,10 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 
 	if pc.ClaudeModel != "" {
 		merged.ClaudeModel = pc.ClaudeModel
+	}
+
+	if pc.ClaudeBinPath != "" {
+		merged.ClaudeBinPath = pc.ClaudeBinPath
 	}
 
 	return &merged, nil

@@ -125,6 +125,7 @@ func (s *RunnerSuite) SetupTest() {
 	}
 	s.client = new(MockDockerClient)
 	s.cfg = &config.Config{
+		ClaudeBinPath:      "claude",
 		ContainerImage:     "loop-agent:latest",
 		ContainerMemoryMB:  512,
 		ContainerCPUs:      1.0,

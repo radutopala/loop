@@ -698,6 +698,42 @@ func (s *ConfigSuite) TestLoadProjectConfigClaudeModelNoOverride() {
 	require.Equal(s.T(), "claude-sonnet-4-5-20250929", merged.ClaudeModel)
 }
 
+func (s *ConfigSuite) TestLoadProjectConfigClaudeBinPathOverride() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"claude_bin_path": "/custom/bin/claude"
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		ClaudeBinPath: "claude",
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "/custom/bin/claude", merged.ClaudeBinPath)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigClaudeBinPathNoOverride() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		ClaudeBinPath: "claude",
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "claude", merged.ClaudeBinPath)
+}
+
 func (s *ConfigSuite) TestLoadProjectConfigDoesNotMutateMain() {
 	readFile = func(path string) ([]byte, error) {
 		if path == "/project/.loop/config.json" {
