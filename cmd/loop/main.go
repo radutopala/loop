@@ -33,6 +33,12 @@ func init() {
 	cobra.EnablePrefixMatching = true
 }
 
+var (
+	version = "dev"
+	commit  = "none"
+	date    = "unknown"
+)
+
 var osExit = os.Exit
 
 func main() {
@@ -53,7 +59,50 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newDaemonStatusCmd())
 	root.AddCommand(newOnboardGlobalCmd())
 	root.AddCommand(newOnboardLocalCmd())
+	root.AddCommand(newVersionCmd())
+	root.SetHelpTemplate(helpTemplate)
 	return root
+}
+
+const helpTemplate = `loop - Discord bot powered by Claude that runs AI agents in Docker containers
+
+Usage:
+  loop [command]
+
+Available Commands:
+  serve                    Start the Discord bot (alias: s)
+  mcp                      Run as an MCP server over stdio (alias: m)
+    --channel-id           Discord channel ID
+    --dir                  Project directory path (auto-creates Discord channel)
+    --api-url              Loop API base URL (required)
+    --log                  Path to MCP log file [default: .loop/mcp.log]
+  onboard:global           Initialize global config at ~/.loop/ (aliases: o:global, setup)
+    --force                Overwrite existing config
+  onboard:local            Register Loop MCP server in current project (aliases: o:local, init)
+    --api-url              Loop API base URL [default: http://localhost:8222]
+  daemon:start             Install and start the daemon (aliases: d:start, up)
+  daemon:stop              Stop and uninstall the daemon (aliases: d:stop, down)
+  daemon:status            Show daemon status (alias: d:status)
+  version                  Print version information (alias: v)
+
+Use "loop [command] --help" for more information about a command.
+`
+
+func newVersionCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "version",
+		Aliases: []string{"v"},
+		Short:   "Print version information",
+		Run: func(_ *cobra.Command, _ []string) {
+			fmt.Printf("loop %s\n", version)
+			if commit != "none" {
+				fmt.Printf("  commit: %s\n", commit)
+			}
+			if date != "unknown" {
+				fmt.Printf("  built:  %s\n", date)
+			}
+		},
+	}
 }
 
 func newServeCmd() *cobra.Command {
@@ -101,8 +150,9 @@ var (
 
 func newDaemonStartCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "daemon:start",
-		Short: "Install and start the daemon",
+		Use:     "daemon:start",
+		Aliases: []string{"d:start", "up"},
+		Short:   "Install and start the daemon",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if err := daemonStart(newSystem()); err != nil {
 				return err
@@ -115,8 +165,9 @@ func newDaemonStartCmd() *cobra.Command {
 
 func newDaemonStopCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "daemon:stop",
-		Short: "Stop and uninstall the daemon",
+		Use:     "daemon:stop",
+		Aliases: []string{"d:stop", "down"},
+		Short:   "Stop and uninstall the daemon",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			if err := daemonStop(newSystem()); err != nil {
 				return err
@@ -129,8 +180,9 @@ func newDaemonStopCmd() *cobra.Command {
 
 func newDaemonStatusCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "daemon:status",
-		Short: "Show daemon status",
+		Use:     "daemon:status",
+		Aliases: []string{"d:status"},
+		Short:   "Show daemon status",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			status, err := daemonStatus(newSystem())
 			if err != nil {
@@ -144,8 +196,9 @@ func newDaemonStatusCmd() *cobra.Command {
 
 func newOnboardGlobalCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "onboard:global",
-		Short: "Initialize global Loop configuration at ~/.loop/",
+		Use:     "onboard:global",
+		Aliases: []string{"o:global", "setup"},
+		Short:   "Initialize global Loop configuration at ~/.loop/",
 		Long:  "Copies config.example.json to ~/.loop/config.json for first-time setup",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			force, _ := cmd.Flags().GetBool("force")
@@ -158,8 +211,9 @@ func newOnboardGlobalCmd() *cobra.Command {
 
 func newOnboardLocalCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "onboard:local",
-		Short: "Register Loop MCP server in the current project",
+		Use:     "onboard:local",
+		Aliases: []string{"o:local", "init"},
+		Short:   "Register Loop MCP server in the current project",
 		Long:  "Writes .mcp.json with the loop MCP server for Claude Code integration",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			apiURL, _ := cmd.Flags().GetString("api-url")

@@ -4,11 +4,16 @@
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
 
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
+
 build: ## Build the loop binary
-	go build -o bin/loop ./cmd/loop
+	go build -ldflags "$(LDFLAGS)" -o bin/loop ./cmd/loop
 
 install: ## Install loop to GOPATH/bin
-	go install ./cmd/loop
+	go install -ldflags "$(LDFLAGS)" ./cmd/loop
 
 test: ## Run all tests
 	go test -race -count=1 ./...

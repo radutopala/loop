@@ -378,6 +378,7 @@ func (s *MainSuite) TestNewRootCmd() {
 		"daemon:status":  false,
 		"onboard:global": false,
 		"onboard:local":  false,
+		"version":        false,
 	}
 	for _, sub := range cmd.Commands() {
 		if _, ok := want[sub.Use]; ok {
@@ -1107,18 +1108,21 @@ func (s *MainSuite) TestDefaultNewDockerClient() {
 func (s *MainSuite) TestNewDaemonStartCmd() {
 	cmd := newDaemonStartCmd()
 	require.Equal(s.T(), "daemon:start", cmd.Use)
+	require.Equal(s.T(), []string{"d:start", "up"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.RunE)
 }
 
 func (s *MainSuite) TestNewDaemonStopCmd() {
 	cmd := newDaemonStopCmd()
 	require.Equal(s.T(), "daemon:stop", cmd.Use)
+	require.Equal(s.T(), []string{"d:stop", "down"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.RunE)
 }
 
 func (s *MainSuite) TestNewDaemonStatusCmd() {
 	cmd := newDaemonStatusCmd()
 	require.Equal(s.T(), "daemon:status", cmd.Use)
+	require.Equal(s.T(), []string{"d:status"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.RunE)
 }
 
@@ -1194,6 +1198,7 @@ func (s *MainSuite) TestDefaultDaemonVars() {
 func (s *MainSuite) TestNewOnboardGlobalCmd() {
 	cmd := newOnboardGlobalCmd()
 	require.Equal(s.T(), "onboard:global", cmd.Use)
+	require.Equal(s.T(), []string{"o:global", "setup"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.RunE)
 	require.NotNil(s.T(), cmd.Flags().Lookup("force"))
 }
@@ -1201,6 +1206,7 @@ func (s *MainSuite) TestNewOnboardGlobalCmd() {
 func (s *MainSuite) TestNewOnboardLocalCmd() {
 	cmd := newOnboardLocalCmd()
 	require.Equal(s.T(), "onboard:local", cmd.Use)
+	require.Equal(s.T(), []string{"o:local", "init"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.RunE)
 	f := cmd.Flags().Lookup("api-url")
 	require.NotNil(s.T(), f)
@@ -1728,6 +1734,43 @@ func (s *MainSuite) TestEnsureImageEntrypointWriteError() {
 	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing entrypoint")
+}
+
+// --- version ---
+
+func (s *MainSuite) TestNewVersionCmd() {
+	cmd := newVersionCmd()
+	require.Equal(s.T(), "version", cmd.Use)
+	require.Equal(s.T(), []string{"v"}, cmd.Aliases)
+	require.NotNil(s.T(), cmd.Run)
+}
+
+func (s *MainSuite) TestVersionOutput() {
+	origVersion, origCommit, origDate := version, commit, date
+	defer func() { version, commit, date = origVersion, origCommit, origDate }()
+
+	version = "1.2.3"
+	commit = "abc1234"
+	date = "2026-01-01T00:00:00Z"
+
+	cmd := newVersionCmd()
+	cmd.SetArgs([]string{})
+	err := cmd.Execute()
+	require.NoError(s.T(), err)
+}
+
+func (s *MainSuite) TestVersionOutputDefaults() {
+	origVersion, origCommit, origDate := version, commit, date
+	defer func() { version, commit, date = origVersion, origCommit, origDate }()
+
+	version = "dev"
+	commit = "none"
+	date = "unknown"
+
+	cmd := newVersionCmd()
+	cmd.SetArgs([]string{})
+	err := cmd.Execute()
+	require.NoError(s.T(), err)
 }
 
 func (s *MainSuite) TestRootCmdHasOnboardCommands() {

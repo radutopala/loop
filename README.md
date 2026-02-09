@@ -135,7 +135,7 @@ Mount format: `"host_path:container_path[:mode]"` where mode is `ro` for read-on
 
 Paths starting with `~/` are automatically expanded to the user's home directory. Non-existent paths are silently skipped.
 
-**Important**: Project directories (`workDir`) and MCP logs (`mcpDir`) are automatically mounted at their actual paths (not `/work` or `/mcp`), ensuring Claude sessions reference correct absolute paths.
+**Important**: Project directories (`workDir`) and MCP logs (`mcpDir`) are automatically mounted at their actual paths, ensuring Claude sessions reference correct absolute paths.
 
 ### Per-Project Configuration
 
@@ -247,21 +247,21 @@ make restart
 
 ## CLI Commands
 
-| Command | Alias | Description |
+| Command | Aliases | Description |
 |---|---|---|
 | `loop serve` | `s` | Start the Discord bot |
 | `loop mcp` | `m` | Run as an MCP server over stdio |
-| `loop onboard:global` | | Initialize global Loop configuration (~/.loop/config.json) |
-| `loop onboard:local` | | Register Loop MCP server in current project (.mcp.json) |
-| `loop daemon:start` | | Install and start the daemon |
-| `loop daemon:stop` | | Stop and uninstall the daemon |
-| `loop daemon:status` | | Show daemon status |
+| `loop onboard:global` | `o:global`, `setup` | Initialize global Loop configuration (~/.loop/config.json) |
+| `loop onboard:local` | `o:local`, `init` | Register Loop MCP server in current project (.mcp.json) |
+| `loop daemon:start` | `d:start`, `up` | Install and start the daemon |
+| `loop daemon:stop` | `d:stop`, `down` | Stop and uninstall the daemon |
+| `loop daemon:status` | `d:status` | Show daemon status |
 
 ### MCP Server Options
 
 ```sh
 loop mcp --channel-id <id> --api-url <url>   # Attach to existing channel
-loop mcp --dir <path> --api-url <url>         # Auto-create channel for directory
+loop mcp --dir <path> --api-url <url>        # Auto-create channel for directory
 ```
 
 ### Using with Claude Code
