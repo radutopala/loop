@@ -1,8 +1,10 @@
 package container
 
 import (
-	"bytes"
+	"bufio"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/config"
@@ -28,14 +31,14 @@ type mcpServerEntry struct {
 	Env     map[string]string `json:"env,omitempty"`
 }
 
-// claudeResponse represents the JSON output from claude --output-format json.
+// claudeResponse represents a stream-json event from claude --output-format stream-json.
+// The final event has Type "result" and contains the response.
 type claudeResponse struct {
+	Type      string `json:"type"`
 	Result    string `json:"result"`
 	SessionID string `json:"session_id"`
 	IsError   bool   `json:"is_error"`
 }
-
-var ansiRegexp = regexp.MustCompile(`\x1b(?:\[[0-9;?]*[a-zA-Z<>]|\][^\x07]*(?:\x07|\x1b\\)|\(B)|\r`)
 
 // ContainerConfig holds settings for creating a container.
 type ContainerConfig struct {
@@ -96,6 +99,38 @@ var writeFile = os.WriteFile
 var userHomeDir = os.UserHomeDir
 var osStat = os.Stat
 var execCommand = exec.Command
+var timeAfterFunc = time.AfterFunc
+var randRead = rand.Read
+
+var nonAlphanumRegexp = regexp.MustCompile(`[^a-z0-9]+`)
+
+// sanitizeName lowercases the input, replaces non-alphanumeric chars with
+// hyphens, collapses consecutive hyphens, trims leading/trailing hyphens,
+// and truncates to 40 characters.
+func sanitizeName(name string) string {
+	s := strings.ToLower(name)
+	s = nonAlphanumRegexp.ReplaceAllString(s, "-")
+	s = strings.Trim(s, "-")
+	if len(s) > 40 {
+		s = s[:40]
+		s = strings.TrimRight(s, "-")
+	}
+	return s
+}
+
+// containerName generates a Docker container name in the format
+// "loop-{base}-{6-hex-chars}". When dirPath is set, the base is derived
+// from filepath.Base(dirPath); otherwise channelID is used.
+func containerName(channelID, dirPath string) string {
+	base := channelID
+	if dirPath != "" {
+		base = filepath.Base(dirPath)
+	}
+	sanitized := sanitizeName(base)
+	b := make([]byte, 3)
+	_, _ = randRead(b)
+	return "loop-" + sanitized + "-" + hex.EncodeToString(b)
+}
 
 // Run executes an agent request in a Docker container.
 // If a session ID is set and the run fails, it retries without --resume
@@ -300,7 +335,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 	if cfg.ClaudeModel != "" {
 		cmd = append(cmd, "--model", cfg.ClaudeModel)
 	}
-	cmd = append(cmd, "--print", "--output-format", "json", "--dangerously-skip-permissions")
+	cmd = append(cmd, "--print", "--verbose", "--output-format", "stream-json", "--dangerously-skip-permissions")
 	if req.SessionID != "" {
 		cmd = append(cmd, "--resume", req.SessionID)
 	}
@@ -316,13 +351,12 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		WorkingDir: workDir,
 	}
 
-	containerID, err := r.client.ContainerCreate(ctx, containerCfg, "")
+	name := containerName(req.ChannelID, req.DirPath)
+	containerID, err := r.client.ContainerCreate(ctx, containerCfg, name)
 	if err != nil {
 		return nil, fmt.Errorf("creating container: %w", err)
 	}
-	defer func() {
-		_ = r.client.ContainerRemove(ctx, containerID)
-	}()
+	defer r.scheduleRemove(containerID)
 
 	if err := r.client.ContainerStart(ctx, containerID); err != nil {
 		return nil, fmt.Errorf("starting container: %w", err)
@@ -350,19 +384,12 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		return nil, fmt.Errorf("reading container logs: %w", err)
 	}
 
-	var buf bytes.Buffer
-	if _, err := io.Copy(&buf, reader); err != nil {
-		return nil, fmt.Errorf("reading container output: %w", err)
-	}
-
-	output := stripANSI(buf.String())
-
-	var claudeResp claudeResponse
-	if err := json.Unmarshal([]byte(output), &claudeResp); err != nil {
+	claudeResp, err := parseStreamJSON(reader)
+	if err != nil {
 		if exitCode != 0 {
 			return nil, fmt.Errorf("container exited with code %d: %w", exitCode, err)
 		}
-		return nil, fmt.Errorf("parsing claude response: %w", err)
+		return nil, err
 	}
 
 	if claudeResp.IsError {
@@ -400,9 +427,31 @@ func localhostToDockerHost(v string) string {
 	return result
 }
 
-// stripANSI removes ANSI escape sequences from TTY output.
-func stripANSI(s string) string {
-	return strings.TrimSpace(ansiRegexp.ReplaceAllString(s, ""))
+// parseStreamJSON scans newline-delimited JSON events from Claude's
+// --output-format stream-json and returns the final "result" event.
+func parseStreamJSON(r io.Reader) (*claudeResponse, error) {
+	scanner := bufio.NewScanner(r)
+	var result *claudeResponse
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+		var evt claudeResponse
+		if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			continue // skip non-JSON lines (e.g. ANSI noise)
+		}
+		if evt.Type == "result" {
+			result = &evt
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("reading container output: %w", err)
+	}
+	if result == nil {
+		return nil, fmt.Errorf("parsing claude response: no result event found")
+	}
+	return result, nil
 }
 
 // Cleanup removes any lingering containers with the loop-agent label.
@@ -419,4 +468,12 @@ func (r *DockerRunner) Cleanup(ctx context.Context) error {
 		}
 	}
 	return lastErr
+}
+
+// scheduleRemove removes a container after a delay so that `docker logs`
+// remains available for debugging shortly after the run completes.
+func (r *DockerRunner) scheduleRemove(containerID string) {
+	timeAfterFunc(r.cfg.ContainerKeepAlive, func() {
+		_ = r.client.ContainerRemove(context.Background(), containerID)
+	})
 }

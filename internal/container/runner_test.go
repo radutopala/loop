@@ -76,15 +76,17 @@ func (m *MockDockerClient) ContainerList(ctx context.Context, labelKey, labelVal
 
 type RunnerSuite struct {
 	suite.Suite
-	client          *MockDockerClient
-	runner          *DockerRunner
-	cfg             *config.Config
-	origMkdirAll    func(string, os.FileMode) error
-	origGetenv      func(string) string
-	origWriteFile   func(string, []byte, os.FileMode) error
-	origUserHomeDir func() (string, error)
-	origOsStat      func(string) (os.FileInfo, error)
-	origExecCommand func(string, ...string) *exec.Cmd
+	client            *MockDockerClient
+	runner            *DockerRunner
+	cfg               *config.Config
+	origMkdirAll      func(string, os.FileMode) error
+	origGetenv        func(string) string
+	origWriteFile     func(string, []byte, os.FileMode) error
+	origUserHomeDir   func() (string, error)
+	origOsStat        func(string) (os.FileInfo, error)
+	origExecCommand   func(string, ...string) *exec.Cmd
+	origTimeAfterFunc func(time.Duration, func()) *time.Timer
+	origRandRead      func([]byte) (int, error)
 }
 
 func TestRunnerSuite(t *testing.T) {
@@ -111,14 +113,25 @@ func (s *RunnerSuite) SetupTest() {
 	execCommand = func(_ string, _ ...string) *exec.Cmd {
 		return exec.Command("echo", "")
 	}
+	s.origTimeAfterFunc = timeAfterFunc
+	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+		f() // execute immediately in tests
+		return time.NewTimer(0)
+	}
+	s.origRandRead = randRead
+	randRead = func(b []byte) (int, error) {
+		copy(b, []byte{0xaa, 0xbb, 0xcc})
+		return len(b), nil
+	}
 	s.client = new(MockDockerClient)
 	s.cfg = &config.Config{
-		ContainerImage:    "loop-agent:latest",
-		ContainerMemoryMB: 512,
-		ContainerCPUs:     1.0,
-		ContainerTimeout:  30 * time.Second,
-		APIAddr:           ":8222",
-		LoopDir:           "/home/testuser/.loop",
+		ContainerImage:     "loop-agent:latest",
+		ContainerMemoryMB:  512,
+		ContainerCPUs:      1.0,
+		ContainerTimeout:   30 * time.Second,
+		ContainerKeepAlive: 5 * time.Minute,
+		APIAddr:            ":8222",
+		LoopDir:            "/home/testuser/.loop",
 	}
 	s.runner = NewDockerRunner(s.client, s.cfg)
 }
@@ -130,6 +143,8 @@ func (s *RunnerSuite) TearDownTest() {
 	userHomeDir = s.origUserHomeDir
 	osStat = s.origOsStat
 	execCommand = s.origExecCommand
+	timeAfterFunc = s.origTimeAfterFunc
+	randRead = s.origRandRead
 }
 
 func (s *RunnerSuite) TestNewDockerRunner() {
@@ -162,7 +177,7 @@ func (s *RunnerSuite) TestRunHappyPath() {
 		hasHome := slices.Contains(cfg.Env, "HOME=/home/testuser")
 		hasHostUser := slices.Contains(cfg.Env, "HOST_USER=testuser")
 		return hasResume && hasBinds && hasHome && hasHostUser
-	}), "").Return("container-123", nil)
+	}), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -180,7 +195,7 @@ func (s *RunnerSuite) TestRunCreateFails() {
 	ctx := context.Background()
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
 
-	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("", errors.New("docker create failed"))
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("", errors.New("docker create failed"))
 
 	resp, err := s.runner.Run(ctx, req)
 	require.Nil(s.T(), resp)
@@ -198,7 +213,7 @@ func (s *RunnerSuite) TestRunLogsFails() {
 	waitCh <- WaitResponse{StatusCode: 0}
 	errCh := make(chan error, 1)
 
-	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerLogs", ctx, "container-123").Return(nil, errors.New("logs failed"))
@@ -216,7 +231,7 @@ func (s *RunnerSuite) TestRunStartFails() {
 	ctx := context.Background()
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
 
-	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(errors.New("start failed"))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
 
@@ -236,10 +251,11 @@ func (s *RunnerSuite) TestRunTimeout() {
 	waitCh := make(chan WaitResponse)
 	errCh := make(chan error)
 
-	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
-	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+	// scheduleRemove uses context.Background(), not the cancelled ctx
+	s.client.On("ContainerRemove", mock.Anything, "container-123").Return(nil)
 
 	// Cancel context to simulate timeout
 	cancel()
@@ -260,7 +276,7 @@ func (s *RunnerSuite) TestRunWaitError() {
 	errCh := make(chan error, 1)
 	errCh <- errors.New("wait error")
 
-	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -281,7 +297,7 @@ func (s *RunnerSuite) TestRunContainerExitError() {
 	waitCh <- WaitResponse{StatusCode: 1, Error: errors.New("exit code 1")}
 	errCh := make(chan error, 1)
 
-	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -304,7 +320,7 @@ func (s *RunnerSuite) TestRunReadOutputError() {
 	waitCh <- WaitResponse{StatusCode: 0}
 	errCh := make(chan error, 1)
 
-	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -338,7 +354,7 @@ func (s *RunnerSuite) TestRunWithOAuthToken() {
 		hasOAuth := slices.Contains(cfg.Env, "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-test-token")
 		noResume := !slices.Contains(cfg.Cmd, "--resume")
 		return hasOAuth && noResume
-	}), "").Return("container-123", nil)
+	}), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -368,7 +384,7 @@ func (s *RunnerSuite) TestRunNoSessionID() {
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return !slices.Contains(cfg.Cmd, "--resume")
-	}), "").Return("container-123", nil)
+	}), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -403,7 +419,7 @@ func (s *RunnerSuite) TestRunProxyEnvForwarding() {
 		ChannelID: "ch-1",
 	}
 
-	jsonOutput := `{"result":"ok","session_id":"s1","is_error":false}`
+	jsonOutput := `{"type":"result","result":"ok","session_id":"s1","is_error":false}`
 	reader := bytes.NewReader([]byte(jsonOutput))
 
 	waitCh := make(chan WaitResponse, 1)
@@ -414,7 +430,7 @@ func (s *RunnerSuite) TestRunProxyEnvForwarding() {
 		return slices.Contains(cfg.Env, "HTTP_PROXY=http://proxy:8080") &&
 			slices.Contains(cfg.Env, "HTTPS_PROXY=http://proxy:8443") &&
 			slices.Contains(cfg.Env, "NO_PROXY=localhost,127.0.0.1")
-	}), "").Return("container-123", nil)
+	}), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -437,7 +453,7 @@ func (s *RunnerSuite) TestRunJSONParseError() {
 	waitCh <- WaitResponse{StatusCode: 0}
 	errCh := make(chan error, 1)
 
-	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -462,7 +478,7 @@ func (s *RunnerSuite) TestRunClaudeError() {
 	waitCh <- WaitResponse{StatusCode: 0}
 	errCh := make(chan error, 1)
 
-	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -487,7 +503,7 @@ func (s *RunnerSuite) TestRunNonZeroExitCode() {
 	waitCh <- WaitResponse{StatusCode: 1}
 	errCh := make(chan error, 1)
 
-	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -567,14 +583,14 @@ func (s *RunnerSuite) TestRunRetryWithoutSession() {
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "stale-sess")
-	}), "").Return("container-fail", nil).Once()
+	}), "loop-ch-1-aabbcc").Return("container-fail", nil).Once()
 	s.client.On("ContainerLogs", ctx, "container-fail").Return(failReader, nil)
 	s.client.On("ContainerStart", ctx, "container-fail").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-fail").Return((<-chan WaitResponse)(failWaitCh), (<-chan error)(failErrCh))
 	s.client.On("ContainerRemove", ctx, "container-fail").Return(nil)
 
 	// Retry (without session) — succeeds
-	okJSON := `{"result":"Hello!","session_id":"new-sess","is_error":false}`
+	okJSON := `{"type":"result","result":"Hello!","session_id":"new-sess","is_error":false}`
 	okReader := bytes.NewReader([]byte(okJSON))
 	okWaitCh := make(chan WaitResponse, 1)
 	okWaitCh <- WaitResponse{StatusCode: 0}
@@ -582,7 +598,7 @@ func (s *RunnerSuite) TestRunRetryWithoutSession() {
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return !slices.Contains(cfg.Cmd, "--resume")
-	}), "").Return("container-ok", nil).Once()
+	}), "loop-ch-1-aabbcc").Return("container-ok", nil).Once()
 	s.client.On("ContainerLogs", ctx, "container-ok").Return(okReader, nil)
 	s.client.On("ContainerStart", ctx, "container-ok").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-ok").Return((<-chan WaitResponse)(okWaitCh), (<-chan error)(okErrCh))
@@ -612,7 +628,7 @@ func (s *RunnerSuite) TestRunRetryAlsoFails() {
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "stale-sess")
-	}), "").Return("container-fail1", nil).Once()
+	}), "loop-ch-1-aabbcc").Return("container-fail1", nil).Once()
 	s.client.On("ContainerLogs", ctx, "container-fail1").Return(failReader1, nil)
 	s.client.On("ContainerStart", ctx, "container-fail1").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-fail1").Return((<-chan WaitResponse)(failWaitCh1), (<-chan error)(failErrCh1))
@@ -626,7 +642,7 @@ func (s *RunnerSuite) TestRunRetryAlsoFails() {
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return !slices.Contains(cfg.Cmd, "--resume")
-	}), "").Return("container-fail2", nil).Once()
+	}), "loop-ch-1-aabbcc").Return("container-fail2", nil).Once()
 	s.client.On("ContainerLogs", ctx, "container-fail2").Return(failReader2, nil)
 	s.client.On("ContainerStart", ctx, "container-fail2").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-fail2").Return((<-chan WaitResponse)(failWaitCh2), (<-chan error)(failErrCh2))
@@ -756,7 +772,7 @@ func (s *RunnerSuite) TestRunWithDirPath() {
 		DirPath:   "/home/user/project",
 	}
 
-	jsonOutput := `{"result":"ok","session_id":"s1","is_error":false}`
+	jsonOutput := `{"type":"result","result":"ok","session_id":"s1","is_error":false}`
 	reader := bytes.NewReader([]byte(jsonOutput))
 
 	waitCh := make(chan WaitResponse, 1)
@@ -766,7 +782,7 @@ func (s *RunnerSuite) TestRunWithDirPath() {
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return len(cfg.Binds) == 1 &&
 			cfg.Binds[0] == "/home/user/project:/home/user/project"
-	}), "").Return("container-123", nil)
+	}), "loop-project-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -786,7 +802,7 @@ func (s *RunnerSuite) TestRunWithoutDirPathUsesDefault() {
 		ChannelID: "ch-1",
 	}
 
-	jsonOutput := `{"result":"ok","session_id":"s1","is_error":false}`
+	jsonOutput := `{"type":"result","result":"ok","session_id":"s1","is_error":false}`
 	reader := bytes.NewReader([]byte(jsonOutput))
 
 	waitCh := make(chan WaitResponse, 1)
@@ -796,7 +812,7 @@ func (s *RunnerSuite) TestRunWithoutDirPathUsesDefault() {
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return len(cfg.Binds) == 1 &&
 			cfg.Binds[0] == "/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work"
-	}), "").Return("container-123", nil)
+	}), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -838,14 +854,14 @@ func (s *RunnerSuite) TestRunMCPConfigWritten() {
 		ChannelID: "ch-1",
 	}
 
-	jsonOutput := `{"result":"ok","session_id":"s1","is_error":false}`
+	jsonOutput := `{"type":"result","result":"ok","session_id":"s1","is_error":false}`
 	reader := bytes.NewReader([]byte(jsonOutput))
 
 	waitCh := make(chan WaitResponse, 1)
 	waitCh <- WaitResponse{StatusCode: 0}
 	errCh := make(chan error, 1)
 
-	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -879,6 +895,78 @@ type errReader struct {
 
 func (r *errReader) Read([]byte) (int, error) {
 	return 0, r.err
+}
+
+// --- Tests for parseStreamJSON ---
+
+func TestParseStreamJSON(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		wantResp *claudeResponse
+		wantErr  string
+	}{
+		{
+			name:  "single result line",
+			input: `{"type":"result","result":"hello","session_id":"s1","is_error":false}`,
+			wantResp: &claudeResponse{
+				Type:      "result",
+				Result:    "hello",
+				SessionID: "s1",
+			},
+		},
+		{
+			name: "multiple events with result last",
+			input: `{"type":"system","data":"init"}
+{"type":"assistant","message":"thinking..."}
+{"type":"result","result":"done","session_id":"s2","is_error":false}`,
+			wantResp: &claudeResponse{
+				Type:      "result",
+				Result:    "done",
+				SessionID: "s2",
+			},
+		},
+		{
+			name:  "skips blank lines and non-JSON",
+			input: "\nsome garbage\n\n" + `{"type":"result","result":"ok","session_id":"s3","is_error":false}` + "\n",
+			wantResp: &claudeResponse{
+				Type:      "result",
+				Result:    "ok",
+				SessionID: "s3",
+			},
+		},
+		{
+			name:    "no result event",
+			input:   `{"type":"assistant","message":"hi"}`,
+			wantErr: "no result event found",
+		},
+		{
+			name:    "empty input",
+			input:   "",
+			wantErr: "no result event found",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			resp, err := parseStreamJSON(strings.NewReader(tc.input))
+			if tc.wantErr != "" {
+				require.Error(t, err)
+				require.Contains(t, err.Error(), tc.wantErr)
+				require.Nil(t, resp)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tc.wantResp, resp)
+			}
+		})
+	}
+}
+
+func TestParseStreamJSONReaderError(t *testing.T) {
+	resp, err := parseStreamJSON(&errReader{err: errors.New("read error")})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "reading container output")
+	require.Nil(t, resp)
 }
 
 // --- Tests for new mount processing functions ---
@@ -1058,7 +1146,7 @@ func (s *RunnerSuite) TestRunWithInvalidMount() {
 		ChannelID: "ch-1",
 	}
 
-	jsonOutput := `{"result":"ok","session_id":"s1","is_error":false}`
+	jsonOutput := `{"type":"result","result":"ok","session_id":"s1","is_error":false}`
 	reader := bytes.NewReader([]byte(jsonOutput))
 
 	waitCh := make(chan WaitResponse, 1)
@@ -1068,7 +1156,7 @@ func (s *RunnerSuite) TestRunWithInvalidMount() {
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		// Invalid mount should be skipped, only workDir bind
 		return len(cfg.Binds) == 1
-	}), "").Return("container-123", nil)
+	}), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -1131,7 +1219,7 @@ func (s *RunnerSuite) TestRunWithCustomMounts() {
 		bindsMatch := slices.Equal(cfg.Binds, expectedBinds)
 		workDirMatch := cfg.WorkingDir == "/home/testuser/.loop/ch-1/work"
 		return bindsMatch && workDirMatch
-	}), "").Return("container-123", nil)
+	}), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -1167,7 +1255,7 @@ func (s *RunnerSuite) TestRunWithDirPathPreservesPath() {
 		hasCorrectBinds := len(cfg.Binds) == 1 && slices.Contains(cfg.Binds, workDirBind)
 		hasCorrectWorkingDir := cfg.WorkingDir == "/custom/project/path"
 		return hasCorrectBinds && hasCorrectWorkingDir
-	}), "").Return("container-123", nil)
+	}), "loop-path-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -1282,7 +1370,7 @@ func (s *RunnerSuite) TestRunWithClaudeModel() {
 		ChannelID: "ch-1",
 	}
 
-	jsonOutput := `{"result":"ok","session_id":"s1","is_error":false}`
+	jsonOutput := `{"type":"result","result":"ok","session_id":"s1","is_error":false}`
 	reader := bytes.NewReader([]byte(jsonOutput))
 
 	waitCh := make(chan WaitResponse, 1)
@@ -1295,7 +1383,7 @@ func (s *RunnerSuite) TestRunWithClaudeModel() {
 			return false
 		}
 		return cfg.Cmd[modelIdx+1] == "claude-sonnet-4-5-20250929"
-	}), "").Return("container-123", nil)
+	}), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -1315,7 +1403,7 @@ func (s *RunnerSuite) TestRunWithoutClaudeModel() {
 		ChannelID: "ch-1",
 	}
 
-	jsonOutput := `{"result":"ok","session_id":"s1","is_error":false}`
+	jsonOutput := `{"type":"result","result":"ok","session_id":"s1","is_error":false}`
 	reader := bytes.NewReader([]byte(jsonOutput))
 
 	waitCh := make(chan WaitResponse, 1)
@@ -1324,7 +1412,7 @@ func (s *RunnerSuite) TestRunWithoutClaudeModel() {
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return !slices.Contains(cfg.Cmd, "--model")
-	}), "").Return("container-123", nil)
+	}), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -1366,7 +1454,7 @@ func (s *RunnerSuite) TestRunWithGitExcludesMount() {
 		ChannelID: "ch-1",
 	}
 
-	jsonOutput := `{"result":"ok","session_id":"s1","is_error":false}`
+	jsonOutput := `{"type":"result","result":"ok","session_id":"s1","is_error":false}`
 	reader := bytes.NewReader([]byte(jsonOutput))
 
 	waitCh := make(chan WaitResponse, 1)
@@ -1375,7 +1463,7 @@ func (s *RunnerSuite) TestRunWithGitExcludesMount() {
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return slices.Contains(cfg.Binds, "/home/testuser/.gitignore_global:/home/testuser/.gitignore_global:ro")
-	}), "").Return("container-123", nil)
+	}), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -1391,6 +1479,49 @@ func (s *RunnerSuite) TestRunWithGitExcludesMount() {
 func (s *RunnerSuite) TestDefaultExecCommand() {
 	cmd := s.origExecCommand("echo", "hello")
 	require.NotNil(s.T(), cmd)
+}
+
+func (s *RunnerSuite) TestScheduleRemove() {
+	var capturedDuration time.Duration
+	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+		capturedDuration = d
+		f()
+		return time.NewTimer(0)
+	}
+
+	s.client.On("ContainerRemove", mock.Anything, "container-xyz").Return(nil)
+
+	s.runner.scheduleRemove("container-xyz")
+
+	require.Equal(s.T(), 5*time.Minute, capturedDuration)
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestScheduleRemoveIgnoresError() {
+	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+		f()
+		return time.NewTimer(0)
+	}
+
+	s.client.On("ContainerRemove", mock.Anything, "container-xyz").Return(errors.New("remove failed"))
+
+	// Should not panic
+	s.runner.scheduleRemove("container-xyz")
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestDefaultTimeAfterFunc() {
+	done := make(chan struct{})
+	timer := s.origTimeAfterFunc(time.Millisecond, func() {
+		close(done)
+	})
+	require.NotNil(s.T(), timer)
+	select {
+	case <-done:
+		// success
+	case <-time.After(time.Second):
+		s.T().Fatal("timer callback was not called")
+	}
 }
 
 func (s *RunnerSuite) TestRunProjectConfigError() {
@@ -1416,4 +1547,68 @@ func (s *RunnerSuite) TestRunProjectConfigError() {
 	require.Error(s.T(), err)
 	require.Nil(s.T(), resp)
 	require.Contains(s.T(), err.Error(), "loading project config")
+}
+
+func (s *RunnerSuite) TestDefaultRandRead() {
+	b := make([]byte, 3)
+	n, err := s.origRandRead(b)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 3, n)
+}
+
+// --- Tests for sanitizeName ---
+
+func TestSanitizeName(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{"lowercase conversion", "MyProject", "myproject"},
+		{"special chars to hyphens", "my_project!@#$%", "my-project"},
+		{"consecutive hyphens collapsed", "my---project", "my-project"},
+		{"leading/trailing hyphens trimmed", "---my-project---", "my-project"},
+		{"dots replaced", "my.project.v2", "my-project-v2"},
+		{"spaces replaced", "my project", "my-project"},
+		{"already clean", "my-project", "my-project"},
+		{"numbers preserved", "project123", "project123"},
+		{"long name truncated to 40", strings.Repeat("a", 50), strings.Repeat("a", 40)},
+		{"truncation trims trailing hyphens", strings.Repeat("a", 39) + "-b", strings.Repeat("a", 39)},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := sanitizeName(tc.input)
+			require.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+// --- Tests for containerName ---
+
+func TestContainerName(t *testing.T) {
+	origRandRead := randRead
+	defer func() { randRead = origRandRead }()
+
+	randRead = func(b []byte) (int, error) {
+		copy(b, []byte{0xde, 0xad, 0x42})
+		return len(b), nil
+	}
+
+	tests := []struct {
+		name      string
+		channelID string
+		dirPath   string
+		expected  string
+	}{
+		{"dirPath set uses filepath.Base", "ch-1", "/home/user/my-project", "loop-my-project-dead42"},
+		{"dirPath empty uses channelID", "ch-123", "", "loop-ch-123-dead42"},
+		{"dirPath with special chars", "ch-1", "/home/user/My Project!", "loop-my-project-dead42"},
+		{"long dirPath base truncated", "ch-1", "/home/user/" + strings.Repeat("x", 50), "loop-" + strings.Repeat("x", 40) + "-dead42"},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := containerName(tc.channelID, tc.dirPath)
+			require.Equal(t, tc.expected, result)
+		})
+	}
 }
