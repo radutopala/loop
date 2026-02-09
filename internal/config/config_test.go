@@ -79,7 +79,8 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 			"container_cpus": 2.5,
 			"container_keep_alive_sec": 120,
 			"poll_interval_sec": 60,
-			"api_addr": ":9999"
+			"api_addr": ":9999",
+			"claude_bin_path": "/custom/claude"
 		}`), nil
 	}
 
@@ -99,6 +100,7 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 	require.Equal(s.T(), 120*time.Second, cfg.ContainerKeepAlive)
 	require.Equal(s.T(), 60*time.Second, cfg.PollInterval)
 	require.Equal(s.T(), ":9999", cfg.APIAddr)
+	require.Equal(s.T(), "/custom/claude", cfg.ClaudeBinPath)
 }
 
 func (s *ConfigSuite) TestMissingRequired() {

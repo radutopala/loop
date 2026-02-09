@@ -72,6 +72,7 @@ type jsonConfig struct {
 	TaskTemplates         []TaskTemplate `json:"task_templates"`
 	Mounts                []string       `json:"mounts"`
 	ClaudeModel           string         `json:"claude_model"`
+	ClaudeBinPath         string         `json:"claude_bin_path"`
 }
 
 type jsonMCPConfig struct {
@@ -119,7 +120,7 @@ func Load() (*Config, error) {
 	cfg := &Config{
 		DiscordToken:         jc.DiscordToken,
 		DiscordAppID:         jc.DiscordAppID,
-		ClaudeBinPath:        "claude",
+		ClaudeBinPath:        stringDefault(jc.ClaudeBinPath, "claude"),
 		ClaudeCodeOAuthToken: jc.ClaudeCodeOAuthToken,
 		DiscordGuildID:       jc.DiscordGuildID,
 		LogLevel:             stringDefault(jc.LogLevel, "info"),
