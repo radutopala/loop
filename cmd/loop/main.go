@@ -60,6 +60,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newOnboardGlobalCmd())
 	root.AddCommand(newOnboardLocalCmd())
 	root.AddCommand(newVersionCmd())
+	root.AddCommand(newUpdateCmd())
 	root.SetHelpTemplate(helpTemplate)
 	return root
 }
@@ -84,6 +85,7 @@ Available Commands:
   daemon:stop              Stop and uninstall the daemon (aliases: d:stop, down)
   daemon:status            Show daemon status (alias: d:status)
   version                  Print version information (alias: v)
+  update                   Update loop to the latest version (alias: u)
 
 Use "loop [command] --help" for more information about a command.
 `
