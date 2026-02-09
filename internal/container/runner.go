@@ -191,14 +191,13 @@ func gitExcludesMount() string {
 		return ""
 	}
 
-	home, err := userHomeDir()
-	if err != nil {
-		return ""
-	}
-
 	// Expand ~ for the host path (source)
 	hostPath := raw
 	if strings.HasPrefix(hostPath, "~/") {
+		home, err := userHomeDir()
+		if err != nil {
+			return ""
+		}
 		hostPath = filepath.Join(home, hostPath[2:])
 	}
 
@@ -207,14 +206,11 @@ func gitExcludesMount() string {
 		return ""
 	}
 
-	// Determine container path: map paths under $HOME to /home/agent/
-	var containerPath string
+	// Container path: ~/foo → /home/agent/foo (git expands ~ to agent home),
+	// absolute paths stay as-is (git uses them literally from .gitconfig).
+	containerPath := hostPath
 	if strings.HasPrefix(raw, "~/") {
 		containerPath = filepath.Join("/home/agent", raw[2:])
-	} else if rel, err := filepath.Rel(home, hostPath); err == nil && !strings.HasPrefix(rel, "..") {
-		containerPath = filepath.Join("/home/agent", rel)
-	} else {
-		containerPath = hostPath
 	}
 
 	return hostPath + ":" + containerPath + ":ro"

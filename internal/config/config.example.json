@@ -26,6 +26,8 @@
     "~/.gitconfig:/home/agent/.gitconfig:ro",
     // Mount SSH keys read-only to allow agents to perform Git operations with authentication (e.g. cloning private repos, pushing commits)
     "~/.ssh:/home/agent/.ssh:ro",
+    // Mount AWS credentials read-only to allow agents to interact with AWS services
+    "~/.aws:/home/agent/.aws",
     // Mount Docker socket to allow agents to run Docker commands (e.g. for testing or deployment)
     "/var/run/docker.sock:/var/run/docker.sock"
   ],

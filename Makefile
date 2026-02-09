@@ -47,8 +47,9 @@ docker-shell: ## Start a bash shell in the agent container
 		-v $(CURDIR):$(CURDIR) \
 		-v $(HOME)/.claude:/home/agent/.claude \
 		-v $(HOME)/.gitconfig:/home/agent/.gitconfig:ro \
-		-v $(HOME)/.gitignore_global:/home/agent/.gitignore_global:ro \
+		-v $(HOME)/.gitignore_global:$(HOME)/.gitignore_global:ro \
 		-v $(HOME)/.ssh:/home/agent/.ssh:ro \
+		-v $(HOME)/.aws:/home/agent/.aws \
 		-v /var/run/docker.sock:/var/run/docker.sock \
 		-w $(CURDIR) \
 		-e CLAUDE_CODE_OAUTH_TOKEN=$$(grep claude_code_oauth_token ~/.loop/config.json | awk -F'"' '{print $$4}') \

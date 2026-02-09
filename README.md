@@ -117,7 +117,8 @@ Alternatively, manually create `~/.loop/config.json` (HJSON — comments and tra
   "mounts": [
     "~/.claude:/home/agent/.claude",           // Writable - for Claude sessions
     "~/.gitconfig:/home/agent/.gitconfig:ro",          // Read-only - for git identity
-    "~/.ssh:/home/agent/.ssh:ro",                     // Read-only - for SSH keys
+    "~/.ssh:/home/agent/.ssh:ro",              // Read-only - for SSH keys
+    "~/.aws:/home/agent/.aws",                // Writable - for AWS credentials and cache
     "/var/run/docker.sock:/var/run/docker.sock" // Docker access
   ]
 }
