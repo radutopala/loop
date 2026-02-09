@@ -42,8 +42,6 @@ restart: install docker-build ## Install, stop and start the daemon
 	loop daemon:start
 
 docker-shell: ## Start a bash shell in the agent container
-	@mkdir -p $(CURDIR)/.loop
-	@printf '{"mcpServers":{"loop":{"command":"/usr/local/bin/loop","args":["mcp","--dir","$(CURDIR)","--api-url","http://host.docker.internal:8222","--log","$(CURDIR)/.loop/mcp.log"]}}}\n' > $(CURDIR)/.loop/mcp.json
 	docker run --rm -it --entrypoint bash \
 		--add-host=host.docker.internal:host-gateway \
 		-v $(CURDIR):$(CURDIR) \
