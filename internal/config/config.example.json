@@ -12,6 +12,7 @@
   //"container_memory_mb": 512,
   //"container_cpus": 1.0,
   //"poll_interval_sec": 30,
+  //"claude_model": "",
 
   // MCP server configurations. Each entry defines a separate MCP server that agents can connect to. The key is an arbitrary name for the server, and the value specifies how to start the server (e.g. command and args).
   "mcp": {},

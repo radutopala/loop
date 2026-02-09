@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -94,6 +95,7 @@ var getenv = os.Getenv
 var writeFile = os.WriteFile
 var userHomeDir = os.UserHomeDir
 var osStat = os.Stat
+var execCommand = exec.Command
 
 // Run executes an agent request in a Docker container.
 // If a session ID is set and the run fails, it retries without --resume
@@ -176,6 +178,43 @@ func processMount(mount string) (string, error) {
 	return expanded + ":" + containerPath + mode, nil
 }
 
+// gitExcludesMount detects the host git core.excludesFile and returns a bind
+// mount string so the file is available inside the container at the path git
+// will look for it. Returns "" if unconfigured or the file doesn't exist.
+func gitExcludesMount() string {
+	out, err := execCommand("git", "config", "--global", "--get", "core.excludesFile").Output()
+	if err != nil {
+		return ""
+	}
+	raw := strings.TrimSpace(string(out))
+	if raw == "" {
+		return ""
+	}
+
+	// Expand ~ for the host path (source)
+	hostPath := raw
+	if strings.HasPrefix(hostPath, "~/") {
+		home, err := userHomeDir()
+		if err != nil {
+			return ""
+		}
+		hostPath = filepath.Join(home, hostPath[2:])
+	}
+
+	// Check if the file exists on the host
+	if _, err := osStat(hostPath); err != nil {
+		return ""
+	}
+
+	// Determine container path: if raw starts with ~/, map to agent's home
+	containerPath := raw
+	if strings.HasPrefix(raw, "~/") {
+		containerPath = filepath.Join("/home/agent", raw[2:])
+	}
+
+	return hostPath + ":" + containerPath + ":ro"
+}
+
 // runOnce executes a single container run.
 func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
 	// When resuming a session, Claude already has the conversation history —
@@ -242,12 +281,21 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		}
 	}
 
+	// Auto-detect and mount git core.excludesFile if configured
+	if excludesBind := gitExcludesMount(); excludesBind != "" {
+		binds = append(binds, excludesBind)
+	}
+
 	// Mount workDir at same path in container
 	binds = append(binds, workDir+":"+workDir)
 
 	// Build full Claude CLI args — --mcp-config must come before --print
 	// to avoid Claude Code hanging.
-	cmd := []string{"--mcp-config", mcpConfigPath, "--print", "--output-format", "json", "--dangerously-skip-permissions"}
+	cmd := []string{"--mcp-config", mcpConfigPath}
+	if cfg.ClaudeModel != "" {
+		cmd = append(cmd, "--model", cfg.ClaudeModel)
+	}
+	cmd = append(cmd, "--print", "--output-format", "json", "--dangerously-skip-permissions")
 	if req.SessionID != "" {
 		cmd = append(cmd, "--resume", req.SessionID)
 	}

@@ -635,6 +635,66 @@ func (s *ConfigSuite) TestSetReadFile() {
 	TestSetReadFile(orig)
 }
 
+func (s *ConfigSuite) TestClaudeModelLoaded() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"discord_token": "tok",
+			"discord_app_id": "app",
+			"claude_model": "claude-sonnet-4-5-20250929"
+		}`), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "claude-sonnet-4-5-20250929", cfg.ClaudeModel)
+}
+
+func (s *ConfigSuite) TestClaudeModelAbsent() {
+	readFile = func(_ string) ([]byte, error) {
+		return s.minimalJSON(), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), cfg.ClaudeModel)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigClaudeModelOverride() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"claude_model": "claude-opus-4-6"
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		ClaudeModel: "claude-sonnet-4-5-20250929",
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "claude-opus-4-6", merged.ClaudeModel)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigClaudeModelNoOverride() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		ClaudeModel: "claude-sonnet-4-5-20250929",
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "claude-sonnet-4-5-20250929", merged.ClaudeModel)
+}
+
 func (s *ConfigSuite) TestLoadProjectConfigDoesNotMutateMain() {
 	readFile = func(path string) ([]byte, error) {
 		if path == "/project/.loop/config.json" {

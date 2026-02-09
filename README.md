@@ -110,13 +110,14 @@ Alternatively, manually create `~/.loop/config.json` (HJSON — comments and tra
   "container_memory_mb": 512,
   "container_cpus": 1.0,
   "poll_interval_sec": 30,
+  // "claude_model": "claude-sonnet-4-5-20250929",  // Override Claude model (overridable in project config)
 
   // Mounts for all containers (optional)
   // Format: "host_path:container_path" or "host_path:container_path:ro"
   "mounts": [
     "~/.claude:/home/agent/.claude",           // Writable - for Claude sessions
-    "~/.gitconfig:/home/agent/.gitconfig:ro",  // Read-only - for git identity
-    "~/.ssh:/home/agent/.ssh:ro",              // Read-only - for SSH keys
+    "~/.gitconfig:/home/agent/.gitconfig:ro",          // Read-only - for git identity
+    "~/.ssh:/home/agent/.ssh:ro",                     // Read-only - for SSH keys
     "/var/run/docker.sock:/var/run/docker.sock" // Docker access
   ]
 }
@@ -170,7 +171,8 @@ You can override mounts and MCP servers on a per-project basis by creating a `.l
 - **Mounts**: Project mounts are **appended** to main config mounts. All mounts from both configs are applied to the container.
 - **MCP Servers**: Project MCP servers are **merged** with main config servers. If a project defines an MCP server with the same name as the main config, the **project version takes precedence**.
 - **Path Resolution**: Relative paths in project mounts (e.g., `./data`) are automatically resolved relative to the project directory.
-- **Security**: Only `mounts` and `mcp` can be set in project config. Critical settings (Discord token, API settings, etc.) cannot be overridden.
+- **Claude Model**: Project config can override `claude_model` to use a different model per project.
+- **Security**: Only `mounts`, `mcp`, and `claude_model` can be set in project config. Critical settings (Discord token, API settings, etc.) cannot be overridden.
 
 **Use Cases:**
 

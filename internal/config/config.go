@@ -47,6 +47,7 @@ type Config struct {
 	MCPServers           map[string]MCPServerConfig
 	TaskTemplates        []TaskTemplate
 	Mounts               []string
+	ClaudeModel          string
 }
 
 // jsonConfig is an intermediate struct for JSON unmarshalling.
@@ -68,6 +69,7 @@ type jsonConfig struct {
 	MCP                  *jsonMCPConfig `json:"mcp"`
 	TaskTemplates        []TaskTemplate `json:"task_templates"`
 	Mounts               []string       `json:"mounts"`
+	ClaudeModel          string         `json:"claude_model"`
 }
 
 type jsonMCPConfig struct {
@@ -128,6 +130,7 @@ func Load() (*Config, error) {
 		PollInterval:         time.Duration(intPtrDefault(jc.PollIntervalSec, 30)) * time.Second,
 		APIAddr:              stringDefault(jc.APIAddr, ":8222"),
 		LoopDir:              loopDir,
+		ClaudeModel:          jc.ClaudeModel,
 	}
 
 	if jc.MCP != nil && len(jc.MCP.Servers) > 0 {
@@ -180,10 +183,11 @@ func floatPtrDefault(val *float64, def float64) float64 {
 }
 
 // projectConfig is the structure for project-specific .loop/config.json files.
-// Only mounts and mcp_servers can be specified for security reasons.
+// Only mounts, mcp_servers, and claude_model can be specified for security reasons.
 type projectConfig struct {
-	Mounts []string       `json:"mounts"`
-	MCP    *jsonMCPConfig `json:"mcp"`
+	Mounts      []string       `json:"mounts"`
+	MCP         *jsonMCPConfig `json:"mcp"`
+	ClaudeModel string         `json:"claude_model"`
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
@@ -262,6 +266,10 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 			mergedServers[name] = srv
 		}
 		merged.MCPServers = mergedServers
+	}
+
+	if pc.ClaudeModel != "" {
+		merged.ClaudeModel = pc.ClaudeModel
 	}
 
 	return &merged, nil

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"io"
 	"os"
+	"os/exec"
 	"slices"
 	"strings"
 	"testing"
@@ -75,13 +76,14 @@ func (m *MockDockerClient) ContainerList(ctx context.Context, labelKey, labelVal
 
 type RunnerSuite struct {
 	suite.Suite
-	client        *MockDockerClient
-	runner        *DockerRunner
-	cfg           *config.Config
-	origMkdirAll  func(string, os.FileMode) error
-	origGetenv    func(string) string
-	origWriteFile func(string, []byte, os.FileMode) error
-	origOsStat    func(string) (os.FileInfo, error)
+	client          *MockDockerClient
+	runner          *DockerRunner
+	cfg             *config.Config
+	origMkdirAll    func(string, os.FileMode) error
+	origGetenv      func(string) string
+	origWriteFile   func(string, []byte, os.FileMode) error
+	origOsStat      func(string) (os.FileInfo, error)
+	origExecCommand func(string, ...string) *exec.Cmd
 }
 
 func TestRunnerSuite(t *testing.T) {
@@ -97,6 +99,10 @@ func (s *RunnerSuite) SetupTest() {
 	writeFile = func(_ string, _ []byte, _ os.FileMode) error { return nil }
 	s.origOsStat = osStat
 	osStat = func(_ string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	s.origExecCommand = execCommand
+	execCommand = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("echo", "")
+	}
 	s.client = new(MockDockerClient)
 	s.cfg = &config.Config{
 		ContainerImage:    "loop-agent:latest",
@@ -114,6 +120,7 @@ func (s *RunnerSuite) TearDownTest() {
 	getenv = s.origGetenv
 	writeFile = s.origWriteFile
 	osStat = s.origOsStat
+	execCommand = s.origExecCommand
 }
 
 func (s *RunnerSuite) TestNewDockerRunner() {
@@ -1110,6 +1117,219 @@ func (s *RunnerSuite) TestRunWithDirPathPreservesPath() {
 	require.NotNil(s.T(), resp)
 
 	s.client.AssertExpectations(s.T())
+}
+
+func TestGitExcludesMount(t *testing.T) {
+	origExecCommand := execCommand
+	origUserHomeDir := userHomeDir
+	origOsStat := osStat
+	defer func() {
+		execCommand = origExecCommand
+		userHomeDir = origUserHomeDir
+		osStat = origOsStat
+	}()
+
+	tests := []struct {
+		name       string
+		gitOutput  string
+		gitErr     bool
+		homeDir    string
+		homeDirErr bool
+		fileExists bool
+		expected   string
+	}{
+		{
+			name:       "tilde path with existing file",
+			gitOutput:  "~/.gitignore_global\n",
+			homeDir:    "/home/testuser",
+			fileExists: true,
+			expected:   "/home/testuser/.gitignore_global:/home/agent/.gitignore_global:ro",
+		},
+		{
+			name:       "absolute path with existing file",
+			gitOutput:  "/etc/gitignore\n",
+			homeDir:    "/home/testuser",
+			fileExists: true,
+			expected:   "/etc/gitignore:/etc/gitignore:ro",
+		},
+		{
+			name:     "git config returns error",
+			gitErr:   true,
+			expected: "",
+		},
+		{
+			name:      "git config returns empty",
+			gitOutput: "\n",
+			expected:  "",
+		},
+		{
+			name:       "file does not exist",
+			gitOutput:  "~/.gitignore_global\n",
+			homeDir:    "/home/testuser",
+			fileExists: false,
+			expected:   "",
+		},
+		{
+			name:       "home dir error with tilde path",
+			gitOutput:  "~/.gitignore_global\n",
+			homeDirErr: true,
+			expected:   "",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.gitErr {
+				execCommand = func(_ string, _ ...string) *exec.Cmd {
+					return exec.Command("false")
+				}
+			} else {
+				execCommand = func(_ string, _ ...string) *exec.Cmd {
+					return exec.Command("echo", "-n", tc.gitOutput)
+				}
+			}
+
+			if tc.homeDirErr {
+				userHomeDir = func() (string, error) {
+					return "", errors.New("home dir error")
+				}
+			} else {
+				userHomeDir = func() (string, error) {
+					return tc.homeDir, nil
+				}
+			}
+
+			osStat = func(_ string) (os.FileInfo, error) {
+				if tc.fileExists {
+					return nil, nil
+				}
+				return nil, os.ErrNotExist
+			}
+
+			result := gitExcludesMount()
+			require.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func (s *RunnerSuite) TestRunWithClaudeModel() {
+	s.cfg.ClaudeModel = "claude-sonnet-4-5-20250929"
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	jsonOutput := `{"result":"ok","session_id":"s1","is_error":false}`
+	reader := bytes.NewReader([]byte(jsonOutput))
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		modelIdx := slices.Index(cfg.Cmd, "--model")
+		if modelIdx == -1 {
+			return false
+		}
+		return cfg.Cmd[modelIdx+1] == "claude-sonnet-4-5-20250929"
+	}), "").Return("container-123", nil)
+	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp.Response)
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunWithoutClaudeModel() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	jsonOutput := `{"result":"ok","session_id":"s1","is_error":false}`
+	reader := bytes.NewReader([]byte(jsonOutput))
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return !slices.Contains(cfg.Cmd, "--model")
+	}), "").Return("container-123", nil)
+	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp.Response)
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunWithGitExcludesMount() {
+	origUserHomeDir := userHomeDir
+	origOsStat := osStat
+	defer func() {
+		userHomeDir = origUserHomeDir
+		osStat = origOsStat
+	}()
+
+	userHomeDir = func() (string, error) {
+		return "/home/testuser", nil
+	}
+
+	execCommand = func(_ string, _ ...string) *exec.Cmd {
+		return exec.Command("echo", "-n", "~/.gitignore_global\n")
+	}
+
+	osStat = func(name string) (os.FileInfo, error) {
+		if name == "/home/testuser/.gitignore_global" {
+			return nil, nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	jsonOutput := `{"result":"ok","session_id":"s1","is_error":false}`
+	reader := bytes.NewReader([]byte(jsonOutput))
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Binds, "/home/testuser/.gitignore_global:/home/agent/.gitignore_global:ro")
+	}), "").Return("container-123", nil)
+	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp.Response)
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestDefaultExecCommand() {
+	cmd := s.origExecCommand("echo", "hello")
+	require.NotNil(s.T(), cmd)
 }
 
 func (s *RunnerSuite) TestRunProjectConfigError() {
