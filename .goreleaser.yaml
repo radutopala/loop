@@ -41,6 +41,24 @@ changelog:
       - "^test:"
       - "^chore:"
 
+brews:
+  - name: loop
+    repository:
+      owner: radutopala
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/radutopala/loop
+    description: Discord bot powered by Claude that runs AI agents in Docker containers
+    license: GPL-3.0
+    commit_author:
+      name: Radu Topala
+      email: radu.topala@trisoft.ro
+    install: |
+      bin.install "loop"
+    test: |
+      system "#{bin}/loop", "--help"
+
 release:
   github:
     owner: radutopala

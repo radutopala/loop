@@ -48,113 +48,158 @@ A Discord bot powered by Claude that runs AI agents in Docker containers.
 - **API Server** exposes REST endpoints for task and channel management
 - **SQLite** stores channels, messages, scheduled tasks, and run logs
 
-## Setup
-
-### Prerequisites
-
-**macOS is recommended.** The `loop daemon:start/stop/status` commands use launchd (macOS-only) to manage the background service. `loop serve` works on any platform but requires manual process management on Linux.
-
-**Host (build & run):**
+## Prerequisites
 
 - macOS (recommended) or Linux
-- [Go 1.25+](https://go.dev/dl/)
 - [Docker Desktop](https://docs.docker.com/desktop/) (macOS) or [Docker Engine](https://docs.docker.com/engine/install/) (Linux)
-- A Discord bot token and application ID
+- A Discord bot token and application ID ([create one](https://discord.com/developers/applications))
 - An Anthropic API key or Claude Code OAuth token (for agent containers)
 
-**Container image (bundled automatically via `make docker-build`):**
+> **Note:** `loop daemon:start/stop/status` use launchd (macOS-only). On Linux, use `loop serve` directly.
 
-- [Claude Code CLI](https://www.npmjs.com/package/@anthropic-ai/claude-code) (`@anthropic-ai/claude-code`)
-- Go 1.25+ toolchain (for agent code execution)
-- Node.js & npm (Claude Code runtime)
-- Docker CLI (for Docker-in-Docker via socket mount)
-- git, bash, curl
+## Getting Started
 
-### Discord Bot Setup
+### Step 1: Install
 
-1. Create an application at https://discord.com/developers/applications
-2. Copy the **Application ID** and **Bot Token** into your `config.json`
-3. Invite the bot to your server using this OAuth2 URL (replace `YOUR_APP_ID`):
+```sh
+# Homebrew
+brew install radutopala/tap/loop
+
+# Or from source
+go install github.com/radutopala/loop/cmd/loop@latest
+```
+
+### Step 2: Create a Discord bot
+
+1. Go to https://discord.com/developers/applications and create a new application
+2. Under **Bot**, copy the **Bot Token**
+3. Under **Bot** → **Privileged Gateway Intents**, enable **Message Content Intent**
+4. Copy the **Application ID** from the General Information page
+5. Invite the bot to your server (replace `YOUR_APP_ID`):
 
    ```
    https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot%20applications.commands&permissions=68624
    ```
 
-### Configuration
+   This grants: View Channels, Send Messages, Read Message History, Manage Channels (for auto-creating project channels).
 
-Initialize your configuration with the onboard commands:
+### Step 3: Initialize global config
 
 ```sh
-loop onboard:global          # Initialize ~/.loop/config.json
-loop onboard:local           # Register Loop MCP server in current project's .mcp.json
+loop onboard:global
 ```
 
-`onboard:global` creates `~/.loop/config.json` from the embedded example config. Edit it to add your Discord credentials.
+This creates:
+- `~/.loop/config.json` — main configuration file
+- `~/.loop/container/Dockerfile` — agent container image definition
+- `~/.loop/container/entrypoint.sh` — container entrypoint script
 
-Alternatively, manually create `~/.loop/config.json` (HJSON — comments and trailing commas are allowed):
+### Step 4: Add your credentials
+
+Edit `~/.loop/config.json` and fill in the required fields:
 
 ```jsonc
 {
   // Required
-  "discord_token": "your-discord-bot-token",
-  "discord_app_id": "your-discord-app-id",
+  "discord_token": "your-bot-token-from-step-2",
+  "discord_app_id": "your-app-id-from-step-2",
 
   // Optional — enables auto-creation of Discord channels via `loop mcp --dir`
-  "discord_guild_id": "your-discord-guild-id",
-
-  // Optional (defaults shown)
-  "log_level": "debug",
-  "log_format": "text",
-  "container_image": "loop-agent:latest",
-  "container_timeout_sec": 300,
-  "container_memory_mb": 512,
-  "container_cpus": 1.0,
-  "poll_interval_sec": 30,
-  // "claude_model": "claude-sonnet-4-5-20250929",  // Override Claude model (overridable in project config)
-
-  // Mounts for all containers (optional)
-  // Format: "host_path:container_path" or "host_path:container_path:ro"
-  "mounts": [
-    "~/.claude:~/.claude",                     // Writable - for Claude sessions
-    "~/.gitconfig:~/.gitconfig:ro",            // Read-only - for git identity
-    "~/.ssh:~/.ssh:ro",                        // Read-only - for SSH keys
-    "~/.aws:~/.aws",                           // Writable - for AWS credentials and cache
-    "/var/run/docker.sock:/var/run/docker.sock" // Docker access
-  ]
+  "discord_guild_id": "your-discord-guild-id"
 }
 ```
 
+The config file uses HJSON (comments and trailing commas are allowed). See `config.global.example.json` for all available options and their defaults.
+
+### Step 5: Start Loop
+
+```sh
+# Run directly (auto-builds the agent Docker image on first run)
+loop serve
+
+# Or run as a background daemon (macOS only)
+loop daemon:start
+loop daemon:status   # check status
+loop daemon:stop     # stop
+```
+
+### Step 6: Set up a project (optional)
+
+To use Loop with a specific project directory:
+
+```sh
+cd /path/to/your/project
+loop onboard:local
+# optionally: loop onboard:local --api-url http://custom:9999
+```
+
+This does three things:
+1. Writes `.mcp.json` — registers the Loop MCP server so Claude Code can schedule tasks from your IDE
+2. Creates `.loop/config.json` — project-specific overrides (mounts, MCP servers, model)
+3. Registers a Discord channel for this directory (requires `loop serve` to be running)
+
+## Configuration Reference
+
+### Global Config (`~/.loop/config.json`)
+
+| Field | Default | Description |
+|---|---|---|
+| `discord_token` | **(required)** | Discord bot token |
+| `discord_app_id` | **(required)** | Discord application ID |
+| `discord_guild_id` | `""` | Guild ID for auto-creating Discord channels |
+| `log_level` | `"info"` | Log level (`debug`, `info`, `warn`, `error`) |
+| `log_format` | `"text"` | Log format (`text`, `json`) |
+| `container_image` | `"loop-agent:latest"` | Docker image for agent containers |
+| `container_timeout_sec` | `300` | Max seconds per agent run |
+| `container_memory_mb` | `512` | Memory limit per container (MB) |
+| `container_cpus` | `1.0` | CPU limit per container |
+| `container_keep_alive_sec` | `300` | Keep-alive duration for idle containers |
+| `poll_interval_sec` | `30` | Task scheduler poll interval |
+| `claude_model` | `""` | Override Claude model (e.g. `"claude-sonnet-4-5-20250929"`) |
+| `claude_bin_path` | `"claude"` | Path to Claude Code binary |
+| `mounts` | `[]` | Host directories to mount into containers |
+| `mcp` | `{}` | MCP server configurations |
+| `task_templates` | `[]` | Reusable task templates |
+
 ### Container Mounts
 
-The `mounts` configuration allows you to mount host directories into all agent containers. This enables:
+The `mounts` array mounts host directories into all agent containers. Format: `"host_path:container_path[:ro]"`
 
-- **Session Portability**: Share Claude sessions between host and containers by mounting `~/.claude`
-- **Git Identity**: Inherit git config (user.name, user.email) from the host by mounting `~/.gitconfig`
-- **SSH Access**: Use host SSH keys for git operations by mounting `~/.ssh`
-- **Docker Access**: Run Docker commands inside containers by mounting `/var/run/docker.sock` (the host socket's GID is auto-detected and added to the container process)
+```jsonc
+"mounts": [
+  "~/.claude:~/.claude",                      // Claude sessions (writable)
+  "~/.gitconfig:~/.gitconfig:ro",             // Git identity (read-only)
+  "~/.ssh:~/.ssh:ro",                         // SSH keys (read-only)
+  "~/.aws:~/.aws",                            // AWS credentials (writable)
+  "/var/run/docker.sock:/var/run/docker.sock"  // Docker access
+]
+```
 
-Mount format: `"host_path:container_path[:mode]"` where mode is `ro` for read-only (optional).
+- Paths starting with `~/` are expanded to the user's home directory
+- Non-existent paths are silently skipped
+- The Docker socket's GID is auto-detected and added to the container process
+- Project directories (`workDir`) and MCP logs (`mcpDir`) are always mounted automatically at their actual paths
 
-Paths starting with `~/` are automatically expanded to the user's home directory. Non-existent paths are silently skipped.
+### Per-Project Config (`{project}/.loop/config.json`)
 
-**Important**: Project directories (`workDir`) and MCP logs (`mcpDir`) are automatically mounted at their actual paths, ensuring Claude sessions reference correct absolute paths.
+Project config overrides specific global settings. Only these fields are allowed:
 
-### Per-Project Configuration
+| Field | Merge behavior |
+|---|---|
+| `mounts` | **Replaces** global mounts entirely |
+| `mcp` | **Merged** with global; project servers take precedence |
+| `claude_model` | **Overrides** global model |
+| `claude_bin_path` | **Overrides** global binary path |
 
-You can override mounts and MCP servers on a per-project basis by creating a `.loop/config.json` file in your project directory. This allows each project to have its own custom tooling, data mounts, and MCP servers.
-
-**Project Config** (`{project}/.loop/config.json`):
+Relative paths in project mounts (e.g., `./data`) are resolved relative to the project directory.
 
 ```jsonc
 {
-  // Project-specific mounts (replaces global mounts when set)
   "mounts": [
-    "./data:/app/data",              // Relative paths resolved to project dir
-    "./logs:/app/logs:ro",           // Read-only mode supported
-    "/absolute/path:/app/external"   // Absolute paths work too
+    "./data:/app/data",              // Relative to project dir
+    "~/.claude:~/.claude",           // Home expansion works
+    "/absolute/path:/app/external"   // Absolute paths too
   ],
-
-  // Project-specific MCP servers (merged with main config)
   "mcp": {
     "servers": {
       "project-db": {
@@ -167,86 +212,13 @@ You can override mounts and MCP servers on a per-project basis by creating a `.l
 }
 ```
 
-**Merge Behavior:**
-
-- **Mounts**: Project mounts **replace** global mounts entirely. If a project config specifies mounts, only those mounts are used.
-- **MCP Servers**: Project MCP servers are **merged** with main config servers. If a project defines an MCP server with the same name as the main config, the **project version takes precedence**.
-- **Path Resolution**: Relative paths in project mounts (e.g., `./data`) are automatically resolved relative to the project directory.
-- **Claude Model**: Project config can override `claude_model` to use a different model per project.
-- **Security**: Only `mounts`, `mcp`, and `claude_model` can be set in project config. Critical settings (Discord token, API settings, etc.) cannot be overridden.
-
-**Use Cases:**
-
-1. **Project-specific databases**: Each project can have its own database MCP server configuration
-2. **Project data mounts**: ML projects mount models/datasets, web projects mount public assets
-3. **Development tools**: Mount project-specific tools, configs, or cache directories
-4. **Monorepo support**: Each service subdirectory can have its own tools and mounts
-
-**Example Scenarios:**
-
-```jsonc
-// Machine Learning Project
-{
-  "mounts": [
-    "./models:/app/models:ro",     // Pre-trained models
-    "./datasets:/app/data:ro",     // Training data
-    "./outputs:/app/outputs"       // Model outputs
-  ]
-}
-
-// Web Development Project
-{
-  "mounts": [
-    "./public:/app/public:ro",     // Static assets
-    "./.env:/app/.env:ro"          // Environment variables
-  ],
-  "mcp": {
-    "servers": {
-      "postgres": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-postgres"],
-        "env": {"DATABASE_URL": "postgresql://localhost/webapp"}
-      }
-    }
-  }
-}
-```
-
 ### Container Image
 
-The agent Docker image is auto-built on first `loop serve` / `loop daemon:start` if it doesn't exist. The Dockerfile and entrypoint are embedded in the binary and flushed to `~/.loop/container/` during `loop onboard:global`.
+The agent Docker image is auto-built on first `loop serve` / `loop daemon:start` if it doesn't exist. The Dockerfile and entrypoint are embedded in the binary and written to `~/.loop/container/` during `loop onboard:global`.
 
-You can customize the container by editing `~/.loop/container/Dockerfile` and `~/.loop/container/entrypoint.sh`. To trigger a rebuild, remove the existing image (`docker rmi loop-agent:latest`) and restart the daemon.
+To customize: edit `~/.loop/container/Dockerfile`, then `docker rmi loop-agent:latest` and restart.
 
-For **development** (building from local source), use `make docker-build` which uses `container/Dockerfile`.
-
-### Build
-
-```sh
-# Build the loop binary
-make build
-
-# Install to GOPATH/bin
-make install
-
-# Build the Docker agent image (dev, from local source)
-make docker-build
-```
-
-### Run
-
-```sh
-# Run directly (auto-builds image if missing)
-loop serve
-
-# Or run as a background daemon
-loop daemon:start
-loop daemon:status
-loop daemon:stop
-
-# Shortcut: reinstall + restart daemon
-make restart
-```
+For development: `make docker-build` builds from `container/Dockerfile` in the repo.
 
 ## CLI Commands
 
@@ -352,7 +324,13 @@ To use a template, copy its schedule, type, and prompt values into the `/loop sc
 
 ## Development
 
+Requires [Go 1.25+](https://go.dev/dl/).
+
 ```sh
+make build            # Build the loop binary
+make install          # Install to $GOPATH/bin
+make docker-build     # Build the Docker agent image (from local source)
+make restart          # Reinstall + restart daemon
 make test             # Run tests
 make lint             # Run linter
 make coverage-check   # Enforce 100% test coverage
