@@ -1672,6 +1672,87 @@ func (s *MainSuite) TestOnboardLocalAlreadyRegisteredStillEnsuresChannel() {
 	require.True(s.T(), called, "ensureChannelFunc should be called even when loop is already registered")
 }
 
+func (s *MainSuite) TestOnboardLocalProjectConfigWritten() {
+	tmpDir := s.T().TempDir()
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = os.WriteFile
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+
+	err := onboardLocal("http://localhost:8222")
+	require.NoError(s.T(), err)
+
+	projectConfigPath := filepath.Join(tmpDir, ".loop", "config.json")
+	data, err := os.ReadFile(projectConfigPath)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), string(config.ProjectExampleConfig), string(data))
+}
+
+func (s *MainSuite) TestOnboardLocalProjectConfigAlreadyExists() {
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(loopDir, "config.json"), []byte(`{"claude_model":"custom"}`), 0644))
+
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = os.WriteFile
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+
+	err := onboardLocal("http://localhost:8222")
+	require.NoError(s.T(), err)
+
+	// Verify existing config was NOT overwritten
+	data, err := os.ReadFile(filepath.Join(loopDir, "config.json"))
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), `{"claude_model":"custom"}`, string(data))
+}
+
+func (s *MainSuite) TestOnboardLocalProjectConfigMkdirError() {
+	tmpDir := s.T().TempDir()
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osStat = os.Stat
+
+	writeCount := 0
+	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
+		writeCount++
+		return os.WriteFile(path, data, perm)
+	}
+	osMkdirAll = func(_ string, _ os.FileMode) error { return errors.New("mkdir error") }
+	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+
+	err := onboardLocal("http://localhost:8222")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating .loop directory")
+}
+
+func (s *MainSuite) TestOnboardLocalProjectConfigWriteError() {
+	tmpDir := s.T().TempDir()
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+
+	writeCount := 0
+	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
+		writeCount++
+		if writeCount == 2 {
+			return errors.New("write config error")
+		}
+		return os.WriteFile(path, data, perm)
+	}
+	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+
+	err := onboardLocal("http://localhost:8222")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing project config")
+}
+
 // --- ensureImage tests ---
 
 func (s *MainSuite) TestEnsureImageSkipsWhenExists() {

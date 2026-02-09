@@ -324,6 +324,19 @@ func onboardLocal(apiURL string) error {
 		fmt.Println("\nMake sure 'loop serve' or 'loop daemon:start' is running.")
 	}
 
+	// Write project config example if .loop/config.json doesn't exist
+	loopDir := filepath.Join(dir, ".loop")
+	projectConfigPath := filepath.Join(loopDir, "config.json")
+	if _, err := osStat(projectConfigPath); os.IsNotExist(err) {
+		if err := osMkdirAll(loopDir, 0755); err != nil {
+			return fmt.Errorf("creating .loop directory: %w", err)
+		}
+		if err := osWriteFile(projectConfigPath, config.ProjectExampleConfig, 0644); err != nil {
+			return fmt.Errorf("writing project config: %w", err)
+		}
+		fmt.Printf("Created project config at %s\n", projectConfigPath)
+	}
+
 	// Eagerly create the Discord channel so it's ready immediately
 	channelID, err := ensureChannelFunc(apiURL, dir)
 	if err != nil {

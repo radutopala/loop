@@ -2,5 +2,8 @@ package config
 
 import _ "embed"
 
-//go:embed config.example.json
+//go:embed config.global.example.json
 var ExampleConfig []byte
+
+//go:embed config.project.example.json
+var ProjectExampleConfig []byte

@@ -445,11 +445,10 @@ func (s *ConfigSuite) TestLoadProjectConfigMountsOnly() {
 	merged, err := LoadProjectConfig("/project", mainCfg)
 	require.NoError(s.T(), err)
 
-	// Check mounts: main + project with resolved paths
-	require.Len(s.T(), merged.Mounts, 3)
-	require.Equal(s.T(), "~/.gitconfig:~/.gitconfig:ro", merged.Mounts[0])
-	require.Equal(s.T(), "/project/data:/app/data", merged.Mounts[1])
-	require.Equal(s.T(), "/project/logs:/app/logs:ro", merged.Mounts[2])
+	// Check mounts: project replaces global mounts
+	require.Len(s.T(), merged.Mounts, 2)
+	require.Equal(s.T(), "/project/data:/app/data", merged.Mounts[0])
+	require.Equal(s.T(), "/project/logs:/app/logs:ro", merged.Mounts[1])
 
 	// MCP servers unchanged
 	require.Len(s.T(), merged.MCPServers, 1)
@@ -517,10 +516,9 @@ func (s *ConfigSuite) TestLoadProjectConfigBothMountsAndMCP() {
 	merged, err := LoadProjectConfig("/project", mainCfg)
 	require.NoError(s.T(), err)
 
-	// Check mounts
-	require.Len(s.T(), merged.Mounts, 2)
-	require.Equal(s.T(), "~/.gitconfig:~/.gitconfig:ro", merged.Mounts[0])
-	require.Equal(s.T(), "/project/data:/app/data", merged.Mounts[1])
+	// Check mounts: project replaces global
+	require.Len(s.T(), merged.Mounts, 1)
+	require.Equal(s.T(), "/project/data:/app/data", merged.Mounts[0])
 
 	// Check MCP servers
 	require.Len(s.T(), merged.MCPServers, 2)
@@ -729,8 +727,9 @@ func (s *ConfigSuite) TestLoadProjectConfigDoesNotMutateMain() {
 	require.Len(s.T(), mainCfg.MCPServers, 1)
 	require.Equal(s.T(), "/bin/main", mainCfg.MCPServers["main-srv"].Command)
 
-	// Verify merged config has new values
-	require.Len(s.T(), merged.Mounts, 2)
+	// Verify merged config has project mounts (replaced, not appended)
+	require.Len(s.T(), merged.Mounts, 1)
+	require.Equal(s.T(), "/project/data:/app/data", merged.Mounts[0])
 	require.Len(s.T(), merged.MCPServers, 2)
 	require.Equal(s.T(), "/bin/main", merged.MCPServers["main-srv"].Command)
 	require.Equal(s.T(), "/bin/project", merged.MCPServers["project-srv"].Command)

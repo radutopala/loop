@@ -1,0 +1,27 @@
+{
+  // Claude model override for this project (e.g. "claude-sonnet-4-5-20250929")
+  //"claude_model": "",
+
+  // MCP server configurations specific to this project
+  // Project servers take precedence over global config servers with the same name
+  //"mcp": {
+  //  "servers": {
+  //    "my-tool": {
+  //      "command": "/path/to/binary",
+  //      "args": ["--flag"],
+  //      "env": {"API_KEY": "secret"}
+  //    }
+  //  }
+  //},
+
+  // Mounts for this project's containers (replaces global mounts when set)
+  // Format: "host_path:container_path" or "host_path:container_path:ro"
+  // Relative paths are resolved relative to the project directory
+  //"mounts": [
+  //  "~/.claude:~/.claude",
+  //  "~/.gitconfig:~/.gitconfig:ro",
+  //  "~/.ssh:~/.ssh:ro",
+  //  "~/.aws:~/.aws",
+  //  "/var/run/docker.sock:/var/run/docker.sock"
+  //]
+}

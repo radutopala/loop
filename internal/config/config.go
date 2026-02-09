@@ -194,11 +194,11 @@ type projectConfig struct {
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
-// and merges it with the main config. Only mounts and mcp_servers are loaded from
-// the project config for security reasons.
+// and merges it with the main config. Only mounts, mcp_servers, and claude_model
+// are loaded from the project config for security reasons.
 //
 // Merge behavior:
-// - Mounts: Project mounts are appended to main config mounts
+// - Mounts: Project mounts replace global mounts entirely
 // - MCP Servers: Merged with project servers taking precedence over main config
 //
 // Relative paths in project mounts are resolved relative to workDir.
@@ -228,8 +228,8 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 	// Create a copy of main config to avoid mutating it
 	merged := *mainConfig
 
-	// Merge mounts: append project mounts to main mounts
-	// Resolve relative paths relative to workDir
+	// Merge mounts: project mounts replace global mounts entirely.
+	// Resolve relative paths relative to workDir.
 	if len(pc.Mounts) > 0 {
 		resolvedMounts := make([]string, 0, len(pc.Mounts))
 		for _, mount := range pc.Mounts {
@@ -253,8 +253,7 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 			resolvedMounts = append(resolvedMounts, hostPath+":"+containerPath+mode)
 		}
 
-		// Append project mounts to main mounts
-		merged.Mounts = append(append([]string{}, mainConfig.Mounts...), resolvedMounts...)
+		merged.Mounts = resolvedMounts
 	}
 
 	// Merge MCP servers: project takes precedence

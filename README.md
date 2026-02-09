@@ -147,7 +147,7 @@ You can override mounts and MCP servers on a per-project basis by creating a `.l
 
 ```jsonc
 {
-  // Project-specific mounts (appended to main config mounts)
+  // Project-specific mounts (replaces global mounts when set)
   "mounts": [
     "./data:/app/data",              // Relative paths resolved to project dir
     "./logs:/app/logs:ro",           // Read-only mode supported
@@ -169,7 +169,7 @@ You can override mounts and MCP servers on a per-project basis by creating a `.l
 
 **Merge Behavior:**
 
-- **Mounts**: Project mounts are **appended** to main config mounts. All mounts from both configs are applied to the container.
+- **Mounts**: Project mounts **replace** global mounts entirely. If a project config specifies mounts, only those mounts are used.
 - **MCP Servers**: Project MCP servers are **merged** with main config servers. If a project defines an MCP server with the same name as the main config, the **project version takes precedence**.
 - **Path Resolution**: Relative paths in project mounts (e.g., `./data`) are automatically resolved relative to the project directory.
 - **Claude Model**: Project config can override `claude_model` to use a different model per project.
