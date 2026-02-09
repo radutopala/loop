@@ -7,7 +7,6 @@ import (
 	"os/exec"
 	"strings"
 
-	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/image"
@@ -20,8 +19,8 @@ import (
 // dockerAPI abstracts the Docker SDK methods used by Client, enabling unit testing.
 type dockerAPI interface {
 	ContainerCreate(ctx context.Context, config *containertypes.Config, hostConfig *containertypes.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (containertypes.CreateResponse, error)
-	ContainerAttach(ctx context.Context, container string, options containertypes.AttachOptions) (types.HijackedResponse, error)
 	ContainerStart(ctx context.Context, container string, options containertypes.StartOptions) error
+	ContainerLogs(ctx context.Context, container string, options containertypes.LogsOptions) (io.ReadCloser, error)
 	ContainerWait(ctx context.Context, container string, condition containertypes.WaitCondition) (<-chan containertypes.WaitResponse, <-chan error)
 	ContainerRemove(ctx context.Context, container string, options containertypes.RemoveOptions) error
 	ContainerList(ctx context.Context, options containertypes.ListOptions) ([]containertypes.Summary, error)
@@ -85,13 +84,12 @@ func (c *Client) ContainerCreate(ctx context.Context, cfg *ContainerConfig, name
 	return resp.ID, nil
 }
 
-// ContainerAttach attaches to the container's stdout and returns a reader for output.
-// It demultiplexes the Docker stream so the caller receives clean stdout bytes.
-func (c *Client) ContainerAttach(ctx context.Context, containerID string) (io.Reader, error) {
-	resp, err := c.api.ContainerAttach(ctx, containerID, containertypes.AttachOptions{
-		Stream: true,
-		Stdout: true,
-		Stderr: true,
+// ContainerLogs retrieves the container's stdout/stderr logs after it exits.
+// It demultiplexes the Docker stream so the caller receives clean output bytes.
+func (c *Client) ContainerLogs(ctx context.Context, containerID string) (io.Reader, error) {
+	resp, err := c.api.ContainerLogs(ctx, containerID, containertypes.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
 	})
 	if err != nil {
 		return nil, err
@@ -99,7 +97,8 @@ func (c *Client) ContainerAttach(ctx context.Context, containerID string) (io.Re
 
 	pr, pw := io.Pipe()
 	go func() {
-		_, copyErr := stdcopy.StdCopy(pw, pw, resp.Reader)
+		_, copyErr := stdcopy.StdCopy(pw, pw, resp)
+		resp.Close()
 		pw.CloseWithError(copyErr)
 	}()
 	return pr, nil

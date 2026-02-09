@@ -1,16 +1,12 @@
 package container
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"errors"
 	"io"
-	"net"
 	"testing"
-	"time"
 
-	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/api/types/network"
@@ -29,11 +25,6 @@ type mockDockerAPI struct {
 func (m *mockDockerAPI) ContainerCreate(ctx context.Context, config *containertypes.Config, hostConfig *containertypes.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (containertypes.CreateResponse, error) {
 	args := m.Called(ctx, config, hostConfig, networkingConfig, platform, containerName)
 	return args.Get(0).(containertypes.CreateResponse), args.Error(1)
-}
-
-func (m *mockDockerAPI) ContainerAttach(ctx context.Context, container string, options containertypes.AttachOptions) (types.HijackedResponse, error) {
-	args := m.Called(ctx, container, options)
-	return args.Get(0).(types.HijackedResponse), args.Error(1)
 }
 
 func (m *mockDockerAPI) ContainerStart(ctx context.Context, container string, options containertypes.StartOptions) error {
@@ -70,24 +61,19 @@ func (m *mockDockerAPI) ImagePull(ctx context.Context, refStr string, options im
 	return rc, args.Error(1)
 }
 
+func (m *mockDockerAPI) ContainerLogs(ctx context.Context, container string, options containertypes.LogsOptions) (io.ReadCloser, error) {
+	args := m.Called(ctx, container, options)
+	var rc io.ReadCloser
+	if v := args.Get(0); v != nil {
+		rc = v.(io.ReadCloser)
+	}
+	return rc, args.Error(1)
+}
+
 func (m *mockDockerAPI) Close() error {
 	args := m.Called()
 	return args.Error(0)
 }
-
-// fakeConn is a minimal net.Conn for testing HijackedResponse.
-type fakeConn struct {
-	bytes.Buffer
-}
-
-func (f *fakeConn) Close() error { return nil }
-
-// LocalAddr, RemoteAddr and other net.Conn methods needed to satisfy the interface.
-func (f *fakeConn) LocalAddr() net.Addr                { return nil }
-func (f *fakeConn) RemoteAddr() net.Addr               { return nil }
-func (f *fakeConn) SetDeadline(_ time.Time) error      { return nil }
-func (f *fakeConn) SetReadDeadline(_ time.Time) error  { return nil }
-func (f *fakeConn) SetWriteDeadline(_ time.Time) error { return nil }
 
 type ClientSuite struct {
 	suite.Suite
@@ -225,9 +211,8 @@ func (s *ClientSuite) TestContainerCreateError() {
 	s.api.AssertExpectations(s.T())
 }
 
-func (s *ClientSuite) TestContainerAttach() {
+func (s *ClientSuite) TestContainerLogs() {
 	ctx := context.Background()
-	conn := &fakeConn{}
 
 	// Build stdcopy-formatted stream data.
 	var streamBuf bytes.Buffer
@@ -235,20 +220,12 @@ func (s *ClientSuite) TestContainerAttach() {
 	_, err := w.Write([]byte("output"))
 	require.NoError(s.T(), err)
 
-	reader := bufio.NewReader(&streamBuf)
+	s.api.On("ContainerLogs", ctx, "cid-1", containertypes.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+	}).Return(io.NopCloser(&streamBuf), nil)
 
-	hijacked := types.HijackedResponse{
-		Conn:   conn,
-		Reader: reader,
-	}
-
-	s.api.On("ContainerAttach", ctx, "cid-1", containertypes.AttachOptions{
-		Stream: true,
-		Stdout: true,
-		Stderr: true,
-	}).Return(hijacked, nil)
-
-	r, err := s.client.ContainerAttach(ctx, "cid-1")
+	r, err := s.client.ContainerLogs(ctx, "cid-1")
 	require.NoError(s.T(), err)
 
 	data, readErr := io.ReadAll(r)
@@ -258,19 +235,18 @@ func (s *ClientSuite) TestContainerAttach() {
 	s.api.AssertExpectations(s.T())
 }
 
-func (s *ClientSuite) TestContainerAttachError() {
+func (s *ClientSuite) TestContainerLogsError() {
 	ctx := context.Background()
 
-	s.api.On("ContainerAttach", ctx, "cid-1", containertypes.AttachOptions{
-		Stream: true,
-		Stdout: true,
-		Stderr: true,
-	}).Return(types.HijackedResponse{}, errors.New("attach failed"))
+	s.api.On("ContainerLogs", ctx, "cid-1", containertypes.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+	}).Return(nil, errors.New("logs failed"))
 
-	r, err := s.client.ContainerAttach(ctx, "cid-1")
+	r, err := s.client.ContainerLogs(ctx, "cid-1")
 	require.Error(s.T(), err)
 	require.Nil(s.T(), r)
-	require.Contains(s.T(), err.Error(), "attach failed")
+	require.Contains(s.T(), err.Error(), "logs failed")
 	s.api.AssertExpectations(s.T())
 }
 

@@ -158,7 +158,7 @@ func (m *mockDockerClient) ContainerCreate(ctx context.Context, cfg *container.C
 	return args.String(0), args.Error(1)
 }
 
-func (m *mockDockerClient) ContainerAttach(ctx context.Context, containerID string) (io.Reader, error) {
+func (m *mockDockerClient) ContainerLogs(ctx context.Context, containerID string) (io.Reader, error) {
 	args := m.Called(ctx, containerID)
 	var r io.Reader
 	if v := args.Get(0); v != nil {

@@ -30,7 +30,7 @@ func (m *MockDockerClient) ContainerCreate(ctx context.Context, cfg *ContainerCo
 	return args.String(0), args.Error(1)
 }
 
-func (m *MockDockerClient) ContainerAttach(ctx context.Context, containerID string) (io.Reader, error) {
+func (m *MockDockerClient) ContainerLogs(ctx context.Context, containerID string) (io.Reader, error) {
 	args := m.Called(ctx, containerID)
 	var r io.Reader
 	if v := args.Get(0); v != nil {
@@ -163,7 +163,7 @@ func (s *RunnerSuite) TestRunHappyPath() {
 		hasHostUser := slices.Contains(cfg.Env, "HOST_USER=testuser")
 		return hasResume && hasBinds && hasHome && hasHostUser
 	}), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -190,18 +190,24 @@ func (s *RunnerSuite) TestRunCreateFails() {
 	s.client.AssertExpectations(s.T())
 }
 
-func (s *RunnerSuite) TestRunAttachFails() {
+func (s *RunnerSuite) TestRunLogsFails() {
 	ctx := context.Background()
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
 
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(nil, errors.New("attach failed"))
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerLogs", ctx, "container-123").Return(nil, errors.New("logs failed"))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
 
 	resp, err := s.runner.Run(ctx, req)
 	require.Nil(s.T(), resp)
 	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "attaching to container")
+	require.Contains(s.T(), err.Error(), "reading container logs")
 
 	s.client.AssertExpectations(s.T())
 }
@@ -211,7 +217,6 @@ func (s *RunnerSuite) TestRunStartFails() {
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
 
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(bytes.NewReader(nil), nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(errors.New("start failed"))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
 
@@ -232,7 +237,6 @@ func (s *RunnerSuite) TestRunTimeout() {
 	errCh := make(chan error)
 
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(bytes.NewReader(nil), nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -257,7 +261,6 @@ func (s *RunnerSuite) TestRunWaitError() {
 	errCh <- errors.New("wait error")
 
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(bytes.NewReader(nil), nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -279,7 +282,6 @@ func (s *RunnerSuite) TestRunContainerExitError() {
 	errCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(bytes.NewReader(nil), nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -303,7 +305,7 @@ func (s *RunnerSuite) TestRunReadOutputError() {
 	errCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -337,7 +339,7 @@ func (s *RunnerSuite) TestRunWithOAuthToken() {
 		noResume := !slices.Contains(cfg.Cmd, "--resume")
 		return hasOAuth && noResume
 	}), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -367,7 +369,7 @@ func (s *RunnerSuite) TestRunNoSessionID() {
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return !slices.Contains(cfg.Cmd, "--resume")
 	}), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -413,7 +415,7 @@ func (s *RunnerSuite) TestRunProxyEnvForwarding() {
 			slices.Contains(cfg.Env, "HTTPS_PROXY=http://proxy:8443") &&
 			slices.Contains(cfg.Env, "NO_PROXY=localhost,127.0.0.1")
 	}), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -436,7 +438,7 @@ func (s *RunnerSuite) TestRunJSONParseError() {
 	errCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -461,7 +463,7 @@ func (s *RunnerSuite) TestRunClaudeError() {
 	errCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -486,7 +488,7 @@ func (s *RunnerSuite) TestRunNonZeroExitCode() {
 	errCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -566,7 +568,7 @@ func (s *RunnerSuite) TestRunRetryWithoutSession() {
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "stale-sess")
 	}), "").Return("container-fail", nil).Once()
-	s.client.On("ContainerAttach", ctx, "container-fail").Return(failReader, nil)
+	s.client.On("ContainerLogs", ctx, "container-fail").Return(failReader, nil)
 	s.client.On("ContainerStart", ctx, "container-fail").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-fail").Return((<-chan WaitResponse)(failWaitCh), (<-chan error)(failErrCh))
 	s.client.On("ContainerRemove", ctx, "container-fail").Return(nil)
@@ -581,7 +583,7 @@ func (s *RunnerSuite) TestRunRetryWithoutSession() {
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return !slices.Contains(cfg.Cmd, "--resume")
 	}), "").Return("container-ok", nil).Once()
-	s.client.On("ContainerAttach", ctx, "container-ok").Return(okReader, nil)
+	s.client.On("ContainerLogs", ctx, "container-ok").Return(okReader, nil)
 	s.client.On("ContainerStart", ctx, "container-ok").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-ok").Return((<-chan WaitResponse)(okWaitCh), (<-chan error)(okErrCh))
 	s.client.On("ContainerRemove", ctx, "container-ok").Return(nil)
@@ -611,7 +613,7 @@ func (s *RunnerSuite) TestRunRetryAlsoFails() {
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "stale-sess")
 	}), "").Return("container-fail1", nil).Once()
-	s.client.On("ContainerAttach", ctx, "container-fail1").Return(failReader1, nil)
+	s.client.On("ContainerLogs", ctx, "container-fail1").Return(failReader1, nil)
 	s.client.On("ContainerStart", ctx, "container-fail1").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-fail1").Return((<-chan WaitResponse)(failWaitCh1), (<-chan error)(failErrCh1))
 	s.client.On("ContainerRemove", ctx, "container-fail1").Return(nil)
@@ -625,7 +627,7 @@ func (s *RunnerSuite) TestRunRetryAlsoFails() {
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return !slices.Contains(cfg.Cmd, "--resume")
 	}), "").Return("container-fail2", nil).Once()
-	s.client.On("ContainerAttach", ctx, "container-fail2").Return(failReader2, nil)
+	s.client.On("ContainerLogs", ctx, "container-fail2").Return(failReader2, nil)
 	s.client.On("ContainerStart", ctx, "container-fail2").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-fail2").Return((<-chan WaitResponse)(failWaitCh2), (<-chan error)(failErrCh2))
 	s.client.On("ContainerRemove", ctx, "container-fail2").Return(nil)
@@ -765,7 +767,7 @@ func (s *RunnerSuite) TestRunWithDirPath() {
 		return len(cfg.Binds) == 1 &&
 			cfg.Binds[0] == "/home/user/project:/home/user/project"
 	}), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -795,7 +797,7 @@ func (s *RunnerSuite) TestRunWithoutDirPathUsesDefault() {
 		return len(cfg.Binds) == 1 &&
 			cfg.Binds[0] == "/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work"
 	}), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -844,7 +846,7 @@ func (s *RunnerSuite) TestRunMCPConfigWritten() {
 	errCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -1067,7 +1069,7 @@ func (s *RunnerSuite) TestRunWithInvalidMount() {
 		// Invalid mount should be skipped, only workDir bind
 		return len(cfg.Binds) == 1
 	}), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -1130,7 +1132,7 @@ func (s *RunnerSuite) TestRunWithCustomMounts() {
 		workDirMatch := cfg.WorkingDir == "/home/testuser/.loop/ch-1/work"
 		return bindsMatch && workDirMatch
 	}), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -1166,7 +1168,7 @@ func (s *RunnerSuite) TestRunWithDirPathPreservesPath() {
 		hasCorrectWorkingDir := cfg.WorkingDir == "/custom/project/path"
 		return hasCorrectBinds && hasCorrectWorkingDir
 	}), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -1294,7 +1296,7 @@ func (s *RunnerSuite) TestRunWithClaudeModel() {
 		}
 		return cfg.Cmd[modelIdx+1] == "claude-sonnet-4-5-20250929"
 	}), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -1323,7 +1325,7 @@ func (s *RunnerSuite) TestRunWithoutClaudeModel() {
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return !slices.Contains(cfg.Cmd, "--model")
 	}), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -1374,7 +1376,7 @@ func (s *RunnerSuite) TestRunWithGitExcludesMount() {
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return slices.Contains(cfg.Binds, "/home/testuser/.gitignore_global:/home/testuser/.gitignore_global:ro")
 	}), "").Return("container-123", nil)
-	s.client.On("ContainerAttach", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)

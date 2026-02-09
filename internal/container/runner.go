@@ -58,8 +58,8 @@ type WaitResponse struct {
 // DockerClient abstracts the Docker SDK methods used by DockerRunner.
 type DockerClient interface {
 	ContainerCreate(ctx context.Context, cfg *ContainerConfig, name string) (string, error)
-	ContainerAttach(ctx context.Context, containerID string) (io.Reader, error)
 	ContainerStart(ctx context.Context, containerID string) error
+	ContainerLogs(ctx context.Context, containerID string) (io.Reader, error)
 	ContainerWait(ctx context.Context, containerID string) (<-chan WaitResponse, <-chan error)
 	ContainerRemove(ctx context.Context, containerID string) error
 	ImageList(ctx context.Context, image string) ([]string, error)
@@ -324,11 +324,6 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		_ = r.client.ContainerRemove(ctx, containerID)
 	}()
 
-	reader, err := r.client.ContainerAttach(ctx, containerID)
-	if err != nil {
-		return nil, fmt.Errorf("attaching to container: %w", err)
-	}
-
 	if err := r.client.ContainerStart(ctx, containerID); err != nil {
 		return nil, fmt.Errorf("starting container: %w", err)
 	}
@@ -348,6 +343,11 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 			return nil, fmt.Errorf("container exited with error: %w", wr.Error)
 		}
 		exitCode = wr.StatusCode
+	}
+
+	reader, err := r.client.ContainerLogs(ctx, containerID)
+	if err != nil {
+		return nil, fmt.Errorf("reading container logs: %w", err)
 	}
 
 	var buf bytes.Buffer

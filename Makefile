@@ -1,4 +1,4 @@
-.PHONY: help build install test lint coverage coverage-check docker-build run clean restart docker-shell
+.PHONY: help build install test lint coverage coverage-check docker-build run clean restart docker-shell docker-logs
 .DEFAULT_GOAL := help
 
 help: ## Show available targets
@@ -56,6 +56,13 @@ docker-shell: ## Start a bash shell in the agent container
 		-e HOST_USER=$(USER) \
 		-e CLAUDE_CODE_OAUTH_TOKEN=$$(grep claude_code_oauth_token ~/.loop/config.json | awk -F'"' '{print $$4}') \
 		loop-agent:latest bash
+
+docker-logs: ## Tail logs of a running agent container (waits for one to start)
+	@while true; do \
+		CID=$$(docker ps -q --filter label=app=loop-agent); \
+		if [ -n "$$CID" ]; then docker logs -f "$$CID"; break; fi; \
+		sleep 0.5; \
+	done
 
 clean: ## Remove build artifacts
 	rm -rf bin/ coverage.out coverage.html
