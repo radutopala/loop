@@ -40,3 +40,5 @@ loop.db*
 *.out
 .loop.bkp/
 .loop/
+memory/
+tickets/
