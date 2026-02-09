@@ -1146,7 +1146,14 @@ func TestGitExcludesMount(t *testing.T) {
 			expected:   "/home/testuser/.gitignore_global:/home/agent/.gitignore_global:ro",
 		},
 		{
-			name:       "absolute path with existing file",
+			name:       "absolute path under home maps to agent home",
+			gitOutput:  "/home/testuser/.gitignore_global\n",
+			homeDir:    "/home/testuser",
+			fileExists: true,
+			expected:   "/home/testuser/.gitignore_global:/home/agent/.gitignore_global:ro",
+		},
+		{
+			name:       "absolute path outside home unchanged",
 			gitOutput:  "/etc/gitignore\n",
 			homeDir:    "/home/testuser",
 			fileExists: true,
