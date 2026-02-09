@@ -427,7 +427,7 @@ func (o *Orchestrator) handleTasksInteraction(ctx context.Context, inter *Intera
 		}
 		var schedule string
 		if t.Type == db.TaskTypeOnce {
-			schedule = t.NextRunAt.UTC().Format("2006-01-02 15:04 UTC")
+			schedule = t.NextRunAt.Local().Format("2006-01-02 15:04 MST")
 		} else {
 			schedule = fmt.Sprintf("`%s`", t.Schedule)
 		}

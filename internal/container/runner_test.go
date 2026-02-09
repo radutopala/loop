@@ -87,6 +87,68 @@ type RunnerSuite struct {
 	origExecCommand   func(string, ...string) *exec.Cmd
 	origTimeAfterFunc func(time.Duration, func()) *time.Timer
 	origRandRead      func([]byte) (int, error)
+	origReadlink      func(string) (string, error)
+	origReadFile      func(string) ([]byte, error)
+	origTimeLocalName func() string
+}
+
+func (s *RunnerSuite) TestLocalTimezoneFromTZEnv() {
+	origGetenv := getenv
+	defer func() { getenv = origGetenv }()
+	getenv = func(key string) string {
+		if key == "TZ" {
+			return "America/New_York"
+		}
+		return ""
+	}
+	require.Equal(s.T(), "America/New_York", localTimezone())
+}
+
+func (s *RunnerSuite) TestLocalTimezoneFromReadlink() {
+	origGetenv := getenv
+	origReadFile := readFile
+	origReadlink := readlink
+	defer func() { getenv = origGetenv; readFile = origReadFile; readlink = origReadlink }()
+	getenv = func(string) string { return "" }
+	readFile = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+	readlink = func(string) (string, error) {
+		return "/var/db/timezone/zoneinfo/Europe/Bucharest", nil
+	}
+	require.Equal(s.T(), "Europe/Bucharest", localTimezone())
+}
+
+func (s *RunnerSuite) TestLocalTimezoneFromEtcTimezone() {
+	origGetenv := getenv
+	origReadFile := readFile
+	defer func() { getenv = origGetenv; readFile = origReadFile }()
+	getenv = func(string) string { return "" }
+	readFile = func(path string) ([]byte, error) {
+		if path == "/etc/timezone" {
+			return []byte("Asia/Tokyo\n"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+	require.Equal(s.T(), "Asia/Tokyo", localTimezone())
+}
+
+func (s *RunnerSuite) TestLocalTimezoneFromLocationName() {
+	origGetenv := getenv
+	origTimeLocalName := timeLocalName
+	defer func() { getenv = origGetenv; timeLocalName = origTimeLocalName }()
+	getenv = func(string) string { return "" }
+	timeLocalName = func() string { return "Europe/Berlin" }
+	require.Equal(s.T(), "Europe/Berlin", localTimezone())
+}
+
+func (s *RunnerSuite) TestLocalTimezoneFallbackUTC() {
+	origGetenv := getenv
+	origReadFile := readFile
+	origReadlink := readlink
+	defer func() { getenv = origGetenv; readFile = origReadFile; readlink = origReadlink }()
+	getenv = func(string) string { return "" }
+	readFile = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+	readlink = func(string) (string, error) { return "", os.ErrNotExist }
+	require.Equal(s.T(), "UTC", localTimezone())
 }
 
 func TestRunnerSuite(t *testing.T) {
@@ -123,6 +185,12 @@ func (s *RunnerSuite) SetupTest() {
 		copy(b, []byte{0xaa, 0xbb, 0xcc})
 		return len(b), nil
 	}
+	s.origReadlink = readlink
+	readlink = func(string) (string, error) { return "", os.ErrNotExist }
+	s.origReadFile = readFile
+	readFile = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+	s.origTimeLocalName = timeLocalName
+	timeLocalName = func() string { return "Local" }
 	s.client = new(MockDockerClient)
 	s.cfg = &config.Config{
 		ClaudeBinPath:      "claude",
@@ -146,6 +214,9 @@ func (s *RunnerSuite) TearDownTest() {
 	execCommand = s.origExecCommand
 	timeAfterFunc = s.origTimeAfterFunc
 	randRead = s.origRandRead
+	readlink = s.origReadlink
+	readFile = s.origReadFile
+	timeLocalName = s.origTimeLocalName
 }
 
 func (s *RunnerSuite) TestNewDockerRunner() {
@@ -177,7 +248,10 @@ func (s *RunnerSuite) TestRunHappyPath() {
 			cfg.Binds[0] == "/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work"
 		hasHome := slices.Contains(cfg.Env, "HOME=/home/testuser")
 		hasHostUser := slices.Contains(cfg.Env, "HOST_USER=testuser")
-		return hasResume && hasBinds && hasHome && hasHostUser
+		hasTZ := slices.ContainsFunc(cfg.Env, func(e string) bool {
+			return len(e) > 3 && e[:3] == "TZ="
+		})
+		return hasResume && hasBinds && hasHome && hasHostUser && hasTZ
 	}), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)

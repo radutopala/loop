@@ -218,7 +218,7 @@ func (s *SchedulerSuite) TestAddTaskOnce() {
 	task := &db.ScheduledTask{
 		ChannelID: "ch1",
 		GuildID:   "g1",
-		Schedule:  "5m",
+		Schedule:  "2026-02-09T14:30:00Z",
 		Type:      db.TaskTypeOnce,
 		Prompt:    "once task",
 	}
@@ -441,7 +441,7 @@ func (s *SchedulerSuite) TestPollLoopOnceTaskDisabled() {
 	task := &db.ScheduledTask{
 		ID:        3,
 		ChannelID: "ch1",
-		Schedule:  "5m",
+		Schedule:  "2026-02-09T14:30:00Z",
 		Type:      db.TaskTypeOnce,
 		Prompt:    "once task",
 		Enabled:   true,
@@ -702,15 +702,36 @@ func (s *SchedulerSuite) TestCalculateNextRunInterval() {
 
 func (s *SchedulerSuite) TestCalculateNextRunOnce() {
 	now := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
-	next, err := calculateNextRun(db.TaskTypeOnce, "10m", now)
+	next, err := calculateNextRun(db.TaskTypeOnce, "2026-02-09T14:30:00Z", now)
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), time.Date(2025, 1, 1, 12, 10, 0, 0, time.UTC), next)
+	require.Equal(s.T(), time.Date(2026, 2, 9, 14, 30, 0, 0, time.UTC), next)
 }
 
 func (s *SchedulerSuite) TestCalculateNextRunInvalidOnce() {
 	_, err := calculateNextRun(db.TaskTypeOnce, "bad", time.Now())
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "parsing once schedule")
+	require.Contains(s.T(), err.Error(), "RFC3339")
+}
+
+func (s *SchedulerSuite) TestParseOnceScheduleRFC3339() {
+	result, err := parseOnceSchedule("2026-02-09T14:30:00Z")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), time.Date(2026, 2, 9, 14, 30, 0, 0, time.UTC), result)
+}
+
+func (s *SchedulerSuite) TestParseOnceScheduleWithOffset() {
+	result, err := parseOnceSchedule("2026-02-09T14:30:00+02:00")
+	require.NoError(s.T(), err)
+	tz := time.FixedZone("", 2*60*60)
+	expected := time.Date(2026, 2, 9, 14, 30, 0, 0, tz)
+	require.True(s.T(), expected.Equal(result))
+}
+
+func (s *SchedulerSuite) TestParseOnceScheduleInvalid() {
+	_, err := parseOnceSchedule("not-valid")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "RFC3339")
 }
 
 func (s *SchedulerSuite) TestCalculateNextRunInvalidCron() {
@@ -903,7 +924,7 @@ func (s *SchedulerSuite) TestEditTaskInvalidSchedule() {
 
 func (s *SchedulerSuite) TestEditTaskTypeChange() {
 	task := &db.ScheduledTask{
-		ID: 1, ChannelID: "ch1", Schedule: "30m",
+		ID: 1, ChannelID: "ch1", Schedule: "2026-02-09T14:30:00Z",
 		Type: db.TaskTypeInterval, Prompt: "prompt", Enabled: true,
 	}
 	s.store.On("GetScheduledTask", mock.Anything, int64(1)).Return(task, nil)

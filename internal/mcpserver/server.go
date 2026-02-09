@@ -8,6 +8,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -27,7 +28,7 @@ type Server struct {
 }
 
 type scheduleTaskInput struct {
-	Schedule string `json:"schedule" jsonschema:"Cron expression (e.g. 0 9 * * *) or Go duration (e.g. 5m or 1h)"`
+	Schedule string `json:"schedule" jsonschema:"Cron expression (e.g. 0 9 * * *), Go time.Duration (e.g. 5m, 1h), or RFC3339 timestamp (e.g. 2026-02-09T14:30:00Z) for once type"`
 	Type     string `json:"type" jsonschema:"Task type: cron, interval, or once"`
 	Prompt   string `json:"prompt" jsonschema:"The prompt to execute on schedule"`
 }
@@ -43,7 +44,7 @@ type toggleTaskInput struct {
 
 type editTaskInput struct {
 	TaskID   int64   `json:"task_id" jsonschema:"The ID of the task to edit"`
-	Schedule *string `json:"schedule,omitempty" jsonschema:"New schedule expression (cron or Go duration)"`
+	Schedule *string `json:"schedule,omitempty" jsonschema:"New schedule expression (cron, Go time.Duration, or RFC3339 timestamp for once type)"`
 	Type     *string `json:"type,omitempty" jsonschema:"New task type: cron, interval, or once"`
 	Prompt   *string `json:"prompt,omitempty" jsonschema:"New prompt to execute on schedule"`
 }
@@ -69,7 +70,7 @@ func New(channelID, apiURL string, httpClient HTTPClient, logger *slog.Logger) *
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "schedule_task",
-		Description: "Create a scheduled task. Use cron expressions (e.g. '0 9 * * *' for daily at 9am) with type 'cron', Go durations (e.g. '5m', '1h') with type 'interval', or type 'once' for one-time execution.",
+		Description: "Create a scheduled task. Use cron expressions (e.g. '0 9 * * *' for daily at 9am) with type 'cron', Go time.Duration (e.g. '5m', '1h') with type 'interval', or RFC3339 timestamp (e.g. '2026-02-09T14:30:00Z') with type 'once' for one-time execution. When using 'once', first check the user's local time to compute the correct offset. Prefer RFC3339 timestamps for absolute scheduling.",
 	}, s.handleScheduleTask)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
@@ -134,6 +135,16 @@ func (s *Server) doRequest(method, url string, body []byte) ([]byte, int, error)
 
 func (s *Server) handleScheduleTask(_ context.Context, _ *mcp.CallToolRequest, input scheduleTaskInput) (*mcp.CallToolResult, any, error) {
 	s.logger.Info("mcp tool call", "tool", "schedule_task", "schedule", input.Schedule, "type", input.Type, "prompt", input.Prompt)
+
+	if input.Type == "once" {
+		if _, err := time.Parse(time.RFC3339, input.Schedule); err != nil {
+			return errorResult(fmt.Sprintf("invalid schedule for type \"once\": must be RFC3339 (e.g. 2026-02-09T14:30:00Z): %v", err)), nil, nil
+		}
+	} else if input.Type == "interval" {
+		if _, err := time.ParseDuration(input.Schedule); err != nil {
+			return errorResult(fmt.Sprintf("invalid schedule for type %q: must be a valid Go time.Duration (e.g. 5m, 1h, 24h): %v", input.Type, err)), nil, nil
+		}
+	}
 
 	data, _ := json.Marshal(map[string]string{
 		"channel_id": s.channelID,
@@ -244,6 +255,19 @@ func (s *Server) handleEditTask(_ context.Context, _ *mcp.CallToolRequest, input
 
 	if len(body) == 0 {
 		return errorResult("at least one of schedule, type, or prompt is required"), nil, nil
+	}
+
+	// Validate schedule when editing to once/interval type with a schedule
+	if input.Schedule != nil && input.Type != nil {
+		if *input.Type == "once" {
+			if _, err := time.Parse(time.RFC3339, *input.Schedule); err != nil {
+				return errorResult(fmt.Sprintf("invalid schedule for type \"once\": must be RFC3339 (e.g. 2026-02-09T14:30:00Z): %v", err)), nil, nil
+			}
+		} else if *input.Type == "interval" {
+			if _, err := time.ParseDuration(*input.Schedule); err != nil {
+				return errorResult(fmt.Sprintf("invalid schedule for type %q: must be a valid Go time.Duration (e.g. 5m, 1h, 24h): %v", *input.Type, err)), nil, nil
+			}
+		}
 	}
 
 	data, _ := json.Marshal(body)

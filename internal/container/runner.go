@@ -101,8 +101,34 @@ var osStat = os.Stat
 var execCommand = exec.Command
 var timeAfterFunc = time.AfterFunc
 var randRead = rand.Read
+var readlink = os.Readlink
+var readFile = os.ReadFile
+var timeLocalName = func() string { return time.Now().Location().String() }
 
 var nonAlphanumRegexp = regexp.MustCompile(`[^a-z0-9]+`)
+
+// localTimezone returns the IANA timezone name (e.g. "Europe/Bucharest").
+func localTimezone() string {
+	if tz := getenv("TZ"); tz != "" && tz != "Local" {
+		return tz
+	}
+	if loc := timeLocalName(); loc != "Local" {
+		return loc
+	}
+	// Linux: /etc/timezone contains the IANA name directly.
+	if data, err := readFile("/etc/timezone"); err == nil {
+		if tz := strings.TrimSpace(string(data)); tz != "" {
+			return tz
+		}
+	}
+	// macOS/Linux: /etc/localtime is a symlink into the zoneinfo directory.
+	if target, err := readlink("/etc/localtime"); err == nil {
+		if idx := strings.Index(target, "zoneinfo/"); idx != -1 {
+			return target[idx+len("zoneinfo/"):]
+		}
+	}
+	return "UTC"
+}
 
 // sanitizeName lowercases the input, replaces non-alphanumeric chars with
 // hyphens, collapses consecutive hyphens, trims leading/trailing hyphens,
@@ -282,6 +308,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		"API_URL=" + apiURL,
 		"HOME=" + hostHome,
 		"HOST_USER=" + getenv("USER"),
+		"TZ=" + localTimezone(),
 	}
 	if cfg.ClaudeCodeOAuthToken != "" {
 		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+cfg.ClaudeCodeOAuthToken)

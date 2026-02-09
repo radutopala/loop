@@ -139,6 +139,71 @@ func (s *MCPServerSuite) TestScheduleTaskAPIError() {
 	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "API error")
 }
 
+func (s *MCPServerSuite) TestScheduleTaskInvalidOnce() {
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name: "schedule_task",
+		Arguments: map[string]any{
+			"schedule": "5m",
+			"type":     "once",
+			"prompt":   "test",
+		},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "invalid schedule for type")
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "RFC3339")
+}
+
+func (s *MCPServerSuite) TestScheduleTaskValidRFC3339Once() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusCreated, `{"id":10}`), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name: "schedule_task",
+		Arguments: map[string]any{
+			"schedule": "2026-02-09T14:30:00Z",
+			"type":     "once",
+			"prompt":   "test",
+		},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "ID: 10")
+}
+
+func (s *MCPServerSuite) TestScheduleTaskInvalidDurationInterval() {
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name: "schedule_task",
+		Arguments: map[string]any{
+			"schedule": "*/5 * * * *",
+			"type":     "interval",
+			"prompt":   "test",
+		},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "invalid schedule for type")
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "time.Duration")
+}
+
+func (s *MCPServerSuite) TestScheduleTaskValidDurationInterval() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusCreated, `{"id":2}`), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name: "schedule_task",
+		Arguments: map[string]any{
+			"schedule": "1h",
+			"type":     "interval",
+			"prompt":   "test",
+		},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+}
+
 func (s *MCPServerSuite) TestScheduleTaskHTTPError() {
 	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
 		return nil, fmt.Errorf("connection refused")
@@ -368,6 +433,46 @@ func (s *MCPServerSuite) TestEditTaskWithTypeAndSchedule() {
 	require.NoError(s.T(), err)
 	require.False(s.T(), res.IsError)
 	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "Task 10 updated")
+}
+
+func (s *MCPServerSuite) TestEditTaskInvalidOnce() {
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "edit_task",
+		Arguments: map[string]any{"task_id": float64(1), "type": "once", "schedule": "not-valid"},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "invalid schedule for type")
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "RFC3339")
+}
+
+func (s *MCPServerSuite) TestEditTaskValidRFC3339Once() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "PATCH", req.Method)
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(bytes.NewReader(nil)),
+		}, nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "edit_task",
+		Arguments: map[string]any{"task_id": float64(1), "type": "once", "schedule": "2026-02-09T14:30:00Z"},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "Task 1 updated")
+}
+
+func (s *MCPServerSuite) TestEditTaskInvalidDurationInterval() {
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "edit_task",
+		Arguments: map[string]any{"task_id": float64(1), "type": "interval", "schedule": "not-valid"},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "invalid schedule for type")
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "time.Duration")
 }
 
 func (s *MCPServerSuite) TestEditTaskNoFields() {

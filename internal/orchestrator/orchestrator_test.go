@@ -898,7 +898,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTasks() {
 			strings.Contains(out.Content, "[disabled]") &&
 			strings.Contains(out.Content, "`5m`") &&
 			strings.Contains(out.Content, "[once]") &&
-			strings.Contains(out.Content, "UTC") &&
+			strings.Contains(out.Content, nextRun.Add(10*time.Minute).Local().Format("2006-01-02 15:04 MST")) &&
 			!strings.Contains(out.Content, "`10m`") &&
 			strings.Contains(out.Content, "next: in ")
 	})).Return(nil)

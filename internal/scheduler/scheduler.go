@@ -221,6 +221,14 @@ func (s *TaskScheduler) executeAndUpdate(ctx context.Context, task *db.Scheduled
 	}
 }
 
+func parseOnceSchedule(schedule string) (time.Time, error) {
+	t, err := time.Parse(time.RFC3339, schedule)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("parsing once schedule %q: must be RFC3339 (e.g. 2026-02-09T14:30:00Z): %w", schedule, err)
+	}
+	return t, nil
+}
+
 func calculateNextRun(taskType db.TaskType, schedule string, now time.Time) (time.Time, error) {
 	switch taskType {
 	case db.TaskTypeCron:
@@ -237,11 +245,7 @@ func calculateNextRun(taskType db.TaskType, schedule string, now time.Time) (tim
 		}
 		return now.Add(d), nil
 	case db.TaskTypeOnce:
-		d, err := time.ParseDuration(schedule)
-		if err != nil {
-			return time.Time{}, fmt.Errorf("parsing once schedule %q: %w", schedule, err)
-		}
-		return now.Add(d), nil
+		return parseOnceSchedule(schedule)
 	default:
 		return time.Time{}, fmt.Errorf("unknown task type %q", taskType)
 	}
