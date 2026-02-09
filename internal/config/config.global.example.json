@@ -31,7 +31,9 @@
     // Mount AWS credentials read-only to allow agents to interact with AWS services
     "~/.aws:~/.aws",
     // Mount Docker socket to allow agents to run Docker commands (e.g. for testing or deployment)
-    "/var/run/docker.sock:/var/run/docker.sock"
+    "/var/run/docker.sock:/var/run/docker.sock",
+    // Mount shell aliases/config into container's bashrc (sourced by Claude's bash subshells)
+    "~/.loop/.bashrc:~/.bashrc:ro"
   ],
 
   // Task templates

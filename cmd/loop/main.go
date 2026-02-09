@@ -261,6 +261,15 @@ func onboardGlobal(force bool) error {
 		return fmt.Errorf("writing config file: %w", err)
 	}
 
+	// Create default .bashrc for container shell aliases
+	bashrcPath := filepath.Join(loopDir, ".bashrc")
+	if _, err := osStat(bashrcPath); err != nil {
+		bashrcContent := []byte("# Shell aliases and config sourced inside Loop containers.\n# Add your aliases here — this file is bind-mounted as ~/.bashrc.\n")
+		if err := osWriteFile(bashrcPath, bashrcContent, 0644); err != nil {
+			return fmt.Errorf("writing .bashrc: %w", err)
+		}
+	}
+
 	// Flush embedded container files
 	containerDir := filepath.Join(loopDir, "container")
 	if err := osMkdirAll(containerDir, 0755); err != nil {

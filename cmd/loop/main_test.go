@@ -1270,6 +1270,11 @@ func (s *MainSuite) TestOnboardGlobalSuccess() {
 	entrypointData, err := os.ReadFile(entrypointPath)
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), string(entrypointData), `su-exec "$AGENT_USER" "$@"`)
+
+	bashrcPath := filepath.Join(tmpDir, ".loop", ".bashrc")
+	bashrcData, err := os.ReadFile(bashrcPath)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(bashrcData), "Shell aliases")
 }
 
 func (s *MainSuite) TestOnboardGlobalConfigAlreadyExists() {
@@ -1408,6 +1413,49 @@ func (s *MainSuite) TestOnboardGlobalCmdWithForceFlag() {
 	require.Contains(s.T(), string(data), "discord_token")
 }
 
+func (s *MainSuite) TestOnboardGlobalBashrcWriteError() {
+	tmpDir := s.T().TempDir()
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	calls := 0
+	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
+		calls++
+		if calls == 2 { // Second write is .bashrc (after config)
+			return errors.New("bashrc write error")
+		}
+		return os.WriteFile(path, data, perm)
+	}
+
+	err := onboardGlobal(false)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing .bashrc")
+}
+
+func (s *MainSuite) TestOnboardGlobalBashrcSkipsIfExists() {
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0755))
+	bashrcPath := filepath.Join(loopDir, ".bashrc")
+	require.NoError(s.T(), os.WriteFile(bashrcPath, []byte("existing aliases"), 0644))
+
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	osWriteFile = os.WriteFile
+
+	err := onboardGlobal(true) // force overwrites config but not .bashrc
+	require.NoError(s.T(), err)
+
+	data, err := os.ReadFile(bashrcPath)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "existing aliases", string(data))
+}
+
 func (s *MainSuite) TestOnboardGlobalContainerDirError() {
 	tmpDir := s.T().TempDir()
 	userHomeDir = func() (string, error) {
@@ -1439,7 +1487,7 @@ func (s *MainSuite) TestOnboardGlobalContainerDockerfileWriteError() {
 	calls := 0
 	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
 		calls++
-		if calls == 2 { // Second write is Dockerfile
+		if calls == 3 { // Third write is Dockerfile (after config and .bashrc)
 			return errors.New("dockerfile write error")
 		}
 		return os.WriteFile(path, data, perm)
@@ -1460,7 +1508,7 @@ func (s *MainSuite) TestOnboardGlobalContainerEntrypointWriteError() {
 	calls := 0
 	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
 		calls++
-		if calls == 3 { // Third write is entrypoint.sh
+		if calls == 4 { // Fourth write is entrypoint.sh (after config, .bashrc, Dockerfile)
 			return errors.New("entrypoint write error")
 		}
 		return os.WriteFile(path, data, perm)
