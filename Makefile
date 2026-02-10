@@ -32,7 +32,7 @@ coverage-check: ## Run tests and enforce 100% coverage
 		awk '{if ($$1 < 100.0) {print "Coverage is " $$1 "%, required 100%"; exit 1} else {print "Coverage: " $$1 "%"}}'
 
 docker-build: ## Build the Docker container image
-	docker build -t loop-agent -f container/Dockerfile .
+	docker build --secret id=gitconfig,src=$(HOME)/.gitconfig -t loop-agent -f container/Dockerfile .
 
 run: build ## Build and run the bot
 	./bin/loop serve

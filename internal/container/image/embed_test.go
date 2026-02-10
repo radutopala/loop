@@ -27,3 +27,8 @@ func (s *EmbedSuite) TestEntrypointNotEmpty() {
 	require.Contains(s.T(), string(Entrypoint), "#!/bin/sh")
 	require.Contains(s.T(), string(Entrypoint), `su-exec "$AGENT_USER" "$@"`)
 }
+
+func (s *EmbedSuite) TestSetupNotEmpty() {
+	require.NotEmpty(s.T(), Setup)
+	require.Contains(s.T(), string(Setup), "#!/bin/sh")
+}

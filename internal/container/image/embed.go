@@ -7,3 +7,6 @@ var Dockerfile []byte
 
 //go:embed entrypoint.sh
 var Entrypoint []byte
+
+//go:embed setup.sh
+var Setup []byte

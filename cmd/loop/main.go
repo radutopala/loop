@@ -281,6 +281,12 @@ func onboardGlobal(force bool) error {
 	if err := osWriteFile(filepath.Join(containerDir, "entrypoint.sh"), containerimage.Entrypoint, 0644); err != nil {
 		return fmt.Errorf("writing container entrypoint: %w", err)
 	}
+	setupPath := filepath.Join(containerDir, "setup.sh")
+	if _, err := osStat(setupPath); err != nil {
+		if err := osWriteFile(setupPath, containerimage.Setup, 0644); err != nil {
+			return fmt.Errorf("writing container setup script: %w", err)
+		}
+	}
 
 	fmt.Printf("✓ Created config at %s\n", configPath)
 	fmt.Println("\nNext steps:")
@@ -427,6 +433,9 @@ var ensureImage = func(ctx context.Context, client container.DockerClient, cfg *
 		}
 		if err := osWriteFile(filepath.Join(containerDir, "entrypoint.sh"), containerimage.Entrypoint, 0644); err != nil {
 			return fmt.Errorf("writing entrypoint: %w", err)
+		}
+		if err := osWriteFile(filepath.Join(containerDir, "setup.sh"), containerimage.Setup, 0644); err != nil {
+			return fmt.Errorf("writing setup script: %w", err)
 		}
 	}
 

@@ -1251,6 +1251,11 @@ func (s *MainSuite) TestOnboardGlobalSuccess() {
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), string(entrypointData), `su-exec "$AGENT_USER" "$@"`)
 
+	setupPath := filepath.Join(tmpDir, ".loop", "container", "setup.sh")
+	setupData, err := os.ReadFile(setupPath)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(setupData), "#!/bin/sh")
+
 	bashrcPath := filepath.Join(tmpDir, ".loop", ".bashrc")
 	bashrcData, err := os.ReadFile(bashrcPath)
 	require.NoError(s.T(), err)
@@ -1479,6 +1484,49 @@ func (s *MainSuite) TestOnboardGlobalContainerEntrypointWriteError() {
 	err := onboardGlobal(false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing container entrypoint")
+}
+
+func (s *MainSuite) TestOnboardGlobalContainerSetupWriteError() {
+	tmpDir := s.T().TempDir()
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	calls := 0
+	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
+		calls++
+		if calls == 5 { // Fifth write is setup.sh (after config, .bashrc, Dockerfile, entrypoint)
+			return errors.New("setup write error")
+		}
+		return os.WriteFile(path, data, perm)
+	}
+
+	err := onboardGlobal(false)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing container setup script")
+}
+
+func (s *MainSuite) TestOnboardGlobalSetupSkipsIfExists() {
+	tmpDir := s.T().TempDir()
+	containerDir := filepath.Join(tmpDir, ".loop", "container")
+	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
+	setupPath := filepath.Join(containerDir, "setup.sh")
+	require.NoError(s.T(), os.WriteFile(setupPath, []byte("existing setup"), 0644))
+
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	osWriteFile = os.WriteFile
+
+	err := onboardGlobal(true) // force overwrites config but not setup.sh
+	require.NoError(s.T(), err)
+
+	data, err := os.ReadFile(setupPath)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "existing setup", string(data))
 }
 
 // --- onboard:local ---
@@ -1816,6 +1864,10 @@ func (s *MainSuite) TestEnsureImageWritesEmbeddedFiles() {
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), string(entrypointData), `su-exec "$AGENT_USER" "$@"`)
 
+	setupData, err := os.ReadFile(filepath.Join(containerDir, "setup.sh"))
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(setupData), "#!/bin/sh")
+
 	dockerClient.AssertExpectations(s.T())
 }
 
@@ -1897,6 +1949,30 @@ func (s *MainSuite) TestEnsureImageEntrypointWriteError() {
 	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing entrypoint")
+}
+
+func (s *MainSuite) TestEnsureImageSetupWriteError() {
+	dockerClient := new(mockDockerClient)
+
+	cfg := &config.Config{
+		LoopDir:        s.T().TempDir(),
+		ContainerImage: "loop-agent:latest",
+	}
+
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	calls := 0
+	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
+		calls++
+		if calls == 3 { // Third write is setup.sh
+			return errors.New("setup write error")
+		}
+		return os.WriteFile(path, data, perm)
+	}
+
+	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing setup script")
 }
 
 // --- version ---

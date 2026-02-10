@@ -96,6 +96,7 @@ This creates:
 - `~/.loop/.bashrc` — shell aliases sourced inside containers
 - `~/.loop/container/Dockerfile` — agent container image definition
 - `~/.loop/container/entrypoint.sh` — container entrypoint script
+- `~/.loop/container/setup.sh` — custom build-time setup script (runs once during `docker build`)
 
 ### Step 4: Add your credentials
 

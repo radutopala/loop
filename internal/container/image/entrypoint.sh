@@ -31,4 +31,5 @@ if [ -S /var/run/docker.sock ]; then
     addgroup "$AGENT_USER" "$GROUP_NAME" 2>/dev/null || true
 fi
 
+export PATH="$AGENT_HOME/bin:$PATH"
 exec su-exec "$AGENT_USER" "$@"
