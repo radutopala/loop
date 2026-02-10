@@ -210,6 +210,15 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[2:]), nil
 }
 
+// isNamedVolume returns true if the source part of a mount looks like a Docker
+// named volume rather than a host path (no slashes, doesn't start with ~ or .).
+func isNamedVolume(source string) bool {
+	return !strings.HasPrefix(source, "/") &&
+		!strings.HasPrefix(source, "~") &&
+		!strings.HasPrefix(source, ".") &&
+		!strings.Contains(source, "/")
+}
+
 // processMount processes a single mount specification and returns the expanded bind string.
 // Returns empty string if the mount should be skipped.
 func processMount(mount string) (string, error) {
@@ -219,6 +228,17 @@ func processMount(mount string) (string, error) {
 	}
 
 	hostPath := parts[0]
+
+	// Docker named volumes (e.g. "gomodcache:/go/pkg/mod") are passed through
+	// without path expansion or existence checks — Docker manages them.
+	if isNamedVolume(hostPath) {
+		mode := ""
+		if len(parts) > 2 {
+			mode = ":" + parts[2]
+		}
+		return hostPath + ":" + parts[1] + mode, nil
+	}
+
 	expanded, err := expandPath(hostPath)
 	if err != nil {
 		return "", fmt.Errorf("expanding path %s: %w", hostPath, err)

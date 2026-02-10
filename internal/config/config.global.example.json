@@ -8,12 +8,12 @@
   //"log_level": "info",
   //"log_format": "text",
   //"container_image": "loop-agent:latest",
-  //"container_timeout_sec": 300,
+  //"container_timeout_sec": 3600,
   //"container_memory_mb": 512,
   //"container_cpus": 1.0,
   //"container_keep_alive_sec": 300,
   //"poll_interval_sec": 30,
-  //"claude_model": "",
+  //"claude_model": "", // defaults to sonnet; options: "claude-opus-4-6", "claude-sonnet-4-5-20250929"
   //"claude_bin_path": "claude",
 
   // MCP server configurations. Each entry defines a separate MCP server that agents can connect to. The key is an arbitrary name for the server, and the value specifies how to start the server (e.g. command and args).
@@ -33,7 +33,10 @@
     // Mount Docker socket to allow agents to run Docker commands (e.g. for testing or deployment)
     "/var/run/docker.sock:/var/run/docker.sock",
     // Mount shell aliases/config into container's bashrc (sourced by Claude's bash subshells)
-    "~/.loop/.bashrc:~/.bashrc:ro"
+    "~/.loop/.bashrc:~/.bashrc:ro",
+    // Named volumes for Go caches — persisted across container runs by Docker
+    "gomodcache:/go/pkg/mod",
+    "gobuildcache:/root/.cache/go-build"
   ],
 
   // Task templates

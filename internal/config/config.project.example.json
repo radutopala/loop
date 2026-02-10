@@ -1,9 +1,14 @@
 {
   // Claude model override for this project (e.g. "claude-sonnet-4-5-20250929")
-  //"claude_model": "",
+  //"claude_model": "", // defaults to sonnet; options: "claude-opus-4-6", "claude-sonnet-4-5-20250929"
 
   // Claude binary path override (e.g. "/usr/local/bin/claude" or "claude-code")
   //"claude_bin_path": "",
+
+  // Container overrides for this project
+  //"container_image": "loop-agent:latest",
+  //"container_memory_mb": 512,
+  //"container_cpus": 1.0,
 
   // MCP server configurations specific to this project
   // Project servers take precedence over global config servers with the same name
@@ -25,6 +30,9 @@
   //  "~/.gitconfig:~/.gitconfig:ro",
   //  "~/.ssh:~/.ssh:ro",
   //  "~/.aws:~/.aws",
-  //  "/var/run/docker.sock:/var/run/docker.sock"
+  //  "/var/run/docker.sock:/var/run/docker.sock",
+  //  // Named volumes for Go caches — persisted across container runs by Docker
+  //  "gomodcache:/go/pkg/mod",
+  //  "gobuildcache:/root/.cache/go-build"
   //]
 }

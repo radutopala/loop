@@ -91,6 +91,7 @@ loop onboard:global
 
 This creates:
 - `~/.loop/config.json` — main configuration file
+- `~/.loop/.bashrc` — shell aliases sourced inside containers
 - `~/.loop/container/Dockerfile` — agent container image definition
 - `~/.loop/container/entrypoint.sh` — container entrypoint script
 
@@ -150,7 +151,7 @@ This does three things:
 | `log_level` | `"info"` | Log level (`debug`, `info`, `warn`, `error`) |
 | `log_format` | `"text"` | Log format (`text`, `json`) |
 | `container_image` | `"loop-agent:latest"` | Docker image for agent containers |
-| `container_timeout_sec` | `300` | Max seconds per agent run |
+| `container_timeout_sec` | `3600` | Max seconds per agent run |
 | `container_memory_mb` | `512` | Memory limit per container (MB) |
 | `container_cpus` | `1.0` | CPU limit per container |
 | `container_keep_alive_sec` | `300` | Keep-alive duration for idle containers |
@@ -177,6 +178,7 @@ The `mounts` array mounts host directories into all agent containers. Format: `"
 
 - Paths starting with `~/` are expanded to the user's home directory
 - Non-existent paths are silently skipped
+- Docker named volumes are supported (e.g. `"gomodcache:/go/pkg/mod"`) — Docker manages them automatically
 - The Docker socket's GID is auto-detected and added to the container process
 - Project directories (`workDir`) and MCP logs (`mcpDir`) are always mounted automatically at their actual paths
 
@@ -190,6 +192,9 @@ Project config overrides specific global settings. Only these fields are allowed
 | `mcp` | **Merged** with global; project servers take precedence |
 | `claude_model` | **Overrides** global model |
 | `claude_bin_path` | **Overrides** global binary path |
+| `container_image` | **Overrides** global image |
+| `container_memory_mb` | **Overrides** global memory limit |
+| `container_cpus` | **Overrides** global CPU limit |
 
 Relative paths in project mounts (e.g., `./data`) are resolved relative to the project directory.
 

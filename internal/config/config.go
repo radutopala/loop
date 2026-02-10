@@ -127,7 +127,7 @@ func Load() (*Config, error) {
 		LogFormat:            stringDefault(jc.LogFormat, "text"),
 		DBPath:               stringDefault(jc.DBPath, filepath.Join(loopDir, "loop.db")),
 		ContainerImage:       stringDefault(jc.ContainerImage, "loop-agent:latest"),
-		ContainerTimeout:     time.Duration(intPtrDefault(jc.ContainerTimeoutSec, 300)) * time.Second,
+		ContainerTimeout:     time.Duration(intPtrDefault(jc.ContainerTimeoutSec, 3600)) * time.Second,
 		ContainerMemoryMB:    int64PtrDefault(jc.ContainerMemoryMB, 512),
 		ContainerCPUs:        floatPtrDefault(jc.ContainerCPUs, 1.0),
 		ContainerKeepAlive:   time.Duration(intPtrDefault(jc.ContainerKeepAliveSec, 300)) * time.Second,
@@ -188,10 +188,13 @@ func floatPtrDefault(val *float64, def float64) float64 {
 
 // projectConfig is the structure for project-specific .loop/config.json files.
 type projectConfig struct {
-	Mounts        []string       `json:"mounts"`
-	MCP           *jsonMCPConfig `json:"mcp"`
-	ClaudeModel   string         `json:"claude_model"`
-	ClaudeBinPath string         `json:"claude_bin_path"`
+	Mounts            []string       `json:"mounts"`
+	MCP               *jsonMCPConfig `json:"mcp"`
+	ClaudeModel       string         `json:"claude_model"`
+	ClaudeBinPath     string         `json:"claude_bin_path"`
+	ContainerImage    string         `json:"container_image"`
+	ContainerMemoryMB *int64         `json:"container_memory_mb"`
+	ContainerCPUs     *float64       `json:"container_cpus"`
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
@@ -277,6 +280,16 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 
 	if pc.ClaudeBinPath != "" {
 		merged.ClaudeBinPath = pc.ClaudeBinPath
+	}
+
+	if pc.ContainerImage != "" {
+		merged.ContainerImage = pc.ContainerImage
+	}
+	if pc.ContainerMemoryMB != nil {
+		merged.ContainerMemoryMB = *pc.ContainerMemoryMB
+	}
+	if pc.ContainerCPUs != nil {
+		merged.ContainerCPUs = *pc.ContainerCPUs
 	}
 
 	return &merged, nil

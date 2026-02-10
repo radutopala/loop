@@ -1150,6 +1150,18 @@ func TestProcessMount(t *testing.T) {
 			wantErr:  false,
 		},
 		{
+			name:     "named volume",
+			input:    "gomodcache:/go/pkg/mod",
+			expected: "gomodcache:/go/pkg/mod",
+			wantErr:  false,
+		},
+		{
+			name:     "named volume with mode",
+			input:    "gobuildcache:/root/.cache/go-build:rw",
+			expected: "gobuildcache:/root/.cache/go-build:rw",
+			wantErr:  false,
+		},
+		{
 			name:     "invalid format",
 			input:    "invalid",
 			expected: "",
@@ -1166,6 +1178,26 @@ func TestProcessMount(t *testing.T) {
 				require.NoError(t, err)
 				require.Equal(t, tt.expected, result)
 			}
+		})
+	}
+}
+
+func TestIsNamedVolume(t *testing.T) {
+	tests := []struct {
+		source   string
+		expected bool
+	}{
+		{"gomodcache", true},
+		{"my-volume", true},
+		{"/absolute/path", false},
+		{"~/home/path", false},
+		{"./relative/path", false},
+		{"relative/path", false},
+		{"", true}, // edge case but won't reach here due to mount format validation
+	}
+	for _, tt := range tests {
+		t.Run(tt.source, func(t *testing.T) {
+			require.Equal(t, tt.expected, isNamedVolume(tt.source))
 		})
 	}
 }

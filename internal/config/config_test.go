@@ -51,7 +51,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Equal(s.T(), "info", cfg.LogLevel)
 	require.Equal(s.T(), "text", cfg.LogFormat)
 	require.Equal(s.T(), "loop-agent:latest", cfg.ContainerImage)
-	require.Equal(s.T(), 300*time.Second, cfg.ContainerTimeout)
+	require.Equal(s.T(), 3600*time.Second, cfg.ContainerTimeout)
 	require.Equal(s.T(), int64(512), cfg.ContainerMemoryMB)
 	require.Equal(s.T(), 1.0, cfg.ContainerCPUs)
 	require.Equal(s.T(), 300*time.Second, cfg.ContainerKeepAlive)
@@ -734,6 +734,56 @@ func (s *ConfigSuite) TestLoadProjectConfigClaudeBinPathNoOverride() {
 	merged, err := LoadProjectConfig("/project", mainCfg)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "claude", merged.ClaudeBinPath)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigContainerOverrides() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"container_image": "custom-agent:v3",
+				"container_memory_mb": 2048,
+				"container_cpus": 4.0
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		ContainerImage:    "loop-agent:latest",
+		ContainerMemoryMB: 512,
+		ContainerCPUs:     1.0,
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "custom-agent:v3", merged.ContainerImage)
+	require.Equal(s.T(), int64(2048), merged.ContainerMemoryMB)
+	require.Equal(s.T(), 4.0, merged.ContainerCPUs)
+
+	// Verify main not mutated
+	require.Equal(s.T(), "loop-agent:latest", mainCfg.ContainerImage)
+	require.Equal(s.T(), int64(512), mainCfg.ContainerMemoryMB)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigContainerNoOverride() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		ContainerImage:    "loop-agent:latest",
+		ContainerMemoryMB: 512,
+		ContainerCPUs:     1.0,
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "loop-agent:latest", merged.ContainerImage)
+	require.Equal(s.T(), int64(512), merged.ContainerMemoryMB)
+	require.Equal(s.T(), 1.0, merged.ContainerCPUs)
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigDoesNotMutateMain() {
