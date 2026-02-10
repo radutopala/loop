@@ -1,5 +1,7 @@
 # Loop
 
+[![Go](https://img.shields.io/badge/Go-1.25-blue)](https://go.dev/) [![CI](https://github.com/radutopala/loop/actions/workflows/ci.yml/badge.svg)](https://github.com/radutopala/loop/actions/workflows/ci.yml) [![release](https://img.shields.io/github/v/release/radutopala/loop)](https://github.com/radutopala/loop/releases/latest) [![license](https://img.shields.io/github/license/radutopala/loop)](LICENSE)
+
 A Discord bot powered by Claude that runs AI agents in Docker containers.
 
 ## Architecture
