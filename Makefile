@@ -1,4 +1,4 @@
-.PHONY: help build install test lint coverage coverage-check docker-build run clean restart docker-shell docker-logs
+.PHONY: help build install test lint coverage coverage-check docker-build run clean restart docker-shell docker-logs docker-snapshot
 .DEFAULT_GOAL := help
 
 help: ## Show available targets
@@ -41,28 +41,19 @@ restart: install docker-build ## Install, stop and start the daemon
 	loop daemon:stop || true
 	loop daemon:start
 
-docker-shell: ## Start a bash shell in the agent container
-	docker run --rm -it \
-		--add-host=host.docker.internal:host-gateway \
-		-v $(CURDIR):$(CURDIR) \
-		-v $(HOME)/.claude:$(HOME)/.claude \
-		-v $(HOME)/.gitconfig:$(HOME)/.gitconfig:ro \
-		-v $(HOME)/.gitignore_global:$(HOME)/.gitignore_global:ro \
-		-v $(HOME)/.ssh:$(HOME)/.ssh:ro \
-		-v $(HOME)/.aws:$(HOME)/.aws \
-		-v /var/run/docker.sock:/var/run/docker.sock \
-		-w $(CURDIR) \
-		-e HOME=$(HOME) \
-		-e HOST_USER=$(USER) \
-		-e CLAUDE_CODE_OAUTH_TOKEN=$$(grep claude_code_oauth_token ~/.loop/config.json | awk -F'"' '{print $$4}') \
-		loop-agent:latest bash
+docker-shell: ## Start a bash shell in the agent container (requires make docker-snapshot first)
+	docker run --rm -it $$(cat ~/.loop/snapshot-run) loop-agent:snapshot bash
 
-docker-logs: ## Tail logs of a running agent container (waits for one to start)
-	@while true; do \
-		CID=$$(docker ps -q --filter label=app=loop-agent); \
-		if [ -n "$$CID" ]; then docker logs -f "$$CID"; break; fi; \
-		sleep 0.5; \
-	done
+docker-snapshot: ## Snapshot the most recent loop-agent container into loop-agent:snapshot
+	@CID=$$(docker ps -aq --filter label=app=loop-agent | head -1); \
+	if [ -z "$$CID" ]; then echo "No loop-agent container found"; exit 1; fi; \
+	echo "Committing container $$CID to loop-agent:snapshot"; \
+	docker commit "$$CID" loop-agent:snapshot; \
+	VOLS=$$(docker inspect --format '{{range .Mounts}}{{if eq .Type "volume"}}-v {{.Name}}:{{.Destination}} {{else if eq .Type "bind"}}-v {{.Source}}:{{.Destination}}{{if .Mode}}:{{.Mode}}{{end}} {{end}}{{end}}' "$$CID"); \
+	ENVS=$$(docker inspect --format '{{range .Config.Env}}-e {{.}} {{end}}' "$$CID"); \
+	WORKDIR=$$(docker inspect --format '{{.Config.WorkingDir}}' "$$CID"); \
+	echo "$$VOLS $$ENVS -w $$WORKDIR --add-host=host.docker.internal:host-gateway" > ~/.loop/snapshot-run; \
+	echo 'Run with: make docker-shell'
 
 clean: ## Remove build artifacts
 	rm -rf bin/ coverage.out coverage.html

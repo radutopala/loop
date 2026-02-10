@@ -833,13 +833,15 @@ func (s *ConfigSuite) TestLoadEnvsFromGlobal() {
 		return []byte(`{
 			"discord_token": "tok",
 			"discord_app_id": "app",
-			"envs": {"MY_VAR": "my-value"}
+			"envs": {"MY_VAR": "my-value", "NUM_VAR": 0, "BOOL_VAR": true}
 		}`), nil
 	}
 
 	cfg, err := Load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "my-value", cfg.Envs["MY_VAR"])
+	require.Equal(s.T(), "0", cfg.Envs["NUM_VAR"])
+	require.Equal(s.T(), "true", cfg.Envs["BOOL_VAR"])
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigDoesNotMutateMain() {

@@ -20,7 +20,10 @@
   "mcp": {},
 
   // Extra environment variables passed to all containers
-  "envs": {},
+  "envs": {
+    // Ensure .bashrc is sourced in non-interactive shells (e.g. Claude's bash subshells)
+    "BASH_ENV": "~/.bashrc"
+  },
 
   // Mounts for all containers
   // Format: "host_path:container_path" or "host_path:container_path:ro"

@@ -72,7 +72,7 @@ type jsonConfig struct {
 	MCP                   *jsonMCPConfig    `json:"mcp"`
 	TaskTemplates         []TaskTemplate    `json:"task_templates"`
 	Mounts                []string          `json:"mounts"`
-	Envs                  map[string]string `json:"envs"`
+	Envs                  map[string]any    `json:"envs"`
 	ClaudeModel           string            `json:"claude_model"`
 	ClaudeBinPath         string            `json:"claude_bin_path"`
 }
@@ -145,7 +145,7 @@ func Load() (*Config, error) {
 
 	cfg.TaskTemplates = jc.TaskTemplates
 	cfg.Mounts = jc.Mounts
-	cfg.Envs = jc.Envs
+	cfg.Envs = stringifyEnvs(jc.Envs)
 
 	var missing []string
 	if cfg.DiscordToken == "" {
@@ -189,10 +189,23 @@ func floatPtrDefault(val *float64, def float64) float64 {
 	return def
 }
 
+// stringifyEnvs converts a map of any JSON values to strings.
+// Numbers, booleans, etc. are formatted as their natural string representation.
+func stringifyEnvs(raw map[string]any) map[string]string {
+	if len(raw) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(raw))
+	for k, v := range raw {
+		out[k] = fmt.Sprintf("%v", v)
+	}
+	return out
+}
+
 // projectConfig is the structure for project-specific .loop/config.json files.
 type projectConfig struct {
-	Mounts            []string          `json:"mounts"`
-	Envs              map[string]string `json:"envs"`
+	Mounts            []string       `json:"mounts"`
+	Envs              map[string]any `json:"envs"`
 	MCP               *jsonMCPConfig    `json:"mcp"`
 	ClaudeModel       string            `json:"claude_model"`
 	ClaudeBinPath     string            `json:"claude_bin_path"`
@@ -302,7 +315,7 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 		for k, v := range mainConfig.Envs {
 			mergedEnvs[k] = v
 		}
-		for k, v := range pc.Envs {
+		for k, v := range stringifyEnvs(pc.Envs) {
 			mergedEnvs[k] = v
 		}
 		merged.Envs = mergedEnvs
