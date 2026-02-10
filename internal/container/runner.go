@@ -230,13 +230,18 @@ func processMount(mount string) (string, error) {
 	hostPath := parts[0]
 
 	// Docker named volumes (e.g. "gomodcache:/go/pkg/mod") are passed through
-	// without path expansion or existence checks — Docker manages them.
+	// without host path expansion or existence checks — Docker manages them.
+	// The container path still needs ~ expansion since Docker requires absolute paths.
 	if isNamedVolume(hostPath) {
+		containerPath, err := expandPath(parts[1])
+		if err != nil {
+			return "", fmt.Errorf("expanding container path %s: %w", parts[1], err)
+		}
 		mode := ""
 		if len(parts) > 2 {
 			mode = ":" + parts[2]
 		}
-		return hostPath + ":" + parts[1] + mode, nil
+		return hostPath + ":" + containerPath + mode, nil
 	}
 
 	expanded, err := expandPath(hostPath)
@@ -338,6 +343,13 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 			env = append(env, key+"="+localhostToDockerHost(v))
 		}
 	}
+	for k, v := range cfg.Envs {
+		expanded, err := expandPath(v)
+		if err != nil {
+			return nil, fmt.Errorf("expanding env %s value: %w", k, err)
+		}
+		env = append(env, k+"="+expanded)
+	}
 
 	for _, dir := range []string{workDir, filepath.Join(workDir, ".loop")} {
 		if err := mkdirAll(dir, 0o755); err != nil {
@@ -354,9 +366,18 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 	}
 
 	var binds []string
+	var chownDirs []string
 
 	// Add mounts from merged config (includes project-specific mounts)
 	for _, mount := range cfg.Mounts {
+		parts := strings.Split(mount, ":")
+		if len(parts) >= 2 && isNamedVolume(parts[0]) {
+			// Track named volume container paths for chown in entrypoint
+			expanded, _ := expandPath(parts[1])
+			if expanded != "" {
+				chownDirs = append(chownDirs, expanded)
+			}
+		}
 		bind, err := processMount(mount)
 		if err != nil {
 			// Log warning but continue (don't fail the container)
@@ -366,6 +387,9 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		if bind != "" {
 			binds = append(binds, bind)
 		}
+	}
+	if len(chownDirs) > 0 {
+		env = append(env, "CHOWN_DIRS="+strings.Join(chownDirs, ":"))
 	}
 
 	// Auto-detect and mount git core.excludesFile if configured

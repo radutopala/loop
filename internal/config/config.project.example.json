@@ -22,6 +22,9 @@
   //  }
   //},
 
+  // Extra environment variables for this project's containers (merged with global; project takes precedence)
+  //"envs": {},
+
   // Mounts for this project's containers (replaces global mounts when set)
   // Format: "host_path:container_path" or "host_path:container_path:ro"
   // Relative paths are resolved relative to the project directory
@@ -31,8 +34,9 @@
   //  "~/.ssh:~/.ssh:ro",
   //  "~/.aws:~/.aws",
   //  "/var/run/docker.sock:/var/run/docker.sock",
-  //  // Named volumes for Go caches — persisted across container runs by Docker
-  //  "loop-gomodcache:/go/pkg/mod",
-  //  "loop-gobuildcache:/root/.cache/go-build"
+  //  // Named volumes for caches — persisted across container runs by Docker
+  //  "loop-npmcache:~/.npm",
+  //  "loop-gomodcache:~/go/pkg/mod",
+  //  "loop-gocache:~/.cache/go-build"
   //]
 }

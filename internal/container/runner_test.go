@@ -518,6 +518,65 @@ func (s *RunnerSuite) TestRunProxyEnvForwarding() {
 	s.client.AssertExpectations(s.T())
 }
 
+func (s *RunnerSuite) TestRunConfigEnvsForwarding() {
+	s.cfg.Envs = map[string]string{
+		"CUSTOM_VAR": "custom-value",
+		"GOMODCACHE": "~/go/pkg/mod",
+	}
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	jsonOutput := `{"type":"result","result":"ok","session_id":"s1","is_error":false}`
+	reader := bytes.NewReader([]byte(jsonOutput))
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Env, "CUSTOM_VAR=custom-value") &&
+			slices.Contains(cfg.Env, "GOMODCACHE=/home/testuser/go/pkg/mod")
+	}), "loop-ch-1-aabbcc").Return("container-123", nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp.Response)
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunConfigEnvsExpandError() {
+	s.cfg.Envs = map[string]string{
+		"BAD_VAR": "~/some/path",
+	}
+	callCount := 0
+	userHomeDir = func() (string, error) {
+		callCount++
+		if callCount == 1 {
+			return "/home/testuser", nil // hostHome succeeds
+		}
+		return "", errors.New("home error") // env expansion fails
+	}
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	_, err := s.runner.Run(ctx, req)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "expanding env")
+}
+
 func (s *RunnerSuite) TestRunJSONParseError() {
 	ctx := context.Background()
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
@@ -1162,6 +1221,12 @@ func TestProcessMount(t *testing.T) {
 			wantErr:  false,
 		},
 		{
+			name:     "named volume with tilde container path",
+			input:    "npmcache:~/.npm",
+			expected: "npmcache:/home/testuser/.npm",
+			wantErr:  false,
+		},
+		{
 			name:     "invalid format",
 			input:    "invalid",
 			expected: "",
@@ -1239,6 +1304,20 @@ func TestProcessMountContainerPathExpandError(t *testing.T) {
 
 	// Host uses ~ (triggers first userHomeDir call), container uses ~ (triggers second call that fails)
 	result, err := processMount("~/.claude:~/.claude")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "expanding container path")
+	require.Empty(t, result)
+}
+
+func TestProcessMountNamedVolumeContainerPathExpandError(t *testing.T) {
+	origUserHomeDir := userHomeDir
+	defer func() { userHomeDir = origUserHomeDir }()
+
+	userHomeDir = func() (string, error) {
+		return "", errors.New("home dir error")
+	}
+
+	result, err := processMount("myvolume:~/.cache")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "expanding container path")
 	require.Empty(t, result)
@@ -1335,6 +1414,64 @@ func (s *RunnerSuite) TestRunWithCustomMounts() {
 	resp, err := s.runner.Run(ctx, req)
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), resp)
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunNamedVolumesChownDirs() {
+	origUserHomeDir := userHomeDir
+	origOsStat := osStat
+	defer func() {
+		userHomeDir = origUserHomeDir
+		osStat = origOsStat
+	}()
+
+	userHomeDir = func() (string, error) {
+		return "/home/testuser", nil
+	}
+	osStat = func(_ string) (os.FileInfo, error) {
+		return nil, os.ErrNotExist
+	}
+
+	s.cfg.Mounts = []string{
+		"loop-gomodcache:/go/pkg/mod",
+		"loop-npmcache:~/.npm",
+	}
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	jsonOutput := `{"type":"result","result":"ok","session_id":"s1","is_error":false}`
+	reader := bytes.NewReader([]byte(jsonOutput))
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		hasChownDirs := false
+		for _, e := range cfg.Env {
+			if strings.HasPrefix(e, "CHOWN_DIRS=") {
+				val := strings.TrimPrefix(e, "CHOWN_DIRS=")
+				hasChownDirs = strings.Contains(val, "/go/pkg/mod") &&
+					strings.Contains(val, "/home/testuser/.npm")
+			}
+		}
+		hasGomod := slices.Contains(cfg.Binds, "loop-gomodcache:/go/pkg/mod")
+		hasNpm := slices.Contains(cfg.Binds, "loop-npmcache:/home/testuser/.npm")
+		return hasChownDirs && hasGomod && hasNpm
+	}), "loop-ch-1-aabbcc").Return("container-123", nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp.Response)
 
 	s.client.AssertExpectations(s.T())
 }

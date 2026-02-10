@@ -19,6 +19,9 @@
   // MCP server configurations. Each entry defines a separate MCP server that agents can connect to. The key is an arbitrary name for the server, and the value specifies how to start the server (e.g. command and args).
   "mcp": {},
 
+  // Extra environment variables passed to all containers
+  "envs": {},
+
   // Mounts for all containers
   // Format: "host_path:container_path" or "host_path:container_path:ro"
   "mounts": [
@@ -34,9 +37,10 @@
     "/var/run/docker.sock:/var/run/docker.sock",
     // Mount shell aliases/config into container's bashrc (sourced by Claude's bash subshells)
     "~/.loop/.bashrc:~/.bashrc:ro",
-    // Named volumes for Go caches — persisted across container runs by Docker
-    "loop-gomodcache:/go/pkg/mod",
-    "loop-gobuildcache:/root/.cache/go-build"
+    // Named volumes for caches — persisted across container runs by Docker
+    "loop-npmcache:~/.npm",
+    "loop-gomodcache:~/go/pkg/mod",
+    "loop-gocache:~/.cache/go-build"
   ],
 
   // Task templates

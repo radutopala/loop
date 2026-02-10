@@ -786,6 +786,62 @@ func (s *ConfigSuite) TestLoadProjectConfigContainerNoOverride() {
 	require.Equal(s.T(), 1.0, merged.ContainerCPUs)
 }
 
+func (s *ConfigSuite) TestLoadProjectConfigEnvsMerged() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"envs": {"PROJECT_KEY": "proj-val", "SHARED": "proj"}
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		Envs: map[string]string{"GLOBAL_KEY": "global-val", "SHARED": "global"},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "global-val", merged.Envs["GLOBAL_KEY"])
+	require.Equal(s.T(), "proj-val", merged.Envs["PROJECT_KEY"])
+	require.Equal(s.T(), "proj", merged.Envs["SHARED"]) // project wins
+
+	// Verify main not mutated
+	require.Equal(s.T(), "global", mainCfg.Envs["SHARED"])
+	require.Empty(s.T(), mainCfg.Envs["PROJECT_KEY"])
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigEnvsNoOverride() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		Envs: map[string]string{"GLOBAL_KEY": "global-val"},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "global-val", merged.Envs["GLOBAL_KEY"])
+}
+
+func (s *ConfigSuite) TestLoadEnvsFromGlobal() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"discord_token": "tok",
+			"discord_app_id": "app",
+			"envs": {"MY_VAR": "my-value"}
+		}`), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "my-value", cfg.Envs["MY_VAR"])
+}
+
 func (s *ConfigSuite) TestLoadProjectConfigDoesNotMutateMain() {
 	readFile = func(path string) ([]byte, error) {
 		if path == "/project/.loop/config.json" {

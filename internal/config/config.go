@@ -48,31 +48,33 @@ type Config struct {
 	MCPServers           map[string]MCPServerConfig
 	TaskTemplates        []TaskTemplate
 	Mounts               []string
+	Envs                 map[string]string
 	ClaudeModel          string
 }
 
 // jsonConfig is an intermediate struct for JSON unmarshalling.
 // Pointer types for numerics distinguish "missing" (nil) from "zero".
 type jsonConfig struct {
-	DiscordToken          string         `json:"discord_token"`
-	DiscordAppID          string         `json:"discord_app_id"`
-	ClaudeCodeOAuthToken  string         `json:"claude_code_oauth_token"`
-	DiscordGuildID        string         `json:"discord_guild_id"`
-	LogLevel              string         `json:"log_level"`
-	LogFormat             string         `json:"log_format"`
-	DBPath                string         `json:"db_path"`
-	ContainerImage        string         `json:"container_image"`
-	ContainerTimeoutSec   *int           `json:"container_timeout_sec"`
-	ContainerMemoryMB     *int64         `json:"container_memory_mb"`
-	ContainerCPUs         *float64       `json:"container_cpus"`
-	ContainerKeepAliveSec *int           `json:"container_keep_alive_sec"`
-	PollIntervalSec       *int           `json:"poll_interval_sec"`
-	APIAddr               string         `json:"api_addr"`
-	MCP                   *jsonMCPConfig `json:"mcp"`
-	TaskTemplates         []TaskTemplate `json:"task_templates"`
-	Mounts                []string       `json:"mounts"`
-	ClaudeModel           string         `json:"claude_model"`
-	ClaudeBinPath         string         `json:"claude_bin_path"`
+	DiscordToken          string            `json:"discord_token"`
+	DiscordAppID          string            `json:"discord_app_id"`
+	ClaudeCodeOAuthToken  string            `json:"claude_code_oauth_token"`
+	DiscordGuildID        string            `json:"discord_guild_id"`
+	LogLevel              string            `json:"log_level"`
+	LogFormat             string            `json:"log_format"`
+	DBPath                string            `json:"db_path"`
+	ContainerImage        string            `json:"container_image"`
+	ContainerTimeoutSec   *int              `json:"container_timeout_sec"`
+	ContainerMemoryMB     *int64            `json:"container_memory_mb"`
+	ContainerCPUs         *float64          `json:"container_cpus"`
+	ContainerKeepAliveSec *int              `json:"container_keep_alive_sec"`
+	PollIntervalSec       *int              `json:"poll_interval_sec"`
+	APIAddr               string            `json:"api_addr"`
+	MCP                   *jsonMCPConfig    `json:"mcp"`
+	TaskTemplates         []TaskTemplate    `json:"task_templates"`
+	Mounts                []string          `json:"mounts"`
+	Envs                  map[string]string `json:"envs"`
+	ClaudeModel           string            `json:"claude_model"`
+	ClaudeBinPath         string            `json:"claude_bin_path"`
 }
 
 type jsonMCPConfig struct {
@@ -143,6 +145,7 @@ func Load() (*Config, error) {
 
 	cfg.TaskTemplates = jc.TaskTemplates
 	cfg.Mounts = jc.Mounts
+	cfg.Envs = jc.Envs
 
 	var missing []string
 	if cfg.DiscordToken == "" {
@@ -188,13 +191,14 @@ func floatPtrDefault(val *float64, def float64) float64 {
 
 // projectConfig is the structure for project-specific .loop/config.json files.
 type projectConfig struct {
-	Mounts            []string       `json:"mounts"`
-	MCP               *jsonMCPConfig `json:"mcp"`
-	ClaudeModel       string         `json:"claude_model"`
-	ClaudeBinPath     string         `json:"claude_bin_path"`
-	ContainerImage    string         `json:"container_image"`
-	ContainerMemoryMB *int64         `json:"container_memory_mb"`
-	ContainerCPUs     *float64       `json:"container_cpus"`
+	Mounts            []string          `json:"mounts"`
+	Envs              map[string]string `json:"envs"`
+	MCP               *jsonMCPConfig    `json:"mcp"`
+	ClaudeModel       string            `json:"claude_model"`
+	ClaudeBinPath     string            `json:"claude_bin_path"`
+	ContainerImage    string            `json:"container_image"`
+	ContainerMemoryMB *int64            `json:"container_memory_mb"`
+	ContainerCPUs     *float64          `json:"container_cpus"`
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
@@ -290,6 +294,18 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 	}
 	if pc.ContainerCPUs != nil {
 		merged.ContainerCPUs = *pc.ContainerCPUs
+	}
+
+	// Merge envs: project takes precedence over global
+	if len(pc.Envs) > 0 {
+		mergedEnvs := make(map[string]string)
+		for k, v := range mainConfig.Envs {
+			mergedEnvs[k] = v
+		}
+		for k, v := range pc.Envs {
+			mergedEnvs[k] = v
+		}
+		merged.Envs = mergedEnvs
 	}
 
 	return &merged, nil
