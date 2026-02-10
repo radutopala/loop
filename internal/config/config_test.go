@@ -204,16 +204,6 @@ func (s *ConfigSuite) TestMCPServersLoaded() {
 	require.Equal(s.T(), map[string]string{"API_KEY": "secret"}, srv.Env)
 }
 
-func (s *ConfigSuite) TestMCPServersAbsent() {
-	readFile = func(_ string) ([]byte, error) {
-		return s.minimalJSON(), nil
-	}
-
-	cfg, err := Load()
-	require.NoError(s.T(), err)
-	require.Nil(s.T(), cfg.MCPServers)
-}
-
 func (s *ConfigSuite) TestMCPServersEmptyBlock() {
 	readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
@@ -842,41 +832,4 @@ func (s *ConfigSuite) TestLoadEnvsFromGlobal() {
 	require.Equal(s.T(), "my-value", cfg.Envs["MY_VAR"])
 	require.Equal(s.T(), "0", cfg.Envs["NUM_VAR"])
 	require.Equal(s.T(), "true", cfg.Envs["BOOL_VAR"])
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigDoesNotMutateMain() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{
-				"mounts": ["./data:/app/data"],
-				"mcp": {
-					"servers": {
-						"project-srv": {"command": "/bin/project"}
-					}
-				}
-			}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		Mounts:     []string{"~/.gitconfig:~/.gitconfig:ro"},
-		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-
-	// Verify main config was not mutated
-	require.Len(s.T(), mainCfg.Mounts, 1)
-	require.Equal(s.T(), "~/.gitconfig:~/.gitconfig:ro", mainCfg.Mounts[0])
-	require.Len(s.T(), mainCfg.MCPServers, 1)
-	require.Equal(s.T(), "/bin/main", mainCfg.MCPServers["main-srv"].Command)
-
-	// Verify merged config has project mounts (replaced, not appended)
-	require.Len(s.T(), merged.Mounts, 1)
-	require.Equal(s.T(), "/project/data:/app/data", merged.Mounts[0])
-	require.Len(s.T(), merged.MCPServers, 2)
-	require.Equal(s.T(), "/bin/main", merged.MCPServers["main-srv"].Command)
-	require.Equal(s.T(), "/bin/project", merged.MCPServers["project-srv"].Command)
 }

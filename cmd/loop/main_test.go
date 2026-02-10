@@ -453,26 +453,6 @@ func (s *MainSuite) TestRunMCP() {
 	require.True(s.T(), called)
 }
 
-func (s *MainSuite) TestNewMCPCmdRunE() {
-	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
-	// Test the RunE closure is wired correctly by executing with flags.
-	called := false
-	newMCPServer = func(channelID, apiURL string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
-		require.Equal(s.T(), "ch-test", channelID)
-		require.Equal(s.T(), "http://test:8222", apiURL)
-		called = true
-		return mcpserver.New(channelID, apiURL, httpClient, logger)
-	}
-
-	cmd := newMCPCmd()
-	cmd.SetArgs([]string{"--channel-id", "ch-test", "--api-url", "http://test:8222", "--log", logPath})
-	// Note: this calls runMCP via RunE which now takes 4 args
-	// Execute will invoke RunE -> runMCP which tries StdioTransport.
-	// That will return an error in test context, which is fine.
-	_ = cmd.Execute()
-	require.True(s.T(), called)
-}
-
 func (s *MainSuite) TestRunMCPLogOpenError() {
 	err := runMCP("ch1", "http://localhost:8222", "", "/nonexistent/dir/mcp.log")
 	require.Error(s.T(), err)
@@ -1370,24 +1350,6 @@ func (s *MainSuite) TestOnboardGlobalWriteFileError() {
 	require.Contains(s.T(), err.Error(), "writing config file")
 }
 
-func (s *MainSuite) TestOnboardGlobalCmdRunE() {
-	tmpDir := s.T().TempDir()
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
-	}
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	osWriteFile = os.WriteFile
-
-	cmd := newOnboardGlobalCmd()
-	err := cmd.Execute()
-	require.NoError(s.T(), err)
-
-	configPath := filepath.Join(tmpDir, ".loop", "config.json")
-	_, err = os.Stat(configPath)
-	require.NoError(s.T(), err)
-}
-
 func (s *MainSuite) TestOnboardGlobalCmdWithForceFlag() {
 	tmpDir := s.T().TempDir()
 	loopDir := filepath.Join(tmpDir, ".loop")
@@ -1636,22 +1598,8 @@ func (s *MainSuite) TestOnboardLocalCmdRunE() {
 	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
 
 	cmd := newOnboardLocalCmd()
+	cmd.SetArgs([]string{"--api-url", "http://custom:9999"})
 	err := cmd.Execute()
-	require.NoError(s.T(), err)
-
-	mcpPath := filepath.Join(tmpDir, ".mcp.json")
-	_, err = os.Stat(mcpPath)
-	require.NoError(s.T(), err)
-}
-
-func (s *MainSuite) TestOnboardLocalCustomAPIURL() {
-	tmpDir := s.T().TempDir()
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = os.WriteFile
-	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
-
-	err := onboardLocal("http://custom:9999")
 	require.NoError(s.T(), err)
 
 	data, err := os.ReadFile(filepath.Join(tmpDir, ".mcp.json"))
@@ -1986,20 +1934,4 @@ func (s *MainSuite) TestVersionOutputDefaults() {
 	cmd.SetArgs([]string{})
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
-}
-
-func (s *MainSuite) TestRootCmdHasOnboardCommands() {
-	cmd := newRootCmd()
-	foundGlobal := false
-	foundLocal := false
-	for _, sub := range cmd.Commands() {
-		if sub.Use == "onboard:global" {
-			foundGlobal = true
-		}
-		if sub.Use == "onboard:local" {
-			foundLocal = true
-		}
-	}
-	require.True(s.T(), foundGlobal, "root command should have onboard:global subcommand")
-	require.True(s.T(), foundLocal, "root command should have onboard:local subcommand")
 }

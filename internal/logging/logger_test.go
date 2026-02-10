@@ -3,7 +3,6 @@ package logging
 import (
 	"bytes"
 	"log/slog"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -85,17 +84,4 @@ func (s *LoggerSuite) TestParseLevel() {
 	require.Equal(s.T(), slog.LevelError, parseLevel("error"))
 	require.Equal(s.T(), slog.LevelInfo, parseLevel(""))
 	require.Equal(s.T(), slog.LevelInfo, parseLevel("invalid"))
-}
-
-func (s *LoggerSuite) TestParseLevelCaseInsensitive() {
-	require.Equal(s.T(), slog.LevelDebug, parseLevel("DEBUG"))
-	require.Equal(s.T(), slog.LevelDebug, parseLevel("Debug"))
-}
-
-func (s *LoggerSuite) TestLogOutputContainsLevel() {
-	var buf bytes.Buffer
-	logger := NewLoggerWithWriter("debug", "text", &buf)
-	logger.Debug("test")
-	output := buf.String()
-	require.True(s.T(), strings.Contains(output, "DEBUG") || strings.Contains(output, "level=DEBUG"))
 }

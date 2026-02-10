@@ -185,6 +185,15 @@ func (s *UpdateSuite) TestDoUpdateDownloadError() {
 	require.Contains(s.T(), err.Error(), "failed to update")
 }
 
+func (s *UpdateSuite) TestNewUpdateCmdRunE() {
+	version = "1.0.0"
+	getLatestVersionFunc = func() (string, error) { return "1.0.0", nil }
+
+	cmd := newUpdateCmd()
+	err := cmd.RunE(cmd, nil)
+	require.NoError(s.T(), err)
+}
+
 func (s *UpdateSuite) TestDownloadAndReplaceHTTPError() {
 	httpGet = func(_ string) (*http.Response, error) { return nil, errors.New("connection refused") }
 
@@ -442,15 +451,6 @@ func (s *UpdateSuite) TestDownloadAndReplaceExtractError() {
 
 	err := downloadAndReplace("1.0.0", "/tmp/loop")
 	require.Error(s.T(), err)
-}
-
-func (s *UpdateSuite) TestNewUpdateCmdRunE() {
-	version = "1.0.0"
-	getLatestVersionFunc = func() (string, error) { return "1.0.0", nil }
-
-	cmd := newUpdateCmd()
-	err := cmd.RunE(cmd, nil)
-	require.NoError(s.T(), err)
 }
 
 // --- Tests for getLatestVersion ---

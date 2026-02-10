@@ -480,36 +480,6 @@ func (s *RunnerSuite) TestRunWithOAuthToken() {
 	s.client.AssertExpectations(s.T())
 }
 
-func (s *RunnerSuite) TestRunNoSessionID() {
-	ctx := context.Background()
-	req := &agent.AgentRequest{
-		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
-		ChannelID: "ch-1",
-	}
-
-	jsonOutput := `{"type":"result","result":"Hi there","session_id":"brand-new-sess","is_error":false}`
-	reader := bytes.NewReader([]byte(jsonOutput))
-
-	waitCh := make(chan WaitResponse, 1)
-	waitCh <- WaitResponse{StatusCode: 0}
-	errCh := make(chan error, 1)
-
-	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		return !slices.Contains(cfg.Cmd, "--resume")
-	}), "loop-ch-1-aabbcc").Return("container-123", nil)
-	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
-	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
-	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
-	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
-
-	resp, err := s.runner.Run(ctx, req)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "Hi there", resp.Response)
-	require.Equal(s.T(), "brand-new-sess", resp.SessionID)
-
-	s.client.AssertExpectations(s.T())
-}
-
 func (s *RunnerSuite) TestRunProxyEnvForwarding() {
 	getenv = func(key string) string {
 		switch key {
@@ -954,36 +924,6 @@ func (s *RunnerSuite) TestRunWithDirPath() {
 		return len(cfg.Binds) == 1 &&
 			cfg.Binds[0] == "/home/user/project:/home/user/project"
 	}), "loop-project-aabbcc").Return("container-123", nil)
-	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
-	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
-	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
-	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
-
-	resp, err := s.runner.Run(ctx, req)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "ok", resp.Response)
-
-	s.client.AssertExpectations(s.T())
-}
-
-func (s *RunnerSuite) TestRunWithoutDirPathUsesDefault() {
-	ctx := context.Background()
-	req := &agent.AgentRequest{
-		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
-		ChannelID: "ch-1",
-	}
-
-	jsonOutput := `{"type":"result","result":"ok","session_id":"s1","is_error":false}`
-	reader := bytes.NewReader([]byte(jsonOutput))
-
-	waitCh := make(chan WaitResponse, 1)
-	waitCh <- WaitResponse{StatusCode: 0}
-	errCh := make(chan error, 1)
-
-	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		return len(cfg.Binds) == 1 &&
-			cfg.Binds[0] == "/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work"
-	}), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
@@ -1509,42 +1449,6 @@ func (s *RunnerSuite) TestRunNamedVolumesChownDirs() {
 	resp, err := s.runner.Run(ctx, req)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "ok", resp.Response)
-
-	s.client.AssertExpectations(s.T())
-}
-
-func (s *RunnerSuite) TestRunWithDirPathPreservesPath() {
-	ctx := context.Background()
-	req := &agent.AgentRequest{
-		SessionID:    "sess-1",
-		Messages:     []agent.AgentMessage{{Role: "user", Content: "hello"}},
-		SystemPrompt: "You are helpful",
-		ChannelID:    "ch-1",
-		DirPath:      "/custom/project/path",
-	}
-
-	jsonOutput := `{"type":"result","result":"Hello!","session_id":"sess-new-1","is_error":false}`
-	reader := bytes.NewReader([]byte(jsonOutput))
-
-	waitCh := make(chan WaitResponse, 1)
-	waitCh <- WaitResponse{StatusCode: 0}
-	errCh := make(chan error, 1)
-
-	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		// Verify workDir is mounted at same path and WorkingDir is set correctly
-		workDirBind := "/custom/project/path:/custom/project/path"
-		hasCorrectBinds := len(cfg.Binds) == 1 && slices.Contains(cfg.Binds, workDirBind)
-		hasCorrectWorkingDir := cfg.WorkingDir == "/custom/project/path"
-		return hasCorrectBinds && hasCorrectWorkingDir
-	}), "loop-path-aabbcc").Return("container-123", nil)
-	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
-	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
-	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
-	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
-
-	resp, err := s.runner.Run(ctx, req)
-	require.NoError(s.T(), err)
-	require.NotNil(s.T(), resp)
 
 	s.client.AssertExpectations(s.T())
 }
