@@ -33,6 +33,7 @@ type Config struct {
 	DiscordAppID         string
 	ClaudeBinPath        string
 	DBPath               string
+	LogFile              string
 	LogLevel             string
 	LogFormat            string
 	ContainerImage       string
@@ -59,6 +60,7 @@ type jsonConfig struct {
 	DiscordAppID          string         `json:"discord_app_id"`
 	ClaudeCodeOAuthToken  string         `json:"claude_code_oauth_token"`
 	DiscordGuildID        string         `json:"discord_guild_id"`
+	LogFile               string         `json:"log_file"`
 	LogLevel              string         `json:"log_level"`
 	LogFormat             string         `json:"log_format"`
 	DBPath                string         `json:"db_path"`
@@ -125,6 +127,7 @@ func Load() (*Config, error) {
 		ClaudeBinPath:        stringDefault(jc.ClaudeBinPath, "claude"),
 		ClaudeCodeOAuthToken: jc.ClaudeCodeOAuthToken,
 		DiscordGuildID:       jc.DiscordGuildID,
+		LogFile:              stringDefault(jc.LogFile, filepath.Join(loopDir, "loop.log")),
 		LogLevel:             stringDefault(jc.LogLevel, "info"),
 		LogFormat:            stringDefault(jc.LogFormat, "text"),
 		DBPath:               stringDefault(jc.DBPath, filepath.Join(loopDir, "loop.db")),

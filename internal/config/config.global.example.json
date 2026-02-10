@@ -5,6 +5,7 @@
   // Enables auto-creation of Discord channels via `loop mcp --dir`
   "discord_guild_id": "your-discord-guild-id-here",
 
+  //"log_file": "~/.loop/loop.log",
   //"log_level": "info",
   //"log_format": "text",
   //"container_image": "loop-agent:latest",

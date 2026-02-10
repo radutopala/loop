@@ -281,7 +281,7 @@ type MainSuite struct {
 	origOsExit            func(int)
 	origNewAPIServer      func(scheduler.Scheduler, api.ChannelEnsurer, *slog.Logger) apiServer
 	origNewMCPServer      func(string, string, mcpserver.HTTPClient, *slog.Logger) *mcpserver.Server
-	origDaemonStart       func(daemon.System) error
+	origDaemonStart       func(daemon.System, string) error
 	origDaemonStop        func(daemon.System) error
 	origDaemonStatus      func(daemon.System) (string, error)
 	origNewSystem         func() daemon.System
@@ -1136,7 +1136,8 @@ func (s *MainSuite) TestNewDaemonStatusCmd() {
 }
 
 func (s *MainSuite) TestDaemonStartSuccess() {
-	daemonStart = func(_ daemon.System) error { return nil }
+	configLoad = func() (*config.Config, error) { return testConfig(), nil }
+	daemonStart = func(_ daemon.System, _ string) error { return nil }
 	newSystem = func() daemon.System { return daemon.RealSystem{} }
 
 	cmd := newDaemonStartCmd()
@@ -1145,13 +1146,23 @@ func (s *MainSuite) TestDaemonStartSuccess() {
 }
 
 func (s *MainSuite) TestDaemonStartError() {
-	daemonStart = func(_ daemon.System) error { return errors.New("start fail") }
+	configLoad = func() (*config.Config, error) { return testConfig(), nil }
+	daemonStart = func(_ daemon.System, _ string) error { return errors.New("start fail") }
 	newSystem = func() daemon.System { return daemon.RealSystem{} }
 
 	cmd := newDaemonStartCmd()
 	err := cmd.Execute()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "start fail")
+}
+
+func (s *MainSuite) TestDaemonStartConfigError() {
+	configLoad = func() (*config.Config, error) { return nil, errors.New("config fail") }
+
+	cmd := newDaemonStartCmd()
+	err := cmd.Execute()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "config fail")
 }
 
 func (s *MainSuite) TestDaemonStopSuccess() {

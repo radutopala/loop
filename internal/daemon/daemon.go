@@ -53,7 +53,8 @@ var osGetenv = os.Getenv
 var proxyKeys = []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"}
 
 // Start installs and bootstraps the launchd service.
-func Start(sys System) error {
+// logFile is the absolute path to the daemon log file.
+func Start(sys System, logFile string) error {
 	exe, err := sys.Executable()
 	if err != nil {
 		return fmt.Errorf("resolving executable: %w", err)
@@ -69,7 +70,7 @@ func Start(sys System) error {
 	}
 
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", plistName)
-	logDir := filepath.Join(home, ".loop", "logs")
+	logDir := filepath.Dir(logFile)
 
 	if err := sys.MkdirAll(filepath.Dir(plistPath), 0o755); err != nil {
 		return fmt.Errorf("creating LaunchAgents directory: %w", err)
@@ -85,7 +86,7 @@ func Start(sys System) error {
 		}
 	}
 
-	plist := generatePlist(binPath, logDir, extraEnv)
+	plist := generatePlist(binPath, logFile, extraEnv)
 	if err := sys.WriteFile(plistPath, []byte(plist), 0o644); err != nil {
 		return fmt.Errorf("writing plist: %w", err)
 	}
@@ -167,9 +168,7 @@ func Status(sys System) (string, error) {
 	return "stopped", nil
 }
 
-func generatePlist(binaryPath, logDir string, extraEnv map[string]string) string {
-	logFile := logDir + "/loop.log"
-
+func generatePlist(binaryPath, logFile string, extraEnv map[string]string) string {
 	var envEntries string
 	// Sort keys for deterministic output.
 	keys := make([]string, 0, len(extraEnv))

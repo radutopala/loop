@@ -91,14 +91,14 @@ func (s *DaemonSuite) TestStartSuccess() {
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", "/home/test/Library/LaunchAgents", os.FileMode(0o755)).Return(nil)
-	sys.On("MkdirAll", "/home/test/.loop/logs", os.FileMode(0o755)).Return(nil)
+	sys.On("MkdirAll", "/home/test/.loop", os.FileMode(0o755)).Return(nil)
 	sys.On("WriteFile", "/home/test/Library/LaunchAgents/com.loop.agent.plist", mock.Anything, os.FileMode(0o644)).Return(nil)
 	sys.On("RunCommand", "launchctl", []string{"bootout", "gui/501", "/home/test/Library/LaunchAgents/com.loop.agent.plist"}).
 		Return([]byte(""), nil)
 	sys.On("RunCommand", "launchctl", []string{"bootstrap", "gui/501", "/home/test/Library/LaunchAgents/com.loop.agent.plist"}).
 		Return([]byte(""), nil)
 
-	err := Start(sys)
+	err := Start(sys, "/home/test/.loop/loop.log")
 	require.NoError(s.T(), err)
 	sys.AssertExpectations(s.T())
 }
@@ -127,7 +127,7 @@ func (s *DaemonSuite) TestStartWithProxyEnv() {
 	}), os.FileMode(0o644)).Return(nil)
 	sys.On("RunCommand", "launchctl", mock.Anything).Return([]byte(""), nil)
 
-	err := Start(sys)
+	err := Start(sys, "/home/test/.loop/loop.log")
 	require.NoError(s.T(), err)
 	sys.AssertExpectations(s.T())
 }
@@ -136,7 +136,7 @@ func (s *DaemonSuite) TestStartExecutableError() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("", errors.New("exec fail"))
 
-	err := Start(sys)
+	err := Start(sys, "/home/test/.loop/loop.log")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "resolving executable")
 }
@@ -147,7 +147,7 @@ func (s *DaemonSuite) TestStartEvalSymlinksError() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
 
-	err := Start(sys)
+	err := Start(sys, "/home/test/.loop/loop.log")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "resolving symlinks")
 }
@@ -157,7 +157,7 @@ func (s *DaemonSuite) TestStartHomeDirError() {
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("", errors.New("home fail"))
 
-	err := Start(sys)
+	err := Start(sys, "/home/test/.loop/loop.log")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "getting home directory")
 }
@@ -168,7 +168,7 @@ func (s *DaemonSuite) TestStartMkdirLaunchAgentsError() {
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", "/home/test/Library/LaunchAgents", os.FileMode(0o755)).Return(errors.New("mkdir fail"))
 
-	err := Start(sys)
+	err := Start(sys, "/home/test/.loop/loop.log")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating LaunchAgents directory")
 }
@@ -178,9 +178,9 @@ func (s *DaemonSuite) TestStartMkdirLogDirError() {
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", "/home/test/Library/LaunchAgents", os.FileMode(0o755)).Return(nil)
-	sys.On("MkdirAll", "/home/test/.loop/logs", os.FileMode(0o755)).Return(errors.New("logdir fail"))
+	sys.On("MkdirAll", "/home/test/.loop", os.FileMode(0o755)).Return(errors.New("logdir fail"))
 
-	err := Start(sys)
+	err := Start(sys, "/home/test/.loop/loop.log")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating log directory")
 }
@@ -192,7 +192,7 @@ func (s *DaemonSuite) TestStartWriteError() {
 	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
 	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("write fail"))
 
-	err := Start(sys)
+	err := Start(sys, "/home/test/.loop/loop.log")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing plist")
 }
@@ -206,7 +206,7 @@ func (s *DaemonSuite) TestStartLaunchctlError() {
 	sys.On("RunCommand", "launchctl", mock.Anything).
 		Return([]byte("Bootstrap failed: 5: Input/output error"), errors.New("exit 5"))
 
-	err := Start(sys)
+	err := Start(sys, "/home/test/.loop/loop.log")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "launchctl bootstrap")
 }
@@ -220,7 +220,7 @@ func (s *DaemonSuite) TestStartAlreadyBootstrapped() {
 	sys.On("RunCommand", "launchctl", mock.Anything).
 		Return([]byte("Bootstrap failed: already bootstrapped"), errors.New("exit 5"))
 
-	err := Start(sys)
+	err := Start(sys, "/home/test/.loop/loop.log")
 	require.NoError(s.T(), err)
 }
 
@@ -372,13 +372,13 @@ func (s *DaemonSuite) TestStatusStatError() {
 // --- generatePlist test ---
 
 func (s *DaemonSuite) TestGeneratePlist() {
-	plist := generatePlist("/usr/local/bin/loop", "/home/test/.loop/logs", nil)
+	plist := generatePlist("/usr/local/bin/loop", "/home/test/.loop/loop.log", nil)
 	require.Contains(s.T(), plist, "<string>com.loop.agent</string>")
 	require.Contains(s.T(), plist, "<string>/usr/local/bin/loop</string>")
 	require.Contains(s.T(), plist, "<string>serve</string>")
 	require.Contains(s.T(), plist, "<key>KeepAlive</key>")
 	require.Contains(s.T(), plist, "<key>RunAtLoad</key>")
-	require.Contains(s.T(), plist, "/home/test/.loop/logs/loop.log")
+	require.Contains(s.T(), plist, "/home/test/.loop/loop.log")
 	require.NotContains(s.T(), plist, "loop.out.log")
 	require.NotContains(s.T(), plist, "loop.err.log")
 	require.Contains(s.T(), plist, "/opt/homebrew/bin")
@@ -389,7 +389,7 @@ func (s *DaemonSuite) TestGeneratePlistWithProxyEnv() {
 		"HTTP_PROXY":  "http://127.0.0.1:3128",
 		"HTTPS_PROXY": "http://127.0.0.1:3128",
 	}
-	plist := generatePlist("/usr/local/bin/loop", "/home/test/.loop/logs", env)
+	plist := generatePlist("/usr/local/bin/loop", "/home/test/.loop/loop.log", env)
 	require.Contains(s.T(), plist, "<key>HTTP_PROXY</key>")
 	require.Contains(s.T(), plist, "<string>http://127.0.0.1:3128</string>")
 	require.Contains(s.T(), plist, "<key>HTTPS_PROXY</key>")

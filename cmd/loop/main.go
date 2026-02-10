@@ -156,7 +156,11 @@ func newDaemonStartCmd() *cobra.Command {
 		Aliases: []string{"d:start", "up"},
 		Short:   "Install and start the daemon",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if err := daemonStart(newSystem()); err != nil {
+			cfg, err := configLoad()
+			if err != nil {
+				return err
+			}
+			if err := daemonStart(newSystem(), cfg.LogFile); err != nil {
 				return err
 			}
 			fmt.Println("Daemon started.")

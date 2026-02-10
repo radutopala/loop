@@ -48,6 +48,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Equal(s.T(), "test-app-id", cfg.DiscordAppID)
 	require.Equal(s.T(), "claude", cfg.ClaudeBinPath)
 	require.Equal(s.T(), "/home/testuser/.loop/loop.db", cfg.DBPath)
+	require.Equal(s.T(), "/home/testuser/.loop/loop.log", cfg.LogFile)
 	require.Equal(s.T(), "info", cfg.LogLevel)
 	require.Equal(s.T(), "text", cfg.LogFormat)
 	require.Equal(s.T(), "loop-agent:latest", cfg.ContainerImage)
@@ -70,6 +71,7 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 			"discord_app_id": "custom-app-id",
 			"claude_code_oauth_token": "sk-oauth",
 			"discord_guild_id": "guild-123",
+			"log_file": "/var/log/loop.log",
 			"log_level": "debug",
 			"log_format": "json",
 			"db_path": "/tmp/test.db",
@@ -90,6 +92,7 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 	require.Equal(s.T(), "custom-app-id", cfg.DiscordAppID)
 	require.Equal(s.T(), "sk-oauth", cfg.ClaudeCodeOAuthToken)
 	require.Equal(s.T(), "guild-123", cfg.DiscordGuildID)
+	require.Equal(s.T(), "/var/log/loop.log", cfg.LogFile)
 	require.Equal(s.T(), "debug", cfg.LogLevel)
 	require.Equal(s.T(), "json", cfg.LogFormat)
 	require.Equal(s.T(), "/tmp/test.db", cfg.DBPath)
