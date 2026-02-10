@@ -6,8 +6,9 @@ RUN go install github.com/radutopala/ticket/cmd/tk@latest
 
 FROM golang:1.25-alpine
 ENV GOTOOLCHAIN=auto
-RUN apk add --no-cache bash ca-certificates curl git make nodejs npm docker-cli docker-cli-compose su-exec aws-cli
-RUN npm install -g @anthropic-ai/claude-code
+RUN apk add --no-cache bash ca-certificates curl git make nodejs npm docker-cli docker-cli-compose su-exec aws-cli libgcc libstdc++ ripgrep
+ENV USE_BUILTIN_RIPGREP=0
+RUN curl -fsSL https://claude.ai/install.sh | bash && cp -L ~/.local/bin/claude /usr/local/bin/claude && rm -rf ~/.local/share/claude ~/.local/bin/claude
 COPY --from=builder /go/bin/loop /usr/local/bin/loop
 COPY --from=builder /go/bin/tk /usr/local/bin/tk
 COPY setup.sh /usr/local/bin/setup.sh
