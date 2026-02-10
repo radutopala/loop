@@ -35,8 +35,8 @@
     // Mount shell aliases/config into container's bashrc (sourced by Claude's bash subshells)
     "~/.loop/.bashrc:~/.bashrc:ro",
     // Named volumes for Go caches — persisted across container runs by Docker
-    "gomodcache:/go/pkg/mod",
-    "gobuildcache:/root/.cache/go-build"
+    "loop-gomodcache:/go/pkg/mod",
+    "loop-gobuildcache:/root/.cache/go-build"
   ],
 
   // Task templates
