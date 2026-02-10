@@ -303,11 +303,16 @@ func gitExcludesMount() string {
 func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
 	// When resuming a session, Claude already has the conversation history —
 	// only send the latest message to avoid a huge redundant prompt.
+	// Prefer the explicit Prompt field (set by the orchestrator from the
+	// triggering message) so that rapid successive messages don't race.
 	var prompt string
-	if req.SessionID != "" && len(req.Messages) > 0 {
+	switch {
+	case req.SessionID != "" && req.Prompt != "":
+		prompt = req.Prompt
+	case req.SessionID != "" && len(req.Messages) > 0:
 		last := req.Messages[len(req.Messages)-1]
 		prompt = last.Content
-	} else {
+	default:
 		prompt = agent.BuildPrompt(req.Messages, req.SystemPrompt)
 	}
 

@@ -9,6 +9,7 @@ type AgentRequest struct {
 	SystemPrompt string         `json:"system_prompt"`
 	ChannelID    string         `json:"channel_id"`
 	DirPath      string         `json:"dir_path,omitempty"`
+	Prompt       string         `json:"prompt,omitempty"`
 }
 
 // AgentMessage represents a single message in the conversation context.

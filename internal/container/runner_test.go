@@ -266,6 +266,43 @@ func (s *RunnerSuite) TestRunHappyPath() {
 	s.client.AssertExpectations(s.T())
 }
 
+func (s *RunnerSuite) TestRunUsesExplicitPromptOverLastMessage() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID: "sess-1",
+		Messages: []agent.AgentMessage{
+			{Role: "user", Content: "Alice: first message"},
+			{Role: "user", Content: "Bob: second message"},
+		},
+		ChannelID: "ch-1",
+		Prompt:    "Alice: first message",
+	}
+
+	jsonOutput := `{"type":"result","result":"Hello!","session_id":"sess-new","is_error":false}`
+	reader := bytes.NewReader([]byte(jsonOutput))
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		// The last element of Cmd is the prompt — it should be the explicit Prompt,
+		// NOT the last message content.
+		lastArg := cfg.Cmd[len(cfg.Cmd)-1]
+		return lastArg == "Alice: first message"
+	}), "loop-ch-1-aabbcc").Return("container-123", nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Hello!", resp.Response)
+
+	s.client.AssertExpectations(s.T())
+}
+
 func (s *RunnerSuite) TestRunCreateFails() {
 	ctx := context.Background()
 	req := &agent.AgentRequest{ChannelID: "ch-1"}

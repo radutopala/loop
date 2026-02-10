@@ -465,7 +465,7 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredFullFlow() {
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return(recentMsgs, nil)
 	// Second GetChannel (in processTriggeredMessage for session data) — returns same object
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		return req.ChannelID == "ch1" && req.SessionID == "session123" && len(req.Messages) == 2
+		return req.ChannelID == "ch1" && req.SessionID == "session123" && len(req.Messages) == 2 && req.Prompt == "Alice: hello bot"
 	})).Return(&agent.AgentResponse{
 		Response:  "Hello Alice!",
 		SessionID: "session456",
@@ -500,7 +500,7 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredWithNilSession() {
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		return req.SessionID == "" && len(req.Messages) == 0
+		return req.SessionID == "" && len(req.Messages) == 0 && req.Prompt == "Alice: hello"
 	})).Return(&agent.AgentResponse{
 		Response:  "Hi!",
 		SessionID: "new-session",

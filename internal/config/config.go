@@ -55,26 +55,26 @@ type Config struct {
 // jsonConfig is an intermediate struct for JSON unmarshalling.
 // Pointer types for numerics distinguish "missing" (nil) from "zero".
 type jsonConfig struct {
-	DiscordToken          string            `json:"discord_token"`
-	DiscordAppID          string            `json:"discord_app_id"`
-	ClaudeCodeOAuthToken  string            `json:"claude_code_oauth_token"`
-	DiscordGuildID        string            `json:"discord_guild_id"`
-	LogLevel              string            `json:"log_level"`
-	LogFormat             string            `json:"log_format"`
-	DBPath                string            `json:"db_path"`
-	ContainerImage        string            `json:"container_image"`
-	ContainerTimeoutSec   *int              `json:"container_timeout_sec"`
-	ContainerMemoryMB     *int64            `json:"container_memory_mb"`
-	ContainerCPUs         *float64          `json:"container_cpus"`
-	ContainerKeepAliveSec *int              `json:"container_keep_alive_sec"`
-	PollIntervalSec       *int              `json:"poll_interval_sec"`
-	APIAddr               string            `json:"api_addr"`
-	MCP                   *jsonMCPConfig    `json:"mcp"`
-	TaskTemplates         []TaskTemplate    `json:"task_templates"`
-	Mounts                []string          `json:"mounts"`
-	Envs                  map[string]any    `json:"envs"`
-	ClaudeModel           string            `json:"claude_model"`
-	ClaudeBinPath         string            `json:"claude_bin_path"`
+	DiscordToken          string         `json:"discord_token"`
+	DiscordAppID          string         `json:"discord_app_id"`
+	ClaudeCodeOAuthToken  string         `json:"claude_code_oauth_token"`
+	DiscordGuildID        string         `json:"discord_guild_id"`
+	LogLevel              string         `json:"log_level"`
+	LogFormat             string         `json:"log_format"`
+	DBPath                string         `json:"db_path"`
+	ContainerImage        string         `json:"container_image"`
+	ContainerTimeoutSec   *int           `json:"container_timeout_sec"`
+	ContainerMemoryMB     *int64         `json:"container_memory_mb"`
+	ContainerCPUs         *float64       `json:"container_cpus"`
+	ContainerKeepAliveSec *int           `json:"container_keep_alive_sec"`
+	PollIntervalSec       *int           `json:"poll_interval_sec"`
+	APIAddr               string         `json:"api_addr"`
+	MCP                   *jsonMCPConfig `json:"mcp"`
+	TaskTemplates         []TaskTemplate `json:"task_templates"`
+	Mounts                []string       `json:"mounts"`
+	Envs                  map[string]any `json:"envs"`
+	ClaudeModel           string         `json:"claude_model"`
+	ClaudeBinPath         string         `json:"claude_bin_path"`
 }
 
 type jsonMCPConfig struct {
@@ -206,12 +206,12 @@ func stringifyEnvs(raw map[string]any) map[string]string {
 type projectConfig struct {
 	Mounts            []string       `json:"mounts"`
 	Envs              map[string]any `json:"envs"`
-	MCP               *jsonMCPConfig    `json:"mcp"`
-	ClaudeModel       string            `json:"claude_model"`
-	ClaudeBinPath     string            `json:"claude_bin_path"`
-	ContainerImage    string            `json:"container_image"`
-	ContainerMemoryMB *int64            `json:"container_memory_mb"`
-	ContainerCPUs     *float64          `json:"container_cpus"`
+	MCP               *jsonMCPConfig `json:"mcp"`
+	ClaudeModel       string         `json:"claude_model"`
+	ClaudeBinPath     string         `json:"claude_bin_path"`
+	ContainerImage    string         `json:"container_image"`
+	ContainerMemoryMB *int64         `json:"container_memory_mb"`
+	ContainerCPUs     *float64       `json:"container_cpus"`
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json

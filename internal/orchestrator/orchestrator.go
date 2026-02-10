@@ -224,6 +224,7 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *Incomin
 	}
 
 	req := o.buildAgentRequest(msg.ChannelID, recent, channel)
+	req.Prompt = fmt.Sprintf("%s: %s", msg.AuthorName, msg.Content)
 
 	runCtx, runCancel := context.WithTimeout(ctx, o.containerTimeout)
 	defer runCancel()
