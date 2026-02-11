@@ -9,7 +9,7 @@ RUN go install github.com/radutopala/ticket/cmd/tk@latest
 
 FROM golang:1.26-alpine
 ENV GOTOOLCHAIN=auto
-RUN apk add --no-cache bash ca-certificates curl git make nodejs npm docker-cli docker-cli-compose su-exec aws-cli libgcc libstdc++ ripgrep
+RUN apk add --no-cache bash ca-certificates curl git make nodejs npm docker-cli docker-cli-compose su-exec aws-cli libgcc libstdc++ ripgrep uv
 ENV USE_BUILTIN_RIPGREP=0
 RUN curl -fsSL https://claude.ai/install.sh | bash && cp -L ~/.local/bin/claude /usr/local/bin/claude && rm -rf ~/.local/share/claude ~/.local/bin/claude
 COPY --from=builder /loop /usr/local/bin/loop

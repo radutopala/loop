@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"strings"
@@ -192,6 +193,15 @@ func floatPtrDefault(val *float64, def float64) float64 {
 	return def
 }
 
+// IsNamedVolume returns true if the source part of a mount looks like a Docker
+// named volume rather than a host path (no slashes, doesn't start with ~ or .).
+func IsNamedVolume(source string) bool {
+	return !strings.HasPrefix(source, "/") &&
+		!strings.HasPrefix(source, "~") &&
+		!strings.HasPrefix(source, ".") &&
+		!strings.Contains(source, "/")
+}
+
 // stringifyEnvs converts a map of any JSON values to strings.
 // Numbers, booleans, etc. are formatted as their natural string representation.
 func stringifyEnvs(raw map[string]any) map[string]string {
@@ -263,8 +273,9 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 			}
 
 			hostPath := parts[0]
-			// Resolve relative paths relative to workDir
-			if !filepath.IsAbs(hostPath) && !strings.HasPrefix(hostPath, "~") {
+			// Resolve relative paths relative to workDir, but skip named volumes
+			// (e.g. "loop-npmcache:~/.npm") which contain no path separators.
+			if !filepath.IsAbs(hostPath) && !strings.HasPrefix(hostPath, "~") && !IsNamedVolume(hostPath) {
 				hostPath = filepath.Join(workDir, hostPath)
 			}
 
@@ -284,13 +295,9 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 	if pc.MCP != nil && len(pc.MCP.Servers) > 0 {
 		// Start with main config servers
 		mergedServers := make(map[string]MCPServerConfig)
-		for name, srv := range mainConfig.MCPServers {
-			mergedServers[name] = srv
-		}
+		maps.Copy(mergedServers, mainConfig.MCPServers)
 		// Override with project servers
-		for name, srv := range pc.MCP.Servers {
-			mergedServers[name] = srv
-		}
+		maps.Copy(mergedServers, pc.MCP.Servers)
 		merged.MCPServers = mergedServers
 	}
 
@@ -315,12 +322,8 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 	// Merge envs: project takes precedence over global
 	if len(pc.Envs) > 0 {
 		mergedEnvs := make(map[string]string)
-		for k, v := range mainConfig.Envs {
-			mergedEnvs[k] = v
-		}
-		for k, v := range stringifyEnvs(pc.Envs) {
-			mergedEnvs[k] = v
-		}
+		maps.Copy(mergedEnvs, mainConfig.Envs)
+		maps.Copy(mergedEnvs, stringifyEnvs(pc.Envs))
 		merged.Envs = mergedEnvs
 	}
 

@@ -818,6 +818,52 @@ func (s *ConfigSuite) TestLoadProjectConfigEnvsNoOverride() {
 	require.Equal(s.T(), "global-val", merged.Envs["GLOBAL_KEY"])
 }
 
+func (s *ConfigSuite) TestIsNamedVolume() {
+	tests := []struct {
+		source   string
+		expected bool
+	}{
+		{"gomodcache", true},
+		{"my-volume", true},
+		{"/absolute/path", false},
+		{"~/home/path", false},
+		{"./relative/path", false},
+		{"relative/path", false},
+		{"", true}, // edge case but won't reach here due to mount format validation
+	}
+	for _, tt := range tests {
+		s.Run(tt.source, func() {
+			require.Equal(s.T(), tt.expected, IsNamedVolume(tt.source))
+		})
+	}
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigNamedVolumes() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"mounts": [
+					"./data:/app/data",
+					"loop-npmcache:~/.npm",
+					"loop-gocache:/go",
+					"~/.ssh:~/.ssh:ro"
+				]
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), merged.Mounts, 4)
+	require.Equal(s.T(), "/project/data:/app/data", merged.Mounts[0])
+	require.Equal(s.T(), "loop-npmcache:~/.npm", merged.Mounts[1])
+	require.Equal(s.T(), "loop-gocache:/go", merged.Mounts[2])
+	require.Equal(s.T(), "~/.ssh:~/.ssh:ro", merged.Mounts[3])
+}
+
 func (s *ConfigSuite) TestLoadEnvsFromGlobal() {
 	readFile = func(_ string) ([]byte, error) {
 		return []byte(`{

@@ -210,15 +210,6 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[2:]), nil
 }
 
-// isNamedVolume returns true if the source part of a mount looks like a Docker
-// named volume rather than a host path (no slashes, doesn't start with ~ or .).
-func isNamedVolume(source string) bool {
-	return !strings.HasPrefix(source, "/") &&
-		!strings.HasPrefix(source, "~") &&
-		!strings.HasPrefix(source, ".") &&
-		!strings.Contains(source, "/")
-}
-
 // processMount processes a single mount specification and returns the expanded bind string.
 // Returns empty string if the mount should be skipped.
 func processMount(mount string) (string, error) {
@@ -232,7 +223,7 @@ func processMount(mount string) (string, error) {
 	// Docker named volumes (e.g. "gomodcache:/go/pkg/mod") are passed through
 	// without host path expansion or existence checks — Docker manages them.
 	// The container path still needs ~ expansion since Docker requires absolute paths.
-	if isNamedVolume(hostPath) {
+	if config.IsNamedVolume(hostPath) {
 		containerPath, err := expandPath(parts[1])
 		if err != nil {
 			return "", fmt.Errorf("expanding container path %s: %w", parts[1], err)
@@ -383,7 +374,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 	// Add mounts from merged config (includes project-specific mounts)
 	for _, mount := range cfg.Mounts {
 		parts := strings.Split(mount, ":")
-		if len(parts) >= 2 && isNamedVolume(parts[0]) {
+		if len(parts) >= 2 && config.IsNamedVolume(parts[0]) {
 			// Track named volume container paths for chown in entrypoint
 			expanded, _ := expandPath(parts[1])
 			if expanded != "" {

@@ -1320,7 +1320,7 @@ func TestIsNamedVolume(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.source, func(t *testing.T) {
-			require.Equal(t, tt.expected, isNamedVolume(tt.source))
+			require.Equal(t, tt.expected, config.IsNamedVolume(tt.source))
 		})
 	}
 }
