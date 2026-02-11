@@ -10,10 +10,11 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
-	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/orchestrator"
 )
 
 // --- Mock DiscordSession ---
@@ -1241,10 +1242,9 @@ func (s *BotSuite) TestSendMessageWithPendingInteractionSplit() {
 	s.bot.mu.Unlock()
 
 	longContent := strings.Repeat("a", 2500)
-	firstChunk := strings.Repeat("a", 2000)
 	secondChunk := strings.Repeat("a", 500)
 
-	s.session.On("InteractionResponseEdit", interaction, &discordgo.WebhookEdit{Content: &firstChunk}, mock.Anything).
+	s.session.On("InteractionResponseEdit", interaction, &discordgo.WebhookEdit{Content: new(strings.Repeat("a", 2000))}, mock.Anything).
 		Return(&discordgo.Message{}, nil)
 	s.session.On("FollowupMessageCreate", interaction, true, &discordgo.WebhookParams{Content: secondChunk}, mock.Anything).
 		Return(&discordgo.Message{}, nil)
@@ -1282,10 +1282,9 @@ func (s *BotSuite) TestSendMessageWithPendingInteractionFollowupError() {
 	s.bot.mu.Unlock()
 
 	longContent := strings.Repeat("a", 2500)
-	firstChunk := strings.Repeat("a", 2000)
 	secondChunk := strings.Repeat("a", 500)
 
-	s.session.On("InteractionResponseEdit", interaction, &discordgo.WebhookEdit{Content: &firstChunk}, mock.Anything).
+	s.session.On("InteractionResponseEdit", interaction, &discordgo.WebhookEdit{Content: new(strings.Repeat("a", 2000))}, mock.Anything).
 		Return(&discordgo.Message{}, nil)
 	s.session.On("FollowupMessageCreate", interaction, true, &discordgo.WebhookParams{Content: secondChunk}, mock.Anything).
 		Return(nil, errors.New("followup failed"))

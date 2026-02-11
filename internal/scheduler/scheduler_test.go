@@ -859,8 +859,7 @@ func (s *SchedulerSuite) TestEditTaskPromptOnly() {
 	})).Return(nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	newPrompt := "new prompt"
-	err := ts.EditTask(context.Background(), 1, nil, nil, &newPrompt)
+	err := ts.EditTask(context.Background(), 1, nil, nil, new("new prompt"))
 
 	require.NoError(s.T(), err)
 	s.store.AssertExpectations(s.T())
@@ -877,8 +876,7 @@ func (s *SchedulerSuite) TestEditTaskScheduleChange() {
 	})).Return(nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	newSchedule := "0 9 * * *"
-	err := ts.EditTask(context.Background(), 1, &newSchedule, nil, nil)
+	err := ts.EditTask(context.Background(), 1, new("0 9 * * *"), nil, nil)
 
 	require.NoError(s.T(), err)
 	s.store.AssertExpectations(s.T())
@@ -914,8 +912,7 @@ func (s *SchedulerSuite) TestEditTaskInvalidSchedule() {
 	s.store.On("GetScheduledTask", mock.Anything, int64(1)).Return(task, nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	badSchedule := "invalid"
-	err := ts.EditTask(context.Background(), 1, &badSchedule, nil, nil)
+	err := ts.EditTask(context.Background(), 1, new("invalid"), nil, nil)
 
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "calculating next run")
@@ -933,8 +930,7 @@ func (s *SchedulerSuite) TestEditTaskTypeChange() {
 	})).Return(nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	newType := string(db.TaskTypeOnce)
-	err := ts.EditTask(context.Background(), 1, nil, &newType, nil)
+	err := ts.EditTask(context.Background(), 1, nil, new(string(db.TaskTypeOnce)), nil)
 
 	require.NoError(s.T(), err)
 	s.store.AssertExpectations(s.T())
@@ -949,8 +945,7 @@ func (s *SchedulerSuite) TestEditTaskUpdateError() {
 	s.store.On("UpdateScheduledTask", mock.Anything, mock.Anything).Return(errors.New("update error"))
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	newPrompt := "new"
-	err := ts.EditTask(context.Background(), 1, nil, nil, &newPrompt)
+	err := ts.EditTask(context.Background(), 1, nil, nil, new("new"))
 
 	require.Error(s.T(), err)
 	require.Equal(s.T(), "update error", err.Error())

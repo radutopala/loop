@@ -1045,8 +1045,7 @@ func (s *OrchestratorSuite) TestHandleInteractionToggleError() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionEditSuccess() {
-	schedule := "0 9 * * *"
-	s.scheduler.On("EditTask", s.ctx, int64(42), &schedule, (*string)(nil), (*string)(nil)).Return(nil)
+	s.scheduler.On("EditTask", s.ctx, int64(42), new("0 9 * * *"), (*string)(nil), (*string)(nil)).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Task 42 updated."
 	})).Return(nil)
@@ -1062,9 +1061,7 @@ func (s *OrchestratorSuite) TestHandleInteractionEditSuccess() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionEditWithTypeAndPrompt() {
-	taskType := "interval"
-	prompt := "new prompt"
-	s.scheduler.On("EditTask", s.ctx, int64(10), (*string)(nil), &taskType, &prompt).Return(nil)
+	s.scheduler.On("EditTask", s.ctx, int64(10), (*string)(nil), new("interval"), new("new prompt")).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Task 10 updated."
 	})).Return(nil)
@@ -1108,8 +1105,7 @@ func (s *OrchestratorSuite) TestHandleInteractionEditNoFields() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionEditError() {
-	prompt := "new"
-	s.scheduler.On("EditTask", s.ctx, int64(42), (*string)(nil), (*string)(nil), &prompt).Return(errors.New("edit err"))
+	s.scheduler.On("EditTask", s.ctx, int64(42), (*string)(nil), (*string)(nil), new("new")).Return(errors.New("edit err"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Failed to edit task."
 	})).Return(nil)

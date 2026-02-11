@@ -1,6 +1,6 @@
 # Loop
 
-[![Go](https://img.shields.io/badge/Go-1.25-blue)](https://go.dev/) [![CI](https://github.com/radutopala/loop/actions/workflows/ci.yml/badge.svg)](https://github.com/radutopala/loop/actions/workflows/ci.yml) [![release](https://img.shields.io/github/v/release/radutopala/loop)](https://github.com/radutopala/loop/releases/latest) [![license](https://img.shields.io/github/license/radutopala/loop)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.26-blue)](https://go.dev/) [![CI](https://github.com/radutopala/loop/actions/workflows/ci.yml/badge.svg)](https://github.com/radutopala/loop/actions/workflows/ci.yml) [![release](https://img.shields.io/github/v/release/radutopala/loop)](https://github.com/radutopala/loop/releases/latest) [![license](https://img.shields.io/github/license/radutopala/loop)](LICENSE)
 
 A Discord bot powered by Claude that runs AI agents in Docker containers.
 
@@ -151,6 +151,7 @@ This does three things:
 | `discord_token` | **(required)** | Discord bot token |
 | `discord_app_id` | **(required)** | Discord application ID |
 | `discord_guild_id` | `""` | Guild ID for auto-creating Discord channels |
+| `log_file` | `"~/.loop/loop.log"` | Daemon log file path |
 | `log_level` | `"info"` | Log level (`debug`, `info`, `warn`, `error`) |
 | `log_format` | `"text"` | Log format (`text`, `json`) |
 | `container_image` | `"loop-agent:latest"` | Docker image for agent containers |
@@ -332,7 +333,7 @@ To use a template, copy its schedule, type, and prompt values into the `/loop sc
 
 ## Development
 
-Requires [Go 1.25+](https://go.dev/dl/).
+Requires [Go 1.26+](https://go.dev/dl/).
 
 ```sh
 make build            # Build the loop binary

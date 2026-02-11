@@ -267,16 +267,13 @@ func (s *ConfigSuite) TestDefaultHelpers() {
 	require.Equal(s.T(), "val", stringDefault("val", "def"))
 	require.Equal(s.T(), "def", stringDefault("", "def"))
 
-	intVal := 42
-	require.Equal(s.T(), 42, intPtrDefault(&intVal, 10))
+	require.Equal(s.T(), 42, intPtrDefault(new(42), 10))
 	require.Equal(s.T(), 10, intPtrDefault(nil, 10))
 
-	int64Val := int64(99)
-	require.Equal(s.T(), int64(99), int64PtrDefault(&int64Val, 50))
+	require.Equal(s.T(), int64(99), int64PtrDefault(new(int64(99)), 50))
 	require.Equal(s.T(), int64(50), int64PtrDefault(nil, 50))
 
-	floatVal := 3.14
-	require.InDelta(s.T(), 3.14, floatPtrDefault(&floatVal, 1.0), 0.001)
+	require.InDelta(s.T(), 3.14, floatPtrDefault(new(3.14), 1.0), 0.001)
 	require.Equal(s.T(), 1.0, floatPtrDefault(nil, 1.0))
 }
 

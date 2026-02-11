@@ -1,4 +1,4 @@
-FROM golang:1.25-alpine AS builder
+FROM golang:1.26-alpine AS builder
 ENV GOTOOLCHAIN=auto
 WORKDIR /src
 COPY go.mod go.sum ./
@@ -7,7 +7,7 @@ COPY . .
 RUN go build -o /loop ./cmd/loop
 RUN go install github.com/radutopala/ticket/cmd/tk@latest
 
-FROM golang:1.25-alpine
+FROM golang:1.26-alpine
 ENV GOTOOLCHAIN=auto
 RUN apk add --no-cache bash ca-certificates curl git make nodejs npm docker-cli docker-cli-compose su-exec aws-cli libgcc libstdc++ ripgrep
 ENV USE_BUILTIN_RIPGREP=0
