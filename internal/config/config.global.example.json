@@ -44,8 +44,8 @@
     // Named volumes for caches — persisted across container runs by Docker
     "loop-npmcache:~/.npm",
     "loop-uvcache:~/.local/share/uv",
-    "loop-gocache:/go",
-    "loop-gobuildcache:~/.cache/go-build"
+    "loop-cache:~/.cache",
+    "loop-gocache:/go"
   ],
 
   // Task templates

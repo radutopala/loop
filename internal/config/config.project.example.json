@@ -36,7 +36,8 @@
   //  "/var/run/docker.sock:/var/run/docker.sock",
   //  // Named volumes for caches — persisted across container runs by Docker
   //  "loop-npmcache:~/.npm",
-  //  "loop-gomodcache:~/go/pkg/mod",
-  //  "loop-gocache:~/.cache/go-build"
+  //  "loop-uvcache:~/.local/share/uv",
+  //  "loop-cache:~/.cache",
+  //  "loop-gocache:/go"
   //]
 }
