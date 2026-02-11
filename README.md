@@ -182,7 +182,7 @@ The `mounts` array mounts host directories into all agent containers. Format: `"
 
 - Paths starting with `~/` are expanded to the user's home directory
 - Non-existent paths are silently skipped
-- Docker named volumes are supported (e.g. `"loop-gomodcache:/go/pkg/mod"`) — Docker manages them automatically
+- Docker named volumes are supported (e.g. `"loop-cache:~/.cache"`) — Docker manages them automatically
 - The Docker socket's GID is auto-detected and added to the container process
 - Project directories (`workDir`) and MCP logs (`mcpDir`) are always mounted automatically at their actual paths
 
