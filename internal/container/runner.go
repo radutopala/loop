@@ -343,10 +343,17 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 	if cfg.ClaudeCodeOAuthToken != "" {
 		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+cfg.ClaudeCodeOAuthToken)
 	}
+	hasProxy := false
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
 		if v := getenv(key); v != "" {
 			env = append(env, key+"="+localhostToDockerHost(v))
+			if key != "NO_PROXY" && key != "no_proxy" {
+				hasProxy = true
+			}
 		}
+	}
+	if hasProxy {
+		env = ensureNoProxy(env)
 	}
 	for k, v := range cfg.Envs {
 		expanded, err := expandPath(v)
@@ -476,6 +483,32 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		Response:  claudeResp.Result,
 		SessionID: claudeResp.SessionID,
 	}, nil
+}
+
+// ensureNoProxy ensures host.docker.internal is in NO_PROXY and no_proxy
+// so the container's API calls bypass the proxy.
+func ensureNoProxy(env []string) []string {
+	const host = "host.docker.internal"
+	found := false
+	for i, e := range env {
+		for _, key := range []string{"NO_PROXY=", "no_proxy="} {
+			if strings.HasPrefix(e, key) {
+				found = true
+				val := strings.TrimPrefix(e, key)
+				if !strings.Contains(val, host) {
+					if val != "" {
+						val += ","
+					}
+					val += host
+					env[i] = key + val
+				}
+			}
+		}
+	}
+	if !found {
+		env = append(env, "NO_PROXY="+host, "no_proxy="+host)
+	}
+	return env
 }
 
 // localhostToDockerHost rewrites localhost proxy addresses so they resolve

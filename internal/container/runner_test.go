@@ -511,7 +511,48 @@ func (s *RunnerSuite) TestRunProxyEnvForwarding() {
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return slices.Contains(cfg.Env, "HTTP_PROXY=http://proxy:8080") &&
 			slices.Contains(cfg.Env, "HTTPS_PROXY=http://proxy:8443") &&
-			slices.Contains(cfg.Env, "NO_PROXY=localhost,127.0.0.1")
+			slices.Contains(cfg.Env, "NO_PROXY=localhost,127.0.0.1,host.docker.internal")
+	}), "loop-ch-1-aabbcc").Return("container-123", nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp.Response)
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunProxyEnvNoProxyAdded() {
+	getenv = func(key string) string {
+		switch key {
+		case "USER":
+			return "testuser"
+		case "HTTP_PROXY":
+			return "http://proxy:8080"
+		}
+		return ""
+	}
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	jsonOutput := `{"type":"result","result":"ok","session_id":"s1","is_error":false}`
+	reader := bytes.NewReader([]byte(jsonOutput))
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Env, "HTTP_PROXY=http://proxy:8080") &&
+			slices.Contains(cfg.Env, "NO_PROXY=host.docker.internal") &&
+			slices.Contains(cfg.Env, "no_proxy=host.docker.internal")
 	}), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
@@ -858,6 +899,46 @@ func (s *RunnerSuite) TestLocalhostToDockerHost() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			require.Equal(s.T(), tc.want, localhostToDockerHost(tc.input))
+		})
+	}
+}
+
+func (s *RunnerSuite) TestEnsureNoProxy() {
+	tests := []struct {
+		name string
+		env  []string
+		want []string
+	}{
+		{
+			"appends to existing NO_PROXY",
+			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=localhost,127.0.0.1"},
+			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=localhost,127.0.0.1,host.docker.internal"},
+		},
+		{
+			"appends to existing no_proxy",
+			[]string{"http_proxy=http://proxy:8080", "no_proxy=localhost"},
+			[]string{"http_proxy=http://proxy:8080", "no_proxy=localhost,host.docker.internal"},
+		},
+		{
+			"adds both NO_PROXY and no_proxy when missing",
+			[]string{"HTTP_PROXY=http://proxy:8080"},
+			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=host.docker.internal", "no_proxy=host.docker.internal"},
+		},
+		{
+			"no-op when already present",
+			[]string{"NO_PROXY=host.docker.internal,other"},
+			[]string{"NO_PROXY=host.docker.internal,other"},
+		},
+		{
+			"empty NO_PROXY value",
+			[]string{"NO_PROXY="},
+			[]string{"NO_PROXY=host.docker.internal"},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			result := ensureNoProxy(tc.env)
+			require.Equal(s.T(), tc.want, result)
 		})
 	}
 }
