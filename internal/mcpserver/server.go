@@ -136,11 +136,12 @@ func (s *Server) doRequest(method, url string, body []byte) ([]byte, int, error)
 func (s *Server) handleScheduleTask(_ context.Context, _ *mcp.CallToolRequest, input scheduleTaskInput) (*mcp.CallToolResult, any, error) {
 	s.logger.Info("mcp tool call", "tool", "schedule_task", "schedule", input.Schedule, "type", input.Type, "prompt", input.Prompt)
 
-	if input.Type == "once" {
+	switch input.Type {
+	case "once":
 		if _, err := time.Parse(time.RFC3339, input.Schedule); err != nil {
 			return errorResult(fmt.Sprintf("invalid schedule for type \"once\": must be RFC3339 (e.g. 2026-02-09T14:30:00Z): %v", err)), nil, nil
 		}
-	} else if input.Type == "interval" {
+	case "interval":
 		if _, err := time.ParseDuration(input.Schedule); err != nil {
 			return errorResult(fmt.Sprintf("invalid schedule for type %q: must be a valid Go time.Duration (e.g. 5m, 1h, 24h): %v", input.Type, err)), nil, nil
 		}
@@ -259,11 +260,12 @@ func (s *Server) handleEditTask(_ context.Context, _ *mcp.CallToolRequest, input
 
 	// Validate schedule when editing to once/interval type with a schedule
 	if input.Schedule != nil && input.Type != nil {
-		if *input.Type == "once" {
+		switch *input.Type {
+		case "once":
 			if _, err := time.Parse(time.RFC3339, *input.Schedule); err != nil {
 				return errorResult(fmt.Sprintf("invalid schedule for type \"once\": must be RFC3339 (e.g. 2026-02-09T14:30:00Z): %v", err)), nil, nil
 			}
-		} else if *input.Type == "interval" {
+		case "interval":
 			if _, err := time.ParseDuration(*input.Schedule); err != nil {
 				return errorResult(fmt.Sprintf("invalid schedule for type %q: must be a valid Go time.Duration (e.g. 5m, 1h, 24h): %v", *input.Type, err)), nil, nil
 			}
