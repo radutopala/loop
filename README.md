@@ -94,6 +94,7 @@ loop onboard:global
 This creates:
 - `~/.loop/config.json` — main configuration file
 - `~/.loop/.bashrc` — shell aliases sourced inside containers
+- `~/.loop/templates/` — directory for prompt template files (used by `prompt_path`)
 - `~/.loop/container/Dockerfile` — agent container image definition
 - `~/.loop/container/entrypoint.sh` — container entrypoint script
 - `~/.loop/container/setup.sh` — custom build-time setup script (runs once during `docker build`)
@@ -137,10 +138,11 @@ loop onboard:local
 # optionally: loop onboard:local --api-url http://custom:9999
 ```
 
-This does three things:
+This does four things:
 1. Writes `.mcp.json` — registers the Loop MCP server so Claude Code can schedule tasks from your IDE
-2. Creates `.loop/config.json` — project-specific overrides (mounts, MCP servers, model)
-3. Registers a Discord channel for this directory (requires `loop serve` to be running)
+2. Creates `.loop/config.json` — project-specific overrides (mounts, MCP servers, model, task templates)
+3. Creates `.loop/templates/` — directory for project-specific prompt template files
+4. Registers a Discord channel for this directory (requires `loop serve` to be running)
 
 ## Configuration Reference
 
@@ -194,6 +196,7 @@ Project config overrides specific global settings. Only these fields are allowed
 |---|---|
 | `mounts` | **Replaces** global mounts entirely |
 | `mcp` | **Merged** with global; project servers take precedence |
+| `task_templates` | **Merged** with global; project overrides by name |
 | `claude_model` | **Overrides** global model |
 | `claude_bin_path` | **Overrides** global binary path |
 | `container_image` | **Overrides** global image |
@@ -284,12 +287,14 @@ The bot also responds to `@mentions`, replies to its own messages, and messages 
 
 The config.json file can include a `task_templates` array with reusable task patterns. Use `/loop template add <name>` in Discord to load a template as a scheduled task in the current channel. Templates are idempotent — adding the same template twice to a channel is a no-op.
 
-Example templates in config.json:
+Each template requires exactly one of:
+- `prompt` — inline prompt text
+- `prompt_path` — path to a prompt file relative to the `templates/` directory (`~/.loop/templates/` for global, `.loop/templates/` for project)
+
+Example templates in `~/.loop/config.json`:
 
 ```jsonc
 {
-  // ... other config ...
-
   "task_templates": [
     {
       "name": "tk-auto-worker",
@@ -304,12 +309,36 @@ Example templates in config.json:
       "schedule": "0 17 * * *",
       "type": "cron",
       "prompt": "Generate a summary of all tickets closed today using 'tk list --status=closed'. Include ticket IDs, titles, and brief descriptions of what was accomplished."
+    },
+    {
+      "name": "dependency-audit",
+      "description": "Check for outdated or vulnerable dependencies",
+      "schedule": "0 8 * * 1",
+      "type": "cron",
+      "prompt_path": "dependency-audit.md"  // loaded from ~/.loop/templates/dependency-audit.md
     }
   ]
 }
 ```
 
-To use a template, copy its schedule, type, and prompt values into the `/loop schedule` command in Discord.
+#### Project-Level Templates
+
+Project configs (`.loop/config.json`) can define their own `task_templates` that merge with global templates. Project templates override global ones by name, and new templates are appended.
+
+```jsonc
+// .loop/config.json
+{
+  "task_templates": [
+    {
+      "name": "test-suite",
+      "description": "Run full test suite and report failures",
+      "schedule": "0 6 * * *",
+      "type": "cron",
+      "prompt_path": "test-suite.md"  // loaded from .loop/templates/test-suite.md
+    }
+  ]
+}
+```
 
 ## REST API
 
