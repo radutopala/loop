@@ -43,8 +43,9 @@
     "~/.loop/.bashrc:~/.bashrc:ro",
     // Named volumes for caches — persisted across container runs by Docker
     "loop-npmcache:~/.npm",
-    "loop-gomodcache:~/go/pkg/mod",
-    "loop-gocache:~/.cache/go-build"
+    "loop-uvcache:~/.local/share/uv",
+    "loop-gocache:/go",
+    "loop-gobuildcache:~/.cache/go-build"
   ],
 
   // Task templates
