@@ -1,4 +1,4 @@
-.PHONY: help build install test lint coverage coverage-check docker-build run clean restart docker-shell docker-logs docker-snapshot
+.PHONY: help build install test lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot
 .DEFAULT_GOAL := help
 
 help: ## Show available targets
