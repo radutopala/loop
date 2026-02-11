@@ -159,8 +159,8 @@ func containerName(channelID, dirPath string) string {
 }
 
 // Run executes an agent request in a Docker container.
-// If a session ID is set and the run fails, it retries without --resume
-// (stale session IDs cause Claude to output non-JSON errors).
+// If a session ID is set and the run fails, it retries with --resume
+// using only the original prompt (no full message history rebuild).
 func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
 	resp, err := r.runOnce(ctx, req)
 	if err == nil || req.SessionID == "" {
@@ -168,7 +168,9 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 	}
 
 	retryReq := *req
-	retryReq.SessionID = ""
+	if retryReq.Prompt == "" && len(retryReq.Messages) > 0 {
+		retryReq.Prompt = retryReq.Messages[len(retryReq.Messages)-1].Content
+	}
 	retryResp, retryErr := r.runOnce(ctx, &retryReq)
 	if retryErr != nil {
 		return nil, err
@@ -531,6 +533,7 @@ func localhostToDockerHost(v string) string {
 // --output-format stream-json and returns the final "result" event.
 func parseStreamJSON(r io.Reader) (*claudeResponse, error) {
 	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // allow lines up to 1MB
 	var result *claudeResponse
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())

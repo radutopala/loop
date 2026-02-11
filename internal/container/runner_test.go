@@ -749,7 +749,7 @@ func (s *RunnerSuite) TestCleanupNoContainers() {
 	s.client.AssertExpectations(s.T())
 }
 
-func (s *RunnerSuite) TestRunRetryWithoutSession() {
+func (s *RunnerSuite) TestRunRetryWithSession() {
 	ctx := context.Background()
 	req := &agent.AgentRequest{
 		SessionID: "stale-sess",
@@ -771,7 +771,7 @@ func (s *RunnerSuite) TestRunRetryWithoutSession() {
 	s.client.On("ContainerWait", ctx, "container-fail").Return((<-chan WaitResponse)(failWaitCh), (<-chan error)(failErrCh))
 	s.client.On("ContainerRemove", ctx, "container-fail").Return(nil)
 
-	// Retry (without session) — succeeds
+	// Retry (with session, prompt only) — succeeds
 	okJSON := `{"type":"result","result":"Hello!","session_id":"new-sess","is_error":false}`
 	okReader := bytes.NewReader([]byte(okJSON))
 	okWaitCh := make(chan WaitResponse, 1)
@@ -779,7 +779,7 @@ func (s *RunnerSuite) TestRunRetryWithoutSession() {
 	okErrCh := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		return !slices.Contains(cfg.Cmd, "--resume")
+		return slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "stale-sess")
 	}), "loop-ch-1-aabbcc").Return("container-ok", nil).Once()
 	s.client.On("ContainerLogs", ctx, "container-ok").Return(okReader, nil)
 	s.client.On("ContainerStart", ctx, "container-ok").Return(nil)
@@ -816,14 +816,14 @@ func (s *RunnerSuite) TestRunRetryAlsoFails() {
 	s.client.On("ContainerWait", ctx, "container-fail1").Return((<-chan WaitResponse)(failWaitCh1), (<-chan error)(failErrCh1))
 	s.client.On("ContainerRemove", ctx, "container-fail1").Return(nil)
 
-	// Retry (without session) — also fails
+	// Retry (with session, prompt only) — also fails
 	failReader2 := bytes.NewReader([]byte("some other error"))
 	failWaitCh2 := make(chan WaitResponse, 1)
 	failWaitCh2 <- WaitResponse{StatusCode: 1}
 	failErrCh2 := make(chan error, 1)
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		return !slices.Contains(cfg.Cmd, "--resume")
+		return slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "stale-sess")
 	}), "loop-ch-1-aabbcc").Return("container-fail2", nil).Once()
 	s.client.On("ContainerLogs", ctx, "container-fail2").Return(failReader2, nil)
 	s.client.On("ContainerStart", ctx, "container-fail2").Return(nil)
@@ -1136,6 +1136,15 @@ func TestParseStreamJSON(t *testing.T) {
 			name:    "empty input",
 			input:   "",
 			wantErr: "no result event found",
+		},
+		{
+			name:  "large intermediate line exceeding default scanner buffer",
+			input: `{"type":"assistant","message":"` + strings.Repeat("x", 128*1024) + `"}` + "\n" + `{"type":"result","result":"done","session_id":"s4","is_error":false}`,
+			wantResp: &claudeResponse{
+				Type:      "result",
+				Result:    "done",
+				SessionID: "s4",
+			},
 		},
 	}
 

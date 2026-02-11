@@ -17,8 +17,20 @@
   //"claude_model": "", // defaults to sonnet; options: "claude-opus-4-6", "claude-sonnet-4-5-20250929"
   //"claude_bin_path": "claude",
 
-  // MCP server configurations. Each entry defines a separate MCP server that agents can connect to. The key is an arbitrary name for the server, and the value specifies how to start the server (e.g. command and args).
-  "mcp": {},
+  // MCP server configurations. Each entry defines a separate MCP server that agents can connect to.
+  // The key is an arbitrary name for the server, and the value specifies how to start the server.
+  // Project-level configs can override or add servers with the same structure.
+  "mcp": {
+    //"servers": {
+    //  "github": {
+    //    "command": "npx",
+    //    "args": ["-y", "@modelcontextprotocol/server-github"],
+    //    "env": {
+    //      "GITHUB_PERSONAL_ACCESS_TOKEN": "ghp_your_token_here"
+    //    }
+    //  }
+    //}
+  },
 
   // Extra environment variables passed to all containers
   "envs": {
