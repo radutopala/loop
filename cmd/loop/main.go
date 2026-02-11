@@ -292,6 +292,12 @@ func onboardGlobal(force bool) error {
 		}
 	}
 
+	// Create templates directory for prompt_path templates
+	templatesDir := filepath.Join(loopDir, "templates")
+	if err := osMkdirAll(templatesDir, 0755); err != nil {
+		return fmt.Errorf("creating templates directory: %w", err)
+	}
+
 	fmt.Printf("✓ Created config at %s\n", configPath)
 	fmt.Println("\nNext steps:")
 	fmt.Println("1. Edit config.json and add your discord_token and discord_app_id")
@@ -354,6 +360,12 @@ func onboardLocal(apiURL string) error {
 			return fmt.Errorf("writing project config: %w", err)
 		}
 		fmt.Printf("Created project config at %s\n", projectConfigPath)
+	}
+
+	// Create templates directory for prompt_path templates
+	templatesDir := filepath.Join(loopDir, "templates")
+	if err := osMkdirAll(templatesDir, 0755); err != nil {
+		return fmt.Errorf("creating templates directory: %w", err)
 	}
 
 	// Eagerly create the Discord channel so it's ready immediately
@@ -527,7 +539,7 @@ func serve() error {
 		return fmt.Errorf("starting api server: %w", err)
 	}
 
-	orch := orchestrator.New(store, bot, runner, sched, logger, cfg.TaskTemplates, cfg.ContainerTimeout)
+	orch := orchestrator.New(store, bot, runner, sched, logger, cfg.TaskTemplates, cfg.ContainerTimeout, cfg.LoopDir)
 
 	if err := orch.Start(ctx); err != nil {
 		_ = apiSrv.Stop(context.Background())

@@ -49,6 +49,7 @@
   ],
 
   // Task templates
+  // Each template must have either "prompt" (inline) or "prompt_path" (loads from ~/.loop/templates/<path>), but not both.
   "task_templates": [
     {
       "name": "tk-auto-worker",
@@ -63,6 +64,8 @@
       "schedule": "0 17 * * *",
       "type": "cron",
       "prompt": "Generate a summary of all tickets closed today using 'tk list --status=closed'. Include ticket IDs, titles, and brief descriptions of what was accomplished."
+      // Or use prompt_path to load prompt from ~/.loop/templates/<file>:
+      //"prompt_path": "daily-summary.md"
     }
   ]
 }

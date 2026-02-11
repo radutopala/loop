@@ -1271,6 +1271,12 @@ func (s *MainSuite) TestOnboardGlobalSuccess() {
 	bashrcData, err := os.ReadFile(bashrcPath)
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), string(bashrcData), "Shell aliases")
+
+	// Verify templates directory was created
+	templatesDir := filepath.Join(tmpDir, ".loop", "templates")
+	info, err := os.Stat(templatesDir)
+	require.NoError(s.T(), err)
+	require.True(s.T(), info.IsDir())
 }
 
 func (s *MainSuite) TestOnboardGlobalConfigAlreadyExists() {
@@ -1540,6 +1546,27 @@ func (s *MainSuite) TestOnboardGlobalSetupSkipsIfExists() {
 	require.Equal(s.T(), "existing setup", string(data))
 }
 
+func (s *MainSuite) TestOnboardGlobalTemplatesDirError() {
+	tmpDir := s.T().TempDir()
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	calls := 0
+	osMkdirAll = func(path string, perm os.FileMode) error {
+		calls++
+		if calls == 3 { // Third mkdir is templates dir (after loop dir and container dir)
+			return errors.New("templates mkdir error")
+		}
+		return os.MkdirAll(path, perm)
+	}
+	osWriteFile = os.WriteFile
+
+	err := onboardGlobal(false)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating templates directory")
+}
+
 // --- onboard:local ---
 
 func (s *MainSuite) TestOnboardLocalSuccess() {
@@ -1547,6 +1574,8 @@ func (s *MainSuite) TestOnboardLocalSuccess() {
 	osGetwd = func() (string, error) { return tmpDir, nil }
 	osReadFile = os.ReadFile
 	osWriteFile = os.WriteFile
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
 	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
 
 	err := onboardLocal("http://localhost:8222")
@@ -1806,6 +1835,46 @@ func (s *MainSuite) TestOnboardLocalProjectConfigWriteError() {
 	err := onboardLocal("http://localhost:8222")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing project config")
+}
+
+func (s *MainSuite) TestOnboardLocalTemplatesDirError() {
+	tmpDir := s.T().TempDir()
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = os.WriteFile
+	osStat = os.Stat
+	mkdirCalls := 0
+	osMkdirAll = func(path string, perm os.FileMode) error {
+		mkdirCalls++
+		if mkdirCalls == 2 { // Second mkdir is templates dir (after .loop dir)
+			return errors.New("templates mkdir error")
+		}
+		return os.MkdirAll(path, perm)
+	}
+	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+
+	err := onboardLocal("http://localhost:8222")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating templates directory")
+}
+
+func (s *MainSuite) TestOnboardLocalTemplatesDirCreated() {
+	tmpDir := s.T().TempDir()
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = os.WriteFile
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+
+	err := onboardLocal("http://localhost:8222")
+	require.NoError(s.T(), err)
+
+	// Verify templates directory was created
+	templatesDir := filepath.Join(tmpDir, ".loop", "templates")
+	info, err := os.Stat(templatesDir)
+	require.NoError(s.T(), err)
+	require.True(s.T(), info.IsDir())
 }
 
 // --- ensureImage tests ---

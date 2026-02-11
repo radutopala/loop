@@ -879,3 +879,157 @@ func (s *ConfigSuite) TestLoadEnvsFromGlobal() {
 	require.Equal(s.T(), "0", cfg.Envs["NUM_VAR"])
 	require.Equal(s.T(), "true", cfg.Envs["BOOL_VAR"])
 }
+
+func (s *ConfigSuite) TestResolvePromptWithPrompt() {
+	tmpl := &TaskTemplate{Name: "test", Prompt: "do stuff"}
+	prompt, err := tmpl.ResolvePrompt("/loop")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "do stuff", prompt)
+}
+
+func (s *ConfigSuite) TestResolvePromptWithPromptPath() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/loop/templates/daily.md" {
+			return []byte("daily prompt content"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	tmpl := &TaskTemplate{Name: "test", PromptPath: "daily.md"}
+	prompt, err := tmpl.ResolvePrompt("/loop")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "daily prompt content", prompt)
+}
+
+func (s *ConfigSuite) TestResolvePromptWithBothSet() {
+	tmpl := &TaskTemplate{Name: "test", Prompt: "inline", PromptPath: "file.md"}
+	_, err := tmpl.ResolvePrompt("/loop")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "mutually exclusive")
+}
+
+func (s *ConfigSuite) TestResolvePromptWithNeitherSet() {
+	tmpl := &TaskTemplate{Name: "test"}
+	_, err := tmpl.ResolvePrompt("/loop")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "one of prompt or prompt_path is required")
+}
+
+func (s *ConfigSuite) TestResolvePromptFileReadError() {
+	readFile = func(_ string) ([]byte, error) {
+		return nil, errors.New("file not found")
+	}
+
+	tmpl := &TaskTemplate{Name: "test", PromptPath: "missing.md"}
+	_, err := tmpl.ResolvePrompt("/loop")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading prompt file")
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigTemplatesMerge() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"task_templates": [
+					{
+						"name": "daily-summary",
+						"description": "Overridden daily summary",
+						"schedule": "0 18 * * *",
+						"type": "cron",
+						"prompt": "New summary prompt"
+					},
+					{
+						"name": "project-only",
+						"description": "Project-specific template",
+						"schedule": "*/10 * * * *",
+						"type": "cron",
+						"prompt": "Project task"
+					}
+				]
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		TaskTemplates: []TaskTemplate{
+			{Name: "daily-summary", Description: "Daily summary", Schedule: "0 17 * * *", Type: "cron", Prompt: "Generate summary"},
+			{Name: "global-only", Description: "Global template", Schedule: "0 9 * * *", Type: "cron", Prompt: "Global task"},
+		},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+
+	// Should have 3 templates: overridden daily-summary, preserved global-only, new project-only
+	require.Len(s.T(), merged.TaskTemplates, 3)
+
+	// daily-summary should be overridden by project
+	require.Equal(s.T(), "daily-summary", merged.TaskTemplates[0].Name)
+	require.Equal(s.T(), "Overridden daily summary", merged.TaskTemplates[0].Description)
+	require.Equal(s.T(), "0 18 * * *", merged.TaskTemplates[0].Schedule)
+	require.Equal(s.T(), "New summary prompt", merged.TaskTemplates[0].Prompt)
+
+	// global-only should be preserved
+	require.Equal(s.T(), "global-only", merged.TaskTemplates[1].Name)
+	require.Equal(s.T(), "Global task", merged.TaskTemplates[1].Prompt)
+
+	// project-only should be added
+	require.Equal(s.T(), "project-only", merged.TaskTemplates[2].Name)
+	require.Equal(s.T(), "Project task", merged.TaskTemplates[2].Prompt)
+
+	// Verify main config not mutated
+	require.Len(s.T(), mainCfg.TaskTemplates, 2)
+	require.Equal(s.T(), "Generate summary", mainCfg.TaskTemplates[0].Prompt)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigTemplatesEmpty() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		TaskTemplates: []TaskTemplate{
+			{Name: "global", Description: "Global", Schedule: "0 9 * * *", Type: "cron", Prompt: "Do global"},
+		},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+
+	// Templates unchanged
+	require.Len(s.T(), merged.TaskTemplates, 1)
+	require.Equal(s.T(), "global", merged.TaskTemplates[0].Name)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigTemplatesWithPromptPath() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"task_templates": [
+					{
+						"name": "file-template",
+						"description": "Template from file",
+						"schedule": "0 9 * * *",
+						"type": "cron",
+						"prompt_path": "review.md"
+					}
+				]
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+
+	require.Len(s.T(), merged.TaskTemplates, 1)
+	require.Equal(s.T(), "file-template", merged.TaskTemplates[0].Name)
+	require.Equal(s.T(), "review.md", merged.TaskTemplates[0].PromptPath)
+	require.Empty(s.T(), merged.TaskTemplates[0].Prompt)
+}

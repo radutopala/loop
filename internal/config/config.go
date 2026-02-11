@@ -26,6 +26,29 @@ type TaskTemplate struct {
 	Schedule    string `json:"schedule"`
 	Type        string `json:"type"`
 	Prompt      string `json:"prompt"`
+	PromptPath  string `json:"prompt_path"`
+}
+
+// ResolvePrompt returns the prompt text for the template.
+// If Prompt is set, it is returned directly.
+// If PromptPath is set, the file is read from {loopDir}/templates/{prompt_path}.
+// Exactly one of Prompt or PromptPath must be set.
+func (t *TaskTemplate) ResolvePrompt(loopDir string) (string, error) {
+	if t.Prompt != "" && t.PromptPath != "" {
+		return "", fmt.Errorf("template %q: prompt and prompt_path are mutually exclusive", t.Name)
+	}
+	if t.Prompt == "" && t.PromptPath == "" {
+		return "", fmt.Errorf("template %q: one of prompt or prompt_path is required", t.Name)
+	}
+	if t.Prompt != "" {
+		return t.Prompt, nil
+	}
+	path := filepath.Join(loopDir, "templates", t.PromptPath)
+	data, err := readFile(path)
+	if err != nil {
+		return "", fmt.Errorf("reading prompt file for template %q: %w", t.Name, err)
+	}
+	return string(data), nil
 }
 
 // Config holds all application configuration loaded from config.json.
@@ -225,6 +248,7 @@ type projectConfig struct {
 	ContainerImage    string         `json:"container_image"`
 	ContainerMemoryMB *int64         `json:"container_memory_mb"`
 	ContainerCPUs     *float64       `json:"container_cpus"`
+	TaskTemplates     []TaskTemplate `json:"task_templates"`
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
@@ -325,6 +349,24 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 		maps.Copy(mergedEnvs, mainConfig.Envs)
 		maps.Copy(mergedEnvs, stringifyEnvs(pc.Envs))
 		merged.Envs = mergedEnvs
+	}
+
+	// Merge task templates: project templates override global by name
+	if len(pc.TaskTemplates) > 0 {
+		byName := make(map[string]int, len(merged.TaskTemplates))
+		mergedTemplates := make([]TaskTemplate, len(merged.TaskTemplates))
+		copy(mergedTemplates, merged.TaskTemplates)
+		for i, t := range mergedTemplates {
+			byName[t.Name] = i
+		}
+		for _, pt := range pc.TaskTemplates {
+			if idx, ok := byName[pt.Name]; ok {
+				mergedTemplates[idx] = pt
+			} else {
+				mergedTemplates = append(mergedTemplates, pt)
+			}
+		}
+		merged.TaskTemplates = mergedTemplates
 	}
 
 	return &merged, nil

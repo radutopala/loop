@@ -39,5 +39,19 @@
   //  "loop-uvcache:~/.local/share/uv",
   //  "loop-cache:~/.cache",
   //  "loop-gocache:/go"
+  //],
+
+  // Task templates specific to this project (merged with global; project overrides by name)
+  // Each template must have either "prompt" (inline) or "prompt_path" (loads from ~/.loop/templates/<path>), but not both.
+  //"task_templates": [
+  //  {
+  //    "name": "daily-summary",
+  //    "description": "Project-specific daily summary",
+  //    "schedule": "0 18 * * *",
+  //    "type": "cron",
+  //    "prompt": "Summarize today's project activity"
+  //    // Or use prompt_path to load prompt from ~/.loop/templates/<file>:
+  //    //"prompt_path": "daily-summary.md"
+  //  }
   //]
 }

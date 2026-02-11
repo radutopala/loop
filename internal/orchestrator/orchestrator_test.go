@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -284,7 +285,7 @@ func (s *OrchestratorSuite) SetupTest() {
 	s.ctx = context.Background()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, nil, 5*time.Minute)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, nil, 5*time.Minute, "")
 }
 
 func (s *OrchestratorSuite) TestNew() {
@@ -1247,7 +1248,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSuccess() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "")
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
@@ -1274,7 +1275,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddIdempotent() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "")
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(&db.ScheduledTask{ID: 5, TemplateName: "daily-check"}, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
@@ -1310,7 +1311,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddStoreError() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "")
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, errors.New("db error"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
@@ -1332,7 +1333,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSchedulerError() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "")
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.Anything).Return(int64(0), errors.New("sched error"))
@@ -1356,7 +1357,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateList() {
 		{Name: "weekly-report", Description: "Weekly report", Schedule: "0 17 * * 5", Type: "cron", Prompt: "generate report"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "")
 
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return strings.Contains(out.Content, "Available templates:") &&
@@ -1386,5 +1387,62 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateListEmpty() {
 		CommandName: "template-list",
 	})
 
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTemplateAddWithPromptPath() {
+	tmpDir := s.T().TempDir()
+
+	// Write a template prompt file
+	templatesDir := tmpDir + "/templates"
+	require.NoError(s.T(), os.MkdirAll(templatesDir, 0755))
+	require.NoError(s.T(), os.WriteFile(templatesDir+"/daily.md", []byte("Do daily stuff"), 0644))
+
+	templates := []config.TaskTemplate{
+		{Name: "daily-from-file", Description: "Daily from file", Schedule: "0 9 * * *", Type: "cron", PromptPath: "daily.md"},
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, tmpDir)
+
+	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-from-file").Return(nil, nil)
+	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
+		return task.Prompt == "Do daily stuff" && task.TemplateName == "daily-from-file"
+	})).Return(int64(20), nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Template 'daily-from-file' loaded (task ID: 20)."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		GuildID:     "g1",
+		CommandName: "template-add",
+		Options:     map[string]string{"name": "daily-from-file"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.scheduler.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTemplateAddResolvePromptError() {
+	templates := []config.TaskTemplate{
+		{Name: "bad-template", Description: "Bad template", Schedule: "0 9 * * *", Type: "cron"},
+		// Neither prompt nor prompt_path set
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "")
+
+	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "bad-template").Return(nil, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return strings.Contains(out.Content, "Failed to resolve template prompt")
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "template-add",
+		Options:     map[string]string{"name": "bad-template"},
+	})
+
+	s.store.AssertExpectations(s.T())
 	s.bot.AssertExpectations(s.T())
 }

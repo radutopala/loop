@@ -88,10 +88,11 @@ type Orchestrator struct {
 	typingInterval   time.Duration
 	templates        []config.TaskTemplate
 	containerTimeout time.Duration
+	loopDir          string
 }
 
 // New creates a new Orchestrator.
-func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *slog.Logger, templates []config.TaskTemplate, containerTimeout time.Duration) *Orchestrator {
+func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *slog.Logger, templates []config.TaskTemplate, containerTimeout time.Duration, loopDir string) *Orchestrator {
 	return &Orchestrator{
 		store:            store,
 		bot:              bot,
@@ -102,6 +103,7 @@ func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *sl
 		typingInterval:   typingRefreshInterval,
 		templates:        templates,
 		containerTimeout: containerTimeout,
+		loopDir:          loopDir,
 	}
 }
 
@@ -584,11 +586,21 @@ func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *
 		return
 	}
 
+	prompt, err := tmpl.ResolvePrompt(o.loopDir)
+	if err != nil {
+		o.logger.Error("resolving template prompt", "error", err, "template", name)
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   fmt.Sprintf("Failed to resolve template prompt: %v", err),
+		})
+		return
+	}
+
 	task := &db.ScheduledTask{
 		ChannelID:    inter.ChannelID,
 		GuildID:      inter.GuildID,
 		Schedule:     tmpl.Schedule,
-		Prompt:       tmpl.Prompt,
+		Prompt:       prompt,
 		Type:         db.TaskType(tmpl.Type),
 		Enabled:      true,
 		TemplateName: name,
