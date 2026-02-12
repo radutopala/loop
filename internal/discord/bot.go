@@ -60,6 +60,7 @@ type DiscordBot struct {
 	appID                 string
 	logger                *slog.Logger
 	botUserID             string
+	botUsername           string
 	messageHandlers       []MessageHandler
 	interactionHandlers   []InteractionHandler
 	channelDeleteHandlers []ChannelDeleteHandler
@@ -101,9 +102,10 @@ func (b *DiscordBot) Start(ctx context.Context) error {
 	}
 	b.mu.Lock()
 	b.botUserID = user.ID
+	b.botUsername = user.Username
 	b.mu.Unlock()
 
-	b.logger.InfoContext(ctx, "discord bot started", "bot_user_id", user.ID)
+	b.logger.InfoContext(ctx, "discord bot started", "bot_user_id", user.ID, "bot_username", user.Username)
 	return nil
 }
 
@@ -296,12 +298,34 @@ func (b *DiscordBot) CreateThread(ctx context.Context, channelID, name, mentionU
 }
 
 // PostMessage sends a simple message to the given channel or thread.
+// Text mentions of the bot (e.g. @LoopBot) are converted to proper Discord
+// mentions so the message triggers bot processing in the target channel.
 func (b *DiscordBot) PostMessage(ctx context.Context, channelID, content string) error {
+	b.mu.RLock()
+	username := b.botUsername
+	userID := b.botUserID
+	b.mu.RUnlock()
+
+	if username != "" {
+		discordMention := "<@" + userID + ">"
+		content = replaceTextMention(content, username, discordMention)
+	}
+
 	_, err := b.session.ChannelMessageSend(channelID, content)
 	if err != nil {
 		return fmt.Errorf("discord post message: %w", err)
 	}
 	return nil
+}
+
+// replaceTextMention replaces case-insensitive @username with a Discord mention.
+func replaceTextMention(content, username, mention string) string {
+	target := "@" + username
+	idx := strings.Index(strings.ToLower(content), strings.ToLower(target))
+	if idx == -1 {
+		return content
+	}
+	return content[:idx] + mention + content[idx+len(target):]
 }
 
 // DeleteThread deletes a Discord thread by its ID.
@@ -361,7 +385,12 @@ func (b *DiscordBot) handleMessage(_ *discordgo.Session, m *discordgo.MessageCre
 	}
 
 	botID := b.BotUserID()
-	if m.Author.ID == botID && !isBotMention(m, botID) {
+	// For bot-authored messages, only allow processing if the content
+	// explicitly contains <@BOT_ID>. We cannot use isBotMention here because
+	// Discord auto-populates m.Mentions when replying to a message, which
+	// would cause infinite recursion (response replies to bot msg → Discord
+	// adds bot to Mentions → triggers another runner → repeat).
+	if m.Author.ID == botID && !strings.Contains(m.Content, "<@"+botID+">") {
 		return
 	}
 
@@ -481,7 +510,10 @@ func isBotMention(m *discordgo.MessageCreate, botUserID string) bool {
 			return true
 		}
 	}
-	return false
+	// Fallback: check raw content for <@BOT_ID>. This handles the case where
+	// the bot sends a self-mention via PostMessage but Discord doesn't
+	// populate the Mentions slice.
+	return strings.Contains(m.Content, "<@"+botUserID+">")
 }
 
 func hasCommandPrefix(content string) bool {

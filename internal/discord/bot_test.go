@@ -707,6 +707,68 @@ func (s *BotSuite) TestHandleMessageBotSelfMentionProcessed() {
 	require.True(s.T(), received.IsBotMention)
 }
 
+func (s *BotSuite) TestHandleMessageBotSelfMentionContentFallback() {
+	s.bot.mu.Lock()
+	s.bot.botUserID = "bot-123"
+	s.bot.mu.Unlock()
+
+	var received *IncomingMessage
+	done := make(chan struct{})
+	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+		received = msg
+		close(done)
+	})
+
+	// Mentions slice is empty but content contains <@bot-123>.
+	m := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			ID:        "msg-1",
+			ChannelID: "ch-2",
+			Content:   "<@bot-123> check the last commit",
+			Author:    &discordgo.User{ID: "bot-123", Username: "LoopBot"},
+			Mentions:  []*discordgo.User{},
+		},
+	}
+	s.bot.handleMessage(nil, m)
+	<-done
+
+	require.NotNil(s.T(), received)
+	require.Equal(s.T(), "check the last commit", received.Content)
+	require.True(s.T(), received.IsBotMention)
+}
+
+func (s *BotSuite) TestHandleMessageBotReplyToSelfNotTriggered() {
+	s.bot.mu.Lock()
+	s.bot.botUserID = "bot-123"
+	s.bot.mu.Unlock()
+
+	called := false
+	s.bot.OnMessage(func(_ context.Context, _ *IncomingMessage) {
+		called = true
+	})
+
+	// Bot response that is a reply to its own message. Discord auto-populates
+	// Mentions with the referenced message author, but the content does NOT
+	// contain <@bot-123>. This must NOT trigger a runner (prevents recursion).
+	m := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			ID:        "msg-2",
+			ChannelID: "ch-2",
+			Content:   "The last commit is abc123",
+			Author:    &discordgo.User{ID: "bot-123", Username: "LoopBot"},
+			Mentions:  []*discordgo.User{{ID: "bot-123"}},
+			MessageReference: &discordgo.MessageReference{
+				MessageID: "msg-1",
+			},
+			ReferencedMessage: &discordgo.Message{
+				Author: &discordgo.User{ID: "bot-123"},
+			},
+		},
+	}
+	s.bot.handleMessage(nil, m)
+	require.False(s.T(), called)
+}
+
 func (s *BotSuite) TestHandleMessageIgnoresNonTriggered() {
 	s.bot.mu.Lock()
 	s.bot.botUserID = "bot-123"
@@ -1626,6 +1688,34 @@ func (s *BotSuite) TestPostMessageSuccess() {
 	s.session.AssertExpectations(s.T())
 }
 
+func (s *BotSuite) TestPostMessageConvertsTextMention() {
+	s.bot.mu.Lock()
+	s.bot.botUserID = "bot-123"
+	s.bot.botUsername = "LoopBot"
+	s.bot.mu.Unlock()
+
+	s.session.On("ChannelMessageSend", "ch-1", "<@bot-123> check the last commit", mock.Anything).
+		Return(&discordgo.Message{}, nil)
+
+	err := s.bot.PostMessage(context.Background(), "ch-1", "@LoopBot check the last commit")
+	require.NoError(s.T(), err)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestPostMessageConvertsTextMentionCaseInsensitive() {
+	s.bot.mu.Lock()
+	s.bot.botUserID = "bot-123"
+	s.bot.botUsername = "LoopBot"
+	s.bot.mu.Unlock()
+
+	s.session.On("ChannelMessageSend", "ch-1", "<@bot-123> check commits", mock.Anything).
+		Return(&discordgo.Message{}, nil)
+
+	err := s.bot.PostMessage(context.Background(), "ch-1", "@loopbot check commits")
+	require.NoError(s.T(), err)
+	s.session.AssertExpectations(s.T())
+}
+
 func (s *BotSuite) TestPostMessageError() {
 	s.session.On("ChannelMessageSend", "ch-1", "hello", mock.Anything).
 		Return(nil, errors.New("send failed"))
@@ -1633,6 +1723,29 @@ func (s *BotSuite) TestPostMessageError() {
 	err := s.bot.PostMessage(context.Background(), "ch-1", "hello")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "discord post message")
+}
+
+// --- replaceTextMention ---
+
+func (s *BotSuite) TestReplaceTextMention() {
+	tests := []struct {
+		name    string
+		content string
+		want    string
+	}{
+		{"exact case", "@LoopBot check this", "<@bot-1> check this"},
+		{"lowercase", "@loopbot check this", "<@bot-1> check this"},
+		{"uppercase", "@LOOPBOT check this", "<@bot-1> check this"},
+		{"mid sentence", "hey @LoopBot check this", "hey <@bot-1> check this"},
+		{"no mention", "just a message", "just a message"},
+		{"only mention", "@LoopBot", "<@bot-1>"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			result := replaceTextMention(tc.content, "LoopBot", "<@bot-1>")
+			require.Equal(s.T(), tc.want, result)
+		})
+	}
 }
 
 // --- Verify Bot interface compliance ---

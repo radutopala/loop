@@ -129,7 +129,7 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "send_message",
-		Description: "Send a message to a Discord channel or thread. Use search_channels to find the target channel ID first.",
+		Description: "Send a message to a Discord channel or thread. Use search_channels to find the target channel ID first. To trigger the bot in the target channel, include @BotName (e.g. @LoopBot) as plain text in the message — it will be converted to a proper Discord mention automatically.",
 	}, s.handleSendMessage)
 
 	return s
