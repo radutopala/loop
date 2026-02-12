@@ -39,7 +39,7 @@ run: build ## Build and run the bot
 
 restart: install docker-build ## Install, stop and start the daemon
 	loop daemon:stop || true
-	docker volume rm -f loop-npmcache loop-uvcache loop-cache loop-gocache
+	#docker volume rm -f loop-npmcache loop-uvcache loop-cache loop-gocache
 	loop daemon:start
 
 docker-shell: ## Start a bash shell in the agent container (requires make docker-snapshot first)
