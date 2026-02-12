@@ -58,6 +58,15 @@ type deleteThreadInput struct {
 	ThreadID string `json:"thread_id" jsonschema:"The ID of the thread to delete"`
 }
 
+type searchChannelsInput struct {
+	Query string `json:"query,omitempty" jsonschema:"Optional search term to filter channels and threads by name"`
+}
+
+type sendMessageInput struct {
+	ChannelID string `json:"channel_id" jsonschema:"The Discord channel or thread ID to send the message to"`
+	Content   string `json:"content" jsonschema:"The message content to send"`
+}
+
 type listTasksInput struct{}
 
 // New creates a new MCP server with scheduler tools.
@@ -112,6 +121,16 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 		Name:        "delete_thread",
 		Description: "Delete a Discord thread by its ID. This removes the thread from Discord and the database.",
 	}, s.handleDeleteThread)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "search_channels",
+		Description: "Search for Discord channels and threads. Returns channel IDs, names, directory paths, and active status. Use the query parameter to filter by name.",
+	}, s.handleSearchChannels)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "send_message",
+		Description: "Send a message to a Discord channel or thread. Use search_channels to find the target channel ID first.",
+	}, s.handleSendMessage)
 
 	return s
 }
@@ -396,6 +415,89 @@ func (s *Server) handleDeleteThread(_ context.Context, _ *mcp.CallToolRequest, i
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: fmt.Sprintf("Thread %s deleted successfully.", input.ThreadID)},
+		},
+	}, nil, nil
+}
+
+func (s *Server) handleSearchChannels(_ context.Context, _ *mcp.CallToolRequest, input searchChannelsInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "search_channels", "query", input.Query)
+
+	url := fmt.Sprintf("%s/api/channels", s.apiURL)
+	if input.Query != "" {
+		url += fmt.Sprintf("?query=%s", input.Query)
+	}
+
+	respBody, status, err := s.doRequest("GET", url, nil)
+	if err != nil {
+		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
+	}
+
+	if status != http.StatusOK {
+		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
+	}
+
+	var channels []struct {
+		ChannelID string `json:"channel_id"`
+		Name      string `json:"name"`
+		DirPath   string `json:"dir_path"`
+		ParentID  string `json:"parent_id"`
+		Active    bool   `json:"active"`
+	}
+	if err := json.Unmarshal(respBody, &channels); err != nil {
+		return errorResult(fmt.Sprintf("decoding response: %v", err)), nil, nil
+	}
+
+	if len(channels) == 0 {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: "No channels found."},
+			},
+		}, nil, nil
+	}
+
+	var text string
+	for _, ch := range channels {
+		chType := "channel"
+		if ch.ParentID != "" {
+			chType = "thread"
+		}
+		text += fmt.Sprintf("- %s [%s] (ID: %s, dir: %s, active: %v)\n", ch.Name, chType, ch.ChannelID, ch.DirPath, ch.Active)
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: text},
+		},
+	}, nil, nil
+}
+
+func (s *Server) handleSendMessage(_ context.Context, _ *mcp.CallToolRequest, input sendMessageInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "send_message", "channel_id", input.ChannelID, "content", input.Content)
+
+	if input.ChannelID == "" {
+		return errorResult("channel_id is required"), nil, nil
+	}
+	if input.Content == "" {
+		return errorResult("content is required"), nil, nil
+	}
+
+	data, _ := json.Marshal(map[string]string{
+		"channel_id": input.ChannelID,
+		"content":    input.Content,
+	})
+
+	respBody, status, err := s.doRequest("POST", s.apiURL+"/api/messages", data)
+	if err != nil {
+		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
+	}
+
+	if status != http.StatusNoContent {
+		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: "Message sent successfully."},
 		},
 	}, nil, nil
 }

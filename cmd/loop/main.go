@@ -484,8 +484,8 @@ var (
 	newDockerClient = func() (container.DockerClient, error) {
 		return container.NewClient()
 	}
-	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, logger *slog.Logger) apiServer {
-		return api.NewServer(sched, channels, threads, logger)
+	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) apiServer {
+		return api.NewServer(sched, channels, threads, store, messages, logger)
 	}
 )
 
@@ -537,7 +537,7 @@ func serve() error {
 		threadSvc = api.NewThreadService(store, bot)
 	}
 
-	apiSrv := newAPIServer(sched, channelSvc, threadSvc, logger)
+	apiSrv := newAPIServer(sched, channelSvc, threadSvc, store, bot, logger)
 	if err := apiSrv.Start(cfg.APIAddr); err != nil {
 		return fmt.Errorf("starting api server: %w", err)
 	}

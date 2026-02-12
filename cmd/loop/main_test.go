@@ -157,6 +157,14 @@ func (m *mockStore) GetScheduledTaskByTemplateName(ctx context.Context, channelI
 	return args.Get(0).(*db.ScheduledTask), args.Error(1)
 }
 
+func (m *mockStore) ListChannels(ctx context.Context) ([]*db.Channel, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.Channel), args.Error(1)
+}
+
 type mockDockerClient struct {
 	mock.Mock
 }
@@ -270,6 +278,10 @@ func (m *mockBot) DeleteThread(ctx context.Context, threadID string) error {
 	return m.Called(ctx, threadID).Error(0)
 }
 
+func (m *mockBot) PostMessage(ctx context.Context, channelID, content string) error {
+	return m.Called(ctx, channelID, content).Error(0)
+}
+
 func (m *mockBot) GetChannelParentID(ctx context.Context, channelID string) (string, error) {
 	args := m.Called(ctx, channelID)
 	return args.String(0), args.Error(1)
@@ -305,7 +317,7 @@ type MainSuite struct {
 	origNewDockerClient   func() (container.DockerClient, error)
 	origNewSQLiteStore    func(string) (db.Store, error)
 	origOsExit            func(int)
-	origNewAPIServer      func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, *slog.Logger) apiServer
+	origNewAPIServer      func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, api.ChannelLister, api.MessageSender, *slog.Logger) apiServer
 	origNewMCPServer      func(string, string, string, mcpserver.HTTPClient, *slog.Logger) *mcpserver.Server
 	origDaemonStart       func(daemon.System, string) error
 	origDaemonStop        func(daemon.System) error
@@ -383,9 +395,9 @@ func testConfig() *config.Config {
 
 // fakeAPIServer returns a newAPIServer func that creates a real api.Server
 // but binds to a random port (127.0.0.1:0).
-func fakeAPIServer() func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, *slog.Logger) apiServer {
-	return func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, logger *slog.Logger) apiServer {
-		return api.NewServer(sched, channels, threads, logger)
+func fakeAPIServer() func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, api.ChannelLister, api.MessageSender, *slog.Logger) apiServer {
+	return func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) apiServer {
+		return api.NewServer(sched, channels, threads, store, messages, logger)
 	}
 }
 
@@ -532,7 +544,7 @@ func (s *MainSuite) TestRunMCPWithInMemoryTransport() {
 
 	res, err := session.ListTools(context.Background(), nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 7)
+	require.Len(s.T(), res.Tools, 9)
 }
 
 func (s *MainSuite) TestEnsureChannelSuccess() {
@@ -882,9 +894,9 @@ func (s *MainSuite) TestServeHappyPathWithGuildID() {
 		return nil
 	}
 	channelsCh := make(chan api.ChannelEnsurer, 1)
-	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, logger *slog.Logger) apiServer {
+	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) apiServer {
 		channelsCh <- channels
-		return api.NewServer(sched, channels, threads, logger)
+		return api.NewServer(sched, channels, threads, store, messages, logger)
 	}
 
 	errCh := make(chan error, 1)
@@ -999,7 +1011,7 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
 		return nil
 	}
-	newAPIServer = func(_ scheduler.Scheduler, _ api.ChannelEnsurer, _ api.ThreadEnsurer, _ *slog.Logger) apiServer {
+	newAPIServer = func(_ scheduler.Scheduler, _ api.ChannelEnsurer, _ api.ThreadEnsurer, _ api.ChannelLister, _ api.MessageSender, _ *slog.Logger) apiServer {
 		return mockAPI
 	}
 
@@ -1109,7 +1121,7 @@ func (s *MainSuite) TestDefaultVarSignatures() {
 
 	// Verify newAPIServer produces a non-nil apiServer
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	apiSrv := newAPIServer(nil, nil, nil, logger)
+	apiSrv := newAPIServer(nil, nil, nil, nil, nil, logger)
 	require.NotNil(s.T(), apiSrv)
 
 	// Verify newMCPServer produces a non-nil server

@@ -283,6 +283,12 @@ loop onboard:local
 
 The bot also responds to `@mentions`, replies to its own messages, and messages prefixed with `!loop`. It auto-joins threads in active channels — tagging the bot in a thread inherits the parent channel's project directory and forks its session so each thread gets independent context.
 
+Agents can trigger work in other channels using the `send_message` MCP tool. The bot can self-reference itself — a message it sends with its own `@mention` will trigger a runner in the target channel. For example, an agent in channel A can ask:
+
+> Send a message to the backend channel asking @LoopBot to check the last commit
+
+The agent will use `search_channels` to find the backend channel, then `send_message` with a bot mention, which triggers a new runner in that channel.
+
 ### Task Templates
 
 The config.json file can include a `task_templates` array with reusable task patterns. Use `/loop template add <name>` in Discord to load a template as a scheduled task in the current channel. Templates are idempotent — adding the same template twice to a channel is a no-op.
@@ -348,7 +354,9 @@ Project configs (`.loop/config.json`) can define their own `task_templates` that
 | `GET` | `/api/tasks?channel_id=<id>` | List tasks for a channel |
 | `PATCH` | `/api/tasks/{id}` | Update a task (enabled, schedule, type, prompt) |
 | `DELETE` | `/api/tasks/{id}` | Delete a task |
+| `GET` | `/api/channels?query=<term>` | Search channels and threads (optional query filter) |
 | `POST` | `/api/channels` | Ensure/create a Discord channel for a directory |
+| `POST` | `/api/messages` | Send a message to a channel or thread |
 | `POST` | `/api/threads` | Create a Discord thread in an existing channel |
 | `DELETE` | `/api/threads/{id}` | Delete a Discord thread |
 
@@ -363,6 +371,8 @@ Project configs (`.loop/config.json`) can define their own `task_templates` that
 | `edit_task` | Edit a task's schedule, type, and/or prompt |
 | `create_thread` | Create a new Discord thread in the current channel |
 | `delete_thread` | Delete a Discord thread by ID |
+| `search_channels` | Search for channels and threads by name |
+| `send_message` | Send a message to a channel or thread |
 
 ## Development
 

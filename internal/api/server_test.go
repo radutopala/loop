@@ -82,11 +82,33 @@ func (m *MockThreadEnsurer) DeleteThread(ctx context.Context, threadID string) e
 	return m.Called(ctx, threadID).Error(0)
 }
 
+type MockChannelLister struct {
+	mock.Mock
+}
+
+func (m *MockChannelLister) ListChannels(ctx context.Context) ([]*db.Channel, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.Channel), args.Error(1)
+}
+
+type MockMessageSender struct {
+	mock.Mock
+}
+
+func (m *MockMessageSender) PostMessage(ctx context.Context, channelID, content string) error {
+	return m.Called(ctx, channelID, content).Error(0)
+}
+
 type ServerSuite struct {
 	suite.Suite
 	scheduler *MockScheduler
 	channels  *MockChannelEnsurer
 	threads   *MockThreadEnsurer
+	store     *MockChannelLister
+	messages  *MockMessageSender
 	srv       *Server
 	mux       *http.ServeMux
 }
@@ -99,11 +121,15 @@ func (s *ServerSuite) SetupTest() {
 	s.scheduler = new(MockScheduler)
 	s.channels = new(MockChannelEnsurer)
 	s.threads = new(MockThreadEnsurer)
+	s.store = new(MockChannelLister)
+	s.messages = new(MockMessageSender)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.srv = NewServer(s.scheduler, s.channels, s.threads, logger)
+	s.srv = NewServer(s.scheduler, s.channels, s.threads, s.store, s.messages, logger)
 
 	s.mux = http.NewServeMux()
+	s.mux.HandleFunc("GET /api/channels", s.srv.handleSearchChannels)
 	s.mux.HandleFunc("POST /api/channels", s.srv.handleEnsureChannel)
+	s.mux.HandleFunc("POST /api/messages", s.srv.handleSendMessage)
 	s.mux.HandleFunc("POST /api/threads", s.srv.handleCreateThread)
 	s.mux.HandleFunc("DELETE /api/threads/{id}", s.srv.handleDeleteThread)
 	s.mux.HandleFunc("POST /api/tasks", s.srv.handleCreateTask)
@@ -116,6 +142,8 @@ func (s *ServerSuite) TestNewServer() {
 	require.NotNil(s.T(), s.srv)
 	require.NotNil(s.T(), s.srv.scheduler)
 	require.NotNil(s.T(), s.srv.channels)
+	require.NotNil(s.T(), s.srv.store)
+	require.NotNil(s.T(), s.srv.messages)
 	require.NotNil(s.T(), s.srv.logger)
 }
 
@@ -378,7 +406,7 @@ func (s *ServerSuite) TestStartListenError() {
 	// Try to start another server — won't get the same port, but
 	// we can test with an invalid address
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv2 := NewServer(s.scheduler, nil, nil, logger)
+	srv2 := NewServer(s.scheduler, nil, nil, nil, nil, logger)
 	err = srv2.Start("invalid-addr-no-port")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "listening on")
@@ -387,7 +415,7 @@ func (s *ServerSuite) TestStartListenError() {
 
 func (s *ServerSuite) TestStopNilServer() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(s.scheduler, nil, nil, logger)
+	srv := NewServer(s.scheduler, nil, nil, nil, nil, logger)
 
 	err := srv.Stop(context.Background())
 	require.NoError(s.T(), err)
@@ -460,7 +488,7 @@ func (s *ServerSuite) TestEnsureChannelError() {
 
 func (s *ServerSuite) TestEnsureChannelNilEnsurer() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(s.scheduler, nil, nil, logger)
+	srv := NewServer(s.scheduler, nil, nil, nil, nil, logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/channels", srv.handleEnsureChannel)
@@ -584,7 +612,7 @@ func (s *ServerSuite) TestDeleteThreadError() {
 
 func (s *ServerSuite) TestDeleteThreadNilEnsurer() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(s.scheduler, nil, nil, logger)
+	srv := NewServer(s.scheduler, nil, nil, nil, nil, logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("DELETE /api/threads/{id}", srv.handleDeleteThread)
@@ -599,7 +627,7 @@ func (s *ServerSuite) TestDeleteThreadNilEnsurer() {
 
 func (s *ServerSuite) TestCreateThreadNilEnsurer() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(s.scheduler, nil, nil, logger)
+	srv := NewServer(s.scheduler, nil, nil, nil, nil, logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/threads", srv.handleCreateThread)
@@ -611,4 +639,197 @@ func (s *ServerSuite) TestCreateThreadNilEnsurer() {
 	mux.ServeHTTP(rec, req)
 
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+// --- SearchChannels tests ---
+
+func (s *ServerSuite) TestSearchChannelsSuccess() {
+	channels := []*db.Channel{
+		{ChannelID: "ch-1", Name: "general", DirPath: "/home/user/general", Active: true},
+		{ChannelID: "ch-2", Name: "random", DirPath: "/home/user/random", ParentID: "ch-1", Active: false},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+
+	req := httptest.NewRequest("GET", "/api/channels", nil)
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 2)
+	require.Equal(s.T(), "ch-1", resp[0].ChannelID)
+	require.Equal(s.T(), "general", resp[0].Name)
+	require.True(s.T(), resp[0].Active)
+	require.Equal(s.T(), "ch-2", resp[1].ChannelID)
+	require.Equal(s.T(), "ch-1", resp[1].ParentID)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSearchChannelsWithQuery() {
+	channels := []*db.Channel{
+		{ChannelID: "ch-1", Name: "general", DirPath: "/home/user/general", Active: true},
+		{ChannelID: "ch-2", Name: "random", DirPath: "/home/user/random", Active: true},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+
+	req := httptest.NewRequest("GET", "/api/channels?query=gen", nil)
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 1)
+	require.Equal(s.T(), "general", resp[0].Name)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSearchChannelsWithQueryNoMatch() {
+	channels := []*db.Channel{
+		{ChannelID: "ch-1", Name: "general", DirPath: "/home/user/general", Active: true},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+
+	req := httptest.NewRequest("GET", "/api/channels?query=nonexistent", nil)
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Empty(s.T(), resp)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSearchChannelsEmpty() {
+	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{}, nil)
+
+	req := httptest.NewRequest("GET", "/api/channels", nil)
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Empty(s.T(), resp)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSearchChannelsError() {
+	s.store.On("ListChannels", mock.Anything).Return(nil, errors.New("db error"))
+
+	req := httptest.NewRequest("GET", "/api/channels", nil)
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSearchChannelsNilStore() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewServer(s.scheduler, nil, nil, nil, nil, logger)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels", srv.handleSearchChannels)
+
+	req := httptest.NewRequest("GET", "/api/channels", nil)
+	rec := httptest.NewRecorder()
+
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+// --- SendMessage tests ---
+
+func (s *ServerSuite) TestSendMessageSuccess() {
+	s.messages.On("PostMessage", mock.Anything, "ch-1", "hello world").Return(nil)
+
+	body := `{"channel_id":"ch-1","content":"hello world"}`
+	req := httptest.NewRequest("POST", "/api/messages", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	s.messages.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSendMessageMissingChannelID() {
+	body := `{"content":"hello"}`
+	req := httptest.NewRequest("POST", "/api/messages", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestSendMessageMissingContent() {
+	body := `{"channel_id":"ch-1"}`
+	req := httptest.NewRequest("POST", "/api/messages", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestSendMessageInvalidBody() {
+	req := httptest.NewRequest("POST", "/api/messages", bytes.NewBufferString("not json"))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestSendMessageError() {
+	s.messages.On("PostMessage", mock.Anything, "ch-1", "hello").Return(errors.New("send failed"))
+
+	body := `{"channel_id":"ch-1","content":"hello"}`
+	req := httptest.NewRequest("POST", "/api/messages", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.messages.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSendMessageNilSender() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewServer(s.scheduler, nil, nil, nil, nil, logger)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/messages", srv.handleSendMessage)
+
+	body := `{"channel_id":"ch-1","content":"hello"}`
+	req := httptest.NewRequest("POST", "/api/messages", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+// --- containsFold tests ---
+
+func (s *ServerSuite) TestContainsFold() {
+	require.True(s.T(), containsFold("General", "gen"))
+	require.True(s.T(), containsFold("GENERAL", "general"))
+	require.True(s.T(), containsFold("general", "GENERAL"))
+	require.False(s.T(), containsFold("general", "random"))
+	require.True(s.T(), containsFold("abc", ""))
 }

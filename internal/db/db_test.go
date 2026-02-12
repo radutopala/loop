@@ -298,6 +298,61 @@ func (s *StoreSuite) TestDeleteChannelsByParentIDError() {
 	require.Error(s.T(), err)
 }
 
+func (s *StoreSuite) TestListChannels() {
+	now := time.Now().UTC()
+	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "active", "session_id", "created_at", "updated_at"}).
+		AddRow(1, "ch1", "g1", "alpha", "/home/user/alpha", "", 1, "sess-1", now, now).
+		AddRow(2, "ch2", "g1", "beta", "/home/user/beta", "ch1", 0, "sess-2", now, now)
+	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).
+		WillReturnRows(rows)
+
+	channels, err := s.store.ListChannels(context.Background())
+	require.NoError(s.T(), err)
+	require.Len(s.T(), channels, 2)
+	require.Equal(s.T(), "ch1", channels[0].ChannelID)
+	require.Equal(s.T(), "alpha", channels[0].Name)
+	require.Equal(s.T(), "/home/user/alpha", channels[0].DirPath)
+	require.Empty(s.T(), channels[0].ParentID)
+	require.True(s.T(), channels[0].Active)
+	require.Equal(s.T(), "sess-1", channels[0].SessionID)
+	require.Equal(s.T(), "ch2", channels[1].ChannelID)
+	require.Equal(s.T(), "beta", channels[1].Name)
+	require.Equal(s.T(), "ch1", channels[1].ParentID)
+	require.False(s.T(), channels[1].Active)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestListChannelsEmpty() {
+	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "active", "session_id", "created_at", "updated_at"})
+	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).
+		WillReturnRows(rows)
+
+	channels, err := s.store.ListChannels(context.Background())
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), channels)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestListChannelsError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).
+		WillReturnError(sql.ErrConnDone)
+
+	channels, err := s.store.ListChannels(context.Background())
+	require.Error(s.T(), err)
+	require.Nil(s.T(), channels)
+}
+
+func (s *StoreSuite) TestListChannelsScanError() {
+	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "active", "session_id", "created_at", "updated_at"}).
+		AddRow("not-an-int", "ch1", "g1", "test", "/home/user/project", "", 1, "sess-1", time.Now().UTC(), time.Now().UTC())
+	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).
+		WillReturnRows(rows)
+
+	channels, err := s.store.ListChannels(context.Background())
+	require.Error(s.T(), err)
+	require.Nil(s.T(), channels)
+}
+
 // --- Message tests ---
 
 func (s *StoreSuite) TestInsertMessage() {

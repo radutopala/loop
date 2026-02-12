@@ -157,6 +157,14 @@ func (m *MockStore) GetScheduledTaskByTemplateName(ctx context.Context, channelI
 	return args.Get(0).(*db.ScheduledTask), args.Error(1)
 }
 
+func (m *MockStore) ListChannels(ctx context.Context) ([]*db.Channel, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.Channel), args.Error(1)
+}
+
 type MockBot struct {
 	mock.Mock
 }
@@ -220,6 +228,10 @@ func (m *MockBot) CreateThread(ctx context.Context, channelID, name, mentionUser
 
 func (m *MockBot) DeleteThread(ctx context.Context, threadID string) error {
 	return m.Called(ctx, threadID).Error(0)
+}
+
+func (m *MockBot) PostMessage(ctx context.Context, channelID, content string) error {
+	return m.Called(ctx, channelID, content).Error(0)
 }
 
 func (m *MockBot) GetChannelParentID(ctx context.Context, channelID string) (string, error) {

@@ -85,7 +85,7 @@ func (s *MCPServerSuite) TestMCPServer() {
 func (s *MCPServerSuite) TestListTools() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 7)
+	require.Len(s.T(), res.Tools, 9)
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -98,6 +98,8 @@ func (s *MCPServerSuite) TestListTools() {
 	require.True(s.T(), names["edit_task"])
 	require.True(s.T(), names["create_thread"])
 	require.True(s.T(), names["delete_thread"])
+	require.True(s.T(), names["search_channels"])
+	require.True(s.T(), names["send_message"])
 }
 
 // --- schedule_task ---
@@ -709,6 +711,172 @@ func (s *MCPServerSuite) TestDeleteThreadHTTPError() {
 	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
 		Name:      "delete_thread",
 		Arguments: map[string]any{"thread_id": "thread-1"},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "calling API")
+}
+
+// --- search_channels ---
+
+func (s *MCPServerSuite) TestSearchChannelsSuccess() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "GET", req.Method)
+		require.Contains(s.T(), req.URL.String(), "/api/channels")
+		return jsonResponse(http.StatusOK, `[{"channel_id":"ch-1","name":"general","dir_path":"/home/user/general","parent_id":"","active":true},{"channel_id":"ch-2","name":"thread-1","dir_path":"/home/user/general","parent_id":"ch-1","active":true}]`), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "search_channels",
+		Arguments: map[string]any{},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	text := res.Content[0].(*mcp.TextContent).Text
+	require.Contains(s.T(), text, "general")
+	require.Contains(s.T(), text, "[channel]")
+	require.Contains(s.T(), text, "thread-1")
+	require.Contains(s.T(), text, "[thread]")
+}
+
+func (s *MCPServerSuite) TestSearchChannelsWithQuery() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "GET", req.Method)
+		require.Contains(s.T(), req.URL.String(), "query=gen")
+		return jsonResponse(http.StatusOK, `[{"channel_id":"ch-1","name":"general","dir_path":"/home/user/general","parent_id":"","active":true}]`), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "search_channels",
+		Arguments: map[string]any{"query": "gen"},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "general")
+}
+
+func (s *MCPServerSuite) TestSearchChannelsEmpty() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `[]`), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "search_channels",
+		Arguments: map[string]any{},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "No channels found")
+}
+
+func (s *MCPServerSuite) TestSearchChannelsAPIError() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusInternalServerError, "db error"), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "search_channels",
+		Arguments: map[string]any{},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "API error")
+}
+
+func (s *MCPServerSuite) TestSearchChannelsHTTPError() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("connection refused")
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "search_channels",
+		Arguments: map[string]any{},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "calling API")
+}
+
+func (s *MCPServerSuite) TestSearchChannelsInvalidResponseJSON() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, "not json"), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "search_channels",
+		Arguments: map[string]any{},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "decoding response")
+}
+
+// --- send_message ---
+
+func (s *MCPServerSuite) TestSendMessageSuccess() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "POST", req.Method)
+		require.Contains(s.T(), req.URL.String(), "/api/messages")
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"channel_id":"ch-1"`)
+		require.Contains(s.T(), string(body), `"content":"hello world"`)
+		return &http.Response{
+			StatusCode: http.StatusNoContent,
+			Body:       io.NopCloser(bytes.NewReader(nil)),
+		}, nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "send_message",
+		Arguments: map[string]any{"channel_id": "ch-1", "content": "hello world"},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "Message sent successfully")
+}
+
+func (s *MCPServerSuite) TestSendMessageEmptyChannelID() {
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "send_message",
+		Arguments: map[string]any{"channel_id": "", "content": "hello"},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "channel_id is required")
+}
+
+func (s *MCPServerSuite) TestSendMessageEmptyContent() {
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "send_message",
+		Arguments: map[string]any{"channel_id": "ch-1", "content": ""},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "content is required")
+}
+
+func (s *MCPServerSuite) TestSendMessageAPIError() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusInternalServerError, "send failed"), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "send_message",
+		Arguments: map[string]any{"channel_id": "ch-1", "content": "hello"},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "API error")
+}
+
+func (s *MCPServerSuite) TestSendMessageHTTPError() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("connection refused")
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "send_message",
+		Arguments: map[string]any{"channel_id": "ch-1", "content": "hello"},
 	})
 	require.NoError(s.T(), err)
 	require.True(s.T(), res.IsError)

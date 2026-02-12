@@ -295,6 +295,15 @@ func (b *DiscordBot) CreateThread(ctx context.Context, channelID, name, mentionU
 	return ch.ID, nil
 }
 
+// PostMessage sends a simple message to the given channel or thread.
+func (b *DiscordBot) PostMessage(ctx context.Context, channelID, content string) error {
+	_, err := b.session.ChannelMessageSend(channelID, content)
+	if err != nil {
+		return fmt.Errorf("discord post message: %w", err)
+	}
+	return nil
+}
+
 // DeleteThread deletes a Discord thread by its ID.
 func (b *DiscordBot) DeleteThread(ctx context.Context, threadID string) error {
 	if _, err := b.session.ChannelDelete(threadID); err != nil {
@@ -352,7 +361,7 @@ func (b *DiscordBot) handleMessage(_ *discordgo.Session, m *discordgo.MessageCre
 	}
 
 	botID := b.BotUserID()
-	if m.Author.ID == botID {
+	if m.Author.ID == botID && !isBotMention(m, botID) {
 		return
 	}
 

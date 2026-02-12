@@ -141,6 +141,14 @@ func (m *MockStore) GetScheduledTaskByTemplateName(ctx context.Context, channelI
 	return args.Get(0).(*db.ScheduledTask), args.Error(1)
 }
 
+func (m *MockStore) ListChannels(ctx context.Context) ([]*db.Channel, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.Channel), args.Error(1)
+}
+
 // MockTaskExecutor implements TaskExecutor for testing.
 type MockTaskExecutor struct {
 	mock.Mock

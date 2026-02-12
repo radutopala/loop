@@ -670,11 +670,41 @@ func (s *BotSuite) TestHandleMessageIgnoresBotMessages() {
 
 	m := &discordgo.MessageCreate{
 		Message: &discordgo.Message{
-			Author: &discordgo.User{ID: "bot-123"},
+			Author:  &discordgo.User{ID: "bot-123"},
+			Content: "just a normal response",
 		},
 	}
 	s.bot.handleMessage(nil, m)
 	require.False(s.T(), called)
+}
+
+func (s *BotSuite) TestHandleMessageBotSelfMentionProcessed() {
+	s.bot.mu.Lock()
+	s.bot.botUserID = "bot-123"
+	s.bot.mu.Unlock()
+
+	var received *IncomingMessage
+	done := make(chan struct{})
+	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+		received = msg
+		close(done)
+	})
+
+	m := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			ID:        "msg-1",
+			ChannelID: "ch-2",
+			Content:   "<@bot-123> check the last commit",
+			Author:    &discordgo.User{ID: "bot-123", Username: "LoopBot"},
+			Mentions:  []*discordgo.User{{ID: "bot-123"}},
+		},
+	}
+	s.bot.handleMessage(nil, m)
+	<-done
+
+	require.NotNil(s.T(), received)
+	require.Equal(s.T(), "check the last commit", received.Content)
+	require.True(s.T(), received.IsBotMention)
 }
 
 func (s *BotSuite) TestHandleMessageIgnoresNonTriggered() {
@@ -1583,6 +1613,26 @@ func (s *BotSuite) TestGetChannelParentIDError() {
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "discord get channel")
 	require.Empty(s.T(), parentID)
+}
+
+// --- PostMessage ---
+
+func (s *BotSuite) TestPostMessageSuccess() {
+	s.session.On("ChannelMessageSend", "ch-1", "hello", mock.Anything).
+		Return(&discordgo.Message{}, nil)
+
+	err := s.bot.PostMessage(context.Background(), "ch-1", "hello")
+	require.NoError(s.T(), err)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestPostMessageError() {
+	s.session.On("ChannelMessageSend", "ch-1", "hello", mock.Anything).
+		Return(nil, errors.New("send failed"))
+
+	err := s.bot.PostMessage(context.Background(), "ch-1", "hello")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "discord post message")
 }
 
 // --- Verify Bot interface compliance ---

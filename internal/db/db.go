@@ -30,6 +30,7 @@ type Store interface {
 	UpdateScheduledTaskEnabled(ctx context.Context, id int64, enabled bool) error
 	GetScheduledTask(ctx context.Context, id int64) (*ScheduledTask, error)
 	GetScheduledTaskByTemplateName(ctx context.Context, channelID, templateName string) (*ScheduledTask, error)
+	ListChannels(ctx context.Context) ([]*Channel, error)
 	InsertTaskRunLog(ctx context.Context, log *TaskRunLog) (int64, error)
 	UpdateTaskRunLog(ctx context.Context, log *TaskRunLog) error
 	Close() error
@@ -172,6 +173,29 @@ func (s *SQLiteStore) DeleteChannelsByParentID(ctx context.Context, parentID str
 	}
 	_, err = s.db.ExecContext(ctx, `DELETE FROM channels WHERE parent_id = ?`, parentID)
 	return err
+}
+
+func (s *SQLiteStore) ListChannels(ctx context.Context) ([]*Channel, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, active, session_id, created_at, updated_at
+		 FROM channels ORDER BY name ASC`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var channels []*Channel
+	for rows.Next() {
+		ch := &Channel{}
+		var active int
+		if err := rows.Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath,
+			&ch.ParentID, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
+			return nil, err
+		}
+		ch.Active = active == 1
+		channels = append(channels, ch)
+	}
+	return channels, rows.Err()
 }
 
 func (s *SQLiteStore) InsertMessage(ctx context.Context, msg *Message) error {

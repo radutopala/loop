@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/radutopala/loop/internal/db"
@@ -20,18 +21,22 @@ type Server struct {
 	scheduler scheduler.Scheduler
 	channels  ChannelEnsurer
 	threads   ThreadEnsurer
+	store     ChannelLister
+	messages  MessageSender
 	logger    *slog.Logger
 	server    *http.Server
 	listener  net.Listener
 }
 
-// NewServer creates a new API server. The channels and threads parameters
-// may be nil if channel/thread creation is not configured.
-func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads ThreadEnsurer, logger *slog.Logger) *Server {
+// NewServer creates a new API server. The channels, threads, store, and messages
+// parameters may be nil if those features are not configured.
+func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads ThreadEnsurer, store ChannelLister, messages MessageSender, logger *slog.Logger) *Server {
 	return &Server{
 		scheduler: sched,
 		channels:  channels,
 		threads:   threads,
+		store:     store,
+		messages:  messages,
 		logger:    logger,
 	}
 }
@@ -72,6 +77,19 @@ type createThreadResponse struct {
 	ThreadID string `json:"thread_id"`
 }
 
+type channelResponse struct {
+	ChannelID string `json:"channel_id"`
+	Name      string `json:"name"`
+	DirPath   string `json:"dir_path"`
+	ParentID  string `json:"parent_id"`
+	Active    bool   `json:"active"`
+}
+
+type sendMessageRequest struct {
+	ChannelID string `json:"channel_id"`
+	Content   string `json:"content"`
+}
+
 type taskResponse struct {
 	ID        int64     `json:"id"`
 	ChannelID string    `json:"channel_id"`
@@ -85,7 +103,9 @@ type taskResponse struct {
 // Start starts the HTTP server on the given address.
 func (s *Server) Start(addr string) error {
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels", s.handleSearchChannels)
 	mux.HandleFunc("POST /api/channels", s.handleEnsureChannel)
+	mux.HandleFunc("POST /api/messages", s.handleSendMessage)
 	mux.HandleFunc("POST /api/threads", s.handleCreateThread)
 	mux.HandleFunc("DELETE /api/threads/{id}", s.handleDeleteThread)
 	mux.HandleFunc("POST /api/tasks", s.handleCreateTask)
@@ -289,6 +309,67 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(createThreadResponse{ThreadID: threadID})
 }
 
+func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
+	if s.store == nil {
+		http.Error(w, "channel listing not configured", http.StatusNotImplemented)
+		return
+	}
+
+	channels, err := s.store.ListChannels(r.Context())
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	query := r.URL.Query().Get("query")
+
+	resp := make([]channelResponse, 0, len(channels))
+	for _, ch := range channels {
+		if query != "" && !containsFold(ch.Name, query) {
+			continue
+		}
+		resp = append(resp, channelResponse{
+			ChannelID: ch.ChannelID,
+			Name:      ch.Name,
+			DirPath:   ch.DirPath,
+			ParentID:  ch.ParentID,
+			Active:    ch.Active,
+		})
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
+func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
+	if s.messages == nil {
+		http.Error(w, "message sending not configured", http.StatusNotImplemented)
+		return
+	}
+
+	var req sendMessageRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.ChannelID == "" {
+		http.Error(w, "channel_id is required", http.StatusBadRequest)
+		return
+	}
+	if req.Content == "" {
+		http.Error(w, "content is required", http.StatusBadRequest)
+		return
+	}
+
+	if err := s.messages.PostMessage(r.Context(), req.ChannelID, req.Content); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 	if s.threads == nil {
 		http.Error(w, "thread deletion not configured", http.StatusNotImplemented)
@@ -303,4 +384,8 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+func containsFold(s, substr string) bool {
+	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
