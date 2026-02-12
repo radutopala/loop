@@ -5,6 +5,7 @@ import "fmt"
 // AgentRequest is the input sent to the agent runner.
 type AgentRequest struct {
 	SessionID    string         `json:"session_id"`
+	ForkSession  bool           `json:"fork_session,omitempty"`
 	Messages     []AgentMessage `json:"messages"`
 	SystemPrompt string         `json:"system_prompt"`
 	ChannelID    string         `json:"channel_id"`

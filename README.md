@@ -80,10 +80,10 @@ go install github.com/radutopala/loop/cmd/loop@latest
 5. Invite the bot to your server (replace `YOUR_APP_ID`):
 
    ```
-   https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot%20applications.commands&permissions=68624
+   https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot%20applications.commands&permissions=377957190672
    ```
 
-   This grants: View Channels, Send Messages, Read Message History, Manage Channels (for auto-creating project channels).
+   This grants: View Channels, Send Messages, Read Message History, Manage Channels, Send Messages in Threads, Create Public Threads, Create Private Threads.
 
 ### Step 3: Initialize global config
 

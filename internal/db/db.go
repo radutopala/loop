@@ -84,15 +84,17 @@ func (s *SQLiteStore) Close() error {
 
 func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO channels (channel_id, guild_id, name, dir_path, active, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?)
+		`INSERT INTO channels (channel_id, guild_id, name, dir_path, parent_id, session_id, active, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(channel_id) DO UPDATE SET
 		   guild_id = excluded.guild_id,
 		   name = excluded.name,
 		   dir_path = excluded.dir_path,
+		   parent_id = excluded.parent_id,
+		   session_id = CASE WHEN excluded.session_id != '' THEN excluded.session_id ELSE channels.session_id END,
 		   active = excluded.active,
 		   updated_at = excluded.updated_at`,
-		ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, boolToInt(ch.Active), time.Now().UTC(),
+		ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, ch.ParentID, ch.SessionID, boolToInt(ch.Active), time.Now().UTC(),
 	)
 	return err
 }
@@ -101,9 +103,9 @@ func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channe
 	ch := &Channel{}
 	var active int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, active, session_id, created_at, updated_at FROM channels WHERE channel_id = ?`,
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, active, session_id, created_at, updated_at FROM channels WHERE channel_id = ?`,
 		channelID,
-	).Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt)
+	).Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &ch.ParentID, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -118,9 +120,9 @@ func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string) (
 	ch := &Channel{}
 	var active int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, active, session_id, created_at, updated_at FROM channels WHERE dir_path = ?`,
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, active, session_id, created_at, updated_at FROM channels WHERE dir_path = ?`,
 		dirPath,
-	).Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt)
+	).Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &ch.ParentID, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

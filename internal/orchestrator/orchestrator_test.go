@@ -199,6 +199,11 @@ func (m *MockBot) CreateChannel(ctx context.Context, guildID, name string) (stri
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockBot) GetChannelParentID(ctx context.Context, channelID string) (string, error) {
+	args := m.Called(ctx, channelID)
+	return args.String(0), args.Error(1)
+}
+
 type MockRunner struct {
 	mock.Mock
 }
@@ -368,6 +373,7 @@ func (s *OrchestratorSuite) TestStopWithErrors() {
 
 func (s *OrchestratorSuite) TestHandleMessageUnregisteredChannel() {
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(false, nil)
+	s.bot.On("GetChannelParentID", s.ctx, "ch1").Return("", nil)
 
 	s.orch.HandleMessage(s.ctx, &IncomingMessage{
 		ChannelID: "ch1",
@@ -376,6 +382,161 @@ func (s *OrchestratorSuite) TestHandleMessageUnregisteredChannel() {
 
 	s.store.AssertExpectations(s.T())
 	s.store.AssertNotCalled(s.T(), "GetChannel", mock.Anything, mock.Anything)
+}
+
+func (s *OrchestratorSuite) TestHandleMessageThreadResolved() {
+	msg := &IncomingMessage{
+		ChannelID:    "thread1",
+		GuildID:      "g1",
+		AuthorID:     "user1",
+		AuthorName:   "Alice",
+		Content:      "hello in thread",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	// Thread is not directly active
+	s.store.On("IsChannelActive", s.ctx, "thread1").Return(false, nil).Once()
+	// Resolve thread: parent found
+	s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("ch1", nil)
+	// Parent is active
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	// Get parent channel for inheritance
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", GuildID: "g1", DirPath: "/project", SessionID: "sess-parent", Active: true,
+	}, nil)
+	// Upsert thread channel with dir_path and session_id inherited from parent
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "thread1" && ch.ParentID == "ch1" && ch.GuildID == "g1" && ch.DirPath == "/project" && ch.SessionID == "sess-parent" && ch.Active
+	})).Return(nil)
+	// Now the thread is a channel — normal flow continues
+	s.store.On("GetChannel", s.ctx, "thread1").Return(&db.Channel{
+		ID: 2, ChannelID: "thread1", GuildID: "g1", DirPath: "/project", ParentID: "ch1", SessionID: "sess-parent", Active: true,
+	}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "thread1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "thread1", 50).Return([]*db.Message{}, nil)
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.ForkSession && req.SessionID == "sess-parent"
+	})).Return(&agent.AgentResponse{
+		Response:  "Hi from thread!",
+		SessionID: "sess-forked",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread1", "sess-forked").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.ChannelID == "thread1" && out.Content == "Hi from thread!"
+	})).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleMessageThreadAlreadyUpserted() {
+	// Second message in a thread — thread is already in DB with dir_path
+	s.store.On("IsChannelActive", s.ctx, "thread1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "thread1").Return(&db.Channel{
+		ID: 2, ChannelID: "thread1", GuildID: "g1", DirPath: "/project", ParentID: "ch1", Active: true,
+	}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, &IncomingMessage{
+		ChannelID: "thread1",
+		GuildID:   "g1",
+		Content:   "just context",
+	})
+
+	// No GetChannelParentID call — thread was already active
+	s.bot.AssertNotCalled(s.T(), "GetChannelParentID", mock.Anything, mock.Anything)
+}
+
+func (s *OrchestratorSuite) TestHandleMessageThreadInactiveParent() {
+	s.store.On("IsChannelActive", s.ctx, "thread1").Return(false, nil)
+	s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("ch1", nil)
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(false, nil)
+
+	s.orch.HandleMessage(s.ctx, &IncomingMessage{
+		ChannelID: "thread1",
+		Content:   "hello",
+	})
+
+	// Should not upsert or proceed
+	s.store.AssertNotCalled(s.T(), "UpsertChannel", mock.Anything, mock.Anything)
+	s.store.AssertNotCalled(s.T(), "GetChannel", mock.Anything, mock.Anything)
+}
+
+func (s *OrchestratorSuite) TestHandleMessageThreadParentIDError() {
+	s.store.On("IsChannelActive", s.ctx, "thread1").Return(false, nil)
+	s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("", errors.New("api error"))
+
+	s.orch.HandleMessage(s.ctx, &IncomingMessage{
+		ChannelID: "thread1",
+		Content:   "hello",
+	})
+
+	s.store.AssertNotCalled(s.T(), "GetChannel", mock.Anything, mock.Anything)
+}
+
+func (s *OrchestratorSuite) TestHandleMessageThreadParentActiveCheckError() {
+	s.store.On("IsChannelActive", s.ctx, "thread1").Return(false, nil)
+	s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("ch1", nil)
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(false, errors.New("db error"))
+
+	s.orch.HandleMessage(s.ctx, &IncomingMessage{
+		ChannelID: "thread1",
+		Content:   "hello",
+	})
+
+	s.store.AssertNotCalled(s.T(), "GetChannel", mock.Anything, mock.Anything)
+}
+
+func (s *OrchestratorSuite) TestHandleMessageThreadGetParentChannelError() {
+	s.store.On("IsChannelActive", s.ctx, "thread1").Return(false, nil)
+	s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("ch1", nil)
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("db error"))
+
+	s.orch.HandleMessage(s.ctx, &IncomingMessage{
+		ChannelID: "thread1",
+		Content:   "hello",
+	})
+
+	s.store.AssertNotCalled(s.T(), "UpsertChannel", mock.Anything, mock.Anything)
+}
+
+func (s *OrchestratorSuite) TestHandleMessageThreadGetParentChannelNil() {
+	s.store.On("IsChannelActive", s.ctx, "thread1").Return(false, nil)
+	s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("ch1", nil)
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+
+	s.orch.HandleMessage(s.ctx, &IncomingMessage{
+		ChannelID: "thread1",
+		Content:   "hello",
+	})
+
+	s.store.AssertNotCalled(s.T(), "UpsertChannel", mock.Anything, mock.Anything)
+}
+
+func (s *OrchestratorSuite) TestHandleMessageThreadUpsertError() {
+	s.store.On("IsChannelActive", s.ctx, "thread1").Return(false, nil)
+	s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("ch1", nil)
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", GuildID: "g1", DirPath: "/project", Active: true,
+	}, nil)
+	s.store.On("UpsertChannel", s.ctx, mock.Anything).Return(errors.New("upsert error"))
+
+	s.orch.HandleMessage(s.ctx, &IncomingMessage{
+		ChannelID: "thread1",
+		Content:   "hello",
+	})
+
+	// Should not proceed to GetChannel for thread
+	s.store.AssertNotCalled(s.T(), "InsertMessage", mock.Anything, mock.Anything)
 }
 
 func (s *OrchestratorSuite) TestHandleMessageIsChannelActiveError() {

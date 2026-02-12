@@ -266,6 +266,40 @@ func (s *RunnerSuite) TestRunHappyPath() {
 	s.client.AssertExpectations(s.T())
 }
 
+func (s *RunnerSuite) TestRunForkSession() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID:   "sess-parent",
+		ForkSession: true,
+		Messages:    []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID:   "ch-1",
+	}
+
+	jsonOutput := `{"type":"result","result":"Forked!","session_id":"sess-forked","is_error":false}`
+	reader := bytes.NewReader([]byte(jsonOutput))
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		hasResume := slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "sess-parent")
+		hasFork := slices.Contains(cfg.Cmd, "--fork-session")
+		return hasResume && hasFork
+	}), "loop-ch-1-aabbcc").Return("container-123", nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Forked!", resp.Response)
+	require.Equal(s.T(), "sess-forked", resp.SessionID)
+
+	s.client.AssertExpectations(s.T())
+}
+
 func (s *RunnerSuite) TestRunUsesExplicitPromptOverLastMessage() {
 	ctx := context.Background()
 	req := &agent.AgentRequest{

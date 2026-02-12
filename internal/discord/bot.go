@@ -25,6 +25,7 @@ type DiscordSession interface {
 	Close() error
 	AddHandler(handler any) func()
 	User(userID string, options ...discordgo.RequestOption) (*discordgo.User, error)
+	Channel(channelID string, options ...discordgo.RequestOption) (*discordgo.Channel, error)
 	ChannelMessageSend(channelID string, content string, options ...discordgo.RequestOption) (*discordgo.Message, error)
 	ChannelMessageSendReply(channelID string, content string, reference *discordgo.MessageReference, options ...discordgo.RequestOption) (*discordgo.Message, error)
 	ChannelTyping(channelID string, options ...discordgo.RequestOption) error
@@ -35,6 +36,7 @@ type DiscordSession interface {
 	InteractionResponseEdit(interaction *discordgo.Interaction, newresp *discordgo.WebhookEdit, options ...discordgo.RequestOption) (*discordgo.Message, error)
 	FollowupMessageCreate(interaction *discordgo.Interaction, wait bool, data *discordgo.WebhookParams, options ...discordgo.RequestOption) (*discordgo.Message, error)
 	GuildChannelCreate(guildID string, name string, ctype discordgo.ChannelType, options ...discordgo.RequestOption) (*discordgo.Channel, error)
+	ThreadJoin(id string, options ...discordgo.RequestOption) error
 }
 
 // Bot defines the interface for a Discord bot.
@@ -79,8 +81,9 @@ func NewBot(session DiscordSession, appID string, logger *slog.Logger) *DiscordB
 func (b *DiscordBot) Start(ctx context.Context) error {
 	rh1 := b.session.AddHandler(b.handleMessage)
 	rh2 := b.session.AddHandler(b.handleInteraction)
+	rh3 := b.session.AddHandler(b.handleThreadCreate)
 	b.mu.Lock()
-	b.removeHandlers = append(b.removeHandlers, rh1, rh2)
+	b.removeHandlers = append(b.removeHandlers, rh1, rh2, rh3)
 	b.mu.Unlock()
 
 	if err := b.session.Open(); err != nil {
@@ -244,6 +247,29 @@ func (b *DiscordBot) CreateChannel(ctx context.Context, guildID, name string) (s
 	}
 	b.logger.InfoContext(ctx, "created discord channel", "channel_id", ch.ID, "name", name, "guild_id", guildID)
 	return ch.ID, nil
+}
+
+// GetChannelParentID returns the parent channel ID for a thread, or empty string if not a thread.
+func (b *DiscordBot) GetChannelParentID(ctx context.Context, channelID string) (string, error) {
+	ch, err := b.session.Channel(channelID)
+	if err != nil {
+		return "", fmt.Errorf("discord get channel: %w", err)
+	}
+	if !ch.IsThread() {
+		return "", nil
+	}
+	return ch.ParentID, nil
+}
+
+func (b *DiscordBot) handleThreadCreate(_ *discordgo.Session, c *discordgo.ThreadCreate) {
+	if !c.IsThread() {
+		return
+	}
+	if err := b.session.ThreadJoin(c.ID); err != nil {
+		b.logger.Error("joining thread", "error", err, "thread_id", c.ID)
+		return
+	}
+	b.logger.Info("joined thread", "thread_id", c.ID, "parent_id", c.ParentID)
 }
 
 // BotUserID returns the bot's Discord user ID.

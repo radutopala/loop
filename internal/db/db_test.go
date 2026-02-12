@@ -47,7 +47,7 @@ func (s *StoreSuite) TestClose() {
 func (s *StoreSuite) TestUpsertChannel() {
 	ch := &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test-channel", Active: true}
 	s.mock.ExpectExec(`INSERT INTO channels`).
-		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", 1, sqlmock.AnyArg()).
+		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", "", "", 1, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err := s.store.UpsertChannel(context.Background(), ch)
@@ -58,7 +58,7 @@ func (s *StoreSuite) TestUpsertChannel() {
 func (s *StoreSuite) TestUpsertChannelWithDirPath() {
 	ch := &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test-channel", DirPath: "/home/user/project", Active: true}
 	s.mock.ExpectExec(`INSERT INTO channels`).
-		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, 1, sqlmock.AnyArg()).
+		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, "", "", 1, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err := s.store.UpsertChannel(context.Background(), ch)
@@ -66,10 +66,36 @@ func (s *StoreSuite) TestUpsertChannelWithDirPath() {
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
+func (s *StoreSuite) TestUpsertChannelWithParentID() {
+	ch := &Channel{ChannelID: "thread1", GuildID: "g1", Name: "", ParentID: "ch1", SessionID: "sess-parent", Active: true}
+	s.mock.ExpectExec(`INSERT INTO channels`).
+		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", "ch1", "sess-parent", 1, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err := s.store.UpsertChannel(context.Background(), ch)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestGetChannelWithParentID() {
+	now := time.Now().UTC()
+	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "active", "session_id", "created_at", "updated_at"}).
+		AddRow(1, "thread1", "g1", "", "/project", "ch1", 1, "", now, now)
+	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).
+		WithArgs("thread1").
+		WillReturnRows(rows)
+
+	ch, err := s.store.GetChannel(context.Background(), "thread1")
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), ch)
+	require.Equal(s.T(), "ch1", ch.ParentID)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
 func (s *StoreSuite) TestUpsertChannelError() {
 	ch := &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test-channel", Active: true}
 	s.mock.ExpectExec(`INSERT INTO channels`).
-		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", 1, sqlmock.AnyArg()).
+		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", "", "", 1, sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
 
 	err := s.store.UpsertChannel(context.Background(), ch)
@@ -78,8 +104,8 @@ func (s *StoreSuite) TestUpsertChannelError() {
 
 func (s *StoreSuite) TestGetChannel() {
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "active", "session_id", "created_at", "updated_at"}).
-		AddRow(1, "ch1", "g1", "test", "/home/user/project", 1, "sess-123", now, now)
+	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "active", "session_id", "created_at", "updated_at"}).
+		AddRow(1, "ch1", "g1", "test", "/home/user/project", "", 1, "sess-123", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).
 		WithArgs("ch1").
 		WillReturnRows(rows)
@@ -90,6 +116,7 @@ func (s *StoreSuite) TestGetChannel() {
 	require.Equal(s.T(), "ch1", ch.ChannelID)
 	require.Equal(s.T(), "g1", ch.GuildID)
 	require.Equal(s.T(), "/home/user/project", ch.DirPath)
+	require.Empty(s.T(), ch.ParentID)
 	require.True(s.T(), ch.Active)
 	require.Equal(s.T(), "sess-123", ch.SessionID)
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
@@ -117,8 +144,8 @@ func (s *StoreSuite) TestGetChannelError() {
 
 func (s *StoreSuite) TestGetChannelByDirPath() {
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "active", "session_id", "created_at", "updated_at"}).
-		AddRow(1, "ch1", "g1", "loop", "/home/user/dev/loop", 1, "", now, now)
+	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "active", "session_id", "created_at", "updated_at"}).
+		AddRow(1, "ch1", "g1", "loop", "/home/user/dev/loop", "", 1, "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
 		WithArgs("/home/user/dev/loop").
 		WillReturnRows(rows)

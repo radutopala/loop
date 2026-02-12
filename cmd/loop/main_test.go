@@ -249,6 +249,11 @@ func (m *mockBot) CreateChannel(ctx context.Context, guildID, name string) (stri
 	return args.String(0), args.Error(1)
 }
 
+func (m *mockBot) GetChannelParentID(ctx context.Context, channelID string) (string, error) {
+	args := m.Called(ctx, channelID)
+	return args.String(0), args.Error(1)
+}
+
 type closableDockerClient struct {
 	*mockDockerClient
 	closeFn func() error

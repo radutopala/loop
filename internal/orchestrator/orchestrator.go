@@ -27,6 +27,7 @@ type Bot interface {
 	OnInteraction(handler func(ctx context.Context, i any))
 	BotUserID() string
 	CreateChannel(ctx context.Context, guildID, name string) (string, error)
+	GetChannelParentID(ctx context.Context, channelID string) (string, error)
 }
 
 // IncomingMessage from Discord.
@@ -163,7 +164,9 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *IncomingMessage) 
 		return
 	}
 	if !active {
-		return
+		if !o.resolveThread(ctx, msg.ChannelID) {
+			return
+		}
 	}
 
 	channel, err := o.store.GetChannel(ctx, msg.ChannelID)
@@ -205,6 +208,52 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *IncomingMessage) 
 	o.processTriggeredMessage(ctx, msg)
 }
 
+// resolveThread checks if channelID is a thread with an active parent channel.
+// If so, it upserts the thread as a channel inheriting from the parent and returns true.
+func (o *Orchestrator) resolveThread(ctx context.Context, channelID string) bool {
+	parentID, err := o.bot.GetChannelParentID(ctx, channelID)
+	if err != nil {
+		o.logger.Error("getting channel parent", "error", err, "channel_id", channelID)
+		return false
+	}
+	if parentID == "" {
+		return false
+	}
+
+	parentActive, err := o.store.IsChannelActive(ctx, parentID)
+	if err != nil {
+		o.logger.Error("checking parent channel active", "error", err, "parent_id", parentID)
+		return false
+	}
+	if !parentActive {
+		return false
+	}
+
+	parent, err := o.store.GetChannel(ctx, parentID)
+	if err != nil || parent == nil {
+		o.logger.Error("getting parent channel", "error", err, "parent_id", parentID)
+		return false
+	}
+
+	if err := o.store.UpsertChannel(ctx, &db.Channel{
+		ChannelID: channelID,
+		GuildID:   parent.GuildID,
+		DirPath:   parent.DirPath,
+		ParentID:  parentID,
+		SessionID: parent.SessionID,
+		Active:    true,
+	}); err != nil {
+		o.logger.Error("upserting thread channel", "error", err, "channel_id", channelID)
+		return false
+	}
+
+	o.logger.Info("resolved thread to parent channel",
+		"thread_id", channelID,
+		"parent_id", parentID,
+	)
+	return true
+}
+
 func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *IncomingMessage) {
 	o.queue.Acquire(msg.ChannelID)
 	defer o.queue.Release(msg.ChannelID)
@@ -227,6 +276,15 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *Incomin
 
 	req := o.buildAgentRequest(msg.ChannelID, recent, channel)
 	req.Prompt = fmt.Sprintf("%s: %s", msg.AuthorName, msg.Content)
+
+	// Fork the session on the first thread message so the thread gets its
+	// own session while inheriting the parent's context.
+	if channel.ParentID != "" && req.SessionID != "" {
+		parent, err := o.store.GetChannel(ctx, channel.ParentID)
+		if err == nil && parent != nil && channel.SessionID == parent.SessionID {
+			req.ForkSession = true
+		}
+	}
 
 	runCtx, runCancel := context.WithTimeout(ctx, o.containerTimeout)
 	defer runCancel()

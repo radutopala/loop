@@ -31,5 +31,8 @@ if [ -S /var/run/docker.sock ]; then
     addgroup "$AGENT_USER" "$GROUP_NAME" 2>/dev/null || true
 fi
 
-export PATH="$AGENT_HOME/bin:$PATH"
+mkdir -p "$AGENT_HOME/.local/bin"
+ln -sf /usr/local/bin/claude "$AGENT_HOME/.local/bin/claude"
+chown -R "$AGENT_USER":"$AGENT_USER" "$AGENT_HOME/.local" 2>/dev/null || true
+export PATH="$AGENT_HOME/.local/bin:$AGENT_HOME/bin:$PATH"
 exec su-exec "$AGENT_USER" "$@"

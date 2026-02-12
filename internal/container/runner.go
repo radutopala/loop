@@ -414,6 +414,9 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 	cmd = append(cmd, "--print", "--verbose", "--output-format", "stream-json", "--dangerously-skip-permissions")
 	if req.SessionID != "" {
 		cmd = append(cmd, "--resume", req.SessionID)
+		if req.ForkSession {
+			cmd = append(cmd, "--fork-session")
+		}
 	}
 	cmd = append(cmd, prompt)
 

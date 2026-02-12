@@ -121,6 +121,9 @@ var migrations = []migration{
 	sqlMigration(`CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dir_path ON channels(dir_path) WHERE dir_path != ''`),
 	funcMigration(migrateTimestampsToUTC),
 	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN template_name TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE channels ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`DROP INDEX IF EXISTS idx_channels_dir_path`),
+	sqlMigration(`CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dir_path ON channels(dir_path) WHERE dir_path != '' AND parent_id = ''`),
 }
 
 // RunMigrations executes all pending schema migrations.

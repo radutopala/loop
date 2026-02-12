@@ -117,6 +117,19 @@ func (m *MockSession) GuildChannelCreate(guildID string, name string, ctype disc
 	return args.Get(0).(*discordgo.Channel), args.Error(1)
 }
 
+func (m *MockSession) Channel(channelID string, options ...discordgo.RequestOption) (*discordgo.Channel, error) {
+	args := m.Called(channelID, options)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*discordgo.Channel), args.Error(1)
+}
+
+func (m *MockSession) ThreadJoin(id string, options ...discordgo.RequestOption) error {
+	args := m.Called(id, options)
+	return args.Error(0)
+}
+
 // --- Test Suite ---
 
 type BotSuite struct {
@@ -144,7 +157,7 @@ func (discard) Write(p []byte) (int, error) { return len(p), nil }
 
 func (s *BotSuite) TestStartSuccess() {
 	noop := func() {}
-	s.session.On("AddHandler", mock.Anything).Return(noop).Twice()
+	s.session.On("AddHandler", mock.Anything).Return(noop).Times(3)
 	s.session.On("Open").Return(nil)
 	s.session.On("User", "@me", mock.Anything).Return(&discordgo.User{ID: "bot-123"}, nil)
 
@@ -156,7 +169,7 @@ func (s *BotSuite) TestStartSuccess() {
 
 func (s *BotSuite) TestStartOpenError() {
 	noop := func() {}
-	s.session.On("AddHandler", mock.Anything).Return(noop).Twice()
+	s.session.On("AddHandler", mock.Anything).Return(noop).Times(3)
 	s.session.On("Open").Return(errors.New("connection failed"))
 
 	err := s.bot.Start(context.Background())
@@ -166,7 +179,7 @@ func (s *BotSuite) TestStartOpenError() {
 
 func (s *BotSuite) TestStartUserError() {
 	noop := func() {}
-	s.session.On("AddHandler", mock.Anything).Return(noop).Twice()
+	s.session.On("AddHandler", mock.Anything).Return(noop).Times(3)
 	s.session.On("Open").Return(nil)
 	s.session.On("User", "@me", mock.Anything).Return(nil, errors.New("user fetch failed"))
 
@@ -178,7 +191,7 @@ func (s *BotSuite) TestStartUserError() {
 func (s *BotSuite) TestStop() {
 	called := false
 	remove := func() { called = true }
-	s.session.On("AddHandler", mock.Anything).Return(remove).Twice()
+	s.session.On("AddHandler", mock.Anything).Return(remove).Times(3)
 	s.session.On("Open").Return(nil)
 	s.session.On("User", "@me", mock.Anything).Return(&discordgo.User{ID: "bot-123"}, nil)
 	s.session.On("Close").Return(nil)
@@ -1317,6 +1330,95 @@ func (s *BotSuite) TestCreateChannelError() {
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "discord create channel")
 	require.Empty(s.T(), channelID)
+}
+
+// --- handleThreadCreate ---
+
+func (s *BotSuite) TestHandleThreadCreateJoinsPublicThread() {
+	s.session.On("ThreadJoin", "thread-1", mock.Anything).Return(nil)
+
+	c := &discordgo.ThreadCreate{
+		Channel: &discordgo.Channel{
+			ID:       "thread-1",
+			Type:     discordgo.ChannelTypeGuildPublicThread,
+			ParentID: "ch-1",
+		},
+	}
+	s.bot.handleThreadCreate(nil, c)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestHandleThreadCreateJoinsPrivateThread() {
+	s.session.On("ThreadJoin", "thread-2", mock.Anything).Return(nil)
+
+	c := &discordgo.ThreadCreate{
+		Channel: &discordgo.Channel{
+			ID:       "thread-2",
+			Type:     discordgo.ChannelTypeGuildPrivateThread,
+			ParentID: "ch-1",
+		},
+	}
+	s.bot.handleThreadCreate(nil, c)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestHandleThreadCreateIgnoresNonThread() {
+	c := &discordgo.ThreadCreate{
+		Channel: &discordgo.Channel{
+			ID:   "ch-1",
+			Type: discordgo.ChannelTypeGuildText,
+		},
+	}
+	s.bot.handleThreadCreate(nil, c)
+	s.session.AssertNotCalled(s.T(), "ThreadJoin", mock.Anything, mock.Anything)
+}
+
+func (s *BotSuite) TestHandleThreadCreateJoinError() {
+	s.session.On("ThreadJoin", "thread-1", mock.Anything).Return(errors.New("join failed"))
+
+	c := &discordgo.ThreadCreate{
+		Channel: &discordgo.Channel{
+			ID:       "thread-1",
+			Type:     discordgo.ChannelTypeGuildPublicThread,
+			ParentID: "ch-1",
+		},
+	}
+	s.bot.handleThreadCreate(nil, c)
+	s.session.AssertExpectations(s.T())
+}
+
+// --- GetChannelParentID ---
+
+func (s *BotSuite) TestGetChannelParentIDThread() {
+	s.session.On("Channel", "thread-1", mock.Anything).Return(&discordgo.Channel{
+		ID:       "thread-1",
+		Type:     discordgo.ChannelTypeGuildPublicThread,
+		ParentID: "ch-1",
+	}, nil)
+
+	parentID, err := s.bot.GetChannelParentID(context.Background(), "thread-1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ch-1", parentID)
+}
+
+func (s *BotSuite) TestGetChannelParentIDNotThread() {
+	s.session.On("Channel", "ch-1", mock.Anything).Return(&discordgo.Channel{
+		ID:   "ch-1",
+		Type: discordgo.ChannelTypeGuildText,
+	}, nil)
+
+	parentID, err := s.bot.GetChannelParentID(context.Background(), "ch-1")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), parentID)
+}
+
+func (s *BotSuite) TestGetChannelParentIDError() {
+	s.session.On("Channel", "ch-1", mock.Anything).Return(nil, errors.New("api error"))
+
+	parentID, err := s.bot.GetChannelParentID(context.Background(), "ch-1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "discord get channel")
+	require.Empty(s.T(), parentID)
 }
 
 // --- Verify Bot interface compliance ---
