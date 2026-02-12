@@ -156,12 +156,21 @@ func (s *SQLiteStore) UpdateSessionID(ctx context.Context, channelID string, ses
 }
 
 func (s *SQLiteStore) DeleteChannel(ctx context.Context, channelID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM channels WHERE channel_id = ?`, channelID)
+	_, err := s.db.ExecContext(ctx, `DELETE FROM messages WHERE channel_id = ?`, channelID)
+	if err != nil {
+		return fmt.Errorf("deleting messages for channel: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `DELETE FROM channels WHERE channel_id = ?`, channelID)
 	return err
 }
 
 func (s *SQLiteStore) DeleteChannelsByParentID(ctx context.Context, parentID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM channels WHERE parent_id = ?`, parentID)
+	_, err := s.db.ExecContext(ctx,
+		`DELETE FROM messages WHERE channel_id IN (SELECT channel_id FROM channels WHERE parent_id = ?)`, parentID)
+	if err != nil {
+		return fmt.Errorf("deleting messages for child channels: %w", err)
+	}
+	_, err = s.db.ExecContext(ctx, `DELETE FROM channels WHERE parent_id = ?`, parentID)
 	return err
 }
 

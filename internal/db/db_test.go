@@ -229,6 +229,9 @@ func (s *StoreSuite) TestUpdateSessionIDError() {
 // --- DeleteChannel tests ---
 
 func (s *StoreSuite) TestDeleteChannel() {
+	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).
+		WithArgs("ch1").
+		WillReturnResult(sqlmock.NewResult(0, 5))
 	s.mock.ExpectExec(`DELETE FROM channels WHERE channel_id`).
 		WithArgs("ch1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -238,7 +241,20 @@ func (s *StoreSuite) TestDeleteChannel() {
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
+func (s *StoreSuite) TestDeleteChannelMessagesError() {
+	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).
+		WithArgs("ch1").
+		WillReturnError(sql.ErrConnDone)
+
+	err := s.store.DeleteChannel(context.Background(), "ch1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "deleting messages for channel")
+}
+
 func (s *StoreSuite) TestDeleteChannelError() {
+	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).
+		WithArgs("ch1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	s.mock.ExpectExec(`DELETE FROM channels WHERE channel_id`).
 		WithArgs("ch1").
 		WillReturnError(sql.ErrConnDone)
@@ -248,6 +264,9 @@ func (s *StoreSuite) TestDeleteChannelError() {
 }
 
 func (s *StoreSuite) TestDeleteChannelsByParentID() {
+	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).
+		WithArgs("ch1").
+		WillReturnResult(sqlmock.NewResult(0, 10))
 	s.mock.ExpectExec(`DELETE FROM channels WHERE parent_id`).
 		WithArgs("ch1").
 		WillReturnResult(sqlmock.NewResult(0, 3))
@@ -257,7 +276,20 @@ func (s *StoreSuite) TestDeleteChannelsByParentID() {
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
+func (s *StoreSuite) TestDeleteChannelsByParentIDMessagesError() {
+	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).
+		WithArgs("ch1").
+		WillReturnError(sql.ErrConnDone)
+
+	err := s.store.DeleteChannelsByParentID(context.Background(), "ch1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "deleting messages for child channels")
+}
+
 func (s *StoreSuite) TestDeleteChannelsByParentIDError() {
+	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).
+		WithArgs("ch1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
 	s.mock.ExpectExec(`DELETE FROM channels WHERE parent_id`).
 		WithArgs("ch1").
 		WillReturnError(sql.ErrConnDone)
