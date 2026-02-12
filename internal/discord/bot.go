@@ -272,11 +272,17 @@ func (b *DiscordBot) GetChannelParentID(ctx context.Context, channelID string) (
 	return ch.ParentID, nil
 }
 
-// CreateThread creates a new public thread in the given channel.
+// CreateThread creates a new public thread in the given channel and sends
+// an initial message mentioning the bot so users know it's active.
 func (b *DiscordBot) CreateThread(ctx context.Context, channelID, name string) (string, error) {
 	ch, err := b.session.ThreadStart(channelID, name, discordgo.ChannelTypeGuildPublicThread, 10080)
 	if err != nil {
 		return "", fmt.Errorf("discord create thread: %w", err)
+	}
+	botID := b.BotUserID()
+	mention := fmt.Sprintf("<@%s> is here. Tag me to get started!", botID)
+	if _, err := b.session.ChannelMessageSend(ch.ID, mention); err != nil {
+		b.logger.WarnContext(ctx, "sending initial thread message", "error", err, "thread_id", ch.ID)
 	}
 	b.logger.InfoContext(ctx, "created discord thread", "thread_id", ch.ID, "name", name, "parent_id", channelID)
 	return ch.ID, nil

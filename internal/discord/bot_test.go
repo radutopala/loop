@@ -1343,8 +1343,24 @@ func (s *BotSuite) TestCreateChannelError() {
 // --- CreateThread ---
 
 func (s *BotSuite) TestCreateThreadSuccess() {
+	s.bot.botUserID = "bot-123"
 	s.session.On("ThreadStart", "ch-1", "my-thread", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
 		Return(&discordgo.Channel{ID: "thread-1"}, nil)
+	s.session.On("ChannelMessageSend", "thread-1", "<@bot-123> is here. Tag me to get started!", mock.Anything).
+		Return(&discordgo.Message{}, nil)
+
+	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "thread-1", threadID)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestCreateThreadMessageSendError() {
+	s.bot.botUserID = "bot-123"
+	s.session.On("ThreadStart", "ch-1", "my-thread", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
+		Return(&discordgo.Channel{ID: "thread-1"}, nil)
+	s.session.On("ChannelMessageSend", "thread-1", mock.Anything, mock.Anything).
+		Return(nil, errors.New("send failed"))
 
 	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread")
 	require.NoError(s.T(), err)
