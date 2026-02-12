@@ -9,6 +9,7 @@ type AgentRequest struct {
 	Messages     []AgentMessage `json:"messages"`
 	SystemPrompt string         `json:"system_prompt"`
 	ChannelID    string         `json:"channel_id"`
+	AuthorID     string         `json:"author_id,omitempty"`
 	DirPath      string         `json:"dir_path,omitempty"`
 	Prompt       string         `json:"prompt,omitempty"`
 }

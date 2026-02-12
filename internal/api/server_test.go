@@ -73,8 +73,8 @@ type MockThreadEnsurer struct {
 	mock.Mock
 }
 
-func (m *MockThreadEnsurer) CreateThread(ctx context.Context, channelID, name string) (string, error) {
-	args := m.Called(ctx, channelID, name)
+func (m *MockThreadEnsurer) CreateThread(ctx context.Context, channelID, name, authorID string) (string, error) {
+	args := m.Called(ctx, channelID, name, authorID)
 	return args.String(0), args.Error(1)
 }
 
@@ -472,10 +472,28 @@ func (s *ServerSuite) TestEnsureChannelNilEnsurer() {
 // --- CreateThread tests ---
 
 func (s *ServerSuite) TestCreateThreadSuccess() {
-	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread").
+	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread", "").
 		Return("thread-1", nil)
 
 	body := `{"channel_id":"ch-1","name":"my-thread"}`
+	req := httptest.NewRequest("POST", "/api/threads", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+
+	var resp createThreadResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(s.T(), "thread-1", resp.ThreadID)
+	s.threads.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCreateThreadSuccessWithAuthorID() {
+	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread", "user-42").
+		Return("thread-1", nil)
+
+	body := `{"channel_id":"ch-1","name":"my-thread","author_id":"user-42"}`
 	req := httptest.NewRequest("POST", "/api/threads", bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
 
@@ -519,7 +537,7 @@ func (s *ServerSuite) TestCreateThreadInvalidBody() {
 }
 
 func (s *ServerSuite) TestCreateThreadError() {
-	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread").
+	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread", "").
 		Return("", errors.New("create failed"))
 
 	body := `{"channel_id":"ch-1","name":"my-thread"}`

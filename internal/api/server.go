@@ -65,6 +65,7 @@ type updateTaskRequest struct {
 type createThreadRequest struct {
 	ChannelID string `json:"channel_id"`
 	Name      string `json:"name"`
+	AuthorID  string `json:"author_id"`
 }
 
 type createThreadResponse struct {
@@ -276,7 +277,7 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	threadID, err := s.threads.CreateThread(r.Context(), req.ChannelID, req.Name)
+	threadID, err := s.threads.CreateThread(r.Context(), req.ChannelID, req.Name, req.AuthorID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

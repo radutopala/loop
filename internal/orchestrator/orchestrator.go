@@ -28,7 +28,7 @@ type Bot interface {
 	OnChannelDelete(handler func(ctx context.Context, channelID string, isThread bool))
 	BotUserID() string
 	CreateChannel(ctx context.Context, guildID, name string) (string, error)
-	CreateThread(ctx context.Context, channelID, name string) (string, error)
+	CreateThread(ctx context.Context, channelID, name, mentionUserID string) (string, error)
 	GetChannelParentID(ctx context.Context, channelID string) (string, error)
 }
 
@@ -279,6 +279,7 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *Incomin
 
 	req := o.buildAgentRequest(msg.ChannelID, recent, channel)
 	req.Prompt = fmt.Sprintf("%s: %s", msg.AuthorName, msg.Content)
+	req.AuthorID = msg.AuthorID
 
 	// Fork the session on the first thread message so the thread gets its
 	// own session while inheriting the parent's context.

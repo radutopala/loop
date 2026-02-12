@@ -261,8 +261,8 @@ func (m *mockBot) CreateChannel(ctx context.Context, guildID, name string) (stri
 	return args.String(0), args.Error(1)
 }
 
-func (m *mockBot) CreateThread(ctx context.Context, channelID, name string) (string, error) {
-	args := m.Called(ctx, channelID, name)
+func (m *mockBot) CreateThread(ctx context.Context, channelID, name, mentionUserID string) (string, error) {
+	args := m.Called(ctx, channelID, name, mentionUserID)
 	return args.String(0), args.Error(1)
 }
 
@@ -302,7 +302,7 @@ type MainSuite struct {
 	origNewSQLiteStore    func(string) (db.Store, error)
 	origOsExit            func(int)
 	origNewAPIServer      func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, *slog.Logger) apiServer
-	origNewMCPServer      func(string, string, mcpserver.HTTPClient, *slog.Logger) *mcpserver.Server
+	origNewMCPServer      func(string, string, string, mcpserver.HTTPClient, *slog.Logger) *mcpserver.Server
 	origDaemonStart       func(daemon.System, string) error
 	origDaemonStop        func(daemon.System) error
 	origDaemonStatus      func(daemon.System) (string, error)
@@ -462,21 +462,21 @@ func (s *MainSuite) TestNewMCPCmdMutuallyExclusive() {
 func (s *MainSuite) TestRunMCP() {
 	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
 	called := false
-	newMCPServer = func(channelID, apiURL string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
+	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
 		require.Equal(s.T(), "ch1", channelID)
 		require.Equal(s.T(), "http://localhost:8222", apiURL)
 		called = true
-		return mcpserver.New(channelID, apiURL, httpClient, logger)
+		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger)
 	}
 
 	// runMCP will try to use StdioTransport which will fail/close immediately in test.
 	// We just verify the function is wired correctly.
-	_ = runMCP("ch1", "http://localhost:8222", "", logPath)
+	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "")
 	require.True(s.T(), called)
 }
 
 func (s *MainSuite) TestRunMCPLogOpenError() {
-	err := runMCP("ch1", "http://localhost:8222", "", "/nonexistent/dir/mcp.log")
+	err := runMCP("ch1", "http://localhost:8222", "", "/nonexistent/dir/mcp.log", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "opening mcp log")
 }
@@ -497,23 +497,23 @@ func (s *MainSuite) TestRunMCPWithConfigLoad() {
 
 	// Mock newMCPServer to avoid actually running the server
 	called := false
-	newMCPServer = func(channelID, apiURL string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
+	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
 		called = true
 		// Verify logger was created (we can't easily inspect its level, but at least it was called)
 		require.NotNil(s.T(), logger)
 		// Return a real server that we won't run
-		return mcpserver.New(channelID, apiURL, httpClient, logger)
+		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger)
 	}
 
 	// This will fail to run the server (no stdio), but that's OK - we just want to test config loading
-	_ = runMCP("ch1", "http://localhost:8222", "", logPath)
+	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "")
 	require.True(s.T(), called)
 }
 
 func (s *MainSuite) TestRunMCPWithInMemoryTransport() {
 	// Verify runMCP constructs the server correctly.
 	// We can't test stdio, but we test the MCP server is functional via in-memory transport.
-	srv := mcpserver.New("ch1", "http://localhost:8222", http.DefaultClient, nil)
+	srv := mcpserver.New("ch1", "http://localhost:8222", "", http.DefaultClient, nil)
 
 	t1, t2 := mcpsdk.NewInMemoryTransports()
 
@@ -584,10 +584,10 @@ func (s *MainSuite) TestEnsureChannelInvalidJSON() {
 func (s *MainSuite) TestRunMCPWithDir() {
 	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
 	called := false
-	newMCPServer = func(channelID, apiURL string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
+	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
 		require.Equal(s.T(), "resolved-ch", channelID)
 		called = true
-		return mcpserver.New(channelID, apiURL, httpClient, logger)
+		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger)
 	}
 	ensureChannelFunc = func(apiURL, dirPath string) (string, error) {
 		require.Equal(s.T(), "http://localhost:8222", apiURL)
@@ -595,7 +595,7 @@ func (s *MainSuite) TestRunMCPWithDir() {
 		return "resolved-ch", nil
 	}
 
-	_ = runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath)
+	_ = runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "")
 	require.True(s.T(), called)
 }
 
@@ -604,7 +604,7 @@ func (s *MainSuite) TestRunMCPWithDirEnsureError() {
 		return "", errors.New("ensure failed")
 	}
 
-	err := runMCP("", "http://localhost:8222", "/path", "/tmp/mcp.log")
+	err := runMCP("", "http://localhost:8222", "/path", "/tmp/mcp.log", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "ensuring channel for dir")
 }
@@ -612,10 +612,10 @@ func (s *MainSuite) TestRunMCPWithDirEnsureError() {
 func (s *MainSuite) TestNewMCPCmdWithDirFlag() {
 	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
 	called := false
-	newMCPServer = func(channelID, apiURL string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
+	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
 		require.Equal(s.T(), "resolved-ch", channelID)
 		called = true
-		return mcpserver.New(channelID, apiURL, httpClient, logger)
+		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger)
 	}
 	ensureChannelFunc = func(_, _ string) (string, error) {
 		return "resolved-ch", nil
@@ -1109,7 +1109,7 @@ func (s *MainSuite) TestDefaultVarSignatures() {
 	require.NotNil(s.T(), apiSrv)
 
 	// Verify newMCPServer produces a non-nil server
-	mcpSrv := newMCPServer("ch1", "http://localhost:8222", http.DefaultClient, nil)
+	mcpSrv := newMCPServer("ch1", "http://localhost:8222", "", http.DefaultClient, nil)
 	require.NotNil(s.T(), mcpSrv)
 }
 

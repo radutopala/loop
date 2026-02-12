@@ -202,7 +202,7 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 // buildMCPConfig creates the merged MCP config with the built-in loop
 // and any user-defined servers from the config. The built-in loop always
 // takes precedence over a user-defined server with the same name.
-func buildMCPConfig(channelID, apiURL, workDir string, userServers map[string]config.MCPServerConfig) mcpConfig {
+func buildMCPConfig(channelID, apiURL, workDir, authorID string, userServers map[string]config.MCPServerConfig) mcpConfig {
 	servers := make(map[string]mcpServerEntry, len(userServers)+1)
 	for name, srv := range userServers {
 		servers[name] = mcpServerEntry{
@@ -213,9 +213,13 @@ func buildMCPConfig(channelID, apiURL, workDir string, userServers map[string]co
 	}
 	// Add built-in loop only if the user hasn't defined one.
 	if _, exists := userServers["loop"]; !exists {
+		args := []string{"mcp", "--channel-id", channelID, "--api-url", apiURL, "--log", filepath.Join(workDir, ".loop", "mcp.log")}
+		if authorID != "" {
+			args = append(args, "--author-id", authorID)
+		}
 		servers["loop"] = mcpServerEntry{
 			Command: "/usr/local/bin/loop",
-			Args:    []string{"mcp", "--channel-id", channelID, "--api-url", apiURL, "--log", filepath.Join(workDir, ".loop", "mcp.log")},
+			Args:    args,
 		}
 	}
 	return mcpConfig{MCPServers: servers}
@@ -383,9 +387,9 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		}
 	}
 
-	// Write .loop/mcp.json for Claude's --mcp-config (always regenerated from merged config).
-	mcpConfigPath := filepath.Join(workDir, ".loop", "mcp.json")
-	mcpCfg := buildMCPConfig(req.ChannelID, apiURL, workDir, cfg.MCPServers)
+	// Write a per-channel MCP config so parallel runs (e.g. parent + thread) don't collide.
+	mcpConfigPath := filepath.Join(workDir, ".loop", "mcp-"+req.ChannelID+".json")
+	mcpCfg := buildMCPConfig(req.ChannelID, apiURL, workDir, req.AuthorID, cfg.MCPServers)
 	mcpJSON, _ := json.MarshalIndent(mcpCfg, "", "  ")
 	if err := writeFile(mcpConfigPath, mcpJSON, 0o644); err != nil {
 		return nil, fmt.Errorf("writing mcp config: %w", err)

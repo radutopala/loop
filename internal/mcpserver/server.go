@@ -22,6 +22,7 @@ type HTTPClient interface {
 type Server struct {
 	channelID  string
 	apiURL     string
+	authorID   string
 	mcpServer  *mcp.Server
 	httpClient HTTPClient
 	logger     *slog.Logger
@@ -56,13 +57,14 @@ type createThreadInput struct {
 type listTasksInput struct{}
 
 // New creates a new MCP server with scheduler tools.
-func New(channelID, apiURL string, httpClient HTTPClient, logger *slog.Logger) *Server {
+func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	s := &Server{
 		channelID:  channelID,
 		apiURL:     apiURL,
+		authorID:   authorID,
 		httpClient: httpClient,
 		logger:     logger,
 	}
@@ -334,10 +336,14 @@ func (s *Server) handleCreateThread(_ context.Context, _ *mcp.CallToolRequest, i
 		return errorResult("name is required"), nil, nil
 	}
 
-	data, _ := json.Marshal(map[string]string{
+	reqBody := map[string]string{
 		"channel_id": s.channelID,
 		"name":       input.Name,
-	})
+	}
+	if s.authorID != "" {
+		reqBody["author_id"] = s.authorID
+	}
+	data, _ := json.Marshal(reqBody)
 
 	respBody, status, err := s.doRequest("POST", s.apiURL+"/api/threads", data)
 	if err != nil {

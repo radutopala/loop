@@ -274,13 +274,19 @@ func (b *DiscordBot) GetChannelParentID(ctx context.Context, channelID string) (
 
 // CreateThread creates a new public thread in the given channel and sends
 // an initial message mentioning the bot so users know it's active.
-func (b *DiscordBot) CreateThread(ctx context.Context, channelID, name string) (string, error) {
+// If mentionUserID is non-empty, the user is also mentioned in the greeting.
+func (b *DiscordBot) CreateThread(ctx context.Context, channelID, name, mentionUserID string) (string, error) {
 	ch, err := b.session.ThreadStart(channelID, name, discordgo.ChannelTypeGuildPublicThread, 10080)
 	if err != nil {
 		return "", fmt.Errorf("discord create thread: %w", err)
 	}
 	botID := b.BotUserID()
-	mention := fmt.Sprintf("<@%s> is here. Tag me to get started!", botID)
+	mention := fmt.Sprintf("<@%s> is here.", botID)
+	if mentionUserID != "" {
+		mention += fmt.Sprintf(" Hey <@%s>, tag me to get started!", mentionUserID)
+	} else {
+		mention += " Tag me to get started!"
+	}
 	if _, err := b.session.ChannelMessageSend(ch.ID, mention); err != nil {
 		b.logger.WarnContext(ctx, "sending initial thread message", "error", err, "thread_id", ch.ID)
 	}

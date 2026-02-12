@@ -44,7 +44,7 @@ func TestMCPServerSuite(t *testing.T) {
 
 func (s *MCPServerSuite) SetupTest() {
 	s.httpClient = &mockHTTPClient{}
-	s.srv = New("test-channel", "http://localhost:8222", s.httpClient, nil)
+	s.srv = New("test-channel", "http://localhost:8222", "", s.httpClient, nil)
 	s.ctx = context.Background()
 
 	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
@@ -555,6 +555,34 @@ func (s *MCPServerSuite) TestToggleTaskHTTPError() {
 }
 
 // --- create_thread ---
+
+func (s *MCPServerSuite) TestCreateThreadSuccessWithAuthorID() {
+	// Re-create the server with an authorID
+	s.cleanup()
+	s.srv = New("test-channel", "http://localhost:8222", "user-42", s.httpClient, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
+	t1, t2 := mcp.NewInMemoryTransports()
+	go func() { _ = s.srv.Run(s.ctx, t1) }()
+	session, err := client.Connect(s.ctx, t2, nil)
+	require.NoError(s.T(), err)
+	s.session = session
+	s.cleanup = func() { session.Close() }
+
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "POST", req.Method)
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"author_id":"user-42"`)
+		return jsonResponse(http.StatusCreated, `{"thread_id":"thread-1"}`), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "create_thread",
+		Arguments: map[string]any{"name": "my-thread"},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "ID: thread-1")
+}
 
 func (s *MCPServerSuite) TestCreateThreadSuccess() {
 	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {

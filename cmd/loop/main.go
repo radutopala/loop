@@ -119,14 +119,14 @@ func newServeCmd() *cobra.Command {
 }
 
 func newMCPCmd() *cobra.Command {
-	var channelID, apiURL, logPath, dirPath string
+	var channelID, apiURL, logPath, dirPath, authorID string
 
 	cmd := &cobra.Command{
 		Use:     "mcp",
 		Aliases: []string{"m"},
 		Short:   "Run as an MCP server over stdio",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runMCP(channelID, apiURL, dirPath, logPath)
+			return runMCP(channelID, apiURL, dirPath, logPath, authorID)
 		},
 	}
 
@@ -134,6 +134,7 @@ func newMCPCmd() *cobra.Command {
 	cmd.Flags().StringVar(&dirPath, "dir", "", "Project directory path (auto-creates Discord channel)")
 	cmd.Flags().StringVar(&apiURL, "api-url", "", "Loop API base URL")
 	cmd.Flags().StringVar(&logPath, "log", ".loop/mcp.log", "Path to MCP log file")
+	cmd.Flags().StringVar(&authorID, "author-id", "", "Discord user ID of the message author")
 	cmd.MarkFlagsOneRequired("channel-id", "dir")
 	cmd.MarkFlagsMutuallyExclusive("channel-id", "dir")
 	_ = cmd.MarkFlagRequired("api-url")
@@ -381,7 +382,7 @@ func onboardLocal(apiURL string) error {
 
 var ensureChannelFunc = ensureChannel
 
-func runMCP(channelID, apiURL, dirPath, logPath string) error {
+func runMCP(channelID, apiURL, dirPath, logPath, authorID string) error {
 	if dirPath != "" {
 		resolved, err := ensureChannelFunc(apiURL, dirPath)
 		if err != nil {
@@ -403,7 +404,7 @@ func runMCP(channelID, apiURL, dirPath, logPath string) error {
 	}
 
 	logger := logging.NewLoggerWithWriter(logLevel, logFormat, f)
-	srv := newMCPServer(channelID, apiURL, http.DefaultClient, logger)
+	srv := newMCPServer(channelID, apiURL, authorID, http.DefaultClient, logger)
 	return srv.Run(context.Background(), &mcp.StdioTransport{})
 }
 

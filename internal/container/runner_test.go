@@ -1150,12 +1150,20 @@ func (s *RunnerSuite) TestEnsureNoProxy() {
 }
 
 func (s *RunnerSuite) TestBuildMCPConfig() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", nil)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", nil)
 	require.Len(s.T(), cfg.MCPServers, 1)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
 	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222", "--log", "/home/user/project/.loop/mcp.log"}, ls.Args)
 	require.Nil(s.T(), ls.Env)
+}
+
+func (s *RunnerSuite) TestBuildMCPConfigWithAuthorID() {
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "user-42", nil)
+	require.Len(s.T(), cfg.MCPServers, 1)
+	ls := cfg.MCPServers["loop"]
+	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
+	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222", "--log", "/home/user/project/.loop/mcp.log", "--author-id", "user-42"}, ls.Args)
 }
 
 func (s *RunnerSuite) TestBuildMCPConfigWithUserServers() {
@@ -1166,7 +1174,7 @@ func (s *RunnerSuite) TestBuildMCPConfigWithUserServers() {
 			Env:     map[string]string{"API_KEY": "secret"},
 		},
 	}
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", userServers)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", userServers)
 	require.Len(s.T(), cfg.MCPServers, 2)
 
 	custom := cfg.MCPServers["custom-tool"]
@@ -1185,7 +1193,7 @@ func (s *RunnerSuite) TestBuildMCPConfigUserLoopPreserved() {
 			Args:    []string{"--custom-flag"},
 		},
 	}
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", userServers)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", userServers)
 	require.Len(s.T(), cfg.MCPServers, 1)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/user/custom/loop", ls.Command)
@@ -1268,7 +1276,7 @@ func (s *RunnerSuite) TestRunMCPConfigWritten() {
 	_, err := s.runner.Run(ctx, req)
 	require.NoError(s.T(), err)
 
-	require.Equal(s.T(), "/home/testuser/.loop/ch-1/work/.loop/mcp.json", writtenPath)
+	require.Equal(s.T(), "/home/testuser/.loop/ch-1/work/.loop/mcp-ch-1.json", writtenPath)
 
 	var cfg mcpConfig
 	require.NoError(s.T(), json.Unmarshal(writtenData, &cfg))
