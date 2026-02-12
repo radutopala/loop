@@ -349,6 +349,7 @@ Project configs (`.loop/config.json`) can define their own `task_templates` that
 | `PATCH` | `/api/tasks/{id}` | Update a task (enabled, schedule, type, prompt) |
 | `DELETE` | `/api/tasks/{id}` | Delete a task |
 | `POST` | `/api/channels` | Ensure/create a Discord channel for a directory |
+| `POST` | `/api/threads` | Create a Discord thread in an existing channel |
 
 ## MCP Tools
 
