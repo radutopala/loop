@@ -167,6 +167,27 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 		return resp, err
 	}
 
+	// When a forked session is too long, compact it and retry.
+	if req.ForkSession && resp != nil && resp.SessionID != "" && strings.Contains(err.Error(), "Prompt is too long") {
+		compactReq := &agent.AgentRequest{
+			SessionID: resp.SessionID,
+			ChannelID: req.ChannelID,
+			DirPath:   req.DirPath,
+			Prompt:    "/compact",
+		}
+		compactResp, compactErr := r.runOnce(ctx, compactReq)
+		if compactErr != nil {
+			return nil, fmt.Errorf("compacting forked session: %w", compactErr)
+		}
+		retryReq := *req
+		retryReq.SessionID = compactResp.SessionID
+		retryReq.ForkSession = false
+		if retryReq.Prompt == "" && len(retryReq.Messages) > 0 {
+			retryReq.Prompt = retryReq.Messages[len(retryReq.Messages)-1].Content
+		}
+		return r.runOnce(ctx, &retryReq)
+	}
+
 	retryReq := *req
 	if retryReq.Prompt == "" && len(retryReq.Messages) > 0 {
 		retryReq.Prompt = retryReq.Messages[len(retryReq.Messages)-1].Content
@@ -472,7 +493,10 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 	}
 
 	if claudeResp.IsError {
-		return nil, fmt.Errorf("claude returned error: %s", claudeResp.Result)
+		return &agent.AgentResponse{
+			SessionID: claudeResp.SessionID,
+			Error:     claudeResp.Result,
+		}, fmt.Errorf("claude returned error: %s", claudeResp.Result)
 	}
 
 	return &agent.AgentResponse{

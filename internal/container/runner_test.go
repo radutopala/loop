@@ -300,6 +300,111 @@ func (s *RunnerSuite) TestRunForkSession() {
 	s.client.AssertExpectations(s.T())
 }
 
+func (s *RunnerSuite) TestRunForkSessionCompactOnPromptTooLong() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID:   "sess-parent",
+		ForkSession: true,
+		Messages:    []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID:   "ch-1",
+	}
+
+	// First attempt: fork → "Prompt is too long"
+	forkJSON := `{"type":"result","result":"Prompt is too long","session_id":"sess-forked","is_error":true}`
+	forkReader := bytes.NewReader([]byte(forkJSON))
+	forkWait := make(chan WaitResponse, 1)
+	forkWait <- WaitResponse{StatusCode: 0}
+	forkErr := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, "--fork-session") && slices.Contains(cfg.Cmd, "sess-parent")
+	}), "loop-ch-1-aabbcc").Return("container-fork", nil).Once()
+	s.client.On("ContainerLogs", ctx, "container-fork").Return(forkReader, nil)
+	s.client.On("ContainerStart", ctx, "container-fork").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-fork").Return((<-chan WaitResponse)(forkWait), (<-chan error)(forkErr))
+	s.client.On("ContainerRemove", ctx, "container-fork").Return(nil)
+
+	// Compact: run /compact on the forked session
+	compactJSON := `{"type":"result","result":"Conversation compacted","session_id":"sess-compacted","is_error":false}`
+	compactReader := bytes.NewReader([]byte(compactJSON))
+	compactWait := make(chan WaitResponse, 1)
+	compactWait <- WaitResponse{StatusCode: 0}
+	compactErrCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		hasResume := slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "sess-forked")
+		noFork := !slices.Contains(cfg.Cmd, "--fork-session")
+		hasCompact := slices.Contains(cfg.Cmd, "/compact")
+		return hasResume && noFork && hasCompact
+	}), "loop-ch-1-aabbcc").Return("container-compact", nil).Once()
+	s.client.On("ContainerLogs", ctx, "container-compact").Return(compactReader, nil)
+	s.client.On("ContainerStart", ctx, "container-compact").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-compact").Return((<-chan WaitResponse)(compactWait), (<-chan error)(compactErrCh))
+	s.client.On("ContainerRemove", ctx, "container-compact").Return(nil)
+
+	// Retry: resume compacted session with original prompt
+	retryJSON := `{"type":"result","result":"Hi from compacted session!","session_id":"sess-final","is_error":false}`
+	retryReader := bytes.NewReader([]byte(retryJSON))
+	retryWait := make(chan WaitResponse, 1)
+	retryWait <- WaitResponse{StatusCode: 0}
+	retryErrCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		hasResume := slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "sess-compacted")
+		noFork := !slices.Contains(cfg.Cmd, "--fork-session")
+		return hasResume && noFork
+	}), "loop-ch-1-aabbcc").Return("container-retry", nil).Once()
+	s.client.On("ContainerLogs", ctx, "container-retry").Return(retryReader, nil)
+	s.client.On("ContainerStart", ctx, "container-retry").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-retry").Return((<-chan WaitResponse)(retryWait), (<-chan error)(retryErrCh))
+	s.client.On("ContainerRemove", ctx, "container-retry").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Hi from compacted session!", resp.Response)
+	require.Equal(s.T(), "sess-final", resp.SessionID)
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunForkSessionCompactFails() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID:   "sess-parent",
+		ForkSession: true,
+		Messages:    []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID:   "ch-1",
+		Prompt:      "user: hello",
+	}
+
+	// First attempt: fork → "Prompt is too long"
+	forkJSON := `{"type":"result","result":"Prompt is too long","session_id":"sess-forked","is_error":true}`
+	forkReader := bytes.NewReader([]byte(forkJSON))
+	forkWait := make(chan WaitResponse, 1)
+	forkWait <- WaitResponse{StatusCode: 0}
+	forkErr := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, "--fork-session")
+	}), "loop-ch-1-aabbcc").Return("container-fork", nil).Once()
+	s.client.On("ContainerLogs", ctx, "container-fork").Return(forkReader, nil)
+	s.client.On("ContainerStart", ctx, "container-fork").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-fork").Return((<-chan WaitResponse)(forkWait), (<-chan error)(forkErr))
+	s.client.On("ContainerRemove", ctx, "container-fork").Return(nil)
+
+	// Compact fails: container create error
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, "/compact")
+	}), "loop-ch-1-aabbcc").Return("", errors.New("docker error")).Once()
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Error(s.T(), err)
+	require.Nil(s.T(), resp)
+	require.Contains(s.T(), err.Error(), "compacting forked session")
+
+	s.client.AssertExpectations(s.T())
+}
+
 func (s *RunnerSuite) TestRunUsesExplicitPromptOverLastMessage() {
 	ctx := context.Background()
 	req := &agent.AgentRequest{
@@ -701,10 +806,12 @@ func (s *RunnerSuite) TestRunClaudeError() {
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
 
 	resp, err := s.runner.Run(ctx, req)
-	require.Nil(s.T(), resp)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "claude returned error")
 	require.Contains(s.T(), err.Error(), "something went wrong")
+	require.NotNil(s.T(), resp)
+	require.Equal(s.T(), "sess-err", resp.SessionID)
+	require.Equal(s.T(), "something went wrong", resp.Error)
 
 	s.client.AssertExpectations(s.T())
 }

@@ -27,6 +27,7 @@ type Bot interface {
 	OnInteraction(handler func(ctx context.Context, i any))
 	BotUserID() string
 	CreateChannel(ctx context.Context, guildID, name string) (string, error)
+	CreateThread(ctx context.Context, channelID, name string) (string, error)
 	GetChannelParentID(ctx context.Context, channelID string) (string, error)
 }
 

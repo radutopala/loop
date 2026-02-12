@@ -199,6 +199,11 @@ func (m *MockBot) CreateChannel(ctx context.Context, guildID, name string) (stri
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockBot) CreateThread(ctx context.Context, channelID, name string) (string, error) {
+	args := m.Called(ctx, channelID, name)
+	return args.String(0), args.Error(1)
+}
+
 func (m *MockBot) GetChannelParentID(ctx context.Context, channelID string) (string, error) {
 	args := m.Called(ctx, channelID)
 	return args.String(0), args.Error(1)
