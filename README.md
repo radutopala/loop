@@ -283,7 +283,7 @@ loop onboard:local
 
 The bot also responds to `@mentions`, replies to its own messages, and messages prefixed with `!loop`. It auto-joins threads in active channels — tagging the bot in a thread inherits the parent channel's project directory and forks its session so each thread gets independent context.
 
-Agents can trigger work in other channels using the `send_message` MCP tool. The bot can self-reference itself — a message it sends with its own `@mention` will trigger a runner in the target channel. For example, an agent in channel A can ask:
+Agents can trigger work in other channels using the `send_message` MCP tool. The bot can self-reference itself — a message it sends with its own `@mention` will trigger a runner in the target channel. Text mentions like `@LoopBot` are automatically converted to proper Discord mentions. For example, an agent in channel A can ask:
 
 > Send a message to the backend channel asking @LoopBot to check the last commit
 
