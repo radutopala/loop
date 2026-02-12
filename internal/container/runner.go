@@ -167,8 +167,8 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 		return resp, err
 	}
 
-	// When a forked session is too long, compact it and retry.
-	if req.ForkSession && resp != nil && resp.SessionID != "" && strings.Contains(err.Error(), "Prompt is too long") {
+	// When a session is too long, compact it and retry.
+	if resp != nil && resp.SessionID != "" && strings.Contains(err.Error(), "Prompt is too long") {
 		compactReq := &agent.AgentRequest{
 			SessionID: resp.SessionID,
 			ChannelID: req.ChannelID,
@@ -177,7 +177,7 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 		}
 		compactResp, compactErr := r.runOnce(ctx, compactReq)
 		if compactErr != nil {
-			return nil, fmt.Errorf("compacting forked session: %w", compactErr)
+			return nil, fmt.Errorf("compacting session: %w", compactErr)
 		}
 		retryReq := *req
 		retryReq.SessionID = compactResp.SessionID

@@ -69,10 +69,20 @@ func (m *MockChannelEnsurer) EnsureChannel(ctx context.Context, dirPath string) 
 	return args.String(0), args.Error(1)
 }
 
+type MockThreadEnsurer struct {
+	mock.Mock
+}
+
+func (m *MockThreadEnsurer) CreateThread(ctx context.Context, channelID, name string) (string, error) {
+	args := m.Called(ctx, channelID, name)
+	return args.String(0), args.Error(1)
+}
+
 type ServerSuite struct {
 	suite.Suite
 	scheduler *MockScheduler
 	channels  *MockChannelEnsurer
+	threads   *MockThreadEnsurer
 	srv       *Server
 	mux       *http.ServeMux
 }
@@ -84,11 +94,13 @@ func TestServerSuite(t *testing.T) {
 func (s *ServerSuite) SetupTest() {
 	s.scheduler = new(MockScheduler)
 	s.channels = new(MockChannelEnsurer)
+	s.threads = new(MockThreadEnsurer)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.srv = NewServer(s.scheduler, s.channels, logger)
+	s.srv = NewServer(s.scheduler, s.channels, s.threads, logger)
 
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("POST /api/channels", s.srv.handleEnsureChannel)
+	s.mux.HandleFunc("POST /api/threads", s.srv.handleCreateThread)
 	s.mux.HandleFunc("POST /api/tasks", s.srv.handleCreateTask)
 	s.mux.HandleFunc("GET /api/tasks", s.srv.handleListTasks)
 	s.mux.HandleFunc("DELETE /api/tasks/{id}", s.srv.handleDeleteTask)
@@ -361,7 +373,7 @@ func (s *ServerSuite) TestStartListenError() {
 	// Try to start another server — won't get the same port, but
 	// we can test with an invalid address
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv2 := NewServer(s.scheduler, nil, logger)
+	srv2 := NewServer(s.scheduler, nil, nil, logger)
 	err = srv2.Start("invalid-addr-no-port")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "listening on")
@@ -370,7 +382,7 @@ func (s *ServerSuite) TestStartListenError() {
 
 func (s *ServerSuite) TestStopNilServer() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(s.scheduler, nil, logger)
+	srv := NewServer(s.scheduler, nil, nil, logger)
 
 	err := srv.Stop(context.Background())
 	require.NoError(s.T(), err)
@@ -443,13 +455,92 @@ func (s *ServerSuite) TestEnsureChannelError() {
 
 func (s *ServerSuite) TestEnsureChannelNilEnsurer() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(s.scheduler, nil, logger)
+	srv := NewServer(s.scheduler, nil, nil, logger)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/channels", srv.handleEnsureChannel)
 
 	body := `{"dir_path":"/path"}`
 	req := httptest.NewRequest("POST", "/api/channels", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+// --- CreateThread tests ---
+
+func (s *ServerSuite) TestCreateThreadSuccess() {
+	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread").
+		Return("thread-1", nil)
+
+	body := `{"channel_id":"ch-1","name":"my-thread"}`
+	req := httptest.NewRequest("POST", "/api/threads", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+
+	var resp createThreadResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(s.T(), "thread-1", resp.ThreadID)
+	s.threads.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCreateThreadMissingChannelID() {
+	body := `{"name":"my-thread"}`
+	req := httptest.NewRequest("POST", "/api/threads", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestCreateThreadMissingName() {
+	body := `{"channel_id":"ch-1"}`
+	req := httptest.NewRequest("POST", "/api/threads", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestCreateThreadInvalidBody() {
+	req := httptest.NewRequest("POST", "/api/threads", bytes.NewBufferString("not json"))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestCreateThreadError() {
+	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread").
+		Return("", errors.New("create failed"))
+
+	body := `{"channel_id":"ch-1","name":"my-thread"}`
+	req := httptest.NewRequest("POST", "/api/threads", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.threads.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCreateThreadNilEnsurer() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewServer(s.scheduler, nil, nil, logger)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/threads", srv.handleCreateThread)
+
+	body := `{"channel_id":"ch-1","name":"my-thread"}`
+	req := httptest.NewRequest("POST", "/api/threads", bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
 
 	mux.ServeHTTP(rec, req)

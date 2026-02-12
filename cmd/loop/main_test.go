@@ -249,6 +249,11 @@ func (m *mockBot) CreateChannel(ctx context.Context, guildID, name string) (stri
 	return args.String(0), args.Error(1)
 }
 
+func (m *mockBot) CreateThread(ctx context.Context, channelID, name string) (string, error) {
+	args := m.Called(ctx, channelID, name)
+	return args.String(0), args.Error(1)
+}
+
 func (m *mockBot) GetChannelParentID(ctx context.Context, channelID string) (string, error) {
 	args := m.Called(ctx, channelID)
 	return args.String(0), args.Error(1)
@@ -284,7 +289,7 @@ type MainSuite struct {
 	origNewDockerClient   func() (container.DockerClient, error)
 	origNewSQLiteStore    func(string) (db.Store, error)
 	origOsExit            func(int)
-	origNewAPIServer      func(scheduler.Scheduler, api.ChannelEnsurer, *slog.Logger) apiServer
+	origNewAPIServer      func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, *slog.Logger) apiServer
 	origNewMCPServer      func(string, string, mcpserver.HTTPClient, *slog.Logger) *mcpserver.Server
 	origDaemonStart       func(daemon.System, string) error
 	origDaemonStop        func(daemon.System) error
@@ -362,9 +367,9 @@ func testConfig() *config.Config {
 
 // fakeAPIServer returns a newAPIServer func that creates a real api.Server
 // but binds to a random port (127.0.0.1:0).
-func fakeAPIServer() func(scheduler.Scheduler, api.ChannelEnsurer, *slog.Logger) apiServer {
-	return func(sched scheduler.Scheduler, channels api.ChannelEnsurer, logger *slog.Logger) apiServer {
-		return api.NewServer(sched, channels, logger)
+func fakeAPIServer() func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, *slog.Logger) apiServer {
+	return func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, logger *slog.Logger) apiServer {
+		return api.NewServer(sched, channels, threads, logger)
 	}
 }
 
@@ -511,7 +516,7 @@ func (s *MainSuite) TestRunMCPWithInMemoryTransport() {
 
 	res, err := session.ListTools(context.Background(), nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 5)
+	require.Len(s.T(), res.Tools, 6)
 }
 
 func (s *MainSuite) TestEnsureChannelSuccess() {
@@ -858,9 +863,9 @@ func (s *MainSuite) TestServeHappyPathWithGuildID() {
 		return nil
 	}
 	channelsCh := make(chan api.ChannelEnsurer, 1)
-	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, logger *slog.Logger) apiServer {
+	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, logger *slog.Logger) apiServer {
 		channelsCh <- channels
-		return api.NewServer(sched, channels, logger)
+		return api.NewServer(sched, channels, threads, logger)
 	}
 
 	errCh := make(chan error, 1)
@@ -973,7 +978,7 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
 		return nil
 	}
-	newAPIServer = func(_ scheduler.Scheduler, _ api.ChannelEnsurer, _ *slog.Logger) apiServer {
+	newAPIServer = func(_ scheduler.Scheduler, _ api.ChannelEnsurer, _ api.ThreadEnsurer, _ *slog.Logger) apiServer {
 		return mockAPI
 	}
 
@@ -1082,7 +1087,7 @@ func (s *MainSuite) TestDefaultVarSignatures() {
 
 	// Verify newAPIServer produces a non-nil apiServer
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	apiSrv := newAPIServer(nil, nil, logger)
+	apiSrv := newAPIServer(nil, nil, nil, logger)
 	require.NotNil(s.T(), apiSrv)
 
 	// Verify newMCPServer produces a non-nil server

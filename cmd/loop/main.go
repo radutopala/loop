@@ -483,8 +483,8 @@ var (
 	newDockerClient = func() (container.DockerClient, error) {
 		return container.NewClient()
 	}
-	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, logger *slog.Logger) apiServer {
-		return api.NewServer(sched, channels, logger)
+	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, logger *slog.Logger) apiServer {
+		return api.NewServer(sched, channels, threads, logger)
 	}
 )
 
@@ -530,11 +530,13 @@ func serve() error {
 	sched := scheduler.NewTaskScheduler(store, executor, cfg.PollInterval, logger)
 
 	var channelSvc api.ChannelEnsurer
+	var threadSvc api.ThreadEnsurer
 	if cfg.DiscordGuildID != "" {
 		channelSvc = api.NewChannelService(store, bot, cfg.DiscordGuildID)
+		threadSvc = api.NewThreadService(store, bot)
 	}
 
-	apiSrv := newAPIServer(sched, channelSvc, logger)
+	apiSrv := newAPIServer(sched, channelSvc, threadSvc, logger)
 	if err := apiSrv.Start(cfg.APIAddr); err != nil {
 		return fmt.Errorf("starting api server: %w", err)
 	}

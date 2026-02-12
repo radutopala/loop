@@ -125,6 +125,14 @@ func (m *MockSession) Channel(channelID string, options ...discordgo.RequestOpti
 	return args.Get(0).(*discordgo.Channel), args.Error(1)
 }
 
+func (m *MockSession) ThreadStart(channelID string, name string, typ discordgo.ChannelType, archiveDuration int, options ...discordgo.RequestOption) (*discordgo.Channel, error) {
+	args := m.Called(channelID, name, typ, archiveDuration, options)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*discordgo.Channel), args.Error(1)
+}
+
 func (m *MockSession) ThreadJoin(id string, options ...discordgo.RequestOption) error {
 	args := m.Called(id, options)
 	return args.Error(0)
@@ -1330,6 +1338,28 @@ func (s *BotSuite) TestCreateChannelError() {
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "discord create channel")
 	require.Empty(s.T(), channelID)
+}
+
+// --- CreateThread ---
+
+func (s *BotSuite) TestCreateThreadSuccess() {
+	s.session.On("ThreadStart", "ch-1", "my-thread", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
+		Return(&discordgo.Channel{ID: "thread-1"}, nil)
+
+	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "thread-1", threadID)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestCreateThreadError() {
+	s.session.On("ThreadStart", "ch-1", "my-thread", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
+		Return(nil, errors.New("thread create failed"))
+
+	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "discord create thread")
+	require.Empty(s.T(), threadID)
 }
 
 // --- handleThreadCreate ---

@@ -49,6 +49,10 @@ type editTaskInput struct {
 	Prompt   *string `json:"prompt,omitempty" jsonschema:"New prompt to execute on schedule"`
 }
 
+type createThreadInput struct {
+	Name string `json:"name" jsonschema:"The name for the new Discord thread"`
+}
+
 type listTasksInput struct{}
 
 // New creates a new MCP server with scheduler tools.
@@ -92,6 +96,11 @@ func New(channelID, apiURL string, httpClient HTTPClient, logger *slog.Logger) *
 		Name:        "edit_task",
 		Description: "Edit a scheduled task's schedule, type, and/or prompt.",
 	}, s.handleEditTask)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "create_thread",
+		Description: "Create a new Discord thread in the current channel. The thread will be registered and the bot will auto-join it.",
+	}, s.handleCreateThread)
 
 	return s
 }
@@ -314,6 +323,41 @@ func (s *Server) handleToggleTask(_ context.Context, _ *mcp.CallToolRequest, inp
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: fmt.Sprintf("Task %d %s.", input.TaskID, state)},
+		},
+	}, nil, nil
+}
+
+func (s *Server) handleCreateThread(_ context.Context, _ *mcp.CallToolRequest, input createThreadInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "create_thread", "channel_id", s.channelID, "name", input.Name)
+
+	if input.Name == "" {
+		return errorResult("name is required"), nil, nil
+	}
+
+	data, _ := json.Marshal(map[string]string{
+		"channel_id": s.channelID,
+		"name":       input.Name,
+	})
+
+	respBody, status, err := s.doRequest("POST", s.apiURL+"/api/threads", data)
+	if err != nil {
+		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
+	}
+
+	if status != http.StatusCreated {
+		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
+	}
+
+	var result struct {
+		ThreadID string `json:"thread_id"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return errorResult(fmt.Sprintf("decoding response: %v", err)), nil, nil
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: fmt.Sprintf("Thread created successfully (ID: %s).", result.ThreadID)},
 		},
 	}, nil, nil
 }

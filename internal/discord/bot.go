@@ -36,6 +36,7 @@ type DiscordSession interface {
 	InteractionResponseEdit(interaction *discordgo.Interaction, newresp *discordgo.WebhookEdit, options ...discordgo.RequestOption) (*discordgo.Message, error)
 	FollowupMessageCreate(interaction *discordgo.Interaction, wait bool, data *discordgo.WebhookParams, options ...discordgo.RequestOption) (*discordgo.Message, error)
 	GuildChannelCreate(guildID string, name string, ctype discordgo.ChannelType, options ...discordgo.RequestOption) (*discordgo.Channel, error)
+	ThreadStart(channelID string, name string, typ discordgo.ChannelType, archiveDuration int, options ...discordgo.RequestOption) (*discordgo.Channel, error)
 	ThreadJoin(id string, options ...discordgo.RequestOption) error
 }
 
@@ -259,6 +260,16 @@ func (b *DiscordBot) GetChannelParentID(ctx context.Context, channelID string) (
 		return "", nil
 	}
 	return ch.ParentID, nil
+}
+
+// CreateThread creates a new public thread in the given channel.
+func (b *DiscordBot) CreateThread(ctx context.Context, channelID, name string) (string, error) {
+	ch, err := b.session.ThreadStart(channelID, name, discordgo.ChannelTypeGuildPublicThread, 10080)
+	if err != nil {
+		return "", fmt.Errorf("discord create thread: %w", err)
+	}
+	b.logger.InfoContext(ctx, "created discord thread", "thread_id", ch.ID, "name", name, "parent_id", channelID)
+	return ch.ID, nil
 }
 
 func (b *DiscordBot) handleThreadCreate(_ *discordgo.Session, c *discordgo.ThreadCreate) {

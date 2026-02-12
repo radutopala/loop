@@ -85,7 +85,7 @@ func (s *MCPServerSuite) TestMCPServer() {
 func (s *MCPServerSuite) TestListTools() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 5)
+	require.Len(s.T(), res.Tools, 6)
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -96,6 +96,7 @@ func (s *MCPServerSuite) TestListTools() {
 	require.True(s.T(), names["cancel_task"])
 	require.True(s.T(), names["toggle_task"])
 	require.True(s.T(), names["edit_task"])
+	require.True(s.T(), names["create_thread"])
 }
 
 // --- schedule_task ---
@@ -551,6 +552,79 @@ func (s *MCPServerSuite) TestToggleTaskHTTPError() {
 	require.NoError(s.T(), err)
 	require.True(s.T(), res.IsError)
 	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "calling API")
+}
+
+// --- create_thread ---
+
+func (s *MCPServerSuite) TestCreateThreadSuccess() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "POST", req.Method)
+		require.Contains(s.T(), req.URL.String(), "/api/threads")
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"channel_id":"test-channel"`)
+		require.Contains(s.T(), string(body), `"name":"my-thread"`)
+		return jsonResponse(http.StatusCreated, `{"thread_id":"thread-1"}`), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "create_thread",
+		Arguments: map[string]any{"name": "my-thread"},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "ID: thread-1")
+}
+
+func (s *MCPServerSuite) TestCreateThreadEmptyName() {
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "create_thread",
+		Arguments: map[string]any{"name": ""},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "name is required")
+}
+
+func (s *MCPServerSuite) TestCreateThreadAPIError() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusInternalServerError, "parent not found"), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "create_thread",
+		Arguments: map[string]any{"name": "my-thread"},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "API error")
+}
+
+func (s *MCPServerSuite) TestCreateThreadHTTPError() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("connection refused")
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "create_thread",
+		Arguments: map[string]any{"name": "my-thread"},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "calling API")
+}
+
+func (s *MCPServerSuite) TestCreateThreadInvalidResponseJSON() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusCreated, "not json"), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "create_thread",
+		Arguments: map[string]any{"name": "my-thread"},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "decoding response")
 }
 
 // --- doRequest ---

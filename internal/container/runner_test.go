@@ -400,7 +400,72 @@ func (s *RunnerSuite) TestRunForkSessionCompactFails() {
 	resp, err := s.runner.Run(ctx, req)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), resp)
-	require.Contains(s.T(), err.Error(), "compacting forked session")
+	require.Contains(s.T(), err.Error(), "compacting session")
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunSessionCompactOnPromptTooLong() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID: "sess-long",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+		Prompt:    "user: hello",
+	}
+
+	// First attempt: regular resume → "Prompt is too long"
+	failJSON := `{"type":"result","result":"Prompt is too long","session_id":"sess-long","is_error":true}`
+	failReader := bytes.NewReader([]byte(failJSON))
+	failWait := make(chan WaitResponse, 1)
+	failWait <- WaitResponse{StatusCode: 0}
+	failErr := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "sess-long") &&
+			!slices.Contains(cfg.Cmd, "/compact")
+	}), "loop-ch-1-aabbcc").Return("container-fail", nil).Once()
+	s.client.On("ContainerLogs", ctx, "container-fail").Return(failReader, nil)
+	s.client.On("ContainerStart", ctx, "container-fail").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-fail").Return((<-chan WaitResponse)(failWait), (<-chan error)(failErr))
+	s.client.On("ContainerRemove", ctx, "container-fail").Return(nil)
+
+	// Compact
+	compactJSON := `{"type":"result","result":"Compacted","session_id":"sess-compacted","is_error":false}`
+	compactReader := bytes.NewReader([]byte(compactJSON))
+	compactWait := make(chan WaitResponse, 1)
+	compactWait <- WaitResponse{StatusCode: 0}
+	compactErrCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "sess-long") &&
+			slices.Contains(cfg.Cmd, "/compact")
+	}), "loop-ch-1-aabbcc").Return("container-compact", nil).Once()
+	s.client.On("ContainerLogs", ctx, "container-compact").Return(compactReader, nil)
+	s.client.On("ContainerStart", ctx, "container-compact").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-compact").Return((<-chan WaitResponse)(compactWait), (<-chan error)(compactErrCh))
+	s.client.On("ContainerRemove", ctx, "container-compact").Return(nil)
+
+	// Retry with compacted session
+	retryJSON := `{"type":"result","result":"Hello!","session_id":"sess-compacted","is_error":false}`
+	retryReader := bytes.NewReader([]byte(retryJSON))
+	retryWait := make(chan WaitResponse, 1)
+	retryWait <- WaitResponse{StatusCode: 0}
+	retryErrCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "sess-compacted") &&
+			!slices.Contains(cfg.Cmd, "/compact")
+	}), "loop-ch-1-aabbcc").Return("container-retry", nil).Once()
+	s.client.On("ContainerLogs", ctx, "container-retry").Return(retryReader, nil)
+	s.client.On("ContainerStart", ctx, "container-retry").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-retry").Return((<-chan WaitResponse)(retryWait), (<-chan error)(retryErrCh))
+	s.client.On("ContainerRemove", ctx, "container-retry").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Hello!", resp.Response)
+	require.Equal(s.T(), "sess-compacted", resp.SessionID)
 
 	s.client.AssertExpectations(s.T())
 }
@@ -1662,8 +1727,7 @@ func (s *RunnerSuite) TestRunNamedVolumesChownDirs() {
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		hasChownDirs := false
 		for _, e := range cfg.Env {
-			if strings.HasPrefix(e, "CHOWN_DIRS=") {
-				val := strings.TrimPrefix(e, "CHOWN_DIRS=")
+			if val, ok := strings.CutPrefix(e, "CHOWN_DIRS="); ok {
 				hasChownDirs = strings.Contains(val, "/go/pkg/mod") &&
 					strings.Contains(val, "/home/testuser/.npm")
 			}
