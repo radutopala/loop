@@ -78,6 +78,10 @@ func (m *MockThreadEnsurer) CreateThread(ctx context.Context, channelID, name, a
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockThreadEnsurer) DeleteThread(ctx context.Context, threadID string) error {
+	return m.Called(ctx, threadID).Error(0)
+}
+
 type ServerSuite struct {
 	suite.Suite
 	scheduler *MockScheduler
@@ -101,6 +105,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("POST /api/channels", s.srv.handleEnsureChannel)
 	s.mux.HandleFunc("POST /api/threads", s.srv.handleCreateThread)
+	s.mux.HandleFunc("DELETE /api/threads/{id}", s.srv.handleDeleteThread)
 	s.mux.HandleFunc("POST /api/tasks", s.srv.handleCreateTask)
 	s.mux.HandleFunc("GET /api/tasks", s.srv.handleListTasks)
 	s.mux.HandleFunc("DELETE /api/tasks/{id}", s.srv.handleDeleteTask)
@@ -548,6 +553,48 @@ func (s *ServerSuite) TestCreateThreadError() {
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.threads.AssertExpectations(s.T())
+}
+
+// --- DeleteThread tests ---
+
+func (s *ServerSuite) TestDeleteThreadSuccess() {
+	s.threads.On("DeleteThread", mock.Anything, "thread-1").Return(nil)
+
+	req := httptest.NewRequest("DELETE", "/api/threads/thread-1", nil)
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	s.threads.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestDeleteThreadError() {
+	s.threads.On("DeleteThread", mock.Anything, "thread-1").
+		Return(errors.New("delete failed"))
+
+	req := httptest.NewRequest("DELETE", "/api/threads/thread-1", nil)
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.threads.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestDeleteThreadNilEnsurer() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewServer(s.scheduler, nil, nil, logger)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE /api/threads/{id}", srv.handleDeleteThread)
+
+	req := httptest.NewRequest("DELETE", "/api/threads/thread-1", nil)
+	rec := httptest.NewRecorder()
+
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
 func (s *ServerSuite) TestCreateThreadNilEnsurer() {

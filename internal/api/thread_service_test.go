@@ -20,6 +20,10 @@ func (m *MockThreadCreator) CreateThread(ctx context.Context, channelID, name, m
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockThreadCreator) DeleteThread(ctx context.Context, threadID string) error {
+	return m.Called(ctx, threadID).Error(0)
+}
+
 type ThreadServiceSuite struct {
 	suite.Suite
 	store   *MockStore
@@ -101,4 +105,67 @@ func (s *ThreadServiceSuite) TestCreateThreadUpsertError() {
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "storing thread mapping")
 	require.Empty(s.T(), threadID)
+}
+
+// --- DeleteThread tests ---
+
+func (s *ThreadServiceSuite) TestDeleteThreadSuccess() {
+	s.store.On("GetChannel", s.ctx, "thread-1").
+		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1"}, nil)
+	s.creator.On("DeleteThread", s.ctx, "thread-1").Return(nil)
+	s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
+
+	err := s.svc.DeleteThread(s.ctx, "thread-1")
+	require.NoError(s.T(), err)
+	s.store.AssertExpectations(s.T())
+	s.creator.AssertExpectations(s.T())
+}
+
+func (s *ThreadServiceSuite) TestDeleteThreadLookupError() {
+	s.store.On("GetChannel", s.ctx, "thread-1").
+		Return(nil, errors.New("db error"))
+
+	err := s.svc.DeleteThread(s.ctx, "thread-1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "looking up thread")
+}
+
+func (s *ThreadServiceSuite) TestDeleteThreadNotFound() {
+	s.store.On("GetChannel", s.ctx, "thread-1").Return(nil, nil)
+
+	err := s.svc.DeleteThread(s.ctx, "thread-1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "thread thread-1 not found")
+}
+
+func (s *ThreadServiceSuite) TestDeleteThreadNotAThread() {
+	s.store.On("GetChannel", s.ctx, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", ParentID: ""}, nil)
+
+	err := s.svc.DeleteThread(s.ctx, "ch-1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "is not a thread")
+}
+
+func (s *ThreadServiceSuite) TestDeleteThreadDiscordError() {
+	s.store.On("GetChannel", s.ctx, "thread-1").
+		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1"}, nil)
+	s.creator.On("DeleteThread", s.ctx, "thread-1").
+		Return(errors.New("discord error"))
+
+	err := s.svc.DeleteThread(s.ctx, "thread-1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "deleting discord thread")
+}
+
+func (s *ThreadServiceSuite) TestDeleteThreadDBError() {
+	s.store.On("GetChannel", s.ctx, "thread-1").
+		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1"}, nil)
+	s.creator.On("DeleteThread", s.ctx, "thread-1").Return(nil)
+	s.store.On("DeleteChannel", s.ctx, "thread-1").
+		Return(errors.New("db error"))
+
+	err := s.svc.DeleteThread(s.ctx, "thread-1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "deleting thread from db")
 }

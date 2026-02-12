@@ -87,6 +87,7 @@ func (s *Server) Start(addr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/channels", s.handleEnsureChannel)
 	mux.HandleFunc("POST /api/threads", s.handleCreateThread)
+	mux.HandleFunc("DELETE /api/threads/{id}", s.handleDeleteThread)
 	mux.HandleFunc("POST /api/tasks", s.handleCreateTask)
 	mux.HandleFunc("GET /api/tasks", s.handleListTasks)
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.handleDeleteTask)
@@ -286,4 +287,20 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	_ = json.NewEncoder(w).Encode(createThreadResponse{ThreadID: threadID})
+}
+
+func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
+	if s.threads == nil {
+		http.Error(w, "thread deletion not configured", http.StatusNotImplemented)
+		return
+	}
+
+	threadID := r.PathValue("id")
+
+	if err := s.threads.DeleteThread(r.Context(), threadID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }

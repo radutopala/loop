@@ -54,6 +54,10 @@ type createThreadInput struct {
 	Name string `json:"name" jsonschema:"The name for the new Discord thread"`
 }
 
+type deleteThreadInput struct {
+	ThreadID string `json:"thread_id" jsonschema:"The ID of the thread to delete"`
+}
+
 type listTasksInput struct{}
 
 // New creates a new MCP server with scheduler tools.
@@ -103,6 +107,11 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 		Name:        "create_thread",
 		Description: "Create a new Discord thread in the current channel. The thread will be registered and the bot will auto-join it.",
 	}, s.handleCreateThread)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "delete_thread",
+		Description: "Delete a Discord thread by its ID. This removes the thread from Discord and the database.",
+	}, s.handleDeleteThread)
 
 	return s
 }
@@ -364,6 +373,29 @@ func (s *Server) handleCreateThread(_ context.Context, _ *mcp.CallToolRequest, i
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: fmt.Sprintf("Thread created successfully (ID: %s).", result.ThreadID)},
+		},
+	}, nil, nil
+}
+
+func (s *Server) handleDeleteThread(_ context.Context, _ *mcp.CallToolRequest, input deleteThreadInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "delete_thread", "thread_id", input.ThreadID)
+
+	if input.ThreadID == "" {
+		return errorResult("thread_id is required"), nil, nil
+	}
+
+	respBody, status, err := s.doRequest("DELETE", fmt.Sprintf("%s/api/threads/%s", s.apiURL, input.ThreadID), nil)
+	if err != nil {
+		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
+	}
+
+	if status != http.StatusNoContent {
+		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: fmt.Sprintf("Thread %s deleted successfully.", input.ThreadID)},
 		},
 	}, nil, nil
 }

@@ -218,6 +218,10 @@ func (m *MockBot) CreateThread(ctx context.Context, channelID, name, mentionUser
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockBot) DeleteThread(ctx context.Context, threadID string) error {
+	return m.Called(ctx, threadID).Error(0)
+}
+
 func (m *MockBot) GetChannelParentID(ctx context.Context, channelID string) (string, error) {
 	args := m.Called(ctx, channelID)
 	return args.String(0), args.Error(1)

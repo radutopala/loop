@@ -85,7 +85,7 @@ func (s *MCPServerSuite) TestMCPServer() {
 func (s *MCPServerSuite) TestListTools() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 6)
+	require.Len(s.T(), res.Tools, 7)
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -97,6 +97,7 @@ func (s *MCPServerSuite) TestListTools() {
 	require.True(s.T(), names["toggle_task"])
 	require.True(s.T(), names["edit_task"])
 	require.True(s.T(), names["create_thread"])
+	require.True(s.T(), names["delete_thread"])
 }
 
 // --- schedule_task ---
@@ -653,6 +654,65 @@ func (s *MCPServerSuite) TestCreateThreadInvalidResponseJSON() {
 	require.NoError(s.T(), err)
 	require.True(s.T(), res.IsError)
 	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "decoding response")
+}
+
+// --- delete_thread ---
+
+func (s *MCPServerSuite) TestDeleteThreadSuccess() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "DELETE", req.Method)
+		require.Contains(s.T(), req.URL.String(), "/api/threads/thread-1")
+		return &http.Response{
+			StatusCode: http.StatusNoContent,
+			Body:       io.NopCloser(bytes.NewReader(nil)),
+		}, nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "delete_thread",
+		Arguments: map[string]any{"thread_id": "thread-1"},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "Thread thread-1 deleted")
+}
+
+func (s *MCPServerSuite) TestDeleteThreadEmptyID() {
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "delete_thread",
+		Arguments: map[string]any{"thread_id": ""},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "thread_id is required")
+}
+
+func (s *MCPServerSuite) TestDeleteThreadAPIError() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusInternalServerError, "thread not found"), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "delete_thread",
+		Arguments: map[string]any{"thread_id": "thread-1"},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "API error")
+}
+
+func (s *MCPServerSuite) TestDeleteThreadHTTPError() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("connection refused")
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "delete_thread",
+		Arguments: map[string]any{"thread_id": "thread-1"},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "calling API")
 }
 
 // --- doRequest ---

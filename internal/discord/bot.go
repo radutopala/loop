@@ -38,6 +38,7 @@ type DiscordSession interface {
 	GuildChannelCreate(guildID string, name string, ctype discordgo.ChannelType, options ...discordgo.RequestOption) (*discordgo.Channel, error)
 	ThreadStart(channelID string, name string, typ discordgo.ChannelType, archiveDuration int, options ...discordgo.RequestOption) (*discordgo.Channel, error)
 	ThreadJoin(id string, options ...discordgo.RequestOption) error
+	ChannelDelete(channelID string, options ...discordgo.RequestOption) (*discordgo.Channel, error)
 }
 
 // Bot defines the interface for a Discord bot.
@@ -292,6 +293,15 @@ func (b *DiscordBot) CreateThread(ctx context.Context, channelID, name, mentionU
 	}
 	b.logger.InfoContext(ctx, "created discord thread", "thread_id", ch.ID, "name", name, "parent_id", channelID)
 	return ch.ID, nil
+}
+
+// DeleteThread deletes a Discord thread by its ID.
+func (b *DiscordBot) DeleteThread(ctx context.Context, threadID string) error {
+	if _, err := b.session.ChannelDelete(threadID); err != nil {
+		return fmt.Errorf("discord delete thread: %w", err)
+	}
+	b.logger.InfoContext(ctx, "deleted discord thread", "thread_id", threadID)
+	return nil
 }
 
 func (b *DiscordBot) handleThreadCreate(_ *discordgo.Session, c *discordgo.ThreadCreate) {

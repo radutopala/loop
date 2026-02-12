@@ -138,6 +138,14 @@ func (m *MockSession) ThreadJoin(id string, options ...discordgo.RequestOption) 
 	return args.Error(0)
 }
 
+func (m *MockSession) ChannelDelete(channelID string, options ...discordgo.RequestOption) (*discordgo.Channel, error) {
+	args := m.Called(channelID, options)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*discordgo.Channel), args.Error(1)
+}
+
 // --- Test Suite ---
 
 type BotSuite struct {
@@ -1389,6 +1397,26 @@ func (s *BotSuite) TestCreateThreadError() {
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "discord create thread")
 	require.Empty(s.T(), threadID)
+}
+
+// --- DeleteThread ---
+
+func (s *BotSuite) TestDeleteThreadSuccess() {
+	s.session.On("ChannelDelete", "thread-1", mock.Anything).
+		Return(&discordgo.Channel{ID: "thread-1"}, nil)
+
+	err := s.bot.DeleteThread(context.Background(), "thread-1")
+	require.NoError(s.T(), err)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestDeleteThreadError() {
+	s.session.On("ChannelDelete", "thread-1", mock.Anything).
+		Return(nil, errors.New("delete failed"))
+
+	err := s.bot.DeleteThread(context.Background(), "thread-1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "discord delete thread")
 }
 
 // --- handleThreadCreate ---

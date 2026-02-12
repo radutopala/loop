@@ -266,6 +266,10 @@ func (m *mockBot) CreateThread(ctx context.Context, channelID, name, mentionUser
 	return args.String(0), args.Error(1)
 }
 
+func (m *mockBot) DeleteThread(ctx context.Context, threadID string) error {
+	return m.Called(ctx, threadID).Error(0)
+}
+
 func (m *mockBot) GetChannelParentID(ctx context.Context, channelID string) (string, error) {
 	args := m.Called(ctx, channelID)
 	return args.String(0), args.Error(1)
@@ -528,7 +532,7 @@ func (s *MainSuite) TestRunMCPWithInMemoryTransport() {
 
 	res, err := session.ListTools(context.Background(), nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 6)
+	require.Len(s.T(), res.Tools, 7)
 }
 
 func (s *MainSuite) TestEnsureChannelSuccess() {

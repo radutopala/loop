@@ -80,10 +80,10 @@ go install github.com/radutopala/loop/cmd/loop@latest
 5. Invite the bot to your server (replace `YOUR_APP_ID`):
 
    ```
-   https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot%20applications.commands&permissions=377957190672
+   https://discord.com/oauth2/authorize?client_id=YOUR_APP_ID&scope=bot%20applications.commands&permissions=395137059856
    ```
 
-   This grants: View Channels, Send Messages, Read Message History, Manage Channels, Send Messages in Threads, Create Public Threads, Create Private Threads.
+   This grants: View Channels, Send Messages, Read Message History, Manage Channels, Manage Threads, Send Messages in Threads, Create Public Threads, Create Private Threads.
 
 ### Step 3: Initialize global config
 
@@ -350,6 +350,7 @@ Project configs (`.loop/config.json`) can define their own `task_templates` that
 | `DELETE` | `/api/tasks/{id}` | Delete a task |
 | `POST` | `/api/channels` | Ensure/create a Discord channel for a directory |
 | `POST` | `/api/threads` | Create a Discord thread in an existing channel |
+| `DELETE` | `/api/threads/{id}` | Delete a Discord thread |
 
 ## MCP Tools
 
@@ -361,6 +362,7 @@ Project configs (`.loop/config.json`) can define their own `task_templates` that
 | `toggle_task` | Enable or disable a scheduled task by ID |
 | `edit_task` | Edit a task's schedule, type, and/or prompt |
 | `create_thread` | Create a new Discord thread in the current channel |
+| `delete_thread` | Delete a Discord thread by ID |
 
 ## Development
 
