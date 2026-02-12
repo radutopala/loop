@@ -278,19 +278,34 @@ func (b *DiscordBot) GetChannelParentID(ctx context.Context, channelID string) (
 // CreateThread creates a new public thread in the given channel and sends
 // an initial message mentioning the bot so users know it's active.
 // If mentionUserID is non-empty, the user is also mentioned in the greeting.
-func (b *DiscordBot) CreateThread(ctx context.Context, channelID, name, mentionUserID string) (string, error) {
+func (b *DiscordBot) CreateThread(ctx context.Context, channelID, name, mentionUserID, message string) (string, error) {
 	ch, err := b.session.ThreadStart(channelID, name, discordgo.ChannelTypeGuildPublicThread, 10080)
 	if err != nil {
 		return "", fmt.Errorf("discord create thread: %w", err)
 	}
-	botID := b.BotUserID()
-	mention := fmt.Sprintf("<@%s> is here.", botID)
-	if mentionUserID != "" {
-		mention += fmt.Sprintf(" Hey <@%s>, tag me to get started!", mentionUserID)
-	} else {
-		mention += " Tag me to get started!"
+	var initialMsg string
+	switch {
+	case message != "":
+		botID := b.BotUserID()
+		// Strip any existing bot mentions from the message to avoid duplicates.
+		clean := strings.ReplaceAll(message, "<@"+botID+">", "")
+		b.mu.RLock()
+		username := b.botUsername
+		b.mu.RUnlock()
+		if username != "" {
+			clean = replaceTextMention(clean, username, "")
+		}
+		clean = strings.TrimSpace(clean)
+		initialMsg = fmt.Sprintf("<@%s> %s", botID, clean)
+		if mentionUserID != "" {
+			initialMsg += fmt.Sprintf(" <@%s>", mentionUserID)
+		}
+	case mentionUserID != "":
+		initialMsg = fmt.Sprintf("Hey <@%s>, tag me to get started!", mentionUserID)
+	default:
+		initialMsg = "Tag me to get started!"
 	}
-	if _, err := b.session.ChannelMessageSend(ch.ID, mention); err != nil {
+	if _, err := b.session.ChannelMessageSend(ch.ID, initialMsg); err != nil {
 		b.logger.WarnContext(ctx, "sending initial thread message", "error", err, "thread_id", ch.ID)
 	}
 	b.logger.InfoContext(ctx, "created discord thread", "thread_id", ch.ID, "name", name, "parent_id", channelID)

@@ -28,7 +28,7 @@ type Bot interface {
 	OnChannelDelete(handler func(ctx context.Context, channelID string, isThread bool))
 	BotUserID() string
 	CreateChannel(ctx context.Context, guildID, name string) (string, error)
-	CreateThread(ctx context.Context, channelID, name, mentionUserID string) (string, error)
+	CreateThread(ctx context.Context, channelID, name, mentionUserID, message string) (string, error)
 	PostMessage(ctx context.Context, channelID, content string) error
 	DeleteThread(ctx context.Context, threadID string) error
 	GetChannelParentID(ctx context.Context, channelID string) (string, error)

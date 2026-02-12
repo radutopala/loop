@@ -594,12 +594,32 @@ func (s *MCPServerSuite) TestCreateThreadSuccess() {
 		body, _ := io.ReadAll(req.Body)
 		require.Contains(s.T(), string(body), `"channel_id":"test-channel"`)
 		require.Contains(s.T(), string(body), `"name":"my-thread"`)
+		require.NotContains(s.T(), string(body), `"message"`)
 		return jsonResponse(http.StatusCreated, `{"thread_id":"thread-1"}`), nil
 	}
 
 	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
 		Name:      "create_thread",
 		Arguments: map[string]any{"name": "my-thread"},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "ID: thread-1")
+}
+
+func (s *MCPServerSuite) TestCreateThreadSuccessWithMessage() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "POST", req.Method)
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"channel_id":"test-channel"`)
+		require.Contains(s.T(), string(body), `"name":"my-thread"`)
+		require.Contains(s.T(), string(body), `"message":"Do the task"`)
+		return jsonResponse(http.StatusCreated, `{"thread_id":"thread-1"}`), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "create_thread",
+		Arguments: map[string]any{"name": "my-thread", "message": "Do the task"},
 	})
 	require.NoError(s.T(), err)
 	require.False(s.T(), res.IsError)

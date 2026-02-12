@@ -51,7 +51,8 @@ type editTaskInput struct {
 }
 
 type createThreadInput struct {
-	Name string `json:"name" jsonschema:"The name for the new Discord thread"`
+	Name    string `json:"name" jsonschema:"The name for the new Discord thread"`
+	Message string `json:"message,omitempty" jsonschema:"Optional initial message for the thread. If provided, the bot will post it as a self-mention to trigger a runner immediately."`
 }
 
 type deleteThreadInput struct {
@@ -114,7 +115,7 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "create_thread",
-		Description: "Create a new Discord thread in the current channel. The thread will be registered and the bot will auto-join it.",
+		Description: "Create a new Discord thread in the current channel. The thread will be registered and the bot will auto-join it. If a message is provided, the bot posts it as a self-mention to trigger a runner immediately with that task.",
 	}, s.handleCreateThread)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
@@ -370,6 +371,9 @@ func (s *Server) handleCreateThread(_ context.Context, _ *mcp.CallToolRequest, i
 	}
 	if s.authorID != "" {
 		reqBody["author_id"] = s.authorID
+	}
+	if input.Message != "" {
+		reqBody["message"] = input.Message
 	}
 	data, _ := json.Marshal(reqBody)
 

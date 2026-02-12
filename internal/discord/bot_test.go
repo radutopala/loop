@@ -1446,10 +1446,10 @@ func (s *BotSuite) TestCreateThreadSuccess() {
 	s.bot.botUserID = "bot-123"
 	s.session.On("ThreadStart", "ch-1", "my-thread", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
 		Return(&discordgo.Channel{ID: "thread-1"}, nil)
-	s.session.On("ChannelMessageSend", "thread-1", "<@bot-123> is here. Tag me to get started!", mock.Anything).
+	s.session.On("ChannelMessageSend", "thread-1", "Tag me to get started!", mock.Anything).
 		Return(&discordgo.Message{}, nil)
 
-	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread", "")
+	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread", "", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "thread-1", threadID)
 	s.session.AssertExpectations(s.T())
@@ -1459,10 +1459,63 @@ func (s *BotSuite) TestCreateThreadWithMentionUser() {
 	s.bot.botUserID = "bot-123"
 	s.session.On("ThreadStart", "ch-1", "my-thread", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
 		Return(&discordgo.Channel{ID: "thread-1"}, nil)
-	s.session.On("ChannelMessageSend", "thread-1", "<@bot-123> is here. Hey <@user-42>, tag me to get started!", mock.Anything).
+	s.session.On("ChannelMessageSend", "thread-1", "Hey <@user-42>, tag me to get started!", mock.Anything).
 		Return(&discordgo.Message{}, nil)
 
-	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread", "user-42")
+	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread", "user-42", "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "thread-1", threadID)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestCreateThreadWithMessage() {
+	s.bot.botUserID = "bot-123"
+	s.session.On("ThreadStart", "ch-1", "my-thread", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
+		Return(&discordgo.Channel{ID: "thread-1"}, nil)
+	s.session.On("ChannelMessageSend", "thread-1", "<@bot-123> Do the task", mock.Anything).
+		Return(&discordgo.Message{}, nil)
+
+	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread", "", "Do the task")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "thread-1", threadID)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestCreateThreadWithMessageStripsTextMention() {
+	s.bot.botUserID = "bot-123"
+	s.bot.botUsername = "LoopBot"
+	s.session.On("ThreadStart", "ch-1", "my-thread", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
+		Return(&discordgo.Channel{ID: "thread-1"}, nil)
+	s.session.On("ChannelMessageSend", "thread-1", "<@bot-123> Do the task", mock.Anything).
+		Return(&discordgo.Message{}, nil)
+
+	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread", "", "@LoopBot Do the task")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "thread-1", threadID)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestCreateThreadWithMessageStripsDiscordMention() {
+	s.bot.botUserID = "bot-123"
+	s.session.On("ThreadStart", "ch-1", "my-thread", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
+		Return(&discordgo.Channel{ID: "thread-1"}, nil)
+	s.session.On("ChannelMessageSend", "thread-1", "<@bot-123> Do the task", mock.Anything).
+		Return(&discordgo.Message{}, nil)
+
+	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread", "", "<@bot-123> Do the task")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "thread-1", threadID)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestCreateThreadWithMessageAndMentionUser() {
+	s.bot.botUserID = "bot-123"
+	s.session.On("ThreadStart", "ch-1", "my-thread", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
+		Return(&discordgo.Channel{ID: "thread-1"}, nil)
+	s.session.On("ChannelMessageSend", "thread-1", "<@bot-123> Do the task <@user-42>", mock.Anything).
+		Return(&discordgo.Message{}, nil)
+
+	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread", "user-42", "Do the task")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "thread-1", threadID)
 	s.session.AssertExpectations(s.T())
@@ -1475,7 +1528,7 @@ func (s *BotSuite) TestCreateThreadMessageSendError() {
 	s.session.On("ChannelMessageSend", "thread-1", mock.Anything, mock.Anything).
 		Return(nil, errors.New("send failed"))
 
-	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread", "")
+	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread", "", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "thread-1", threadID)
 	s.session.AssertExpectations(s.T())
@@ -1485,7 +1538,7 @@ func (s *BotSuite) TestCreateThreadError() {
 	s.session.On("ThreadStart", "ch-1", "my-thread", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
 		Return(nil, errors.New("thread create failed"))
 
-	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread", "")
+	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "discord create thread")
 	require.Empty(s.T(), threadID)

@@ -9,13 +9,13 @@ import (
 
 // ThreadCreator can create and delete Discord threads.
 type ThreadCreator interface {
-	CreateThread(ctx context.Context, channelID, name, mentionUserID string) (string, error)
+	CreateThread(ctx context.Context, channelID, name, mentionUserID, message string) (string, error)
 	DeleteThread(ctx context.Context, threadID string) error
 }
 
 // ThreadEnsurer manages threads in Discord and the DB.
 type ThreadEnsurer interface {
-	CreateThread(ctx context.Context, channelID, name, authorID string) (string, error)
+	CreateThread(ctx context.Context, channelID, name, authorID, message string) (string, error)
 	DeleteThread(ctx context.Context, threadID string) error
 }
 
@@ -55,7 +55,7 @@ func (s *threadService) DeleteThread(ctx context.Context, threadID string) error
 	return nil
 }
 
-func (s *threadService) CreateThread(ctx context.Context, channelID, name, authorID string) (string, error) {
+func (s *threadService) CreateThread(ctx context.Context, channelID, name, authorID, message string) (string, error) {
 	parent, err := s.store.GetChannel(ctx, channelID)
 	if err != nil {
 		return "", fmt.Errorf("looking up parent channel: %w", err)
@@ -64,7 +64,7 @@ func (s *threadService) CreateThread(ctx context.Context, channelID, name, autho
 		return "", fmt.Errorf("parent channel %s not found", channelID)
 	}
 
-	threadID, err := s.creator.CreateThread(ctx, channelID, name, authorID)
+	threadID, err := s.creator.CreateThread(ctx, channelID, name, authorID, message)
 	if err != nil {
 		return "", fmt.Errorf("creating discord thread: %w", err)
 	}

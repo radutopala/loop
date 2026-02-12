@@ -71,6 +71,7 @@ type createThreadRequest struct {
 	ChannelID string `json:"channel_id"`
 	Name      string `json:"name"`
 	AuthorID  string `json:"author_id"`
+	Message   string `json:"message"`
 }
 
 type createThreadResponse struct {
@@ -298,7 +299,7 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	threadID, err := s.threads.CreateThread(r.Context(), req.ChannelID, req.Name, req.AuthorID)
+	threadID, err := s.threads.CreateThread(r.Context(), req.ChannelID, req.Name, req.AuthorID, req.Message)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

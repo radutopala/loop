@@ -269,8 +269,8 @@ func (m *mockBot) CreateChannel(ctx context.Context, guildID, name string) (stri
 	return args.String(0), args.Error(1)
 }
 
-func (m *mockBot) CreateThread(ctx context.Context, channelID, name, mentionUserID string) (string, error) {
-	args := m.Called(ctx, channelID, name, mentionUserID)
+func (m *mockBot) CreateThread(ctx context.Context, channelID, name, mentionUserID, message string) (string, error) {
+	args := m.Called(ctx, channelID, name, mentionUserID, message)
 	return args.String(0), args.Error(1)
 }
 
