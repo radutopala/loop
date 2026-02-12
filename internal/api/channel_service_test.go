@@ -119,6 +119,14 @@ func (m *MockStore) UpdateTaskRunLog(ctx context.Context, trl *db.TaskRunLog) er
 	return m.Called(ctx, trl).Error(0)
 }
 
+func (m *MockStore) DeleteChannel(ctx context.Context, channelID string) error {
+	return m.Called(ctx, channelID).Error(0)
+}
+
+func (m *MockStore) DeleteChannelsByParentID(ctx context.Context, parentID string) error {
+	return m.Called(ctx, parentID).Error(0)
+}
+
 func (m *MockStore) Close() error {
 	return m.Called().Error(0)
 }

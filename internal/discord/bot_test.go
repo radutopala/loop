@@ -165,7 +165,7 @@ func (discard) Write(p []byte) (int, error) { return len(p), nil }
 
 func (s *BotSuite) TestStartSuccess() {
 	noop := func() {}
-	s.session.On("AddHandler", mock.Anything).Return(noop).Times(3)
+	s.session.On("AddHandler", mock.Anything).Return(noop).Times(5)
 	s.session.On("Open").Return(nil)
 	s.session.On("User", "@me", mock.Anything).Return(&discordgo.User{ID: "bot-123"}, nil)
 
@@ -177,7 +177,7 @@ func (s *BotSuite) TestStartSuccess() {
 
 func (s *BotSuite) TestStartOpenError() {
 	noop := func() {}
-	s.session.On("AddHandler", mock.Anything).Return(noop).Times(3)
+	s.session.On("AddHandler", mock.Anything).Return(noop).Times(5)
 	s.session.On("Open").Return(errors.New("connection failed"))
 
 	err := s.bot.Start(context.Background())
@@ -187,7 +187,7 @@ func (s *BotSuite) TestStartOpenError() {
 
 func (s *BotSuite) TestStartUserError() {
 	noop := func() {}
-	s.session.On("AddHandler", mock.Anything).Return(noop).Times(3)
+	s.session.On("AddHandler", mock.Anything).Return(noop).Times(5)
 	s.session.On("Open").Return(nil)
 	s.session.On("User", "@me", mock.Anything).Return(nil, errors.New("user fetch failed"))
 
@@ -199,7 +199,7 @@ func (s *BotSuite) TestStartUserError() {
 func (s *BotSuite) TestStop() {
 	called := false
 	remove := func() { called = true }
-	s.session.On("AddHandler", mock.Anything).Return(remove).Times(3)
+	s.session.On("AddHandler", mock.Anything).Return(remove).Times(5)
 	s.session.On("Open").Return(nil)
 	s.session.On("User", "@me", mock.Anything).Return(&discordgo.User{ID: "bot-123"}, nil)
 	s.session.On("Close").Return(nil)
@@ -1415,6 +1415,83 @@ func (s *BotSuite) TestHandleThreadCreateJoinError() {
 	}
 	s.bot.handleThreadCreate(nil, c)
 	s.session.AssertExpectations(s.T())
+}
+
+// --- handleThreadDelete ---
+
+func (s *BotSuite) TestHandleThreadDelete() {
+	called := make(chan struct{}, 1)
+	s.bot.OnChannelDelete(func(ctx context.Context, channelID string, isThread bool) {
+		require.Equal(s.T(), "thread-1", channelID)
+		require.True(s.T(), isThread)
+		called <- struct{}{}
+	})
+
+	c := &discordgo.ThreadDelete{
+		Channel: &discordgo.Channel{
+			ID:       "thread-1",
+			Type:     discordgo.ChannelTypeGuildPublicThread,
+			ParentID: "ch-1",
+		},
+	}
+	s.bot.handleThreadDelete(nil, c)
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		s.T().Fatal("handler not called")
+	}
+}
+
+// --- handleChannelDelete ---
+
+func (s *BotSuite) TestHandleChannelDeleteNotifiesHandlers() {
+	called := make(chan struct{}, 1)
+	s.bot.OnChannelDelete(func(ctx context.Context, channelID string, isThread bool) {
+		require.Equal(s.T(), "ch-1", channelID)
+		require.False(s.T(), isThread)
+		called <- struct{}{}
+	})
+
+	c := &discordgo.ChannelDelete{
+		Channel: &discordgo.Channel{
+			ID:   "ch-1",
+			Type: discordgo.ChannelTypeGuildText,
+		},
+	}
+	s.bot.handleChannelDelete(nil, c)
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		s.T().Fatal("handler not called")
+	}
+}
+
+func (s *BotSuite) TestHandleChannelDeleteIgnoresThreads() {
+	s.bot.OnChannelDelete(func(ctx context.Context, channelID string, isThread bool) {
+		s.T().Fatal("should not be called for threads")
+	})
+
+	c := &discordgo.ChannelDelete{
+		Channel: &discordgo.Channel{
+			ID:       "thread-1",
+			Type:     discordgo.ChannelTypeGuildPublicThread,
+			ParentID: "ch-1",
+		},
+	}
+	s.bot.handleChannelDelete(nil, c)
+}
+
+// --- OnChannelDelete ---
+
+func (s *BotSuite) TestOnChannelDeleteRegistersHandler() {
+	handler := func(ctx context.Context, channelID string, isThread bool) {}
+	s.bot.OnChannelDelete(handler)
+
+	s.bot.mu.RLock()
+	require.Len(s.T(), s.bot.channelDeleteHandlers, 1)
+	s.bot.mu.RUnlock()
 }
 
 // --- GetChannelParentID ---

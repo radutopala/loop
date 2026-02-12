@@ -16,6 +16,8 @@ type Store interface {
 	GetChannelByDirPath(ctx context.Context, dirPath string) (*Channel, error)
 	IsChannelActive(ctx context.Context, channelID string) (bool, error)
 	UpdateSessionID(ctx context.Context, channelID string, sessionID string) error
+	DeleteChannel(ctx context.Context, channelID string) error
+	DeleteChannelsByParentID(ctx context.Context, parentID string) error
 	InsertMessage(ctx context.Context, msg *Message) error
 	GetUnprocessedMessages(ctx context.Context, channelID string) ([]*Message, error)
 	MarkMessagesProcessed(ctx context.Context, ids []int64) error
@@ -150,6 +152,16 @@ func (s *SQLiteStore) UpdateSessionID(ctx context.Context, channelID string, ses
 		`UPDATE channels SET session_id = ?, updated_at = ? WHERE channel_id = ?`,
 		sessionID, time.Now().UTC(), channelID,
 	)
+	return err
+}
+
+func (s *SQLiteStore) DeleteChannel(ctx context.Context, channelID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM channels WHERE channel_id = ?`, channelID)
+	return err
+}
+
+func (s *SQLiteStore) DeleteChannelsByParentID(ctx context.Context, parentID string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM channels WHERE parent_id = ?`, parentID)
 	return err
 }
 

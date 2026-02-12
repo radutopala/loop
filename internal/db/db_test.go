@@ -226,6 +226,46 @@ func (s *StoreSuite) TestUpdateSessionIDError() {
 	require.Error(s.T(), err)
 }
 
+// --- DeleteChannel tests ---
+
+func (s *StoreSuite) TestDeleteChannel() {
+	s.mock.ExpectExec(`DELETE FROM channels WHERE channel_id`).
+		WithArgs("ch1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := s.store.DeleteChannel(context.Background(), "ch1")
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestDeleteChannelError() {
+	s.mock.ExpectExec(`DELETE FROM channels WHERE channel_id`).
+		WithArgs("ch1").
+		WillReturnError(sql.ErrConnDone)
+
+	err := s.store.DeleteChannel(context.Background(), "ch1")
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestDeleteChannelsByParentID() {
+	s.mock.ExpectExec(`DELETE FROM channels WHERE parent_id`).
+		WithArgs("ch1").
+		WillReturnResult(sqlmock.NewResult(0, 3))
+
+	err := s.store.DeleteChannelsByParentID(context.Background(), "ch1")
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestDeleteChannelsByParentIDError() {
+	s.mock.ExpectExec(`DELETE FROM channels WHERE parent_id`).
+		WithArgs("ch1").
+		WillReturnError(sql.ErrConnDone)
+
+	err := s.store.DeleteChannelsByParentID(context.Background(), "ch1")
+	require.Error(s.T(), err)
+}
+
 // --- Message tests ---
 
 func (s *StoreSuite) TestInsertMessage() {

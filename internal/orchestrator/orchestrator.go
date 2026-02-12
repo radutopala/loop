@@ -25,6 +25,7 @@ type Bot interface {
 	RemoveCommands(ctx context.Context) error
 	OnMessage(handler func(ctx context.Context, msg *IncomingMessage))
 	OnInteraction(handler func(ctx context.Context, i any))
+	OnChannelDelete(handler func(ctx context.Context, channelID string, isThread bool))
 	BotUserID() string
 	CreateChannel(ctx context.Context, guildID, name string) (string, error)
 	CreateThread(ctx context.Context, channelID, name string) (string, error)
@@ -113,6 +114,7 @@ func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *sl
 func (o *Orchestrator) Start(ctx context.Context) error {
 	o.bot.OnMessage(o.HandleMessage)
 	o.bot.OnInteraction(o.HandleInteraction)
+	o.bot.OnChannelDelete(o.HandleChannelDelete)
 
 	if err := o.bot.RegisterCommands(ctx); err != nil {
 		return fmt.Errorf("registering commands: %w", err)
@@ -601,6 +603,28 @@ func (o *Orchestrator) handleEditInteraction(ctx context.Context, inter *Interac
 		ChannelID: inter.ChannelID,
 		Content:   fmt.Sprintf("Task %d updated.", taskID),
 	})
+}
+
+// HandleChannelDelete removes a deleted channel or thread from the database.
+// For channels (not threads), it also removes all child threads.
+func (o *Orchestrator) HandleChannelDelete(ctx context.Context, channelID string, isThread bool) {
+	if isThread {
+		if err := o.store.DeleteChannel(ctx, channelID); err != nil {
+			o.logger.Error("deleting thread from db", "error", err, "thread_id", channelID)
+			return
+		}
+		o.logger.Info("deleted thread from db", "thread_id", channelID)
+		return
+	}
+
+	if err := o.store.DeleteChannelsByParentID(ctx, channelID); err != nil {
+		o.logger.Error("deleting child threads from db", "error", err, "channel_id", channelID)
+	}
+	if err := o.store.DeleteChannel(ctx, channelID); err != nil {
+		o.logger.Error("deleting channel from db", "error", err, "channel_id", channelID)
+		return
+	}
+	o.logger.Info("deleted channel and child threads from db", "channel_id", channelID)
 }
 
 func (o *Orchestrator) handleStatusInteraction(ctx context.Context, inter *Interaction) {

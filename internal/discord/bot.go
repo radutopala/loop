@@ -55,16 +55,17 @@ type Bot interface {
 
 // DiscordBot implements Bot using discordgo.
 type DiscordBot struct {
-	session             DiscordSession
-	appID               string
-	logger              *slog.Logger
-	botUserID           string
-	messageHandlers     []MessageHandler
-	interactionHandlers []InteractionHandler
-	mu                  sync.RWMutex
-	removeHandlers      []func()
-	typingInterval      time.Duration
-	pendingInteractions map[string]*discordgo.Interaction
+	session               DiscordSession
+	appID                 string
+	logger                *slog.Logger
+	botUserID             string
+	messageHandlers       []MessageHandler
+	interactionHandlers   []InteractionHandler
+	channelDeleteHandlers []ChannelDeleteHandler
+	mu                    sync.RWMutex
+	removeHandlers        []func()
+	typingInterval        time.Duration
+	pendingInteractions   map[string]*discordgo.Interaction
 }
 
 // NewBot creates a new DiscordBot with the given session, app ID, and logger.
@@ -83,8 +84,10 @@ func (b *DiscordBot) Start(ctx context.Context) error {
 	rh1 := b.session.AddHandler(b.handleMessage)
 	rh2 := b.session.AddHandler(b.handleInteraction)
 	rh3 := b.session.AddHandler(b.handleThreadCreate)
+	rh4 := b.session.AddHandler(b.handleThreadDelete)
+	rh5 := b.session.AddHandler(b.handleChannelDelete)
 	b.mu.Lock()
-	b.removeHandlers = append(b.removeHandlers, rh1, rh2, rh3)
+	b.removeHandlers = append(b.removeHandlers, rh1, rh2, rh3, rh4, rh5)
 	b.mu.Unlock()
 
 	if err := b.session.Open(); err != nil {
@@ -240,6 +243,13 @@ func (b *DiscordBot) OnInteraction(handler InteractionHandler) {
 	b.interactionHandlers = append(b.interactionHandlers, handler)
 }
 
+// OnChannelDelete registers a handler to be called when a channel or thread is deleted.
+func (b *DiscordBot) OnChannelDelete(handler ChannelDeleteHandler) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.channelDeleteHandlers = append(b.channelDeleteHandlers, handler)
+}
+
 // CreateChannel creates a new text channel in the given guild.
 func (b *DiscordBot) CreateChannel(ctx context.Context, guildID, name string) (string, error) {
 	ch, err := b.session.GuildChannelCreate(guildID, name, discordgo.ChannelTypeGuildText)
@@ -281,6 +291,30 @@ func (b *DiscordBot) handleThreadCreate(_ *discordgo.Session, c *discordgo.Threa
 		return
 	}
 	b.logger.Info("joined thread", "thread_id", c.ID, "parent_id", c.ParentID)
+}
+
+func (b *DiscordBot) handleThreadDelete(_ *discordgo.Session, c *discordgo.ThreadDelete) {
+	b.logger.Info("thread deleted", "thread_id", c.ID, "parent_id", c.ParentID)
+	b.notifyChannelDelete(c.ID, true)
+}
+
+func (b *DiscordBot) handleChannelDelete(_ *discordgo.Session, c *discordgo.ChannelDelete) {
+	if c.IsThread() {
+		return
+	}
+	b.logger.Info("channel deleted", "channel_id", c.ID)
+	b.notifyChannelDelete(c.ID, false)
+}
+
+func (b *DiscordBot) notifyChannelDelete(channelID string, isThread bool) {
+	b.mu.RLock()
+	handlers := make([]ChannelDeleteHandler, len(b.channelDeleteHandlers))
+	copy(handlers, b.channelDeleteHandlers)
+	b.mu.RUnlock()
+
+	for _, h := range handlers {
+		go h(context.Background(), channelID, isThread)
+	}
 }
 
 // BotUserID returns the bot's Discord user ID.

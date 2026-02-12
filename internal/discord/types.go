@@ -17,3 +17,6 @@ type MessageHandler = func(ctx context.Context, msg *IncomingMessage)
 
 // InteractionHandler is a callback for slash command interactions.
 type InteractionHandler = func(ctx context.Context, i any)
+
+// ChannelDeleteHandler is a callback for channel/thread deletion events.
+type ChannelDeleteHandler = func(ctx context.Context, channelID string, isThread bool)

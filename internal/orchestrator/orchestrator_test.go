@@ -134,6 +134,16 @@ func (m *MockStore) UpdateTaskRunLog(ctx context.Context, trl *db.TaskRunLog) er
 	return args.Error(0)
 }
 
+func (m *MockStore) DeleteChannel(ctx context.Context, channelID string) error {
+	args := m.Called(ctx, channelID)
+	return args.Error(0)
+}
+
+func (m *MockStore) DeleteChannelsByParentID(ctx context.Context, parentID string) error {
+	args := m.Called(ctx, parentID)
+	return args.Error(0)
+}
+
 func (m *MockStore) Close() error {
 	args := m.Called()
 	return args.Error(0)
@@ -186,6 +196,10 @@ func (m *MockBot) OnMessage(handler func(ctx context.Context, msg *IncomingMessa
 }
 
 func (m *MockBot) OnInteraction(handler func(ctx context.Context, i any)) {
+	m.Called(handler)
+}
+
+func (m *MockBot) OnChannelDelete(handler func(ctx context.Context, channelID string, isThread bool)) {
 	m.Called(handler)
 }
 
@@ -308,6 +322,7 @@ func (s *OrchestratorSuite) TestNew() {
 func (s *OrchestratorSuite) TestStartSuccess() {
 	s.bot.On("OnMessage", mock.AnythingOfType("func(context.Context, *orchestrator.IncomingMessage)")).Return()
 	s.bot.On("OnInteraction", mock.AnythingOfType("func(context.Context, interface {})")).Return()
+	s.bot.On("OnChannelDelete", mock.AnythingOfType("func(context.Context, string, bool)")).Return()
 	s.bot.On("RegisterCommands", s.ctx).Return(nil)
 	s.bot.On("Start", s.ctx).Return(nil)
 	s.scheduler.On("Start", s.ctx).Return(nil)
@@ -321,6 +336,7 @@ func (s *OrchestratorSuite) TestStartSuccess() {
 func (s *OrchestratorSuite) TestStartRegisterCommandsError() {
 	s.bot.On("OnMessage", mock.Anything).Return()
 	s.bot.On("OnInteraction", mock.Anything).Return()
+	s.bot.On("OnChannelDelete", mock.Anything).Return()
 	s.bot.On("RegisterCommands", s.ctx).Return(errors.New("register failed"))
 
 	err := s.orch.Start(s.ctx)
@@ -331,6 +347,7 @@ func (s *OrchestratorSuite) TestStartRegisterCommandsError() {
 func (s *OrchestratorSuite) TestStartBotError() {
 	s.bot.On("OnMessage", mock.Anything).Return()
 	s.bot.On("OnInteraction", mock.Anything).Return()
+	s.bot.On("OnChannelDelete", mock.Anything).Return()
 	s.bot.On("RegisterCommands", s.ctx).Return(nil)
 	s.bot.On("Start", s.ctx).Return(errors.New("bot failed"))
 
@@ -342,6 +359,7 @@ func (s *OrchestratorSuite) TestStartBotError() {
 func (s *OrchestratorSuite) TestStartSchedulerError() {
 	s.bot.On("OnMessage", mock.Anything).Return()
 	s.bot.On("OnInteraction", mock.Anything).Return()
+	s.bot.On("OnChannelDelete", mock.Anything).Return()
 	s.bot.On("RegisterCommands", s.ctx).Return(nil)
 	s.bot.On("Start", s.ctx).Return(nil)
 	s.scheduler.On("Start", s.ctx).Return(errors.New("scheduler failed"))
@@ -1611,4 +1629,44 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddResolvePromptError()
 
 	s.store.AssertExpectations(s.T())
 	s.bot.AssertExpectations(s.T())
+}
+
+// --- HandleChannelDelete tests ---
+
+func (s *OrchestratorSuite) TestHandleChannelDeleteThread() {
+	s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
+
+	s.orch.HandleChannelDelete(s.ctx, "thread-1", true)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleChannelDeleteThreadError() {
+	s.store.On("DeleteChannel", s.ctx, "thread-1").Return(errors.New("db error"))
+
+	s.orch.HandleChannelDelete(s.ctx, "thread-1", true)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleChannelDeleteChannel() {
+	s.store.On("DeleteChannelsByParentID", s.ctx, "ch-1").Return(nil)
+	s.store.On("DeleteChannel", s.ctx, "ch-1").Return(nil)
+
+	s.orch.HandleChannelDelete(s.ctx, "ch-1", false)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleChannelDeleteChannelChildrenError() {
+	s.store.On("DeleteChannelsByParentID", s.ctx, "ch-1").Return(errors.New("db error"))
+	s.store.On("DeleteChannel", s.ctx, "ch-1").Return(nil)
+
+	s.orch.HandleChannelDelete(s.ctx, "ch-1", false)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleChannelDeleteChannelError() {
+	s.store.On("DeleteChannelsByParentID", s.ctx, "ch-1").Return(nil)
+	s.store.On("DeleteChannel", s.ctx, "ch-1").Return(errors.New("db error"))
+
+	s.orch.HandleChannelDelete(s.ctx, "ch-1", false)
+	s.store.AssertExpectations(s.T())
 }

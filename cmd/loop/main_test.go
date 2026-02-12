@@ -137,6 +137,14 @@ func (m *mockStore) UpdateTaskRunLog(ctx context.Context, trl *db.TaskRunLog) er
 	return m.Called(ctx, trl).Error(0)
 }
 
+func (m *mockStore) DeleteChannel(ctx context.Context, channelID string) error {
+	return m.Called(ctx, channelID).Error(0)
+}
+
+func (m *mockStore) DeleteChannelsByParentID(ctx context.Context, parentID string) error {
+	return m.Called(ctx, parentID).Error(0)
+}
+
 func (m *mockStore) Close() error {
 	return m.Called().Error(0)
 }
@@ -237,6 +245,10 @@ func (m *mockBot) OnMessage(handler func(ctx context.Context, msg *orchestrator.
 }
 
 func (m *mockBot) OnInteraction(handler func(ctx context.Context, i any)) {
+	m.Called(handler)
+}
+
+func (m *mockBot) OnChannelDelete(handler func(ctx context.Context, channelID string, isThread bool)) {
 	m.Called(handler)
 }
 
@@ -750,6 +762,7 @@ func (s *MainSuite) TestServeOrchestratorStartError() {
 	bot := new(mockBot)
 	bot.On("OnMessage", mock.Anything).Return()
 	bot.On("OnInteraction", mock.Anything).Return()
+	bot.On("OnChannelDelete", mock.Anything).Return()
 	bot.On("RegisterCommands", mock.Anything).Return(errors.New("register failed"))
 
 	dockerClient := new(mockDockerClient)
@@ -785,6 +798,7 @@ func (s *MainSuite) TestServeHappyPathShutdown() {
 	bot := new(mockBot)
 	bot.On("OnMessage", mock.Anything).Return()
 	bot.On("OnInteraction", mock.Anything).Return()
+	bot.On("OnChannelDelete", mock.Anything).Return()
 	bot.On("RegisterCommands", mock.Anything).Return(nil)
 	bot.On("Start", mock.Anything).Return(nil)
 	bot.On("Stop").Return(nil)
@@ -838,6 +852,7 @@ func (s *MainSuite) TestServeHappyPathWithGuildID() {
 	bot := new(mockBot)
 	bot.On("OnMessage", mock.Anything).Return()
 	bot.On("OnInteraction", mock.Anything).Return()
+	bot.On("OnChannelDelete", mock.Anything).Return()
 	bot.On("RegisterCommands", mock.Anything).Return(nil)
 	bot.On("Start", mock.Anything).Return(nil)
 	bot.On("Stop").Return(nil)
@@ -900,6 +915,7 @@ func (s *MainSuite) TestServeHappyPathShutdownWithStopError() {
 	bot := new(mockBot)
 	bot.On("OnMessage", mock.Anything).Return()
 	bot.On("OnInteraction", mock.Anything).Return()
+	bot.On("OnChannelDelete", mock.Anything).Return()
 	bot.On("RegisterCommands", mock.Anything).Return(nil)
 	bot.On("Start", mock.Anything).Return(nil)
 	bot.On("Stop").Return(errors.New("bot stop error"))
@@ -952,6 +968,7 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 	bot := new(mockBot)
 	bot.On("OnMessage", mock.Anything).Return()
 	bot.On("OnInteraction", mock.Anything).Return()
+	bot.On("OnChannelDelete", mock.Anything).Return()
 	bot.On("RegisterCommands", mock.Anything).Return(nil)
 	bot.On("Start", mock.Anything).Return(nil)
 	bot.On("Stop").Return(nil)
@@ -1011,6 +1028,7 @@ func (s *MainSuite) TestServeDockerClientCloserCalled() {
 	bot := new(mockBot)
 	bot.On("OnMessage", mock.Anything).Return()
 	bot.On("OnInteraction", mock.Anything).Return()
+	bot.On("OnChannelDelete", mock.Anything).Return()
 	bot.On("RegisterCommands", mock.Anything).Return(errors.New("fail"))
 
 	closeCalled := false
