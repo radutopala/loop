@@ -359,6 +359,7 @@ Project configs (`.loop/config.json`) can define their own `task_templates` that
 | `cancel_task` | Cancel a scheduled task by ID |
 | `toggle_task` | Enable or disable a scheduled task by ID |
 | `edit_task` | Edit a task's schedule, type, and/or prompt |
+| `create_thread` | Create a new Discord thread in the current channel |
 
 ## Development
 
