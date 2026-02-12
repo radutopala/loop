@@ -281,7 +281,7 @@ loop onboard:local
 | `/loop template add <name>` | Load a task template into the current channel |
 | `/loop template list` | List available task templates from config |
 
-The bot also responds to `@mentions`, replies to its own messages, and messages prefixed with `!loop`.
+The bot also responds to `@mentions`, replies to its own messages, and messages prefixed with `!loop`. It auto-joins threads in active channels — tagging the bot in a thread inherits the parent channel's project directory and forks its session so each thread gets independent context.
 
 ### Task Templates
 
