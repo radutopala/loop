@@ -282,6 +282,11 @@ func (b *DiscordBot) InviteUserToChannel(_ context.Context, _, _ string) error {
 	return nil
 }
 
+// GetOwnerUserID is a no-op for Discord — channels are visible to all guild members.
+func (b *DiscordBot) GetOwnerUserID(_ context.Context) (string, error) {
+	return "", nil
+}
+
 // GetChannelParentID returns the parent channel ID for a thread, or empty string if not a thread.
 func (b *DiscordBot) GetChannelParentID(ctx context.Context, channelID string) (string, error) {
 	ch, err := b.session.Channel(channelID)

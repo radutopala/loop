@@ -16,4 +16,5 @@ type SlackSession interface {
 	GetConversationReplies(params *goslack.GetConversationRepliesParameters) ([]goslack.Message, bool, string, error)
 	InviteUsersToConversation(channelID string, users ...string) (*goslack.Channel, error)
 	GetConversations(params *goslack.GetConversationsParameters) ([]goslack.Channel, string, error)
+	GetUsers(options ...goslack.GetUsersOption) ([]goslack.User, error)
 }

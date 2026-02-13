@@ -13,6 +13,7 @@ import (
 type ChannelCreator interface {
 	CreateChannel(ctx context.Context, guildID, name string) (string, error)
 	InviteUserToChannel(ctx context.Context, channelID, userID string) error
+	GetOwnerUserID(ctx context.Context) (string, error)
 }
 
 // ChannelEnsurer resolves a directory path to a channel ID,
@@ -77,6 +78,10 @@ func (s *channelService) EnsureChannel(ctx context.Context, dirPath string) (str
 	channelID, err := s.creator.CreateChannel(ctx, s.guildID, name)
 	if err != nil {
 		return "", fmt.Errorf("creating channel: %w", err)
+	}
+
+	if ownerID, ownerErr := s.creator.GetOwnerUserID(ctx); ownerErr == nil && ownerID != "" {
+		_ = s.creator.InviteUserToChannel(ctx, channelID, ownerID)
 	}
 
 	if err := s.store.UpsertChannel(ctx, &db.Channel{

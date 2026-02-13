@@ -1495,6 +1495,12 @@ func (s *BotSuite) TestInviteUserToChannelNoOp() {
 	require.NoError(s.T(), err)
 }
 
+func (s *BotSuite) TestGetOwnerUserIDNoOp() {
+	id, err := s.bot.GetOwnerUserID(context.Background())
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), id)
+}
+
 // --- CreateThread ---
 
 func (s *BotSuite) TestCreateThreadSuccess() {

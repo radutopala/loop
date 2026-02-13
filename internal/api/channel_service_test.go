@@ -161,6 +161,11 @@ func (m *MockCreator) InviteUserToChannel(ctx context.Context, channelID, userID
 	return m.Called(ctx, channelID, userID).Error(0)
 }
 
+func (m *MockCreator) GetOwnerUserID(ctx context.Context) (string, error) {
+	args := m.Called(ctx)
+	return args.String(0), args.Error(1)
+}
+
 // --- Test Suite ---
 
 type ChannelServiceSuite struct {
@@ -198,6 +203,7 @@ func (s *ChannelServiceSuite) TestEnsureChannelCreatesNew() {
 		Return(nil, nil)
 	s.creator.On("CreateChannel", s.ctx, "guild-1", "loop").
 		Return("new-ch-1", nil)
+	s.creator.On("GetOwnerUserID", s.ctx).Return("", nil)
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "new-ch-1" && ch.GuildID == "guild-1" &&
 			ch.Name == "loop" && ch.DirPath == "/home/user/dev/loop" &&
@@ -209,6 +215,23 @@ func (s *ChannelServiceSuite) TestEnsureChannelCreatesNew() {
 	require.Equal(s.T(), "new-ch-1", channelID)
 	s.store.AssertExpectations(s.T())
 	s.creator.AssertExpectations(s.T())
+}
+
+func (s *ChannelServiceSuite) TestEnsureChannelCreatesNewWithOwnerInvite() {
+	s.store.On("GetChannelByDirPath", s.ctx, "/home/user/dev/loop", types.PlatformDiscord).
+		Return(nil, nil)
+	s.creator.On("CreateChannel", s.ctx, "guild-1", "loop").
+		Return("new-ch-1", nil)
+	s.creator.On("GetOwnerUserID", s.ctx).Return("U-OWNER", nil)
+	s.creator.On("InviteUserToChannel", s.ctx, "new-ch-1", "U-OWNER").Return(nil)
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "new-ch-1"
+	})).Return(nil)
+
+	channelID, err := s.svc.EnsureChannel(s.ctx, "/home/user/dev/loop")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "new-ch-1", channelID)
+	s.creator.AssertCalled(s.T(), "InviteUserToChannel", s.ctx, "new-ch-1", "U-OWNER")
 }
 
 func (s *ChannelServiceSuite) TestEnsureChannelLookupError() {
@@ -238,6 +261,7 @@ func (s *ChannelServiceSuite) TestEnsureChannelUpsertError() {
 		Return(nil, nil)
 	s.creator.On("CreateChannel", s.ctx, "guild-1", "path").
 		Return("ch-1", nil)
+	s.creator.On("GetOwnerUserID", s.ctx).Return("", nil)
 	s.store.On("UpsertChannel", s.ctx, mock.Anything).
 		Return(errors.New("upsert error"))
 

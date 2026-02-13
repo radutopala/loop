@@ -30,6 +30,7 @@ type Bot interface {
 	BotUserID() string
 	CreateChannel(ctx context.Context, guildID, name string) (string, error)
 	InviteUserToChannel(ctx context.Context, channelID, userID string) error
+	GetOwnerUserID(ctx context.Context) (string, error)
 	CreateThread(ctx context.Context, channelID, name, mentionUserID, message string) (string, error)
 	PostMessage(ctx context.Context, channelID, content string) error
 	DeleteThread(ctx context.Context, threadID string) error

@@ -226,6 +226,11 @@ func (m *MockBot) InviteUserToChannel(ctx context.Context, channelID, userID str
 	return m.Called(ctx, channelID, userID).Error(0)
 }
 
+func (m *MockBot) GetOwnerUserID(ctx context.Context) (string, error) {
+	args := m.Called(ctx)
+	return args.String(0), args.Error(1)
+}
+
 func (m *MockBot) CreateThread(ctx context.Context, channelID, name, mentionUserID, message string) (string, error) {
 	args := m.Called(ctx, channelID, name, mentionUserID, message)
 	return args.String(0), args.Error(1)

@@ -85,6 +85,14 @@ func (m *MockSession) GetConversations(params *goslack.GetConversationsParameter
 	return args.Get(0).([]goslack.Channel), args.String(1), args.Error(2)
 }
 
+func (m *MockSession) GetUsers(options ...goslack.GetUsersOption) ([]goslack.User, error) {
+	args := m.Called(options)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]goslack.User), args.Error(1)
+}
+
 // MockSocketModeClient mocks the SocketModeClient interface.
 type MockSocketModeClient struct {
 	mock.Mock
@@ -488,6 +496,49 @@ func (s *BotSuite) TestInviteUserToChannelError() {
 	err := s.bot.InviteUserToChannel(context.Background(), "C456", "U789")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "slack invite user to channel")
+}
+
+// --- GetOwnerUserID ---
+
+func (s *BotSuite) TestGetOwnerUserIDSuccess() {
+	s.session.On("GetUsers", mock.Anything).Return([]goslack.User{
+		{ID: "U111", Name: "bot", IsBot: true, IsOwner: false},
+		{ID: "U222", Name: "member", IsBot: false, IsOwner: false},
+		{ID: "U333", Name: "owner", IsBot: false, IsOwner: true},
+	}, nil)
+
+	id, err := s.bot.GetOwnerUserID(context.Background())
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "U333", id)
+}
+
+func (s *BotSuite) TestGetOwnerUserIDNotFound() {
+	s.session.On("GetUsers", mock.Anything).Return([]goslack.User{
+		{ID: "U111", Name: "member", IsBot: false, IsOwner: false},
+	}, nil)
+
+	_, err := s.bot.GetOwnerUserID(context.Background())
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "no workspace owner found")
+}
+
+func (s *BotSuite) TestGetOwnerUserIDError() {
+	s.session.On("GetUsers", mock.Anything).Return(nil, errors.New("api_error"))
+
+	_, err := s.bot.GetOwnerUserID(context.Background())
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "slack get users")
+}
+
+func (s *BotSuite) TestGetOwnerUserIDSkipsBot() {
+	// A bot that is also marked as owner should be skipped.
+	s.session.On("GetUsers", mock.Anything).Return([]goslack.User{
+		{ID: "U111", Name: "bot-owner", IsBot: true, IsOwner: true},
+	}, nil)
+
+	_, err := s.bot.GetOwnerUserID(context.Background())
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "no workspace owner found")
 }
 
 // --- CreateThread ---

@@ -253,6 +253,21 @@ func (b *SlackBot) InviteUserToChannel(ctx context.Context, channelID, userID st
 	return nil
 }
 
+// GetOwnerUserID returns the Slack workspace owner's user ID.
+func (b *SlackBot) GetOwnerUserID(ctx context.Context) (string, error) {
+	users, err := b.session.GetUsers()
+	if err != nil {
+		return "", fmt.Errorf("slack get users: %w", err)
+	}
+	for _, u := range users {
+		if u.IsOwner && !u.IsBot {
+			b.logger.InfoContext(ctx, "found workspace owner", "user_id", u.ID, "name", u.Name)
+			return u.ID, nil
+		}
+	}
+	return "", fmt.Errorf("no workspace owner found")
+}
+
 // CreateThread creates a new thread by posting an initial message in the channel.
 // Returns a composite ID "channelID:messageTS" that represents the thread.
 func (b *SlackBot) CreateThread(ctx context.Context, channelID, name, mentionUserID, message string) (string, error) {
