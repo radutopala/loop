@@ -40,6 +40,7 @@ type DiscordSession interface {
 	ThreadJoin(id string, options ...discordgo.RequestOption) error
 	ChannelDelete(channelID string, options ...discordgo.RequestOption) (*discordgo.Channel, error)
 	GuildChannels(guildID string, options ...discordgo.RequestOption) ([]*discordgo.Channel, error)
+	ChannelEdit(channelID string, data *discordgo.ChannelEdit, options ...discordgo.RequestOption) (*discordgo.Channel, error)
 }
 
 // Bot defines the interface for a Discord bot.
@@ -285,6 +286,15 @@ func (b *DiscordBot) InviteUserToChannel(_ context.Context, _, _ string) error {
 // GetOwnerUserID is a no-op for Discord — channels are visible to all guild members.
 func (b *DiscordBot) GetOwnerUserID(_ context.Context) (string, error) {
 	return "", nil
+}
+
+// SetChannelTopic sets the topic/description of a Discord channel.
+func (b *DiscordBot) SetChannelTopic(ctx context.Context, channelID, topic string) error {
+	if _, err := b.session.ChannelEdit(channelID, &discordgo.ChannelEdit{Topic: topic}); err != nil {
+		return fmt.Errorf("discord set channel topic: %w", err)
+	}
+	b.logger.InfoContext(ctx, "set discord channel topic", "channel_id", channelID, "topic", topic)
+	return nil
 }
 
 // GetChannelParentID returns the parent channel ID for a thread, or empty string if not a thread.

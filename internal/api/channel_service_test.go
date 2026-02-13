@@ -166,6 +166,10 @@ func (m *MockCreator) GetOwnerUserID(ctx context.Context) (string, error) {
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockCreator) SetChannelTopic(ctx context.Context, channelID, topic string) error {
+	return m.Called(ctx, channelID, topic).Error(0)
+}
+
 // --- Test Suite ---
 
 type ChannelServiceSuite struct {
@@ -185,6 +189,7 @@ func (s *ChannelServiceSuite) SetupTest() {
 	s.creator = new(MockCreator)
 	s.ctx = context.Background()
 	s.svc = NewChannelService(s.store, s.creator, "guild-1", types.PlatformDiscord)
+	randSuffix = func() string { return "ab12" }
 }
 
 func (s *ChannelServiceSuite) TestEnsureChannelExisting() {
@@ -201,12 +206,13 @@ func (s *ChannelServiceSuite) TestEnsureChannelExisting() {
 func (s *ChannelServiceSuite) TestEnsureChannelCreatesNew() {
 	s.store.On("GetChannelByDirPath", s.ctx, "/home/user/dev/loop", types.PlatformDiscord).
 		Return(nil, nil)
-	s.creator.On("CreateChannel", s.ctx, "guild-1", "loop").
+	s.creator.On("CreateChannel", s.ctx, "guild-1", "loop-ab12").
 		Return("new-ch-1", nil)
+	s.creator.On("SetChannelTopic", s.ctx, "new-ch-1", "/home/user/dev/loop").Return(nil)
 	s.creator.On("GetOwnerUserID", s.ctx).Return("", nil)
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "new-ch-1" && ch.GuildID == "guild-1" &&
-			ch.Name == "loop" && ch.DirPath == "/home/user/dev/loop" &&
+			ch.Name == "loop-ab12" && ch.DirPath == "/home/user/dev/loop" &&
 			ch.Platform == types.PlatformDiscord && ch.Active
 	})).Return(nil)
 
@@ -220,8 +226,9 @@ func (s *ChannelServiceSuite) TestEnsureChannelCreatesNew() {
 func (s *ChannelServiceSuite) TestEnsureChannelCreatesNewWithOwnerInvite() {
 	s.store.On("GetChannelByDirPath", s.ctx, "/home/user/dev/loop", types.PlatformDiscord).
 		Return(nil, nil)
-	s.creator.On("CreateChannel", s.ctx, "guild-1", "loop").
+	s.creator.On("CreateChannel", s.ctx, "guild-1", "loop-ab12").
 		Return("new-ch-1", nil)
+	s.creator.On("SetChannelTopic", s.ctx, "new-ch-1", "/home/user/dev/loop").Return(nil)
 	s.creator.On("GetOwnerUserID", s.ctx).Return("U-OWNER", nil)
 	s.creator.On("InviteUserToChannel", s.ctx, "new-ch-1", "U-OWNER").Return(nil)
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
@@ -247,7 +254,7 @@ func (s *ChannelServiceSuite) TestEnsureChannelLookupError() {
 func (s *ChannelServiceSuite) TestEnsureChannelCreatorError() {
 	s.store.On("GetChannelByDirPath", s.ctx, "/path", types.PlatformDiscord).
 		Return(nil, nil)
-	s.creator.On("CreateChannel", s.ctx, "guild-1", "path").
+	s.creator.On("CreateChannel", s.ctx, "guild-1", "path-ab12").
 		Return("", errors.New("discord error"))
 
 	channelID, err := s.svc.EnsureChannel(s.ctx, "/path")
@@ -259,8 +266,9 @@ func (s *ChannelServiceSuite) TestEnsureChannelCreatorError() {
 func (s *ChannelServiceSuite) TestEnsureChannelUpsertError() {
 	s.store.On("GetChannelByDirPath", s.ctx, "/path", types.PlatformDiscord).
 		Return(nil, nil)
-	s.creator.On("CreateChannel", s.ctx, "guild-1", "path").
+	s.creator.On("CreateChannel", s.ctx, "guild-1", "path-ab12").
 		Return("ch-1", nil)
+	s.creator.On("SetChannelTopic", s.ctx, "ch-1", "/path").Return(nil)
 	s.creator.On("GetOwnerUserID", s.ctx).Return("", nil)
 	s.store.On("UpsertChannel", s.ctx, mock.Anything).
 		Return(errors.New("upsert error"))

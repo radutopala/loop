@@ -93,6 +93,18 @@ func (m *MockSession) GetUsers(options ...goslack.GetUsersOption) ([]goslack.Use
 	return args.Get(0).([]goslack.User), args.Error(1)
 }
 
+func (m *MockSession) SetUserPresence(presence string) error {
+	return m.Called(presence).Error(0)
+}
+
+func (m *MockSession) SetTopicOfConversation(channelID, topic string) (*goslack.Channel, error) {
+	args := m.Called(channelID, topic)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*goslack.Channel), args.Error(1)
+}
+
 // MockSocketModeClient mocks the SocketModeClient interface.
 type MockSocketModeClient struct {
 	mock.Mock
@@ -173,6 +185,7 @@ func (s *BotSuite) TestStartSuccess() {
 		UserID: "U123BOT",
 		User:   "loopbot",
 	}, nil)
+	session.On("SetUserPresence", "auto").Return(nil)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -183,6 +196,29 @@ func (s *BotSuite) TestStartSuccess() {
 
 	cancel()
 	time.Sleep(10 * time.Millisecond) // allow goroutines to stop
+	session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestStartPresenceError() {
+	session := new(MockSession)
+	sc := newMockSocketClient()
+	bot := NewBot(session, sc, testLogger())
+
+	session.On("AuthTest").Return(&goslack.AuthTestResponse{
+		UserID: "U123BOT",
+		User:   "loopbot",
+	}, nil)
+	session.On("SetUserPresence", "auto").Return(errors.New("presence_error"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	err := bot.Start(ctx)
+	require.NoError(s.T(), err) // presence error is non-fatal
+	require.Equal(s.T(), "U123BOT", bot.BotUserID())
+
+	cancel()
+	time.Sleep(10 * time.Millisecond)
 	session.AssertExpectations(s.T())
 }
 
@@ -539,6 +575,26 @@ func (s *BotSuite) TestGetOwnerUserIDSkipsBot() {
 	_, err := s.bot.GetOwnerUserID(context.Background())
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "no workspace owner found")
+}
+
+// --- SetChannelTopic ---
+
+func (s *BotSuite) TestSetChannelTopicSuccess() {
+	s.session.On("SetTopicOfConversation", "C123", "/home/user/dev/loop").
+		Return(&goslack.Channel{}, nil)
+
+	err := s.bot.SetChannelTopic(context.Background(), "C123", "/home/user/dev/loop")
+	require.NoError(s.T(), err)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestSetChannelTopicError() {
+	s.session.On("SetTopicOfConversation", "C123", "/path").
+		Return(nil, errors.New("topic_error"))
+
+	err := s.bot.SetChannelTopic(context.Background(), "C123", "/path")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "slack set channel topic")
 }
 
 // --- CreateThread ---
@@ -1249,6 +1305,7 @@ func (s *BotSuite) TestStartRunContextError() {
 		UserID: "U123BOT",
 		User:   "loopbot",
 	}, nil)
+	session.On("SetUserPresence", "auto").Return(nil)
 
 	// Create a mock socket client that returns an error from RunContext
 	errSc := &errorSocketModeClient{

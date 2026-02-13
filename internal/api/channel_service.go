@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"path/filepath"
 
@@ -9,11 +11,19 @@ import (
 	"github.com/radutopala/loop/internal/types"
 )
 
+// randSuffix generates a short random hex suffix for channel names.
+var randSuffix = func() string {
+	b := make([]byte, 2)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
 // ChannelCreator can create channels on the chat platform.
 type ChannelCreator interface {
 	CreateChannel(ctx context.Context, guildID, name string) (string, error)
 	InviteUserToChannel(ctx context.Context, channelID, userID string) error
 	GetOwnerUserID(ctx context.Context) (string, error)
+	SetChannelTopic(ctx context.Context, channelID, topic string) error
 }
 
 // ChannelEnsurer resolves a directory path to a channel ID,
@@ -74,11 +84,13 @@ func (s *channelService) EnsureChannel(ctx context.Context, dirPath string) (str
 		return ch.ChannelID, nil
 	}
 
-	name := filepath.Base(dirPath)
+	name := filepath.Base(dirPath) + "-" + randSuffix()
 	channelID, err := s.creator.CreateChannel(ctx, s.guildID, name)
 	if err != nil {
 		return "", fmt.Errorf("creating channel: %w", err)
 	}
+
+	_ = s.creator.SetChannelTopic(ctx, channelID, dirPath)
 
 	if ownerID, ownerErr := s.creator.GetOwnerUserID(ctx); ownerErr == nil && ownerID != "" {
 		_ = s.creator.InviteUserToChannel(ctx, channelID, ownerID)

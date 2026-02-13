@@ -85,6 +85,10 @@ func (b *SlackBot) Start(ctx context.Context) error {
 	b.botUsername = resp.User
 	b.mu.Unlock()
 
+	if err := b.session.SetUserPresence("auto"); err != nil {
+		b.logger.WarnContext(ctx, "slack set presence failed", "error", err)
+	}
+
 	b.logger.InfoContext(ctx, "slack bot started", "bot_user_id", resp.UserID, "bot_username", resp.User)
 
 	smCtx, cancel := context.WithCancel(ctx)
@@ -266,6 +270,15 @@ func (b *SlackBot) GetOwnerUserID(ctx context.Context) (string, error) {
 		}
 	}
 	return "", fmt.Errorf("no workspace owner found")
+}
+
+// SetChannelTopic sets the topic/description of a Slack channel.
+func (b *SlackBot) SetChannelTopic(ctx context.Context, channelID, topic string) error {
+	if _, err := b.session.SetTopicOfConversation(channelID, topic); err != nil {
+		return fmt.Errorf("slack set channel topic: %w", err)
+	}
+	b.logger.InfoContext(ctx, "set slack channel topic", "channel_id", channelID, "topic", topic)
+	return nil
 }
 
 // CreateThread creates a new thread by posting an initial message in the channel.

@@ -154,6 +154,14 @@ func (m *MockSession) GuildChannels(guildID string, options ...discordgo.Request
 	return args.Get(0).([]*discordgo.Channel), args.Error(1)
 }
 
+func (m *MockSession) ChannelEdit(channelID string, data *discordgo.ChannelEdit, options ...discordgo.RequestOption) (*discordgo.Channel, error) {
+	args := m.Called(channelID, data, options)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*discordgo.Channel), args.Error(1)
+}
+
 // --- Test Suite ---
 
 type BotSuite struct {
@@ -1499,6 +1507,26 @@ func (s *BotSuite) TestGetOwnerUserIDNoOp() {
 	id, err := s.bot.GetOwnerUserID(context.Background())
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), id)
+}
+
+// --- SetChannelTopic ---
+
+func (s *BotSuite) TestSetChannelTopicSuccess() {
+	s.session.On("ChannelEdit", "ch-1", &discordgo.ChannelEdit{Topic: "/home/user/dev/loop"}, mock.Anything).
+		Return(&discordgo.Channel{}, nil)
+
+	err := s.bot.SetChannelTopic(context.Background(), "ch-1", "/home/user/dev/loop")
+	require.NoError(s.T(), err)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestSetChannelTopicError() {
+	s.session.On("ChannelEdit", "ch-1", &discordgo.ChannelEdit{Topic: "/path"}, mock.Anything).
+		Return(nil, errors.New("edit_error"))
+
+	err := s.bot.SetChannelTopic(context.Background(), "ch-1", "/path")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "discord set channel topic")
 }
 
 // --- CreateThread ---
