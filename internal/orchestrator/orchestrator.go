@@ -27,6 +27,7 @@ type Bot interface {
 	OnMessage(handler func(ctx context.Context, msg *IncomingMessage))
 	OnInteraction(handler func(ctx context.Context, i any))
 	OnChannelDelete(handler func(ctx context.Context, channelID string, isThread bool))
+	OnChannelJoin(handler func(ctx context.Context, channelID string))
 	BotUserID() string
 	CreateChannel(ctx context.Context, guildID, name string) (string, error)
 	InviteUserToChannel(ctx context.Context, channelID, userID string) error
@@ -36,6 +37,7 @@ type Bot interface {
 	PostMessage(ctx context.Context, channelID, content string) error
 	DeleteThread(ctx context.Context, threadID string) error
 	GetChannelParentID(ctx context.Context, channelID string) (string, error)
+	GetChannelName(ctx context.Context, channelID string) (string, error)
 }
 
 // IncomingMessage from the chat platform.
@@ -123,6 +125,7 @@ func (o *Orchestrator) Start(ctx context.Context) error {
 	o.bot.OnMessage(o.HandleMessage)
 	o.bot.OnInteraction(o.HandleInteraction)
 	o.bot.OnChannelDelete(o.HandleChannelDelete)
+	o.bot.OnChannelJoin(o.HandleChannelJoin)
 
 	if err := o.bot.RegisterCommands(ctx); err != nil {
 		return fmt.Errorf("registering commands: %w", err)
@@ -176,18 +179,19 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *IncomingMessage) 
 	}
 	if !active {
 		if !o.resolveThread(ctx, msg.ChannelID) {
-			if msg.IsDM {
+			if msg.IsDM || msg.IsBotMention || msg.HasPrefix || msg.IsReplyToBot {
+				name := o.resolveChannelName(ctx, msg.ChannelID, msg.IsDM)
 				if err := o.store.UpsertChannel(ctx, &db.Channel{
 					ChannelID: msg.ChannelID,
 					GuildID:   msg.GuildID,
-					Name:      "DM",
+					Name:      name,
 					Platform:  o.platform,
 					Active:    true,
 				}); err != nil {
-					o.logger.Error("auto-creating DM channel", "error", err)
+					o.logger.Error("auto-creating channel", "error", err)
 					return
 				}
-				o.logger.Info("auto-created DM channel", "channel_id", msg.ChannelID)
+				o.logger.Info("auto-created channel", "channel_id", msg.ChannelID, "name", name)
 			} else {
 				return
 			}
@@ -627,6 +631,34 @@ func (o *Orchestrator) handleEditInteraction(ctx context.Context, inter *Interac
 		ChannelID: inter.ChannelID,
 		Content:   fmt.Sprintf("Task %d updated.", taskID),
 	})
+}
+
+// HandleChannelJoin auto-registers a channel when the bot is added to it.
+func (o *Orchestrator) HandleChannelJoin(ctx context.Context, channelID string) {
+	name := o.resolveChannelName(ctx, channelID, false)
+	if err := o.store.UpsertChannel(ctx, &db.Channel{
+		ChannelID: channelID,
+		Name:      name,
+		Platform:  o.platform,
+		Active:    true,
+	}); err != nil {
+		o.logger.Error("auto-creating channel on join", "error", err, "channel_id", channelID)
+		return
+	}
+	o.logger.Info("auto-created channel on bot join", "channel_id", channelID, "name", name)
+}
+
+// resolveChannelName returns the channel name from the platform API,
+// falling back to "DM" for DMs or "channel" if the lookup fails.
+func (o *Orchestrator) resolveChannelName(ctx context.Context, channelID string, isDM bool) string {
+	if isDM {
+		return "DM"
+	}
+	name, err := o.bot.GetChannelName(ctx, channelID)
+	if err != nil || name == "" {
+		return "channel"
+	}
+	return name
 }
 
 // HandleChannelDelete removes a deleted channel or thread from the database.

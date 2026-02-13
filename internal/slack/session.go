@@ -19,4 +19,5 @@ type SlackSession interface {
 	GetUsers(options ...goslack.GetUsersOption) ([]goslack.User, error)
 	SetTopicOfConversation(channelID, topic string) (*goslack.Channel, error)
 	SetUserPresence(presence string) error
+	GetConversationInfo(input *goslack.GetConversationInfoInput) (*goslack.Channel, error)
 }

@@ -105,6 +105,14 @@ func (m *MockSession) SetTopicOfConversation(channelID, topic string) (*goslack.
 	return args.Get(0).(*goslack.Channel), args.Error(1)
 }
 
+func (m *MockSession) GetConversationInfo(input *goslack.GetConversationInfoInput) (*goslack.Channel, error) {
+	args := m.Called(input)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*goslack.Channel), args.Error(1)
+}
+
 // MockSocketModeClient mocks the SocketModeClient interface.
 type MockSocketModeClient struct {
 	mock.Mock
@@ -395,6 +403,11 @@ func (s *BotSuite) TestOnChannelDelete() {
 	require.Len(s.T(), s.bot.channelDeleteHandlers, 1)
 }
 
+func (s *BotSuite) TestOnChannelJoin() {
+	s.bot.OnChannelJoin(func(_ context.Context, _ string) {})
+	require.Len(s.T(), s.bot.channelJoinHandlers, 1)
+}
+
 // --- BotUserID ---
 
 func (s *BotSuite) TestBotUserID() {
@@ -683,6 +696,44 @@ func (s *BotSuite) TestDeleteThreadError() {
 	err := s.bot.DeleteThread(context.Background(), "C123:1111.2222")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "slack delete thread")
+}
+
+// --- GetChannelName ---
+
+func (s *BotSuite) TestGetChannelNameSuccess() {
+	s.session.On("GetConversationInfo", &goslack.GetConversationInfoInput{
+		ChannelID: "C123",
+	}).Return(&goslack.Channel{
+		GroupConversation: goslack.GroupConversation{
+			Name: "general",
+		},
+	}, nil)
+
+	name, err := s.bot.GetChannelName(context.Background(), "C123")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "general", name)
+}
+
+func (s *BotSuite) TestGetChannelNameCompositeID() {
+	s.session.On("GetConversationInfo", &goslack.GetConversationInfoInput{
+		ChannelID: "C123",
+	}).Return(&goslack.Channel{
+		GroupConversation: goslack.GroupConversation{
+			Name: "general",
+		},
+	}, nil)
+
+	name, err := s.bot.GetChannelName(context.Background(), "C123:1111.2222")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "general", name)
+}
+
+func (s *BotSuite) TestGetChannelNameError() {
+	s.session.On("GetConversationInfo", mock.Anything).Return(nil, errors.New("channel_not_found"))
+
+	name, err := s.bot.GetChannelName(context.Background(), "C123")
+	require.Error(s.T(), err)
+	require.Empty(s.T(), name)
 }
 
 // --- GetChannelParentID ---
@@ -1678,6 +1729,144 @@ func (s *BotSuite) TestHandleEventsAPINilRequest() {
 		Request: nil,
 	}
 	s.bot.handleEventsAPI(evt)
+}
+
+// --- handleMemberJoinedChannel tests ---
+
+func (s *BotSuite) TestHandleMemberJoinedChannelBotJoins() {
+	received := make(chan string, 1)
+	s.bot.OnChannelJoin(func(_ context.Context, channelID string) {
+		received <- channelID
+	})
+
+	ev := &slackevents.MemberJoinedChannelEvent{
+		User:    "U123BOT",
+		Channel: "C456",
+	}
+	s.bot.handleMemberJoinedChannel(ev)
+
+	select {
+	case chID := <-received:
+		require.Equal(s.T(), "C456", chID)
+	case <-time.After(time.Second):
+		s.T().Fatal("handler not called")
+	}
+}
+
+func (s *BotSuite) TestHandleMemberJoinedChannelOtherUser() {
+	called := false
+	s.bot.OnChannelJoin(func(_ context.Context, _ string) {
+		called = true
+	})
+
+	ev := &slackevents.MemberJoinedChannelEvent{
+		User:    "U999OTHER",
+		Channel: "C456",
+	}
+	s.bot.handleMemberJoinedChannel(ev)
+
+	// Give goroutine a chance to run (it shouldn't)
+	time.Sleep(50 * time.Millisecond)
+	require.False(s.T(), called, "handler should not be called for other users")
+}
+
+func (s *BotSuite) TestHandleEventsAPIMemberJoinedChannel() {
+	received := make(chan string, 1)
+	s.bot.OnChannelJoin(func(_ context.Context, channelID string) {
+		received <- channelID
+	})
+
+	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
+
+	evt := socketmode.Event{
+		Type: socketmode.EventTypeEventsAPI,
+		Data: slackevents.EventsAPIEvent{
+			InnerEvent: slackevents.EventsAPIInnerEvent{
+				Type: "member_joined_channel",
+				Data: &slackevents.MemberJoinedChannelEvent{
+					User:    "U123BOT",
+					Channel: "C789",
+				},
+			},
+		},
+		Request: &socketmode.Request{},
+	}
+	s.bot.handleEventsAPI(evt)
+
+	select {
+	case chID := <-received:
+		require.Equal(s.T(), "C789", chID)
+	case <-time.After(time.Second):
+		s.T().Fatal("handler not called")
+	}
+}
+
+// --- Channel deletion/archive event tests ---
+
+func (s *BotSuite) TestHandleEventsAPIChannelDeleted() {
+	received := make(chan string, 1)
+	s.bot.OnChannelDelete(func(_ context.Context, channelID string, isThread bool) {
+		require.False(s.T(), isThread)
+		received <- channelID
+	})
+
+	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
+
+	evt := socketmode.Event{
+		Type: socketmode.EventTypeEventsAPI,
+		Data: slackevents.EventsAPIEvent{
+			InnerEvent: slackevents.EventsAPIInnerEvent{
+				Type: "channel_deleted",
+				Data: &slackevents.ChannelDeletedEvent{
+					Channel: "C111",
+				},
+			},
+		},
+		Request: &socketmode.Request{},
+	}
+	s.bot.handleEventsAPI(evt)
+
+	select {
+	case chID := <-received:
+		require.Equal(s.T(), "C111", chID)
+	case <-time.After(time.Second):
+		s.T().Fatal("handler not called")
+	}
+}
+
+func (s *BotSuite) TestHandleEventsAPIGroupDeleted() {
+	received := make(chan string, 1)
+	s.bot.OnChannelDelete(func(_ context.Context, channelID string, _ bool) {
+		received <- channelID
+	})
+
+	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
+
+	evt := socketmode.Event{
+		Type: socketmode.EventTypeEventsAPI,
+		Data: slackevents.EventsAPIEvent{
+			InnerEvent: slackevents.EventsAPIInnerEvent{
+				Type: "group_deleted",
+				Data: &slackevents.GroupDeletedEvent{
+					Channel: "G222",
+				},
+			},
+		},
+		Request: &socketmode.Request{},
+	}
+	s.bot.handleEventsAPI(evt)
+
+	select {
+	case chID := <-received:
+		require.Equal(s.T(), "G222", chID)
+	case <-time.After(time.Second):
+		s.T().Fatal("handler not called")
+	}
+}
+
+func (s *BotSuite) TestNotifyChannelDeleteNoHandlers() {
+	// Should not panic with no handlers registered
+	s.bot.notifyChannelDelete("C123")
 }
 
 func (s *BotSuite) TestHandleMessageSelfMentionSkipped() {

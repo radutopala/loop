@@ -1785,6 +1785,39 @@ func (s *BotSuite) TestOnChannelDeleteRegistersHandler() {
 	s.bot.mu.RUnlock()
 }
 
+// --- OnChannelJoin ---
+
+func (s *BotSuite) TestOnChannelJoinRegistersHandler() {
+	handler := func(ctx context.Context, channelID string) {}
+	s.bot.OnChannelJoin(handler)
+
+	s.bot.mu.RLock()
+	require.Len(s.T(), s.bot.channelJoinHandlers, 1)
+	s.bot.mu.RUnlock()
+}
+
+// --- GetChannelName ---
+
+func (s *BotSuite) TestGetChannelNameSuccess() {
+	s.session.On("Channel", "ch-1", mock.Anything).Return(&discordgo.Channel{
+		ID:   "ch-1",
+		Name: "general",
+	}, nil)
+
+	name, err := s.bot.GetChannelName(context.Background(), "ch-1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "general", name)
+}
+
+func (s *BotSuite) TestGetChannelNameError() {
+	s.session.On("Channel", "ch-1", mock.Anything).Return(nil, errors.New("api error"))
+
+	name, err := s.bot.GetChannelName(context.Background(), "ch-1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "discord get channel name")
+	require.Empty(s.T(), name)
+}
+
 // --- GetChannelParentID ---
 
 func (s *BotSuite) TestGetChannelParentIDThread() {

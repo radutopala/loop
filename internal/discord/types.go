@@ -20,3 +20,6 @@ type InteractionHandler = func(ctx context.Context, i any)
 
 // ChannelDeleteHandler is a callback for channel/thread deletion events.
 type ChannelDeleteHandler = func(ctx context.Context, channelID string, isThread bool)
+
+// ChannelJoinHandler is a callback for when the bot joins a channel.
+type ChannelJoinHandler = func(ctx context.Context, channelID string)

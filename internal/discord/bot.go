@@ -66,6 +66,7 @@ type DiscordBot struct {
 	messageHandlers       []MessageHandler
 	interactionHandlers   []InteractionHandler
 	channelDeleteHandlers []ChannelDeleteHandler
+	channelJoinHandlers   []ChannelJoinHandler
 	mu                    sync.RWMutex
 	removeHandlers        []func()
 	typingInterval        time.Duration
@@ -255,6 +256,15 @@ func (b *DiscordBot) OnChannelDelete(handler ChannelDeleteHandler) {
 	b.channelDeleteHandlers = append(b.channelDeleteHandlers, handler)
 }
 
+// OnChannelJoin registers a handler for channel join events.
+// Discord has no equivalent "bot added to channel" event (bot sees all guild channels),
+// so handlers are stored but never dispatched.
+func (b *DiscordBot) OnChannelJoin(handler ChannelJoinHandler) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.channelJoinHandlers = append(b.channelJoinHandlers, handler)
+}
+
 // CreateChannel creates a new text channel in the given guild. If a text
 // channel with the same name already exists, it returns the existing channel's ID.
 func (b *DiscordBot) CreateChannel(ctx context.Context, guildID, name string) (string, error) {
@@ -295,6 +305,15 @@ func (b *DiscordBot) SetChannelTopic(ctx context.Context, channelID, topic strin
 	}
 	b.logger.InfoContext(ctx, "set discord channel topic", "channel_id", channelID, "topic", topic)
 	return nil
+}
+
+// GetChannelName returns the name of a Discord channel by its ID.
+func (b *DiscordBot) GetChannelName(_ context.Context, channelID string) (string, error) {
+	ch, err := b.session.Channel(channelID)
+	if err != nil {
+		return "", fmt.Errorf("discord get channel name: %w", err)
+	}
+	return ch.Name, nil
 }
 
 // GetChannelParentID returns the parent channel ID for a thread, or empty string if not a thread.

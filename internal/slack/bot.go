@@ -59,6 +59,7 @@ type SlackBot struct {
 	messageHandlers       []MessageHandler
 	interactionHandlers   []InteractionHandler
 	channelDeleteHandlers []ChannelDeleteHandler
+	channelJoinHandlers   []ChannelJoinHandler
 	mu                    sync.RWMutex
 	cancel                context.CancelFunc
 	// lastMessageRef tracks the latest message per channel for emoji reactions.
@@ -190,6 +191,13 @@ func (b *SlackBot) OnChannelDelete(handler ChannelDeleteHandler) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.channelDeleteHandlers = append(b.channelDeleteHandlers, handler)
+}
+
+// OnChannelJoin registers a handler to be called when the bot joins a channel.
+func (b *SlackBot) OnChannelJoin(handler ChannelJoinHandler) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.channelJoinHandlers = append(b.channelJoinHandlers, handler)
 }
 
 // BotUserID returns the bot's Slack user ID.
@@ -355,6 +363,18 @@ func (b *SlackBot) DeleteThread(ctx context.Context, threadID string) error {
 	return nil
 }
 
+// GetChannelName returns the name of a Slack channel by its ID.
+func (b *SlackBot) GetChannelName(_ context.Context, channelID string) (string, error) {
+	channelID, _ = parseCompositeID(channelID)
+	ch, err := b.session.GetConversationInfo(&goslack.GetConversationInfoInput{
+		ChannelID: channelID,
+	})
+	if err != nil {
+		return "", fmt.Errorf("slack get channel name: %w", err)
+	}
+	return ch.Name, nil
+}
+
 // GetChannelParentID returns the parent channel ID for a thread (composite ID),
 // or empty string if not a thread.
 func (b *SlackBot) GetChannelParentID(_ context.Context, channelID string) (string, error) {
@@ -403,6 +423,12 @@ func (b *SlackBot) handleEventsAPI(evt socketmode.Event) {
 		b.handleAppMention(ev)
 	case *slackevents.MessageEvent:
 		b.handleMessage(ev)
+	case *slackevents.MemberJoinedChannelEvent:
+		b.handleMemberJoinedChannel(ev)
+	case *slackevents.ChannelDeletedEvent:
+		b.notifyChannelDelete(ev.Channel)
+	case *slackevents.GroupDeletedEvent:
+		b.notifyChannelDelete(ev.Channel)
 	}
 }
 
@@ -511,6 +537,32 @@ func (b *SlackBot) isReplyToBot(ev *slackevents.MessageEvent) bool {
 		return false
 	}
 	return msgs[0].User == b.BotUserID() || msgs[0].BotID != ""
+}
+
+func (b *SlackBot) notifyChannelDelete(channelID string) {
+	b.mu.RLock()
+	handlers := make([]ChannelDeleteHandler, len(b.channelDeleteHandlers))
+	copy(handlers, b.channelDeleteHandlers)
+	b.mu.RUnlock()
+
+	for _, h := range handlers {
+		go h(context.Background(), channelID, false)
+	}
+}
+
+func (b *SlackBot) handleMemberJoinedChannel(ev *slackevents.MemberJoinedChannelEvent) {
+	if ev.User != b.BotUserID() {
+		return
+	}
+
+	b.mu.RLock()
+	handlers := make([]ChannelJoinHandler, len(b.channelJoinHandlers))
+	copy(handlers, b.channelJoinHandlers)
+	b.mu.RUnlock()
+
+	for _, h := range handlers {
+		go h(context.Background(), ev.Channel)
+	}
 }
 
 func (b *SlackBot) handleSlashCommand(evt socketmode.Event) {

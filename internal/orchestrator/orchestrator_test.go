@@ -212,6 +212,10 @@ func (m *MockBot) OnChannelDelete(handler func(ctx context.Context, channelID st
 	m.Called(handler)
 }
 
+func (m *MockBot) OnChannelJoin(handler func(ctx context.Context, channelID string)) {
+	m.Called(handler)
+}
+
 func (m *MockBot) BotUserID() string {
 	args := m.Called()
 	return args.String(0)
@@ -249,6 +253,11 @@ func (m *MockBot) PostMessage(ctx context.Context, channelID, content string) er
 }
 
 func (m *MockBot) GetChannelParentID(ctx context.Context, channelID string) (string, error) {
+	args := m.Called(ctx, channelID)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockBot) GetChannelName(ctx context.Context, channelID string) (string, error) {
 	args := m.Called(ctx, channelID)
 	return args.String(0), args.Error(1)
 }
@@ -353,6 +362,7 @@ func (s *OrchestratorSuite) TestStartSuccess() {
 	s.bot.On("OnMessage", mock.AnythingOfType("func(context.Context, *orchestrator.IncomingMessage)")).Return()
 	s.bot.On("OnInteraction", mock.AnythingOfType("func(context.Context, interface {})")).Return()
 	s.bot.On("OnChannelDelete", mock.AnythingOfType("func(context.Context, string, bool)")).Return()
+	s.bot.On("OnChannelJoin", mock.AnythingOfType("func(context.Context, string)")).Return()
 	s.bot.On("RegisterCommands", s.ctx).Return(nil)
 	s.bot.On("Start", s.ctx).Return(nil)
 	s.scheduler.On("Start", s.ctx).Return(nil)
@@ -367,6 +377,7 @@ func (s *OrchestratorSuite) TestStartRegisterCommandsError() {
 	s.bot.On("OnMessage", mock.Anything).Return()
 	s.bot.On("OnInteraction", mock.Anything).Return()
 	s.bot.On("OnChannelDelete", mock.Anything).Return()
+	s.bot.On("OnChannelJoin", mock.Anything).Return()
 	s.bot.On("RegisterCommands", s.ctx).Return(errors.New("register failed"))
 
 	err := s.orch.Start(s.ctx)
@@ -378,6 +389,7 @@ func (s *OrchestratorSuite) TestStartBotError() {
 	s.bot.On("OnMessage", mock.Anything).Return()
 	s.bot.On("OnInteraction", mock.Anything).Return()
 	s.bot.On("OnChannelDelete", mock.Anything).Return()
+	s.bot.On("OnChannelJoin", mock.Anything).Return()
 	s.bot.On("RegisterCommands", s.ctx).Return(nil)
 	s.bot.On("Start", s.ctx).Return(errors.New("bot failed"))
 
@@ -390,6 +402,7 @@ func (s *OrchestratorSuite) TestStartSchedulerError() {
 	s.bot.On("OnMessage", mock.Anything).Return()
 	s.bot.On("OnInteraction", mock.Anything).Return()
 	s.bot.On("OnChannelDelete", mock.Anything).Return()
+	s.bot.On("OnChannelJoin", mock.Anything).Return()
 	s.bot.On("RegisterCommands", s.ctx).Return(nil)
 	s.bot.On("Start", s.ctx).Return(nil)
 	s.scheduler.On("Start", s.ctx).Return(errors.New("scheduler failed"))
@@ -654,18 +667,156 @@ func (s *OrchestratorSuite) TestHandleMessageDMAutoCreateFails() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageNonDMUnregisteredChannelDropped() {
-	// Non-DM message to an unregistered channel (not a thread either) should be dropped
+	// Non-triggered message to an unregistered channel (not a thread either) should be dropped
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(false, nil)
 	s.bot.On("GetChannelParentID", s.ctx, "ch1").Return("", nil)
 
 	s.orch.HandleMessage(s.ctx, &IncomingMessage{
 		ChannelID: "ch1",
 		Content:   "hello",
-		// IsDM is false
+		// No trigger flags set
 	})
 
 	s.store.AssertNotCalled(s.T(), "UpsertChannel", mock.Anything, mock.Anything)
 	s.store.AssertNotCalled(s.T(), "GetChannel", mock.Anything, mock.Anything)
+}
+
+func (s *OrchestratorSuite) TestHandleMessageMentionAutoCreatesChannel() {
+	msg := &IncomingMessage{
+		ChannelID:    "ch1",
+		GuildID:      "g1",
+		AuthorID:     "user1",
+		AuthorName:   "Alice",
+		Content:      "hello bot",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(false, nil)
+	s.bot.On("GetChannelParentID", s.ctx, "ch1").Return("", nil)
+	s.bot.On("GetChannelName", s.ctx, "ch1").Return("general", nil)
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "ch1" && ch.GuildID == "g1" && ch.Name == "general" && ch.Platform == "discord" && ch.Active
+	})).Return(nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", Active: true, Platform: types.PlatformDiscord,
+	}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
+		Response:  "Hello!",
+		SessionID: "sess1",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess1").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.ChannelID == "ch1" && out.Content == "Hello!"
+	})).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleMessageMentionAutoCreateFails() {
+	msg := &IncomingMessage{
+		ChannelID:    "ch1",
+		Content:      "hello bot",
+		IsBotMention: true,
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(false, nil)
+	s.bot.On("GetChannelParentID", s.ctx, "ch1").Return("", nil)
+	s.bot.On("GetChannelName", s.ctx, "ch1").Return("general", nil)
+	s.store.On("UpsertChannel", s.ctx, mock.Anything).Return(errors.New("upsert error"))
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	s.store.AssertNotCalled(s.T(), "GetChannel", mock.Anything, mock.Anything)
+}
+
+func (s *OrchestratorSuite) TestHandleMessagePrefixAutoCreatesChannel() {
+	msg := &IncomingMessage{
+		ChannelID:  "ch1",
+		AuthorID:   "user1",
+		AuthorName: "Alice",
+		Content:    "do something",
+		MessageID:  "msg1",
+		HasPrefix:  true,
+		Timestamp:  time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(false, nil)
+	s.bot.On("GetChannelParentID", s.ctx, "ch1").Return("", nil)
+	s.bot.On("GetChannelName", s.ctx, "ch1").Return("dev-ops", nil)
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "ch1" && ch.Name == "dev-ops" && ch.Active
+	})).Return(nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", Active: true, Platform: types.PlatformDiscord,
+	}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
+		Response:  "Done!",
+		SessionID: "sess1",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess1").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	s.store.AssertExpectations(s.T())
+}
+
+// --- HandleChannelJoin tests ---
+
+func (s *OrchestratorSuite) TestHandleChannelJoinSuccess() {
+	s.bot.On("GetChannelName", s.ctx, "ch1").Return("project-x", nil)
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "ch1" && ch.Name == "project-x" && ch.Platform == "discord" && ch.Active
+	})).Return(nil)
+
+	s.orch.HandleChannelJoin(s.ctx, "ch1")
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleChannelJoinNameLookupFails() {
+	s.bot.On("GetChannelName", s.ctx, "ch1").Return("", errors.New("api error"))
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "ch1" && ch.Name == "channel" && ch.Platform == "discord" && ch.Active
+	})).Return(nil)
+
+	s.orch.HandleChannelJoin(s.ctx, "ch1")
+
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleChannelJoinEmptyName() {
+	s.bot.On("GetChannelName", s.ctx, "ch1").Return("", nil)
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "ch1" && ch.Name == "channel" && ch.Active
+	})).Return(nil)
+
+	s.orch.HandleChannelJoin(s.ctx, "ch1")
+
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleChannelJoinUpsertError() {
+	s.bot.On("GetChannelName", s.ctx, "ch1").Return("project-x", nil)
+	s.store.On("UpsertChannel", s.ctx, mock.Anything).Return(errors.New("db error"))
+
+	s.orch.HandleChannelJoin(s.ctx, "ch1")
+
+	s.store.AssertExpectations(s.T())
 }
 
 func (s *OrchestratorSuite) TestHandleMessageIsChannelActiveError() {

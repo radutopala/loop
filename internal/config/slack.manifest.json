@@ -43,6 +43,9 @@
     "event_subscriptions": {
       "bot_events": [
         "app_mention",
+        "channel_deleted",
+        "group_deleted",
+        "member_joined_channel",
         "message.channels",
         "message.groups",
         "message.im"
