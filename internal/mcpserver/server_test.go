@@ -85,7 +85,7 @@ func (s *MCPServerSuite) TestMCPServer() {
 func (s *MCPServerSuite) TestListTools() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 9)
+	require.Len(s.T(), res.Tools, 10)
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -96,6 +96,7 @@ func (s *MCPServerSuite) TestListTools() {
 	require.True(s.T(), names["cancel_task"])
 	require.True(s.T(), names["toggle_task"])
 	require.True(s.T(), names["edit_task"])
+	require.True(s.T(), names["create_channel"])
 	require.True(s.T(), names["create_thread"])
 	require.True(s.T(), names["delete_thread"])
 	require.True(s.T(), names["search_channels"])
@@ -555,6 +556,106 @@ func (s *MCPServerSuite) TestToggleTaskHTTPError() {
 	require.NoError(s.T(), err)
 	require.True(s.T(), res.IsError)
 	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "calling API")
+}
+
+// --- create_channel ---
+
+func (s *MCPServerSuite) TestCreateChannelSuccess() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "POST", req.Method)
+		require.Contains(s.T(), req.URL.String(), "/api/channels/create")
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"name":"trial"`)
+		require.NotContains(s.T(), string(body), `"author_id"`)
+		return jsonResponse(http.StatusCreated, `{"channel_id":"ch-new"}`), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "create_channel",
+		Arguments: map[string]any{"name": "trial"},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "ID: ch-new")
+}
+
+func (s *MCPServerSuite) TestCreateChannelSuccessWithAuthorID() {
+	// Re-create the server with an authorID
+	s.cleanup()
+	s.srv = New("test-channel", "http://localhost:8222", "user-42", s.httpClient, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
+	t1, t2 := mcp.NewInMemoryTransports()
+	go func() { _ = s.srv.Run(s.ctx, t1) }()
+	session, err := client.Connect(s.ctx, t2, nil)
+	require.NoError(s.T(), err)
+	s.session = session
+	s.cleanup = func() { session.Close() }
+
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"author_id":"user-42"`)
+		return jsonResponse(http.StatusCreated, `{"channel_id":"ch-new"}`), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "create_channel",
+		Arguments: map[string]any{"name": "trial"},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "ID: ch-new")
+}
+
+func (s *MCPServerSuite) TestCreateChannelEmptyName() {
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "create_channel",
+		Arguments: map[string]any{"name": ""},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "name is required")
+}
+
+func (s *MCPServerSuite) TestCreateChannelAPIError() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusInternalServerError, "create failed"), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "create_channel",
+		Arguments: map[string]any{"name": "trial"},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "API error")
+}
+
+func (s *MCPServerSuite) TestCreateChannelHTTPError() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("connection refused")
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "create_channel",
+		Arguments: map[string]any{"name": "trial"},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "calling API")
+}
+
+func (s *MCPServerSuite) TestCreateChannelInvalidResponseJSON() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusCreated, "not json"), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "create_channel",
+		Arguments: map[string]any{"name": "trial"},
+	})
+	require.NoError(s.T(), err)
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "decoding response")
 }
 
 // --- create_thread ---

@@ -26,6 +26,10 @@ import (
 	"github.com/radutopala/loop/internal/mcpserver"
 	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/scheduler"
+	slackbot "github.com/radutopala/loop/internal/slack"
+	"github.com/radutopala/loop/internal/types"
+	goslack "github.com/slack-go/slack"
+	"github.com/slack-go/slack/socketmode"
 	"github.com/spf13/cobra"
 )
 
@@ -50,7 +54,7 @@ func main() {
 func newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "loop",
-		Short: "Loop Discord bot powered by Claude",
+		Short: "Loop bot powered by Claude",
 	}
 	root.AddCommand(newServeCmd())
 	root.AddCommand(newMCPCmd())
@@ -65,16 +69,16 @@ func newRootCmd() *cobra.Command {
 	return root
 }
 
-const helpTemplate = `loop - Discord bot powered by Claude that runs AI agents in Docker containers
+const helpTemplate = `loop - Chat bot powered by Claude that runs AI agents in Docker containers
 
 Usage:
   loop [command]
 
 Available Commands:
-  serve                    Start the Discord bot (alias: s)
+  serve                    Start the bot (alias: s)
   mcp                      Run as an MCP server over stdio (alias: m)
-    --channel-id           Discord channel ID
-    --dir                  Project directory path (auto-creates Discord channel)
+    --channel-id           Channel ID
+    --dir                  Project directory path (auto-creates channel)
     --api-url              Loop API base URL (required)
     --log                  Path to MCP log file [default: .loop/mcp.log]
   onboard:global           Initialize global config at ~/.loop/ (aliases: o:global, setup)
@@ -111,7 +115,7 @@ func newServeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"s"},
-		Short:   "Start the Discord bot",
+		Short:   "Start the bot",
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return serve()
 		},
@@ -130,11 +134,11 @@ func newMCPCmd() *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&channelID, "channel-id", "", "Discord channel ID")
-	cmd.Flags().StringVar(&dirPath, "dir", "", "Project directory path (auto-creates Discord channel)")
+	cmd.Flags().StringVar(&channelID, "channel-id", "", "Channel ID")
+	cmd.Flags().StringVar(&dirPath, "dir", "", "Project directory path (auto-creates channel)")
 	cmd.Flags().StringVar(&apiURL, "api-url", "", "Loop API base URL")
 	cmd.Flags().StringVar(&logPath, "log", ".loop/mcp.log", "Path to MCP log file")
-	cmd.Flags().StringVar(&authorID, "author-id", "", "Discord user ID of the message author")
+	cmd.Flags().StringVar(&authorID, "author-id", "", "User ID of the message author")
 	cmd.MarkFlagsOneRequired("channel-id", "dir")
 	cmd.MarkFlagsMutuallyExclusive("channel-id", "dir")
 	_ = cmd.MarkFlagRequired("api-url")
@@ -293,6 +297,11 @@ func onboardGlobal(force bool) error {
 		}
 	}
 
+	// Write Slack app manifest
+	if err := osWriteFile(filepath.Join(loopDir, "slack-manifest.json"), config.SlackManifest, 0644); err != nil {
+		return fmt.Errorf("writing Slack manifest: %w", err)
+	}
+
 	// Create templates directory for prompt_path templates
 	templatesDir := filepath.Join(loopDir, "templates")
 	if err := osMkdirAll(templatesDir, 0755); err != nil {
@@ -301,7 +310,8 @@ func onboardGlobal(force bool) error {
 
 	fmt.Printf("✓ Created config at %s\n", configPath)
 	fmt.Println("\nNext steps:")
-	fmt.Println("1. Edit config.json and add your discord_token and discord_app_id")
+	fmt.Println("1. Edit config.json and add your platform credentials (Discord or Slack)")
+	fmt.Println("   For Slack: create an app from ~/.loop/slack-manifest.json (see README)")
 	fmt.Println("2. Run 'loop serve' to start the bot")
 	fmt.Println("3. Customize the Dockerfile at ~/.loop/container/ if needed")
 
@@ -369,12 +379,12 @@ func onboardLocal(apiURL string) error {
 		return fmt.Errorf("creating templates directory: %w", err)
 	}
 
-	// Eagerly create the Discord channel so it's ready immediately
+	// Eagerly create the channel so it's ready immediately
 	channelID, err := ensureChannelFunc(apiURL, dir)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Warning: could not register channel (is 'loop serve' running?): %v\n", err)
 	} else {
-		fmt.Printf("Discord channel ready: %s\n", channelID)
+		fmt.Printf("Channel ready: %s\n", channelID)
 	}
 
 	return nil
@@ -481,6 +491,11 @@ var (
 		session.Identify.Intents |= discordgo.IntentMessageContent
 		return discord.NewBot(session, appID, logger), nil
 	}
+	newSlackBot = func(botToken, appToken string, logger *slog.Logger) (orchestrator.Bot, error) {
+		api := goslack.New(botToken, goslack.OptionAppLevelToken(appToken))
+		smClient := socketmode.New(api)
+		return slackbot.NewBot(api, slackbot.NewSocketModeAdapter(smClient), logger), nil
+	}
 	newDockerClient = func() (container.DockerClient, error) {
 		return container.NewClient()
 	}
@@ -504,9 +519,20 @@ func serve() error {
 	}
 	defer store.Close()
 
-	bot, err := newDiscordBot(cfg.DiscordToken, cfg.DiscordAppID, logger)
-	if err != nil {
-		return fmt.Errorf("creating discord bot: %w", err)
+	platform := cfg.Platform()
+
+	var bot orchestrator.Bot
+	switch platform {
+	case types.PlatformSlack:
+		bot, err = newSlackBot(cfg.SlackBotToken, cfg.SlackAppToken, logger)
+		if err != nil {
+			return fmt.Errorf("creating slack bot: %w", err)
+		}
+	default:
+		bot, err = newDiscordBot(cfg.DiscordToken, cfg.DiscordAppID, logger)
+		if err != nil {
+			return fmt.Errorf("creating discord bot: %w", err)
+		}
 	}
 
 	dockerClient, err := newDockerClient()
@@ -532,9 +558,16 @@ func serve() error {
 
 	var channelSvc api.ChannelEnsurer
 	var threadSvc api.ThreadEnsurer
-	if cfg.DiscordGuildID != "" {
-		channelSvc = api.NewChannelService(store, bot, cfg.DiscordGuildID)
-		threadSvc = api.NewThreadService(store, bot)
+	switch platform {
+	case types.PlatformSlack:
+		// Slack doesn't use guild IDs — channel/thread services are always available.
+		channelSvc = api.NewChannelService(store, bot, "", platform)
+		threadSvc = api.NewThreadService(store, bot, platform)
+	default:
+		if cfg.DiscordGuildID != "" {
+			channelSvc = api.NewChannelService(store, bot, cfg.DiscordGuildID, platform)
+			threadSvc = api.NewThreadService(store, bot, platform)
+		}
 	}
 
 	apiSrv := newAPIServer(sched, channelSvc, threadSvc, store, bot, logger)
@@ -542,7 +575,7 @@ func serve() error {
 		return fmt.Errorf("starting api server: %w", err)
 	}
 
-	orch := orchestrator.New(store, bot, runner, sched, logger, cfg.TaskTemplates, cfg.ContainerTimeout, cfg.LoopDir)
+	orch := orchestrator.New(store, bot, runner, sched, logger, cfg.TaskTemplates, cfg.ContainerTimeout, cfg.LoopDir, platform)
 
 	if err := orch.Start(ctx); err != nil {
 		_ = apiSrv.Stop(context.Background())

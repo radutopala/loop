@@ -69,6 +69,11 @@ func (m *MockChannelEnsurer) EnsureChannel(ctx context.Context, dirPath string) 
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockChannelEnsurer) CreateChannel(ctx context.Context, name, authorID string) (string, error) {
+	args := m.Called(ctx, name, authorID)
+	return args.String(0), args.Error(1)
+}
+
 type MockThreadEnsurer struct {
 	mock.Mock
 }
@@ -129,6 +134,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("GET /api/channels", s.srv.handleSearchChannels)
 	s.mux.HandleFunc("POST /api/channels", s.srv.handleEnsureChannel)
+	s.mux.HandleFunc("POST /api/channels/create", s.srv.handleCreateChannel)
 	s.mux.HandleFunc("POST /api/messages", s.srv.handleSendMessage)
 	s.mux.HandleFunc("POST /api/threads", s.srv.handleCreateThread)
 	s.mux.HandleFunc("DELETE /api/threads/{id}", s.srv.handleDeleteThread)
@@ -495,6 +501,93 @@ func (s *ServerSuite) TestEnsureChannelNilEnsurer() {
 
 	body := `{"dir_path":"/path"}`
 	req := httptest.NewRequest("POST", "/api/channels", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+// --- CreateChannel tests ---
+
+func (s *ServerSuite) TestCreateChannelSuccess() {
+	s.channels.On("CreateChannel", mock.Anything, "trial", "").
+		Return("ch-new", nil)
+
+	body := `{"name":"trial"}`
+	req := httptest.NewRequest("POST", "/api/channels/create", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+
+	var resp createChannelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(s.T(), "ch-new", resp.ChannelID)
+	s.channels.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCreateChannelMissingName() {
+	body := `{"name":""}`
+	req := httptest.NewRequest("POST", "/api/channels/create", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestCreateChannelInvalidBody() {
+	req := httptest.NewRequest("POST", "/api/channels/create", bytes.NewBufferString("not json"))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestCreateChannelWithAuthorID() {
+	s.channels.On("CreateChannel", mock.Anything, "trial", "user-42").
+		Return("ch-new", nil)
+
+	body := `{"name":"trial","author_id":"user-42"}`
+	req := httptest.NewRequest("POST", "/api/channels/create", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+
+	var resp createChannelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(s.T(), "ch-new", resp.ChannelID)
+	s.channels.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCreateChannelError() {
+	s.channels.On("CreateChannel", mock.Anything, "trial", "").
+		Return("", errors.New("create failed"))
+
+	body := `{"name":"trial"}`
+	req := httptest.NewRequest("POST", "/api/channels/create", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.channels.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCreateChannelNilEnsurer() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewServer(s.scheduler, nil, nil, nil, nil, logger)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/channels/create", srv.handleCreateChannel)
+
+	body := `{"name":"trial"}`
+	req := httptest.NewRequest("POST", "/api/channels/create", bytes.NewBufferString(body))
 	rec := httptest.NewRecorder()
 
 	mux.ServeHTTP(rec, req)

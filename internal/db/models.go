@@ -1,19 +1,24 @@
 package db
 
-import "time"
+import (
+	"time"
 
-// Channel represents a Discord channel where the bot operates.
+	"github.com/radutopala/loop/internal/types"
+)
+
+// Channel represents a chat platform channel where the bot operates.
 type Channel struct {
-	ID        int64     `json:"id"`
-	ChannelID string    `json:"channel_id"`
-	GuildID   string    `json:"guild_id"`
-	Name      string    `json:"name"`
-	DirPath   string    `json:"dir_path"`
-	ParentID  string    `json:"parent_id"`
-	Active    bool      `json:"active"`
-	SessionID string    `json:"session_id"`
-	CreatedAt time.Time `json:"created_at"`
-	UpdatedAt time.Time `json:"updated_at"`
+	ID        int64          `json:"id"`
+	ChannelID string         `json:"channel_id"`
+	GuildID   string         `json:"guild_id"`
+	Name      string         `json:"name"`
+	DirPath   string         `json:"dir_path"`
+	ParentID  string         `json:"parent_id"`
+	Platform  types.Platform `json:"platform"`
+	Active    bool           `json:"active"`
+	SessionID string         `json:"session_id"`
+	CreatedAt time.Time      `json:"created_at"`
+	UpdatedAt time.Time      `json:"updated_at"`
 }
 
 // Message represents a Discord message stored for context.

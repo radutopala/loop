@@ -11,7 +11,7 @@ import (
 )
 
 // TaskExecutor implements scheduler.TaskExecutor by running an agent and
-// delivering the response to Discord.
+// delivering the response to the chat platform.
 type TaskExecutor struct {
 	runner           Runner
 	bot              Bot
@@ -25,7 +25,7 @@ func NewTaskExecutor(runner Runner, bot Bot, store db.Store, logger *slog.Logger
 	return &TaskExecutor{runner: runner, bot: bot, store: store, logger: logger, containerTimeout: containerTimeout}
 }
 
-// ExecuteTask runs an agent for the given scheduled task and sends the result to Discord.
+// ExecuteTask runs an agent for the given scheduled task and sends the result to the chat platform.
 func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) (string, error) {
 	// Send notification message before executing the task
 	notificationMsg := fmt.Sprintf("🕒 Running scheduled task (ID: %d)\nType: %s\nSchedule: %s\nPrompt: %s",

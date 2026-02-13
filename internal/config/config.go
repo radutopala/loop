@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/radutopala/loop/internal/types"
 	"github.com/tailscale/hujson"
 )
 
@@ -53,8 +54,11 @@ func (t *TaskTemplate) ResolvePrompt(loopDir string) (string, error) {
 
 // Config holds all application configuration loaded from config.json.
 type Config struct {
+	PlatformType         types.Platform
 	DiscordToken         string
 	DiscordAppID         string
+	SlackBotToken        string
+	SlackAppToken        string
 	ClaudeBinPath        string
 	DBPath               string
 	LogFile              string
@@ -77,11 +81,19 @@ type Config struct {
 	ClaudeModel          string
 }
 
+// Platform returns the configured chat platform.
+func (c *Config) Platform() types.Platform {
+	return c.PlatformType
+}
+
 // jsonConfig is an intermediate struct for JSON unmarshalling.
 // Pointer types for numerics distinguish "missing" (nil) from "zero".
 type jsonConfig struct {
+	Platform              string         `json:"platform"`
 	DiscordToken          string         `json:"discord_token"`
 	DiscordAppID          string         `json:"discord_app_id"`
+	SlackBotToken         string         `json:"slack_bot_token"`
+	SlackAppToken         string         `json:"slack_app_token"`
 	ClaudeCodeOAuthToken  string         `json:"claude_code_oauth_token"`
 	DiscordGuildID        string         `json:"discord_guild_id"`
 	LogFile               string         `json:"log_file"`
@@ -146,8 +158,11 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
+		PlatformType:         types.Platform(strings.ToLower(jc.Platform)),
 		DiscordToken:         jc.DiscordToken,
 		DiscordAppID:         jc.DiscordAppID,
+		SlackBotToken:        jc.SlackBotToken,
+		SlackAppToken:        jc.SlackAppToken,
 		ClaudeBinPath:        stringDefault(jc.ClaudeBinPath, "claude"),
 		ClaudeCodeOAuthToken: jc.ClaudeCodeOAuthToken,
 		DiscordGuildID:       jc.DiscordGuildID,
@@ -174,15 +189,19 @@ func Load() (*Config, error) {
 	cfg.Mounts = jc.Mounts
 	cfg.Envs = stringifyEnvs(jc.Envs)
 
-	var missing []string
-	if cfg.DiscordToken == "" {
-		missing = append(missing, "discord_token")
-	}
-	if cfg.DiscordAppID == "" {
-		missing = append(missing, "discord_app_id")
-	}
-	if len(missing) > 0 {
-		return nil, fmt.Errorf("missing required config fields: %v", missing)
+	switch cfg.PlatformType {
+	case types.PlatformDiscord:
+		if cfg.DiscordToken == "" || cfg.DiscordAppID == "" {
+			return nil, fmt.Errorf("platform \"discord\" requires discord_token and discord_app_id")
+		}
+	case types.PlatformSlack:
+		if cfg.SlackBotToken == "" || cfg.SlackAppToken == "" {
+			return nil, fmt.Errorf("platform \"slack\" requires slack_bot_token and slack_app_token")
+		}
+	case "":
+		return nil, fmt.Errorf("missing required config: \"platform\" must be set to \"discord\" or \"slack\"")
+	default:
+		return nil, fmt.Errorf("unsupported platform %q: must be \"discord\" or \"slack\"", cfg.PlatformType)
 	}
 
 	return cfg, nil

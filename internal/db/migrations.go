@@ -124,6 +124,9 @@ var migrations = []migration{
 	sqlMigration(`ALTER TABLE channels ADD COLUMN parent_id TEXT NOT NULL DEFAULT ''`),
 	sqlMigration(`DROP INDEX IF EXISTS idx_channels_dir_path`),
 	sqlMigration(`CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dir_path ON channels(dir_path) WHERE dir_path != '' AND parent_id = ''`),
+	sqlMigration(`ALTER TABLE channels ADD COLUMN platform TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`DROP INDEX IF EXISTS idx_channels_dir_path`),
+	sqlMigration(`CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dir_path ON channels(dir_path, platform) WHERE dir_path != '' AND parent_id = ''`),
 }
 
 // RunMigrations executes all pending schema migrations.

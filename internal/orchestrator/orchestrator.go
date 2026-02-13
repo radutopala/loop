@@ -13,9 +13,10 @@ import (
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/types"
 )
 
-// Bot represents the Discord bot interface.
+// Bot represents the chat platform bot interface (Discord or Slack).
 type Bot interface {
 	Start(ctx context.Context) error
 	Stop() error
@@ -28,13 +29,14 @@ type Bot interface {
 	OnChannelDelete(handler func(ctx context.Context, channelID string, isThread bool))
 	BotUserID() string
 	CreateChannel(ctx context.Context, guildID, name string) (string, error)
+	InviteUserToChannel(ctx context.Context, channelID, userID string) error
 	CreateThread(ctx context.Context, channelID, name, mentionUserID, message string) (string, error)
 	PostMessage(ctx context.Context, channelID, content string) error
 	DeleteThread(ctx context.Context, threadID string) error
 	GetChannelParentID(ctx context.Context, channelID string) (string, error)
 }
 
-// IncomingMessage from Discord.
+// IncomingMessage from the chat platform.
 type IncomingMessage struct {
 	ChannelID    string
 	GuildID      string
@@ -49,7 +51,7 @@ type IncomingMessage struct {
 	Timestamp    time.Time
 }
 
-// OutgoingMessage to Discord.
+// OutgoingMessage to the chat platform.
 type OutgoingMessage struct {
 	ChannelID        string
 	Content          string
@@ -74,7 +76,7 @@ type Scheduler interface {
 	EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string) error
 }
 
-// Interaction represents a Discord slash command interaction.
+// Interaction represents a slash command interaction.
 type Interaction struct {
 	ChannelID   string
 	GuildID     string
@@ -94,10 +96,11 @@ type Orchestrator struct {
 	templates        []config.TaskTemplate
 	containerTimeout time.Duration
 	loopDir          string
+	platform         types.Platform
 }
 
 // New creates a new Orchestrator.
-func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *slog.Logger, templates []config.TaskTemplate, containerTimeout time.Duration, loopDir string) *Orchestrator {
+func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *slog.Logger, templates []config.TaskTemplate, containerTimeout time.Duration, loopDir string, platform types.Platform) *Orchestrator {
 	return &Orchestrator{
 		store:            store,
 		bot:              bot,
@@ -109,6 +112,7 @@ func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *sl
 		templates:        templates,
 		containerTimeout: containerTimeout,
 		loopDir:          loopDir,
+		platform:         platform,
 	}
 }
 
@@ -161,7 +165,7 @@ func (o *Orchestrator) Stop() error {
 const recentMessageLimit = 50
 const typingRefreshInterval = 8 * time.Second
 
-// HandleMessage processes an incoming Discord message.
+// HandleMessage processes an incoming chat message.
 func (o *Orchestrator) HandleMessage(ctx context.Context, msg *IncomingMessage) {
 	active, err := o.store.IsChannelActive(ctx, msg.ChannelID)
 	if err != nil {
@@ -170,7 +174,21 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *IncomingMessage) 
 	}
 	if !active {
 		if !o.resolveThread(ctx, msg.ChannelID) {
-			return
+			if msg.IsDM {
+				if err := o.store.UpsertChannel(ctx, &db.Channel{
+					ChannelID: msg.ChannelID,
+					GuildID:   msg.GuildID,
+					Name:      "DM",
+					Platform:  o.platform,
+					Active:    true,
+				}); err != nil {
+					o.logger.Error("auto-creating DM channel", "error", err)
+					return
+				}
+				o.logger.Info("auto-created DM channel", "channel_id", msg.ChannelID)
+			} else {
+				return
+			}
 		}
 	}
 
@@ -245,6 +263,7 @@ func (o *Orchestrator) resolveThread(ctx context.Context, channelID string) bool
 		GuildID:   parent.GuildID,
 		DirPath:   parent.DirPath,
 		ParentID:  parentID,
+		Platform:  parent.Platform,
 		SessionID: parent.SessionID,
 		Active:    true,
 	}); err != nil {
@@ -410,7 +429,7 @@ func (o *Orchestrator) buildAgentRequest(channelID string, recent []*db.Message,
 	}
 }
 
-// HandleInteraction processes a Discord slash command interaction.
+// HandleInteraction processes a slash command interaction.
 func (o *Orchestrator) HandleInteraction(ctx context.Context, interaction any) {
 	inter, ok := interaction.(*Interaction)
 	if !ok {

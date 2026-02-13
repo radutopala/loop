@@ -49,6 +49,15 @@ type ensureChannelResponse struct {
 	ChannelID string `json:"channel_id"`
 }
 
+type createChannelRequest struct {
+	Name     string `json:"name"`
+	AuthorID string `json:"author_id"`
+}
+
+type createChannelResponse struct {
+	ChannelID string `json:"channel_id"`
+}
+
 type createTaskRequest struct {
 	ChannelID string `json:"channel_id"`
 	Schedule  string `json:"schedule"`
@@ -106,6 +115,7 @@ func (s *Server) Start(addr string) error {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/channels", s.handleSearchChannels)
 	mux.HandleFunc("POST /api/channels", s.handleEnsureChannel)
+	mux.HandleFunc("POST /api/channels/create", s.handleCreateChannel)
 	mux.HandleFunc("POST /api/messages", s.handleSendMessage)
 	mux.HandleFunc("POST /api/threads", s.handleCreateThread)
 	mux.HandleFunc("DELETE /api/threads/{id}", s.handleDeleteThread)
@@ -253,7 +263,7 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
 	if s.channels == nil {
-		http.Error(w, "channel creation not configured (discord_guild_id not set)", http.StatusNotImplemented)
+		http.Error(w, "channel creation not configured (discord_guild_id not set or Slack not configured)", http.StatusNotImplemented)
 		return
 	}
 
@@ -276,6 +286,34 @@ func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 	_ = json.NewEncoder(w).Encode(ensureChannelResponse{ChannelID: channelID})
+}
+
+func (s *Server) handleCreateChannel(w http.ResponseWriter, r *http.Request) {
+	if s.channels == nil {
+		http.Error(w, "channel creation not configured (discord_guild_id not set or Slack not configured)", http.StatusNotImplemented)
+		return
+	}
+
+	var req createChannelRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Name == "" {
+		http.Error(w, "name is required", http.StatusBadRequest)
+		return
+	}
+
+	channelID, err := s.channels.CreateChannel(r.Context(), req.Name, req.AuthorID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusCreated)
+	_ = json.NewEncoder(w).Encode(createChannelResponse{ChannelID: channelID})
 }
 
 func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {

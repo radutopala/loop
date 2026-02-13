@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/types"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -28,8 +29,8 @@ func (m *MockStore) GetChannel(ctx context.Context, channelID string) (*db.Chann
 	return args.Get(0).(*db.Channel), args.Error(1)
 }
 
-func (m *MockStore) GetChannelByDirPath(ctx context.Context, dirPath string) (*db.Channel, error) {
-	args := m.Called(ctx, dirPath)
+func (m *MockStore) GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*db.Channel, error) {
+	args := m.Called(ctx, dirPath, platform)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -156,6 +157,10 @@ func (m *MockCreator) CreateChannel(ctx context.Context, guildID, name string) (
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockCreator) InviteUserToChannel(ctx context.Context, channelID, userID string) error {
+	return m.Called(ctx, channelID, userID).Error(0)
+}
+
 // --- Test Suite ---
 
 type ChannelServiceSuite struct {
@@ -174,11 +179,11 @@ func (s *ChannelServiceSuite) SetupTest() {
 	s.store = new(MockStore)
 	s.creator = new(MockCreator)
 	s.ctx = context.Background()
-	s.svc = NewChannelService(s.store, s.creator, "guild-1")
+	s.svc = NewChannelService(s.store, s.creator, "guild-1", types.PlatformDiscord)
 }
 
 func (s *ChannelServiceSuite) TestEnsureChannelExisting() {
-	s.store.On("GetChannelByDirPath", s.ctx, "/home/user/dev/loop").
+	s.store.On("GetChannelByDirPath", s.ctx, "/home/user/dev/loop", types.PlatformDiscord).
 		Return(&db.Channel{ChannelID: "existing-ch-1", DirPath: "/home/user/dev/loop"}, nil)
 
 	channelID, err := s.svc.EnsureChannel(s.ctx, "/home/user/dev/loop")
@@ -189,13 +194,14 @@ func (s *ChannelServiceSuite) TestEnsureChannelExisting() {
 }
 
 func (s *ChannelServiceSuite) TestEnsureChannelCreatesNew() {
-	s.store.On("GetChannelByDirPath", s.ctx, "/home/user/dev/loop").
+	s.store.On("GetChannelByDirPath", s.ctx, "/home/user/dev/loop", types.PlatformDiscord).
 		Return(nil, nil)
 	s.creator.On("CreateChannel", s.ctx, "guild-1", "loop").
 		Return("new-ch-1", nil)
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "new-ch-1" && ch.GuildID == "guild-1" &&
-			ch.Name == "loop" && ch.DirPath == "/home/user/dev/loop" && ch.Active
+			ch.Name == "loop" && ch.DirPath == "/home/user/dev/loop" &&
+			ch.Platform == types.PlatformDiscord && ch.Active
 	})).Return(nil)
 
 	channelID, err := s.svc.EnsureChannel(s.ctx, "/home/user/dev/loop")
@@ -206,7 +212,7 @@ func (s *ChannelServiceSuite) TestEnsureChannelCreatesNew() {
 }
 
 func (s *ChannelServiceSuite) TestEnsureChannelLookupError() {
-	s.store.On("GetChannelByDirPath", s.ctx, "/path").
+	s.store.On("GetChannelByDirPath", s.ctx, "/path", types.PlatformDiscord).
 		Return(nil, errors.New("db error"))
 
 	channelID, err := s.svc.EnsureChannel(s.ctx, "/path")
@@ -216,19 +222,19 @@ func (s *ChannelServiceSuite) TestEnsureChannelLookupError() {
 }
 
 func (s *ChannelServiceSuite) TestEnsureChannelCreatorError() {
-	s.store.On("GetChannelByDirPath", s.ctx, "/path").
+	s.store.On("GetChannelByDirPath", s.ctx, "/path", types.PlatformDiscord).
 		Return(nil, nil)
 	s.creator.On("CreateChannel", s.ctx, "guild-1", "path").
 		Return("", errors.New("discord error"))
 
 	channelID, err := s.svc.EnsureChannel(s.ctx, "/path")
 	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "creating discord channel")
+	require.Contains(s.T(), err.Error(), "creating channel")
 	require.Empty(s.T(), channelID)
 }
 
 func (s *ChannelServiceSuite) TestEnsureChannelUpsertError() {
-	s.store.On("GetChannelByDirPath", s.ctx, "/path").
+	s.store.On("GetChannelByDirPath", s.ctx, "/path", types.PlatformDiscord).
 		Return(nil, nil)
 	s.creator.On("CreateChannel", s.ctx, "guild-1", "path").
 		Return("ch-1", nil)
@@ -236,6 +242,71 @@ func (s *ChannelServiceSuite) TestEnsureChannelUpsertError() {
 		Return(errors.New("upsert error"))
 
 	channelID, err := s.svc.EnsureChannel(s.ctx, "/path")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "storing channel mapping")
+	require.Empty(s.T(), channelID)
+}
+
+func (s *ChannelServiceSuite) TestCreateChannelSuccess() {
+	s.creator.On("CreateChannel", s.ctx, "guild-1", "trial").
+		Return("new-ch-1", nil)
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "new-ch-1" && ch.GuildID == "guild-1" &&
+			ch.Name == "trial" && ch.DirPath == "" &&
+			ch.Platform == types.PlatformDiscord && ch.Active
+	})).Return(nil)
+
+	channelID, err := s.svc.CreateChannel(s.ctx, "trial", "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "new-ch-1", channelID)
+	s.store.AssertExpectations(s.T())
+	s.creator.AssertExpectations(s.T())
+}
+
+func (s *ChannelServiceSuite) TestCreateChannelWithAuthorInvite() {
+	s.creator.On("CreateChannel", s.ctx, "guild-1", "trial").
+		Return("new-ch-1", nil)
+	s.creator.On("InviteUserToChannel", s.ctx, "new-ch-1", "user-42").
+		Return(nil)
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "new-ch-1" && ch.Name == "trial"
+	})).Return(nil)
+
+	channelID, err := s.svc.CreateChannel(s.ctx, "trial", "user-42")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "new-ch-1", channelID)
+	s.creator.AssertExpectations(s.T())
+}
+
+func (s *ChannelServiceSuite) TestCreateChannelInviteError() {
+	s.creator.On("CreateChannel", s.ctx, "guild-1", "trial").
+		Return("new-ch-1", nil)
+	s.creator.On("InviteUserToChannel", s.ctx, "new-ch-1", "user-42").
+		Return(errors.New("invite failed"))
+
+	channelID, err := s.svc.CreateChannel(s.ctx, "trial", "user-42")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "inviting user to channel")
+	require.Empty(s.T(), channelID)
+}
+
+func (s *ChannelServiceSuite) TestCreateChannelCreatorError() {
+	s.creator.On("CreateChannel", s.ctx, "guild-1", "trial").
+		Return("", errors.New("platform error"))
+
+	channelID, err := s.svc.CreateChannel(s.ctx, "trial", "")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating channel")
+	require.Empty(s.T(), channelID)
+}
+
+func (s *ChannelServiceSuite) TestCreateChannelUpsertError() {
+	s.creator.On("CreateChannel", s.ctx, "guild-1", "trial").
+		Return("ch-1", nil)
+	s.store.On("UpsertChannel", s.ctx, mock.Anything).
+		Return(errors.New("upsert error"))
+
+	channelID, err := s.svc.CreateChannel(s.ctx, "trial", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "storing channel mapping")
 	require.Empty(s.T(), channelID)

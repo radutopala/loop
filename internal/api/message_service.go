@@ -6,7 +6,7 @@ import (
 	"github.com/radutopala/loop/internal/db"
 )
 
-// MessageSender can send messages to Discord channels or threads.
+// MessageSender can send messages to channels or threads.
 type MessageSender interface {
 	PostMessage(ctx context.Context, channelID, content string) error
 }

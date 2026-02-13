@@ -1,9 +1,16 @@
 {
-  // Required
+  // Required: "discord" or "slack"
+  "platform": "discord",
+
+  // Discord credentials (required when platform is "discord")
   "discord_token": "your-discord-bot-token-here",
   "discord_app_id": "your-discord-app-id-here",
   // Enables auto-creation of Discord channels via `loop mcp --dir`
   "discord_guild_id": "your-discord-guild-id-here",
+
+  // Slack credentials (required when platform is "slack")
+  //"slack_bot_token": "xoxb-your-slack-bot-token",
+  //"slack_app_token": "xapp-your-slack-app-token",
 
   //"log_file": "~/.loop/loop.log",
   //"log_level": "info",

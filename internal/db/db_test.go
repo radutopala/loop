@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/DATA-DOG/go-sqlmock"
+	"github.com/radutopala/loop/internal/types"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -47,7 +48,7 @@ func (s *StoreSuite) TestClose() {
 func (s *StoreSuite) TestUpsertChannel() {
 	ch := &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test-channel", Active: true}
 	s.mock.ExpectExec(`INSERT INTO channels`).
-		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", "", "", 1, sqlmock.AnyArg()).
+		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", "", "", "", 1, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err := s.store.UpsertChannel(context.Background(), ch)
@@ -58,7 +59,7 @@ func (s *StoreSuite) TestUpsertChannel() {
 func (s *StoreSuite) TestUpsertChannelWithDirPath() {
 	ch := &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test-channel", DirPath: "/home/user/project", Active: true}
 	s.mock.ExpectExec(`INSERT INTO channels`).
-		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, "", "", 1, sqlmock.AnyArg()).
+		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, "", "", "", 1, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err := s.store.UpsertChannel(context.Background(), ch)
@@ -69,7 +70,7 @@ func (s *StoreSuite) TestUpsertChannelWithDirPath() {
 func (s *StoreSuite) TestUpsertChannelWithParentID() {
 	ch := &Channel{ChannelID: "thread1", GuildID: "g1", Name: "", ParentID: "ch1", SessionID: "sess-parent", Active: true}
 	s.mock.ExpectExec(`INSERT INTO channels`).
-		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", "ch1", "sess-parent", 1, sqlmock.AnyArg()).
+		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", "ch1", "", "sess-parent", 1, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	err := s.store.UpsertChannel(context.Background(), ch)
@@ -79,8 +80,8 @@ func (s *StoreSuite) TestUpsertChannelWithParentID() {
 
 func (s *StoreSuite) TestGetChannelWithParentID() {
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "active", "session_id", "created_at", "updated_at"}).
-		AddRow(1, "thread1", "g1", "", "/project", "ch1", 1, "", now, now)
+	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "platform", "active", "session_id", "created_at", "updated_at"}).
+		AddRow(1, "thread1", "g1", "", "/project", "ch1", "", 1, "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).
 		WithArgs("thread1").
 		WillReturnRows(rows)
@@ -95,7 +96,7 @@ func (s *StoreSuite) TestGetChannelWithParentID() {
 func (s *StoreSuite) TestUpsertChannelError() {
 	ch := &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test-channel", Active: true}
 	s.mock.ExpectExec(`INSERT INTO channels`).
-		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", "", "", 1, sqlmock.AnyArg()).
+		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", "", "", "", 1, sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
 
 	err := s.store.UpsertChannel(context.Background(), ch)
@@ -104,8 +105,8 @@ func (s *StoreSuite) TestUpsertChannelError() {
 
 func (s *StoreSuite) TestGetChannel() {
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "active", "session_id", "created_at", "updated_at"}).
-		AddRow(1, "ch1", "g1", "test", "/home/user/project", "", 1, "sess-123", now, now)
+	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "platform", "active", "session_id", "created_at", "updated_at"}).
+		AddRow(1, "ch1", "g1", "test", "/home/user/project", "", "discord", 1, "sess-123", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).
 		WithArgs("ch1").
 		WillReturnRows(rows)
@@ -144,13 +145,13 @@ func (s *StoreSuite) TestGetChannelError() {
 
 func (s *StoreSuite) TestGetChannelByDirPath() {
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "active", "session_id", "created_at", "updated_at"}).
-		AddRow(1, "ch1", "g1", "loop", "/home/user/dev/loop", "", 1, "", now, now)
+	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "platform", "active", "session_id", "created_at", "updated_at"}).
+		AddRow(1, "ch1", "g1", "loop", "/home/user/dev/loop", "", "discord", 1, "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
-		WithArgs("/home/user/dev/loop").
+		WithArgs("/home/user/dev/loop", types.PlatformDiscord).
 		WillReturnRows(rows)
 
-	ch, err := s.store.GetChannelByDirPath(context.Background(), "/home/user/dev/loop")
+	ch, err := s.store.GetChannelByDirPath(context.Background(), "/home/user/dev/loop", types.PlatformDiscord)
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), ch)
 	require.Equal(s.T(), "ch1", ch.ChannelID)
@@ -160,20 +161,20 @@ func (s *StoreSuite) TestGetChannelByDirPath() {
 
 func (s *StoreSuite) TestGetChannelByDirPathNotFound() {
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
-		WithArgs("/nonexistent").
+		WithArgs("/nonexistent", types.PlatformSlack).
 		WillReturnError(sql.ErrNoRows)
 
-	ch, err := s.store.GetChannelByDirPath(context.Background(), "/nonexistent")
+	ch, err := s.store.GetChannelByDirPath(context.Background(), "/nonexistent", types.PlatformSlack)
 	require.NoError(s.T(), err)
 	require.Nil(s.T(), ch)
 }
 
 func (s *StoreSuite) TestGetChannelByDirPathError() {
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
-		WithArgs("/some/path").
+		WithArgs("/some/path", types.PlatformDiscord).
 		WillReturnError(sql.ErrConnDone)
 
-	ch, err := s.store.GetChannelByDirPath(context.Background(), "/some/path")
+	ch, err := s.store.GetChannelByDirPath(context.Background(), "/some/path", types.PlatformDiscord)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), ch)
 }
@@ -300,9 +301,9 @@ func (s *StoreSuite) TestDeleteChannelsByParentIDError() {
 
 func (s *StoreSuite) TestListChannels() {
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "active", "session_id", "created_at", "updated_at"}).
-		AddRow(1, "ch1", "g1", "alpha", "/home/user/alpha", "", 1, "sess-1", now, now).
-		AddRow(2, "ch2", "g1", "beta", "/home/user/beta", "ch1", 0, "sess-2", now, now)
+	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "platform", "active", "session_id", "created_at", "updated_at"}).
+		AddRow(1, "ch1", "g1", "alpha", "/home/user/alpha", "", "discord", 1, "sess-1", now, now).
+		AddRow(2, "ch2", "g1", "beta", "/home/user/beta", "ch1", "discord", 0, "sess-2", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).
 		WillReturnRows(rows)
 
@@ -323,7 +324,7 @@ func (s *StoreSuite) TestListChannels() {
 }
 
 func (s *StoreSuite) TestListChannelsEmpty() {
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "active", "session_id", "created_at", "updated_at"})
+	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "platform", "active", "session_id", "created_at", "updated_at"})
 	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).
 		WillReturnRows(rows)
 
@@ -343,8 +344,8 @@ func (s *StoreSuite) TestListChannelsError() {
 }
 
 func (s *StoreSuite) TestListChannelsScanError() {
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "active", "session_id", "created_at", "updated_at"}).
-		AddRow("not-an-int", "ch1", "g1", "test", "/home/user/project", "", 1, "sess-1", time.Now().UTC(), time.Now().UTC())
+	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "platform", "active", "session_id", "created_at", "updated_at"}).
+		AddRow("not-an-int", "ch1", "g1", "test", "/home/user/project", "", "", 1, "sess-1", time.Now().UTC(), time.Now().UTC())
 	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).
 		WillReturnRows(rows)
 

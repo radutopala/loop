@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/types"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -40,18 +41,18 @@ func (s *ThreadServiceSuite) SetupTest() {
 	s.store = new(MockStore)
 	s.creator = new(MockThreadCreator)
 	s.ctx = context.Background()
-	s.svc = NewThreadService(s.store, s.creator)
+	s.svc = NewThreadService(s.store, s.creator, types.PlatformDiscord)
 }
 
 func (s *ThreadServiceSuite) TestCreateThreadSuccess() {
 	s.store.On("GetChannel", s.ctx, "ch-1").
-		Return(&db.Channel{ChannelID: "ch-1", GuildID: "guild-1", DirPath: "/work", SessionID: "sess-1"}, nil)
+		Return(&db.Channel{ChannelID: "ch-1", GuildID: "guild-1", DirPath: "/work", Platform: types.PlatformDiscord, SessionID: "sess-1"}, nil)
 	s.creator.On("CreateThread", s.ctx, "ch-1", "my-thread", "user-42", "").
 		Return("thread-1", nil)
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "thread-1" && ch.GuildID == "guild-1" &&
 			ch.Name == "my-thread" && ch.ParentID == "ch-1" &&
-			ch.DirPath == "/work" && ch.SessionID == "sess-1" && ch.Active
+			ch.DirPath == "/work" && ch.Platform == types.PlatformDiscord && ch.SessionID == "sess-1" && ch.Active
 	})).Return(nil)
 
 	threadID, err := s.svc.CreateThread(s.ctx, "ch-1", "my-thread", "user-42", "")
@@ -106,7 +107,7 @@ func (s *ThreadServiceSuite) TestCreateThreadDiscordError() {
 
 	threadID, err := s.svc.CreateThread(s.ctx, "ch-1", "my-thread", "", "")
 	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "creating discord thread")
+	require.Contains(s.T(), err.Error(), "creating thread")
 	require.Empty(s.T(), threadID)
 }
 
@@ -172,7 +173,7 @@ func (s *ThreadServiceSuite) TestDeleteThreadDiscordError() {
 
 	err := s.svc.DeleteThread(s.ctx, "thread-1")
 	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "deleting discord thread")
+	require.Contains(s.T(), err.Error(), "deleting thread")
 }
 
 func (s *ThreadServiceSuite) TestDeleteThreadDBError() {

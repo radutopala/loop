@@ -39,6 +39,7 @@ type DiscordSession interface {
 	ThreadStart(channelID string, name string, typ discordgo.ChannelType, archiveDuration int, options ...discordgo.RequestOption) (*discordgo.Channel, error)
 	ThreadJoin(id string, options ...discordgo.RequestOption) error
 	ChannelDelete(channelID string, options ...discordgo.RequestOption) (*discordgo.Channel, error)
+	GuildChannels(guildID string, options ...discordgo.RequestOption) ([]*discordgo.Channel, error)
 }
 
 // Bot defines the interface for a Discord bot.
@@ -253,14 +254,32 @@ func (b *DiscordBot) OnChannelDelete(handler ChannelDeleteHandler) {
 	b.channelDeleteHandlers = append(b.channelDeleteHandlers, handler)
 }
 
-// CreateChannel creates a new text channel in the given guild.
+// CreateChannel creates a new text channel in the given guild. If a text
+// channel with the same name already exists, it returns the existing channel's ID.
 func (b *DiscordBot) CreateChannel(ctx context.Context, guildID, name string) (string, error) {
+	// Check if a channel with this name already exists.
+	channels, err := b.session.GuildChannels(guildID)
+	if err != nil {
+		return "", fmt.Errorf("discord list channels: %w", err)
+	}
+	for _, ch := range channels {
+		if ch.Name == name && ch.Type == discordgo.ChannelTypeGuildText {
+			b.logger.InfoContext(ctx, "found existing discord channel", "channel_id", ch.ID, "name", name, "guild_id", guildID)
+			return ch.ID, nil
+		}
+	}
+
 	ch, err := b.session.GuildChannelCreate(guildID, name, discordgo.ChannelTypeGuildText)
 	if err != nil {
 		return "", fmt.Errorf("discord create channel: %w", err)
 	}
 	b.logger.InfoContext(ctx, "created discord channel", "channel_id", ch.ID, "name", name, "guild_id", guildID)
 	return ch.ID, nil
+}
+
+// InviteUserToChannel is a no-op for Discord since channels are visible to all guild members.
+func (b *DiscordBot) InviteUserToChannel(_ context.Context, _, _ string) error {
+	return nil
 }
 
 // GetChannelParentID returns the parent channel ID for a thread, or empty string if not a thread.

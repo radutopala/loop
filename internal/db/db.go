@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/radutopala/loop/internal/types"
 	_ "modernc.org/sqlite"
 )
 
@@ -13,7 +14,7 @@ import (
 type Store interface {
 	UpsertChannel(ctx context.Context, ch *Channel) error
 	GetChannel(ctx context.Context, channelID string) (*Channel, error)
-	GetChannelByDirPath(ctx context.Context, dirPath string) (*Channel, error)
+	GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*Channel, error)
 	IsChannelActive(ctx context.Context, channelID string) (bool, error)
 	UpdateSessionID(ctx context.Context, channelID string, sessionID string) error
 	DeleteChannel(ctx context.Context, channelID string) error
@@ -87,17 +88,18 @@ func (s *SQLiteStore) Close() error {
 
 func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO channels (channel_id, guild_id, name, dir_path, parent_id, session_id, active, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO channels (channel_id, guild_id, name, dir_path, parent_id, platform, session_id, active, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(channel_id) DO UPDATE SET
 		   guild_id = excluded.guild_id,
 		   name = excluded.name,
 		   dir_path = excluded.dir_path,
 		   parent_id = excluded.parent_id,
+		   platform = CASE WHEN excluded.platform != '' THEN excluded.platform ELSE channels.platform END,
 		   session_id = CASE WHEN excluded.session_id != '' THEN excluded.session_id ELSE channels.session_id END,
 		   active = excluded.active,
 		   updated_at = excluded.updated_at`,
-		ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, ch.ParentID, ch.SessionID, boolToInt(ch.Active), time.Now().UTC(),
+		ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, ch.ParentID, ch.Platform, ch.SessionID, boolToInt(ch.Active), time.Now().UTC(),
 	)
 	return err
 }
@@ -106,9 +108,9 @@ func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channe
 	ch := &Channel{}
 	var active int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, active, session_id, created_at, updated_at FROM channels WHERE channel_id = ?`,
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, created_at, updated_at FROM channels WHERE channel_id = ?`,
 		channelID,
-	).Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &ch.ParentID, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt)
+	).Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &ch.ParentID, &ch.Platform, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -119,13 +121,13 @@ func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channe
 	return ch, nil
 }
 
-func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string) (*Channel, error) {
+func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*Channel, error) {
 	ch := &Channel{}
 	var active int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, active, session_id, created_at, updated_at FROM channels WHERE dir_path = ?`,
-		dirPath,
-	).Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &ch.ParentID, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt)
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, created_at, updated_at FROM channels WHERE dir_path = ? AND platform = ?`,
+		dirPath, platform,
+	).Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &ch.ParentID, &ch.Platform, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -177,7 +179,7 @@ func (s *SQLiteStore) DeleteChannelsByParentID(ctx context.Context, parentID str
 
 func (s *SQLiteStore) ListChannels(ctx context.Context) ([]*Channel, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, active, session_id, created_at, updated_at
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, created_at, updated_at
 		 FROM channels ORDER BY name ASC`)
 	if err != nil {
 		return nil, err
@@ -189,7 +191,7 @@ func (s *SQLiteStore) ListChannels(ctx context.Context) ([]*Channel, error) {
 		ch := &Channel{}
 		var active int
 		if err := rows.Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath,
-			&ch.ParentID, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
+			&ch.ParentID, &ch.Platform, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
 			return nil, err
 		}
 		ch.Active = active == 1

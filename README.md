@@ -54,7 +54,7 @@ A Discord bot powered by Claude that runs AI agents in Docker containers.
 
 - macOS (recommended) or Linux
 - [Docker Desktop](https://docs.docker.com/desktop/) (macOS) or [Docker Engine](https://docs.docker.com/engine/install/) (Linux)
-- A Discord bot token and application ID ([create one](https://discord.com/developers/applications))
+- A **Discord** bot token and application ID, or a **Slack** bot token and app token
 - An Anthropic API key or Claude Code OAuth token (for agent containers)
 
 > **Note:** `loop daemon:start/stop/status` use launchd (macOS-only). On Linux, use `loop serve` directly.
@@ -71,7 +71,12 @@ brew install radutopala/tap/loop
 go install github.com/radutopala/loop/cmd/loop@latest
 ```
 
-### Step 2: Create a Discord bot
+### Step 2: Create a bot
+
+Choose **Discord** or **Slack**:
+
+<details>
+<summary><strong>Discord</strong></summary>
 
 1. Go to https://discord.com/developers/applications and create a new application
 2. Under **Bot**, copy the **Bot Token**
@@ -85,6 +90,19 @@ go install github.com/radutopala/loop/cmd/loop@latest
 
    This grants: View Channels, Send Messages, Read Message History, Manage Channels, Manage Threads, Send Messages in Threads, Create Public Threads, Create Private Threads.
 
+</details>
+
+<details>
+<summary><strong>Slack</strong></summary>
+
+1. Go to https://api.slack.com/apps → **Create New App** → **From a manifest**
+2. Select your workspace, choose **JSON**, and paste the contents of `~/.loop/slack-manifest.json` (created by `loop onboard:global`)
+3. Click **Create**
+4. Go to **Socket Mode** → generate an app-level token with `connections:write` scope → copy the token (starts with `xapp-`)
+5. Go to **Install App** → install to workspace → copy the **Bot User OAuth Token** (starts with `xoxb-`)
+
+</details>
+
 ### Step 3: Initialize global config
 
 ```sh
@@ -93,6 +111,7 @@ loop onboard:global
 
 This creates:
 - `~/.loop/config.json` — main configuration file
+- `~/.loop/slack-manifest.json` — Slack app manifest (for creating a Slack app)
 - `~/.loop/.bashrc` — shell aliases sourced inside containers
 - `~/.loop/templates/` — directory for prompt template files (used by `prompt_path`)
 - `~/.loop/container/Dockerfile` — agent container image definition
@@ -101,16 +120,22 @@ This creates:
 
 ### Step 4: Add your credentials
 
-Edit `~/.loop/config.json` and fill in the required fields:
+Edit `~/.loop/config.json` and fill in the required fields for your platform:
 
 ```jsonc
+// Discord:
 {
-  // Required
+  "platform": "discord",
   "discord_token": "your-bot-token-from-step-2",
   "discord_app_id": "your-app-id-from-step-2",
+  "discord_guild_id": "your-discord-guild-id" // optional, enables auto-channel creation
+}
 
-  // Optional — enables auto-creation of Discord channels via `loop mcp --dir`
-  "discord_guild_id": "your-discord-guild-id"
+// Slack:
+{
+  "platform": "slack",
+  "slack_bot_token": "xoxb-your-bot-token",
+  "slack_app_token": "xapp-your-app-token"
 }
 ```
 
@@ -150,9 +175,12 @@ This does four things:
 
 | Field | Default | Description |
 |---|---|---|
-| `discord_token` | **(required)** | Discord bot token |
-| `discord_app_id` | **(required)** | Discord application ID |
+| `platform` | **(required)** | Chat platform: `"discord"` or `"slack"` |
+| `discord_token` | | Discord bot token (required for Discord) |
+| `discord_app_id` | | Discord application ID (required for Discord) |
 | `discord_guild_id` | `""` | Guild ID for auto-creating Discord channels |
+| `slack_bot_token` | | Slack bot token (required for Slack) |
+| `slack_app_token` | | Slack app-level token (required for Slack) |
 | `log_file` | `"~/.loop/loop.log"` | Daemon log file path |
 | `log_level` | `"info"` | Log level (`debug`, `info`, `warn`, `error`) |
 | `log_format` | `"text"` | Log format (`text`, `json`) |
@@ -236,7 +264,7 @@ For development: `make docker-build` builds from `container/Dockerfile` in the r
 
 | Command | Aliases | Description |
 |---|---|---|
-| `loop serve` | `s` | Start the Discord bot |
+| `loop serve` | `s` | Start the bot (Discord or Slack) |
 | `loop mcp` | `m` | Run as an MCP server over stdio |
 | `loop onboard:global` | `o:global`, `setup` | Initialize global Loop configuration (~/.loop/config.json) |
 | `loop onboard:local` | `o:local`, `init` | Register Loop MCP server in current project (.mcp.json) |

@@ -146,6 +146,14 @@ func (m *MockSession) ChannelDelete(channelID string, options ...discordgo.Reque
 	return args.Get(0).(*discordgo.Channel), args.Error(1)
 }
 
+func (m *MockSession) GuildChannels(guildID string, options ...discordgo.RequestOption) ([]*discordgo.Channel, error) {
+	args := m.Called(guildID, options)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*discordgo.Channel), args.Error(1)
+}
+
 // --- Test Suite ---
 
 type BotSuite struct {
@@ -1421,6 +1429,8 @@ func (s *BotSuite) TestSendMessageWithPendingInteractionFollowupError() {
 // --- CreateChannel ---
 
 func (s *BotSuite) TestCreateChannelSuccess() {
+	s.session.On("GuildChannels", "g-1", mock.Anything).
+		Return([]*discordgo.Channel{}, nil)
 	s.session.On("GuildChannelCreate", "g-1", "loop", discordgo.ChannelTypeGuildText, mock.Anything).
 		Return(&discordgo.Channel{ID: "new-ch-1"}, nil)
 
@@ -1431,6 +1441,8 @@ func (s *BotSuite) TestCreateChannelSuccess() {
 }
 
 func (s *BotSuite) TestCreateChannelError() {
+	s.session.On("GuildChannels", "g-1", mock.Anything).
+		Return([]*discordgo.Channel{}, nil)
 	s.session.On("GuildChannelCreate", "g-1", "loop", discordgo.ChannelTypeGuildText, mock.Anything).
 		Return(nil, errors.New("create failed"))
 
@@ -1438,6 +1450,49 @@ func (s *BotSuite) TestCreateChannelError() {
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "discord create channel")
 	require.Empty(s.T(), channelID)
+}
+
+func (s *BotSuite) TestCreateChannelExisting() {
+	s.session.On("GuildChannels", "g-1", mock.Anything).
+		Return([]*discordgo.Channel{
+			{ID: "ch-other", Name: "other", Type: discordgo.ChannelTypeGuildText},
+			{ID: "ch-loop", Name: "loop", Type: discordgo.ChannelTypeGuildText},
+		}, nil)
+
+	channelID, err := s.bot.CreateChannel(context.Background(), "g-1", "loop")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ch-loop", channelID)
+	s.session.AssertNotCalled(s.T(), "GuildChannelCreate")
+}
+
+func (s *BotSuite) TestCreateChannelExistingWrongType() {
+	// A voice channel with the same name should not match.
+	s.session.On("GuildChannels", "g-1", mock.Anything).
+		Return([]*discordgo.Channel{
+			{ID: "ch-voice", Name: "loop", Type: discordgo.ChannelTypeGuildVoice},
+		}, nil)
+	s.session.On("GuildChannelCreate", "g-1", "loop", discordgo.ChannelTypeGuildText, mock.Anything).
+		Return(&discordgo.Channel{ID: "new-ch-1"}, nil)
+
+	channelID, err := s.bot.CreateChannel(context.Background(), "g-1", "loop")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "new-ch-1", channelID)
+}
+
+func (s *BotSuite) TestCreateChannelListError() {
+	s.session.On("GuildChannels", "g-1", mock.Anything).
+		Return(nil, errors.New("list failed"))
+
+	_, err := s.bot.CreateChannel(context.Background(), "g-1", "loop")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "discord list channels")
+}
+
+// --- InviteUserToChannel ---
+
+func (s *BotSuite) TestInviteUserToChannelNoOp() {
+	err := s.bot.InviteUserToChannel(context.Background(), "ch-1", "user-1")
+	require.NoError(s.T(), err)
 }
 
 // --- CreateThread ---

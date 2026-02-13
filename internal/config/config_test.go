@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/radutopala/loop/internal/types"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
@@ -34,7 +35,7 @@ func (s *ConfigSuite) TearDownTest() {
 }
 
 func (s *ConfigSuite) minimalJSON() []byte {
-	return []byte(`{"discord_token":"test-token","discord_app_id":"test-app-id"}`)
+	return []byte(`{"platform":"discord","discord_token":"test-token","discord_app_id":"test-app-id"}`)
 }
 
 func (s *ConfigSuite) TestLoadDefaults() {
@@ -67,6 +68,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 func (s *ConfigSuite) TestLoadCustomValues() {
 	readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
+			"platform": "discord",
 			"discord_token": "custom-token",
 			"discord_app_id": "custom-app-id",
 			"claude_code_oauth_token": "sk-oauth",
@@ -110,17 +112,37 @@ func (s *ConfigSuite) TestMissingRequired() {
 	tests := []struct {
 		name    string
 		json    string
-		missing string
+		errText string
 	}{
 		{
-			name:    "missing all",
+			name:    "missing platform",
 			json:    `{}`,
-			missing: "discord_token",
+			errText: "\"platform\" must be set",
 		},
 		{
-			name:    "missing discord_app_id",
-			json:    `{"discord_token":"tok"}`,
-			missing: "discord_app_id",
+			name:    "discord missing token",
+			json:    `{"platform":"discord"}`,
+			errText: "requires discord_token and discord_app_id",
+		},
+		{
+			name:    "discord partial",
+			json:    `{"platform":"discord","discord_token":"tok"}`,
+			errText: "requires discord_token and discord_app_id",
+		},
+		{
+			name:    "slack missing tokens",
+			json:    `{"platform":"slack"}`,
+			errText: "requires slack_bot_token and slack_app_token",
+		},
+		{
+			name:    "slack partial",
+			json:    `{"platform":"slack","slack_bot_token":"xoxb-tok"}`,
+			errText: "requires slack_bot_token and slack_app_token",
+		},
+		{
+			name:    "unsupported platform",
+			json:    `{"platform":"teams"}`,
+			errText: "unsupported platform",
 		},
 	}
 
@@ -131,9 +153,60 @@ func (s *ConfigSuite) TestMissingRequired() {
 			}
 			_, err := Load()
 			require.Error(s.T(), err)
-			require.Contains(s.T(), err.Error(), tc.missing)
+			require.Contains(s.T(), err.Error(), tc.errText)
 		})
 	}
+}
+
+func (s *ConfigSuite) TestPlatformCaseInsensitive() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platform": "Discord",
+			"discord_token": "tok",
+			"discord_app_id": "app"
+		}`), nil
+	}
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), types.PlatformDiscord, cfg.Platform())
+}
+
+func (s *ConfigSuite) TestSlackConfigLoads() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platform": "slack",
+			"slack_bot_token": "xoxb-test-token",
+			"slack_app_token": "xapp-test-token"
+		}`), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "xoxb-test-token", cfg.SlackBotToken)
+	require.Equal(s.T(), "xapp-test-token", cfg.SlackAppToken)
+	require.Empty(s.T(), cfg.DiscordToken)
+	require.Empty(s.T(), cfg.DiscordAppID)
+	require.Equal(s.T(), types.PlatformSlack, cfg.Platform())
+}
+
+func (s *ConfigSuite) TestPlatformDiscord() {
+	readFile = func(_ string) ([]byte, error) {
+		return s.minimalJSON(), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), types.PlatformDiscord, cfg.Platform())
+}
+
+func (s *ConfigSuite) TestPlatformSlack() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{"platform":"slack","slack_bot_token":"xoxb-tok","slack_app_token":"xapp-tok"}`), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), types.PlatformSlack, cfg.Platform())
 }
 
 func (s *ConfigSuite) TestFileNotFound() {
@@ -184,6 +257,7 @@ func (s *ConfigSuite) TestHomeDirError() {
 func (s *ConfigSuite) TestMCPServersLoaded() {
 	readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
+			"platform": "discord",
 			"discord_token": "tok",
 			"discord_app_id": "app",
 			"mcp": {
@@ -210,6 +284,7 @@ func (s *ConfigSuite) TestMCPServersLoaded() {
 func (s *ConfigSuite) TestMCPServersEmptyBlock() {
 	readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
+			"platform": "discord",
 			"discord_token": "tok",
 			"discord_app_id": "app",
 			"mcp": {"servers": {}}
@@ -224,6 +299,7 @@ func (s *ConfigSuite) TestMCPServersEmptyBlock() {
 func (s *ConfigSuite) TestZeroNumericValues() {
 	readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
+			"platform": "discord",
 			"discord_token": "tok",
 			"discord_app_id": "app",
 			"container_timeout_sec": 0,
@@ -247,6 +323,7 @@ func (s *ConfigSuite) TestJSONWithComments() {
 	readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			// Required credentials
+			"platform": "discord",
 			"discord_token": "tok",
 			"discord_app_id": "app",
 			/* Optional settings */
@@ -285,6 +362,7 @@ func (s *ConfigSuite) TestDefaultReadFile() {
 func (s *ConfigSuite) TestTaskTemplatesLoaded() {
 	readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
+			"platform": "discord",
 			"discord_token": "tok",
 			"discord_app_id": "app",
 			"task_templates": [
@@ -338,6 +416,7 @@ func (s *ConfigSuite) TestTaskTemplatesAbsent() {
 func (s *ConfigSuite) TestTaskTemplatesEmpty() {
 	readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
+			"platform": "discord",
 			"discord_token": "tok",
 			"discord_app_id": "app",
 			"task_templates": []
@@ -352,6 +431,7 @@ func (s *ConfigSuite) TestTaskTemplatesEmpty() {
 func (s *ConfigSuite) TestExampleConfigEmbedded() {
 	// Verify the embedded ExampleConfig is not empty
 	require.NotEmpty(s.T(), ExampleConfig)
+	require.Contains(s.T(), string(ExampleConfig), "platform")
 	require.Contains(s.T(), string(ExampleConfig), "discord_token")
 	require.Contains(s.T(), string(ExampleConfig), "task_templates")
 }
@@ -633,6 +713,7 @@ func (s *ConfigSuite) TestSetReadFile() {
 func (s *ConfigSuite) TestClaudeModelLoaded() {
 	readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
+			"platform": "discord",
 			"discord_token": "tok",
 			"discord_app_id": "app",
 			"claude_model": "claude-sonnet-4-5-20250929"
@@ -867,6 +948,7 @@ func (s *ConfigSuite) TestLoadProjectConfigNamedVolumes() {
 func (s *ConfigSuite) TestLoadEnvsFromGlobal() {
 	readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
+			"platform": "discord",
 			"discord_token": "tok",
 			"discord_app_id": "app",
 			"envs": {"MY_VAR": "my-value", "NUM_VAR": 0, "BOOL_VAR": true}

@@ -13,6 +13,7 @@ import (
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/types"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -37,8 +38,8 @@ func (m *MockStore) GetChannel(ctx context.Context, channelID string) (*db.Chann
 	return args.Get(0).(*db.Channel), args.Error(1)
 }
 
-func (m *MockStore) GetChannelByDirPath(ctx context.Context, dirPath string) (*db.Channel, error) {
-	args := m.Called(ctx, dirPath)
+func (m *MockStore) GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*db.Channel, error) {
+	args := m.Called(ctx, dirPath, platform)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -221,6 +222,10 @@ func (m *MockBot) CreateChannel(ctx context.Context, guildID, name string) (stri
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockBot) InviteUserToChannel(ctx context.Context, channelID, userID string) error {
+	return m.Called(ctx, channelID, userID).Error(0)
+}
+
 func (m *MockBot) CreateThread(ctx context.Context, channelID, name, mentionUserID, message string) (string, error) {
 	args := m.Called(ctx, channelID, name, mentionUserID, message)
 	return args.String(0), args.Error(1)
@@ -325,7 +330,7 @@ func (s *OrchestratorSuite) SetupTest() {
 	s.ctx = context.Background()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, nil, 5*time.Minute, "")
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, nil, 5*time.Minute, "", types.PlatformDiscord)
 }
 
 func (s *OrchestratorSuite) TestNew() {
@@ -443,11 +448,11 @@ func (s *OrchestratorSuite) TestHandleMessageThreadResolved() {
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 	// Get parent channel for inheritance
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
-		ID: 1, ChannelID: "ch1", GuildID: "g1", DirPath: "/project", SessionID: "sess-parent", Active: true,
+		ID: 1, ChannelID: "ch1", GuildID: "g1", DirPath: "/project", Platform: types.PlatformDiscord, SessionID: "sess-parent", Active: true,
 	}, nil)
-	// Upsert thread channel with dir_path and session_id inherited from parent
+	// Upsert thread channel with dir_path, platform, and session_id inherited from parent
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
-		return ch.ChannelID == "thread1" && ch.ParentID == "ch1" && ch.GuildID == "g1" && ch.DirPath == "/project" && ch.SessionID == "sess-parent" && ch.Active
+		return ch.ChannelID == "thread1" && ch.ParentID == "ch1" && ch.GuildID == "g1" && ch.DirPath == "/project" && ch.Platform == "discord" && ch.SessionID == "sess-parent" && ch.Active
 	})).Return(nil)
 	// Now the thread is a channel — normal flow continues
 	s.store.On("GetChannel", s.ctx, "thread1").Return(&db.Channel{
@@ -576,6 +581,82 @@ func (s *OrchestratorSuite) TestHandleMessageThreadUpsertError() {
 
 	// Should not proceed to GetChannel for thread
 	s.store.AssertNotCalled(s.T(), "InsertMessage", mock.Anything, mock.Anything)
+}
+
+func (s *OrchestratorSuite) TestHandleMessageDMAutoCreatesChannel() {
+	msg := &IncomingMessage{
+		ChannelID:  "dm-ch1",
+		GuildID:    "",
+		AuthorID:   "user1",
+		AuthorName: "Alice",
+		Content:    "hello",
+		MessageID:  "msg1",
+		IsDM:       true,
+		Timestamp:  time.Now().UTC(),
+	}
+
+	// Channel is not active
+	s.store.On("IsChannelActive", s.ctx, "dm-ch1").Return(false, nil)
+	// Not a thread
+	s.bot.On("GetChannelParentID", s.ctx, "dm-ch1").Return("", nil)
+	// Auto-create DM channel
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "dm-ch1" && ch.Name == "DM" && ch.Platform == "discord" && ch.Active
+	})).Return(nil)
+	// Normal flow continues
+	s.store.On("GetChannel", s.ctx, "dm-ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "dm-ch1", Active: true, Platform: types.PlatformDiscord,
+	}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "dm-ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "dm-ch1", 50).Return([]*db.Message{}, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
+		Response:  "Hello from DM!",
+		SessionID: "sess-dm",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "dm-ch1", "sess-dm").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.ChannelID == "dm-ch1" && out.Content == "Hello from DM!"
+	})).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleMessageDMAutoCreateFails() {
+	msg := &IncomingMessage{
+		ChannelID: "dm-ch1",
+		GuildID:   "",
+		Content:   "hello",
+		IsDM:      true,
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "dm-ch1").Return(false, nil)
+	s.bot.On("GetChannelParentID", s.ctx, "dm-ch1").Return("", nil)
+	s.store.On("UpsertChannel", s.ctx, mock.Anything).Return(errors.New("upsert error"))
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	// Should not proceed
+	s.store.AssertNotCalled(s.T(), "GetChannel", mock.Anything, mock.Anything)
+}
+
+func (s *OrchestratorSuite) TestHandleMessageNonDMUnregisteredChannelDropped() {
+	// Non-DM message to an unregistered channel (not a thread either) should be dropped
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(false, nil)
+	s.bot.On("GetChannelParentID", s.ctx, "ch1").Return("", nil)
+
+	s.orch.HandleMessage(s.ctx, &IncomingMessage{
+		ChannelID: "ch1",
+		Content:   "hello",
+		// IsDM is false
+	})
+
+	s.store.AssertNotCalled(s.T(), "UpsertChannel", mock.Anything, mock.Anything)
+	s.store.AssertNotCalled(s.T(), "GetChannel", mock.Anything, mock.Anything)
 }
 
 func (s *OrchestratorSuite) TestHandleMessageIsChannelActiveError() {
@@ -1448,7 +1529,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSuccess() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "")
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord)
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
@@ -1475,7 +1556,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddIdempotent() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "")
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord)
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(&db.ScheduledTask{ID: 5, TemplateName: "daily-check"}, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
@@ -1511,7 +1592,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddStoreError() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "")
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord)
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, errors.New("db error"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
@@ -1533,7 +1614,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSchedulerError() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "")
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord)
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.Anything).Return(int64(0), errors.New("sched error"))
@@ -1557,7 +1638,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateList() {
 		{Name: "weekly-report", Description: "Weekly report", Schedule: "0 17 * * 5", Type: "cron", Prompt: "generate report"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "")
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord)
 
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return strings.Contains(out.Content, "Available templates:") &&
@@ -1602,7 +1683,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddWithPromptPath() {
 		{Name: "daily-from-file", Description: "Daily from file", Schedule: "0 9 * * *", Type: "cron", PromptPath: "daily.md"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, tmpDir)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, tmpDir, types.PlatformDiscord)
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-from-file").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
@@ -1630,7 +1711,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddResolvePromptError()
 		// Neither prompt nor prompt_path set
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "")
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord)
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "bad-template").Return(nil, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {

@@ -23,6 +23,7 @@ import (
 	"github.com/radutopala/loop/internal/mcpserver"
 	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/scheduler"
+	"github.com/radutopala/loop/internal/types"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -46,8 +47,8 @@ func (m *mockStore) GetChannel(ctx context.Context, channelID string) (*db.Chann
 	return args.Get(0).(*db.Channel), args.Error(1)
 }
 
-func (m *mockStore) GetChannelByDirPath(ctx context.Context, dirPath string) (*db.Channel, error) {
-	args := m.Called(ctx, dirPath)
+func (m *mockStore) GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*db.Channel, error) {
+	args := m.Called(ctx, dirPath, platform)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -269,6 +270,10 @@ func (m *mockBot) CreateChannel(ctx context.Context, guildID, name string) (stri
 	return args.String(0), args.Error(1)
 }
 
+func (m *mockBot) InviteUserToChannel(ctx context.Context, channelID, userID string) error {
+	return m.Called(ctx, channelID, userID).Error(0)
+}
+
 func (m *mockBot) CreateThread(ctx context.Context, channelID, name, mentionUserID, message string) (string, error) {
 	args := m.Called(ctx, channelID, name, mentionUserID, message)
 	return args.String(0), args.Error(1)
@@ -314,6 +319,7 @@ type MainSuite struct {
 	suite.Suite
 	origConfigLoad        func() (*config.Config, error)
 	origNewDiscordBot     func(string, string, *slog.Logger) (orchestrator.Bot, error)
+	origNewSlackBot       func(string, string, *slog.Logger) (orchestrator.Bot, error)
 	origNewDockerClient   func() (container.DockerClient, error)
 	origNewSQLiteStore    func(string) (db.Store, error)
 	origOsExit            func(int)
@@ -340,6 +346,7 @@ func TestMainSuite(t *testing.T) {
 func (s *MainSuite) SetupTest() {
 	s.origConfigLoad = configLoad
 	s.origNewDiscordBot = newDiscordBot
+	s.origNewSlackBot = newSlackBot
 	s.origNewDockerClient = newDockerClient
 	s.origNewSQLiteStore = newSQLiteStore
 	s.origOsExit = osExit
@@ -362,6 +369,7 @@ func (s *MainSuite) SetupTest() {
 func (s *MainSuite) TearDownTest() {
 	configLoad = s.origConfigLoad
 	newDiscordBot = s.origNewDiscordBot
+	newSlackBot = s.origNewSlackBot
 	newDockerClient = s.origNewDockerClient
 	newSQLiteStore = s.origNewSQLiteStore
 	osExit = s.origOsExit
@@ -383,6 +391,7 @@ func (s *MainSuite) TearDownTest() {
 
 func testConfig() *config.Config {
 	return &config.Config{
+		PlatformType: types.PlatformDiscord,
 		DiscordToken: "test-token",
 		DiscordAppID: "test-app",
 		LogLevel:     "info",
@@ -390,6 +399,19 @@ func testConfig() *config.Config {
 		DBPath:       "test.db",
 		PollInterval: time.Hour,
 		APIAddr:      "127.0.0.1:0",
+	}
+}
+
+func testSlackConfig() *config.Config {
+	return &config.Config{
+		PlatformType:  types.PlatformSlack,
+		SlackBotToken: "xoxb-test-token",
+		SlackAppToken: "xapp-test-token",
+		LogLevel:      "info",
+		LogFormat:     "text",
+		DBPath:        "test.db",
+		PollInterval:  time.Hour,
+		APIAddr:       "127.0.0.1:0",
 	}
 }
 
@@ -544,7 +566,7 @@ func (s *MainSuite) TestRunMCPWithInMemoryTransport() {
 
 	res, err := session.ListTools(context.Background(), nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 9)
+	require.Len(s.T(), res.Tools, 10)
 }
 
 func (s *MainSuite) TestEnsureChannelSuccess() {
@@ -686,6 +708,92 @@ func (s *MainSuite) TestServeDiscordBotError() {
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating discord bot")
 	store.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestServeSlackBotError() {
+	store := new(mockStore)
+	store.On("Close").Return(nil)
+
+	configLoad = func() (*config.Config, error) {
+		return testSlackConfig(), nil
+	}
+	newSQLiteStore = func(_ string) (db.Store, error) {
+		return store, nil
+	}
+	newSlackBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
+		return nil, errors.New("slack error")
+	}
+
+	err := serve()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating slack bot")
+	store.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestServeSlackHappyPathShutdown() {
+	store := new(mockStore)
+	store.On("Close").Return(nil)
+
+	bot := new(mockBot)
+	bot.On("OnMessage", mock.Anything).Return()
+	bot.On("OnInteraction", mock.Anything).Return()
+	bot.On("OnChannelDelete", mock.Anything).Return()
+	bot.On("RegisterCommands", mock.Anything).Return(nil)
+	bot.On("Start", mock.Anything).Return(nil)
+	bot.On("Stop").Return(nil)
+
+	dockerClient := new(mockDockerClient)
+	dockerClient.On("ContainerList", mock.Anything, "app", "loop-agent").Return([]string{}, nil)
+
+	configLoad = func() (*config.Config, error) {
+		return testSlackConfig(), nil
+	}
+	newSQLiteStore = func(_ string) (db.Store, error) {
+		return store, nil
+	}
+	newSlackBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
+		return bot, nil
+	}
+	newDockerClient = func() (container.DockerClient, error) {
+		return dockerClient, nil
+	}
+	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
+		return nil
+	}
+
+	// Verify that channel/thread services are created for Slack (no guild ID needed).
+	channelsCh := make(chan api.ChannelEnsurer, 1)
+	threadsCh := make(chan api.ThreadEnsurer, 1)
+	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) apiServer {
+		channelsCh <- channels
+		threadsCh <- threads
+		return api.NewServer(sched, channels, threads, store, messages, logger)
+	}
+
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- serve()
+	}()
+
+	gotChannels := <-channelsCh
+	gotThreads := <-threadsCh
+	require.NotNil(s.T(), gotChannels, "Slack should always create channel service")
+	require.NotNil(s.T(), gotThreads, "Slack should always create thread service")
+
+	time.Sleep(100 * time.Millisecond)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+
+	store.AssertExpectations(s.T())
+	bot.AssertExpectations(s.T())
 }
 
 func (s *MainSuite) TestServeDockerClientError() {
@@ -1114,6 +1222,7 @@ func (s *MainSuite) TestMainError() {
 func (s *MainSuite) TestDefaultVarSignatures() {
 	require.NotNil(s.T(), configLoad)
 	require.NotNil(s.T(), newDiscordBot)
+	require.NotNil(s.T(), newSlackBot)
 	require.NotNil(s.T(), newDockerClient)
 	require.NotNil(s.T(), newSQLiteStore)
 	require.NotNil(s.T(), newAPIServer)
@@ -1142,6 +1251,14 @@ func (s *MainSuite) TestDefaultNewDiscordBot() {
 	// Exercise the default newDiscordBot — discordgo.New succeeds without a server.
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	bot, err := s.origNewDiscordBot("fake-token", "fake-app-id", logger)
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), bot)
+}
+
+func (s *MainSuite) TestDefaultNewSlackBot() {
+	// Exercise the default newSlackBot — creates a bot without needing a server.
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	bot, err := s.origNewSlackBot("xoxb-fake", "xapp-fake", logger)
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), bot)
 }
@@ -1315,6 +1432,13 @@ func (s *MainSuite) TestOnboardGlobalSuccess() {
 	bashrcData, err := os.ReadFile(bashrcPath)
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), string(bashrcData), "Shell aliases")
+
+	// Verify Slack manifest was written
+	manifestPath := filepath.Join(tmpDir, ".loop", "slack-manifest.json")
+	manifestData, err := os.ReadFile(manifestPath)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(manifestData), "LoopBot")
+	require.Contains(s.T(), string(manifestData), "socket_mode_enabled")
 
 	// Verify templates directory was created
 	templatesDir := filepath.Join(tmpDir, ".loop", "templates")
@@ -1588,6 +1712,27 @@ func (s *MainSuite) TestOnboardGlobalSetupSkipsIfExists() {
 	data, err := os.ReadFile(setupPath)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "existing setup", string(data))
+}
+
+func (s *MainSuite) TestOnboardGlobalSlackManifestWriteError() {
+	tmpDir := s.T().TempDir()
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	calls := 0
+	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
+		calls++
+		if calls == 6 { // Sixth write is slack-manifest.json
+			return errors.New("manifest write error")
+		}
+		return os.WriteFile(path, data, perm)
+	}
+
+	err := onboardGlobal(false)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing Slack manifest")
 }
 
 func (s *MainSuite) TestOnboardGlobalTemplatesDirError() {

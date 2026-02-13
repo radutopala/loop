@@ -5,30 +5,33 @@ import (
 	"fmt"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/types"
 )
 
-// ThreadCreator can create and delete Discord threads.
+// ThreadCreator can create and delete threads on the chat platform.
 type ThreadCreator interface {
 	CreateThread(ctx context.Context, channelID, name, mentionUserID, message string) (string, error)
 	DeleteThread(ctx context.Context, threadID string) error
 }
 
-// ThreadEnsurer manages threads in Discord and the DB.
+// ThreadEnsurer manages threads on the chat platform and the DB.
 type ThreadEnsurer interface {
 	CreateThread(ctx context.Context, channelID, name, authorID, message string) (string, error)
 	DeleteThread(ctx context.Context, threadID string) error
 }
 
 type threadService struct {
-	store   db.Store
-	creator ThreadCreator
+	store    db.Store
+	creator  ThreadCreator
+	platform types.Platform
 }
 
 // NewThreadService creates a new ThreadEnsurer.
-func NewThreadService(store db.Store, creator ThreadCreator) ThreadEnsurer {
+func NewThreadService(store db.Store, creator ThreadCreator, platform types.Platform) ThreadEnsurer {
 	return &threadService{
-		store:   store,
-		creator: creator,
+		store:    store,
+		creator:  creator,
+		platform: platform,
 	}
 }
 
@@ -45,7 +48,7 @@ func (s *threadService) DeleteThread(ctx context.Context, threadID string) error
 	}
 
 	if err := s.creator.DeleteThread(ctx, threadID); err != nil {
-		return fmt.Errorf("deleting discord thread: %w", err)
+		return fmt.Errorf("deleting thread: %w", err)
 	}
 
 	if err := s.store.DeleteChannel(ctx, threadID); err != nil {
@@ -66,7 +69,7 @@ func (s *threadService) CreateThread(ctx context.Context, channelID, name, autho
 
 	threadID, err := s.creator.CreateThread(ctx, channelID, name, authorID, message)
 	if err != nil {
-		return "", fmt.Errorf("creating discord thread: %w", err)
+		return "", fmt.Errorf("creating thread: %w", err)
 	}
 
 	if err := s.store.UpsertChannel(ctx, &db.Channel{
@@ -75,6 +78,7 @@ func (s *threadService) CreateThread(ctx context.Context, channelID, name, autho
 		Name:      name,
 		DirPath:   parent.DirPath,
 		ParentID:  channelID,
+		Platform:  parent.Platform,
 		SessionID: parent.SessionID,
 		Active:    true,
 	}); err != nil {

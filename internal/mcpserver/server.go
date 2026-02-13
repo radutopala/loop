@@ -50,8 +50,12 @@ type editTaskInput struct {
 	Prompt   *string `json:"prompt,omitempty" jsonschema:"New prompt to execute on schedule"`
 }
 
+type createChannelInput struct {
+	Name string `json:"name" jsonschema:"The name for the new channel"`
+}
+
 type createThreadInput struct {
-	Name    string `json:"name" jsonschema:"The name for the new Discord thread"`
+	Name    string `json:"name" jsonschema:"The name for the new thread"`
 	Message string `json:"message,omitempty" jsonschema:"Optional initial message for the thread. If provided, the bot will post it as a self-mention to trigger a runner immediately."`
 }
 
@@ -64,7 +68,7 @@ type searchChannelsInput struct {
 }
 
 type sendMessageInput struct {
-	ChannelID string `json:"channel_id" jsonschema:"The Discord channel or thread ID to send the message to"`
+	ChannelID string `json:"channel_id" jsonschema:"The channel or thread ID to send the message to"`
 	Content   string `json:"content" jsonschema:"The message content to send"`
 }
 
@@ -114,23 +118,28 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}, s.handleEditTask)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "create_channel",
+		Description: "Create a new channel. The channel will be registered and the bot will auto-join it.",
+	}, s.handleCreateChannel)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "create_thread",
-		Description: "Create a new Discord thread in the current channel. The thread will be registered and the bot will auto-join it. If a message is provided, the bot posts it as a self-mention to trigger a runner immediately with that task.",
+		Description: "Create a new thread in the current channel. The thread will be registered and the bot will auto-join it. If a message is provided, the bot posts it as a self-mention to trigger a runner immediately with that task.",
 	}, s.handleCreateThread)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "delete_thread",
-		Description: "Delete a Discord thread by its ID. This removes the thread from Discord and the database.",
+		Description: "Delete a thread by its ID. This removes the thread from the platform and the database.",
 	}, s.handleDeleteThread)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "search_channels",
-		Description: "Search for Discord channels and threads. Returns channel IDs, names, directory paths, and active status. Use the query parameter to filter by name.",
+		Description: "Search for channels and threads. Returns channel IDs, names, directory paths, and active status. Use the query parameter to filter by name.",
 	}, s.handleSearchChannels)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "send_message",
-		Description: "Send a message to a Discord channel or thread. Use search_channels to find the target channel ID first. To trigger the bot in the target channel, include @BotName (e.g. @LoopBot) as plain text in the message — it will be converted to a proper Discord mention automatically.",
+		Description: "Send a message to a channel or thread. Use search_channels to find the target channel ID first. To trigger the bot in the target channel, include @BotName (e.g. @LoopBot) as plain text in the message — it will be converted to a proper mention automatically.",
 	}, s.handleSendMessage)
 
 	return s
@@ -354,6 +363,44 @@ func (s *Server) handleToggleTask(_ context.Context, _ *mcp.CallToolRequest, inp
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: fmt.Sprintf("Task %d %s.", input.TaskID, state)},
+		},
+	}, nil, nil
+}
+
+func (s *Server) handleCreateChannel(_ context.Context, _ *mcp.CallToolRequest, input createChannelInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "create_channel", "name", input.Name)
+
+	if input.Name == "" {
+		return errorResult("name is required"), nil, nil
+	}
+
+	reqBody := map[string]string{
+		"name": input.Name,
+	}
+	if s.authorID != "" {
+		reqBody["author_id"] = s.authorID
+	}
+	data, _ := json.Marshal(reqBody)
+
+	respBody, status, err := s.doRequest("POST", s.apiURL+"/api/channels/create", data)
+	if err != nil {
+		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
+	}
+
+	if status != http.StatusCreated {
+		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
+	}
+
+	var result struct {
+		ChannelID string `json:"channel_id"`
+	}
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return errorResult(fmt.Sprintf("decoding response: %v", err)), nil, nil
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: fmt.Sprintf("Channel created successfully (ID: %s).", result.ChannelID)},
 		},
 	}, nil, nil
 }
