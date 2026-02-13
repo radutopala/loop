@@ -127,6 +127,7 @@ var migrations = []migration{
 	sqlMigration(`ALTER TABLE channels ADD COLUMN platform TEXT NOT NULL DEFAULT ''`),
 	sqlMigration(`DROP INDEX IF EXISTS idx_channels_dir_path`),
 	sqlMigration(`CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dir_path ON channels(dir_path, platform) WHERE dir_path != '' AND parent_id = ''`),
+	sqlMigration(`ALTER TABLE messages RENAME COLUMN discord_msg_id TO msg_id`),
 }
 
 // RunMigrations executes all pending schema migrations.

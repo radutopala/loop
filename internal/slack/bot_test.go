@@ -1528,6 +1528,8 @@ func (s *BotSuite) TestHandleEventsAPIMessageEvent() {
 
 	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
 
+	// Use a DM (not a channel mention) to exercise the message event path,
+	// since channel mentions are handled by handleAppMention instead.
 	evt := socketmode.Event{
 		Type: socketmode.EventTypeEventsAPI,
 		Data: slackevents.EventsAPIEvent{
@@ -1535,10 +1537,10 @@ func (s *BotSuite) TestHandleEventsAPIMessageEvent() {
 				Type: string(slackevents.Message),
 				Data: &slackevents.MessageEvent{
 					User:        "U456",
-					Text:        "<@U123BOT> hello via events api",
+					Text:        "hello via events api",
 					TimeStamp:   "1234567890.000001",
-					Channel:     "C123",
-					ChannelType: "channel",
+					Channel:     "D123",
+					ChannelType: "im",
 				},
 			},
 		},
@@ -1549,6 +1551,7 @@ func (s *BotSuite) TestHandleEventsAPIMessageEvent() {
 	select {
 	case msg := <-received:
 		require.Equal(s.T(), "hello via events api", msg.Content)
+		require.True(s.T(), msg.IsDM)
 	case <-time.After(time.Second):
 		s.Fail("timeout")
 	}
@@ -1593,17 +1596,19 @@ func (s *BotSuite) TestHandleMessageSelfMentionSkipped() {
 }
 
 func (s *BotSuite) TestHandleMessageInThread() {
+	// Thread reply to a bot-started thread (no @mention, just a reply).
 	ev := &slackevents.MessageEvent{
 		User:            "U456",
-		Text:            "<@U123BOT> test",
+		Text:            "follow up in thread",
 		Channel:         "C123",
 		TimeStamp:       "1234567890.000003",
 		ThreadTimeStamp: "1234567890.000001",
+		ChannelType:     "channel",
 	}
 
-	// isReplyToBot will check the thread parent
+	// isReplyToBot returns true — parent message was from the bot.
 	s.session.On("GetConversationReplies", mock.Anything).
-		Return([]goslack.Message{}, false, "", nil)
+		Return([]goslack.Message{{Msg: goslack.Msg{User: "U123BOT"}}}, false, "", nil)
 
 	received := make(chan *IncomingMessage, 1)
 	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
@@ -1614,8 +1619,33 @@ func (s *BotSuite) TestHandleMessageInThread() {
 	select {
 	case msg := <-received:
 		require.Equal(s.T(), "C123:1234567890.000001", msg.ChannelID)
-		require.True(s.T(), msg.IsBotMention)
+		require.True(s.T(), msg.IsReplyToBot)
 	case <-time.After(time.Second):
 		s.Fail("timeout")
+	}
+}
+
+func (s *BotSuite) TestHandleMessageMentionInChannelSkipped() {
+	// @mentions in non-DM channels are handled by handleAppMention, so
+	// handleMessage should skip them to avoid duplicate processing.
+	ev := &slackevents.MessageEvent{
+		User:        "U456",
+		Text:        "<@U123BOT> hello",
+		Channel:     "C123",
+		TimeStamp:   "1234567890.000001",
+		ChannelType: "channel",
+	}
+
+	received := make(chan *IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+		received <- msg
+	})
+	s.bot.handleMessage(ev)
+
+	select {
+	case <-received:
+		s.Fail("should not receive channel mention via handleMessage")
+	case <-time.After(50 * time.Millisecond):
+		// expected — handled by handleAppMention instead
 	}
 }

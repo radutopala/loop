@@ -358,12 +358,12 @@ func (s *StoreSuite) TestListChannelsScanError() {
 
 func (s *StoreSuite) TestInsertMessage() {
 	msg := &Message{
-		ChatID: 1, ChannelID: "ch1", DiscordMsgID: "msg1",
+		ChatID: 1, ChannelID: "ch1", MsgID: "msg1",
 		AuthorID: "u1", AuthorName: "user1", Content: "hello",
 		IsBot: false, IsProcessed: false, CreatedAt: time.Now().UTC(),
 	}
 	s.mock.ExpectExec(`INSERT INTO messages`).
-		WithArgs(msg.ChatID, msg.ChannelID, msg.DiscordMsgID, msg.AuthorID, msg.AuthorName, msg.Content, 0, 0, sqlmock.AnyArg()).
+		WithArgs(msg.ChatID, msg.ChannelID, msg.MsgID, msg.AuthorID, msg.AuthorName, msg.Content, 0, 0, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(42, 1))
 
 	err := s.store.InsertMessage(context.Background(), msg)
@@ -372,7 +372,7 @@ func (s *StoreSuite) TestInsertMessage() {
 }
 
 func (s *StoreSuite) TestInsertMessageError() {
-	msg := &Message{ChatID: 1, ChannelID: "ch1", DiscordMsgID: "msg1", AuthorID: "u1", CreatedAt: time.Now().UTC()}
+	msg := &Message{ChatID: 1, ChannelID: "ch1", MsgID: "msg1", AuthorID: "u1", CreatedAt: time.Now().UTC()}
 	s.mock.ExpectExec(`INSERT INTO messages`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
@@ -382,7 +382,7 @@ func (s *StoreSuite) TestInsertMessageError() {
 }
 
 func (s *StoreSuite) TestInsertMessageLastInsertIDError() {
-	msg := &Message{ChatID: 1, ChannelID: "ch1", DiscordMsgID: "msg1", AuthorID: "u1", CreatedAt: time.Now().UTC()}
+	msg := &Message{ChatID: 1, ChannelID: "ch1", MsgID: "msg1", AuthorID: "u1", CreatedAt: time.Now().UTC()}
 	s.mock.ExpectExec(`INSERT INTO messages`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
@@ -393,7 +393,7 @@ func (s *StoreSuite) TestInsertMessageLastInsertIDError() {
 
 func (s *StoreSuite) TestGetUnprocessedMessages() {
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "chat_id", "channel_id", "discord_msg_id", "author_id", "author_name", "content", "is_bot", "is_processed", "created_at"}).
+	rows := sqlmock.NewRows([]string{"id", "chat_id", "channel_id", "msg_id", "author_id", "author_name", "content", "is_bot", "is_processed", "created_at"}).
 		AddRow(1, 1, "ch1", "msg1", "u1", "user1", "hello", 0, 0, now).
 		AddRow(2, 1, "ch1", "msg2", "u2", "user2", "world", 1, 0, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id .+ AND is_processed = 0`).
@@ -418,7 +418,7 @@ func (s *StoreSuite) TestGetUnprocessedMessagesError() {
 }
 
 func (s *StoreSuite) TestGetUnprocessedMessagesScanError() {
-	rows := sqlmock.NewRows([]string{"id", "chat_id", "channel_id", "discord_msg_id", "author_id", "author_name", "content", "is_bot", "is_processed", "created_at"}).
+	rows := sqlmock.NewRows([]string{"id", "chat_id", "channel_id", "msg_id", "author_id", "author_name", "content", "is_bot", "is_processed", "created_at"}).
 		AddRow("not-an-int", 1, "ch1", "msg1", "u1", "user1", "hello", 0, 0, time.Now().UTC())
 	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id .+ AND is_processed = 0`).
 		WithArgs("ch1").
@@ -457,7 +457,7 @@ func (s *StoreSuite) TestMarkMessagesProcessedEmpty() {
 
 func (s *StoreSuite) TestGetRecentMessages() {
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "chat_id", "channel_id", "discord_msg_id", "author_id", "author_name", "content", "is_bot", "is_processed", "created_at"}).
+	rows := sqlmock.NewRows([]string{"id", "chat_id", "channel_id", "msg_id", "author_id", "author_name", "content", "is_bot", "is_processed", "created_at"}).
 		AddRow(1, 1, "ch1", "msg1", "u1", "user1", "hello", 0, 1, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id .+ ORDER BY created_at DESC LIMIT`).
 		WithArgs("ch1", 10).

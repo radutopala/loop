@@ -21,18 +21,18 @@ type Channel struct {
 	UpdatedAt time.Time      `json:"updated_at"`
 }
 
-// Message represents a Discord message stored for context.
+// Message represents a chat message stored for context.
 type Message struct {
-	ID           int64     `json:"id"`
-	ChatID       int64     `json:"chat_id"`
-	ChannelID    string    `json:"channel_id"`
-	DiscordMsgID string    `json:"discord_msg_id"`
-	AuthorID     string    `json:"author_id"`
-	AuthorName   string    `json:"author_name"`
-	Content      string    `json:"content"`
-	IsBot        bool      `json:"is_bot"`
-	IsProcessed  bool      `json:"is_processed"`
-	CreatedAt    time.Time `json:"created_at"`
+	ID          int64     `json:"id"`
+	ChatID      int64     `json:"chat_id"`
+	ChannelID   string    `json:"channel_id"`
+	MsgID       string    `json:"msg_id"`
+	AuthorID    string    `json:"author_id"`
+	AuthorName  string    `json:"author_name"`
+	Content     string    `json:"content"`
+	IsBot       bool      `json:"is_bot"`
+	IsProcessed bool      `json:"is_processed"`
+	CreatedAt   time.Time `json:"created_at"`
 }
 
 // ScheduledTask represents a task scheduled for execution.

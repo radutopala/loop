@@ -202,9 +202,9 @@ func (s *SQLiteStore) ListChannels(ctx context.Context) ([]*Channel, error) {
 
 func (s *SQLiteStore) InsertMessage(ctx context.Context, msg *Message) error {
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO messages (chat_id, channel_id, discord_msg_id, author_id, author_name, content, is_bot, is_processed, created_at)
+		`INSERT INTO messages (chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		msg.ChatID, msg.ChannelID, msg.DiscordMsgID, msg.AuthorID, msg.AuthorName, msg.Content, boolToInt(msg.IsBot), boolToInt(msg.IsProcessed), msg.CreatedAt,
+		msg.ChatID, msg.ChannelID, msg.MsgID, msg.AuthorID, msg.AuthorName, msg.Content, boolToInt(msg.IsBot), boolToInt(msg.IsProcessed), msg.CreatedAt,
 	)
 	if err != nil {
 		return err
@@ -219,7 +219,7 @@ func (s *SQLiteStore) InsertMessage(ctx context.Context, msg *Message) error {
 
 func (s *SQLiteStore) GetUnprocessedMessages(ctx context.Context, channelID string) ([]*Message, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, chat_id, channel_id, discord_msg_id, author_id, author_name, content, is_bot, is_processed, created_at
+		`SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at
 		 FROM messages WHERE channel_id = ? AND is_processed = 0 ORDER BY created_at ASC`,
 		channelID,
 	)
@@ -241,7 +241,7 @@ func (s *SQLiteStore) MarkMessagesProcessed(ctx context.Context, ids []int64) er
 
 func (s *SQLiteStore) GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*Message, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, chat_id, channel_id, discord_msg_id, author_id, author_name, content, is_bot, is_processed, created_at
+		`SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at
 		 FROM messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?`,
 		channelID, limit,
 	)
@@ -404,7 +404,7 @@ func scanMessages(rows *sql.Rows) ([]*Message, error) {
 		msg := &Message{}
 		var isBot, isProcessed int
 		if err := rows.Scan(
-			&msg.ID, &msg.ChatID, &msg.ChannelID, &msg.DiscordMsgID,
+			&msg.ID, &msg.ChatID, &msg.ChannelID, &msg.MsgID,
 			&msg.AuthorID, &msg.AuthorName, &msg.Content,
 			&isBot, &isProcessed, &msg.CreatedAt,
 		); err != nil {

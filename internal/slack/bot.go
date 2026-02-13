@@ -427,6 +427,12 @@ func (b *SlackBot) handleMessage(ev *slackevents.MessageEvent) {
 	isDM := ev.ChannelType == "im"
 	isReply := b.isReplyToBot(ev)
 
+	// Skip @mentions in non-DM channels — handleAppMention handles those.
+	// Processing both would cause duplicate message inserts.
+	if isMention && !isDM {
+		return
+	}
+
 	if !isMention && !hasPrefix && !isReply && !isDM {
 		return
 	}

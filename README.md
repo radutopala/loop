@@ -2,12 +2,12 @@
 
 [![Go](https://img.shields.io/badge/Go-1.26-blue)](https://go.dev/) [![CI](https://github.com/radutopala/loop/actions/workflows/ci.yml/badge.svg)](https://github.com/radutopala/loop/actions/workflows/ci.yml) [![release](https://img.shields.io/github/v/release/radutopala/loop)](https://github.com/radutopala/loop/releases/latest) [![license](https://img.shields.io/github/license/radutopala/loop)](LICENSE)
 
-A Discord bot powered by Claude that runs AI agents in Docker containers.
+A Slack/Discord bot powered by Claude that runs AI agents in Docker containers.
 
 ## Architecture
 
 ```
-                   Discord
+              Slack / Discord
                      │
               @mention / reply / !loop / DM
                      ▼
@@ -54,7 +54,7 @@ A Discord bot powered by Claude that runs AI agents in Docker containers.
 
 - macOS (recommended) or Linux
 - [Docker Desktop](https://docs.docker.com/desktop/) (macOS) or [Docker Engine](https://docs.docker.com/engine/install/) (Linux)
-- A **Discord** bot token and application ID, or a **Slack** bot token and app token
+- A **Slack** bot token and app token, or a **Discord** bot token and application ID
 - An Anthropic API key or Claude Code OAuth token (for agent containers)
 
 > **Note:** `loop daemon:start/stop/status` use launchd (macOS-only). On Linux, use `loop serve` directly.
@@ -73,7 +73,18 @@ go install github.com/radutopala/loop/cmd/loop@latest
 
 ### Step 2: Create a bot
 
-Choose **Discord** or **Slack**:
+Choose **Slack** or **Discord**:
+
+<details>
+<summary><strong>Slack</strong></summary>
+
+1. Go to https://api.slack.com/apps → **Create New App** → **From a manifest**
+2. Select your workspace, choose **JSON**, and paste the contents of `~/.loop/slack-manifest.json` (created by `loop onboard:global`)
+3. Click **Create**
+4. Go to **Socket Mode** → generate an app-level token with `connections:write` scope → copy the token (starts with `xapp-`)
+5. Go to **Install App** → install to workspace → copy the **Bot User OAuth Token** (starts with `xoxb-`)
+
+</details>
 
 <details>
 <summary><strong>Discord</strong></summary>
@@ -89,17 +100,6 @@ Choose **Discord** or **Slack**:
    ```
 
    This grants: View Channels, Send Messages, Read Message History, Manage Channels, Manage Threads, Send Messages in Threads, Create Public Threads, Create Private Threads.
-
-</details>
-
-<details>
-<summary><strong>Slack</strong></summary>
-
-1. Go to https://api.slack.com/apps → **Create New App** → **From a manifest**
-2. Select your workspace, choose **JSON**, and paste the contents of `~/.loop/slack-manifest.json` (created by `loop onboard:global`)
-3. Click **Create**
-4. Go to **Socket Mode** → generate an app-level token with `connections:write` scope → copy the token (starts with `xapp-`)
-5. Go to **Install App** → install to workspace → copy the **Bot User OAuth Token** (starts with `xoxb-`)
 
 </details>
 
@@ -123,19 +123,19 @@ This creates:
 Edit `~/.loop/config.json` and fill in the required fields for your platform:
 
 ```jsonc
+// Slack:
+{
+  "platform": "slack",
+  "slack_bot_token": "xoxb-your-bot-token",
+  "slack_app_token": "xapp-your-app-token"
+}
+
 // Discord:
 {
   "platform": "discord",
   "discord_token": "your-bot-token-from-step-2",
   "discord_app_id": "your-app-id-from-step-2",
   "discord_guild_id": "your-discord-guild-id" // optional, enables auto-channel creation
-}
-
-// Slack:
-{
-  "platform": "slack",
-  "slack_bot_token": "xoxb-your-bot-token",
-  "slack_app_token": "xapp-your-app-token"
 }
 ```
 
@@ -167,7 +167,7 @@ This does four things:
 1. Writes `.mcp.json` — registers the Loop MCP server so Claude Code can schedule tasks from your IDE
 2. Creates `.loop/config.json` — project-specific overrides (mounts, MCP servers, model, task templates)
 3. Creates `.loop/templates/` — directory for project-specific prompt template files
-4. Registers a Discord channel for this directory (requires `loop serve` to be running)
+4. Registers a channel for this directory (requires `loop serve` to be running)
 
 ## Configuration Reference
 
@@ -175,12 +175,12 @@ This does four things:
 
 | Field | Default | Description |
 |---|---|---|
-| `platform` | **(required)** | Chat platform: `"discord"` or `"slack"` |
+| `platform` | **(required)** | Chat platform: `"slack"` or `"discord"` |
+| `slack_bot_token` | | Slack bot token (required for Slack) |
+| `slack_app_token` | | Slack app-level token (required for Slack) |
 | `discord_token` | | Discord bot token (required for Discord) |
 | `discord_app_id` | | Discord application ID (required for Discord) |
 | `discord_guild_id` | `""` | Guild ID for auto-creating Discord channels |
-| `slack_bot_token` | | Slack bot token (required for Slack) |
-| `slack_app_token` | | Slack app-level token (required for Slack) |
 | `log_file` | `"~/.loop/loop.log"` | Daemon log file path |
 | `log_level` | `"info"` | Log level (`debug`, `info`, `warn`, `error`) |
 | `log_format` | `"text"` | Log format (`text`, `json`) |
@@ -264,7 +264,7 @@ For development: `make docker-build` builds from `container/Dockerfile` in the r
 
 | Command | Aliases | Description |
 |---|---|---|
-| `loop serve` | `s` | Start the bot (Discord or Slack) |
+| `loop serve` | `s` | Start the bot (Slack or Discord) |
 | `loop mcp` | `m` | Run as an MCP server over stdio |
 | `loop onboard:global` | `o:global`, `setup` | Initialize global Loop configuration (~/.loop/config.json) |
 | `loop onboard:local` | `o:local`, `init` | Register Loop MCP server in current project (.mcp.json) |
@@ -286,7 +286,7 @@ loop mcp --dir <path> --api-url <url>        # Auto-create channel for directory
 - **On the host** — registered in your local Claude Code so you can schedule tasks from your IDE
 - **Inside containers** — automatically injected into every agent container so scheduled tasks can themselves schedule follow-up tasks
 
-When using `--dir`, Loop automatically registers a channel (and creates a Discord channel in the configured guild) for that directory. The project directory is then mounted at its original path inside agent containers.
+When using `--dir`, Loop automatically registers a channel (and creates a channel in the configured guild/workspace) for that directory. The project directory is then mounted at its original path inside agent containers.
 
 To register it in your local Claude Code, run `loop onboard:local` in your project directory. This writes a `.mcp.json` file that Claude Code auto-discovers:
 
@@ -296,22 +296,24 @@ loop onboard:local
 # optionally: loop onboard:local --api-url http://custom:9999
 ```
 
-## Discord Commands
+## Bot Commands
+
+Both Discord slash commands and Slack `/loop` subcommands use the same syntax:
 
 | Command | Description |
 |---|---|
-| `/loop schedule <schedule> <prompt> <type>` | Schedule a task (cron/interval/once) |
+| `/loop schedule <schedule> <type> <prompt>` | Schedule a task (cron/interval/once) |
 | `/loop tasks` | List scheduled tasks with status |
 | `/loop cancel <task_id>` | Cancel a scheduled task |
 | `/loop toggle <task_id>` | Toggle a scheduled task on or off |
-| `/loop edit <task_id> [schedule] [type] [prompt]` | Edit a scheduled task |
+| `/loop edit <task_id> [--schedule] [--type] [--prompt]` | Edit a scheduled task |
 | `/loop status` | Show bot status |
 | `/loop template add <name>` | Load a task template into the current channel |
 | `/loop template list` | List available task templates from config |
 
-The bot also responds to `@mentions`, replies to its own messages, and messages prefixed with `!loop`. It auto-joins threads in active channels — tagging the bot in a thread inherits the parent channel's project directory and forks its session so each thread gets independent context.
+The bot responds to `@mentions`, replies to its own messages, DMs, and messages prefixed with `!loop`. It auto-joins threads in active channels — tagging the bot in a thread inherits the parent channel's project directory and forks its session so each thread gets independent context.
 
-Agents can trigger work in other channels using the `send_message` MCP tool. The bot can self-reference itself — a message it sends with its own `@mention` will trigger a runner in the target channel. Text mentions like `@LoopBot` are automatically converted to proper Discord mentions. For example, an agent in channel A can ask:
+Agents can trigger work in other channels using the `send_message` MCP tool. The bot can self-reference itself — a message it sends with its own `@mention` will trigger a runner in the target channel. Text mentions like `@LoopBot` are automatically converted to proper platform mentions (Discord `<@ID>`, Slack `<@ID>`). For example, an agent in channel A can ask:
 
 > Send a message to the backend channel asking @LoopBot to check the last commit
 
@@ -383,10 +385,11 @@ Project configs (`.loop/config.json`) can define their own `task_templates` that
 | `PATCH` | `/api/tasks/{id}` | Update a task (enabled, schedule, type, prompt) |
 | `DELETE` | `/api/tasks/{id}` | Delete a task |
 | `GET` | `/api/channels?query=<term>` | Search channels and threads (optional query filter) |
-| `POST` | `/api/channels` | Ensure/create a Discord channel for a directory |
+| `POST` | `/api/channels` | Ensure/create a channel for a directory |
+| `POST` | `/api/channels/create` | Create a channel by name |
 | `POST` | `/api/messages` | Send a message to a channel or thread |
-| `POST` | `/api/threads` | Create a Discord thread in an existing channel |
-| `DELETE` | `/api/threads/{id}` | Delete a Discord thread |
+| `POST` | `/api/threads` | Create a thread in an existing channel |
+| `DELETE` | `/api/threads/{id}` | Delete a thread |
 
 ## MCP Tools
 
@@ -397,8 +400,9 @@ Project configs (`.loop/config.json`) can define their own `task_templates` that
 | `cancel_task` | Cancel a scheduled task by ID |
 | `toggle_task` | Enable or disable a scheduled task by ID |
 | `edit_task` | Edit a task's schedule, type, and/or prompt |
-| `create_thread` | Create a new Discord thread; optional `message` triggers a runner immediately |
-| `delete_thread` | Delete a Discord thread by ID |
+| `create_channel` | Create a new channel by name |
+| `create_thread` | Create a new thread; optional `message` triggers a runner immediately |
+| `delete_thread` | Delete a thread by ID |
 | `search_channels` | Search for channels and threads by name |
 | `send_message` | Send a message to a channel or thread |
 

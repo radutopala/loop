@@ -198,19 +198,19 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *IncomingMessage) 
 		return
 	}
 
-	discordMsgID := msg.MessageID
-	if discordMsgID == "" {
-		discordMsgID = generateMessageID()
+	msgID := msg.MessageID
+	if msgID == "" {
+		msgID = generateMessageID()
 	}
 
 	if err := o.store.InsertMessage(ctx, &db.Message{
-		ChatID:       channel.ID,
-		ChannelID:    msg.ChannelID,
-		DiscordMsgID: discordMsgID,
-		AuthorID:     msg.AuthorID,
-		AuthorName:   msg.AuthorName,
-		Content:      msg.Content,
-		CreatedAt:    msg.Timestamp,
+		ChatID:     channel.ID,
+		ChannelID:  msg.ChannelID,
+		MsgID:      msgID,
+		AuthorID:   msg.AuthorID,
+		AuthorName: msg.AuthorName,
+		Content:    msg.Content,
+		CreatedAt:  msg.Timestamp,
 	}); err != nil {
 		o.logger.Error("inserting message", "error", err, "channel_id", msg.ChannelID)
 		return
@@ -355,13 +355,13 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *Incomin
 	ch, err := o.store.GetChannel(ctx, msg.ChannelID)
 	if err == nil && ch != nil {
 		if insertErr := o.store.InsertMessage(ctx, &db.Message{
-			ChatID:       ch.ID,
-			ChannelID:    msg.ChannelID,
-			DiscordMsgID: generateMessageID(),
-			AuthorName:   "assistant",
-			Content:      resp.Response,
-			IsBot:        true,
-			CreatedAt:    time.Now().UTC(),
+			ChatID:     ch.ID,
+			ChannelID:  msg.ChannelID,
+			MsgID:      generateMessageID(),
+			AuthorName: "assistant",
+			Content:    resp.Response,
+			IsBot:      true,
+			CreatedAt:  time.Now().UTC(),
 		}); insertErr != nil {
 			o.logger.Error("inserting bot response", "error", insertErr, "channel_id", msg.ChannelID)
 		}
