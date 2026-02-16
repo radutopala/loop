@@ -878,6 +878,33 @@ func (s *BotSuite) TestHandleAppMentionInThread() {
 	}
 }
 
+func (s *BotSuite) TestHandleAppMentionSelfMentionCreatesThread() {
+	received := make(chan *IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+		received <- msg
+	})
+
+	// Bot's own message with explicit self-mention (e.g. from CreateThread).
+	// Should use the message's own TS as the thread TS so the response
+	// goes as a thread reply.
+	ev := &slackevents.AppMentionEvent{
+		User:      "U123BOT",
+		Text:      "<@U123BOT> Review the codebase",
+		TimeStamp: "1234567890.000001",
+		Channel:   "C123",
+	}
+	s.bot.handleAppMention(ev)
+
+	select {
+	case msg := <-received:
+		require.Equal(s.T(), "C123:1234567890.000001", msg.ChannelID)
+		require.Equal(s.T(), "Review the codebase", msg.Content)
+		require.True(s.T(), msg.IsBotMention)
+	case <-time.After(time.Second):
+		s.Fail("timeout waiting for message")
+	}
+}
+
 func (s *BotSuite) TestHandleAppMentionSelfSkipped() {
 	received := make(chan *IncomingMessage, 1)
 	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {

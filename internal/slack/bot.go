@@ -444,6 +444,11 @@ func (b *SlackBot) handleAppMention(ev *slackevents.AppMentionEvent) {
 	channelID := ev.Channel
 	if ev.ThreadTimeStamp != "" && ev.ThreadTimeStamp != ev.TimeStamp {
 		channelID = compositeID(ev.Channel, ev.ThreadTimeStamp)
+	} else if ev.User == botID {
+		// Self-mention as a top-level message (e.g. from CreateThread):
+		// use the message's own timestamp as the thread TS so the
+		// response is posted as a reply, creating a proper Slack thread.
+		channelID = compositeID(ev.Channel, ev.TimeStamp)
 	}
 
 	msg := &IncomingMessage{
