@@ -435,20 +435,16 @@ func (b *SlackBot) handleEventsAPI(evt socketmode.Event) {
 func (b *SlackBot) handleAppMention(ev *slackevents.AppMentionEvent) {
 	botID := b.BotUserID()
 
-	// Self-mention loop prevention: skip our own messages unless they
-	// explicitly contain <@botID> (which means a PostMessage self-trigger).
-	if ev.User == botID && !strings.Contains(ev.Text, "<@"+botID+">") {
+	// Skip bot's own messages — self-mentions (e.g. from CreateThread) are
+	// handled by handleMessage because Slack may not fire app_mention events
+	// for bot-posted messages on all workspaces.
+	if ev.User == botID {
 		return
 	}
 
 	channelID := ev.Channel
 	if ev.ThreadTimeStamp != "" && ev.ThreadTimeStamp != ev.TimeStamp {
 		channelID = compositeID(ev.Channel, ev.ThreadTimeStamp)
-	} else if ev.User == botID {
-		// Self-mention as a top-level message (e.g. from CreateThread):
-		// use the message's own timestamp as the thread TS so the
-		// response is posted as a reply, creating a proper Slack thread.
-		channelID = compositeID(ev.Channel, ev.TimeStamp)
 	}
 
 	msg := &IncomingMessage{
@@ -481,14 +477,16 @@ func (b *SlackBot) handleMessage(ev *slackevents.MessageEvent) {
 		return
 	}
 
+	isSelfMention := ev.User == botID
 	isMention := strings.Contains(ev.Text, "<@"+botID+">")
 	hasPrefix := hasCommandPrefix(ev.Text)
 	isDM := ev.ChannelType == "im"
 	isReply := b.isReplyToBot(ev)
 
 	// Skip @mentions in non-DM channels — handleAppMention handles those.
-	// Processing both would cause duplicate message inserts.
-	if isMention && !isDM {
+	// Exception: bot self-mentions (e.g. from CreateThread) are handled here
+	// because Slack may not fire app_mention events for bot-posted messages.
+	if isMention && !isDM && !isSelfMention {
 		return
 	}
 
@@ -506,6 +504,11 @@ func (b *SlackBot) handleMessage(ev *slackevents.MessageEvent) {
 	channelID := ev.Channel
 	if ev.ThreadTimeStamp != "" && ev.ThreadTimeStamp != ev.TimeStamp {
 		channelID = compositeID(ev.Channel, ev.ThreadTimeStamp)
+	} else if isSelfMention && isMention {
+		// Self-mention as a top-level message (e.g. from CreateThread):
+		// use the message's own timestamp as the thread TS so the
+		// response is posted as a reply, creating a proper Slack thread.
+		channelID = compositeID(ev.Channel, ev.TimeStamp)
 	}
 
 	msg := &IncomingMessage{

@@ -878,15 +878,15 @@ func (s *BotSuite) TestHandleAppMentionInThread() {
 	}
 }
 
-func (s *BotSuite) TestHandleAppMentionSelfMentionCreatesThread() {
+func (s *BotSuite) TestHandleAppMentionSelfMentionSkippedForHandleMessage() {
 	received := make(chan *IncomingMessage, 1)
 	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
 		received <- msg
 	})
 
 	// Bot's own message with explicit self-mention (e.g. from CreateThread).
-	// Should use the message's own TS as the thread TS so the response
-	// goes as a thread reply.
+	// handleAppMention now skips ALL bot messages — self-mentions are handled
+	// by handleMessage instead (Slack may not fire app_mention for bot posts).
 	ev := &slackevents.AppMentionEvent{
 		User:      "U123BOT",
 		Text:      "<@U123BOT> Review the codebase",
@@ -896,12 +896,10 @@ func (s *BotSuite) TestHandleAppMentionSelfMentionCreatesThread() {
 	s.bot.handleAppMention(ev)
 
 	select {
-	case msg := <-received:
-		require.Equal(s.T(), "C123:1234567890.000001", msg.ChannelID)
-		require.Equal(s.T(), "Review the codebase", msg.Content)
-		require.True(s.T(), msg.IsBotMention)
-	case <-time.After(time.Second):
-		s.Fail("timeout waiting for message")
+	case <-received:
+		s.Fail("handleAppMention should skip bot's own messages")
+	case <-time.After(50 * time.Millisecond):
+		// expected — self-mentions are handled by handleMessage
 	}
 }
 
@@ -1946,6 +1944,64 @@ func (s *BotSuite) TestHandleMessageInThread() {
 		require.True(s.T(), msg.IsReplyToBot)
 	case <-time.After(time.Second):
 		s.Fail("timeout")
+	}
+}
+
+func (s *BotSuite) TestHandleMessageSelfMentionCreatesThread() {
+	// Bot self-mention in a channel (e.g. from CreateThread) should be
+	// processed by handleMessage and use the message's own TS as thread TS.
+	received := make(chan *IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+		received <- msg
+	})
+
+	ev := &slackevents.MessageEvent{
+		User:        "U123BOT",
+		Text:        "<@U123BOT> Review the codebase",
+		Channel:     "C123",
+		TimeStamp:   "1234567890.000001",
+		ChannelType: "channel",
+	}
+	s.bot.handleMessage(ev)
+
+	select {
+	case msg := <-received:
+		require.Equal(s.T(), "C123:1234567890.000001", msg.ChannelID)
+		require.Equal(s.T(), "Review the codebase", msg.Content)
+		require.True(s.T(), msg.IsBotMention)
+	case <-time.After(time.Second):
+		s.Fail("timeout waiting for self-mention message")
+	}
+}
+
+func (s *BotSuite) TestHandleMessageSelfMentionInThread() {
+	// Bot self-mention inside a thread should use the thread TS, not the message TS.
+	received := make(chan *IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+		received <- msg
+	})
+
+	// isReplyToBot is called for threaded messages.
+	s.session.On("GetConversationReplies", mock.AnythingOfType("*slack.GetConversationRepliesParameters")).
+		Return([]goslack.Message{{Msg: goslack.Msg{User: "U123BOT"}}}, false, "", nil)
+
+	ev := &slackevents.MessageEvent{
+		User:            "U123BOT",
+		Text:            "<@U123BOT> do something",
+		Channel:         "C123",
+		TimeStamp:       "1234567891.000001",
+		ThreadTimeStamp: "1234567890.000001",
+		ChannelType:     "channel",
+	}
+	s.bot.handleMessage(ev)
+
+	select {
+	case msg := <-received:
+		require.Equal(s.T(), "C123:1234567890.000001", msg.ChannelID)
+		require.Equal(s.T(), "do something", msg.Content)
+		require.True(s.T(), msg.IsBotMention)
+	case <-time.After(time.Second):
+		s.Fail("timeout waiting for self-mention in thread")
 	}
 }
 
