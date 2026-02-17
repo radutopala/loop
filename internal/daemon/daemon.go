@@ -123,7 +123,8 @@ func Stop(sys System) error {
 		s := string(out)
 		if strings.Contains(s, "No such file") ||
 			strings.Contains(s, "not found") ||
-			strings.Contains(s, "Could not find service") {
+			strings.Contains(s, "Could not find service") ||
+			strings.Contains(s, "Input/output error") {
 			return removeIfExists(sys, plistPath)
 		}
 		return fmt.Errorf("launchctl bootout: %s", strings.TrimSpace(s))

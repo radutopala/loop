@@ -291,6 +291,17 @@ func (s *DaemonSuite) TestStopNotFound() {
 	require.NoError(s.T(), err)
 }
 
+func (s *DaemonSuite) TestStopInputOutputError() {
+	sys := new(mockSystem)
+	sys.On("UserHomeDir").Return("/home/test", nil)
+	sys.On("RunCommand", "launchctl", mock.Anything).
+		Return([]byte("Boot-out failed: 5: Input/output error"), errors.New("exit 5"))
+	sys.On("RemoveFile", mock.Anything).Return(os.ErrNotExist)
+
+	err := Stop(sys)
+	require.NoError(s.T(), err)
+}
+
 func (s *DaemonSuite) TestStopRemoveFileError() {
 	sys := new(mockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
