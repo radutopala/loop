@@ -424,12 +424,16 @@ make clean            # Remove build artifacts
 
 ### Integration Tests
 
+Integration tests run against the real platform APIs to verify bot behavior end-to-end. Both Discord and Slack suites are available — each creates temporary channels, runs all tests, and cleans up on teardown.
+
+#### Slack
+
 The Slack integration tests run against the real Slack API using Socket Mode. They require a dedicated Slack app with bot, app-level, and user tokens.
 
 **Setup:**
 
 1. Create a Slack app (or reuse the one from your main config) with these additional **User Token Scopes**: `channels:write`, `channels:read`, `chat:write`, `reactions:read`, `im:write`
-2. Create `~/.loop/config.integration.json`:
+2. Add the following to `~/.loop/config.integration.json`:
 
 ```json
 {
@@ -441,13 +445,34 @@ The Slack integration tests run against the real Slack API using Socket Mode. Th
 
 Alternatively, set environment variables: `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_USER_TOKEN`.
 
-**Run:**
+The user token is optional — tests requiring it (e.g. DM events) will be skipped if not provided.
+
+#### Discord
+
+The Discord integration tests run against the real Discord API using a bot token. They require a Discord bot with appropriate permissions in a test guild (server).
+
+**Setup:**
+
+1. Use an existing Discord bot or create one with the required permissions (View Channels, Send Messages, Manage Channels, Manage Threads, Read Message History, Send/Create Threads)
+2. Add the following to `~/.loop/config.integration.json`:
+
+```json
+{
+  "discord_token": "MTA...",
+  "discord_app_id": "...",
+  "discord_guild_id": "..."
+}
+```
+
+Alternatively, set environment variables: `DISCORD_BOT_TOKEN`, `DISCORD_APP_ID`, `DISCORD_GUILD_ID`.
+
+#### Running
 
 ```sh
 make test-integration
 ```
 
-The suite creates a temporary channel, runs all tests, and archives the channel on teardown. The user token is optional — tests requiring it (e.g. DM events) will be skipped if not provided.
+Both suites create temporary channels, run all tests, and clean up on teardown. Tests are skipped automatically when the required credentials are not configured.
 
 ## License
 
