@@ -1,4 +1,4 @@
-.PHONY: help build install test lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot
+.PHONY: help build install test test-integration lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot
 .DEFAULT_GOAL := help
 
 help: ## Show available targets
@@ -17,6 +17,9 @@ install: ## Install loop to GOPATH/bin
 
 test: ## Run all tests
 	go test -race -count=1 ./...
+
+test-integration: ## Run Slack integration tests (requires SLACK_BOT_TOKEN + SLACK_APP_TOKEN)
+	go test -v -tags integration -race -count=1 -timeout 10m ./internal/slack/
 
 lint: ## Run golangci-lint
 	golangci-lint run ./...

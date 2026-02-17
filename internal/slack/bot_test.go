@@ -374,6 +374,23 @@ func (s *BotSuite) TestSendTypingAddReactionError() {
 	require.NoError(s.T(), err) // non-fatal
 }
 
+func (s *BotSuite) TestSendTypingAlreadyReacted() {
+	ref := goslack.NewRefToMessage("C123", "1234.5678")
+	s.bot.lastMessageRef.Store("C123", ref)
+
+	s.session.On("AddReaction", reactionEmoji, ref).Return(errors.New("already_reacted"))
+	s.session.On("RemoveReaction", reactionEmoji, ref).Return(nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	err := s.bot.SendTyping(ctx, "C123")
+	require.NoError(s.T(), err)
+
+	// Cleanup goroutine should still be set up.
+	cancel()
+	time.Sleep(20 * time.Millisecond)
+	s.session.AssertCalled(s.T(), "RemoveReaction", reactionEmoji, ref)
+}
+
 // --- RegisterCommands / RemoveCommands ---
 
 func (s *BotSuite) TestRegisterCommandsNoOp() {
@@ -830,19 +847,20 @@ func (s *BotSuite) TestSlackTSToTimeEmpty() {
 
 // --- Event Handling ---
 
-func (s *BotSuite) TestHandleAppMention() {
+func (s *BotSuite) TestHandleMessageMentionInChannel() {
 	received := make(chan *IncomingMessage, 1)
 	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
 		received <- msg
 	})
 
-	ev := &slackevents.AppMentionEvent{
-		User:      "U456",
-		Text:      "<@U123BOT> hello",
-		TimeStamp: "1234567890.000001",
-		Channel:   "C123",
+	ev := &slackevents.MessageEvent{
+		User:        "U456",
+		Text:        "<@U123BOT> hello",
+		TimeStamp:   "1234567890.000001",
+		Channel:     "C123",
+		ChannelType: "channel",
 	}
-	s.bot.handleAppMention(ev)
+	s.bot.handleMessage(ev)
 
 	select {
 	case msg := <-received:
@@ -855,73 +873,31 @@ func (s *BotSuite) TestHandleAppMention() {
 	}
 }
 
-func (s *BotSuite) TestHandleAppMentionInThread() {
+func (s *BotSuite) TestHandleMessageMentionInThread() {
 	received := make(chan *IncomingMessage, 1)
 	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
 		received <- msg
 	})
 
-	ev := &slackevents.AppMentionEvent{
+	s.session.On("GetConversationReplies", mock.AnythingOfType("*slack.GetConversationRepliesParameters")).
+		Return([]goslack.Message{{Msg: goslack.Msg{User: "U123BOT"}}}, false, "", nil)
+
+	ev := &slackevents.MessageEvent{
 		User:            "U456",
 		Text:            "<@U123BOT> hello",
 		TimeStamp:       "1234567891.000001",
 		ThreadTimeStamp: "1234567890.000001",
 		Channel:         "C123",
+		ChannelType:     "channel",
 	}
-	s.bot.handleAppMention(ev)
+	s.bot.handleMessage(ev)
 
 	select {
 	case msg := <-received:
 		require.Equal(s.T(), "C123:1234567890.000001", msg.ChannelID)
+		require.True(s.T(), msg.IsBotMention)
 	case <-time.After(time.Second):
 		s.Fail("timeout waiting for message")
-	}
-}
-
-func (s *BotSuite) TestHandleAppMentionSelfMentionSkippedForHandleMessage() {
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
-		received <- msg
-	})
-
-	// Bot's own message with explicit self-mention (e.g. from CreateThread).
-	// handleAppMention now skips ALL bot messages — self-mentions are handled
-	// by handleMessage instead (Slack may not fire app_mention for bot posts).
-	ev := &slackevents.AppMentionEvent{
-		User:      "U123BOT",
-		Text:      "<@U123BOT> Review the codebase",
-		TimeStamp: "1234567890.000001",
-		Channel:   "C123",
-	}
-	s.bot.handleAppMention(ev)
-
-	select {
-	case <-received:
-		s.Fail("handleAppMention should skip bot's own messages")
-	case <-time.After(50 * time.Millisecond):
-		// expected — self-mentions are handled by handleMessage
-	}
-}
-
-func (s *BotSuite) TestHandleAppMentionSelfSkipped() {
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
-		received <- msg
-	})
-
-	ev := &slackevents.AppMentionEvent{
-		User:      "U123BOT",
-		Text:      "hello without mention",
-		TimeStamp: "1234567890.000001",
-		Channel:   "C123",
-	}
-	s.bot.handleAppMention(ev)
-
-	select {
-	case <-received:
-		s.Fail("should not have received message from self")
-	case <-time.After(50 * time.Millisecond):
-		// expected
 	}
 }
 
@@ -1130,7 +1106,7 @@ func (s *BotSuite) TestHandleSlashCommandHelp() {
 	s.session.AssertCalled(s.T(), "PostMessage", "C123", mock.Anything)
 }
 
-func (s *BotSuite) TestHandleEventsAPIAppMention() {
+func (s *BotSuite) TestHandleEventsAPIChannelMention() {
 	received := make(chan *IncomingMessage, 1)
 	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
 		received <- msg
@@ -1138,23 +1114,20 @@ func (s *BotSuite) TestHandleEventsAPIAppMention() {
 
 	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
 
-	innerEvent := slackevents.EventsAPIInnerEvent{
-		Type: string(slackevents.AppMention),
-		Data: &slackevents.AppMentionEvent{
-			User:      "U456",
-			Text:      "<@U123BOT> test",
-			TimeStamp: "1234567890.000001",
-			Channel:   "C123",
-		},
-	}
-	eventsAPIEvent := slackevents.EventsAPIEvent{
-		Type:       string(slackevents.CallbackEvent),
-		InnerEvent: innerEvent,
-	}
-
 	evt := socketmode.Event{
-		Type:    socketmode.EventTypeEventsAPI,
-		Data:    eventsAPIEvent,
+		Type: socketmode.EventTypeEventsAPI,
+		Data: slackevents.EventsAPIEvent{
+			InnerEvent: slackevents.EventsAPIInnerEvent{
+				Type: string(slackevents.Message),
+				Data: &slackevents.MessageEvent{
+					User:        "U456",
+					Text:        "<@U123BOT> test",
+					TimeStamp:   "1234567890.000001",
+					Channel:     "C123",
+					ChannelType: "channel",
+				},
+			},
+		},
 		Request: &socketmode.Request{},
 	}
 	s.bot.handleEvent(evt)
@@ -1349,17 +1322,18 @@ func (s *BotSuite) TestEventLoopProcessesEvent() {
 
 	go bot.eventLoop(ctx)
 
-	// Send an AppMention event through the channel
+	// Send a mention via message event through the channel.
 	events <- socketmode.Event{
 		Type: socketmode.EventTypeEventsAPI,
 		Data: slackevents.EventsAPIEvent{
 			InnerEvent: slackevents.EventsAPIInnerEvent{
-				Type: string(slackevents.AppMention),
-				Data: &slackevents.AppMentionEvent{
-					User:      "U456",
-					Text:      "<@U123BOT> hello from event loop",
-					TimeStamp: "1234567890.000001",
-					Channel:   "C123",
+				Type: string(slackevents.Message),
+				Data: &slackevents.MessageEvent{
+					User:        "U456",
+					Text:        "<@U123BOT> hello from event loop",
+					TimeStamp:   "1234567890.000001",
+					Channel:     "C123",
+					ChannelType: "channel",
 				},
 			},
 		},
@@ -1369,6 +1343,7 @@ func (s *BotSuite) TestEventLoopProcessesEvent() {
 	select {
 	case msg := <-received:
 		require.Equal(s.T(), "hello from event loop", msg.Content)
+		require.True(s.T(), msg.IsBotMention)
 	case <-time.After(time.Second):
 		s.Fail("timeout waiting for message from eventLoop")
 	}
@@ -1712,8 +1687,7 @@ func (s *BotSuite) TestHandleEventsAPIMessageEvent() {
 
 	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
 
-	// Use a DM (not a channel mention) to exercise the message event path,
-	// since channel mentions are handled by handleAppMention instead.
+	// Use a DM to exercise the message event path.
 	evt := socketmode.Event{
 		Type: socketmode.EventTypeEventsAPI,
 		Data: slackevents.EventsAPIEvent{
@@ -2005,15 +1979,14 @@ func (s *BotSuite) TestHandleMessageSelfMentionInThread() {
 	}
 }
 
-func (s *BotSuite) TestHandleMessageMentionInChannelSkipped() {
-	// @mentions in non-DM channels are handled by handleAppMention, so
-	// handleMessage should skip them to avoid duplicate processing.
+func (s *BotSuite) TestHandleMessageMentionDM() {
+	// @mentions in DMs should be dispatched with both IsDM and IsBotMention.
 	ev := &slackevents.MessageEvent{
 		User:        "U456",
 		Text:        "<@U123BOT> hello",
-		Channel:     "C123",
+		Channel:     "D123",
 		TimeStamp:   "1234567890.000001",
-		ChannelType: "channel",
+		ChannelType: "im",
 	}
 
 	received := make(chan *IncomingMessage, 1)
@@ -2023,9 +1996,11 @@ func (s *BotSuite) TestHandleMessageMentionInChannelSkipped() {
 	s.bot.handleMessage(ev)
 
 	select {
-	case <-received:
-		s.Fail("should not receive channel mention via handleMessage")
-	case <-time.After(50 * time.Millisecond):
-		// expected — handled by handleAppMention instead
+	case msg := <-received:
+		require.True(s.T(), msg.IsDM)
+		require.True(s.T(), msg.IsBotMention)
+		require.Equal(s.T(), "hello", msg.Content)
+	case <-time.After(time.Second):
+		s.Fail("timeout waiting for DM mention")
 	}
 }

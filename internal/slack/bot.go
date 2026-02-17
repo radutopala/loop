@@ -147,8 +147,11 @@ func (b *SlackBot) SendTyping(ctx context.Context, channelID string) error {
 	ref := val.(goslack.ItemRef)
 
 	if err := b.session.AddReaction(reactionEmoji, ref); err != nil {
-		b.logger.Error("slack add reaction failed", "error", err, "channel_id", channelID)
-		return nil // non-fatal
+		// If already_reacted, the reaction is present — still set up cleanup.
+		if !strings.Contains(err.Error(), "already_reacted") {
+			b.logger.Error("slack add reaction failed", "error", err, "channel_id", channelID)
+			return nil // non-fatal
+		}
 	}
 
 	go func() {
@@ -419,8 +422,6 @@ func (b *SlackBot) handleEventsAPI(evt socketmode.Event) {
 	}
 
 	switch ev := eventsAPIEvent.InnerEvent.Data.(type) {
-	case *slackevents.AppMentionEvent:
-		b.handleAppMention(ev)
 	case *slackevents.MessageEvent:
 		b.handleMessage(ev)
 	case *slackevents.MemberJoinedChannelEvent:
@@ -430,38 +431,6 @@ func (b *SlackBot) handleEventsAPI(evt socketmode.Event) {
 	case *slackevents.GroupDeletedEvent:
 		b.notifyChannelDelete(ev.Channel)
 	}
-}
-
-func (b *SlackBot) handleAppMention(ev *slackevents.AppMentionEvent) {
-	botID := b.BotUserID()
-
-	// Skip bot's own messages — self-mentions (e.g. from CreateThread) are
-	// handled by handleMessage because Slack may not fire app_mention events
-	// for bot-posted messages on all workspaces.
-	if ev.User == botID {
-		return
-	}
-
-	channelID := ev.Channel
-	if ev.ThreadTimeStamp != "" && ev.ThreadTimeStamp != ev.TimeStamp {
-		channelID = compositeID(ev.Channel, ev.ThreadTimeStamp)
-	}
-
-	msg := &IncomingMessage{
-		ChannelID:    channelID,
-		GuildID:      "",
-		AuthorID:     ev.User,
-		AuthorName:   ev.User, // Slack doesn't include username in events
-		Content:      stripMention(ev.Text, botID),
-		MessageID:    ev.TimeStamp,
-		IsBotMention: true,
-		Timestamp:    slackTSToTime(ev.TimeStamp),
-	}
-
-	// Track message for reaction-based typing indicator.
-	b.lastMessageRef.Store(ev.Channel, goslack.NewRefToMessage(ev.Channel, ev.TimeStamp))
-
-	b.dispatchMessage(msg)
 }
 
 func (b *SlackBot) handleMessage(ev *slackevents.MessageEvent) {
@@ -482,13 +451,6 @@ func (b *SlackBot) handleMessage(ev *slackevents.MessageEvent) {
 	hasPrefix := hasCommandPrefix(ev.Text)
 	isDM := ev.ChannelType == "im"
 	isReply := b.isReplyToBot(ev)
-
-	// Skip @mentions in non-DM channels — handleAppMention handles those.
-	// Exception: bot self-mentions (e.g. from CreateThread) are handled here
-	// because Slack may not fire app_mention events for bot-posted messages.
-	if isMention && !isDM && !isSelfMention {
-		return
-	}
 
 	if !isMention && !hasPrefix && !isReply && !isDM {
 		return

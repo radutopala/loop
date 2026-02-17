@@ -422,6 +422,33 @@ make coverage         # Generate HTML coverage report
 make clean            # Remove build artifacts
 ```
 
+### Integration Tests
+
+The Slack integration tests run against the real Slack API using Socket Mode. They require a dedicated Slack app with bot, app-level, and user tokens.
+
+**Setup:**
+
+1. Create a Slack app (or reuse the one from your main config) with these additional **User Token Scopes**: `channels:write`, `channels:read`, `chat:write`, `reactions:read`, `im:write`
+2. Create `~/.loop/config.integration.json`:
+
+```json
+{
+  "slack_bot_token": "xoxb-...",
+  "slack_app_token": "xapp-...",
+  "slack_user_token": "xoxp-..."
+}
+```
+
+Alternatively, set environment variables: `SLACK_BOT_TOKEN`, `SLACK_APP_TOKEN`, `SLACK_USER_TOKEN`.
+
+**Run:**
+
+```sh
+make test-integration
+```
+
+The suite creates a temporary channel, runs all tests, and archives the channel on teardown. The user token is optional — tests requiring it (e.g. DM events) will be skipped if not provided.
+
 ## License
 
 This project is licensed under the [GNU General Public License v3.0](LICENSE).
