@@ -12,6 +12,11 @@ type AgentRequest struct {
 	AuthorID     string         `json:"author_id,omitempty"`
 	DirPath      string         `json:"dir_path,omitempty"`
 	Prompt       string         `json:"prompt,omitempty"`
+	// OnTurn is called for each assistant turn's text content during streaming.
+	// When set, the runner follows container logs in real-time instead of waiting
+	// for the container to exit. When nil, the runner uses the existing
+	// wait-then-read behavior.
+	OnTurn func(text string) `json:"-"`
 }
 
 // AgentMessage represents a single message in the conversation context.

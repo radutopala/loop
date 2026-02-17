@@ -348,7 +348,7 @@ func (s *OrchestratorSuite) SetupTest() {
 	s.ctx = context.Background()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, nil, 5*time.Minute, "", types.PlatformDiscord)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, nil, 5*time.Minute, "", types.PlatformDiscord, false)
 }
 
 func (s *OrchestratorSuite) TestNew() {
@@ -1689,7 +1689,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSuccess() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord, false)
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
@@ -1716,7 +1716,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddIdempotent() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord, false)
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(&db.ScheduledTask{ID: 5, TemplateName: "daily-check"}, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
@@ -1752,7 +1752,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddStoreError() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord, false)
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, errors.New("db error"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
@@ -1774,7 +1774,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSchedulerError() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord, false)
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.Anything).Return(int64(0), errors.New("sched error"))
@@ -1798,7 +1798,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateList() {
 		{Name: "weekly-report", Description: "Weekly report", Schedule: "0 17 * * 5", Type: "cron", Prompt: "generate report"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord, false)
 
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return strings.Contains(out.Content, "Available templates:") &&
@@ -1843,7 +1843,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddWithPromptPath() {
 		{Name: "daily-from-file", Description: "Daily from file", Schedule: "0 9 * * *", Type: "cron", PromptPath: "daily.md"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, tmpDir, types.PlatformDiscord)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, tmpDir, types.PlatformDiscord, false)
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-from-file").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
@@ -1871,7 +1871,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddResolvePromptError()
 		// Neither prompt nor prompt_path set
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord, false)
 
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "bad-template").Return(nil, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
@@ -1926,4 +1926,152 @@ func (s *OrchestratorSuite) TestHandleChannelDeleteChannelError() {
 
 	s.orch.HandleChannelDelete(s.ctx, "ch-1", false)
 	s.store.AssertExpectations(s.T())
+}
+
+// --- Streaming tests ---
+
+func (s *OrchestratorSuite) TestHandleMessageStreamingSkipsDuplicateFinalMessage() {
+	// Enable streaming on the orchestrator
+	s.orch.streamingEnabled = true
+
+	msg := &IncomingMessage{
+		ChannelID:    "ch1",
+		GuildID:      "g1",
+		AuthorID:     "user1",
+		AuthorName:   "Alice",
+		Content:      "hello bot",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+
+	// The runner captures OnTurn and calls it with intermediate text
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		// Simulate streaming: call OnTurn with an intermediate turn, empty text, then final
+		req.OnTurn("Let me check...")
+		req.OnTurn("") // empty text should be skipped
+		req.OnTurn("Here is the answer.")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:  "Here is the answer.", // Same as last OnTurn call
+		SessionID: "sess-1",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-1").Return(nil)
+
+	// Expect TWO intermediate SendMessage calls (from OnTurn), but NOT a final one
+	// because resp.Response == lastStreamedText
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.ChannelID == "ch1" && out.Content == "Let me check..." && out.ReplyToMessageID == "msg1"
+	})).Return(nil).Once()
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.ChannelID == "ch1" && out.Content == "Here is the answer." && out.ReplyToMessageID == "msg1"
+	})).Return(nil).Once()
+
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	// Verify SendMessage was called exactly twice (2 OnTurn calls, final skipped)
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 2)
+	s.store.AssertExpectations(s.T())
+	s.runner.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleMessageStreamingSendsFinalWhenDifferent() {
+	s.orch.streamingEnabled = true
+
+	msg := &IncomingMessage{
+		ChannelID:    "ch1",
+		GuildID:      "g1",
+		AuthorName:   "Alice",
+		Content:      "hello",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Intermediate turn")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:  "Final different response",
+		SessionID: "sess-2",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-2").Return(nil)
+
+	// Expect intermediate + final messages (3 total with InsertMessage for bot response)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Intermediate turn"
+	})).Return(nil).Once()
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Final different response"
+	})).Return(nil).Once()
+
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	// 2 calls: one OnTurn + one final (different from last streamed)
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 2)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleMessageStreamingDisabledNoOnTurn() {
+	// streamingEnabled is false by default (set in SetupTest)
+	msg := &IncomingMessage{
+		ChannelID:    "ch1",
+		GuildID:      "g1",
+		AuthorName:   "Alice",
+		Content:      "hello",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		// OnTurn should NOT be set when streaming is disabled
+		return req.OnTurn == nil
+	})).Return(&agent.AgentResponse{
+		Response:  "Hello!",
+		SessionID: "sess-3",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-3").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Hello!" && out.ReplyToMessageID == "msg1"
+	})).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	// Only 1 SendMessage call (the final response)
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
+	s.store.AssertExpectations(s.T())
+	s.runner.AssertExpectations(s.T())
 }

@@ -79,6 +79,7 @@ type Config struct {
 	Mounts               []string
 	Envs                 map[string]string
 	ClaudeModel          string
+	StreamingEnabled     bool
 }
 
 // Platform returns the configured chat platform.
@@ -113,6 +114,7 @@ type jsonConfig struct {
 	Envs                  map[string]any `json:"envs"`
 	ClaudeModel           string         `json:"claude_model"`
 	ClaudeBinPath         string         `json:"claude_bin_path"`
+	StreamingEnabled      *bool          `json:"streaming_enabled"`
 }
 
 type jsonMCPConfig struct {
@@ -179,6 +181,7 @@ func Load() (*Config, error) {
 		APIAddr:              stringDefault(jc.APIAddr, ":8222"),
 		LoopDir:              loopDir,
 		ClaudeModel:          jc.ClaudeModel,
+		StreamingEnabled:     boolPtrDefault(jc.StreamingEnabled, true),
 	}
 
 	if jc.MCP != nil && len(jc.MCP.Servers) > 0 {
@@ -229,6 +232,13 @@ func int64PtrDefault(val *int64, def int64) int64 {
 }
 
 func floatPtrDefault(val *float64, def float64) float64 {
+	if val != nil {
+		return *val
+	}
+	return def
+}
+
+func boolPtrDefault(val *bool, def bool) bool {
 	if val != nil {
 		return *val
 	}

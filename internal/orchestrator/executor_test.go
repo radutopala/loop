@@ -35,7 +35,7 @@ func (s *TaskExecutorSuite) SetupTest() {
 	s.ctx = context.Background()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.executor = NewTaskExecutor(s.runner, s.bot, s.store, logger, 5*time.Minute)
+	s.executor = NewTaskExecutor(s.runner, s.bot, s.store, logger, 5*time.Minute, false)
 }
 
 func (s *TaskExecutorSuite) TestNew() {
@@ -302,4 +302,144 @@ func (s *TaskExecutorSuite) TestNotificationFailureDoesNotStopExecution() {
 
 	s.runner.AssertExpectations(s.T())
 	s.bot.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestStreamingEnabled() {
+	s.executor.streamingEnabled = true
+
+	task := &db.ScheduledTask{
+		ID:        9,
+		ChannelID: "ch9",
+		Prompt:    "stream task",
+		Type:      db.TaskTypeCron,
+		Schedule:  "0 * * * *",
+	}
+
+	// Expect notification message
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch9" && msg.Content != "Final answer" && msg.Content != "Intermediate"
+	})).Return(nil).Once()
+
+	s.store.On("GetChannel", s.ctx, "ch9").Return(nil, nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		// Simulate streaming turns (including empty text that should be skipped)
+		req.OnTurn("Intermediate")
+		req.OnTurn("") // empty text should be skipped
+		req.OnTurn("Final answer")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:  "Final answer", // Same as last OnTurn — should be skipped
+		SessionID: "sess-stream",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch9", "sess-stream").Return(nil)
+
+	// Expect intermediate messages from OnTurn
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch9" && msg.Content == "Intermediate"
+	})).Return(nil).Once()
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch9" && msg.Content == "Final answer"
+	})).Return(nil).Once()
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Final answer", resp)
+
+	// 3 calls: notification + 2 OnTurn (final send skipped because == lastStreamedText)
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 3)
+	s.runner.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestStreamingDisabledNoOnTurn() {
+	// streamingEnabled is false by default
+	task := &db.ScheduledTask{
+		ID:        10,
+		ChannelID: "ch10",
+		Prompt:    "no stream",
+		Type:      db.TaskTypeCron,
+		Schedule:  "0 * * * *",
+	}
+
+	// Expect notification message
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch10" && msg.Content != "Result"
+	})).Return(nil).Once()
+
+	s.store.On("GetChannel", s.ctx, "ch10").Return(nil, nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.OnTurn == nil
+	})).Return(&agent.AgentResponse{
+		Response:  "Result",
+		SessionID: "sess-nostream",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch10", "sess-nostream").Return(nil)
+
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch10" && msg.Content == "Result"
+	})).Return(nil).Once()
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Result", resp)
+
+	// 2 calls: notification + final response
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 2)
+	s.runner.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
+	s.executor.streamingEnabled = true
+
+	task := &db.ScheduledTask{
+		ID:        11,
+		ChannelID: "ch11",
+		Prompt:    "stream diff",
+		Type:      db.TaskTypeInterval,
+		Schedule:  "5m",
+	}
+
+	// Notification
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch11" && msg.Content != "Intermediate" && msg.Content != "Different final"
+	})).Return(nil).Once()
+
+	s.store.On("GetChannel", s.ctx, "ch11").Return(nil, nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Intermediate")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:  "Different final",
+		SessionID: "sess-diff",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch11", "sess-diff").Return(nil)
+
+	// Intermediate from OnTurn
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch11" && msg.Content == "Intermediate"
+	})).Return(nil).Once()
+	// Final response (different from last streamed)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch11" && msg.Content == "Different final"
+	})).Return(nil).Once()
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Different final", resp)
+
+	// 3 calls: notification + intermediate + final (different)
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 3)
+	s.runner.AssertExpectations(s.T())
 }

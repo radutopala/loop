@@ -18,11 +18,12 @@ type TaskExecutor struct {
 	store            db.Store
 	logger           *slog.Logger
 	containerTimeout time.Duration
+	streamingEnabled bool
 }
 
 // NewTaskExecutor creates a new TaskExecutor.
-func NewTaskExecutor(runner Runner, bot Bot, store db.Store, logger *slog.Logger, containerTimeout time.Duration) *TaskExecutor {
-	return &TaskExecutor{runner: runner, bot: bot, store: store, logger: logger, containerTimeout: containerTimeout}
+func NewTaskExecutor(runner Runner, bot Bot, store db.Store, logger *slog.Logger, containerTimeout time.Duration, streamingEnabled bool) *TaskExecutor {
+	return &TaskExecutor{runner: runner, bot: bot, store: store, logger: logger, containerTimeout: containerTimeout, streamingEnabled: streamingEnabled}
 }
 
 // ExecuteTask runs an agent for the given scheduled task and sends the result to the chat platform.
@@ -59,6 +60,20 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		DirPath:   dirPath,
 	}
 
+	var lastStreamedText string
+	if e.streamingEnabled {
+		req.OnTurn = func(text string) {
+			if text == "" {
+				return
+			}
+			lastStreamedText = text
+			_ = e.bot.SendMessage(ctx, &OutgoingMessage{
+				ChannelID: task.ChannelID,
+				Content:   text,
+			})
+		}
+	}
+
 	runCtx, runCancel := context.WithTimeout(ctx, e.containerTimeout)
 	defer runCancel()
 
@@ -75,11 +90,14 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		e.logger.Error("updating session data after task", "error", err, "channel_id", task.ChannelID)
 	}
 
-	if err := e.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID: task.ChannelID,
-		Content:   resp.Response,
-	}); err != nil {
-		e.logger.Error("sending task response", "error", err, "channel_id", task.ChannelID)
+	// Skip final send if it duplicates the last streamed turn
+	if resp.Response != lastStreamedText {
+		if err := e.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: task.ChannelID,
+			Content:   resp.Response,
+		}); err != nil {
+			e.logger.Error("sending task response", "error", err, "channel_id", task.ChannelID)
+		}
 	}
 
 	return resp.Response, nil

@@ -250,6 +250,48 @@ func (s *ClientSuite) TestContainerLogsError() {
 	s.api.AssertExpectations(s.T())
 }
 
+func (s *ClientSuite) TestContainerLogsFollow() {
+	ctx := context.Background()
+
+	// Build stdcopy-formatted stream data.
+	var streamBuf bytes.Buffer
+	w := stdcopy.NewStdWriter(&streamBuf, stdcopy.Stdout)
+	_, err := w.Write([]byte("streaming output"))
+	require.NoError(s.T(), err)
+
+	s.api.On("ContainerLogs", ctx, "cid-1", containertypes.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+	}).Return(io.NopCloser(&streamBuf), nil)
+
+	r, err := s.client.ContainerLogsFollow(ctx, "cid-1")
+	require.NoError(s.T(), err)
+
+	data, readErr := io.ReadAll(r)
+	require.NoError(s.T(), readErr)
+	require.Equal(s.T(), "streaming output", string(data))
+	require.NoError(s.T(), r.Close())
+
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerLogsFollowError() {
+	ctx := context.Background()
+
+	s.api.On("ContainerLogs", ctx, "cid-1", containertypes.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+	}).Return(nil, errors.New("follow failed"))
+
+	r, err := s.client.ContainerLogsFollow(ctx, "cid-1")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), r)
+	require.Contains(s.T(), err.Error(), "follow failed")
+	s.api.AssertExpectations(s.T())
+}
+
 func (s *ClientSuite) TestContainerStart() {
 	ctx := context.Background()
 

@@ -184,6 +184,15 @@ func (m *mockDockerClient) ContainerLogs(ctx context.Context, containerID string
 	return r, args.Error(1)
 }
 
+func (m *mockDockerClient) ContainerLogsFollow(ctx context.Context, containerID string) (io.ReadCloser, error) {
+	args := m.Called(ctx, containerID)
+	var r io.ReadCloser
+	if v := args.Get(0); v != nil {
+		r = v.(io.ReadCloser)
+	}
+	return r, args.Error(1)
+}
+
 func (m *mockDockerClient) ContainerStart(ctx context.Context, containerID string) error {
 	return m.Called(ctx, containerID).Error(0)
 }

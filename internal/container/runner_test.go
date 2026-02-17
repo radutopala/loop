@@ -39,6 +39,15 @@ func (m *MockDockerClient) ContainerLogs(ctx context.Context, containerID string
 	return r, args.Error(1)
 }
 
+func (m *MockDockerClient) ContainerLogsFollow(ctx context.Context, containerID string) (io.ReadCloser, error) {
+	args := m.Called(ctx, containerID)
+	var r io.ReadCloser
+	if v := args.Get(0); v != nil {
+		r = v.(io.ReadCloser)
+	}
+	return r, args.Error(1)
+}
+
 func (m *MockDockerClient) ContainerStart(ctx context.Context, containerID string) error {
 	args := m.Called(ctx, containerID)
 	return args.Error(0)
@@ -2099,4 +2108,423 @@ func TestContainerName(t *testing.T) {
 			require.Equal(t, tc.expected, result)
 		})
 	}
+}
+
+// --- Tests for assistantMessage.extractText ---
+
+func TestAssistantMessageExtractText(t *testing.T) {
+	tests := []struct {
+		name     string
+		msg      assistantMessage
+		expected string
+	}{
+		{
+			name: "single text block",
+			msg: func() assistantMessage {
+				var m assistantMessage
+				m.Message.Content = append(m.Message.Content, struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				}{Type: "text", Text: "Hello!"})
+				return m
+			}(),
+			expected: "Hello!",
+		},
+		{
+			name: "multiple text blocks joined",
+			msg: func() assistantMessage {
+				var m assistantMessage
+				m.Message.Content = append(m.Message.Content,
+					struct {
+						Type string `json:"type"`
+						Text string `json:"text"`
+					}{Type: "text", Text: "Line one"},
+					struct {
+						Type string `json:"type"`
+						Text string `json:"text"`
+					}{Type: "text", Text: "Line two"},
+				)
+				return m
+			}(),
+			expected: "Line one\nLine two",
+		},
+		{
+			name: "tool_use only returns empty",
+			msg: func() assistantMessage {
+				var m assistantMessage
+				m.Message.Content = append(m.Message.Content, struct {
+					Type string `json:"type"`
+					Text string `json:"text"`
+				}{Type: "tool_use", Text: ""})
+				return m
+			}(),
+			expected: "",
+		},
+		{
+			name: "mixed content skips non-text",
+			msg: func() assistantMessage {
+				var m assistantMessage
+				m.Message.Content = append(m.Message.Content,
+					struct {
+						Type string `json:"type"`
+						Text string `json:"text"`
+					}{Type: "tool_use", Text: ""},
+					struct {
+						Type string `json:"type"`
+						Text string `json:"text"`
+					}{Type: "text", Text: "Result"},
+				)
+				return m
+			}(),
+			expected: "Result",
+		},
+		{
+			name:     "empty content",
+			msg:      assistantMessage{},
+			expected: "",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := tc.msg.extractText()
+			require.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+// --- Tests for parseStreamingJSON ---
+
+func TestParseStreamingJSON(t *testing.T) {
+	t.Run("happy path with assistant and result events", func(t *testing.T) {
+		input := `{"type":"system","subtype":"init"}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Let me check..."}]}}
+{"type":"user","message":{"content":[{"type":"tool_result"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Here is the answer."}]}}
+{"type":"result","result":"Here is the answer.","session_id":"sess-1","is_error":false}
+`
+		var turns []string
+		onTurn := func(text string) {
+			turns = append(turns, text)
+		}
+
+		resp, err := parseStreamingJSON(strings.NewReader(input), onTurn)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, "Here is the answer.", resp.Result)
+		require.Equal(t, "sess-1", resp.SessionID)
+		require.False(t, resp.IsError)
+		require.Equal(t, []string{"Let me check...", "Here is the answer."}, turns)
+	})
+
+	t.Run("no result event", func(t *testing.T) {
+		input := `{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]}}
+`
+		resp, err := parseStreamingJSON(strings.NewReader(input), func(string) {})
+		require.Error(t, err)
+		require.Nil(t, resp)
+		require.Contains(t, err.Error(), "no result event found")
+	})
+
+	t.Run("empty assistant text skipped", func(t *testing.T) {
+		input := `{"type":"assistant","message":{"content":[{"type":"tool_use","text":""}]}}
+{"type":"result","result":"Done.","session_id":"sess-2","is_error":false}
+`
+		var turns []string
+		resp, err := parseStreamingJSON(strings.NewReader(input), func(text string) {
+			turns = append(turns, text)
+		})
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		require.Equal(t, "Done.", resp.Result)
+		require.Empty(t, turns)
+	})
+
+	t.Run("non-JSON lines skipped", func(t *testing.T) {
+		input := `not json at all
+{"type":"result","result":"OK","session_id":"sess-3","is_error":false}
+`
+		resp, err := parseStreamingJSON(strings.NewReader(input), func(string) {})
+		require.NoError(t, err)
+		require.Equal(t, "OK", resp.Result)
+	})
+
+	t.Run("empty lines skipped", func(t *testing.T) {
+		input := `
+
+{"type":"result","result":"OK","session_id":"sess-4","is_error":false}
+`
+		resp, err := parseStreamingJSON(strings.NewReader(input), func(string) {})
+		require.NoError(t, err)
+		require.Equal(t, "OK", resp.Result)
+	})
+
+	t.Run("malformed assistant event skipped", func(t *testing.T) {
+		input := `{"type":"assistant","message":"not an object"}
+{"type":"result","result":"OK","session_id":"sess-5","is_error":false}
+`
+		var turns []string
+		resp, err := parseStreamingJSON(strings.NewReader(input), func(text string) {
+			turns = append(turns, text)
+		})
+		require.NoError(t, err)
+		require.Equal(t, "OK", resp.Result)
+		require.Empty(t, turns)
+	})
+
+	t.Run("malformed result event skipped finds later result", func(t *testing.T) {
+		input := `{"type":"result","result":123}
+{"type":"result","result":"OK","session_id":"sess-6","is_error":false}
+`
+		resp, err := parseStreamingJSON(strings.NewReader(input), func(string) {})
+		require.NoError(t, err)
+		require.Equal(t, "OK", resp.Result)
+	})
+
+	t.Run("error result", func(t *testing.T) {
+		input := `{"type":"result","result":"something broke","session_id":"sess-err","is_error":true}
+`
+		resp, err := parseStreamingJSON(strings.NewReader(input), func(string) {})
+		require.NoError(t, err)
+		require.True(t, resp.IsError)
+		require.Equal(t, "something broke", resp.Result)
+	})
+}
+
+// --- Tests for streaming path in Run ---
+
+func (s *RunnerSuite) TestRunWithOnTurnStreaming() {
+	ctx := context.Background()
+
+	var streamedTurns []string
+	req := &agent.AgentRequest{
+		ChannelID: "ch-1",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		OnTurn: func(text string) {
+			streamedTurns = append(streamedTurns, text)
+		},
+	}
+
+	// Build streaming log output with assistant + result events
+	streamOutput := `{"type":"assistant","message":{"content":[{"type":"text","text":"Let me check..."}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Here is the answer."}]}}
+{"type":"result","result":"Here is the answer.","session_id":"sess-stream","is_error":false}
+`
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-stream", nil)
+	s.client.On("ContainerStart", ctx, "container-stream").Return(nil)
+	s.client.On("ContainerLogsFollow", ctx, "container-stream").Return(io.NopCloser(strings.NewReader(streamOutput)), nil)
+	s.client.On("ContainerWait", ctx, "container-stream").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", mock.Anything, "container-stream").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Here is the answer.", resp.Response)
+	require.Equal(s.T(), "sess-stream", resp.SessionID)
+	require.Equal(s.T(), []string{"Let me check...", "Here is the answer."}, streamedTurns)
+
+	// ContainerLogs should NOT be called in streaming path
+	s.client.AssertNotCalled(s.T(), "ContainerLogs", mock.Anything, mock.Anything)
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunWithOnTurnFollowError() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		ChannelID: "ch-1",
+		OnTurn:    func(string) {},
+	}
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-err", nil)
+	s.client.On("ContainerStart", ctx, "container-err").Return(nil)
+	s.client.On("ContainerLogsFollow", ctx, "container-err").Return(nil, errors.New("follow failed"))
+	s.client.On("ContainerRemove", mock.Anything, "container-err").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Nil(s.T(), resp)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "following container logs")
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunWithOnTurnClaudeError() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		ChannelID: "ch-1",
+		OnTurn:    func(string) {},
+	}
+
+	streamOutput := `{"type":"result","result":"something broke","session_id":"sess-err","is_error":true}
+`
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-err", nil)
+	s.client.On("ContainerStart", ctx, "container-err").Return(nil)
+	s.client.On("ContainerLogsFollow", ctx, "container-err").Return(io.NopCloser(strings.NewReader(streamOutput)), nil)
+	s.client.On("ContainerWait", ctx, "container-err").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", mock.Anything, "container-err").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "claude returned error")
+	require.NotNil(s.T(), resp)
+	require.Equal(s.T(), "something broke", resp.Error)
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunWithOnTurnNoResultEvent() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		ChannelID: "ch-1",
+		OnTurn:    func(string) {},
+	}
+
+	streamOutput := `{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]}}
+`
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-noresult", nil)
+	s.client.On("ContainerStart", ctx, "container-noresult").Return(nil)
+	s.client.On("ContainerLogsFollow", ctx, "container-noresult").Return(io.NopCloser(strings.NewReader(streamOutput)), nil)
+	s.client.On("ContainerWait", ctx, "container-noresult").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", mock.Anything, "container-noresult").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Nil(s.T(), resp)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "no result event found")
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunWithOnTurnNonZeroExitCode() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		ChannelID: "ch-1",
+		OnTurn:    func(string) {},
+	}
+
+	// No result event + non-zero exit → should include exit code in error
+	streamOutput := `{"type":"system","subtype":"init"}
+`
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 1}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-exit1", nil)
+	s.client.On("ContainerStart", ctx, "container-exit1").Return(nil)
+	s.client.On("ContainerLogsFollow", ctx, "container-exit1").Return(io.NopCloser(strings.NewReader(streamOutput)), nil)
+	s.client.On("ContainerWait", ctx, "container-exit1").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", mock.Anything, "container-exit1").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Nil(s.T(), resp)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "container exited with code 1")
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunWithOnTurnWaitError() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		ChannelID: "ch-1",
+		OnTurn:    func(string) {},
+	}
+
+	streamOutput := `{"type":"result","result":"OK","session_id":"sess-1","is_error":false}
+`
+
+	waitCh := make(chan WaitResponse, 1)
+	errCh := make(chan error, 1)
+	errCh <- errors.New("wait error")
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-wait-err", nil)
+	s.client.On("ContainerStart", ctx, "container-wait-err").Return(nil)
+	s.client.On("ContainerLogsFollow", ctx, "container-wait-err").Return(io.NopCloser(strings.NewReader(streamOutput)), nil)
+	s.client.On("ContainerWait", ctx, "container-wait-err").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", mock.Anything, "container-wait-err").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Nil(s.T(), resp)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "waiting for container")
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunWithOnTurnContainerExitError() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		ChannelID: "ch-1",
+		OnTurn:    func(string) {},
+	}
+
+	streamOutput := `{"type":"result","result":"OK","session_id":"sess-1","is_error":false}
+`
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 1, Error: errors.New("oom killed")}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-oom", nil)
+	s.client.On("ContainerStart", ctx, "container-oom").Return(nil)
+	s.client.On("ContainerLogsFollow", ctx, "container-oom").Return(io.NopCloser(strings.NewReader(streamOutput)), nil)
+	s.client.On("ContainerWait", ctx, "container-oom").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", mock.Anything, "container-oom").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Nil(s.T(), resp)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "container exited with error")
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunWithOnTurnTimeout() {
+	ctx, cancel := context.WithCancel(context.Background())
+	req := &agent.AgentRequest{
+		ChannelID: "ch-1",
+		OnTurn:    func(string) {},
+	}
+
+	// Create a reader that blocks until context is cancelled
+	pr, pw := io.Pipe()
+	go func() {
+		<-ctx.Done()
+		pw.CloseWithError(ctx.Err())
+	}()
+
+	waitCh := make(chan WaitResponse)
+	errCh := make(chan error)
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-timeout", nil)
+	s.client.On("ContainerStart", ctx, "container-timeout").Return(nil)
+	s.client.On("ContainerLogsFollow", ctx, "container-timeout").Return(pr, nil)
+	s.client.On("ContainerWait", ctx, "container-timeout").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", mock.Anything, "container-timeout").Return(nil)
+
+	// Cancel immediately to simulate timeout
+	cancel()
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Nil(s.T(), resp)
+	require.Error(s.T(), err)
+	// After pipe closes due to context cancel, parseStreamingJSON returns
+	// "no result event found" — then ContainerWait hits ctx.Done()
+	require.Contains(s.T(), err.Error(), "container execution timed out")
+
+	s.client.AssertExpectations(s.T())
 }

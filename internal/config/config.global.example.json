@@ -23,6 +23,7 @@
   //"poll_interval_sec": 30,
   //"claude_model": "", // defaults to sonnet; options: "claude-opus-4-6", "claude-sonnet-4-5-20250929"
   //"claude_bin_path": "claude",
+  //"streaming_enabled": true, // stream intermediate Claude turns to chat as they happen
 
   // MCP server configurations. Each entry defines a separate MCP server that agents can connect to.
   // The key is an arbitrary name for the server, and the value specifies how to start the server.

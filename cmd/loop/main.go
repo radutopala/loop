@@ -553,7 +553,7 @@ func serve() error {
 
 	runner := container.NewDockerRunner(dockerClient, cfg)
 
-	executor := orchestrator.NewTaskExecutor(runner, bot, store, logger, cfg.ContainerTimeout)
+	executor := orchestrator.NewTaskExecutor(runner, bot, store, logger, cfg.ContainerTimeout, cfg.StreamingEnabled)
 	sched := scheduler.NewTaskScheduler(store, executor, cfg.PollInterval, logger)
 
 	var channelSvc api.ChannelEnsurer
@@ -575,7 +575,7 @@ func serve() error {
 		return fmt.Errorf("starting api server: %w", err)
 	}
 
-	orch := orchestrator.New(store, bot, runner, sched, logger, cfg.TaskTemplates, cfg.ContainerTimeout, cfg.LoopDir, platform)
+	orch := orchestrator.New(store, bot, runner, sched, logger, cfg.TaskTemplates, cfg.ContainerTimeout, cfg.LoopDir, platform, cfg.StreamingEnabled)
 
 	if err := orch.Start(ctx); err != nil {
 		_ = apiSrv.Stop(context.Background())

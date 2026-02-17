@@ -104,6 +104,28 @@ func (c *Client) ContainerLogs(ctx context.Context, containerID string) (io.Read
 	return pr, nil
 }
 
+// ContainerLogsFollow follows the container's stdout/stderr logs in real-time.
+// The returned ReadCloser streams log output as it is produced. The caller
+// must close the reader when done.
+func (c *Client) ContainerLogsFollow(ctx context.Context, containerID string) (io.ReadCloser, error) {
+	resp, err := c.api.ContainerLogs(ctx, containerID, containertypes.LogsOptions{
+		ShowStdout: true,
+		ShowStderr: true,
+		Follow:     true,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	pr, pw := io.Pipe()
+	go func() {
+		_, copyErr := stdcopy.StdCopy(pw, pw, resp)
+		resp.Close()
+		pw.CloseWithError(copyErr)
+	}()
+	return pr, nil
+}
+
 // ContainerStart starts the specified container.
 func (c *Client) ContainerStart(ctx context.Context, containerID string) error {
 	return c.api.ContainerStart(ctx, containerID, containertypes.StartOptions{})

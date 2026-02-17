@@ -63,6 +63,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Empty(s.T(), cfg.ClaudeCodeOAuthToken)
 	require.Empty(s.T(), cfg.DiscordGuildID)
 	require.Nil(s.T(), cfg.MCPServers)
+	require.True(s.T(), cfg.StreamingEnabled)
 }
 
 func (s *ConfigSuite) TestLoadCustomValues() {
@@ -106,6 +107,21 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 	require.Equal(s.T(), 60*time.Second, cfg.PollInterval)
 	require.Equal(s.T(), ":9999", cfg.APIAddr)
 	require.Equal(s.T(), "/custom/claude", cfg.ClaudeBinPath)
+}
+
+func (s *ConfigSuite) TestLoadStreamingEnabledExplicitFalse() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platform": "discord",
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"streaming_enabled": false
+		}`), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.False(s.T(), cfg.StreamingEnabled)
 }
 
 func (s *ConfigSuite) TestMissingRequired() {

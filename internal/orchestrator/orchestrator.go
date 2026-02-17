@@ -101,10 +101,11 @@ type Orchestrator struct {
 	containerTimeout time.Duration
 	loopDir          string
 	platform         types.Platform
+	streamingEnabled bool
 }
 
 // New creates a new Orchestrator.
-func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *slog.Logger, templates []config.TaskTemplate, containerTimeout time.Duration, loopDir string, platform types.Platform) *Orchestrator {
+func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *slog.Logger, templates []config.TaskTemplate, containerTimeout time.Duration, loopDir string, platform types.Platform, streamingEnabled bool) *Orchestrator {
 	return &Orchestrator{
 		store:            store,
 		bot:              bot,
@@ -117,6 +118,7 @@ func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *sl
 		containerTimeout: containerTimeout,
 		loopDir:          loopDir,
 		platform:         platform,
+		streamingEnabled: streamingEnabled,
 	}
 }
 
@@ -320,6 +322,21 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *Incomin
 	runCtx, runCancel := context.WithTimeout(ctx, o.containerTimeout)
 	defer runCancel()
 
+	var lastStreamedText string
+	if o.streamingEnabled {
+		req.OnTurn = func(text string) {
+			if text == "" {
+				return
+			}
+			lastStreamedText = text
+			_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+				ChannelID:        msg.ChannelID,
+				Content:          text,
+				ReplyToMessageID: msg.MessageID,
+			})
+		}
+	}
+
 	resp, err := o.runner.Run(runCtx, req)
 	if err != nil {
 		o.logger.Error("running agent", "error", err, "channel_id", msg.ChannelID)
@@ -350,12 +367,15 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *Incomin
 		"content", resp.Response,
 	)
 
-	if err := o.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID:        msg.ChannelID,
-		Content:          resp.Response,
-		ReplyToMessageID: msg.MessageID,
-	}); err != nil {
-		o.logger.Error("sending response", "error", err, "channel_id", msg.ChannelID)
+	// Skip final send if it duplicates the last streamed turn
+	if resp.Response != lastStreamedText {
+		if err := o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID:        msg.ChannelID,
+			Content:          resp.Response,
+			ReplyToMessageID: msg.MessageID,
+		}); err != nil {
+			o.logger.Error("sending response", "error", err, "channel_id", msg.ChannelID)
+		}
 	}
 
 	ch, err := o.store.GetChannel(ctx, msg.ChannelID)

@@ -40,6 +40,29 @@ type claudeResponse struct {
 	IsError   bool   `json:"is_error"`
 }
 
+// assistantMessage represents an "assistant" event from Claude's stream-json output.
+// Each assistant turn contains a message with content blocks.
+type assistantMessage struct {
+	Type    string `json:"type"`
+	Message struct {
+		Content []struct {
+			Type string `json:"type"`
+			Text string `json:"text"`
+		} `json:"content"`
+	} `json:"message"`
+}
+
+// extractText joins all text content blocks from an assistant message.
+func (m *assistantMessage) extractText() string {
+	var texts []string
+	for _, c := range m.Message.Content {
+		if c.Type == "text" && c.Text != "" {
+			texts = append(texts, c.Text)
+		}
+	}
+	return strings.Join(texts, "\n")
+}
+
 // ContainerConfig holds settings for creating a container.
 type ContainerConfig struct {
 	Image      string
@@ -63,6 +86,7 @@ type DockerClient interface {
 	ContainerCreate(ctx context.Context, cfg *ContainerConfig, name string) (string, error)
 	ContainerStart(ctx context.Context, containerID string) error
 	ContainerLogs(ctx context.Context, containerID string) (io.Reader, error)
+	ContainerLogsFollow(ctx context.Context, containerID string) (io.ReadCloser, error)
 	ContainerWait(ctx context.Context, containerID string) (<-chan WaitResponse, <-chan error)
 	ContainerRemove(ctx context.Context, containerID string) error
 	ImageList(ctx context.Context, image string) ([]string, error)
@@ -466,34 +490,72 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		return nil, fmt.Errorf("starting container: %w", err)
 	}
 
-	waitCh, errCh := r.client.ContainerWait(ctx, containerID)
-
+	var claudeResp *claudeResponse
 	var exitCode int64
-	select {
-	case <-ctx.Done():
-		return nil, fmt.Errorf("container execution timed out: %w", ctx.Err())
-	case err := <-errCh:
+
+	if req.OnTurn != nil {
+		// Streaming path: follow logs in real-time
+		logsReader, err := r.client.ContainerLogsFollow(ctx, containerID)
 		if err != nil {
-			return nil, fmt.Errorf("waiting for container: %w", err)
+			return nil, fmt.Errorf("following container logs: %w", err)
 		}
-	case wr := <-waitCh:
-		if wr.Error != nil {
-			return nil, fmt.Errorf("container exited with error: %w", wr.Error)
-		}
-		exitCode = wr.StatusCode
-	}
 
-	reader, err := r.client.ContainerLogs(ctx, containerID)
-	if err != nil {
-		return nil, fmt.Errorf("reading container logs: %w", err)
-	}
+		var parseErr error
+		claudeResp, parseErr = parseStreamingJSON(logsReader, req.OnTurn)
+		logsReader.Close()
 
-	claudeResp, err := parseStreamJSON(reader)
-	if err != nil {
-		if exitCode != 0 {
-			return nil, fmt.Errorf("container exited with code %d: %w", exitCode, err)
+		// After the log stream ends (container exited), get the exit code
+		waitCh, errCh := r.client.ContainerWait(ctx, containerID)
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("container execution timed out: %w", ctx.Err())
+		case err := <-errCh:
+			if err != nil {
+				return nil, fmt.Errorf("waiting for container: %w", err)
+			}
+		case wr := <-waitCh:
+			if wr.Error != nil {
+				return nil, fmt.Errorf("container exited with error: %w", wr.Error)
+			}
+			exitCode = wr.StatusCode
 		}
-		return nil, err
+
+		if parseErr != nil {
+			if exitCode != 0 {
+				return nil, fmt.Errorf("container exited with code %d: %w", exitCode, parseErr)
+			}
+			return nil, parseErr
+		}
+	} else {
+		// Non-streaming path: wait for exit, then read all logs
+		waitCh, errCh := r.client.ContainerWait(ctx, containerID)
+		select {
+		case <-ctx.Done():
+			return nil, fmt.Errorf("container execution timed out: %w", ctx.Err())
+		case err := <-errCh:
+			if err != nil {
+				return nil, fmt.Errorf("waiting for container: %w", err)
+			}
+		case wr := <-waitCh:
+			if wr.Error != nil {
+				return nil, fmt.Errorf("container exited with error: %w", wr.Error)
+			}
+			exitCode = wr.StatusCode
+		}
+
+		reader, err := r.client.ContainerLogs(ctx, containerID)
+		if err != nil {
+			return nil, fmt.Errorf("reading container logs: %w", err)
+		}
+
+		var parseErr error
+		claudeResp, parseErr = parseStreamJSON(reader)
+		if parseErr != nil {
+			if exitCode != 0 {
+				return nil, fmt.Errorf("container exited with code %d: %w", exitCode, parseErr)
+			}
+			return nil, parseErr
+		}
 	}
 
 	if claudeResp.IsError {
@@ -576,6 +638,53 @@ func parseStreamJSON(r io.Reader) (*claudeResponse, error) {
 			continue // skip non-JSON lines (e.g. ANSI noise)
 		}
 		if evt.Type == "result" {
+			result = &evt
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("reading container output: %w", err)
+	}
+	if result == nil {
+		return nil, fmt.Errorf("parsing claude response: no result event found")
+	}
+	return result, nil
+}
+
+// parseStreamingJSON scans newline-delimited JSON events from Claude's
+// streaming output, calling onTurn for each assistant turn's text content.
+// Returns the final "result" event.
+func parseStreamingJSON(r io.Reader, onTurn func(string)) (*claudeResponse, error) {
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // allow lines up to 1MB
+	var result *claudeResponse
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" {
+			continue
+		}
+
+		// Quick type check to avoid full unmarshal of irrelevant events
+		var typeCheck struct {
+			Type string `json:"type"`
+		}
+		if err := json.Unmarshal([]byte(line), &typeCheck); err != nil {
+			continue
+		}
+
+		switch typeCheck.Type {
+		case "assistant":
+			var msg assistantMessage
+			if err := json.Unmarshal([]byte(line), &msg); err != nil {
+				continue
+			}
+			if text := msg.extractText(); text != "" {
+				onTurn(text)
+			}
+		case "result":
+			var evt claudeResponse
+			if err := json.Unmarshal([]byte(line), &evt); err != nil {
+				continue
+			}
 			result = &evt
 		}
 	}
