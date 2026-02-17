@@ -18,8 +18,8 @@ install: ## Install loop to GOPATH/bin
 test: ## Run all tests
 	go test -race -count=1 ./...
 
-test-integration: ## Run Slack integration tests (requires SLACK_BOT_TOKEN + SLACK_APP_TOKEN)
-	go test -v -tags integration -race -count=1 -timeout 10m ./internal/slack/
+test-integration: ## Run integration tests (requires tokens in ~/.loop/config.integration.json)
+	go test -v -tags integration -race -count=1 -timeout 10m ./internal/slack/ ./internal/discord/
 
 lint: ## Run golangci-lint
 	golangci-lint run ./...
