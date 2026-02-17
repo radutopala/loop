@@ -10,3 +10,6 @@ var ProjectExampleConfig []byte
 
 //go:embed slack.manifest.json
 var SlackManifest []byte
+
+//go:embed heartbeat.md
+var HeartbeatTemplate []byte

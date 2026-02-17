@@ -86,6 +86,13 @@
       "prompt": "Generate a summary of all tickets closed today using 'tk list --status=closed'. Include ticket IDs, titles, and brief descriptions of what was accomplished."
       // Or use prompt_path to load prompt from ~/.loop/templates/<file>:
       //"prompt_path": "daily-summary.md"
+    },
+    {
+      "name": "heartbeat",
+      "description": "Periodic check — reads HEARTBEAT.md and reports only if something needs attention",
+      "schedule": "30m",
+      "type": "interval",
+      "prompt_path": "heartbeat.md"
     }
   ]
 }

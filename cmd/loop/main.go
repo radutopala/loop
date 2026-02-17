@@ -308,6 +308,14 @@ func onboardGlobal(force bool) error {
 		return fmt.Errorf("creating templates directory: %w", err)
 	}
 
+	// Write embedded heartbeat template
+	heartbeatPath := filepath.Join(templatesDir, "heartbeat.md")
+	if _, err := osStat(heartbeatPath); err != nil {
+		if err := osWriteFile(heartbeatPath, config.HeartbeatTemplate, 0644); err != nil {
+			return fmt.Errorf("writing heartbeat template: %w", err)
+		}
+	}
+
 	fmt.Printf("✓ Created config at %s\n", configPath)
 	fmt.Println("\nNext steps:")
 	fmt.Println("1. Edit config.json and add your platform credentials (Discord or Slack)")

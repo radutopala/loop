@@ -1479,6 +1479,12 @@ func (s *MainSuite) TestOnboardGlobalSuccess() {
 	info, err := os.Stat(templatesDir)
 	require.NoError(s.T(), err)
 	require.True(s.T(), info.IsDir())
+
+	// Verify heartbeat template was written
+	heartbeatPath := filepath.Join(templatesDir, "heartbeat.md")
+	heartbeatData, err := os.ReadFile(heartbeatPath)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(heartbeatData), "heartbeat check")
 }
 
 func (s *MainSuite) TestOnboardGlobalConfigAlreadyExists() {
@@ -1788,6 +1794,51 @@ func (s *MainSuite) TestOnboardGlobalTemplatesDirError() {
 	err := onboardGlobal(false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating templates directory")
+}
+
+func (s *MainSuite) TestOnboardGlobalHeartbeatWriteError() {
+	tmpDir := s.T().TempDir()
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	calls := 0
+	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
+		calls++
+		if calls == 7 { // Seventh write is heartbeat template
+			return errors.New("heartbeat write error")
+		}
+		return os.WriteFile(path, data, perm)
+	}
+
+	err := onboardGlobal(false)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing heartbeat template")
+}
+
+func (s *MainSuite) TestOnboardGlobalHeartbeatSkipsIfExists() {
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	templatesDir := filepath.Join(loopDir, "templates")
+	heartbeatPath := filepath.Join(templatesDir, "heartbeat.md")
+
+	require.NoError(s.T(), os.MkdirAll(templatesDir, 0755))
+	require.NoError(s.T(), os.WriteFile(heartbeatPath, []byte("custom heartbeat"), 0644))
+
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	osWriteFile = os.WriteFile
+
+	err := onboardGlobal(true) // force overwrites config but not heartbeat template
+	require.NoError(s.T(), err)
+
+	data, err := os.ReadFile(heartbeatPath)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "custom heartbeat", string(data))
 }
 
 // --- onboard:local ---
