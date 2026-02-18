@@ -178,7 +178,7 @@ func generatePlist(binaryPath, logFile string, extraEnv map[string]string) strin
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		envEntries.WriteString(fmt.Sprintf("\t\t<key>%s</key>\n\t\t<string>%s</string>\n", k, extraEnv[k]))
+		fmt.Fprintf(&envEntries, "\t\t<key>%s</key>\n\t\t<string>%s</string>\n", k, extraEnv[k])
 	}
 
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>

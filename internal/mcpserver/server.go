@@ -261,7 +261,7 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 
 	var text strings.Builder
 	for _, t := range tasks {
-		text.WriteString(fmt.Sprintf("- ID %d: %s (schedule: %s, type: %s, enabled: %v)\n", t.ID, t.Prompt, t.Schedule, t.Type, t.Enabled))
+		fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v)\n", t.ID, t.Prompt, t.Schedule, t.Type, t.Enabled)
 	}
 
 	return &mcp.CallToolResult{
@@ -513,7 +513,7 @@ func (s *Server) handleSearchChannels(_ context.Context, _ *mcp.CallToolRequest,
 		if ch.ParentID != "" {
 			chType = "thread"
 		}
-		text.WriteString(fmt.Sprintf("- %s [%s] (ID: %s, dir: %s, active: %v)\n", ch.Name, chType, ch.ChannelID, ch.DirPath, ch.Active))
+		fmt.Fprintf(&text, "- %s [%s] (ID: %s, dir: %s, active: %v)\n", ch.Name, chType, ch.ChannelID, ch.DirPath, ch.Active)
 	}
 
 	return &mcp.CallToolResult{
