@@ -22,7 +22,9 @@ test-integration: ## Run integration tests (requires tokens in ~/.loop/config.in
 	go test -v -tags integration -race -count=1 -timeout 10m ./internal/slack/ ./internal/discord/
 
 lint: ## Run golangci-lint
-	docker run --rm -v "$$(pwd)":/app -w /app golangci/golangci-lint:v2.10.1 golangci-lint run ./...
+	@docker rm -f loop-lint >/dev/null 2>&1 || true
+	docker run --name loop-lint -v "$$(pwd)":/app -w /app golangci/golangci-lint:v2.10.1 golangci-lint run ./...
+	@(sleep 300 && docker rm -f loop-lint >/dev/null 2>&1) &
 
 coverage: ## Generate HTML coverage report
 	go test -race -count=1 -coverprofile=coverage.out ./...
