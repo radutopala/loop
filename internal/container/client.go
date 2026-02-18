@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"net/http"
 	"os/exec"
 	"strings"
+	"time"
 
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
@@ -201,11 +203,37 @@ func (c *Client) ImagePull(ctx context.Context, imageName string) error {
 	return err
 }
 
+const claudeVersionURL = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest"
+
+// latestClaudeVersion fetches the latest Claude CLI version string.
+// Falls back to a timestamp if the lookup fails, which busts the cache.
+var latestClaudeVersion = func() string {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, claudeVersionURL, nil)
+	if err != nil {
+		return fmt.Sprintf("unknown-%d", time.Now().Unix())
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return fmt.Sprintf("unknown-%d", time.Now().Unix())
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64))
+	if err != nil || resp.StatusCode != http.StatusOK {
+		return fmt.Sprintf("unknown-%d", time.Now().Unix())
+	}
+	return strings.TrimSpace(string(body))
+}
+
 // dockerBuildCmd executes `docker build` via the CLI. Using the CLI instead of
 // the Docker SDK avoids "configured logging driver does not support reading"
 // errors because the CLI uses BuildKit by default.
 var dockerBuildCmd = func(ctx context.Context, contextDir, tag string) ([]byte, error) {
-	return exec.CommandContext(ctx, "docker", "build", "-t", tag, contextDir).CombinedOutput()
+	claudeVersion := "CLAUDE_VERSION=" + latestClaudeVersion()
+	return exec.CommandContext(ctx, "docker", "build", "--build-arg", claudeVersion, "-t", tag, contextDir).CombinedOutput()
 }
 
 // ImageBuild builds a Docker image from the given context directory.
