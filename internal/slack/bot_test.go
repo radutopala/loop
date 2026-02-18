@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -297,16 +298,16 @@ func (s *BotSuite) TestSendMessageWithReplyTo() {
 }
 
 func (s *BotSuite) TestSendMessageSplit() {
-	longContent := ""
-	for i := 0; i < maxMessageLen+100; i++ {
-		longContent += "a"
+	var longContent strings.Builder
+	for range maxMessageLen + 100 {
+		longContent.WriteString("a")
 	}
 
 	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234.5678", nil)
 
 	err := s.bot.SendMessage(context.Background(), &OutgoingMessage{
 		ChannelID: "C123",
-		Content:   longContent,
+		Content:   longContent.String(),
 	})
 	require.NoError(s.T(), err)
 	s.session.AssertNumberOfCalls(s.T(), "PostMessage", 2)
@@ -659,6 +660,41 @@ func (s *BotSuite) TestCreateThreadError() {
 	_, err := s.bot.CreateThread(context.Background(), "C123", "thread", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "slack create thread")
+}
+
+// --- CreateSimpleThread ---
+
+func (s *BotSuite) TestCreateSimpleThreadWithMessage() {
+	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1111.2222", nil)
+
+	id, err := s.bot.CreateSimpleThread(context.Background(), "C123", "task output", "First turn")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "C123:1111.2222", id)
+}
+
+func (s *BotSuite) TestCreateSimpleThreadEmptyMessageUsesName() {
+	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "2222.3333", nil)
+
+	id, err := s.bot.CreateSimpleThread(context.Background(), "C123", "task name", "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "C123:2222.3333", id)
+}
+
+func (s *BotSuite) TestCreateSimpleThreadCompositeParent() {
+	// When parent is a composite ID, only the channel part is used
+	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "3333.4444", nil)
+
+	id, err := s.bot.CreateSimpleThread(context.Background(), "C123:old.ts", "task", "content")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "C123:3333.4444", id)
+}
+
+func (s *BotSuite) TestCreateSimpleThreadError() {
+	s.session.On("PostMessage", "C123", mock.Anything).Return("", "", errors.New("post failed"))
+
+	_, err := s.bot.CreateSimpleThread(context.Background(), "C123", "task", "content")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "slack create simple thread")
 }
 
 // --- PostMessage ---

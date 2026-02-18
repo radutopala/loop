@@ -170,7 +170,7 @@ func Status(sys System) (string, error) {
 }
 
 func generatePlist(binaryPath, logFile string, extraEnv map[string]string) string {
-	var envEntries string
+	var envEntries strings.Builder
 	// Sort keys for deterministic output.
 	keys := make([]string, 0, len(extraEnv))
 	for k := range extraEnv {
@@ -178,7 +178,7 @@ func generatePlist(binaryPath, logFile string, extraEnv map[string]string) strin
 	}
 	sort.Strings(keys)
 	for _, k := range keys {
-		envEntries += fmt.Sprintf("\t\t<key>%s</key>\n\t\t<string>%s</string>\n", k, extraEnv[k])
+		envEntries.WriteString(fmt.Sprintf("\t\t<key>%s</key>\n\t\t<string>%s</string>\n", k, extraEnv[k]))
 	}
 
 	return fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
@@ -207,5 +207,5 @@ func generatePlist(binaryPath, logFile string, extraEnv map[string]string) strin
 %s	</dict>
 </dict>
 </plist>
-`, serviceLabel, binaryPath, logFile, logFile, envEntries)
+`, serviceLabel, binaryPath, logFile, logFile, envEntries.String())
 }

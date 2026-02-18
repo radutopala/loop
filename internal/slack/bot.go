@@ -328,6 +328,23 @@ func (b *SlackBot) CreateThread(ctx context.Context, channelID, name, mentionUse
 	return threadID, nil
 }
 
+// CreateSimpleThread creates a new thread with a plain initial message (no bot mention).
+// Returns a composite "channelID:messageTS" thread ID.
+func (b *SlackBot) CreateSimpleThread(ctx context.Context, channelID, name, initialMessage string) (string, error) {
+	chID, _ := parseCompositeID(channelID)
+	msg := initialMessage
+	if msg == "" {
+		msg = name
+	}
+	_, ts, err := b.session.PostMessage(chID, goslack.MsgOptionText(msg, false))
+	if err != nil {
+		return "", fmt.Errorf("slack create simple thread: %w", err)
+	}
+	threadID := compositeID(chID, ts)
+	b.logger.InfoContext(ctx, "created simple slack thread", "thread_id", threadID, "name", name, "parent_id", channelID)
+	return threadID, nil
+}
+
 // PostMessage sends a simple message to the given channel or thread.
 // Text mentions of the bot (e.g. @BotName) are converted to proper Slack mentions.
 func (b *SlackBot) PostMessage(ctx context.Context, channelID, content string) error {

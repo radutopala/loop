@@ -1923,6 +1923,54 @@ func (s *BotSuite) TestReplaceTextMention() {
 	}
 }
 
+// --- CreateSimpleThread tests ---
+
+func (s *BotSuite) TestCreateSimpleThreadSuccess() {
+	s.session.On("ThreadStart", "ch-1", "task output", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
+		Return(&discordgo.Channel{ID: "thread-1"}, nil)
+	s.session.On("ChannelMessageSend", "thread-1", "First turn content", mock.Anything).
+		Return(&discordgo.Message{}, nil)
+
+	threadID, err := s.bot.CreateSimpleThread(context.Background(), "ch-1", "task output", "First turn content")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "thread-1", threadID)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestCreateSimpleThreadEmptyMessage() {
+	s.session.On("ThreadStart", "ch-1", "task name", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
+		Return(&discordgo.Channel{ID: "thread-2"}, nil)
+
+	threadID, err := s.bot.CreateSimpleThread(context.Background(), "ch-1", "task name", "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "thread-2", threadID)
+	// ChannelMessageSend should not be called for empty message
+	s.session.AssertNotCalled(s.T(), "ChannelMessageSend", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (s *BotSuite) TestCreateSimpleThreadStartError() {
+	s.session.On("ThreadStart", "ch-1", "task", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
+		Return(nil, errors.New("thread start failed"))
+
+	threadID, err := s.bot.CreateSimpleThread(context.Background(), "ch-1", "task", "content")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "discord create simple thread")
+	require.Empty(s.T(), threadID)
+}
+
+func (s *BotSuite) TestCreateSimpleThreadMessageSendError() {
+	s.session.On("ThreadStart", "ch-1", "task", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
+		Return(&discordgo.Channel{ID: "thread-3"}, nil)
+	s.session.On("ChannelMessageSend", "thread-3", "content", mock.Anything).
+		Return(nil, errors.New("send failed"))
+
+	// Message send error is logged but does not fail the thread creation
+	threadID, err := s.bot.CreateSimpleThread(context.Background(), "ch-1", "task", "content")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "thread-3", threadID)
+	s.session.AssertExpectations(s.T())
+}
+
 // --- Verify Bot interface compliance ---
 
 func (s *BotSuite) TestBotInterfaceCompliance() {

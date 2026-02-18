@@ -55,11 +55,6 @@ func (s *TaskExecutorSuite) TestHappyPathWithSession() {
 		Schedule:  "0 * * * *",
 	}
 
-	// Expect notification message first
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch1" && msg.Content != "" && msg.Content != "done!"
-	})).Return(nil).Once()
-
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ChannelID: "ch1",
 		SessionID: "existing-session",
@@ -77,7 +72,6 @@ func (s *TaskExecutorSuite) TestHappyPathWithSession() {
 		SessionID: "new-session",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch1", "new-session").Return(nil)
-	// Expect response message second
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
 		return msg.ChannelID == "ch1" && msg.Content == "done!"
 	})).Return(nil).Once()
@@ -100,11 +94,6 @@ func (s *TaskExecutorSuite) TestHappyPathWithoutSession() {
 		Schedule:  "5m",
 	}
 
-	// Expect notification message first
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch2" && msg.Content != "" && msg.Content != "hi!"
-	})).Return(nil).Once()
-
 	s.store.On("GetChannel", s.ctx, "ch2").Return(nil, nil)
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.SessionID == "" && req.ChannelID == "ch2" && req.DirPath == ""
@@ -113,7 +102,6 @@ func (s *TaskExecutorSuite) TestHappyPathWithoutSession() {
 		SessionID: "fresh-session",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch2", "fresh-session").Return(nil)
-	// Expect response message second
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
 		return msg.ChannelID == "ch2" && msg.Content == "hi!"
 	})).Return(nil).Once()
@@ -134,11 +122,6 @@ func (s *TaskExecutorSuite) TestRunnerError() {
 		Schedule:  "10s",
 	}
 
-	// Expect notification message to be sent even though runner will fail
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch3"
-	})).Return(nil).Once()
-
 	s.store.On("GetChannel", s.ctx, "ch3").Return(nil, nil)
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("runner broke"))
 
@@ -147,7 +130,7 @@ func (s *TaskExecutorSuite) TestRunnerError() {
 	require.Contains(s.T(), err.Error(), "running agent")
 	require.Empty(s.T(), resp)
 
-	s.bot.AssertExpectations(s.T())
+	s.bot.AssertNotCalled(s.T(), "SendMessage", mock.Anything, mock.Anything)
 }
 
 func (s *TaskExecutorSuite) TestAgentResponseError() {
@@ -158,11 +141,6 @@ func (s *TaskExecutorSuite) TestAgentResponseError() {
 		Type:      db.TaskTypeCron,
 		Schedule:  "*/5 * * * *",
 	}
-
-	// Expect notification message to be sent even though agent will return error
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch4"
-	})).Return(nil).Once()
 
 	s.store.On("GetChannel", s.ctx, "ch4").Return(nil, nil)
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
@@ -175,7 +153,7 @@ func (s *TaskExecutorSuite) TestAgentResponseError() {
 	require.Empty(s.T(), resp)
 
 	s.store.AssertNotCalled(s.T(), "UpdateSessionID", mock.Anything, mock.Anything, mock.Anything)
-	s.bot.AssertExpectations(s.T())
+	s.bot.AssertNotCalled(s.T(), "SendMessage", mock.Anything, mock.Anything)
 }
 
 func (s *TaskExecutorSuite) TestSessionUpsertErrorStillSucceeds() {
@@ -187,18 +165,12 @@ func (s *TaskExecutorSuite) TestSessionUpsertErrorStillSucceeds() {
 		Schedule:  "1h",
 	}
 
-	// Expect notification message first
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch5" && msg.Content != "ok"
-	})).Return(nil).Once()
-
 	s.store.On("GetChannel", s.ctx, "ch5").Return(nil, nil)
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 		Response:  "ok",
 		SessionID: "sess",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, mock.Anything, mock.Anything).Return(errors.New("upsert failed"))
-	// Expect response message second
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
 		return msg.ChannelID == "ch5" && msg.Content == "ok"
 	})).Return(nil).Once()
@@ -220,7 +192,6 @@ func (s *TaskExecutorSuite) TestBotSendErrorStillSucceeds() {
 		Schedule:  "30s",
 	}
 
-	// Both notification and response messages may fail
 	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(errors.New("send failed"))
 
 	s.store.On("GetChannel", s.ctx, "ch6").Return(nil, nil)
@@ -246,11 +217,6 @@ func (s *TaskExecutorSuite) TestGetSessionErrorStillWorks() {
 		Schedule:  "0 0 * * *",
 	}
 
-	// Expect notification message first
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch7" && msg.Content != "ok"
-	})).Return(nil).Once()
-
 	s.store.On("GetChannel", s.ctx, "ch7").Return(nil, errors.New("session err"))
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.SessionID == ""
@@ -259,7 +225,6 @@ func (s *TaskExecutorSuite) TestGetSessionErrorStillWorks() {
 		SessionID: "sess",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, mock.Anything, mock.Anything).Return(nil)
-	// Expect response message second
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
 		return msg.ChannelID == "ch7" && msg.Content == "ok"
 	})).Return(nil).Once()
@@ -271,40 +236,7 @@ func (s *TaskExecutorSuite) TestGetSessionErrorStillWorks() {
 	s.store.AssertExpectations(s.T())
 }
 
-func (s *TaskExecutorSuite) TestNotificationFailureDoesNotStopExecution() {
-	task := &db.ScheduledTask{
-		ID:        8,
-		ChannelID: "ch8",
-		Prompt:    "task prompt",
-		Type:      db.TaskTypeInterval,
-		Schedule:  "15m",
-	}
-
-	// Notification fails but execution continues
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch8" && msg.Content != "success"
-	})).Return(errors.New("notification failed")).Once()
-
-	s.store.On("GetChannel", s.ctx, "ch8").Return(nil, nil)
-	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
-		Response:  "success",
-		SessionID: "sess8",
-	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch8", "sess8").Return(nil)
-	// Response message should still be sent
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch8" && msg.Content == "success"
-	})).Return(nil).Once()
-
-	resp, err := s.executor.ExecuteTask(s.ctx, task)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "success", resp)
-
-	s.runner.AssertExpectations(s.T())
-	s.bot.AssertExpectations(s.T())
-}
-
-func (s *TaskExecutorSuite) TestStreamingEnabled() {
+func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
 	s.executor.streamingEnabled = true
 
 	task := &db.ScheduledTask{
@@ -315,43 +247,40 @@ func (s *TaskExecutorSuite) TestStreamingEnabled() {
 		Schedule:  "0 * * * *",
 	}
 
-	// Expect notification message
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch9" && msg.Content != "Final answer" && msg.Content != "Intermediate"
-	})).Return(nil).Once()
-
 	s.store.On("GetChannel", s.ctx, "ch9").Return(nil, nil)
+
+	// First OnTurn creates a thread with the first turn text
+	s.bot.On("CreateSimpleThread", s.ctx, "ch9", "🧵 task #9 (`0 * * * *`) stream task", "🧵 task #9 (`0 * * * *`) Intermediate").Return("thread-1", nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
 			return false
 		}
-		// Simulate streaming turns (including empty text that should be skipped)
+		// Simulate streaming: first turn creates thread, empty skipped, second goes to thread
 		req.OnTurn("Intermediate")
 		req.OnTurn("") // empty text should be skipped
 		req.OnTurn("Final answer")
 		return true
 	})).Return(&agent.AgentResponse{
-		Response:  "Final answer", // Same as last OnTurn — should be skipped
+		Response:  "Final answer", // Same as last OnTurn — final send skipped
 		SessionID: "sess-stream",
 	}, nil)
 
 	s.store.On("UpdateSessionID", s.ctx, "ch9", "sess-stream").Return(nil)
 
-	// Expect intermediate messages from OnTurn
+	// Second OnTurn sends to thread
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch9" && msg.Content == "Intermediate"
-	})).Return(nil).Once()
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch9" && msg.Content == "Final answer"
+		return msg.ChannelID == "thread-1" && msg.Content == "Final answer"
 	})).Return(nil).Once()
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Final answer", resp)
 
-	// 3 calls: notification + 2 OnTurn (final send skipped because == lastStreamedText)
-	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 3)
+	// 1 SendMessage call (second OnTurn to thread). Final skipped (duplicate).
+	// First OnTurn goes via CreateSimpleThread, not SendMessage.
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
+	s.bot.AssertNumberOfCalls(s.T(), "CreateSimpleThread", 1)
 	s.runner.AssertExpectations(s.T())
 	s.bot.AssertExpectations(s.T())
 }
@@ -365,11 +294,6 @@ func (s *TaskExecutorSuite) TestStreamingDisabledNoOnTurn() {
 		Type:      db.TaskTypeCron,
 		Schedule:  "0 * * * *",
 	}
-
-	// Expect notification message
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch10" && msg.Content != "Result"
-	})).Return(nil).Once()
 
 	s.store.On("GetChannel", s.ctx, "ch10").Return(nil, nil)
 
@@ -390,8 +314,8 @@ func (s *TaskExecutorSuite) TestStreamingDisabledNoOnTurn() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Result", resp)
 
-	// 2 calls: notification + final response
-	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 2)
+	// 1 call: just the final response (no notification, no streaming)
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
 	s.runner.AssertExpectations(s.T())
 }
 
@@ -406,12 +330,10 @@ func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
 		Schedule:  "5m",
 	}
 
-	// Notification
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch11" && msg.Content != "Intermediate" && msg.Content != "Different final"
-	})).Return(nil).Once()
-
 	s.store.On("GetChannel", s.ctx, "ch11").Return(nil, nil)
+
+	// First OnTurn creates thread
+	s.bot.On("CreateSimpleThread", s.ctx, "ch11", "🧵 task #11 (`5m`) stream diff", "🧵 task #11 (`5m`) Intermediate").Return("thread-2", nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -426,20 +348,135 @@ func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
 
 	s.store.On("UpdateSessionID", s.ctx, "ch11", "sess-diff").Return(nil)
 
-	// Intermediate from OnTurn
+	// Final response (different from last streamed) goes to thread
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch11" && msg.Content == "Intermediate"
-	})).Return(nil).Once()
-	// Final response (different from last streamed)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch11" && msg.Content == "Different final"
+		return msg.ChannelID == "thread-2" && msg.Content == "Different final"
 	})).Return(nil).Once()
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Different final", resp)
 
-	// 3 calls: notification + intermediate + final (different)
-	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 3)
+	// 1 SendMessage (final to thread) + 1 CreateSimpleThread
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
+	s.bot.AssertNumberOfCalls(s.T(), "CreateSimpleThread", 1)
 	s.runner.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestStreamingThreadCreationFailsFallsBack() {
+	s.executor.streamingEnabled = true
+
+	task := &db.ScheduledTask{
+		ID:        12,
+		ChannelID: "ch12",
+		Prompt:    "fallback task",
+		Type:      db.TaskTypeCron,
+		Schedule:  "0 * * * *",
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch12").Return(nil, nil)
+
+	// Thread creation fails
+	s.bot.On("CreateSimpleThread", s.ctx, "ch12", "🧵 task #12 (`0 * * * *`) fallback task", "🧵 task #12 (`0 * * * *`) Turn 1").Return("", errors.New("thread error")).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Turn 1")
+		req.OnTurn("Turn 2")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:  "Turn 2", // same as last OnTurn
+		SessionID: "sess-fb",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch12", "sess-fb").Return(nil)
+
+	// Fallback: first turn goes to channel directly
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch12" && msg.Content == "Turn 1"
+	})).Return(nil).Once()
+	// Second turn also goes to channel (threadID never set)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch12" && msg.Content == "Turn 2"
+	})).Return(nil).Once()
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Turn 2", resp)
+
+	// 2 SendMessage calls (both fallback to channel), final skipped (duplicate)
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 2)
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestStreamingSingleTurnNoFinalDuplicate() {
+	s.executor.streamingEnabled = true
+
+	task := &db.ScheduledTask{
+		ID:        13,
+		ChannelID: "ch13",
+		Prompt:    "single turn task",
+		Type:      db.TaskTypeCron,
+		Schedule:  "0 * * * *",
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch13").Return(nil, nil)
+
+	// Thread created for single turn
+	s.bot.On("CreateSimpleThread", s.ctx, "ch13", "🧵 task #13 (`0 * * * *`) single turn task", "🧵 task #13 (`0 * * * *`) Only turn").Return("thread-3", nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Only turn")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:  "Only turn", // Same as OnTurn — final skipped
+		SessionID: "sess-single",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch13", "sess-single").Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Only turn", resp)
+
+	// 0 SendMessage (final skipped, only turn went via CreateSimpleThread)
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 0)
+	s.bot.AssertNumberOfCalls(s.T(), "CreateSimpleThread", 1)
+}
+
+func (s *TaskExecutorSuite) TestNoStreamingNoTurns() {
+	// streamingEnabled false, no OnTurn callbacks happen
+	task := &db.ScheduledTask{
+		ID:        14,
+		ChannelID: "ch14",
+		Prompt:    "direct response",
+		Type:      db.TaskTypeOnce,
+		Schedule:  "10s",
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch14").Return(nil, nil)
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.OnTurn == nil
+	})).Return(&agent.AgentResponse{
+		Response:  "Direct result",
+		SessionID: "sess-direct",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch14", "sess-direct").Return(nil)
+
+	// Final response goes to channel directly (no thread)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch14" && msg.Content == "Direct result"
+	})).Return(nil).Once()
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Direct result", resp)
+
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
+	s.bot.AssertNotCalled(s.T(), "CreateSimpleThread", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }

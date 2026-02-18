@@ -486,6 +486,40 @@ func (s *SlackIntegrationSuite) TestD06_GetChannelParentID() {
 	require.Empty(s.T(), parentID)
 }
 
+func (s *SlackIntegrationSuite) TestD07_CreateSimpleThreadWithMessage() {
+	rateSleep()
+	threadID, err := s.bot.CreateSimpleThread(s.ctx, s.channelID, "simple-thread-test", "Hello from simple thread")
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), threadID, s.channelID+":")
+	require.Contains(s.T(), threadID, ".")
+
+	// Verify the parent message contains the initial text but no bot mention.
+	chID, ts := parseCompositeID(threadID)
+	rateSleep()
+	parentMsg, err := waitForMessage(s.botClient, chID, "",
+		func(m goslack.Message) bool { return m.Timestamp == ts },
+		defaultTimeout)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), parentMsg.Text, "Hello from simple thread")
+	require.NotContains(s.T(), parentMsg.Text, "<@"+s.botUserID+">")
+}
+
+func (s *SlackIntegrationSuite) TestD08_CreateSimpleThreadEmptyMessageUsesName() {
+	rateSleep()
+	threadID, err := s.bot.CreateSimpleThread(s.ctx, s.channelID, "fallback-name-test", "")
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), threadID)
+
+	// When initialMessage is empty, the name is used as the message text.
+	chID, ts := parseCompositeID(threadID)
+	rateSleep()
+	parentMsg, err := waitForMessage(s.botClient, chID, "",
+		func(m goslack.Message) bool { return m.Timestamp == ts },
+		defaultTimeout)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), parentMsg.Text, "fallback-name-test")
+}
+
 // ===== Group E: Event Handling (requires user token) =====
 
 func (s *SlackIntegrationSuite) TestE01_AppMentionEvent() {

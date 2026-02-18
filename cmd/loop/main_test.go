@@ -301,6 +301,11 @@ func (m *mockBot) CreateThread(ctx context.Context, channelID, name, mentionUser
 	return args.String(0), args.Error(1)
 }
 
+func (m *mockBot) CreateSimpleThread(ctx context.Context, channelID, name, initialMessage string) (string, error) {
+	args := m.Called(ctx, channelID, name, initialMessage)
+	return args.String(0), args.Error(1)
+}
+
 func (m *mockBot) DeleteThread(ctx context.Context, threadID string) error {
 	return m.Called(ctx, threadID).Error(0)
 }

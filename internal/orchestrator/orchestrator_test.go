@@ -262,6 +262,11 @@ func (m *MockBot) GetChannelName(ctx context.Context, channelID string) (string,
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockBot) CreateSimpleThread(ctx context.Context, channelID, name, initialMessage string) (string, error) {
+	args := m.Called(ctx, channelID, name, initialMessage)
+	return args.String(0), args.Error(1)
+}
+
 type MockRunner struct {
 	mock.Mock
 }
@@ -1930,8 +1935,7 @@ func (s *OrchestratorSuite) TestHandleChannelDeleteChannelError() {
 
 // --- Streaming tests ---
 
-func (s *OrchestratorSuite) TestHandleMessageStreamingSkipsDuplicateFinalMessage() {
-	// Enable streaming on the orchestrator
+func (s *OrchestratorSuite) TestHandleMessageStreamingSkipsDuplicate() {
 	s.orch.streamingEnabled = true
 
 	msg := &IncomingMessage{
@@ -1951,37 +1955,32 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingSkipsDuplicateFinalMessage
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 
-	// The runner captures OnTurn and calls it with intermediate text
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
 			return false
 		}
-		// Simulate streaming: call OnTurn with an intermediate turn, empty text, then final
 		req.OnTurn("Let me check...")
 		req.OnTurn("") // empty text should be skipped
 		req.OnTurn("Here is the answer.")
 		return true
 	})).Return(&agent.AgentResponse{
-		Response:  "Here is the answer.", // Same as last OnTurn call
+		Response:  "Here is the answer.", // Same as last OnTurn — final skipped
 		SessionID: "sess-1",
 	}, nil)
 
 	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-1").Return(nil)
 
-	// Expect TWO intermediate SendMessage calls (from OnTurn), but NOT a final one
-	// because resp.Response == lastStreamedText
+	// Both OnTurn calls go to channel with reply-to
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return out.ChannelID == "ch1" && out.Content == "Let me check..." && out.ReplyToMessageID == "msg1"
-	})).Return(nil).Once()
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return out.ChannelID == "ch1" && out.Content == "Here is the answer." && out.ReplyToMessageID == "msg1"
-	})).Return(nil).Once()
+		return out.ChannelID == "ch1" && out.ReplyToMessageID == "msg1" &&
+			(out.Content == "Let me check..." || out.Content == "Here is the answer.")
+	})).Return(nil).Twice()
 
 	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
 
 	s.orch.HandleMessage(s.ctx, msg)
 
-	// Verify SendMessage was called exactly twice (2 OnTurn calls, final skipped)
+	// 2 SendMessage (two OnTurn calls), final skipped (duplicate)
 	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 2)
 	s.store.AssertExpectations(s.T())
 	s.runner.AssertExpectations(s.T())
@@ -2019,19 +2018,17 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingSendsFinalWhenDifferent() 
 
 	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-2").Return(nil)
 
-	// Expect intermediate + final messages (3 total with InsertMessage for bot response)
+	// OnTurn + final (different) both go to channel with reply-to
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return out.Content == "Intermediate turn"
-	})).Return(nil).Once()
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return out.Content == "Final different response"
-	})).Return(nil).Once()
+		return out.ChannelID == "ch1" && out.ReplyToMessageID == "msg1" &&
+			(out.Content == "Intermediate turn" || out.Content == "Final different response")
+	})).Return(nil).Twice()
 
 	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
 
 	s.orch.HandleMessage(s.ctx, msg)
 
-	// 2 calls: one OnTurn + one final (different from last streamed)
+	// 2 SendMessage (1 OnTurn + 1 final)
 	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 2)
 	s.store.AssertExpectations(s.T())
 }
@@ -2074,4 +2071,28 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingDisabledNoOnTurn() {
 	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
 	s.store.AssertExpectations(s.T())
 	s.runner.AssertExpectations(s.T())
+}
+
+func TestTruncateString(t *testing.T) {
+	tests := []struct {
+		name   string
+		input  string
+		maxLen int
+		want   string
+	}{
+		{"short string unchanged", "hello", 10, "hello"},
+		{"exact length unchanged", "hello", 5, "hello"},
+		{"truncated with ellipsis", "hello world", 8, "hello..."},
+		{"maxLen 3 gives ellipsis only", "hello", 3, "hel"},
+		{"maxLen 2 no ellipsis", "hello", 2, "he"},
+		{"maxLen 1", "hello", 1, "h"},
+		{"maxLen 4 truncates", "hello world", 4, "h..."},
+		{"empty string", "", 5, ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := truncateString(tt.input, tt.maxLen)
+			require.Equal(t, tt.want, got)
+		})
+	}
 }

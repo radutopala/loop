@@ -365,6 +365,22 @@ func (b *DiscordBot) CreateThread(ctx context.Context, channelID, name, mentionU
 	return ch.ID, nil
 }
 
+// CreateSimpleThread creates a new thread with a plain initial message (no bot mention).
+// Returns the thread channel ID.
+func (b *DiscordBot) CreateSimpleThread(ctx context.Context, channelID, name, initialMessage string) (string, error) {
+	ch, err := b.session.ThreadStart(channelID, name, discordgo.ChannelTypeGuildPublicThread, 10080)
+	if err != nil {
+		return "", fmt.Errorf("discord create simple thread: %w", err)
+	}
+	if initialMessage != "" {
+		if _, err := b.session.ChannelMessageSend(ch.ID, initialMessage); err != nil {
+			b.logger.WarnContext(ctx, "sending thread initial message", "error", err, "thread_id", ch.ID)
+		}
+	}
+	b.logger.InfoContext(ctx, "created simple discord thread", "thread_id", ch.ID, "name", name, "parent_id", channelID)
+	return ch.ID, nil
+}
+
 // PostMessage sends a simple message to the given channel or thread.
 // Text mentions of the bot (e.g. @LoopBot) are converted to proper Discord
 // mentions so the message triggers bot processing in the target channel.

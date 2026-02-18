@@ -378,6 +378,32 @@ func (s *DiscordIntegrationSuite) TestD05_GetChannelParentIDOnThread() {
 	require.Equal(s.T(), s.channelID, parentID)
 }
 
+func (s *DiscordIntegrationSuite) TestD06_CreateSimpleThreadWithMessage() {
+	rateSleep()
+	name := "inttest-simple-thread-" + randomSuffix()
+	threadID, err := s.bot.CreateSimpleThread(s.ctx, s.channelID, name, "Hello from simple thread")
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), threadID)
+	s.cleanupIDs = append(s.cleanupIDs, threadID)
+
+	// Verify thread exists and has the initial message (no bot mention).
+	rateSleep()
+	msg, err := waitForDiscordMessage(s.session, threadID,
+		messageContains("Hello from simple thread"), defaultTimeout)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), msg.Content, "Hello from simple thread")
+	require.NotContains(s.T(), msg.Content, "<@"+s.botUserID+">")
+}
+
+func (s *DiscordIntegrationSuite) TestD07_CreateSimpleThreadEmptyMessage() {
+	rateSleep()
+	name := "inttest-simple-thread-empty-" + randomSuffix()
+	threadID, err := s.bot.CreateSimpleThread(s.ctx, s.channelID, name, "")
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), threadID)
+	s.cleanupIDs = append(s.cleanupIDs, threadID)
+}
+
 // ===== Group E: Event Handling =====
 
 func (s *DiscordIntegrationSuite) TestE01_SelfMentionEvent() {

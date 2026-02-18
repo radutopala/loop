@@ -38,6 +38,7 @@ type Bot interface {
 	DeleteThread(ctx context.Context, threadID string) error
 	GetChannelParentID(ctx context.Context, channelID string) (string, error)
 	GetChannelName(ctx context.Context, channelID string) (string, error)
+	CreateSimpleThread(ctx context.Context, channelID, name, initialMessage string) (string, error)
 }
 
 // IncomingMessage from the chat platform.
@@ -822,4 +823,15 @@ func generateMessageID() string {
 	b := make([]byte, 16)
 	_, _ = rand.Read(b)
 	return "ask-" + hex.EncodeToString(b)
+}
+
+// truncateString truncates s to maxLen characters, appending "..." if truncated.
+func truncateString(s string, maxLen int) string {
+	if len(s) <= maxLen {
+		return s
+	}
+	if maxLen <= 3 {
+		return s[:maxLen]
+	}
+	return s[:maxLen-3] + "..."
 }

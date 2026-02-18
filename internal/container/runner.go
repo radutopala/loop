@@ -147,8 +147,8 @@ func localTimezone() string {
 	}
 	// macOS/Linux: /etc/localtime is a symlink into the zoneinfo directory.
 	if target, err := readlink("/etc/localtime"); err == nil {
-		if idx := strings.Index(target, "zoneinfo/"); idx != -1 {
-			return target[idx+len("zoneinfo/"):]
+		if _, after, ok := strings.Cut(target, "zoneinfo/"); ok {
+			return after
 		}
 	}
 	return "UTC"
