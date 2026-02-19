@@ -100,7 +100,7 @@ func (s *IndexerSuite) TestIndexNewFile() {
 	s.embedder.On("Dimensions").Return(768)
 	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
 
-	n, err := s.indexer.Index(ctx, "/memory", "")
+	n, err := s.indexer.Index(ctx, "/memory", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 1, n)
 	s.store.AssertExpectations(s.T())
@@ -123,13 +123,13 @@ func (s *IndexerSuite) TestIndexSkipsUpToDate() {
 	expectedHash := contentHash("## Docker\n\nCleanup info")
 	s.store.On("GetMemoryFileHash", ctx, "/memory/test.md", "").Return(expectedHash, nil)
 
-	n, err := s.indexer.Index(ctx, "/memory", "")
+	n, err := s.indexer.Index(ctx, "/memory", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, n)
 }
 
 func (s *IndexerSuite) TestIndexNonExistentDir() {
-	n, err := s.indexer.Index(context.Background(), "/nonexistent-path-that-does-not-exist", "")
+	n, err := s.indexer.Index(context.Background(), "/nonexistent-path-that-does-not-exist", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, n)
 }
@@ -153,7 +153,7 @@ func (s *IndexerSuite) TestIndexRecursesSubdirectories() {
 	s.embedder.On("Dimensions").Return(768)
 	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
 
-	n, err := s.indexer.Index(ctx, "/memory", "")
+	n, err := s.indexer.Index(ctx, "/memory", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 2, n)
 }
@@ -167,7 +167,7 @@ func (s *IndexerSuite) TestIndexSkipsNonMdFiles() {
 
 	walkDir = fakeWalkDir([]string{"/memory/notes.txt", "/memory/.vectors.db"})
 
-	n, err := s.indexer.Index(context.Background(), "/memory", "")
+	n, err := s.indexer.Index(context.Background(), "/memory", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, n)
 }
@@ -185,7 +185,7 @@ func (s *IndexerSuite) TestIndexReadFileError() {
 		return nil, errors.New("read error")
 	}
 
-	n, err := s.indexer.Index(context.Background(), "/memory", "")
+	n, err := s.indexer.Index(context.Background(), "/memory", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, n) // logged, not returned
 }
@@ -203,7 +203,7 @@ func (s *IndexerSuite) TestIndexWalkDirEntryError() {
 		return nil
 	}
 
-	n, err := s.indexer.Index(context.Background(), "/memory", "")
+	n, err := s.indexer.Index(context.Background(), "/memory", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, n)
 }
@@ -225,7 +225,7 @@ func (s *IndexerSuite) TestIndexEmbedError() {
 	s.store.On("GetMemoryFileHash", ctx, "/memory/test.md", "").Return("", nil)
 	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32(nil), errors.New("embed failed"))
 
-	n, err := s.indexer.Index(ctx, "/memory", "")
+	n, err := s.indexer.Index(ctx, "/memory", "", nil)
 	require.NoError(s.T(), err) // indexing errors are logged, not returned
 	require.Equal(s.T(), 0, n)
 }
@@ -246,7 +246,7 @@ func (s *IndexerSuite) TestIndexHashCheckError() {
 	ctx := context.Background()
 	s.store.On("GetMemoryFileHash", ctx, "/memory/test.md", "").Return("", errors.New("db error"))
 
-	n, err := s.indexer.Index(ctx, "/memory", "")
+	n, err := s.indexer.Index(ctx, "/memory", "", nil)
 	require.NoError(s.T(), err) // logged, not returned
 	require.Equal(s.T(), 0, n)
 }
@@ -270,7 +270,7 @@ func (s *IndexerSuite) TestIndexUpsertError() {
 	s.embedder.On("Dimensions").Return(768)
 	s.store.On("UpsertMemoryFile", ctx, mock.Anything).Return(errors.New("db error"))
 
-	n, err := s.indexer.Index(ctx, "/memory", "")
+	n, err := s.indexer.Index(ctx, "/memory", "", nil)
 	require.NoError(s.T(), err) // logged, not returned
 	require.Equal(s.T(), 0, n)
 }
@@ -305,7 +305,7 @@ func (s *IndexerSuite) TestIndexChunksLargeFile() {
 		return f.ChunkIndex > 0 && f.Dimensions == 768
 	})).Return(nil)
 
-	n, err := s.indexer.Index(ctx, "/memory", "")
+	n, err := s.indexer.Index(ctx, "/memory", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 1, n)
 	s.store.AssertExpectations(s.T())
@@ -330,7 +330,7 @@ func (s *IndexerSuite) TestIndexChunksHeaderUpsertError() {
 		return f.ChunkIndex == 0
 	})).Return(errors.New("db error"))
 
-	n, err := s.indexer.Index(ctx, "/memory", "")
+	n, err := s.indexer.Index(ctx, "/memory", "", nil)
 	require.NoError(s.T(), err) // logged, not returned
 	require.Equal(s.T(), 0, n)
 }
@@ -362,7 +362,7 @@ func (s *IndexerSuite) TestIndexChunksChunkUpsertError() {
 		return f.ChunkIndex > 0
 	})).Return(errors.New("db error"))
 
-	n, err := s.indexer.Index(ctx, "/memory", "")
+	n, err := s.indexer.Index(ctx, "/memory", "", nil)
 	require.NoError(s.T(), err) // logged, not returned
 	require.Equal(s.T(), 0, n)
 }
@@ -377,7 +377,7 @@ func (s *IndexerSuite) TestIndexWalkDirError() {
 		return errors.New("walk error")
 	}
 
-	n, err := s.indexer.Index(context.Background(), "/memory", "")
+	n, err := s.indexer.Index(context.Background(), "/memory", "", nil)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "walking memory dir")
 	require.Equal(s.T(), 0, n)
@@ -405,7 +405,7 @@ func (s *IndexerSuite) TestIndexChunksEmbedError() {
 	// Chunk embedding fails
 	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32(nil), errors.New("embed error"))
 
-	n, err := s.indexer.Index(ctx, "/memory", "")
+	n, err := s.indexer.Index(ctx, "/memory", "", nil)
 	require.NoError(s.T(), err) // logged, not returned
 	require.Equal(s.T(), 0, n)
 }
@@ -423,7 +423,7 @@ func (s *IndexerSuite) TestIndexEmptyFileContent() {
 		return []byte("   \n  \n  "), nil
 	}
 
-	n, err := s.indexer.Index(context.Background(), "/memory", "")
+	n, err := s.indexer.Index(context.Background(), "/memory", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, n)
 }
@@ -448,7 +448,7 @@ func (s *IndexerSuite) TestIndexStaleDeletesOldEntry() {
 	s.embedder.On("Dimensions").Return(768)
 	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
 
-	n, err := s.indexer.Index(ctx, "/memory", "")
+	n, err := s.indexer.Index(ctx, "/memory", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 1, n)
 	s.store.AssertCalled(s.T(), "DeleteMemoryFile", ctx, "/memory/test.md", "")
@@ -480,7 +480,7 @@ func (s *IndexerSuite) TestIndexResolvesSymlinks() {
 	s.embedder.On("Dimensions").Return(768)
 	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
 
-	n, err := s.indexer.Index(ctx, "/project/memory", "")
+	n, err := s.indexer.Index(ctx, "/project/memory", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 1, n)
 }
@@ -494,7 +494,7 @@ func (s *IndexerSuite) TestIndexEvalSymlinksError() {
 		return "", errors.New("symlink error")
 	}
 
-	_, err := s.indexer.Index(context.Background(), "/memory", "")
+	_, err := s.indexer.Index(context.Background(), "/memory", "", nil)
 	require.ErrorContains(s.T(), err, "resolving symlinks")
 }
 
@@ -506,7 +506,7 @@ func (s *IndexerSuite) TestIndexStatPermissionError() {
 		return nil, errors.New("permission denied")
 	}
 
-	_, err := s.indexer.Index(context.Background(), "/memory", "")
+	_, err := s.indexer.Index(context.Background(), "/memory", "", nil)
 	require.ErrorContains(s.T(), err, "stat memory path")
 }
 
@@ -522,7 +522,7 @@ func (s *IndexerSuite) TestIndexFileReadNotExist() {
 		return nil, os.ErrNotExist
 	}
 
-	n, err := s.indexer.Index(context.Background(), "/docs/notes.md", "")
+	n, err := s.indexer.Index(context.Background(), "/docs/notes.md", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, n)
 }
@@ -543,7 +543,7 @@ func (s *IndexerSuite) TestIndexStaleDeleteError() {
 	s.store.On("GetMemoryFileHash", ctx, "/memory/test.md", "").Return("old-hash", nil)
 	s.store.On("DeleteMemoryFile", ctx, "/memory/test.md", "").Return(errors.New("db error"))
 
-	n, err := s.indexer.Index(ctx, "/memory", "")
+	n, err := s.indexer.Index(ctx, "/memory", "", nil)
 	require.NoError(s.T(), err) // logged, not returned
 	require.Equal(s.T(), 0, n)
 }
@@ -568,7 +568,7 @@ func (s *IndexerSuite) TestIndexSingleMdFile() {
 	s.embedder.On("Dimensions").Return(768)
 	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
 
-	n, err := s.indexer.Index(ctx, "/docs/notes.md", "")
+	n, err := s.indexer.Index(ctx, "/docs/notes.md", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 1, n)
 	s.store.AssertExpectations(s.T())
@@ -582,13 +582,118 @@ func (s *IndexerSuite) TestIndexNonMdFilePath() {
 		return &fakeFileInfo{name: name, isDir: false}, nil
 	}
 
-	n, err := s.indexer.Index(context.Background(), "/docs/notes.txt", "")
+	n, err := s.indexer.Index(context.Background(), "/docs/notes.txt", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, n)
 }
 
 func (s *IndexerSuite) TestIndexSingleMdFileNotExist() {
-	n, err := s.indexer.Index(context.Background(), "/nonexistent/file.md", "")
+	n, err := s.indexer.Index(context.Background(), "/nonexistent/file.md", "", nil)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, n)
+}
+
+// --- Exclusion tests ---
+
+func (s *IndexerSuite) TestIsExcluded() {
+	require.True(s.T(), isExcluded("/memory/drafts", []string{"/memory/drafts"}))
+	require.True(s.T(), isExcluded("/memory/drafts/file.md", []string{"/memory/drafts"}))
+	require.False(s.T(), isExcluded("/memory/drafts-v2", []string{"/memory/drafts"}))
+	require.False(s.T(), isExcluded("/memory/other", []string{"/memory/drafts"}))
+	require.False(s.T(), isExcluded("/memory/drafts", nil))
+	require.False(s.T(), isExcluded("/memory/drafts", []string{}))
+}
+
+func (s *IndexerSuite) TestIndexExcludeDir() {
+	origWalkDir := walkDir
+	origReadFile := readFile
+	origOsStat := osStat
+	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
+
+	osStat = fakeStatDir
+
+	// Walk visits both a regular file and a file inside an excluded directory.
+	walkDir = func(root string, fn fs.WalkDirFunc) error {
+		_ = fn(root, &fakeDirEntry{name: root, isDir: true}, nil)
+		_ = fn("/memory/drafts", &fakeDirEntry{name: "drafts", isDir: true}, nil)
+		_ = fn("/memory/notes.md", &fakeDirEntry{name: "notes.md"}, nil)
+		return nil
+	}
+	readFile = func(name string) ([]byte, error) {
+		return []byte("content of " + name), nil
+	}
+
+	ctx := context.Background()
+	s.store.On("GetMemoryFileHash", ctx, "/memory/notes.md", "").Return("", nil)
+	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1}}, nil)
+	s.embedder.On("Dimensions").Return(768)
+	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
+
+	n, err := s.indexer.Index(ctx, "/memory", "", []string{"/memory/drafts"})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, n)
+	s.store.AssertNotCalled(s.T(), "GetMemoryFileHash", ctx, "/memory/drafts/file.md", "")
+}
+
+func (s *IndexerSuite) TestIndexExcludeFile() {
+	origWalkDir := walkDir
+	origReadFile := readFile
+	origOsStat := osStat
+	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
+
+	osStat = fakeStatDir
+
+	walkDir = fakeWalkDir([]string{"/memory/keep.md", "/memory/skip.md"})
+	readFile = func(name string) ([]byte, error) {
+		return []byte("content of " + name), nil
+	}
+
+	ctx := context.Background()
+	s.store.On("GetMemoryFileHash", ctx, "/memory/keep.md", "").Return("", nil)
+	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1}}, nil)
+	s.embedder.On("Dimensions").Return(768)
+	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
+
+	n, err := s.indexer.Index(ctx, "/memory", "", []string{"/memory/skip.md"})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, n)
+	s.store.AssertNotCalled(s.T(), "GetMemoryFileHash", ctx, "/memory/skip.md", "")
+}
+
+func (s *IndexerSuite) TestIndexExcludeNoMatch() {
+	origWalkDir := walkDir
+	origReadFile := readFile
+	origOsStat := osStat
+	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
+
+	osStat = fakeStatDir
+
+	walkDir = fakeWalkDir([]string{"/memory/notes.md"})
+	readFile = func(name string) ([]byte, error) {
+		return []byte("content"), nil
+	}
+
+	ctx := context.Background()
+	s.store.On("GetMemoryFileHash", ctx, "/memory/notes.md", "").Return("", nil)
+	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1}}, nil)
+	s.embedder.On("Dimensions").Return(768)
+	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
+
+	// Exclusion that doesn't match any file — all files still indexed.
+	n, err := s.indexer.Index(ctx, "/memory", "", []string{"/memory/drafts"})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, n)
+}
+
+func (s *IndexerSuite) TestIndexSingleFileExcluded() {
+	origOsStat := osStat
+	defer func() { osStat = origOsStat }()
+
+	osStat = func(name string) (os.FileInfo, error) {
+		return &fakeFileInfo{name: name, isDir: false}, nil
+	}
+
+	n, err := s.indexer.Index(context.Background(), "/docs/notes.md", "", []string{"/docs/notes.md"})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, n)
 }

@@ -12,7 +12,7 @@
 
   // Memory config override for this project
   //"memory": {
-  //  "paths": ["./docs/architecture.md"],
+  //  "paths": ["./docs/architecture.md", "!./docs/wip"],  // prefix with ! to exclude
   //  "max_chunk_chars": 8000,
   //  "embeddings": {
   //    "provider": "ollama",

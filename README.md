@@ -210,7 +210,10 @@ The `memory` block enables semantic search over `.md` files. The daemon indexes 
 // Global config (~/.loop/config.json)
 "memory": {
   "enabled": true,                 // Must be explicitly true
-  "paths": ["./memory"],           // Directories or .md files to index (resolved per project work dir)
+  "paths": [                       // Directories or .md files to index (resolved per project work dir)
+    "./memory",
+    "!./memory/plans"              // Exclude with ! prefix (gitignore-style)
+  ],
   //"max_chunk_chars": 6000,       // Max chars per embedding chunk (increase for models with larger context)
   "embeddings": {
     "provider": "ollama",
@@ -220,12 +223,17 @@ The `memory` block enables semantic search over `.md` files. The daemon indexes 
 }
 ```
 
+Paths prefixed with `!` are exclusions — any file or directory matching the resolved path is skipped during indexing. Uses separator-safe prefix matching (e.g., `!./memory/drafts` won't exclude `./memory/drafts-v2`).
+
 Project config memory settings are **merged** with global — project paths are appended, project embeddings override:
 
 ```jsonc
 // Project config ({project}/.loop/config.json)
 "memory": {
-  "paths": ["./docs/architecture.md"]   // Appended to global paths
+  "paths": [
+    "./docs/architecture.md",      // Appended to global paths
+    "!./docs/wip"                  // Exclude project-specific paths
+  ]
 }
 ```
 

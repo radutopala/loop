@@ -761,8 +761,8 @@ type mockMemIndexer struct {
 	mock.Mock
 }
 
-func (m *mockMemIndexer) Index(ctx context.Context, memoryPath, dirPath string) (int, error) {
-	args := m.Called(ctx, memoryPath, dirPath)
+func (m *mockMemIndexer) Index(ctx context.Context, memoryPath, dirPath string, excludePaths []string) (int, error) {
+	args := m.Called(ctx, memoryPath, dirPath, excludePaths)
 	return args.Int(0), args.Error(1)
 }
 
@@ -793,8 +793,9 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPaths() {
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
 	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
 
-	entries := mdi.resolveMemoryPaths("/home/user/project")
+	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
 	require.Len(s.T(), entries, 2)
+	require.Empty(s.T(), excludePaths)
 	require.Contains(s.T(), entries[0].path, ".claude/projects")
 	require.False(s.T(), entries[0].global)
 	require.Equal(s.T(), "/home/user/project/memory", entries[1].path)
@@ -811,8 +812,9 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsHomeDirError() {
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
 	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
 
-	entries := mdi.resolveMemoryPaths("/path")
+	entries, excludePaths := mdi.resolveMemoryPaths("/path")
 	require.Len(s.T(), entries, 1)
+	require.Empty(s.T(), excludePaths)
 	require.Equal(s.T(), "/path/memory", entries[0].path)
 	require.False(s.T(), entries[0].global)
 }
@@ -832,8 +834,9 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsWithGlobalAndProject() 
 		globalMemoryPaths: []string{"/shared/knowledge"},
 	}
 
-	entries := mdi.resolveMemoryPaths("/home/user/project")
+	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
 	require.Len(s.T(), entries, 3)
+	require.Empty(s.T(), excludePaths)
 	require.Contains(s.T(), entries[0].path, ".claude/projects")
 	require.False(s.T(), entries[0].global)
 	require.Equal(s.T(), "/shared/knowledge", entries[1].path)
@@ -860,13 +863,73 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsDedup() {
 		globalMemoryPaths: []string{"./memory", "/shared/knowledge"},
 	}
 
-	entries := mdi.resolveMemoryPaths("/home/user/project")
+	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
 	// Should be deduplicated: auto-memory, project/memory, /shared/knowledge — no duplicates.
 	require.Len(s.T(), entries, 3)
+	require.Empty(s.T(), excludePaths)
 	require.Contains(s.T(), entries[0].path, ".claude/projects")
 	require.Equal(s.T(), "/home/user/project/memory", entries[1].path)
 	require.Equal(s.T(), "/shared/knowledge", entries[2].path)
 	require.True(s.T(), entries[2].global)
+}
+
+func (s *MainSuite) TestResolveMemoryPathsWithExclusions() {
+	userHomeDir = func() (string, error) {
+		return "/home/test", nil
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := new(mockStore)
+	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
+	mdi := &multiDirIndexer{
+		indexer:           indexer,
+		logger:            logger,
+		globalMemoryPaths: []string{"./memory", "!./memory/drafts"},
+	}
+
+	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
+	require.Len(s.T(), entries, 2) // auto-memory + ./memory
+	require.Len(s.T(), excludePaths, 1)
+	require.Equal(s.T(), "/home/user/project/memory/drafts", excludePaths[0])
+}
+
+func (s *MainSuite) TestResolveMemoryPathsAbsoluteExclusion() {
+	userHomeDir = func() (string, error) {
+		return "/home/test", nil
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := new(mockStore)
+	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
+	mdi := &multiDirIndexer{
+		indexer:           indexer,
+		logger:            logger,
+		globalMemoryPaths: []string{"./memory", "!/shared/secret"},
+	}
+
+	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
+	require.Len(s.T(), entries, 2) // auto-memory + ./memory
+	require.Len(s.T(), excludePaths, 1)
+	require.Equal(s.T(), "/shared/secret", excludePaths[0])
+}
+
+func (s *MainSuite) TestResolveMemoryPathsProjectExclusion() {
+	userHomeDir = func() (string, error) {
+		return "/home/test", nil
+	}
+	loadProjectMemoryPaths = func(_ string) []string {
+		return []string{"./docs", "!./docs/wip"}
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := new(mockStore)
+	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger}
+
+	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
+	require.Len(s.T(), entries, 2) // auto-memory + ./docs
+	require.Len(s.T(), excludePaths, 1)
+	require.Equal(s.T(), "/home/user/project/docs/wip", excludePaths[0])
 }
 
 func (s *MainSuite) TestResolveRelativePath() {
@@ -997,7 +1060,7 @@ func (s *MainSuite) TestMultiDirIndexerIndexWithError() {
 	}
 
 	mi := new(mockMemIndexer)
-	mi.On("Index", mock.Anything, mock.Anything, mock.Anything).Return(0, errors.New("stat error"))
+	mi.On("Index", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(0, errors.New("stat error"))
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mdi := &multiDirIndexer{indexer: mi, logger: logger, globalMemoryPaths: []string{"./memory"}}
@@ -1069,9 +1132,9 @@ func (s *MainSuite) TestMultiDirIndexerSearchWithGlobalPath() {
 
 	mi := new(mockMemIndexer)
 	// Auto-memory path (project-scoped)
-	mi.On("Index", mock.Anything, mock.Anything, "/some/project").Return(0, nil)
+	mi.On("Index", mock.Anything, mock.Anything, "/some/project", mock.Anything).Return(0, nil)
 	// Global path (absolute config path, scope = "")
-	mi.On("Index", mock.Anything, "/shared/knowledge", "").Return(0, nil)
+	mi.On("Index", mock.Anything, "/shared/knowledge", "", mock.Anything).Return(0, nil)
 	mi.On("Search", mock.Anything, "/some/project", "test", 5).Return([]memory.SearchResult{}, nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -1091,7 +1154,7 @@ func (s *MainSuite) TestMultiDirIndexerSearchWithIndexError() {
 
 	mi := new(mockMemIndexer)
 	// Auto-memory path fails
-	mi.On("Index", mock.Anything, mock.Anything, mock.Anything).Return(0, errors.New("index error"))
+	mi.On("Index", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(0, errors.New("index error"))
 	mi.On("Search", mock.Anything, "/some/project", "test", 5).Return([]memory.SearchResult{}, nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -1110,9 +1173,9 @@ func (s *MainSuite) TestMultiDirIndexerIndexWithGlobalPath() {
 
 	mi := new(mockMemIndexer)
 	// Auto-memory path (project-scoped)
-	mi.On("Index", mock.Anything, mock.Anything, "/some/project").Return(1, nil)
+	mi.On("Index", mock.Anything, mock.Anything, "/some/project", mock.Anything).Return(1, nil)
 	// Global path (absolute config path, scope = "")
-	mi.On("Index", mock.Anything, "/shared/knowledge", "").Return(2, nil)
+	mi.On("Index", mock.Anything, "/shared/knowledge", "", mock.Anything).Return(2, nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mdi := &multiDirIndexer{indexer: mi, logger: logger, globalMemoryPaths: []string{"/shared/knowledge"}}

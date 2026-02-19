@@ -71,7 +71,8 @@ var evalSymlinks = filepath.EvalSymlinks
 // Index scans the memory path (directory tree or single .md file), embeds whole files,
 // and stores any stale or new entries. Returns the number of files indexed.
 // dirPath scopes the indexed files; empty string means global scope.
-func (idx *Indexer) Index(ctx context.Context, memoryPath, dirPath string) (int, error) {
+// excludePaths are absolute paths to skip during indexing (prefix match with separator check).
+func (idx *Indexer) Index(ctx context.Context, memoryPath, dirPath string, excludePaths []string) (int, error) {
 	info, err := osStat(memoryPath)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -88,6 +89,9 @@ func (idx *Indexer) Index(ctx context.Context, memoryPath, dirPath string) (int,
 	memoryPath = resolved
 
 	if !info.IsDir() {
+		if isExcluded(memoryPath, excludePaths) {
+			return 0, nil
+		}
 		if strings.HasSuffix(memoryPath, ".md") {
 			return idx.indexFile(ctx, memoryPath, dirPath)
 		}
@@ -98,6 +102,12 @@ func (idx *Indexer) Index(ctx context.Context, memoryPath, dirPath string) (int,
 	err = walkDir(memoryPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			idx.logger.Warn("walking memory dir", "path", path, "error", err)
+			return nil
+		}
+		if isExcluded(path, excludePaths) {
+			if d.IsDir() {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if d.IsDir() || !strings.HasSuffix(d.Name(), ".md") {
@@ -115,6 +125,18 @@ func (idx *Indexer) Index(ctx context.Context, memoryPath, dirPath string) (int,
 		return indexed, fmt.Errorf("walking memory dir: %w", err)
 	}
 	return indexed, nil
+}
+
+// isExcluded checks whether path should be excluded based on excludePaths.
+// Uses separator-safe prefix matching to avoid false positives
+// (e.g., "/memory/drafts" won't exclude "/memory/drafts-v2").
+func isExcluded(path string, excludePaths []string) bool {
+	for _, ex := range excludePaths {
+		if path == ex || strings.HasPrefix(path, ex+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
 }
 
 // indexFile indexes a single .md file. Small files get a single row;

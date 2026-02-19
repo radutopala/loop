@@ -473,7 +473,7 @@ var newEmbedder = func(cfg *config.Config) (embeddings.Embedder, error) {
 
 // memIndexer is the subset of *memory.Indexer used by multiDirIndexer.
 type memIndexer interface {
-	Index(ctx context.Context, memoryPath, dirPath string) (int, error)
+	Index(ctx context.Context, memoryPath, dirPath string, excludePaths []string) (int, error)
 	Search(ctx context.Context, dirPath, query string, topK int) ([]memory.SearchResult, error)
 }
 
@@ -495,13 +495,13 @@ type multiDirIndexer struct {
 
 func (m *multiDirIndexer) Search(ctx context.Context, dirPath, query string, topK int) ([]memory.SearchResult, error) {
 	// Index all paths for freshness first.
-	entries := m.resolveMemoryPaths(dirPath)
+	entries, excludePaths := m.resolveMemoryPaths(dirPath)
 	for _, e := range entries {
 		scope := dirPath
 		if e.global {
 			scope = ""
 		}
-		if _, err := m.indexer.Index(ctx, e.path, scope); err != nil {
+		if _, err := m.indexer.Index(ctx, e.path, scope, excludePaths); err != nil {
 			m.logger.Warn("memory index error", "path", e.path, "error", err)
 		}
 	}
@@ -509,14 +509,14 @@ func (m *multiDirIndexer) Search(ctx context.Context, dirPath, query string, top
 }
 
 func (m *multiDirIndexer) Index(ctx context.Context, dirPath string) (int, error) {
-	entries := m.resolveMemoryPaths(dirPath)
+	entries, excludePaths := m.resolveMemoryPaths(dirPath)
 	total := 0
 	for _, e := range entries {
 		scope := dirPath
 		if e.global {
 			scope = ""
 		}
-		n, err := m.indexer.Index(ctx, e.path, scope)
+		n, err := m.indexer.Index(ctx, e.path, scope, excludePaths)
 		if err != nil {
 			m.logger.Warn("memory index error", "path", e.path, "error", err)
 			continue
@@ -552,25 +552,34 @@ func (m *multiDirIndexer) reindexAll(ctx context.Context, store channelLister) {
 	m.logger.Info("startup re-index complete")
 }
 
-func (m *multiDirIndexer) resolveMemoryPaths(dirPath string) []memoryPathEntry {
+func (m *multiDirIndexer) resolveMemoryPaths(dirPath string) ([]memoryPathEntry, []string) {
 	var entries []memoryPathEntry
+	var excludePaths []string
+
+	// Helper: classify a path as inclusion or exclusion.
+	addPath := func(p string, global bool) {
+		if strings.HasPrefix(p, "!") {
+			resolved := resolveRelativePath(dirPath, p[1:])
+			excludePaths = append(excludePaths, resolved)
+			return
+		}
+		entries = append(entries, memoryPathEntry{
+			path:   resolveRelativePath(dirPath, p),
+			global: global,
+		})
+	}
+
 	// 1. Claude auto-memory dir (~/.claude/projects/-encoded-path/memory/).
 	if memDir, err := memoryDir(dirPath); err == nil {
 		entries = append(entries, memoryPathEntry{path: memDir, global: false})
 	}
 	// 2. Global memory paths (from config).
 	for _, p := range m.globalMemoryPaths {
-		entries = append(entries, memoryPathEntry{
-			path:   resolveRelativePath(dirPath, p),
-			global: filepath.IsAbs(p),
-		})
+		addPath(p, filepath.IsAbs(strings.TrimPrefix(p, "!")))
 	}
 	// 3. Project memory paths (from project config).
 	for _, p := range loadProjectMemoryPaths(dirPath) {
-		entries = append(entries, memoryPathEntry{
-			path:   resolveRelativePath(dirPath, p),
-			global: filepath.IsAbs(p),
-		})
+		addPath(p, filepath.IsAbs(strings.TrimPrefix(p, "!")))
 	}
 
 	// Deduplicate by path.
@@ -582,7 +591,7 @@ func (m *multiDirIndexer) resolveMemoryPaths(dirPath string) []memoryPathEntry {
 			deduped = append(deduped, e)
 		}
 	}
-	return deduped
+	return deduped, excludePaths
 }
 
 // resolveRelativePath resolves a path relative to dirPath if it's not absolute.
