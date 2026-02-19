@@ -604,6 +604,67 @@ func (s *IndexerSuite) TestIsExcluded() {
 	require.False(s.T(), isExcluded("/memory/drafts", []string{}))
 }
 
+func (s *IndexerSuite) TestResolveExcludeSymlinks() {
+	origEval := evalSymlinks
+	defer func() { evalSymlinks = origEval }()
+
+	evalSymlinks = func(path string) (string, error) {
+		if path == "/project/memory/drafts" {
+			return "/real/memory/drafts", nil
+		}
+		return "", errors.New("not found")
+	}
+
+	// Resolved path replaces original; non-existent paths kept as-is.
+	result := resolveExcludeSymlinks([]string{"/project/memory/drafts", "/nonexistent/path"})
+	require.Equal(s.T(), []string{"/real/memory/drafts", "/nonexistent/path"}, result)
+
+	// nil input returns nil.
+	require.Nil(s.T(), resolveExcludeSymlinks(nil))
+}
+
+func (s *IndexerSuite) TestIndexExcludeWithSymlinks() {
+	origWalkDir := walkDir
+	origReadFile := readFile
+	origOsStat := osStat
+	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
+
+	osStat = fakeStatDir
+
+	// Symlink: /project/memory -> /real/memory
+	evalSymlinks = func(path string) (string, error) {
+		switch path {
+		case "/project/memory":
+			return "/real/memory", nil
+		case "/project/memory/plans":
+			return "/real/memory/plans", nil
+		default:
+			return path, nil
+		}
+	}
+
+	walkDir = func(root string, fn fs.WalkDirFunc) error {
+		_ = fn(root, &fakeDirEntry{name: root, isDir: true}, nil)
+		_ = fn("/real/memory/plans", &fakeDirEntry{name: "plans", isDir: true}, nil)
+		_ = fn("/real/memory/notes.md", &fakeDirEntry{name: "notes.md"}, nil)
+		return nil
+	}
+	readFile = func(name string) ([]byte, error) {
+		return []byte("content of " + name), nil
+	}
+
+	ctx := context.Background()
+	s.store.On("GetMemoryFileHash", ctx, "/real/memory/notes.md", "").Return("", nil)
+	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1}}, nil)
+	s.embedder.On("Dimensions").Return(768)
+	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
+
+	// Exclude /project/memory/plans (pre-symlink path) — should resolve and match /real/memory/plans.
+	n, err := s.indexer.Index(ctx, "/project/memory", "", []string{"/project/memory/plans"})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, n) // Only notes.md indexed, plans/ excluded.
+}
+
 func (s *IndexerSuite) TestIndexExcludeDir() {
 	origWalkDir := walkDir
 	origReadFile := readFile

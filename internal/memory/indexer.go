@@ -16,8 +16,8 @@ import (
 )
 
 // defaultMaxChunkChars is the default maximum content length sent to the embedding model.
-// nomic-embed-text has an 8192-token context; ~6000 chars is a safe limit.
-const defaultMaxChunkChars = 6000
+// nomic-embed-text has an 8192-token context; ~5000 chars is a safe limit for dense content.
+const defaultMaxChunkChars = 5000
 
 // Store is the memory file storage interface (subset of db.Store).
 type Store interface {
@@ -88,6 +88,9 @@ func (idx *Indexer) Index(ctx context.Context, memoryPath, dirPath string, exclu
 	}
 	memoryPath = resolved
 
+	// Resolve symlinks on exclude paths so they match the resolved walk paths.
+	excludePaths = resolveExcludeSymlinks(excludePaths)
+
 	if !info.IsDir() {
 		if isExcluded(memoryPath, excludePaths) {
 			return 0, nil
@@ -137,6 +140,23 @@ func isExcluded(path string, excludePaths []string) bool {
 		}
 	}
 	return false
+}
+
+// resolveExcludeSymlinks resolves symlinks in exclude paths so they match
+// the symlink-resolved paths from walkDir. Non-existent paths are kept as-is.
+func resolveExcludeSymlinks(paths []string) []string {
+	if len(paths) == 0 {
+		return paths
+	}
+	resolved := make([]string, len(paths))
+	for i, p := range paths {
+		if r, err := evalSymlinks(p); err == nil {
+			resolved[i] = r
+		} else {
+			resolved[i] = p
+		}
+	}
+	return resolved
 }
 
 // indexFile indexes a single .md file. Small files get a single row;

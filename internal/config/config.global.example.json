@@ -31,7 +31,7 @@
     // Must be explicitly true to enable semantic memory search
     "enabled": true,
     "paths": ["./memory", "!./memory/plans"], // absolute or relative; prefix with ! to exclude
-    //"max_chunk_chars": 6000, // max chars per embedding chunk; increase for models with larger context
+    //"max_chunk_chars": 5000, // max chars per embedding chunk; increase for models with larger context
     "embeddings": {
       "provider": "ollama",
       "model": "nomic-embed-text"

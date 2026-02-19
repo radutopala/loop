@@ -214,7 +214,7 @@ The `memory` block enables semantic search over `.md` files. The daemon indexes 
     "./memory",
     "!./memory/plans"              // Exclude with ! prefix (gitignore-style)
   ],
-  //"max_chunk_chars": 6000,       // Max chars per embedding chunk (increase for models with larger context)
+  //"max_chunk_chars": 5000,       // Max chars per embedding chunk (increase for models with larger context)
   "embeddings": {
     "provider": "ollama",
     "model": "nomic-embed-text"
