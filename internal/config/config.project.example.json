@@ -13,7 +13,8 @@
   // Memory config override for this project
   //"memory": {
   //  "paths": ["./docs/architecture.md", "!./docs/wip"],  // prefix with ! to exclude
-  //  "max_chunk_chars": 8000,
+  //  "max_chunk_chars": 5000,
+  //  "reindex_interval_sec": 300,
   //  "embeddings": {
   //    "provider": "ollama",
   //    "model": "nomic-embed-text"

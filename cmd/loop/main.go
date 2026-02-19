@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -531,10 +532,13 @@ type channelLister interface {
 	ListChannels(ctx context.Context) ([]*db.Channel, error)
 }
 
+// defaultReindexInterval is the default periodic re-index interval (5 minutes).
+const defaultReindexInterval = 5 * time.Minute
+
 func (m *multiDirIndexer) reindexAll(ctx context.Context, store channelLister) {
 	channels, err := store.ListChannels(ctx)
 	if err != nil {
-		m.logger.Warn("startup re-index: listing channels", "error", err)
+		m.logger.Warn("re-index: listing channels", "error", err)
 		return
 	}
 	for _, ch := range channels {
@@ -546,10 +550,32 @@ func (m *multiDirIndexer) reindexAll(ctx context.Context, store channelLister) {
 		}
 		n, _ := m.Index(ctx, ch.DirPath)
 		if n > 0 {
-			m.logger.Info("startup re-index", "channel", ch.ChannelID, "dir", ch.DirPath, "chunks", n)
+			m.logger.Info("re-index", "channel", ch.ChannelID, "dir", ch.DirPath, "chunks", n)
 		}
 	}
+}
+
+// reindexLoop runs reindexAll at startup then periodically at the configured interval.
+// intervalSec <= 0 uses the default (5 minutes). Blocks until ctx is cancelled.
+func (m *multiDirIndexer) reindexLoop(ctx context.Context, store channelLister, intervalSec int) {
+	m.reindexAll(ctx, store)
 	m.logger.Info("startup re-index complete")
+
+	interval := defaultReindexInterval
+	if intervalSec > 0 {
+		interval = time.Duration(intervalSec) * time.Second
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			m.reindexAll(ctx, store)
+		}
+	}
 }
 
 func (m *multiDirIndexer) resolveMemoryPaths(dirPath string) ([]memoryPathEntry, []string) {
@@ -795,8 +821,8 @@ func serve() error {
 			if ollamaEmb, ok := emb.(*embeddings.OllamaEmbedder); ok {
 				go ollamaEmb.RunIdleMonitor(ctx)
 			}
-			// Re-index all channels at startup.
-			go mdi.reindexAll(ctx, store)
+			// Re-index all channels at startup, then periodically.
+			go mdi.reindexLoop(ctx, store, cfg.Memory.ReindexIntervalSec)
 		}
 	}
 

@@ -32,6 +32,7 @@
     "enabled": true,
     "paths": ["./memory", "!./memory/plans"], // absolute or relative; prefix with ! to exclude
     //"max_chunk_chars": 5000, // max chars per embedding chunk; increase for models with larger context
+    //"reindex_interval_sec": 300, // periodic re-index interval in seconds (default: 300 = 5 min)
     "embeddings": {
       "provider": "ollama",
       "model": "nomic-embed-text"

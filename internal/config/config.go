@@ -61,10 +61,11 @@ type EmbeddingsConfig struct {
 
 // MemoryConfig groups all memory-related settings: enable flag, paths, and embeddings.
 type MemoryConfig struct {
-	Enabled       bool
-	Paths         []string
-	MaxChunkChars int
-	Embeddings    EmbeddingsConfig
+	Enabled            bool
+	Paths              []string
+	MaxChunkChars      int
+	ReindexIntervalSec int
+	Embeddings         EmbeddingsConfig
 }
 
 // Config holds all application configuration loaded from config.json.
@@ -136,10 +137,11 @@ type jsonConfig struct {
 
 // jsonMemoryConfig is the JSON representation of the memory block.
 type jsonMemoryConfig struct {
-	Enabled       *bool             `json:"enabled"`
-	Paths         []string          `json:"paths"`
-	MaxChunkChars int               `json:"max_chunk_chars"`
-	Embeddings    *EmbeddingsConfig `json:"embeddings"`
+	Enabled            *bool             `json:"enabled"`
+	Paths              []string          `json:"paths"`
+	MaxChunkChars      int               `json:"max_chunk_chars"`
+	ReindexIntervalSec int               `json:"reindex_interval_sec"`
+	Embeddings         *EmbeddingsConfig `json:"embeddings"`
 }
 
 type jsonMCPConfig struct {
@@ -222,6 +224,7 @@ func Load() (*Config, error) {
 		cfg.Memory.Enabled = boolPtrDefault(jc.Memory.Enabled, false)
 		cfg.Memory.Paths = jc.Memory.Paths
 		cfg.Memory.MaxChunkChars = jc.Memory.MaxChunkChars
+		cfg.Memory.ReindexIntervalSec = jc.Memory.ReindexIntervalSec
 		if jc.Memory.Embeddings != nil {
 			cfg.Memory.Embeddings = EmbeddingsConfig{
 				Provider:  jc.Memory.Embeddings.Provider,

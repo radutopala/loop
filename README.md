@@ -204,7 +204,9 @@ This does four things:
 
 ### Memory
 
-The `memory` block enables semantic search over `.md` files. The daemon indexes files, generates embeddings (via Ollama), and serves search results to MCP processes via its API.
+The `memory` block enables semantic search over `.md` files. The daemon indexes files, generates embeddings (via Ollama), and serves search results to MCP processes via its API. The daemon periodically re-indexes memory files to pick up changes (default: every 5 minutes, configurable via `reindex_interval_sec`).
+
+Loop automatically indexes Claude Code's [auto-memory](https://docs.anthropic.com/en/docs/claude-code/memory) directory (`~/.claude/projects/<encoded-path>/memory/`) for each project. This means insights Claude saves across sessions are searchable by the bot's agents via the `search_memory` MCP tool — no extra configuration needed.
 
 ```jsonc
 // Global config (~/.loop/config.json)
@@ -215,6 +217,7 @@ The `memory` block enables semantic search over `.md` files. The daemon indexes 
     "!./memory/plans"              // Exclude with ! prefix (gitignore-style)
   ],
   //"max_chunk_chars": 5000,       // Max chars per embedding chunk (increase for models with larger context)
+  //"reindex_interval_sec": 300,   // Periodic re-index interval in seconds (default: 300 = 5 min)
   "embeddings": {
     "provider": "ollama",
     "model": "nomic-embed-text"
@@ -237,7 +240,7 @@ Project config memory settings are **merged** with global — project paths are 
 }
 ```
 
-When using Ollama, the daemon automatically manages a `loop-ollama` Docker container — starting it on demand and stopping it after 5 minutes of inactivity.
+When using Ollama, the daemon automatically manages a `loop-ollama` Docker container — starting it lazily on the first embedding request and stopping it after 5 minutes of inactivity.
 
 ### Container Mounts
 

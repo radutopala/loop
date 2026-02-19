@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
@@ -1264,6 +1265,78 @@ func (s *MainSuite) TestReindexAllCancelledContext() {
 	mdi.reindexAll(ctx, cl)
 	cl.AssertExpectations(s.T())
 	// Index should not be called because ctx is cancelled.
+}
+
+// --- reindexLoop ---
+
+func (s *MainSuite) TestReindexLoop() {
+	userHomeDir = func() (string, error) {
+		return "/nonexistent-home", nil
+	}
+
+	mi := new(mockMemIndexer)
+	mi.On("Index", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(0, nil)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mdi := &multiDirIndexer{indexer: mi, logger: logger}
+
+	var callCount atomic.Int32
+	cl := new(mockChannelLister)
+	cl.On("ListChannels", mock.Anything).Run(func(_ mock.Arguments) {
+		callCount.Add(1)
+	}).Return([]*db.Channel{
+		{ChannelID: "ch1", DirPath: "/some/path"},
+	}, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		mdi.reindexLoop(ctx, cl, 1) // 1-second interval
+		close(done)
+	}()
+
+	// Wait for at least 2 ListChannels calls (startup + one tick).
+	require.Eventually(s.T(), func() bool {
+		return callCount.Load() >= 2
+	}, 5*time.Second, 100*time.Millisecond)
+
+	cancel()
+	<-done
+}
+
+func (s *MainSuite) TestReindexLoopDefaultInterval() {
+	userHomeDir = func() (string, error) {
+		return "/nonexistent-home", nil
+	}
+
+	mi := new(mockMemIndexer)
+	mi.On("Index", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(0, nil)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mdi := &multiDirIndexer{indexer: mi, logger: logger}
+
+	var callCount atomic.Int32
+	cl := new(mockChannelLister)
+	cl.On("ListChannels", mock.Anything).Run(func(_ mock.Arguments) {
+		callCount.Add(1)
+	}).Return([]*db.Channel{}, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		mdi.reindexLoop(ctx, cl, 0) // 0 = default interval
+		close(done)
+	}()
+
+	// Wait for the startup reindexAll call.
+	require.Eventually(s.T(), func() bool {
+		return callCount.Load() >= 1
+	}, 2*time.Second, 50*time.Millisecond)
+
+	cancel()
+	<-done
 }
 
 // --- newEmbedder ---
