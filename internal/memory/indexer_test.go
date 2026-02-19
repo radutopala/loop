@@ -772,9 +772,8 @@ func (s *IndexerSuite) TestSearchRankedResults() {
 	results, err := s.indexer.Search(ctx, "/memory", "docker cleanup", 5)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), results, 2)
-	// Whole-file results (ChunkIndex 0) omit content — just return path.
 	require.Equal(s.T(), "/memory/a.md", results[0].FilePath)
-	require.Empty(s.T(), results[0].Content)
+	require.Equal(s.T(), "Docker stuff", results[0].Content)
 	require.Equal(s.T(), 0, results[0].ChunkIndex)
 	require.Greater(s.T(), results[0].Score, results[1].Score)
 }

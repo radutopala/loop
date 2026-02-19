@@ -295,17 +295,12 @@ func (idx *Indexer) Search(ctx context.Context, dirPath, query string, topK int)
 			continue
 		}
 		score := embeddings.CosineSimilarity(queryVec, vec)
-		r := SearchResult{
+		results = append(results, SearchResult{
 			FilePath:   f.FilePath,
+			Content:    f.Content,
 			Score:      score,
 			ChunkIndex: f.ChunkIndex,
-		}
-		// Only include content for chunks (ChunkIndex > 0).
-		// Whole files (ChunkIndex == 0) return just the path — the agent can read them directly.
-		if f.ChunkIndex > 0 {
-			r.Content = f.Content
-		}
-		results = append(results, r)
+		})
 	}
 
 	// Sort by score descending.
