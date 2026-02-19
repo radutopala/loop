@@ -20,7 +20,7 @@ type memorySearchAPIResponse struct {
 
 type memorySearchResult struct {
 	FilePath string  `json:"file_path"`
-	Content  string  `json:"content"`
+	Content  string  `json:"content,omitempty"`
 	Score    float32 `json:"score"`
 }
 
@@ -652,7 +652,11 @@ func (s *Server) handleSearchMemory(_ context.Context, _ *mcp.CallToolRequest, i
 	for i, r := range resp.Results {
 		fmt.Fprintf(&text, "## Result %d (score: %.3f)\n", i+1, r.Score)
 		fmt.Fprintf(&text, "**File:** %s\n", r.FilePath)
-		fmt.Fprintf(&text, "\n%s\n\n", r.Content)
+		if r.Content != "" {
+			fmt.Fprintf(&text, "\n%s\n\n", r.Content)
+		} else {
+			text.WriteString("\n")
+		}
 	}
 
 	return &mcp.CallToolResult{

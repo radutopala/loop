@@ -772,8 +772,29 @@ func (s *IndexerSuite) TestSearchRankedResults() {
 	results, err := s.indexer.Search(ctx, "/memory", "docker cleanup", 5)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), results, 2)
-	require.Contains(s.T(), results[0].Content, "Docker")
+	// Whole-file results (ChunkIndex 0) omit content — just return path.
+	require.Equal(s.T(), "/memory/a.md", results[0].FilePath)
+	require.Empty(s.T(), results[0].Content)
+	require.Equal(s.T(), 0, results[0].ChunkIndex)
 	require.Greater(s.T(), results[0].Score, results[1].Score)
+}
+
+func (s *IndexerSuite) TestSearchChunkedResultIncludesContent() {
+	ctx := context.Background()
+	s.embedder.On("Embed", ctx, []string{"query"}).Return([][]float32{{0.5, 0.5}}, nil)
+	s.store.On("GetMemoryFilesByDirPath", ctx, "/memory").Return([]*db.MemoryFile{
+		{FilePath: "/memory/large.md", ChunkIndex: 1, Content: "Chunk 1 content", Embedding: embeddings.SerializeFloat32([]float32{0.9, 0.1})},
+		{FilePath: "/memory/large.md", ChunkIndex: 2, Content: "Chunk 2 content", Embedding: embeddings.SerializeFloat32([]float32{0.1, 0.9})},
+	}, nil)
+
+	results, err := s.indexer.Search(ctx, "/memory", "query", 5)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), results, 2)
+	// Chunk results include content.
+	require.Equal(s.T(), "Chunk 1 content", results[0].Content)
+	require.Equal(s.T(), 1, results[0].ChunkIndex)
+	require.Equal(s.T(), "Chunk 2 content", results[1].Content)
+	require.Equal(s.T(), 2, results[1].ChunkIndex)
 }
 
 func (s *IndexerSuite) TestSearchTopKLimit() {

@@ -29,9 +29,10 @@ type Store interface {
 
 // SearchResult holds a single search result with its similarity score.
 type SearchResult struct {
-	FilePath string  `json:"file_path"`
-	Content  string  `json:"content"`
-	Score    float32 `json:"score"`
+	FilePath   string  `json:"file_path"`
+	Content    string  `json:"content,omitempty"`
+	Score      float32 `json:"score"`
+	ChunkIndex int     `json:"chunk_index"`
 }
 
 // Indexer handles indexing and searching memory files.
@@ -294,11 +295,17 @@ func (idx *Indexer) Search(ctx context.Context, dirPath, query string, topK int)
 			continue
 		}
 		score := embeddings.CosineSimilarity(queryVec, vec)
-		results = append(results, SearchResult{
-			FilePath: f.FilePath,
-			Content:  f.Content,
-			Score:    score,
-		})
+		r := SearchResult{
+			FilePath:   f.FilePath,
+			Score:      score,
+			ChunkIndex: f.ChunkIndex,
+		}
+		// Only include content for chunks (ChunkIndex > 0).
+		// Whole files (ChunkIndex == 0) return just the path — the agent can read them directly.
+		if f.ChunkIndex > 0 {
+			r.Content = f.Content
+		}
+		results = append(results, r)
 	}
 
 	// Sort by score descending.
