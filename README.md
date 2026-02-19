@@ -206,7 +206,9 @@ This does four things:
 
 The `memory` block enables semantic search over `.md` files. The daemon indexes files, generates embeddings (via Ollama), and serves search results to MCP processes via its API. The daemon periodically re-indexes memory files to pick up changes (default: every 5 minutes, configurable via `reindex_interval_sec`).
 
-Loop automatically indexes Claude Code's [auto-memory](https://docs.anthropic.com/en/docs/claude-code/memory) directory (`~/.claude/projects/<encoded-path>/memory/`) for each project. This means insights Claude saves across sessions are searchable by the bot's agents via the `search_memory` MCP tool — no extra configuration needed.
+**Why semantic search?** Claude Code's own [auto-memory](https://docs.anthropic.com/en/docs/claude-code/memory) is designed to be concise and loaded directly into the system prompt — no search needed. That works well for a single user on a single project. Loop serves a different use case: agents running across **many projects** with **larger, less curated** content pools (architecture docs, knowledge bases, accumulated notes). Semantic search lets agents find relevant information from content that wouldn't all fit in a single prompt, using conceptual matching rather than exact keywords.
+
+Loop automatically indexes Claude Code's auto-memory directory (`~/.claude/projects/<encoded-path>/memory/`) for each project, plus any additional paths you configure. This means insights Claude saves across sessions are searchable by the bot's agents via the `search_memory` MCP tool — no extra configuration needed.
 
 ```jsonc
 // Global config (~/.loop/config.json)
