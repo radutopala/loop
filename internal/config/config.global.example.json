@@ -25,6 +25,20 @@
   //"claude_bin_path": "claude",
   //"streaming_enabled": true, // stream intermediate Claude turns to chat as they happen
 
+  // Semantic memory search configuration.
+  // Must be explicitly enabled. Paths are resolved per project work dir.
+  "memory": {
+    // Must be explicitly true to enable semantic memory search
+    "enabled": true,
+    "paths": ["./memory"], // absolute or relative to the project work dir
+    //"max_chunk_chars": 6000, // max chars per embedding chunk; increase for models with larger context
+    "embeddings": {
+      "provider": "ollama",
+      "model": "nomic-embed-text"
+      //"ollama_url": "http://localhost:11434"
+    }
+  },
+
   // MCP server configurations. Each entry defines a separate MCP server that agents can connect to.
   // The key is an arbitrary name for the server, and the value specifies how to start the server.
   // Project-level configs can override or add servers with the same structure.
@@ -51,6 +65,7 @@
   "mounts": [
     // Mount Claude code and config to allow agents to use Claude for reasoning and decision-making
     "~/.claude:~/.claude",
+    "~/.claude.json:~/.claude.json",
     // Mount Git config read-only to allow agents to perform Git operations with correct user identity without risking modification of the host's Git config
     "~/.gitconfig:~/.gitconfig:ro",
     // Mount SSH keys read-only to allow agents to perform Git operations with authentication (e.g. cloning private repos, pushing commits)
@@ -65,7 +80,8 @@
     "loop-npmcache:~/.npm",
     "loop-uvcache:~/.local/share/uv",
     "loop-cache:~/.cache",
-    "loop-gocache:/go"
+    "loop-gocache:/go",
+    "loop-ollama:~/.ollama"
   ],
 
   // Task templates

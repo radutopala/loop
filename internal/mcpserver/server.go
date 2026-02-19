@@ -14,6 +14,16 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
+type memorySearchAPIResponse struct {
+	Results []memorySearchResult `json:"results"`
+}
+
+type memorySearchResult struct {
+	FilePath string  `json:"file_path"`
+	Content  string  `json:"content"`
+	Score    float32 `json:"score"`
+}
+
 // HTTPClient abstracts HTTP calls for testability.
 type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
@@ -21,12 +31,14 @@ type HTTPClient interface {
 
 // Server wraps the MCP server with tools for task scheduling.
 type Server struct {
-	channelID  string
-	apiURL     string
-	authorID   string
-	mcpServer  *mcp.Server
-	httpClient HTTPClient
-	logger     *slog.Logger
+	channelID     string
+	apiURL        string
+	authorID      string
+	dirPath       string
+	memoryEnabled bool
+	mcpServer     *mcp.Server
+	httpClient    HTTPClient
+	logger        *slog.Logger
 }
 
 type scheduleTaskInput struct {
@@ -75,8 +87,30 @@ type sendMessageInput struct {
 
 type listTasksInput struct{}
 
+type searchMemoryInput struct {
+	Query string `json:"query" jsonschema:"The search query to find relevant memory notes"`
+	TopK  int    `json:"top_k,omitempty" jsonschema:"Number of results to return (default 5)"`
+}
+
+type indexMemoryInput struct{}
+
+// MemoryOption configures optional memory search for the MCP server.
+type MemoryOption func(*Server)
+
+// WithMemoryAPI enables memory search tools via the daemon's HTTP API.
+// dirPath is the project directory; if empty, the server falls back to channel_id for lookups.
+func WithMemoryAPI(dirPath string) MemoryOption {
+	return func(s *Server) {
+		s.memoryEnabled = true
+		s.dirPath = dirPath
+	}
+}
+
+// DirPath returns the project directory used for memory lookups.
+func (s *Server) DirPath() string { return s.dirPath }
+
 // New creates a new MCP server with scheduler tools.
-func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog.Logger) *Server {
+func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog.Logger, opts ...MemoryOption) *Server {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
@@ -142,6 +176,22 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 		Name:        "send_message",
 		Description: "Send a message to a channel or thread. Use search_channels to find the target channel ID first. To trigger the bot in the target channel, include @BotName (e.g. @LoopBot) as plain text in the message — it will be converted to a proper mention automatically.",
 	}, s.handleSendMessage)
+
+	for _, opt := range opts {
+		opt(s)
+	}
+
+	if s.memoryEnabled {
+		mcp.AddTool(s.mcpServer, &mcp.Tool{
+			Name:        "search_memory",
+			Description: "Semantic search across memory files. Returns the most relevant chunks ranked by similarity to the query.",
+		}, s.handleSearchMemory)
+
+		mcp.AddTool(s.mcpServer, &mcp.Tool{
+			Name:        "index_memory",
+			Description: "Force re-index all memory files. Useful after editing memory files to update the search index.",
+		}, s.handleIndexMemory)
+	}
 
 	return s
 }
@@ -550,6 +600,97 @@ func (s *Server) handleSendMessage(_ context.Context, _ *mcp.CallToolRequest, in
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
 			&mcp.TextContent{Text: "Message sent successfully."},
+		},
+	}, nil, nil
+}
+
+func (s *Server) handleSearchMemory(_ context.Context, _ *mcp.CallToolRequest, input searchMemoryInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "search_memory", "query", input.Query, "top_k", input.TopK)
+
+	if input.Query == "" {
+		return errorResult("query is required"), nil, nil
+	}
+
+	topK := input.TopK
+	if topK <= 0 {
+		topK = 5
+	}
+
+	body := map[string]any{
+		"query": input.Query,
+		"top_k": topK,
+	}
+	if s.dirPath != "" {
+		body["dir_path"] = s.dirPath
+	} else {
+		body["channel_id"] = s.channelID
+	}
+	data, _ := json.Marshal(body)
+
+	respBody, status, err := s.doRequest("POST", s.apiURL+"/api/memory/search", data)
+	if err != nil {
+		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
+	}
+	if status != http.StatusOK {
+		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
+	}
+
+	var resp memorySearchAPIResponse
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return errorResult(fmt.Sprintf("decoding response: %v", err)), nil, nil
+	}
+
+	if len(resp.Results) == 0 {
+		return &mcp.CallToolResult{
+			Content: []mcp.Content{
+				&mcp.TextContent{Text: "No results found."},
+			},
+		}, nil, nil
+	}
+
+	var text strings.Builder
+	for i, r := range resp.Results {
+		fmt.Fprintf(&text, "## Result %d (score: %.3f)\n", i+1, r.Score)
+		fmt.Fprintf(&text, "**File:** %s\n", r.FilePath)
+		fmt.Fprintf(&text, "\n%s\n\n", r.Content)
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: text.String()},
+		},
+	}, nil, nil
+}
+
+func (s *Server) handleIndexMemory(_ context.Context, _ *mcp.CallToolRequest, _ indexMemoryInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "index_memory")
+
+	body := map[string]string{}
+	if s.dirPath != "" {
+		body["dir_path"] = s.dirPath
+	} else {
+		body["channel_id"] = s.channelID
+	}
+	data, _ := json.Marshal(body)
+
+	respBody, status, err := s.doRequest("POST", s.apiURL+"/api/memory/index", data)
+	if err != nil {
+		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
+	}
+	if status != http.StatusOK {
+		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
+	}
+
+	var resp struct {
+		Count int `json:"count"`
+	}
+	if err := json.Unmarshal(respBody, &resp); err != nil {
+		return errorResult(fmt.Sprintf("decoding response: %v", err)), nil, nil
+	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: fmt.Sprintf("Indexed %d chunks.", resp.Count)},
 		},
 	}, nil, nil
 }

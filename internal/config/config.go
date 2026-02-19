@@ -52,6 +52,21 @@ func (t *TaskTemplate) ResolvePrompt(loopDir string) (string, error) {
 	return string(data), nil
 }
 
+// EmbeddingsConfig configures the embedding provider for semantic memory search.
+type EmbeddingsConfig struct {
+	Provider  string `json:"provider"`   // "ollama"
+	Model     string `json:"model"`      // e.g. "nomic-embed-text"
+	OllamaURL string `json:"ollama_url"` // default "http://localhost:11434"
+}
+
+// MemoryConfig groups all memory-related settings: enable flag, paths, and embeddings.
+type MemoryConfig struct {
+	Enabled       bool
+	Paths         []string
+	MaxChunkChars int
+	Embeddings    EmbeddingsConfig
+}
+
 // Config holds all application configuration loaded from config.json.
 type Config struct {
 	PlatformType         types.Platform
@@ -80,6 +95,7 @@ type Config struct {
 	Envs                 map[string]string
 	ClaudeModel          string
 	StreamingEnabled     bool
+	Memory               MemoryConfig
 }
 
 // Platform returns the configured chat platform.
@@ -90,31 +106,40 @@ func (c *Config) Platform() types.Platform {
 // jsonConfig is an intermediate struct for JSON unmarshalling.
 // Pointer types for numerics distinguish "missing" (nil) from "zero".
 type jsonConfig struct {
-	Platform              string         `json:"platform"`
-	DiscordToken          string         `json:"discord_token"`
-	DiscordAppID          string         `json:"discord_app_id"`
-	SlackBotToken         string         `json:"slack_bot_token"`
-	SlackAppToken         string         `json:"slack_app_token"`
-	ClaudeCodeOAuthToken  string         `json:"claude_code_oauth_token"`
-	DiscordGuildID        string         `json:"discord_guild_id"`
-	LogFile               string         `json:"log_file"`
-	LogLevel              string         `json:"log_level"`
-	LogFormat             string         `json:"log_format"`
-	DBPath                string         `json:"db_path"`
-	ContainerImage        string         `json:"container_image"`
-	ContainerTimeoutSec   *int           `json:"container_timeout_sec"`
-	ContainerMemoryMB     *int64         `json:"container_memory_mb"`
-	ContainerCPUs         *float64       `json:"container_cpus"`
-	ContainerKeepAliveSec *int           `json:"container_keep_alive_sec"`
-	PollIntervalSec       *int           `json:"poll_interval_sec"`
-	APIAddr               string         `json:"api_addr"`
-	MCP                   *jsonMCPConfig `json:"mcp"`
-	TaskTemplates         []TaskTemplate `json:"task_templates"`
-	Mounts                []string       `json:"mounts"`
-	Envs                  map[string]any `json:"envs"`
-	ClaudeModel           string         `json:"claude_model"`
-	ClaudeBinPath         string         `json:"claude_bin_path"`
-	StreamingEnabled      *bool          `json:"streaming_enabled"`
+	Platform              string            `json:"platform"`
+	DiscordToken          string            `json:"discord_token"`
+	DiscordAppID          string            `json:"discord_app_id"`
+	SlackBotToken         string            `json:"slack_bot_token"`
+	SlackAppToken         string            `json:"slack_app_token"`
+	ClaudeCodeOAuthToken  string            `json:"claude_code_oauth_token"`
+	DiscordGuildID        string            `json:"discord_guild_id"`
+	LogFile               string            `json:"log_file"`
+	LogLevel              string            `json:"log_level"`
+	LogFormat             string            `json:"log_format"`
+	DBPath                string            `json:"db_path"`
+	ContainerImage        string            `json:"container_image"`
+	ContainerTimeoutSec   *int              `json:"container_timeout_sec"`
+	ContainerMemoryMB     *int64            `json:"container_memory_mb"`
+	ContainerCPUs         *float64          `json:"container_cpus"`
+	ContainerKeepAliveSec *int              `json:"container_keep_alive_sec"`
+	PollIntervalSec       *int              `json:"poll_interval_sec"`
+	APIAddr               string            `json:"api_addr"`
+	MCP                   *jsonMCPConfig    `json:"mcp"`
+	TaskTemplates         []TaskTemplate    `json:"task_templates"`
+	Mounts                []string          `json:"mounts"`
+	Envs                  map[string]any    `json:"envs"`
+	ClaudeModel           string            `json:"claude_model"`
+	ClaudeBinPath         string            `json:"claude_bin_path"`
+	StreamingEnabled      *bool             `json:"streaming_enabled"`
+	Memory                *jsonMemoryConfig `json:"memory"`
+}
+
+// jsonMemoryConfig is the JSON representation of the memory block.
+type jsonMemoryConfig struct {
+	Enabled       *bool             `json:"enabled"`
+	Paths         []string          `json:"paths"`
+	MaxChunkChars int               `json:"max_chunk_chars"`
+	Embeddings    *EmbeddingsConfig `json:"embeddings"`
 }
 
 type jsonMCPConfig struct {
@@ -191,6 +216,23 @@ func Load() (*Config, error) {
 	cfg.TaskTemplates = jc.TaskTemplates
 	cfg.Mounts = jc.Mounts
 	cfg.Envs = stringifyEnvs(jc.Envs)
+
+	// Memory config: enabled must be explicitly true.
+	if jc.Memory != nil {
+		cfg.Memory.Enabled = boolPtrDefault(jc.Memory.Enabled, false)
+		cfg.Memory.Paths = jc.Memory.Paths
+		cfg.Memory.MaxChunkChars = jc.Memory.MaxChunkChars
+		if jc.Memory.Embeddings != nil {
+			cfg.Memory.Embeddings = EmbeddingsConfig{
+				Provider:  jc.Memory.Embeddings.Provider,
+				Model:     jc.Memory.Embeddings.Model,
+				OllamaURL: stringDefault(jc.Memory.Embeddings.OllamaURL, "http://localhost:11434"),
+			}
+		}
+	}
+	if len(cfg.Memory.Paths) == 0 {
+		cfg.Memory.Paths = []string{"./memory"}
+	}
 
 	switch cfg.PlatformType {
 	case types.PlatformDiscord:
@@ -269,15 +311,16 @@ func stringifyEnvs(raw map[string]any) map[string]string {
 
 // projectConfig is the structure for project-specific .loop/config.json files.
 type projectConfig struct {
-	Mounts            []string       `json:"mounts"`
-	Envs              map[string]any `json:"envs"`
-	MCP               *jsonMCPConfig `json:"mcp"`
-	ClaudeModel       string         `json:"claude_model"`
-	ClaudeBinPath     string         `json:"claude_bin_path"`
-	ContainerImage    string         `json:"container_image"`
-	ContainerMemoryMB *int64         `json:"container_memory_mb"`
-	ContainerCPUs     *float64       `json:"container_cpus"`
-	TaskTemplates     []TaskTemplate `json:"task_templates"`
+	Mounts            []string          `json:"mounts"`
+	Envs              map[string]any    `json:"envs"`
+	MCP               *jsonMCPConfig    `json:"mcp"`
+	ClaudeModel       string            `json:"claude_model"`
+	ClaudeBinPath     string            `json:"claude_bin_path"`
+	ContainerImage    string            `json:"container_image"`
+	ContainerMemoryMB *int64            `json:"container_memory_mb"`
+	ContainerCPUs     *float64          `json:"container_cpus"`
+	TaskTemplates     []TaskTemplate    `json:"task_templates"`
+	Memory            *jsonMemoryConfig `json:"memory"`
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
@@ -370,6 +413,23 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 	}
 	if pc.ContainerCPUs != nil {
 		merged.ContainerCPUs = *pc.ContainerCPUs
+	}
+
+	// Merge memory config: project paths appended, project embeddings override
+	if pc.Memory != nil {
+		if len(pc.Memory.Paths) > 0 {
+			merged.Memory.Paths = append(merged.Memory.Paths, pc.Memory.Paths...)
+		}
+		if pc.Memory.MaxChunkChars > 0 {
+			merged.Memory.MaxChunkChars = pc.Memory.MaxChunkChars
+		}
+		if pc.Memory.Embeddings != nil {
+			merged.Memory.Embeddings = EmbeddingsConfig{
+				Provider:  pc.Memory.Embeddings.Provider,
+				Model:     pc.Memory.Embeddings.Model,
+				OllamaURL: stringDefault(pc.Memory.Embeddings.OllamaURL, "http://localhost:11434"),
+			}
+		}
 	}
 
 	// Merge envs: project takes precedence over global

@@ -41,4 +41,5 @@ loop.db*
 .loop.bkp/
 .loop/
 memory/
+!internal/memory/
 tickets/

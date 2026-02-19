@@ -79,3 +79,19 @@ const (
 	RunStatusSuccess RunStatus = "success"
 	RunStatusFailed  RunStatus = "failed"
 )
+
+// MemoryFile represents an indexed memory file (or chunk) with its embedding.
+// ChunkIndex 0 is the header row (stores content_hash for the whole file).
+// ChunkIndex 1+ are content chunks with embeddings for large files.
+// Small files use a single row with ChunkIndex 0 that has both hash and embedding.
+type MemoryFile struct {
+	ID          int64     `json:"id"`
+	FilePath    string    `json:"file_path"`
+	ChunkIndex  int       `json:"chunk_index"`
+	Content     string    `json:"content"`
+	ContentHash string    `json:"content_hash"`
+	Embedding   []byte    `json:"embedding"`
+	Dimensions  int       `json:"dimensions"`
+	DirPath     string    `json:"dir_path"`
+	UpdatedAt   time.Time `json:"updated_at"`
+}

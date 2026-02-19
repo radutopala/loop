@@ -10,6 +10,16 @@
   //"container_memory_mb": 512,
   //"container_cpus": 1.0,
 
+  // Memory config override for this project
+  //"memory": {
+  //  "paths": ["./docs/architecture.md"],
+  //  "max_chunk_chars": 8000,
+  //  "embeddings": {
+  //    "provider": "ollama",
+  //    "model": "nomic-embed-text"
+  //  }
+  //},
+
   // MCP server configurations specific to this project
   // Project servers take precedence over global config servers with the same name
   //"mcp": {
@@ -30,6 +40,7 @@
   // Relative paths are resolved relative to the project directory
   //"mounts": [
   //  "~/.claude:~/.claude",
+  //  "~/.claude.json:~/.claude.json",
   //  "~/.gitconfig:~/.gitconfig:ro",
   //  "~/.ssh:~/.ssh:ro",
   //  "~/.aws:~/.aws",

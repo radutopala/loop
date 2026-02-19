@@ -873,6 +873,68 @@ func (s *ConfigSuite) TestLoadProjectConfigContainerNoOverride() {
 	require.Equal(s.T(), 1.0, merged.ContainerCPUs)
 }
 
+func (s *ConfigSuite) TestLoadProjectConfigMemoryEmbeddingsOverride() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"memory": {
+					"embeddings": {
+						"provider": "ollama",
+						"model": "mxbai-embed-large",
+						"ollama_url": "http://gpu-server:11434"
+					}
+				}
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		Memory: MemoryConfig{
+			Enabled: true,
+			Embeddings: EmbeddingsConfig{
+				Provider:  "ollama",
+				Model:     "nomic-embed-text",
+				OllamaURL: "http://localhost:11434",
+			},
+		},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ollama", merged.Memory.Embeddings.Provider)
+	require.Equal(s.T(), "mxbai-embed-large", merged.Memory.Embeddings.Model)
+	require.Equal(s.T(), "http://gpu-server:11434", merged.Memory.Embeddings.OllamaURL)
+
+	// Verify main not mutated
+	require.Equal(s.T(), "nomic-embed-text", mainCfg.Memory.Embeddings.Model)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigMemoryEmbeddingsNoOverride() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		Memory: MemoryConfig{
+			Enabled: true,
+			Embeddings: EmbeddingsConfig{
+				Provider:  "ollama",
+				Model:     "nomic-embed-text",
+				OllamaURL: "http://localhost:11434",
+			},
+		},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ollama", merged.Memory.Embeddings.Provider)
+	require.Equal(s.T(), "nomic-embed-text", merged.Memory.Embeddings.Model)
+}
+
 func (s *ConfigSuite) TestLoadProjectConfigEnvsMerged() {
 	readFile = func(path string) ([]byte, error) {
 		if path == "/project/.loop/config.json" {
@@ -1130,4 +1192,217 @@ func (s *ConfigSuite) TestLoadProjectConfigTemplatesWithPromptPath() {
 	require.Equal(s.T(), "file-template", merged.TaskTemplates[0].Name)
 	require.Equal(s.T(), "review.md", merged.TaskTemplates[0].PromptPath)
 	require.Empty(s.T(), merged.TaskTemplates[0].Prompt)
+}
+
+func (s *ConfigSuite) TestMemoryConfigOllama() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platform": "discord",
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"memory": {
+				"enabled": true,
+				"paths": ["./memory"],
+				"embeddings": {
+					"provider": "ollama",
+					"model": "nomic-embed-text"
+				}
+			}
+		}`), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.True(s.T(), cfg.Memory.Enabled)
+	require.Equal(s.T(), "ollama", cfg.Memory.Embeddings.Provider)
+	require.Equal(s.T(), "nomic-embed-text", cfg.Memory.Embeddings.Model)
+	require.Equal(s.T(), "http://localhost:11434", cfg.Memory.Embeddings.OllamaURL)
+}
+
+func (s *ConfigSuite) TestMemoryConfigAbsent() {
+	readFile = func(_ string) ([]byte, error) {
+		return s.minimalJSON(), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.False(s.T(), cfg.Memory.Enabled)
+	require.Empty(s.T(), cfg.Memory.Embeddings.Provider)
+}
+
+func (s *ConfigSuite) TestMemoryConfigNotExplicitlyEnabled() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platform": "discord",
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"memory": {
+				"embeddings": {
+					"provider": "ollama",
+					"model": "nomic-embed-text"
+				}
+			}
+		}`), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.False(s.T(), cfg.Memory.Enabled)
+}
+
+func (s *ConfigSuite) TestMemoryPathsLoaded() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platform": "discord",
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"memory": {
+				"enabled": true,
+				"paths": ["/shared/knowledge", "/path/to/notes.md"]
+			}
+		}`), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"/shared/knowledge", "/path/to/notes.md"}, cfg.Memory.Paths)
+}
+
+func (s *ConfigSuite) TestMemoryPathsDefault() {
+	readFile = func(_ string) ([]byte, error) {
+		return s.minimalJSON(), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"./memory"}, cfg.Memory.Paths)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigMemoryPathsAppended() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"memory": {
+					"paths": ["./docs/arch.md"]
+				}
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		Memory: MemoryConfig{Paths: []string{"/global/knowledge"}},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"/global/knowledge", "./docs/arch.md"}, merged.Memory.Paths)
+
+	// Verify main config not mutated
+	require.Len(s.T(), mainCfg.Memory.Paths, 1)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigMemoryPathsEmptyPreservesGlobal() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		Memory: MemoryConfig{Paths: []string{"/global/knowledge"}},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"/global/knowledge"}, merged.Memory.Paths)
+}
+
+func (s *ConfigSuite) TestMemoryMaxChunkCharsLoaded() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platform": "discord",
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"memory": {
+				"enabled": true,
+				"max_chunk_chars": 8000
+			}
+		}`), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 8000, cfg.Memory.MaxChunkChars)
+}
+
+func (s *ConfigSuite) TestMemoryMaxChunkCharsDefault() {
+	readFile = func(_ string) ([]byte, error) {
+		return s.minimalJSON(), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, cfg.Memory.MaxChunkChars)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigMaxChunkCharsOverride() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"memory": {
+					"max_chunk_chars": 12000
+				}
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		Memory: MemoryConfig{MaxChunkChars: 6000},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 12000, merged.Memory.MaxChunkChars)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigMaxChunkCharsNoOverride() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		Memory: MemoryConfig{MaxChunkChars: 6000},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 6000, merged.Memory.MaxChunkChars)
+}
+
+func (s *ConfigSuite) TestMemoryConfigOllamaCustomURL() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platform": "discord",
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"memory": {
+				"enabled": true,
+				"embeddings": {
+					"provider": "ollama",
+					"model": "nomic-embed-text",
+					"ollama_url": "http://gpu-server:11434"
+				}
+			}
+		}`), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "http://gpu-server:11434", cfg.Memory.Embeddings.OllamaURL)
 }

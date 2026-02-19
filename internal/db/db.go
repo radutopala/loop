@@ -34,6 +34,10 @@ type Store interface {
 	ListChannels(ctx context.Context) ([]*Channel, error)
 	InsertTaskRunLog(ctx context.Context, log *TaskRunLog) (int64, error)
 	UpdateTaskRunLog(ctx context.Context, log *TaskRunLog) error
+	UpsertMemoryFile(ctx context.Context, file *MemoryFile) error
+	GetMemoryFilesByDirPath(ctx context.Context, dirPath string) ([]*MemoryFile, error)
+	GetMemoryFileHash(ctx context.Context, filePath, dirPath string) (string, error)
+	DeleteMemoryFile(ctx context.Context, filePath, dirPath string) error
 	Close() error
 }
 
@@ -386,6 +390,60 @@ func (s *SQLiteStore) UpdateTaskRunLog(ctx context.Context, trl *TaskRunLog) err
 		`UPDATE task_run_logs SET status = ?, response_text = ?, error_text = ?, finished_at = ? WHERE id = ?`,
 		string(trl.Status), trl.ResponseText, trl.ErrorText, trl.FinishedAt, trl.ID,
 	)
+	return err
+}
+
+func (s *SQLiteStore) UpsertMemoryFile(ctx context.Context, file *MemoryFile) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO memory_files (file_path, chunk_index, content, content_hash, embedding, dimensions, dir_path, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(file_path, chunk_index, dir_path) DO UPDATE SET
+		   content = excluded.content,
+		   content_hash = excluded.content_hash,
+		   embedding = excluded.embedding,
+		   dimensions = excluded.dimensions,
+		   updated_at = excluded.updated_at`,
+		file.FilePath, file.ChunkIndex, file.Content, file.ContentHash, file.Embedding, file.Dimensions, file.DirPath, time.Now().UTC(),
+	)
+	return err
+}
+
+func (s *SQLiteStore) GetMemoryFilesByDirPath(ctx context.Context, dirPath string) ([]*MemoryFile, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, file_path, chunk_index, content, content_hash, embedding, dimensions, dir_path, updated_at
+		 FROM memory_files WHERE (dir_path = ? OR dir_path = '') AND dimensions > 0`,
+		dirPath,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var files []*MemoryFile
+	for rows.Next() {
+		f := &MemoryFile{}
+		if err := rows.Scan(&f.ID, &f.FilePath, &f.ChunkIndex, &f.Content, &f.ContentHash, &f.Embedding, &f.Dimensions, &f.DirPath, &f.UpdatedAt); err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	return files, rows.Err()
+}
+
+func (s *SQLiteStore) GetMemoryFileHash(ctx context.Context, filePath, dirPath string) (string, error) {
+	var hash string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT content_hash FROM memory_files WHERE file_path = ? AND dir_path = ? AND chunk_index = 0`,
+		filePath, dirPath,
+	).Scan(&hash)
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+	return hash, err
+}
+
+func (s *SQLiteStore) DeleteMemoryFile(ctx context.Context, filePath, dirPath string) error {
+	_, err := s.db.ExecContext(ctx, `DELETE FROM memory_files WHERE file_path = ? AND dir_path = ?`, filePath, dirPath)
 	return err
 }
 

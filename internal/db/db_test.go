@@ -1063,3 +1063,145 @@ func (s *StoreSuite) TestGetScheduledTaskByTemplateNameError() {
 	require.Error(s.T(), err)
 	require.Nil(s.T(), task)
 }
+
+// --- Memory file tests ---
+
+func (s *StoreSuite) TestUpsertMemoryFile() {
+	file := &MemoryFile{
+		FilePath: "/memory/test.md",
+		Content:  "container cleanup", ContentHash: "abc123",
+		Embedding: []byte{1, 2, 3, 4}, Dimensions: 768,
+	}
+	s.mock.ExpectExec(`INSERT INTO memory_files`).
+		WithArgs(file.FilePath, file.ChunkIndex, file.Content, file.ContentHash, file.Embedding, file.Dimensions, file.DirPath, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err := s.store.UpsertMemoryFile(context.Background(), file)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestUpsertMemoryFileError() {
+	file := &MemoryFile{FilePath: "f", Content: "c", ContentHash: "h", Embedding: []byte{}, Dimensions: 1}
+	s.mock.ExpectExec(`INSERT INTO memory_files`).
+		WillReturnError(sql.ErrConnDone)
+
+	err := s.store.UpsertMemoryFile(context.Background(), file)
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestGetMemoryFilesByDirPath() {
+	now := time.Now().UTC()
+	rows := sqlmock.NewRows([]string{"id", "file_path", "chunk_index", "content", "content_hash", "embedding", "dimensions", "dir_path", "updated_at"}).
+		AddRow(1, "/m/a.md", 0, "content a", "hash-a", []byte{1, 2}, 768, "", now).
+		AddRow(2, "/m/b.md", 0, "content b", "hash-b", []byte{3, 4}, 768, "", now)
+	s.mock.ExpectQuery(`SELECT .+ FROM memory_files WHERE`).
+		WithArgs("/project").
+		WillReturnRows(rows)
+
+	files, err := s.store.GetMemoryFilesByDirPath(context.Background(), "/project")
+	require.NoError(s.T(), err)
+	require.Len(s.T(), files, 2)
+	require.Equal(s.T(), "/m/a.md", files[0].FilePath)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestGetMemoryFilesByDirPathIncludesGlobal() {
+	now := time.Now().UTC()
+	rows := sqlmock.NewRows([]string{"id", "file_path", "chunk_index", "content", "content_hash", "embedding", "dimensions", "dir_path", "updated_at"}).
+		AddRow(1, "/a/x.md", 0, "content a", "hash-a", []byte{1, 2}, 768, "/project", now).
+		AddRow(2, "/b/y.md", 0, "content b", "hash-b", []byte{3, 4}, 768, "", now)
+	s.mock.ExpectQuery(`SELECT .+ FROM memory_files WHERE`).
+		WithArgs("/project").
+		WillReturnRows(rows)
+
+	files, err := s.store.GetMemoryFilesByDirPath(context.Background(), "/project")
+	require.NoError(s.T(), err)
+	require.Len(s.T(), files, 2)
+	require.Equal(s.T(), "/project", files[0].DirPath)
+	require.Equal(s.T(), "", files[1].DirPath)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestGetMemoryFilesByDirPathEmpty() {
+	rows := sqlmock.NewRows([]string{"id", "file_path", "chunk_index", "content", "content_hash", "embedding", "dimensions", "dir_path", "updated_at"})
+	s.mock.ExpectQuery(`SELECT .+ FROM memory_files WHERE`).
+		WithArgs("").
+		WillReturnRows(rows)
+
+	files, err := s.store.GetMemoryFilesByDirPath(context.Background(), "")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), files)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestGetMemoryFilesByDirPathError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM memory_files WHERE`).
+		WithArgs("/project").
+		WillReturnError(sql.ErrConnDone)
+
+	files, err := s.store.GetMemoryFilesByDirPath(context.Background(), "/project")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), files)
+}
+
+func (s *StoreSuite) TestGetMemoryFilesByDirPathScanError() {
+	rows := sqlmock.NewRows([]string{"id", "file_path"}).AddRow(1, "path") // wrong column count
+	s.mock.ExpectQuery(`SELECT .+ FROM memory_files WHERE`).
+		WithArgs("/project").
+		WillReturnRows(rows)
+
+	files, err := s.store.GetMemoryFilesByDirPath(context.Background(), "/project")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), files)
+}
+
+func (s *StoreSuite) TestGetMemoryFileHash() {
+	s.mock.ExpectQuery(`SELECT content_hash FROM memory_files WHERE file_path`).
+		WithArgs("/m/a.md", "").
+		WillReturnRows(sqlmock.NewRows([]string{"content_hash"}).AddRow("abc123"))
+
+	hash, err := s.store.GetMemoryFileHash(context.Background(), "/m/a.md", "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "abc123", hash)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestGetMemoryFileHashNotFound() {
+	s.mock.ExpectQuery(`SELECT content_hash FROM memory_files`).
+		WithArgs("/m/a.md", "").
+		WillReturnError(sql.ErrNoRows)
+
+	hash, err := s.store.GetMemoryFileHash(context.Background(), "/m/a.md", "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "", hash)
+}
+
+func (s *StoreSuite) TestGetMemoryFileHashError() {
+	s.mock.ExpectQuery(`SELECT content_hash FROM memory_files`).
+		WithArgs("/m/a.md", "").
+		WillReturnError(sql.ErrConnDone)
+
+	hash, err := s.store.GetMemoryFileHash(context.Background(), "/m/a.md", "")
+	require.Error(s.T(), err)
+	require.Equal(s.T(), "", hash)
+}
+
+func (s *StoreSuite) TestDeleteMemoryFile() {
+	s.mock.ExpectExec(`DELETE FROM memory_files WHERE file_path`).
+		WithArgs("/m/a.md", "").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := s.store.DeleteMemoryFile(context.Background(), "/m/a.md", "")
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestDeleteMemoryFileError() {
+	s.mock.ExpectExec(`DELETE FROM memory_files`).
+		WithArgs("/m/a.md", "").
+		WillReturnError(sql.ErrConnDone)
+
+	err := s.store.DeleteMemoryFile(context.Background(), "/m/a.md", "")
+	require.Error(s.T(), err)
+}

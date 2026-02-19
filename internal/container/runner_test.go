@@ -1159,7 +1159,7 @@ func (s *RunnerSuite) TestEnsureNoProxy() {
 }
 
 func (s *RunnerSuite) TestBuildMCPConfig() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", nil)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", false, nil)
 	require.Len(s.T(), cfg.MCPServers, 1)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
@@ -1168,7 +1168,7 @@ func (s *RunnerSuite) TestBuildMCPConfig() {
 }
 
 func (s *RunnerSuite) TestBuildMCPConfigWithAuthorID() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "user-42", nil)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "user-42", false, nil)
 	require.Len(s.T(), cfg.MCPServers, 1)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
@@ -1183,7 +1183,7 @@ func (s *RunnerSuite) TestBuildMCPConfigWithUserServers() {
 			Env:     map[string]string{"API_KEY": "secret"},
 		},
 	}
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", userServers)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", false, userServers)
 	require.Len(s.T(), cfg.MCPServers, 2)
 
 	custom := cfg.MCPServers["custom-tool"]
@@ -1202,11 +1202,18 @@ func (s *RunnerSuite) TestBuildMCPConfigUserLoopPreserved() {
 			Args:    []string{"--custom-flag"},
 		},
 	}
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", userServers)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", false, userServers)
 	require.Len(s.T(), cfg.MCPServers, 1)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/user/custom/loop", ls.Command)
 	require.Equal(s.T(), []string{"--custom-flag"}, ls.Args)
+}
+
+func (s *RunnerSuite) TestBuildMCPConfigWithMemory() {
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", true, nil)
+	require.Len(s.T(), cfg.MCPServers, 1)
+	ls := cfg.MCPServers["loop"]
+	require.Contains(s.T(), ls.Args, "--memory")
 }
 
 func (s *RunnerSuite) TestRunWithDirPath() {

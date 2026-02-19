@@ -20,7 +20,9 @@ import (
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/daemon"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/embeddings"
 	"github.com/radutopala/loop/internal/mcpserver"
+	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/types"
@@ -164,6 +166,27 @@ func (m *mockStore) ListChannels(ctx context.Context) ([]*db.Channel, error) {
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]*db.Channel), args.Error(1)
+}
+
+func (m *mockStore) UpsertMemoryFile(ctx context.Context, file *db.MemoryFile) error {
+	return m.Called(ctx, file).Error(0)
+}
+
+func (m *mockStore) GetMemoryFilesByDirPath(ctx context.Context, dirPath string) ([]*db.MemoryFile, error) {
+	args := m.Called(ctx, dirPath)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.MemoryFile), args.Error(1)
+}
+
+func (m *mockStore) GetMemoryFileHash(ctx context.Context, filePath, dirPath string) (string, error) {
+	args := m.Called(ctx, filePath, dirPath)
+	return args.String(0), args.Error(1)
+}
+
+func (m *mockStore) DeleteMemoryFile(ctx context.Context, filePath, dirPath string) error {
+	return m.Called(ctx, filePath, dirPath).Error(0)
 }
 
 type mockDockerClient struct {
@@ -345,30 +368,40 @@ func (m *mockAPIServer) Stop(ctx context.Context) error {
 	return m.Called(ctx).Error(0)
 }
 
+func (m *mockAPIServer) SetMemoryIndexer(idx api.MemoryIndexer) {
+	m.Called(idx)
+}
+
+func (m *mockAPIServer) SetLoopDir(dir string) {
+	m.Called(dir)
+}
+
 // --- Test Suite ---
 
 type MainSuite struct {
 	suite.Suite
-	origConfigLoad        func() (*config.Config, error)
-	origNewDiscordBot     func(string, string, *slog.Logger) (orchestrator.Bot, error)
-	origNewSlackBot       func(string, string, *slog.Logger) (orchestrator.Bot, error)
-	origNewDockerClient   func() (container.DockerClient, error)
-	origNewSQLiteStore    func(string) (db.Store, error)
-	origOsExit            func(int)
-	origNewAPIServer      func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, api.ChannelLister, api.MessageSender, *slog.Logger) apiServer
-	origNewMCPServer      func(string, string, string, mcpserver.HTTPClient, *slog.Logger) *mcpserver.Server
-	origDaemonStart       func(daemon.System, string) error
-	origDaemonStop        func(daemon.System) error
-	origDaemonStatus      func(daemon.System) (string, error)
-	origNewSystem         func() daemon.System
-	origEnsureChannelFunc func(string, string) (string, error)
-	origEnsureImage       func(context.Context, container.DockerClient, *config.Config) error
-	origUserHomeDir       func() (string, error)
-	origOsStat            func(string) (os.FileInfo, error)
-	origOsMkdirAll        func(string, os.FileMode) error
-	origOsWriteFile       func(string, []byte, os.FileMode) error
-	origOsGetwd           func() (string, error)
-	origOsReadFile        func(string) ([]byte, error)
+	origConfigLoad             func() (*config.Config, error)
+	origNewDiscordBot          func(string, string, *slog.Logger) (orchestrator.Bot, error)
+	origNewSlackBot            func(string, string, *slog.Logger) (orchestrator.Bot, error)
+	origNewDockerClient        func() (container.DockerClient, error)
+	origNewSQLiteStore         func(string) (db.Store, error)
+	origOsExit                 func(int)
+	origNewAPIServer           func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, api.ChannelLister, api.MessageSender, *slog.Logger) apiServer
+	origNewMCPServer           func(string, string, string, mcpserver.HTTPClient, *slog.Logger, ...mcpserver.MemoryOption) *mcpserver.Server
+	origDaemonStart            func(daemon.System, string) error
+	origDaemonStop             func(daemon.System) error
+	origDaemonStatus           func(daemon.System) (string, error)
+	origNewSystem              func() daemon.System
+	origEnsureChannelFunc      func(string, string) (string, error)
+	origEnsureImage            func(context.Context, container.DockerClient, *config.Config) error
+	origUserHomeDir            func() (string, error)
+	origOsStat                 func(string) (os.FileInfo, error)
+	origOsMkdirAll             func(string, os.FileMode) error
+	origOsWriteFile            func(string, []byte, os.FileMode) error
+	origOsGetwd                func() (string, error)
+	origOsReadFile             func(string) ([]byte, error)
+	origNewEmbedder            func(*config.Config) (embeddings.Embedder, error)
+	origLoadProjectMemoryPaths func(string) []string
 }
 
 func TestMainSuite(t *testing.T) {
@@ -396,6 +429,9 @@ func (s *MainSuite) SetupTest() {
 	s.origOsWriteFile = osWriteFile
 	s.origOsGetwd = osGetwd
 	s.origOsReadFile = osReadFile
+	s.origNewEmbedder = newEmbedder
+	s.origLoadProjectMemoryPaths = loadProjectMemoryPaths
+	loadProjectMemoryPaths = func(_ string) []string { return nil }
 }
 
 func (s *MainSuite) TearDownTest() {
@@ -419,6 +455,8 @@ func (s *MainSuite) TearDownTest() {
 	osWriteFile = s.origOsWriteFile
 	osGetwd = s.origOsGetwd
 	osReadFile = s.origOsReadFile
+	newEmbedder = s.origNewEmbedder
+	loadProjectMemoryPaths = s.origLoadProjectMemoryPaths
 }
 
 func testConfig() *config.Config {
@@ -532,7 +570,7 @@ func (s *MainSuite) TestNewMCPCmdMutuallyExclusive() {
 func (s *MainSuite) TestRunMCP() {
 	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
 	called := false
-	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
+	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
 		require.Equal(s.T(), "ch1", channelID)
 		require.Equal(s.T(), "http://localhost:8222", apiURL)
 		called = true
@@ -541,12 +579,12 @@ func (s *MainSuite) TestRunMCP() {
 
 	// runMCP will try to use StdioTransport which will fail/close immediately in test.
 	// We just verify the function is wired correctly.
-	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "")
+	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "", false)
 	require.True(s.T(), called)
 }
 
 func (s *MainSuite) TestRunMCPLogOpenError() {
-	err := runMCP("ch1", "http://localhost:8222", "", "/nonexistent/dir/mcp.log", "")
+	err := runMCP("ch1", "http://localhost:8222", "", "/nonexistent/dir/mcp.log", "", false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "opening mcp log")
 }
@@ -567,7 +605,7 @@ func (s *MainSuite) TestRunMCPWithConfigLoad() {
 
 	// Mock newMCPServer to avoid actually running the server
 	called := false
-	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
+	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
 		called = true
 		// Verify logger was created (we can't easily inspect its level, but at least it was called)
 		require.NotNil(s.T(), logger)
@@ -576,7 +614,7 @@ func (s *MainSuite) TestRunMCPWithConfigLoad() {
 	}
 
 	// This will fail to run the server (no stdio), but that's OK - we just want to test config loading
-	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "")
+	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "", false)
 	require.True(s.T(), called)
 }
 
@@ -654,7 +692,7 @@ func (s *MainSuite) TestEnsureChannelInvalidJSON() {
 func (s *MainSuite) TestRunMCPWithDir() {
 	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
 	called := false
-	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
+	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
 		require.Equal(s.T(), "resolved-ch", channelID)
 		called = true
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger)
@@ -665,7 +703,7 @@ func (s *MainSuite) TestRunMCPWithDir() {
 		return "resolved-ch", nil
 	}
 
-	_ = runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "")
+	_ = runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "", false)
 	require.True(s.T(), called)
 }
 
@@ -674,7 +712,7 @@ func (s *MainSuite) TestRunMCPWithDirEnsureError() {
 		return "", errors.New("ensure failed")
 	}
 
-	err := runMCP("", "http://localhost:8222", "/path", "/tmp/mcp.log", "")
+	err := runMCP("", "http://localhost:8222", "/path", "/tmp/mcp.log", "", false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "ensuring channel for dir")
 }
@@ -682,7 +720,7 @@ func (s *MainSuite) TestRunMCPWithDirEnsureError() {
 func (s *MainSuite) TestNewMCPCmdWithDirFlag() {
 	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
 	called := false
-	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger) *mcpserver.Server {
+	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
 		require.Equal(s.T(), "resolved-ch", channelID)
 		called = true
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger)
@@ -695,6 +733,627 @@ func (s *MainSuite) TestNewMCPCmdWithDirFlag() {
 	cmd.SetArgs([]string{"--dir", "/home/user/dev/loop", "--api-url", "http://test:8222", "--log", logPath})
 	_ = cmd.Execute()
 	require.True(s.T(), called)
+}
+
+// --- memoryDir ---
+
+func (s *MainSuite) TestMemoryDir() {
+	userHomeDir = func() (string, error) {
+		return "/home/testuser", nil
+	}
+	dir, err := memoryDir("/Users/dev/loop")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "/home/testuser/.claude/projects/-Users-dev-loop/memory", dir)
+}
+
+func (s *MainSuite) TestMemoryDirHomeDirError() {
+	userHomeDir = func() (string, error) {
+		return "", errors.New("no home")
+	}
+	_, err := memoryDir("/path")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "getting home directory")
+}
+
+// --- multiDirIndexer ---
+
+type mockMemIndexer struct {
+	mock.Mock
+}
+
+func (m *mockMemIndexer) Index(ctx context.Context, memoryPath, dirPath string) (int, error) {
+	args := m.Called(ctx, memoryPath, dirPath)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *mockMemIndexer) Search(ctx context.Context, dirPath, query string, topK int) ([]memory.SearchResult, error) {
+	args := m.Called(ctx, dirPath, query, topK)
+	return args.Get(0).([]memory.SearchResult), args.Error(1)
+}
+
+type fakeEmbedder struct{}
+
+func (f *fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	result := make([][]float32, len(texts))
+	for i := range texts {
+		result[i] = []float32{0.1, 0.2, 0.3}
+	}
+	return result, nil
+}
+
+func (f *fakeEmbedder) Dimensions() int { return 3 }
+
+func (s *MainSuite) TestMultiDirIndexerResolveMemoryPaths() {
+	userHomeDir = func() (string, error) {
+		return "/home/test", nil
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := new(mockStore)
+	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
+
+	entries := mdi.resolveMemoryPaths("/home/user/project")
+	require.Len(s.T(), entries, 2)
+	require.Contains(s.T(), entries[0].path, ".claude/projects")
+	require.False(s.T(), entries[0].global)
+	require.Equal(s.T(), "/home/user/project/memory", entries[1].path)
+	require.False(s.T(), entries[1].global) // relative config path
+}
+
+func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsHomeDirError() {
+	userHomeDir = func() (string, error) {
+		return "", errors.New("no home")
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := new(mockStore)
+	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
+
+	entries := mdi.resolveMemoryPaths("/path")
+	require.Len(s.T(), entries, 1)
+	require.Equal(s.T(), "/path/memory", entries[0].path)
+	require.False(s.T(), entries[0].global)
+}
+
+func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsWithGlobalAndProject() {
+	userHomeDir = func() (string, error) {
+		return "/home/test", nil
+	}
+	loadProjectMemoryPaths = func(_ string) []string { return []string{"./docs/arch.md"} }
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := new(mockStore)
+	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
+	mdi := &multiDirIndexer{
+		indexer:           indexer,
+		logger:            logger,
+		globalMemoryPaths: []string{"/shared/knowledge"},
+	}
+
+	entries := mdi.resolveMemoryPaths("/home/user/project")
+	require.Len(s.T(), entries, 3)
+	require.Contains(s.T(), entries[0].path, ".claude/projects")
+	require.False(s.T(), entries[0].global)
+	require.Equal(s.T(), "/shared/knowledge", entries[1].path)
+	require.True(s.T(), entries[1].global) // absolute config path
+	require.Equal(s.T(), "/home/user/project/docs/arch.md", entries[2].path)
+	require.False(s.T(), entries[2].global) // relative project path
+}
+
+func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsDedup() {
+	userHomeDir = func() (string, error) {
+		return "/home/test", nil
+	}
+	// Project config returns paths that duplicate a global path.
+	loadProjectMemoryPaths = func(_ string) []string {
+		return []string{"./memory", "/shared/knowledge"}
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := new(mockStore)
+	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
+	mdi := &multiDirIndexer{
+		indexer:           indexer,
+		logger:            logger,
+		globalMemoryPaths: []string{"./memory", "/shared/knowledge"},
+	}
+
+	entries := mdi.resolveMemoryPaths("/home/user/project")
+	// Should be deduplicated: auto-memory, project/memory, /shared/knowledge — no duplicates.
+	require.Len(s.T(), entries, 3)
+	require.Contains(s.T(), entries[0].path, ".claude/projects")
+	require.Equal(s.T(), "/home/user/project/memory", entries[1].path)
+	require.Equal(s.T(), "/shared/knowledge", entries[2].path)
+	require.True(s.T(), entries[2].global)
+}
+
+func (s *MainSuite) TestResolveRelativePath() {
+	require.Equal(s.T(), "/project/memory", resolveRelativePath("/project", "./memory"))
+	require.Equal(s.T(), "/project/docs/arch.md", resolveRelativePath("/project", "./docs/arch.md"))
+	require.Equal(s.T(), "/project/notes.md", resolveRelativePath("/project", "notes.md"))
+	require.Equal(s.T(), "/absolute/path", resolveRelativePath("/project", "/absolute/path"))
+}
+
+func (s *MainSuite) TestLoadProjectMemoryPathsDefault() {
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0755))
+	require.NoError(s.T(), os.WriteFile(
+		filepath.Join(loopDir, "config.json"),
+		[]byte(`{"memory": {"paths": ["/extra/docs", "./notes.md"]}}`),
+		0644,
+	))
+
+	paths := defaultLoadProjectMemoryPaths(tmpDir)
+	require.Equal(s.T(), []string{"/extra/docs", "./notes.md"}, paths)
+}
+
+func (s *MainSuite) TestLoadProjectMemoryPathsHJSON() {
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0755))
+	require.NoError(s.T(), os.WriteFile(
+		filepath.Join(loopDir, "config.json"),
+		[]byte(`{
+			// A comment
+			"memory": {"paths": ["/docs"]},
+		}`),
+		0644,
+	))
+
+	paths := defaultLoadProjectMemoryPaths(tmpDir)
+	require.Equal(s.T(), []string{"/docs"}, paths)
+}
+
+func (s *MainSuite) TestLoadProjectMemoryPathsMissingFile() {
+	paths := defaultLoadProjectMemoryPaths("/nonexistent")
+	require.Nil(s.T(), paths)
+}
+
+func (s *MainSuite) TestLoadProjectMemoryPathsInvalidJSON() {
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0755))
+	require.NoError(s.T(), os.WriteFile(
+		filepath.Join(loopDir, "config.json"),
+		[]byte(`{not valid`),
+		0644,
+	))
+
+	paths := defaultLoadProjectMemoryPaths(tmpDir)
+	require.Nil(s.T(), paths)
+}
+
+func (s *MainSuite) TestLoadProjectMemoryPathsNoMemoryPaths() {
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0755))
+	require.NoError(s.T(), os.WriteFile(
+		filepath.Join(loopDir, "config.json"),
+		[]byte(`{"claude_model": "opus"}`),
+		0644,
+	))
+
+	paths := defaultLoadProjectMemoryPaths(tmpDir)
+	require.Nil(s.T(), paths)
+}
+
+func (s *MainSuite) TestMultiDirIndexerSearch() {
+	userHomeDir = func() (string, error) {
+		return s.T().TempDir(), nil
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := new(mockStore)
+	store.On("GetMemoryFilesByDirPath", mock.Anything, mock.Anything).Return([]*db.MemoryFile{}, nil)
+	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger}
+
+	ctx := context.Background()
+	results, err := mdi.Search(ctx, "/nonexistent/project", "test", 5)
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), results)
+}
+
+func (s *MainSuite) TestMultiDirIndexerSearchWithError() {
+	userHomeDir = func() (string, error) {
+		return s.T().TempDir(), nil
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := new(mockStore)
+	// GetMemoryFilesByDirPath returning an error triggers the error path
+	store.On("GetMemoryFilesByDirPath", mock.Anything, mock.Anything).Return(nil, errors.New("db error"))
+	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger}
+
+	ctx := context.Background()
+	results, err := mdi.Search(ctx, "/nonexistent/project", "test", 5)
+	require.Error(s.T(), err)
+	require.Nil(s.T(), results)
+}
+
+func (s *MainSuite) TestMultiDirIndexerIndex() {
+	userHomeDir = func() (string, error) {
+		return s.T().TempDir(), nil
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := new(mockStore)
+	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
+
+	ctx := context.Background()
+	count, err := mdi.Index(ctx, "/nonexistent/project")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, count)
+}
+
+func (s *MainSuite) TestMultiDirIndexerIndexWithError() {
+	userHomeDir = func() (string, error) {
+		return "/nonexistent-home", nil
+	}
+
+	mi := new(mockMemIndexer)
+	mi.On("Index", mock.Anything, mock.Anything, mock.Anything).Return(0, errors.New("stat error"))
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mdi := &multiDirIndexer{indexer: mi, logger: logger, globalMemoryPaths: []string{"./memory"}}
+
+	ctx := context.Background()
+	count, err := mdi.Index(ctx, "/some/project")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, count) // Error was logged, not returned
+	mi.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestMultiDirIndexerIndexWithCount() {
+	tmpDir := s.T().TempDir()
+	memDir := filepath.Join(tmpDir, "memory")
+	require.NoError(s.T(), os.MkdirAll(memDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("## Topic\nSome content\n"), 0644))
+
+	userHomeDir = func() (string, error) {
+		return "/nonexistent-home", nil
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := new(mockStore)
+	store.On("GetMemoryFileHash", mock.Anything, mock.Anything, mock.Anything).Return("", nil)
+	store.On("UpsertMemoryFile", mock.Anything, mock.Anything).Return(nil)
+	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
+
+	ctx := context.Background()
+	count, err := mdi.Index(ctx, tmpDir)
+	require.NoError(s.T(), err)
+	require.Greater(s.T(), count, 0) // Should have indexed files
+}
+
+func (s *MainSuite) TestMultiDirIndexerSearchWithSortAndTopK() {
+	tmpDir := s.T().TempDir()
+	memDir := filepath.Join(tmpDir, "memory")
+	require.NoError(s.T(), os.MkdirAll(memDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(memDir, "a.md"), []byte("content a"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(memDir, "b.md"), []byte("content b"), 0644))
+
+	userHomeDir = func() (string, error) {
+		return "/nonexistent-home", nil
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := new(mockStore)
+	store.On("GetMemoryFileHash", mock.Anything, mock.Anything, mock.Anything).Return("", nil)
+	store.On("UpsertMemoryFile", mock.Anything, mock.Anything).Return(nil)
+	emb1 := embeddings.SerializeFloat32([]float32{0.1, 0.2, 0.3})
+	emb2 := embeddings.SerializeFloat32([]float32{0.3, 0.2, 0.1})
+	store.On("GetMemoryFilesByDirPath", mock.Anything, mock.Anything).Return([]*db.MemoryFile{
+		{FilePath: "a.md", Content: "content a", Embedding: emb1, Dimensions: 3},
+		{FilePath: "b.md", Content: "content b", Embedding: emb2, Dimensions: 3},
+	}, nil)
+	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
+
+	ctx := context.Background()
+	results, err := mdi.Search(ctx, tmpDir, "test query", 1)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), results, 1) // topK=1 truncates to 1 result
+}
+
+func (s *MainSuite) TestMultiDirIndexerSearchWithGlobalPath() {
+	userHomeDir = func() (string, error) {
+		return "/nonexistent-home", nil
+	}
+
+	mi := new(mockMemIndexer)
+	// Auto-memory path (project-scoped)
+	mi.On("Index", mock.Anything, mock.Anything, "/some/project").Return(0, nil)
+	// Global path (absolute config path, scope = "")
+	mi.On("Index", mock.Anything, "/shared/knowledge", "").Return(0, nil)
+	mi.On("Search", mock.Anything, "/some/project", "test", 5).Return([]memory.SearchResult{}, nil)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mdi := &multiDirIndexer{indexer: mi, logger: logger, globalMemoryPaths: []string{"/shared/knowledge"}}
+
+	ctx := context.Background()
+	results, err := mdi.Search(ctx, "/some/project", "test", 5)
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), results)
+	mi.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestMultiDirIndexerSearchWithIndexError() {
+	userHomeDir = func() (string, error) {
+		return "/nonexistent-home", nil
+	}
+
+	mi := new(mockMemIndexer)
+	// Auto-memory path fails
+	mi.On("Index", mock.Anything, mock.Anything, mock.Anything).Return(0, errors.New("index error"))
+	mi.On("Search", mock.Anything, "/some/project", "test", 5).Return([]memory.SearchResult{}, nil)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mdi := &multiDirIndexer{indexer: mi, logger: logger}
+
+	ctx := context.Background()
+	results, err := mdi.Search(ctx, "/some/project", "test", 5)
+	require.NoError(s.T(), err) // Error was logged, not returned
+	require.Empty(s.T(), results)
+}
+
+func (s *MainSuite) TestMultiDirIndexerIndexWithGlobalPath() {
+	userHomeDir = func() (string, error) {
+		return "/nonexistent-home", nil
+	}
+
+	mi := new(mockMemIndexer)
+	// Auto-memory path (project-scoped)
+	mi.On("Index", mock.Anything, mock.Anything, "/some/project").Return(1, nil)
+	// Global path (absolute config path, scope = "")
+	mi.On("Index", mock.Anything, "/shared/knowledge", "").Return(2, nil)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	mdi := &multiDirIndexer{indexer: mi, logger: logger, globalMemoryPaths: []string{"/shared/knowledge"}}
+
+	ctx := context.Background()
+	count, err := mdi.Index(ctx, "/some/project")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 3, count) // 1 + 2
+	mi.AssertExpectations(s.T())
+}
+
+// --- reindexAll ---
+
+type mockChannelLister struct {
+	mock.Mock
+}
+
+func (m *mockChannelLister) ListChannels(ctx context.Context) ([]*db.Channel, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.Channel), args.Error(1)
+}
+
+func (s *MainSuite) TestReindexAll() {
+	tmpDir := s.T().TempDir()
+	memDir := filepath.Join(tmpDir, "memory")
+	require.NoError(s.T(), os.MkdirAll(memDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("## Topic\nSome content\n"), 0644))
+
+	userHomeDir = func() (string, error) {
+		return "/nonexistent-home", nil
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := new(mockStore)
+	store.On("GetMemoryFileHash", mock.Anything, mock.Anything, mock.Anything).Return("", nil)
+	store.On("UpsertMemoryFile", mock.Anything, mock.Anything).Return(nil)
+	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
+
+	cl := new(mockChannelLister)
+	cl.On("ListChannels", mock.Anything).Return([]*db.Channel{
+		{ChannelID: "ch1", DirPath: tmpDir},
+		{ChannelID: "ch2", DirPath: ""},             // empty dir_path — skipped
+		{ChannelID: "ch3", DirPath: "/nonexistent"}, // no files — 0 indexed
+	}, nil)
+
+	mdi.reindexAll(context.Background(), cl)
+	cl.AssertExpectations(s.T())
+	store.AssertCalled(s.T(), "UpsertMemoryFile", mock.Anything, mock.Anything)
+}
+
+func (s *MainSuite) TestReindexAllListError() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := new(mockStore)
+	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger}
+
+	cl := new(mockChannelLister)
+	cl.On("ListChannels", mock.Anything).Return(nil, errors.New("db error"))
+
+	mdi.reindexAll(context.Background(), cl)
+	cl.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestReindexAllCancelledContext() {
+	userHomeDir = func() (string, error) {
+		return "/nonexistent-home", nil
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := new(mockStore)
+	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // Cancel immediately.
+
+	cl := new(mockChannelLister)
+	cl.On("ListChannels", mock.Anything).Return([]*db.Channel{
+		{ChannelID: "ch1", DirPath: "/some/path"},
+	}, nil)
+
+	mdi.reindexAll(ctx, cl)
+	cl.AssertExpectations(s.T())
+	// Index should not be called because ctx is cancelled.
+}
+
+// --- newEmbedder ---
+
+func (s *MainSuite) TestNewEmbedderOllama() {
+	cfg := &config.Config{
+		Memory: config.MemoryConfig{Enabled: true, Embeddings: config.EmbeddingsConfig{
+			Provider:  "ollama",
+			Model:     "nomic-embed-text",
+			OllamaURL: "http://localhost:11434",
+		}},
+	}
+	embedder, err := newEmbedder(cfg)
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), embedder)
+}
+
+func (s *MainSuite) TestNewEmbedderOllamaDefaultModel() {
+	cfg := &config.Config{
+		Memory: config.MemoryConfig{Enabled: true, Embeddings: config.EmbeddingsConfig{
+			Provider:  "ollama",
+			OllamaURL: "http://localhost:11434",
+		}},
+	}
+	embedder, err := newEmbedder(cfg)
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), embedder)
+}
+
+func (s *MainSuite) TestNewEmbedderUnsupportedProvider() {
+	cfg := &config.Config{
+		Memory: config.MemoryConfig{Enabled: true, Embeddings: config.EmbeddingsConfig{
+			Provider: "unknown",
+		}},
+	}
+	_, err := newEmbedder(cfg)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "unsupported embeddings provider")
+}
+
+// --- runMCP with embeddings ---
+
+func (s *MainSuite) TestRunMCPWithMemoryEnabled() {
+	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
+
+	configLoad = func() (*config.Config, error) {
+		return &config.Config{
+			LogLevel:  "info",
+			LogFormat: "text",
+			Memory: config.MemoryConfig{
+				Enabled: true,
+				Embeddings: config.EmbeddingsConfig{
+					Provider:  "ollama",
+					OllamaURL: "http://localhost:11434",
+				},
+			},
+		}, nil
+	}
+
+	ensureChannelFunc = func(_, _ string) (string, error) {
+		return "resolved-ch", nil
+	}
+
+	memoryOptReceived := false
+	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
+		require.Equal(s.T(), "resolved-ch", channelID)
+		if len(opts) > 0 {
+			memoryOptReceived = true
+		}
+		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
+	}
+
+	_ = runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "", false)
+	require.True(s.T(), memoryOptReceived)
+}
+
+func (s *MainSuite) TestRunMCPWithMemoryEnabledChannelIDMode() {
+	// When dirPath is empty (channel-id mode), memory should still be enabled via channel_id
+	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
+
+	configLoad = func() (*config.Config, error) {
+		return &config.Config{
+			LogLevel:  "info",
+			LogFormat: "text",
+			Memory: config.MemoryConfig{
+				Enabled: true,
+				Embeddings: config.EmbeddingsConfig{
+					Provider: "ollama",
+				},
+			},
+		}, nil
+	}
+
+	memoryOptReceived := false
+	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
+		if len(opts) > 0 {
+			memoryOptReceived = true
+		}
+		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
+	}
+
+	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "", false)
+	require.True(s.T(), memoryOptReceived)
+}
+
+func (s *MainSuite) TestRunMCPWithMemoryNotEnabled() {
+	// When memory is not enabled, memory tools should NOT be wired
+	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
+
+	configLoad = func() (*config.Config, error) {
+		return &config.Config{
+			LogLevel:  "info",
+			LogFormat: "text",
+		}, nil
+	}
+
+	memoryOptReceived := false
+	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
+		if len(opts) > 0 {
+			memoryOptReceived = true
+		}
+		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger)
+	}
+
+	ensureChannelFunc = func(_, _ string) (string, error) {
+		return "ch1", nil
+	}
+
+	_ = runMCP("", "http://localhost:8222", "/path", logPath, "", false)
+	require.False(s.T(), memoryOptReceived)
+}
+
+func (s *MainSuite) TestRunMCPWithMemoryFlag() {
+	// When --memory flag is true, memory tools should be enabled regardless of config.
+	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
+
+	configLoad = func() (*config.Config, error) {
+		return &config.Config{
+			LogLevel:  "info",
+			LogFormat: "text",
+		}, nil
+	}
+
+	memoryOptReceived := false
+	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
+		if len(opts) > 0 {
+			memoryOptReceived = true
+		}
+		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
+	}
+
+	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "", true)
+	require.True(s.T(), memoryOptReceived)
 }
 
 // --- serve() error cases ---
@@ -1139,6 +1798,7 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 	dockerClient.On("ContainerList", mock.Anything, "app", "loop-agent").Return([]string{}, nil)
 
 	mockAPI := new(mockAPIServer)
+	mockAPI.On("SetLoopDir", mock.Anything).Return()
 	mockAPI.On("Start", mock.Anything).Return(nil)
 	mockAPI.On("Stop", mock.Anything).Return(errors.New("api stop error"))
 
@@ -1181,6 +1841,117 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 
 	mockAPI.AssertExpectations(s.T())
 	bot.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestServeWithMemoryEnabled() {
+	store := new(mockStore)
+	store.On("Close").Return(nil)
+	// reindexAll goroutine may call ListChannels before the test exits.
+	store.On("ListChannels", mock.Anything).Maybe().Return([]*db.Channel{}, nil)
+
+	bot := new(mockBot)
+	bot.On("OnMessage", mock.Anything).Return()
+	bot.On("OnInteraction", mock.Anything).Return()
+	bot.On("OnChannelDelete", mock.Anything).Return()
+	bot.On("OnChannelJoin", mock.Anything).Return()
+	bot.On("RegisterCommands", mock.Anything).Return(errors.New("fail early"))
+
+	dockerClient := new(mockDockerClient)
+
+	cfg := testConfig()
+	cfg.Memory = config.MemoryConfig{
+		Enabled: true,
+		Embeddings: config.EmbeddingsConfig{
+			Provider:  "ollama",
+			OllamaURL: "http://localhost:11434",
+		},
+		Paths: []string{"./memory"},
+	}
+	cfg.LoopDir = s.T().TempDir()
+
+	configLoad = func() (*config.Config, error) {
+		return cfg, nil
+	}
+	newSQLiteStore = func(_ string) (db.Store, error) {
+		return store, nil
+	}
+	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
+		return bot, nil
+	}
+	newDockerClient = func() (container.DockerClient, error) {
+		return dockerClient, nil
+	}
+	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
+		return nil
+	}
+
+	memoryIndexerSet := false
+	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) apiServer {
+		srv := api.NewServer(sched, channels, threads, store, messages, logger)
+		return &memoryIndexableAPIServer{Server: srv, onSetMemoryIndexer: func(idx api.MemoryIndexer) {
+			memoryIndexerSet = true
+			srv.SetMemoryIndexer(idx)
+		}}
+	}
+
+	// serve() will fail at orchestrator start (RegisterCommands error)
+	err := serve()
+	require.Error(s.T(), err)
+	require.True(s.T(), memoryIndexerSet, "memory indexer should be set on API server")
+}
+
+func (s *MainSuite) TestServeWithMemoryEmbedderError() {
+	store := new(mockStore)
+	store.On("Close").Return(nil)
+
+	bot := new(mockBot)
+	bot.On("OnMessage", mock.Anything).Return()
+	bot.On("OnInteraction", mock.Anything).Return()
+	bot.On("OnChannelDelete", mock.Anything).Return()
+	bot.On("OnChannelJoin", mock.Anything).Return()
+	bot.On("RegisterCommands", mock.Anything).Return(errors.New("fail early"))
+
+	dockerClient := new(mockDockerClient)
+
+	cfg := testConfig()
+	cfg.Memory = config.MemoryConfig{
+		Enabled: true,
+		Embeddings: config.EmbeddingsConfig{
+			Provider: "unsupported-provider",
+		},
+	}
+
+	configLoad = func() (*config.Config, error) {
+		return cfg, nil
+	}
+	newSQLiteStore = func(_ string) (db.Store, error) {
+		return store, nil
+	}
+	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
+		return bot, nil
+	}
+	newDockerClient = func() (container.DockerClient, error) {
+		return dockerClient, nil
+	}
+	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
+		return nil
+	}
+	newAPIServer = fakeAPIServer()
+
+	// serve() continues even when embeddings fail (logs a warning)
+	err := serve()
+	require.Error(s.T(), err) // Fails at orchestrator, not at embeddings
+	require.Contains(s.T(), err.Error(), "starting orchestrator")
+}
+
+// memoryIndexableAPIServer wraps api.Server to detect SetMemoryIndexer calls.
+type memoryIndexableAPIServer struct {
+	*api.Server
+	onSetMemoryIndexer func(api.MemoryIndexer)
+}
+
+func (s *memoryIndexableAPIServer) SetMemoryIndexer(idx api.MemoryIndexer) {
+	s.onSetMemoryIndexer(idx)
 }
 
 func (s *MainSuite) TestServeDockerClientCloserCalled() {
@@ -1881,6 +2652,34 @@ func (s *MainSuite) TestOnboardLocalSuccess() {
 	require.Equal(s.T(), filepath.Join(tmpDir, ".loop", "mcp.log"), args[6])
 }
 
+func (s *MainSuite) TestOnboardLocalWithMemoryEnabled() {
+	tmpDir := s.T().TempDir()
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = os.WriteFile
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+	configLoad = func() (*config.Config, error) {
+		return &config.Config{Memory: config.MemoryConfig{Enabled: true}}, nil
+	}
+	defer func() { configLoad = config.Load }()
+
+	err := onboardLocal("http://localhost:8222")
+	require.NoError(s.T(), err)
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, ".mcp.json"))
+	require.NoError(s.T(), err)
+
+	var result map[string]any
+	require.NoError(s.T(), json.Unmarshal(data, &result))
+
+	servers := result["mcpServers"].(map[string]any)
+	loop := servers["loop"].(map[string]any)
+	args := loop["args"].([]any)
+	require.Equal(s.T(), "--memory", args[len(args)-1])
+}
+
 func (s *MainSuite) TestOnboardLocalMergesExisting() {
 	tmpDir := s.T().TempDir()
 	existing := `{"mcpServers":{"other":{"command":"other-cmd"}}}`
@@ -1905,7 +2704,7 @@ func (s *MainSuite) TestOnboardLocalMergesExisting() {
 	require.Contains(s.T(), servers, "loop", "loop server should be added")
 }
 
-func (s *MainSuite) TestOnboardLocalAlreadyRegistered() {
+func (s *MainSuite) TestOnboardLocalAlreadyRegisteredUpdatesArgs() {
 	tmpDir := s.T().TempDir()
 	existing := `{"mcpServers":{"loop":{"command":"loop","args":["mcp"]}}}`
 	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, ".mcp.json"), []byte(existing), 0644))
@@ -1913,15 +2712,23 @@ func (s *MainSuite) TestOnboardLocalAlreadyRegistered() {
 	osGetwd = func() (string, error) { return tmpDir, nil }
 	osReadFile = os.ReadFile
 	osWriteFile = os.WriteFile
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
 	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
 
 	err := onboardLocal("http://localhost:8222")
 	require.NoError(s.T(), err)
 
-	// Verify file was NOT modified (still has original content)
+	// Verify file was updated with rebuilt args
 	data, err := os.ReadFile(filepath.Join(tmpDir, ".mcp.json"))
 	require.NoError(s.T(), err)
-	require.JSONEq(s.T(), existing, string(data))
+	var result map[string]any
+	require.NoError(s.T(), json.Unmarshal(data, &result))
+	servers := result["mcpServers"].(map[string]any)
+	loop := servers["loop"].(map[string]any)
+	args := loop["args"].([]any)
+	require.Equal(s.T(), "mcp", args[0])
+	require.Equal(s.T(), "--dir", args[1])
 }
 
 func (s *MainSuite) TestOnboardLocalInvalidExistingJSON() {
@@ -2023,6 +2830,8 @@ func (s *MainSuite) TestOnboardLocalAlreadyRegisteredStillEnsuresChannel() {
 	osGetwd = func() (string, error) { return tmpDir, nil }
 	osReadFile = os.ReadFile
 	osWriteFile = os.WriteFile
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
 
 	called := false
 	ensureChannelFunc = func(_, _ string) (string, error) {

@@ -22,8 +22,10 @@ import (
 	"github.com/radutopala/loop/internal/daemon"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/discord"
+	"github.com/radutopala/loop/internal/embeddings"
 	"github.com/radutopala/loop/internal/logging"
 	"github.com/radutopala/loop/internal/mcpserver"
+	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/scheduler"
 	slackbot "github.com/radutopala/loop/internal/slack"
@@ -31,6 +33,7 @@ import (
 	goslack "github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 	"github.com/spf13/cobra"
+	"github.com/tailscale/hujson"
 )
 
 func init() {
@@ -124,13 +127,14 @@ func newServeCmd() *cobra.Command {
 
 func newMCPCmd() *cobra.Command {
 	var channelID, apiURL, logPath, dirPath, authorID string
+	var memoryEnabled bool
 
 	cmd := &cobra.Command{
 		Use:     "mcp",
 		Aliases: []string{"m"},
 		Short:   "Run as an MCP server over stdio",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runMCP(channelID, apiURL, dirPath, logPath, authorID)
+			return runMCP(channelID, apiURL, dirPath, logPath, authorID, memoryEnabled)
 		},
 	}
 
@@ -139,6 +143,7 @@ func newMCPCmd() *cobra.Command {
 	cmd.Flags().StringVar(&apiURL, "api-url", "", "Loop API base URL")
 	cmd.Flags().StringVar(&logPath, "log", ".loop/mcp.log", "Path to MCP log file")
 	cmd.Flags().StringVar(&authorID, "author-id", "", "User ID of the message author")
+	cmd.Flags().BoolVar(&memoryEnabled, "memory", false, "Enable memory search/index tools")
 	cmd.MarkFlagsOneRequired("channel-id", "dir")
 	cmd.MarkFlagsMutuallyExclusive("channel-id", "dir")
 	_ = cmd.MarkFlagRequired("api-url")
@@ -348,25 +353,29 @@ func onboardLocal(apiURL string) error {
 		servers = make(map[string]any)
 	}
 
-	// Check if loop is already registered
-	if _, exists := servers["loop"]; exists {
-		fmt.Println("loop MCP server is already registered in .mcp.json")
-	} else {
-		// Add loop server
-		servers["loop"] = map[string]any{
-			"command": "loop",
-			"args":    []string{"mcp", "--dir", dir, "--api-url", apiURL, "--log", filepath.Join(dir, ".loop", "mcp.log")},
-		}
-		existing["mcpServers"] = servers
-
-		mcpJSON, _ := json.MarshalIndent(existing, "", "  ")
-		if err := osWriteFile(mcpPath, append(mcpJSON, '\n'), 0644); err != nil {
-			return fmt.Errorf("writing .mcp.json: %w", err)
-		}
-
-		fmt.Printf("Added loop MCP server to %s\n", mcpPath)
-		fmt.Println("\nMake sure 'loop serve' or 'loop daemon:start' is running.")
+	// Build loop server entry (always rebuild to pick up config changes).
+	_, alreadyRegistered := servers["loop"]
+	args := []string{"mcp", "--dir", dir, "--api-url", apiURL, "--log", filepath.Join(dir, ".loop", "mcp.log")}
+	if cfg, err := configLoad(); err == nil && cfg.Memory.Enabled {
+		args = append(args, "--memory")
 	}
+	servers["loop"] = map[string]any{
+		"command": "loop",
+		"args":    args,
+	}
+	existing["mcpServers"] = servers
+
+	mcpJSON, _ := json.MarshalIndent(existing, "", "  ")
+	if err := osWriteFile(mcpPath, append(mcpJSON, '\n'), 0644); err != nil {
+		return fmt.Errorf("writing .mcp.json: %w", err)
+	}
+
+	if alreadyRegistered {
+		fmt.Printf("Updated loop MCP server in %s\n", mcpPath)
+	} else {
+		fmt.Printf("Added loop MCP server to %s\n", mcpPath)
+	}
+	fmt.Println("\nMake sure 'loop serve' or 'loop daemon:start' is running.")
 
 	// Write project config example if .loop/config.json doesn't exist
 	loopDir := filepath.Join(dir, ".loop")
@@ -400,7 +409,7 @@ func onboardLocal(apiURL string) error {
 
 var ensureChannelFunc = ensureChannel
 
-func runMCP(channelID, apiURL, dirPath, logPath, authorID string) error {
+func runMCP(channelID, apiURL, dirPath, logPath, authorID string, memoryEnabled bool) error {
 	if dirPath != "" {
 		resolved, err := ensureChannelFunc(apiURL, dirPath)
 		if err != nil {
@@ -416,14 +425,195 @@ func runMCP(channelID, apiURL, dirPath, logPath, authorID string) error {
 	defer f.Close()
 
 	logLevel, logFormat := "info", "text"
-	if cfg, err := configLoad(); err == nil {
+	cfg, cfgErr := configLoad()
+	if cfgErr == nil {
 		logLevel = cfg.LogLevel
 		logFormat = cfg.LogFormat
 	}
 
 	logger := logging.NewLoggerWithWriter(logLevel, logFormat, f)
-	srv := newMCPServer(channelID, apiURL, authorID, http.DefaultClient, logger)
+
+	var memOpts []mcpserver.MemoryOption
+	// Memory is enabled via --memory flag (set by the daemon when embeddings are configured)
+	// or auto-detected from config when running via `loop mcp --dir`.
+	if memoryEnabled || (cfgErr == nil && cfg.Memory.Enabled) {
+		memOpts = append(memOpts, mcpserver.WithMemoryAPI(dirPath))
+	}
+
+	srv := newMCPServer(channelID, apiURL, authorID, http.DefaultClient, logger, memOpts...)
 	return srv.Run(context.Background(), &mcp.StdioTransport{})
+}
+
+// memoryDir returns the Claude Code auto memory directory for a project path.
+// Claude encodes project paths by replacing "/" with "-".
+func memoryDir(dirPath string) (string, error) {
+	home, err := userHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("getting home directory: %w", err)
+	}
+	encoded := strings.ReplaceAll(dirPath, "/", "-")
+	return filepath.Join(home, ".claude", "projects", encoded, "memory"), nil
+}
+
+var newEmbedder = func(cfg *config.Config) (embeddings.Embedder, error) {
+	switch cfg.Memory.Embeddings.Provider {
+	case "ollama":
+		opts := []embeddings.OllamaOption{
+			embeddings.WithOllamaURL(cfg.Memory.Embeddings.OllamaURL),
+			embeddings.WithOllamaLoopDir(cfg.LoopDir),
+		}
+		if cfg.Memory.Embeddings.Model != "" {
+			opts = append(opts, embeddings.WithOllamaModel(cfg.Memory.Embeddings.Model))
+		}
+		return embeddings.NewOllamaEmbedder(opts...), nil
+	default:
+		return nil, fmt.Errorf("unsupported embeddings provider: %q", cfg.Memory.Embeddings.Provider)
+	}
+}
+
+// memIndexer is the subset of *memory.Indexer used by multiDirIndexer.
+type memIndexer interface {
+	Index(ctx context.Context, memoryPath, dirPath string) (int, error)
+	Search(ctx context.Context, dirPath, query string, topK int) ([]memory.SearchResult, error)
+}
+
+// memoryPathEntry holds a resolved memory path with its scope.
+// global == true means the config path was absolute (dir_path = "").
+type memoryPathEntry struct {
+	path   string
+	global bool
+}
+
+// multiDirIndexer wraps memory.Indexer to search across multiple memory paths
+// resolved from a project dir_path: Claude auto-memory dir, project-level memory/ dir,
+// global memory_paths from config, and project-level memory_paths.
+type multiDirIndexer struct {
+	indexer           memIndexer
+	logger            *slog.Logger
+	globalMemoryPaths []string
+}
+
+func (m *multiDirIndexer) Search(ctx context.Context, dirPath, query string, topK int) ([]memory.SearchResult, error) {
+	// Index all paths for freshness first.
+	entries := m.resolveMemoryPaths(dirPath)
+	for _, e := range entries {
+		scope := dirPath
+		if e.global {
+			scope = ""
+		}
+		if _, err := m.indexer.Index(ctx, e.path, scope); err != nil {
+			m.logger.Warn("memory index error", "path", e.path, "error", err)
+		}
+	}
+	return m.indexer.Search(ctx, dirPath, query, topK)
+}
+
+func (m *multiDirIndexer) Index(ctx context.Context, dirPath string) (int, error) {
+	entries := m.resolveMemoryPaths(dirPath)
+	total := 0
+	for _, e := range entries {
+		scope := dirPath
+		if e.global {
+			scope = ""
+		}
+		n, err := m.indexer.Index(ctx, e.path, scope)
+		if err != nil {
+			m.logger.Warn("memory index error", "path", e.path, "error", err)
+			continue
+		}
+		total += n
+	}
+	return total, nil
+}
+
+// channelLister is the subset of db.Store needed for startup re-indexing.
+type channelLister interface {
+	ListChannels(ctx context.Context) ([]*db.Channel, error)
+}
+
+func (m *multiDirIndexer) reindexAll(ctx context.Context, store channelLister) {
+	channels, err := store.ListChannels(ctx)
+	if err != nil {
+		m.logger.Warn("startup re-index: listing channels", "error", err)
+		return
+	}
+	for _, ch := range channels {
+		if ch.DirPath == "" {
+			continue
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		n, _ := m.Index(ctx, ch.DirPath)
+		if n > 0 {
+			m.logger.Info("startup re-index", "channel", ch.ChannelID, "dir", ch.DirPath, "chunks", n)
+		}
+	}
+	m.logger.Info("startup re-index complete")
+}
+
+func (m *multiDirIndexer) resolveMemoryPaths(dirPath string) []memoryPathEntry {
+	var entries []memoryPathEntry
+	// 1. Claude auto-memory dir (~/.claude/projects/-encoded-path/memory/).
+	if memDir, err := memoryDir(dirPath); err == nil {
+		entries = append(entries, memoryPathEntry{path: memDir, global: false})
+	}
+	// 2. Global memory paths (from config).
+	for _, p := range m.globalMemoryPaths {
+		entries = append(entries, memoryPathEntry{
+			path:   resolveRelativePath(dirPath, p),
+			global: filepath.IsAbs(p),
+		})
+	}
+	// 3. Project memory paths (from project config).
+	for _, p := range loadProjectMemoryPaths(dirPath) {
+		entries = append(entries, memoryPathEntry{
+			path:   resolveRelativePath(dirPath, p),
+			global: filepath.IsAbs(p),
+		})
+	}
+
+	// Deduplicate by path.
+	seen := make(map[string]struct{}, len(entries))
+	deduped := entries[:0]
+	for _, e := range entries {
+		if _, ok := seen[e.path]; !ok {
+			seen[e.path] = struct{}{}
+			deduped = append(deduped, e)
+		}
+	}
+	return deduped
+}
+
+// resolveRelativePath resolves a path relative to dirPath if it's not absolute.
+func resolveRelativePath(dirPath, p string) string {
+	if filepath.IsAbs(p) {
+		return p
+	}
+	return filepath.Join(dirPath, p)
+}
+
+var loadProjectMemoryPaths = defaultLoadProjectMemoryPaths
+
+func defaultLoadProjectMemoryPaths(dirPath string) []string {
+	data, err := osReadFile(filepath.Join(dirPath, ".loop", "config.json"))
+	if err != nil {
+		return nil
+	}
+	standardJSON, err := hujson.Standardize(data)
+	if err != nil {
+		return nil
+	}
+	var pc struct {
+		Memory *struct {
+			Paths []string `json:"paths"`
+		} `json:"memory"`
+	}
+	_ = json.Unmarshal(standardJSON, &pc)
+	if pc.Memory != nil {
+		return pc.Memory.Paths
+	}
+	return nil
 }
 
 func ensureChannel(apiURL, dirPath string) (string, error) {
@@ -452,6 +642,8 @@ func ensureChannel(apiURL, dirPath string) (string, error) {
 type apiServer interface {
 	Start(addr string) error
 	Stop(ctx context.Context) error
+	SetMemoryIndexer(idx api.MemoryIndexer)
+	SetLoopDir(dir string)
 }
 
 var ensureImage = func(ctx context.Context, client container.DockerClient, cfg *config.Config) error {
@@ -579,6 +771,26 @@ func serve() error {
 	}
 
 	apiSrv := newAPIServer(sched, channelSvc, threadSvc, store, bot, logger)
+	apiSrv.SetLoopDir(cfg.LoopDir)
+
+	// Configure embeddings and memory indexer at the daemon level.
+	if cfg.Memory.Enabled {
+		emb, embErr := newEmbedder(cfg)
+		if embErr != nil {
+			logger.Warn("skipping embeddings", "error", embErr)
+		} else {
+			indexer := memory.NewIndexer(emb, store, logger, cfg.Memory.MaxChunkChars)
+			mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: cfg.Memory.Paths}
+			apiSrv.SetMemoryIndexer(mdi)
+			// Start idle monitor for Ollama container.
+			if ollamaEmb, ok := emb.(*embeddings.OllamaEmbedder); ok {
+				go ollamaEmb.RunIdleMonitor(ctx)
+			}
+			// Re-index all channels at startup.
+			go mdi.reindexAll(ctx, store)
+		}
+	}
+
 	if err := apiSrv.Start(cfg.APIAddr); err != nil {
 		return fmt.Errorf("starting api server: %w", err)
 	}

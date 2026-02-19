@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/memory"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -99,12 +100,37 @@ func (m *MockChannelLister) ListChannels(ctx context.Context) ([]*db.Channel, er
 	return args.Get(0).([]*db.Channel), args.Error(1)
 }
 
+func (m *MockChannelLister) GetChannel(ctx context.Context, channelID string) (*db.Channel, error) {
+	args := m.Called(ctx, channelID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*db.Channel), args.Error(1)
+}
+
 type MockMessageSender struct {
 	mock.Mock
 }
 
 func (m *MockMessageSender) PostMessage(ctx context.Context, channelID, content string) error {
 	return m.Called(ctx, channelID, content).Error(0)
+}
+
+type MockMemoryIndexer struct {
+	mock.Mock
+}
+
+func (m *MockMemoryIndexer) Search(ctx context.Context, memoryDir, query string, topK int) ([]memory.SearchResult, error) {
+	args := m.Called(ctx, memoryDir, query, topK)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]memory.SearchResult), args.Error(1)
+}
+
+func (m *MockMemoryIndexer) Index(ctx context.Context, memoryDir string) (int, error) {
+	args := m.Called(ctx, memoryDir)
+	return args.Int(0), args.Error(1)
 }
 
 type ServerSuite struct {
@@ -142,6 +168,8 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("GET /api/tasks", s.srv.handleListTasks)
 	s.mux.HandleFunc("DELETE /api/tasks/{id}", s.srv.handleDeleteTask)
 	s.mux.HandleFunc("PATCH /api/tasks/{id}", s.srv.handleUpdateTask)
+	s.mux.HandleFunc("POST /api/memory/search", s.srv.handleMemorySearch)
+	s.mux.HandleFunc("POST /api/memory/index", s.srv.handleMemoryIndex)
 }
 
 func (s *ServerSuite) TestNewServer() {
@@ -933,6 +961,302 @@ func (s *ServerSuite) TestSendMessageNilSender() {
 	mux.ServeHTTP(rec, req)
 
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+// --- MemorySearch tests ---
+
+func (s *ServerSuite) TestMemorySearchSuccess() {
+	indexer := new(MockMemoryIndexer)
+	s.srv.SetMemoryIndexer(indexer)
+
+	indexer.On("Search", mock.Anything, "/tmp/memory", "docker tips", 3).
+		Return([]memory.SearchResult{
+			{FilePath: "/tmp/memory/MEMORY.md", Content: "Tips", Score: 0.95},
+		}, nil)
+
+	body := `{"query":"docker tips","top_k":3,"dir_path":"/tmp/memory"}`
+	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp memorySearchResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp.Results, 1)
+	require.Equal(s.T(), "/tmp/memory/MEMORY.md", resp.Results[0].FilePath)
+	require.InDelta(s.T(), 0.95, float64(resp.Results[0].Score), 0.001)
+	indexer.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestMemorySearchNotConfigured() {
+	body := `{"query":"test","dir_path":"/tmp/memory"}`
+	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+func (s *ServerSuite) TestMemorySearchInvalidBody() {
+	indexer := new(MockMemoryIndexer)
+	s.srv.SetMemoryIndexer(indexer)
+
+	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString("not json"))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestMemorySearchEmptyQuery() {
+	indexer := new(MockMemoryIndexer)
+	s.srv.SetMemoryIndexer(indexer)
+
+	body := `{"query":"","dir_path":"/tmp/memory"}`
+	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestMemorySearchEmptyDirPathAndChannelID() {
+	indexer := new(MockMemoryIndexer)
+	s.srv.SetMemoryIndexer(indexer)
+
+	body := `{"query":"test"}`
+	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestMemorySearchByChannelID() {
+	indexer := new(MockMemoryIndexer)
+	s.srv.SetMemoryIndexer(indexer)
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: "/home/user/project"}, nil)
+	indexer.On("Search", mock.Anything, "/home/user/project", "docker tips", 5).
+		Return([]memory.SearchResult{
+			{FilePath: "/tmp/mem/MEMORY.md", Content: "Tips", Score: 0.9},
+		}, nil)
+
+	body := `{"query":"docker tips","top_k":5,"channel_id":"ch-1"}`
+	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp memorySearchResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp.Results, 1)
+	s.store.AssertExpectations(s.T())
+	indexer.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestMemorySearchByChannelIDNotFound() {
+	indexer := new(MockMemoryIndexer)
+	s.srv.SetMemoryIndexer(indexer)
+
+	s.store.On("GetChannel", mock.Anything, "ch-unknown").
+		Return(nil, nil)
+
+	body := `{"query":"test","channel_id":"ch-unknown"}`
+	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestMemorySearchError() {
+	indexer := new(MockMemoryIndexer)
+	s.srv.SetMemoryIndexer(indexer)
+
+	indexer.On("Search", mock.Anything, "/tmp/memory", "test", 0).
+		Return(nil, errors.New("search failed"))
+
+	body := `{"query":"test","dir_path":"/tmp/memory"}`
+	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	indexer.AssertExpectations(s.T())
+}
+
+// --- MemoryIndex tests ---
+
+func (s *ServerSuite) TestMemoryIndexSuccess() {
+	indexer := new(MockMemoryIndexer)
+	s.srv.SetMemoryIndexer(indexer)
+
+	indexer.On("Index", mock.Anything, "/tmp/memory").Return(15, nil)
+
+	body := `{"dir_path":"/tmp/memory"}`
+	req := httptest.NewRequest("POST", "/api/memory/index", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp memoryIndexResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(s.T(), 15, resp.Count)
+	indexer.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestMemoryIndexNotConfigured() {
+	body := `{"dir_path":"/tmp/memory"}`
+	req := httptest.NewRequest("POST", "/api/memory/index", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+func (s *ServerSuite) TestMemoryIndexInvalidBody() {
+	indexer := new(MockMemoryIndexer)
+	s.srv.SetMemoryIndexer(indexer)
+
+	req := httptest.NewRequest("POST", "/api/memory/index", bytes.NewBufferString("not json"))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestMemoryIndexEmptyDirPathAndChannelID() {
+	indexer := new(MockMemoryIndexer)
+	s.srv.SetMemoryIndexer(indexer)
+
+	body := `{}`
+	req := httptest.NewRequest("POST", "/api/memory/index", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestMemoryIndexByChannelID() {
+	indexer := new(MockMemoryIndexer)
+	s.srv.SetMemoryIndexer(indexer)
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: "/home/user/project"}, nil)
+	indexer.On("Index", mock.Anything, "/home/user/project").Return(10, nil)
+
+	body := `{"channel_id":"ch-1"}`
+	req := httptest.NewRequest("POST", "/api/memory/index", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp memoryIndexResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(s.T(), 10, resp.Count)
+	s.store.AssertExpectations(s.T())
+	indexer.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestMemoryIndexError() {
+	indexer := new(MockMemoryIndexer)
+	s.srv.SetMemoryIndexer(indexer)
+
+	indexer.On("Index", mock.Anything, "/tmp/memory").Return(0, errors.New("index failed"))
+
+	body := `{"dir_path":"/tmp/memory"}`
+	req := httptest.NewRequest("POST", "/api/memory/index", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	indexer.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestMemorySearchByChannelIDLookupError() {
+	indexer := new(MockMemoryIndexer)
+	s.srv.SetMemoryIndexer(indexer)
+
+	s.store.On("GetChannel", mock.Anything, "ch-err").
+		Return(nil, errors.New("db error"))
+
+	body := `{"query":"test","channel_id":"ch-err"}`
+	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestMemorySearchByChannelIDEmptyDirPath() {
+	indexer := new(MockMemoryIndexer)
+	s.srv.SetMemoryIndexer(indexer)
+
+	s.store.On("GetChannel", mock.Anything, "ch-nodir").
+		Return(&db.Channel{ChannelID: "ch-nodir", DirPath: ""}, nil)
+
+	// Without loopDir set, should return error.
+	body := `{"query":"test","channel_id":"ch-nodir"}`
+	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestMemorySearchByChannelIDEmptyDirPathFallback() {
+	indexer := new(MockMemoryIndexer)
+	s.srv.SetMemoryIndexer(indexer)
+	s.srv.SetLoopDir("/home/test/.loop")
+
+	s.store.On("GetChannel", mock.Anything, "ch-nodir").
+		Return(&db.Channel{ChannelID: "ch-nodir", DirPath: ""}, nil)
+	indexer.On("Search", mock.Anything, "/home/test/.loop/ch-nodir/work", "test", 0).
+		Return([]memory.SearchResult{}, nil)
+
+	body := `{"query":"test","channel_id":"ch-nodir"}`
+	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	indexer.AssertExpectations(s.T())
+	s.store.AssertExpectations(s.T())
+
+	// Clean up loopDir for other tests.
+	s.srv.SetLoopDir("")
+}
+
+func (s *ServerSuite) TestMemorySearchByChannelIDNilStore() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewServer(s.scheduler, nil, nil, nil, nil, logger)
+	indexer := new(MockMemoryIndexer)
+	srv.SetMemoryIndexer(indexer)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/memory/search", srv.handleMemorySearch)
+
+	body := `{"query":"test","channel_id":"ch-1"}`
+	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+// --- SetMemoryIndexer ---
+
+func (s *ServerSuite) TestSetMemoryIndexer() {
+	indexer := new(MockMemoryIndexer)
+	s.srv.SetMemoryIndexer(indexer)
+	require.NotNil(s.T(), s.srv.memoryIndexer)
 }
 
 // --- containsFold tests ---

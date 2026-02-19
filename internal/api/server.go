@@ -8,24 +8,44 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/scheduler"
 )
 
+// MemoryIndexer abstracts memory search and indexing for the memory API endpoints.
+type MemoryIndexer interface {
+	Search(ctx context.Context, memoryDir, query string, topK int) ([]memory.SearchResult, error)
+	Index(ctx context.Context, memoryDir string) (int, error)
+}
+
 // Server exposes a lightweight HTTP API for task CRUD operations.
 type Server struct {
-	scheduler scheduler.Scheduler
-	channels  ChannelEnsurer
-	threads   ThreadEnsurer
-	store     ChannelLister
-	messages  MessageSender
-	logger    *slog.Logger
-	server    *http.Server
-	listener  net.Listener
+	scheduler     scheduler.Scheduler
+	channels      ChannelEnsurer
+	threads       ThreadEnsurer
+	store         ChannelLister
+	messages      MessageSender
+	memoryIndexer MemoryIndexer
+	loopDir       string
+	logger        *slog.Logger
+	server        *http.Server
+	listener      net.Listener
+}
+
+// SetMemoryIndexer configures the memory indexer for the /api/memory/* endpoints.
+func (s *Server) SetMemoryIndexer(idx MemoryIndexer) {
+	s.memoryIndexer = idx
+}
+
+// SetLoopDir sets the loop directory used for fallback work dir resolution.
+func (s *Server) SetLoopDir(dir string) {
+	s.loopDir = dir
 }
 
 // NewServer creates a new API server. The channels, threads, store, and messages
@@ -123,6 +143,8 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("GET /api/tasks", s.handleListTasks)
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.handleDeleteTask)
 	mux.HandleFunc("PATCH /api/tasks/{id}", s.handleUpdateTask)
+	mux.HandleFunc("POST /api/memory/search", s.handleMemorySearch)
+	mux.HandleFunc("POST /api/memory/index", s.handleMemoryIndex)
 
 	s.server = &http.Server{
 		Addr:    addr,
@@ -423,6 +445,115 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type memorySearchRequest struct {
+	Query     string `json:"query"`
+	TopK      int    `json:"top_k"`
+	DirPath   string `json:"dir_path"`
+	ChannelID string `json:"channel_id"`
+}
+
+type memorySearchResponse struct {
+	Results []memory.SearchResult `json:"results"`
+}
+
+type memoryIndexRequest struct {
+	DirPath   string `json:"dir_path"`
+	ChannelID string `json:"channel_id"`
+}
+
+type memoryIndexResponse struct {
+	Count int `json:"count"`
+}
+
+func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
+	if s.memoryIndexer == nil {
+		http.Error(w, "memory indexer not configured", http.StatusNotImplemented)
+		return
+	}
+
+	var req memorySearchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	if req.Query == "" {
+		http.Error(w, "query is required", http.StatusBadRequest)
+		return
+	}
+
+	dirPath, err := s.resolveDirPath(r.Context(), req.DirPath, req.ChannelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	results, err := s.memoryIndexer.Search(r.Context(), dirPath, req.Query, req.TopK)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(memorySearchResponse{Results: results})
+}
+
+func (s *Server) handleMemoryIndex(w http.ResponseWriter, r *http.Request) {
+	if s.memoryIndexer == nil {
+		http.Error(w, "memory indexer not configured", http.StatusNotImplemented)
+		return
+	}
+
+	var req memoryIndexRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+
+	dirPath, err := s.resolveDirPath(r.Context(), req.DirPath, req.ChannelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	count, err := s.memoryIndexer.Index(r.Context(), dirPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(memoryIndexResponse{Count: count})
+}
+
+// resolveDirPath returns the dir_path from the request, resolving via channel_id lookup if needed.
+func (s *Server) resolveDirPath(ctx context.Context, dirPath, channelID string) (string, error) {
+	if dirPath != "" {
+		return dirPath, nil
+	}
+	if channelID == "" {
+		return "", fmt.Errorf("dir_path or channel_id is required")
+	}
+	if s.store == nil {
+		return "", fmt.Errorf("channel lookup not configured")
+	}
+	ch, err := s.store.GetChannel(ctx, channelID)
+	if err != nil {
+		return "", fmt.Errorf("looking up channel: %w", err)
+	}
+	if ch == nil {
+		return "", fmt.Errorf("channel %s not found", channelID)
+	}
+	if ch.DirPath == "" {
+		// Fall back to the default work dir for channels without a project dir.
+		if s.loopDir != "" {
+			return filepath.Join(s.loopDir, channelID, "work"), nil
+		}
+		return "", fmt.Errorf("channel %s has no dir_path", channelID)
+	}
+	return ch.DirPath, nil
 }
 
 func containsFold(s, substr string) bool {

@@ -41,6 +41,11 @@ A Slack/Discord bot powered by Claude that runs AI agents in Docker containers.
          MCP tool calls (schedule, list, cancel…)
                     ▼
               API Server ◀──▶ SQLite
+                    │
+             /api/memory/search
+                    ▼
+           Memory Indexer + Embedder
+           (Ollama)
 ```
 
 - **Orchestrator** coordinates message handling, channel registration, session management, and scheduled tasks
@@ -48,7 +53,7 @@ A Slack/Discord bot powered by Claude that runs AI agents in Docker containers.
 - **Scheduler** polls for due tasks (cron, interval, once) and executes them via DockerRunner
 - **MCP Server** (inside the container) gives Claude tools to schedule/manage tasks — calls loop back through the API server
 - **API Server** exposes REST endpoints for task and channel management
-- **SQLite** stores channels, messages, scheduled tasks, and run logs
+- **SQLite** stores channels, messages, scheduled tasks, run logs, and memory file embeddings
 
 ## Prerequisites
 
@@ -195,6 +200,36 @@ This does four things:
 | `mounts` | `[]` | Host directories to mount into containers |
 | `mcp` | `{}` | MCP server configurations |
 | `task_templates` | `[]` | Reusable task templates |
+| `memory` | `{}` | Semantic memory search configuration (see below) |
+
+### Memory
+
+The `memory` block enables semantic search over `.md` files. The daemon indexes files, generates embeddings (via Ollama), and serves search results to MCP processes via its API.
+
+```jsonc
+// Global config (~/.loop/config.json)
+"memory": {
+  "enabled": true,                 // Must be explicitly true
+  "paths": ["./memory"],           // Directories or .md files to index (resolved per project work dir)
+  //"max_chunk_chars": 6000,       // Max chars per embedding chunk (increase for models with larger context)
+  "embeddings": {
+    "provider": "ollama",
+    "model": "nomic-embed-text"
+    //"ollama_url": "http://localhost:11434"
+  }
+}
+```
+
+Project config memory settings are **merged** with global — project paths are appended, project embeddings override:
+
+```jsonc
+// Project config ({project}/.loop/config.json)
+"memory": {
+  "paths": ["./docs/architecture.md"]   // Appended to global paths
+}
+```
+
+When using Ollama, the daemon automatically manages a `loop-ollama` Docker container — starting it on demand and stopping it after 5 minutes of inactivity.
 
 ### Container Mounts
 
@@ -203,6 +238,7 @@ The `mounts` array mounts host directories into all agent containers. Format: `"
 ```jsonc
 "mounts": [
   "~/.claude:~/.claude",                      // Claude sessions (writable)
+  "~/.claude.json:~/.claude.json",            // Claude config (writable)
   "~/.gitconfig:~/.gitconfig:ro",             // Git identity (read-only)
   "~/.ssh:~/.ssh:ro",                         // SSH keys (read-only)
   "~/.aws:~/.aws",                            // AWS credentials (writable)
@@ -230,6 +266,7 @@ Project config overrides specific global settings. Only these fields are allowed
 | `container_image` | **Overrides** global image |
 | `container_memory_mb` | **Overrides** global memory limit |
 | `container_cpus` | **Overrides** global CPU limit |
+| `memory` | **Merged** — paths appended, embeddings override |
 
 Relative paths in project mounts (e.g., `./data`) are resolved relative to the project directory.
 
@@ -390,6 +427,8 @@ Project configs (`.loop/config.json`) can define their own `task_templates` that
 | `POST` | `/api/messages` | Send a message to a channel or thread |
 | `POST` | `/api/threads` | Create a thread in an existing channel |
 | `DELETE` | `/api/threads/{id}` | Delete a thread |
+| `POST` | `/api/memory/search` | Semantic search across memory files |
+| `POST` | `/api/memory/index` | Re-index memory files |
 
 ## MCP Tools
 
@@ -405,6 +444,8 @@ Project configs (`.loop/config.json`) can define their own `task_templates` that
 | `delete_thread` | Delete a thread by ID |
 | `search_channels` | Search for channels and threads by name |
 | `send_message` | Send a message to a channel or thread |
+| `search_memory` | Semantic search across memory files (ranked by similarity) |
+| `index_memory` | Force re-index all memory files |
 
 ## Development
 

@@ -128,6 +128,19 @@ var migrations = []migration{
 	sqlMigration(`DROP INDEX IF EXISTS idx_channels_dir_path`),
 	sqlMigration(`CREATE UNIQUE INDEX IF NOT EXISTS idx_channels_dir_path ON channels(dir_path, platform) WHERE dir_path != '' AND parent_id = ''`),
 	sqlMigration(`ALTER TABLE messages RENAME COLUMN discord_msg_id TO msg_id`),
+	// Memory file storage with chunking and dir_path scoping.
+	sqlMigration(`CREATE TABLE IF NOT EXISTS memory_files (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		file_path TEXT NOT NULL,
+		chunk_index INTEGER NOT NULL DEFAULT 0,
+		content TEXT NOT NULL,
+		content_hash TEXT NOT NULL DEFAULT '',
+		embedding BLOB,
+		dimensions INTEGER NOT NULL DEFAULT 0,
+		dir_path TEXT NOT NULL DEFAULT '',
+		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		UNIQUE(file_path, chunk_index, dir_path)
+	)`),
 }
 
 // RunMigrations executes all pending schema migrations.

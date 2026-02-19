@@ -166,6 +166,24 @@ func (m *MockStore) ListChannels(ctx context.Context) ([]*db.Channel, error) {
 	return args.Get(0).([]*db.Channel), args.Error(1)
 }
 
+func (m *MockStore) UpsertMemoryFile(ctx context.Context, file *db.MemoryFile) error {
+	return m.Called(ctx, file).Error(0)
+}
+
+func (m *MockStore) GetMemoryFilesByDirPath(ctx context.Context, dirPath string) ([]*db.MemoryFile, error) {
+	args := m.Called(ctx, dirPath)
+	return args.Get(0).([]*db.MemoryFile), args.Error(1)
+}
+
+func (m *MockStore) GetMemoryFileHash(ctx context.Context, filePath, dirPath string) (string, error) {
+	args := m.Called(ctx, filePath, dirPath)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockStore) DeleteMemoryFile(ctx context.Context, filePath, dirPath string) error {
+	return m.Called(ctx, filePath, dirPath).Error(0)
+}
+
 type MockBot struct {
 	mock.Mock
 }
