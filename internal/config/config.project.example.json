@@ -1,6 +1,6 @@
 {
-  // Claude model override for this project (e.g. "claude-sonnet-4-5-20250929")
-  //"claude_model": "", // defaults to sonnet; options: "claude-opus-4-6", "claude-sonnet-4-5-20250929"
+  // Claude model override for this project (e.g. "claude-sonnet-4-6")
+  //"claude_model": "", // defaults to sonnet; options: "claude-opus-4-6", "claude-sonnet-4-6"
 
   // Claude binary path override (e.g. "/usr/local/bin/claude" or "claude-code")
   //"claude_bin_path": "",

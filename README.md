@@ -146,7 +146,25 @@ Edit `~/.loop/config.json` and fill in the required fields for your platform:
 
 The config file uses HJSON (comments and trailing commas are allowed). See `config.global.example.json` for all available options and their defaults.
 
-### Step 5: Start Loop
+### Step 5: Authenticate Claude Code
+
+Agents inside containers need Claude Code credentials to run. Generate a long-lived token with `claude setup-token`, then set it in `~/.loop/config.json`:
+
+```sh
+claude setup-token
+```
+
+```jsonc
+{
+  "claude_code_oauth_token": "sk-ant-..."
+}
+```
+
+This is passed as the `CLAUDE_CODE_OAUTH_TOKEN` environment variable to each agent container.
+
+> **Note:** `claude login` stores credentials in the macOS keychain, which containers cannot access. Use `claude setup-token` instead to get a token you can pass explicitly.
+
+### Step 6: Start Loop
 
 ```sh
 # Run directly (auto-builds the agent Docker image on first run)
@@ -158,7 +176,7 @@ loop daemon:status   # check status
 loop daemon:stop     # stop
 ```
 
-### Step 6: Set up a project (optional)
+### Step 7: Set up a project (optional)
 
 To use Loop with a specific project directory:
 
@@ -186,6 +204,8 @@ This does four things:
 | `discord_token` | | Discord bot token (required for Discord) |
 | `discord_app_id` | | Discord application ID (required for Discord) |
 | `discord_guild_id` | `""` | Guild ID for auto-creating Discord channels |
+| `claude_code_oauth_token` | `""` | OAuth token passed as `CLAUDE_CODE_OAUTH_TOKEN` env var to containers |
+| `db_path` | `"~/.loop/loop.db"` | SQLite database file path |
 | `log_file` | `"~/.loop/loop.log"` | Daemon log file path |
 | `log_level` | `"info"` | Log level (`debug`, `info`, `warn`, `error`) |
 | `log_format` | `"text"` | Log format (`text`, `json`) |
@@ -195,7 +215,7 @@ This does four things:
 | `container_cpus` | `1.0` | CPU limit per container |
 | `container_keep_alive_sec` | `300` | Keep-alive duration for idle containers |
 | `poll_interval_sec` | `30` | Task scheduler poll interval |
-| `claude_model` | `""` | Override Claude model (e.g. `"claude-sonnet-4-5-20250929"`) |
+| `claude_model` | `""` | Override Claude model (e.g. `"claude-sonnet-4-6"`) |
 | `claude_bin_path` | `"claude"` | Path to Claude Code binary |
 | `mounts` | `[]` | Host directories to mount into containers |
 | `mcp` | `{}` | MCP server configurations |

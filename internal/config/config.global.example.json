@@ -12,6 +12,10 @@
   //"slack_bot_token": "xoxb-your-slack-bot-token",
   //"slack_app_token": "xapp-your-slack-app-token",
 
+  // Claude Code OAuth token — passed as CLAUDE_CODE_OAUTH_TOKEN env var to containers
+  //"claude_code_oauth_token": "sk-ant-your-oauth-token-here",
+
+  //"db_path": "~/.loop/loop.db",
   //"log_file": "~/.loop/loop.log",
   //"log_level": "info",
   //"log_format": "text",
@@ -21,7 +25,7 @@
   //"container_cpus": 1.0,
   //"container_keep_alive_sec": 300,
   //"poll_interval_sec": 30,
-  //"claude_model": "", // defaults to sonnet; options: "claude-opus-4-6", "claude-sonnet-4-5-20250929"
+  //"claude_model": "", // defaults to sonnet; options: "claude-opus-4-6", "claude-sonnet-4-6"
   //"claude_bin_path": "claude",
   //"streaming_enabled": true, // stream intermediate Claude turns to chat as they happen
 
