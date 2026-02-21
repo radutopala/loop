@@ -89,7 +89,7 @@ Available Commands:
     --force                Overwrite existing config
   onboard:local            Register Loop MCP server in current project (aliases: o:local, init)
     --api-url              Loop API base URL [default: http://localhost:8222]
-  daemon:start             Install and start the daemon (aliases: d:start, up)
+  daemon:start             Install and start the daemon — launchd on macOS, systemd on Linux (aliases: d:start, up)
   daemon:stop              Stop and uninstall the daemon (aliases: d:stop, down)
   daemon:status            Show daemon status (alias: d:status)
   version                  Print version information (alias: v)

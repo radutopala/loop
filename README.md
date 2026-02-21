@@ -62,7 +62,7 @@ A Slack/Discord bot powered by Claude that runs AI agents in Docker containers.
 - A **Slack** bot token and app token, or a **Discord** bot token and application ID
 - An Anthropic API key or Claude Code OAuth token (for agent containers)
 
-> **Note:** `loop daemon:start/stop/status` use launchd (macOS-only). On Linux, use `loop serve` directly.
+> **Note:** `loop daemon:start/stop/status` use launchd on macOS and systemd user services on Linux (`~/.config/systemd/user/loop.service`).
 
 ## Getting Started
 
@@ -170,7 +170,7 @@ This is passed as the `CLAUDE_CODE_OAUTH_TOKEN` environment variable to each age
 # Run directly (auto-builds the agent Docker image on first run)
 loop serve
 
-# Or run as a background daemon (macOS only)
+# Or run as a background daemon (macOS: launchd, Linux: systemd user service)
 loop daemon:start
 loop daemon:status   # check status
 loop daemon:stop     # stop
