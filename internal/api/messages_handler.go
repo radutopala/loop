@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 )
 
@@ -11,14 +10,12 @@ type sendMessageRequest struct {
 }
 
 func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
-	if s.messages == nil {
-		http.Error(w, "message sending not configured", http.StatusNotImplemented)
+	if !requireConfigured(w, s.messages, "message sending not configured") {
 		return
 	}
 
 	var req sendMessageRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 

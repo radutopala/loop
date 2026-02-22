@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+const channelsNotConfiguredMsg = "channel creation not configured (discord_guild_id not set or Slack not configured)"
+
 type ensureChannelRequest struct {
 	DirPath string `json:"dir_path"`
 }
@@ -32,14 +34,12 @@ type channelResponse struct {
 }
 
 func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
-	if s.channels == nil {
-		http.Error(w, "channel creation not configured (discord_guild_id not set or Slack not configured)", http.StatusNotImplemented)
+	if !requireConfigured(w, s.channels, channelsNotConfiguredMsg) {
 		return
 	}
 
 	var req ensureChannelRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
@@ -59,14 +59,12 @@ func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleCreateChannel(w http.ResponseWriter, r *http.Request) {
-	if s.channels == nil {
-		http.Error(w, "channel creation not configured (discord_guild_id not set or Slack not configured)", http.StatusNotImplemented)
+	if !requireConfigured(w, s.channels, channelsNotConfiguredMsg) {
 		return
 	}
 
 	var req createChannelRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
@@ -87,8 +85,7 @@ func (s *Server) handleCreateChannel(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
-	if s.store == nil {
-		http.Error(w, "channel listing not configured", http.StatusNotImplemented)
+	if !requireConfigured(w, s.store, "channel listing not configured") {
 		return
 	}
 

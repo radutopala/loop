@@ -17,14 +17,12 @@ type createThreadResponse struct {
 }
 
 func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
-	if s.threads == nil {
-		http.Error(w, "thread creation not configured", http.StatusNotImplemented)
+	if !requireConfigured(w, s.threads, "thread creation not configured") {
 		return
 	}
 
 	var req createThreadRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
@@ -49,8 +47,7 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
-	if s.threads == nil {
-		http.Error(w, "thread deletion not configured", http.StatusNotImplemented)
+	if !requireConfigured(w, s.threads, "thread deletion not configured") {
 		return
 	}
 

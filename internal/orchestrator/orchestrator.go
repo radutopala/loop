@@ -13,6 +13,7 @@ import (
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -73,18 +74,6 @@ type Runner interface {
 	Cleanup(ctx context.Context) error
 }
 
-// Scheduler manages scheduled tasks.
-type Scheduler interface {
-	Start(ctx context.Context) error
-	Stop() error
-	AddTask(ctx context.Context, task *db.ScheduledTask) (int64, error)
-	RemoveTask(ctx context.Context, taskID int64) error
-	ListTasks(ctx context.Context, channelID string) ([]*db.ScheduledTask, error)
-	SetTaskEnabled(ctx context.Context, taskID int64, enabled bool) error
-	ToggleTask(ctx context.Context, taskID int64) (bool, error)
-	EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string) error
-}
-
 // Interaction represents a slash command interaction.
 type Interaction struct {
 	ChannelID   string
@@ -100,7 +89,7 @@ type Orchestrator struct {
 	store          db.Store
 	bot            Bot
 	runner         Runner
-	scheduler      Scheduler
+	scheduler      scheduler.Scheduler
 	queue          *ChannelQueue
 	activeRuns     sync.Map // map[channelID]context.CancelFunc
 	logger         *slog.Logger
@@ -110,12 +99,12 @@ type Orchestrator struct {
 }
 
 // New creates a new Orchestrator.
-func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *slog.Logger, platform types.Platform, cfg config.Config) *Orchestrator {
+func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logger *slog.Logger, platform types.Platform, cfg config.Config) *Orchestrator {
 	return &Orchestrator{
 		store:          store,
 		bot:            bot,
 		runner:         runner,
-		scheduler:      scheduler,
+		scheduler:      sched,
 		queue:          NewChannelQueue(),
 		logger:         logger,
 		typingInterval: typingRefreshInterval,

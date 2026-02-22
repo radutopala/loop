@@ -37,14 +37,12 @@ type memoryIndexResponse struct {
 }
 
 func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
-	if s.memoryIndexer == nil {
-		http.Error(w, "memory indexer not configured", http.StatusNotImplemented)
+	if !requireConfigured(w, s.memoryIndexer, "memory indexer not configured") {
 		return
 	}
 
 	var req memorySearchRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
@@ -70,14 +68,12 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMemoryIndex(w http.ResponseWriter, r *http.Request) {
-	if s.memoryIndexer == nil {
-		http.Error(w, "memory indexer not configured", http.StatusNotImplemented)
+	if !requireConfigured(w, s.memoryIndexer, "memory indexer not configured") {
 		return
 	}
 
 	var req memoryIndexRequest
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		http.Error(w, "invalid request body", http.StatusBadRequest)
+	if !decodeJSON(w, r, &req) {
 		return
 	}
 
