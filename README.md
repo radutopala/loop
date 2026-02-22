@@ -283,6 +283,7 @@ Permissions can be set in two ways, and the more privileged role wins:
 | `/loop allow_role @role [owner\|member]` | Grant a Discord role a role (Discord only) |
 | `/loop deny_user @user` | Remove a user's DB-granted role |
 | `/loop deny_role @role` | Remove a Discord role's DB-granted access |
+| `/loop iamtheowner` | Self-onboard as channel owner (bootstrap mode only) |
 
 Project config permissions override global config. DB permissions are per-channel and managed via slash commands.
 
@@ -449,6 +450,7 @@ Both Discord slash commands and Slack `/loop` subcommands use the same syntax:
 | `/loop status` | Show bot status |
 | `/loop template add <name>` | Load a task template into the current channel |
 | `/loop template list` | List available task templates from config |
+| `/loop iamtheowner` | Self-onboard as channel owner (only when no permissions are configured) |
 
 The bot responds to `@mentions`, replies to its own messages, DMs, and messages prefixed with `!loop`. It auto-joins threads in active channels — tagging the bot in a thread inherits the parent channel's project directory and forks its session so each thread gets independent context.
 
