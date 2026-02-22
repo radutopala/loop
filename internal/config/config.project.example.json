@@ -5,6 +5,10 @@
   // Claude binary path override (e.g. "/usr/local/bin/claude" or "claude-code")
   //"claude_bin_path": "",
 
+  // Authentication override for this project (overrides global auth entirely)
+  //"claude_code_oauth_token": "sk-ant-project-oauth-token",
+  //"anthropic_api_key": "sk-ant-project-api-key",
+
   // Container overrides for this project
   //"container_image": "loop-agent:latest",
   //"container_memory_mb": 512,
@@ -52,6 +56,12 @@
   //  "loop-cache:~/.cache",
   //  "loop-gocache:/go"
   //],
+
+  // Permissions override for this project (replaces global permissions when set)
+  //"permissions": {
+  //  "owners":  { "users": [], "roles": [] },
+  //  "members": { "users": [], "roles": [] }
+  //},
 
   // Task templates specific to this project (merged with global; project overrides by name)
   // Each template must have either "prompt" (inline) or "prompt_path" (loads from ~/.loop/templates/<path>), but not both.

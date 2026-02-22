@@ -141,6 +141,8 @@ var migrations = []migration{
 		updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(file_path, chunk_index, dir_path)
 	)`),
+	// Per-channel RBAC permissions stored as JSON.
+	sqlMigration(`ALTER TABLE channels ADD COLUMN permissions TEXT NOT NULL DEFAULT ''`),
 }
 
 // RunMigrations executes all pending schema migrations.

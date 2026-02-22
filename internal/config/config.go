@@ -9,8 +9,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/radutopala/loop/internal/types"
 	"github.com/tailscale/hujson"
+
+	"github.com/radutopala/loop/internal/types"
 )
 
 // MCPServerConfig represents a single MCP server entry in the config.
@@ -52,6 +53,56 @@ func (t *TaskTemplate) ResolvePrompt(loopDir string) (string, error) {
 	return string(data), nil
 }
 
+// RoleGrant lists the users and Discord role IDs that are granted a specific RBAC role.
+type RoleGrant struct {
+	Users []string `json:"users"` // platform user IDs
+	Roles []string `json:"roles"` // Discord role IDs (ignored on Slack)
+}
+
+// PermissionsConfig configures per-channel RBAC with owner and member roles.
+// An empty config (all slices nil/empty) allows all users as owners (bootstrap mode).
+type PermissionsConfig struct {
+	Owners  RoleGrant `json:"owners"`
+	Members RoleGrant `json:"members"`
+}
+
+// IsEmpty returns true when no role grants are configured.
+func (p PermissionsConfig) IsEmpty() bool {
+	return len(p.Owners.Users) == 0 && len(p.Owners.Roles) == 0 &&
+		len(p.Members.Users) == 0 && len(p.Members.Roles) == 0
+}
+
+// GetRole returns the role for the given author based on config grants.
+// Returns "" when the author is not granted any role.
+func (p PermissionsConfig) GetRole(authorID string, authorRoles []string) types.Role {
+	if sliceContains(p.Owners.Users, authorID) {
+		return types.RoleOwner
+	}
+	for _, r := range authorRoles {
+		if sliceContains(p.Owners.Roles, r) {
+			return types.RoleOwner
+		}
+	}
+	if sliceContains(p.Members.Users, authorID) {
+		return types.RoleMember
+	}
+	for _, r := range authorRoles {
+		if sliceContains(p.Members.Roles, r) {
+			return types.RoleMember
+		}
+	}
+	return ""
+}
+
+func sliceContains(s []string, v string) bool {
+	for _, item := range s {
+		if item == v {
+			return true
+		}
+	}
+	return false
+}
+
 // EmbeddingsConfig configures the embedding provider for semantic memory search.
 type EmbeddingsConfig struct {
 	Provider  string `json:"provider"`   // "ollama"
@@ -88,6 +139,7 @@ type Config struct {
 	PollInterval         time.Duration
 	APIAddr              string
 	ClaudeCodeOAuthToken string
+	AnthropicAPIKey      string
 	DiscordGuildID       string
 	LoopDir              string
 	MCPServers           map[string]MCPServerConfig
@@ -97,6 +149,7 @@ type Config struct {
 	ClaudeModel          string
 	StreamingEnabled     bool
 	Memory               MemoryConfig
+	Permissions          PermissionsConfig
 }
 
 // Platform returns the configured chat platform.
@@ -107,32 +160,34 @@ func (c *Config) Platform() types.Platform {
 // jsonConfig is an intermediate struct for JSON unmarshalling.
 // Pointer types for numerics distinguish "missing" (nil) from "zero".
 type jsonConfig struct {
-	Platform              string            `json:"platform"`
-	DiscordToken          string            `json:"discord_token"`
-	DiscordAppID          string            `json:"discord_app_id"`
-	SlackBotToken         string            `json:"slack_bot_token"`
-	SlackAppToken         string            `json:"slack_app_token"`
-	ClaudeCodeOAuthToken  string            `json:"claude_code_oauth_token"`
-	DiscordGuildID        string            `json:"discord_guild_id"`
-	LogFile               string            `json:"log_file"`
-	LogLevel              string            `json:"log_level"`
-	LogFormat             string            `json:"log_format"`
-	DBPath                string            `json:"db_path"`
-	ContainerImage        string            `json:"container_image"`
-	ContainerTimeoutSec   *int              `json:"container_timeout_sec"`
-	ContainerMemoryMB     *int64            `json:"container_memory_mb"`
-	ContainerCPUs         *float64          `json:"container_cpus"`
-	ContainerKeepAliveSec *int              `json:"container_keep_alive_sec"`
-	PollIntervalSec       *int              `json:"poll_interval_sec"`
-	APIAddr               string            `json:"api_addr"`
-	MCP                   *jsonMCPConfig    `json:"mcp"`
-	TaskTemplates         []TaskTemplate    `json:"task_templates"`
-	Mounts                []string          `json:"mounts"`
-	Envs                  map[string]any    `json:"envs"`
-	ClaudeModel           string            `json:"claude_model"`
-	ClaudeBinPath         string            `json:"claude_bin_path"`
-	StreamingEnabled      *bool             `json:"streaming_enabled"`
-	Memory                *jsonMemoryConfig `json:"memory"`
+	Platform              string                 `json:"platform"`
+	DiscordToken          string                 `json:"discord_token"`
+	DiscordAppID          string                 `json:"discord_app_id"`
+	SlackBotToken         string                 `json:"slack_bot_token"`
+	SlackAppToken         string                 `json:"slack_app_token"`
+	ClaudeCodeOAuthToken  string                 `json:"claude_code_oauth_token"`
+	AnthropicAPIKey       string                 `json:"anthropic_api_key"`
+	DiscordGuildID        string                 `json:"discord_guild_id"`
+	LogFile               string                 `json:"log_file"`
+	LogLevel              string                 `json:"log_level"`
+	LogFormat             string                 `json:"log_format"`
+	DBPath                string                 `json:"db_path"`
+	ContainerImage        string                 `json:"container_image"`
+	ContainerTimeoutSec   *int                   `json:"container_timeout_sec"`
+	ContainerMemoryMB     *int64                 `json:"container_memory_mb"`
+	ContainerCPUs         *float64               `json:"container_cpus"`
+	ContainerKeepAliveSec *int                   `json:"container_keep_alive_sec"`
+	PollIntervalSec       *int                   `json:"poll_interval_sec"`
+	APIAddr               string                 `json:"api_addr"`
+	MCP                   *jsonMCPConfig         `json:"mcp"`
+	TaskTemplates         []TaskTemplate         `json:"task_templates"`
+	Mounts                []string               `json:"mounts"`
+	Envs                  map[string]any         `json:"envs"`
+	ClaudeModel           string                 `json:"claude_model"`
+	ClaudeBinPath         string                 `json:"claude_bin_path"`
+	StreamingEnabled      *bool                  `json:"streaming_enabled"`
+	Memory                *jsonMemoryConfig      `json:"memory"`
+	Permissions           *jsonPermissionsConfig `json:"permissions"`
 }
 
 // jsonMemoryConfig is the JSON representation of the memory block.
@@ -146,6 +201,18 @@ type jsonMemoryConfig struct {
 
 type jsonMCPConfig struct {
 	Servers map[string]MCPServerConfig `json:"servers"`
+}
+
+// jsonPermissionsConfig is the JSON representation of the permissions block.
+type jsonPermissionsConfig struct {
+	Owners *struct {
+		Users []string `json:"users"`
+		Roles []string `json:"roles"`
+	} `json:"owners"`
+	Members *struct {
+		Users []string `json:"users"`
+		Roles []string `json:"roles"`
+	} `json:"members"`
 }
 
 // userHomeDir is a package-level variable to allow overriding in tests.
@@ -194,6 +261,7 @@ func Load() (*Config, error) {
 		SlackAppToken:        jc.SlackAppToken,
 		ClaudeBinPath:        stringDefault(jc.ClaudeBinPath, "claude"),
 		ClaudeCodeOAuthToken: jc.ClaudeCodeOAuthToken,
+		AnthropicAPIKey:      jc.AnthropicAPIKey,
 		DiscordGuildID:       jc.DiscordGuildID,
 		LogFile:              stringDefault(jc.LogFile, filepath.Join(loopDir, "loop.log")),
 		LogLevel:             stringDefault(jc.LogLevel, "info"),
@@ -235,6 +303,17 @@ func Load() (*Config, error) {
 	}
 	if len(cfg.Memory.Paths) == 0 {
 		cfg.Memory.Paths = []string{"./memory"}
+	}
+
+	if jc.Permissions != nil {
+		if jc.Permissions.Owners != nil {
+			cfg.Permissions.Owners.Users = jc.Permissions.Owners.Users
+			cfg.Permissions.Owners.Roles = jc.Permissions.Owners.Roles
+		}
+		if jc.Permissions.Members != nil {
+			cfg.Permissions.Members.Users = jc.Permissions.Members.Users
+			cfg.Permissions.Members.Roles = jc.Permissions.Members.Roles
+		}
 	}
 
 	switch cfg.PlatformType {
@@ -314,16 +393,19 @@ func stringifyEnvs(raw map[string]any) map[string]string {
 
 // projectConfig is the structure for project-specific .loop/config.json files.
 type projectConfig struct {
-	Mounts            []string          `json:"mounts"`
-	Envs              map[string]any    `json:"envs"`
-	MCP               *jsonMCPConfig    `json:"mcp"`
-	ClaudeModel       string            `json:"claude_model"`
-	ClaudeBinPath     string            `json:"claude_bin_path"`
-	ContainerImage    string            `json:"container_image"`
-	ContainerMemoryMB *int64            `json:"container_memory_mb"`
-	ContainerCPUs     *float64          `json:"container_cpus"`
-	TaskTemplates     []TaskTemplate    `json:"task_templates"`
-	Memory            *jsonMemoryConfig `json:"memory"`
+	Mounts               []string               `json:"mounts"`
+	Envs                 map[string]any         `json:"envs"`
+	MCP                  *jsonMCPConfig         `json:"mcp"`
+	ClaudeModel          string                 `json:"claude_model"`
+	ClaudeBinPath        string                 `json:"claude_bin_path"`
+	ClaudeCodeOAuthToken string                 `json:"claude_code_oauth_token"`
+	AnthropicAPIKey      string                 `json:"anthropic_api_key"`
+	ContainerImage       string                 `json:"container_image"`
+	ContainerMemoryMB    *int64                 `json:"container_memory_mb"`
+	ContainerCPUs        *float64               `json:"container_cpus"`
+	TaskTemplates        []TaskTemplate         `json:"task_templates"`
+	Memory               *jsonMemoryConfig      `json:"memory"`
+	Permissions          *jsonPermissionsConfig `json:"permissions"`
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
@@ -408,6 +490,14 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 		merged.ClaudeBinPath = pc.ClaudeBinPath
 	}
 
+	if pc.ClaudeCodeOAuthToken != "" {
+		merged.ClaudeCodeOAuthToken = pc.ClaudeCodeOAuthToken
+		merged.AnthropicAPIKey = "" // OAuth takes precedence
+	} else if pc.AnthropicAPIKey != "" {
+		merged.AnthropicAPIKey = pc.AnthropicAPIKey
+		merged.ClaudeCodeOAuthToken = "" // Clear OAuth so API key is used
+	}
+
 	if pc.ContainerImage != "" {
 		merged.ContainerImage = pc.ContainerImage
 	}
@@ -441,6 +531,19 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 		maps.Copy(mergedEnvs, mainConfig.Envs)
 		maps.Copy(mergedEnvs, stringifyEnvs(pc.Envs))
 		merged.Envs = mergedEnvs
+	}
+
+	// Permissions: project config replaces global when set.
+	if pc.Permissions != nil {
+		merged.Permissions = PermissionsConfig{}
+		if pc.Permissions.Owners != nil {
+			merged.Permissions.Owners.Users = pc.Permissions.Owners.Users
+			merged.Permissions.Owners.Roles = pc.Permissions.Owners.Roles
+		}
+		if pc.Permissions.Members != nil {
+			merged.Permissions.Members.Users = pc.Permissions.Members.Users
+			merged.Permissions.Members.Roles = pc.Permissions.Members.Roles
+		}
 	}
 
 	// Merge task templates: project templates override global by name

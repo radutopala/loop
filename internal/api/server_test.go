@@ -12,11 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/radutopala/loop/internal/db"
-	"github.com/radutopala/loop/internal/memory"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/memory"
 )
 
 type MockScheduler struct {

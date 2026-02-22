@@ -5,11 +5,12 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/radutopala/loop/internal/db"
-	"github.com/radutopala/loop/internal/types"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/types"
 )
 
 type MockThreadCreator struct {
@@ -45,14 +46,21 @@ func (s *ThreadServiceSuite) SetupTest() {
 }
 
 func (s *ThreadServiceSuite) TestCreateThreadSuccess() {
+	parentPerms := db.ChannelPermissions{
+		Owners:  db.ChannelRoleGrant{Users: []string{"owner1"}},
+		Members: db.ChannelRoleGrant{Users: []string{"member1"}},
+	}
 	s.store.On("GetChannel", s.ctx, "ch-1").
-		Return(&db.Channel{ChannelID: "ch-1", GuildID: "guild-1", DirPath: "/work", Platform: types.PlatformDiscord, SessionID: "sess-1"}, nil)
+		Return(&db.Channel{ChannelID: "ch-1", GuildID: "guild-1", DirPath: "/work", Platform: types.PlatformDiscord, SessionID: "sess-1", Permissions: parentPerms}, nil)
 	s.creator.On("CreateThread", s.ctx, "ch-1", "my-thread", "user-42", "").
 		Return("thread-1", nil)
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "thread-1" && ch.GuildID == "guild-1" &&
 			ch.Name == "my-thread" && ch.ParentID == "ch-1" &&
-			ch.DirPath == "/work" && ch.Platform == types.PlatformDiscord && ch.SessionID == "sess-1" && ch.Active
+			ch.DirPath == "/work" && ch.Platform == types.PlatformDiscord && ch.SessionID == "sess-1" &&
+			len(ch.Permissions.Owners.Users) == 1 && ch.Permissions.Owners.Users[0] == "owner1" &&
+			len(ch.Permissions.Members.Users) == 1 && ch.Permissions.Members.Users[0] == "member1" &&
+			ch.Active
 	})).Return(nil)
 
 	threadID, err := s.svc.CreateThread(s.ctx, "ch-1", "my-thread", "user-42", "")

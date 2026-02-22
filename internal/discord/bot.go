@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/bwmarrin/discordgo"
+
 	"github.com/radutopala/loop/internal/orchestrator"
 )
 
@@ -41,6 +42,7 @@ type DiscordSession interface {
 	ChannelDelete(channelID string, options ...discordgo.RequestOption) (*discordgo.Channel, error)
 	GuildChannels(guildID string, options ...discordgo.RequestOption) ([]*discordgo.Channel, error)
 	ChannelEdit(channelID string, data *discordgo.ChannelEdit, options ...discordgo.RequestOption) (*discordgo.Channel, error)
+	GuildMember(guildID string, userID string, options ...discordgo.RequestOption) (*discordgo.Member, error)
 }
 
 // Bot defines the interface for a Discord bot.
@@ -412,6 +414,15 @@ func replaceTextMention(content, username, mention string) string {
 	return content[:idx] + mention + content[idx+len(target):]
 }
 
+// GetMemberRoles returns the role IDs of a guild member.
+func (b *DiscordBot) GetMemberRoles(_ context.Context, guildID, userID string) ([]string, error) {
+	member, err := b.session.GuildMember(guildID, userID)
+	if err != nil {
+		return nil, fmt.Errorf("discord get member roles: %w", err)
+	}
+	return member.Roles, nil
+}
+
 // DeleteThread deletes a Discord thread by its ID.
 func (b *DiscordBot) DeleteThread(ctx context.Context, threadID string) error {
 	if _, err := b.session.ChannelDelete(threadID); err != nil {
@@ -483,6 +494,13 @@ func (b *DiscordBot) handleMessage(_ *discordgo.Session, m *discordgo.MessageCre
 		return
 	}
 
+	// Populate role IDs for permission checking (guild messages only).
+	if m.GuildID != "" {
+		if member, err := b.session.GuildMember(m.GuildID, m.Author.ID); err == nil {
+			msg.AuthorRoles = member.Roles
+		}
+	}
+
 	b.mu.RLock()
 	handlers := make([]MessageHandler, len(b.messageHandlers))
 	copy(handlers, b.messageHandlers)
@@ -536,11 +554,22 @@ func (b *DiscordBot) handleInteraction(_ *discordgo.Session, i *discordgo.Intera
 		options[o.Name] = fmt.Sprintf("%v", o.Value)
 	}
 
+	var authorID string
+	var authorRoles []string
+	if i.Member != nil && i.Member.User != nil {
+		authorID = i.Member.User.ID
+		authorRoles = i.Member.Roles
+	} else if i.User != nil {
+		authorID = i.User.ID
+	}
+
 	inter := &orchestrator.Interaction{
 		ChannelID:   i.ChannelID,
 		GuildID:     i.GuildID,
 		CommandName: commandName,
 		Options:     options,
+		AuthorID:    authorID,
+		AuthorRoles: authorRoles,
 	}
 
 	b.mu.RLock()

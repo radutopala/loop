@@ -7,8 +7,9 @@ import (
 	"sync"
 	"time"
 
-	"github.com/radutopala/loop/internal/db"
 	"github.com/robfig/cron/v3"
+
+	"github.com/radutopala/loop/internal/db"
 )
 
 // TaskExecutor executes a scheduled task and returns a response or error.

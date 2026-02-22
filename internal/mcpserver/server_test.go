@@ -1171,6 +1171,22 @@ func (s *MCPMemorySuite) TestSearchMemorySingleResult() {
 	require.Contains(s.T(), text, "Some notes")
 }
 
+func (s *MCPMemorySuite) TestSearchMemoryResultWithoutContent() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"results":[{"file_path":"/tmp/memory/MEMORY.md","content":"","score":0.90}]}`), nil
+	}
+
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "search_memory",
+		Arguments: map[string]any{"query": "memory"},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	text := res.Content[0].(*mcp.TextContent).Text
+	require.Contains(s.T(), text, "MEMORY.md")
+	require.Contains(s.T(), text, "score: 0.900")
+}
+
 func (s *MCPMemorySuite) TestIndexMemorySuccess() {
 	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
 		require.Equal(s.T(), "POST", req.Method)

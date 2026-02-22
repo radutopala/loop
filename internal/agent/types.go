@@ -1,6 +1,8 @@
 package agent
 
-import "fmt"
+import (
+	"fmt"
+)
 
 // AgentRequest is the input sent to the agent runner.
 type AgentRequest struct {

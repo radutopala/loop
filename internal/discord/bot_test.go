@@ -162,6 +162,14 @@ func (m *MockSession) ChannelEdit(channelID string, data *discordgo.ChannelEdit,
 	return args.Get(0).(*discordgo.Channel), args.Error(1)
 }
 
+func (m *MockSession) GuildMember(guildID string, userID string, options ...discordgo.RequestOption) (*discordgo.Member, error) {
+	args := m.Called(guildID, userID, options)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*discordgo.Member), args.Error(1)
+}
+
 // --- Test Suite ---
 
 type BotSuite struct {
@@ -408,6 +416,9 @@ func (s *BotSuite) TestOnMessageRegistersHandler() {
 	s.bot.mu.Lock()
 	s.bot.botUserID = "bot-123"
 	s.bot.mu.Unlock()
+
+	s.session.On("GuildMember", "g-1", "user-1", mock.Anything).
+		Return(nil, errors.New("not mocked"))
 
 	m := &discordgo.MessageCreate{
 		Message: &discordgo.Message{
@@ -1850,6 +1861,167 @@ func (s *BotSuite) TestGetChannelParentIDError() {
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "discord get channel")
 	require.Empty(s.T(), parentID)
+}
+
+// --- GetMemberRoles ---
+
+func (s *BotSuite) TestGetMemberRolesSuccess() {
+	s.session.On("GuildMember", "g-1", "user-1", mock.Anything).
+		Return(&discordgo.Member{Roles: []string{"role-1", "role-2"}}, nil)
+
+	roles, err := s.bot.GetMemberRoles(context.Background(), "g-1", "user-1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"role-1", "role-2"}, roles)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestGetMemberRolesError() {
+	s.session.On("GuildMember", "g-1", "user-1", mock.Anything).
+		Return(nil, errors.New("api error"))
+
+	roles, err := s.bot.GetMemberRoles(context.Background(), "g-1", "user-1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "discord get member roles")
+	require.Nil(s.T(), roles)
+	s.session.AssertExpectations(s.T())
+}
+
+// --- handleMessage with role population ---
+
+func (s *BotSuite) TestHandleMessagePopulatesRoles() {
+	var received *IncomingMessage
+	done := make(chan struct{})
+	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+		received = msg
+		close(done)
+	})
+
+	s.bot.mu.Lock()
+	s.bot.botUserID = "bot-123"
+	s.bot.mu.Unlock()
+
+	// Override GuildMember to return roles for this test.
+	s.session.On("GuildMember", "g-1", "user-1", mock.Anything).
+		Return(&discordgo.Member{Roles: []string{"role-admin"}}, nil)
+
+	m := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			ID:        "msg-2",
+			ChannelID: "ch-1",
+			GuildID:   "g-1",
+			Content:   "!loop hello",
+			Author:    &discordgo.User{ID: "user-1", Username: "testuser"},
+			Timestamp: time.Now(),
+		},
+	}
+	s.bot.handleMessage(nil, m)
+	<-done
+
+	require.NotNil(s.T(), received)
+	require.Equal(s.T(), []string{"role-admin"}, received.AuthorRoles)
+}
+
+func (s *BotSuite) TestHandleMessageRoleFetchError() {
+	var received *IncomingMessage
+	done := make(chan struct{})
+	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+		received = msg
+		close(done)
+	})
+
+	s.bot.mu.Lock()
+	s.bot.botUserID = "bot-123"
+	s.bot.mu.Unlock()
+
+	// GuildMember returns error — roles should be nil.
+	s.session.On("GuildMember", "g-1", "user-1", mock.Anything).
+		Return(nil, errors.New("not found"))
+
+	m := &discordgo.MessageCreate{
+		Message: &discordgo.Message{
+			ID:        "msg-3",
+			ChannelID: "ch-1",
+			GuildID:   "g-1",
+			Content:   "!loop hello",
+			Author:    &discordgo.User{ID: "user-1", Username: "testuser"},
+			Timestamp: time.Now(),
+		},
+	}
+	s.bot.handleMessage(nil, m)
+	<-done
+
+	require.NotNil(s.T(), received)
+	require.Nil(s.T(), received.AuthorRoles)
+}
+
+// --- handleInteraction with AuthorID/AuthorRoles ---
+
+func (s *BotSuite) TestHandleInteractionPopulatesAuthorGuild() {
+	var received *orchestrator.Interaction
+	done := make(chan struct{})
+	s.bot.OnInteraction(func(_ context.Context, i any) {
+		received = i.(*orchestrator.Interaction)
+		close(done)
+	})
+
+	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	ic := &discordgo.InteractionCreate{
+		Interaction: &discordgo.Interaction{
+			ID:        "int-guild",
+			ChannelID: "ch-1",
+			GuildID:   "g-1",
+			Type:      discordgo.InteractionApplicationCommand,
+			Member: &discordgo.Member{
+				User:  &discordgo.User{ID: "user-guild"},
+				Roles: []string{"role-a", "role-b"},
+			},
+			Data: discordgo.ApplicationCommandInteractionData{
+				Name: "loop",
+				Options: []*discordgo.ApplicationCommandInteractionDataOption{
+					{Name: "status", Type: discordgo.ApplicationCommandOptionSubCommand},
+				},
+			},
+		},
+	}
+	s.bot.handleInteraction(nil, ic)
+	<-done
+
+	require.NotNil(s.T(), received)
+	require.Equal(s.T(), "user-guild", received.AuthorID)
+	require.Equal(s.T(), []string{"role-a", "role-b"}, received.AuthorRoles)
+}
+
+func (s *BotSuite) TestHandleInteractionPopulatesAuthorDM() {
+	var received *orchestrator.Interaction
+	done := make(chan struct{})
+	s.bot.OnInteraction(func(_ context.Context, i any) {
+		received = i.(*orchestrator.Interaction)
+		close(done)
+	})
+
+	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	ic := &discordgo.InteractionCreate{
+		Interaction: &discordgo.Interaction{
+			ID:        "int-dm",
+			ChannelID: "dm-ch",
+			Type:      discordgo.InteractionApplicationCommand,
+			User:      &discordgo.User{ID: "user-dm"},
+			Data: discordgo.ApplicationCommandInteractionData{
+				Name: "loop",
+				Options: []*discordgo.ApplicationCommandInteractionDataOption{
+					{Name: "status", Type: discordgo.ApplicationCommandOptionSubCommand},
+				},
+			},
+		},
+	}
+	s.bot.handleInteraction(nil, ic)
+	<-done
+
+	require.NotNil(s.T(), received)
+	require.Equal(s.T(), "user-dm", received.AuthorID)
+	require.Nil(s.T(), received.AuthorRoles)
 }
 
 // --- PostMessage ---

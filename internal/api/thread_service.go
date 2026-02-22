@@ -73,14 +73,15 @@ func (s *threadService) CreateThread(ctx context.Context, channelID, name, autho
 	}
 
 	if err := s.store.UpsertChannel(ctx, &db.Channel{
-		ChannelID: threadID,
-		GuildID:   parent.GuildID,
-		Name:      name,
-		DirPath:   parent.DirPath,
-		ParentID:  channelID,
-		Platform:  parent.Platform,
-		SessionID: parent.SessionID,
-		Active:    true,
+		ChannelID:   threadID,
+		GuildID:     parent.GuildID,
+		Name:        name,
+		DirPath:     parent.DirPath,
+		ParentID:    channelID,
+		Platform:    parent.Platform,
+		SessionID:   parent.SessionID,
+		Permissions: parent.Permissions,
+		Active:      true,
 	}); err != nil {
 		return "", fmt.Errorf("storing thread mapping: %w", err)
 	}

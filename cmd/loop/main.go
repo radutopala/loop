@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -16,6 +17,11 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	goslack "github.com/slack-go/slack"
+	"github.com/slack-go/slack/socketmode"
+	"github.com/spf13/cobra"
+	"github.com/tailscale/hujson"
+
 	"github.com/radutopala/loop/internal/api"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
@@ -31,10 +37,6 @@ import (
 	"github.com/radutopala/loop/internal/scheduler"
 	slackbot "github.com/radutopala/loop/internal/slack"
 	"github.com/radutopala/loop/internal/types"
-	goslack "github.com/slack-go/slack"
-	"github.com/slack-go/slack/socketmode"
-	"github.com/spf13/cobra"
-	"github.com/tailscale/hujson"
 )
 
 func init() {
@@ -87,8 +89,10 @@ Available Commands:
     --log                  Path to MCP log file [default: .loop/mcp.log]
   onboard:global           Initialize global config at ~/.loop/ (aliases: o:global, setup)
     --force                Overwrite existing config
+    --owner-id             Set RBAC owner user ID (exits bootstrap mode)
   onboard:local            Register Loop MCP server in current project (aliases: o:local, init)
     --api-url              Loop API base URL [default: http://localhost:8222]
+    --owner-id             Set RBAC owner user ID in project config
   daemon:start             Install and start the daemon — launchd on macOS, systemd on Linux (aliases: d:start, up)
   daemon:stop              Stop and uninstall the daemon (aliases: d:stop, down)
   daemon:status            Show daemon status (alias: d:status)
@@ -219,10 +223,12 @@ func newOnboardGlobalCmd() *cobra.Command {
 		Long:    "Copies config.example.json to ~/.loop/config.json for first-time setup",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			force, _ := cmd.Flags().GetBool("force")
-			return onboardGlobal(force)
+			ownerID, _ := cmd.Flags().GetString("owner-id")
+			return onboardGlobal(force, ownerID)
 		},
 	}
 	cmd.Flags().Bool("force", false, "Overwrite existing config")
+	cmd.Flags().String("owner-id", "", "Set RBAC owner user ID (exits bootstrap mode)")
 	return cmd
 }
 
@@ -234,10 +240,12 @@ func newOnboardLocalCmd() *cobra.Command {
 		Long:    "Writes .mcp.json with the loop MCP server for Claude Code integration",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			apiURL, _ := cmd.Flags().GetString("api-url")
-			return onboardLocal(apiURL)
+			ownerID, _ := cmd.Flags().GetString("owner-id")
+			return onboardLocal(apiURL, ownerID)
 		},
 	}
 	cmd.Flags().String("api-url", "http://localhost:8222", "Loop API base URL")
+	cmd.Flags().String("owner-id", "", "Set RBAC owner user ID in project config")
 	return cmd
 }
 
@@ -250,7 +258,7 @@ var (
 	osReadFile  = os.ReadFile
 )
 
-func onboardGlobal(force bool) error {
+func onboardGlobal(force bool, ownerID string) error {
 	home, err := userHomeDir()
 	if err != nil {
 		return fmt.Errorf("getting home directory: %w", err)
@@ -271,8 +279,24 @@ func onboardGlobal(force bool) error {
 		return fmt.Errorf("creating loop directory: %w", err)
 	}
 
+	// Prepare config content — optionally inject owner permissions
+	configData := config.ExampleConfig
+	if ownerID != "" {
+		commented := []byte(`  // RBAC permissions: owners can do everything (including allow/deny); members can trigger and manage tasks.
+  // If all config and DB permissions are empty, everyone is treated as owner (bootstrap mode).
+  //"permissions": {
+  //  "owners":  { "users": ["U12345678"], "roles": ["1234567890123456789"] },
+  //  "members": { "users": [], "roles": [] }
+  //},`)
+		uncommented := []byte(fmt.Sprintf(`  "permissions": {
+    "owners":  { "users": ["%s"], "roles": [] },
+    "members": { "users": [], "roles": [] }
+  },`, ownerID))
+		configData = bytes.Replace(configData, commented, uncommented, 1)
+	}
+
 	// Write embedded example config
-	if err := osWriteFile(configPath, config.ExampleConfig, 0600); err != nil {
+	if err := osWriteFile(configPath, configData, 0600); err != nil {
 		return fmt.Errorf("writing config file: %w", err)
 	}
 
@@ -332,7 +356,7 @@ func onboardGlobal(force bool) error {
 	return nil
 }
 
-func onboardLocal(apiURL string) error {
+func onboardLocal(apiURL string, ownerID string) error {
 	dir, err := osGetwd()
 	if err != nil {
 		return fmt.Errorf("getting working directory: %w", err)
@@ -385,7 +409,20 @@ func onboardLocal(apiURL string) error {
 		if err := osMkdirAll(loopDir, 0755); err != nil {
 			return fmt.Errorf("creating .loop directory: %w", err)
 		}
-		if err := osWriteFile(projectConfigPath, config.ProjectExampleConfig, 0644); err != nil {
+		projectData := config.ProjectExampleConfig
+		if ownerID != "" {
+			commented := []byte(`  // Permissions override for this project (replaces global permissions when set)
+  //"permissions": {
+  //  "owners":  { "users": [], "roles": [] },
+  //  "members": { "users": [], "roles": [] }
+  //},`)
+			uncommented := []byte(fmt.Sprintf(`  "permissions": {
+    "owners":  { "users": ["%s"], "roles": [] },
+    "members": { "users": [], "roles": [] }
+  },`, ownerID))
+			projectData = bytes.Replace(projectData, commented, uncommented, 1)
+		}
+		if err := osWriteFile(projectConfigPath, projectData, 0644); err != nil {
 			return fmt.Errorf("writing project config: %w", err)
 		}
 		fmt.Printf("Created project config at %s\n", projectConfigPath)
@@ -830,7 +867,7 @@ func serve() error {
 		return fmt.Errorf("starting api server: %w", err)
 	}
 
-	orch := orchestrator.New(store, bot, runner, sched, logger, cfg.TaskTemplates, cfg.ContainerTimeout, cfg.LoopDir, platform, cfg.StreamingEnabled)
+	orch := orchestrator.New(store, bot, runner, sched, logger, platform, *cfg)
 
 	if err := orch.Start(ctx); err != nil {
 		_ = apiSrv.Stop(context.Background())

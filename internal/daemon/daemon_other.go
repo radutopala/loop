@@ -2,7 +2,9 @@
 
 package daemon
 
-import "errors"
+import (
+	"errors"
+)
 
 var errUnsupported = errors.New("daemon management is only supported on macOS (launchd) and Linux (systemd)")
 

@@ -3,11 +3,13 @@ package db
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"time"
 
-	"github.com/radutopala/loop/internal/types"
 	_ "modernc.org/sqlite"
+
+	"github.com/radutopala/loop/internal/types"
 )
 
 // Store defines all database operations.
@@ -17,6 +19,7 @@ type Store interface {
 	GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*Channel, error)
 	IsChannelActive(ctx context.Context, channelID string) (bool, error)
 	UpdateSessionID(ctx context.Context, channelID string, sessionID string) error
+	UpdateChannelPermissions(ctx context.Context, channelID string, perms ChannelPermissions) error
 	DeleteChannel(ctx context.Context, channelID string) error
 	DeleteChannelsByParentID(ctx context.Context, parentID string) error
 	InsertMessage(ctx context.Context, msg *Message) error
@@ -91,9 +94,14 @@ func (s *SQLiteStore) Close() error {
 }
 
 func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
+	var permStr string
+	if !ch.Permissions.IsEmpty() {
+		data, _ := json.Marshal(ch.Permissions) // ChannelPermissions is always serializable
+		permStr = string(data)
+	}
 	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO channels (channel_id, guild_id, name, dir_path, parent_id, platform, session_id, active, updated_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO channels (channel_id, guild_id, name, dir_path, parent_id, platform, session_id, permissions, active, updated_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(channel_id) DO UPDATE SET
 		   guild_id = excluded.guild_id,
 		   name = excluded.name,
@@ -101,9 +109,10 @@ func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
 		   parent_id = excluded.parent_id,
 		   platform = CASE WHEN excluded.platform != '' THEN excluded.platform ELSE channels.platform END,
 		   session_id = CASE WHEN excluded.session_id != '' THEN excluded.session_id ELSE channels.session_id END,
+		   permissions = CASE WHEN excluded.permissions != '' THEN excluded.permissions ELSE channels.permissions END,
 		   active = excluded.active,
 		   updated_at = excluded.updated_at`,
-		ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, ch.ParentID, ch.Platform, ch.SessionID, boolToInt(ch.Active), time.Now().UTC(),
+		ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, ch.ParentID, ch.Platform, ch.SessionID, permStr, boolToInt(ch.Active), time.Now().UTC(),
 	)
 	return err
 }
@@ -111,10 +120,11 @@ func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
 func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channel, error) {
 	ch := &Channel{}
 	var active int
+	var permJSON string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, created_at, updated_at FROM channels WHERE channel_id = ?`,
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, created_at, updated_at FROM channels WHERE channel_id = ?`,
 		channelID,
-	).Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &ch.ParentID, &ch.Platform, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt)
+	).Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &ch.CreatedAt, &ch.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -122,16 +132,20 @@ func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channe
 		return nil, err
 	}
 	ch.Active = active == 1
+	if permJSON != "" {
+		_ = json.Unmarshal([]byte(permJSON), &ch.Permissions)
+	}
 	return ch, nil
 }
 
 func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*Channel, error) {
 	ch := &Channel{}
 	var active int
+	var permJSON string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, created_at, updated_at FROM channels WHERE dir_path = ? AND platform = ?`,
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, created_at, updated_at FROM channels WHERE dir_path = ? AND platform = ?`,
 		dirPath, platform,
-	).Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &ch.ParentID, &ch.Platform, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt)
+	).Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &ch.CreatedAt, &ch.UpdatedAt)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -139,6 +153,9 @@ func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string, p
 		return nil, err
 	}
 	ch.Active = active == 1
+	if permJSON != "" {
+		_ = json.Unmarshal([]byte(permJSON), &ch.Permissions)
+	}
 	return ch, nil
 }
 
@@ -158,6 +175,18 @@ func (s *SQLiteStore) UpdateSessionID(ctx context.Context, channelID string, ses
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE channels SET session_id = ?, updated_at = ? WHERE channel_id = ?`,
 		sessionID, time.Now().UTC(), channelID,
+	)
+	return err
+}
+
+func (s *SQLiteStore) UpdateChannelPermissions(ctx context.Context, channelID string, perms ChannelPermissions) error {
+	data, _ := json.Marshal(perms) // ChannelPermissions is always serializable
+	permStr := string(data)
+	now := time.Now().UTC()
+	// Update the channel and propagate to all child threads
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE channels SET permissions = ?, updated_at = ? WHERE channel_id = ? OR parent_id = ?`,
+		permStr, now, channelID, channelID,
 	)
 	return err
 }
@@ -183,7 +212,7 @@ func (s *SQLiteStore) DeleteChannelsByParentID(ctx context.Context, parentID str
 
 func (s *SQLiteStore) ListChannels(ctx context.Context) ([]*Channel, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, created_at, updated_at
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, created_at, updated_at
 		 FROM channels ORDER BY name ASC`)
 	if err != nil {
 		return nil, err
@@ -194,11 +223,15 @@ func (s *SQLiteStore) ListChannels(ctx context.Context) ([]*Channel, error) {
 	for rows.Next() {
 		ch := &Channel{}
 		var active int
+		var permJSON string
 		if err := rows.Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath,
-			&ch.ParentID, &ch.Platform, &active, &ch.SessionID, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
+			&ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
 			return nil, err
 		}
 		ch.Active = active == 1
+		if permJSON != "" {
+			_ = json.Unmarshal([]byte(permJSON), &ch.Permissions)
+		}
 		channels = append(channels, ch)
 	}
 	return channels, rows.Err()

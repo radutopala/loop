@@ -7,11 +7,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/radutopala/loop/internal/db"
-	"github.com/radutopala/loop/internal/types"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/types"
 )
 
 // MockStore implements the db.Store interface for testing.
@@ -166,6 +167,10 @@ func (m *MockStore) GetMemoryFileHash(ctx context.Context, filePath, dirPath str
 
 func (m *MockStore) DeleteMemoryFile(ctx context.Context, filePath, dirPath string) error {
 	return m.Called(ctx, filePath, dirPath).Error(0)
+}
+
+func (m *MockStore) UpdateChannelPermissions(ctx context.Context, channelID string, perms db.ChannelPermissions) error {
+	return m.Called(ctx, channelID, perms).Error(0)
 }
 
 // MockTaskExecutor implements TaskExecutor for testing.

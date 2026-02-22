@@ -13,11 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/radutopala/loop/internal/agent"
-	"github.com/radutopala/loop/internal/config"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/agent"
+	"github.com/radutopala/loop/internal/config"
 )
 
 // MockDockerClient implements DockerClient for testing.
@@ -689,6 +690,78 @@ func (s *RunnerSuite) TestRunWithOAuthToken() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "response", resp.Response)
 	require.Equal(s.T(), "sess-new", resp.SessionID)
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunWithAnthropicAPIKey() {
+	ctx := context.Background()
+	s.cfg.AnthropicAPIKey = "sk-ant-api-key-123"
+
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	jsonOutput := `{"type":"result","result":"response","session_id":"sess-new","is_error":false}`
+	reader := bytes.NewReader([]byte(jsonOutput))
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		hasAPIKey := slices.Contains(cfg.Env, "ANTHROPIC_API_KEY=sk-ant-api-key-123")
+		noOAuth := !slices.ContainsFunc(cfg.Env, func(e string) bool {
+			return strings.HasPrefix(e, "CLAUDE_CODE_OAUTH_TOKEN=")
+		})
+		return hasAPIKey && noOAuth
+	}), "loop-ch-1-aabbcc").Return("container-123", nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "response", resp.Response)
+	require.Equal(s.T(), "sess-new", resp.SessionID)
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunOAuthTakesPrecedenceOverAPIKey() {
+	ctx := context.Background()
+	s.cfg.ClaudeCodeOAuthToken = "sk-ant-oauth-token"
+	s.cfg.AnthropicAPIKey = "sk-ant-api-key-123"
+
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	jsonOutput := `{"type":"result","result":"response","session_id":"sess-new","is_error":false}`
+	reader := bytes.NewReader([]byte(jsonOutput))
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		hasOAuth := slices.Contains(cfg.Env, "CLAUDE_CODE_OAUTH_TOKEN=sk-ant-oauth-token")
+		noAPIKey := !slices.ContainsFunc(cfg.Env, func(e string) bool {
+			return strings.HasPrefix(e, "ANTHROPIC_API_KEY=")
+		})
+		return hasOAuth && noAPIKey
+	}), "loop-ch-1-aabbcc").Return("container-123", nil)
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "response", resp.Response)
 
 	s.client.AssertExpectations(s.T())
 }

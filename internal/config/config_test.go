@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/radutopala/loop/internal/types"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/types"
 )
 
 type ConfigSuite struct {
@@ -726,6 +727,32 @@ func (s *ConfigSuite) TestSetReadFile() {
 	TestSetReadFile(orig)
 }
 
+func (s *ConfigSuite) TestAnthropicAPIKeyLoaded() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platform": "discord",
+			"discord_token": "tok",
+			"discord_app_id": "app",
+			"anthropic_api_key": "sk-ant-api-key-123"
+		}`), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "sk-ant-api-key-123", cfg.AnthropicAPIKey)
+	require.Empty(s.T(), cfg.ClaudeCodeOAuthToken)
+}
+
+func (s *ConfigSuite) TestAnthropicAPIKeyAbsent() {
+	readFile = func(_ string) ([]byte, error) {
+		return s.minimalJSON(), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), cfg.AnthropicAPIKey)
+}
+
 func (s *ConfigSuite) TestClaudeModelLoaded() {
 	readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
@@ -785,6 +812,71 @@ func (s *ConfigSuite) TestLoadProjectConfigClaudeModelNoOverride() {
 	merged, err := LoadProjectConfig("/project", mainCfg)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "claude-sonnet-4-5-20250929", merged.ClaudeModel)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigOAuthTokenOverride() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"claude_code_oauth_token": "sk-ant-project-oauth"
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		AnthropicAPIKey: "sk-ant-global-api-key",
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "sk-ant-project-oauth", merged.ClaudeCodeOAuthToken)
+	require.Empty(s.T(), merged.AnthropicAPIKey) // OAuth takes precedence
+
+	// Verify main not mutated
+	require.Equal(s.T(), "sk-ant-global-api-key", mainCfg.AnthropicAPIKey)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigAPIKeyOverride() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"anthropic_api_key": "sk-ant-project-api-key"
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		ClaudeCodeOAuthToken: "sk-ant-global-oauth",
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "sk-ant-project-api-key", merged.AnthropicAPIKey)
+	require.Empty(s.T(), merged.ClaudeCodeOAuthToken) // API key clears OAuth
+
+	// Verify main not mutated
+	require.Equal(s.T(), "sk-ant-global-oauth", mainCfg.ClaudeCodeOAuthToken)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigAuthNoOverride() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		ClaudeCodeOAuthToken: "sk-ant-global-oauth",
+		AnthropicAPIKey:      "sk-ant-global-api-key",
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "sk-ant-global-oauth", merged.ClaudeCodeOAuthToken)
+	require.Equal(s.T(), "sk-ant-global-api-key", merged.AnthropicAPIKey)
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigClaudeBinPathOverride() {
@@ -1366,6 +1458,119 @@ func (s *ConfigSuite) TestLoadProjectConfigMaxChunkCharsOverride() {
 	merged, err := LoadProjectConfig("/project", mainCfg)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 12000, merged.Memory.MaxChunkChars)
+}
+
+func (s *ConfigSuite) TestPermissionsConfigIsEmpty() {
+	tests := []struct {
+		name     string
+		perms    PermissionsConfig
+		expected bool
+	}{
+		{"both empty", PermissionsConfig{}, true},
+		{"owners users only", PermissionsConfig{Owners: RoleGrant{Users: []string{"U1"}}}, false},
+		{"owners roles only", PermissionsConfig{Owners: RoleGrant{Roles: []string{"R1"}}}, false},
+		{"members users only", PermissionsConfig{Members: RoleGrant{Users: []string{"U1"}}}, false},
+		{"members roles only", PermissionsConfig{Members: RoleGrant{Roles: []string{"R1"}}}, false},
+		{"all set", PermissionsConfig{Owners: RoleGrant{Users: []string{"U1"}, Roles: []string{"R1"}}, Members: RoleGrant{Users: []string{"U2"}}}, false},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.expected, tc.perms.IsEmpty())
+		})
+	}
+}
+
+func (s *ConfigSuite) TestPermissionsConfigGetRole() {
+	tests := []struct {
+		name        string
+		perms       PermissionsConfig
+		authorID    string
+		authorRoles []string
+		expected    types.Role
+	}{
+		{"empty config returns empty role", PermissionsConfig{}, "any-user", nil, ""},
+		{"owner by user", PermissionsConfig{Owners: RoleGrant{Users: []string{"U1", "U2"}}}, "U1", nil, types.RoleOwner},
+		{"owner by role", PermissionsConfig{Owners: RoleGrant{Roles: []string{"R1"}}}, "U3", []string{"R1"}, types.RoleOwner},
+		{"member by user", PermissionsConfig{Members: RoleGrant{Users: []string{"U1"}}}, "U1", nil, types.RoleMember},
+		{"member by role", PermissionsConfig{Members: RoleGrant{Roles: []string{"R1"}}}, "U3", []string{"R1"}, types.RoleMember},
+		{"owner beats member", PermissionsConfig{Owners: RoleGrant{Users: []string{"U1"}}, Members: RoleGrant{Users: []string{"U1"}}}, "U1", nil, types.RoleOwner},
+		{"user not in any list", PermissionsConfig{Owners: RoleGrant{Users: []string{"U1"}}}, "U2", nil, ""},
+		{"role match as owner", PermissionsConfig{Owners: RoleGrant{Roles: []string{"R1"}}}, "U2", []string{"R1", "R2"}, types.RoleOwner},
+		{"role match as member", PermissionsConfig{Members: RoleGrant{Roles: []string{"R2"}}}, "U2", []string{"R1", "R2"}, types.RoleMember},
+		{"no role match", PermissionsConfig{Owners: RoleGrant{Roles: []string{"R1"}}}, "U3", []string{"R2", "R3"}, ""},
+		{"nil author roles with role restriction", PermissionsConfig{Owners: RoleGrant{Roles: []string{"R1"}}}, "U1", nil, ""},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			require.Equal(s.T(), tc.expected, tc.perms.GetRole(tc.authorID, tc.authorRoles))
+		})
+	}
+}
+
+func (s *ConfigSuite) TestLoadWithPermissions() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platform": "discord",
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"permissions": {
+				"owners":  {"users": ["U1", "U2"], "roles": ["R1"]},
+				"members": {"users": ["U3"], "roles": []}
+			}
+		}`), nil
+	}
+
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"U1", "U2"}, cfg.Permissions.Owners.Users)
+	require.Equal(s.T(), []string{"R1"}, cfg.Permissions.Owners.Roles)
+	require.Equal(s.T(), []string{"U3"}, cfg.Permissions.Members.Users)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigPermissionsOverride() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{
+				"permissions": {
+					"owners":  {"users": [], "roles": []},
+					"members": {"users": [], "roles": []}
+				}
+			}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		Permissions: PermissionsConfig{
+			Owners:  RoleGrant{Users: []string{"U1"}, Roles: []string{"R1"}},
+			Members: RoleGrant{Users: []string{"U2"}},
+		},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	// Project sets empty permissions, replacing the global restriction.
+	require.True(s.T(), merged.Permissions.IsEmpty())
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigPermissionsNoOverride() {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{}`), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+
+	mainCfg := &Config{
+		Permissions: PermissionsConfig{
+			Owners: RoleGrant{Users: []string{"U1"}},
+		},
+	}
+
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	// No project permissions block — global permissions apply unchanged.
+	require.Equal(s.T(), []string{"U1"}, merged.Permissions.Owners.Users)
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigMaxChunkCharsNoOverride() {

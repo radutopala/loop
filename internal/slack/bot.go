@@ -405,6 +405,12 @@ func (b *SlackBot) GetChannelParentID(_ context.Context, channelID string) (stri
 	return parentID, nil
 }
 
+// GetMemberRoles returns nil for Slack — Slack has no role equivalent.
+// Slack-based access control relies on allow_users only.
+func (b *SlackBot) GetMemberRoles(_ context.Context, _, _ string) ([]string, error) {
+	return nil, nil
+}
+
 // eventLoop processes events from the Socket Mode client.
 func (b *SlackBot) eventLoop(ctx context.Context) {
 	for {
@@ -567,6 +573,8 @@ func (b *SlackBot) handleSlashCommand(evt socketmode.Event) {
 		_, _, _ = b.session.PostMessage(cmd.ChannelID, goslack.MsgOptionText(errText, false))
 		return
 	}
+
+	inter.AuthorID = cmd.UserID
 
 	b.dispatchInteraction(inter)
 }

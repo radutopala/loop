@@ -387,6 +387,8 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 	}
 	if cfg.ClaudeCodeOAuthToken != "" {
 		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+cfg.ClaudeCodeOAuthToken)
+	} else if cfg.AnthropicAPIKey != "" {
+		env = append(env, "ANTHROPIC_API_KEY="+cfg.AnthropicAPIKey)
 	}
 	hasProxy := false
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {

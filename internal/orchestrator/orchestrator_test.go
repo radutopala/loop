@@ -10,13 +10,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/types"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 )
 
 // --- Mocks ---
@@ -166,6 +167,10 @@ func (m *MockStore) ListChannels(ctx context.Context) ([]*db.Channel, error) {
 	return args.Get(0).([]*db.Channel), args.Error(1)
 }
 
+func (m *MockStore) UpdateChannelPermissions(ctx context.Context, channelID string, perms db.ChannelPermissions) error {
+	return m.Called(ctx, channelID, perms).Error(0)
+}
+
 func (m *MockStore) UpsertMemoryFile(ctx context.Context, file *db.MemoryFile) error {
 	return m.Called(ctx, file).Error(0)
 }
@@ -285,6 +290,14 @@ func (m *MockBot) CreateSimpleThread(ctx context.Context, channelID, name, initi
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockBot) GetMemberRoles(ctx context.Context, guildID, userID string) ([]string, error) {
+	args := m.Called(ctx, guildID, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]string), args.Error(1)
+}
+
 type MockRunner struct {
 	mock.Mock
 }
@@ -371,7 +384,7 @@ func (s *OrchestratorSuite) SetupTest() {
 	s.ctx = context.Background()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, nil, 5*time.Minute, "", types.PlatformDiscord, false)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{})
 }
 
 func (s *OrchestratorSuite) TestNew() {
@@ -492,16 +505,24 @@ func (s *OrchestratorSuite) TestHandleMessageThreadResolved() {
 	// Parent is active
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 	// Get parent channel for inheritance
+	parentPerms := db.ChannelPermissions{
+		Owners:  db.ChannelRoleGrant{Users: []string{"user1"}},
+		Members: db.ChannelRoleGrant{Users: []string{"member1"}},
+	}
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
-		ID: 1, ChannelID: "ch1", GuildID: "g1", DirPath: "/project", Platform: types.PlatformDiscord, SessionID: "sess-parent", Active: true,
+		ID: 1, ChannelID: "ch1", GuildID: "g1", DirPath: "/project", Platform: types.PlatformDiscord, SessionID: "sess-parent", Permissions: parentPerms, Active: true,
 	}, nil)
-	// Upsert thread channel with dir_path, platform, and session_id inherited from parent
+	// Upsert thread channel with dir_path, platform, session_id, and permissions inherited from parent
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
-		return ch.ChannelID == "thread1" && ch.ParentID == "ch1" && ch.GuildID == "g1" && ch.DirPath == "/project" && ch.Platform == "discord" && ch.SessionID == "sess-parent" && ch.Active
+		return ch.ChannelID == "thread1" && ch.ParentID == "ch1" && ch.GuildID == "g1" &&
+			ch.DirPath == "/project" && ch.Platform == "discord" && ch.SessionID == "sess-parent" &&
+			len(ch.Permissions.Owners.Users) == 1 && ch.Permissions.Owners.Users[0] == "user1" &&
+			len(ch.Permissions.Members.Users) == 1 && ch.Permissions.Members.Users[0] == "member1" &&
+			ch.Active
 	})).Return(nil)
 	// Now the thread is a channel — normal flow continues
 	s.store.On("GetChannel", s.ctx, "thread1").Return(&db.Channel{
-		ID: 2, ChannelID: "thread1", GuildID: "g1", DirPath: "/project", ParentID: "ch1", SessionID: "sess-parent", Active: true,
+		ID: 2, ChannelID: "thread1", GuildID: "g1", DirPath: "/project", ParentID: "ch1", SessionID: "sess-parent", Permissions: parentPerms, Active: true,
 	}, nil)
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.bot.On("SendTyping", mock.Anything, "thread1").Return(nil).Maybe()
@@ -1274,6 +1295,7 @@ func (s *OrchestratorSuite) TestHandleInteractionInvalidType() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionUnknownCommand() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.orch.HandleInteraction(s.ctx, &Interaction{
 		ChannelID:   "ch1",
 		CommandName: "unknown",
@@ -1282,6 +1304,7 @@ func (s *OrchestratorSuite) TestHandleInteractionUnknownCommand() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionSchedule() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
 		return task.ChannelID == "ch1" && task.Prompt == "do stuff" && task.Schedule == "0 * * * *" && task.Type == db.TaskTypeCron
 	})).Return(int64(42), nil)
@@ -1304,6 +1327,7 @@ func (s *OrchestratorSuite) TestHandleInteractionSchedule() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionScheduleInterval() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
 		return task.Type == db.TaskTypeInterval && task.Schedule == "5m"
 	})).Return(int64(43), nil)
@@ -1326,6 +1350,7 @@ func (s *OrchestratorSuite) TestHandleInteractionScheduleInterval() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionScheduleError() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.Anything).Return(int64(0), errors.New("sched err"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Failed to schedule task."
@@ -1345,6 +1370,7 @@ func (s *OrchestratorSuite) TestHandleInteractionScheduleError() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionTasks() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	nextRun := time.Now().Add(30 * time.Minute)
 	tasks := []*db.ScheduledTask{
 		{ID: 1, Prompt: "task1", Schedule: "0 * * * *", Type: db.TaskTypeCron, Enabled: true, NextRunAt: nextRun},
@@ -1377,6 +1403,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTasks() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionTasksEmpty() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("ListTasks", s.ctx, "ch1").Return([]*db.ScheduledTask{}, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "No scheduled tasks."
@@ -1391,6 +1418,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTasksEmpty() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionTasksError() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("ListTasks", s.ctx, "ch1").Return(nil, errors.New("list err"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Failed to list tasks."
@@ -1405,6 +1433,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTasksError() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionCancel() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("RemoveTask", s.ctx, int64(42)).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Task 42 cancelled."
@@ -1420,6 +1449,7 @@ func (s *OrchestratorSuite) TestHandleInteractionCancel() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionCancelInvalidID() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Invalid task ID."
 	})).Return(nil)
@@ -1434,6 +1464,7 @@ func (s *OrchestratorSuite) TestHandleInteractionCancelInvalidID() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionCancelError() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("RemoveTask", s.ctx, int64(42)).Return(errors.New("remove err"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Failed to cancel task."
@@ -1449,6 +1480,7 @@ func (s *OrchestratorSuite) TestHandleInteractionCancelError() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionToggleEnable() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("ToggleTask", s.ctx, int64(42)).Return(true, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Task 42 enabled."
@@ -1465,6 +1497,7 @@ func (s *OrchestratorSuite) TestHandleInteractionToggleEnable() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionToggleDisable() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("ToggleTask", s.ctx, int64(42)).Return(false, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Task 42 disabled."
@@ -1481,6 +1514,7 @@ func (s *OrchestratorSuite) TestHandleInteractionToggleDisable() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionToggleInvalidID() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Invalid task ID."
 	})).Return(nil)
@@ -1495,6 +1529,7 @@ func (s *OrchestratorSuite) TestHandleInteractionToggleInvalidID() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionToggleError() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("ToggleTask", s.ctx, int64(42)).Return(false, errors.New("toggle err"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Failed to toggle task."
@@ -1510,6 +1545,7 @@ func (s *OrchestratorSuite) TestHandleInteractionToggleError() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionEditSuccess() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("EditTask", s.ctx, int64(42), new("0 9 * * *"), (*string)(nil), (*string)(nil)).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Task 42 updated."
@@ -1526,6 +1562,7 @@ func (s *OrchestratorSuite) TestHandleInteractionEditSuccess() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionEditWithTypeAndPrompt() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("EditTask", s.ctx, int64(10), (*string)(nil), new("interval"), new("new prompt")).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Task 10 updated."
@@ -1542,6 +1579,7 @@ func (s *OrchestratorSuite) TestHandleInteractionEditWithTypeAndPrompt() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionEditInvalidID() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Invalid task ID."
 	})).Return(nil)
@@ -1556,6 +1594,7 @@ func (s *OrchestratorSuite) TestHandleInteractionEditInvalidID() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionEditNoFields() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "At least one of schedule, type, or prompt is required."
 	})).Return(nil)
@@ -1570,6 +1609,7 @@ func (s *OrchestratorSuite) TestHandleInteractionEditNoFields() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionEditError() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("EditTask", s.ctx, int64(42), (*string)(nil), (*string)(nil), new("new")).Return(errors.New("edit err"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Failed to edit task."
@@ -1585,6 +1625,7 @@ func (s *OrchestratorSuite) TestHandleInteractionEditError() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionStatus() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Loop bot is running."
 	})).Return(nil)
@@ -1712,8 +1753,9 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSuccess() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord, false)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
 
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
 		return task.ChannelID == "ch1" && task.TemplateName == "daily-check" && task.Schedule == "0 9 * * *" && task.Type == db.TaskTypeCron && task.Prompt == "check stuff"
@@ -1739,8 +1781,9 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddIdempotent() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord, false)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
 
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(&db.ScheduledTask{ID: 5, TemplateName: "daily-check"}, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Template 'daily-check' already loaded (task ID: 5)."
@@ -1757,6 +1800,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddIdempotent() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionTemplateAddUnknown() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Unknown template: nonexistent"
 	})).Return(nil)
@@ -1775,8 +1819,9 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddStoreError() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord, false)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
 
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, errors.New("db error"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Failed to check existing templates."
@@ -1797,8 +1842,9 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSchedulerError() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord, false)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
 
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.Anything).Return(int64(0), errors.New("sched error"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
@@ -1821,8 +1867,9 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateList() {
 		{Name: "weekly-report", Description: "Weekly report", Schedule: "0 17 * * 5", Type: "cron", Prompt: "generate report"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord, false)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
 
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return strings.Contains(out.Content, "Available templates:") &&
 			strings.Contains(out.Content, "**daily-check**") &&
@@ -1842,6 +1889,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateList() {
 
 func (s *OrchestratorSuite) TestHandleInteractionTemplateListEmpty() {
 	// s.orch already has nil templates from SetupTest
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "No templates configured."
 	})).Return(nil)
@@ -1866,8 +1914,9 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddWithPromptPath() {
 		{Name: "daily-from-file", Description: "Daily from file", Schedule: "0 9 * * *", Type: "cron", PromptPath: "daily.md"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, tmpDir, types.PlatformDiscord, false)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute, LoopDir: tmpDir})
 
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-from-file").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
 		return task.Prompt == "Do daily stuff" && task.TemplateName == "daily-from-file"
@@ -1894,8 +1943,9 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddResolvePromptError()
 		// Neither prompt nor prompt_path set
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, templates, 5*time.Minute, "", types.PlatformDiscord, false)
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
 
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "bad-template").Return(nil, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return strings.Contains(out.Content, "Failed to resolve template prompt")
@@ -1951,10 +2001,676 @@ func (s *OrchestratorSuite) TestHandleChannelDeleteChannelError() {
 	s.store.AssertExpectations(s.T())
 }
 
+// --- Permissions tests ---
+
+func (s *OrchestratorSuite) TestConfigPermissionsForEmptyConfig() {
+	// Default zero-value config → empty permissions.
+	s.orch.cfg = config.Config{}
+	perms := s.orch.configPermissionsFor("")
+	require.True(s.T(), perms.IsEmpty())
+}
+
+func (s *OrchestratorSuite) TestConfigPermissionsForGlobalNoProjectConfig() {
+	s.orch.cfg = config.Config{
+		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}},
+	}
+	// Empty dirPath → global permissions returned directly.
+	perms := s.orch.configPermissionsFor("")
+	require.Equal(s.T(), []string{"U1"}, perms.Owners.Users)
+}
+
+func (s *OrchestratorSuite) TestConfigPermissionsForWithDirPath() {
+	orig := config.TestSetReadFile(func(path string) ([]byte, error) {
+		return nil, os.ErrNotExist
+	})
+	defer config.TestSetReadFile(orig)
+
+	s.orch.cfg = config.Config{
+		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}},
+	}
+	// Non-existent project config → LoadProjectConfig returns global config → global permissions returned.
+	perms := s.orch.configPermissionsFor("/some/project")
+	require.Equal(s.T(), []string{"U1"}, perms.Owners.Users)
+}
+
+func (s *OrchestratorSuite) TestConfigPermissionsForLoadError() {
+	orig := config.TestSetReadFile(func(path string) ([]byte, error) {
+		return nil, errors.New("permission denied")
+	})
+	defer config.TestSetReadFile(orig)
+
+	s.orch.cfg = config.Config{
+		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}},
+	}
+	// Read error (not ErrNotExist) → LoadProjectConfig returns error → global permissions returned as fallback.
+	perms := s.orch.configPermissionsFor("/some/project")
+	require.Equal(s.T(), []string{"U1"}, perms.Owners.Users)
+}
+
+func (s *OrchestratorSuite) TestConfigPermissionsForProjectOverridesGlobal() {
+	orig := config.TestSetReadFile(func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(`{"permissions":{"owners":{"users":["U2"]}}}`), nil
+		}
+		return nil, os.ErrNotExist
+	})
+	defer config.TestSetReadFile(orig)
+
+	s.orch.cfg = config.Config{
+		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}},
+	}
+	perms := s.orch.configPermissionsFor("/project")
+	require.Equal(s.T(), []string{"U2"}, perms.Owners.Users)
+}
+
+func (s *OrchestratorSuite) TestResolveRole() {
+	tests := []struct {
+		name        string
+		cfgPerms    config.PermissionsConfig
+		dbPerms     db.ChannelPermissions
+		authorID    string
+		authorRoles []string
+		expected    types.Role
+	}{
+		{
+			name:     "bootstrap: both empty → owner",
+			cfgPerms: config.PermissionsConfig{},
+			dbPerms:  db.ChannelPermissions{},
+			expected: types.RoleOwner,
+		},
+		{
+			name:     "cfg owner only",
+			cfgPerms: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}},
+			dbPerms:  db.ChannelPermissions{},
+			authorID: "U1",
+			expected: types.RoleOwner,
+		},
+		{
+			name:     "db owner only",
+			cfgPerms: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}},
+			dbPerms:  db.ChannelPermissions{Owners: db.ChannelRoleGrant{Users: []string{"U2"}}},
+			authorID: "U2",
+			expected: types.RoleOwner,
+		},
+		{
+			name:     "cfg member only",
+			cfgPerms: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}, Members: config.RoleGrant{Users: []string{"U2"}}},
+			dbPerms:  db.ChannelPermissions{},
+			authorID: "U2",
+			expected: types.RoleMember,
+		},
+		{
+			name:     "db member wins when cfg empty",
+			cfgPerms: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}},
+			dbPerms:  db.ChannelPermissions{Members: db.ChannelRoleGrant{Users: []string{"U3"}}},
+			authorID: "U3",
+			expected: types.RoleMember,
+		},
+		{
+			name:     "denied when not in any list",
+			cfgPerms: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}},
+			dbPerms:  db.ChannelPermissions{},
+			authorID: "U99",
+			expected: "",
+		},
+		{
+			name:        "cfg owner by role",
+			cfgPerms:    config.PermissionsConfig{Owners: config.RoleGrant{Roles: []string{"admin"}}},
+			dbPerms:     db.ChannelPermissions{},
+			authorID:    "U5",
+			authorRoles: []string{"admin"},
+			expected:    types.RoleOwner,
+		},
+		{
+			name:     "db owner beats cfg member",
+			cfgPerms: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}, Members: config.RoleGrant{Users: []string{"U2"}}},
+			dbPerms:  db.ChannelPermissions{Owners: db.ChannelRoleGrant{Users: []string{"U2"}}},
+			authorID: "U2",
+			expected: types.RoleOwner,
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			role := resolveRole(tc.cfgPerms, tc.dbPerms, tc.authorID, tc.authorRoles)
+			require.Equal(s.T(), tc.expected, role)
+		})
+	}
+}
+
+func (s *OrchestratorSuite) TestHandleMessagePermissionDenied() {
+	s.orch.cfg = config.Config{
+		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"allowed-user"}}},
+	}
+
+	msg := &IncomingMessage{
+		ChannelID:    "ch1",
+		AuthorID:     "denied-user",
+		Content:      "hello bot",
+		IsBotMention: true,
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", Active: true,
+	}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	// No runner call or response sent.
+	s.runner.AssertNotCalled(s.T(), "Run", mock.Anything, mock.Anything)
+	s.bot.AssertNotCalled(s.T(), "SendMessage", mock.Anything, mock.Anything)
+}
+
+func (s *OrchestratorSuite) TestHandleMessagePermissionAllowed() {
+	s.orch.cfg = config.Config{
+		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"allowed-user"}}},
+	}
+
+	msg := &IncomingMessage{
+		ChannelID:    "ch1",
+		AuthorID:     "allowed-user",
+		AuthorName:   "Alice",
+		Content:      "hello bot",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", Active: true,
+	}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
+		Response: "Hello!", SessionID: "s1",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "s1").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	s.runner.AssertCalled(s.T(), "Run", mock.Anything, mock.Anything)
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionPermissionDenied() {
+	s.orch.cfg = config.Config{
+		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"allowed-user"}}},
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", DirPath: "",
+	}, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "⛔ You don't have permission to use this command."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "tasks",
+		AuthorID:    "denied-user",
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+	s.scheduler.AssertNotCalled(s.T(), "ListTasks", mock.Anything, mock.Anything)
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionPermissionAllowed() {
+	s.orch.cfg = config.Config{
+		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"allowed-user"}}},
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", DirPath: "",
+	}, nil)
+	s.scheduler.On("ListTasks", s.ctx, "ch1").Return([]*db.ScheduledTask{}, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "No scheduled tasks."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "tasks",
+		AuthorID:    "allowed-user",
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.scheduler.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionPermissionByRole() {
+	s.orch.cfg = config.Config{
+		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Roles: []string{"admin-role"}}},
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", DirPath: "",
+	}, nil)
+	s.scheduler.On("ListTasks", s.ctx, "ch1").Return([]*db.ScheduledTask{}, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "No scheduled tasks."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "tasks",
+		AuthorID:    "some-user",
+		AuthorRoles: []string{"admin-role"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.scheduler.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionGetChannelNil() {
+	s.orch.cfg = config.Config{
+		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"allowed-user"}}},
+	}
+
+	// Channel not found — dirPath will be empty, permissions come from global.
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "⛔ You don't have permission to use this command."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "tasks",
+		AuthorID:    "denied-user",
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionPermCmdRequiresOwner() {
+	// Member user cannot manage permissions.
+	s.orch.cfg = config.Config{
+		Permissions: config.PermissionsConfig{
+			Owners:  config.RoleGrant{Users: []string{"owner-user"}},
+			Members: config.RoleGrant{Users: []string{"member-user"}},
+		},
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", DirPath: "",
+	}, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "⛔ Only owners can manage permissions."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "allow_user",
+		AuthorID:    "member-user",
+		Options:     map[string]string{"target_id": "U99", "role": "member"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionAllowUserSuccess() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", DirPath: "",
+		Permissions: db.ChannelPermissions{},
+	}, nil)
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
+		Members: db.ChannelRoleGrant{Users: []string{"U99"}},
+	}).Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "✅ <@U99> granted member role."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "allow_user",
+		Options:     map[string]string{"target_id": "U99", "role": "member"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionAllowUserOwner() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", DirPath: "",
+		Permissions: db.ChannelPermissions{},
+	}, nil)
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
+		Owners: db.ChannelRoleGrant{Users: []string{"U99"}},
+	}).Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "✅ <@U99> granted owner role."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "allow_user",
+		Options:     map[string]string{"target_id": "U99", "role": "owner"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionAllowUserChannelNotRegistered() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "⛔ Channel not registered."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "allow_user",
+		Options:     map[string]string{"target_id": "U99", "role": "member"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionAllowUserStoreError() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1",
+		Permissions: db.ChannelPermissions{},
+	}, nil)
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.Anything).Return(errors.New("db err"))
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Failed to update permissions."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "allow_user",
+		Options:     map[string]string{"target_id": "U99", "role": "member"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionAllowRoleSuccess() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1",
+		Permissions: db.ChannelPermissions{},
+	}, nil)
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
+		Owners: db.ChannelRoleGrant{Roles: []string{"R1"}},
+	}).Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "✅ Role <@&R1> granted owner role."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "allow_role",
+		Options:     map[string]string{"target_id": "R1", "role": "owner"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionDenyUserSuccess() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1",
+		Permissions: db.ChannelPermissions{
+			Owners:  db.ChannelRoleGrant{Users: []string{"owner-user"}},
+			Members: db.ChannelRoleGrant{Users: []string{"U99"}},
+		},
+	}, nil)
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.MatchedBy(func(p db.ChannelPermissions) bool {
+		// U99 removed from Members; owner-user remains in Owners
+		return len(p.Owners.Users) == 1 && p.Owners.Users[0] == "owner-user" &&
+			len(p.Members.Users) == 0
+	})).Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "✅ <@U99> removed from channel permissions."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "deny_user",
+		AuthorID:    "owner-user",
+		Options:     map[string]string{"target_id": "U99"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionDenyRoleSuccess() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1",
+		Permissions: db.ChannelPermissions{
+			Owners: db.ChannelRoleGrant{Users: []string{"owner-user"}, Roles: []string{"R1"}},
+		},
+	}, nil)
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.MatchedBy(func(p db.ChannelPermissions) bool {
+		// R1 removed from Owners.Roles; owner-user remains in Owners.Users
+		return len(p.Owners.Users) == 1 && p.Owners.Users[0] == "owner-user" &&
+			len(p.Owners.Roles) == 0
+	})).Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "✅ Role <@&R1> removed from channel permissions."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "deny_role",
+		AuthorID:    "owner-user",
+		Options:     map[string]string{"target_id": "R1"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestAppendUnique() {
+	// Value not present — appends it.
+	result := appendUnique([]string{"a", "b"}, "c")
+	require.Equal(s.T(), []string{"a", "b", "c"}, result)
+
+	// Value already present — no duplicate added.
+	result = appendUnique([]string{"a", "b", "c"}, "b")
+	require.Equal(s.T(), []string{"a", "b", "c"}, result)
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionAllowUserDefaultRole() {
+	// When "role" option is absent, it defaults to "member".
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1",
+		Permissions: db.ChannelPermissions{},
+	}, nil)
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
+		Members: db.ChannelRoleGrant{Users: []string{"U99"}},
+	}).Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "✅ <@U99> granted member role."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "allow_user",
+		Options:     map[string]string{"target_id": "U99"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionAllowRoleChannelNotRegistered() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "⛔ Channel not registered."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "allow_role",
+		Options:     map[string]string{"target_id": "R1", "role": "owner"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionAllowRoleStoreError() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1",
+		Permissions: db.ChannelPermissions{},
+	}, nil)
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.Anything).Return(errors.New("db err"))
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Failed to update permissions."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "allow_role",
+		Options:     map[string]string{"target_id": "R1", "role": "owner"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionAllowRoleMember() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1",
+		Permissions: db.ChannelPermissions{},
+	}, nil)
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
+		Members: db.ChannelRoleGrant{Roles: []string{"R1"}},
+	}).Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "✅ Role <@&R1> granted member role."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "allow_role",
+		Options:     map[string]string{"target_id": "R1", "role": "member"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionAllowRoleDefaultRole() {
+	// When "role" option is absent, it defaults to "member".
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1",
+		Permissions: db.ChannelPermissions{},
+	}, nil)
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
+		Members: db.ChannelRoleGrant{Roles: []string{"R1"}},
+	}).Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "✅ Role <@&R1> granted member role."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "allow_role",
+		Options:     map[string]string{"target_id": "R1"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionDenyUserChannelNotRegistered() {
+	// Bootstrap mode (no config perms, no db perms) → everyone is RoleOwner.
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "⛔ Channel not registered."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "deny_user",
+		Options:     map[string]string{"target_id": "U99"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionDenyUserStoreError() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1",
+		Permissions: db.ChannelPermissions{
+			Owners: db.ChannelRoleGrant{Users: []string{"owner-user"}},
+		},
+	}, nil)
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.Anything).Return(errors.New("db err"))
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Failed to update permissions."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "deny_user",
+		AuthorID:    "owner-user",
+		Options:     map[string]string{"target_id": "U99"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionDenyRoleChannelNotRegistered() {
+	// Bootstrap mode (no config perms, no db perms) → everyone is RoleOwner.
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "⛔ Channel not registered."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "deny_role",
+		Options:     map[string]string{"target_id": "R1"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionDenyRoleStoreError() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1",
+		Permissions: db.ChannelPermissions{
+			Owners: db.ChannelRoleGrant{Users: []string{"owner-user"}, Roles: []string{"R1"}},
+		},
+	}, nil)
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.Anything).Return(errors.New("db err"))
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Failed to update permissions."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "deny_role",
+		AuthorID:    "owner-user",
+		Options:     map[string]string{"target_id": "R1"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
 // --- Streaming tests ---
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingSkipsDuplicate() {
-	s.orch.streamingEnabled = true
+	s.orch.cfg.StreamingEnabled = true
 
 	msg := &IncomingMessage{
 		ChannelID:    "ch1",
@@ -2005,7 +2721,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingSkipsDuplicate() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingSendsFinalWhenDifferent() {
-	s.orch.streamingEnabled = true
+	s.orch.cfg.StreamingEnabled = true
 
 	msg := &IncomingMessage{
 		ChannelID:    "ch1",

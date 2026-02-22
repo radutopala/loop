@@ -1122,6 +1122,35 @@ func (s *BotSuite) TestHandleSlashCommandTasks() {
 	}
 }
 
+func (s *BotSuite) TestHandleSlashCommandSetsAuthorID() {
+	received := make(chan any, 1)
+	s.bot.OnInteraction(func(_ context.Context, i any) {
+		received <- i
+	})
+
+	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
+
+	evt := socketmode.Event{
+		Type: socketmode.EventTypeSlashCommand,
+		Data: goslack.SlashCommand{
+			ChannelID: "C123",
+			TeamID:    "T123",
+			UserID:    "U789",
+			Text:      "tasks",
+		},
+		Request: &socketmode.Request{},
+	}
+	s.bot.handleSlashCommand(evt)
+
+	select {
+	case i := <-received:
+		inter := i.(*orchestrator.Interaction)
+		require.Equal(s.T(), "U789", inter.AuthorID)
+	case <-time.After(time.Second):
+		s.Fail("timeout waiting for interaction")
+	}
+}
+
 func (s *BotSuite) TestHandleSlashCommandHelp() {
 	// Empty text should send help back
 	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
@@ -2039,4 +2068,114 @@ func (s *BotSuite) TestHandleMessageMentionDM() {
 	case <-time.After(time.Second):
 		s.Fail("timeout waiting for DM mention")
 	}
+}
+
+// --- GetMemberRoles ---
+
+func (s *BotSuite) TestGetMemberRolesReturnsNil() {
+	roles, err := s.bot.GetMemberRoles(context.Background(), "team-1", "user-1")
+	require.NoError(s.T(), err)
+	require.Nil(s.T(), roles)
+}
+
+// --- parseAllow / parseDeny / extractUserID ---
+
+func (s *BotSuite) TestParseAllowUserMember() {
+	inter, errText := parseSlashCommand("C123", "T123", "allow user <@U123456> member")
+	require.Empty(s.T(), errText)
+	require.NotNil(s.T(), inter)
+	require.Equal(s.T(), "allow_user", inter.CommandName)
+	require.Equal(s.T(), "U123456", inter.Options["target_id"])
+	require.Equal(s.T(), "member", inter.Options["role"])
+}
+
+func (s *BotSuite) TestParseAllowUserOwner() {
+	inter, errText := parseSlashCommand("C123", "T123", "allow user <@U123456> owner")
+	require.Empty(s.T(), errText)
+	require.NotNil(s.T(), inter)
+	require.Equal(s.T(), "allow_user", inter.CommandName)
+	require.Equal(s.T(), "U123456", inter.Options["target_id"])
+	require.Equal(s.T(), "owner", inter.Options["role"])
+}
+
+func (s *BotSuite) TestParseAllowUserDefaultMember() {
+	// No role specified — defaults to "member".
+	inter, errText := parseSlashCommand("C123", "T123", "allow user <@U123456>")
+	require.Empty(s.T(), errText)
+	require.NotNil(s.T(), inter)
+	require.Equal(s.T(), "allow_user", inter.CommandName)
+	require.Equal(s.T(), "member", inter.Options["role"])
+}
+
+func (s *BotSuite) TestParseAllowUserWithPipe() {
+	// Slack mentions with |username suffix.
+	inter, errText := parseSlashCommand("C123", "T123", "allow user <@U123456|alice>")
+	require.Empty(s.T(), errText)
+	require.Equal(s.T(), "U123456", inter.Options["target_id"])
+}
+
+func (s *BotSuite) TestParseAllowUserInvalidMention() {
+	_, errText := parseSlashCommand("C123", "T123", "allow user U123456")
+	require.Contains(s.T(), errText, "Invalid user")
+}
+
+func (s *BotSuite) TestParseAllowRoleError() {
+	_, errText := parseSlashCommand("C123", "T123", "allow role admin")
+	require.Contains(s.T(), errText, "Discord-only")
+}
+
+func (s *BotSuite) TestParseAllowUnknownSubcommand() {
+	_, errText := parseSlashCommand("C123", "T123", "allow unknown <@U123>")
+	require.Contains(s.T(), errText, "Usage:")
+}
+
+func (s *BotSuite) TestParseAllowTooFewArgs() {
+	_, errText := parseSlashCommand("C123", "T123", "allow")
+	require.Contains(s.T(), errText, "Usage:")
+}
+
+func (s *BotSuite) TestParseDenyUserSuccess() {
+	inter, errText := parseSlashCommand("C123", "T123", "deny user <@U654321>")
+	require.Empty(s.T(), errText)
+	require.NotNil(s.T(), inter)
+	require.Equal(s.T(), "deny_user", inter.CommandName)
+	require.Equal(s.T(), "U654321", inter.Options["target_id"])
+}
+
+func (s *BotSuite) TestParseDenyUserInvalidMention() {
+	_, errText := parseSlashCommand("C123", "T123", "deny user notamention")
+	require.Contains(s.T(), errText, "Invalid user")
+}
+
+func (s *BotSuite) TestParseDenyRoleError() {
+	_, errText := parseSlashCommand("C123", "T123", "deny role admin")
+	require.Contains(s.T(), errText, "Discord-only")
+}
+
+func (s *BotSuite) TestParseDenyUnknownSubcommand() {
+	_, errText := parseSlashCommand("C123", "T123", "deny unknown <@U123>")
+	require.Contains(s.T(), errText, "Usage:")
+}
+
+func (s *BotSuite) TestParseDenyTooFewArgs() {
+	_, errText := parseSlashCommand("C123", "T123", "deny")
+	require.Contains(s.T(), errText, "Usage:")
+}
+
+func (s *BotSuite) TestExtractUserIDValid() {
+	require.Equal(s.T(), "U123456", extractUserID("<@U123456>"))
+}
+
+func (s *BotSuite) TestExtractUserIDWithPipe() {
+	require.Equal(s.T(), "U123456", extractUserID("<@U123456|alice>"))
+}
+
+func (s *BotSuite) TestExtractUserIDInvalid() {
+	require.Equal(s.T(), "", extractUserID("U123456"))
+	require.Equal(s.T(), "", extractUserID("<U123456>"))
+	require.Equal(s.T(), "", extractUserID("@U123456"))
+}
+
+func (s *BotSuite) TestExtractUserIDWhitespace() {
+	require.Equal(s.T(), "U123456", extractUserID("  <@U123456>  "))
 }

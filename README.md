@@ -60,7 +60,7 @@ A Slack/Discord bot powered by Claude that runs AI agents in Docker containers.
 - macOS (recommended) or Linux
 - [Docker Desktop](https://docs.docker.com/desktop/) (macOS) or [Docker Engine](https://docs.docker.com/engine/install/) (Linux)
 - A **Slack** bot token and app token, or a **Discord** bot token and application ID
-- An Anthropic API key or Claude Code OAuth token (for agent containers)
+- An [Anthropic API key](https://console.anthropic.com/) (recommended) or Claude Code OAuth token (for agent containers)
 
 > **Note:** `loop daemon:start/stop/status` use launchd on macOS and systemd user services on Linux (`~/.config/systemd/user/loop.service`).
 
@@ -112,7 +112,10 @@ Choose **Slack** or **Discord**:
 
 ```sh
 loop onboard:global
+# optionally: loop onboard:global --owner-id U12345678
 ```
+
+The `--owner-id` flag sets your user ID as an RBAC owner in the config, exiting bootstrap mode so only you have owner access from the start.
 
 This creates:
 - `~/.loop/config.json` — main configuration file
@@ -148,7 +151,25 @@ The config file uses HJSON (comments and trailing commas are allowed). See `conf
 
 ### Step 5: Authenticate Claude Code
 
-Agents inside containers need Claude Code credentials to run. Generate a long-lived token with `claude setup-token`, then set it in `~/.loop/config.json`:
+Agents inside containers need Claude Code credentials to run. Loop supports two authentication methods:
+
+#### Option A: Anthropic API key (recommended)
+
+Uses the Anthropic API with pay-per-token pricing. This is the recommended approach — it routes through the [Commercial Terms of Service](https://www.anthropic.com/legal/commercial-terms) and is fully compliant with Anthropic's terms for automated/programmatic usage.
+
+Get an API key from [console.anthropic.com](https://console.anthropic.com/):
+
+```jsonc
+{
+  "anthropic_api_key": "sk-ant-..."
+}
+```
+
+This is passed as the `ANTHROPIC_API_KEY` environment variable to each agent container.
+
+#### Option B: OAuth token (subscription)
+
+Uses your Claude Pro/Max subscription. Generate a long-lived token with `claude setup-token`:
 
 ```sh
 claude setup-token
@@ -163,6 +184,12 @@ claude setup-token
 This is passed as the `CLAUDE_CODE_OAUTH_TOKEN` environment variable to each agent container.
 
 > **Note:** `claude login` stores credentials in the macOS keychain, which containers cannot access. Use `claude setup-token` instead to get a token you can pass explicitly.
+
+> **Terms of Service:** Anthropic's [Consumer Terms](https://www.anthropic.com/legal/consumer-terms) (Section 3.7) restrict accessing the Services "through automated or non-human means, whether through a bot, script, or otherwise" unless using an Anthropic API Key or where otherwise explicitly permitted. Loop orchestrates Claude Code programmatically — spawning CLI sessions in containers via bot commands — which may fall under this restriction when using a subscription OAuth token. Note that Loop runs the real Claude Code binary (it does not spoof client identity or proxy API calls), but the ToS restriction on automated access applies regardless of how the CLI is invoked.
+>
+> **If compliance matters to you, use an API key (Option A).** It routes through the [Commercial Terms](https://www.anthropic.com/legal/commercial-terms), which explicitly permit programmatic access.
+
+> If both are set, `claude_code_oauth_token` takes precedence.
 
 ### Step 6: Start Loop
 
@@ -184,7 +211,10 @@ To use Loop with a specific project directory:
 cd /path/to/your/project
 loop onboard:local
 # optionally: loop onboard:local --api-url http://custom:9999
+# optionally: loop onboard:local --owner-id U12345678
 ```
+
+The `--owner-id` flag sets your user ID as an RBAC owner in the project config.
 
 This does four things:
 1. Writes `.mcp.json` — registers the Loop MCP server so Claude Code can schedule tasks from your IDE
@@ -205,6 +235,7 @@ This does four things:
 | `discord_app_id` | | Discord application ID (required for Discord) |
 | `discord_guild_id` | `""` | Guild ID for auto-creating Discord channels |
 | `claude_code_oauth_token` | `""` | OAuth token passed as `CLAUDE_CODE_OAUTH_TOKEN` env var to containers |
+| `anthropic_api_key` | `""` | API key passed as `ANTHROPIC_API_KEY` env var to containers (used when OAuth token is not set) |
 | `db_path` | `"~/.loop/loop.db"` | SQLite database file path |
 | `log_file` | `"~/.loop/loop.log"` | Daemon log file path |
 | `log_level` | `"info"` | Log level (`debug`, `info`, `warn`, `error`) |
@@ -221,6 +252,41 @@ This does four things:
 | `mcp` | `{}` | MCP server configurations |
 | `task_templates` | `[]` | Reusable task templates |
 | `memory` | `{}` | Semantic memory search configuration (see below) |
+| `permissions` | `{}` | RBAC permissions: owners and members (see below) |
+
+### Permissions
+
+Loop supports per-channel RBAC with two roles: **owner** and **member**.
+
+- **Owners** can manage scheduled tasks, trigger the bot, and grant/revoke permissions via `/loop allow_user`, `/loop allow_role`, `/loop deny_user`, `/loop deny_role`.
+- **Members** can trigger the bot and manage scheduled tasks, but cannot manage permissions.
+- Users without any role are denied access.
+
+**Bootstrap mode:** If both config and DB permissions are empty (no grants configured anywhere), everyone is treated as owner. This lets you start using Loop immediately — configure permissions only when you're ready to restrict access.
+
+Permissions can be set in two ways, and the more privileged role wins:
+
+1. **Config file** (`~/.loop/config.json` or `.loop/config.json` per project):
+
+```jsonc
+"permissions": {
+  "owners":  { "users": ["U12345678"], "roles": ["1234567890123456789"] },
+  "members": { "users": [], "roles": [] }
+}
+```
+
+2. **Slash commands** (stored in the DB per channel):
+
+| Command | Description |
+|---|---|
+| `/loop allow_user @user [owner\|member]` | Grant a user a role (default: member) |
+| `/loop allow_role @role [owner\|member]` | Grant a Discord role a role (Discord only) |
+| `/loop deny_user @user` | Remove a user's DB-granted role |
+| `/loop deny_role @role` | Remove a Discord role's DB-granted access |
+
+Project config permissions override global config. DB permissions are per-channel and managed via slash commands.
+
+**Thread inheritance:** Threads automatically inherit their parent channel's DB permissions when created or auto-resolved. This means you only need to configure permissions on the parent channel — all threads will share the same access rules.
 
 ### Memory
 
@@ -296,6 +362,8 @@ Project config overrides specific global settings. Only these fields are allowed
 | `task_templates` | **Merged** with global; project overrides by name |
 | `claude_model` | **Overrides** global model |
 | `claude_bin_path` | **Overrides** global binary path |
+| `claude_code_oauth_token` | **Overrides** global auth (clears API key) |
+| `anthropic_api_key` | **Overrides** global auth (clears OAuth token) |
 | `container_image` | **Overrides** global image |
 | `container_memory_mb` | **Overrides** global memory limit |
 | `container_cpus` | **Overrides** global CPU limit |
@@ -336,8 +404,8 @@ For development: `make docker-build` builds from `container/Dockerfile` in the r
 |---|---|---|
 | `loop serve` | `s` | Start the bot (Slack or Discord) |
 | `loop mcp` | `m` | Run as an MCP server over stdio |
-| `loop onboard:global` | `o:global`, `setup` | Initialize global Loop configuration (~/.loop/config.json) |
-| `loop onboard:local` | `o:local`, `init` | Register Loop MCP server in current project (.mcp.json) |
+| `loop onboard:global` | `o:global`, `setup` | Initialize global Loop configuration (`--owner-id` to set RBAC owner) |
+| `loop onboard:local` | `o:local`, `init` | Register Loop MCP server in current project (`--owner-id` to set RBAC owner) |
 | `loop daemon:start` | `d:start`, `up` | Install and start the daemon |
 | `loop daemon:stop` | `d:stop`, `down` | Stop and uninstall the daemon |
 | `loop daemon:status` | `d:status` | Show daemon status |
@@ -364,6 +432,7 @@ To register it in your local Claude Code, run `loop onboard:local` in your proje
 cd /path/to/your/project
 loop onboard:local
 # optionally: loop onboard:local --api-url http://custom:9999
+# optionally: loop onboard:local --owner-id U12345678
 ```
 
 ## Bot Commands

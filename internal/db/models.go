@@ -6,19 +6,69 @@ import (
 	"github.com/radutopala/loop/internal/types"
 )
 
+// ChannelRoleGrant lists the users and Discord role IDs granted a specific RBAC role in a channel.
+type ChannelRoleGrant struct {
+	Users []string `json:"users"`
+	Roles []string `json:"roles"`
+}
+
+// ChannelPermissions holds the DB-backed RBAC grants for a channel.
+type ChannelPermissions struct {
+	Owners  ChannelRoleGrant `json:"owners"`
+	Members ChannelRoleGrant `json:"members"`
+}
+
+// IsEmpty returns true when no role grants are configured in the DB.
+func (p ChannelPermissions) IsEmpty() bool {
+	return len(p.Owners.Users) == 0 && len(p.Owners.Roles) == 0 &&
+		len(p.Members.Users) == 0 && len(p.Members.Roles) == 0
+}
+
+// GetRole returns the role for the given author based on DB grants.
+// Returns "" when the author is not granted any role.
+func (p ChannelPermissions) GetRole(authorID string, authorRoles []string) types.Role {
+	if channelSliceContains(p.Owners.Users, authorID) {
+		return types.RoleOwner
+	}
+	for _, r := range authorRoles {
+		if channelSliceContains(p.Owners.Roles, r) {
+			return types.RoleOwner
+		}
+	}
+	if channelSliceContains(p.Members.Users, authorID) {
+		return types.RoleMember
+	}
+	for _, r := range authorRoles {
+		if channelSliceContains(p.Members.Roles, r) {
+			return types.RoleMember
+		}
+	}
+	return ""
+}
+
+func channelSliceContains(s []string, v string) bool {
+	for _, item := range s {
+		if item == v {
+			return true
+		}
+	}
+	return false
+}
+
 // Channel represents a chat platform channel where the bot operates.
 type Channel struct {
-	ID        int64          `json:"id"`
-	ChannelID string         `json:"channel_id"`
-	GuildID   string         `json:"guild_id"`
-	Name      string         `json:"name"`
-	DirPath   string         `json:"dir_path"`
-	ParentID  string         `json:"parent_id"`
-	Platform  types.Platform `json:"platform"`
-	Active    bool           `json:"active"`
-	SessionID string         `json:"session_id"`
-	CreatedAt time.Time      `json:"created_at"`
-	UpdatedAt time.Time      `json:"updated_at"`
+	ID          int64              `json:"id"`
+	ChannelID   string             `json:"channel_id"`
+	GuildID     string             `json:"guild_id"`
+	Name        string             `json:"name"`
+	DirPath     string             `json:"dir_path"`
+	ParentID    string             `json:"parent_id"`
+	Platform    types.Platform     `json:"platform"`
+	Active      bool               `json:"active"`
+	SessionID   string             `json:"session_id"`
+	Permissions ChannelPermissions `json:"permissions"`
+	CreatedAt   time.Time          `json:"created_at"`
+	UpdatedAt   time.Time          `json:"updated_at"`
 }
 
 // Message represents a chat message stored for context.

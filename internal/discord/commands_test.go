@@ -32,13 +32,17 @@ func (s *CommandsSuite) TestSubcommands() {
 	root := cmds[0]
 
 	expected := map[string]discordgo.ApplicationCommandOptionType{
-		"schedule": discordgo.ApplicationCommandOptionSubCommand,
-		"tasks":    discordgo.ApplicationCommandOptionSubCommand,
-		"cancel":   discordgo.ApplicationCommandOptionSubCommand,
-		"toggle":   discordgo.ApplicationCommandOptionSubCommand,
-		"edit":     discordgo.ApplicationCommandOptionSubCommand,
-		"status":   discordgo.ApplicationCommandOptionSubCommand,
-		"template": discordgo.ApplicationCommandOptionSubCommandGroup,
+		"schedule":   discordgo.ApplicationCommandOptionSubCommand,
+		"tasks":      discordgo.ApplicationCommandOptionSubCommand,
+		"cancel":     discordgo.ApplicationCommandOptionSubCommand,
+		"toggle":     discordgo.ApplicationCommandOptionSubCommand,
+		"edit":       discordgo.ApplicationCommandOptionSubCommand,
+		"status":     discordgo.ApplicationCommandOptionSubCommand,
+		"template":   discordgo.ApplicationCommandOptionSubCommandGroup,
+		"allow_user": discordgo.ApplicationCommandOptionSubCommand,
+		"allow_role": discordgo.ApplicationCommandOptionSubCommand,
+		"deny_user":  discordgo.ApplicationCommandOptionSubCommand,
+		"deny_role":  discordgo.ApplicationCommandOptionSubCommand,
 	}
 
 	require.Len(s.T(), root.Options, len(expected))

@@ -1,6 +1,8 @@
 package orchestrator
 
-import "sync"
+import (
+	"sync"
+)
 
 // ChannelQueue provides per-channel concurrency control, ensuring only one
 // agent container runs per channel at a time.

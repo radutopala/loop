@@ -12,8 +12,14 @@
   //"slack_bot_token": "xoxb-your-slack-bot-token",
   //"slack_app_token": "xapp-your-slack-app-token",
 
-  // Claude Code OAuth token — passed as CLAUDE_CODE_OAUTH_TOKEN env var to containers
+  // Authentication for Claude Code inside containers.
+  // Use ONE of the following (OAuth token takes precedence if both are set):
+  //
+  // Option 1: OAuth token (from `claude setup-token`) — uses your subscription
   //"claude_code_oauth_token": "sk-ant-your-oauth-token-here",
+  //
+  // Option 2: Anthropic API key — uses pay-per-token API pricing
+  //"anthropic_api_key": "sk-ant-your-api-key-here",
 
   //"db_path": "~/.loop/loop.db",
   //"log_file": "~/.loop/loop.log",
@@ -28,6 +34,13 @@
   //"claude_model": "", // defaults to sonnet; options: "claude-opus-4-6", "claude-sonnet-4-6"
   //"claude_bin_path": "claude",
   //"streaming_enabled": true, // stream intermediate Claude turns to chat as they happen
+
+  // RBAC permissions: owners can do everything (including allow/deny); members can trigger and manage tasks.
+  // If all config and DB permissions are empty, everyone is treated as owner (bootstrap mode).
+  //"permissions": {
+  //  "owners":  { "users": ["U12345678"], "roles": ["1234567890123456789"] },
+  //  "members": { "users": [], "roles": [] }
+  //},
 
   // Semantic memory search configuration.
   // Must be explicitly enabled. Paths are resolved per project work dir.

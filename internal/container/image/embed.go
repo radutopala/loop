@@ -1,6 +1,8 @@
 package image
 
-import _ "embed"
+import (
+	_ "embed"
+)
 
 //go:embed Dockerfile
 var Dockerfile []byte

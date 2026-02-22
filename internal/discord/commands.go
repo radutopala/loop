@@ -1,6 +1,8 @@
 package discord
 
-import "github.com/bwmarrin/discordgo"
+import (
+	"github.com/bwmarrin/discordgo"
+)
 
 // Commands returns the slash command definitions for the bot.
 func Commands() []*discordgo.ApplicationCommand {
@@ -133,6 +135,78 @@ func Commands() []*discordgo.ApplicationCommand {
 							Type:        discordgo.ApplicationCommandOptionSubCommand,
 							Name:        "list",
 							Description: "List available task templates",
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "allow_user",
+					Description: "Grant a user owner or member role in this channel",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionUser,
+							Name:        "target_id",
+							Description: "The user to grant a role to",
+							Required:    true,
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "role",
+							Description: "Role to grant (default: member)",
+							Required:    false,
+							Choices: []*discordgo.ApplicationCommandOptionChoice{
+								{Name: "owner", Value: "owner"},
+								{Name: "member", Value: "member"},
+							},
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "allow_role",
+					Description: "Grant a Discord role owner or member access in this channel",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionRole,
+							Name:        "target_id",
+							Description: "The Discord role to grant access to",
+							Required:    true,
+						},
+						{
+							Type:        discordgo.ApplicationCommandOptionString,
+							Name:        "role",
+							Description: "Role to grant (default: member)",
+							Required:    false,
+							Choices: []*discordgo.ApplicationCommandOptionChoice{
+								{Name: "owner", Value: "owner"},
+								{Name: "member", Value: "member"},
+							},
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "deny_user",
+					Description: "Remove a user's DB-granted role from this channel",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionUser,
+							Name:        "target_id",
+							Description: "The user to remove",
+							Required:    true,
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "deny_role",
+					Description: "Remove a Discord role's DB-granted access from this channel",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionRole,
+							Name:        "target_id",
+							Description: "The Discord role to remove",
+							Required:    true,
 						},
 					},
 				},

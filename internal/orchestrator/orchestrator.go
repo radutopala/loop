@@ -39,6 +39,7 @@ type Bot interface {
 	GetChannelParentID(ctx context.Context, channelID string) (string, error)
 	GetChannelName(ctx context.Context, channelID string) (string, error)
 	CreateSimpleThread(ctx context.Context, channelID, name, initialMessage string) (string, error)
+	GetMemberRoles(ctx context.Context, guildID, userID string) ([]string, error)
 }
 
 // IncomingMessage from the chat platform.
@@ -54,6 +55,7 @@ type IncomingMessage struct {
 	HasPrefix    bool
 	IsDM         bool
 	Timestamp    time.Time
+	AuthorRoles  []string // role IDs for permission checking (Discord only)
 }
 
 // OutgoingMessage to the chat platform.
@@ -87,39 +89,35 @@ type Interaction struct {
 	GuildID     string
 	CommandName string
 	Options     map[string]string
+	AuthorID    string   // user who invoked the command
+	AuthorRoles []string // role IDs (Discord only)
 }
 
 // Orchestrator coordinates all components of the loop bot.
 type Orchestrator struct {
-	store            db.Store
-	bot              Bot
-	runner           Runner
-	scheduler        Scheduler
-	queue            *ChannelQueue
-	logger           *slog.Logger
-	typingInterval   time.Duration
-	templates        []config.TaskTemplate
-	containerTimeout time.Duration
-	loopDir          string
-	platform         types.Platform
-	streamingEnabled bool
+	store          db.Store
+	bot            Bot
+	runner         Runner
+	scheduler      Scheduler
+	queue          *ChannelQueue
+	logger         *slog.Logger
+	typingInterval time.Duration
+	platform       types.Platform
+	cfg            config.Config
 }
 
 // New creates a new Orchestrator.
-func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *slog.Logger, templates []config.TaskTemplate, containerTimeout time.Duration, loopDir string, platform types.Platform, streamingEnabled bool) *Orchestrator {
+func New(store db.Store, bot Bot, runner Runner, scheduler Scheduler, logger *slog.Logger, platform types.Platform, cfg config.Config) *Orchestrator {
 	return &Orchestrator{
-		store:            store,
-		bot:              bot,
-		runner:           runner,
-		scheduler:        scheduler,
-		queue:            NewChannelQueue(),
-		logger:           logger,
-		typingInterval:   typingRefreshInterval,
-		templates:        templates,
-		containerTimeout: containerTimeout,
-		loopDir:          loopDir,
-		platform:         platform,
-		streamingEnabled: streamingEnabled,
+		store:          store,
+		bot:            bot,
+		runner:         runner,
+		scheduler:      scheduler,
+		queue:          NewChannelQueue(),
+		logger:         logger,
+		typingInterval: typingRefreshInterval,
+		platform:       platform,
+		cfg:            cfg,
 	}
 }
 
@@ -237,6 +235,13 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *IncomingMessage) 
 		return
 	}
 
+	cfgPerms := o.configPermissionsFor(channel.DirPath)
+	role := resolveRole(cfgPerms, channel.Permissions, msg.AuthorID, msg.AuthorRoles)
+	if role == "" {
+		o.logger.Info("message denied by permissions", "channel_id", msg.ChannelID, "author_id", msg.AuthorID)
+		return
+	}
+
 	o.processTriggeredMessage(ctx, msg)
 }
 
@@ -268,13 +273,14 @@ func (o *Orchestrator) resolveThread(ctx context.Context, channelID string) bool
 	}
 
 	if err := o.store.UpsertChannel(ctx, &db.Channel{
-		ChannelID: channelID,
-		GuildID:   parent.GuildID,
-		DirPath:   parent.DirPath,
-		ParentID:  parentID,
-		Platform:  parent.Platform,
-		SessionID: parent.SessionID,
-		Active:    true,
+		ChannelID:   channelID,
+		GuildID:     parent.GuildID,
+		DirPath:     parent.DirPath,
+		ParentID:    parentID,
+		Platform:    parent.Platform,
+		SessionID:   parent.SessionID,
+		Permissions: parent.Permissions,
+		Active:      true,
 	}); err != nil {
 		o.logger.Error("upserting thread channel", "error", err, "channel_id", channelID)
 		return false
@@ -320,11 +326,11 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *Incomin
 		}
 	}
 
-	runCtx, runCancel := context.WithTimeout(ctx, o.containerTimeout)
+	runCtx, runCancel := context.WithTimeout(ctx, o.cfg.ContainerTimeout)
 	defer runCancel()
 
 	var lastStreamedText string
-	if o.streamingEnabled {
+	if o.cfg.StreamingEnabled {
 		req.OnTurn = func(text string) {
 			if text == "" {
 				return
@@ -464,6 +470,34 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, interaction any) {
 		return
 	}
 
+	ch, _ := o.store.GetChannel(ctx, inter.ChannelID)
+	var dbPerms db.ChannelPermissions
+	dirPath := ""
+	if ch != nil {
+		dbPerms = ch.Permissions
+		dirPath = ch.DirPath
+	}
+	cfgPerms := o.configPermissionsFor(dirPath)
+	role := resolveRole(cfgPerms, dbPerms, inter.AuthorID, inter.AuthorRoles)
+
+	isPermCmd := inter.CommandName == "allow_user" || inter.CommandName == "allow_role" ||
+		inter.CommandName == "deny_user" || inter.CommandName == "deny_role"
+	if isPermCmd {
+		if role != types.RoleOwner {
+			_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+				ChannelID: inter.ChannelID,
+				Content:   "⛔ Only owners can manage permissions.",
+			})
+			return
+		}
+	} else if role == "" {
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "⛔ You don't have permission to use this command.",
+		})
+		return
+	}
+
 	switch inter.CommandName {
 	case "schedule":
 		o.handleScheduleInteraction(ctx, inter)
@@ -481,6 +515,14 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, interaction any) {
 		o.handleTemplateAddInteraction(ctx, inter)
 	case "template-list":
 		o.handleTemplateListInteraction(ctx, inter)
+	case "allow_user":
+		o.handleAllowUser(ctx, inter, ch)
+	case "allow_role":
+		o.handleAllowRole(ctx, inter, ch)
+	case "deny_user":
+		o.handleDenyUser(ctx, inter, ch)
+	case "deny_role":
+		o.handleDenyRole(ctx, inter, ch)
 	default:
 		o.logger.Warn("unknown command", "command", inter.CommandName)
 	}
@@ -669,6 +711,58 @@ func (o *Orchestrator) HandleChannelJoin(ctx context.Context, channelID string) 
 	o.logger.Info("auto-created channel on bot join", "channel_id", channelID, "name", name)
 }
 
+// configPermissionsFor returns the effective PermissionsConfig for the given dirPath.
+// Project config overrides global when present; falls back to global on error.
+func (o *Orchestrator) configPermissionsFor(dirPath string) config.PermissionsConfig {
+	if dirPath == "" {
+		return o.cfg.Permissions
+	}
+	cfg, err := config.LoadProjectConfig(dirPath, &o.cfg)
+	if err != nil {
+		return o.cfg.Permissions
+	}
+	return cfg.Permissions
+}
+
+// resolveRole returns the effective role for the given author by merging config and DB grants.
+// Bootstrap rule: if both config and DB are empty, everyone is RoleOwner.
+// Otherwise the more privileged role (owner > member) from either source wins.
+func resolveRole(cfgPerms config.PermissionsConfig, dbPerms db.ChannelPermissions, authorID string, authorRoles []string) types.Role {
+	if cfgPerms.IsEmpty() && dbPerms.IsEmpty() {
+		return types.RoleOwner // bootstrap: no restrictions configured
+	}
+	cfgRole := cfgPerms.GetRole(authorID, authorRoles)
+	dbRole := dbPerms.GetRole(authorID, authorRoles)
+	if cfgRole == types.RoleOwner || dbRole == types.RoleOwner {
+		return types.RoleOwner
+	}
+	if cfgRole == types.RoleMember || dbRole == types.RoleMember {
+		return types.RoleMember
+	}
+	return ""
+}
+
+// appendUnique appends v to s if not already present.
+func appendUnique(s []string, v string) []string {
+	for _, item := range s {
+		if item == v {
+			return s
+		}
+	}
+	return append(s, v)
+}
+
+// removeString removes all occurrences of v from s.
+func removeString(s []string, v string) []string {
+	out := s[:0:0]
+	for _, item := range s {
+		if item != v {
+			out = append(out, item)
+		}
+	}
+	return out
+}
+
 // resolveChannelName returns the channel name from the platform API,
 // falling back to "DM" for DMs or "channel" if the lookup fails.
 func (o *Orchestrator) resolveChannelName(ctx context.Context, channelID string, isDM bool) string {
@@ -715,9 +809,9 @@ func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *
 	name := inter.Options["name"]
 
 	var tmpl *config.TaskTemplate
-	for i := range o.templates {
-		if o.templates[i].Name == name {
-			tmpl = &o.templates[i]
+	for i := range o.cfg.TaskTemplates {
+		if o.cfg.TaskTemplates[i].Name == name {
+			tmpl = &o.cfg.TaskTemplates[i]
 			break
 		}
 	}
@@ -746,7 +840,7 @@ func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *
 		return
 	}
 
-	prompt, err := tmpl.ResolvePrompt(o.loopDir)
+	prompt, err := tmpl.ResolvePrompt(o.cfg.LoopDir)
 	if err != nil {
 		o.logger.Error("resolving template prompt", "error", err, "template", name)
 		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
@@ -782,7 +876,7 @@ func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *
 }
 
 func (o *Orchestrator) handleTemplateListInteraction(ctx context.Context, inter *Interaction) {
-	if len(o.templates) == 0 {
+	if len(o.cfg.TaskTemplates) == 0 {
 		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
 			ChannelID: inter.ChannelID,
 			Content:   "No templates configured.",
@@ -792,12 +886,134 @@ func (o *Orchestrator) handleTemplateListInteraction(ctx context.Context, inter 
 
 	var sb strings.Builder
 	sb.WriteString("Available templates:\n")
-	for _, t := range o.templates {
+	for _, t := range o.cfg.TaskTemplates {
 		fmt.Fprintf(&sb, "- **%s** [%s] `%s` — %s\n", t.Name, t.Type, t.Schedule, t.Description)
 	}
 	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
 		ChannelID: inter.ChannelID,
 		Content:   sb.String(),
+	})
+}
+
+func (o *Orchestrator) handleAllowUser(ctx context.Context, inter *Interaction, ch *db.Channel) {
+	if ch == nil {
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "⛔ Channel not registered.",
+		})
+		return
+	}
+	targetID := inter.Options["target_id"]
+	roleStr := inter.Options["role"]
+	if roleStr == "" {
+		roleStr = "member"
+	}
+	perms := ch.Permissions
+	perms.Owners.Users = removeString(perms.Owners.Users, targetID)
+	perms.Members.Users = removeString(perms.Members.Users, targetID)
+	if roleStr == "owner" {
+		perms.Owners.Users = appendUnique(perms.Owners.Users, targetID)
+	} else {
+		perms.Members.Users = appendUnique(perms.Members.Users, targetID)
+	}
+	if err := o.store.UpdateChannelPermissions(ctx, inter.ChannelID, perms); err != nil {
+		o.logger.Error("updating channel permissions", "error", err)
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "Failed to update permissions.",
+		})
+		return
+	}
+	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+		ChannelID: inter.ChannelID,
+		Content:   fmt.Sprintf("✅ <@%s> granted %s role.", targetID, roleStr),
+	})
+}
+
+func (o *Orchestrator) handleAllowRole(ctx context.Context, inter *Interaction, ch *db.Channel) {
+	if ch == nil {
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "⛔ Channel not registered.",
+		})
+		return
+	}
+	targetID := inter.Options["target_id"]
+	roleStr := inter.Options["role"]
+	if roleStr == "" {
+		roleStr = "member"
+	}
+	perms := ch.Permissions
+	perms.Owners.Roles = removeString(perms.Owners.Roles, targetID)
+	perms.Members.Roles = removeString(perms.Members.Roles, targetID)
+	if roleStr == "owner" {
+		perms.Owners.Roles = appendUnique(perms.Owners.Roles, targetID)
+	} else {
+		perms.Members.Roles = appendUnique(perms.Members.Roles, targetID)
+	}
+	if err := o.store.UpdateChannelPermissions(ctx, inter.ChannelID, perms); err != nil {
+		o.logger.Error("updating channel permissions", "error", err)
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "Failed to update permissions.",
+		})
+		return
+	}
+	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+		ChannelID: inter.ChannelID,
+		Content:   fmt.Sprintf("✅ Role <@&%s> granted %s role.", targetID, roleStr),
+	})
+}
+
+func (o *Orchestrator) handleDenyUser(ctx context.Context, inter *Interaction, ch *db.Channel) {
+	if ch == nil {
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "⛔ Channel not registered.",
+		})
+		return
+	}
+	targetID := inter.Options["target_id"]
+	perms := ch.Permissions
+	perms.Owners.Users = removeString(perms.Owners.Users, targetID)
+	perms.Members.Users = removeString(perms.Members.Users, targetID)
+	if err := o.store.UpdateChannelPermissions(ctx, inter.ChannelID, perms); err != nil {
+		o.logger.Error("updating channel permissions", "error", err)
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "Failed to update permissions.",
+		})
+		return
+	}
+	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+		ChannelID: inter.ChannelID,
+		Content:   fmt.Sprintf("✅ <@%s> removed from channel permissions.", targetID),
+	})
+}
+
+func (o *Orchestrator) handleDenyRole(ctx context.Context, inter *Interaction, ch *db.Channel) {
+	if ch == nil {
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "⛔ Channel not registered.",
+		})
+		return
+	}
+	targetID := inter.Options["target_id"]
+	perms := ch.Permissions
+	perms.Owners.Roles = removeString(perms.Owners.Roles, targetID)
+	perms.Members.Roles = removeString(perms.Members.Roles, targetID)
+	if err := o.store.UpdateChannelPermissions(ctx, inter.ChannelID, perms); err != nil {
+		o.logger.Error("updating channel permissions", "error", err)
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "Failed to update permissions.",
+		})
+		return
+	}
+	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+		ChannelID: inter.ChannelID,
+		Content:   fmt.Sprintf("✅ Role <@&%s> removed from channel permissions.", targetID),
 	})
 }
 

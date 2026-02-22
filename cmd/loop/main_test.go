@@ -16,6 +16,10 @@ import (
 	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/radutopala/loop/internal/api"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
@@ -27,9 +31,6 @@ import (
 	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/types"
-	"github.com/stretchr/testify/mock"
-	"github.com/stretchr/testify/require"
-	"github.com/stretchr/testify/suite"
 )
 
 // --- Mock implementations ---
@@ -190,6 +191,10 @@ func (m *mockStore) DeleteMemoryFile(ctx context.Context, filePath, dirPath stri
 	return m.Called(ctx, filePath, dirPath).Error(0)
 }
 
+func (m *mockStore) UpdateChannelPermissions(ctx context.Context, channelID string, perms db.ChannelPermissions) error {
+	return m.Called(ctx, channelID, perms).Error(0)
+}
+
 type mockDockerClient struct {
 	mock.Mock
 }
@@ -346,6 +351,14 @@ func (m *mockBot) GetChannelParentID(ctx context.Context, channelID string) (str
 func (m *mockBot) GetChannelName(ctx context.Context, channelID string) (string, error) {
 	args := m.Called(ctx, channelID)
 	return args.String(0), args.Error(1)
+}
+
+func (m *mockBot) GetMemberRoles(ctx context.Context, guildID, userID string) ([]string, error) {
+	args := m.Called(ctx, guildID, userID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]string), args.Error(1)
 }
 
 type closableDockerClient struct {
@@ -2328,6 +2341,9 @@ func (s *MainSuite) TestNewOnboardGlobalCmd() {
 	require.Equal(s.T(), []string{"o:global", "setup"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.RunE)
 	require.NotNil(s.T(), cmd.Flags().Lookup("force"))
+	f := cmd.Flags().Lookup("owner-id")
+	require.NotNil(s.T(), f)
+	require.Equal(s.T(), "", f.DefValue)
 }
 
 func (s *MainSuite) TestNewOnboardLocalCmd() {
@@ -2338,6 +2354,9 @@ func (s *MainSuite) TestNewOnboardLocalCmd() {
 	f := cmd.Flags().Lookup("api-url")
 	require.NotNil(s.T(), f)
 	require.Equal(s.T(), "http://localhost:8222", f.DefValue)
+	ownerF := cmd.Flags().Lookup("owner-id")
+	require.NotNil(s.T(), ownerF)
+	require.Equal(s.T(), "", ownerF.DefValue)
 }
 
 func (s *MainSuite) TestOnboardGlobalSuccess() {
@@ -2349,7 +2368,7 @@ func (s *MainSuite) TestOnboardGlobalSuccess() {
 	osMkdirAll = os.MkdirAll
 	osWriteFile = os.WriteFile
 
-	err := onboardGlobal(false)
+	err := onboardGlobal(false, "")
 	require.NoError(s.T(), err)
 
 	configPath := filepath.Join(tmpDir, ".loop", "config.json")
@@ -2414,7 +2433,7 @@ func (s *MainSuite) TestOnboardGlobalConfigAlreadyExists() {
 	osMkdirAll = os.MkdirAll
 	osWriteFile = os.WriteFile
 
-	err := onboardGlobal(false)
+	err := onboardGlobal(false, "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "config already exists")
 	require.Contains(s.T(), err.Error(), "--force")
@@ -2440,7 +2459,7 @@ func (s *MainSuite) TestOnboardGlobalForceOverwrite() {
 	osMkdirAll = os.MkdirAll
 	osWriteFile = os.WriteFile
 
-	err := onboardGlobal(true)
+	err := onboardGlobal(true, "")
 	require.NoError(s.T(), err)
 
 	// Verify config was overwritten
@@ -2456,7 +2475,7 @@ func (s *MainSuite) TestOnboardGlobalHomeDirError() {
 		return "", errors.New("home dir error")
 	}
 
-	err := onboardGlobal(false)
+	err := onboardGlobal(false, "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "getting home directory")
 }
@@ -2471,7 +2490,7 @@ func (s *MainSuite) TestOnboardGlobalMkdirAllError() {
 		return errors.New("mkdir error")
 	}
 
-	err := onboardGlobal(false)
+	err := onboardGlobal(false, "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating loop directory")
 }
@@ -2487,7 +2506,7 @@ func (s *MainSuite) TestOnboardGlobalWriteFileError() {
 		return errors.New("write error")
 	}
 
-	err := onboardGlobal(false)
+	err := onboardGlobal(false, "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing config file")
 }
@@ -2533,7 +2552,7 @@ func (s *MainSuite) TestOnboardGlobalBashrcWriteError() {
 		return os.WriteFile(path, data, perm)
 	}
 
-	err := onboardGlobal(false)
+	err := onboardGlobal(false, "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing .bashrc")
 }
@@ -2552,7 +2571,7 @@ func (s *MainSuite) TestOnboardGlobalBashrcSkipsIfExists() {
 	osMkdirAll = os.MkdirAll
 	osWriteFile = os.WriteFile
 
-	err := onboardGlobal(true) // force overwrites config but not .bashrc
+	err := onboardGlobal(true, "") // force overwrites config but not .bashrc
 	require.NoError(s.T(), err)
 
 	data, err := os.ReadFile(bashrcPath)
@@ -2576,7 +2595,7 @@ func (s *MainSuite) TestOnboardGlobalContainerDirError() {
 	}
 	osWriteFile = os.WriteFile
 
-	err := onboardGlobal(false)
+	err := onboardGlobal(false, "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating container directory")
 }
@@ -2597,7 +2616,7 @@ func (s *MainSuite) TestOnboardGlobalContainerDockerfileWriteError() {
 		return os.WriteFile(path, data, perm)
 	}
 
-	err := onboardGlobal(false)
+	err := onboardGlobal(false, "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing container Dockerfile")
 }
@@ -2618,7 +2637,7 @@ func (s *MainSuite) TestOnboardGlobalContainerEntrypointWriteError() {
 		return os.WriteFile(path, data, perm)
 	}
 
-	err := onboardGlobal(false)
+	err := onboardGlobal(false, "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing container entrypoint")
 }
@@ -2639,7 +2658,7 @@ func (s *MainSuite) TestOnboardGlobalContainerSetupWriteError() {
 		return os.WriteFile(path, data, perm)
 	}
 
-	err := onboardGlobal(false)
+	err := onboardGlobal(false, "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing container setup script")
 }
@@ -2658,7 +2677,7 @@ func (s *MainSuite) TestOnboardGlobalSetupSkipsIfExists() {
 	osMkdirAll = os.MkdirAll
 	osWriteFile = os.WriteFile
 
-	err := onboardGlobal(true) // force overwrites config but not setup.sh
+	err := onboardGlobal(true, "") // force overwrites config but not setup.sh
 	require.NoError(s.T(), err)
 
 	data, err := os.ReadFile(setupPath)
@@ -2682,7 +2701,7 @@ func (s *MainSuite) TestOnboardGlobalSlackManifestWriteError() {
 		return os.WriteFile(path, data, perm)
 	}
 
-	err := onboardGlobal(false)
+	err := onboardGlobal(false, "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing Slack manifest")
 }
@@ -2703,7 +2722,7 @@ func (s *MainSuite) TestOnboardGlobalTemplatesDirError() {
 	}
 	osWriteFile = os.WriteFile
 
-	err := onboardGlobal(false)
+	err := onboardGlobal(false, "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating templates directory")
 }
@@ -2724,7 +2743,7 @@ func (s *MainSuite) TestOnboardGlobalHeartbeatWriteError() {
 		return os.WriteFile(path, data, perm)
 	}
 
-	err := onboardGlobal(false)
+	err := onboardGlobal(false, "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing heartbeat template")
 }
@@ -2745,12 +2764,59 @@ func (s *MainSuite) TestOnboardGlobalHeartbeatSkipsIfExists() {
 	osMkdirAll = os.MkdirAll
 	osWriteFile = os.WriteFile
 
-	err := onboardGlobal(true) // force overwrites config but not heartbeat template
+	err := onboardGlobal(true, "") // force overwrites config but not heartbeat template
 	require.NoError(s.T(), err)
 
 	data, err := os.ReadFile(heartbeatPath)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "custom heartbeat", string(data))
+}
+
+func (s *MainSuite) TestOnboardGlobalWithOwnerID() {
+	tmpDir := s.T().TempDir()
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	osWriteFile = os.WriteFile
+
+	err := onboardGlobal(false, "U99887766")
+	require.NoError(s.T(), err)
+
+	configPath := filepath.Join(tmpDir, ".loop", "config.json")
+	data, err := os.ReadFile(configPath)
+	require.NoError(s.T(), err)
+
+	content := string(data)
+	// Verify the permissions block is uncommented with the real owner ID
+	require.Contains(s.T(), content, `"permissions": {`)
+	require.Contains(s.T(), content, `"U99887766"`)
+	require.NotContains(s.T(), content, `//  "owners"`)
+	require.NotContains(s.T(), content, `U12345678`)
+}
+
+func (s *MainSuite) TestOnboardGlobalCmdWithOwnerIDFlag() {
+	tmpDir := s.T().TempDir()
+	userHomeDir = func() (string, error) {
+		return tmpDir, nil
+	}
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	osWriteFile = os.WriteFile
+
+	cmd := newOnboardGlobalCmd()
+	cmd.SetArgs([]string{"--owner-id", "UTEST12345"})
+	err := cmd.Execute()
+	require.NoError(s.T(), err)
+
+	configPath := filepath.Join(tmpDir, ".loop", "config.json")
+	data, err := os.ReadFile(configPath)
+	require.NoError(s.T(), err)
+
+	content := string(data)
+	require.Contains(s.T(), content, `"UTEST12345"`)
+	require.Contains(s.T(), content, `"permissions": {`)
 }
 
 // --- onboard:local ---
@@ -2764,7 +2830,7 @@ func (s *MainSuite) TestOnboardLocalSuccess() {
 	osMkdirAll = os.MkdirAll
 	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
 
-	err := onboardLocal("http://localhost:8222")
+	err := onboardLocal("http://localhost:8222", "")
 	require.NoError(s.T(), err)
 
 	mcpPath := filepath.Join(tmpDir, ".mcp.json")
@@ -2801,7 +2867,7 @@ func (s *MainSuite) TestOnboardLocalWithMemoryEnabled() {
 	}
 	defer func() { configLoad = config.Load }()
 
-	err := onboardLocal("http://localhost:8222")
+	err := onboardLocal("http://localhost:8222", "")
 	require.NoError(s.T(), err)
 
 	data, err := os.ReadFile(filepath.Join(tmpDir, ".mcp.json"))
@@ -2826,7 +2892,7 @@ func (s *MainSuite) TestOnboardLocalMergesExisting() {
 	osWriteFile = os.WriteFile
 	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
 
-	err := onboardLocal("http://localhost:8222")
+	err := onboardLocal("http://localhost:8222", "")
 	require.NoError(s.T(), err)
 
 	data, err := os.ReadFile(filepath.Join(tmpDir, ".mcp.json"))
@@ -2852,7 +2918,7 @@ func (s *MainSuite) TestOnboardLocalAlreadyRegisteredUpdatesArgs() {
 	osMkdirAll = os.MkdirAll
 	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
 
-	err := onboardLocal("http://localhost:8222")
+	err := onboardLocal("http://localhost:8222", "")
 	require.NoError(s.T(), err)
 
 	// Verify file was updated with rebuilt args
@@ -2874,7 +2940,7 @@ func (s *MainSuite) TestOnboardLocalInvalidExistingJSON() {
 	osGetwd = func() (string, error) { return tmpDir, nil }
 	osReadFile = os.ReadFile
 
-	err := onboardLocal("http://localhost:8222")
+	err := onboardLocal("http://localhost:8222", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "parsing existing .mcp.json")
 }
@@ -2882,7 +2948,7 @@ func (s *MainSuite) TestOnboardLocalInvalidExistingJSON() {
 func (s *MainSuite) TestOnboardLocalGetwdError() {
 	osGetwd = func() (string, error) { return "", errors.New("getwd error") }
 
-	err := onboardLocal("http://localhost:8222")
+	err := onboardLocal("http://localhost:8222", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "getting working directory")
 }
@@ -2895,7 +2961,7 @@ func (s *MainSuite) TestOnboardLocalWriteError() {
 		return errors.New("write error")
 	}
 
-	err := onboardLocal("http://localhost:8222")
+	err := onboardLocal("http://localhost:8222", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing .mcp.json")
 }
@@ -2939,7 +3005,7 @@ func (s *MainSuite) TestOnboardLocalEnsuresChannel() {
 		return "ch-123", nil
 	}
 
-	err := onboardLocal("http://localhost:8222")
+	err := onboardLocal("http://localhost:8222", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "http://localhost:8222", calledAPIURL)
 	require.Equal(s.T(), tmpDir, calledDir)
@@ -2954,7 +3020,7 @@ func (s *MainSuite) TestOnboardLocalEnsureChannelFailsGracefully() {
 		return "", errors.New("server not running")
 	}
 
-	err := onboardLocal("http://localhost:8222")
+	err := onboardLocal("http://localhost:8222", "")
 	require.NoError(s.T(), err, "onboardLocal should succeed even when ensureChannel fails")
 }
 
@@ -2975,7 +3041,7 @@ func (s *MainSuite) TestOnboardLocalAlreadyRegisteredStillEnsuresChannel() {
 		return "ch-456", nil
 	}
 
-	err := onboardLocal("http://localhost:8222")
+	err := onboardLocal("http://localhost:8222", "")
 	require.NoError(s.T(), err)
 	require.True(s.T(), called, "ensureChannelFunc should be called even when loop is already registered")
 }
@@ -2989,7 +3055,7 @@ func (s *MainSuite) TestOnboardLocalProjectConfigWritten() {
 	osMkdirAll = os.MkdirAll
 	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
 
-	err := onboardLocal("http://localhost:8222")
+	err := onboardLocal("http://localhost:8222", "")
 	require.NoError(s.T(), err)
 
 	projectConfigPath := filepath.Join(tmpDir, ".loop", "config.json")
@@ -3011,7 +3077,7 @@ func (s *MainSuite) TestOnboardLocalProjectConfigAlreadyExists() {
 	osMkdirAll = os.MkdirAll
 	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
 
-	err := onboardLocal("http://localhost:8222")
+	err := onboardLocal("http://localhost:8222", "")
 	require.NoError(s.T(), err)
 
 	// Verify existing config was NOT overwritten
@@ -3034,7 +3100,7 @@ func (s *MainSuite) TestOnboardLocalProjectConfigMkdirError() {
 	osMkdirAll = func(_ string, _ os.FileMode) error { return errors.New("mkdir error") }
 	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
 
-	err := onboardLocal("http://localhost:8222")
+	err := onboardLocal("http://localhost:8222", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating .loop directory")
 }
@@ -3056,7 +3122,7 @@ func (s *MainSuite) TestOnboardLocalProjectConfigWriteError() {
 	}
 	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
 
-	err := onboardLocal("http://localhost:8222")
+	err := onboardLocal("http://localhost:8222", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing project config")
 }
@@ -3077,7 +3143,7 @@ func (s *MainSuite) TestOnboardLocalTemplatesDirError() {
 	}
 	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
 
-	err := onboardLocal("http://localhost:8222")
+	err := onboardLocal("http://localhost:8222", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating templates directory")
 }
@@ -3091,7 +3157,7 @@ func (s *MainSuite) TestOnboardLocalTemplatesDirCreated() {
 	osMkdirAll = os.MkdirAll
 	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
 
-	err := onboardLocal("http://localhost:8222")
+	err := onboardLocal("http://localhost:8222", "")
 	require.NoError(s.T(), err)
 
 	// Verify templates directory was created
@@ -3099,6 +3165,51 @@ func (s *MainSuite) TestOnboardLocalTemplatesDirCreated() {
 	info, err := os.Stat(templatesDir)
 	require.NoError(s.T(), err)
 	require.True(s.T(), info.IsDir())
+}
+
+func (s *MainSuite) TestOnboardLocalWithOwnerID() {
+	tmpDir := s.T().TempDir()
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = os.WriteFile
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+
+	err := onboardLocal("http://localhost:8222", "U99887766")
+	require.NoError(s.T(), err)
+
+	projectConfigPath := filepath.Join(tmpDir, ".loop", "config.json")
+	data, err := os.ReadFile(projectConfigPath)
+	require.NoError(s.T(), err)
+
+	content := string(data)
+	require.Contains(s.T(), content, `"permissions": {`)
+	require.Contains(s.T(), content, `"U99887766"`)
+	require.NotContains(s.T(), content, `//  "owners"`)
+}
+
+func (s *MainSuite) TestOnboardLocalCmdWithOwnerIDFlag() {
+	tmpDir := s.T().TempDir()
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = os.WriteFile
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+
+	cmd := newOnboardLocalCmd()
+	cmd.SetArgs([]string{"--owner-id", "ULOCAL123"})
+	err := cmd.Execute()
+	require.NoError(s.T(), err)
+
+	projectConfigPath := filepath.Join(tmpDir, ".loop", "config.json")
+	data, err := os.ReadFile(projectConfigPath)
+	require.NoError(s.T(), err)
+
+	content := string(data)
+	require.Contains(s.T(), content, `"ULOCAL123"`)
+	require.Contains(s.T(), content, `"permissions": {`)
 }
 
 // --- ensureImage tests ---
