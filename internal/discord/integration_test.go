@@ -13,6 +13,8 @@ import (
 	"github.com/bwmarrin/discordgo"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/bot"
 )
 
 // DiscordIntegrationSuite tests DiscordBot against the real Discord API.
@@ -73,7 +75,7 @@ func (s *DiscordIntegrationSuite) SetupSuite() {
 	s.T().Log("verifying gateway connection...")
 	canary := "inttest-canary-" + randomSuffix()
 	canaryReceived := make(chan struct{}, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		if strings.Contains(msg.Content, canary) {
 			select {
 			case canaryReceived <- struct{}{}:
@@ -209,7 +211,7 @@ func (s *DiscordIntegrationSuite) TestB07_GetOwnerUserID() {
 func (s *DiscordIntegrationSuite) TestC01_SendMessagePlain() {
 	rateSleep()
 	content := fmt.Sprintf("integration-test-msg-%s", randomSuffix())
-	err := s.bot.SendMessage(s.ctx, &OutgoingMessage{
+	err := s.bot.SendMessage(s.ctx, &bot.OutgoingMessage{
 		ChannelID: s.channelID,
 		Content:   content,
 	})
@@ -226,7 +228,7 @@ func (s *DiscordIntegrationSuite) TestC02_SendMessageLong() {
 	marker := fmt.Sprintf("SPLIT-TEST-%s", randomSuffix())
 	longContent := marker + " " + strings.Repeat("x", maxMessageLen+100)
 
-	err := s.bot.SendMessage(s.ctx, &OutgoingMessage{
+	err := s.bot.SendMessage(s.ctx, &bot.OutgoingMessage{
 		ChannelID: s.channelID,
 		Content:   longContent,
 	})
@@ -248,7 +250,7 @@ func (s *DiscordIntegrationSuite) TestC03_SendMessageWithReply() {
 
 	rateSleep()
 	replyContent := fmt.Sprintf("reply-%s", randomSuffix())
-	err = s.bot.SendMessage(s.ctx, &OutgoingMessage{
+	err = s.bot.SendMessage(s.ctx, &bot.OutgoingMessage{
 		ChannelID:        s.channelID,
 		Content:          replyContent,
 		ReplyToMessageID: parentMsg.ID,
@@ -409,8 +411,8 @@ func (s *DiscordIntegrationSuite) TestD07_CreateSimpleThreadEmptyMessage() {
 func (s *DiscordIntegrationSuite) TestE01_SelfMentionEvent() {
 	rateSleep()
 
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		if msg.IsBotMention && strings.Contains(msg.Content, "inttest-mention") {
 			select {
 			case received <- msg:

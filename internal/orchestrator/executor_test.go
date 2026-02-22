@@ -14,11 +14,12 @@ import (
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/testutil"
 )
 
 type TaskExecutorSuite struct {
 	suite.Suite
-	store    *MockStore
+	store    *testutil.MockStore
 	bot      *MockBot
 	runner   *MockRunner
 	executor *TaskExecutor
@@ -30,7 +31,7 @@ func TestTaskExecutorSuite(t *testing.T) {
 }
 
 func (s *TaskExecutorSuite) SetupTest() {
-	s.store = new(MockStore)
+	s.store = new(testutil.MockStore)
 	s.bot = new(MockBot)
 	s.runner = new(MockRunner)
 	s.ctx = context.Background()

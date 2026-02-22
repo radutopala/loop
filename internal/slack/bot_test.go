@@ -266,7 +266,7 @@ func (s *BotSuite) TestStopNilCancel() {
 func (s *BotSuite) TestSendMessagePlain() {
 	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234.5678", nil)
 
-	err := s.bot.SendMessage(context.Background(), &OutgoingMessage{
+	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
 		ChannelID: "C123",
 		Content:   "hello world",
 	})
@@ -277,7 +277,7 @@ func (s *BotSuite) TestSendMessagePlain() {
 func (s *BotSuite) TestSendMessageThread() {
 	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234.5678", nil)
 
-	err := s.bot.SendMessage(context.Background(), &OutgoingMessage{
+	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
 		ChannelID: "C123:1111.2222",
 		Content:   "reply in thread",
 	})
@@ -288,7 +288,7 @@ func (s *BotSuite) TestSendMessageThread() {
 func (s *BotSuite) TestSendMessageWithReplyTo() {
 	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234.5678", nil)
 
-	err := s.bot.SendMessage(context.Background(), &OutgoingMessage{
+	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
 		ChannelID:        "C123",
 		Content:          "replying",
 		ReplyToMessageID: "9999.0000",
@@ -305,7 +305,7 @@ func (s *BotSuite) TestSendMessageSplit() {
 
 	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234.5678", nil)
 
-	err := s.bot.SendMessage(context.Background(), &OutgoingMessage{
+	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
 		ChannelID: "C123",
 		Content:   longContent.String(),
 	})
@@ -316,7 +316,7 @@ func (s *BotSuite) TestSendMessageSplit() {
 func (s *BotSuite) TestSendMessageError() {
 	s.session.On("PostMessage", "C123", mock.Anything).Return("", "", errors.New("channel_not_found"))
 
-	err := s.bot.SendMessage(context.Background(), &OutgoingMessage{
+	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
 		ChannelID: "C123",
 		Content:   "hello",
 	})
@@ -407,7 +407,7 @@ func (s *BotSuite) TestRemoveCommandsNoOp() {
 // --- Handler Registration ---
 
 func (s *BotSuite) TestOnMessage() {
-	s.bot.OnMessage(func(_ context.Context, _ *IncomingMessage) {})
+	s.bot.OnMessage(func(_ context.Context, _ *orchestrator.IncomingMessage) {})
 	require.Len(s.T(), s.bot.messageHandlers, 1)
 }
 
@@ -821,48 +821,6 @@ func (s *BotSuite) TestParseCompositeIDPlain() {
 	require.Empty(s.T(), ts)
 }
 
-// --- Message Parsing ---
-
-func (s *BotSuite) TestStripMention() {
-	require.Equal(s.T(), "hello world", stripMention("<@U123BOT> hello world", "U123BOT"))
-	require.Equal(s.T(), "hello world", stripMention("hello world", "U123BOT"))
-}
-
-func (s *BotSuite) TestHasCommandPrefix() {
-	require.True(s.T(), hasCommandPrefix("!loop status"))
-	require.True(s.T(), hasCommandPrefix("!LOOP status"))
-	require.False(s.T(), hasCommandPrefix("hello !loop"))
-}
-
-func (s *BotSuite) TestStripPrefix() {
-	require.Equal(s.T(), "status", stripPrefix("!loop status"))
-	require.Equal(s.T(), "", stripPrefix("!loop"))
-}
-
-func (s *BotSuite) TestReplaceTextMention() {
-	require.Equal(s.T(), "hey <@U123> do this", replaceTextMention("hey @loopbot do this", "loopbot", "<@U123>"))
-	require.Equal(s.T(), "no mention here", replaceTextMention("no mention here", "loopbot", "<@U123>"))
-}
-
-// --- Split Message ---
-
-func (s *BotSuite) TestSplitMessageShort() {
-	chunks := splitMessage("short", 100)
-	require.Equal(s.T(), []string{"short"}, chunks)
-}
-
-func (s *BotSuite) TestSplitMessageNewline() {
-	content := "line1\nline2"
-	chunks := splitMessage(content, 8)
-	require.Equal(s.T(), []string{"line1\n", "line2"}, chunks)
-}
-
-func (s *BotSuite) TestSplitMessageSpace() {
-	content := "word1 word2"
-	chunks := splitMessage(content, 8)
-	require.Equal(s.T(), []string{"word1 ", "word2"}, chunks)
-}
-
 // --- Slack TS to Time ---
 
 func (s *BotSuite) TestSlackTSToTime() {
@@ -884,8 +842,8 @@ func (s *BotSuite) TestSlackTSToTimeEmpty() {
 // --- Event Handling ---
 
 func (s *BotSuite) TestHandleMessageMentionInChannel() {
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 
@@ -910,8 +868,8 @@ func (s *BotSuite) TestHandleMessageMentionInChannel() {
 }
 
 func (s *BotSuite) TestHandleMessageMentionInThread() {
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 
@@ -938,8 +896,8 @@ func (s *BotSuite) TestHandleMessageMentionInThread() {
 }
 
 func (s *BotSuite) TestHandleMessageWithPrefix() {
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 
@@ -962,8 +920,8 @@ func (s *BotSuite) TestHandleMessageWithPrefix() {
 }
 
 func (s *BotSuite) TestHandleMessageDM() {
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 
@@ -986,8 +944,8 @@ func (s *BotSuite) TestHandleMessageDM() {
 }
 
 func (s *BotSuite) TestHandleMessageIgnoredSubtype() {
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 
@@ -1009,8 +967,8 @@ func (s *BotSuite) TestHandleMessageIgnoredSubtype() {
 }
 
 func (s *BotSuite) TestHandleMessageNoTrigger() {
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 
@@ -1037,8 +995,8 @@ func (s *BotSuite) TestHandleMessageReplyToBot() {
 		false, "", nil,
 	)
 
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 
@@ -1172,8 +1130,8 @@ func (s *BotSuite) TestHandleSlashCommandHelp() {
 }
 
 func (s *BotSuite) TestHandleEventsAPIChannelMention() {
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 
@@ -1375,8 +1333,8 @@ func (s *BotSuite) TestEventLoopProcessesEvent() {
 	bot := NewBot(session, sc, testLogger())
 	bot.botUserID = "U123BOT"
 
-	received := make(chan *IncomingMessage, 1)
-	bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 
@@ -1612,8 +1570,8 @@ func (s *BotSuite) TestHandleMessageSubtypeSkipped() {
 		Text:    "<@U123BOT> test",
 		Channel: "C123",
 	}
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 	s.bot.handleMessage(ev)
@@ -1638,8 +1596,8 @@ func (s *BotSuite) TestHandleMessageNotTriggered() {
 	s.session.On("GetConversationReplies", mock.Anything).
 		Return([]goslack.Message{}, false, "", nil).Maybe()
 
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 	s.bot.handleMessage(ev)
@@ -1660,8 +1618,8 @@ func (s *BotSuite) TestHandleMessagePrefixTrigger() {
 		TimeStamp: "1234567890.000001",
 	}
 
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 	s.bot.handleMessage(ev)
@@ -1684,8 +1642,8 @@ func (s *BotSuite) TestHandleMessageDMTrigger() {
 		TimeStamp:   "1234567890.000001",
 	}
 
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 	s.bot.handleMessage(ev)
@@ -1745,8 +1703,8 @@ func (s *BotSuite) TestHandleEventsAPIUnknownInnerEvent() {
 }
 
 func (s *BotSuite) TestHandleEventsAPIMessageEvent() {
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 
@@ -1942,8 +1900,8 @@ func (s *BotSuite) TestHandleMessageSelfMentionSkipped() {
 		TimeStamp: "1234567890.000001",
 	}
 
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 	s.bot.handleMessage(ev)
@@ -1971,8 +1929,8 @@ func (s *BotSuite) TestHandleMessageInThread() {
 	s.session.On("GetConversationReplies", mock.Anything).
 		Return([]goslack.Message{{Msg: goslack.Msg{User: "U123BOT"}}}, false, "", nil)
 
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 	s.bot.handleMessage(ev)
@@ -1989,8 +1947,8 @@ func (s *BotSuite) TestHandleMessageInThread() {
 func (s *BotSuite) TestHandleMessageSelfMentionCreatesThread() {
 	// Bot self-mention in a channel (e.g. from CreateThread) should be
 	// processed by handleMessage and use the message's own TS as thread TS.
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 
@@ -2015,8 +1973,8 @@ func (s *BotSuite) TestHandleMessageSelfMentionCreatesThread() {
 
 func (s *BotSuite) TestHandleMessageSelfMentionInThread() {
 	// Bot self-mention inside a thread should use the thread TS, not the message TS.
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 
@@ -2054,8 +2012,8 @@ func (s *BotSuite) TestHandleMessageMentionDM() {
 		ChannelType: "im",
 	}
 
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *orchestrator.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received <- msg
 	})
 	s.bot.handleMessage(ev)
@@ -2178,12 +2136,4 @@ func (s *BotSuite) TestExtractUserIDInvalid() {
 
 func (s *BotSuite) TestExtractUserIDWhitespace() {
 	require.Equal(s.T(), "U123456", extractUserID("  <@U123456>  "))
-}
-
-func (s *BotSuite) TestParseIAmTheOwner() {
-	inter, errText := parseSlashCommand("C123", "T123", "iamtheowner")
-	require.Empty(s.T(), errText)
-	require.NotNil(s.T(), inter)
-	require.Equal(s.T(), "iamtheowner", inter.CommandName)
-	require.Equal(s.T(), "C123", inter.ChannelID)
 }

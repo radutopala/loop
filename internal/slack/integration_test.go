@@ -14,6 +14,8 @@ import (
 	"github.com/slack-go/slack/socketmode"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/bot"
 )
 
 const (
@@ -109,7 +111,7 @@ func (s *SlackIntegrationSuite) SetupSuite() {
 
 		canary := "inttest-canary-" + randomSuffix()
 		canaryReceived := make(chan struct{}, 1)
-		s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+		s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 			if strings.Contains(msg.Content, canary) {
 				select {
 				case canaryReceived <- struct{}{}:
@@ -312,7 +314,7 @@ func (s *SlackIntegrationSuite) TestB08_OnChannelJoinEvent() {
 func (s *SlackIntegrationSuite) TestC01_SendMessagePlain() {
 	rateSleep()
 	content := fmt.Sprintf("integration-test-msg-%s", randomSuffix())
-	err := s.bot.SendMessage(s.ctx, &OutgoingMessage{
+	err := s.bot.SendMessage(s.ctx, &bot.OutgoingMessage{
 		ChannelID: s.channelID,
 		Content:   content,
 	})
@@ -331,7 +333,7 @@ func (s *SlackIntegrationSuite) TestC02_SendMessageLong() {
 	marker := fmt.Sprintf("SPLIT-TEST-%s", randomSuffix())
 	longContent := marker + " " + strings.Repeat("x", maxMessageLen+100)
 
-	err := s.bot.SendMessage(s.ctx, &OutgoingMessage{
+	err := s.bot.SendMessage(s.ctx, &bot.OutgoingMessage{
 		ChannelID: s.channelID,
 		Content:   longContent,
 	})
@@ -526,8 +528,8 @@ func (s *SlackIntegrationSuite) TestE01_AppMentionEvent() {
 	s.requireUserToken()
 	rateSleep()
 
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		if msg.IsBotMention && strings.Contains(msg.Content, "inttest-mention") {
 			select {
 			case received <- msg:
@@ -569,8 +571,8 @@ func (s *SlackIntegrationSuite) TestE02_DMEvent() {
 	require.NoError(s.T(), err)
 	dmChannelID := dmCh.ID
 
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		if msg.IsDM && strings.Contains(msg.Content, "inttest-dm-") {
 			select {
 			case received <- msg:
@@ -603,8 +605,8 @@ func (s *SlackIntegrationSuite) TestE03_PrefixCommand() {
 	s.requireUserToken()
 	rateSleep()
 
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		if msg.HasPrefix && strings.Contains(msg.Content, "inttest-prefix") {
 			select {
 			case received <- msg:
@@ -643,8 +645,8 @@ func (s *SlackIntegrationSuite) TestE04_ReplyToBot() {
 		goslack.MsgOptionText(marker, false))
 	require.NoError(s.T(), err)
 
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		if msg.IsReplyToBot && strings.Contains(msg.Content, "inttest-reply") {
 			select {
 			case received <- msg:
@@ -683,8 +685,8 @@ func (s *SlackIntegrationSuite) TestE05_MessageInThread() {
 		goslack.MsgOptionText("thread-parent-"+randomSuffix(), false))
 	require.NoError(s.T(), err)
 
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		if msg.IsBotMention && strings.Contains(msg.Content, "inttest-thread-mention") {
 			select {
 			case received <- msg:
@@ -720,7 +722,7 @@ func (s *SlackIntegrationSuite) TestE06_TypingIndicator() {
 
 	// Send a mention and verify the bot receives it (so lastMessageRef is populated).
 	received := make(chan string, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		if msg.IsBotMention && strings.Contains(msg.Content, "inttest-typing") {
 			select {
 			case received <- msg.MessageID:
@@ -789,8 +791,8 @@ func (s *SlackIntegrationSuite) TestE07_RandomChannelMessageIgnored() {
 	rateSleep()
 
 	marker := "inttest-ignored-" + randomSuffix()
-	received := make(chan *IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		if strings.Contains(msg.Content, marker) {
 			received <- msg
 		}

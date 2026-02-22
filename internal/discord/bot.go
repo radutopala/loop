@@ -10,13 +10,13 @@ import (
 
 	"github.com/bwmarrin/discordgo"
 
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/orchestrator"
 )
 
 const (
 	maxMessageLen     = 2000
 	typingIntervalSec = 8
-	commandPrefix     = "!loop"
 )
 
 // DiscordSession abstracts the discordgo.Session methods used by the bot,
@@ -49,12 +49,12 @@ type DiscordSession interface {
 type Bot interface {
 	Start(ctx context.Context) error
 	Stop() error
-	SendMessage(ctx context.Context, msg *OutgoingMessage) error
+	SendMessage(ctx context.Context, msg *bot.OutgoingMessage) error
 	SendTyping(ctx context.Context, channelID string) error
 	RegisterCommands(ctx context.Context) error
 	RemoveCommands(ctx context.Context) error
-	OnMessage(handler MessageHandler)
-	OnInteraction(handler InteractionHandler)
+	OnMessage(handler bot.MessageHandler)
+	OnInteraction(handler bot.InteractionHandler)
 	BotUserID() string
 }
 
@@ -65,10 +65,10 @@ type DiscordBot struct {
 	logger                *slog.Logger
 	botUserID             string
 	botUsername           string
-	messageHandlers       []MessageHandler
-	interactionHandlers   []InteractionHandler
-	channelDeleteHandlers []ChannelDeleteHandler
-	channelJoinHandlers   []ChannelJoinHandler
+	messageHandlers       []bot.MessageHandler
+	interactionHandlers   []bot.InteractionHandler
+	channelDeleteHandlers []bot.ChannelDeleteHandler
+	channelJoinHandlers   []bot.ChannelJoinHandler
 	mu                    sync.RWMutex
 	removeHandlers        []func()
 	typingInterval        time.Duration
@@ -134,7 +134,7 @@ func (b *DiscordBot) Stop() error {
 // SendMessage sends one or more messages to Discord, splitting at the 2000 char limit.
 // If there is a pending slash command interaction for the channel, it resolves the
 // deferred response instead of sending a regular message.
-func (b *DiscordBot) SendMessage(ctx context.Context, msg *OutgoingMessage) error {
+func (b *DiscordBot) SendMessage(ctx context.Context, msg *bot.OutgoingMessage) error {
 	b.mu.Lock()
 	interaction, hasPending := b.pendingInteractions[msg.ChannelID]
 	if hasPending {
@@ -142,7 +142,7 @@ func (b *DiscordBot) SendMessage(ctx context.Context, msg *OutgoingMessage) erro
 	}
 	b.mu.Unlock()
 
-	chunks := splitMessage(msg.Content, maxMessageLen)
+	chunks := bot.SplitMessage(msg.Content, maxMessageLen)
 
 	if hasPending {
 		return b.sendInteractionChunks(interaction, chunks)
@@ -168,7 +168,7 @@ func (b *DiscordBot) sendInteractionChunks(interaction *discordgo.Interaction, c
 	return nil
 }
 
-func (b *DiscordBot) sendRegularChunks(msg *OutgoingMessage, chunks []string) error {
+func (b *DiscordBot) sendRegularChunks(msg *bot.OutgoingMessage, chunks []string) error {
 	for i, chunk := range chunks {
 		if msg.ReplyToMessageID != "" && i == 0 {
 			ref := &discordgo.MessageReference{MessageID: msg.ReplyToMessageID}
@@ -238,21 +238,21 @@ func (b *DiscordBot) RemoveCommands(ctx context.Context) error {
 }
 
 // OnMessage registers a handler to be called for incoming messages.
-func (b *DiscordBot) OnMessage(handler MessageHandler) {
+func (b *DiscordBot) OnMessage(handler bot.MessageHandler) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.messageHandlers = append(b.messageHandlers, handler)
 }
 
 // OnInteraction registers a handler to be called for slash command interactions.
-func (b *DiscordBot) OnInteraction(handler InteractionHandler) {
+func (b *DiscordBot) OnInteraction(handler bot.InteractionHandler) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.interactionHandlers = append(b.interactionHandlers, handler)
 }
 
 // OnChannelDelete registers a handler to be called when a channel or thread is deleted.
-func (b *DiscordBot) OnChannelDelete(handler ChannelDeleteHandler) {
+func (b *DiscordBot) OnChannelDelete(handler bot.ChannelDeleteHandler) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.channelDeleteHandlers = append(b.channelDeleteHandlers, handler)
@@ -261,7 +261,7 @@ func (b *DiscordBot) OnChannelDelete(handler ChannelDeleteHandler) {
 // OnChannelJoin registers a handler for channel join events.
 // Discord has no equivalent "bot added to channel" event (bot sees all guild channels),
 // so handlers are stored but never dispatched.
-func (b *DiscordBot) OnChannelJoin(handler ChannelJoinHandler) {
+func (b *DiscordBot) OnChannelJoin(handler bot.ChannelJoinHandler) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.channelJoinHandlers = append(b.channelJoinHandlers, handler)
@@ -348,7 +348,7 @@ func (b *DiscordBot) CreateThread(ctx context.Context, channelID, name, mentionU
 		username := b.botUsername
 		b.mu.RUnlock()
 		if username != "" {
-			clean = replaceTextMention(clean, username, "")
+			clean = bot.ReplaceTextMention(clean, username, "")
 		}
 		clean = strings.TrimSpace(clean)
 		initialMsg = fmt.Sprintf("<@%s> %s", botID, clean)
@@ -394,7 +394,7 @@ func (b *DiscordBot) PostMessage(ctx context.Context, channelID, content string)
 
 	if username != "" {
 		discordMention := "<@" + userID + ">"
-		content = replaceTextMention(content, username, discordMention)
+		content = bot.ReplaceTextMention(content, username, discordMention)
 	}
 
 	_, err := b.session.ChannelMessageSend(channelID, content)
@@ -402,16 +402,6 @@ func (b *DiscordBot) PostMessage(ctx context.Context, channelID, content string)
 		return fmt.Errorf("discord post message: %w", err)
 	}
 	return nil
-}
-
-// replaceTextMention replaces case-insensitive @username with a Discord mention.
-func replaceTextMention(content, username, mention string) string {
-	target := "@" + username
-	idx := strings.Index(strings.ToLower(content), strings.ToLower(target))
-	if idx == -1 {
-		return content
-	}
-	return content[:idx] + mention + content[idx+len(target):]
 }
 
 // GetMemberRoles returns the role IDs of a guild member.
@@ -458,7 +448,7 @@ func (b *DiscordBot) handleChannelDelete(_ *discordgo.Session, c *discordgo.Chan
 
 func (b *DiscordBot) notifyChannelDelete(channelID string, isThread bool) {
 	b.mu.RLock()
-	handlers := make([]ChannelDeleteHandler, len(b.channelDeleteHandlers))
+	handlers := make([]bot.ChannelDeleteHandler, len(b.channelDeleteHandlers))
 	copy(handlers, b.channelDeleteHandlers)
 	b.mu.RUnlock()
 
@@ -502,7 +492,7 @@ func (b *DiscordBot) handleMessage(_ *discordgo.Session, m *discordgo.MessageCre
 	}
 
 	b.mu.RLock()
-	handlers := make([]MessageHandler, len(b.messageHandlers))
+	handlers := make([]bot.MessageHandler, len(b.messageHandlers))
 	copy(handlers, b.messageHandlers)
 	b.mu.RUnlock()
 
@@ -573,7 +563,7 @@ func (b *DiscordBot) handleInteraction(_ *discordgo.Session, i *discordgo.Intera
 	}
 
 	b.mu.RLock()
-	handlers := make([]InteractionHandler, len(b.interactionHandlers))
+	handlers := make([]bot.InteractionHandler, len(b.interactionHandlers))
 	copy(handlers, b.interactionHandlers)
 	b.mu.RUnlock()
 
@@ -585,9 +575,9 @@ func (b *DiscordBot) handleInteraction(_ *discordgo.Session, i *discordgo.Intera
 // parseIncomingMessage converts a discordgo MessageCreate into an IncomingMessage.
 // Returns nil if the message has no trigger (mention, prefix, reply to bot, or DM).
 // DMs (GuildID is empty) are always treated as triggered.
-func parseIncomingMessage(m *discordgo.MessageCreate, botUserID string) *IncomingMessage {
+func parseIncomingMessage(m *discordgo.MessageCreate, botUserID string) *bot.IncomingMessage {
 	isMention := isBotMention(m, botUserID)
-	hasPrefix := hasCommandPrefix(m.Content)
+	hasPrefix := bot.HasCommandPrefix(m.Content)
 	isReply := isReplyToBot(m, botUserID)
 	isDM := m.GuildID == ""
 
@@ -597,12 +587,12 @@ func parseIncomingMessage(m *discordgo.MessageCreate, botUserID string) *Incomin
 
 	content := m.Content
 	if isMention {
-		content = stripMention(content, botUserID)
+		content = bot.StripMention(content, botUserID)
 	} else if hasPrefix {
-		content = stripPrefix(content)
+		content = bot.StripPrefix(content)
 	}
 
-	return &IncomingMessage{
+	return &bot.IncomingMessage{
 		ChannelID:    m.ChannelID,
 		GuildID:      m.GuildID,
 		AuthorID:     m.Author.ID,
@@ -629,11 +619,6 @@ func isBotMention(m *discordgo.MessageCreate, botUserID string) bool {
 	return strings.Contains(m.Content, "<@"+botUserID+">")
 }
 
-func hasCommandPrefix(content string) bool {
-	lower := strings.ToLower(content)
-	return strings.HasPrefix(lower, commandPrefix)
-}
-
 func isReplyToBot(m *discordgo.MessageCreate, botUserID string) bool {
 	if m.MessageReference == nil {
 		return false
@@ -645,55 +630,4 @@ func isReplyToBot(m *discordgo.MessageCreate, botUserID string) bool {
 		return false
 	}
 	return m.ReferencedMessage.Author.ID == botUserID
-}
-
-func stripMention(content, botUserID string) string {
-	mention := "<@" + botUserID + ">"
-	mentionNick := "<@!" + botUserID + ">"
-	content = strings.ReplaceAll(content, mention, "")
-	content = strings.ReplaceAll(content, mentionNick, "")
-	return strings.TrimSpace(content)
-}
-
-func stripPrefix(content string) string {
-	if len(content) <= len(commandPrefix) {
-		return ""
-	}
-	return strings.TrimSpace(content[len(commandPrefix):])
-}
-
-// splitMessage splits a message into chunks of at most maxLen characters,
-// breaking on newlines when possible.
-func splitMessage(content string, maxLen int) []string {
-	if len(content) <= maxLen {
-		return []string{content}
-	}
-
-	var chunks []string
-	for len(content) > 0 {
-		if len(content) <= maxLen {
-			chunks = append(chunks, content)
-			break
-		}
-
-		cutPoint := findCutPoint(content, maxLen)
-		chunks = append(chunks, content[:cutPoint])
-		content = content[cutPoint:]
-	}
-	return chunks
-}
-
-func findCutPoint(content string, maxLen int) int {
-	// Try to cut at a newline within the limit.
-	lastNewline := strings.LastIndex(content[:maxLen], "\n")
-	if lastNewline > 0 {
-		return lastNewline + 1
-	}
-	// Try to cut at a space.
-	lastSpace := strings.LastIndex(content[:maxLen], " ")
-	if lastSpace > 0 {
-		return lastSpace + 1
-	}
-	// Hard cut.
-	return maxLen
 }

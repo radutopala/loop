@@ -17,177 +17,11 @@ import (
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/testutil"
 	"github.com/radutopala/loop/internal/types"
 )
 
 // --- Mocks ---
-
-type MockStore struct {
-	mock.Mock
-}
-
-func (m *MockStore) UpsertChannel(ctx context.Context, ch *db.Channel) error {
-	args := m.Called(ctx, ch)
-	return args.Error(0)
-}
-
-func (m *MockStore) GetChannel(ctx context.Context, channelID string) (*db.Channel, error) {
-	args := m.Called(ctx, channelID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*db.Channel), args.Error(1)
-}
-
-func (m *MockStore) GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*db.Channel, error) {
-	args := m.Called(ctx, dirPath, platform)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*db.Channel), args.Error(1)
-}
-
-func (m *MockStore) IsChannelActive(ctx context.Context, channelID string) (bool, error) {
-	args := m.Called(ctx, channelID)
-	return args.Bool(0), args.Error(1)
-}
-
-func (m *MockStore) UpdateSessionID(ctx context.Context, channelID string, sessionID string) error {
-	args := m.Called(ctx, channelID, sessionID)
-	return args.Error(0)
-}
-
-func (m *MockStore) InsertMessage(ctx context.Context, msg *db.Message) error {
-	args := m.Called(ctx, msg)
-	return args.Error(0)
-}
-
-func (m *MockStore) GetUnprocessedMessages(ctx context.Context, channelID string) ([]*db.Message, error) {
-	args := m.Called(ctx, channelID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.Message), args.Error(1)
-}
-
-func (m *MockStore) MarkMessagesProcessed(ctx context.Context, ids []int64) error {
-	args := m.Called(ctx, ids)
-	return args.Error(0)
-}
-
-func (m *MockStore) GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*db.Message, error) {
-	args := m.Called(ctx, channelID, limit)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.Message), args.Error(1)
-}
-
-func (m *MockStore) CreateScheduledTask(ctx context.Context, task *db.ScheduledTask) (int64, error) {
-	args := m.Called(ctx, task)
-	return args.Get(0).(int64), args.Error(1)
-}
-
-func (m *MockStore) GetDueTasks(ctx context.Context, now time.Time) ([]*db.ScheduledTask, error) {
-	args := m.Called(ctx, now)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.ScheduledTask), args.Error(1)
-}
-
-func (m *MockStore) UpdateScheduledTask(ctx context.Context, task *db.ScheduledTask) error {
-	args := m.Called(ctx, task)
-	return args.Error(0)
-}
-
-func (m *MockStore) DeleteScheduledTask(ctx context.Context, id int64) error {
-	args := m.Called(ctx, id)
-	return args.Error(0)
-}
-
-func (m *MockStore) ListScheduledTasks(ctx context.Context, channelID string) ([]*db.ScheduledTask, error) {
-	args := m.Called(ctx, channelID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.ScheduledTask), args.Error(1)
-}
-
-func (m *MockStore) UpdateScheduledTaskEnabled(ctx context.Context, id int64, enabled bool) error {
-	return m.Called(ctx, id, enabled).Error(0)
-}
-
-func (m *MockStore) GetScheduledTask(ctx context.Context, id int64) (*db.ScheduledTask, error) {
-	args := m.Called(ctx, id)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*db.ScheduledTask), args.Error(1)
-}
-
-func (m *MockStore) InsertTaskRunLog(ctx context.Context, trl *db.TaskRunLog) (int64, error) {
-	args := m.Called(ctx, trl)
-	return args.Get(0).(int64), args.Error(1)
-}
-
-func (m *MockStore) UpdateTaskRunLog(ctx context.Context, trl *db.TaskRunLog) error {
-	args := m.Called(ctx, trl)
-	return args.Error(0)
-}
-
-func (m *MockStore) DeleteChannel(ctx context.Context, channelID string) error {
-	args := m.Called(ctx, channelID)
-	return args.Error(0)
-}
-
-func (m *MockStore) DeleteChannelsByParentID(ctx context.Context, parentID string) error {
-	args := m.Called(ctx, parentID)
-	return args.Error(0)
-}
-
-func (m *MockStore) Close() error {
-	args := m.Called()
-	return args.Error(0)
-}
-
-func (m *MockStore) GetScheduledTaskByTemplateName(ctx context.Context, channelID, templateName string) (*db.ScheduledTask, error) {
-	args := m.Called(ctx, channelID, templateName)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*db.ScheduledTask), args.Error(1)
-}
-
-func (m *MockStore) ListChannels(ctx context.Context) ([]*db.Channel, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.Channel), args.Error(1)
-}
-
-func (m *MockStore) UpdateChannelPermissions(ctx context.Context, channelID string, perms db.ChannelPermissions) error {
-	return m.Called(ctx, channelID, perms).Error(0)
-}
-
-func (m *MockStore) UpsertMemoryFile(ctx context.Context, file *db.MemoryFile) error {
-	return m.Called(ctx, file).Error(0)
-}
-
-func (m *MockStore) GetMemoryFilesByDirPath(ctx context.Context, dirPath string) ([]*db.MemoryFile, error) {
-	args := m.Called(ctx, dirPath)
-	return args.Get(0).([]*db.MemoryFile), args.Error(1)
-}
-
-func (m *MockStore) GetMemoryFileHash(ctx context.Context, filePath, dirPath string) (string, error) {
-	args := m.Called(ctx, filePath, dirPath)
-	return args.String(0), args.Error(1)
-}
-
-func (m *MockStore) DeleteMemoryFile(ctx context.Context, filePath, dirPath string) error {
-	return m.Called(ctx, filePath, dirPath).Error(0)
-}
 
 type MockBot struct {
 	mock.Mock
@@ -364,7 +198,7 @@ func (m *MockScheduler) EditTask(ctx context.Context, taskID int64, schedule, ta
 
 type OrchestratorSuite struct {
 	suite.Suite
-	store     *MockStore
+	store     *testutil.MockStore
 	bot       *MockBot
 	runner    *MockRunner
 	scheduler *MockScheduler
@@ -377,7 +211,7 @@ func TestOrchestratorSuite(t *testing.T) {
 }
 
 func (s *OrchestratorSuite) SetupTest() {
-	s.store = new(MockStore)
+	s.store = new(testutil.MockStore)
 	s.bot = new(MockBot)
 	s.runner = new(MockRunner)
 	s.scheduler = new(MockScheduler)
@@ -2829,115 +2663,4 @@ func TestTruncateString(t *testing.T) {
 			require.Equal(t, tt.want, got)
 		})
 	}
-}
-
-// --- iamtheowner tests ---
-
-func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerBootstrapSuccess() {
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
-		ID: 1, ChannelID: "ch1", DirPath: "",
-		Permissions: db.ChannelPermissions{},
-	}, nil)
-	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
-		Owners: db.ChannelRoleGrant{Users: []string{"U42"}},
-	}).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return strings.Contains(out.Content, "U42") && strings.Contains(out.Content, "owner")
-	})).Return(nil)
-
-	s.orch.HandleInteraction(s.ctx, &Interaction{
-		ChannelID:   "ch1",
-		CommandName: "iamtheowner",
-		AuthorID:    "U42",
-		Options:     map[string]string{},
-	})
-
-	s.store.AssertExpectations(s.T())
-	s.bot.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerRefusedDBOwnerExists() {
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
-		ID: 1, ChannelID: "ch1", DirPath: "",
-		Permissions: db.ChannelPermissions{
-			Owners: db.ChannelRoleGrant{Users: []string{"existing-owner"}},
-		},
-	}, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return strings.Contains(out.Content, "already configured")
-	})).Return(nil)
-
-	s.orch.HandleInteraction(s.ctx, &Interaction{
-		ChannelID:   "ch1",
-		CommandName: "iamtheowner",
-		AuthorID:    "U42",
-		Options:     map[string]string{},
-	})
-
-	s.store.AssertExpectations(s.T())
-	s.bot.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerRefusedConfigOwnerExists() {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	orch := New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{
-		Permissions: config.PermissionsConfig{
-			Owners: config.RoleGrant{Users: []string{"config-owner"}},
-		},
-	})
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
-		ID: 1, ChannelID: "ch1", DirPath: "",
-		Permissions: db.ChannelPermissions{},
-	}, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return strings.Contains(out.Content, "already configured")
-	})).Return(nil)
-
-	orch.HandleInteraction(s.ctx, &Interaction{
-		ChannelID:   "ch1",
-		CommandName: "iamtheowner",
-		AuthorID:    "U42",
-		Options:     map[string]string{},
-	})
-
-	s.store.AssertExpectations(s.T())
-	s.bot.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerChannelNotRegistered() {
-	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return strings.Contains(out.Content, "Channel not registered")
-	})).Return(nil)
-
-	s.orch.HandleInteraction(s.ctx, &Interaction{
-		ChannelID:   "ch1",
-		CommandName: "iamtheowner",
-		AuthorID:    "U42",
-		Options:     map[string]string{},
-	})
-
-	s.store.AssertExpectations(s.T())
-	s.bot.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerStoreError() {
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
-		ID: 1, ChannelID: "ch1",
-		Permissions: db.ChannelPermissions{},
-	}, nil)
-	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.Anything).Return(errors.New("db err"))
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return out.Content == "Failed to update permissions."
-	})).Return(nil)
-
-	s.orch.HandleInteraction(s.ctx, &Interaction{
-		ChannelID:   "ch1",
-		CommandName: "iamtheowner",
-		AuthorID:    "U42",
-		Options:     map[string]string{},
-	})
-
-	s.store.AssertExpectations(s.T())
-	s.bot.AssertExpectations(s.T())
 }

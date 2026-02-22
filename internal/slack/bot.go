@@ -12,11 +12,12 @@ import (
 	goslack "github.com/slack-go/slack"
 	"github.com/slack-go/slack/slackevents"
 	"github.com/slack-go/slack/socketmode"
+
+	"github.com/radutopala/loop/internal/bot"
 )
 
 const (
 	maxMessageLen = 4000
-	commandPrefix = "!loop"
 	reactionEmoji = "eyes"
 )
 
@@ -56,10 +57,10 @@ type SlackBot struct {
 	logger                *slog.Logger
 	botUserID             string
 	botUsername           string
-	messageHandlers       []MessageHandler
-	interactionHandlers   []InteractionHandler
-	channelDeleteHandlers []ChannelDeleteHandler
-	channelJoinHandlers   []ChannelJoinHandler
+	messageHandlers       []bot.MessageHandler
+	interactionHandlers   []bot.InteractionHandler
+	channelDeleteHandlers []bot.ChannelDeleteHandler
+	channelJoinHandlers   []bot.ChannelJoinHandler
 	mu                    sync.RWMutex
 	cancel                context.CancelFunc
 	// lastMessageRef tracks the latest message per channel for emoji reactions.
@@ -119,9 +120,9 @@ func (b *SlackBot) Stop() error {
 }
 
 // SendMessage sends one or more messages to Slack, splitting at 4000 chars.
-func (b *SlackBot) SendMessage(ctx context.Context, msg *OutgoingMessage) error {
+func (b *SlackBot) SendMessage(ctx context.Context, msg *bot.OutgoingMessage) error {
 	channelID, threadTS := parseCompositeID(msg.ChannelID)
-	chunks := splitMessage(msg.Content, maxMessageLen)
+	chunks := bot.SplitMessage(msg.Content, maxMessageLen)
 
 	for _, chunk := range chunks {
 		opts := []goslack.MsgOption{goslack.MsgOptionText(chunk, false)}
@@ -176,28 +177,28 @@ func (b *SlackBot) RemoveCommands(_ context.Context) error {
 }
 
 // OnMessage registers a handler to be called for incoming messages.
-func (b *SlackBot) OnMessage(handler MessageHandler) {
+func (b *SlackBot) OnMessage(handler bot.MessageHandler) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.messageHandlers = append(b.messageHandlers, handler)
 }
 
 // OnInteraction registers a handler to be called for slash command interactions.
-func (b *SlackBot) OnInteraction(handler InteractionHandler) {
+func (b *SlackBot) OnInteraction(handler bot.InteractionHandler) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.interactionHandlers = append(b.interactionHandlers, handler)
 }
 
 // OnChannelDelete registers a handler to be called when a channel is deleted.
-func (b *SlackBot) OnChannelDelete(handler ChannelDeleteHandler) {
+func (b *SlackBot) OnChannelDelete(handler bot.ChannelDeleteHandler) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.channelDeleteHandlers = append(b.channelDeleteHandlers, handler)
 }
 
 // OnChannelJoin registers a handler to be called when the bot joins a channel.
-func (b *SlackBot) OnChannelJoin(handler ChannelJoinHandler) {
+func (b *SlackBot) OnChannelJoin(handler bot.ChannelJoinHandler) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	b.channelJoinHandlers = append(b.channelJoinHandlers, handler)
@@ -305,7 +306,7 @@ func (b *SlackBot) CreateThread(ctx context.Context, channelID, name, mentionUse
 		username := b.botUsername
 		b.mu.RUnlock()
 		if username != "" {
-			clean = replaceTextMention(clean, username, "")
+			clean = bot.ReplaceTextMention(clean, username, "")
 		}
 		clean = strings.TrimSpace(clean)
 		initialMsg = fmt.Sprintf("<@%s> %s", botID, clean)
@@ -355,7 +356,7 @@ func (b *SlackBot) PostMessage(ctx context.Context, channelID, content string) e
 
 	if username != "" {
 		slackMention := "<@" + userID + ">"
-		content = replaceTextMention(content, username, slackMention)
+		content = bot.ReplaceTextMention(content, username, slackMention)
 	}
 
 	chID, threadTS := parseCompositeID(channelID)
@@ -471,7 +472,7 @@ func (b *SlackBot) handleMessage(ev *slackevents.MessageEvent) {
 
 	isSelfMention := ev.User == botID
 	isMention := strings.Contains(ev.Text, "<@"+botID+">")
-	hasPrefix := hasCommandPrefix(ev.Text)
+	hasPrefix := bot.HasCommandPrefix(ev.Text)
 	isDM := ev.ChannelType == "im"
 	isReply := b.isReplyToBot(ev)
 
@@ -481,9 +482,9 @@ func (b *SlackBot) handleMessage(ev *slackevents.MessageEvent) {
 
 	content := ev.Text
 	if isMention {
-		content = stripMention(content, botID)
+		content = bot.StripMention(content, botID)
 	} else if hasPrefix {
-		content = stripPrefix(content)
+		content = bot.StripPrefix(content)
 	}
 
 	channelID := ev.Channel
@@ -496,7 +497,7 @@ func (b *SlackBot) handleMessage(ev *slackevents.MessageEvent) {
 		channelID = compositeID(ev.Channel, ev.TimeStamp)
 	}
 
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID:    channelID,
 		GuildID:      "",
 		AuthorID:     ev.User,
@@ -534,7 +535,7 @@ func (b *SlackBot) isReplyToBot(ev *slackevents.MessageEvent) bool {
 
 func (b *SlackBot) notifyChannelDelete(channelID string) {
 	b.mu.RLock()
-	handlers := make([]ChannelDeleteHandler, len(b.channelDeleteHandlers))
+	handlers := make([]bot.ChannelDeleteHandler, len(b.channelDeleteHandlers))
 	copy(handlers, b.channelDeleteHandlers)
 	b.mu.RUnlock()
 
@@ -549,7 +550,7 @@ func (b *SlackBot) handleMemberJoinedChannel(ev *slackevents.MemberJoinedChannel
 	}
 
 	b.mu.RLock()
-	handlers := make([]ChannelJoinHandler, len(b.channelJoinHandlers))
+	handlers := make([]bot.ChannelJoinHandler, len(b.channelJoinHandlers))
 	copy(handlers, b.channelJoinHandlers)
 	b.mu.RUnlock()
 
@@ -579,9 +580,9 @@ func (b *SlackBot) handleSlashCommand(evt socketmode.Event) {
 	b.dispatchInteraction(inter)
 }
 
-func (b *SlackBot) dispatchMessage(msg *IncomingMessage) {
+func (b *SlackBot) dispatchMessage(msg *bot.IncomingMessage) {
 	b.mu.RLock()
-	handlers := make([]MessageHandler, len(b.messageHandlers))
+	handlers := make([]bot.MessageHandler, len(b.messageHandlers))
 	copy(handlers, b.messageHandlers)
 	b.mu.RUnlock()
 
@@ -592,7 +593,7 @@ func (b *SlackBot) dispatchMessage(msg *IncomingMessage) {
 
 func (b *SlackBot) dispatchInteraction(inter any) {
 	b.mu.RLock()
-	handlers := make([]InteractionHandler, len(b.interactionHandlers))
+	handlers := make([]bot.InteractionHandler, len(b.interactionHandlers))
 	copy(handlers, b.interactionHandlers)
 	b.mu.RUnlock()
 
@@ -614,66 +615,6 @@ func parseCompositeID(id string) (channelID, threadTS string) {
 		return parts[0], parts[1]
 	}
 	return id, ""
-}
-
-// replaceTextMention replaces case-insensitive @username with a Slack mention.
-func replaceTextMention(content, username, mention string) string {
-	target := "@" + username
-	idx := strings.Index(strings.ToLower(content), strings.ToLower(target))
-	if idx == -1 {
-		return content
-	}
-	return content[:idx] + mention + content[idx+len(target):]
-}
-
-func stripMention(content, botUserID string) string {
-	mention := "<@" + botUserID + ">"
-	content = strings.ReplaceAll(content, mention, "")
-	return strings.TrimSpace(content)
-}
-
-func hasCommandPrefix(content string) bool {
-	return strings.HasPrefix(strings.ToLower(content), commandPrefix)
-}
-
-func stripPrefix(content string) string {
-	if len(content) <= len(commandPrefix) {
-		return ""
-	}
-	return strings.TrimSpace(content[len(commandPrefix):])
-}
-
-// splitMessage splits a message into chunks of at most maxLen characters,
-// breaking on newlines when possible.
-func splitMessage(content string, maxLen int) []string {
-	if len(content) <= maxLen {
-		return []string{content}
-	}
-
-	var chunks []string
-	for len(content) > 0 {
-		if len(content) <= maxLen {
-			chunks = append(chunks, content)
-			break
-		}
-
-		cutPoint := findCutPoint(content, maxLen)
-		chunks = append(chunks, content[:cutPoint])
-		content = content[cutPoint:]
-	}
-	return chunks
-}
-
-func findCutPoint(content string, maxLen int) int {
-	lastNewline := strings.LastIndex(content[:maxLen], "\n")
-	if lastNewline > 0 {
-		return lastNewline + 1
-	}
-	lastSpace := strings.LastIndex(content[:maxLen], " ")
-	if lastSpace > 0 {
-		return lastSpace + 1
-	}
-	return maxLen
 }
 
 // slackTSToTime converts a Slack timestamp (e.g. "1234567890.123456") to time.Time.

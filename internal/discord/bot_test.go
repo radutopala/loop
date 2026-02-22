@@ -256,7 +256,7 @@ func (s *BotSuite) TestSendMessageSimple() {
 	s.session.On("ChannelMessageSend", "ch-1", "hello", mock.Anything).
 		Return(&discordgo.Message{}, nil)
 
-	err := s.bot.SendMessage(context.Background(), &OutgoingMessage{
+	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
 		ChannelID: "ch-1",
 		Content:   "hello",
 	})
@@ -269,7 +269,7 @@ func (s *BotSuite) TestSendMessageWithReply() {
 	s.session.On("ChannelMessageSendReply", "ch-1", "hello", ref, mock.Anything).
 		Return(&discordgo.Message{}, nil)
 
-	err := s.bot.SendMessage(context.Background(), &OutgoingMessage{
+	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
 		ChannelID:        "ch-1",
 		Content:          "hello",
 		ReplyToMessageID: "msg-1",
@@ -287,7 +287,7 @@ func (s *BotSuite) TestSendMessageSplit() {
 	s.session.On("ChannelMessageSend", "ch-1", strings.Repeat("a", 500), mock.Anything).
 		Return(&discordgo.Message{}, nil)
 
-	err := s.bot.SendMessage(context.Background(), &OutgoingMessage{
+	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
 		ChannelID:        "ch-1",
 		Content:          longContent,
 		ReplyToMessageID: "msg-1",
@@ -301,7 +301,7 @@ func (s *BotSuite) TestSendMessageReplyError() {
 	s.session.On("ChannelMessageSendReply", "ch-1", "hello", ref, mock.Anything).
 		Return(nil, errors.New("send failed"))
 
-	err := s.bot.SendMessage(context.Background(), &OutgoingMessage{
+	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
 		ChannelID:        "ch-1",
 		Content:          "hello",
 		ReplyToMessageID: "msg-1",
@@ -314,7 +314,7 @@ func (s *BotSuite) TestSendMessageError() {
 	s.session.On("ChannelMessageSend", "ch-1", "hello", mock.Anything).
 		Return(nil, errors.New("send failed"))
 
-	err := s.bot.SendMessage(context.Background(), &OutgoingMessage{
+	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
 		ChannelID: "ch-1",
 		Content:   "hello",
 	})
@@ -406,9 +406,9 @@ func (s *BotSuite) TestRemoveCommandsDeleteError() {
 // --- OnMessage / OnInteraction ---
 
 func (s *BotSuite) TestOnMessageRegistersHandler() {
-	var received *IncomingMessage
+	var received *orchestrator.IncomingMessage
 	done := make(chan struct{})
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received = msg
 		close(done)
 	})
@@ -674,7 +674,7 @@ func (s *BotSuite) TestOnInteractionIgnoresNonCommand() {
 
 func (s *BotSuite) TestHandleMessageIgnoresNilAuthor() {
 	called := false
-	s.bot.OnMessage(func(_ context.Context, _ *IncomingMessage) {
+	s.bot.OnMessage(func(_ context.Context, _ *orchestrator.IncomingMessage) {
 		called = true
 	})
 
@@ -691,7 +691,7 @@ func (s *BotSuite) TestHandleMessageIgnoresBotMessages() {
 	s.bot.mu.Unlock()
 
 	called := false
-	s.bot.OnMessage(func(_ context.Context, _ *IncomingMessage) {
+	s.bot.OnMessage(func(_ context.Context, _ *orchestrator.IncomingMessage) {
 		called = true
 	})
 
@@ -710,9 +710,9 @@ func (s *BotSuite) TestHandleMessageBotSelfMentionProcessed() {
 	s.bot.botUserID = "bot-123"
 	s.bot.mu.Unlock()
 
-	var received *IncomingMessage
+	var received *orchestrator.IncomingMessage
 	done := make(chan struct{})
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received = msg
 		close(done)
 	})
@@ -739,9 +739,9 @@ func (s *BotSuite) TestHandleMessageBotSelfMentionContentFallback() {
 	s.bot.botUserID = "bot-123"
 	s.bot.mu.Unlock()
 
-	var received *IncomingMessage
+	var received *orchestrator.IncomingMessage
 	done := make(chan struct{})
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received = msg
 		close(done)
 	})
@@ -770,7 +770,7 @@ func (s *BotSuite) TestHandleMessageBotReplyToSelfNotTriggered() {
 	s.bot.mu.Unlock()
 
 	called := false
-	s.bot.OnMessage(func(_ context.Context, _ *IncomingMessage) {
+	s.bot.OnMessage(func(_ context.Context, _ *orchestrator.IncomingMessage) {
 		called = true
 	})
 
@@ -802,7 +802,7 @@ func (s *BotSuite) TestHandleMessageIgnoresNonTriggered() {
 	s.bot.mu.Unlock()
 
 	called := false
-	s.bot.OnMessage(func(_ context.Context, _ *IncomingMessage) {
+	s.bot.OnMessage(func(_ context.Context, _ *orchestrator.IncomingMessage) {
 		called = true
 	})
 
@@ -822,9 +822,9 @@ func (s *BotSuite) TestHandleMessageDMAlwaysTriggered() {
 	s.bot.botUserID = "bot-123"
 	s.bot.mu.Unlock()
 
-	var received *IncomingMessage
+	var received *orchestrator.IncomingMessage
 	done := make(chan struct{})
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received = msg
 		close(done)
 	})
@@ -854,7 +854,7 @@ func (s *BotSuite) TestHandleMessageMultipleHandlers() {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	count := 0
-	handler := func(_ context.Context, _ *IncomingMessage) {
+	handler := func(_ context.Context, _ *orchestrator.IncomingMessage) {
 		mu.Lock()
 		count++
 		mu.Unlock()
@@ -960,26 +960,6 @@ func (s *TriggerSuite) TestIsBotMention() {
 				Message: &discordgo.Message{Mentions: tc.mentions},
 			}
 			require.Equal(s.T(), tc.expected, isBotMention(m, tc.botID))
-		})
-	}
-}
-
-func (s *TriggerSuite) TestHasCommandPrefix() {
-	tests := []struct {
-		content  string
-		expected bool
-	}{
-		{"!loop hello", true},
-		{"!LOOP hello", true},
-		{"!Loop", true},
-		{"!loopextra", true},
-		{"not a command", false},
-		{"", false},
-		{"!loo", false},
-	}
-	for _, tc := range tests {
-		s.Run(tc.content, func() {
-			require.Equal(s.T(), tc.expected, hasCommandPrefix(tc.content))
 		})
 	}
 }
@@ -1145,126 +1125,6 @@ func (s *TriggerSuite) TestParseIncomingMessageDM() {
 	require.Equal(s.T(), "eve", msg.AuthorName)
 }
 
-// --- stripMention ---
-
-func (s *TriggerSuite) TestStripMention() {
-	tests := []struct {
-		name    string
-		content string
-		botID   string
-		want    string
-	}{
-		{"standard mention", "<@bot-1> hello", "bot-1", "hello"},
-		{"nick mention", "<@!bot-1> hello", "bot-1", "hello"},
-		{"both mentions", "<@bot-1> <@!bot-1> hello", "bot-1", "hello"},
-		{"mention in middle", "hey <@bot-1> hello", "bot-1", "hey  hello"},
-		{"no mention", "hello", "bot-1", "hello"},
-	}
-	for _, tc := range tests {
-		s.Run(tc.name, func() {
-			require.Equal(s.T(), tc.want, stripMention(tc.content, tc.botID))
-		})
-	}
-}
-
-// --- stripPrefix ---
-
-func (s *TriggerSuite) TestStripPrefix() {
-	tests := []struct {
-		content string
-		want    string
-	}{
-		{"!loop hello", "hello"},
-		{"!loop  multiple spaces", "multiple spaces"},
-		{"!loop", ""},
-		{"!loo", ""},
-	}
-	for _, tc := range tests {
-		s.Run(tc.content, func() {
-			require.Equal(s.T(), tc.want, stripPrefix(tc.content))
-		})
-	}
-}
-
-// --- splitMessage ---
-
-type SplitSuite struct {
-	suite.Suite
-}
-
-func TestSplitSuite(t *testing.T) {
-	suite.Run(t, new(SplitSuite))
-}
-
-func (s *SplitSuite) TestShortMessage() {
-	chunks := splitMessage("hello", 2000)
-	require.Equal(s.T(), []string{"hello"}, chunks)
-}
-
-func (s *SplitSuite) TestExactLimit() {
-	content := strings.Repeat("a", 2000)
-	chunks := splitMessage(content, 2000)
-	require.Equal(s.T(), []string{content}, chunks)
-}
-
-func (s *SplitSuite) TestSplitOnNewline() {
-	line := strings.Repeat("a", 1500) + "\n" + strings.Repeat("b", 600)
-	chunks := splitMessage(line, 2000)
-	require.Len(s.T(), chunks, 2)
-	require.Equal(s.T(), strings.Repeat("a", 1500)+"\n", chunks[0])
-	require.Equal(s.T(), strings.Repeat("b", 600), chunks[1])
-}
-
-func (s *SplitSuite) TestSplitOnSpace() {
-	line := strings.Repeat("a", 1500) + " " + strings.Repeat("b", 600)
-	chunks := splitMessage(line, 2000)
-	require.Len(s.T(), chunks, 2)
-	require.Equal(s.T(), strings.Repeat("a", 1500)+" ", chunks[0])
-	require.Equal(s.T(), strings.Repeat("b", 600), chunks[1])
-}
-
-func (s *SplitSuite) TestHardCut() {
-	content := strings.Repeat("a", 2500)
-	chunks := splitMessage(content, 2000)
-	require.Len(s.T(), chunks, 2)
-	require.Len(s.T(), chunks[0], 2000)
-	require.Len(s.T(), chunks[1], 500)
-}
-
-func (s *SplitSuite) TestMultipleChunks() {
-	content := strings.Repeat("a", 5000)
-	chunks := splitMessage(content, 2000)
-	require.Len(s.T(), chunks, 3)
-	require.Len(s.T(), chunks[0], 2000)
-	require.Len(s.T(), chunks[1], 2000)
-	require.Len(s.T(), chunks[2], 1000)
-}
-
-func (s *SplitSuite) TestEmptyMessage() {
-	chunks := splitMessage("", 2000)
-	require.Equal(s.T(), []string{""}, chunks)
-}
-
-// --- findCutPoint ---
-
-func (s *SplitSuite) TestFindCutPointNewline() {
-	content := "hello\nworld this is long"
-	cut := findCutPoint(content, 10)
-	require.Equal(s.T(), 6, cut)
-}
-
-func (s *SplitSuite) TestFindCutPointSpace() {
-	content := "hello world"
-	cut := findCutPoint(content, 10)
-	require.Equal(s.T(), 6, cut)
-}
-
-func (s *SplitSuite) TestFindCutPointHard() {
-	content := "abcdefghij"
-	cut := findCutPoint(content, 5)
-	require.Equal(s.T(), 5, cut)
-}
-
 // --- SendTyping refresh goroutine ---
 
 func (s *BotSuite) TestSendTypingRefreshes() {
@@ -1369,7 +1229,7 @@ func (s *BotSuite) TestSendMessageWithPendingInteraction() {
 	s.session.On("InteractionResponseEdit", interaction, &discordgo.WebhookEdit{Content: &content}, mock.Anything).
 		Return(&discordgo.Message{}, nil)
 
-	err := s.bot.SendMessage(context.Background(), &OutgoingMessage{
+	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
 		ChannelID: "ch-1",
 		Content:   content,
 	})
@@ -1397,7 +1257,7 @@ func (s *BotSuite) TestSendMessageWithPendingInteractionSplit() {
 	s.session.On("FollowupMessageCreate", interaction, true, &discordgo.WebhookParams{Content: secondChunk}, mock.Anything).
 		Return(&discordgo.Message{}, nil)
 
-	err := s.bot.SendMessage(context.Background(), &OutgoingMessage{
+	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
 		ChannelID: "ch-1",
 		Content:   longContent,
 	})
@@ -1415,7 +1275,7 @@ func (s *BotSuite) TestSendMessageWithPendingInteractionEditError() {
 	s.session.On("InteractionResponseEdit", interaction, &discordgo.WebhookEdit{Content: &content}, mock.Anything).
 		Return(nil, errors.New("edit failed"))
 
-	err := s.bot.SendMessage(context.Background(), &OutgoingMessage{
+	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
 		ChannelID: "ch-1",
 		Content:   content,
 	})
@@ -1437,7 +1297,7 @@ func (s *BotSuite) TestSendMessageWithPendingInteractionFollowupError() {
 	s.session.On("FollowupMessageCreate", interaction, true, &discordgo.WebhookParams{Content: secondChunk}, mock.Anything).
 		Return(nil, errors.New("followup failed"))
 
-	err := s.bot.SendMessage(context.Background(), &OutgoingMessage{
+	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
 		ChannelID: "ch-1",
 		Content:   longContent,
 	})
@@ -1889,9 +1749,9 @@ func (s *BotSuite) TestGetMemberRolesError() {
 // --- handleMessage with role population ---
 
 func (s *BotSuite) TestHandleMessagePopulatesRoles() {
-	var received *IncomingMessage
+	var received *orchestrator.IncomingMessage
 	done := make(chan struct{})
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received = msg
 		close(done)
 	})
@@ -1922,9 +1782,9 @@ func (s *BotSuite) TestHandleMessagePopulatesRoles() {
 }
 
 func (s *BotSuite) TestHandleMessageRoleFetchError() {
-	var received *IncomingMessage
+	var received *orchestrator.IncomingMessage
 	done := make(chan struct{})
-	s.bot.OnMessage(func(_ context.Context, msg *IncomingMessage) {
+	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
 		received = msg
 		close(done)
 	})
@@ -2070,29 +1930,6 @@ func (s *BotSuite) TestPostMessageError() {
 	err := s.bot.PostMessage(context.Background(), "ch-1", "hello")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "discord post message")
-}
-
-// --- replaceTextMention ---
-
-func (s *BotSuite) TestReplaceTextMention() {
-	tests := []struct {
-		name    string
-		content string
-		want    string
-	}{
-		{"exact case", "@LoopBot check this", "<@bot-1> check this"},
-		{"lowercase", "@loopbot check this", "<@bot-1> check this"},
-		{"uppercase", "@LOOPBOT check this", "<@bot-1> check this"},
-		{"mid sentence", "hey @LoopBot check this", "hey <@bot-1> check this"},
-		{"no mention", "just a message", "just a message"},
-		{"only mention", "@LoopBot", "<@bot-1>"},
-	}
-	for _, tc := range tests {
-		s.Run(tc.name, func() {
-			result := replaceTextMention(tc.content, "LoopBot", "<@bot-1>")
-			require.Equal(s.T(), tc.want, result)
-		})
-	}
 }
 
 // --- CreateSimpleThread tests ---
