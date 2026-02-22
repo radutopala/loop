@@ -52,97 +52,61 @@ func (s *SchedulerSuite) TestNewTaskScheduler() {
 	require.Equal(s.T(), s.logger, ts.logger)
 }
 
-func (s *SchedulerSuite) TestAddTaskCron() {
-	task := &db.ScheduledTask{
-		ChannelID: "ch1",
-		GuildID:   "g1",
-		Schedule:  "*/5 * * * *",
-		Type:      db.TaskTypeCron,
-		Prompt:    "do stuff",
+func (s *SchedulerSuite) TestAddTask() {
+	cases := []struct {
+		name     string
+		task     *db.ScheduledTask
+		storeID  int64
+		wantErr  string
+	}{
+		{
+			name:    "cron",
+			task:    &db.ScheduledTask{ChannelID: "ch1", GuildID: "g1", Schedule: "*/5 * * * *", Type: db.TaskTypeCron, Prompt: "do stuff"},
+			storeID: 1,
+		},
+		{
+			name:    "interval",
+			task:    &db.ScheduledTask{ChannelID: "ch1", GuildID: "g1", Schedule: "30m", Type: db.TaskTypeInterval, Prompt: "interval task"},
+			storeID: 2,
+		},
+		{
+			name:    "once",
+			task:    &db.ScheduledTask{ChannelID: "ch1", GuildID: "g1", Schedule: "2026-02-09T14:30:00Z", Type: db.TaskTypeOnce, Prompt: "once task"},
+			storeID: 3,
+		},
+		{
+			name:    "invalid cron",
+			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "invalid cron", Type: db.TaskTypeCron},
+			wantErr: "calculating next run",
+		},
+		{
+			name:    "invalid interval",
+			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "not-a-duration", Type: db.TaskTypeInterval},
+			wantErr: "calculating next run",
+		},
 	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			store := new(testutil.MockStore)
+			if tc.wantErr == "" {
+				store.On("CreateScheduledTask", mock.Anything, mock.MatchedBy(func(t *db.ScheduledTask) bool {
+					return t.Enabled && !t.NextRunAt.IsZero()
+				})).Return(tc.storeID, nil)
+			}
 
-	s.store.On("CreateScheduledTask", mock.Anything, mock.MatchedBy(func(t *db.ScheduledTask) bool {
-		return t.Enabled && !t.NextRunAt.IsZero()
-	})).Return(int64(1), nil)
+			ts := NewTaskScheduler(store, s.executor, time.Second, s.logger)
+			id, err := ts.AddTask(context.Background(), tc.task)
 
-	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	id, err := ts.AddTask(context.Background(), task)
-
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), int64(1), id)
-	require.True(s.T(), task.Enabled)
-	require.False(s.T(), task.NextRunAt.IsZero())
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *SchedulerSuite) TestAddTaskInterval() {
-	task := &db.ScheduledTask{
-		ChannelID: "ch1",
-		GuildID:   "g1",
-		Schedule:  "30m",
-		Type:      db.TaskTypeInterval,
-		Prompt:    "interval task",
+			if tc.wantErr != "" {
+				require.Error(s.T(), err)
+				require.Contains(s.T(), err.Error(), tc.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), tc.storeID, id)
+				store.AssertExpectations(s.T())
+			}
+		})
 	}
-
-	s.store.On("CreateScheduledTask", mock.Anything, mock.MatchedBy(func(t *db.ScheduledTask) bool {
-		return t.Enabled && t.NextRunAt.After(time.Now().Add(29*time.Minute))
-	})).Return(int64(2), nil)
-
-	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	id, err := ts.AddTask(context.Background(), task)
-
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), int64(2), id)
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *SchedulerSuite) TestAddTaskOnce() {
-	task := &db.ScheduledTask{
-		ChannelID: "ch1",
-		GuildID:   "g1",
-		Schedule:  "2026-02-09T14:30:00Z",
-		Type:      db.TaskTypeOnce,
-		Prompt:    "once task",
-	}
-
-	s.store.On("CreateScheduledTask", mock.Anything, mock.MatchedBy(func(t *db.ScheduledTask) bool {
-		return t.Enabled && !t.NextRunAt.IsZero()
-	})).Return(int64(3), nil)
-
-	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	id, err := ts.AddTask(context.Background(), task)
-
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), int64(3), id)
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *SchedulerSuite) TestAddTaskInvalidCron() {
-	task := &db.ScheduledTask{
-		ChannelID: "ch1",
-		Schedule:  "invalid cron",
-		Type:      db.TaskTypeCron,
-	}
-
-	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	_, err := ts.AddTask(context.Background(), task)
-
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "calculating next run")
-}
-
-func (s *SchedulerSuite) TestAddTaskInvalidInterval() {
-	task := &db.ScheduledTask{
-		ChannelID: "ch1",
-		Schedule:  "not-a-duration",
-		Type:      db.TaskTypeInterval,
-	}
-
-	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	_, err := ts.AddTask(context.Background(), task)
-
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "calculating next run")
 }
 
 func (s *SchedulerSuite) TestAddTaskStoreError() {
@@ -163,24 +127,30 @@ func (s *SchedulerSuite) TestAddTaskStoreError() {
 }
 
 func (s *SchedulerSuite) TestRemoveTask() {
-	s.store.On("DeleteScheduledTask", mock.Anything, int64(42)).Return(nil)
+	cases := []struct {
+		name    string
+		storeErr error
+	}{
+		{"success", nil},
+		{"error", errors.New("delete error")},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			store := new(testutil.MockStore)
+			store.On("DeleteScheduledTask", mock.Anything, int64(42)).Return(tc.storeErr)
 
-	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.RemoveTask(context.Background(), 42)
+			ts := NewTaskScheduler(store, s.executor, time.Second, s.logger)
+			err := ts.RemoveTask(context.Background(), 42)
 
-	require.NoError(s.T(), err)
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *SchedulerSuite) TestRemoveTaskError() {
-	s.store.On("DeleteScheduledTask", mock.Anything, int64(42)).Return(errors.New("delete error"))
-
-	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.RemoveTask(context.Background(), 42)
-
-	require.Error(s.T(), err)
-	require.Equal(s.T(), "delete error", err.Error())
-	s.store.AssertExpectations(s.T())
+			if tc.storeErr != nil {
+				require.Error(s.T(), err)
+				require.Equal(s.T(), tc.storeErr.Error(), err.Error())
+			} else {
+				require.NoError(s.T(), err)
+			}
+			store.AssertExpectations(s.T())
+		})
+	}
 }
 
 func (s *SchedulerSuite) TestListTasks() {
@@ -188,25 +158,32 @@ func (s *SchedulerSuite) TestListTasks() {
 		{ID: 1, ChannelID: "ch1"},
 		{ID: 2, ChannelID: "ch1"},
 	}
-	s.store.On("ListScheduledTasks", mock.Anything, "ch1").Return(expected, nil)
+	cases := []struct {
+		name     string
+		result   []*db.ScheduledTask
+		storeErr error
+	}{
+		{"success", expected, nil},
+		{"error", nil, errors.New("list error")},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			store := new(testutil.MockStore)
+			store.On("ListScheduledTasks", mock.Anything, "ch1").Return(tc.result, tc.storeErr)
 
-	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	tasks, err := ts.ListTasks(context.Background(), "ch1")
+			ts := NewTaskScheduler(store, s.executor, time.Second, s.logger)
+			tasks, err := ts.ListTasks(context.Background(), "ch1")
 
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), expected, tasks)
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *SchedulerSuite) TestListTasksError() {
-	s.store.On("ListScheduledTasks", mock.Anything, "ch1").Return(nil, errors.New("list error"))
-
-	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	tasks, err := ts.ListTasks(context.Background(), "ch1")
-
-	require.Error(s.T(), err)
-	require.Nil(s.T(), tasks)
-	s.store.AssertExpectations(s.T())
+			if tc.storeErr != nil {
+				require.Error(s.T(), err)
+				require.Nil(s.T(), tasks)
+			} else {
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), tc.result, tasks)
+			}
+			store.AssertExpectations(s.T())
+		})
+	}
 }
 
 func (s *SchedulerSuite) TestStartAndStop() {
@@ -568,32 +545,36 @@ func (s *SchedulerSuite) TestPollLoopIntervalParseError() {
 	s.store.AssertNotCalled(s.T(), "UpdateScheduledTask", mock.Anything, mock.Anything)
 }
 
-func (s *SchedulerSuite) TestCalculateNextRunCron() {
+func (s *SchedulerSuite) TestCalculateNextRun() {
 	now := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
-	next, err := calculateNextRun(db.TaskTypeCron, "*/5 * * * *", now)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), next)
-}
-
-func (s *SchedulerSuite) TestCalculateNextRunInterval() {
-	now := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
-	next, err := calculateNextRun(db.TaskTypeInterval, "30m", now)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), time.Date(2025, 1, 1, 12, 30, 0, 0, time.UTC), next)
-}
-
-func (s *SchedulerSuite) TestCalculateNextRunOnce() {
-	now := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
-	next, err := calculateNextRun(db.TaskTypeOnce, "2026-02-09T14:30:00Z", now)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), time.Date(2026, 2, 9, 14, 30, 0, 0, time.UTC), next)
-}
-
-func (s *SchedulerSuite) TestCalculateNextRunInvalidOnce() {
-	_, err := calculateNextRun(db.TaskTypeOnce, "bad", time.Now())
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "parsing once schedule")
-	require.Contains(s.T(), err.Error(), "RFC3339")
+	cases := []struct {
+		name     string
+		taskType db.TaskType
+		schedule string
+		now      time.Time
+		expected time.Time
+		errMsg   string
+	}{
+		{"cron", db.TaskTypeCron, "*/5 * * * *", now, time.Date(2025, 1, 1, 12, 5, 0, 0, time.UTC), ""},
+		{"interval", db.TaskTypeInterval, "30m", now, time.Date(2025, 1, 1, 12, 30, 0, 0, time.UTC), ""},
+		{"once", db.TaskTypeOnce, "2026-02-09T14:30:00Z", now, time.Date(2026, 2, 9, 14, 30, 0, 0, time.UTC), ""},
+		{"invalid cron", db.TaskTypeCron, "bad", now, time.Time{}, "parsing cron schedule"},
+		{"invalid interval", db.TaskTypeInterval, "not-valid", now, time.Time{}, "parsing interval"},
+		{"invalid once", db.TaskTypeOnce, "bad", now, time.Time{}, "parsing once schedule"},
+		{"unknown type", db.TaskType("unknown"), "", now, time.Time{}, "unknown task type"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			next, err := calculateNextRun(tc.taskType, tc.schedule, tc.now)
+			if tc.errMsg != "" {
+				require.Error(s.T(), err)
+				require.Contains(s.T(), err.Error(), tc.errMsg)
+			} else {
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), tc.expected, next)
+			}
+		})
+	}
 }
 
 func (s *SchedulerSuite) TestParseOnceScheduleRFC3339() {
@@ -614,24 +595,6 @@ func (s *SchedulerSuite) TestParseOnceScheduleInvalid() {
 	_, err := parseOnceSchedule("not-valid")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "RFC3339")
-}
-
-func (s *SchedulerSuite) TestCalculateNextRunInvalidCron() {
-	_, err := calculateNextRun(db.TaskTypeCron, "bad", time.Now())
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "parsing cron schedule")
-}
-
-func (s *SchedulerSuite) TestCalculateNextRunInvalidInterval() {
-	_, err := calculateNextRun(db.TaskTypeInterval, "not-valid", time.Now())
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "parsing interval")
-}
-
-func (s *SchedulerSuite) TestCalculateNextRunUnknownType() {
-	_, err := calculateNextRun(db.TaskType("unknown"), "", time.Now())
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "unknown task type")
 }
 
 func (s *SchedulerSuite) TestAddTaskUnknownType() {

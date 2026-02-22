@@ -3,6 +3,7 @@ package db
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"fmt"
 	"testing"
 	"time"
@@ -47,36 +48,43 @@ func (s *StoreSuite) TestClose() {
 // --- Channel tests ---
 
 func (s *StoreSuite) TestUpsertChannel() {
-	ch := &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test-channel", Active: true}
-	s.mock.ExpectExec(`INSERT INTO channels`).
-		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", "", "", "", "", 1, sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(1, 1))
+	cases := []struct {
+		name string
+		ch   *Channel
+		args []driver.Value
+	}{
+		{
+			name: "basic",
+			ch:   &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test-channel", Active: true},
+			args: []driver.Value{"ch1", "g1", "test-channel", "", "", "", "", "", 1, sqlmock.AnyArg()},
+		},
+		{
+			name: "with dir path",
+			ch:   &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test-channel", DirPath: "/home/user/project", Active: true},
+			args: []driver.Value{"ch1", "g1", "test-channel", "/home/user/project", "", "", "", "", 1, sqlmock.AnyArg()},
+		},
+		{
+			name: "with parent ID",
+			ch:   &Channel{ChannelID: "thread1", GuildID: "g1", Name: "", ParentID: "ch1", SessionID: "sess-parent", Active: true},
+			args: []driver.Value{"thread1", "g1", "", "", "ch1", "", "sess-parent", "", 1, sqlmock.AnyArg()},
+		},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			dbConn, sqlMock, err := sqlmock.New()
+			require.NoError(s.T(), err)
+			defer dbConn.Close()
+			store := &SQLiteStore{db: dbConn}
 
-	err := s.store.UpsertChannel(context.Background(), ch)
-	require.NoError(s.T(), err)
-	require.NoError(s.T(), s.mock.ExpectationsWereMet())
-}
+			sqlMock.ExpectExec(`INSERT INTO channels`).
+				WithArgs(tc.args...).
+				WillReturnResult(sqlmock.NewResult(1, 1))
 
-func (s *StoreSuite) TestUpsertChannelWithDirPath() {
-	ch := &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test-channel", DirPath: "/home/user/project", Active: true}
-	s.mock.ExpectExec(`INSERT INTO channels`).
-		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, "", "", "", "", 1, sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-
-	err := s.store.UpsertChannel(context.Background(), ch)
-	require.NoError(s.T(), err)
-	require.NoError(s.T(), s.mock.ExpectationsWereMet())
-}
-
-func (s *StoreSuite) TestUpsertChannelWithParentID() {
-	ch := &Channel{ChannelID: "thread1", GuildID: "g1", Name: "", ParentID: "ch1", SessionID: "sess-parent", Active: true}
-	s.mock.ExpectExec(`INSERT INTO channels`).
-		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", "ch1", "", "sess-parent", "", 1, sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewResult(1, 1))
-
-	err := s.store.UpsertChannel(context.Background(), ch)
-	require.NoError(s.T(), err)
-	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+			err = store.UpsertChannel(context.Background(), tc.ch)
+			require.NoError(s.T(), err)
+			require.NoError(s.T(), sqlMock.ExpectationsWereMet())
+		})
+	}
 }
 
 func (s *StoreSuite) TestGetChannelWithParentID() {

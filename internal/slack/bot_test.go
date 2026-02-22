@@ -630,28 +630,52 @@ func (s *BotSuite) TestSetChannelTopicError() {
 
 // --- CreateThread ---
 
-func (s *BotSuite) TestCreateThreadWithMessage() {
-	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "9999.0000", nil)
+func (s *BotSuite) TestCreateThreadSuccess() {
+	tests := []struct {
+		name     string
+		channel  string
+		thread   string
+		authorID string
+		message  string
+	}{
+		{
+			name:     "with explicit message",
+			channel:  "C123",
+			thread:   "my thread",
+			authorID: "U456",
+			message:  "<@U123BOT> do something",
+		},
+		{
+			name:     "with mention (empty message)",
+			channel:  "C123",
+			thread:   "my thread",
+			authorID: "U456",
+			message:  "",
+		},
+		{
+			name:     "default (no author, no message)",
+			channel:  "C123",
+			thread:   "my thread",
+			authorID: "",
+			message:  "",
+		},
+	}
 
-	id, err := s.bot.CreateThread(context.Background(), "C123", "my thread", "U456", "<@U123BOT> do something")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "C123:9999.0000", id)
-}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			session := new(MockSession)
+			sc := newMockSocketClient()
+			bot := NewBot(session, sc, testLogger())
+			bot.botUserID = "U123BOT"
+			bot.botUsername = "loopbot"
 
-func (s *BotSuite) TestCreateThreadWithMention() {
-	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "9999.0000", nil)
+			session.On("PostMessage", tt.channel, mock.Anything).Return(tt.channel, "9999.0000", nil)
 
-	id, err := s.bot.CreateThread(context.Background(), "C123", "my thread", "U456", "")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "C123:9999.0000", id)
-}
-
-func (s *BotSuite) TestCreateThreadDefault() {
-	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "9999.0000", nil)
-
-	id, err := s.bot.CreateThread(context.Background(), "C123", "my thread", "", "")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "C123:9999.0000", id)
+			id, err := bot.CreateThread(context.Background(), tt.channel, tt.thread, tt.authorID, tt.message)
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), "C123:9999.0000", id)
+		})
+	}
 }
 
 func (s *BotSuite) TestCreateThreadError() {
@@ -2122,6 +2146,15 @@ func (s *BotSuite) TestParseDenyTooFewArgs() {
 
 func (s *BotSuite) TestExtractUserIDValid() {
 	require.Equal(s.T(), "U123456", extractUserID("<@U123456>"))
+}
+
+func (s *BotSuite) TestParseSlashCommandIAmTheOwner() {
+	inter, errText := parseSlashCommand("C123", "T123", "iamtheowner")
+	require.NotNil(s.T(), inter)
+	require.Empty(s.T(), errText)
+	require.Equal(s.T(), "iamtheowner", inter.CommandName)
+	require.Equal(s.T(), "C123", inter.ChannelID)
+	require.Equal(s.T(), "T123", inter.GuildID)
 }
 
 func (s *BotSuite) TestExtractUserIDWithPipe() {

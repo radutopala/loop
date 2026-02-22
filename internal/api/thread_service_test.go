@@ -134,6 +134,50 @@ func (s *ThreadServiceSuite) TestCreateThreadUpsertError() {
 	require.Empty(s.T(), threadID)
 }
 
+func (s *ThreadServiceSuite) TestCreateThreadFromThreadResolvesParent() {
+	// First GetChannel returns a thread (has ParentID).
+	s.store.On("GetChannel", s.ctx, "thread-1").
+		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1", GuildID: "guild-1"}, nil)
+	// Second GetChannel resolves to the real parent.
+	s.store.On("GetChannel", s.ctx, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", GuildID: "guild-1", DirPath: "/work", Platform: types.PlatformDiscord, SessionID: "sess-1"}, nil)
+	s.creator.On("CreateThread", s.ctx, "ch-1", "new-thread", "user-1", "").
+		Return("thread-2", nil)
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "thread-2" && ch.ParentID == "ch-1" && ch.GuildID == "guild-1"
+	})).Return(nil)
+
+	threadID, err := s.svc.CreateThread(s.ctx, "thread-1", "new-thread", "user-1", "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "thread-2", threadID)
+	s.store.AssertExpectations(s.T())
+	s.creator.AssertExpectations(s.T())
+}
+
+func (s *ThreadServiceSuite) TestCreateThreadFromThreadResolveError() {
+	s.store.On("GetChannel", s.ctx, "thread-1").
+		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1"}, nil)
+	s.store.On("GetChannel", s.ctx, "ch-1").
+		Return(nil, errors.New("db error"))
+
+	threadID, err := s.svc.CreateThread(s.ctx, "thread-1", "new-thread", "", "")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "looking up resolved parent channel")
+	require.Empty(s.T(), threadID)
+}
+
+func (s *ThreadServiceSuite) TestCreateThreadFromThreadResolvedParentNotFound() {
+	s.store.On("GetChannel", s.ctx, "thread-1").
+		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1"}, nil)
+	s.store.On("GetChannel", s.ctx, "ch-1").
+		Return(nil, nil)
+
+	threadID, err := s.svc.CreateThread(s.ctx, "thread-1", "new-thread", "", "")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "resolved parent channel ch-1 not found")
+	require.Empty(s.T(), threadID)
+}
+
 // --- DeleteThread tests ---
 
 func (s *ThreadServiceSuite) TestDeleteThreadSuccess() {

@@ -2641,6 +2641,110 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingDisabledNoOnTurn() {
 	s.runner.AssertExpectations(s.T())
 }
 
+// --- IAmTheOwner tests ---
+
+func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerSuccess() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", DirPath: "",
+		Permissions: db.ChannelPermissions{},
+	}, nil)
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
+		Owners: db.ChannelRoleGrant{Users: []string{"user1"}},
+	}).Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "✅ <@user1> is now the owner of this channel."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "iamtheowner",
+		AuthorID:    "user1",
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerAlreadyConfigured() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", DirPath: "",
+		Permissions: db.ChannelPermissions{
+			Owners: db.ChannelRoleGrant{Users: []string{"existing-owner"}},
+		},
+	}, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "⛔ An owner is already configured. Use `/loop allow_user` to manage permissions."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "iamtheowner",
+		AuthorID:    "user1",
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerChannelNotRegistered() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "⛔ Channel not registered."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "iamtheowner",
+		AuthorID:    "user1",
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerStoreError() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", DirPath: "",
+		Permissions: db.ChannelPermissions{},
+	}, nil)
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.Anything).Return(errors.New("db err"))
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Failed to update permissions."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "iamtheowner",
+		AuthorID:    "user1",
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerBlockedByCfgPerms() {
+	s.orch.cfg = config.Config{
+		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"cfg-owner"}}},
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", DirPath: "",
+		Permissions: db.ChannelPermissions{},
+	}, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "⛔ An owner is already configured. Use `/loop allow_user` to manage permissions."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "iamtheowner",
+		AuthorID:    "user1",
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
 func TestTruncateString(t *testing.T) {
 	tests := []struct {
 		name   string
