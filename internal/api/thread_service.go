@@ -67,6 +67,18 @@ func (s *threadService) CreateThread(ctx context.Context, channelID, name, autho
 		return "", fmt.Errorf("parent channel %s not found", channelID)
 	}
 
+	// If channelID is a thread, resolve to its parent channel.
+	if parent.ParentID != "" {
+		channelID = parent.ParentID
+		parent, err = s.store.GetChannel(ctx, channelID)
+		if err != nil {
+			return "", fmt.Errorf("looking up resolved parent channel: %w", err)
+		}
+		if parent == nil {
+			return "", fmt.Errorf("resolved parent channel %s not found", channelID)
+		}
+	}
+
 	threadID, err := s.creator.CreateThread(ctx, channelID, name, authorID, message)
 	if err != nil {
 		return "", fmt.Errorf("creating thread: %w", err)
