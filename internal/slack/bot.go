@@ -14,6 +14,7 @@ import (
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/radutopala/loop/internal/bot"
+	"github.com/radutopala/loop/internal/orchestrator"
 )
 
 const (
@@ -162,6 +163,41 @@ func (b *SlackBot) SendTyping(ctx context.Context, channelID string) error {
 		}
 	}()
 
+	return nil
+}
+
+// SendStopButton sends a message with a Block Kit "Stop" button.
+func (b *SlackBot) SendStopButton(_ context.Context, channelID, runID string) (string, error) {
+	chID, threadTS := parseCompositeID(channelID)
+
+	btnText := goslack.NewTextBlockObject("plain_text", "Stop", false, false)
+	btn := goslack.NewButtonBlockElement("stop:"+runID, runID, btnText)
+	btn.Style = goslack.StyleDanger
+	actionBlock := goslack.NewActionBlock("stop_actions", btn)
+
+	opts := []goslack.MsgOption{
+		goslack.MsgOptionBlocks(actionBlock),
+	}
+	if threadTS != "" {
+		opts = append(opts, goslack.MsgOptionTS(threadTS))
+	}
+
+	_, ts, err := b.session.PostMessage(chID, opts...)
+	if err != nil {
+		return "", fmt.Errorf("slack send stop button: %w", err)
+	}
+	return ts, nil
+}
+
+// RemoveStopButton removes the stop button message by clearing its content.
+func (b *SlackBot) RemoveStopButton(_ context.Context, channelID, messageID string) error {
+	chID, _ := parseCompositeID(channelID)
+	_, _, _, err := b.session.UpdateMessage(chID, messageID,
+		goslack.MsgOptionBlocks(),
+	)
+	if err != nil {
+		return fmt.Errorf("slack remove stop button: %w", err)
+	}
 	return nil
 }
 
@@ -433,6 +469,8 @@ func (b *SlackBot) handleEvent(evt socketmode.Event) {
 		b.handleEventsAPI(evt)
 	case socketmode.EventTypeSlashCommand:
 		b.handleSlashCommand(evt)
+	case socketmode.EventTypeInteractive:
+		b.handleInteractive(evt)
 	}
 }
 
@@ -578,6 +616,37 @@ func (b *SlackBot) handleSlashCommand(evt socketmode.Event) {
 	inter.AuthorID = cmd.UserID
 
 	b.dispatchInteraction(inter)
+}
+
+func (b *SlackBot) handleInteractive(evt socketmode.Event) {
+	callback, ok := evt.Data.(goslack.InteractionCallback)
+	if !ok {
+		return
+	}
+	if evt.Request != nil {
+		b.socketClient.Ack(*evt.Request)
+	}
+
+	if callback.Type != goslack.InteractionTypeBlockActions {
+		return
+	}
+
+	for _, action := range callback.ActionCallback.BlockActions {
+		if !strings.HasPrefix(action.ActionID, "stop:") {
+			continue
+		}
+		targetChannelID := strings.TrimPrefix(action.ActionID, "stop:")
+
+		inter := &orchestrator.Interaction{
+			ChannelID:   callback.Channel.ID,
+			GuildID:     callback.Team.ID,
+			CommandName: "stop",
+			Options:     map[string]string{"channel_id": targetChannelID},
+			AuthorID:    callback.User.ID,
+		}
+
+		b.dispatchInteraction(inter)
+	}
 }
 
 func (b *SlackBot) dispatchMessage(msg *bot.IncomingMessage) {

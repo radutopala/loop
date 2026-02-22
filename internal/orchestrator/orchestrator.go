@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/radutopala/loop/internal/agent"
@@ -22,6 +23,8 @@ type Bot interface {
 	Stop() error
 	SendMessage(ctx context.Context, msg *OutgoingMessage) error
 	SendTyping(ctx context.Context, channelID string) error
+	SendStopButton(ctx context.Context, channelID, runID string) (messageID string, err error)
+	RemoveStopButton(ctx context.Context, channelID, messageID string) error
 	RegisterCommands(ctx context.Context) error
 	RemoveCommands(ctx context.Context) error
 	OnMessage(handler func(ctx context.Context, msg *IncomingMessage))
@@ -100,6 +103,7 @@ type Orchestrator struct {
 	runner         Runner
 	scheduler      Scheduler
 	queue          *ChannelQueue
+	activeRuns     sync.Map // map[channelID]context.CancelFunc
 	logger         *slog.Logger
 	typingInterval time.Duration
 	platform       types.Platform
@@ -297,6 +301,20 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *Incomin
 	o.queue.Acquire(msg.ChannelID)
 	defer o.queue.Release(msg.ChannelID)
 
+	// Send stop button (non-fatal if it fails)
+	stopMsgID, stopErr := o.bot.SendStopButton(ctx, msg.ChannelID, msg.ChannelID)
+	if stopErr != nil {
+		o.logger.Error("sending stop button", "error", stopErr, "channel_id", msg.ChannelID)
+	}
+	defer func() {
+		o.activeRuns.Delete(msg.ChannelID)
+		if stopMsgID != "" {
+			if err := o.bot.RemoveStopButton(ctx, msg.ChannelID, stopMsgID); err != nil {
+				o.logger.Error("removing stop button", "error", err, "channel_id", msg.ChannelID)
+			}
+		}
+	}()
+
 	typingCtx, stopTyping := context.WithCancel(ctx)
 	defer stopTyping()
 	go o.refreshTyping(typingCtx, msg.ChannelID)
@@ -329,6 +347,9 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *Incomin
 	runCtx, runCancel := context.WithTimeout(ctx, o.cfg.ContainerTimeout)
 	defer runCancel()
 
+	// Register the cancel func so stop button clicks can cancel this run.
+	o.activeRuns.Store(msg.ChannelID, runCancel)
+
 	var lastStreamedText string
 	if o.cfg.StreamingEnabled {
 		req.OnTurn = func(text string) {
@@ -346,6 +367,15 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *Incomin
 
 	resp, err := o.runner.Run(runCtx, req)
 	if err != nil {
+		if runCtx.Err() == context.Canceled {
+			o.logger.Info("run stopped by user", "channel_id", msg.ChannelID)
+			_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+				ChannelID:        msg.ChannelID,
+				Content:          "Run stopped.",
+				ReplyToMessageID: msg.MessageID,
+			})
+			return
+		}
 		o.logger.Error("running agent", "error", err, "channel_id", msg.ChannelID)
 		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
 			ChannelID:        msg.ChannelID,
@@ -515,6 +545,8 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, interaction any) {
 		o.handleEditInteraction(ctx, inter)
 	case "status":
 		o.handleStatusInteraction(ctx, inter)
+	case "stop":
+		o.handleStopInteraction(ctx, inter)
 	case "template-add":
 		o.handleTemplateAddInteraction(ctx, inter)
 	case "template-list":
@@ -809,6 +841,24 @@ func (o *Orchestrator) handleStatusInteraction(ctx context.Context, inter *Inter
 		ChannelID: inter.ChannelID,
 		Content:   "Loop bot is running.",
 	})
+}
+
+func (o *Orchestrator) handleStopInteraction(ctx context.Context, inter *Interaction) {
+	targetChannelID := inter.ChannelID
+	if v, ok := inter.Options["channel_id"]; ok && v != "" {
+		targetChannelID = v
+	}
+	val, ok := o.activeRuns.LoadAndDelete(targetChannelID)
+	if !ok {
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "No active run to stop.",
+		})
+		return
+	}
+	cancel := val.(context.CancelFunc)
+	cancel()
+	o.logger.Info("run stopped by user", "channel_id", targetChannelID, "author_id", inter.AuthorID)
 }
 
 func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *Interaction) {

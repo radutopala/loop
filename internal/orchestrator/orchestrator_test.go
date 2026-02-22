@@ -132,6 +132,15 @@ func (m *MockBot) GetMemberRoles(ctx context.Context, guildID, userID string) ([
 	return args.Get(0).([]string), args.Error(1)
 }
 
+func (m *MockBot) SendStopButton(ctx context.Context, channelID, runID string) (string, error) {
+	args := m.Called(ctx, channelID, runID)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockBot) RemoveStopButton(ctx context.Context, channelID, messageID string) error {
+	return m.Called(ctx, channelID, messageID).Error(0)
+}
+
 type MockRunner struct {
 	mock.Mock
 }
@@ -171,6 +180,10 @@ func (s *OrchestratorSuite) SetupTest() {
 	s.runner = new(MockRunner)
 	s.scheduler = new(testutil.MockScheduler)
 	s.ctx = context.Background()
+
+	// Default expectations for stop button (non-fatal, called during processTriggeredMessage)
+	s.bot.On("SendStopButton", mock.Anything, mock.Anything, mock.Anything).Return("stop-msg-1", nil).Maybe()
+	s.bot.On("RemoveStopButton", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{})
@@ -1425,6 +1438,170 @@ func (s *OrchestratorSuite) TestHandleInteractionStatus() {
 	})
 
 	s.bot.AssertExpectations(s.T())
+}
+
+// --- Stop interaction tests ---
+
+func (s *OrchestratorSuite) TestHandleInteractionStopNoActiveRun() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.ChannelID == "ch1" && out.Content == "No active run to stop."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "stop",
+	})
+
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionStopCancelsActiveRun() {
+	cancelled := false
+	cancelFunc := context.CancelFunc(func() { cancelled = true })
+	s.orch.activeRuns.Store("ch1", cancelFunc)
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		AuthorID:    "user1",
+		CommandName: "stop",
+	})
+
+	require.True(s.T(), cancelled, "cancel func should have been called")
+	// Verify the activeRuns entry was removed
+	_, loaded := s.orch.activeRuns.Load("ch1")
+	require.False(s.T(), loaded, "activeRuns entry should have been removed")
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionStopWithChannelIDOption() {
+	cancelled := false
+	cancelFunc := context.CancelFunc(func() { cancelled = true })
+	s.orch.activeRuns.Store("target-ch", cancelFunc)
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		AuthorID:    "user1",
+		CommandName: "stop",
+		Options:     map[string]string{"channel_id": "target-ch"},
+	})
+
+	require.True(s.T(), cancelled, "cancel func should have been called for target channel")
+	_, loaded := s.orch.activeRuns.Load("target-ch")
+	require.False(s.T(), loaded)
+}
+
+func (s *OrchestratorSuite) TestHandleMessageSendStopButtonError() {
+	s.bot.ExpectedCalls = nil // clear default
+	s.bot.On("SendStopButton", mock.Anything, "ch1", "ch1").Return("", errors.New("button failed")).Once()
+	s.bot.On("RemoveStopButton", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	msg := &IncomingMessage{
+		ChannelID:    "ch1",
+		GuildID:      "g1",
+		AuthorName:   "Alice",
+		Content:      "hello",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
+		Response:  "Hi!",
+		SessionID: "sess1",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess1").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	// Verify RemoveStopButton was NOT called (since stopMsgID is "")
+	s.bot.AssertNotCalled(s.T(), "RemoveStopButton", mock.Anything, "ch1", "")
+}
+
+func (s *OrchestratorSuite) TestHandleMessageRemoveStopButtonError() {
+	s.bot.ExpectedCalls = nil // clear default
+	s.bot.On("SendStopButton", mock.Anything, "ch1", "ch1").Return("stop-msg-1", nil).Once()
+	s.bot.On("RemoveStopButton", mock.Anything, "ch1", "stop-msg-1").Return(errors.New("remove failed")).Once()
+
+	msg := &IncomingMessage{
+		ChannelID:    "ch1",
+		GuildID:      "g1",
+		AuthorName:   "Alice",
+		Content:      "hello",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
+		Response:  "Hi!",
+		SessionID: "sess1",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess1").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	s.bot.AssertCalled(s.T(), "RemoveStopButton", mock.Anything, "ch1", "stop-msg-1")
+}
+
+func (s *OrchestratorSuite) TestHandleMessageRunCanceledByStopButton() {
+	// Set a real timeout so runCtx doesn't expire immediately.
+	s.orch.cfg.ContainerTimeout = 10 * time.Second
+
+	msg := &IncomingMessage{
+		ChannelID:    "ch1",
+		GuildID:      "g1",
+		AuthorName:   "Alice",
+		Content:      "hello",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+
+	// Simulate stop button click during runner execution.
+	s.runner.On("Run", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		// Cancel the runCtx via the activeRuns entry (simulates stop button).
+		if val, ok := s.orch.activeRuns.Load("ch1"); ok {
+			cancel := val.(context.CancelFunc)
+			cancel()
+		}
+		// Wait for context cancellation to propagate.
+		ctx := args.Get(0).(context.Context)
+		<-ctx.Done()
+	}).Return(nil, context.Canceled)
+
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.ChannelID == "ch1" && out.Content == "Run stopped." && out.ReplyToMessageID == "msg1"
+	})).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	s.bot.AssertCalled(s.T(), "SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Run stopped."
+	}))
 }
 
 // --- refreshTyping test ---

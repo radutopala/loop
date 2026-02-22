@@ -43,6 +43,8 @@ type DiscordSession interface {
 	GuildChannels(guildID string, options ...discordgo.RequestOption) ([]*discordgo.Channel, error)
 	ChannelEdit(channelID string, data *discordgo.ChannelEdit, options ...discordgo.RequestOption) (*discordgo.Channel, error)
 	GuildMember(guildID string, userID string, options ...discordgo.RequestOption) (*discordgo.Member, error)
+	ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend, options ...discordgo.RequestOption) (*discordgo.Message, error)
+	ChannelMessageDelete(channelID string, messageID string, options ...discordgo.RequestOption) error
 }
 
 // Bot defines the interface for a Discord bot.
@@ -207,6 +209,36 @@ func (b *DiscordBot) SendTyping(ctx context.Context, channelID string) error {
 			}
 		}
 	}()
+	return nil
+}
+
+// SendStopButton sends a message with a "Stop" button that can cancel the active run.
+func (b *DiscordBot) SendStopButton(_ context.Context, channelID, runID string) (string, error) {
+	msg, err := b.session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+		Content: "Processing...",
+		Components: []discordgo.MessageComponent{
+			discordgo.ActionsRow{
+				Components: []discordgo.MessageComponent{
+					discordgo.Button{
+						Label:    "Stop",
+						Style:    discordgo.DangerButton,
+						CustomID: "stop:" + runID,
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("discord send stop button: %w", err)
+	}
+	return msg.ID, nil
+}
+
+// RemoveStopButton deletes the stop button message.
+func (b *DiscordBot) RemoveStopButton(_ context.Context, channelID, messageID string) error {
+	if err := b.session.ChannelMessageDelete(channelID, messageID); err != nil {
+		return fmt.Errorf("discord remove stop button: %w", err)
+	}
 	return nil
 }
 
@@ -502,10 +534,15 @@ func (b *DiscordBot) handleMessage(_ *discordgo.Session, m *discordgo.MessageCre
 }
 
 func (b *DiscordBot) handleInteraction(_ *discordgo.Session, i *discordgo.InteractionCreate) {
-	if i.Type != discordgo.InteractionApplicationCommand {
-		return
+	switch i.Type {
+	case discordgo.InteractionApplicationCommand:
+		b.handleSlashCommandInteraction(i)
+	case discordgo.InteractionMessageComponent:
+		b.handleComponentInteraction(i)
 	}
+}
 
+func (b *DiscordBot) handleSlashCommandInteraction(i *discordgo.InteractionCreate) {
 	if err := b.session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
 		Type: discordgo.InteractionResponseDeferredChannelMessageWithSource,
 	}); err != nil {
@@ -562,6 +599,46 @@ func (b *DiscordBot) handleInteraction(_ *discordgo.Session, i *discordgo.Intera
 		AuthorRoles: authorRoles,
 	}
 
+	b.dispatchInteraction(inter)
+}
+
+func (b *DiscordBot) handleComponentInteraction(i *discordgo.InteractionCreate) {
+	data := i.MessageComponentData()
+
+	// Acknowledge the button click without sending a visible response.
+	if err := b.session.InteractionRespond(i.Interaction, &discordgo.InteractionResponse{
+		Type: discordgo.InteractionResponseDeferredMessageUpdate,
+	}); err != nil {
+		b.logger.Error("acknowledging component interaction", "error", err)
+	}
+
+	if !strings.HasPrefix(data.CustomID, "stop:") {
+		return
+	}
+	targetChannelID := strings.TrimPrefix(data.CustomID, "stop:")
+
+	var authorID string
+	var authorRoles []string
+	if i.Member != nil && i.Member.User != nil {
+		authorID = i.Member.User.ID
+		authorRoles = i.Member.Roles
+	} else if i.User != nil {
+		authorID = i.User.ID
+	}
+
+	inter := &orchestrator.Interaction{
+		ChannelID:   i.ChannelID,
+		GuildID:     i.GuildID,
+		CommandName: "stop",
+		Options:     map[string]string{"channel_id": targetChannelID},
+		AuthorID:    authorID,
+		AuthorRoles: authorRoles,
+	}
+
+	b.dispatchInteraction(inter)
+}
+
+func (b *DiscordBot) dispatchInteraction(inter *orchestrator.Interaction) {
 	b.mu.RLock()
 	handlers := make([]bot.InteractionHandler, len(b.interactionHandlers))
 	copy(handlers, b.interactionHandlers)

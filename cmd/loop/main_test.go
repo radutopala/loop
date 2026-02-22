@@ -361,6 +361,15 @@ func (m *mockBot) GetMemberRoles(ctx context.Context, guildID, userID string) ([
 	return args.Get(0).([]string), args.Error(1)
 }
 
+func (m *mockBot) SendStopButton(ctx context.Context, channelID, runID string) (string, error) {
+	args := m.Called(ctx, channelID, runID)
+	return args.String(0), args.Error(1)
+}
+
+func (m *mockBot) RemoveStopButton(ctx context.Context, channelID, messageID string) error {
+	return m.Called(ctx, channelID, messageID).Error(0)
+}
+
 type closableDockerClient struct {
 	*mockDockerClient
 	closeFn func() error
