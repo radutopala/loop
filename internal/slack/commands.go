@@ -19,6 +19,7 @@ import (
 //	toggle <task_id>
 //	edit <task_id> [--schedule X] [--type Y] [--prompt Z]
 //	status
+//	stop
 //	template add <name>
 //	template list
 //	allow user <@U...> [owner|member]
@@ -53,6 +54,9 @@ func parseSlashCommand(channelID, teamID, text string) (*orchestrator.Interactio
 		return parseEdit(inter, args)
 	case "status":
 		inter.CommandName = "status"
+		return inter, ""
+	case "stop":
+		inter.CommandName = "stop"
 		return inter, ""
 	case "template":
 		return parseTemplate(inter, args)
@@ -268,6 +272,7 @@ func helpText() string {
 		"  `/loop toggle <task_id>` - Toggle a task on/off\n" +
 		"  `/loop edit <task_id> [--schedule X] [--type Y] [--prompt Z]` - Edit a task\n" +
 		"  `/loop status` - Show bot status\n" +
+		"  `/loop stop` - Stop the currently running agent\n" +
 		"  `/loop template add <name>` - Load a task template\n" +
 		"  `/loop template list` - List available templates\n" +
 		"  `/loop allow user <@U...> [owner|member]` - Grant user a role\n" +

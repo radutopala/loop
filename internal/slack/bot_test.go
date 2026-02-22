@@ -114,6 +114,11 @@ func (m *MockSession) GetConversationInfo(input *goslack.GetConversationInfoInpu
 	return args.Get(0).(*goslack.Channel), args.Error(1)
 }
 
+func (m *MockSession) UpdateMessage(channelID, timestamp string, options ...goslack.MsgOption) (string, string, string, error) {
+	args := m.Called(channelID, timestamp, options)
+	return args.String(0), args.String(1), args.String(2), args.Error(3)
+}
+
 // MockSocketModeClient mocks the SocketModeClient interface.
 type MockSocketModeClient struct {
 	mock.Mock
@@ -1272,6 +1277,13 @@ func (s *BotSuite) TestParseSlashCommandStatus() {
 	require.Equal(s.T(), "status", inter.CommandName)
 }
 
+func (s *BotSuite) TestParseSlashCommandStop() {
+	inter, errText := parseSlashCommand("C123", "T123", "stop")
+	require.Empty(s.T(), errText)
+	require.Equal(s.T(), "stop", inter.CommandName)
+	require.Equal(s.T(), "C123", inter.ChannelID)
+}
+
 func (s *BotSuite) TestParseSlashCommandTemplateAdd() {
 	inter, errText := parseSlashCommand("C123", "T123", "template add daily-check")
 	require.Empty(s.T(), errText)
@@ -2178,4 +2190,204 @@ func (s *BotSuite) TestExtractUserIDInvalid() {
 
 func (s *BotSuite) TestExtractUserIDWhitespace() {
 	require.Equal(s.T(), "U123456", extractUserID("  <@U123456>  "))
+}
+
+// --- Stop button tests ---
+
+func (s *BotSuite) TestSendStopButtonSuccess() {
+	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234567890.123456", nil)
+
+	msgID, err := s.bot.SendStopButton(context.Background(), "C123", "run-1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "1234567890.123456", msgID)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestSendStopButtonError() {
+	s.session.On("PostMessage", "C123", mock.Anything).Return("", "", errors.New("post failed"))
+
+	msgID, err := s.bot.SendStopButton(context.Background(), "C123", "run-1")
+	require.Error(s.T(), err)
+	require.Equal(s.T(), "", msgID)
+}
+
+func (s *BotSuite) TestSendStopButtonThread() {
+	// Thread composite ID: channelID:threadTS
+	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234567890.999", nil)
+
+	msgID, err := s.bot.SendStopButton(context.Background(), "C123:1111111111.000", "run-1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "1234567890.999", msgID)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestRemoveStopButtonSuccess() {
+	s.session.On("UpdateMessage", "C123", "1234567890.123456", mock.Anything).Return("C123", "1234567890.123456", "", nil)
+
+	err := s.bot.RemoveStopButton(context.Background(), "C123", "1234567890.123456")
+	require.NoError(s.T(), err)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestRemoveStopButtonError() {
+	s.session.On("UpdateMessage", "C123", "1234567890.123456", mock.Anything).Return("", "", "", errors.New("update failed"))
+
+	err := s.bot.RemoveStopButton(context.Background(), "C123", "1234567890.123456")
+	require.Error(s.T(), err)
+}
+
+func (s *BotSuite) TestRemoveStopButtonThread() {
+	s.session.On("UpdateMessage", "C123", "1234567890.123456", mock.Anything).Return("C123", "1234567890.123456", "", nil)
+
+	err := s.bot.RemoveStopButton(context.Background(), "C123:1111111111.000", "1234567890.123456")
+	require.NoError(s.T(), err)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestParseSlashCommandStopInHelp() {
+	_, errText := parseSlashCommand("C123", "T123", "")
+	require.Contains(s.T(), errText, "/loop stop")
+}
+
+// --- handleInteractive tests ---
+
+func (s *BotSuite) TestHandleInteractiveStopAction() {
+	received := make(chan any, 1)
+	s.bot.OnInteraction(func(_ context.Context, i any) {
+		received <- i
+	})
+
+	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
+
+	evt := socketmode.Event{
+		Type: socketmode.EventTypeInteractive,
+		Data: goslack.InteractionCallback{
+			Type: goslack.InteractionTypeBlockActions,
+			Channel: goslack.Channel{
+				GroupConversation: goslack.GroupConversation{
+					Conversation: goslack.Conversation{ID: "C123"},
+				},
+			},
+			Team: goslack.Team{ID: "T123"},
+			User: goslack.User{ID: "U456"},
+			ActionCallback: goslack.ActionCallbacks{
+				BlockActions: []*goslack.BlockAction{
+					{ActionID: "stop:target-ch"},
+				},
+			},
+		},
+		Request: &socketmode.Request{},
+	}
+	s.bot.handleInteractive(evt)
+
+	select {
+	case i := <-received:
+		inter := i.(*orchestrator.Interaction)
+		require.Equal(s.T(), "stop", inter.CommandName)
+		require.Equal(s.T(), "target-ch", inter.Options["channel_id"])
+		require.Equal(s.T(), "C123", inter.ChannelID)
+		require.Equal(s.T(), "T123", inter.GuildID)
+		require.Equal(s.T(), "U456", inter.AuthorID)
+	case <-time.After(time.Second):
+		s.Fail("timeout waiting for interaction")
+	}
+}
+
+func (s *BotSuite) TestHandleInteractiveNonBlockActions() {
+	called := false
+	s.bot.OnInteraction(func(_ context.Context, _ any) {
+		called = true
+	})
+
+	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
+
+	evt := socketmode.Event{
+		Type: socketmode.EventTypeInteractive,
+		Data: goslack.InteractionCallback{
+			Type: goslack.InteractionTypeDialogSubmission,
+		},
+		Request: &socketmode.Request{},
+	}
+	s.bot.handleInteractive(evt)
+
+	require.False(s.T(), called)
+}
+
+func (s *BotSuite) TestHandleInteractiveNonStopAction() {
+	called := false
+	s.bot.OnInteraction(func(_ context.Context, _ any) {
+		called = true
+	})
+
+	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
+
+	evt := socketmode.Event{
+		Type: socketmode.EventTypeInteractive,
+		Data: goslack.InteractionCallback{
+			Type: goslack.InteractionTypeBlockActions,
+			ActionCallback: goslack.ActionCallbacks{
+				BlockActions: []*goslack.BlockAction{
+					{ActionID: "other:something"},
+				},
+			},
+		},
+		Request: &socketmode.Request{},
+	}
+	s.bot.handleInteractive(evt)
+
+	require.False(s.T(), called)
+}
+
+func (s *BotSuite) TestHandleInteractiveInvalidData() {
+	called := false
+	s.bot.OnInteraction(func(_ context.Context, _ any) {
+		called = true
+	})
+
+	evt := socketmode.Event{
+		Type: socketmode.EventTypeInteractive,
+		Data: "not-a-callback",
+	}
+	s.bot.handleInteractive(evt)
+
+	require.False(s.T(), called)
+}
+
+func (s *BotSuite) TestHandleEventInteractiveType() {
+	received := make(chan any, 1)
+	s.bot.OnInteraction(func(_ context.Context, i any) {
+		received <- i
+	})
+
+	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
+
+	evt := socketmode.Event{
+		Type: socketmode.EventTypeInteractive,
+		Data: goslack.InteractionCallback{
+			Type: goslack.InteractionTypeBlockActions,
+			Channel: goslack.Channel{
+				GroupConversation: goslack.GroupConversation{
+					Conversation: goslack.Conversation{ID: "C123"},
+				},
+			},
+			Team: goslack.Team{ID: "T123"},
+			User: goslack.User{ID: "U456"},
+			ActionCallback: goslack.ActionCallbacks{
+				BlockActions: []*goslack.BlockAction{
+					{ActionID: "stop:ch-1"},
+				},
+			},
+		},
+		Request: &socketmode.Request{},
+	}
+	// Call handleEvent directly to cover the EventTypeInteractive branch
+	s.bot.handleEvent(evt)
+
+	select {
+	case i := <-received:
+		inter := i.(*orchestrator.Interaction)
+		require.Equal(s.T(), "stop", inter.CommandName)
+	case <-time.After(time.Second):
+		s.Fail("timeout waiting for interaction")
+	}
 }

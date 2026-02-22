@@ -38,6 +38,7 @@ func (s *CommandsSuite) TestSubcommands() {
 		"toggle":     discordgo.ApplicationCommandOptionSubCommand,
 		"edit":       discordgo.ApplicationCommandOptionSubCommand,
 		"status":     discordgo.ApplicationCommandOptionSubCommand,
+		"stop":       discordgo.ApplicationCommandOptionSubCommand,
 		"template":   discordgo.ApplicationCommandOptionSubCommandGroup,
 		"allow_user": discordgo.ApplicationCommandOptionSubCommand,
 		"allow_role": discordgo.ApplicationCommandOptionSubCommand,
@@ -137,7 +138,7 @@ func (s *CommandsSuite) TestEditSubcommand() {
 
 func (s *CommandsSuite) TestTasksStatusHaveNoOptions() {
 	cmds := Commands()
-	for _, name := range []string{"tasks", "status"} {
+	for _, name := range []string{"tasks", "status", "stop"} {
 		sub := findSubcommand(cmds[0], name)
 		require.NotNil(s.T(), sub, "subcommand %s should exist", name)
 		require.Empty(s.T(), sub.Options, "subcommand %s should have no options", name)

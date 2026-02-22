@@ -114,6 +114,11 @@ func Commands() []*discordgo.ApplicationCommand {
 					Description: "Show bot status",
 				},
 				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "stop",
+					Description: "Stop the currently running agent",
+				},
+				{
 					Type:        discordgo.ApplicationCommandOptionSubCommandGroup,
 					Name:        "template",
 					Description: "Manage task templates",

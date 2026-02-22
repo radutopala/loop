@@ -170,6 +170,19 @@ func (m *MockSession) GuildMember(guildID string, userID string, options ...disc
 	return args.Get(0).(*discordgo.Member), args.Error(1)
 }
 
+func (m *MockSession) ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend, options ...discordgo.RequestOption) (*discordgo.Message, error) {
+	args := m.Called(channelID, data, options)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*discordgo.Message), args.Error(1)
+}
+
+func (m *MockSession) ChannelMessageDelete(channelID string, messageID string, options ...discordgo.RequestOption) error {
+	args := m.Called(channelID, messageID, options)
+	return args.Error(0)
+}
+
 // --- Test Suite ---
 
 type BotSuite struct {
@@ -654,7 +667,7 @@ func (s *BotSuite) TestOnInteractionRespondError() {
 	s.session.AssertExpectations(s.T())
 }
 
-func (s *BotSuite) TestOnInteractionIgnoresNonCommand() {
+func (s *BotSuite) TestOnInteractionIgnoresUnhandledType() {
 	called := false
 	s.bot.OnInteraction(func(_ context.Context, _ any) {
 		called = true
@@ -662,12 +675,120 @@ func (s *BotSuite) TestOnInteractionIgnoresNonCommand() {
 
 	ic := &discordgo.InteractionCreate{
 		Interaction: &discordgo.Interaction{
-			Type: discordgo.InteractionMessageComponent,
+			Type: discordgo.InteractionModalSubmit,
 		},
 	}
 	s.bot.handleInteraction(nil, ic)
 
 	require.False(s.T(), called)
+}
+
+func (s *BotSuite) TestHandleComponentInteractionStopButton() {
+	var received *orchestrator.Interaction
+	done := make(chan struct{})
+	s.bot.OnInteraction(func(_ context.Context, i any) {
+		received = i.(*orchestrator.Interaction)
+		close(done)
+	})
+
+	s.session.On("InteractionRespond", mock.Anything, mock.MatchedBy(func(resp *discordgo.InteractionResponse) bool {
+		return resp.Type == discordgo.InteractionResponseDeferredMessageUpdate
+	}), mock.Anything).Return(nil)
+
+	ic := &discordgo.InteractionCreate{
+		Interaction: &discordgo.Interaction{
+			ChannelID: "ch-1",
+			GuildID:   "g-1",
+			Type:      discordgo.InteractionMessageComponent,
+			Member: &discordgo.Member{
+				User:  &discordgo.User{ID: "user-1"},
+				Roles: []string{"role-1"},
+			},
+			Data: discordgo.MessageComponentInteractionData{
+				CustomID: "stop:target-ch",
+			},
+		},
+	}
+	s.bot.handleInteraction(nil, ic)
+	<-done
+
+	require.NotNil(s.T(), received)
+	require.Equal(s.T(), "stop", received.CommandName)
+	require.Equal(s.T(), "target-ch", received.Options["channel_id"])
+	require.Equal(s.T(), "ch-1", received.ChannelID)
+	require.Equal(s.T(), "g-1", received.GuildID)
+	require.Equal(s.T(), "user-1", received.AuthorID)
+	require.Equal(s.T(), []string{"role-1"}, received.AuthorRoles)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestHandleComponentInteractionNonStopIgnored() {
+	called := false
+	s.bot.OnInteraction(func(_ context.Context, _ any) {
+		called = true
+	})
+
+	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	ic := &discordgo.InteractionCreate{
+		Interaction: &discordgo.Interaction{
+			ChannelID: "ch-1",
+			Type:      discordgo.InteractionMessageComponent,
+			Data: discordgo.MessageComponentInteractionData{
+				CustomID: "other:something",
+			},
+		},
+	}
+	s.bot.handleInteraction(nil, ic)
+
+	require.False(s.T(), called)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestHandleComponentInteractionAckError() {
+	s.bot.OnInteraction(func(_ context.Context, _ any) {})
+
+	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("ack failed"))
+
+	ic := &discordgo.InteractionCreate{
+		Interaction: &discordgo.Interaction{
+			ChannelID: "ch-1",
+			Type:      discordgo.InteractionMessageComponent,
+			Data: discordgo.MessageComponentInteractionData{
+				CustomID: "stop:ch-1",
+			},
+		},
+	}
+	// Should not panic, just log error and continue
+	s.bot.handleInteraction(nil, ic)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestHandleComponentInteractionDMUser() {
+	var received *orchestrator.Interaction
+	done := make(chan struct{})
+	s.bot.OnInteraction(func(_ context.Context, i any) {
+		received = i.(*orchestrator.Interaction)
+		close(done)
+	})
+
+	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+
+	ic := &discordgo.InteractionCreate{
+		Interaction: &discordgo.Interaction{
+			ChannelID: "dm-ch",
+			Type:      discordgo.InteractionMessageComponent,
+			User:      &discordgo.User{ID: "dm-user"},
+			Data: discordgo.MessageComponentInteractionData{
+				CustomID: "stop:dm-ch",
+			},
+		},
+	}
+	s.bot.handleInteraction(nil, ic)
+	<-done
+
+	require.Equal(s.T(), "dm-user", received.AuthorID)
+	require.Empty(s.T(), received.AuthorRoles)
 }
 
 // --- handleMessage edge cases ---
@@ -2140,6 +2261,64 @@ func (s *BotSuite) TestCreateSimpleThreadMessageSendError() {
 	threadID, err := s.bot.CreateSimpleThread(context.Background(), "ch-1", "task", "content")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "thread-3", threadID)
+	s.session.AssertExpectations(s.T())
+}
+
+// --- Stop button tests ---
+
+func (s *BotSuite) TestSendStopButtonSuccess() {
+	s.session.On("ChannelMessageSendComplex", "ch1", mock.MatchedBy(func(data *discordgo.MessageSend) bool {
+		return data.Content == "Processing..." && len(data.Components) == 1
+	}), mock.Anything).Return(&discordgo.Message{ID: "stop-msg-1"}, nil)
+
+	msgID, err := s.bot.SendStopButton(context.Background(), "ch1", "run-1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "stop-msg-1", msgID)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestSendStopButtonError() {
+	s.session.On("ChannelMessageSendComplex", "ch1", mock.Anything, mock.Anything).Return(nil, errors.New("send failed"))
+
+	msgID, err := s.bot.SendStopButton(context.Background(), "ch1", "run-1")
+	require.Error(s.T(), err)
+	require.Equal(s.T(), "", msgID)
+}
+
+func (s *BotSuite) TestRemoveStopButtonSuccess() {
+	s.session.On("ChannelMessageDelete", "ch1", "stop-msg-1", mock.Anything).Return(nil)
+
+	err := s.bot.RemoveStopButton(context.Background(), "ch1", "stop-msg-1")
+	require.NoError(s.T(), err)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestRemoveStopButtonError() {
+	s.session.On("ChannelMessageDelete", "ch1", "stop-msg-1", mock.Anything).Return(errors.New("delete failed"))
+
+	err := s.bot.RemoveStopButton(context.Background(), "ch1", "stop-msg-1")
+	require.Error(s.T(), err)
+}
+
+func (s *BotSuite) TestSendStopButtonCustomID() {
+	s.session.On("ChannelMessageSendComplex", "ch1", mock.MatchedBy(func(data *discordgo.MessageSend) bool {
+		if len(data.Components) != 1 {
+			return false
+		}
+		row, ok := data.Components[0].(discordgo.ActionsRow)
+		if !ok || len(row.Components) != 1 {
+			return false
+		}
+		btn, ok := row.Components[0].(discordgo.Button)
+		if !ok {
+			return false
+		}
+		return btn.CustomID == "stop:my-channel" && btn.Style == discordgo.DangerButton && btn.Label == "Stop"
+	}), mock.Anything).Return(&discordgo.Message{ID: "msg-1"}, nil)
+
+	msgID, err := s.bot.SendStopButton(context.Background(), "ch1", "my-channel")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "msg-1", msgID)
 	s.session.AssertExpectations(s.T())
 }
 
