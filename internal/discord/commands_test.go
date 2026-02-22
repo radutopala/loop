@@ -32,17 +32,18 @@ func (s *CommandsSuite) TestSubcommands() {
 	root := cmds[0]
 
 	expected := map[string]discordgo.ApplicationCommandOptionType{
-		"schedule":   discordgo.ApplicationCommandOptionSubCommand,
-		"tasks":      discordgo.ApplicationCommandOptionSubCommand,
-		"cancel":     discordgo.ApplicationCommandOptionSubCommand,
-		"toggle":     discordgo.ApplicationCommandOptionSubCommand,
-		"edit":       discordgo.ApplicationCommandOptionSubCommand,
-		"status":     discordgo.ApplicationCommandOptionSubCommand,
-		"template":   discordgo.ApplicationCommandOptionSubCommandGroup,
-		"allow_user": discordgo.ApplicationCommandOptionSubCommand,
-		"allow_role": discordgo.ApplicationCommandOptionSubCommand,
-		"deny_user":  discordgo.ApplicationCommandOptionSubCommand,
-		"deny_role":  discordgo.ApplicationCommandOptionSubCommand,
+		"schedule":    discordgo.ApplicationCommandOptionSubCommand,
+		"tasks":       discordgo.ApplicationCommandOptionSubCommand,
+		"cancel":      discordgo.ApplicationCommandOptionSubCommand,
+		"toggle":      discordgo.ApplicationCommandOptionSubCommand,
+		"edit":        discordgo.ApplicationCommandOptionSubCommand,
+		"status":      discordgo.ApplicationCommandOptionSubCommand,
+		"template":    discordgo.ApplicationCommandOptionSubCommandGroup,
+		"allow_user":  discordgo.ApplicationCommandOptionSubCommand,
+		"allow_role":  discordgo.ApplicationCommandOptionSubCommand,
+		"deny_user":   discordgo.ApplicationCommandOptionSubCommand,
+		"deny_role":   discordgo.ApplicationCommandOptionSubCommand,
+		"iamtheowner": discordgo.ApplicationCommandOptionSubCommand,
 	}
 
 	require.Len(s.T(), root.Options, len(expected))
@@ -176,6 +177,13 @@ func (s *CommandsSuite) TestTemplateSubcommandGroup() {
 
 	// "list" should have no options
 	require.Empty(s.T(), subNames["list"].Options)
+}
+
+func (s *CommandsSuite) TestIamtheownerSubcommand() {
+	cmds := Commands()
+	sub := findSubcommand(cmds[0], "iamtheowner")
+	require.NotNil(s.T(), sub)
+	require.Empty(s.T(), sub.Options)
 }
 
 func findSubcommand(root *discordgo.ApplicationCommand, name string) *discordgo.ApplicationCommandOption {

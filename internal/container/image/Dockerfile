@@ -7,7 +7,7 @@ RUN go install golang.org/x/tools/gopls@latest
 
 FROM golang:1.26-alpine
 ENV GOTOOLCHAIN=auto
-RUN apk add --no-cache bash ca-certificates curl git make nodejs npm docker-cli docker-cli-compose su-exec aws-cli libgcc libstdc++ ripgrep uv gcc musl-dev
+RUN apk add --no-cache bash ca-certificates curl git make nodejs npm docker-cli docker-cli-compose su-exec aws-cli libgcc libstdc++ ripgrep uv gcc musl-dev openssh-client
 ENV USE_BUILTIN_RIPGREP=0
 ARG CLAUDE_VERSION=latest
 RUN curl -fsSL https://claude.ai/install.sh | bash && cp -L ~/.local/bin/claude /usr/local/bin/claude && rm -rf ~/.local/share/claude ~/.local/bin/claude

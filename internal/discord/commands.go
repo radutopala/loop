@@ -210,6 +210,11 @@ func Commands() []*discordgo.ApplicationCommand {
 						},
 					},
 				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "iamtheowner",
+					Description: "Claim ownership of this channel (only works during initial setup)",
+				},
 			},
 		},
 	}

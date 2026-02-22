@@ -482,7 +482,9 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, interaction any) {
 
 	isPermCmd := inter.CommandName == "allow_user" || inter.CommandName == "allow_role" ||
 		inter.CommandName == "deny_user" || inter.CommandName == "deny_role"
-	if isPermCmd {
+	isSelfOnboard := inter.CommandName == "iamtheowner"
+	switch {
+	case isPermCmd:
 		if role != types.RoleOwner {
 			_ = o.bot.SendMessage(ctx, &OutgoingMessage{
 				ChannelID: inter.ChannelID,
@@ -490,7 +492,9 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, interaction any) {
 			})
 			return
 		}
-	} else if role == "" {
+	case isSelfOnboard:
+		// Bypass normal permission checks; handler validates bootstrap mode.
+	case role == "":
 		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
 			ChannelID: inter.ChannelID,
 			Content:   "⛔ You don't have permission to use this command.",
@@ -523,6 +527,8 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, interaction any) {
 		o.handleDenyUser(ctx, inter, ch)
 	case "deny_role":
 		o.handleDenyRole(ctx, inter, ch)
+	case "iamtheowner":
+		o.handleIAmTheOwner(ctx, inter, ch, cfgPerms, dbPerms)
 	default:
 		o.logger.Warn("unknown command", "command", inter.CommandName)
 	}
@@ -1014,6 +1020,37 @@ func (o *Orchestrator) handleDenyRole(ctx context.Context, inter *Interaction, c
 	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
 		ChannelID: inter.ChannelID,
 		Content:   fmt.Sprintf("✅ Role <@&%s> removed from channel permissions.", targetID),
+	})
+}
+
+func (o *Orchestrator) handleIAmTheOwner(ctx context.Context, inter *Interaction, ch *db.Channel, cfgPerms config.PermissionsConfig, dbPerms db.ChannelPermissions) {
+	if !cfgPerms.IsEmpty() || !dbPerms.IsEmpty() {
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "⛔ An owner is already configured. Use `/loop allow_user` to manage permissions.",
+		})
+		return
+	}
+	if ch == nil {
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "⛔ Channel not registered.",
+		})
+		return
+	}
+	perms := ch.Permissions
+	perms.Owners.Users = appendUnique(perms.Owners.Users, inter.AuthorID)
+	if err := o.store.UpdateChannelPermissions(ctx, inter.ChannelID, perms); err != nil {
+		o.logger.Error("updating channel permissions", "error", err)
+		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			ChannelID: inter.ChannelID,
+			Content:   "Failed to update permissions.",
+		})
+		return
+	}
+	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+		ChannelID: inter.ChannelID,
+		Content:   fmt.Sprintf("✅ <@%s> is now the owner of this channel.", inter.AuthorID),
 	})
 }
 

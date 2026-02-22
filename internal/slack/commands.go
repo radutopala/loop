@@ -23,6 +23,7 @@ import (
 //	template list
 //	allow user <@U...> [owner|member]
 //	deny user <@U...>
+//	iamtheowner
 func parseSlashCommand(channelID, teamID, text string) (*orchestrator.Interaction, string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
@@ -60,6 +61,9 @@ func parseSlashCommand(channelID, teamID, text string) (*orchestrator.Interactio
 		return parseAllow(inter, args)
 	case "deny":
 		return parseDeny(inter, args)
+	case "iamtheowner":
+		inter.CommandName = "iamtheowner"
+		return inter, ""
 	default:
 		return nil, fmt.Sprintf("Unknown subcommand: %s\n\n%s", subcommand, helpText())
 	}
@@ -271,5 +275,6 @@ func helpText() string {
 		"  `/loop template add <name>` - Load a task template\n" +
 		"  `/loop template list` - List available templates\n" +
 		"  `/loop allow user <@U...> [owner|member]` - Grant user a role\n" +
-		"  `/loop deny user <@U...>` - Remove user's role"
+		"  `/loop deny user <@U...>` - Remove user's role\n" +
+		"  `/loop iamtheowner` - Claim ownership (initial setup only)"
 }

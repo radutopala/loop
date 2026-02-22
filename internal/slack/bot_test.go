@@ -2179,3 +2179,11 @@ func (s *BotSuite) TestExtractUserIDInvalid() {
 func (s *BotSuite) TestExtractUserIDWhitespace() {
 	require.Equal(s.T(), "U123456", extractUserID("  <@U123456>  "))
 }
+
+func (s *BotSuite) TestParseIAmTheOwner() {
+	inter, errText := parseSlashCommand("C123", "T123", "iamtheowner")
+	require.Empty(s.T(), errText)
+	require.NotNil(s.T(), inter)
+	require.Equal(s.T(), "iamtheowner", inter.CommandName)
+	require.Equal(s.T(), "C123", inter.ChannelID)
+}
