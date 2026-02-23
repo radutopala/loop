@@ -416,6 +416,7 @@ For development: `make docker-build` builds from `container/Dockerfile` in the r
 | `loop daemon:start` | `d:start`, `up` | Install and start the daemon |
 | `loop daemon:stop` | `d:stop`, `down` | Stop and uninstall the daemon |
 | `loop daemon:status` | `d:status` | Show daemon status |
+| `loop readme` | `r` | Print the README documentation |
 
 ### MCP Server Options
 
@@ -455,6 +456,7 @@ Both Discord slash commands and Slack `/loop` subcommands use the same syntax:
 | `/loop edit <task_id> [--schedule] [--type] [--prompt]` | Edit a scheduled task |
 | `/loop stop` | Stop the currently running agent |
 | `/loop status` | Show bot status |
+| `/loop readme` | Show the README documentation |
 | `/loop template add <name>` | Load a task template into the current channel |
 | `/loop template list` | List available task templates from config |
 | `/loop iamtheowner` | Self-onboard as channel owner (only when no permissions are configured) |
@@ -607,6 +609,7 @@ Project configs (`.loop/config.json`) can define their own `task_templates` that
 | `send_message` | Send a message to a channel or thread |
 | `search_memory` | Semantic search across memory files (ranked by similarity) |
 | `index_memory` | Force re-index all memory files |
+| `get_readme` | Get the full Loop README documentation |
 
 ## Development
 
