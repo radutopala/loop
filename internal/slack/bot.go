@@ -189,12 +189,10 @@ func (b *SlackBot) SendStopButton(_ context.Context, channelID, runID string) (s
 	return ts, nil
 }
 
-// RemoveStopButton removes the stop button message by clearing its content.
+// RemoveStopButton removes the stop button message by deleting it.
 func (b *SlackBot) RemoveStopButton(_ context.Context, channelID, messageID string) error {
 	chID, _ := parseCompositeID(channelID)
-	_, _, _, err := b.session.UpdateMessage(chID, messageID,
-		goslack.MsgOptionBlocks(),
-	)
+	_, _, err := b.session.DeleteMessage(chID, messageID)
 	if err != nil {
 		return fmt.Errorf("slack remove stop button: %w", err)
 	}

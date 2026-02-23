@@ -114,11 +114,6 @@ func (m *MockSession) GetConversationInfo(input *goslack.GetConversationInfoInpu
 	return args.Get(0).(*goslack.Channel), args.Error(1)
 }
 
-func (m *MockSession) UpdateMessage(channelID, timestamp string, options ...goslack.MsgOption) (string, string, string, error) {
-	args := m.Called(channelID, timestamp, options)
-	return args.String(0), args.String(1), args.String(2), args.Error(3)
-}
-
 // MockSocketModeClient mocks the SocketModeClient interface.
 type MockSocketModeClient struct {
 	mock.Mock
@@ -2213,7 +2208,7 @@ func (s *BotSuite) TestSendStopButtonThread() {
 }
 
 func (s *BotSuite) TestRemoveStopButtonSuccess() {
-	s.session.On("UpdateMessage", "C123", "1234567890.123456", mock.Anything).Return("C123", "1234567890.123456", "", nil)
+	s.session.On("DeleteMessage", "C123", "1234567890.123456").Return("C123", "1234567890.123456", nil)
 
 	err := s.bot.RemoveStopButton(context.Background(), "C123", "1234567890.123456")
 	require.NoError(s.T(), err)
@@ -2221,14 +2216,14 @@ func (s *BotSuite) TestRemoveStopButtonSuccess() {
 }
 
 func (s *BotSuite) TestRemoveStopButtonError() {
-	s.session.On("UpdateMessage", "C123", "1234567890.123456", mock.Anything).Return("", "", "", errors.New("update failed"))
+	s.session.On("DeleteMessage", "C123", "1234567890.123456").Return("", "", errors.New("delete failed"))
 
 	err := s.bot.RemoveStopButton(context.Background(), "C123", "1234567890.123456")
 	require.Error(s.T(), err)
 }
 
 func (s *BotSuite) TestRemoveStopButtonThread() {
-	s.session.On("UpdateMessage", "C123", "1234567890.123456", mock.Anything).Return("C123", "1234567890.123456", "", nil)
+	s.session.On("DeleteMessage", "C123", "1234567890.123456").Return("C123", "1234567890.123456", nil)
 
 	err := s.bot.RemoveStopButton(context.Background(), "C123:1111111111.000", "1234567890.123456")
 	require.NoError(s.T(), err)
