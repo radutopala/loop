@@ -10,12 +10,15 @@ DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
 build: ## Build the loop binary
+	go generate ./internal/readme/
 	go build -ldflags "$(LDFLAGS)" -o bin/loop ./cmd/loop
 
 install: ## Install loop to GOPATH/bin
+	go generate ./internal/readme/
 	go install -ldflags "$(LDFLAGS)" ./cmd/loop
 
 test: ## Run all tests
+	go generate ./internal/readme/
 	go test -race -count=1 ./...
 
 test-integration: ## Run integration tests (requires tokens in ~/.loop/config.integration.json)
@@ -25,12 +28,14 @@ lint: ## Run golangci-lint
 	docker run --rm --name loop-lint -v "$$(pwd)":/app -w /app golangci/golangci-lint:v2.10.1 golangci-lint run -v ./...
 
 coverage: ## Generate HTML coverage report
+	go generate ./internal/readme/
 	go test -race -count=1 -coverprofile=coverage.out ./...
 	@sed '/^$$/d' coverage.out > coverage.out.tmp && mv coverage.out.tmp coverage.out
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
 coverage-check: ## Run tests and enforce 100% coverage
+	go generate ./internal/readme/
 	go test -race -count=1 -coverprofile=coverage.out ./...
 	@sed '/^$$/d' coverage.out > coverage.out.tmp && mv coverage.out.tmp coverage.out
 	@go tool cover -func=coverage.out | grep total | awk '{print $$3}' | sed 's/%//' | \

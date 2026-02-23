@@ -59,6 +59,9 @@ func parseSlashCommand(channelID, teamID, text string) (*orchestrator.Interactio
 	case "stop":
 		inter.CommandName = "stop"
 		return inter, ""
+	case "readme":
+		inter.CommandName = "readme"
+		return inter, ""
 	case "template":
 		return parseTemplate(inter, args)
 	case "allow":
@@ -277,6 +280,7 @@ func helpText() string {
 		"  `/loop edit <task_id> [--schedule X] [--type Y] [--prompt Z]` - Edit a task\n" +
 		"  `/loop status` - Show bot status\n" +
 		"  `/loop stop` - Stop the currently running agent\n" +
+		"  `/loop readme` - Show the README documentation\n" +
 		"  `/loop template add <name>` - Load a task template\n" +
 		"  `/loop template list` - List available templates\n" +
 		"  `/loop allow user <@U...> [owner|member]` - Grant user a role\n" +

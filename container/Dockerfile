@@ -4,7 +4,7 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -o /loop ./cmd/loop
+RUN go generate ./internal/readme/ && go build -o /loop ./cmd/loop
 RUN go install github.com/radutopala/ticket/cmd/tk@latest
 RUN go install golang.org/x/tools/gopls@latest
 

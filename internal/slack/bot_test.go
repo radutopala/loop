@@ -1261,6 +1261,13 @@ func (s *BotSuite) TestParseSlashCommandStop() {
 	require.Equal(s.T(), "C123", inter.ChannelID)
 }
 
+func (s *BotSuite) TestParseSlashCommandReadme() {
+	inter, errText := parseSlashCommand("C123", "T123", "readme")
+	require.Empty(s.T(), errText)
+	require.Equal(s.T(), "readme", inter.CommandName)
+	require.Equal(s.T(), "C123", inter.ChannelID)
+}
+
 func (s *BotSuite) TestParseSlashCommandTemplateAdd() {
 	inter, errText := parseSlashCommand("C123", "T123", "template add daily-check")
 	require.Empty(s.T(), errText)
@@ -2250,6 +2257,11 @@ func (s *BotSuite) TestRemoveStopButtonThread() {
 func (s *BotSuite) TestParseSlashCommandStopInHelp() {
 	_, errText := parseSlashCommand("C123", "T123", "")
 	require.Contains(s.T(), errText, "/loop stop")
+}
+
+func (s *BotSuite) TestParseSlashCommandReadmeInHelp() {
+	_, errText := parseSlashCommand("C123", "T123", "")
+	require.Contains(s.T(), errText, "/loop readme")
 }
 
 // --- handleInteractive tests ---

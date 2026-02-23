@@ -119,6 +119,11 @@ func Commands() []*discordgo.ApplicationCommand {
 					Description: "Stop the currently running agent",
 				},
 				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "readme",
+					Description: "Show the README documentation",
+				},
+				{
 					Type:        discordgo.ApplicationCommandOptionSubCommandGroup,
 					Name:        "template",
 					Description: "Manage task templates",

@@ -532,6 +532,7 @@ func (s *MainSuite) TestNewRootCmd() {
 		"onboard:global": false,
 		"onboard:local":  false,
 		"version":        false,
+		"readme":         false,
 	}
 	for _, sub := range cmd.Commands() {
 		if _, ok := want[sub.Use]; ok {
@@ -659,7 +660,7 @@ func (s *MainSuite) TestRunMCPWithInMemoryTransport() {
 
 	res, err := session.ListTools(context.Background(), nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 10)
+	require.Len(s.T(), res.Tools, 11)
 }
 
 func (s *MainSuite) TestEnsureChannelSuccess() {
@@ -3431,6 +3432,22 @@ func (s *MainSuite) TestVersionOutputDefaults() {
 	date = "unknown"
 
 	cmd := newVersionCmd()
+	cmd.SetArgs([]string{})
+	err := cmd.Execute()
+	require.NoError(s.T(), err)
+}
+
+// --- newReadmeCmd ---
+
+func (s *MainSuite) TestNewReadmeCmd() {
+	cmd := newReadmeCmd()
+	require.Equal(s.T(), "readme", cmd.Use)
+	require.Equal(s.T(), []string{"r"}, cmd.Aliases)
+	require.NotNil(s.T(), cmd.Run)
+}
+
+func (s *MainSuite) TestReadmeOutput() {
+	cmd := newReadmeCmd()
 	cmd.SetArgs([]string{})
 	err := cmd.Execute()
 	require.NoError(s.T(), err)

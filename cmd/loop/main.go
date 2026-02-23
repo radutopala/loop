@@ -34,6 +34,7 @@ import (
 	"github.com/radutopala/loop/internal/mcpserver"
 	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/orchestrator"
+	"github.com/radutopala/loop/internal/readme"
 	"github.com/radutopala/loop/internal/scheduler"
 	slackbot "github.com/radutopala/loop/internal/slack"
 	"github.com/radutopala/loop/internal/types"
@@ -70,6 +71,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newOnboardGlobalCmd())
 	root.AddCommand(newOnboardLocalCmd())
 	root.AddCommand(newVersionCmd())
+	root.AddCommand(newReadmeCmd())
 	root.AddCommand(newUpdateCmd())
 	root.SetHelpTemplate(helpTemplate)
 	return root
@@ -97,6 +99,7 @@ Available Commands:
   daemon:stop              Stop and uninstall the daemon (aliases: d:stop, down)
   daemon:status            Show daemon status (alias: d:status)
   version                  Print version information (alias: v)
+  readme                   Print the README documentation (alias: r)
   update                   Update loop to the latest version (alias: u)
 
 Use "loop [command] --help" for more information about a command.
@@ -115,6 +118,17 @@ func newVersionCmd() *cobra.Command {
 			if date != "unknown" {
 				fmt.Printf("  built:  %s\n", date)
 			}
+		},
+	}
+}
+
+func newReadmeCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "readme",
+		Aliases: []string{"r"},
+		Short:   "Print the README documentation",
+		Run: func(_ *cobra.Command, _ []string) {
+			fmt.Print(readme.Content)
 		},
 	}
 }

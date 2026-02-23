@@ -9,6 +9,7 @@ import (
 
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/readme"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -67,6 +68,8 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, interaction any) {
 		o.handleStatusInteraction(ctx, inter)
 	case "stop":
 		o.handleStopInteraction(ctx, inter)
+	case "readme":
+		o.handleReadmeInteraction(ctx, inter)
 	case "template-add":
 		o.handleTemplateAddInteraction(ctx, inter)
 	case "template-list":
@@ -277,6 +280,13 @@ func (o *Orchestrator) handleStopInteraction(ctx context.Context, inter *Interac
 	cancel := val.(context.CancelFunc)
 	cancel()
 	o.logger.Info("run stopped by user", "channel_id", targetChannelID, "author_id", inter.AuthorID)
+}
+
+func (o *Orchestrator) handleReadmeInteraction(ctx context.Context, inter *Interaction) {
+	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+		ChannelID: inter.ChannelID,
+		Content:   readme.Content,
+	})
 }
 
 func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *Interaction) {

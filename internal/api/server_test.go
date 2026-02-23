@@ -130,6 +130,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("PATCH /api/tasks/{id}", s.srv.handleUpdateTask)
 	s.mux.HandleFunc("POST /api/memory/search", s.srv.handleMemorySearch)
 	s.mux.HandleFunc("POST /api/memory/index", s.srv.handleMemoryIndex)
+	s.mux.HandleFunc("GET /api/readme", s.srv.handleGetReadme)
 }
 
 func (s *ServerSuite) TestNewServer() {
@@ -1217,6 +1218,19 @@ func (s *ServerSuite) TestSetMemoryIndexer() {
 	indexer := new(MockMemoryIndexer)
 	s.srv.SetMemoryIndexer(indexer)
 	require.NotNil(s.T(), s.srv.memoryIndexer)
+}
+
+// --- GetReadme tests ---
+
+func (s *ServerSuite) TestGetReadme() {
+	req := httptest.NewRequest("GET", "/api/readme", nil)
+	rec := httptest.NewRecorder()
+
+	s.mux.ServeHTTP(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Equal(s.T(), "text/plain; charset=utf-8", rec.Header().Get("Content-Type"))
+	require.NotEmpty(s.T(), rec.Body.String())
 }
 
 // --- containsFold tests ---

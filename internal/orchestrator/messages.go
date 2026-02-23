@@ -73,11 +73,14 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *IncomingMessage) 
 		return
 	}
 
-	cfgPerms := o.configPermissionsFor(channel.DirPath)
-	role := resolveRole(cfgPerms, channel.Permissions, msg.AuthorID, msg.AuthorRoles)
-	if role == "" {
-		o.logger.Info("message denied by permissions", "channel_id", msg.ChannelID, "author_id", msg.AuthorID)
-		return
+	// Allow the bot's own self-mentions (e.g. from create_thread MCP tool) to bypass permissions.
+	if msg.AuthorID != o.bot.BotUserID() {
+		cfgPerms := o.configPermissionsFor(channel.DirPath)
+		role := resolveRole(cfgPerms, channel.Permissions, msg.AuthorID, msg.AuthorRoles)
+		if role == "" {
+			o.logger.Info("message denied by permissions", "channel_id", msg.ChannelID, "author_id", msg.AuthorID)
+			return
+		}
 	}
 
 	o.processTriggeredMessage(ctx, msg)

@@ -182,6 +182,7 @@ func (s *OrchestratorSuite) SetupTest() {
 	s.ctx = context.Background()
 
 	// Default expectations for stop button (non-fatal, called during processTriggeredMessage)
+	s.bot.On("BotUserID").Return("BOT").Maybe()
 	s.bot.On("SendStopButton", mock.Anything, mock.Anything, mock.Anything).Return("stop-msg-1", nil).Maybe()
 	s.bot.On("RemoveStopButton", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
@@ -1496,6 +1497,7 @@ func (s *OrchestratorSuite) TestHandleInteractionStopWithChannelIDOption() {
 
 func (s *OrchestratorSuite) TestHandleMessageSendStopButtonError() {
 	s.bot.ExpectedCalls = nil // clear default
+	s.bot.On("BotUserID").Return("BOT").Maybe()
 	s.bot.On("SendStopButton", mock.Anything, "ch1", "ch1").Return("", errors.New("button failed")).Once()
 	s.bot.On("RemoveStopButton", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
@@ -1530,6 +1532,7 @@ func (s *OrchestratorSuite) TestHandleMessageSendStopButtonError() {
 
 func (s *OrchestratorSuite) TestHandleMessageRemoveStopButtonError() {
 	s.bot.ExpectedCalls = nil // clear default
+	s.bot.On("BotUserID").Return("BOT").Maybe()
 	s.bot.On("SendStopButton", mock.Anything, "ch1", "ch1").Return("stop-msg-1", nil).Once()
 	s.bot.On("RemoveStopButton", mock.Anything, "ch1", "stop-msg-1").Return(errors.New("remove failed")).Once()
 
@@ -1602,6 +1605,22 @@ func (s *OrchestratorSuite) TestHandleMessageRunCanceledByStopButton() {
 	s.bot.AssertCalled(s.T(), "SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Run stopped."
 	}))
+}
+
+// --- Readme interaction tests ---
+
+func (s *OrchestratorSuite) TestHandleInteractionReadme() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.ChannelID == "ch1" && len(out.Content) > 0
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "readme",
+	})
+
+	s.bot.AssertExpectations(s.T())
 }
 
 // --- refreshTyping test ---
@@ -2126,6 +2145,41 @@ func (s *OrchestratorSuite) TestHandleMessagePermissionDenied() {
 	// No runner call or response sent.
 	s.runner.AssertNotCalled(s.T(), "Run", mock.Anything, mock.Anything)
 	s.bot.AssertNotCalled(s.T(), "SendMessage", mock.Anything, mock.Anything)
+}
+
+func (s *OrchestratorSuite) TestHandleMessageBotSelfMentionBypassesPermissions() {
+	s.orch.cfg = config.Config{
+		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"allowed-user"}}},
+	}
+
+	msg := &IncomingMessage{
+		ChannelID:    "ch1",
+		AuthorID:     "BOT", // same as BotUserID()
+		AuthorName:   "LoopBot",
+		Content:      "audit the codebase",
+		MessageID:    "msg-bot",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", Active: true,
+	}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
+		Response: "Done!", SessionID: "s1",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "s1").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	// The runner should have been called despite the bot not being in the owners list.
+	s.runner.AssertCalled(s.T(), "Run", mock.Anything, mock.Anything)
 }
 
 func (s *OrchestratorSuite) TestHandleMessagePermissionAllowed() {

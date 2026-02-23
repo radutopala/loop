@@ -85,7 +85,7 @@ func (s *MCPServerSuite) TestMCPServer() {
 func (s *MCPServerSuite) TestListTools() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 10)
+	require.Len(s.T(), res.Tools, 11)
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -101,6 +101,7 @@ func (s *MCPServerSuite) TestListTools() {
 	require.True(s.T(), names["delete_thread"])
 	require.True(s.T(), names["search_channels"])
 	require.True(s.T(), names["send_message"])
+	require.True(s.T(), names["get_readme"])
 }
 
 // --- schedule_task ---
@@ -1004,6 +1005,19 @@ func (s *MCPServerSuite) TestSendMessageHTTPError() {
 	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "calling API")
 }
 
+// --- get_readme ---
+
+func (s *MCPServerSuite) TestGetReadmeSuccess() {
+	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
+		Name:      "get_readme",
+		Arguments: map[string]any{},
+	})
+	require.NoError(s.T(), err)
+	require.False(s.T(), res.IsError)
+	require.Len(s.T(), res.Content, 1)
+	require.NotEmpty(s.T(), res.Content[0].(*mcp.TextContent).Text)
+}
+
 // --- search_memory / index_memory ---
 
 // MCPMemorySuite tests memory tools separately because they need a server created with WithMemoryAPI.
@@ -1052,7 +1066,7 @@ func (s *MCPMemorySuite) TearDownTest() {
 func (s *MCPMemorySuite) TestListToolsIncludesMemory() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 12) // 10 base + 2 memory
+	require.Len(s.T(), res.Tools, 13) // 11 base + 2 memory
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -1307,7 +1321,7 @@ func (s *MCPMemoryChannelIDSuite) TestMemoryEnabledWithEmptyDirPath() {
 func (s *MCPMemoryChannelIDSuite) TestListToolsIncludesMemory() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 12)
+	require.Len(s.T(), res.Tools, 13)
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {

@@ -110,6 +110,11 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 		Description: "Send a message to a channel or thread. Use search_channels to find the target channel ID first. To trigger the bot in the target channel, include @BotName (e.g. @LoopBot) as plain text in the message — it will be converted to a proper mention automatically.",
 	}, s.handleSendMessage)
 
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "get_readme",
+		Description: "Get the Loop README documentation. Returns the full project README with setup instructions, configuration, commands, and architecture details.",
+	}, s.handleGetReadme)
+
 	for _, opt := range opts {
 		opt(s)
 	}
