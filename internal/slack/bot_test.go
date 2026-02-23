@@ -1593,6 +1593,23 @@ func (s *BotSuite) TestSendTypingRemoveReactionError() {
 	s.session.AssertCalled(s.T(), "RemoveReaction", "eyes", ref)
 }
 
+func (s *BotSuite) TestSendTypingRemoveReactionNoReactionIgnored() {
+	channelID := "C123"
+	ref := goslack.NewRefToMessage(channelID, "1234.5678")
+	s.bot.lastMessageRef.Store(channelID, ref)
+
+	s.session.On("AddReaction", "eyes", ref).Return(nil)
+	s.session.On("RemoveReaction", "eyes", ref).Return(errors.New("no_reaction"))
+
+	ctx, cancel := context.WithCancel(context.Background())
+	err := s.bot.SendTyping(ctx, channelID)
+	require.NoError(s.T(), err)
+
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+	s.session.AssertCalled(s.T(), "RemoveReaction", "eyes", ref)
+}
+
 func (s *BotSuite) TestHandleMessageSubtypeSkipped() {
 	// Messages with subtypes should be skipped
 	ev := &slackevents.MessageEvent{

@@ -158,7 +158,7 @@ func (b *SlackBot) SendTyping(ctx context.Context, channelID string) error {
 
 	go func() {
 		<-ctx.Done()
-		if err := b.session.RemoveReaction(reactionEmoji, ref); err != nil {
+		if err := b.session.RemoveReaction(reactionEmoji, ref); err != nil && !strings.Contains(err.Error(), "no_reaction") {
 			b.logger.Error("slack remove reaction failed", "error", err, "channel_id", channelID)
 		}
 	}()
