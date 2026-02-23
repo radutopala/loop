@@ -115,7 +115,7 @@ loop onboard:global
 # optionally: loop onboard:global --owner-id U12345678
 ```
 
-The `--owner-id` flag sets your user ID as an RBAC owner in the config, exiting bootstrap mode so only you have owner access from the start.
+The `--owner-id` flag sets your user ID as an RBAC owner in the config, exiting bootstrap mode so only you have owner access from the start. See [Finding your user ID](#finding-your-user-id) below.
 
 This creates:
 - `~/.loop/config.json` — main configuration file
@@ -214,13 +214,19 @@ loop onboard:local
 # optionally: loop onboard:local --owner-id U12345678
 ```
 
-The `--owner-id` flag sets your user ID as an RBAC owner in the project config.
+The `--owner-id` flag sets your user ID as an RBAC owner in the project config. See [Finding your user ID](#finding-your-user-id) below.
 
 This does four things:
 1. Writes `.mcp.json` — registers the Loop MCP server so Claude Code can schedule tasks from your IDE
 2. Creates `.loop/config.json` — project-specific overrides (mounts, MCP servers, model, task templates)
 3. Creates `.loop/templates/` — directory for project-specific prompt template files
 4. Registers a channel for this directory (requires `loop serve` to be running)
+
+### Finding your user ID
+
+**Slack:** Click your profile picture → **Profile** → click the **⋯** menu → **Copy member ID** (looks like `U01ABCDEF`).
+
+**Discord:** Click your profile picture → click the **⋯** menu → **Copy User ID** (looks like `123456789012345678`).
 
 ## Configuration Reference
 
