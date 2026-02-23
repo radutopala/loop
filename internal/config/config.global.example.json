@@ -118,7 +118,7 @@
       "schedule": "5m",
       "type": "interval",
       "prompt_path": "tk-heartbeat.md",
-      "auto_delete_sec": 300
+      "auto_delete_sec": 60
     },
     {
       "name": "daily-summary",

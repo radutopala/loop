@@ -547,7 +547,7 @@ Example templates in `~/.loop/config.json`:
       "schedule": "5m",
       "type": "interval",
       "prompt_path": "tk-heartbeat.md",  // loaded from ~/.loop/templates/tk-heartbeat.md
-      "auto_delete_sec": 300  // auto-delete thread 5 min after execution (0 = disabled)
+      "auto_delete_sec": 60  // auto-delete thread 1 min after execution (0 = disabled)
     },
     {
       "name": "daily-summary",
