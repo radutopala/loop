@@ -50,17 +50,9 @@ func (s *Server) handleSearchMemory(_ context.Context, _ *mcp.CallToolRequest, i
 	}
 	data, _ := json.Marshal(body)
 
-	respBody, status, err := s.doRequest("POST", s.apiURL+"/api/memory/search", data)
-	if err != nil {
-		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
-	}
-	if status != http.StatusOK {
-		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
-	}
-
-	var resp memorySearchAPIResponse
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return errorResult(fmt.Sprintf("decoding response: %v", err)), nil, nil
+	resp, errResult, err := doAPICall[memorySearchAPIResponse](s, "POST", s.apiURL+"/api/memory/search", http.StatusOK, data)
+	if errResult != nil || err != nil {
+		return errResult, nil, err
 	}
 
 	if len(resp.Results) == 0 {
@@ -100,19 +92,12 @@ func (s *Server) handleIndexMemory(_ context.Context, _ *mcp.CallToolRequest, _ 
 	}
 	data, _ := json.Marshal(body)
 
-	respBody, status, err := s.doRequest("POST", s.apiURL+"/api/memory/index", data)
-	if err != nil {
-		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
-	}
-	if status != http.StatusOK {
-		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
-	}
-
-	var resp struct {
+	type indexResult struct {
 		Count int `json:"count"`
 	}
-	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return errorResult(fmt.Sprintf("decoding response: %v", err)), nil, nil
+	resp, errResult, err := doAPICall[indexResult](s, "POST", s.apiURL+"/api/memory/index", http.StatusOK, data)
+	if errResult != nil || err != nil {
+		return errResult, nil, err
 	}
 
 	return &mcp.CallToolResult{

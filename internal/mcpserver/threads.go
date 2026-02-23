@@ -37,20 +37,12 @@ func (s *Server) handleCreateThread(_ context.Context, _ *mcp.CallToolRequest, i
 	}
 	data, _ := json.Marshal(reqBody)
 
-	respBody, status, err := s.doRequest("POST", s.apiURL+"/api/threads", data)
-	if err != nil {
-		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
-	}
-
-	if status != http.StatusCreated {
-		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
-	}
-
-	var result struct {
+	type threadResult struct {
 		ThreadID string `json:"thread_id"`
 	}
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return errorResult(fmt.Sprintf("decoding response: %v", err)), nil, nil
+	result, errResult, err := doAPICall[threadResult](s, "POST", s.apiURL+"/api/threads", http.StatusCreated, data)
+	if errResult != nil || err != nil {
+		return errResult, nil, err
 	}
 
 	return &mcp.CallToolResult{
@@ -67,13 +59,8 @@ func (s *Server) handleDeleteThread(_ context.Context, _ *mcp.CallToolRequest, i
 		return errorResult("thread_id is required"), nil, nil
 	}
 
-	respBody, status, err := s.doRequest("DELETE", fmt.Sprintf("%s/api/threads/%s", s.apiURL, input.ThreadID), nil)
-	if err != nil {
-		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
-	}
-
-	if status != http.StatusNoContent {
-		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
+	if errResult, err := doAPICallNoBody(s, "DELETE", fmt.Sprintf("%s/api/threads/%s", s.apiURL, input.ThreadID), http.StatusNoContent, nil); errResult != nil || err != nil {
+		return errResult, nil, err
 	}
 
 	return &mcp.CallToolResult{

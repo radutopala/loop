@@ -56,20 +56,12 @@ func (s *Server) handleScheduleTask(_ context.Context, _ *mcp.CallToolRequest, i
 		"prompt":     input.Prompt,
 	})
 
-	respBody, status, err := s.doRequest("POST", s.apiURL+"/api/tasks", data)
-	if err != nil {
-		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
-	}
-
-	if status != http.StatusCreated {
-		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
-	}
-
-	var result struct {
+	type taskResult struct {
 		ID int64 `json:"id"`
 	}
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return errorResult(fmt.Sprintf("decoding response: %v", err)), nil, nil
+	result, errResult, err := doAPICall[taskResult](s, "POST", s.apiURL+"/api/tasks", http.StatusCreated, data)
+	if errResult != nil || err != nil {
+		return errResult, nil, err
 	}
 
 	return &mcp.CallToolResult{
@@ -82,16 +74,7 @@ func (s *Server) handleScheduleTask(_ context.Context, _ *mcp.CallToolRequest, i
 func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ listTasksInput) (*mcp.CallToolResult, any, error) {
 	s.logger.Info("mcp tool call", "tool", "list_tasks", "channel_id", s.channelID)
 
-	respBody, status, err := s.doRequest("GET", fmt.Sprintf("%s/api/tasks?channel_id=%s", s.apiURL, s.channelID), nil)
-	if err != nil {
-		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
-	}
-
-	if status != http.StatusOK {
-		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
-	}
-
-	var tasks []struct {
+	type taskEntry struct {
 		ID        int64  `json:"id"`
 		Schedule  string `json:"schedule"`
 		Type      string `json:"type"`
@@ -99,11 +82,12 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 		Enabled   bool   `json:"enabled"`
 		NextRunAt string `json:"next_run_at"`
 	}
-	if err := json.Unmarshal(respBody, &tasks); err != nil {
-		return errorResult(fmt.Sprintf("decoding response: %v", err)), nil, nil
+	tasks, errResult, err := doAPICall[[]taskEntry](s, "GET", fmt.Sprintf("%s/api/tasks?channel_id=%s", s.apiURL, s.channelID), http.StatusOK, nil)
+	if errResult != nil || err != nil {
+		return errResult, nil, err
 	}
 
-	if len(tasks) == 0 {
+	if len(*tasks) == 0 {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: "No scheduled tasks."},
@@ -112,7 +96,7 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 	}
 
 	var text strings.Builder
-	for _, t := range tasks {
+	for _, t := range *tasks {
 		fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v)\n", t.ID, t.Prompt, t.Schedule, t.Type, t.Enabled)
 	}
 
@@ -126,13 +110,8 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 func (s *Server) handleCancelTask(_ context.Context, _ *mcp.CallToolRequest, input cancelTaskInput) (*mcp.CallToolResult, any, error) {
 	s.logger.Info("mcp tool call", "tool", "cancel_task", "task_id", input.TaskID)
 
-	respBody, status, err := s.doRequest("DELETE", fmt.Sprintf("%s/api/tasks/%d", s.apiURL, input.TaskID), nil)
-	if err != nil {
-		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
-	}
-
-	if status != http.StatusNoContent {
-		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
+	if errResult, err := doAPICallNoBody(s, "DELETE", fmt.Sprintf("%s/api/tasks/%d", s.apiURL, input.TaskID), http.StatusNoContent, nil); errResult != nil || err != nil {
+		return errResult, nil, err
 	}
 
 	return &mcp.CallToolResult{
@@ -176,13 +155,8 @@ func (s *Server) handleEditTask(_ context.Context, _ *mcp.CallToolRequest, input
 
 	data, _ := json.Marshal(body)
 
-	respBody, status, err := s.doRequest("PATCH", fmt.Sprintf("%s/api/tasks/%d", s.apiURL, input.TaskID), data)
-	if err != nil {
-		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
-	}
-
-	if status != http.StatusOK {
-		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
+	if errResult, err := doAPICallNoBody(s, "PATCH", fmt.Sprintf("%s/api/tasks/%d", s.apiURL, input.TaskID), http.StatusOK, data); errResult != nil || err != nil {
+		return errResult, nil, err
 	}
 
 	return &mcp.CallToolResult{
@@ -199,13 +173,8 @@ func (s *Server) handleToggleTask(_ context.Context, _ *mcp.CallToolRequest, inp
 		"enabled": input.Enabled,
 	})
 
-	respBody, status, err := s.doRequest("PATCH", fmt.Sprintf("%s/api/tasks/%d", s.apiURL, input.TaskID), data)
-	if err != nil {
-		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
-	}
-
-	if status != http.StatusOK {
-		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
+	if errResult, err := doAPICallNoBody(s, "PATCH", fmt.Sprintf("%s/api/tasks/%d", s.apiURL, input.TaskID), http.StatusOK, data); errResult != nil || err != nil {
+		return errResult, nil, err
 	}
 
 	state := "disabled"

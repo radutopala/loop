@@ -33,20 +33,12 @@ func (s *Server) handleCreateChannel(_ context.Context, _ *mcp.CallToolRequest, 
 	}
 	data, _ := json.Marshal(reqBody)
 
-	respBody, status, err := s.doRequest("POST", s.apiURL+"/api/channels/create", data)
-	if err != nil {
-		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
-	}
-
-	if status != http.StatusCreated {
-		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
-	}
-
-	var result struct {
+	type channelResult struct {
 		ChannelID string `json:"channel_id"`
 	}
-	if err := json.Unmarshal(respBody, &result); err != nil {
-		return errorResult(fmt.Sprintf("decoding response: %v", err)), nil, nil
+	result, errResult, err := doAPICall[channelResult](s, "POST", s.apiURL+"/api/channels/create", http.StatusCreated, data)
+	if errResult != nil || err != nil {
+		return errResult, nil, err
 	}
 
 	return &mcp.CallToolResult{
@@ -64,27 +56,19 @@ func (s *Server) handleSearchChannels(_ context.Context, _ *mcp.CallToolRequest,
 		url += fmt.Sprintf("?query=%s", input.Query)
 	}
 
-	respBody, status, err := s.doRequest("GET", url, nil)
-	if err != nil {
-		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
-	}
-
-	if status != http.StatusOK {
-		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
-	}
-
-	var channels []struct {
+	type channelEntry struct {
 		ChannelID string `json:"channel_id"`
 		Name      string `json:"name"`
 		DirPath   string `json:"dir_path"`
 		ParentID  string `json:"parent_id"`
 		Active    bool   `json:"active"`
 	}
-	if err := json.Unmarshal(respBody, &channels); err != nil {
-		return errorResult(fmt.Sprintf("decoding response: %v", err)), nil, nil
+	channels, errResult, err := doAPICall[[]channelEntry](s, "GET", url, http.StatusOK, nil)
+	if errResult != nil || err != nil {
+		return errResult, nil, err
 	}
 
-	if len(channels) == 0 {
+	if len(*channels) == 0 {
 		return &mcp.CallToolResult{
 			Content: []mcp.Content{
 				&mcp.TextContent{Text: "No channels found."},
@@ -93,7 +77,7 @@ func (s *Server) handleSearchChannels(_ context.Context, _ *mcp.CallToolRequest,
 	}
 
 	var text strings.Builder
-	for _, ch := range channels {
+	for _, ch := range *channels {
 		chType := "channel"
 		if ch.ParentID != "" {
 			chType = "thread"

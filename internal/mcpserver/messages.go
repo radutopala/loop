@@ -3,7 +3,6 @@ package mcpserver
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -29,13 +28,8 @@ func (s *Server) handleSendMessage(_ context.Context, _ *mcp.CallToolRequest, in
 		"content":    input.Content,
 	})
 
-	respBody, status, err := s.doRequest("POST", s.apiURL+"/api/messages", data)
-	if err != nil {
-		return errorResult(fmt.Sprintf("calling API: %v", err)), nil, nil
-	}
-
-	if status != http.StatusNoContent {
-		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil, nil
+	if errResult, err := doAPICallNoBody(s, "POST", s.apiURL+"/api/messages", http.StatusNoContent, data); errResult != nil || err != nil {
+		return errResult, nil, err
 	}
 
 	return &mcp.CallToolResult{

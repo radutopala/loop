@@ -3,6 +3,8 @@ package mcpserver
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -178,4 +180,34 @@ func errorResult(msg string) *mcp.CallToolResult {
 			&mcp.TextContent{Text: msg},
 		},
 	}
+}
+
+// doAPICall performs an HTTP request, checks the status code, and unmarshals the JSON response into T.
+// On any failure it returns an errorResult suitable for returning directly from a tool handler.
+func doAPICall[T any](s *Server, method, url string, expectedStatus int, body []byte) (*T, *mcp.CallToolResult, error) {
+	respBody, status, err := s.doRequest(method, url, body)
+	if err != nil {
+		return nil, errorResult(fmt.Sprintf("calling API: %v", err)), nil
+	}
+	if status != expectedStatus {
+		return nil, errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil
+	}
+	var result T
+	if err := json.Unmarshal(respBody, &result); err != nil {
+		return nil, errorResult(fmt.Sprintf("decoding response: %v", err)), nil
+	}
+	return &result, nil, nil
+}
+
+// doAPICallNoBody performs an HTTP request and checks the status code, without decoding a response body.
+// Suitable for DELETE/POST endpoints that return no content (e.g. 204).
+func doAPICallNoBody(s *Server, method, url string, expectedStatus int, body []byte) (*mcp.CallToolResult, error) {
+	respBody, status, err := s.doRequest(method, url, body)
+	if err != nil {
+		return errorResult(fmt.Sprintf("calling API: %v", err)), nil
+	}
+	if status != expectedStatus {
+		return errorResult(fmt.Sprintf("API error (status %d): %s", status, string(respBody))), nil
+	}
+	return nil, nil
 }
