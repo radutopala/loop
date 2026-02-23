@@ -361,14 +361,14 @@ func (s *ConfigSuite) TestDefaultHelpers() {
 	require.Equal(s.T(), "val", stringDefault("val", "def"))
 	require.Equal(s.T(), "def", stringDefault("", "def"))
 
-	require.Equal(s.T(), 42, intPtrDefault(new(42), 10))
-	require.Equal(s.T(), 10, intPtrDefault(nil, 10))
+	require.Equal(s.T(), 42, ptrDefault(new(42), 10))
+	require.Equal(s.T(), 10, ptrDefault((*int)(nil), 10))
 
-	require.Equal(s.T(), int64(99), int64PtrDefault(new(int64(99)), 50))
-	require.Equal(s.T(), int64(50), int64PtrDefault(nil, 50))
+	require.Equal(s.T(), int64(99), ptrDefault(new(int64(99)), 50))
+	require.Equal(s.T(), int64(50), ptrDefault((*int64)(nil), 50))
 
-	require.InDelta(s.T(), 3.14, floatPtrDefault(new(3.14), 1.0), 0.001)
-	require.Equal(s.T(), 1.0, floatPtrDefault(nil, 1.0))
+	require.InDelta(s.T(), 3.14, ptrDefault(new(3.14), 1.0), 0.001)
+	require.Equal(s.T(), 1.0, ptrDefault((*float64)(nil), 1.0))
 }
 
 func (s *ConfigSuite) TestDefaultReadFile() {

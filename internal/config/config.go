@@ -268,15 +268,15 @@ func Load() (*Config, error) {
 		LogFormat:            stringDefault(jc.LogFormat, "text"),
 		DBPath:               stringDefault(jc.DBPath, filepath.Join(loopDir, "loop.db")),
 		ContainerImage:       stringDefault(jc.ContainerImage, "loop-agent:latest"),
-		ContainerTimeout:     time.Duration(intPtrDefault(jc.ContainerTimeoutSec, 3600)) * time.Second,
-		ContainerMemoryMB:    int64PtrDefault(jc.ContainerMemoryMB, 512),
-		ContainerCPUs:        floatPtrDefault(jc.ContainerCPUs, 1.0),
-		ContainerKeepAlive:   time.Duration(intPtrDefault(jc.ContainerKeepAliveSec, 300)) * time.Second,
-		PollInterval:         time.Duration(intPtrDefault(jc.PollIntervalSec, 30)) * time.Second,
+		ContainerTimeout:     time.Duration(ptrDefault(jc.ContainerTimeoutSec, 3600)) * time.Second,
+		ContainerMemoryMB:    ptrDefault(jc.ContainerMemoryMB, 512),
+		ContainerCPUs:        ptrDefault(jc.ContainerCPUs, 1.0),
+		ContainerKeepAlive:   time.Duration(ptrDefault(jc.ContainerKeepAliveSec, 300)) * time.Second,
+		PollInterval:         time.Duration(ptrDefault(jc.PollIntervalSec, 30)) * time.Second,
 		APIAddr:              stringDefault(jc.APIAddr, ":8222"),
 		LoopDir:              loopDir,
 		ClaudeModel:          jc.ClaudeModel,
-		StreamingEnabled:     boolPtrDefault(jc.StreamingEnabled, true),
+		StreamingEnabled:     ptrDefault(jc.StreamingEnabled, true),
 	}
 
 	if jc.MCP != nil && len(jc.MCP.Servers) > 0 {
@@ -289,7 +289,7 @@ func Load() (*Config, error) {
 
 	// Memory config: enabled must be explicitly true.
 	if jc.Memory != nil {
-		cfg.Memory.Enabled = boolPtrDefault(jc.Memory.Enabled, false)
+		cfg.Memory.Enabled = ptrDefault(jc.Memory.Enabled, false)
 		cfg.Memory.Paths = jc.Memory.Paths
 		cfg.Memory.MaxChunkChars = jc.Memory.MaxChunkChars
 		cfg.Memory.ReindexIntervalSec = jc.Memory.ReindexIntervalSec
@@ -341,28 +341,7 @@ func stringDefault(val, def string) string {
 	return def
 }
 
-func intPtrDefault(val *int, def int) int {
-	if val != nil {
-		return *val
-	}
-	return def
-}
-
-func int64PtrDefault(val *int64, def int64) int64 {
-	if val != nil {
-		return *val
-	}
-	return def
-}
-
-func floatPtrDefault(val *float64, def float64) float64 {
-	if val != nil {
-		return *val
-	}
-	return def
-}
-
-func boolPtrDefault(val *bool, def bool) bool {
+func ptrDefault[T comparable](val *T, def T) T {
 	if val != nil {
 		return *val
 	}
