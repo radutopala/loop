@@ -50,15 +50,11 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		DirPath:      dirPath,
 	}
 
-	var lastStreamedText string
+	var tracker *streamTracker
 	var threadID string
 	var threadFailed bool
 	if e.streamingEnabled {
-		req.OnTurn = func(text string) {
-			if text == "" {
-				return
-			}
-			lastStreamedText = text
+		tracker = newStreamTracker(func(text string) {
 			if threadID == "" && !threadFailed {
 				// First turn — create a thread for the task output
 				prefix := fmt.Sprintf("🧵 task #%d (`%s`) ", task.ID, task.Schedule)
@@ -85,7 +81,8 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 					Content:   text,
 				})
 			}
-		}
+		})
+		req.OnTurn = tracker.OnTurn
 	}
 
 	runCtx, runCancel := context.WithTimeout(ctx, e.containerTimeout)
@@ -111,7 +108,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	}
 
 	// Skip final send if it duplicates the last streamed turn
-	if resp.Response != lastStreamedText {
+	if tracker == nil || !tracker.IsDuplicate(resp.Response) {
 		if err := e.bot.SendMessage(ctx, &OutgoingMessage{
 			ChannelID: targetChannelID,
 			Content:   resp.Response,
