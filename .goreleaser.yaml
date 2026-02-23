@@ -4,6 +4,7 @@ project_name: loop
 
 before:
   hooks:
+    - go generate ./internal/readme/
     - go mod tidy
 
 builds:
