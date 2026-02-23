@@ -149,7 +149,7 @@ func (s *RunnerSuite) TestLocalTimezone() {
 			expected: "Europe/Berlin",
 		},
 		{
-			name: "fallback UTC",
+			name:     "fallback UTC",
 			setup:    func() {},
 			expected: "UTC",
 		},

@@ -1605,9 +1605,9 @@ func (s *BotSuite) TestDeleteThreadError() {
 
 func (s *BotSuite) TestHandleThreadCreateJoins() {
 	cases := []struct {
-		name      string
-		threadID  string
-		chanType  discordgo.ChannelType
+		name     string
+		threadID string
+		chanType discordgo.ChannelType
 	}{
 		{"public thread", "thread-1", discordgo.ChannelTypeGuildPublicThread},
 		{"private thread", "thread-2", discordgo.ChannelTypeGuildPrivateThread},

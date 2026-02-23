@@ -54,10 +54,10 @@ func (s *SchedulerSuite) TestNewTaskScheduler() {
 
 func (s *SchedulerSuite) TestAddTask() {
 	cases := []struct {
-		name     string
-		task     *db.ScheduledTask
-		storeID  int64
-		wantErr  string
+		name    string
+		task    *db.ScheduledTask
+		storeID int64
+		wantErr string
 	}{
 		{
 			name:    "cron",
@@ -128,7 +128,7 @@ func (s *SchedulerSuite) TestAddTaskStoreError() {
 
 func (s *SchedulerSuite) TestRemoveTask() {
 	cases := []struct {
-		name    string
+		name     string
 		storeErr error
 	}{
 		{"success", nil},
