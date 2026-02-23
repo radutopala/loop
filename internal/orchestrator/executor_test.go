@@ -482,3 +482,187 @@ func (s *TaskExecutorSuite) TestNoStreamingNoTurns() {
 	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
 	s.bot.AssertNotCalled(s.T(), "CreateSimpleThread", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
+
+func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
+	s.executor.streamingEnabled = true
+
+	task := &db.ScheduledTask{
+		ID:            15,
+		ChannelID:     "ch15",
+		Prompt:        "auto-del task",
+		Type:          db.TaskTypeCron,
+		Schedule:      "0 * * * *",
+		AutoDeleteSec: 60,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch15").Return(nil, nil)
+	s.bot.On("CreateSimpleThread", s.ctx, "ch15", mock.Anything, mock.Anything).Return("thread-auto-del", nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Turn 1")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:  "Turn 1",
+		SessionID: "sess-auto-del",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch15", "sess-auto-del").Return(nil)
+	s.bot.On("DeleteThread", mock.Anything, "thread-auto-del").Return(nil).Once()
+
+	var capturedDelay time.Duration
+	var callbackCalled bool
+	origTimeAfterFunc := timeAfterFunc
+	defer func() { timeAfterFunc = origTimeAfterFunc }()
+	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+		capturedDelay = d
+		callbackCalled = true
+		f() // immediately invoke the callback
+		return time.NewTimer(0)
+	}
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Turn 1", resp)
+	require.True(s.T(), callbackCalled, "timeAfterFunc should have been called")
+	require.Equal(s.T(), 60*time.Second, capturedDelay)
+
+	s.bot.AssertCalled(s.T(), "DeleteThread", mock.Anything, "thread-auto-del")
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestAutoDeleteTimerDeleteThreadError() {
+	s.executor.streamingEnabled = true
+
+	task := &db.ScheduledTask{
+		ID:            18,
+		ChannelID:     "ch18",
+		Prompt:        "auto-del-err task",
+		Type:          db.TaskTypeCron,
+		Schedule:      "0 * * * *",
+		AutoDeleteSec: 90,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch18").Return(nil, nil)
+	s.bot.On("CreateSimpleThread", s.ctx, "ch18", mock.Anything, mock.Anything).Return("thread-del-err", nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Turn 1")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:  "Turn 1",
+		SessionID: "sess-del-err",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch18", "sess-del-err").Return(nil)
+	s.bot.On("DeleteThread", mock.Anything, "thread-del-err").Return(errors.New("delete failed")).Once()
+
+	var capturedDelay time.Duration
+	var callbackCalled bool
+	origTimeAfterFunc := timeAfterFunc
+	defer func() { timeAfterFunc = origTimeAfterFunc }()
+	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+		capturedDelay = d
+		callbackCalled = true
+		f() // immediately invoke the callback
+		return time.NewTimer(0)
+	}
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Turn 1", resp)
+	require.True(s.T(), callbackCalled, "timeAfterFunc should have been called")
+	require.Equal(s.T(), 90*time.Second, capturedDelay)
+
+	s.bot.AssertCalled(s.T(), "DeleteThread", mock.Anything, "thread-del-err")
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestAutoDeleteSkippedWhenZero() {
+	s.executor.streamingEnabled = true
+
+	task := &db.ScheduledTask{
+		ID:            16,
+		ChannelID:     "ch16",
+		Prompt:        "no-del task",
+		Type:          db.TaskTypeCron,
+		Schedule:      "0 * * * *",
+		AutoDeleteSec: 0,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch16").Return(nil, nil)
+	s.bot.On("CreateSimpleThread", s.ctx, "ch16", mock.Anything, mock.Anything).Return("thread-no-del", nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Turn 1")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:  "Turn 1",
+		SessionID: "sess-no-del",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch16", "sess-no-del").Return(nil)
+
+	var timerCalled bool
+	origTimeAfterFunc := timeAfterFunc
+	defer func() { timeAfterFunc = origTimeAfterFunc }()
+	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+		timerCalled = true
+		return time.NewTimer(0)
+	}
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Turn 1", resp)
+	require.False(s.T(), timerCalled, "timeAfterFunc should NOT have been called when AutoDeleteSec is 0")
+
+	s.bot.AssertNotCalled(s.T(), "DeleteThread", mock.Anything, mock.Anything)
+}
+
+func (s *TaskExecutorSuite) TestAutoDeleteSkippedWhenNoThread() {
+	// streamingEnabled is false by default — no thread created
+	task := &db.ScheduledTask{
+		ID:            17,
+		ChannelID:     "ch17",
+		Prompt:        "no-thread task",
+		Type:          db.TaskTypeCron,
+		Schedule:      "0 * * * *",
+		AutoDeleteSec: 120,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch17").Return(nil, nil)
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.OnTurn == nil
+	})).Return(&agent.AgentResponse{
+		Response:  "Result",
+		SessionID: "sess-no-thread",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch17", "sess-no-thread").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+		return msg.ChannelID == "ch17" && msg.Content == "Result"
+	})).Return(nil).Once()
+
+	var timerCalled bool
+	origTimeAfterFunc := timeAfterFunc
+	defer func() { timeAfterFunc = origTimeAfterFunc }()
+	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+		timerCalled = true
+		return time.NewTimer(0)
+	}
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Result", resp)
+	require.False(s.T(), timerCalled, "timeAfterFunc should NOT have been called when no thread was created")
+
+	s.bot.AssertNotCalled(s.T(), "DeleteThread", mock.Anything, mock.Anything)
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
+}

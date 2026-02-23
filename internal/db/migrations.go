@@ -143,6 +143,7 @@ var migrations = []migration{
 	)`),
 	// Per-channel RBAC permissions stored as JSON.
 	sqlMigration(`ALTER TABLE channels ADD COLUMN permissions TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN auto_delete_sec INTEGER NOT NULL DEFAULT 0`),
 }
 
 // RunMigrations executes all pending schema migrations.

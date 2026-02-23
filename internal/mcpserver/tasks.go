@@ -12,9 +12,10 @@ import (
 )
 
 type scheduleTaskInput struct {
-	Schedule string `json:"schedule" jsonschema:"Cron expression (e.g. 0 9 * * *), Go time.Duration (e.g. 5m, 1h), or RFC3339 timestamp (e.g. 2026-02-09T14:30:00Z) for once type"`
-	Type     string `json:"type" jsonschema:"Task type: cron, interval, or once"`
-	Prompt   string `json:"prompt" jsonschema:"The prompt to execute on schedule"`
+	Schedule      string `json:"schedule" jsonschema:"Cron expression (e.g. 0 9 * * *), Go time.Duration (e.g. 5m, 1h), or RFC3339 timestamp (e.g. 2026-02-09T14:30:00Z) for once type"`
+	Type          string `json:"type" jsonschema:"Task type: cron, interval, or once"`
+	Prompt        string `json:"prompt" jsonschema:"The prompt to execute on schedule"`
+	AutoDeleteSec int    `json:"auto_delete_sec,omitempty" jsonschema:"Seconds after execution to auto-delete the thread (0 = disabled)"`
 }
 
 type cancelTaskInput struct {
@@ -27,10 +28,11 @@ type toggleTaskInput struct {
 }
 
 type editTaskInput struct {
-	TaskID   int64   `json:"task_id" jsonschema:"The ID of the task to edit"`
-	Schedule *string `json:"schedule,omitempty" jsonschema:"New schedule expression (cron, Go time.Duration, or RFC3339 timestamp for once type)"`
-	Type     *string `json:"type,omitempty" jsonschema:"New task type: cron, interval, or once"`
-	Prompt   *string `json:"prompt,omitempty" jsonschema:"New prompt to execute on schedule"`
+	TaskID        int64   `json:"task_id" jsonschema:"The ID of the task to edit"`
+	Schedule      *string `json:"schedule,omitempty" jsonschema:"New schedule expression (cron, Go time.Duration, or RFC3339 timestamp for once type)"`
+	Type          *string `json:"type,omitempty" jsonschema:"New task type: cron, interval, or once"`
+	Prompt        *string `json:"prompt,omitempty" jsonschema:"New prompt to execute on schedule"`
+	AutoDeleteSec *int    `json:"auto_delete_sec,omitempty" jsonschema:"Seconds after execution to auto-delete the thread (0 = disabled)"`
 }
 
 type listTasksInput struct{}
@@ -49,11 +51,12 @@ func (s *Server) handleScheduleTask(_ context.Context, _ *mcp.CallToolRequest, i
 		}
 	}
 
-	data, _ := json.Marshal(map[string]string{
-		"channel_id": s.channelID,
-		"schedule":   input.Schedule,
-		"type":       input.Type,
-		"prompt":     input.Prompt,
+	data, _ := json.Marshal(map[string]any{
+		"channel_id":      s.channelID,
+		"schedule":        input.Schedule,
+		"type":            input.Type,
+		"prompt":          input.Prompt,
+		"auto_delete_sec": input.AutoDeleteSec,
 	})
 
 	type taskResult struct {
@@ -75,13 +78,14 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 	s.logger.Info("mcp tool call", "tool", "list_tasks", "channel_id", s.channelID)
 
 	type taskEntry struct {
-		ID           int64  `json:"id"`
-		Schedule     string `json:"schedule"`
-		Type         string `json:"type"`
-		Prompt       string `json:"prompt"`
-		Enabled      bool   `json:"enabled"`
-		NextRunAt    string `json:"next_run_at"`
-		TemplateName string `json:"template_name"`
+		ID            int64  `json:"id"`
+		Schedule      string `json:"schedule"`
+		Type          string `json:"type"`
+		Prompt        string `json:"prompt"`
+		Enabled       bool   `json:"enabled"`
+		NextRunAt     string `json:"next_run_at"`
+		TemplateName  string `json:"template_name"`
+		AutoDeleteSec int    `json:"auto_delete_sec"`
 	}
 	tasks, errResult, err := doAPICall[[]taskEntry](s, "GET", fmt.Sprintf("%s/api/tasks?channel_id=%s", s.apiURL, s.channelID), http.StatusOK, nil)
 	if errResult != nil || err != nil {
@@ -99,10 +103,14 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 	var text strings.Builder
 	for _, t := range *tasks {
 		if t.TemplateName != "" {
-			fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v, template_name: %s)\n", t.ID, t.Prompt, t.Schedule, t.Type, t.Enabled, t.TemplateName)
+			fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v, template_name: %s", t.ID, t.Prompt, t.Schedule, t.Type, t.Enabled, t.TemplateName)
 		} else {
-			fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v)\n", t.ID, t.Prompt, t.Schedule, t.Type, t.Enabled)
+			fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v", t.ID, t.Prompt, t.Schedule, t.Type, t.Enabled)
 		}
+		if t.AutoDeleteSec > 0 {
+			fmt.Fprintf(&text, ", auto_delete: %ds", t.AutoDeleteSec)
+		}
+		text.WriteString(")\n")
 	}
 
 	return &mcp.CallToolResult{
@@ -139,9 +147,12 @@ func (s *Server) handleEditTask(_ context.Context, _ *mcp.CallToolRequest, input
 	if input.Prompt != nil {
 		body["prompt"] = *input.Prompt
 	}
+	if input.AutoDeleteSec != nil {
+		body["auto_delete_sec"] = *input.AutoDeleteSec
+	}
 
 	if len(body) == 0 {
-		return errorResult("at least one of schedule, type, or prompt is required"), nil, nil
+		return errorResult("at least one of schedule, type, prompt, or auto_delete_sec is required"), nil, nil
 	}
 
 	// Validate schedule when editing to once/interval type with a schedule

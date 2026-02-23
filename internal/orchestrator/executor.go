@@ -10,6 +10,9 @@ import (
 	"github.com/radutopala/loop/internal/db"
 )
 
+// timeAfterFunc is a package-level variable for testability of time.AfterFunc.
+var timeAfterFunc = time.AfterFunc
+
 // TaskExecutor implements scheduler.TaskExecutor by running an agent and
 // delivering the response to the chat platform.
 type TaskExecutor struct {
@@ -115,6 +118,16 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		}); err != nil {
 			e.logger.Error("sending task response", "error", err, "channel_id", task.ChannelID)
 		}
+	}
+
+	// Schedule auto-deletion of the thread if configured
+	if task.AutoDeleteSec > 0 && threadID != "" {
+		delay := time.Duration(task.AutoDeleteSec) * time.Second
+		timeAfterFunc(delay, func() {
+			if err := e.bot.DeleteThread(context.Background(), threadID); err != nil {
+				e.logger.Error("auto-deleting task thread", "error", err, "thread_id", threadID, "task_id", task.ID)
+			}
+		})
 	}
 
 	return resp.Response, nil

@@ -117,7 +117,8 @@
       "description": "Check for ready work tickets; enable/disable tk-auto-worker accordingly",
       "schedule": "5m",
       "type": "interval",
-      "prompt_path": "tk-heartbeat.md"
+      "prompt_path": "tk-heartbeat.md",
+      "auto_delete_sec": 300
     },
     {
       "name": "daily-summary",

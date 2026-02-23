@@ -1174,6 +1174,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTasks() {
 		{ID: 1, Prompt: "task1", Schedule: "0 * * * *", Type: db.TaskTypeCron, Enabled: true, NextRunAt: nextRun},
 		{ID: 2, Prompt: "task2", Schedule: "5m", Type: db.TaskTypeInterval, Enabled: false, NextRunAt: nextRun.Add(5 * time.Minute)},
 		{ID: 3, Prompt: "task3", Schedule: "10m", Type: db.TaskTypeOnce, Enabled: true, NextRunAt: nextRun.Add(10 * time.Minute)},
+		{ID: 4, Prompt: "task4", Schedule: "0 12 * * *", Type: db.TaskTypeCron, Enabled: true, NextRunAt: nextRun.Add(15 * time.Minute), AutoDeleteSec: 120},
 	}
 	s.scheduler.On("ListTasks", s.ctx, "ch1").Return(tasks, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
@@ -1189,7 +1190,29 @@ func (s *OrchestratorSuite) TestHandleInteractionTasks() {
 			strings.Contains(out.Content, "[once]") &&
 			strings.Contains(out.Content, nextRun.Add(10*time.Minute).Local().Format("2006-01-02 15:04 MST")) &&
 			!strings.Contains(out.Content, "`10m`") &&
-			strings.Contains(out.Content, "next: in ")
+			strings.Contains(out.Content, "next: in ") &&
+			strings.Contains(out.Content, "(auto_delete: 120s)")
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		CommandName: "tasks",
+	})
+
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTasksAutoDeleteNotShownWhenZero() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	nextRun := time.Now().Add(30 * time.Minute)
+	tasks := []*db.ScheduledTask{
+		{ID: 1, Prompt: "task1", Schedule: "0 * * * *", Type: db.TaskTypeCron, Enabled: true, NextRunAt: nextRun, AutoDeleteSec: 0},
+	}
+	s.scheduler.On("ListTasks", s.ctx, "ch1").Return(tasks, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.ChannelID == "ch1" &&
+			strings.Contains(out.Content, "ID 1") &&
+			!strings.Contains(out.Content, "auto_delete")
 	})).Return(nil)
 
 	s.orch.HandleInteraction(s.ctx, &Interaction{
@@ -1344,7 +1367,7 @@ func (s *OrchestratorSuite) TestHandleInteractionToggleError() {
 
 func (s *OrchestratorSuite) TestHandleInteractionEditSuccess() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.scheduler.On("EditTask", s.ctx, int64(42), new("0 9 * * *"), (*string)(nil), (*string)(nil)).Return(nil)
+	s.scheduler.On("EditTask", s.ctx, int64(42), new("0 9 * * *"), (*string)(nil), (*string)(nil), (*int)(nil)).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Task 42 updated."
 	})).Return(nil)
@@ -1361,7 +1384,7 @@ func (s *OrchestratorSuite) TestHandleInteractionEditSuccess() {
 
 func (s *OrchestratorSuite) TestHandleInteractionEditWithTypeAndPrompt() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.scheduler.On("EditTask", s.ctx, int64(10), (*string)(nil), new("interval"), new("new prompt")).Return(nil)
+	s.scheduler.On("EditTask", s.ctx, int64(10), (*string)(nil), new("interval"), new("new prompt"), (*int)(nil)).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Task 10 updated."
 	})).Return(nil)
@@ -1408,7 +1431,7 @@ func (s *OrchestratorSuite) TestHandleInteractionEditNoFields() {
 
 func (s *OrchestratorSuite) TestHandleInteractionEditError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.scheduler.On("EditTask", s.ctx, int64(42), (*string)(nil), (*string)(nil), new("new")).Return(errors.New("edit err"))
+	s.scheduler.On("EditTask", s.ctx, int64(42), (*string)(nil), (*string)(nil), new("new"), (*int)(nil)).Return(errors.New("edit err"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Failed to edit task."
 	})).Return(nil)
@@ -1738,7 +1761,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSuccess() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
-		return task.ChannelID == "ch1" && task.TemplateName == "daily-check" && task.Schedule == "0 9 * * *" && task.Type == db.TaskTypeCron && task.Prompt == "check stuff"
+		return task.ChannelID == "ch1" && task.TemplateName == "daily-check" && task.Schedule == "0 9 * * *" && task.Type == db.TaskTypeCron && task.Prompt == "check stuff" && task.AutoDeleteSec == 0
 	})).Return(int64(10), nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
 		return out.Content == "Template 'daily-check' loaded (task ID: 10)."
@@ -1749,6 +1772,34 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSuccess() {
 		GuildID:     "g1",
 		CommandName: "template-add",
 		Options:     map[string]string{"name": "daily-check"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.scheduler.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTemplateAddWithAutoDelete() {
+	templates := []config.TaskTemplate{
+		{Name: "ephemeral-check", Description: "Ephemeral check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff", AutoDeleteSec: 300},
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "ephemeral-check").Return(nil, nil)
+	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
+		return task.ChannelID == "ch1" && task.TemplateName == "ephemeral-check" && task.AutoDeleteSec == 300
+	})).Return(int64(11), nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+		return out.Content == "Template 'ephemeral-check' loaded (task ID: 11)."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &Interaction{
+		ChannelID:   "ch1",
+		GuildID:     "g1",
+		CommandName: "template-add",
+		Options:     map[string]string{"name": "ephemeral-check"},
 	})
 
 	s.store.AssertExpectations(s.T())

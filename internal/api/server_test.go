@@ -345,7 +345,7 @@ func (s *ServerSuite) TestUpdateTaskNoFields() {
 func (s *ServerSuite) TestUpdateTaskEditPrompt() {
 	s.scheduler.On("EditTask", mock.Anything, int64(42), (*string)(nil), (*string)(nil), mock.MatchedBy(func(p *string) bool {
 		return p != nil && *p == "new prompt"
-	})).Return(nil)
+	}), (*int)(nil)).Return(nil)
 
 	body := `{"prompt":"new prompt"}`
 	req := httptest.NewRequest("PATCH", "/api/tasks/42", bytes.NewBufferString(body))
@@ -358,7 +358,7 @@ func (s *ServerSuite) TestUpdateTaskEditPrompt() {
 }
 
 func (s *ServerSuite) TestUpdateTaskEditSchedulerError() {
-	s.scheduler.On("EditTask", mock.Anything, int64(42), mock.Anything, mock.Anything, mock.Anything).Return(errors.New("edit error"))
+	s.scheduler.On("EditTask", mock.Anything, int64(42), mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("edit error"))
 
 	body := `{"prompt":"new"}`
 	req := httptest.NewRequest("PATCH", "/api/tasks/42", bytes.NewBufferString(body))

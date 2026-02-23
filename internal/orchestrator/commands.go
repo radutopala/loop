@@ -132,7 +132,11 @@ func (o *Orchestrator) handleTasksInteraction(ctx context.Context, inter *Intera
 			schedule = fmt.Sprintf("`%s`", t.Schedule)
 		}
 		nextRun := formatDuration(t.NextRunAt.Sub(now))
-		fmt.Fprintf(&sb, "- **ID %d** [%s] [%s] %s — %s (next: %s)\n", t.ID, t.Type, status, schedule, t.Prompt, nextRun)
+		fmt.Fprintf(&sb, "- **ID %d** [%s] [%s] %s — %s (next: %s)", t.ID, t.Type, status, schedule, t.Prompt, nextRun)
+		if t.AutoDeleteSec > 0 {
+			fmt.Fprintf(&sb, " (auto_delete: %ds)", t.AutoDeleteSec)
+		}
+		sb.WriteString("\n")
 	}
 	o.sendReply(ctx, inter.ChannelID, sb.String())
 }
@@ -199,7 +203,7 @@ func (o *Orchestrator) handleEditInteraction(ctx context.Context, inter *Interac
 		return
 	}
 
-	if err := o.scheduler.EditTask(ctx, taskID, schedule, taskType, prompt); err != nil {
+	if err := o.scheduler.EditTask(ctx, taskID, schedule, taskType, prompt, nil); err != nil {
 		o.logger.Error("editing task", "error", err, "channel_id", inter.ChannelID)
 		o.sendReply(ctx, inter.ChannelID, "Failed to edit task.")
 		return
@@ -265,13 +269,14 @@ func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *
 	}
 
 	task := &db.ScheduledTask{
-		ChannelID:    inter.ChannelID,
-		GuildID:      inter.GuildID,
-		Schedule:     tmpl.Schedule,
-		Prompt:       prompt,
-		Type:         db.TaskType(tmpl.Type),
-		Enabled:      true,
-		TemplateName: name,
+		ChannelID:     inter.ChannelID,
+		GuildID:       inter.GuildID,
+		Schedule:      tmpl.Schedule,
+		Prompt:        prompt,
+		Type:          db.TaskType(tmpl.Type),
+		Enabled:       true,
+		TemplateName:  name,
+		AutoDeleteSec: tmpl.AutoDeleteSec,
 	}
 
 	id, err := o.scheduler.AddTask(ctx, task)

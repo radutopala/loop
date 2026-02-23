@@ -527,6 +527,8 @@ Each template requires exactly one of:
 - `prompt` — inline prompt text
 - `prompt_path` — path to a prompt file relative to the `templates/` directory (`~/.loop/templates/` for global, `.loop/templates/` for project)
 
+Optional: `auto_delete_sec` — seconds after execution to auto-delete the thread created by the task (0 = disabled, default).
+
 Example templates in `~/.loop/config.json`:
 
 ```jsonc
@@ -544,7 +546,8 @@ Example templates in `~/.loop/config.json`:
       "description": "Check for ready work tickets; enable/disable tk-auto-worker accordingly",
       "schedule": "5m",
       "type": "interval",
-      "prompt_path": "tk-heartbeat.md"  // loaded from ~/.loop/templates/tk-heartbeat.md
+      "prompt_path": "tk-heartbeat.md",  // loaded from ~/.loop/templates/tk-heartbeat.md
+      "auto_delete_sec": 300  // auto-delete thread 5 min after execution (0 = disabled)
     },
     {
       "name": "daily-summary",

@@ -87,17 +87,18 @@ type Message struct {
 
 // ScheduledTask represents a task scheduled for execution.
 type ScheduledTask struct {
-	ID           int64     `json:"id"`
-	ChannelID    string    `json:"channel_id"`
-	GuildID      string    `json:"guild_id"`
-	Schedule     string    `json:"schedule"`
-	Type         TaskType  `json:"type"`
-	Prompt       string    `json:"prompt"`
-	Enabled      bool      `json:"enabled"`
-	NextRunAt    time.Time `json:"next_run_at"`
-	CreatedAt    time.Time `json:"created_at"`
-	UpdatedAt    time.Time `json:"updated_at"`
-	TemplateName string    `json:"template_name"`
+	ID            int64     `json:"id"`
+	ChannelID     string    `json:"channel_id"`
+	GuildID       string    `json:"guild_id"`
+	Schedule      string    `json:"schedule"`
+	Type          TaskType  `json:"type"`
+	Prompt        string    `json:"prompt"`
+	Enabled       bool      `json:"enabled"`
+	NextRunAt     time.Time `json:"next_run_at"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+	TemplateName  string    `json:"template_name"`
+	AutoDeleteSec int       `json:"auto_delete_sec"`
 }
 
 // TaskType represents the type of scheduled task.

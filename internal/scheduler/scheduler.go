@@ -26,7 +26,7 @@ type Scheduler interface {
 	ListTasks(ctx context.Context, channelID string) ([]*db.ScheduledTask, error)
 	SetTaskEnabled(ctx context.Context, taskID int64, enabled bool) error
 	ToggleTask(ctx context.Context, taskID int64) (bool, error)
-	EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string) error
+	EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int) error
 }
 
 // TaskScheduler implements Scheduler using a polling loop.
@@ -110,8 +110,8 @@ func (s *TaskScheduler) ToggleTask(ctx context.Context, taskID int64) (bool, err
 	return newEnabled, nil
 }
 
-// EditTask updates a scheduled task's schedule, type, and/or prompt.
-func (s *TaskScheduler) EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string) error {
+// EditTask updates a scheduled task's schedule, type, prompt, and/or auto_delete_sec.
+func (s *TaskScheduler) EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int) error {
 	task, err := s.store.GetScheduledTask(ctx, taskID)
 	if err != nil {
 		return fmt.Errorf("getting task: %w", err)
@@ -128,6 +128,9 @@ func (s *TaskScheduler) EditTask(ctx context.Context, taskID int64, schedule, ta
 	}
 	if prompt != nil {
 		task.Prompt = *prompt
+	}
+	if autoDeleteSec != nil {
+		task.AutoDeleteSec = *autoDeleteSec
 	}
 
 	if schedule != nil || taskType != nil {

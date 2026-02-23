@@ -10,10 +10,11 @@ import (
 )
 
 type createTaskRequest struct {
-	ChannelID string `json:"channel_id"`
-	Schedule  string `json:"schedule"`
-	Type      string `json:"type"`
-	Prompt    string `json:"prompt"`
+	ChannelID     string `json:"channel_id"`
+	Schedule      string `json:"schedule"`
+	Type          string `json:"type"`
+	Prompt        string `json:"prompt"`
+	AutoDeleteSec int    `json:"auto_delete_sec"`
 }
 
 type createTaskResponse struct {
@@ -21,21 +22,23 @@ type createTaskResponse struct {
 }
 
 type updateTaskRequest struct {
-	Enabled  *bool   `json:"enabled"`
-	Schedule *string `json:"schedule"`
-	Type     *string `json:"type"`
-	Prompt   *string `json:"prompt"`
+	Enabled       *bool   `json:"enabled"`
+	Schedule      *string `json:"schedule"`
+	Type          *string `json:"type"`
+	Prompt        *string `json:"prompt"`
+	AutoDeleteSec *int    `json:"auto_delete_sec"`
 }
 
 type taskResponse struct {
-	ID           int64     `json:"id"`
-	ChannelID    string    `json:"channel_id"`
-	Schedule     string    `json:"schedule"`
-	Type         string    `json:"type"`
-	Prompt       string    `json:"prompt"`
-	Enabled      bool      `json:"enabled"`
-	NextRunAt    time.Time `json:"next_run_at"`
-	TemplateName string    `json:"template_name,omitempty"`
+	ID            int64     `json:"id"`
+	ChannelID     string    `json:"channel_id"`
+	Schedule      string    `json:"schedule"`
+	Type          string    `json:"type"`
+	Prompt        string    `json:"prompt"`
+	Enabled       bool      `json:"enabled"`
+	NextRunAt     time.Time `json:"next_run_at"`
+	TemplateName  string    `json:"template_name,omitempty"`
+	AutoDeleteSec int       `json:"auto_delete_sec"`
 }
 
 func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
@@ -45,11 +48,12 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	task := &db.ScheduledTask{
-		ChannelID: req.ChannelID,
-		Schedule:  req.Schedule,
-		Type:      db.TaskType(req.Type),
-		Prompt:    req.Prompt,
-		Enabled:   true,
+		ChannelID:     req.ChannelID,
+		Schedule:      req.Schedule,
+		Type:          db.TaskType(req.Type),
+		Prompt:        req.Prompt,
+		Enabled:       true,
+		AutoDeleteSec: req.AutoDeleteSec,
 	}
 
 	id, err := s.scheduler.AddTask(r.Context(), task)
@@ -79,14 +83,15 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	resp := make([]taskResponse, 0, len(tasks))
 	for _, t := range tasks {
 		resp = append(resp, taskResponse{
-			ID:           t.ID,
-			ChannelID:    t.ChannelID,
-			Schedule:     t.Schedule,
-			Type:         string(t.Type),
-			Prompt:       t.Prompt,
-			Enabled:      t.Enabled,
-			NextRunAt:    t.NextRunAt,
-			TemplateName: t.TemplateName,
+			ID:            t.ID,
+			ChannelID:     t.ChannelID,
+			Schedule:      t.Schedule,
+			Type:          string(t.Type),
+			Prompt:        t.Prompt,
+			Enabled:       t.Enabled,
+			NextRunAt:     t.NextRunAt,
+			TemplateName:  t.TemplateName,
+			AutoDeleteSec: t.AutoDeleteSec,
 		})
 	}
 
@@ -123,7 +128,7 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Enabled == nil && req.Schedule == nil && req.Type == nil && req.Prompt == nil {
+	if req.Enabled == nil && req.Schedule == nil && req.Type == nil && req.Prompt == nil && req.AutoDeleteSec == nil {
 		http.Error(w, "at least one field is required", http.StatusBadRequest)
 		return
 	}
@@ -135,8 +140,8 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if req.Schedule != nil || req.Type != nil || req.Prompt != nil {
-		if err := s.scheduler.EditTask(r.Context(), taskID, req.Schedule, req.Type, req.Prompt); err != nil {
+	if req.Schedule != nil || req.Type != nil || req.Prompt != nil || req.AutoDeleteSec != nil {
+		if err := s.scheduler.EditTask(r.Context(), taskID, req.Schedule, req.Type, req.Prompt, req.AutoDeleteSec); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

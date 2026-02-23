@@ -79,6 +79,6 @@ func (s *MockSchedulerSuite) TestToggleTask() {
 
 func (s *MockSchedulerSuite) TestEditTask() {
 	sched := "0 9 * * *"
-	s.sched.On("EditTask", s.ctx, int64(1), &sched, (*string)(nil), (*string)(nil)).Return(nil)
-	require.NoError(s.T(), s.sched.EditTask(s.ctx, int64(1), &sched, nil, nil))
+	s.sched.On("EditTask", s.ctx, int64(1), &sched, (*string)(nil), (*string)(nil), (*int)(nil)).Return(nil)
+	require.NoError(s.T(), s.sched.EditTask(s.ctx, int64(1), &sched, nil, nil, nil))
 }
