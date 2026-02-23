@@ -447,12 +447,13 @@ Both Discord slash commands and Slack `/loop` subcommands use the same syntax:
 | `/loop cancel <task_id>` | Cancel a scheduled task |
 | `/loop toggle <task_id>` | Toggle a scheduled task on or off |
 | `/loop edit <task_id> [--schedule] [--type] [--prompt]` | Edit a scheduled task |
+| `/loop stop` | Stop the currently running agent |
 | `/loop status` | Show bot status |
 | `/loop template add <name>` | Load a task template into the current channel |
 | `/loop template list` | List available task templates from config |
 | `/loop iamtheowner` | Self-onboard as channel owner (only when no permissions are configured) |
 
-The bot responds to `@mentions`, replies to its own messages, DMs, and messages prefixed with `!loop`. It auto-joins threads in active channels — tagging the bot in a thread inherits the parent channel's project directory and forks its session so each thread gets independent context.
+The bot responds to `@mentions`, replies to its own messages, DMs, and messages prefixed with `!loop`. While processing, a **Stop** button appears that cancels the running agent when clicked. It auto-joins threads in active channels — tagging the bot in a thread inherits the parent channel's project directory and forks its session so each thread gets independent context.
 
 Agents can trigger work in other channels using the `send_message` MCP tool. The bot can self-reference itself — a message it sends with its own `@mention` will trigger a runner in the target channel. Text mentions like `@LoopBot` are automatically converted to proper platform mentions (Discord `<@ID>`, Slack `<@ID>`). For example, an agent in channel A can ask:
 
