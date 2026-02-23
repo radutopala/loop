@@ -453,6 +453,22 @@ func (s *ConfigSuite) TestExampleConfigEmbedded() {
 	require.Contains(s.T(), string(ExampleConfig), "task_templates")
 }
 
+func (s *ConfigSuite) TestTemplatesEmbedded() {
+	entries, err := Templates.ReadDir("templates")
+	require.NoError(s.T(), err)
+	require.GreaterOrEqual(s.T(), len(entries), 2)
+
+	names := make(map[string]bool)
+	for _, e := range entries {
+		names[e.Name()] = true
+		data, err := Templates.ReadFile("templates/" + e.Name())
+		require.NoError(s.T(), err)
+		require.NotEmpty(s.T(), data)
+	}
+	require.True(s.T(), names["heartbeat.md"])
+	require.True(s.T(), names["tk-auto-worker.md"])
+}
+
 func (s *ConfigSuite) TestLoadProjectConfigNoFile() {
 	readFile = func(path string) ([]byte, error) {
 		if path == "/project/.loop/config.json" {

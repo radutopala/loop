@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -2421,11 +2422,16 @@ func (s *MainSuite) TestOnboardGlobalSuccess() {
 	require.NoError(s.T(), err)
 	require.True(s.T(), info.IsDir())
 
-	// Verify heartbeat template was written
+	// Verify embedded templates were written
 	heartbeatPath := filepath.Join(templatesDir, "heartbeat.md")
 	heartbeatData, err := os.ReadFile(heartbeatPath)
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), string(heartbeatData), "heartbeat check")
+
+	tkAutoWorkerPath := filepath.Join(templatesDir, "tk-auto-worker.md")
+	tkAutoWorkerData, err := os.ReadFile(tkAutoWorkerPath)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(tkAutoWorkerData), "ticket dispatcher")
 }
 
 func (s *MainSuite) TestOnboardGlobalConfigAlreadyExists() {
@@ -2737,7 +2743,7 @@ func (s *MainSuite) TestOnboardGlobalTemplatesDirError() {
 	require.Contains(s.T(), err.Error(), "creating templates directory")
 }
 
-func (s *MainSuite) TestOnboardGlobalHeartbeatWriteError() {
+func (s *MainSuite) TestOnboardGlobalTemplateWriteError() {
 	tmpDir := s.T().TempDir()
 	userHomeDir = func() (string, error) {
 		return tmpDir, nil
@@ -2747,25 +2753,25 @@ func (s *MainSuite) TestOnboardGlobalHeartbeatWriteError() {
 	calls := 0
 	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
 		calls++
-		if calls == 7 { // Seventh write is heartbeat template
-			return errors.New("heartbeat write error")
+		if calls == 7 { // Seventh write is first template
+			return errors.New("template write error")
 		}
 		return os.WriteFile(path, data, perm)
 	}
 
 	err := onboardGlobal(false, "")
 	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "writing heartbeat template")
+	require.Contains(s.T(), err.Error(), "writing template")
 }
 
-func (s *MainSuite) TestOnboardGlobalHeartbeatSkipsIfExists() {
+func (s *MainSuite) TestOnboardGlobalTemplatesSkipIfExist() {
 	tmpDir := s.T().TempDir()
 	loopDir := filepath.Join(tmpDir, ".loop")
 	templatesDir := filepath.Join(loopDir, "templates")
-	heartbeatPath := filepath.Join(templatesDir, "heartbeat.md")
 
 	require.NoError(s.T(), os.MkdirAll(templatesDir, 0755))
-	require.NoError(s.T(), os.WriteFile(heartbeatPath, []byte("custom heartbeat"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(templatesDir, "heartbeat.md"), []byte("custom heartbeat"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(templatesDir, "tk-auto-worker.md"), []byte("custom worker"), 0644))
 
 	userHomeDir = func() (string, error) {
 		return tmpDir, nil
@@ -2774,12 +2780,76 @@ func (s *MainSuite) TestOnboardGlobalHeartbeatSkipsIfExists() {
 	osMkdirAll = os.MkdirAll
 	osWriteFile = os.WriteFile
 
-	err := onboardGlobal(true, "") // force overwrites config but not heartbeat template
+	err := onboardGlobal(true, "") // force overwrites config but not templates
 	require.NoError(s.T(), err)
 
-	data, err := os.ReadFile(heartbeatPath)
+	data, err := os.ReadFile(filepath.Join(templatesDir, "heartbeat.md"))
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "custom heartbeat", string(data))
+
+	data, err = os.ReadFile(filepath.Join(templatesDir, "tk-auto-worker.md"))
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "custom worker", string(data))
+}
+
+// brokenReadDirFS implements fs.ReadFileFS but fails on ReadDir.
+type brokenReadDirFS struct{}
+
+func (brokenReadDirFS) Open(string) (fs.File, error)    { return nil, errors.New("broken") }
+func (brokenReadDirFS) ReadFile(string) ([]byte, error) { return nil, errors.New("broken") }
+
+// brokenReadFileFS succeeds on ReadDir (returns one fake entry) but fails on ReadFile.
+type brokenReadFileFS struct{ brokenReadDirFS }
+
+func (brokenReadFileFS) Open(name string) (fs.File, error) {
+	// fs.ReadDir calls Open; return a dir with one fake file entry.
+	if name == "templates" {
+		return &fakeDirFile{entries: []fs.DirEntry{&fakeEntry{name: "test.md"}}}, nil
+	}
+	return nil, errors.New("broken")
+}
+
+type fakeDirFile struct {
+	entries []fs.DirEntry
+	read    bool
+}
+
+func (f *fakeDirFile) Stat() (fs.FileInfo, error) { return nil, nil }
+func (f *fakeDirFile) Read([]byte) (int, error)   { return 0, io.EOF }
+func (f *fakeDirFile) Close() error               { return nil }
+func (f *fakeDirFile) ReadDir(int) ([]fs.DirEntry, error) {
+	if f.read {
+		return nil, io.EOF
+	}
+	f.read = true
+	return f.entries, nil
+}
+
+type fakeEntry struct{ name string }
+
+func (e *fakeEntry) Name() string               { return e.name }
+func (e *fakeEntry) IsDir() bool                { return false }
+func (e *fakeEntry) Type() fs.FileMode          { return 0 }
+func (e *fakeEntry) Info() (fs.FileInfo, error) { return nil, nil }
+
+func (s *MainSuite) TestDumpTemplatesReadDirError() {
+	origFS := templatesFS
+	defer func() { templatesFS = origFS }()
+	templatesFS = brokenReadDirFS{}
+
+	err := dumpTemplates(s.T().TempDir())
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading embedded templates")
+}
+
+func (s *MainSuite) TestDumpTemplatesReadFileError() {
+	origFS := templatesFS
+	defer func() { templatesFS = origFS }()
+	templatesFS = brokenReadFileFS{}
+
+	err := dumpTemplates(s.T().TempDir())
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading embedded template test.md")
 }
 
 func (s *MainSuite) TestOnboardGlobalWithOwnerID() {

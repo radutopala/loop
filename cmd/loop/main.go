@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"os"
@@ -264,12 +265,13 @@ func newOnboardLocalCmd() *cobra.Command {
 }
 
 var (
-	userHomeDir = os.UserHomeDir
-	osStat      = os.Stat
-	osMkdirAll  = os.MkdirAll
-	osWriteFile = os.WriteFile
-	osGetwd     = os.Getwd
-	osReadFile  = os.ReadFile
+	userHomeDir               = os.UserHomeDir
+	osStat                    = os.Stat
+	osMkdirAll                = os.MkdirAll
+	osWriteFile               = os.WriteFile
+	osGetwd                   = os.Getwd
+	osReadFile                = os.ReadFile
+	templatesFS fs.ReadFileFS = config.Templates
 )
 
 func onboardGlobal(force bool, ownerID string) error {
@@ -346,18 +348,13 @@ func onboardGlobal(force bool, ownerID string) error {
 		return fmt.Errorf("writing Slack manifest: %w", err)
 	}
 
-	// Create templates directory for prompt_path templates
+	// Dump embedded templates directory
 	templatesDir := filepath.Join(loopDir, "templates")
 	if err := osMkdirAll(templatesDir, 0755); err != nil {
 		return fmt.Errorf("creating templates directory: %w", err)
 	}
-
-	// Write embedded heartbeat template
-	heartbeatPath := filepath.Join(templatesDir, "heartbeat.md")
-	if _, err := osStat(heartbeatPath); err != nil {
-		if err := osWriteFile(heartbeatPath, config.HeartbeatTemplate, 0644); err != nil {
-			return fmt.Errorf("writing heartbeat template: %w", err)
-		}
+	if err := dumpTemplates(templatesDir); err != nil {
+		return err
 	}
 
 	fmt.Printf("✓ Created config at %s\n", configPath)
@@ -367,6 +364,32 @@ func onboardGlobal(force bool, ownerID string) error {
 	fmt.Println("2. Run 'loop serve' to start the bot")
 	fmt.Println("3. Customize the Dockerfile at ~/.loop/container/ if needed")
 
+	return nil
+}
+
+// dumpTemplates writes all embedded template files to the target directory,
+// skipping files that already exist (so user edits are preserved).
+func dumpTemplates(dir string) error {
+	entries, err := fs.ReadDir(templatesFS, "templates")
+	if err != nil {
+		return fmt.Errorf("reading embedded templates: %w", err)
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			continue
+		}
+		dst := filepath.Join(dir, e.Name())
+		if _, err := osStat(dst); err == nil {
+			continue // don't overwrite existing
+		}
+		data, err := templatesFS.ReadFile("templates/" + e.Name())
+		if err != nil {
+			return fmt.Errorf("reading embedded template %s: %w", e.Name(), err)
+		}
+		if err := osWriteFile(dst, data, 0644); err != nil {
+			return fmt.Errorf("writing template %s: %w", e.Name(), err)
+		}
+	}
 	return nil
 }
 
@@ -442,7 +465,7 @@ func onboardLocal(apiURL string, ownerID string) error {
 		fmt.Printf("Created project config at %s\n", projectConfigPath)
 	}
 
-	// Create templates directory for prompt_path templates
+	// Create templates directory for project-level prompt_path templates
 	templatesDir := filepath.Join(loopDir, "templates")
 	if err := osMkdirAll(templatesDir, 0755); err != nil {
 		return fmt.Errorf("creating templates directory: %w", err)
