@@ -16,7 +16,7 @@ type OutgoingMessage = orchestrator.OutgoingMessage
 type MessageHandler = func(ctx context.Context, msg *IncomingMessage)
 
 // InteractionHandler is a callback for slash command interactions.
-type InteractionHandler = func(ctx context.Context, i any)
+type InteractionHandler = func(ctx context.Context, i *orchestrator.Interaction)
 
 // ChannelDeleteHandler is a callback for channel/thread deletion events.
 type ChannelDeleteHandler = func(ctx context.Context, channelID string, isThread bool)

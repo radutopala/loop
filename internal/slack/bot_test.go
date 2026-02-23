@@ -412,7 +412,7 @@ func (s *BotSuite) TestOnMessage() {
 }
 
 func (s *BotSuite) TestOnInteraction() {
-	s.bot.OnInteraction(func(_ context.Context, _ any) {})
+	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {})
 	require.Len(s.T(), s.bot.interactionHandlers, 1)
 }
 
@@ -1046,8 +1046,8 @@ func (s *BotSuite) TestHandleMessageReplyToBot() {
 // --- Slash Commands ---
 
 func (s *BotSuite) TestHandleSlashCommandSchedule() {
-	received := make(chan any, 1)
-	s.bot.OnInteraction(func(_ context.Context, i any) {
+	received := make(chan *orchestrator.Interaction, 1)
+	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
 		received <- i
 	})
 
@@ -1065,8 +1065,7 @@ func (s *BotSuite) TestHandleSlashCommandSchedule() {
 	s.bot.handleSlashCommand(evt)
 
 	select {
-	case i := <-received:
-		inter := i.(*orchestrator.Interaction)
+	case inter := <-received:
 		require.Equal(s.T(), "schedule", inter.CommandName)
 		require.Equal(s.T(), "0 9 * * *", inter.Options["schedule"])
 		require.Equal(s.T(), "cron", inter.Options["type"])
@@ -1077,8 +1076,8 @@ func (s *BotSuite) TestHandleSlashCommandSchedule() {
 }
 
 func (s *BotSuite) TestHandleSlashCommandTasks() {
-	received := make(chan any, 1)
-	s.bot.OnInteraction(func(_ context.Context, i any) {
+	received := make(chan *orchestrator.Interaction, 1)
+	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
 		received <- i
 	})
 
@@ -1096,8 +1095,7 @@ func (s *BotSuite) TestHandleSlashCommandTasks() {
 	s.bot.handleSlashCommand(evt)
 
 	select {
-	case i := <-received:
-		inter := i.(*orchestrator.Interaction)
+	case inter := <-received:
 		require.Equal(s.T(), "tasks", inter.CommandName)
 	case <-time.After(time.Second):
 		s.Fail("timeout waiting for interaction")
@@ -1105,8 +1103,8 @@ func (s *BotSuite) TestHandleSlashCommandTasks() {
 }
 
 func (s *BotSuite) TestHandleSlashCommandSetsAuthorID() {
-	received := make(chan any, 1)
-	s.bot.OnInteraction(func(_ context.Context, i any) {
+	received := make(chan *orchestrator.Interaction, 1)
+	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
 		received <- i
 	})
 
@@ -1125,8 +1123,7 @@ func (s *BotSuite) TestHandleSlashCommandSetsAuthorID() {
 	s.bot.handleSlashCommand(evt)
 
 	select {
-	case i := <-received:
-		inter := i.(*orchestrator.Interaction)
+	case inter := <-received:
 		require.Equal(s.T(), "U789", inter.AuthorID)
 	case <-time.After(time.Second):
 		s.Fail("timeout waiting for interaction")
@@ -2267,8 +2264,8 @@ func (s *BotSuite) TestParseSlashCommandReadmeInHelp() {
 // --- handleInteractive tests ---
 
 func (s *BotSuite) TestHandleInteractiveStopAction() {
-	received := make(chan any, 1)
-	s.bot.OnInteraction(func(_ context.Context, i any) {
+	received := make(chan *orchestrator.Interaction, 1)
+	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
 		received <- i
 	})
 
@@ -2296,8 +2293,7 @@ func (s *BotSuite) TestHandleInteractiveStopAction() {
 	s.bot.handleInteractive(evt)
 
 	select {
-	case i := <-received:
-		inter := i.(*orchestrator.Interaction)
+	case inter := <-received:
 		require.Equal(s.T(), "stop", inter.CommandName)
 		require.Equal(s.T(), "target-ch", inter.Options["channel_id"])
 		require.Equal(s.T(), "C123", inter.ChannelID)
@@ -2310,7 +2306,7 @@ func (s *BotSuite) TestHandleInteractiveStopAction() {
 
 func (s *BotSuite) TestHandleInteractiveNonBlockActions() {
 	called := false
-	s.bot.OnInteraction(func(_ context.Context, _ any) {
+	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {
 		called = true
 	})
 
@@ -2330,7 +2326,7 @@ func (s *BotSuite) TestHandleInteractiveNonBlockActions() {
 
 func (s *BotSuite) TestHandleInteractiveNonStopAction() {
 	called := false
-	s.bot.OnInteraction(func(_ context.Context, _ any) {
+	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {
 		called = true
 	})
 
@@ -2355,7 +2351,7 @@ func (s *BotSuite) TestHandleInteractiveNonStopAction() {
 
 func (s *BotSuite) TestHandleInteractiveInvalidData() {
 	called := false
-	s.bot.OnInteraction(func(_ context.Context, _ any) {
+	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {
 		called = true
 	})
 
@@ -2369,8 +2365,8 @@ func (s *BotSuite) TestHandleInteractiveInvalidData() {
 }
 
 func (s *BotSuite) TestHandleEventInteractiveType() {
-	received := make(chan any, 1)
-	s.bot.OnInteraction(func(_ context.Context, i any) {
+	received := make(chan *orchestrator.Interaction, 1)
+	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
 		received <- i
 	})
 
@@ -2399,8 +2395,7 @@ func (s *BotSuite) TestHandleEventInteractiveType() {
 	s.bot.handleEvent(evt)
 
 	select {
-	case i := <-received:
-		inter := i.(*orchestrator.Interaction)
+	case inter := <-received:
 		require.Equal(s.T(), "stop", inter.CommandName)
 	case <-time.After(time.Second):
 		s.Fail("timeout waiting for interaction")

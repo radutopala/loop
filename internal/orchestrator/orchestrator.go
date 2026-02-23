@@ -28,7 +28,7 @@ type Bot interface {
 	RegisterCommands(ctx context.Context) error
 	RemoveCommands(ctx context.Context) error
 	OnMessage(handler func(ctx context.Context, msg *IncomingMessage))
-	OnInteraction(handler func(ctx context.Context, i any))
+	OnInteraction(handler func(ctx context.Context, i *Interaction))
 	OnChannelDelete(handler func(ctx context.Context, channelID string, isThread bool))
 	OnChannelJoin(handler func(ctx context.Context, channelID string))
 	BotUserID() string

@@ -635,7 +635,7 @@ func (b *SlackBot) dispatchMessage(msg *bot.IncomingMessage) {
 	}
 }
 
-func (b *SlackBot) dispatchInteraction(inter any) {
+func (b *SlackBot) dispatchInteraction(inter *orchestrator.Interaction) {
 	for _, h := range bot.CopyHandlers(&b.mu, b.interactionHandlers) {
 		go h(context.Background(), inter)
 	}

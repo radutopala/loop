@@ -454,8 +454,8 @@ func (s *BotSuite) TestOnMessageRegistersHandler() {
 func (s *BotSuite) TestOnInteractionRegistersHandler() {
 	var received *orchestrator.Interaction
 	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i any) {
-		received = i.(*orchestrator.Interaction)
+	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+		received = i
 		close(done)
 	})
 
@@ -490,8 +490,8 @@ func (s *BotSuite) TestOnInteractionRegistersHandler() {
 func (s *BotSuite) TestOnInteractionWithOptions() {
 	var received *orchestrator.Interaction
 	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i any) {
-		received = i.(*orchestrator.Interaction)
+	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+		received = i
 		close(done)
 	})
 
@@ -530,8 +530,8 @@ func (s *BotSuite) TestOnInteractionWithOptions() {
 func (s *BotSuite) TestOnInteractionSubcommandGroup() {
 	var received *orchestrator.Interaction
 	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i any) {
-		received = i.(*orchestrator.Interaction)
+	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+		received = i
 		close(done)
 	})
 
@@ -575,8 +575,8 @@ func (s *BotSuite) TestOnInteractionSubcommandGroup() {
 func (s *BotSuite) TestOnInteractionSubcommandGroupNoSub() {
 	var received *orchestrator.Interaction
 	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i any) {
-		received = i.(*orchestrator.Interaction)
+	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+		received = i
 		close(done)
 	})
 
@@ -608,8 +608,8 @@ func (s *BotSuite) TestOnInteractionSubcommandGroupNoSub() {
 func (s *BotSuite) TestOnInteractionTopLevelCommand() {
 	var received *orchestrator.Interaction
 	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i any) {
-		received = i.(*orchestrator.Interaction)
+	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+		received = i
 		close(done)
 	})
 
@@ -636,8 +636,8 @@ func (s *BotSuite) TestOnInteractionTopLevelCommand() {
 func (s *BotSuite) TestOnInteractionRespondError() {
 	var received *orchestrator.Interaction
 	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i any) {
-		received = i.(*orchestrator.Interaction)
+	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+		received = i
 		close(done)
 	})
 
@@ -669,7 +669,7 @@ func (s *BotSuite) TestOnInteractionRespondError() {
 
 func (s *BotSuite) TestOnInteractionIgnoresUnhandledType() {
 	called := false
-	s.bot.OnInteraction(func(_ context.Context, _ any) {
+	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {
 		called = true
 	})
 
@@ -686,8 +686,8 @@ func (s *BotSuite) TestOnInteractionIgnoresUnhandledType() {
 func (s *BotSuite) TestHandleComponentInteractionStopButton() {
 	var received *orchestrator.Interaction
 	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i any) {
-		received = i.(*orchestrator.Interaction)
+	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+		received = i
 		close(done)
 	})
 
@@ -724,7 +724,7 @@ func (s *BotSuite) TestHandleComponentInteractionStopButton() {
 
 func (s *BotSuite) TestHandleComponentInteractionNonStopIgnored() {
 	called := false
-	s.bot.OnInteraction(func(_ context.Context, _ any) {
+	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {
 		called = true
 	})
 
@@ -746,7 +746,7 @@ func (s *BotSuite) TestHandleComponentInteractionNonStopIgnored() {
 }
 
 func (s *BotSuite) TestHandleComponentInteractionAckError() {
-	s.bot.OnInteraction(func(_ context.Context, _ any) {})
+	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {})
 
 	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("ack failed"))
 
@@ -767,8 +767,8 @@ func (s *BotSuite) TestHandleComponentInteractionAckError() {
 func (s *BotSuite) TestHandleComponentInteractionDMUser() {
 	var received *orchestrator.Interaction
 	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i any) {
-		received = i.(*orchestrator.Interaction)
+	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+		received = i
 		close(done)
 	})
 
@@ -1003,7 +1003,7 @@ func (s *BotSuite) TestHandleInteractionMultipleHandlers() {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	count := 0
-	handler := func(_ context.Context, _ any) {
+	handler := func(_ context.Context, _ *orchestrator.Interaction) {
 		mu.Lock()
 		count++
 		mu.Unlock()
@@ -1291,7 +1291,7 @@ func (s *BotSuite) TestSendTypingRefreshError() {
 // --- Pending interaction stored on successful defer ---
 
 func (s *BotSuite) TestHandleInteractionStoresPendingInteraction() {
-	s.bot.OnInteraction(func(_ context.Context, _ any) {})
+	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {})
 	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	interaction := &discordgo.Interaction{
@@ -1315,7 +1315,7 @@ func (s *BotSuite) TestHandleInteractionStoresPendingInteraction() {
 }
 
 func (s *BotSuite) TestHandleInteractionDoesNotStorePendingOnError() {
-	s.bot.OnInteraction(func(_ context.Context, _ any) {})
+	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {})
 	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("respond failed"))
 
 	ic := &discordgo.InteractionCreate{
@@ -1896,8 +1896,8 @@ func (s *BotSuite) TestHandleMessageRoleFetchError() {
 func (s *BotSuite) TestHandleInteractionPopulatesAuthorGuild() {
 	var received *orchestrator.Interaction
 	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i any) {
-		received = i.(*orchestrator.Interaction)
+	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+		received = i
 		close(done)
 	})
 
@@ -1932,8 +1932,8 @@ func (s *BotSuite) TestHandleInteractionPopulatesAuthorGuild() {
 func (s *BotSuite) TestHandleInteractionPopulatesAuthorDM() {
 	var received *orchestrator.Interaction
 	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i any) {
-		received = i.(*orchestrator.Interaction)
+	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+		received = i
 		close(done)
 	})
 
