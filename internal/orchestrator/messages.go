@@ -209,19 +209,16 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *IncomingMessage
 	// Register the cancel func so stop button clicks can cancel this run.
 	o.activeRuns.Store(msg.ChannelID, runCancel)
 
-	var lastStreamedText string
+	var tracker *streamTracker
 	if o.cfg.StreamingEnabled {
-		req.OnTurn = func(text string) {
-			if text == "" {
-				return
-			}
-			lastStreamedText = text
+		tracker = newStreamTracker(func(text string) {
 			_ = o.bot.SendMessage(ctx, &OutgoingMessage{
 				ChannelID:        msg.ChannelID,
 				Content:          text,
 				ReplyToMessageID: msg.MessageID,
 			})
-		}
+		})
+		req.OnTurn = tracker.OnTurn
 	}
 
 	resp, err := o.runner.Run(runCtx, req)
@@ -269,7 +266,7 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *IncomingMessage
 	)
 
 	// Skip final send if it duplicates the last streamed turn
-	if resp.Response != lastStreamedText {
+	if tracker == nil || !tracker.IsDuplicate(resp.Response) {
 		if err := o.bot.SendMessage(ctx, &OutgoingMessage{
 			ChannelID:        msg.ChannelID,
 			Content:          resp.Response,
