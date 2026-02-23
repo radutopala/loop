@@ -292,7 +292,7 @@ func (m *mockBot) OnMessage(handler func(ctx context.Context, msg *orchestrator.
 	m.Called(handler)
 }
 
-func (m *mockBot) OnInteraction(handler func(ctx context.Context, i any)) {
+func (m *mockBot) OnInteraction(handler func(ctx context.Context, i *orchestrator.Interaction)) {
 	m.Called(handler)
 }
 

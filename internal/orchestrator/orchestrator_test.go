@@ -61,7 +61,7 @@ func (m *MockBot) OnMessage(handler func(ctx context.Context, msg *IncomingMessa
 	m.Called(handler)
 }
 
-func (m *MockBot) OnInteraction(handler func(ctx context.Context, i any)) {
+func (m *MockBot) OnInteraction(handler func(ctx context.Context, i *Interaction)) {
 	m.Called(handler)
 }
 
@@ -199,7 +199,7 @@ func (s *OrchestratorSuite) TestNew() {
 
 func (s *OrchestratorSuite) TestStartSuccess() {
 	s.bot.On("OnMessage", mock.AnythingOfType("func(context.Context, *orchestrator.IncomingMessage)")).Return()
-	s.bot.On("OnInteraction", mock.AnythingOfType("func(context.Context, interface {})")).Return()
+	s.bot.On("OnInteraction", mock.AnythingOfType("func(context.Context, *orchestrator.Interaction)")).Return()
 	s.bot.On("OnChannelDelete", mock.AnythingOfType("func(context.Context, string, bool)")).Return()
 	s.bot.On("OnChannelJoin", mock.AnythingOfType("func(context.Context, string)")).Return()
 	s.bot.On("RegisterCommands", s.ctx).Return(nil)
@@ -1091,11 +1091,6 @@ func (s *OrchestratorSuite) TestHandleMessageInsertBotResponseInsertError() {
 }
 
 // --- HandleInteraction tests ---
-
-func (s *OrchestratorSuite) TestHandleInteractionInvalidType() {
-	s.orch.HandleInteraction(s.ctx, "not an interaction")
-	// Should not panic, just log error
-}
 
 func (s *OrchestratorSuite) TestHandleInteractionUnknownCommand() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)

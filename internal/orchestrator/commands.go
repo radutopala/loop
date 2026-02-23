@@ -14,13 +14,7 @@ import (
 )
 
 // HandleInteraction processes a slash command interaction.
-func (o *Orchestrator) HandleInteraction(ctx context.Context, interaction any) {
-	inter, ok := interaction.(*Interaction)
-	if !ok {
-		o.logger.Error("invalid interaction type")
-		return
-	}
-
+func (o *Orchestrator) HandleInteraction(ctx context.Context, inter *Interaction) {
 	ch, _ := o.store.GetChannel(ctx, inter.ChannelID)
 	var dbPerms db.ChannelPermissions
 	dirPath := ""
