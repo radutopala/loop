@@ -212,30 +212,22 @@ func (b *SlackBot) RemoveCommands(_ context.Context) error {
 
 // OnMessage registers a handler to be called for incoming messages.
 func (b *SlackBot) OnMessage(handler bot.MessageHandler) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.messageHandlers = append(b.messageHandlers, handler)
+	bot.RegisterHandler(&b.mu, &b.messageHandlers, handler)
 }
 
 // OnInteraction registers a handler to be called for slash command interactions.
 func (b *SlackBot) OnInteraction(handler bot.InteractionHandler) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.interactionHandlers = append(b.interactionHandlers, handler)
+	bot.RegisterHandler(&b.mu, &b.interactionHandlers, handler)
 }
 
 // OnChannelDelete registers a handler to be called when a channel is deleted.
 func (b *SlackBot) OnChannelDelete(handler bot.ChannelDeleteHandler) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.channelDeleteHandlers = append(b.channelDeleteHandlers, handler)
+	bot.RegisterHandler(&b.mu, &b.channelDeleteHandlers, handler)
 }
 
 // OnChannelJoin registers a handler to be called when the bot joins a channel.
 func (b *SlackBot) OnChannelJoin(handler bot.ChannelJoinHandler) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.channelJoinHandlers = append(b.channelJoinHandlers, handler)
+	bot.RegisterHandler(&b.mu, &b.channelJoinHandlers, handler)
 }
 
 // BotUserID returns the bot's Slack user ID.
@@ -570,12 +562,7 @@ func (b *SlackBot) isReplyToBot(ev *slackevents.MessageEvent) bool {
 }
 
 func (b *SlackBot) notifyChannelDelete(channelID string) {
-	b.mu.RLock()
-	handlers := make([]bot.ChannelDeleteHandler, len(b.channelDeleteHandlers))
-	copy(handlers, b.channelDeleteHandlers)
-	b.mu.RUnlock()
-
-	for _, h := range handlers {
+	for _, h := range bot.CopyHandlers(&b.mu, b.channelDeleteHandlers) {
 		go h(context.Background(), channelID, false)
 	}
 }
@@ -585,12 +572,7 @@ func (b *SlackBot) handleMemberJoinedChannel(ev *slackevents.MemberJoinedChannel
 		return
 	}
 
-	b.mu.RLock()
-	handlers := make([]bot.ChannelJoinHandler, len(b.channelJoinHandlers))
-	copy(handlers, b.channelJoinHandlers)
-	b.mu.RUnlock()
-
-	for _, h := range handlers {
+	for _, h := range bot.CopyHandlers(&b.mu, b.channelJoinHandlers) {
 		go h(context.Background(), ev.Channel)
 	}
 }
@@ -648,23 +630,13 @@ func (b *SlackBot) handleInteractive(evt socketmode.Event) {
 }
 
 func (b *SlackBot) dispatchMessage(msg *bot.IncomingMessage) {
-	b.mu.RLock()
-	handlers := make([]bot.MessageHandler, len(b.messageHandlers))
-	copy(handlers, b.messageHandlers)
-	b.mu.RUnlock()
-
-	for _, h := range handlers {
+	for _, h := range bot.CopyHandlers(&b.mu, b.messageHandlers) {
 		go h(context.Background(), msg)
 	}
 }
 
 func (b *SlackBot) dispatchInteraction(inter any) {
-	b.mu.RLock()
-	handlers := make([]bot.InteractionHandler, len(b.interactionHandlers))
-	copy(handlers, b.interactionHandlers)
-	b.mu.RUnlock()
-
-	for _, h := range handlers {
+	for _, h := range bot.CopyHandlers(&b.mu, b.interactionHandlers) {
 		go h(context.Background(), inter)
 	}
 }

@@ -271,32 +271,24 @@ func (b *DiscordBot) RemoveCommands(ctx context.Context) error {
 
 // OnMessage registers a handler to be called for incoming messages.
 func (b *DiscordBot) OnMessage(handler bot.MessageHandler) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.messageHandlers = append(b.messageHandlers, handler)
+	bot.RegisterHandler(&b.mu, &b.messageHandlers, handler)
 }
 
 // OnInteraction registers a handler to be called for slash command interactions.
 func (b *DiscordBot) OnInteraction(handler bot.InteractionHandler) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.interactionHandlers = append(b.interactionHandlers, handler)
+	bot.RegisterHandler(&b.mu, &b.interactionHandlers, handler)
 }
 
 // OnChannelDelete registers a handler to be called when a channel or thread is deleted.
 func (b *DiscordBot) OnChannelDelete(handler bot.ChannelDeleteHandler) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.channelDeleteHandlers = append(b.channelDeleteHandlers, handler)
+	bot.RegisterHandler(&b.mu, &b.channelDeleteHandlers, handler)
 }
 
 // OnChannelJoin registers a handler for channel join events.
 // Discord has no equivalent "bot added to channel" event (bot sees all guild channels),
 // so handlers are stored but never dispatched.
 func (b *DiscordBot) OnChannelJoin(handler bot.ChannelJoinHandler) {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.channelJoinHandlers = append(b.channelJoinHandlers, handler)
+	bot.RegisterHandler(&b.mu, &b.channelJoinHandlers, handler)
 }
 
 // CreateChannel creates a new text channel in the given guild. If a text
@@ -479,12 +471,7 @@ func (b *DiscordBot) handleChannelDelete(_ *discordgo.Session, c *discordgo.Chan
 }
 
 func (b *DiscordBot) notifyChannelDelete(channelID string, isThread bool) {
-	b.mu.RLock()
-	handlers := make([]bot.ChannelDeleteHandler, len(b.channelDeleteHandlers))
-	copy(handlers, b.channelDeleteHandlers)
-	b.mu.RUnlock()
-
-	for _, h := range handlers {
+	for _, h := range bot.CopyHandlers(&b.mu, b.channelDeleteHandlers) {
 		go h(context.Background(), channelID, isThread)
 	}
 }
@@ -523,12 +510,7 @@ func (b *DiscordBot) handleMessage(_ *discordgo.Session, m *discordgo.MessageCre
 		}
 	}
 
-	b.mu.RLock()
-	handlers := make([]bot.MessageHandler, len(b.messageHandlers))
-	copy(handlers, b.messageHandlers)
-	b.mu.RUnlock()
-
-	for _, h := range handlers {
+	for _, h := range bot.CopyHandlers(&b.mu, b.messageHandlers) {
 		go h(context.Background(), msg)
 	}
 }
@@ -639,12 +621,7 @@ func (b *DiscordBot) handleComponentInteraction(i *discordgo.InteractionCreate) 
 }
 
 func (b *DiscordBot) dispatchInteraction(inter *orchestrator.Interaction) {
-	b.mu.RLock()
-	handlers := make([]bot.InteractionHandler, len(b.interactionHandlers))
-	copy(handlers, b.interactionHandlers)
-	b.mu.RUnlock()
-
-	for _, h := range handlers {
+	for _, h := range bot.CopyHandlers(&b.mu, b.interactionHandlers) {
 		go h(context.Background(), inter)
 	}
 }
