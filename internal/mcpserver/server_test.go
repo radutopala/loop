@@ -252,7 +252,7 @@ func (s *MCPServerSuite) TestListTasksSuccess() {
 	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
 		require.Equal(s.T(), "GET", req.Method)
 		require.Contains(s.T(), req.URL.String(), "channel_id=test-channel")
-		return jsonResponse(http.StatusOK, `[{"id":1,"schedule":"0 9 * * *","type":"cron","prompt":"standup","enabled":true,"next_run_at":"2025-01-01T09:00:00Z"}]`), nil
+		return jsonResponse(http.StatusOK, `[{"id":1,"schedule":"0 9 * * *","type":"cron","prompt":"standup","enabled":true,"next_run_at":"2025-01-01T09:00:00Z","template_name":"my-tmpl"},{"id":2,"schedule":"5m","type":"interval","prompt":"check","enabled":false,"next_run_at":"2025-01-01T10:00:00Z","template_name":""}]`), nil
 	}
 
 	res, err := s.session.CallTool(s.ctx, &mcp.CallToolParams{
@@ -261,8 +261,12 @@ func (s *MCPServerSuite) TestListTasksSuccess() {
 	})
 	require.NoError(s.T(), err)
 	require.False(s.T(), res.IsError)
-	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "ID 1")
-	require.Contains(s.T(), res.Content[0].(*mcp.TextContent).Text, "standup")
+	text := res.Content[0].(*mcp.TextContent).Text
+	require.Contains(s.T(), text, "ID 1")
+	require.Contains(s.T(), text, "standup")
+	require.Contains(s.T(), text, "template_name: my-tmpl")
+	require.Contains(s.T(), text, "ID 2")
+	require.NotContains(s.T(), text, "template_name: \n")
 }
 
 func (s *MCPServerSuite) TestListTasksEmpty() {

@@ -75,12 +75,13 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 	s.logger.Info("mcp tool call", "tool", "list_tasks", "channel_id", s.channelID)
 
 	type taskEntry struct {
-		ID        int64  `json:"id"`
-		Schedule  string `json:"schedule"`
-		Type      string `json:"type"`
-		Prompt    string `json:"prompt"`
-		Enabled   bool   `json:"enabled"`
-		NextRunAt string `json:"next_run_at"`
+		ID           int64  `json:"id"`
+		Schedule     string `json:"schedule"`
+		Type         string `json:"type"`
+		Prompt       string `json:"prompt"`
+		Enabled      bool   `json:"enabled"`
+		NextRunAt    string `json:"next_run_at"`
+		TemplateName string `json:"template_name"`
 	}
 	tasks, errResult, err := doAPICall[[]taskEntry](s, "GET", fmt.Sprintf("%s/api/tasks?channel_id=%s", s.apiURL, s.channelID), http.StatusOK, nil)
 	if errResult != nil || err != nil {
@@ -97,7 +98,11 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 
 	var text strings.Builder
 	for _, t := range *tasks {
-		fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v)\n", t.ID, t.Prompt, t.Schedule, t.Type, t.Enabled)
+		if t.TemplateName != "" {
+			fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v, template_name: %s)\n", t.ID, t.Prompt, t.Schedule, t.Type, t.Enabled, t.TemplateName)
+		} else {
+			fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v)\n", t.ID, t.Prompt, t.Schedule, t.Type, t.Enabled)
+		}
 	}
 
 	return &mcp.CallToolResult{

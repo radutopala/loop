@@ -13,14 +13,14 @@ ticket is the tail. For each ready work ticket (skip if already in `tk list --st
    the worker to:
    a) `tk start <id>`
    b) Create a git worktree on branch `tk-<id>`
-   c) Implement the solution in the worktree
+   c) Implement the solution in the worktree — do NOT create new work tickets (`tk create --tags work`)
    d) Commit and `tk close <id>` — do NOT merge into main
 
 ## B) Merge Tickets
 
 Run `tk ready -T merge`. For each ready merge ticket (skip if already in progress), create a thread
 via `create_thread` MCP tool with the merge ticket ID as name and a message telling the worker to
-follow the ticket description (`tk show <id>`) to merge the branch into main.
+follow the ticket description (`tk show <id>`) to merge the branch into main — do NOT create new work tickets (`tk create --tags work`).
 
 ---
 

@@ -108,9 +108,16 @@
     {
       "name": "tk-auto-worker",
       "description": "Dispatch ready tickets to worker threads",
-      "schedule": "*/5 * * * *",
+      "schedule": "* * * * *",
       "type": "cron",
       "prompt_path": "tk-auto-worker.md"
+    },
+    {
+      "name": "tk-heartbeat",
+      "description": "Check for ready work tickets; enable/disable tk-auto-worker accordingly",
+      "schedule": "5m",
+      "type": "interval",
+      "prompt_path": "tk-heartbeat.md"
     },
     {
       "name": "daily-summary",

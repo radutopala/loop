@@ -28,13 +28,14 @@ type updateTaskRequest struct {
 }
 
 type taskResponse struct {
-	ID        int64     `json:"id"`
-	ChannelID string    `json:"channel_id"`
-	Schedule  string    `json:"schedule"`
-	Type      string    `json:"type"`
-	Prompt    string    `json:"prompt"`
-	Enabled   bool      `json:"enabled"`
-	NextRunAt time.Time `json:"next_run_at"`
+	ID           int64     `json:"id"`
+	ChannelID    string    `json:"channel_id"`
+	Schedule     string    `json:"schedule"`
+	Type         string    `json:"type"`
+	Prompt       string    `json:"prompt"`
+	Enabled      bool      `json:"enabled"`
+	NextRunAt    time.Time `json:"next_run_at"`
+	TemplateName string    `json:"template_name,omitempty"`
 }
 
 func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
@@ -78,13 +79,14 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	resp := make([]taskResponse, 0, len(tasks))
 	for _, t := range tasks {
 		resp = append(resp, taskResponse{
-			ID:        t.ID,
-			ChannelID: t.ChannelID,
-			Schedule:  t.Schedule,
-			Type:      string(t.Type),
-			Prompt:    t.Prompt,
-			Enabled:   t.Enabled,
-			NextRunAt: t.NextRunAt,
+			ID:           t.ID,
+			ChannelID:    t.ChannelID,
+			Schedule:     t.Schedule,
+			Type:         string(t.Type),
+			Prompt:       t.Prompt,
+			Enabled:      t.Enabled,
+			NextRunAt:    t.NextRunAt,
+			TemplateName: t.TemplateName,
 		})
 	}
 
