@@ -71,13 +71,13 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, inter *Interaction
 	case "template-list":
 		o.handleTemplateListInteraction(ctx, inter)
 	case "allow_user":
-		o.handleAllowUser(ctx, inter, ch)
+		o.handlePermissionUpdate(ctx, inter, ch, "user", true)
 	case "allow_role":
-		o.handleAllowRole(ctx, inter, ch)
+		o.handlePermissionUpdate(ctx, inter, ch, "role", true)
 	case "deny_user":
-		o.handleDenyUser(ctx, inter, ch)
+		o.handlePermissionUpdate(ctx, inter, ch, "user", false)
 	case "deny_role":
-		o.handleDenyRole(ctx, inter, ch)
+		o.handlePermissionUpdate(ctx, inter, ch, "role", false)
 	case "iamtheowner":
 		o.handleIAmTheOwner(ctx, inter, ch, cfgPerms, dbPerms)
 	default:
@@ -297,90 +297,63 @@ func (o *Orchestrator) handleTemplateListInteraction(ctx context.Context, inter 
 	o.sendReply(ctx, inter.ChannelID, sb.String())
 }
 
-func (o *Orchestrator) handleAllowUser(ctx context.Context, inter *Interaction, ch *db.Channel) {
+// handlePermissionUpdate is a parameterized handler for allow_user, allow_role, deny_user, deny_role.
+// targetType is "user" or "role"; allow true grants a role, false revokes all grants.
+func (o *Orchestrator) handlePermissionUpdate(ctx context.Context, inter *Interaction, ch *db.Channel, targetType string, allow bool) {
 	if ch == nil {
 		o.sendReply(ctx, inter.ChannelID, "⛔ Channel not registered.")
 		return
 	}
 	targetID := inter.Options["target_id"]
-	roleStr := inter.Options["role"]
-	if roleStr == "" {
-		roleStr = "member"
-	}
 	perms := ch.Permissions
-	perms.Owners.Users = removeString(perms.Owners.Users, targetID)
-	perms.Members.Users = removeString(perms.Members.Users, targetID)
-	if roleStr == "owner" {
-		perms.Owners.Users = appendUnique(perms.Owners.Users, targetID)
-	} else {
-		perms.Members.Users = appendUnique(perms.Members.Users, targetID)
-	}
-	if err := o.store.UpdateChannelPermissions(ctx, inter.ChannelID, perms); err != nil {
-		o.logger.Error("updating channel permissions", "error", err)
-		o.sendReply(ctx, inter.ChannelID, "Failed to update permissions.")
-		return
-	}
-	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ <@%s> granted %s role.", targetID, roleStr))
-}
 
-func (o *Orchestrator) handleAllowRole(ctx context.Context, inter *Interaction, ch *db.Channel) {
-	if ch == nil {
-		o.sendReply(ctx, inter.ChannelID, "⛔ Channel not registered.")
-		return
+	// slicePtr returns a pointer to the Users or Roles slice in a ChannelRoleGrant.
+	slicePtr := func(g *db.ChannelRoleGrant) *[]string {
+		if targetType == "role" {
+			return &g.Roles
+		}
+		return &g.Users
 	}
-	targetID := inter.Options["target_id"]
-	roleStr := inter.Options["role"]
-	if roleStr == "" {
-		roleStr = "member"
-	}
-	perms := ch.Permissions
-	perms.Owners.Roles = removeString(perms.Owners.Roles, targetID)
-	perms.Members.Roles = removeString(perms.Members.Roles, targetID)
-	if roleStr == "owner" {
-		perms.Owners.Roles = appendUnique(perms.Owners.Roles, targetID)
-	} else {
-		perms.Members.Roles = appendUnique(perms.Members.Roles, targetID)
-	}
-	if err := o.store.UpdateChannelPermissions(ctx, inter.ChannelID, perms); err != nil {
-		o.logger.Error("updating channel permissions", "error", err)
-		o.sendReply(ctx, inter.ChannelID, "Failed to update permissions.")
-		return
-	}
-	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ Role <@&%s> granted %s role.", targetID, roleStr))
-}
 
-func (o *Orchestrator) handleDenyUser(ctx context.Context, inter *Interaction, ch *db.Channel) {
-	if ch == nil {
-		o.sendReply(ctx, inter.ChannelID, "⛔ Channel not registered.")
-		return
-	}
-	targetID := inter.Options["target_id"]
-	perms := ch.Permissions
-	perms.Owners.Users = removeString(perms.Owners.Users, targetID)
-	perms.Members.Users = removeString(perms.Members.Users, targetID)
-	if err := o.store.UpdateChannelPermissions(ctx, inter.ChannelID, perms); err != nil {
-		o.logger.Error("updating channel permissions", "error", err)
-		o.sendReply(ctx, inter.ChannelID, "Failed to update permissions.")
-		return
-	}
-	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ <@%s> removed from channel permissions.", targetID))
-}
+	owners := slicePtr(&perms.Owners)
+	members := slicePtr(&perms.Members)
+	*owners = removeString(*owners, targetID)
+	*members = removeString(*members, targetID)
 
-func (o *Orchestrator) handleDenyRole(ctx context.Context, inter *Interaction, ch *db.Channel) {
-	if ch == nil {
-		o.sendReply(ctx, inter.ChannelID, "⛔ Channel not registered.")
+	if allow {
+		roleStr := inter.Options["role"]
+		if roleStr == "" {
+			roleStr = "member"
+		}
+		if roleStr == "owner" {
+			*owners = appendUnique(*owners, targetID)
+		} else {
+			*members = appendUnique(*members, targetID)
+		}
+		if err := o.store.UpdateChannelPermissions(ctx, inter.ChannelID, perms); err != nil {
+			o.logger.Error("updating channel permissions", "error", err)
+			o.sendReply(ctx, inter.ChannelID, "Failed to update permissions.")
+			return
+		}
+		mention := fmt.Sprintf("<@%s>", targetID)
+		if targetType == "role" {
+			mention = fmt.Sprintf("Role <@&%s>", targetID)
+		}
+		o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ %s granted %s role.", mention, roleStr))
 		return
 	}
-	targetID := inter.Options["target_id"]
-	perms := ch.Permissions
-	perms.Owners.Roles = removeString(perms.Owners.Roles, targetID)
-	perms.Members.Roles = removeString(perms.Members.Roles, targetID)
+
+	// Deny: remove from all lists (already done above).
 	if err := o.store.UpdateChannelPermissions(ctx, inter.ChannelID, perms); err != nil {
 		o.logger.Error("updating channel permissions", "error", err)
 		o.sendReply(ctx, inter.ChannelID, "Failed to update permissions.")
 		return
 	}
-	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ Role <@&%s> removed from channel permissions.", targetID))
+	mention := fmt.Sprintf("<@%s>", targetID)
+	if targetType == "role" {
+		mention = fmt.Sprintf("Role <@&%s>", targetID)
+	}
+	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ %s removed from channel permissions.", mention))
 }
 
 func (o *Orchestrator) handleIAmTheOwner(ctx context.Context, inter *Interaction, ch *db.Channel, cfgPerms config.PermissionsConfig, dbPerms db.ChannelPermissions) {
