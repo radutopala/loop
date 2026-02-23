@@ -13,6 +13,14 @@ import (
 	"github.com/radutopala/loop/internal/types"
 )
 
+// sendReply sends a simple text message to the interaction's channel.
+func (o *Orchestrator) sendReply(ctx context.Context, channelID, content string) {
+	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+		ChannelID: channelID,
+		Content:   content,
+	})
+}
+
 // HandleInteraction processes a slash command interaction.
 func (o *Orchestrator) HandleInteraction(ctx context.Context, inter *Interaction) {
 	ch, _ := o.store.GetChannel(ctx, inter.ChannelID)
@@ -31,19 +39,13 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, inter *Interaction
 	switch {
 	case isPermCmd:
 		if role != types.RoleOwner {
-			_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-				ChannelID: inter.ChannelID,
-				Content:   "⛔ Only owners can manage permissions.",
-			})
+			o.sendReply(ctx, inter.ChannelID, "⛔ Only owners can manage permissions.")
 			return
 		}
 	case isSelfOnboard:
 		// Bypass normal permission checks; handler validates bootstrap mode.
 	case role == "":
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "⛔ You don't have permission to use this command.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "⛔ You don't have permission to use this command.")
 		return
 	}
 
@@ -96,34 +98,22 @@ func (o *Orchestrator) handleScheduleInteraction(ctx context.Context, inter *Int
 	id, err := o.scheduler.AddTask(ctx, task)
 	if err != nil {
 		o.logger.Error("adding scheduled task", "error", err, "channel_id", inter.ChannelID)
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Failed to schedule task.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "Failed to schedule task.")
 		return
 	}
-	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID: inter.ChannelID,
-		Content:   fmt.Sprintf("Task scheduled (ID: %d).", id),
-	})
+	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Task scheduled (ID: %d).", id))
 }
 
 func (o *Orchestrator) handleTasksInteraction(ctx context.Context, inter *Interaction) {
 	tasks, err := o.scheduler.ListTasks(ctx, inter.ChannelID)
 	if err != nil {
 		o.logger.Error("listing tasks", "error", err, "channel_id", inter.ChannelID)
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Failed to list tasks.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "Failed to list tasks.")
 		return
 	}
 
 	if len(tasks) == 0 {
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "No scheduled tasks.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "No scheduled tasks.")
 		return
 	}
 
@@ -144,55 +134,37 @@ func (o *Orchestrator) handleTasksInteraction(ctx context.Context, inter *Intera
 		nextRun := formatDuration(t.NextRunAt.Sub(now))
 		fmt.Fprintf(&sb, "- **ID %d** [%s] [%s] %s — %s (next: %s)\n", t.ID, t.Type, status, schedule, t.Prompt, nextRun)
 	}
-	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID: inter.ChannelID,
-		Content:   sb.String(),
-	})
+	o.sendReply(ctx, inter.ChannelID, sb.String())
 }
 
 func (o *Orchestrator) handleCancelInteraction(ctx context.Context, inter *Interaction) {
 	idStr := inter.Options["task_id"]
 	taskID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Invalid task ID.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "Invalid task ID.")
 		return
 	}
 
 	if err := o.scheduler.RemoveTask(ctx, taskID); err != nil {
 		o.logger.Error("removing task", "error", err, "channel_id", inter.ChannelID)
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Failed to cancel task.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "Failed to cancel task.")
 		return
 	}
-	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID: inter.ChannelID,
-		Content:   fmt.Sprintf("Task %d cancelled.", taskID),
-	})
+	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Task %d cancelled.", taskID))
 }
 
 func (o *Orchestrator) handleToggleInteraction(ctx context.Context, inter *Interaction) {
 	idStr := inter.Options["task_id"]
 	taskID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Invalid task ID.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "Invalid task ID.")
 		return
 	}
 
 	newEnabled, err := o.scheduler.ToggleTask(ctx, taskID)
 	if err != nil {
 		o.logger.Error("toggling task", "error", err, "channel_id", inter.ChannelID)
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Failed to toggle task.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "Failed to toggle task.")
 		return
 	}
 
@@ -200,20 +172,14 @@ func (o *Orchestrator) handleToggleInteraction(ctx context.Context, inter *Inter
 	if newEnabled {
 		state = "enabled"
 	}
-	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID: inter.ChannelID,
-		Content:   fmt.Sprintf("Task %d %s.", taskID, state),
-	})
+	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Task %d %s.", taskID, state))
 }
 
 func (o *Orchestrator) handleEditInteraction(ctx context.Context, inter *Interaction) {
 	idStr := inter.Options["task_id"]
 	taskID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Invalid task ID.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "Invalid task ID.")
 		return
 	}
 
@@ -229,33 +195,21 @@ func (o *Orchestrator) handleEditInteraction(ctx context.Context, inter *Interac
 	}
 
 	if schedule == nil && taskType == nil && prompt == nil {
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "At least one of schedule, type, or prompt is required.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "At least one of schedule, type, or prompt is required.")
 		return
 	}
 
 	if err := o.scheduler.EditTask(ctx, taskID, schedule, taskType, prompt); err != nil {
 		o.logger.Error("editing task", "error", err, "channel_id", inter.ChannelID)
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Failed to edit task.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "Failed to edit task.")
 		return
 	}
 
-	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID: inter.ChannelID,
-		Content:   fmt.Sprintf("Task %d updated.", taskID),
-	})
+	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Task %d updated.", taskID))
 }
 
 func (o *Orchestrator) handleStatusInteraction(ctx context.Context, inter *Interaction) {
-	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID: inter.ChannelID,
-		Content:   "Loop bot is running.",
-	})
+	o.sendReply(ctx, inter.ChannelID, "Loop bot is running.")
 }
 
 func (o *Orchestrator) handleStopInteraction(ctx context.Context, inter *Interaction) {
@@ -265,10 +219,7 @@ func (o *Orchestrator) handleStopInteraction(ctx context.Context, inter *Interac
 	}
 	val, ok := o.activeRuns.LoadAndDelete(targetChannelID)
 	if !ok {
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "No active run to stop.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "No active run to stop.")
 		return
 	}
 	cancel := val.(context.CancelFunc)
@@ -277,10 +228,7 @@ func (o *Orchestrator) handleStopInteraction(ctx context.Context, inter *Interac
 }
 
 func (o *Orchestrator) handleReadmeInteraction(ctx context.Context, inter *Interaction) {
-	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID: inter.ChannelID,
-		Content:   readme.Content,
-	})
+	o.sendReply(ctx, inter.ChannelID, readme.Content)
 }
 
 func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *Interaction) {
@@ -294,37 +242,25 @@ func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *
 		}
 	}
 	if tmpl == nil {
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   fmt.Sprintf("Unknown template: %s", name),
-		})
+		o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Unknown template: %s", name))
 		return
 	}
 
 	existing, err := o.store.GetScheduledTaskByTemplateName(ctx, inter.ChannelID, name)
 	if err != nil {
 		o.logger.Error("checking template", "error", err, "channel_id", inter.ChannelID)
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Failed to check existing templates.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "Failed to check existing templates.")
 		return
 	}
 	if existing != nil {
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   fmt.Sprintf("Template '%s' already loaded (task ID: %d).", name, existing.ID),
-		})
+		o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Template '%s' already loaded (task ID: %d).", name, existing.ID))
 		return
 	}
 
 	prompt, err := tmpl.ResolvePrompt(o.cfg.LoopDir)
 	if err != nil {
 		o.logger.Error("resolving template prompt", "error", err, "template", name)
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   fmt.Sprintf("Failed to resolve template prompt: %v", err),
-		})
+		o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Failed to resolve template prompt: %v", err))
 		return
 	}
 
@@ -341,24 +277,15 @@ func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *
 	id, err := o.scheduler.AddTask(ctx, task)
 	if err != nil {
 		o.logger.Error("adding template task", "error", err, "channel_id", inter.ChannelID)
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Failed to add template task.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "Failed to add template task.")
 		return
 	}
-	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID: inter.ChannelID,
-		Content:   fmt.Sprintf("Template '%s' loaded (task ID: %d).", name, id),
-	})
+	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Template '%s' loaded (task ID: %d).", name, id))
 }
 
 func (o *Orchestrator) handleTemplateListInteraction(ctx context.Context, inter *Interaction) {
 	if len(o.cfg.TaskTemplates) == 0 {
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "No templates configured.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "No templates configured.")
 		return
 	}
 
@@ -367,18 +294,12 @@ func (o *Orchestrator) handleTemplateListInteraction(ctx context.Context, inter 
 	for _, t := range o.cfg.TaskTemplates {
 		fmt.Fprintf(&sb, "- **%s** [%s] `%s` — %s\n", t.Name, t.Type, t.Schedule, t.Description)
 	}
-	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID: inter.ChannelID,
-		Content:   sb.String(),
-	})
+	o.sendReply(ctx, inter.ChannelID, sb.String())
 }
 
 func (o *Orchestrator) handleAllowUser(ctx context.Context, inter *Interaction, ch *db.Channel) {
 	if ch == nil {
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "⛔ Channel not registered.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "⛔ Channel not registered.")
 		return
 	}
 	targetID := inter.Options["target_id"]
@@ -396,24 +317,15 @@ func (o *Orchestrator) handleAllowUser(ctx context.Context, inter *Interaction, 
 	}
 	if err := o.store.UpdateChannelPermissions(ctx, inter.ChannelID, perms); err != nil {
 		o.logger.Error("updating channel permissions", "error", err)
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Failed to update permissions.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "Failed to update permissions.")
 		return
 	}
-	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID: inter.ChannelID,
-		Content:   fmt.Sprintf("✅ <@%s> granted %s role.", targetID, roleStr),
-	})
+	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ <@%s> granted %s role.", targetID, roleStr))
 }
 
 func (o *Orchestrator) handleAllowRole(ctx context.Context, inter *Interaction, ch *db.Channel) {
 	if ch == nil {
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "⛔ Channel not registered.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "⛔ Channel not registered.")
 		return
 	}
 	targetID := inter.Options["target_id"]
@@ -431,24 +343,15 @@ func (o *Orchestrator) handleAllowRole(ctx context.Context, inter *Interaction, 
 	}
 	if err := o.store.UpdateChannelPermissions(ctx, inter.ChannelID, perms); err != nil {
 		o.logger.Error("updating channel permissions", "error", err)
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Failed to update permissions.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "Failed to update permissions.")
 		return
 	}
-	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID: inter.ChannelID,
-		Content:   fmt.Sprintf("✅ Role <@&%s> granted %s role.", targetID, roleStr),
-	})
+	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ Role <@&%s> granted %s role.", targetID, roleStr))
 }
 
 func (o *Orchestrator) handleDenyUser(ctx context.Context, inter *Interaction, ch *db.Channel) {
 	if ch == nil {
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "⛔ Channel not registered.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "⛔ Channel not registered.")
 		return
 	}
 	targetID := inter.Options["target_id"]
@@ -457,24 +360,15 @@ func (o *Orchestrator) handleDenyUser(ctx context.Context, inter *Interaction, c
 	perms.Members.Users = removeString(perms.Members.Users, targetID)
 	if err := o.store.UpdateChannelPermissions(ctx, inter.ChannelID, perms); err != nil {
 		o.logger.Error("updating channel permissions", "error", err)
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Failed to update permissions.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "Failed to update permissions.")
 		return
 	}
-	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID: inter.ChannelID,
-		Content:   fmt.Sprintf("✅ <@%s> removed from channel permissions.", targetID),
-	})
+	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ <@%s> removed from channel permissions.", targetID))
 }
 
 func (o *Orchestrator) handleDenyRole(ctx context.Context, inter *Interaction, ch *db.Channel) {
 	if ch == nil {
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "⛔ Channel not registered.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "⛔ Channel not registered.")
 		return
 	}
 	targetID := inter.Options["target_id"]
@@ -483,45 +377,27 @@ func (o *Orchestrator) handleDenyRole(ctx context.Context, inter *Interaction, c
 	perms.Members.Roles = removeString(perms.Members.Roles, targetID)
 	if err := o.store.UpdateChannelPermissions(ctx, inter.ChannelID, perms); err != nil {
 		o.logger.Error("updating channel permissions", "error", err)
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Failed to update permissions.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "Failed to update permissions.")
 		return
 	}
-	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID: inter.ChannelID,
-		Content:   fmt.Sprintf("✅ Role <@&%s> removed from channel permissions.", targetID),
-	})
+	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ Role <@&%s> removed from channel permissions.", targetID))
 }
 
 func (o *Orchestrator) handleIAmTheOwner(ctx context.Context, inter *Interaction, ch *db.Channel, cfgPerms config.PermissionsConfig, dbPerms db.ChannelPermissions) {
 	if !cfgPerms.IsEmpty() || !dbPerms.IsEmpty() {
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "⛔ An owner is already configured. Use `/loop allow_user` to manage permissions.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "⛔ An owner is already configured. Use `/loop allow_user` to manage permissions.")
 		return
 	}
 	if ch == nil {
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "⛔ Channel not registered.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "⛔ Channel not registered.")
 		return
 	}
 	perms := ch.Permissions
 	perms.Owners.Users = appendUnique(perms.Owners.Users, inter.AuthorID)
 	if err := o.store.UpdateChannelPermissions(ctx, inter.ChannelID, perms); err != nil {
 		o.logger.Error("updating channel permissions", "error", err)
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-			ChannelID: inter.ChannelID,
-			Content:   "Failed to update permissions.",
-		})
+		o.sendReply(ctx, inter.ChannelID, "Failed to update permissions.")
 		return
 	}
-	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
-		ChannelID: inter.ChannelID,
-		Content:   fmt.Sprintf("✅ <@%s> is now the owner of this channel.", inter.AuthorID),
-	})
+	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ <@%s> is now the owner of this channel.", inter.AuthorID))
 }
