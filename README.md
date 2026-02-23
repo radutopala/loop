@@ -395,7 +395,7 @@ Relative paths in project mounts (e.g., `./data`) are resolved relative to the p
 
 The agent Docker image is auto-built on first `loop serve` / `loop daemon:start` if it doesn't exist. The Dockerfile and entrypoint are embedded in the binary and written to `~/.loop/container/` during `loop onboard:global`.
 
-To customize: edit `~/.loop/container/Dockerfile`, then `docker rmi loop-agent:latest` and restart.
+The default image ships with Go 1.26, Node.js, and common development tools. You can build any custom Dockerfile to suit your stack — edit `~/.loop/container/Dockerfile`, then `docker rmi loop-agent:latest` and restart.
 
 For development: `make docker-build` builds from `container/Dockerfile` in the repo.
 
