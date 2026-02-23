@@ -251,7 +251,11 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *IncomingMessage
 		return nil, "", fmt.Errorf("agent error: %s", resp.Error)
 	}
 
-	return resp, lastStreamedText, nil
+	var lastText string
+	if tracker != nil {
+		lastText = tracker.lastText
+	}
+	return resp, lastText, nil
 }
 
 // deliverResponse sends the final response, records the bot message, and marks messages as processed.
@@ -266,7 +270,7 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *IncomingMessage
 	)
 
 	// Skip final send if it duplicates the last streamed turn
-	if tracker == nil || !tracker.IsDuplicate(resp.Response) {
+	if lastStreamedText == "" || resp.Response != lastStreamedText {
 		if err := o.bot.SendMessage(ctx, &OutgoingMessage{
 			ChannelID:        msg.ChannelID,
 			Content:          resp.Response,
