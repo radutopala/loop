@@ -346,221 +346,48 @@ func gitExcludesMount() string {
 
 // runOnce executes a single container run.
 func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
-	// When resuming a session, Claude already has the conversation history —
-	// only send the latest message to avoid a huge redundant prompt.
-	// Prefer the explicit Prompt field (set by the orchestrator from the
-	// triggering message) so that rapid successive messages don't race.
-	var prompt string
-	switch {
-	case req.SessionID != "" && req.Prompt != "":
-		prompt = req.Prompt
-	case req.SessionID != "" && len(req.Messages) > 0:
-		last := req.Messages[len(req.Messages)-1]
-		prompt = last.Content
-	default:
-		prompt = agent.BuildPrompt(req.Messages, req.SystemPrompt)
-	}
+	prompt := buildPrompt(req)
 
 	workDir := filepath.Join(r.cfg.LoopDir, req.ChannelID, "work")
 	if req.DirPath != "" {
 		workDir = req.DirPath
 	}
 
-	// Load and merge project-specific config if it exists
 	cfg, err := config.LoadProjectConfig(workDir, r.cfg)
 	if err != nil {
 		return nil, fmt.Errorf("loading project config: %w", err)
 	}
 
-	hostHome, err := userHomeDir()
-	if err != nil {
-		return nil, fmt.Errorf("getting home directory: %w", err)
-	}
-
 	apiURL := "http://host.docker.internal" + cfg.APIAddr
-	env := []string{
-		"CHANNEL_ID=" + req.ChannelID,
-		"API_URL=" + apiURL,
-		"HOME=" + hostHome,
-		"HOST_USER=" + getenv("USER"),
-		"TZ=" + localTimezone(),
-	}
-	if cfg.ClaudeCodeOAuthToken != "" {
-		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+cfg.ClaudeCodeOAuthToken)
-	} else if cfg.AnthropicAPIKey != "" {
-		env = append(env, "ANTHROPIC_API_KEY="+cfg.AnthropicAPIKey)
-	}
-	hasProxy := false
-	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
-		if v := getenv(key); v != "" {
-			env = append(env, key+"="+localhostToDockerHost(v))
-			if key != "NO_PROXY" && key != "no_proxy" {
-				hasProxy = true
-			}
-		}
-	}
-	if hasProxy {
-		env = ensureNoProxy(env)
-	}
-	for k, v := range cfg.Envs {
-		expanded, err := expandPath(v)
-		if err != nil {
-			return nil, fmt.Errorf("expanding env %s value: %w", k, err)
-		}
-		env = append(env, k+"="+expanded)
+
+	env, err := r.buildContainerEnv(cfg, req.ChannelID, apiURL)
+	if err != nil {
+		return nil, err
 	}
 
-	for _, dir := range []string{workDir, filepath.Join(workDir, ".loop")} {
-		if err := mkdirAll(dir, 0o755); err != nil {
-			return nil, fmt.Errorf("creating host directory %s: %w", dir, err)
-		}
+	mcpConfigPath, err := r.writeMCPConfig(workDir, req.ChannelID, apiURL, req.AuthorID, cfg)
+	if err != nil {
+		return nil, err
 	}
 
-	// Write a per-channel MCP config so parallel runs (e.g. parent + thread) don't collide.
-	mcpConfigPath := filepath.Join(workDir, ".loop", "mcp-"+req.ChannelID+".json")
-	mcpCfg := buildMCPConfig(req.ChannelID, apiURL, workDir, req.AuthorID, cfg.Memory.Enabled, cfg.MCPServers)
-	mcpJSON, _ := json.MarshalIndent(mcpCfg, "", "  ")
-	if err := writeFile(mcpConfigPath, mcpJSON, 0o644); err != nil {
-		return nil, fmt.Errorf("writing mcp config: %w", err)
-	}
-
-	var binds []string
-	var chownDirs []string
-
-	// Add mounts from merged config (includes project-specific mounts)
-	for _, mount := range cfg.Mounts {
-		parts := strings.Split(mount, ":")
-		if len(parts) >= 2 && config.IsNamedVolume(parts[0]) {
-			// Track named volume container paths for chown in entrypoint
-			expanded, _ := expandPath(parts[1])
-			if expanded != "" {
-				chownDirs = append(chownDirs, expanded)
-			}
-		}
-		bind, err := processMount(mount)
-		if err != nil {
-			// Log warning but continue (don't fail the container)
-			fmt.Fprintf(os.Stderr, "Warning: skipping mount %s: %v\n", mount, err)
-			continue
-		}
-		if bind != "" {
-			binds = append(binds, bind)
-		}
-	}
+	binds, chownDirs := r.buildContainerMounts(cfg.Mounts, workDir)
 	if len(chownDirs) > 0 {
 		env = append(env, "CHOWN_DIRS="+strings.Join(chownDirs, ":"))
 	}
 
-	// Auto-detect and mount git core.excludesFile if configured
-	if excludesBind := gitExcludesMount(); excludesBind != "" {
-		binds = append(binds, excludesBind)
-	}
+	cmd := buildClaudeCmd(cfg, mcpConfigPath, req, prompt)
 
-	// Mount workDir at same path in container
-	binds = append(binds, workDir+":"+workDir)
-
-	// Build full Claude CLI command — entrypoint runs whatever CMD is passed.
-	// --mcp-config must come before --print to avoid Claude Code hanging.
-	cmd := []string{cfg.ClaudeBinPath, "--mcp-config", mcpConfigPath}
-	if cfg.ClaudeModel != "" {
-		cmd = append(cmd, "--model", cfg.ClaudeModel)
+	containerID, err := r.createAndStartContainer(ctx, cfg, env, cmd, binds, workDir, req.ChannelID, req.DirPath)
+	if containerID != "" {
+		defer r.scheduleRemove(containerID)
 	}
-	cmd = append(cmd, "--print", "--verbose", "--output-format", "stream-json", "--dangerously-skip-permissions")
-	if req.SessionID != "" {
-		cmd = append(cmd, "--resume", req.SessionID)
-		if req.ForkSession {
-			cmd = append(cmd, "--fork-session")
-		}
-	}
-	cmd = append(cmd, prompt)
-
-	containerCfg := &ContainerConfig{
-		Image:      cfg.ContainerImage,
-		MemoryMB:   cfg.ContainerMemoryMB,
-		CPUs:       cfg.ContainerCPUs,
-		Env:        env,
-		Cmd:        cmd,
-		Binds:      binds,
-		WorkingDir: workDir,
-	}
-
-	name := containerName(req.ChannelID, req.DirPath)
-	containerID, err := r.client.ContainerCreate(ctx, containerCfg, name)
 	if err != nil {
-		return nil, fmt.Errorf("creating container: %w", err)
-	}
-	defer r.scheduleRemove(containerID)
-
-	if err := r.client.ContainerStart(ctx, containerID); err != nil {
-		return nil, fmt.Errorf("starting container: %w", err)
+		return nil, err
 	}
 
-	var claudeResp *claudeResponse
-	var exitCode int64
-
-	if req.OnTurn != nil {
-		// Streaming path: follow logs in real-time
-		logsReader, err := r.client.ContainerLogsFollow(ctx, containerID)
-		if err != nil {
-			return nil, fmt.Errorf("following container logs: %w", err)
-		}
-
-		var parseErr error
-		claudeResp, parseErr = parseStreamingJSON(logsReader, req.OnTurn)
-		logsReader.Close()
-
-		// After the log stream ends (container exited), get the exit code
-		waitCh, errCh := r.client.ContainerWait(ctx, containerID)
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("container execution timed out: %w", ctx.Err())
-		case err := <-errCh:
-			if err != nil {
-				return nil, fmt.Errorf("waiting for container: %w", err)
-			}
-		case wr := <-waitCh:
-			if wr.Error != nil {
-				return nil, fmt.Errorf("container exited with error: %w", wr.Error)
-			}
-			exitCode = wr.StatusCode
-		}
-
-		if parseErr != nil {
-			if exitCode != 0 {
-				return nil, fmt.Errorf("container exited with code %d: %w", exitCode, parseErr)
-			}
-			return nil, parseErr
-		}
-	} else {
-		// Non-streaming path: wait for exit, then read all logs
-		waitCh, errCh := r.client.ContainerWait(ctx, containerID)
-		select {
-		case <-ctx.Done():
-			return nil, fmt.Errorf("container execution timed out: %w", ctx.Err())
-		case err := <-errCh:
-			if err != nil {
-				return nil, fmt.Errorf("waiting for container: %w", err)
-			}
-		case wr := <-waitCh:
-			if wr.Error != nil {
-				return nil, fmt.Errorf("container exited with error: %w", wr.Error)
-			}
-			exitCode = wr.StatusCode
-		}
-
-		reader, err := r.client.ContainerLogs(ctx, containerID)
-		if err != nil {
-			return nil, fmt.Errorf("reading container logs: %w", err)
-		}
-
-		var parseErr error
-		claudeResp, parseErr = parseStreamJSON(reader)
-		if parseErr != nil {
-			if exitCode != 0 {
-				return nil, fmt.Errorf("container exited with code %d: %w", exitCode, parseErr)
-			}
-			return nil, parseErr
-		}
+	claudeResp, err := r.collectOutput(ctx, containerID, req.OnTurn)
+	if err != nil {
+		return nil, err
 	}
 
 	if claudeResp.IsError {
@@ -574,6 +401,226 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		Response:  claudeResp.Result,
 		SessionID: claudeResp.SessionID,
 	}, nil
+}
+
+// buildPrompt selects the appropriate prompt for the request.
+// When resuming a session, only the latest message is sent to avoid redundancy.
+func buildPrompt(req *agent.AgentRequest) string {
+	switch {
+	case req.SessionID != "" && req.Prompt != "":
+		return req.Prompt
+	case req.SessionID != "" && len(req.Messages) > 0:
+		return req.Messages[len(req.Messages)-1].Content
+	default:
+		return agent.BuildPrompt(req.Messages, req.SystemPrompt)
+	}
+}
+
+// buildContainerEnv assembles environment variables for the container,
+// including auth credentials, proxy settings, timezone, and custom envs.
+func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL string) ([]string, error) {
+	hostHome, err := userHomeDir()
+	if err != nil {
+		return nil, fmt.Errorf("getting home directory: %w", err)
+	}
+
+	env := []string{
+		"CHANNEL_ID=" + channelID,
+		"API_URL=" + apiURL,
+		"HOME=" + hostHome,
+		"HOST_USER=" + getenv("USER"),
+		"TZ=" + localTimezone(),
+	}
+	if cfg.ClaudeCodeOAuthToken != "" {
+		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+cfg.ClaudeCodeOAuthToken)
+	} else if cfg.AnthropicAPIKey != "" {
+		env = append(env, "ANTHROPIC_API_KEY="+cfg.AnthropicAPIKey)
+	}
+
+	hasProxy := false
+	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
+		if v := getenv(key); v != "" {
+			env = append(env, key+"="+localhostToDockerHost(v))
+			if key != "NO_PROXY" && key != "no_proxy" {
+				hasProxy = true
+			}
+		}
+	}
+	if hasProxy {
+		env = ensureNoProxy(env)
+	}
+
+	for k, v := range cfg.Envs {
+		expanded, err := expandPath(v)
+		if err != nil {
+			return nil, fmt.Errorf("expanding env %s value: %w", k, err)
+		}
+		env = append(env, k+"="+expanded)
+	}
+
+	return env, nil
+}
+
+// writeMCPConfig creates host directories and writes the per-channel MCP
+// config file. Returns the config file path.
+func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID string, cfg *config.Config) (string, error) {
+	for _, dir := range []string{workDir, filepath.Join(workDir, ".loop")} {
+		if err := mkdirAll(dir, 0o755); err != nil {
+			return "", fmt.Errorf("creating host directory %s: %w", dir, err)
+		}
+	}
+
+	mcpConfigPath := filepath.Join(workDir, ".loop", "mcp-"+channelID+".json")
+	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, authorID, cfg.Memory.Enabled, cfg.MCPServers)
+	mcpJSON, _ := json.MarshalIndent(mcpCfg, "", "  ")
+	if err := writeFile(mcpConfigPath, mcpJSON, 0o644); err != nil {
+		return "", fmt.Errorf("writing mcp config: %w", err)
+	}
+	return mcpConfigPath, nil
+}
+
+// buildContainerMounts processes config mounts and adds the workDir bind.
+// Returns the bind strings and any named-volume container paths that need chown.
+func (r *DockerRunner) buildContainerMounts(mounts []string, workDir string) (binds, chownDirs []string) {
+	for _, mount := range mounts {
+		parts := strings.Split(mount, ":")
+		if len(parts) >= 2 && config.IsNamedVolume(parts[0]) {
+			expanded, _ := expandPath(parts[1])
+			if expanded != "" {
+				chownDirs = append(chownDirs, expanded)
+			}
+		}
+		bind, err := processMount(mount)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: skipping mount %s: %v\n", mount, err)
+			continue
+		}
+		if bind != "" {
+			binds = append(binds, bind)
+		}
+	}
+
+	if excludesBind := gitExcludesMount(); excludesBind != "" {
+		binds = append(binds, excludesBind)
+	}
+
+	binds = append(binds, workDir+":"+workDir)
+	return binds, chownDirs
+}
+
+// buildClaudeCmd assembles the Claude CLI command with all flags.
+func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest, prompt string) []string {
+	cmd := []string{cfg.ClaudeBinPath, "--mcp-config", mcpConfigPath}
+	if cfg.ClaudeModel != "" {
+		cmd = append(cmd, "--model", cfg.ClaudeModel)
+	}
+	cmd = append(cmd, "--print", "--verbose", "--output-format", "stream-json", "--dangerously-skip-permissions")
+	if req.SessionID != "" {
+		cmd = append(cmd, "--resume", req.SessionID)
+		if req.ForkSession {
+			cmd = append(cmd, "--fork-session")
+		}
+	}
+	return append(cmd, prompt)
+}
+
+// createAndStartContainer creates a Docker container and starts it.
+func (r *DockerRunner) createAndStartContainer(ctx context.Context, cfg *config.Config, env, cmd, binds []string, workDir, channelID, dirPath string) (string, error) {
+	containerCfg := &ContainerConfig{
+		Image:      cfg.ContainerImage,
+		MemoryMB:   cfg.ContainerMemoryMB,
+		CPUs:       cfg.ContainerCPUs,
+		Env:        env,
+		Cmd:        cmd,
+		Binds:      binds,
+		WorkingDir: workDir,
+	}
+
+	name := containerName(channelID, dirPath)
+	containerID, err := r.client.ContainerCreate(ctx, containerCfg, name)
+	if err != nil {
+		return "", fmt.Errorf("creating container: %w", err)
+	}
+
+	if err := r.client.ContainerStart(ctx, containerID); err != nil {
+		return containerID, fmt.Errorf("starting container: %w", err)
+	}
+
+	return containerID, nil
+}
+
+// collectOutput reads container logs (streaming or batch) and waits for exit.
+// Returns the parsed Claude response or an error.
+func (r *DockerRunner) collectOutput(ctx context.Context, containerID string, onTurn func(string)) (*claudeResponse, error) {
+	if onTurn != nil {
+		return r.collectStreamingOutput(ctx, containerID, onTurn)
+	}
+	return r.collectBatchOutput(ctx, containerID)
+}
+
+// collectStreamingOutput follows container logs in real-time, then waits for exit.
+func (r *DockerRunner) collectStreamingOutput(ctx context.Context, containerID string, onTurn func(string)) (*claudeResponse, error) {
+	logsReader, err := r.client.ContainerLogsFollow(ctx, containerID)
+	if err != nil {
+		return nil, fmt.Errorf("following container logs: %w", err)
+	}
+
+	claudeResp, parseErr := parseStreamingJSON(logsReader, onTurn)
+	logsReader.Close()
+
+	exitCode, err := r.waitForExit(ctx, containerID)
+	if err != nil {
+		return nil, err
+	}
+
+	if parseErr != nil {
+		if exitCode != 0 {
+			return nil, fmt.Errorf("container exited with code %d: %w", exitCode, parseErr)
+		}
+		return nil, parseErr
+	}
+	return claudeResp, nil
+}
+
+// collectBatchOutput waits for the container to exit, then reads all logs.
+func (r *DockerRunner) collectBatchOutput(ctx context.Context, containerID string) (*claudeResponse, error) {
+	exitCode, err := r.waitForExit(ctx, containerID)
+	if err != nil {
+		return nil, err
+	}
+
+	reader, err := r.client.ContainerLogs(ctx, containerID)
+	if err != nil {
+		return nil, fmt.Errorf("reading container logs: %w", err)
+	}
+
+	claudeResp, parseErr := parseStreamJSON(reader)
+	if parseErr != nil {
+		if exitCode != 0 {
+			return nil, fmt.Errorf("container exited with code %d: %w", exitCode, parseErr)
+		}
+		return nil, parseErr
+	}
+	return claudeResp, nil
+}
+
+// waitForExit blocks until the container exits and returns the exit code.
+func (r *DockerRunner) waitForExit(ctx context.Context, containerID string) (int64, error) {
+	waitCh, errCh := r.client.ContainerWait(ctx, containerID)
+	select {
+	case <-ctx.Done():
+		return 0, fmt.Errorf("container execution timed out: %w", ctx.Err())
+	case err := <-errCh:
+		if err != nil {
+			return 0, fmt.Errorf("waiting for container: %w", err)
+		}
+		return 0, nil
+	case wr := <-waitCh:
+		if wr.Error != nil {
+			return 0, fmt.Errorf("container exited with error: %w", wr.Error)
+		}
+		return wr.StatusCode, nil
+	}
 }
 
 // ensureNoProxy ensures host.docker.internal is in NO_PROXY and no_proxy

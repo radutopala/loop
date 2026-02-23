@@ -621,6 +621,30 @@ func (s *RunnerSuite) TestRunWaitError() {
 	s.client.AssertExpectations(s.T())
 }
 
+func (s *RunnerSuite) TestRunWaitErrChNil() {
+	ctx := context.Background()
+
+	reader := strings.NewReader(`{"type":"result","result":"Ok","session_id":"s-1"}` + "\n")
+
+	req := &agent.AgentRequest{ChannelID: "ch-1"}
+
+	waitCh := make(chan WaitResponse) // never written to
+	errCh := make(chan error, 1)
+	errCh <- nil // nil error on errCh
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
+	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
+	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Ok", resp.Response)
+
+	s.client.AssertExpectations(s.T())
+}
+
 func (s *RunnerSuite) TestRunContainerExitError() {
 	ctx := context.Background()
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
