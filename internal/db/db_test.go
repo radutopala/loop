@@ -38,6 +38,22 @@ func (s *StoreSuite) TearDownTest() {
 	s.db.Close()
 }
 
+func newMockChannelRows() *sqlmock.Rows {
+	return sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "platform", "active", "session_id", "permissions", "created_at", "updated_at"})
+}
+
+func newMockTaskRows() *sqlmock.Rows {
+	return sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "schedule", "type", "prompt", "enabled", "next_run_at", "created_at", "updated_at", "template_name", "auto_delete_sec"})
+}
+
+func newMockMessageRows() *sqlmock.Rows {
+	return sqlmock.NewRows([]string{"id", "chat_id", "channel_id", "msg_id", "author_id", "author_name", "content", "is_bot", "is_processed", "created_at"})
+}
+
+func newMockMemoryRows() *sqlmock.Rows {
+	return sqlmock.NewRows([]string{"id", "file_path", "chunk_index", "content", "content_hash", "embedding", "dimensions", "dir_path", "updated_at"})
+}
+
 func (s *StoreSuite) TestClose() {
 	s.mock.ExpectClose()
 	err := s.store.Close()
@@ -89,7 +105,7 @@ func (s *StoreSuite) TestUpsertChannel() {
 
 func (s *StoreSuite) TestGetChannelWithParentID() {
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "platform", "active", "session_id", "permissions", "created_at", "updated_at"}).
+	rows := newMockChannelRows().
 		AddRow(1, "thread1", "g1", "", "/project", "ch1", "", 1, "", "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).
 		WithArgs("thread1").
@@ -130,7 +146,7 @@ func (s *StoreSuite) TestUpsertChannelWithPermissions() {
 func (s *StoreSuite) TestGetChannel() {
 	now := time.Now().UTC()
 	permJSON := `{"owners":{"users":["U1"],"roles":["admin"]},"members":{"users":[],"roles":[]}}`
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "platform", "active", "session_id", "permissions", "created_at", "updated_at"}).
+	rows := newMockChannelRows().
 		AddRow(1, "ch1", "g1", "test", "/home/user/project", "", "discord", 1, "sess-123", permJSON, now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).
 		WithArgs("ch1").
@@ -150,22 +166,14 @@ func (s *StoreSuite) TestGetChannel() {
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
-func (s *StoreSuite) TestGetChannelNotFound() {
-	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).
-		WithArgs("nonexistent").
-		WillReturnError(sql.ErrNoRows)
-
-	ch, err := s.store.GetChannel(context.Background(), "nonexistent")
+func (s *StoreSuite) TestGetChannelNotFoundAndError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).WithArgs("ch1").WillReturnError(sql.ErrNoRows)
+	ch, err := s.store.GetChannel(context.Background(), "ch1")
 	require.NoError(s.T(), err)
 	require.Nil(s.T(), ch)
-}
 
-func (s *StoreSuite) TestGetChannelError() {
-	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).
-		WithArgs("ch1").
-		WillReturnError(sql.ErrConnDone)
-
-	ch, err := s.store.GetChannel(context.Background(), "ch1")
+	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE channel_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
+	ch, err = s.store.GetChannel(context.Background(), "ch1")
 	require.Error(s.T(), err)
 	require.Nil(s.T(), ch)
 }
@@ -173,7 +181,7 @@ func (s *StoreSuite) TestGetChannelError() {
 func (s *StoreSuite) TestGetChannelByDirPath() {
 	now := time.Now().UTC()
 	permJSON := `{"owners":{"users":["U1"],"roles":[]},"members":{"users":["U2"],"roles":[]}}`
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "platform", "active", "session_id", "permissions", "created_at", "updated_at"}).
+	rows := newMockChannelRows().
 		AddRow(1, "ch1", "g1", "loop", "/home/user/dev/loop", "", "discord", 1, "", permJSON, now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
 		WithArgs("/home/user/dev/loop", types.PlatformDiscord).
@@ -189,72 +197,41 @@ func (s *StoreSuite) TestGetChannelByDirPath() {
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
-func (s *StoreSuite) TestGetChannelByDirPathNotFound() {
-	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
-		WithArgs("/nonexistent", types.PlatformSlack).
-		WillReturnError(sql.ErrNoRows)
-
-	ch, err := s.store.GetChannelByDirPath(context.Background(), "/nonexistent", types.PlatformSlack)
+func (s *StoreSuite) TestGetChannelByDirPathNotFoundAndError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).WithArgs("/path", types.PlatformDiscord).WillReturnError(sql.ErrNoRows)
+	ch, err := s.store.GetChannelByDirPath(context.Background(), "/path", types.PlatformDiscord)
 	require.NoError(s.T(), err)
 	require.Nil(s.T(), ch)
-}
 
-func (s *StoreSuite) TestGetChannelByDirPathError() {
-	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
-		WithArgs("/some/path", types.PlatformDiscord).
-		WillReturnError(sql.ErrConnDone)
-
-	ch, err := s.store.GetChannelByDirPath(context.Background(), "/some/path", types.PlatformDiscord)
+	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).WithArgs("/path", types.PlatformDiscord).WillReturnError(sql.ErrConnDone)
+	ch, err = s.store.GetChannelByDirPath(context.Background(), "/path", types.PlatformDiscord)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), ch)
 }
 
 func (s *StoreSuite) TestIsChannelActive() {
-	s.mock.ExpectQuery(`SELECT COUNT`).
-		WithArgs("ch1").
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
-
+	s.mock.ExpectQuery(`SELECT COUNT`).WithArgs("ch1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	active, err := s.store.IsChannelActive(context.Background(), "ch1")
 	require.NoError(s.T(), err)
 	require.True(s.T(), active)
-}
 
-func (s *StoreSuite) TestIsChannelActiveFalse() {
-	s.mock.ExpectQuery(`SELECT COUNT`).
-		WithArgs("ch1").
-		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
-
-	active, err := s.store.IsChannelActive(context.Background(), "ch1")
+	s.mock.ExpectQuery(`SELECT COUNT`).WithArgs("ch1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	active, err = s.store.IsChannelActive(context.Background(), "ch1")
 	require.NoError(s.T(), err)
 	require.False(s.T(), active)
-}
 
-func (s *StoreSuite) TestIsChannelActiveError() {
-	s.mock.ExpectQuery(`SELECT COUNT`).
-		WithArgs("ch1").
-		WillReturnError(sql.ErrConnDone)
-
-	active, err := s.store.IsChannelActive(context.Background(), "ch1")
+	s.mock.ExpectQuery(`SELECT COUNT`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
+	active, err = s.store.IsChannelActive(context.Background(), "ch1")
 	require.Error(s.T(), err)
 	require.False(s.T(), active)
 }
 
 func (s *StoreSuite) TestUpdateSessionID() {
-	s.mock.ExpectExec(`UPDATE channels SET session_id`).
-		WithArgs("new-sess", sqlmock.AnyArg(), "ch1").
-		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectExec(`UPDATE channels SET session_id`).WithArgs("new-sess", sqlmock.AnyArg(), "ch1").WillReturnResult(sqlmock.NewResult(0, 1))
+	require.NoError(s.T(), s.store.UpdateSessionID(context.Background(), "ch1", "new-sess"))
 
-	err := s.store.UpdateSessionID(context.Background(), "ch1", "new-sess")
-	require.NoError(s.T(), err)
-}
-
-func (s *StoreSuite) TestUpdateSessionIDError() {
-	s.mock.ExpectExec(`UPDATE channels SET session_id`).
-		WithArgs("new-sess", sqlmock.AnyArg(), "ch1").
-		WillReturnError(sql.ErrConnDone)
-
-	err := s.store.UpdateSessionID(context.Background(), "ch1", "new-sess")
-	require.Error(s.T(), err)
+	s.mock.ExpectExec(`UPDATE channels SET session_id`).WithArgs("new-sess", sqlmock.AnyArg(), "ch1").WillReturnError(sql.ErrConnDone)
+	require.Error(s.T(), s.store.UpdateSessionID(context.Background(), "ch1", "new-sess"))
 }
 
 func (s *StoreSuite) TestUpdateChannelPermissions() {
@@ -262,23 +239,12 @@ func (s *StoreSuite) TestUpdateChannelPermissions() {
 		Owners:  ChannelRoleGrant{Users: []string{"U1"}, Roles: []string{"admin"}},
 		Members: ChannelRoleGrant{Users: []string{"U2"}},
 	}
-	s.mock.ExpectExec(`UPDATE channels SET permissions`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "ch1", "ch1").
-		WillReturnResult(sqlmock.NewResult(0, 3))
-
-	err := s.store.UpdateChannelPermissions(context.Background(), "ch1", perms)
-	require.NoError(s.T(), err)
+	s.mock.ExpectExec(`UPDATE channels SET permissions`).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "ch1", "ch1").WillReturnResult(sqlmock.NewResult(0, 3))
+	require.NoError(s.T(), s.store.UpdateChannelPermissions(context.Background(), "ch1", perms))
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
-}
 
-func (s *StoreSuite) TestUpdateChannelPermissionsError() {
-	perms := ChannelPermissions{}
-	s.mock.ExpectExec(`UPDATE channels SET permissions`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "ch1", "ch1").
-		WillReturnError(sql.ErrConnDone)
-
-	err := s.store.UpdateChannelPermissions(context.Background(), "ch1", perms)
-	require.Error(s.T(), err)
+	s.mock.ExpectExec(`UPDATE channels SET permissions`).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "ch1", "ch1").WillReturnError(sql.ErrConnDone)
+	require.Error(s.T(), s.store.UpdateChannelPermissions(context.Background(), "ch1", ChannelPermissions{}))
 }
 
 // --- DeleteChannel tests ---
@@ -296,25 +262,15 @@ func (s *StoreSuite) TestDeleteChannel() {
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
-func (s *StoreSuite) TestDeleteChannelMessagesError() {
-	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).
-		WithArgs("ch1").
-		WillReturnError(sql.ErrConnDone)
-
+func (s *StoreSuite) TestDeleteChannelErrors() {
+	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
 	err := s.store.DeleteChannel(context.Background(), "ch1")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "deleting messages for channel")
-}
 
-func (s *StoreSuite) TestDeleteChannelError() {
-	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).
-		WithArgs("ch1").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-	s.mock.ExpectExec(`DELETE FROM channels WHERE channel_id`).
-		WithArgs("ch1").
-		WillReturnError(sql.ErrConnDone)
-
-	err := s.store.DeleteChannel(context.Background(), "ch1")
+	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
+	s.mock.ExpectExec(`DELETE FROM channels WHERE channel_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
+	err = s.store.DeleteChannel(context.Background(), "ch1")
 	require.Error(s.T(), err)
 }
 
@@ -331,32 +287,22 @@ func (s *StoreSuite) TestDeleteChannelsByParentID() {
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
-func (s *StoreSuite) TestDeleteChannelsByParentIDMessagesError() {
-	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).
-		WithArgs("ch1").
-		WillReturnError(sql.ErrConnDone)
-
+func (s *StoreSuite) TestDeleteChannelsByParentIDErrors() {
+	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
 	err := s.store.DeleteChannelsByParentID(context.Background(), "ch1")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "deleting messages for child channels")
-}
 
-func (s *StoreSuite) TestDeleteChannelsByParentIDError() {
-	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).
-		WithArgs("ch1").
-		WillReturnResult(sqlmock.NewResult(0, 0))
-	s.mock.ExpectExec(`DELETE FROM channels WHERE parent_id`).
-		WithArgs("ch1").
-		WillReturnError(sql.ErrConnDone)
-
-	err := s.store.DeleteChannelsByParentID(context.Background(), "ch1")
+	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
+	s.mock.ExpectExec(`DELETE FROM channels WHERE parent_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
+	err = s.store.DeleteChannelsByParentID(context.Background(), "ch1")
 	require.Error(s.T(), err)
 }
 
 func (s *StoreSuite) TestListChannels() {
 	now := time.Now().UTC()
 	permJSON := `{"owners":{"users":["U1"],"roles":[]},"members":{"users":[],"roles":[]}}`
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "platform", "active", "session_id", "permissions", "created_at", "updated_at"}).
+	rows := newMockChannelRows().
 		AddRow(1, "ch1", "g1", "alpha", "/home/user/alpha", "", "discord", 1, "sess-1", permJSON, now, now).
 		AddRow(2, "ch2", "g1", "beta", "/home/user/beta", "ch1", "discord", 0, "sess-2", "", now, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).
@@ -381,7 +327,7 @@ func (s *StoreSuite) TestListChannels() {
 }
 
 func (s *StoreSuite) TestListChannelsEmpty() {
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "platform", "active", "session_id", "permissions", "created_at", "updated_at"})
+	rows := newMockChannelRows()
 	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).
 		WillReturnRows(rows)
 
@@ -391,22 +337,15 @@ func (s *StoreSuite) TestListChannelsEmpty() {
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
-func (s *StoreSuite) TestListChannelsError() {
-	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).
-		WillReturnError(sql.ErrConnDone)
-
+func (s *StoreSuite) TestListChannelsErrors() {
+	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).WillReturnError(sql.ErrConnDone)
 	channels, err := s.store.ListChannels(context.Background())
 	require.Error(s.T(), err)
 	require.Nil(s.T(), channels)
-}
 
-func (s *StoreSuite) TestListChannelsScanError() {
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "name", "dir_path", "parent_id", "platform", "active", "session_id", "permissions", "created_at", "updated_at"}).
-		AddRow("not-an-int", "ch1", "g1", "test", "/home/user/project", "", "", 1, "sess-1", "", time.Now().UTC(), time.Now().UTC())
-	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).
-		WillReturnRows(rows)
-
-	channels, err := s.store.ListChannels(context.Background())
+	s.mock.ExpectQuery(`SELECT .+ FROM channels ORDER BY name ASC`).WillReturnRows(
+		newMockChannelRows().AddRow("not-an-int", "ch1", "g1", "test", "/home/user/project", "", "", 1, "sess-1", "", time.Now().UTC(), time.Now().UTC()))
+	channels, err = s.store.ListChannels(context.Background())
 	require.Error(s.T(), err)
 	require.Nil(s.T(), channels)
 }
@@ -428,29 +367,20 @@ func (s *StoreSuite) TestInsertMessage() {
 	require.Equal(s.T(), int64(42), msg.ID)
 }
 
-func (s *StoreSuite) TestInsertMessageError() {
-	msg := &Message{ChatID: 1, ChannelID: "ch1", MsgID: "msg1", AuthorID: "u1", CreatedAt: time.Now().UTC()}
-	s.mock.ExpectExec(`INSERT INTO messages`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
-		WillReturnError(sql.ErrConnDone)
-
-	err := s.store.InsertMessage(context.Background(), msg)
+func (s *StoreSuite) TestInsertMessageErrors() {
+	anyArgs := []driver.Value{sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()}
+	s.mock.ExpectExec(`INSERT INTO messages`).WithArgs(anyArgs...).WillReturnError(sql.ErrConnDone)
+	err := s.store.InsertMessage(context.Background(), &Message{ChatID: 1, ChannelID: "ch1", MsgID: "msg1", AuthorID: "u1", CreatedAt: time.Now().UTC()})
 	require.Error(s.T(), err)
-}
 
-func (s *StoreSuite) TestInsertMessageLastInsertIDError() {
-	msg := &Message{ChatID: 1, ChannelID: "ch1", MsgID: "msg1", AuthorID: "u1", CreatedAt: time.Now().UTC()}
-	s.mock.ExpectExec(`INSERT INTO messages`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
-
-	err := s.store.InsertMessage(context.Background(), msg)
+	s.mock.ExpectExec(`INSERT INTO messages`).WithArgs(anyArgs...).WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
+	err = s.store.InsertMessage(context.Background(), &Message{ChatID: 1, ChannelID: "ch1", MsgID: "msg1", AuthorID: "u1", CreatedAt: time.Now().UTC()})
 	require.Error(s.T(), err)
 }
 
 func (s *StoreSuite) TestGetUnprocessedMessages() {
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "chat_id", "channel_id", "msg_id", "author_id", "author_name", "content", "is_bot", "is_processed", "created_at"}).
+	rows := newMockMessageRows().
 		AddRow(1, 1, "ch1", "msg1", "u1", "user1", "hello", 0, 0, now).
 		AddRow(2, 1, "ch1", "msg2", "u2", "user2", "world", 1, 0, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id .+ AND is_processed = 0`).
@@ -464,24 +394,15 @@ func (s *StoreSuite) TestGetUnprocessedMessages() {
 	require.True(s.T(), msgs[1].IsBot)
 }
 
-func (s *StoreSuite) TestGetUnprocessedMessagesError() {
-	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id`).
-		WithArgs("ch1").
-		WillReturnError(sql.ErrConnDone)
-
+func (s *StoreSuite) TestGetUnprocessedMessagesErrors() {
+	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
 	msgs, err := s.store.GetUnprocessedMessages(context.Background(), "ch1")
 	require.Error(s.T(), err)
 	require.Nil(s.T(), msgs)
-}
 
-func (s *StoreSuite) TestGetUnprocessedMessagesScanError() {
-	rows := sqlmock.NewRows([]string{"id", "chat_id", "channel_id", "msg_id", "author_id", "author_name", "content", "is_bot", "is_processed", "created_at"}).
-		AddRow("not-an-int", 1, "ch1", "msg1", "u1", "user1", "hello", 0, 0, time.Now().UTC())
-	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id .+ AND is_processed = 0`).
-		WithArgs("ch1").
-		WillReturnRows(rows)
-
-	msgs, err := s.store.GetUnprocessedMessages(context.Background(), "ch1")
+	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id .+ AND is_processed = 0`).WithArgs("ch1").WillReturnRows(
+		newMockMessageRows().AddRow("not-an-int", 1, "ch1", "msg1", "u1", "user1", "hello", 0, 0, time.Now().UTC()))
+	msgs, err = s.store.GetUnprocessedMessages(context.Background(), "ch1")
 	require.Error(s.T(), err)
 	require.Nil(s.T(), msgs)
 }
@@ -499,12 +420,8 @@ func (s *StoreSuite) TestMarkMessagesProcessed() {
 }
 
 func (s *StoreSuite) TestMarkMessagesProcessedError() {
-	s.mock.ExpectExec(`UPDATE messages SET is_processed = 1`).
-		WithArgs(int64(1)).
-		WillReturnError(sql.ErrConnDone)
-
-	err := s.store.MarkMessagesProcessed(context.Background(), []int64{1, 2})
-	require.Error(s.T(), err)
+	s.mock.ExpectExec(`UPDATE messages SET is_processed = 1`).WithArgs(int64(1)).WillReturnError(sql.ErrConnDone)
+	require.Error(s.T(), s.store.MarkMessagesProcessed(context.Background(), []int64{1, 2}))
 }
 
 func (s *StoreSuite) TestMarkMessagesProcessedEmpty() {
@@ -514,7 +431,7 @@ func (s *StoreSuite) TestMarkMessagesProcessedEmpty() {
 
 func (s *StoreSuite) TestGetRecentMessages() {
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "chat_id", "channel_id", "msg_id", "author_id", "author_name", "content", "is_bot", "is_processed", "created_at"}).
+	rows := newMockMessageRows().
 		AddRow(1, 1, "ch1", "msg1", "u1", "user1", "hello", 0, 1, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id .+ ORDER BY created_at DESC LIMIT`).
 		WithArgs("ch1", 10).
@@ -527,10 +444,7 @@ func (s *StoreSuite) TestGetRecentMessages() {
 }
 
 func (s *StoreSuite) TestGetRecentMessagesError() {
-	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id`).
-		WithArgs("ch1", 10).
-		WillReturnError(sql.ErrConnDone)
-
+	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id`).WithArgs("ch1", 10).WillReturnError(sql.ErrConnDone)
 	msgs, err := s.store.GetRecentMessages(context.Background(), "ch1", 10)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), msgs)
@@ -554,31 +468,22 @@ func (s *StoreSuite) TestCreateScheduledTask() {
 	require.Equal(s.T(), int64(5), task.ID)
 }
 
-func (s *StoreSuite) TestCreateScheduledTaskError() {
-	task := &ScheduledTask{ChannelID: "ch1", Type: TaskTypeCron, NextRunAt: time.Now().UTC()}
-	s.mock.ExpectExec(`INSERT INTO scheduled_tasks`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
-		WillReturnError(sql.ErrConnDone)
-
-	id, err := s.store.CreateScheduledTask(context.Background(), task)
+func (s *StoreSuite) TestCreateScheduledTaskErrors() {
+	anyArgs := []driver.Value{sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()}
+	s.mock.ExpectExec(`INSERT INTO scheduled_tasks`).WithArgs(anyArgs...).WillReturnError(sql.ErrConnDone)
+	id, err := s.store.CreateScheduledTask(context.Background(), &ScheduledTask{ChannelID: "ch1", Type: TaskTypeCron, NextRunAt: time.Now().UTC()})
 	require.Error(s.T(), err)
 	require.Equal(s.T(), int64(0), id)
-}
 
-func (s *StoreSuite) TestCreateScheduledTaskLastInsertIDError() {
-	task := &ScheduledTask{ChannelID: "ch1", Type: TaskTypeCron, NextRunAt: time.Now().UTC()}
-	s.mock.ExpectExec(`INSERT INTO scheduled_tasks`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
-
-	id, err := s.store.CreateScheduledTask(context.Background(), task)
+	s.mock.ExpectExec(`INSERT INTO scheduled_tasks`).WithArgs(anyArgs...).WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
+	id, err = s.store.CreateScheduledTask(context.Background(), &ScheduledTask{ChannelID: "ch1", Type: TaskTypeCron, NextRunAt: time.Now().UTC()})
 	require.Error(s.T(), err)
 	require.Equal(s.T(), int64(0), id)
 }
 
 func (s *StoreSuite) TestGetDueTasks() {
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "schedule", "type", "prompt", "enabled", "next_run_at", "created_at", "updated_at", "template_name", "auto_delete_sec"}).
+	rows := newMockTaskRows().
 		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "", 0)
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE enabled = 1 AND next_run_at`).
 		WithArgs(sqlmock.AnyArg()).
@@ -591,25 +496,16 @@ func (s *StoreSuite) TestGetDueTasks() {
 	require.True(s.T(), tasks[0].Enabled)
 }
 
-func (s *StoreSuite) TestGetDueTasksError() {
-	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE enabled = 1`).
-		WithArgs(sqlmock.AnyArg()).
-		WillReturnError(sql.ErrConnDone)
-
-	tasks, err := s.store.GetDueTasks(context.Background(), time.Now())
+func (s *StoreSuite) TestGetDueTasksErrors() {
+	now := time.Now().UTC()
+	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE enabled = 1`).WithArgs(sqlmock.AnyArg()).WillReturnError(sql.ErrConnDone)
+	tasks, err := s.store.GetDueTasks(context.Background(), now)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), tasks)
-}
 
-func (s *StoreSuite) TestGetDueTasksScanError() {
-	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "schedule", "type", "prompt", "enabled", "next_run_at", "created_at", "updated_at", "template_name", "auto_delete_sec"}).
-		AddRow("bad", "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "", 0)
-	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE enabled = 1`).
-		WithArgs(sqlmock.AnyArg()).
-		WillReturnRows(rows)
-
-	tasks, err := s.store.GetDueTasks(context.Background(), now)
+	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE enabled = 1`).WithArgs(sqlmock.AnyArg()).WillReturnRows(
+		newMockTaskRows().AddRow("bad", "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "", 0))
+	tasks, err = s.store.GetDueTasks(context.Background(), now)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), tasks)
 }
@@ -628,13 +524,10 @@ func (s *StoreSuite) TestUpdateScheduledTask() {
 }
 
 func (s *StoreSuite) TestUpdateScheduledTaskError() {
-	task := &ScheduledTask{ID: 1, Type: TaskTypeCron, NextRunAt: time.Now().UTC()}
 	s.mock.ExpectExec(`UPDATE scheduled_tasks SET`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
-
-	err := s.store.UpdateScheduledTask(context.Background(), task)
-	require.Error(s.T(), err)
+	require.Error(s.T(), s.store.UpdateScheduledTask(context.Background(), &ScheduledTask{ID: 1, Type: TaskTypeCron, NextRunAt: time.Now().UTC()}))
 }
 
 func (s *StoreSuite) TestDeleteScheduledTask() {
@@ -649,30 +542,20 @@ func (s *StoreSuite) TestDeleteScheduledTask() {
 	require.NoError(s.T(), err)
 }
 
-func (s *StoreSuite) TestDeleteScheduledTaskError() {
-	s.mock.ExpectExec(`DELETE FROM task_run_logs WHERE task_id`).
-		WithArgs(int64(1)).
-		WillReturnResult(sqlmock.NewResult(0, 0))
-	s.mock.ExpectExec(`DELETE FROM scheduled_tasks WHERE id`).
-		WithArgs(int64(1)).
-		WillReturnError(sql.ErrConnDone)
-
+func (s *StoreSuite) TestDeleteScheduledTaskErrors() {
+	s.mock.ExpectExec(`DELETE FROM task_run_logs WHERE task_id`).WithArgs(int64(1)).WillReturnError(sql.ErrConnDone)
 	err := s.store.DeleteScheduledTask(context.Background(), 1)
 	require.Error(s.T(), err)
-}
 
-func (s *StoreSuite) TestDeleteScheduledTaskRunLogsError() {
-	s.mock.ExpectExec(`DELETE FROM task_run_logs WHERE task_id`).
-		WithArgs(int64(1)).
-		WillReturnError(sql.ErrConnDone)
-
-	err := s.store.DeleteScheduledTask(context.Background(), 1)
+	s.mock.ExpectExec(`DELETE FROM task_run_logs WHERE task_id`).WithArgs(int64(1)).WillReturnResult(sqlmock.NewResult(0, 0))
+	s.mock.ExpectExec(`DELETE FROM scheduled_tasks WHERE id`).WithArgs(int64(1)).WillReturnError(sql.ErrConnDone)
+	err = s.store.DeleteScheduledTask(context.Background(), 1)
 	require.Error(s.T(), err)
 }
 
 func (s *StoreSuite) TestListScheduledTasks() {
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "schedule", "type", "prompt", "enabled", "next_run_at", "created_at", "updated_at", "template_name", "auto_delete_sec"}).
+	rows := newMockTaskRows().
 		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check", 1, now, now, now, "", 0).
 		AddRow(2, "ch1", "g1", "30m", "interval", "ping", 0, now.Add(time.Hour), now, now, "", 0)
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE channel_id`).
@@ -687,28 +570,21 @@ func (s *StoreSuite) TestListScheduledTasks() {
 }
 
 func (s *StoreSuite) TestListScheduledTasksError() {
-	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE channel_id`).
-		WithArgs("ch1", sqlmock.AnyArg()).
-		WillReturnError(sql.ErrConnDone)
-
+	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE channel_id`).WithArgs("ch1", sqlmock.AnyArg()).WillReturnError(sql.ErrConnDone)
 	tasks, err := s.store.ListScheduledTasks(context.Background(), "ch1")
 	require.Error(s.T(), err)
 	require.Nil(s.T(), tasks)
 }
 
 func (s *StoreSuite) TestUpdateScheduledTaskEnabled() {
-	s.mock.ExpectExec(`UPDATE scheduled_tasks SET enabled`).
-		WithArgs(0, sqlmock.AnyArg(), int64(1)).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-
-	err := s.store.UpdateScheduledTaskEnabled(context.Background(), 1, false)
-	require.NoError(s.T(), err)
+	s.mock.ExpectExec(`UPDATE scheduled_tasks SET enabled`).WithArgs(0, sqlmock.AnyArg(), int64(1)).WillReturnResult(sqlmock.NewResult(0, 1))
+	require.NoError(s.T(), s.store.UpdateScheduledTaskEnabled(context.Background(), 1, false))
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
 func (s *StoreSuite) TestGetScheduledTask() {
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "schedule", "type", "prompt", "enabled", "next_run_at", "created_at", "updated_at", "template_name", "auto_delete_sec"}).
+	rows := newMockTaskRows().
 		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "", 0)
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE id`).
 		WithArgs(int64(1)).
@@ -724,33 +600,21 @@ func (s *StoreSuite) TestGetScheduledTask() {
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
-func (s *StoreSuite) TestGetScheduledTaskNotFound() {
-	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE id`).
-		WithArgs(int64(999)).
-		WillReturnError(sql.ErrNoRows)
-
-	task, err := s.store.GetScheduledTask(context.Background(), 999)
+func (s *StoreSuite) TestGetScheduledTaskNotFoundAndError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE id`).WithArgs(int64(1)).WillReturnError(sql.ErrNoRows)
+	task, err := s.store.GetScheduledTask(context.Background(), 1)
 	require.NoError(s.T(), err)
 	require.Nil(s.T(), task)
-}
 
-func (s *StoreSuite) TestGetScheduledTaskError() {
-	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE id`).
-		WithArgs(int64(1)).
-		WillReturnError(sql.ErrConnDone)
-
-	task, err := s.store.GetScheduledTask(context.Background(), 1)
+	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE id`).WithArgs(int64(1)).WillReturnError(sql.ErrConnDone)
+	task, err = s.store.GetScheduledTask(context.Background(), 1)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), task)
 }
 
 func (s *StoreSuite) TestUpdateScheduledTaskEnabledError() {
-	s.mock.ExpectExec(`UPDATE scheduled_tasks SET enabled`).
-		WithArgs(1, sqlmock.AnyArg(), int64(1)).
-		WillReturnError(sql.ErrConnDone)
-
-	err := s.store.UpdateScheduledTaskEnabled(context.Background(), 1, true)
-	require.Error(s.T(), err)
+	s.mock.ExpectExec(`UPDATE scheduled_tasks SET enabled`).WithArgs(1, sqlmock.AnyArg(), int64(1)).WillReturnError(sql.ErrConnDone)
+	require.Error(s.T(), s.store.UpdateScheduledTaskEnabled(context.Background(), 1, true))
 }
 
 // --- TaskRunLog tests ---
@@ -768,24 +632,15 @@ func (s *StoreSuite) TestInsertTaskRunLog() {
 	require.Equal(s.T(), int64(10), id)
 }
 
-func (s *StoreSuite) TestInsertTaskRunLogError() {
-	trl := &TaskRunLog{TaskID: 1, Status: RunStatusRunning, StartedAt: time.Now().UTC()}
-	s.mock.ExpectExec(`INSERT INTO task_run_logs`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
-		WillReturnError(sql.ErrConnDone)
-
-	id, err := s.store.InsertTaskRunLog(context.Background(), trl)
+func (s *StoreSuite) TestInsertTaskRunLogErrors() {
+	anyArgs := []driver.Value{sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()}
+	s.mock.ExpectExec(`INSERT INTO task_run_logs`).WithArgs(anyArgs...).WillReturnError(sql.ErrConnDone)
+	id, err := s.store.InsertTaskRunLog(context.Background(), &TaskRunLog{TaskID: 1, Status: RunStatusRunning, StartedAt: time.Now().UTC()})
 	require.Error(s.T(), err)
 	require.Equal(s.T(), int64(0), id)
-}
 
-func (s *StoreSuite) TestInsertTaskRunLogLastInsertIDError() {
-	trl := &TaskRunLog{TaskID: 1, Status: RunStatusRunning, StartedAt: time.Now().UTC()}
-	s.mock.ExpectExec(`INSERT INTO task_run_logs`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
-		WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
-
-	id, err := s.store.InsertTaskRunLog(context.Background(), trl)
+	s.mock.ExpectExec(`INSERT INTO task_run_logs`).WithArgs(anyArgs...).WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
+	id, err = s.store.InsertTaskRunLog(context.Background(), &TaskRunLog{TaskID: 1, Status: RunStatusRunning, StartedAt: time.Now().UTC()})
 	require.Error(s.T(), err)
 	require.Equal(s.T(), int64(0), id)
 }
@@ -804,13 +659,10 @@ func (s *StoreSuite) TestUpdateTaskRunLog() {
 }
 
 func (s *StoreSuite) TestUpdateTaskRunLogError() {
-	trl := &TaskRunLog{ID: 10, Status: RunStatusFailed}
 	s.mock.ExpectExec(`UPDATE task_run_logs SET`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
-
-	err := s.store.UpdateTaskRunLog(context.Background(), trl)
-	require.Error(s.T(), err)
+	require.Error(s.T(), s.store.UpdateTaskRunLog(context.Background(), &TaskRunLog{ID: 10, Status: RunStatusFailed}))
 }
 
 // --- initDB tests ---
@@ -833,43 +685,37 @@ func (s *StoreSuite) TestInitDBSuccess() {
 	require.NoError(s.T(), err)
 }
 
-func (s *StoreSuite) TestInitDBWALError() {
-	db, mock, err := sqlmock.New()
-	require.NoError(s.T(), err)
-	defer db.Close()
-
-	mock.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnError(sql.ErrConnDone)
-
-	err = initDB(db)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "enabling WAL mode")
-}
-
-func (s *StoreSuite) TestInitDBForeignKeysError() {
-	db, mock, err := sqlmock.New()
-	require.NoError(s.T(), err)
-	defer db.Close()
-
-	mock.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnError(sql.ErrConnDone)
-
-	err = initDB(db)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "enabling foreign keys")
-}
-
-func (s *StoreSuite) TestInitDBMigrationsError() {
-	db, mock, err := sqlmock.New()
-	require.NoError(s.T(), err)
-	defer db.Close()
-
-	mock.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnResult(sqlmock.NewResult(0, 0))
-	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS schema_migrations`).WillReturnError(sql.ErrConnDone)
-
-	err = initDB(db)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "running migrations")
+func (s *StoreSuite) TestInitDBErrors() {
+	ok := sqlmock.NewResult(0, 0)
+	cases := []struct {
+		name    string
+		setup   func(sqlmock.Sqlmock)
+		wantMsg string
+	}{
+		{"WAL error", func(m sqlmock.Sqlmock) {
+			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnError(sql.ErrConnDone)
+		}, "enabling WAL mode"},
+		{"foreign keys error", func(m sqlmock.Sqlmock) {
+			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnError(sql.ErrConnDone)
+		}, "enabling foreign keys"},
+		{"migrations error", func(m sqlmock.Sqlmock) {
+			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnResult(ok)
+			m.ExpectExec(`CREATE TABLE IF NOT EXISTS schema_migrations`).WillReturnError(sql.ErrConnDone)
+		}, "running migrations"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			db, mock, err := sqlmock.New()
+			require.NoError(s.T(), err)
+			defer db.Close()
+			tc.setup(mock)
+			err = initDB(db)
+			require.Error(s.T(), err)
+			require.Contains(s.T(), err.Error(), tc.wantMsg)
+		})
+	}
 }
 
 func (s *StoreSuite) TestMigrateTimestampsToUTC() {
@@ -915,130 +761,70 @@ func (s *StoreSuite) TestMigrateTimestampsToUTCEmpty() {
 	require.NoError(s.T(), mock.ExpectationsWereMet())
 }
 
-func (s *StoreSuite) TestMigrateTimestampsToUTCQueryError() {
-	db, mock, err := sqlmock.New()
-	require.NoError(s.T(), err)
-	defer db.Close()
-
-	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
-		WillReturnError(sql.ErrConnDone)
-
-	err = migrateTimestampsToUTC(context.Background(), db)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "querying scheduled_tasks")
-}
-
-func (s *StoreSuite) TestMigrateTimestampsToUTCUpdateError() {
-	db, mock, err := sqlmock.New()
-	require.NoError(s.T(), err)
-	defer db.Close()
-
+func (s *StoreSuite) TestMigrateTimestampsToUTCErrors() {
 	now := time.Now().UTC()
-	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}).
-			AddRow(1, now, now, now))
-	mock.ExpectExec(`UPDATE scheduled_tasks SET next_run_at`).
-		WillReturnError(sql.ErrConnDone)
-
-	err = migrateTimestampsToUTC(context.Background(), db)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "updating scheduled_task 1")
-}
-
-func (s *StoreSuite) TestMigrateTimestampsToUTCLogQueryError() {
-	db, mock, err := sqlmock.New()
-	require.NoError(s.T(), err)
-	defer db.Close()
-
-	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}))
-	mock.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).
-		WillReturnError(sql.ErrConnDone)
-
-	err = migrateTimestampsToUTC(context.Background(), db)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "querying task_run_logs")
-}
-
-func (s *StoreSuite) TestMigrateTimestampsToUTCScanError() {
-	db, mock, err := sqlmock.New()
-	require.NoError(s.T(), err)
-	defer db.Close()
-
-	// Return rows with wrong type to trigger scan error
-	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}).
-			AddRow("not-an-int", "bad", "bad", "bad"))
-
-	err = migrateTimestampsToUTC(context.Background(), db)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "scanning scheduled_task")
-}
-
-func (s *StoreSuite) TestMigrateTimestampsToUTCRowsError() {
-	db, mock, err := sqlmock.New()
-	require.NoError(s.T(), err)
-	defer db.Close()
-
-	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}).
-			CloseError(fmt.Errorf("rows iteration error")))
-
-	err = migrateTimestampsToUTC(context.Background(), db)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "iterating scheduled_tasks")
-}
-
-func (s *StoreSuite) TestMigrateTimestampsToUTCLogScanError() {
-	db, mock, err := sqlmock.New()
-	require.NoError(s.T(), err)
-	defer db.Close()
-
-	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}))
-	// Return rows with wrong type to trigger scan error
-	mock.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "started_at", "finished_at"}).
-			AddRow("not-an-int", "bad", "bad"))
-
-	err = migrateTimestampsToUTC(context.Background(), db)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "scanning task_run_log")
-}
-
-func (s *StoreSuite) TestMigrateTimestampsToUTCLogRowsError() {
-	db, mock, err := sqlmock.New()
-	require.NoError(s.T(), err)
-	defer db.Close()
-
-	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}))
-	mock.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "started_at", "finished_at"}).
-			CloseError(fmt.Errorf("log rows iteration error")))
-
-	err = migrateTimestampsToUTC(context.Background(), db)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "iterating task_run_logs")
-}
-
-func (s *StoreSuite) TestMigrateTimestampsToUTCLogUpdateError() {
-	db, mock, err := sqlmock.New()
-	require.NoError(s.T(), err)
-	defer db.Close()
-
-	now := time.Now().UTC()
-	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}))
-	mock.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).
-		WillReturnRows(sqlmock.NewRows([]string{"id", "started_at", "finished_at"}).
-			AddRow(10, now, now))
-	mock.ExpectExec(`UPDATE task_run_logs SET started_at`).
-		WillReturnError(sql.ErrConnDone)
-
-	err = migrateTimestampsToUTC(context.Background(), db)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "updating task_run_log 10")
+	emptyTaskRows := func() *sqlmock.Rows {
+		return sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"})
+	}
+	cases := []struct {
+		name    string
+		setup   func(sqlmock.Sqlmock)
+		wantMsg string
+	}{
+		{"query error", func(m sqlmock.Sqlmock) {
+			m.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
+				WillReturnError(sql.ErrConnDone)
+		}, "querying scheduled_tasks"},
+		{"update error", func(m sqlmock.Sqlmock) {
+			m.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
+				WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}).
+					AddRow(1, now, now, now))
+			m.ExpectExec(`UPDATE scheduled_tasks SET next_run_at`).WillReturnError(sql.ErrConnDone)
+		}, "updating scheduled_task 1"},
+		{"log query error", func(m sqlmock.Sqlmock) {
+			m.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).WillReturnRows(emptyTaskRows())
+			m.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).WillReturnError(sql.ErrConnDone)
+		}, "querying task_run_logs"},
+		{"scan error", func(m sqlmock.Sqlmock) {
+			m.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
+				WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}).
+					AddRow("not-an-int", "bad", "bad", "bad"))
+		}, "scanning scheduled_task"},
+		{"rows error", func(m sqlmock.Sqlmock) {
+			m.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
+				WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}).
+					CloseError(fmt.Errorf("rows iteration error")))
+		}, "iterating scheduled_tasks"},
+		{"log scan error", func(m sqlmock.Sqlmock) {
+			m.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).WillReturnRows(emptyTaskRows())
+			m.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).
+				WillReturnRows(sqlmock.NewRows([]string{"id", "started_at", "finished_at"}).
+					AddRow("not-an-int", "bad", "bad"))
+		}, "scanning task_run_log"},
+		{"log rows error", func(m sqlmock.Sqlmock) {
+			m.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).WillReturnRows(emptyTaskRows())
+			m.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).
+				WillReturnRows(sqlmock.NewRows([]string{"id", "started_at", "finished_at"}).
+					CloseError(fmt.Errorf("log rows iteration error")))
+		}, "iterating task_run_logs"},
+		{"log update error", func(m sqlmock.Sqlmock) {
+			m.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).WillReturnRows(emptyTaskRows())
+			m.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).
+				WillReturnRows(sqlmock.NewRows([]string{"id", "started_at", "finished_at"}).AddRow(10, now, now))
+			m.ExpectExec(`UPDATE task_run_logs SET started_at`).WillReturnError(sql.ErrConnDone)
+		}, "updating task_run_log 10"},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			db, mock, err := sqlmock.New()
+			require.NoError(s.T(), err)
+			defer db.Close()
+			tc.setup(mock)
+			err = migrateTimestampsToUTC(context.Background(), db)
+			require.Error(s.T(), err)
+			require.Contains(s.T(), err.Error(), tc.wantMsg)
+		})
+	}
 }
 
 // --- NewSQLiteStore tests ---
@@ -1086,7 +872,7 @@ func (s *StoreSuite) TestBoolToInt() {
 
 func (s *StoreSuite) TestGetScheduledTaskByTemplateName() {
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "schedule", "type", "prompt", "enabled", "next_run_at", "created_at", "updated_at", "template_name", "auto_delete_sec"}).
+	rows := newMockTaskRows().
 		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "my-template", 0)
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE channel_id .+ AND template_name`).
 		WithArgs("ch1", "my-template").
@@ -1101,22 +887,14 @@ func (s *StoreSuite) TestGetScheduledTaskByTemplateName() {
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
-func (s *StoreSuite) TestGetScheduledTaskByTemplateNameNotFound() {
-	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE channel_id .+ AND template_name`).
-		WithArgs("ch1", "nonexistent").
-		WillReturnError(sql.ErrNoRows)
-
-	task, err := s.store.GetScheduledTaskByTemplateName(context.Background(), "ch1", "nonexistent")
+func (s *StoreSuite) TestGetScheduledTaskByTemplateNameNotFoundAndError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE channel_id .+ AND template_name`).WithArgs("ch1", "tmpl").WillReturnError(sql.ErrNoRows)
+	task, err := s.store.GetScheduledTaskByTemplateName(context.Background(), "ch1", "tmpl")
 	require.NoError(s.T(), err)
 	require.Nil(s.T(), task)
-}
 
-func (s *StoreSuite) TestGetScheduledTaskByTemplateNameError() {
-	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE channel_id .+ AND template_name`).
-		WithArgs("ch1", "tmpl").
-		WillReturnError(sql.ErrConnDone)
-
-	task, err := s.store.GetScheduledTaskByTemplateName(context.Background(), "ch1", "tmpl")
+	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE channel_id .+ AND template_name`).WithArgs("ch1", "tmpl").WillReturnError(sql.ErrConnDone)
+	task, err = s.store.GetScheduledTaskByTemplateName(context.Background(), "ch1", "tmpl")
 	require.Error(s.T(), err)
 	require.Nil(s.T(), task)
 }
@@ -1139,17 +917,13 @@ func (s *StoreSuite) TestUpsertMemoryFile() {
 }
 
 func (s *StoreSuite) TestUpsertMemoryFileError() {
-	file := &MemoryFile{FilePath: "f", Content: "c", ContentHash: "h", Embedding: []byte{}, Dimensions: 1}
-	s.mock.ExpectExec(`INSERT INTO memory_files`).
-		WillReturnError(sql.ErrConnDone)
-
-	err := s.store.UpsertMemoryFile(context.Background(), file)
-	require.Error(s.T(), err)
+	s.mock.ExpectExec(`INSERT INTO memory_files`).WillReturnError(sql.ErrConnDone)
+	require.Error(s.T(), s.store.UpsertMemoryFile(context.Background(), &MemoryFile{FilePath: "f", Content: "c", ContentHash: "h", Embedding: []byte{}, Dimensions: 1}))
 }
 
 func (s *StoreSuite) TestGetMemoryFilesByDirPath() {
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "file_path", "chunk_index", "content", "content_hash", "embedding", "dimensions", "dir_path", "updated_at"}).
+	rows := newMockMemoryRows().
 		AddRow(1, "/m/a.md", 0, "content a", "hash-a", []byte{1, 2}, 768, "", now).
 		AddRow(2, "/m/b.md", 0, "content b", "hash-b", []byte{3, 4}, 768, "", now)
 	s.mock.ExpectQuery(`SELECT .+ FROM memory_files WHERE`).
@@ -1165,7 +939,7 @@ func (s *StoreSuite) TestGetMemoryFilesByDirPath() {
 
 func (s *StoreSuite) TestGetMemoryFilesByDirPathIncludesGlobal() {
 	now := time.Now().UTC()
-	rows := sqlmock.NewRows([]string{"id", "file_path", "chunk_index", "content", "content_hash", "embedding", "dimensions", "dir_path", "updated_at"}).
+	rows := newMockMemoryRows().
 		AddRow(1, "/a/x.md", 0, "content a", "hash-a", []byte{1, 2}, 768, "/project", now).
 		AddRow(2, "/b/y.md", 0, "content b", "hash-b", []byte{3, 4}, 768, "", now)
 	s.mock.ExpectQuery(`SELECT .+ FROM memory_files WHERE`).
@@ -1181,7 +955,7 @@ func (s *StoreSuite) TestGetMemoryFilesByDirPathIncludesGlobal() {
 }
 
 func (s *StoreSuite) TestGetMemoryFilesByDirPathEmpty() {
-	rows := sqlmock.NewRows([]string{"id", "file_path", "chunk_index", "content", "content_hash", "embedding", "dimensions", "dir_path", "updated_at"})
+	rows := newMockMemoryRows()
 	s.mock.ExpectQuery(`SELECT .+ FROM memory_files WHERE`).
 		WithArgs("").
 		WillReturnRows(rows)
@@ -1192,23 +966,15 @@ func (s *StoreSuite) TestGetMemoryFilesByDirPathEmpty() {
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
-func (s *StoreSuite) TestGetMemoryFilesByDirPathError() {
-	s.mock.ExpectQuery(`SELECT .+ FROM memory_files WHERE`).
-		WithArgs("/project").
-		WillReturnError(sql.ErrConnDone)
-
+func (s *StoreSuite) TestGetMemoryFilesByDirPathErrors() {
+	s.mock.ExpectQuery(`SELECT .+ FROM memory_files WHERE`).WithArgs("/project").WillReturnError(sql.ErrConnDone)
 	files, err := s.store.GetMemoryFilesByDirPath(context.Background(), "/project")
 	require.Error(s.T(), err)
 	require.Nil(s.T(), files)
-}
 
-func (s *StoreSuite) TestGetMemoryFilesByDirPathScanError() {
-	rows := sqlmock.NewRows([]string{"id", "file_path"}).AddRow(1, "path") // wrong column count
-	s.mock.ExpectQuery(`SELECT .+ FROM memory_files WHERE`).
-		WithArgs("/project").
-		WillReturnRows(rows)
-
-	files, err := s.store.GetMemoryFilesByDirPath(context.Background(), "/project")
+	s.mock.ExpectQuery(`SELECT .+ FROM memory_files WHERE`).WithArgs("/project").WillReturnRows(
+		sqlmock.NewRows([]string{"id", "file_path"}).AddRow(1, "path")) // wrong column count
+	files, err = s.store.GetMemoryFilesByDirPath(context.Background(), "/project")
 	require.Error(s.T(), err)
 	require.Nil(s.T(), files)
 }
@@ -1224,22 +990,14 @@ func (s *StoreSuite) TestGetMemoryFileHash() {
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
-func (s *StoreSuite) TestGetMemoryFileHashNotFound() {
-	s.mock.ExpectQuery(`SELECT content_hash FROM memory_files`).
-		WithArgs("/m/a.md", "").
-		WillReturnError(sql.ErrNoRows)
-
+func (s *StoreSuite) TestGetMemoryFileHashNotFoundAndError() {
+	s.mock.ExpectQuery(`SELECT content_hash FROM memory_files`).WithArgs("/m/a.md", "").WillReturnError(sql.ErrNoRows)
 	hash, err := s.store.GetMemoryFileHash(context.Background(), "/m/a.md", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "", hash)
-}
 
-func (s *StoreSuite) TestGetMemoryFileHashError() {
-	s.mock.ExpectQuery(`SELECT content_hash FROM memory_files`).
-		WithArgs("/m/a.md", "").
-		WillReturnError(sql.ErrConnDone)
-
-	hash, err := s.store.GetMemoryFileHash(context.Background(), "/m/a.md", "")
+	s.mock.ExpectQuery(`SELECT content_hash FROM memory_files`).WithArgs("/m/a.md", "").WillReturnError(sql.ErrConnDone)
+	hash, err = s.store.GetMemoryFileHash(context.Background(), "/m/a.md", "")
 	require.Error(s.T(), err)
 	require.Equal(s.T(), "", hash)
 }
@@ -1255,10 +1013,6 @@ func (s *StoreSuite) TestDeleteMemoryFile() {
 }
 
 func (s *StoreSuite) TestDeleteMemoryFileError() {
-	s.mock.ExpectExec(`DELETE FROM memory_files`).
-		WithArgs("/m/a.md", "").
-		WillReturnError(sql.ErrConnDone)
-
-	err := s.store.DeleteMemoryFile(context.Background(), "/m/a.md", "")
-	require.Error(s.T(), err)
+	s.mock.ExpectExec(`DELETE FROM memory_files`).WithArgs("/m/a.md", "").WillReturnError(sql.ErrConnDone)
+	require.Error(s.T(), s.store.DeleteMemoryFile(context.Background(), "/m/a.md", ""))
 }
