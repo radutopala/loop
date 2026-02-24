@@ -578,7 +578,7 @@ Run `tk ready -T work`. Find the merge chain tail via `tk list --status=open -T 
 ticket is the tail. For each ready work ticket (skip if already in `tk list --status=in_progress`):
 
 1. Create a merge ticket tagged `merge`:
-   `tk create "merge-<id>: merge branch tk-<id> into main" -d "Merge worktree branch tk-<id> into main. Run: git merge tk-<id>, resolve any conflicts, delete the worktree and branch, then tk close this ticket." --tags merge`
+   `tk create "merge-<id>: merge branch tk-<id> into main" -d "Merge worktree branch tk-<id> into main. Run: git checkout tk-<id> && git rebase main, resolve any conflicts, then git checkout main && git merge --ff-only tk-<id>, delete the worktree and branch, then tk close this ticket." --tags merge`
 2. Chain with `tk dep add <merge-id> <work-id>` and if a tail exists `tk dep add <merge-id> <tail-id>`.
    Update tail to this merge ticket.
 3. Create a thread via `create_thread` MCP tool with the work ticket ID as name and a message telling
