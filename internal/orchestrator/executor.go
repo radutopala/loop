@@ -68,7 +68,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			if threadID == "" && !threadFailed {
 				// First turn — create a thread for the task output
 				prefix := fmt.Sprintf("🧵 task #%d (`%s`) ", task.ID, task.Schedule)
-				threadName = prefix + truncateString(task.Prompt, 80)
+				threadName = truncateString(prefix+task.Prompt, 100)
 				id, err := e.bot.CreateSimpleThread(ctx, task.ChannelID, threadName, prefix+text)
 				if err != nil {
 					e.logger.Error("creating task thread", "error", err, "task_id", task.ID, "channel_id", task.ChannelID)
