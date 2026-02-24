@@ -517,6 +517,54 @@ func fakeAPIServer() func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEns
 	}
 }
 
+// serveSetupMocks creates and wires the standard mock objects for serve() tests.
+// It returns the mocks so callers can add extra expectations or adjust config.
+type serveMocks struct {
+	store        *mockStore
+	bot          *mockBot
+	dockerClient *mockDockerClient
+	cfg          *config.Config
+}
+
+func setupServeMocks() *serveMocks {
+	m := &serveMocks{
+		store:        new(mockStore),
+		bot:          new(mockBot),
+		dockerClient: new(mockDockerClient),
+		cfg:          testConfig(),
+	}
+	m.store.On("Close").Return(nil)
+	configLoad = func() (*config.Config, error) { return m.cfg, nil }
+	newSQLiteStore = func(_ string) (db.Store, error) { return m.store, nil }
+	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) { return m.bot, nil }
+	newDockerClient = func() (container.DockerClient, error) { return m.dockerClient, nil }
+	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error { return nil }
+	newAPIServer = fakeAPIServer()
+	return m
+}
+
+func (m *serveMocks) setupHappyBot() {
+	m.bot.On("OnMessage", mock.Anything).Return()
+	m.bot.On("OnInteraction", mock.Anything).Return()
+	m.bot.On("OnChannelDelete", mock.Anything).Return()
+	m.bot.On("OnChannelJoin", mock.Anything).Return()
+	m.bot.On("RegisterCommands", mock.Anything).Return(nil)
+	m.bot.On("Start", mock.Anything).Return(nil)
+	m.bot.On("Stop").Return(nil)
+	m.dockerClient.On("ContainerList", mock.Anything, "app", "loop-agent").Return([]string{}, nil)
+}
+
+// filterExpected removes mock expectations for the given method name.
+func filterExpected(calls []*mock.Call, method string) []*mock.Call {
+	filtered := make([]*mock.Call, 0, len(calls))
+	for _, c := range calls {
+		if c.Method != method {
+			filtered = append(filtered, c)
+		}
+	}
+	return filtered
+}
+
 // --- newRootCmd ---
 
 func (s *MainSuite) TestNewRootCmd() {
@@ -1518,102 +1566,108 @@ func (s *MainSuite) TestRunMCPWithMemoryFlag() {
 
 // --- serve() error cases ---
 
-func (s *MainSuite) TestServeConfigLoadError() {
-	configLoad = func() (*config.Config, error) {
-		return nil, errors.New("config error")
+func (s *MainSuite) TestServeEarlyErrors() {
+	tests := []struct {
+		name    string
+		setup   func(store *mockStore)
+		wantErr string
+	}{
+		{
+			name: "config load error",
+			setup: func(_ *mockStore) {
+				configLoad = func() (*config.Config, error) {
+					return nil, errors.New("config error")
+				}
+			},
+			wantErr: "config error",
+		},
+		{
+			name: "sqlite store error",
+			setup: func(_ *mockStore) {
+				configLoad = func() (*config.Config, error) { return testConfig(), nil }
+				newSQLiteStore = func(_ string) (db.Store, error) {
+					return nil, errors.New("db error")
+				}
+			},
+			wantErr: "opening database",
+		},
+		{
+			name: "discord bot error",
+			setup: func(store *mockStore) {
+				store.On("Close").Return(nil)
+				configLoad = func() (*config.Config, error) { return testConfig(), nil }
+				newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
+				newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
+					return nil, errors.New("discord error")
+				}
+			},
+			wantErr: "creating discord bot",
+		},
+		{
+			name: "slack bot error",
+			setup: func(store *mockStore) {
+				store.On("Close").Return(nil)
+				configLoad = func() (*config.Config, error) { return testSlackConfig(), nil }
+				newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
+				newSlackBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
+					return nil, errors.New("slack error")
+				}
+			},
+			wantErr: "creating slack bot",
+		},
+		{
+			name: "docker client error",
+			setup: func(store *mockStore) {
+				store.On("Close").Return(nil)
+				configLoad = func() (*config.Config, error) { return testConfig(), nil }
+				newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
+				newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
+					return new(mockBot), nil
+				}
+				newDockerClient = func() (container.DockerClient, error) {
+					return nil, errors.New("docker error")
+				}
+			},
+			wantErr: "creating docker client",
+		},
+		{
+			name: "ensure image error",
+			setup: func(store *mockStore) {
+				store.On("Close").Return(nil)
+				configLoad = func() (*config.Config, error) { return testConfig(), nil }
+				newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
+				newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
+					return new(mockBot), nil
+				}
+				newDockerClient = func() (container.DockerClient, error) {
+					return new(mockDockerClient), nil
+				}
+				ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
+					return errors.New("image build failed")
+				}
+			},
+			wantErr: "ensuring agent image",
+		},
 	}
-
-	err := serve()
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "config error")
-}
-
-func (s *MainSuite) TestServeSQLiteStoreError() {
-	configLoad = func() (*config.Config, error) {
-		return testConfig(), nil
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			store := new(mockStore)
+			tt.setup(store)
+			err := serve()
+			require.Error(s.T(), err)
+			require.Contains(s.T(), err.Error(), tt.wantErr)
+			store.AssertExpectations(s.T())
+		})
 	}
-	newSQLiteStore = func(_ string) (db.Store, error) {
-		return nil, errors.New("db error")
-	}
-
-	err := serve()
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "opening database")
-}
-
-func (s *MainSuite) TestServeDiscordBotError() {
-	store := new(mockStore)
-	store.On("Close").Return(nil)
-
-	configLoad = func() (*config.Config, error) {
-		return testConfig(), nil
-	}
-	newSQLiteStore = func(_ string) (db.Store, error) {
-		return store, nil
-	}
-	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
-		return nil, errors.New("discord error")
-	}
-
-	err := serve()
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "creating discord bot")
-	store.AssertExpectations(s.T())
-}
-
-func (s *MainSuite) TestServeSlackBotError() {
-	store := new(mockStore)
-	store.On("Close").Return(nil)
-
-	configLoad = func() (*config.Config, error) {
-		return testSlackConfig(), nil
-	}
-	newSQLiteStore = func(_ string) (db.Store, error) {
-		return store, nil
-	}
-	newSlackBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
-		return nil, errors.New("slack error")
-	}
-
-	err := serve()
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "creating slack bot")
-	store.AssertExpectations(s.T())
 }
 
 func (s *MainSuite) TestServeSlackHappyPathShutdown() {
-	store := new(mockStore)
-	store.On("Close").Return(nil)
+	m := setupServeMocks()
+	m.cfg = testSlackConfig()
+	configLoad = func() (*config.Config, error) { return m.cfg, nil }
+	newSlackBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) { return m.bot, nil }
+	m.setupHappyBot()
 
-	bot := new(mockBot)
-	bot.On("OnMessage", mock.Anything).Return()
-	bot.On("OnInteraction", mock.Anything).Return()
-	bot.On("OnChannelDelete", mock.Anything).Return()
-	bot.On("OnChannelJoin", mock.Anything).Return()
-	bot.On("RegisterCommands", mock.Anything).Return(nil)
-	bot.On("Start", mock.Anything).Return(nil)
-	bot.On("Stop").Return(nil)
-
-	dockerClient := new(mockDockerClient)
-	dockerClient.On("ContainerList", mock.Anything, "app", "loop-agent").Return([]string{}, nil)
-
-	configLoad = func() (*config.Config, error) {
-		return testSlackConfig(), nil
-	}
-	newSQLiteStore = func(_ string) (db.Store, error) {
-		return store, nil
-	}
-	newSlackBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
-		return bot, nil
-	}
-	newDockerClient = func() (container.DockerClient, error) {
-		return dockerClient, nil
-	}
-	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
-		return nil
-	}
-
-	// Verify that channel/thread services are created for Slack (no guild ID needed).
 	channelsCh := make(chan api.ChannelEnsurer, 1)
 	threadsCh := make(chan api.ThreadEnsurer, 1)
 	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) apiServer {
@@ -1623,9 +1677,7 @@ func (s *MainSuite) TestServeSlackHappyPathShutdown() {
 	}
 
 	errCh := make(chan error, 1)
-	go func() {
-		errCh <- serve()
-	}()
+	go func() { errCh <- serve() }()
 
 	gotChannels := <-channelsCh
 	gotThreads := <-threadsCh
@@ -1644,169 +1696,42 @@ func (s *MainSuite) TestServeSlackHappyPathShutdown() {
 		s.T().Fatal("serve() did not return in time")
 	}
 
-	store.AssertExpectations(s.T())
-	bot.AssertExpectations(s.T())
-}
-
-func (s *MainSuite) TestServeDockerClientError() {
-	store := new(mockStore)
-	store.On("Close").Return(nil)
-	bot := new(mockBot)
-
-	configLoad = func() (*config.Config, error) {
-		return testConfig(), nil
-	}
-	newSQLiteStore = func(_ string) (db.Store, error) {
-		return store, nil
-	}
-	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
-		return bot, nil
-	}
-	newDockerClient = func() (container.DockerClient, error) {
-		return nil, errors.New("docker error")
-	}
-
-	err := serve()
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "creating docker client")
-	store.AssertExpectations(s.T())
-}
-
-func (s *MainSuite) TestServeEnsureImageError() {
-	store := new(mockStore)
-	store.On("Close").Return(nil)
-	bot := new(mockBot)
-	dockerClient := new(mockDockerClient)
-
-	configLoad = func() (*config.Config, error) {
-		return testConfig(), nil
-	}
-	newSQLiteStore = func(_ string) (db.Store, error) {
-		return store, nil
-	}
-	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
-		return bot, nil
-	}
-	newDockerClient = func() (container.DockerClient, error) {
-		return dockerClient, nil
-	}
-	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
-		return errors.New("image build failed")
-	}
-
-	err := serve()
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "ensuring agent image")
-	store.AssertExpectations(s.T())
+	m.store.AssertExpectations(s.T())
+	m.bot.AssertExpectations(s.T())
 }
 
 func (s *MainSuite) TestServeAPIServerStartError() {
-	store := new(mockStore)
-	store.On("Close").Return(nil)
-	bot := new(mockBot)
-	dockerClient := new(mockDockerClient)
-
-	configLoad = func() (*config.Config, error) {
-		cfg := testConfig()
-		cfg.APIAddr = "invalid-addr-no-port"
-		return cfg, nil
-	}
-	newSQLiteStore = func(_ string) (db.Store, error) {
-		return store, nil
-	}
-	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
-		return bot, nil
-	}
-	newDockerClient = func() (container.DockerClient, error) {
-		return dockerClient, nil
-	}
-	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
-		return nil
-	}
-	newAPIServer = fakeAPIServer()
+	m := setupServeMocks()
+	m.cfg.APIAddr = "invalid-addr-no-port"
 
 	err := serve()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "starting api server")
-	store.AssertExpectations(s.T())
+	m.store.AssertExpectations(s.T())
 }
 
 func (s *MainSuite) TestServeOrchestratorStartError() {
-	store := new(mockStore)
-	store.On("Close").Return(nil)
-
-	bot := new(mockBot)
-	bot.On("OnMessage", mock.Anything).Return()
-	bot.On("OnInteraction", mock.Anything).Return()
-	bot.On("OnChannelDelete", mock.Anything).Return()
-	bot.On("OnChannelJoin", mock.Anything).Return()
-	bot.On("RegisterCommands", mock.Anything).Return(errors.New("register failed"))
-
-	dockerClient := new(mockDockerClient)
-
-	configLoad = func() (*config.Config, error) {
-		return testConfig(), nil
-	}
-	newSQLiteStore = func(_ string) (db.Store, error) {
-		return store, nil
-	}
-	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
-		return bot, nil
-	}
-	newDockerClient = func() (container.DockerClient, error) {
-		return dockerClient, nil
-	}
-	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
-		return nil
-	}
-	newAPIServer = fakeAPIServer()
+	m := setupServeMocks()
+	m.bot.On("OnMessage", mock.Anything).Return()
+	m.bot.On("OnInteraction", mock.Anything).Return()
+	m.bot.On("OnChannelDelete", mock.Anything).Return()
+	m.bot.On("OnChannelJoin", mock.Anything).Return()
+	m.bot.On("RegisterCommands", mock.Anything).Return(errors.New("register failed"))
 
 	err := serve()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "starting orchestrator")
-	store.AssertExpectations(s.T())
-	bot.AssertExpectations(s.T())
+	m.store.AssertExpectations(s.T())
+	m.bot.AssertExpectations(s.T())
 }
 
 func (s *MainSuite) TestServeHappyPathShutdown() {
-	store := new(mockStore)
-	store.On("Close").Return(nil)
-
-	bot := new(mockBot)
-	bot.On("OnMessage", mock.Anything).Return()
-	bot.On("OnInteraction", mock.Anything).Return()
-	bot.On("OnChannelDelete", mock.Anything).Return()
-	bot.On("OnChannelJoin", mock.Anything).Return()
-	bot.On("RegisterCommands", mock.Anything).Return(nil)
-	bot.On("Start", mock.Anything).Return(nil)
-	bot.On("Stop").Return(nil)
-
-	dockerClient := new(mockDockerClient)
-	dockerClient.On("ContainerList", mock.Anything, "app", "loop-agent").Return([]string{}, nil)
-
-	configLoad = func() (*config.Config, error) {
-		return testConfig(), nil
-	}
-	newSQLiteStore = func(_ string) (db.Store, error) {
-		return store, nil
-	}
-	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
-		return bot, nil
-	}
-	newDockerClient = func() (container.DockerClient, error) {
-		return dockerClient, nil
-	}
-	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
-		return nil
-	}
-	newAPIServer = fakeAPIServer()
+	m := setupServeMocks()
+	m.setupHappyBot()
 
 	errCh := make(chan error, 1)
-	go func() {
-		errCh <- serve()
-	}()
+	go func() { errCh <- serve() }()
 
-	// Give serve() time to start, then send SIGINT.
 	time.Sleep(100 * time.Millisecond)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
@@ -1819,43 +1744,15 @@ func (s *MainSuite) TestServeHappyPathShutdown() {
 		s.T().Fatal("serve() did not return in time")
 	}
 
-	store.AssertExpectations(s.T())
-	bot.AssertExpectations(s.T())
+	m.store.AssertExpectations(s.T())
+	m.bot.AssertExpectations(s.T())
 }
 
 func (s *MainSuite) TestServeHappyPathWithGuildID() {
-	store := new(mockStore)
-	store.On("Close").Return(nil)
+	m := setupServeMocks()
+	m.setupHappyBot()
+	m.cfg.DiscordGuildID = "guild-123"
 
-	bot := new(mockBot)
-	bot.On("OnMessage", mock.Anything).Return()
-	bot.On("OnInteraction", mock.Anything).Return()
-	bot.On("OnChannelDelete", mock.Anything).Return()
-	bot.On("OnChannelJoin", mock.Anything).Return()
-	bot.On("RegisterCommands", mock.Anything).Return(nil)
-	bot.On("Start", mock.Anything).Return(nil)
-	bot.On("Stop").Return(nil)
-
-	dockerClient := new(mockDockerClient)
-	dockerClient.On("ContainerList", mock.Anything, "app", "loop-agent").Return([]string{}, nil)
-
-	cfg := testConfig()
-	cfg.DiscordGuildID = "guild-123"
-	configLoad = func() (*config.Config, error) {
-		return cfg, nil
-	}
-	newSQLiteStore = func(_ string) (db.Store, error) {
-		return store, nil
-	}
-	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
-		return bot, nil
-	}
-	newDockerClient = func() (container.DockerClient, error) {
-		return dockerClient, nil
-	}
-	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
-		return nil
-	}
 	channelsCh := make(chan api.ChannelEnsurer, 1)
 	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) apiServer {
 		channelsCh <- channels
@@ -1863,14 +1760,11 @@ func (s *MainSuite) TestServeHappyPathWithGuildID() {
 	}
 
 	errCh := make(chan error, 1)
-	go func() {
-		errCh <- serve()
-	}()
+	go func() { errCh <- serve() }()
 
 	gotChannels := <-channelsCh
 	require.NotNil(s.T(), gotChannels)
 
-	// Wait for serve() to set up signal handler via signal.NotifyContext.
 	time.Sleep(100 * time.Millisecond)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
@@ -1883,47 +1777,19 @@ func (s *MainSuite) TestServeHappyPathWithGuildID() {
 		s.T().Fatal("serve() did not return in time")
 	}
 
-	store.AssertExpectations(s.T())
-	bot.AssertExpectations(s.T())
+	m.store.AssertExpectations(s.T())
+	m.bot.AssertExpectations(s.T())
 }
 
 func (s *MainSuite) TestServeHappyPathShutdownWithStopError() {
-	store := new(mockStore)
-	store.On("Close").Return(nil)
-
-	bot := new(mockBot)
-	bot.On("OnMessage", mock.Anything).Return()
-	bot.On("OnInteraction", mock.Anything).Return()
-	bot.On("OnChannelDelete", mock.Anything).Return()
-	bot.On("OnChannelJoin", mock.Anything).Return()
-	bot.On("RegisterCommands", mock.Anything).Return(nil)
-	bot.On("Start", mock.Anything).Return(nil)
-	bot.On("Stop").Return(errors.New("bot stop error"))
-
-	dockerClient := new(mockDockerClient)
-	dockerClient.On("ContainerList", mock.Anything, "app", "loop-agent").Return([]string{}, nil)
-
-	configLoad = func() (*config.Config, error) {
-		return testConfig(), nil
-	}
-	newSQLiteStore = func(_ string) (db.Store, error) {
-		return store, nil
-	}
-	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
-		return bot, nil
-	}
-	newDockerClient = func() (container.DockerClient, error) {
-		return dockerClient, nil
-	}
-	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
-		return nil
-	}
-	newAPIServer = fakeAPIServer()
+	m := setupServeMocks()
+	m.setupHappyBot()
+	// Override Stop to return an error
+	m.bot.ExpectedCalls = filterExpected(m.bot.ExpectedCalls, "Stop")
+	m.bot.On("Stop").Return(errors.New("bot stop error"))
 
 	errCh := make(chan error, 1)
-	go func() {
-		errCh <- serve()
-	}()
+	go func() { errCh <- serve() }()
 
 	time.Sleep(100 * time.Millisecond)
 	p, err := os.FindProcess(os.Getpid())
@@ -1938,53 +1804,23 @@ func (s *MainSuite) TestServeHappyPathShutdownWithStopError() {
 		s.T().Fatal("serve() did not return in time")
 	}
 
-	bot.AssertExpectations(s.T())
+	m.bot.AssertExpectations(s.T())
 }
 
 func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
-	store := new(mockStore)
-	store.On("Close").Return(nil)
-
-	bot := new(mockBot)
-	bot.On("OnMessage", mock.Anything).Return()
-	bot.On("OnInteraction", mock.Anything).Return()
-	bot.On("OnChannelDelete", mock.Anything).Return()
-	bot.On("OnChannelJoin", mock.Anything).Return()
-	bot.On("RegisterCommands", mock.Anything).Return(nil)
-	bot.On("Start", mock.Anything).Return(nil)
-	bot.On("Stop").Return(nil)
-
-	dockerClient := new(mockDockerClient)
-	dockerClient.On("ContainerList", mock.Anything, "app", "loop-agent").Return([]string{}, nil)
+	m := setupServeMocks()
+	m.setupHappyBot()
 
 	mockAPI := new(mockAPIServer)
 	mockAPI.On("SetLoopDir", mock.Anything).Return()
 	mockAPI.On("Start", mock.Anything).Return(nil)
 	mockAPI.On("Stop", mock.Anything).Return(errors.New("api stop error"))
-
-	configLoad = func() (*config.Config, error) {
-		return testConfig(), nil
-	}
-	newSQLiteStore = func(_ string) (db.Store, error) {
-		return store, nil
-	}
-	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
-		return bot, nil
-	}
-	newDockerClient = func() (container.DockerClient, error) {
-		return dockerClient, nil
-	}
-	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
-		return nil
-	}
 	newAPIServer = func(_ scheduler.Scheduler, _ api.ChannelEnsurer, _ api.ThreadEnsurer, _ api.ChannelLister, _ api.MessageSender, _ *slog.Logger) apiServer {
 		return mockAPI
 	}
 
 	errCh := make(chan error, 1)
-	go func() {
-		errCh <- serve()
-	}()
+	go func() { errCh <- serve() }()
 
 	time.Sleep(100 * time.Millisecond)
 	p, err := os.FindProcess(os.Getpid())
@@ -2000,26 +1836,19 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 	}
 
 	mockAPI.AssertExpectations(s.T())
-	bot.AssertExpectations(s.T())
+	m.bot.AssertExpectations(s.T())
 }
 
 func (s *MainSuite) TestServeWithMemoryEnabled() {
-	store := new(mockStore)
-	store.On("Close").Return(nil)
-	// reindexAll goroutine may call ListChannels before the test exits.
-	store.On("ListChannels", mock.Anything).Maybe().Return([]*db.Channel{}, nil)
+	m := setupServeMocks()
+	m.store.On("ListChannels", mock.Anything).Maybe().Return([]*db.Channel{}, nil)
+	m.bot.On("OnMessage", mock.Anything).Return()
+	m.bot.On("OnInteraction", mock.Anything).Return()
+	m.bot.On("OnChannelDelete", mock.Anything).Return()
+	m.bot.On("OnChannelJoin", mock.Anything).Return()
+	m.bot.On("RegisterCommands", mock.Anything).Return(errors.New("fail early"))
 
-	bot := new(mockBot)
-	bot.On("OnMessage", mock.Anything).Return()
-	bot.On("OnInteraction", mock.Anything).Return()
-	bot.On("OnChannelDelete", mock.Anything).Return()
-	bot.On("OnChannelJoin", mock.Anything).Return()
-	bot.On("RegisterCommands", mock.Anything).Return(errors.New("fail early"))
-
-	dockerClient := new(mockDockerClient)
-
-	cfg := testConfig()
-	cfg.Memory = config.MemoryConfig{
+	m.cfg.Memory = config.MemoryConfig{
 		Enabled: true,
 		Embeddings: config.EmbeddingsConfig{
 			Provider:  "ollama",
@@ -2027,23 +1856,7 @@ func (s *MainSuite) TestServeWithMemoryEnabled() {
 		},
 		Paths: []string{"./memory"},
 	}
-	cfg.LoopDir = s.T().TempDir()
-
-	configLoad = func() (*config.Config, error) {
-		return cfg, nil
-	}
-	newSQLiteStore = func(_ string) (db.Store, error) {
-		return store, nil
-	}
-	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
-		return bot, nil
-	}
-	newDockerClient = func() (container.DockerClient, error) {
-		return dockerClient, nil
-	}
-	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
-		return nil
-	}
+	m.cfg.LoopDir = s.T().TempDir()
 
 	memoryIndexerSet := false
 	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) apiServer {
@@ -2054,49 +1867,25 @@ func (s *MainSuite) TestServeWithMemoryEnabled() {
 		}}
 	}
 
-	// serve() will fail at orchestrator start (RegisterCommands error)
 	err := serve()
 	require.Error(s.T(), err)
 	require.True(s.T(), memoryIndexerSet, "memory indexer should be set on API server")
 }
 
 func (s *MainSuite) TestServeWithMemoryEmbedderError() {
-	store := new(mockStore)
-	store.On("Close").Return(nil)
+	m := setupServeMocks()
+	m.bot.On("OnMessage", mock.Anything).Return()
+	m.bot.On("OnInteraction", mock.Anything).Return()
+	m.bot.On("OnChannelDelete", mock.Anything).Return()
+	m.bot.On("OnChannelJoin", mock.Anything).Return()
+	m.bot.On("RegisterCommands", mock.Anything).Return(errors.New("fail early"))
 
-	bot := new(mockBot)
-	bot.On("OnMessage", mock.Anything).Return()
-	bot.On("OnInteraction", mock.Anything).Return()
-	bot.On("OnChannelDelete", mock.Anything).Return()
-	bot.On("OnChannelJoin", mock.Anything).Return()
-	bot.On("RegisterCommands", mock.Anything).Return(errors.New("fail early"))
-
-	dockerClient := new(mockDockerClient)
-
-	cfg := testConfig()
-	cfg.Memory = config.MemoryConfig{
+	m.cfg.Memory = config.MemoryConfig{
 		Enabled: true,
 		Embeddings: config.EmbeddingsConfig{
 			Provider: "unsupported-provider",
 		},
 	}
-
-	configLoad = func() (*config.Config, error) {
-		return cfg, nil
-	}
-	newSQLiteStore = func(_ string) (db.Store, error) {
-		return store, nil
-	}
-	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
-		return bot, nil
-	}
-	newDockerClient = func() (container.DockerClient, error) {
-		return dockerClient, nil
-	}
-	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
-		return nil
-	}
-	newAPIServer = fakeAPIServer()
 
 	// serve() continues even when embeddings fail (logs a warning)
 	err := serve()
@@ -2115,38 +1904,20 @@ func (s *memoryIndexableAPIServer) SetMemoryIndexer(idx api.MemoryIndexer) {
 }
 
 func (s *MainSuite) TestServeDockerClientCloserCalled() {
-	store := new(mockStore)
-	store.On("Close").Return(nil)
-
-	bot := new(mockBot)
-	bot.On("OnMessage", mock.Anything).Return()
-	bot.On("OnInteraction", mock.Anything).Return()
-	bot.On("OnChannelDelete", mock.Anything).Return()
-	bot.On("OnChannelJoin", mock.Anything).Return()
-	bot.On("RegisterCommands", mock.Anything).Return(errors.New("fail"))
+	m := setupServeMocks()
+	m.bot.On("OnMessage", mock.Anything).Return()
+	m.bot.On("OnInteraction", mock.Anything).Return()
+	m.bot.On("OnChannelDelete", mock.Anything).Return()
+	m.bot.On("OnChannelJoin", mock.Anything).Return()
+	m.bot.On("RegisterCommands", mock.Anything).Return(errors.New("fail"))
 
 	closeCalled := false
-	dockerClient := &closableDockerClient{
-		mockDockerClient: new(mockDockerClient),
-		closeFn:          func() error { closeCalled = true; return nil },
-	}
-
-	configLoad = func() (*config.Config, error) {
-		return testConfig(), nil
-	}
-	newSQLiteStore = func(_ string) (db.Store, error) {
-		return store, nil
-	}
-	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
-		return bot, nil
-	}
 	newDockerClient = func() (container.DockerClient, error) {
-		return dockerClient, nil
+		return &closableDockerClient{
+			mockDockerClient: new(mockDockerClient),
+			closeFn:          func() error { closeCalled = true; return nil },
+		}, nil
 	}
-	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
-		return nil
-	}
-	newAPIServer = fakeAPIServer()
 
 	err := serve()
 	require.Error(s.T(), err)
@@ -2496,35 +2267,38 @@ func (s *MainSuite) TestOnboardGlobalHomeDirError() {
 	require.Contains(s.T(), err.Error(), "getting home directory")
 }
 
-func (s *MainSuite) TestOnboardGlobalMkdirAllError() {
-	tmpDir := s.T().TempDir()
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
+func (s *MainSuite) TestOnboardGlobalMkdirErrors() {
+	tests := []struct {
+		name      string
+		failCallN int
+		wantErr   string
+	}{
+		{"loop directory", 1, "creating loop directory"},
+		{"container directory", 2, "creating container directory"},
+		{"templates directory", 3, "creating templates directory"},
 	}
-	osStat = os.Stat
-	osMkdirAll = func(_ string, _ os.FileMode) error {
-		return errors.New("mkdir error")
-	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			tmpDir := s.T().TempDir()
+			userHomeDir = func() (string, error) {
+				return tmpDir, nil
+			}
+			osStat = os.Stat
+			calls := 0
+			osMkdirAll = func(path string, perm os.FileMode) error {
+				calls++
+				if calls == tt.failCallN {
+					return errors.New("mkdir error")
+				}
+				return os.MkdirAll(path, perm)
+			}
+			osWriteFile = os.WriteFile
 
-	err := onboardGlobal(false, "")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "creating loop directory")
-}
-
-func (s *MainSuite) TestOnboardGlobalWriteFileError() {
-	tmpDir := s.T().TempDir()
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
+			err := onboardGlobal(false, "")
+			require.Error(s.T(), err)
+			require.Contains(s.T(), err.Error(), tt.wantErr)
+		})
 	}
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	osWriteFile = func(_ string, _ []byte, _ os.FileMode) error {
-		return errors.New("write error")
-	}
-
-	err := onboardGlobal(false, "")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "writing config file")
 }
 
 func (s *MainSuite) TestOnboardGlobalCmdWithForceFlag() {
@@ -2552,27 +2326,6 @@ func (s *MainSuite) TestOnboardGlobalCmdWithForceFlag() {
 	require.Contains(s.T(), string(data), "discord_token")
 }
 
-func (s *MainSuite) TestOnboardGlobalBashrcWriteError() {
-	tmpDir := s.T().TempDir()
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
-	}
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	calls := 0
-	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
-		calls++
-		if calls == 2 { // Second write is .bashrc (after config)
-			return errors.New("bashrc write error")
-		}
-		return os.WriteFile(path, data, perm)
-	}
-
-	err := onboardGlobal(false, "")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "writing .bashrc")
-}
-
 func (s *MainSuite) TestOnboardGlobalBashrcSkipsIfExists() {
 	tmpDir := s.T().TempDir()
 	loopDir := filepath.Join(tmpDir, ".loop")
@@ -2593,90 +2346,6 @@ func (s *MainSuite) TestOnboardGlobalBashrcSkipsIfExists() {
 	data, err := os.ReadFile(bashrcPath)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "existing aliases", string(data))
-}
-
-func (s *MainSuite) TestOnboardGlobalContainerDirError() {
-	tmpDir := s.T().TempDir()
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
-	}
-	osStat = os.Stat
-	calls := 0
-	osMkdirAll = func(path string, perm os.FileMode) error {
-		calls++
-		if calls == 2 {
-			return errors.New("container mkdir error")
-		}
-		return os.MkdirAll(path, perm)
-	}
-	osWriteFile = os.WriteFile
-
-	err := onboardGlobal(false, "")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "creating container directory")
-}
-
-func (s *MainSuite) TestOnboardGlobalContainerDockerfileWriteError() {
-	tmpDir := s.T().TempDir()
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
-	}
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	calls := 0
-	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
-		calls++
-		if calls == 3 { // Third write is Dockerfile (after config and .bashrc)
-			return errors.New("dockerfile write error")
-		}
-		return os.WriteFile(path, data, perm)
-	}
-
-	err := onboardGlobal(false, "")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "writing container Dockerfile")
-}
-
-func (s *MainSuite) TestOnboardGlobalContainerEntrypointWriteError() {
-	tmpDir := s.T().TempDir()
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
-	}
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	calls := 0
-	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
-		calls++
-		if calls == 4 { // Fourth write is entrypoint.sh (after config, .bashrc, Dockerfile)
-			return errors.New("entrypoint write error")
-		}
-		return os.WriteFile(path, data, perm)
-	}
-
-	err := onboardGlobal(false, "")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "writing container entrypoint")
-}
-
-func (s *MainSuite) TestOnboardGlobalContainerSetupWriteError() {
-	tmpDir := s.T().TempDir()
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
-	}
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	calls := 0
-	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
-		calls++
-		if calls == 5 { // Fifth write is setup.sh (after config, .bashrc, Dockerfile, entrypoint)
-			return errors.New("setup write error")
-		}
-		return os.WriteFile(path, data, perm)
-	}
-
-	err := onboardGlobal(false, "")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "writing container setup script")
 }
 
 func (s *MainSuite) TestOnboardGlobalSetupSkipsIfExists() {
@@ -2701,67 +2370,42 @@ func (s *MainSuite) TestOnboardGlobalSetupSkipsIfExists() {
 	require.Equal(s.T(), "existing setup", string(data))
 }
 
-func (s *MainSuite) TestOnboardGlobalSlackManifestWriteError() {
-	tmpDir := s.T().TempDir()
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
+func (s *MainSuite) TestOnboardGlobalWriteErrors() {
+	tests := []struct {
+		name      string
+		failCallN int
+		wantErr   string
+	}{
+		{"config file", 1, "writing config file"},
+		{".bashrc", 2, "writing .bashrc"},
+		{"Dockerfile", 3, "writing container Dockerfile"},
+		{"entrypoint", 4, "writing container entrypoint"},
+		{"setup script", 5, "writing container setup script"},
+		{"Slack manifest", 6, "writing Slack manifest"},
+		{"template", 7, "writing template"},
 	}
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	calls := 0
-	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
-		calls++
-		if calls == 6 { // Sixth write is slack-manifest.json
-			return errors.New("manifest write error")
-		}
-		return os.WriteFile(path, data, perm)
-	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			tmpDir := s.T().TempDir()
+			userHomeDir = func() (string, error) {
+				return tmpDir, nil
+			}
+			osStat = os.Stat
+			osMkdirAll = os.MkdirAll
+			calls := 0
+			osWriteFile = func(path string, data []byte, perm os.FileMode) error {
+				calls++
+				if calls == tt.failCallN {
+					return errors.New("write error")
+				}
+				return os.WriteFile(path, data, perm)
+			}
 
-	err := onboardGlobal(false, "")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "writing Slack manifest")
-}
-
-func (s *MainSuite) TestOnboardGlobalTemplatesDirError() {
-	tmpDir := s.T().TempDir()
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
+			err := onboardGlobal(false, "")
+			require.Error(s.T(), err)
+			require.Contains(s.T(), err.Error(), tt.wantErr)
+		})
 	}
-	osStat = os.Stat
-	calls := 0
-	osMkdirAll = func(path string, perm os.FileMode) error {
-		calls++
-		if calls == 3 { // Third mkdir is templates dir (after loop dir and container dir)
-			return errors.New("templates mkdir error")
-		}
-		return os.MkdirAll(path, perm)
-	}
-	osWriteFile = os.WriteFile
-
-	err := onboardGlobal(false, "")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "creating templates directory")
-}
-
-func (s *MainSuite) TestOnboardGlobalTemplateWriteError() {
-	tmpDir := s.T().TempDir()
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
-	}
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	calls := 0
-	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
-		calls++
-		if calls == 7 { // Seventh write is first template
-			return errors.New("template write error")
-		}
-		return os.WriteFile(path, data, perm)
-	}
-
-	err := onboardGlobal(false, "")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "writing template")
 }
 
 func (s *MainSuite) TestOnboardGlobalTemplatesSkipIfExist() {
@@ -3403,71 +3047,39 @@ func (s *MainSuite) TestEnsureImageMkdirError() {
 	require.Contains(s.T(), err.Error(), "creating container directory")
 }
 
-func (s *MainSuite) TestEnsureImageDockerfileWriteError() {
-	dockerClient := new(mockDockerClient)
-
-	cfg := &config.Config{
-		LoopDir:        s.T().TempDir(),
-		ContainerImage: "loop-agent:latest",
+func (s *MainSuite) TestEnsureImageWriteErrors() {
+	tests := []struct {
+		name      string
+		failCallN int
+		wantErr   string
+	}{
+		{"Dockerfile", 1, "writing Dockerfile"},
+		{"entrypoint", 2, "writing entrypoint"},
+		{"setup script", 3, "writing setup script"},
 	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			dockerClient := new(mockDockerClient)
+			cfg := &config.Config{
+				LoopDir:        s.T().TempDir(),
+				ContainerImage: "loop-agent:latest",
+			}
+			osStat = os.Stat
+			osMkdirAll = os.MkdirAll
+			calls := 0
+			osWriteFile = func(path string, data []byte, perm os.FileMode) error {
+				calls++
+				if calls == tt.failCallN {
+					return errors.New("write error")
+				}
+				return os.WriteFile(path, data, perm)
+			}
 
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	osWriteFile = func(_ string, _ []byte, _ os.FileMode) error {
-		return errors.New("write error")
+			err := s.origEnsureImage(context.Background(), dockerClient, cfg)
+			require.Error(s.T(), err)
+			require.Contains(s.T(), err.Error(), tt.wantErr)
+		})
 	}
-
-	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "writing Dockerfile")
-}
-
-func (s *MainSuite) TestEnsureImageEntrypointWriteError() {
-	dockerClient := new(mockDockerClient)
-
-	cfg := &config.Config{
-		LoopDir:        s.T().TempDir(),
-		ContainerImage: "loop-agent:latest",
-	}
-
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	calls := 0
-	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
-		calls++
-		if calls == 2 { // Second write is entrypoint.sh
-			return errors.New("entrypoint write error")
-		}
-		return os.WriteFile(path, data, perm)
-	}
-
-	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "writing entrypoint")
-}
-
-func (s *MainSuite) TestEnsureImageSetupWriteError() {
-	dockerClient := new(mockDockerClient)
-
-	cfg := &config.Config{
-		LoopDir:        s.T().TempDir(),
-		ContainerImage: "loop-agent:latest",
-	}
-
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	calls := 0
-	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
-		calls++
-		if calls == 3 { // Third write is setup.sh
-			return errors.New("setup write error")
-		}
-		return os.WriteFile(path, data, perm)
-	}
-
-	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "writing setup script")
 }
 
 // --- version ---
