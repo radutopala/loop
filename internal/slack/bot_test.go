@@ -268,65 +268,45 @@ func (s *BotSuite) TestStopNilCancel() {
 
 // --- SendMessage ---
 
-func (s *BotSuite) TestSendMessagePlain() {
-	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234.5678", nil)
+func (s *BotSuite) TestSendMessage() {
+	longContent := strings.Repeat("a", maxMessageLen+100)
 
-	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
-		ChannelID: "C123",
-		Content:   "hello world",
-	})
-	require.NoError(s.T(), err)
-	s.session.AssertNumberOfCalls(s.T(), "PostMessage", 1)
-}
-
-func (s *BotSuite) TestSendMessageThread() {
-	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234.5678", nil)
-
-	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
-		ChannelID: "C123:1111.2222",
-		Content:   "reply in thread",
-	})
-	require.NoError(s.T(), err)
-	s.session.AssertNumberOfCalls(s.T(), "PostMessage", 1)
-}
-
-func (s *BotSuite) TestSendMessageWithReplyTo() {
-	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234.5678", nil)
-
-	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
-		ChannelID:        "C123",
-		Content:          "replying",
-		ReplyToMessageID: "9999.0000",
-	})
-	require.NoError(s.T(), err)
-	s.session.AssertNumberOfCalls(s.T(), "PostMessage", 1)
-}
-
-func (s *BotSuite) TestSendMessageSplit() {
-	var longContent strings.Builder
-	for range maxMessageLen + 100 {
-		longContent.WriteString("a")
+	tests := []struct {
+		name      string
+		msg       *orchestrator.OutgoingMessage
+		postErr   error
+		wantErr   string
+		wantCalls int
+	}{
+		{"plain", &orchestrator.OutgoingMessage{ChannelID: "C123", Content: "hello world"}, nil, "", 1},
+		{"thread", &orchestrator.OutgoingMessage{ChannelID: "C123:1111.2222", Content: "reply in thread"}, nil, "", 1},
+		{"reply_to", &orchestrator.OutgoingMessage{ChannelID: "C123", Content: "replying", ReplyToMessageID: "9999.0000"}, nil, "", 1},
+		{"split", &orchestrator.OutgoingMessage{ChannelID: "C123", Content: longContent}, nil, "", 2},
+		{"error", &orchestrator.OutgoingMessage{ChannelID: "C123", Content: "hello"}, errors.New("channel_not_found"), "slack send message", 1},
 	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			session := new(MockSession)
+			sc := newMockSocketClient()
+			bot := NewBot(session, sc, testLogger())
+			bot.botUserID = "U123BOT"
 
-	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234.5678", nil)
+			if tt.postErr != nil {
+				session.On("PostMessage", "C123", mock.Anything).Return("", "", tt.postErr)
+			} else {
+				session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234.5678", nil)
+			}
 
-	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
-		ChannelID: "C123",
-		Content:   longContent.String(),
-	})
-	require.NoError(s.T(), err)
-	s.session.AssertNumberOfCalls(s.T(), "PostMessage", 2)
-}
-
-func (s *BotSuite) TestSendMessageError() {
-	s.session.On("PostMessage", "C123", mock.Anything).Return("", "", errors.New("channel_not_found"))
-
-	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
-		ChannelID: "C123",
-		Content:   "hello",
-	})
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "slack send message")
+			err := bot.SendMessage(context.Background(), tt.msg)
+			if tt.wantErr != "" {
+				require.Error(s.T(), err)
+				require.Contains(s.T(), err.Error(), tt.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+			}
+			session.AssertNumberOfCalls(s.T(), "PostMessage", tt.wantCalls)
+		})
+	}
 }
 
 // --- SendTyping ---
@@ -693,68 +673,86 @@ func (s *BotSuite) TestCreateThreadError() {
 
 // --- CreateSimpleThread ---
 
-func (s *BotSuite) TestCreateSimpleThreadWithMessage() {
-	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1111.2222", nil)
+func (s *BotSuite) TestCreateSimpleThread() {
+	tests := []struct {
+		name    string
+		parent  string
+		thName  string
+		msg     string
+		postTS  string
+		postErr error
+		wantID  string
+		wantErr string
+	}{
+		{"with_message", "C123", "task output", "First turn", "1111.2222", nil, "C123:1111.2222", ""},
+		{"empty_message", "C123", "task name", "", "2222.3333", nil, "C123:2222.3333", ""},
+		{"composite_parent", "C123:old.ts", "task", "content", "3333.4444", nil, "C123:3333.4444", ""},
+		{"error", "C123", "task", "content", "", errors.New("post failed"), "", "slack create simple thread"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			session := new(MockSession)
+			sc := newMockSocketClient()
+			bot := NewBot(session, sc, testLogger())
+			bot.botUserID = "U123BOT"
+			bot.botUsername = "loopbot"
 
-	id, err := s.bot.CreateSimpleThread(context.Background(), "C123", "task output", "First turn")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "C123:1111.2222", id)
-}
+			if tt.postErr != nil {
+				session.On("PostMessage", "C123", mock.Anything).Return("", "", tt.postErr)
+			} else {
+				session.On("PostMessage", "C123", mock.Anything).Return("C123", tt.postTS, nil)
+			}
 
-func (s *BotSuite) TestCreateSimpleThreadEmptyMessageUsesName() {
-	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "2222.3333", nil)
-
-	id, err := s.bot.CreateSimpleThread(context.Background(), "C123", "task name", "")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "C123:2222.3333", id)
-}
-
-func (s *BotSuite) TestCreateSimpleThreadCompositeParent() {
-	// When parent is a composite ID, only the channel part is used
-	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "3333.4444", nil)
-
-	id, err := s.bot.CreateSimpleThread(context.Background(), "C123:old.ts", "task", "content")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "C123:3333.4444", id)
-}
-
-func (s *BotSuite) TestCreateSimpleThreadError() {
-	s.session.On("PostMessage", "C123", mock.Anything).Return("", "", errors.New("post failed"))
-
-	_, err := s.bot.CreateSimpleThread(context.Background(), "C123", "task", "content")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "slack create simple thread")
+			id, err := bot.CreateSimpleThread(context.Background(), tt.parent, tt.thName, tt.msg)
+			if tt.wantErr != "" {
+				require.Error(s.T(), err)
+				require.Contains(s.T(), err.Error(), tt.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), tt.wantID, id)
+			}
+		})
+	}
 }
 
 // --- PostMessage ---
 
-func (s *BotSuite) TestPostMessagePlain() {
-	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234.5678", nil)
+func (s *BotSuite) TestPostMessage() {
+	tests := []struct {
+		name      string
+		channelID string
+		text      string
+		postErr   error
+		wantErr   string
+	}{
+		{"plain", "C123", "hello", nil, ""},
+		{"composite", "C123:1111.2222", "reply", nil, ""},
+		{"mention_conversion", "C123", "hey @loopbot do this", nil, ""},
+		{"error", "C123", "hello", errors.New("channel_not_found"), "slack post message"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			session := new(MockSession)
+			sc := newMockSocketClient()
+			bot := NewBot(session, sc, testLogger())
+			bot.botUserID = "U123BOT"
+			bot.botUsername = "loopbot"
 
-	err := s.bot.PostMessage(context.Background(), "C123", "hello")
-	require.NoError(s.T(), err)
-}
+			if tt.postErr != nil {
+				session.On("PostMessage", "C123", mock.Anything).Return("", "", tt.postErr)
+			} else {
+				session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234.5678", nil)
+			}
 
-func (s *BotSuite) TestPostMessageComposite() {
-	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234.5678", nil)
-
-	err := s.bot.PostMessage(context.Background(), "C123:1111.2222", "reply")
-	require.NoError(s.T(), err)
-}
-
-func (s *BotSuite) TestPostMessageTextMentionConversion() {
-	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234.5678", nil)
-
-	err := s.bot.PostMessage(context.Background(), "C123", "hey @loopbot do this")
-	require.NoError(s.T(), err)
-}
-
-func (s *BotSuite) TestPostMessageError() {
-	s.session.On("PostMessage", "C123", mock.Anything).Return("", "", errors.New("channel_not_found"))
-
-	err := s.bot.PostMessage(context.Background(), "C123", "hello")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "slack post message")
+			err := bot.PostMessage(context.Background(), tt.channelID, tt.text)
+			if tt.wantErr != "" {
+				require.Error(s.T(), err)
+				require.Contains(s.T(), err.Error(), tt.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+			}
+		})
+	}
 }
 
 // --- DeleteThread ---
@@ -873,89 +871,99 @@ func (s *BotSuite) TestRenameThreadStripsEphemeral() {
 	require.NoError(s.T(), err)
 }
 
-func (s *BotSuite) TestRenameThreadInvalidID() {
-	err := s.bot.RenameThread(context.Background(), "C123", "new name")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "invalid thread ID")
-}
+func (s *BotSuite) TestRenameThreadErrors() {
+	tests := []struct {
+		name    string
+		id      string
+		replies []goslack.Message
+		replErr error
+		updErr  error
+		wantErr string
+	}{
+		{"invalid_id", "C123", nil, nil, nil, "invalid thread ID"},
+		{"get_replies_error", "C123:1111.2222", nil, errors.New("fetch error"), nil, "slack get parent message"},
+		{"empty_replies", "C123:1111.2222", []goslack.Message{}, nil, nil, "parent message not found"},
+		{"update_error", "C123:1111.2222", []goslack.Message{{Msg: goslack.Msg{Text: "🧵 original"}}}, nil, errors.New("update_failed"), "slack rename thread"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			session := new(MockSession)
+			sc := newMockSocketClient()
+			bot := NewBot(session, sc, testLogger())
+			bot.botUserID = "U123BOT"
 
-func (s *BotSuite) TestRenameThreadGetRepliesError() {
-	s.session.On("GetConversationReplies", mock.Anything).Return(nil, false, "", errors.New("fetch error"))
+			if tt.id != "C123" { // has valid composite ID
+				session.On("GetConversationReplies", mock.Anything).Return(tt.replies, false, "", tt.replErr)
+				if tt.updErr != nil {
+					session.On("UpdateMessage", "C123", "1111.2222", mock.Anything).Return("", "", "", tt.updErr)
+				}
+			}
 
-	err := s.bot.RenameThread(context.Background(), "C123:1111.2222", "new name")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "slack get parent message")
-}
-
-func (s *BotSuite) TestRenameThreadEmptyReplies() {
-	s.session.On("GetConversationReplies", mock.Anything).Return([]goslack.Message{}, false, "", nil)
-
-	err := s.bot.RenameThread(context.Background(), "C123:1111.2222", "new name")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "parent message not found")
-}
-
-func (s *BotSuite) TestRenameThreadUpdateError() {
-	s.session.On("GetConversationReplies", mock.Anything).Return([]goslack.Message{
-		{Msg: goslack.Msg{Text: "🧵 original"}},
-	}, false, "", nil)
-	s.session.On("UpdateMessage", "C123", "1111.2222", mock.Anything).Return("", "", "", errors.New("update_failed"))
-
-	err := s.bot.RenameThread(context.Background(), "C123:1111.2222", "new name")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "slack rename thread")
+			err := bot.RenameThread(context.Background(), tt.id, "new name")
+			require.Error(s.T(), err)
+			require.Contains(s.T(), err.Error(), tt.wantErr)
+		})
+	}
 }
 
 // --- GetChannelName ---
 
-func (s *BotSuite) TestGetChannelNameSuccess() {
-	s.session.On("GetConversationInfo", &goslack.GetConversationInfoInput{
-		ChannelID: "C123",
-	}).Return(&goslack.Channel{
-		GroupConversation: goslack.GroupConversation{
-			Name: "general",
-		},
-	}, nil)
+func (s *BotSuite) TestGetChannelName() {
+	tests := []struct {
+		name      string
+		channelID string
+		infoErr   error
+		wantName  string
+		wantErr   bool
+	}{
+		{"success", "C123", nil, "general", false},
+		{"composite_id", "C123:1111.2222", nil, "general", false},
+		{"error", "C123", errors.New("channel_not_found"), "", true},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			session := new(MockSession)
+			sc := newMockSocketClient()
+			bot := NewBot(session, sc, testLogger())
+			bot.botUserID = "U123BOT"
 
-	name, err := s.bot.GetChannelName(context.Background(), "C123")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "general", name)
-}
+			if tt.infoErr != nil {
+				session.On("GetConversationInfo", mock.Anything).Return(nil, tt.infoErr)
+			} else {
+				session.On("GetConversationInfo", &goslack.GetConversationInfoInput{ChannelID: "C123"}).
+					Return(&goslack.Channel{GroupConversation: goslack.GroupConversation{Name: "general"}}, nil)
+			}
 
-func (s *BotSuite) TestGetChannelNameCompositeID() {
-	s.session.On("GetConversationInfo", &goslack.GetConversationInfoInput{
-		ChannelID: "C123",
-	}).Return(&goslack.Channel{
-		GroupConversation: goslack.GroupConversation{
-			Name: "general",
-		},
-	}, nil)
-
-	name, err := s.bot.GetChannelName(context.Background(), "C123:1111.2222")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "general", name)
-}
-
-func (s *BotSuite) TestGetChannelNameError() {
-	s.session.On("GetConversationInfo", mock.Anything).Return(nil, errors.New("channel_not_found"))
-
-	name, err := s.bot.GetChannelName(context.Background(), "C123")
-	require.Error(s.T(), err)
-	require.Empty(s.T(), name)
+			name, err := bot.GetChannelName(context.Background(), tt.channelID)
+			if tt.wantErr {
+				require.Error(s.T(), err)
+				require.Empty(s.T(), name)
+			} else {
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), tt.wantName, name)
+			}
+		})
+	}
 }
 
 // --- GetChannelParentID ---
 
-func (s *BotSuite) TestGetChannelParentIDThread() {
-	parentID, err := s.bot.GetChannelParentID(context.Background(), "C123:1111.2222")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "C123", parentID)
-}
-
-func (s *BotSuite) TestGetChannelParentIDNotThread() {
-	parentID, err := s.bot.GetChannelParentID(context.Background(), "C123")
-	require.NoError(s.T(), err)
-	require.Empty(s.T(), parentID)
+func (s *BotSuite) TestGetChannelParentID() {
+	tests := []struct {
+		name   string
+		input  string
+		wantID string
+	}{
+		{"thread", "C123:1111.2222", "C123"},
+		{"not_thread", "C123", ""},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			parentID, err := s.bot.GetChannelParentID(context.Background(), tt.input)
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tt.wantID, parentID)
+		})
+	}
 }
 
 // --- Composite ID ---
@@ -979,19 +987,27 @@ func (s *BotSuite) TestParseCompositeIDPlain() {
 // --- Slack TS to Time ---
 
 func (s *BotSuite) TestSlackTSToTime() {
-	ts := "1234567890.123456"
-	t := slackTSToTime(ts)
-	require.Equal(s.T(), time.Unix(1234567890, 0), t)
-}
-
-func (s *BotSuite) TestSlackTSToTimeInvalid() {
-	t := slackTSToTime("abc")
-	require.True(s.T(), t.IsZero())
-}
-
-func (s *BotSuite) TestSlackTSToTimeEmpty() {
-	t := slackTSToTime("")
-	require.True(s.T(), t.IsZero())
+	tests := []struct {
+		name   string
+		input  string
+		expect time.Time
+	}{
+		{"valid", "1234567890.123456", time.Unix(1234567890, 0)},
+		{"invalid", "abc", time.Time{}},
+		{"empty", "", time.Time{}},
+		{"non_digit", "abc.123", time.Time{}},
+		{"dot_prefix", ".123456", time.Time{}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			result := slackTSToTime(tt.input)
+			if tt.expect.IsZero() {
+				require.True(s.T(), result.IsZero())
+			} else {
+				require.Equal(s.T(), tt.expect, result)
+			}
+		})
+	}
 }
 
 // --- Event Handling ---
@@ -1098,49 +1114,28 @@ func (s *BotSuite) TestHandleMessageDM() {
 	}
 }
 
-func (s *BotSuite) TestHandleMessageIgnoredSubtype() {
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
-		received <- msg
-	})
-
-	ev := &slackevents.MessageEvent{
-		User:      "U456",
-		Text:      "edited",
-		TimeStamp: "1234567890.000001",
-		Channel:   "C123",
-		SubType:   "message_changed",
+func (s *BotSuite) TestHandleMessageIgnored() {
+	tests := []struct {
+		name string
+		ev   *slackevents.MessageEvent
+	}{
+		{"subtype", &slackevents.MessageEvent{User: "U456", Text: "edited", TimeStamp: "1234567890.000001", Channel: "C123", SubType: "message_changed"}},
+		{"no_trigger", &slackevents.MessageEvent{User: "U456", Text: "just a random message", TimeStamp: "1234567890.000001", Channel: "C123", ChannelType: "channel"}},
+		{"self_no_mention", &slackevents.MessageEvent{User: "U123BOT", Text: "hello from bot", Channel: "C123", TimeStamp: "1234567890.000001"}},
 	}
-	s.bot.handleMessage(ev)
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			received := make(chan *orchestrator.IncomingMessage, 1)
+			s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) { received <- msg })
+			s.bot.handleMessage(tt.ev)
 
-	select {
-	case <-received:
-		s.Fail("should not have received message with subtype")
-	case <-time.After(50 * time.Millisecond):
-		// expected
-	}
-}
-
-func (s *BotSuite) TestHandleMessageNoTrigger() {
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
-		received <- msg
-	})
-
-	ev := &slackevents.MessageEvent{
-		User:        "U456",
-		Text:        "just a random message",
-		TimeStamp:   "1234567890.000001",
-		Channel:     "C123",
-		ChannelType: "channel",
-	}
-	s.bot.handleMessage(ev)
-
-	select {
-	case <-received:
-		s.Fail("should not have received non-triggered message")
-	case <-time.After(50 * time.Millisecond):
-		// expected
+			select {
+			case <-received:
+				s.Fail("should not have received message")
+			case <-time.After(50 * time.Millisecond):
+				// expected
+			}
+		})
 	}
 }
 
@@ -1176,88 +1171,50 @@ func (s *BotSuite) TestHandleMessageReplyToBot() {
 
 // --- Slash Commands ---
 
-func (s *BotSuite) TestHandleSlashCommandSchedule() {
-	received := make(chan *orchestrator.Interaction, 1)
-	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
-		received <- i
-	})
-
-	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
-
-	evt := socketmode.Event{
-		Type: socketmode.EventTypeSlashCommand,
-		Data: goslack.SlashCommand{
-			ChannelID: "C123",
-			TeamID:    "T123",
-			Text:      "schedule 0 9 * * * cron Check for updates",
-		},
-		Request: &socketmode.Request{},
+func (s *BotSuite) TestHandleSlashCommandDispatched() {
+	tests := []struct {
+		name     string
+		cmd      goslack.SlashCommand
+		wantCmd  string
+		wantOpts map[string]string
+		wantAuth string
+	}{
+		{"schedule", goslack.SlashCommand{ChannelID: "C123", TeamID: "T123", Text: "schedule 0 9 * * * cron Check for updates"},
+			"schedule", map[string]string{"schedule": "0 9 * * *", "type": "cron", "prompt": "Check for updates"}, ""},
+		{"tasks", goslack.SlashCommand{ChannelID: "C123", TeamID: "T123", Text: "tasks"},
+			"tasks", nil, ""},
+		{"author_id", goslack.SlashCommand{ChannelID: "C123", TeamID: "T123", UserID: "U789", Text: "tasks"},
+			"tasks", nil, "U789"},
 	}
-	s.bot.handleSlashCommand(evt)
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			session := new(MockSession)
+			sc := newMockSocketClient()
+			bot := NewBot(session, sc, testLogger())
+			bot.botUserID = "U123BOT"
 
-	select {
-	case inter := <-received:
-		require.Equal(s.T(), "schedule", inter.CommandName)
-		require.Equal(s.T(), "0 9 * * *", inter.Options["schedule"])
-		require.Equal(s.T(), "cron", inter.Options["type"])
-		require.Equal(s.T(), "Check for updates", inter.Options["prompt"])
-	case <-time.After(time.Second):
-		s.Fail("timeout waiting for interaction")
-	}
-}
+			received := make(chan *orchestrator.Interaction, 1)
+			bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) { received <- i })
+			sc.On("Ack", mock.Anything, mock.Anything).Return()
 
-func (s *BotSuite) TestHandleSlashCommandTasks() {
-	received := make(chan *orchestrator.Interaction, 1)
-	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
-		received <- i
-	})
+			evt := socketmode.Event{
+				Type: socketmode.EventTypeSlashCommand, Data: tt.cmd, Request: &socketmode.Request{},
+			}
+			bot.handleSlashCommand(evt)
 
-	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
-
-	evt := socketmode.Event{
-		Type: socketmode.EventTypeSlashCommand,
-		Data: goslack.SlashCommand{
-			ChannelID: "C123",
-			TeamID:    "T123",
-			Text:      "tasks",
-		},
-		Request: &socketmode.Request{},
-	}
-	s.bot.handleSlashCommand(evt)
-
-	select {
-	case inter := <-received:
-		require.Equal(s.T(), "tasks", inter.CommandName)
-	case <-time.After(time.Second):
-		s.Fail("timeout waiting for interaction")
-	}
-}
-
-func (s *BotSuite) TestHandleSlashCommandSetsAuthorID() {
-	received := make(chan *orchestrator.Interaction, 1)
-	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
-		received <- i
-	})
-
-	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
-
-	evt := socketmode.Event{
-		Type: socketmode.EventTypeSlashCommand,
-		Data: goslack.SlashCommand{
-			ChannelID: "C123",
-			TeamID:    "T123",
-			UserID:    "U789",
-			Text:      "tasks",
-		},
-		Request: &socketmode.Request{},
-	}
-	s.bot.handleSlashCommand(evt)
-
-	select {
-	case inter := <-received:
-		require.Equal(s.T(), "U789", inter.AuthorID)
-	case <-time.After(time.Second):
-		s.Fail("timeout waiting for interaction")
+			select {
+			case inter := <-received:
+				require.Equal(s.T(), tt.wantCmd, inter.CommandName)
+				for k, v := range tt.wantOpts {
+					require.Equal(s.T(), v, inter.Options[k], "option %s", k)
+				}
+				if tt.wantAuth != "" {
+					require.Equal(s.T(), tt.wantAuth, inter.AuthorID)
+				}
+			case <-time.After(time.Second):
+				s.Fail("timeout waiting for interaction")
+			}
+		})
 	}
 }
 
@@ -1318,95 +1275,75 @@ func (s *BotSuite) TestHandleEventsAPIChannelMention() {
 
 // --- Command Parsing ---
 
-func (s *BotSuite) TestParseSlashCommandSchedule() {
-	inter, errText := parseSlashCommand("C123", "T123", "schedule 0 9 * * * cron Check updates")
-	require.Empty(s.T(), errText)
-	require.NotNil(s.T(), inter)
-	require.Equal(s.T(), "schedule", inter.CommandName)
-	require.Equal(s.T(), "0 9 * * *", inter.Options["schedule"])
-	require.Equal(s.T(), "cron", inter.Options["type"])
-	require.Equal(s.T(), "Check updates", inter.Options["prompt"])
-}
-
-func (s *BotSuite) TestParseSlashCommandScheduleInterval() {
-	inter, errText := parseSlashCommand("C123", "T123", "schedule 1h interval Run checks")
-	require.Empty(s.T(), errText)
-	require.NotNil(s.T(), inter)
-	require.Equal(s.T(), "1h", inter.Options["schedule"])
-	require.Equal(s.T(), "interval", inter.Options["type"])
-	require.Equal(s.T(), "Run checks", inter.Options["prompt"])
-}
-
-func (s *BotSuite) TestParseSlashCommandScheduleTooFewArgs() {
-	_, errText := parseSlashCommand("C123", "T123", "schedule foo bar")
-	require.NotEmpty(s.T(), errText)
-}
-
-func (s *BotSuite) TestParseSlashCommandCancel() {
-	inter, errText := parseSlashCommand("C123", "T123", "cancel 42")
-	require.Empty(s.T(), errText)
-	require.Equal(s.T(), "cancel", inter.CommandName)
-	require.Equal(s.T(), "42", inter.Options["task_id"])
-}
-
-func (s *BotSuite) TestParseSlashCommandCancelInvalidID() {
-	_, errText := parseSlashCommand("C123", "T123", "cancel abc")
-	require.Contains(s.T(), errText, "Invalid task_id")
-}
-
-func (s *BotSuite) TestParseSlashCommandToggle() {
-	inter, errText := parseSlashCommand("C123", "T123", "toggle 7")
-	require.Empty(s.T(), errText)
-	require.Equal(s.T(), "toggle", inter.CommandName)
-	require.Equal(s.T(), "7", inter.Options["task_id"])
-}
-
-func (s *BotSuite) TestParseSlashCommandEdit() {
-	inter, errText := parseSlashCommand("C123", "T123", "edit 5 --schedule 1h --type interval --prompt New task prompt text")
-	require.Empty(s.T(), errText)
-	require.Equal(s.T(), "edit", inter.CommandName)
-	require.Equal(s.T(), "5", inter.Options["task_id"])
-	require.Equal(s.T(), "1h", inter.Options["schedule"])
-	require.Equal(s.T(), "interval", inter.Options["type"])
-	require.Equal(s.T(), "New task prompt text", inter.Options["prompt"])
-}
-
-func (s *BotSuite) TestParseSlashCommandEditNoFlags() {
-	_, errText := parseSlashCommand("C123", "T123", "edit 5")
-	require.Contains(s.T(), errText, "At least one of")
-}
-
-func (s *BotSuite) TestParseSlashCommandStatus() {
-	inter, errText := parseSlashCommand("C123", "T123", "status")
-	require.Empty(s.T(), errText)
-	require.Equal(s.T(), "status", inter.CommandName)
-}
-
-func (s *BotSuite) TestParseSlashCommandStop() {
-	inter, errText := parseSlashCommand("C123", "T123", "stop")
-	require.Empty(s.T(), errText)
-	require.Equal(s.T(), "stop", inter.CommandName)
-	require.Equal(s.T(), "C123", inter.ChannelID)
-}
-
-func (s *BotSuite) TestParseSlashCommandReadme() {
-	inter, errText := parseSlashCommand("C123", "T123", "readme")
-	require.Empty(s.T(), errText)
-	require.Equal(s.T(), "readme", inter.CommandName)
-	require.Equal(s.T(), "C123", inter.ChannelID)
-}
-
-func (s *BotSuite) TestParseSlashCommandTemplateAdd() {
-	inter, errText := parseSlashCommand("C123", "T123", "template add daily-check")
-	require.Empty(s.T(), errText)
-	require.Equal(s.T(), "template-add", inter.CommandName)
-	require.Equal(s.T(), "daily-check", inter.Options["name"])
-}
-
-func (s *BotSuite) TestParseSlashCommandTemplateList() {
-	inter, errText := parseSlashCommand("C123", "T123", "template list")
-	require.Empty(s.T(), errText)
-	require.Equal(s.T(), "template-list", inter.CommandName)
+func (s *BotSuite) TestParseSlashCommand() {
+	tests := []struct {
+		name       string
+		input      string
+		wantCmd    string
+		wantOpts   map[string]string
+		wantErrSub string // non-empty means error expected
+	}{
+		// schedule
+		{"schedule_cron", "schedule 0 9 * * * cron Check updates", "schedule", map[string]string{"schedule": "0 9 * * *", "type": "cron", "prompt": "Check updates"}, ""},
+		{"schedule_interval", "schedule 1h interval Run checks", "schedule", map[string]string{"schedule": "1h", "type": "interval", "prompt": "Run checks"}, ""},
+		{"schedule_too_few", "schedule foo bar", "", nil, "Usage:"},
+		{"schedule_type_at_start", "schedule cron prompt text", "", nil, "Usage:"},
+		{"schedule_type_at_end", "schedule daily cron", "", nil, "Usage:"},
+		{"schedule_no_type", "schedule daily something prompt", "", nil, "Usage:"},
+		// cancel
+		{"cancel", "cancel 42", "cancel", map[string]string{"task_id": "42"}, ""},
+		{"cancel_invalid_id", "cancel abc", "", nil, "Invalid task_id"},
+		{"cancel_no_args", "cancel", "", nil, "Usage:"},
+		// toggle
+		{"toggle", "toggle 7", "toggle", map[string]string{"task_id": "7"}, ""},
+		{"toggle_no_args", "toggle", "", nil, "Usage:"},
+		{"toggle_invalid_id", "toggle abc", "", nil, "Invalid task_id"},
+		// edit
+		{"edit_all_flags", "edit 5 --schedule 1h --type interval --prompt New task prompt text", "edit", map[string]string{"task_id": "5", "schedule": "1h", "type": "interval", "prompt": "New task prompt text"}, ""},
+		{"edit_no_flags", "edit 5", "", nil, "At least one of"},
+		{"edit_no_args", "edit", "", nil, "Usage:"},
+		{"edit_invalid_id", "edit abc", "", nil, "Invalid task_id"},
+		{"edit_schedule_no_val", "edit 1 --schedule", "", nil, "--schedule requires a value"},
+		{"edit_type_no_val", "edit 1 --type", "", nil, "--type requires a value"},
+		{"edit_prompt_no_val", "edit 1 --prompt", "", nil, "--prompt requires a value"},
+		{"edit_with_prompt", "edit 1 --prompt hello world", "edit", map[string]string{"prompt": "hello world"}, ""},
+		{"edit_with_type", "edit 1 --type cron", "edit", map[string]string{"type": "cron"}, ""},
+		// simple commands
+		{"status", "status", "status", nil, ""},
+		{"stop", "stop", "stop", nil, ""},
+		{"readme", "readme", "readme", nil, ""},
+		{"iamtheowner", "iamtheowner", "iamtheowner", nil, ""},
+		{"tasks", "tasks", "tasks", nil, ""},
+		// template
+		{"template_add", "template add daily-check", "template-add", map[string]string{"name": "daily-check"}, ""},
+		{"template_list", "template list", "template-list", nil, ""},
+		{"template_no_args", "template", "", nil, "Usage:"},
+		{"template_unknown_sub", "template foo", "", nil, "Usage:"},
+		{"template_add_no_name", "template add", "", nil, "Usage:"},
+		// errors
+		{"empty", "", "", nil, "Available commands"},
+		{"unknown", "foo", "", nil, "Unknown subcommand: foo"},
+		// help text checks
+		{"help_has_stop", "", "", nil, "/loop stop"},
+		{"help_has_readme", "", "", nil, "/loop readme"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			inter, errText := parseSlashCommand("C123", "T123", tt.input)
+			if tt.wantErrSub != "" {
+				require.Contains(s.T(), errText, tt.wantErrSub)
+				return
+			}
+			require.Empty(s.T(), errText)
+			require.NotNil(s.T(), inter)
+			require.Equal(s.T(), tt.wantCmd, inter.CommandName)
+			require.Equal(s.T(), "C123", inter.ChannelID)
+			require.Equal(s.T(), "T123", inter.GuildID)
+			for k, v := range tt.wantOpts {
+				require.Equal(s.T(), v, inter.Options[k], "option %s", k)
+			}
+		})
+	}
 }
 
 func (s *BotSuite) TestEventLoopChannelClosed() {
@@ -1436,34 +1373,15 @@ func (s *BotSuite) TestEventLoopChannelClosed() {
 	}
 }
 
-func (s *BotSuite) TestHandleSlashCommandInvalidData() {
-	// Send a slash command event with non-SlashCommand data type
-	evt := socketmode.Event{
-		Type: socketmode.EventTypeSlashCommand,
-		Data: "not a slash command", // wrong type
+func (s *BotSuite) TestHandleEventInvalidData() {
+	// All should return without panic
+	for _, evt := range []socketmode.Event{
+		{Type: socketmode.EventTypeSlashCommand, Data: "not a slash command"},
+		{Type: socketmode.EventTypeEventsAPI, Data: "not an events api event"},
+		{Type: socketmode.EventType("unknown"), Data: nil},
+	} {
+		s.bot.handleEvent(evt)
 	}
-	// Should return without panic
-	s.bot.handleSlashCommand(evt)
-}
-
-func (s *BotSuite) TestHandleEventsAPIInvalidData() {
-	// Send an events API event with non-EventsAPIEvent data type
-	evt := socketmode.Event{
-		Type: socketmode.EventTypeEventsAPI,
-		Data: "not an events api event", // wrong type
-	}
-	// Should return without panic
-	s.bot.handleEventsAPI(evt)
-}
-
-func (s *BotSuite) TestHandleEventUnknownType() {
-	// Send an event with an unknown type
-	evt := socketmode.Event{
-		Type: socketmode.EventType("unknown"),
-		Data: nil,
-	}
-	// Should return without panic
-	s.bot.handleEvent(evt)
 }
 
 func (s *BotSuite) TestHandleEventBothPaths() {
@@ -1583,289 +1501,57 @@ func (e *errorSocketModeClient) Events() <-chan socketmode.Event {
 	return e.events
 }
 
-func (s *BotSuite) TestParseSlashCommandEmpty() {
-	inter, errText := parseSlashCommand("C123", "T123", "")
-	require.Nil(s.T(), inter)
-	require.Contains(s.T(), errText, "Available commands")
-}
-
-func (s *BotSuite) TestParseSlashCommandUnknown() {
-	inter, errText := parseSlashCommand("C123", "T123", "foo")
-	require.Nil(s.T(), inter)
-	require.Contains(s.T(), errText, "Unknown subcommand: foo")
-}
-
-// --- Additional command parsing edge cases ---
-
-func (s *BotSuite) TestParseCancelWrongArgCount() {
-	inter, errText := parseSlashCommand("C123", "T123", "cancel")
-	require.Nil(s.T(), inter)
-	require.Contains(s.T(), errText, "Usage:")
-}
-
-func (s *BotSuite) TestParseToggleWrongArgCount() {
-	inter, errText := parseSlashCommand("C123", "T123", "toggle")
-	require.Nil(s.T(), inter)
-	require.Contains(s.T(), errText, "Usage:")
-}
-
-func (s *BotSuite) TestParseToggleInvalidID() {
-	inter, errText := parseSlashCommand("C123", "T123", "toggle abc")
-	require.Nil(s.T(), inter)
-	require.Contains(s.T(), errText, "Invalid task_id")
-}
-
-func (s *BotSuite) TestParseEditNoArgs() {
-	inter, errText := parseSlashCommand("C123", "T123", "edit")
-	require.Nil(s.T(), inter)
-	require.Contains(s.T(), errText, "Usage:")
-}
-
-func (s *BotSuite) TestParseEditInvalidID() {
-	inter, errText := parseSlashCommand("C123", "T123", "edit abc")
-	require.Nil(s.T(), inter)
-	require.Contains(s.T(), errText, "Invalid task_id")
-}
-
-func (s *BotSuite) TestParseEditScheduleNoValue() {
-	inter, errText := parseSlashCommand("C123", "T123", "edit 1 --schedule")
-	require.Nil(s.T(), inter)
-	require.Contains(s.T(), errText, "--schedule requires a value")
-}
-
-func (s *BotSuite) TestParseEditTypeNoValue() {
-	inter, errText := parseSlashCommand("C123", "T123", "edit 1 --type")
-	require.Nil(s.T(), inter)
-	require.Contains(s.T(), errText, "--type requires a value")
-}
-
-func (s *BotSuite) TestParseEditPromptNoValue() {
-	inter, errText := parseSlashCommand("C123", "T123", "edit 1 --prompt")
-	require.Nil(s.T(), inter)
-	require.Contains(s.T(), errText, "--prompt requires a value")
-}
-
-func (s *BotSuite) TestParseEditWithPrompt() {
-	inter, _ := parseSlashCommand("C123", "T123", "edit 1 --prompt hello world")
-	require.NotNil(s.T(), inter)
-	require.Equal(s.T(), "edit", inter.CommandName)
-	require.Equal(s.T(), "hello world", inter.Options["prompt"])
-}
-
-func (s *BotSuite) TestParseEditWithType() {
-	inter, _ := parseSlashCommand("C123", "T123", "edit 1 --type cron")
-	require.NotNil(s.T(), inter)
-	require.Equal(s.T(), "edit", inter.CommandName)
-	require.Equal(s.T(), "cron", inter.Options["type"])
-}
-
-func (s *BotSuite) TestParseTemplateNoArgs() {
-	inter, errText := parseSlashCommand("C123", "T123", "template")
-	require.Nil(s.T(), inter)
-	require.Contains(s.T(), errText, "Usage:")
-}
-
-func (s *BotSuite) TestParseTemplateUnknownSubcommand() {
-	inter, errText := parseSlashCommand("C123", "T123", "template foo")
-	require.Nil(s.T(), inter)
-	require.Contains(s.T(), errText, "Usage:")
-}
-
-func (s *BotSuite) TestParseTemplateAddNoName() {
-	inter, errText := parseSlashCommand("C123", "T123", "template add")
-	require.Nil(s.T(), inter)
-	require.Contains(s.T(), errText, "Usage:")
-}
-
-func (s *BotSuite) TestParseScheduleTypeAtStart() {
-	// Type keyword at position 0 (before schedule)
-	inter, errText := parseSlashCommand("C123", "T123", "schedule cron prompt text")
-	require.Nil(s.T(), inter)
-	require.Contains(s.T(), errText, "Usage:")
-}
-
-func (s *BotSuite) TestParseScheduleTypeAtEnd() {
-	// Type keyword at the last position (no prompt)
-	inter, errText := parseSlashCommand("C123", "T123", "schedule daily cron")
-	require.Nil(s.T(), inter)
-	require.Contains(s.T(), errText, "Usage:")
-}
-
-func (s *BotSuite) TestParseScheduleNoTypeKeyword() {
-	// No type keyword found
-	inter, errText := parseSlashCommand("C123", "T123", "schedule daily something prompt")
-	require.Nil(s.T(), inter)
-	require.Contains(s.T(), errText, "Usage:")
-}
-
 // --- Additional bot edge cases ---
 
-func (s *BotSuite) TestSlackTSToTimeNonDigit() {
-	t := slackTSToTime("abc.123")
-	require.True(s.T(), t.IsZero())
-}
+func (s *BotSuite) TestSendTypingRemoveReactionErrors() {
+	for _, removeErr := range []string{"remove error", "no_reaction"} {
+		s.Run(removeErr, func() {
+			session := new(MockSession)
+			sc := newMockSocketClient()
+			bot := NewBot(session, sc, testLogger())
+			bot.botUserID = "U123BOT"
 
-func (s *BotSuite) TestSlackTSToTimeDotPrefix() {
-	// Timestamp starting with a dot (empty parts[0])
-	t := slackTSToTime(".123456")
-	require.True(s.T(), t.IsZero())
-}
+			ref := goslack.NewRefToMessage("C123", "1234.5678")
+			bot.lastMessageRef.Store("C123", ref)
 
-func (s *BotSuite) TestSendTypingRemoveReactionError() {
-	channelID := "C123"
-	ref := goslack.NewRefToMessage(channelID, "1234.5678")
-	s.bot.lastMessageRef.Store(channelID, ref)
+			session.On("AddReaction", "eyes", ref).Return(nil)
+			session.On("RemoveReaction", "eyes", ref).Return(errors.New(removeErr))
 
-	s.session.On("AddReaction", "eyes", ref).Return(nil)
-	s.session.On("RemoveReaction", "eyes", ref).Return(errors.New("remove error"))
+			ctx, cancel := context.WithCancel(context.Background())
+			err := bot.SendTyping(ctx, "C123")
+			require.NoError(s.T(), err)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	err := s.bot.SendTyping(ctx, channelID)
-	require.NoError(s.T(), err)
-
-	cancel()
-	time.Sleep(50 * time.Millisecond)
-	s.session.AssertCalled(s.T(), "RemoveReaction", "eyes", ref)
-}
-
-func (s *BotSuite) TestSendTypingRemoveReactionNoReactionIgnored() {
-	channelID := "C123"
-	ref := goslack.NewRefToMessage(channelID, "1234.5678")
-	s.bot.lastMessageRef.Store(channelID, ref)
-
-	s.session.On("AddReaction", "eyes", ref).Return(nil)
-	s.session.On("RemoveReaction", "eyes", ref).Return(errors.New("no_reaction"))
-
-	ctx, cancel := context.WithCancel(context.Background())
-	err := s.bot.SendTyping(ctx, channelID)
-	require.NoError(s.T(), err)
-
-	cancel()
-	time.Sleep(50 * time.Millisecond)
-	s.session.AssertCalled(s.T(), "RemoveReaction", "eyes", ref)
-}
-
-func (s *BotSuite) TestHandleMessageSubtypeSkipped() {
-	// Messages with subtypes should be skipped
-	ev := &slackevents.MessageEvent{
-		SubType: "message_changed",
-		User:    "U456",
-		Text:    "<@U123BOT> test",
-		Channel: "C123",
-	}
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
-		received <- msg
-	})
-	s.bot.handleMessage(ev)
-
-	select {
-	case <-received:
-		s.Fail("should not receive message with subtype")
-	case <-time.After(50 * time.Millisecond):
-		// expected
+			cancel()
+			time.Sleep(50 * time.Millisecond)
+			session.AssertCalled(s.T(), "RemoveReaction", "eyes", ref)
+		})
 	}
 }
 
-func (s *BotSuite) TestHandleMessageNotTriggered() {
-	// Message that doesn't match any trigger
-	ev := &slackevents.MessageEvent{
-		User:      "U456",
-		Text:      "just some random text",
-		Channel:   "C123",
-		TimeStamp: "1234567890.000001",
+func (s *BotSuite) TestIsReplyToBotFalse() {
+	tests := []struct {
+		name    string
+		replies []goslack.Message
+		err     error
+	}{
+		{"api_error", nil, errors.New("api error")},
+		{"empty_replies", []goslack.Message{}, nil},
 	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			session := new(MockSession)
+			sc := newMockSocketClient()
+			bot := NewBot(session, sc, testLogger())
+			bot.botUserID = "U123BOT"
 
-	s.session.On("GetConversationReplies", mock.Anything).
-		Return([]goslack.Message{}, false, "", nil).Maybe()
-
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
-		received <- msg
-	})
-	s.bot.handleMessage(ev)
-
-	select {
-	case <-received:
-		s.Fail("should not receive non-triggered message")
-	case <-time.After(50 * time.Millisecond):
-		// expected
+			ev := &slackevents.MessageEvent{
+				User: "U456", Channel: "C123",
+				ThreadTimeStamp: "1234567890.000001", TimeStamp: "1234567890.000002",
+			}
+			session.On("GetConversationReplies", mock.Anything).Return(tt.replies, false, "", tt.err)
+			require.False(s.T(), bot.isReplyToBot(ev))
+		})
 	}
-}
-
-func (s *BotSuite) TestHandleMessagePrefixTrigger() {
-	ev := &slackevents.MessageEvent{
-		User:      "U456",
-		Text:      "!loop hello world",
-		Channel:   "C123",
-		TimeStamp: "1234567890.000001",
-	}
-
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
-		received <- msg
-	})
-	s.bot.handleMessage(ev)
-
-	select {
-	case msg := <-received:
-		require.True(s.T(), msg.HasPrefix)
-		require.Equal(s.T(), "hello world", msg.Content)
-	case <-time.After(time.Second):
-		s.Fail("timeout")
-	}
-}
-
-func (s *BotSuite) TestHandleMessageDMTrigger() {
-	ev := &slackevents.MessageEvent{
-		User:        "U456",
-		Text:        "hello",
-		Channel:     "D123",
-		ChannelType: "im",
-		TimeStamp:   "1234567890.000001",
-	}
-
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
-		received <- msg
-	})
-	s.bot.handleMessage(ev)
-
-	select {
-	case msg := <-received:
-		require.True(s.T(), msg.IsDM)
-		require.Equal(s.T(), "hello", msg.Content)
-	case <-time.After(time.Second):
-		s.Fail("timeout")
-	}
-}
-
-func (s *BotSuite) TestIsReplyToBotError() {
-	ev := &slackevents.MessageEvent{
-		User:            "U456",
-		Channel:         "C123",
-		ThreadTimeStamp: "1234567890.000001",
-		TimeStamp:       "1234567890.000002",
-	}
-	s.session.On("GetConversationReplies", mock.Anything).
-		Return(nil, false, "", errors.New("api error"))
-
-	result := s.bot.isReplyToBot(ev)
-	require.False(s.T(), result)
-}
-
-func (s *BotSuite) TestIsReplyToBotEmptyReplies() {
-	ev := &slackevents.MessageEvent{
-		User:            "U456",
-		Channel:         "C123",
-		ThreadTimeStamp: "1234567890.000001",
-		TimeStamp:       "1234567890.000002",
-	}
-	s.session.On("GetConversationReplies", mock.Anything).
-		Return([]goslack.Message{}, false, "", nil)
-
-	result := s.bot.isReplyToBot(ev)
-	require.False(s.T(), result)
 }
 
 func (s *BotSuite) TestHandleEventsAPIUnknownInnerEvent() {
@@ -2008,93 +1694,52 @@ func (s *BotSuite) TestHandleEventsAPIMemberJoinedChannel() {
 
 // --- Channel deletion/archive event tests ---
 
-func (s *BotSuite) TestHandleEventsAPIChannelDeleted() {
-	received := make(chan string, 1)
-	s.bot.OnChannelDelete(func(_ context.Context, channelID string, isThread bool) {
-		require.False(s.T(), isThread)
-		received <- channelID
-	})
+func (s *BotSuite) TestHandleEventsAPIChannelGroupDeleted() {
+	tests := []struct {
+		name      string
+		eventType string
+		data      any
+		expectID  string
+	}{
+		{"channel_deleted", "channel_deleted", &slackevents.ChannelDeletedEvent{Channel: "C111"}, "C111"},
+		{"group_deleted", "group_deleted", &slackevents.GroupDeletedEvent{Channel: "G222"}, "G222"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			session := new(MockSession)
+			sc := newMockSocketClient()
+			bot := NewBot(session, sc, testLogger())
+			bot.botUserID = "U123BOT"
 
-	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
+			received := make(chan string, 1)
+			bot.OnChannelDelete(func(_ context.Context, channelID string, _ bool) {
+				received <- channelID
+			})
 
-	evt := socketmode.Event{
-		Type: socketmode.EventTypeEventsAPI,
-		Data: slackevents.EventsAPIEvent{
-			InnerEvent: slackevents.EventsAPIInnerEvent{
-				Type: "channel_deleted",
-				Data: &slackevents.ChannelDeletedEvent{
-					Channel: "C111",
+			sc.On("Ack", mock.Anything, mock.Anything).Return()
+
+			evt := socketmode.Event{
+				Type: socketmode.EventTypeEventsAPI,
+				Data: slackevents.EventsAPIEvent{
+					InnerEvent: slackevents.EventsAPIInnerEvent{Type: tt.eventType, Data: tt.data},
 				},
-			},
-		},
-		Request: &socketmode.Request{},
-	}
-	s.bot.handleEventsAPI(evt)
+				Request: &socketmode.Request{},
+			}
+			bot.handleEventsAPI(evt)
 
-	select {
-	case chID := <-received:
-		require.Equal(s.T(), "C111", chID)
-	case <-time.After(time.Second):
-		s.T().Fatal("handler not called")
-	}
-}
-
-func (s *BotSuite) TestHandleEventsAPIGroupDeleted() {
-	received := make(chan string, 1)
-	s.bot.OnChannelDelete(func(_ context.Context, channelID string, _ bool) {
-		received <- channelID
-	})
-
-	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
-
-	evt := socketmode.Event{
-		Type: socketmode.EventTypeEventsAPI,
-		Data: slackevents.EventsAPIEvent{
-			InnerEvent: slackevents.EventsAPIInnerEvent{
-				Type: "group_deleted",
-				Data: &slackevents.GroupDeletedEvent{
-					Channel: "G222",
-				},
-			},
-		},
-		Request: &socketmode.Request{},
-	}
-	s.bot.handleEventsAPI(evt)
-
-	select {
-	case chID := <-received:
-		require.Equal(s.T(), "G222", chID)
-	case <-time.After(time.Second):
-		s.T().Fatal("handler not called")
+			select {
+			case chID := <-received:
+				require.Equal(s.T(), tt.expectID, chID)
+			case <-time.After(time.Second):
+				s.T().Fatal("handler not called")
+			}
+		})
 	}
 }
 
 func (s *BotSuite) TestNotifyChannelDeleteNoHandlers() {
 	// Should not panic with no handlers registered
 	s.bot.notifyChannelDelete("C123")
-}
-
-func (s *BotSuite) TestHandleMessageSelfMentionSkipped() {
-	// Bot's own messages (without self-mention) should be skipped
-	ev := &slackevents.MessageEvent{
-		User:      "U123BOT",
-		Text:      "hello from bot",
-		Channel:   "C123",
-		TimeStamp: "1234567890.000001",
-	}
-
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
-		received <- msg
-	})
-	s.bot.handleMessage(ev)
-
-	select {
-	case <-received:
-		s.Fail("should not receive bot's own message")
-	case <-time.After(50 * time.Millisecond):
-		// expected
-	}
 }
 
 func (s *BotSuite) TestHandleMessageInThread() {
@@ -2221,175 +1866,136 @@ func (s *BotSuite) TestGetMemberRolesReturnsNil() {
 
 // --- parseAllow / parseDeny / extractUserID ---
 
-func (s *BotSuite) TestParseAllowUserMember() {
-	inter, errText := parseSlashCommand("C123", "T123", "allow user <@U123456> member")
-	require.Empty(s.T(), errText)
-	require.NotNil(s.T(), inter)
-	require.Equal(s.T(), "allow_user", inter.CommandName)
-	require.Equal(s.T(), "U123456", inter.Options["target_id"])
-	require.Equal(s.T(), "member", inter.Options["role"])
+func (s *BotSuite) TestParseAllowDeny() {
+	tests := []struct {
+		name       string
+		input      string
+		wantCmd    string
+		wantOpts   map[string]string
+		wantErrSub string
+	}{
+		{"allow_user_member", "allow user <@U123456> member", "allow_user", map[string]string{"target_id": "U123456", "role": "member"}, ""},
+		{"allow_user_owner", "allow user <@U123456> owner", "allow_user", map[string]string{"target_id": "U123456", "role": "owner"}, ""},
+		{"allow_user_default", "allow user <@U123456>", "allow_user", map[string]string{"role": "member"}, ""},
+		{"allow_user_pipe", "allow user <@U123456|alice>", "allow_user", map[string]string{"target_id": "U123456"}, ""},
+		{"allow_user_invalid", "allow user U123456", "", nil, "Invalid user"},
+		{"allow_role_error", "allow role admin", "", nil, "Discord-only"},
+		{"allow_unknown_sub", "allow unknown <@U123>", "", nil, "Usage:"},
+		{"allow_too_few", "allow", "", nil, "Usage:"},
+		{"deny_user_success", "deny user <@U654321>", "deny_user", map[string]string{"target_id": "U654321"}, ""},
+		{"deny_user_invalid", "deny user notamention", "", nil, "Invalid user"},
+		{"deny_role_error", "deny role admin", "", nil, "Discord-only"},
+		{"deny_unknown_sub", "deny unknown <@U123>", "", nil, "Usage:"},
+		{"deny_too_few", "deny", "", nil, "Usage:"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			inter, errText := parseSlashCommand("C123", "T123", tt.input)
+			if tt.wantErrSub != "" {
+				require.Contains(s.T(), errText, tt.wantErrSub)
+				return
+			}
+			require.Empty(s.T(), errText)
+			require.NotNil(s.T(), inter)
+			require.Equal(s.T(), tt.wantCmd, inter.CommandName)
+			for k, v := range tt.wantOpts {
+				require.Equal(s.T(), v, inter.Options[k], "option %s", k)
+			}
+		})
+	}
 }
 
-func (s *BotSuite) TestParseAllowUserOwner() {
-	inter, errText := parseSlashCommand("C123", "T123", "allow user <@U123456> owner")
-	require.Empty(s.T(), errText)
-	require.NotNil(s.T(), inter)
-	require.Equal(s.T(), "allow_user", inter.CommandName)
-	require.Equal(s.T(), "U123456", inter.Options["target_id"])
-	require.Equal(s.T(), "owner", inter.Options["role"])
-}
-
-func (s *BotSuite) TestParseAllowUserDefaultMember() {
-	// No role specified — defaults to "member".
-	inter, errText := parseSlashCommand("C123", "T123", "allow user <@U123456>")
-	require.Empty(s.T(), errText)
-	require.NotNil(s.T(), inter)
-	require.Equal(s.T(), "allow_user", inter.CommandName)
-	require.Equal(s.T(), "member", inter.Options["role"])
-}
-
-func (s *BotSuite) TestParseAllowUserWithPipe() {
-	// Slack mentions with |username suffix.
-	inter, errText := parseSlashCommand("C123", "T123", "allow user <@U123456|alice>")
-	require.Empty(s.T(), errText)
-	require.Equal(s.T(), "U123456", inter.Options["target_id"])
-}
-
-func (s *BotSuite) TestParseAllowUserInvalidMention() {
-	_, errText := parseSlashCommand("C123", "T123", "allow user U123456")
-	require.Contains(s.T(), errText, "Invalid user")
-}
-
-func (s *BotSuite) TestParseAllowRoleError() {
-	_, errText := parseSlashCommand("C123", "T123", "allow role admin")
-	require.Contains(s.T(), errText, "Discord-only")
-}
-
-func (s *BotSuite) TestParseAllowUnknownSubcommand() {
-	_, errText := parseSlashCommand("C123", "T123", "allow unknown <@U123>")
-	require.Contains(s.T(), errText, "Usage:")
-}
-
-func (s *BotSuite) TestParseAllowTooFewArgs() {
-	_, errText := parseSlashCommand("C123", "T123", "allow")
-	require.Contains(s.T(), errText, "Usage:")
-}
-
-func (s *BotSuite) TestParseDenyUserSuccess() {
-	inter, errText := parseSlashCommand("C123", "T123", "deny user <@U654321>")
-	require.Empty(s.T(), errText)
-	require.NotNil(s.T(), inter)
-	require.Equal(s.T(), "deny_user", inter.CommandName)
-	require.Equal(s.T(), "U654321", inter.Options["target_id"])
-}
-
-func (s *BotSuite) TestParseDenyUserInvalidMention() {
-	_, errText := parseSlashCommand("C123", "T123", "deny user notamention")
-	require.Contains(s.T(), errText, "Invalid user")
-}
-
-func (s *BotSuite) TestParseDenyRoleError() {
-	_, errText := parseSlashCommand("C123", "T123", "deny role admin")
-	require.Contains(s.T(), errText, "Discord-only")
-}
-
-func (s *BotSuite) TestParseDenyUnknownSubcommand() {
-	_, errText := parseSlashCommand("C123", "T123", "deny unknown <@U123>")
-	require.Contains(s.T(), errText, "Usage:")
-}
-
-func (s *BotSuite) TestParseDenyTooFewArgs() {
-	_, errText := parseSlashCommand("C123", "T123", "deny")
-	require.Contains(s.T(), errText, "Usage:")
-}
-
-func (s *BotSuite) TestExtractUserIDValid() {
-	require.Equal(s.T(), "U123456", extractUserID("<@U123456>"))
-}
-
-func (s *BotSuite) TestParseSlashCommandIAmTheOwner() {
-	inter, errText := parseSlashCommand("C123", "T123", "iamtheowner")
-	require.NotNil(s.T(), inter)
-	require.Empty(s.T(), errText)
-	require.Equal(s.T(), "iamtheowner", inter.CommandName)
-	require.Equal(s.T(), "C123", inter.ChannelID)
-	require.Equal(s.T(), "T123", inter.GuildID)
-}
-
-func (s *BotSuite) TestExtractUserIDWithPipe() {
-	require.Equal(s.T(), "U123456", extractUserID("<@U123456|alice>"))
-}
-
-func (s *BotSuite) TestExtractUserIDInvalid() {
-	require.Equal(s.T(), "", extractUserID("U123456"))
-	require.Equal(s.T(), "", extractUserID("<U123456>"))
-	require.Equal(s.T(), "", extractUserID("@U123456"))
-}
-
-func (s *BotSuite) TestExtractUserIDWhitespace() {
-	require.Equal(s.T(), "U123456", extractUserID("  <@U123456>  "))
+func (s *BotSuite) TestExtractUserID() {
+	tests := []struct {
+		name   string
+		input  string
+		expect string
+	}{
+		{"valid", "<@U123456>", "U123456"},
+		{"with_pipe", "<@U123456|alice>", "U123456"},
+		{"no_at_prefix", "U123456", ""},
+		{"no_at_sign", "<U123456>", ""},
+		{"no_angle", "@U123456", ""},
+		{"whitespace", "  <@U123456>  ", "U123456"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			require.Equal(s.T(), tt.expect, extractUserID(tt.input))
+		})
+	}
 }
 
 // --- Stop button tests ---
 
-func (s *BotSuite) TestSendStopButtonSuccess() {
-	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234567890.123456", nil)
+func (s *BotSuite) TestSendStopButton() {
+	tests := []struct {
+		name      string
+		channelID string
+		postErr   error
+		wantID    string
+		wantErr   bool
+	}{
+		{"success", "C123", nil, "1234567890.123456", false},
+		{"error", "C123", errors.New("post failed"), "", true},
+		{"thread", "C123:1111111111.000", nil, "1234567890.999", false},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			session := new(MockSession)
+			sc := newMockSocketClient()
+			bot := NewBot(session, sc, testLogger())
+			bot.botUserID = "U123BOT"
 
-	msgID, err := s.bot.SendStopButton(context.Background(), "C123", "run-1")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "1234567890.123456", msgID)
-	s.session.AssertExpectations(s.T())
+			if tt.postErr != nil {
+				session.On("PostMessage", "C123", mock.Anything).Return("", "", tt.postErr)
+			} else {
+				session.On("PostMessage", "C123", mock.Anything).Return("C123", tt.wantID, nil)
+			}
+
+			msgID, err := bot.SendStopButton(context.Background(), tt.channelID, "run-1")
+			if tt.wantErr {
+				require.Error(s.T(), err)
+				require.Empty(s.T(), msgID)
+			} else {
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), tt.wantID, msgID)
+			}
+		})
+	}
 }
 
-func (s *BotSuite) TestSendStopButtonError() {
-	s.session.On("PostMessage", "C123", mock.Anything).Return("", "", errors.New("post failed"))
+func (s *BotSuite) TestRemoveStopButton() {
+	tests := []struct {
+		name      string
+		channelID string
+		delErr    error
+		wantErr   bool
+	}{
+		{"success", "C123", nil, false},
+		{"error", "C123", errors.New("delete failed"), true},
+		{"thread", "C123:1111111111.000", nil, false},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			session := new(MockSession)
+			sc := newMockSocketClient()
+			bot := NewBot(session, sc, testLogger())
+			bot.botUserID = "U123BOT"
 
-	msgID, err := s.bot.SendStopButton(context.Background(), "C123", "run-1")
-	require.Error(s.T(), err)
-	require.Equal(s.T(), "", msgID)
-}
+			if tt.delErr != nil {
+				session.On("DeleteMessage", "C123", "1234567890.123456").Return("", "", tt.delErr)
+			} else {
+				session.On("DeleteMessage", "C123", "1234567890.123456").Return("C123", "1234567890.123456", nil)
+			}
 
-func (s *BotSuite) TestSendStopButtonThread() {
-	// Thread composite ID: channelID:threadTS
-	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "1234567890.999", nil)
-
-	msgID, err := s.bot.SendStopButton(context.Background(), "C123:1111111111.000", "run-1")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "1234567890.999", msgID)
-	s.session.AssertExpectations(s.T())
-}
-
-func (s *BotSuite) TestRemoveStopButtonSuccess() {
-	s.session.On("DeleteMessage", "C123", "1234567890.123456").Return("C123", "1234567890.123456", nil)
-
-	err := s.bot.RemoveStopButton(context.Background(), "C123", "1234567890.123456")
-	require.NoError(s.T(), err)
-	s.session.AssertExpectations(s.T())
-}
-
-func (s *BotSuite) TestRemoveStopButtonError() {
-	s.session.On("DeleteMessage", "C123", "1234567890.123456").Return("", "", errors.New("delete failed"))
-
-	err := s.bot.RemoveStopButton(context.Background(), "C123", "1234567890.123456")
-	require.Error(s.T(), err)
-}
-
-func (s *BotSuite) TestRemoveStopButtonThread() {
-	s.session.On("DeleteMessage", "C123", "1234567890.123456").Return("C123", "1234567890.123456", nil)
-
-	err := s.bot.RemoveStopButton(context.Background(), "C123:1111111111.000", "1234567890.123456")
-	require.NoError(s.T(), err)
-	s.session.AssertExpectations(s.T())
-}
-
-func (s *BotSuite) TestParseSlashCommandStopInHelp() {
-	_, errText := parseSlashCommand("C123", "T123", "")
-	require.Contains(s.T(), errText, "/loop stop")
-}
-
-func (s *BotSuite) TestParseSlashCommandReadmeInHelp() {
-	_, errText := parseSlashCommand("C123", "T123", "")
-	require.Contains(s.T(), errText, "/loop readme")
+			err := bot.RemoveStopButton(context.Background(), tt.channelID, "1234567890.123456")
+			if tt.wantErr {
+				require.Error(s.T(), err)
+			} else {
+				require.NoError(s.T(), err)
+			}
+		})
+	}
 }
 
 // --- handleInteractive tests ---
@@ -2435,64 +2041,44 @@ func (s *BotSuite) TestHandleInteractiveStopAction() {
 	}
 }
 
-func (s *BotSuite) TestHandleInteractiveNonBlockActions() {
-	called := false
-	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {
-		called = true
-	})
-
-	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
-
-	evt := socketmode.Event{
-		Type: socketmode.EventTypeInteractive,
-		Data: goslack.InteractionCallback{
-			Type: goslack.InteractionTypeDialogSubmission,
-		},
-		Request: &socketmode.Request{},
-	}
-	s.bot.handleInteractive(evt)
-
-	require.False(s.T(), called)
-}
-
-func (s *BotSuite) TestHandleInteractiveNonStopAction() {
-	called := false
-	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {
-		called = true
-	})
-
-	s.socketClient.On("Ack", mock.Anything, mock.Anything).Return()
-
-	evt := socketmode.Event{
-		Type: socketmode.EventTypeInteractive,
-		Data: goslack.InteractionCallback{
-			Type: goslack.InteractionTypeBlockActions,
-			ActionCallback: goslack.ActionCallbacks{
-				BlockActions: []*goslack.BlockAction{
-					{ActionID: "other:something"},
-				},
+func (s *BotSuite) TestHandleInteractiveIgnored() {
+	tests := []struct {
+		name string
+		evt  socketmode.Event
+	}{
+		{"non_block_actions", socketmode.Event{
+			Type:    socketmode.EventTypeInteractive,
+			Data:    goslack.InteractionCallback{Type: goslack.InteractionTypeDialogSubmission},
+			Request: &socketmode.Request{},
+		}},
+		{"non_stop_action", socketmode.Event{
+			Type: socketmode.EventTypeInteractive,
+			Data: goslack.InteractionCallback{
+				Type:           goslack.InteractionTypeBlockActions,
+				ActionCallback: goslack.ActionCallbacks{BlockActions: []*goslack.BlockAction{{ActionID: "other:something"}}},
 			},
-		},
-		Request: &socketmode.Request{},
+			Request: &socketmode.Request{},
+		}},
+		{"invalid_data", socketmode.Event{
+			Type: socketmode.EventTypeInteractive,
+			Data: "not-a-callback",
+		}},
 	}
-	s.bot.handleInteractive(evt)
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			session := new(MockSession)
+			sc := newMockSocketClient()
+			bot := NewBot(session, sc, testLogger())
+			bot.botUserID = "U123BOT"
 
-	require.False(s.T(), called)
-}
+			called := false
+			bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) { called = true })
+			sc.On("Ack", mock.Anything, mock.Anything).Return()
 
-func (s *BotSuite) TestHandleInteractiveInvalidData() {
-	called := false
-	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {
-		called = true
-	})
-
-	evt := socketmode.Event{
-		Type: socketmode.EventTypeInteractive,
-		Data: "not-a-callback",
+			bot.handleInteractive(tt.evt)
+			require.False(s.T(), called)
+		})
 	}
-	s.bot.handleInteractive(evt)
-
-	require.False(s.T(), called)
 }
 
 func (s *BotSuite) TestHandleEventInteractiveType() {
