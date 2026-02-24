@@ -39,6 +39,15 @@ func (s *ConfigSuite) minimalJSON() []byte {
 	return []byte(`{"platform":"discord","discord_token":"test-token","discord_app_id":"test-app-id"}`)
 }
 
+func (s *ConfigSuite) setupProjectReadFile(projectJSON string) {
+	readFile = func(path string) ([]byte, error) {
+		if path == "/project/.loop/config.json" {
+			return []byte(projectJSON), nil
+		}
+		return nil, errors.New("unexpected path")
+	}
+}
+
 func (s *ConfigSuite) TestLoadDefaults() {
 	readFile = func(_ string) ([]byte, error) {
 		return s.minimalJSON(), nil
@@ -794,197 +803,114 @@ func (s *ConfigSuite) TestClaudeModelAbsent() {
 	require.Empty(s.T(), cfg.ClaudeModel)
 }
 
-func (s *ConfigSuite) TestLoadProjectConfigClaudeModelOverride() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{
-				"claude_model": "claude-opus-4-6"
-			}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		ClaudeModel: "claude-sonnet-4-5-20250929",
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "claude-opus-4-6", merged.ClaudeModel)
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigClaudeModelNoOverride() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		ClaudeModel: "claude-sonnet-4-5-20250929",
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "claude-sonnet-4-5-20250929", merged.ClaudeModel)
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigOAuthTokenOverride() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{
-				"claude_code_oauth_token": "sk-ant-project-oauth"
-			}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		AnthropicAPIKey: "sk-ant-global-api-key",
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "sk-ant-project-oauth", merged.ClaudeCodeOAuthToken)
-	require.Empty(s.T(), merged.AnthropicAPIKey) // OAuth takes precedence
-
-	// Verify main not mutated
-	require.Equal(s.T(), "sk-ant-global-api-key", mainCfg.AnthropicAPIKey)
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigAPIKeyOverride() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{
-				"anthropic_api_key": "sk-ant-project-api-key"
-			}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		ClaudeCodeOAuthToken: "sk-ant-global-oauth",
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "sk-ant-project-api-key", merged.AnthropicAPIKey)
-	require.Empty(s.T(), merged.ClaudeCodeOAuthToken) // API key clears OAuth
-
-	// Verify main not mutated
-	require.Equal(s.T(), "sk-ant-global-oauth", mainCfg.ClaudeCodeOAuthToken)
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigAuthNoOverride() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		ClaudeCodeOAuthToken: "sk-ant-global-oauth",
-		AnthropicAPIKey:      "sk-ant-global-api-key",
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "sk-ant-global-oauth", merged.ClaudeCodeOAuthToken)
-	require.Equal(s.T(), "sk-ant-global-api-key", merged.AnthropicAPIKey)
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigClaudeBinPathOverride() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{
-				"claude_bin_path": "/custom/bin/claude"
-			}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		ClaudeBinPath: "claude",
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "/custom/bin/claude", merged.ClaudeBinPath)
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigClaudeBinPathNoOverride() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		ClaudeBinPath: "claude",
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "claude", merged.ClaudeBinPath)
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigContainerOverrides() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{
+func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
+	tests := []struct {
+		name        string
+		projectJSON string
+		mainCfg     *Config
+		assert      func(merged, main *Config)
+	}{
+		{
+			name:        "ClaudeModel/Override",
+			projectJSON: `{"claude_model": "claude-opus-4-6"}`,
+			mainCfg:     &Config{ClaudeModel: "claude-sonnet-4-5-20250929"},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), "claude-opus-4-6", merged.ClaudeModel)
+			},
+		},
+		{
+			name:        "ClaudeModel/NoOverride",
+			projectJSON: `{}`,
+			mainCfg:     &Config{ClaudeModel: "claude-sonnet-4-5-20250929"},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), "claude-sonnet-4-5-20250929", merged.ClaudeModel)
+			},
+		},
+		{
+			name:        "OAuthToken/Override",
+			projectJSON: `{"claude_code_oauth_token": "sk-ant-project-oauth"}`,
+			mainCfg:     &Config{AnthropicAPIKey: "sk-ant-global-api-key"},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), "sk-ant-project-oauth", merged.ClaudeCodeOAuthToken)
+				require.Empty(s.T(), merged.AnthropicAPIKey)
+				require.Equal(s.T(), "sk-ant-global-api-key", main.AnthropicAPIKey)
+			},
+		},
+		{
+			name:        "APIKey/Override",
+			projectJSON: `{"anthropic_api_key": "sk-ant-project-api-key"}`,
+			mainCfg:     &Config{ClaudeCodeOAuthToken: "sk-ant-global-oauth"},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), "sk-ant-project-api-key", merged.AnthropicAPIKey)
+				require.Empty(s.T(), merged.ClaudeCodeOAuthToken)
+				require.Equal(s.T(), "sk-ant-global-oauth", main.ClaudeCodeOAuthToken)
+			},
+		},
+		{
+			name:        "Auth/NoOverride",
+			projectJSON: `{}`,
+			mainCfg: &Config{
+				ClaudeCodeOAuthToken: "sk-ant-global-oauth",
+				AnthropicAPIKey:      "sk-ant-global-api-key",
+			},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), "sk-ant-global-oauth", merged.ClaudeCodeOAuthToken)
+				require.Equal(s.T(), "sk-ant-global-api-key", merged.AnthropicAPIKey)
+			},
+		},
+		{
+			name:        "ClaudeBinPath/Override",
+			projectJSON: `{"claude_bin_path": "/custom/bin/claude"}`,
+			mainCfg:     &Config{ClaudeBinPath: "claude"},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), "/custom/bin/claude", merged.ClaudeBinPath)
+			},
+		},
+		{
+			name:        "ClaudeBinPath/NoOverride",
+			projectJSON: `{}`,
+			mainCfg:     &Config{ClaudeBinPath: "claude"},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), "claude", merged.ClaudeBinPath)
+			},
+		},
+		{
+			name: "Container/Override",
+			projectJSON: `{
 				"container_image": "custom-agent:v3",
 				"container_memory_mb": 2048,
 				"container_cpus": 4.0
-			}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		ContainerImage:    "loop-agent:latest",
-		ContainerMemoryMB: 512,
-		ContainerCPUs:     1.0,
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "custom-agent:v3", merged.ContainerImage)
-	require.Equal(s.T(), int64(2048), merged.ContainerMemoryMB)
-	require.Equal(s.T(), 4.0, merged.ContainerCPUs)
-
-	// Verify main not mutated
-	require.Equal(s.T(), "loop-agent:latest", mainCfg.ContainerImage)
-	require.Equal(s.T(), int64(512), mainCfg.ContainerMemoryMB)
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigContainerNoOverride() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		ContainerImage:    "loop-agent:latest",
-		ContainerMemoryMB: 512,
-		ContainerCPUs:     1.0,
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "loop-agent:latest", merged.ContainerImage)
-	require.Equal(s.T(), int64(512), merged.ContainerMemoryMB)
-	require.Equal(s.T(), 1.0, merged.ContainerCPUs)
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigMemoryEmbeddingsOverride() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{
+			}`,
+			mainCfg: &Config{
+				ContainerImage:    "loop-agent:latest",
+				ContainerMemoryMB: 512,
+				ContainerCPUs:     1.0,
+			},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), "custom-agent:v3", merged.ContainerImage)
+				require.Equal(s.T(), int64(2048), merged.ContainerMemoryMB)
+				require.Equal(s.T(), 4.0, merged.ContainerCPUs)
+				require.Equal(s.T(), "loop-agent:latest", main.ContainerImage)
+				require.Equal(s.T(), int64(512), main.ContainerMemoryMB)
+			},
+		},
+		{
+			name:        "Container/NoOverride",
+			projectJSON: `{}`,
+			mainCfg: &Config{
+				ContainerImage:    "loop-agent:latest",
+				ContainerMemoryMB: 512,
+				ContainerCPUs:     1.0,
+			},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), "loop-agent:latest", merged.ContainerImage)
+				require.Equal(s.T(), int64(512), merged.ContainerMemoryMB)
+				require.Equal(s.T(), 1.0, merged.ContainerCPUs)
+			},
+		},
+		{
+			name: "MemoryEmbeddings/Override",
+			projectJSON: `{
 				"memory": {
 					"embeddings": {
 						"provider": "ollama",
@@ -992,97 +918,208 @@ func (s *ConfigSuite) TestLoadProjectConfigMemoryEmbeddingsOverride() {
 						"ollama_url": "http://gpu-server:11434"
 					}
 				}
-			}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		Memory: MemoryConfig{
-			Enabled: true,
-			Embeddings: EmbeddingsConfig{
-				Provider:  "ollama",
-				Model:     "nomic-embed-text",
-				OllamaURL: "http://localhost:11434",
+			}`,
+			mainCfg: &Config{
+				Memory: MemoryConfig{
+					Enabled: true,
+					Embeddings: EmbeddingsConfig{
+						Provider:  "ollama",
+						Model:     "nomic-embed-text",
+						OllamaURL: "http://localhost:11434",
+					},
+				},
+			},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), "ollama", merged.Memory.Embeddings.Provider)
+				require.Equal(s.T(), "mxbai-embed-large", merged.Memory.Embeddings.Model)
+				require.Equal(s.T(), "http://gpu-server:11434", merged.Memory.Embeddings.OllamaURL)
+				require.Equal(s.T(), "nomic-embed-text", main.Memory.Embeddings.Model)
+			},
+		},
+		{
+			name:        "MemoryEmbeddings/NoOverride",
+			projectJSON: `{}`,
+			mainCfg: &Config{
+				Memory: MemoryConfig{
+					Enabled: true,
+					Embeddings: EmbeddingsConfig{
+						Provider:  "ollama",
+						Model:     "nomic-embed-text",
+						OllamaURL: "http://localhost:11434",
+					},
+				},
+			},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), "ollama", merged.Memory.Embeddings.Provider)
+				require.Equal(s.T(), "nomic-embed-text", merged.Memory.Embeddings.Model)
+			},
+		},
+		{
+			name:        "Envs/Merged",
+			projectJSON: `{"envs": {"PROJECT_KEY": "proj-val", "SHARED": "proj"}}`,
+			mainCfg: &Config{
+				Envs: map[string]string{"GLOBAL_KEY": "global-val", "SHARED": "global"},
+			},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), "global-val", merged.Envs["GLOBAL_KEY"])
+				require.Equal(s.T(), "proj-val", merged.Envs["PROJECT_KEY"])
+				require.Equal(s.T(), "proj", merged.Envs["SHARED"])
+				require.Equal(s.T(), "global", main.Envs["SHARED"])
+				require.Empty(s.T(), main.Envs["PROJECT_KEY"])
+			},
+		},
+		{
+			name:        "Envs/NoOverride",
+			projectJSON: `{}`,
+			mainCfg: &Config{
+				Envs: map[string]string{"GLOBAL_KEY": "global-val"},
+			},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), "global-val", merged.Envs["GLOBAL_KEY"])
+			},
+		},
+		{
+			name: "Templates/Merge",
+			projectJSON: `{
+				"task_templates": [
+					{
+						"name": "daily-summary",
+						"description": "Overridden daily summary",
+						"schedule": "0 18 * * *",
+						"type": "cron",
+						"prompt": "New summary prompt"
+					},
+					{
+						"name": "project-only",
+						"description": "Project-specific template",
+						"schedule": "*/10 * * * *",
+						"type": "cron",
+						"prompt": "Project task"
+					}
+				]
+			}`,
+			mainCfg: &Config{
+				TaskTemplates: []TaskTemplate{
+					{Name: "daily-summary", Description: "Daily summary", Schedule: "0 17 * * *", Type: "cron", Prompt: "Generate summary"},
+					{Name: "global-only", Description: "Global template", Schedule: "0 9 * * *", Type: "cron", Prompt: "Global task"},
+				},
+			},
+			assert: func(merged, main *Config) {
+				require.Len(s.T(), merged.TaskTemplates, 3)
+				require.Equal(s.T(), "daily-summary", merged.TaskTemplates[0].Name)
+				require.Equal(s.T(), "Overridden daily summary", merged.TaskTemplates[0].Description)
+				require.Equal(s.T(), "0 18 * * *", merged.TaskTemplates[0].Schedule)
+				require.Equal(s.T(), "New summary prompt", merged.TaskTemplates[0].Prompt)
+				require.Equal(s.T(), "global-only", merged.TaskTemplates[1].Name)
+				require.Equal(s.T(), "Global task", merged.TaskTemplates[1].Prompt)
+				require.Equal(s.T(), "project-only", merged.TaskTemplates[2].Name)
+				require.Equal(s.T(), "Project task", merged.TaskTemplates[2].Prompt)
+				require.Len(s.T(), main.TaskTemplates, 2)
+				require.Equal(s.T(), "Generate summary", main.TaskTemplates[0].Prompt)
+			},
+		},
+		{
+			name:        "Templates/Empty",
+			projectJSON: `{}`,
+			mainCfg: &Config{
+				TaskTemplates: []TaskTemplate{
+					{Name: "global", Description: "Global", Schedule: "0 9 * * *", Type: "cron", Prompt: "Do global"},
+				},
+			},
+			assert: func(merged, _ *Config) {
+				require.Len(s.T(), merged.TaskTemplates, 1)
+				require.Equal(s.T(), "global", merged.TaskTemplates[0].Name)
+			},
+		},
+		{
+			name: "MemoryPaths/Appended",
+			projectJSON: `{
+				"memory": {
+					"paths": ["./docs/arch.md"]
+				}
+			}`,
+			mainCfg: &Config{
+				Memory: MemoryConfig{Paths: []string{"/global/knowledge"}},
+			},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), []string{"/global/knowledge", "./docs/arch.md"}, merged.Memory.Paths)
+				require.Len(s.T(), main.Memory.Paths, 1)
+			},
+		},
+		{
+			name:        "MemoryPaths/NoOverride",
+			projectJSON: `{}`,
+			mainCfg: &Config{
+				Memory: MemoryConfig{Paths: []string{"/global/knowledge"}},
+			},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), []string{"/global/knowledge"}, merged.Memory.Paths)
+			},
+		},
+		{
+			name: "MaxChunkChars/Override",
+			projectJSON: `{
+				"memory": {
+					"max_chunk_chars": 12000
+				}
+			}`,
+			mainCfg: &Config{
+				Memory: MemoryConfig{MaxChunkChars: 6000},
+			},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), 12000, merged.Memory.MaxChunkChars)
+			},
+		},
+		{
+			name:        "MaxChunkChars/NoOverride",
+			projectJSON: `{}`,
+			mainCfg: &Config{
+				Memory: MemoryConfig{MaxChunkChars: 6000},
+			},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), 6000, merged.Memory.MaxChunkChars)
+			},
+		},
+		{
+			name: "Permissions/Override",
+			projectJSON: `{
+				"permissions": {
+					"owners":  {"users": [], "roles": []},
+					"members": {"users": [], "roles": []}
+				}
+			}`,
+			mainCfg: &Config{
+				Permissions: PermissionsConfig{
+					Owners:  RoleGrant{Users: []string{"U1"}, Roles: []string{"R1"}},
+					Members: RoleGrant{Users: []string{"U2"}},
+				},
+			},
+			assert: func(merged, _ *Config) {
+				require.True(s.T(), merged.Permissions.IsEmpty())
+			},
+		},
+		{
+			name:        "Permissions/NoOverride",
+			projectJSON: `{}`,
+			mainCfg: &Config{
+				Permissions: PermissionsConfig{
+					Owners: RoleGrant{Users: []string{"U1"}},
+				},
+			},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), []string{"U1"}, merged.Permissions.Owners.Users)
 			},
 		},
 	}
 
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "ollama", merged.Memory.Embeddings.Provider)
-	require.Equal(s.T(), "mxbai-embed-large", merged.Memory.Embeddings.Model)
-	require.Equal(s.T(), "http://gpu-server:11434", merged.Memory.Embeddings.OllamaURL)
-
-	// Verify main not mutated
-	require.Equal(s.T(), "nomic-embed-text", mainCfg.Memory.Embeddings.Model)
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigMemoryEmbeddingsNoOverride() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{}`), nil
-		}
-		return nil, errors.New("unexpected path")
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.setupProjectReadFile(tt.projectJSON)
+			merged, err := LoadProjectConfig("/project", tt.mainCfg)
+			require.NoError(s.T(), err)
+			tt.assert(merged, tt.mainCfg)
+		})
 	}
-
-	mainCfg := &Config{
-		Memory: MemoryConfig{
-			Enabled: true,
-			Embeddings: EmbeddingsConfig{
-				Provider:  "ollama",
-				Model:     "nomic-embed-text",
-				OllamaURL: "http://localhost:11434",
-			},
-		},
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "ollama", merged.Memory.Embeddings.Provider)
-	require.Equal(s.T(), "nomic-embed-text", merged.Memory.Embeddings.Model)
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigEnvsMerged() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{
-				"envs": {"PROJECT_KEY": "proj-val", "SHARED": "proj"}
-			}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		Envs: map[string]string{"GLOBAL_KEY": "global-val", "SHARED": "global"},
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "global-val", merged.Envs["GLOBAL_KEY"])
-	require.Equal(s.T(), "proj-val", merged.Envs["PROJECT_KEY"])
-	require.Equal(s.T(), "proj", merged.Envs["SHARED"]) // project wins
-
-	// Verify main not mutated
-	require.Equal(s.T(), "global", mainCfg.Envs["SHARED"])
-	require.Empty(s.T(), mainCfg.Envs["PROJECT_KEY"])
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigEnvsNoOverride() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		Envs: map[string]string{"GLOBAL_KEY": "global-val"},
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "global-val", merged.Envs["GLOBAL_KEY"])
 }
 
 func (s *ConfigSuite) TestIsNamedVolume() {
@@ -1106,19 +1143,14 @@ func (s *ConfigSuite) TestIsNamedVolume() {
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigNamedVolumes() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{
-				"mounts": [
-					"./data:/app/data",
-					"loop-npmcache:~/.npm",
-					"loop-gocache:/go",
-					"~/.ssh:~/.ssh:ro"
-				]
-			}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
+	s.setupProjectReadFile(`{
+		"mounts": [
+			"./data:/app/data",
+			"loop-npmcache:~/.npm",
+			"loop-gocache:/go",
+			"~/.ssh:~/.ssh:ro"
+		]
+	}`)
 
 	mainCfg := &Config{}
 
@@ -1194,102 +1226,18 @@ func (s *ConfigSuite) TestResolvePromptFileReadError() {
 	require.Contains(s.T(), err.Error(), "reading prompt file")
 }
 
-func (s *ConfigSuite) TestLoadProjectConfigTemplatesMerge() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{
-				"task_templates": [
-					{
-						"name": "daily-summary",
-						"description": "Overridden daily summary",
-						"schedule": "0 18 * * *",
-						"type": "cron",
-						"prompt": "New summary prompt"
-					},
-					{
-						"name": "project-only",
-						"description": "Project-specific template",
-						"schedule": "*/10 * * * *",
-						"type": "cron",
-						"prompt": "Project task"
-					}
-				]
-			}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		TaskTemplates: []TaskTemplate{
-			{Name: "daily-summary", Description: "Daily summary", Schedule: "0 17 * * *", Type: "cron", Prompt: "Generate summary"},
-			{Name: "global-only", Description: "Global template", Schedule: "0 9 * * *", Type: "cron", Prompt: "Global task"},
-		},
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-
-	// Should have 3 templates: overridden daily-summary, preserved global-only, new project-only
-	require.Len(s.T(), merged.TaskTemplates, 3)
-
-	// daily-summary should be overridden by project
-	require.Equal(s.T(), "daily-summary", merged.TaskTemplates[0].Name)
-	require.Equal(s.T(), "Overridden daily summary", merged.TaskTemplates[0].Description)
-	require.Equal(s.T(), "0 18 * * *", merged.TaskTemplates[0].Schedule)
-	require.Equal(s.T(), "New summary prompt", merged.TaskTemplates[0].Prompt)
-
-	// global-only should be preserved
-	require.Equal(s.T(), "global-only", merged.TaskTemplates[1].Name)
-	require.Equal(s.T(), "Global task", merged.TaskTemplates[1].Prompt)
-
-	// project-only should be added
-	require.Equal(s.T(), "project-only", merged.TaskTemplates[2].Name)
-	require.Equal(s.T(), "Project task", merged.TaskTemplates[2].Prompt)
-
-	// Verify main config not mutated
-	require.Len(s.T(), mainCfg.TaskTemplates, 2)
-	require.Equal(s.T(), "Generate summary", mainCfg.TaskTemplates[0].Prompt)
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigTemplatesEmpty() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		TaskTemplates: []TaskTemplate{
-			{Name: "global", Description: "Global", Schedule: "0 9 * * *", Type: "cron", Prompt: "Do global"},
-		},
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-
-	// Templates unchanged
-	require.Len(s.T(), merged.TaskTemplates, 1)
-	require.Equal(s.T(), "global", merged.TaskTemplates[0].Name)
-}
-
 func (s *ConfigSuite) TestLoadProjectConfigTemplatesWithPromptPath() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{
-				"task_templates": [
-					{
-						"name": "file-template",
-						"description": "Template from file",
-						"schedule": "0 9 * * *",
-						"type": "cron",
-						"prompt_path": "review.md"
-					}
-				]
-			}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
+	s.setupProjectReadFile(`{
+		"task_templates": [
+			{
+				"name": "file-template",
+				"description": "Template from file",
+				"schedule": "0 9 * * *",
+				"type": "cron",
+				"prompt_path": "review.md"
+			}
+		]
+	}`)
 
 	mainCfg := &Config{}
 
@@ -1386,47 +1334,6 @@ func (s *ConfigSuite) TestMemoryPathsDefault() {
 	require.Equal(s.T(), []string{"./memory"}, cfg.Memory.Paths)
 }
 
-func (s *ConfigSuite) TestLoadProjectConfigMemoryPathsAppended() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{
-				"memory": {
-					"paths": ["./docs/arch.md"]
-				}
-			}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		Memory: MemoryConfig{Paths: []string{"/global/knowledge"}},
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), []string{"/global/knowledge", "./docs/arch.md"}, merged.Memory.Paths)
-
-	// Verify main config not mutated
-	require.Len(s.T(), mainCfg.Memory.Paths, 1)
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigMemoryPathsEmptyPreservesGlobal() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		Memory: MemoryConfig{Paths: []string{"/global/knowledge"}},
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), []string{"/global/knowledge"}, merged.Memory.Paths)
-}
-
 func (s *ConfigSuite) TestMemoryMaxChunkCharsLoaded() {
 	readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
@@ -1453,27 +1360,6 @@ func (s *ConfigSuite) TestMemoryMaxChunkCharsDefault() {
 	cfg, err := Load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, cfg.Memory.MaxChunkChars)
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigMaxChunkCharsOverride() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{
-				"memory": {
-					"max_chunk_chars": 12000
-				}
-			}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		Memory: MemoryConfig{MaxChunkChars: 6000},
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), 12000, merged.Memory.MaxChunkChars)
 }
 
 func (s *ConfigSuite) TestPermissionsConfigIsEmpty() {
@@ -1541,69 +1427,6 @@ func (s *ConfigSuite) TestLoadWithPermissions() {
 	require.Equal(s.T(), []string{"U1", "U2"}, cfg.Permissions.Owners.Users)
 	require.Equal(s.T(), []string{"R1"}, cfg.Permissions.Owners.Roles)
 	require.Equal(s.T(), []string{"U3"}, cfg.Permissions.Members.Users)
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigPermissionsOverride() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{
-				"permissions": {
-					"owners":  {"users": [], "roles": []},
-					"members": {"users": [], "roles": []}
-				}
-			}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		Permissions: PermissionsConfig{
-			Owners:  RoleGrant{Users: []string{"U1"}, Roles: []string{"R1"}},
-			Members: RoleGrant{Users: []string{"U2"}},
-		},
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	// Project sets empty permissions, replacing the global restriction.
-	require.True(s.T(), merged.Permissions.IsEmpty())
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigPermissionsNoOverride() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		Permissions: PermissionsConfig{
-			Owners: RoleGrant{Users: []string{"U1"}},
-		},
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	// No project permissions block — global permissions apply unchanged.
-	require.Equal(s.T(), []string{"U1"}, merged.Permissions.Owners.Users)
-}
-
-func (s *ConfigSuite) TestLoadProjectConfigMaxChunkCharsNoOverride() {
-	readFile = func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{}`), nil
-		}
-		return nil, errors.New("unexpected path")
-	}
-
-	mainCfg := &Config{
-		Memory: MemoryConfig{MaxChunkChars: 6000},
-	}
-
-	merged, err := LoadProjectConfig("/project", mainCfg)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), 6000, merged.Memory.MaxChunkChars)
 }
 
 func (s *ConfigSuite) TestMemoryConfigOllamaCustomURL() {
