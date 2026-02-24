@@ -197,58 +197,45 @@ func (s *OrchestratorSuite) TestNew() {
 
 // --- Start tests ---
 
-func (s *OrchestratorSuite) TestStartSuccess() {
-	s.bot.On("OnMessage", mock.AnythingOfType("func(context.Context, *orchestrator.IncomingMessage)")).Return()
-	s.bot.On("OnInteraction", mock.AnythingOfType("func(context.Context, *orchestrator.Interaction)")).Return()
-	s.bot.On("OnChannelDelete", mock.AnythingOfType("func(context.Context, string, bool)")).Return()
-	s.bot.On("OnChannelJoin", mock.AnythingOfType("func(context.Context, string)")).Return()
-	s.bot.On("RegisterCommands", s.ctx).Return(nil)
-	s.bot.On("Start", s.ctx).Return(nil)
-	s.scheduler.On("Start", s.ctx).Return(nil)
+func (s *OrchestratorSuite) TestStart() {
+	tests := []struct {
+		name        string
+		registerErr error
+		botStartErr error
+		schedErr    error
+		wantErr     string
+	}{
+		{"success", nil, nil, nil, ""},
+		{"register commands error", errors.New("register failed"), nil, nil, "registering commands"},
+		{"bot start error", nil, errors.New("bot failed"), nil, "starting bot"},
+		{"scheduler start error", nil, nil, errors.New("scheduler failed"), "starting scheduler"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.bot.On("OnMessage", mock.Anything).Return()
+			s.bot.On("OnInteraction", mock.Anything).Return()
+			s.bot.On("OnChannelDelete", mock.Anything).Return()
+			s.bot.On("OnChannelJoin", mock.Anything).Return()
+			s.bot.On("RegisterCommands", s.ctx).Return(tc.registerErr)
+			if tc.registerErr == nil {
+				s.bot.On("Start", s.ctx).Return(tc.botStartErr)
+			}
+			if tc.registerErr == nil && tc.botStartErr == nil {
+				s.scheduler.On("Start", s.ctx).Return(tc.schedErr)
+			}
 
-	err := s.orch.Start(s.ctx)
-	require.NoError(s.T(), err)
-	s.bot.AssertExpectations(s.T())
-	s.scheduler.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestStartRegisterCommandsError() {
-	s.bot.On("OnMessage", mock.Anything).Return()
-	s.bot.On("OnInteraction", mock.Anything).Return()
-	s.bot.On("OnChannelDelete", mock.Anything).Return()
-	s.bot.On("OnChannelJoin", mock.Anything).Return()
-	s.bot.On("RegisterCommands", s.ctx).Return(errors.New("register failed"))
-
-	err := s.orch.Start(s.ctx)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "registering commands")
-}
-
-func (s *OrchestratorSuite) TestStartBotError() {
-	s.bot.On("OnMessage", mock.Anything).Return()
-	s.bot.On("OnInteraction", mock.Anything).Return()
-	s.bot.On("OnChannelDelete", mock.Anything).Return()
-	s.bot.On("OnChannelJoin", mock.Anything).Return()
-	s.bot.On("RegisterCommands", s.ctx).Return(nil)
-	s.bot.On("Start", s.ctx).Return(errors.New("bot failed"))
-
-	err := s.orch.Start(s.ctx)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "starting bot")
-}
-
-func (s *OrchestratorSuite) TestStartSchedulerError() {
-	s.bot.On("OnMessage", mock.Anything).Return()
-	s.bot.On("OnInteraction", mock.Anything).Return()
-	s.bot.On("OnChannelDelete", mock.Anything).Return()
-	s.bot.On("OnChannelJoin", mock.Anything).Return()
-	s.bot.On("RegisterCommands", s.ctx).Return(nil)
-	s.bot.On("Start", s.ctx).Return(nil)
-	s.scheduler.On("Start", s.ctx).Return(errors.New("scheduler failed"))
-
-	err := s.orch.Start(s.ctx)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "starting scheduler")
+			err := s.orch.Start(s.ctx)
+			if tc.wantErr == "" {
+				require.NoError(s.T(), err)
+			} else {
+				require.Error(s.T(), err)
+				require.Contains(s.T(), err.Error(), tc.wantErr)
+			}
+			s.bot.AssertExpectations(s.T())
+			s.scheduler.AssertExpectations(s.T())
+		})
+	}
 }
 
 // --- Stop tests ---
@@ -381,75 +368,76 @@ func (s *OrchestratorSuite) TestHandleMessageThreadInactiveParent() {
 	s.store.AssertNotCalled(s.T(), "GetChannel", mock.Anything, mock.Anything)
 }
 
-func (s *OrchestratorSuite) TestHandleMessageThreadParentIDError() {
-	s.store.On("IsChannelActive", s.ctx, "thread1").Return(false, nil)
-	s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("", errors.New("api error"))
+func (s *OrchestratorSuite) TestHandleMessageThreadResolutionErrors() {
+	tests := []struct {
+		name      string
+		setupMock func()
+		notCalled string // method that should NOT be called
+	}{
+		{
+			name: "parent ID error",
+			setupMock: func() {
+				s.store.On("IsChannelActive", s.ctx, "thread1").Return(false, nil)
+				s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("", errors.New("api error"))
+			},
+			notCalled: "GetChannel",
+		},
+		{
+			name: "parent active check error",
+			setupMock: func() {
+				s.store.On("IsChannelActive", s.ctx, "thread1").Return(false, nil)
+				s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("ch1", nil)
+				s.store.On("IsChannelActive", s.ctx, "ch1").Return(false, errors.New("db error"))
+			},
+			notCalled: "GetChannel",
+		},
+		{
+			name: "get parent channel error",
+			setupMock: func() {
+				s.store.On("IsChannelActive", s.ctx, "thread1").Return(false, nil)
+				s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("ch1", nil)
+				s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+				s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("db error"))
+			},
+			notCalled: "UpsertChannel",
+		},
+		{
+			name: "get parent channel nil",
+			setupMock: func() {
+				s.store.On("IsChannelActive", s.ctx, "thread1").Return(false, nil)
+				s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("ch1", nil)
+				s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+				s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+			},
+			notCalled: "UpsertChannel",
+		},
+		{
+			name: "upsert error",
+			setupMock: func() {
+				s.store.On("IsChannelActive", s.ctx, "thread1").Return(false, nil)
+				s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("ch1", nil)
+				s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+				s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+					ID: 1, ChannelID: "ch1", GuildID: "g1", DirPath: "/project", Active: true,
+				}, nil)
+				s.store.On("UpsertChannel", s.ctx, mock.Anything).Return(errors.New("upsert error"))
+			},
+			notCalled: "InsertMessage",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			tc.setupMock()
 
-	s.orch.HandleMessage(s.ctx, &IncomingMessage{
-		ChannelID: "thread1",
-		Content:   "hello",
-	})
+			s.orch.HandleMessage(s.ctx, &IncomingMessage{
+				ChannelID: "thread1",
+				Content:   "hello",
+			})
 
-	s.store.AssertNotCalled(s.T(), "GetChannel", mock.Anything, mock.Anything)
-}
-
-func (s *OrchestratorSuite) TestHandleMessageThreadParentActiveCheckError() {
-	s.store.On("IsChannelActive", s.ctx, "thread1").Return(false, nil)
-	s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("ch1", nil)
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(false, errors.New("db error"))
-
-	s.orch.HandleMessage(s.ctx, &IncomingMessage{
-		ChannelID: "thread1",
-		Content:   "hello",
-	})
-
-	s.store.AssertNotCalled(s.T(), "GetChannel", mock.Anything, mock.Anything)
-}
-
-func (s *OrchestratorSuite) TestHandleMessageThreadGetParentChannelError() {
-	s.store.On("IsChannelActive", s.ctx, "thread1").Return(false, nil)
-	s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("ch1", nil)
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
-	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("db error"))
-
-	s.orch.HandleMessage(s.ctx, &IncomingMessage{
-		ChannelID: "thread1",
-		Content:   "hello",
-	})
-
-	s.store.AssertNotCalled(s.T(), "UpsertChannel", mock.Anything, mock.Anything)
-}
-
-func (s *OrchestratorSuite) TestHandleMessageThreadGetParentChannelNil() {
-	s.store.On("IsChannelActive", s.ctx, "thread1").Return(false, nil)
-	s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("ch1", nil)
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
-	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-
-	s.orch.HandleMessage(s.ctx, &IncomingMessage{
-		ChannelID: "thread1",
-		Content:   "hello",
-	})
-
-	s.store.AssertNotCalled(s.T(), "UpsertChannel", mock.Anything, mock.Anything)
-}
-
-func (s *OrchestratorSuite) TestHandleMessageThreadUpsertError() {
-	s.store.On("IsChannelActive", s.ctx, "thread1").Return(false, nil)
-	s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("ch1", nil)
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
-		ID: 1, ChannelID: "ch1", GuildID: "g1", DirPath: "/project", Active: true,
-	}, nil)
-	s.store.On("UpsertChannel", s.ctx, mock.Anything).Return(errors.New("upsert error"))
-
-	s.orch.HandleMessage(s.ctx, &IncomingMessage{
-		ChannelID: "thread1",
-		Content:   "hello",
-	})
-
-	// Should not proceed to GetChannel for thread
-	s.store.AssertNotCalled(s.T(), "InsertMessage", mock.Anything, mock.Anything)
+			s.store.AssertNotCalled(s.T(), tc.notCalled, mock.Anything, mock.Anything)
+		})
+	}
 }
 
 func (s *OrchestratorSuite) TestHandleMessageDMAutoCreatesChannel() {
@@ -623,95 +611,119 @@ func (s *OrchestratorSuite) TestHandleMessagePrefixAutoCreatesChannel() {
 
 // --- HandleChannelJoin tests ---
 
-func (s *OrchestratorSuite) TestHandleChannelJoinSuccess() {
-	s.bot.On("GetChannelName", s.ctx, "ch1").Return("project-x", nil)
-	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
-		return ch.ChannelID == "ch1" && ch.Name == "project-x" && ch.Platform == "discord" && ch.Active
-	})).Return(nil)
+func (s *OrchestratorSuite) TestHandleChannelJoin() {
+	tests := []struct {
+		name         string
+		nameReturn   string
+		nameErr      error
+		upsertErr    error
+		expectedName string
+	}{
+		{"success", "project-x", nil, nil, "project-x"},
+		{"name lookup fails uses default", "", errors.New("api error"), nil, "channel"},
+		{"empty name uses default", "", nil, nil, "channel"},
+		{"upsert error", "project-x", nil, errors.New("db error"), "project-x"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.bot.On("GetChannelName", s.ctx, "ch1").Return(tc.nameReturn, tc.nameErr)
+			s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+				return ch.ChannelID == "ch1" && ch.Name == tc.expectedName && ch.Active
+			})).Return(tc.upsertErr)
 
-	s.orch.HandleChannelJoin(s.ctx, "ch1")
+			s.orch.HandleChannelJoin(s.ctx, "ch1")
 
-	s.store.AssertExpectations(s.T())
-	s.bot.AssertExpectations(s.T())
+			s.store.AssertExpectations(s.T())
+		})
+	}
 }
 
-func (s *OrchestratorSuite) TestHandleChannelJoinNameLookupFails() {
-	s.bot.On("GetChannelName", s.ctx, "ch1").Return("", errors.New("api error"))
-	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
-		return ch.ChannelID == "ch1" && ch.Name == "channel" && ch.Platform == "discord" && ch.Active
-	})).Return(nil)
+func (s *OrchestratorSuite) TestHandleMessageEarlyErrors() {
+	tests := []struct {
+		name      string
+		setupMock func()
+		msg       *IncomingMessage
+		notCalled string
+	}{
+		{
+			name: "IsChannelActive error",
+			setupMock: func() {
+				s.store.On("IsChannelActive", s.ctx, "ch1").Return(false, errors.New("db err"))
+			},
+			msg:       &IncomingMessage{ChannelID: "ch1"},
+			notCalled: "GetChannel",
+		},
+		{
+			name: "GetChannel error",
+			setupMock: func() {
+				s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+				s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("channel err"))
+			},
+			msg:       &IncomingMessage{ChannelID: "ch1", GuildID: "g1"},
+			notCalled: "InsertMessage",
+		},
+		{
+			name: "GetChannel nil",
+			setupMock: func() {
+				s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+				s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+			},
+			msg:       &IncomingMessage{ChannelID: "ch1", GuildID: "g1"},
+			notCalled: "InsertMessage",
+		},
+		{
+			name: "InsertMessage error",
+			setupMock: func() {
+				s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+				s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+				s.store.On("InsertMessage", s.ctx, mock.Anything).Return(errors.New("insert err"))
+			},
+			msg:       &IncomingMessage{ChannelID: "ch1", IsBotMention: true},
+			notCalled: "GetRecentMessages",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			tc.setupMock()
 
-	s.orch.HandleChannelJoin(s.ctx, "ch1")
+			s.orch.HandleMessage(s.ctx, tc.msg)
 
-	s.store.AssertExpectations(s.T())
+			s.store.AssertNotCalled(s.T(), tc.notCalled, mock.Anything, mock.Anything)
+		})
+	}
 }
 
-func (s *OrchestratorSuite) TestHandleChannelJoinEmptyName() {
-	s.bot.On("GetChannelName", s.ctx, "ch1").Return("", nil)
-	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
-		return ch.ChannelID == "ch1" && ch.Name == "channel" && ch.Active
-	})).Return(nil)
-
-	s.orch.HandleChannelJoin(s.ctx, "ch1")
-
-	s.store.AssertExpectations(s.T())
+// triggeredMsg returns a standard triggered IncomingMessage for tests.
+func triggeredMsg() *IncomingMessage {
+	return &IncomingMessage{
+		ChannelID:    "ch1",
+		GuildID:      "g1",
+		AuthorName:   "Alice",
+		Content:      "hello",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
 }
 
-func (s *OrchestratorSuite) TestHandleChannelJoinUpsertError() {
-	s.bot.On("GetChannelName", s.ctx, "ch1").Return("project-x", nil)
-	s.store.On("UpsertChannel", s.ctx, mock.Anything).Return(errors.New("db error"))
-
-	s.orch.HandleChannelJoin(s.ctx, "ch1")
-
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleMessageIsChannelActiveError() {
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(false, errors.New("db err"))
-
-	s.orch.HandleMessage(s.ctx, &IncomingMessage{
-		ChannelID: "ch1",
-	})
-
-	s.store.AssertNotCalled(s.T(), "GetChannel", mock.Anything, mock.Anything)
-}
-
-func (s *OrchestratorSuite) TestHandleMessageGetChannelError() {
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
-	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("channel err"))
-
-	s.orch.HandleMessage(s.ctx, &IncomingMessage{
-		ChannelID: "ch1",
-		GuildID:   "g1",
-	})
-
-	s.store.AssertNotCalled(s.T(), "InsertMessage", mock.Anything, mock.Anything)
-}
-
-func (s *OrchestratorSuite) TestHandleMessageGetChannelNil() {
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
-	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-
-	s.orch.HandleMessage(s.ctx, &IncomingMessage{
-		ChannelID: "ch1",
-		GuildID:   "g1",
-	})
-
-	s.store.AssertNotCalled(s.T(), "InsertMessage", mock.Anything, mock.Anything)
-}
-
-func (s *OrchestratorSuite) TestHandleMessageInsertMessageError() {
+// setupTriggeredBase sets up common mocks for a triggered message through GetRecentMessages.
+func (s *OrchestratorSuite) setupTriggeredBase() {
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
-	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(errors.New("insert err"))
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+}
 
-	s.orch.HandleMessage(s.ctx, &IncomingMessage{
-		ChannelID:    "ch1",
-		IsBotMention: true,
-	})
-
-	// Should not proceed to triggered flow
-	s.store.AssertNotCalled(s.T(), "GetRecentMessages", mock.Anything, mock.Anything, mock.Anything)
+// setupTriggeredThroughRun extends setupTriggeredBase through a successful runner call.
+func (s *OrchestratorSuite) setupTriggeredThroughRun(response string, sessionID string) {
+	s.setupTriggeredBase()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
+		Response:  response,
+		SessionID: sessionID,
+	}, nil)
 }
 
 func (s *OrchestratorSuite) TestHandleMessageNotTriggered() {
@@ -803,291 +815,168 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredWithNilSession() {
 	s.store.AssertExpectations(s.T())
 }
 
-func (s *OrchestratorSuite) TestHandleMessageGetRecentMessagesError() {
-	msg := &IncomingMessage{
-		ChannelID:    "ch1",
-		GuildID:      "g1",
-		AuthorName:   "Alice",
-		Content:      "hello",
-		MessageID:    "msg1",
-		IsBotMention: true,
-		Timestamp:    time.Now().UTC(),
+func (s *OrchestratorSuite) TestHandleMessageTriggeredErrors() {
+	tests := []struct {
+		name      string
+		setupMock func()
+		assertFn  func()
+	}{
+		{
+			name: "GetRecentMessages error",
+			setupMock: func() {
+				s.setupTriggeredBase()
+				s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return(nil, errors.New("db err"))
+			},
+			assertFn: func() {
+				s.runner.AssertNotCalled(s.T(), "Run", mock.Anything, mock.Anything)
+			},
+		},
+		{
+			name: "GetSession error",
+			setupMock: func() {
+				s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+				s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Once()
+				s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+				s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+				s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+				s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("session err")).Once()
+			},
+			assertFn: func() {
+				s.runner.AssertNotCalled(s.T(), "Run", mock.Anything, mock.Anything)
+			},
+		},
+		{
+			name: "runner error",
+			setupMock: func() {
+				s.setupTriggeredBase()
+				s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+				s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("runner err"))
+				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+					return out.Content == "Sorry, I encountered an error processing your request."
+				})).Return(nil)
+			},
+			assertFn: func() { s.bot.AssertExpectations(s.T()) },
+		},
+		{
+			name: "agent response error",
+			setupMock: func() {
+				s.setupTriggeredBase()
+				s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+				s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Error: "agent broke"}, nil)
+				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+					return out.Content == "Agent error: agent broke"
+				})).Return(nil)
+			},
+			assertFn: func() {
+				s.bot.AssertCalled(s.T(), "SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+					return out.Content == "Agent error: agent broke"
+				}))
+			},
+		},
+		{
+			name: "UpdateSessionID error still sends and marks",
+			setupMock: func() {
+				s.setupTriggeredThroughRun("ok", "data")
+				s.store.On("UpdateSessionID", s.ctx, "ch1", "data").Return(errors.New("session err"))
+				s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+				s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+			},
+			assertFn: func() {
+				s.bot.AssertExpectations(s.T())
+				s.store.AssertExpectations(s.T())
+			},
+		},
+		{
+			name: "SendResponse error still marks",
+			setupMock: func() {
+				s.setupTriggeredThroughRun("ok", "")
+				s.store.On("UpdateSessionID", s.ctx, "ch1", "").Return(nil)
+				s.bot.On("SendMessage", s.ctx, mock.Anything).Return(errors.New("send err"))
+				s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+			},
+			assertFn: func() { s.store.AssertExpectations(s.T()) },
+		},
+		{
+			name: "MarkProcessed error",
+			setupMock: func() {
+				s.setupTriggeredThroughRun("ok", "")
+				s.store.On("UpdateSessionID", s.ctx, "ch1", "").Return(nil)
+				s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+				s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(errors.New("mark err"))
+			},
+			assertFn: func() { s.store.AssertExpectations(s.T()) },
+		},
+		{
+			name: "typing error still completes",
+			setupMock: func() {
+				s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+				s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+				s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+				s.bot.On("SendTyping", mock.Anything, "ch1").Return(errors.New("typing err"))
+				s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+				s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Response: "ok"}, nil)
+				s.store.On("UpdateSessionID", s.ctx, "ch1", "").Return(nil)
+				s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+				s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+			},
+			assertFn: func() { s.store.AssertExpectations(s.T()) },
+		},
 	}
-
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
-	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
-	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return(nil, errors.New("db err"))
-
-	s.orch.HandleMessage(s.ctx, msg)
-
-	s.runner.AssertNotCalled(s.T(), "Run", mock.Anything, mock.Anything)
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			tc.setupMock()
+			s.orch.HandleMessage(s.ctx, triggeredMsg())
+			tc.assertFn()
+		})
+	}
 }
 
-func (s *OrchestratorSuite) TestHandleMessageGetSessionError() {
-	msg := &IncomingMessage{
-		ChannelID:    "ch1",
-		GuildID:      "g1",
-		AuthorName:   "Alice",
-		Content:      "hello",
-		MessageID:    "msg1",
-		IsBotMention: true,
-		Timestamp:    time.Now().UTC(),
+func (s *OrchestratorSuite) TestHandleMessageInsertBotResponseErrors() {
+	tests := []struct {
+		name      string
+		setupMock func()
+	}{
+		{
+			name: "GetChannel for bot response returns error",
+			setupMock: func() {
+				s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+				s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Once()
+				s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil).Once()
+				s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+				s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+				s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Once()
+				s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Response: "ok"}, nil)
+				s.store.On("UpdateSessionID", s.ctx, "ch1", "").Return(nil)
+				s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+				s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("channel err")).Once()
+				s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+			},
+		},
+		{
+			name: "InsertMessage for bot response fails",
+			setupMock: func() {
+				s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+				s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+				s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil).Once()
+				s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+				s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+				s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Response: "ok"}, nil)
+				s.store.On("UpdateSessionID", s.ctx, "ch1", "").Return(nil)
+				s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+				s.store.On("InsertMessage", s.ctx, mock.Anything).Return(errors.New("insert err")).Once()
+				s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+			},
+		},
 	}
-
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
-	// First GetChannel (in HandleMessage) succeeds
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Once()
-	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
-	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
-	// Second GetChannel (for session data in processTriggeredMessage) returns error
-	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("session err")).Once()
-
-	s.orch.HandleMessage(s.ctx, msg)
-
-	s.runner.AssertNotCalled(s.T(), "Run", mock.Anything, mock.Anything)
-}
-
-func (s *OrchestratorSuite) TestHandleMessageRunnerError() {
-	msg := &IncomingMessage{
-		ChannelID:    "ch1",
-		GuildID:      "g1",
-		AuthorName:   "Alice",
-		Content:      "hello",
-		MessageID:    "msg1",
-		IsBotMention: true,
-		Timestamp:    time.Now().UTC(),
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			tc.setupMock()
+			s.orch.HandleMessage(s.ctx, triggeredMsg())
+			s.store.AssertExpectations(s.T())
+		})
 	}
-
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
-	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
-	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
-	s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("runner err"))
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return out.Content == "Sorry, I encountered an error processing your request."
-	})).Return(nil)
-
-	s.orch.HandleMessage(s.ctx, msg)
-
-	s.bot.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleMessageAgentResponseError() {
-	msg := &IncomingMessage{
-		ChannelID:    "ch1",
-		GuildID:      "g1",
-		AuthorName:   "Alice",
-		Content:      "hello",
-		MessageID:    "msg1",
-		IsBotMention: true,
-		Timestamp:    time.Now().UTC(),
-	}
-
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
-	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
-	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
-	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
-		Error: "agent broke",
-	}, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return out.Content == "Agent error: agent broke"
-	})).Return(nil)
-
-	s.orch.HandleMessage(s.ctx, msg)
-
-	s.bot.AssertCalled(s.T(), "SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
-		return out.Content == "Agent error: agent broke"
-	}))
-}
-
-func (s *OrchestratorSuite) TestHandleMessageUpdateSessionIDError() {
-	msg := &IncomingMessage{
-		ChannelID:    "ch1",
-		GuildID:      "g1",
-		AuthorName:   "Alice",
-		Content:      "hello",
-		MessageID:    "msg1",
-		IsBotMention: true,
-		Timestamp:    time.Now().UTC(),
-	}
-
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
-	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
-	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
-	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
-		Response:  "ok",
-		SessionID: "data",
-	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch1", "data").Return(errors.New("session err"))
-	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
-	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
-
-	s.orch.HandleMessage(s.ctx, msg)
-
-	// Should still send message and mark processed
-	s.bot.AssertExpectations(s.T())
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleMessageSendResponseError() {
-	msg := &IncomingMessage{
-		ChannelID:    "ch1",
-		GuildID:      "g1",
-		AuthorName:   "Alice",
-		Content:      "hello",
-		MessageID:    "msg1",
-		IsBotMention: true,
-		Timestamp:    time.Now().UTC(),
-	}
-
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
-	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
-	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
-	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
-		Response: "ok",
-	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch1", "").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(errors.New("send err"))
-	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
-
-	s.orch.HandleMessage(s.ctx, msg)
-
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleMessageMarkProcessedError() {
-	msg := &IncomingMessage{
-		ChannelID:    "ch1",
-		GuildID:      "g1",
-		AuthorName:   "Alice",
-		Content:      "hello",
-		MessageID:    "msg1",
-		IsBotMention: true,
-		Timestamp:    time.Now().UTC(),
-	}
-
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
-	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
-	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{
-		{ID: 5, AuthorName: "Alice", Content: "hello"},
-	}, nil)
-	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
-		Response: "ok",
-	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch1", "").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
-	s.store.On("MarkMessagesProcessed", s.ctx, []int64{5}).Return(errors.New("mark err"))
-
-	s.orch.HandleMessage(s.ctx, msg)
-
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleMessageTypingError() {
-	msg := &IncomingMessage{
-		ChannelID:    "ch1",
-		GuildID:      "g1",
-		AuthorName:   "Alice",
-		Content:      "hello",
-		MessageID:    "msg1",
-		IsBotMention: true,
-		Timestamp:    time.Now().UTC(),
-	}
-
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
-	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(errors.New("typing err"))
-	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
-	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
-		Response: "ok",
-	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch1", "").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
-	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
-
-	s.orch.HandleMessage(s.ctx, msg)
-
-	// Should still complete despite typing error
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleMessageInsertBotResponseError() {
-	msg := &IncomingMessage{
-		ChannelID:    "ch1",
-		GuildID:      "g1",
-		AuthorName:   "Alice",
-		Content:      "hello",
-		MessageID:    "msg1",
-		IsBotMention: true,
-		Timestamp:    time.Now().UTC(),
-	}
-
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
-	// First GetChannel (in HandleMessage) succeeds
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Once()
-	// First InsertMessage (user message) succeeds
-	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil).Once()
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
-	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
-	// Second GetChannel (for session data in processTriggeredMessage) succeeds
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Once()
-	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
-		Response: "ok",
-	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch1", "").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
-	// Third GetChannel (for bot response insert) returns error
-	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("channel err")).Once()
-	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
-
-	s.orch.HandleMessage(s.ctx, msg)
-
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleMessageInsertBotResponseInsertError() {
-	msg := &IncomingMessage{
-		ChannelID:    "ch1",
-		GuildID:      "g1",
-		AuthorName:   "Alice",
-		Content:      "hello",
-		MessageID:    "msg1",
-		IsBotMention: true,
-		Timestamp:    time.Now().UTC(),
-	}
-
-	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
-	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
-	// First InsertMessage (user message) succeeds
-	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil).Once()
-	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
-	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
-	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
-		Response: "ok",
-	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch1", "").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
-	// Second InsertMessage (bot response) fails
-	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(errors.New("insert err")).Once()
-	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
-
-	s.orch.HandleMessage(s.ctx, msg)
-
-	// Should still mark messages processed despite bot response insert error
-	s.store.AssertExpectations(s.T())
 }
 
 // --- HandleInteraction tests ---
@@ -1994,42 +1883,55 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddResolvePromptError()
 
 // --- HandleChannelDelete tests ---
 
-func (s *OrchestratorSuite) TestHandleChannelDeleteThread() {
-	s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
-
-	s.orch.HandleChannelDelete(s.ctx, "thread-1", true)
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleChannelDeleteThreadError() {
-	s.store.On("DeleteChannel", s.ctx, "thread-1").Return(errors.New("db error"))
-
-	s.orch.HandleChannelDelete(s.ctx, "thread-1", true)
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleChannelDeleteChannel() {
-	s.store.On("DeleteChannelsByParentID", s.ctx, "ch-1").Return(nil)
-	s.store.On("DeleteChannel", s.ctx, "ch-1").Return(nil)
-
-	s.orch.HandleChannelDelete(s.ctx, "ch-1", false)
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleChannelDeleteChannelChildrenError() {
-	s.store.On("DeleteChannelsByParentID", s.ctx, "ch-1").Return(errors.New("db error"))
-	s.store.On("DeleteChannel", s.ctx, "ch-1").Return(nil)
-
-	s.orch.HandleChannelDelete(s.ctx, "ch-1", false)
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *OrchestratorSuite) TestHandleChannelDeleteChannelError() {
-	s.store.On("DeleteChannelsByParentID", s.ctx, "ch-1").Return(nil)
-	s.store.On("DeleteChannel", s.ctx, "ch-1").Return(errors.New("db error"))
-
-	s.orch.HandleChannelDelete(s.ctx, "ch-1", false)
-	s.store.AssertExpectations(s.T())
+func (s *OrchestratorSuite) TestHandleChannelDelete() {
+	tests := []struct {
+		name      string
+		channelID string
+		isThread  bool
+		setupMock func()
+	}{
+		{
+			name: "thread success", channelID: "thread-1", isThread: true,
+			setupMock: func() {
+				s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
+			},
+		},
+		{
+			name: "thread error", channelID: "thread-1", isThread: true,
+			setupMock: func() {
+				s.store.On("DeleteChannel", s.ctx, "thread-1").Return(errors.New("db error"))
+			},
+		},
+		{
+			name: "channel success", channelID: "ch-1", isThread: false,
+			setupMock: func() {
+				s.store.On("DeleteChannelsByParentID", s.ctx, "ch-1").Return(nil)
+				s.store.On("DeleteChannel", s.ctx, "ch-1").Return(nil)
+			},
+		},
+		{
+			name: "channel children error", channelID: "ch-1", isThread: false,
+			setupMock: func() {
+				s.store.On("DeleteChannelsByParentID", s.ctx, "ch-1").Return(errors.New("db error"))
+				s.store.On("DeleteChannel", s.ctx, "ch-1").Return(nil)
+			},
+		},
+		{
+			name: "channel delete error", channelID: "ch-1", isThread: false,
+			setupMock: func() {
+				s.store.On("DeleteChannelsByParentID", s.ctx, "ch-1").Return(nil)
+				s.store.On("DeleteChannel", s.ctx, "ch-1").Return(errors.New("db error"))
+			},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			tc.setupMock()
+			s.orch.HandleChannelDelete(s.ctx, tc.channelID, tc.isThread)
+			s.store.AssertExpectations(s.T())
+		})
+	}
 }
 
 // --- Permissions tests ---
