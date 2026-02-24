@@ -43,6 +43,23 @@ func (s *SchedulerSuite) SetupTest() {
 	s.logger = slog.Default()
 }
 
+// setupDueTasks configures the mock store to return tasks once, then empty.
+func setupDueTasks(store *testutil.MockStore, tasks []*db.ScheduledTask) {
+	store.On("GetDueTasks", mock.Anything, mock.Anything).Return(tasks, nil).Once()
+	store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{}, nil).Maybe()
+}
+
+// signalDone returns a channel and a mock.Run callback that signals it.
+func signalDone() (chan struct{}, func(mock.Arguments)) {
+	ch := make(chan struct{}, 1)
+	return ch, func(mock.Arguments) {
+		select {
+		case ch <- struct{}{}:
+		default:
+		}
+	}
+}
+
 func (s *SchedulerSuite) TestNewTaskScheduler() {
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
 	require.NotNil(s.T(), ts)
@@ -82,6 +99,11 @@ func (s *SchedulerSuite) TestAddTask() {
 		{
 			name:    "invalid interval",
 			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "not-a-duration", Type: db.TaskTypeInterval},
+			wantErr: "calculating next run",
+		},
+		{
+			name:    "unknown type",
+			task:    &db.ScheduledTask{ChannelID: "ch1", Schedule: "", Type: db.TaskType("unknown")},
 			wantErr: "calculating next run",
 		},
 	}
@@ -187,7 +209,7 @@ func (s *SchedulerSuite) TestListTasks() {
 }
 
 func (s *SchedulerSuite) TestStartAndStop() {
-	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{}, nil).Maybe()
+	setupDueTasks(s.store, []*db.ScheduledTask{})
 
 	ts := NewTaskScheduler(s.store, s.executor, 10*time.Millisecond, s.logger)
 	err := ts.Start(context.Background())
@@ -207,27 +229,16 @@ func (s *SchedulerSuite) TestStopWithoutStart() {
 
 func (s *SchedulerSuite) TestPollLoopExecutesTask() {
 	cronTask := &db.ScheduledTask{
-		ID:        1,
-		ChannelID: "ch1",
-		Schedule:  "*/5 * * * *",
-		Type:      db.TaskTypeCron,
-		Prompt:    "test prompt",
-		Enabled:   true,
+		ID: 1, ChannelID: "ch1", Schedule: "*/5 * * * *",
+		Type: db.TaskTypeCron, Prompt: "test prompt", Enabled: true,
 	}
+	done, signal := signalDone()
 
-	executed := make(chan struct{}, 1)
-
-	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{cronTask}, nil).Once()
-	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{}, nil).Maybe()
+	setupDueTasks(s.store, []*db.ScheduledTask{cronTask})
 	s.store.On("InsertTaskRunLog", mock.Anything, mock.MatchedBy(func(trl *db.TaskRunLog) bool {
 		return trl.TaskID == 1 && trl.Status == db.RunStatusRunning
 	})).Return(int64(10), nil)
-	s.executor.On("ExecuteTask", mock.Anything, cronTask).Return("done", nil).Run(func(args mock.Arguments) {
-		select {
-		case executed <- struct{}{}:
-		default:
-		}
-	})
+	s.executor.On("ExecuteTask", mock.Anything, cronTask).Return("done", nil).Run(signal)
 	s.store.On("UpdateTaskRunLog", mock.Anything, mock.MatchedBy(func(trl *db.TaskRunLog) bool {
 		return trl.Status == db.RunStatusSuccess && trl.ResponseText == "done"
 	})).Return(nil)
@@ -240,7 +251,7 @@ func (s *SchedulerSuite) TestPollLoopExecutesTask() {
 	require.NoError(s.T(), err)
 
 	select {
-	case <-executed:
+	case <-done:
 	case <-time.After(2 * time.Second):
 		s.T().Fatal("timed out waiting for task execution")
 	}
@@ -254,25 +265,14 @@ func (s *SchedulerSuite) TestPollLoopExecutesTask() {
 
 func (s *SchedulerSuite) TestPollLoopExecutorError() {
 	task := &db.ScheduledTask{
-		ID:        2,
-		ChannelID: "ch1",
-		Schedule:  "1h",
-		Type:      db.TaskTypeInterval,
-		Prompt:    "fail task",
-		Enabled:   true,
+		ID: 2, ChannelID: "ch1", Schedule: "1h",
+		Type: db.TaskTypeInterval, Prompt: "fail task", Enabled: true,
 	}
+	done, signal := signalDone()
 
-	executed := make(chan struct{}, 1)
-
-	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{task}, nil).Once()
-	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{}, nil).Maybe()
+	setupDueTasks(s.store, []*db.ScheduledTask{task})
 	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(20), nil)
-	s.executor.On("ExecuteTask", mock.Anything, task).Return("", errors.New("exec failed")).Run(func(args mock.Arguments) {
-		select {
-		case executed <- struct{}{}:
-		default:
-		}
-	})
+	s.executor.On("ExecuteTask", mock.Anything, task).Return("", errors.New("exec failed")).Run(signal)
 	s.store.On("UpdateTaskRunLog", mock.Anything, mock.MatchedBy(func(trl *db.TaskRunLog) bool {
 		return trl.Status == db.RunStatusFailed && trl.ErrorText == "exec failed"
 	})).Return(nil)
@@ -285,7 +285,7 @@ func (s *SchedulerSuite) TestPollLoopExecutorError() {
 	require.NoError(s.T(), err)
 
 	select {
-	case <-executed:
+	case <-done:
 	case <-time.After(2 * time.Second):
 		s.T().Fatal("timed out waiting for task execution")
 	}
@@ -298,25 +298,14 @@ func (s *SchedulerSuite) TestPollLoopExecutorError() {
 
 func (s *SchedulerSuite) TestPollLoopOnceTaskDisabled() {
 	task := &db.ScheduledTask{
-		ID:        3,
-		ChannelID: "ch1",
-		Schedule:  "2026-02-09T14:30:00Z",
-		Type:      db.TaskTypeOnce,
-		Prompt:    "once task",
-		Enabled:   true,
+		ID: 3, ChannelID: "ch1", Schedule: "2026-02-09T14:30:00Z",
+		Type: db.TaskTypeOnce, Prompt: "once task", Enabled: true,
 	}
+	done, signal := signalDone()
 
-	executed := make(chan struct{}, 1)
-
-	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{task}, nil).Once()
-	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{}, nil).Maybe()
+	setupDueTasks(s.store, []*db.ScheduledTask{task})
 	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(30), nil)
-	s.executor.On("ExecuteTask", mock.Anything, task).Return("once done", nil).Run(func(args mock.Arguments) {
-		select {
-		case executed <- struct{}{}:
-		default:
-		}
-	})
+	s.executor.On("ExecuteTask", mock.Anything, task).Return("once done", nil).Run(signal)
 	s.store.On("UpdateTaskRunLog", mock.Anything, mock.MatchedBy(func(trl *db.TaskRunLog) bool {
 		return trl.Status == db.RunStatusSuccess
 	})).Return(nil)
@@ -329,7 +318,7 @@ func (s *SchedulerSuite) TestPollLoopOnceTaskDisabled() {
 	require.NoError(s.T(), err)
 
 	select {
-	case <-executed:
+	case <-done:
 	case <-time.After(2 * time.Second):
 		s.T().Fatal("timed out waiting for task execution")
 	}
@@ -355,30 +344,20 @@ func (s *SchedulerSuite) TestPollLoopGetDueTasksError() {
 
 func (s *SchedulerSuite) TestPollLoopInsertRunLogError() {
 	task := &db.ScheduledTask{
-		ID:        4,
-		ChannelID: "ch1",
-		Schedule:  "10m",
-		Type:      db.TaskTypeInterval,
-		Enabled:   true,
+		ID: 4, ChannelID: "ch1", Schedule: "10m",
+		Type: db.TaskTypeInterval, Enabled: true,
 	}
+	done, signal := signalDone()
 
-	inserted := make(chan struct{}, 1)
-
-	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{task}, nil).Once()
-	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{}, nil).Maybe()
-	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(0), errors.New("insert log fail")).Run(func(args mock.Arguments) {
-		select {
-		case inserted <- struct{}{}:
-		default:
-		}
-	})
+	setupDueTasks(s.store, []*db.ScheduledTask{task})
+	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(0), errors.New("insert log fail")).Run(signal)
 
 	ts := NewTaskScheduler(s.store, s.executor, 10*time.Millisecond, s.logger)
 	err := ts.Start(context.Background())
 	require.NoError(s.T(), err)
 
 	select {
-	case <-inserted:
+	case <-done:
 	case <-time.After(2 * time.Second):
 		s.T().Fatal("timed out")
 	}
@@ -391,25 +370,15 @@ func (s *SchedulerSuite) TestPollLoopInsertRunLogError() {
 
 func (s *SchedulerSuite) TestPollLoopUpdateRunLogError() {
 	task := &db.ScheduledTask{
-		ID:        5,
-		ChannelID: "ch1",
-		Schedule:  "10m",
-		Type:      db.TaskTypeInterval,
-		Enabled:   true,
+		ID: 5, ChannelID: "ch1", Schedule: "10m",
+		Type: db.TaskTypeInterval, Enabled: true,
 	}
+	done, signal := signalDone()
 
-	updated := make(chan struct{}, 1)
-
-	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{task}, nil).Once()
-	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{}, nil).Maybe()
+	setupDueTasks(s.store, []*db.ScheduledTask{task})
 	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(50), nil)
 	s.executor.On("ExecuteTask", mock.Anything, task).Return("ok", nil)
-	s.store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(errors.New("update log fail")).Run(func(args mock.Arguments) {
-		select {
-		case updated <- struct{}{}:
-		default:
-		}
-	})
+	s.store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(errors.New("update log fail")).Run(signal)
 	s.store.On("UpdateScheduledTask", mock.Anything, mock.Anything).Return(nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, 10*time.Millisecond, s.logger)
@@ -417,7 +386,7 @@ func (s *SchedulerSuite) TestPollLoopUpdateRunLogError() {
 	require.NoError(s.T(), err)
 
 	select {
-	case <-updated:
+	case <-done:
 	case <-time.After(2 * time.Second):
 		s.T().Fatal("timed out")
 	}
@@ -428,33 +397,23 @@ func (s *SchedulerSuite) TestPollLoopUpdateRunLogError() {
 
 func (s *SchedulerSuite) TestPollLoopUpdateScheduledTaskError() {
 	task := &db.ScheduledTask{
-		ID:        6,
-		ChannelID: "ch1",
-		Schedule:  "10m",
-		Type:      db.TaskTypeInterval,
-		Enabled:   true,
+		ID: 6, ChannelID: "ch1", Schedule: "10m",
+		Type: db.TaskTypeInterval, Enabled: true,
 	}
+	done, signal := signalDone()
 
-	taskUpdated := make(chan struct{}, 1)
-
-	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{task}, nil).Once()
-	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{}, nil).Maybe()
+	setupDueTasks(s.store, []*db.ScheduledTask{task})
 	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(60), nil)
 	s.executor.On("ExecuteTask", mock.Anything, task).Return("ok", nil)
 	s.store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateScheduledTask", mock.Anything, mock.Anything).Return(errors.New("update task fail")).Run(func(args mock.Arguments) {
-		select {
-		case taskUpdated <- struct{}{}:
-		default:
-		}
-	})
+	s.store.On("UpdateScheduledTask", mock.Anything, mock.Anything).Return(errors.New("update task fail")).Run(signal)
 
 	ts := NewTaskScheduler(s.store, s.executor, 10*time.Millisecond, s.logger)
 	err := ts.Start(context.Background())
 	require.NoError(s.T(), err)
 
 	select {
-	case <-taskUpdated:
+	case <-done:
 	case <-time.After(2 * time.Second):
 		s.T().Fatal("timed out")
 	}
@@ -463,86 +422,44 @@ func (s *SchedulerSuite) TestPollLoopUpdateScheduledTaskError() {
 	require.NoError(s.T(), err)
 }
 
-func (s *SchedulerSuite) TestPollLoopCronParseError() {
-	task := &db.ScheduledTask{
-		ID:        7,
-		ChannelID: "ch1",
-		Schedule:  "bad cron",
-		Type:      db.TaskTypeCron,
-		Enabled:   true,
+func (s *SchedulerSuite) TestPollLoopParseError() {
+	cases := []struct {
+		name string
+		task *db.ScheduledTask
+	}{
+		{"cron", &db.ScheduledTask{ID: 7, ChannelID: "ch1", Schedule: "bad cron", Type: db.TaskTypeCron, Enabled: true}},
+		{"interval", &db.ScheduledTask{ID: 8, ChannelID: "ch1", Schedule: "not-a-duration", Type: db.TaskTypeInterval, Enabled: true}},
 	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			store := new(testutil.MockStore)
+			executor := new(MockTaskExecutor)
+			done, signal := signalDone()
 
-	executed := make(chan struct{}, 1)
+			setupDueTasks(store, []*db.ScheduledTask{tc.task})
+			store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(70), nil)
+			executor.On("ExecuteTask", mock.Anything, tc.task).Return("ok", nil).Run(signal)
+			store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(nil)
 
-	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{task}, nil).Once()
-	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{}, nil).Maybe()
-	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(70), nil)
-	s.executor.On("ExecuteTask", mock.Anything, task).Return("ok", nil).Run(func(args mock.Arguments) {
-		select {
-		case executed <- struct{}{}:
-		default:
-		}
-	})
-	s.store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(nil)
+			ts := NewTaskScheduler(store, executor, 10*time.Millisecond, s.logger)
+			err := ts.Start(context.Background())
+			require.NoError(s.T(), err)
 
-	ts := NewTaskScheduler(s.store, s.executor, 10*time.Millisecond, s.logger)
-	err := ts.Start(context.Background())
-	require.NoError(s.T(), err)
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+				s.T().Fatal("timed out")
+			}
 
-	select {
-	case <-executed:
-	case <-time.After(2 * time.Second):
-		s.T().Fatal("timed out")
+			time.Sleep(20 * time.Millisecond)
+
+			err = ts.Stop()
+			require.NoError(s.T(), err)
+
+			// UpdateScheduledTask should NOT be called because schedule parse fails
+			store.AssertNotCalled(s.T(), "UpdateScheduledTask", mock.Anything, mock.Anything)
+		})
 	}
-
-	// Give time for the cron parse error path to complete
-	time.Sleep(20 * time.Millisecond)
-
-	err = ts.Stop()
-	require.NoError(s.T(), err)
-
-	// UpdateScheduledTask should NOT be called because cron parse fails
-	s.store.AssertNotCalled(s.T(), "UpdateScheduledTask", mock.Anything, mock.Anything)
-}
-
-func (s *SchedulerSuite) TestPollLoopIntervalParseError() {
-	task := &db.ScheduledTask{
-		ID:        8,
-		ChannelID: "ch1",
-		Schedule:  "not-a-duration",
-		Type:      db.TaskTypeInterval,
-		Enabled:   true,
-	}
-
-	executed := make(chan struct{}, 1)
-
-	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{task}, nil).Once()
-	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{}, nil).Maybe()
-	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(80), nil)
-	s.executor.On("ExecuteTask", mock.Anything, task).Return("ok", nil).Run(func(args mock.Arguments) {
-		select {
-		case executed <- struct{}{}:
-		default:
-		}
-	})
-	s.store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(nil)
-
-	ts := NewTaskScheduler(s.store, s.executor, 10*time.Millisecond, s.logger)
-	err := ts.Start(context.Background())
-	require.NoError(s.T(), err)
-
-	select {
-	case <-executed:
-	case <-time.After(2 * time.Second):
-		s.T().Fatal("timed out")
-	}
-
-	time.Sleep(20 * time.Millisecond)
-
-	err = ts.Stop()
-	require.NoError(s.T(), err)
-
-	s.store.AssertNotCalled(s.T(), "UpdateScheduledTask", mock.Anything, mock.Anything)
 }
 
 func (s *SchedulerSuite) TestCalculateNextRun() {
@@ -577,120 +494,121 @@ func (s *SchedulerSuite) TestCalculateNextRun() {
 	}
 }
 
-func (s *SchedulerSuite) TestParseOnceScheduleRFC3339() {
-	result, err := parseOnceSchedule("2026-02-09T14:30:00Z")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), time.Date(2026, 2, 9, 14, 30, 0, 0, time.UTC), result)
-}
-
-func (s *SchedulerSuite) TestParseOnceScheduleWithOffset() {
-	result, err := parseOnceSchedule("2026-02-09T14:30:00+02:00")
-	require.NoError(s.T(), err)
+func (s *SchedulerSuite) TestParseOnceSchedule() {
 	tz := time.FixedZone("", 2*60*60)
-	expected := time.Date(2026, 2, 9, 14, 30, 0, 0, tz)
-	require.True(s.T(), expected.Equal(result))
-}
-
-func (s *SchedulerSuite) TestParseOnceScheduleInvalid() {
-	_, err := parseOnceSchedule("not-valid")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "RFC3339")
-}
-
-func (s *SchedulerSuite) TestAddTaskUnknownType() {
-	task := &db.ScheduledTask{
-		ChannelID: "ch1",
-		Schedule:  "",
-		Type:      db.TaskType("unknown"),
+	cases := []struct {
+		name     string
+		input    string
+		expected time.Time
+		wantErr  string
+	}{
+		{"rfc3339", "2026-02-09T14:30:00Z", time.Date(2026, 2, 9, 14, 30, 0, 0, time.UTC), ""},
+		{"with offset", "2026-02-09T14:30:00+02:00", time.Date(2026, 2, 9, 14, 30, 0, 0, tz), ""},
+		{"invalid", "not-valid", time.Time{}, "RFC3339"},
 	}
-
-	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	_, err := ts.AddTask(context.Background(), task)
-
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "calculating next run")
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			result, err := parseOnceSchedule(tc.input)
+			if tc.wantErr != "" {
+				require.Error(s.T(), err)
+				require.Contains(s.T(), err.Error(), tc.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+				require.True(s.T(), tc.expected.Equal(result))
+			}
+		})
+	}
 }
 
 func (s *SchedulerSuite) TestSetTaskEnabled() {
-	s.store.On("UpdateScheduledTaskEnabled", mock.Anything, int64(42), false).Return(nil)
+	cases := []struct {
+		name     string
+		enabled  bool
+		storeErr error
+	}{
+		{"success", false, nil},
+		{"error", true, errors.New("db error")},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			store := new(testutil.MockStore)
+			store.On("UpdateScheduledTaskEnabled", mock.Anything, int64(42), tc.enabled).Return(tc.storeErr)
 
-	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.SetTaskEnabled(context.Background(), 42, false)
+			ts := NewTaskScheduler(store, s.executor, time.Second, s.logger)
+			err := ts.SetTaskEnabled(context.Background(), 42, tc.enabled)
 
-	require.NoError(s.T(), err)
-	s.store.AssertExpectations(s.T())
+			if tc.storeErr != nil {
+				require.Error(s.T(), err)
+				require.Equal(s.T(), tc.storeErr.Error(), err.Error())
+			} else {
+				require.NoError(s.T(), err)
+			}
+			store.AssertExpectations(s.T())
+		})
+	}
 }
 
-func (s *SchedulerSuite) TestSetTaskEnabledError() {
-	s.store.On("UpdateScheduledTaskEnabled", mock.Anything, int64(42), true).Return(errors.New("db error"))
+func (s *SchedulerSuite) TestToggleTask() {
+	cases := []struct {
+		name      string
+		taskID    int64
+		task      *db.ScheduledTask
+		getErr    error
+		updateErr error
+		wantState bool
+		wantErr   string
+	}{
+		{
+			name:      "enable",
+			taskID:    1,
+			task:      &db.ScheduledTask{ID: 1, Enabled: false},
+			wantState: true,
+		},
+		{
+			name:   "disable",
+			taskID: 1,
+			task:   &db.ScheduledTask{ID: 1, Enabled: true},
+		},
+		{
+			name:    "not found",
+			taskID:  99,
+			wantErr: "not found",
+		},
+		{
+			name:    "get error",
+			taskID:  1,
+			getErr:  errors.New("db error"),
+			wantErr: "getting task",
+		},
+		{
+			name:      "update error",
+			taskID:    1,
+			task:      &db.ScheduledTask{ID: 1, Enabled: true},
+			updateErr: errors.New("update error"),
+			wantErr:   "update error",
+		},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			store := new(testutil.MockStore)
+			store.On("GetScheduledTask", mock.Anything, tc.taskID).Return(tc.task, tc.getErr)
+			if tc.task != nil && tc.getErr == nil {
+				store.On("UpdateScheduledTaskEnabled", mock.Anything, tc.taskID, !tc.task.Enabled).Return(tc.updateErr)
+			}
 
-	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.SetTaskEnabled(context.Background(), 42, true)
+			ts := NewTaskScheduler(store, s.executor, time.Second, s.logger)
+			newState, err := ts.ToggleTask(context.Background(), tc.taskID)
 
-	require.Error(s.T(), err)
-	require.Equal(s.T(), "db error", err.Error())
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *SchedulerSuite) TestToggleTaskEnable() {
-	task := &db.ScheduledTask{ID: 1, Enabled: false}
-	s.store.On("GetScheduledTask", mock.Anything, int64(1)).Return(task, nil)
-	s.store.On("UpdateScheduledTaskEnabled", mock.Anything, int64(1), true).Return(nil)
-
-	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	newState, err := ts.ToggleTask(context.Background(), 1)
-
-	require.NoError(s.T(), err)
-	require.True(s.T(), newState)
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *SchedulerSuite) TestToggleTaskDisable() {
-	task := &db.ScheduledTask{ID: 1, Enabled: true}
-	s.store.On("GetScheduledTask", mock.Anything, int64(1)).Return(task, nil)
-	s.store.On("UpdateScheduledTaskEnabled", mock.Anything, int64(1), false).Return(nil)
-
-	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	newState, err := ts.ToggleTask(context.Background(), 1)
-
-	require.NoError(s.T(), err)
-	require.False(s.T(), newState)
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *SchedulerSuite) TestToggleTaskNotFound() {
-	s.store.On("GetScheduledTask", mock.Anything, int64(99)).Return(nil, nil)
-
-	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	_, err := ts.ToggleTask(context.Background(), 99)
-
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "not found")
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *SchedulerSuite) TestToggleTaskGetError() {
-	s.store.On("GetScheduledTask", mock.Anything, int64(1)).Return(nil, errors.New("db error"))
-
-	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	_, err := ts.ToggleTask(context.Background(), 1)
-
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "getting task")
-	s.store.AssertExpectations(s.T())
-}
-
-func (s *SchedulerSuite) TestToggleTaskUpdateError() {
-	task := &db.ScheduledTask{ID: 1, Enabled: true}
-	s.store.On("GetScheduledTask", mock.Anything, int64(1)).Return(task, nil)
-	s.store.On("UpdateScheduledTaskEnabled", mock.Anything, int64(1), false).Return(errors.New("update error"))
-
-	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	_, err := ts.ToggleTask(context.Background(), 1)
-
-	require.Error(s.T(), err)
-	require.Equal(s.T(), "update error", err.Error())
-	s.store.AssertExpectations(s.T())
+			if tc.wantErr != "" {
+				require.Error(s.T(), err)
+				require.Contains(s.T(), err.Error(), tc.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), tc.wantState, newState)
+			}
+			store.AssertExpectations(s.T())
+		})
+	}
 }
 
 func (s *SchedulerSuite) TestEditTaskPromptOnly() {
