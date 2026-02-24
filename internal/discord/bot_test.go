@@ -740,8 +740,8 @@ func (s *BotSuite) TestHandleMessageIgnored() {
 		{
 			"bot reply to self", &discordgo.Message{
 				ID: "msg-2", ChannelID: "ch-2", Content: "The last commit is abc123",
-				Author: &discordgo.User{ID: "bot-123", Username: "LoopBot"},
-				Mentions: []*discordgo.User{{ID: "bot-123"}},
+				Author:            &discordgo.User{ID: "bot-123", Username: "LoopBot"},
+				Mentions:          []*discordgo.User{{ID: "bot-123"}},
 				MessageReference:  &discordgo.MessageReference{MessageID: "msg-1"},
 				ReferencedMessage: &discordgo.Message{Author: &discordgo.User{ID: "bot-123"}},
 			},
@@ -1229,10 +1229,10 @@ func (s *BotSuite) TestSendMessageWithPendingInteraction() {
 
 func (s *BotSuite) TestCreateChannel() {
 	tests := []struct {
-		name      string
-		setup     func(*MockSession)
-		wantID    string
-		wantErr   string
+		name    string
+		setup   func(*MockSession)
+		wantID  string
+		wantErr string
 	}{
 		{
 			name: "success",
@@ -1582,7 +1582,7 @@ func (s *BotSuite) TestGetChannelParentID() {
 	}{
 		{
 			name: "thread", channelID: "thread-1",
-			channel: &discordgo.Channel{ID: "thread-1", Type: discordgo.ChannelTypeGuildPublicThread, ParentID: "ch-1"},
+			channel:    &discordgo.Channel{ID: "thread-1", Type: discordgo.ChannelTypeGuildPublicThread, ParentID: "ch-1"},
 			wantParent: "ch-1",
 		},
 		{
@@ -1764,12 +1764,12 @@ func (s *BotSuite) TestPostMessage() {
 
 func (s *BotSuite) TestCreateSimpleThread() {
 	tests := []struct {
-		name     string
-		title    string
-		message  string
-		setup    func(*MockSession)
-		wantID   string
-		wantErr  string
+		name    string
+		title   string
+		message string
+		setup   func(*MockSession)
+		wantID  string
+		wantErr string
 	}{
 		{
 			name: "success", title: "task output", message: "First turn content",
