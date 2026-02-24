@@ -79,26 +79,41 @@ func (s *IndexerSuite) TearDownTest() {
 	evalSymlinks = s.origEvalSymlinks
 }
 
+// stubFS overrides walkDir, readFile, and osStat for a test and returns a cleanup function.
+// It sets osStat to fakeStatDir, walkDir to a fake that visits the given paths,
+// and readFile to return the given content for every file.
+func (s *IndexerSuite) stubFS(paths []string, content string) func() {
+	origWalkDir, origReadFile, origOsStat := walkDir, readFile, osStat
+	osStat = fakeStatDir
+	walkDir = fakeWalkDir(paths)
+	readFile = func(string) ([]byte, error) { return []byte(content), nil }
+	return func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }
+}
+
+// stubFSFunc is like stubFS but accepts a custom readFile function.
+func (s *IndexerSuite) stubFSFunc(paths []string, readFn func(string) ([]byte, error)) func() {
+	origWalkDir, origReadFile, origOsStat := walkDir, readFile, osStat
+	osStat = fakeStatDir
+	walkDir = fakeWalkDir(paths)
+	readFile = readFn
+	return func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }
+}
+
+// expectEmbed sets up embedder and store mocks for a successful index of small files.
+func (s *IndexerSuite) expectEmbed(ctx context.Context) {
+	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1}}, nil)
+	s.embedder.On("Dimensions").Return(768)
+	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
+}
+
 // --- Index tests ---
 
 func (s *IndexerSuite) TestIndexNewFile() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
-
-	osStat = fakeStatDir
-
-	walkDir = fakeWalkDir([]string{"/memory/test.md"})
-	readFile = func(name string) ([]byte, error) {
-		return []byte("## Docker\n\nCleanup info"), nil
-	}
+	defer s.stubFS([]string{"/memory/test.md"}, "## Docker\n\nCleanup info")()
 
 	ctx := context.Background()
 	s.store.On("GetMemoryFileHash", ctx, "/memory/test.md", "").Return("", nil)
-	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1, 0.2}}, nil)
-	s.embedder.On("Dimensions").Return(768)
-	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
+	s.expectEmbed(ctx)
 
 	n, err := s.indexer.Index(ctx, "/memory", "", nil)
 	require.NoError(s.T(), err)
@@ -107,17 +122,7 @@ func (s *IndexerSuite) TestIndexNewFile() {
 }
 
 func (s *IndexerSuite) TestIndexSkipsUpToDate() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
-
-	osStat = fakeStatDir
-
-	walkDir = fakeWalkDir([]string{"/memory/test.md"})
-	readFile = func(name string) ([]byte, error) {
-		return []byte("## Docker\n\nCleanup info"), nil
-	}
+	defer s.stubFS([]string{"/memory/test.md"}, "## Docker\n\nCleanup info")()
 
 	ctx := context.Background()
 	expectedHash := contentHash("## Docker\n\nCleanup info")
@@ -135,23 +140,13 @@ func (s *IndexerSuite) TestIndexNonExistentDir() {
 }
 
 func (s *IndexerSuite) TestIndexRecursesSubdirectories() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
-
-	osStat = fakeStatDir
-
-	walkDir = fakeWalkDir([]string{"/memory/a.md", "/memory/sub/b.md"})
-	readFile = func(name string) ([]byte, error) {
+	defer s.stubFSFunc([]string{"/memory/a.md", "/memory/sub/b.md"}, func(name string) ([]byte, error) {
 		return []byte("content of " + name), nil
-	}
+	})()
 
 	ctx := context.Background()
 	s.store.On("GetMemoryFileHash", ctx, mock.Anything, "").Return("", nil)
-	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1}}, nil)
-	s.embedder.On("Dimensions").Return(768)
-	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
+	s.expectEmbed(ctx)
 
 	n, err := s.indexer.Index(ctx, "/memory", "", nil)
 	require.NoError(s.T(), err)
@@ -159,45 +154,66 @@ func (s *IndexerSuite) TestIndexRecursesSubdirectories() {
 }
 
 func (s *IndexerSuite) TestIndexSkipsNonMdFiles() {
-	origWalkDir := walkDir
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; osStat = origOsStat }()
-
-	osStat = fakeStatDir
-
-	walkDir = fakeWalkDir([]string{"/memory/notes.txt", "/memory/.vectors.db"})
+	defer s.stubFS([]string{"/memory/notes.txt", "/memory/.vectors.db"}, "")()
 
 	n, err := s.indexer.Index(context.Background(), "/memory", "", nil)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, n)
 }
 
-func (s *IndexerSuite) TestIndexReadFileError() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
-
-	osStat = fakeStatDir
-
-	walkDir = fakeWalkDir([]string{"/memory/bad.md"})
-	readFile = func(name string) ([]byte, error) {
-		return nil, errors.New("read error")
+func (s *IndexerSuite) TestIndexErrorPaths() {
+	tests := []struct {
+		name  string
+		setup func(ctx context.Context)
+	}{
+		{
+			name: "read file error",
+			setup: func(ctx context.Context) {
+				readFile = func(string) ([]byte, error) { return nil, errors.New("read error") }
+			},
+		},
+		{
+			name: "embed error",
+			setup: func(ctx context.Context) {
+				s.store.On("GetMemoryFileHash", ctx, "/memory/test.md", "").Return("", nil)
+				s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32(nil), errors.New("embed failed"))
+			},
+		},
+		{
+			name: "hash check error",
+			setup: func(ctx context.Context) {
+				s.store.On("GetMemoryFileHash", ctx, "/memory/test.md", "").Return("", errors.New("db error"))
+			},
+		},
+		{
+			name: "upsert error",
+			setup: func(ctx context.Context) {
+				s.store.On("GetMemoryFileHash", ctx, "/memory/test.md", "").Return("", nil)
+				s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1}}, nil)
+				s.embedder.On("Dimensions").Return(768)
+				s.store.On("UpsertMemoryFile", ctx, mock.Anything).Return(errors.New("db error"))
+			},
+		},
 	}
-
-	n, err := s.indexer.Index(context.Background(), "/memory", "", nil)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), 0, n) // logged, not returned
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			defer s.stubFS([]string{"/memory/test.md"}, "content")()
+			ctx := context.Background()
+			tt.setup(ctx)
+			n, err := s.indexer.Index(ctx, "/memory", "", nil)
+			require.NoError(s.T(), err) // logged, not returned
+			require.Equal(s.T(), 0, n)
+		})
+	}
 }
 
 func (s *IndexerSuite) TestIndexWalkDirEntryError() {
-	origWalkDir := walkDir
-	origOsStat := osStat
+	origWalkDir, origOsStat := walkDir, osStat
 	defer func() { walkDir = origWalkDir; osStat = origOsStat }()
 
 	osStat = fakeStatDir
 	walkDir = func(root string, fn fs.WalkDirFunc) error {
-		// Simulate a walk error for a specific entry (e.g., permission denied).
 		_ = fn(root, &fakeDirEntry{name: root, isDir: true}, nil)
 		_ = fn("/memory/bad", nil, errors.New("permission denied"))
 		return nil
@@ -208,89 +224,12 @@ func (s *IndexerSuite) TestIndexWalkDirEntryError() {
 	require.Equal(s.T(), 0, n)
 }
 
-func (s *IndexerSuite) TestIndexEmbedError() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
-
-	osStat = fakeStatDir
-
-	walkDir = fakeWalkDir([]string{"/memory/test.md"})
-	readFile = func(name string) ([]byte, error) {
-		return []byte("content"), nil
-	}
-
-	ctx := context.Background()
-	s.store.On("GetMemoryFileHash", ctx, "/memory/test.md", "").Return("", nil)
-	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32(nil), errors.New("embed failed"))
-
-	n, err := s.indexer.Index(ctx, "/memory", "", nil)
-	require.NoError(s.T(), err) // indexing errors are logged, not returned
-	require.Equal(s.T(), 0, n)
-}
-
-func (s *IndexerSuite) TestIndexHashCheckError() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
-
-	osStat = fakeStatDir
-
-	walkDir = fakeWalkDir([]string{"/memory/test.md"})
-	readFile = func(name string) ([]byte, error) {
-		return []byte("content"), nil
-	}
-
-	ctx := context.Background()
-	s.store.On("GetMemoryFileHash", ctx, "/memory/test.md", "").Return("", errors.New("db error"))
-
-	n, err := s.indexer.Index(ctx, "/memory", "", nil)
-	require.NoError(s.T(), err) // logged, not returned
-	require.Equal(s.T(), 0, n)
-}
-
-func (s *IndexerSuite) TestIndexUpsertError() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
-
-	osStat = fakeStatDir
-
-	walkDir = fakeWalkDir([]string{"/memory/test.md"})
-	readFile = func(name string) ([]byte, error) {
-		return []byte("content"), nil
-	}
-
-	ctx := context.Background()
-	s.store.On("GetMemoryFileHash", ctx, "/memory/test.md", "").Return("", nil)
-	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1}}, nil)
-	s.embedder.On("Dimensions").Return(768)
-	s.store.On("UpsertMemoryFile", ctx, mock.Anything).Return(errors.New("db error"))
-
-	n, err := s.indexer.Index(ctx, "/memory", "", nil)
-	require.NoError(s.T(), err) // logged, not returned
-	require.Equal(s.T(), 0, n)
-}
-
 func (s *IndexerSuite) TestIndexChunksLargeFile() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
-
-	osStat = fakeStatDir
-	// Create content that's larger than defaultMaxChunkChars with newlines for clean splitting.
 	line := strings.Repeat("x", 100) + "\n"
 	largeContent := strings.Repeat(line, (defaultMaxChunkChars/101)+2)
 	require.Greater(s.T(), len(largeContent), defaultMaxChunkChars)
 
-	walkDir = fakeWalkDir([]string{"/memory/large.md"})
-	readFile = func(name string) ([]byte, error) {
-		return []byte(largeContent), nil
-	}
+	defer s.stubFS([]string{"/memory/large.md"}, largeContent)()
 
 	ctx := context.Background()
 	s.store.On("GetMemoryFileHash", ctx, "/memory/large.md", "").Return("", nil)
@@ -311,71 +250,64 @@ func (s *IndexerSuite) TestIndexChunksLargeFile() {
 	s.store.AssertExpectations(s.T())
 }
 
-func (s *IndexerSuite) TestIndexChunksHeaderUpsertError() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
-
-	osStat = fakeStatDir
+func (s *IndexerSuite) TestIndexChunksErrorPaths() {
 	largeContent := strings.Repeat("x\n", defaultMaxChunkChars)
-	walkDir = fakeWalkDir([]string{"/memory/large.md"})
-	readFile = func(name string) ([]byte, error) {
-		return []byte(largeContent), nil
+
+	tests := []struct {
+		name  string
+		setup func(ctx context.Context)
+	}{
+		{
+			name: "header upsert error",
+			setup: func(ctx context.Context) {
+				s.store.On("UpsertMemoryFile", ctx, mock.MatchedBy(func(f *db.MemoryFile) bool {
+					return f.ChunkIndex == 0
+				})).Return(errors.New("db error"))
+			},
+		},
+		{
+			name: "chunk upsert error",
+			setup: func(ctx context.Context) {
+				s.store.On("UpsertMemoryFile", ctx, mock.MatchedBy(func(f *db.MemoryFile) bool {
+					return f.ChunkIndex == 0
+				})).Return(nil)
+				s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1}}, nil)
+				s.embedder.On("Dimensions").Return(768)
+				s.store.On("UpsertMemoryFile", ctx, mock.MatchedBy(func(f *db.MemoryFile) bool {
+					return f.ChunkIndex > 0
+				})).Return(errors.New("db error"))
+			},
+		},
+		{
+			name: "chunk embed error",
+			setup: func(ctx context.Context) {
+				s.store.On("UpsertMemoryFile", ctx, mock.MatchedBy(func(f *db.MemoryFile) bool {
+					return f.ChunkIndex == 0
+				})).Return(nil)
+				s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32(nil), errors.New("embed error"))
+			},
+		},
 	}
-
-	ctx := context.Background()
-	s.store.On("GetMemoryFileHash", ctx, "/memory/large.md", "").Return("", nil)
-	s.store.On("UpsertMemoryFile", ctx, mock.MatchedBy(func(f *db.MemoryFile) bool {
-		return f.ChunkIndex == 0
-	})).Return(errors.New("db error"))
-
-	n, err := s.indexer.Index(ctx, "/memory", "", nil)
-	require.NoError(s.T(), err) // logged, not returned
-	require.Equal(s.T(), 0, n)
-}
-
-func (s *IndexerSuite) TestIndexChunksChunkUpsertError() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
-
-	osStat = fakeStatDir
-	largeContent := strings.Repeat("x\n", defaultMaxChunkChars)
-	walkDir = fakeWalkDir([]string{"/memory/large.md"})
-	readFile = func(name string) ([]byte, error) {
-		return []byte(largeContent), nil
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.SetupTest()
+			defer s.stubFS([]string{"/memory/large.md"}, largeContent)()
+			ctx := context.Background()
+			s.store.On("GetMemoryFileHash", ctx, "/memory/large.md", "").Return("", nil)
+			tt.setup(ctx)
+			n, err := s.indexer.Index(ctx, "/memory", "", nil)
+			require.NoError(s.T(), err) // logged, not returned
+			require.Equal(s.T(), 0, n)
+		})
 	}
-
-	ctx := context.Background()
-	s.store.On("GetMemoryFileHash", ctx, "/memory/large.md", "").Return("", nil)
-	// Header succeeds
-	s.store.On("UpsertMemoryFile", ctx, mock.MatchedBy(func(f *db.MemoryFile) bool {
-		return f.ChunkIndex == 0
-	})).Return(nil)
-	// Chunk embedding succeeds
-	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1}}, nil)
-	s.embedder.On("Dimensions").Return(768)
-	// Chunk upsert fails
-	s.store.On("UpsertMemoryFile", ctx, mock.MatchedBy(func(f *db.MemoryFile) bool {
-		return f.ChunkIndex > 0
-	})).Return(errors.New("db error"))
-
-	n, err := s.indexer.Index(ctx, "/memory", "", nil)
-	require.NoError(s.T(), err) // logged, not returned
-	require.Equal(s.T(), 0, n)
 }
 
 func (s *IndexerSuite) TestIndexWalkDirError() {
-	origWalkDir := walkDir
-	origOsStat := osStat
+	origWalkDir, origOsStat := walkDir, osStat
 	defer func() { walkDir = origWalkDir; osStat = origOsStat }()
 
 	osStat = fakeStatDir
-	walkDir = func(root string, fn fs.WalkDirFunc) error {
-		return errors.New("walk error")
-	}
+	walkDir = func(string, fs.WalkDirFunc) error { return errors.New("walk error") }
 
 	n, err := s.indexer.Index(context.Background(), "/memory", "", nil)
 	require.Error(s.T(), err)
@@ -383,45 +315,8 @@ func (s *IndexerSuite) TestIndexWalkDirError() {
 	require.Equal(s.T(), 0, n)
 }
 
-func (s *IndexerSuite) TestIndexChunksEmbedError() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
-
-	osStat = fakeStatDir
-	largeContent := strings.Repeat("x\n", defaultMaxChunkChars)
-	walkDir = fakeWalkDir([]string{"/memory/large.md"})
-	readFile = func(name string) ([]byte, error) {
-		return []byte(largeContent), nil
-	}
-
-	ctx := context.Background()
-	s.store.On("GetMemoryFileHash", ctx, "/memory/large.md", "").Return("", nil)
-	// Header succeeds
-	s.store.On("UpsertMemoryFile", ctx, mock.MatchedBy(func(f *db.MemoryFile) bool {
-		return f.ChunkIndex == 0
-	})).Return(nil)
-	// Chunk embedding fails
-	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32(nil), errors.New("embed error"))
-
-	n, err := s.indexer.Index(ctx, "/memory", "", nil)
-	require.NoError(s.T(), err) // logged, not returned
-	require.Equal(s.T(), 0, n)
-}
-
 func (s *IndexerSuite) TestIndexEmptyFileContent() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
-
-	osStat = fakeStatDir
-
-	walkDir = fakeWalkDir([]string{"/memory/empty.md"})
-	readFile = func(name string) ([]byte, error) {
-		return []byte("   \n  \n  "), nil
-	}
+	defer s.stubFS([]string{"/memory/empty.md"}, "   \n  \n  ")()
 
 	n, err := s.indexer.Index(context.Background(), "/memory", "", nil)
 	require.NoError(s.T(), err)
@@ -429,24 +324,12 @@ func (s *IndexerSuite) TestIndexEmptyFileContent() {
 }
 
 func (s *IndexerSuite) TestIndexStaleDeletesOldEntry() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
-
-	osStat = fakeStatDir
-
-	walkDir = fakeWalkDir([]string{"/memory/test.md"})
-	readFile = func(name string) ([]byte, error) {
-		return []byte("updated content"), nil
-	}
+	defer s.stubFS([]string{"/memory/test.md"}, "updated content")()
 
 	ctx := context.Background()
 	s.store.On("GetMemoryFileHash", ctx, "/memory/test.md", "").Return("old-hash", nil)
 	s.store.On("DeleteMemoryFile", ctx, "/memory/test.md", "").Return(nil)
-	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1}}, nil)
-	s.embedder.On("Dimensions").Return(768)
-	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
+	s.expectEmbed(ctx)
 
 	n, err := s.indexer.Index(ctx, "/memory", "", nil)
 	require.NoError(s.T(), err)
@@ -455,13 +338,8 @@ func (s *IndexerSuite) TestIndexStaleDeletesOldEntry() {
 }
 
 func (s *IndexerSuite) TestIndexResolvesSymlinks() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
+	defer s.stubFS([]string{"/real/memory/test.md"}, "content")()
 
-	osStat = fakeStatDir
-	// Symlink resolves /project/memory -> /real/memory
 	evalSymlinks = func(path string) (string, error) {
 		if path == "/project/memory" {
 			return "/real/memory", nil
@@ -469,16 +347,9 @@ func (s *IndexerSuite) TestIndexResolvesSymlinks() {
 		return path, nil
 	}
 
-	walkDir = fakeWalkDir([]string{"/real/memory/test.md"})
-	readFile = func(name string) ([]byte, error) {
-		return []byte("content"), nil
-	}
-
 	ctx := context.Background()
 	s.store.On("GetMemoryFileHash", ctx, "/real/memory/test.md", "").Return("", nil)
-	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1}}, nil)
-	s.embedder.On("Dimensions").Return(768)
-	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
+	s.expectEmbed(ctx)
 
 	n, err := s.indexer.Index(ctx, "/project/memory", "", nil)
 	require.NoError(s.T(), err)
@@ -511,16 +382,11 @@ func (s *IndexerSuite) TestIndexStatPermissionError() {
 }
 
 func (s *IndexerSuite) TestIndexFileReadNotExist() {
-	origOsStat := osStat
-	origReadFile := readFile
+	origOsStat, origReadFile := osStat, readFile
 	defer func() { osStat = origOsStat; readFile = origReadFile }()
 
-	osStat = func(name string) (os.FileInfo, error) {
-		return &fakeFileInfo{name: name, isDir: false}, nil
-	}
-	readFile = func(name string) ([]byte, error) {
-		return nil, os.ErrNotExist
-	}
+	osStat = fakeStatFile
+	readFile = func(string) ([]byte, error) { return nil, os.ErrNotExist }
 
 	n, err := s.indexer.Index(context.Background(), "/docs/notes.md", "", nil)
 	require.NoError(s.T(), err)
@@ -528,16 +394,7 @@ func (s *IndexerSuite) TestIndexFileReadNotExist() {
 }
 
 func (s *IndexerSuite) TestIndexStaleDeleteError() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
-
-	osStat = fakeStatDir
-	walkDir = fakeWalkDir([]string{"/memory/test.md"})
-	readFile = func(name string) ([]byte, error) {
-		return []byte("updated content"), nil
-	}
+	defer s.stubFS([]string{"/memory/test.md"}, "updated content")()
 
 	ctx := context.Background()
 	s.store.On("GetMemoryFileHash", ctx, "/memory/test.md", "").Return("old-hash", nil)
@@ -551,22 +408,15 @@ func (s *IndexerSuite) TestIndexStaleDeleteError() {
 // --- Index file path tests ---
 
 func (s *IndexerSuite) TestIndexSingleMdFile() {
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { readFile = origReadFile; osStat = origOsStat }()
+	origOsStat, origReadFile := osStat, readFile
+	defer func() { osStat = origOsStat; readFile = origReadFile }()
 
-	osStat = func(name string) (os.FileInfo, error) {
-		return &fakeFileInfo{name: name, isDir: false}, nil
-	}
-	readFile = func(name string) ([]byte, error) {
-		return []byte("## Topic\nSome content"), nil
-	}
+	osStat = fakeStatFile
+	readFile = func(string) ([]byte, error) { return []byte("## Topic\nSome content"), nil }
 
 	ctx := context.Background()
 	s.store.On("GetMemoryFileHash", ctx, "/docs/notes.md", "").Return("", nil)
-	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1, 0.2}}, nil)
-	s.embedder.On("Dimensions").Return(768)
-	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
+	s.expectEmbed(ctx)
 
 	n, err := s.indexer.Index(ctx, "/docs/notes.md", "", nil)
 	require.NoError(s.T(), err)
@@ -577,10 +427,7 @@ func (s *IndexerSuite) TestIndexSingleMdFile() {
 func (s *IndexerSuite) TestIndexNonMdFilePath() {
 	origOsStat := osStat
 	defer func() { osStat = origOsStat }()
-
-	osStat = func(name string) (os.FileInfo, error) {
-		return &fakeFileInfo{name: name, isDir: false}, nil
-	}
+	osStat = fakeStatFile
 
 	n, err := s.indexer.Index(context.Background(), "/docs/notes.txt", "", nil)
 	require.NoError(s.T(), err)
@@ -624,14 +471,10 @@ func (s *IndexerSuite) TestResolveExcludeSymlinks() {
 }
 
 func (s *IndexerSuite) TestIndexExcludeWithSymlinks() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
+	defer s.stubFSFunc(nil, func(name string) ([]byte, error) {
+		return []byte("content of " + name), nil
+	})()
 
-	osStat = fakeStatDir
-
-	// Symlink: /project/memory -> /real/memory
 	evalSymlinks = func(path string) (string, error) {
 		switch path {
 		case "/project/memory":
@@ -642,22 +485,16 @@ func (s *IndexerSuite) TestIndexExcludeWithSymlinks() {
 			return path, nil
 		}
 	}
-
 	walkDir = func(root string, fn fs.WalkDirFunc) error {
 		_ = fn(root, &fakeDirEntry{name: root, isDir: true}, nil)
 		_ = fn("/real/memory/plans", &fakeDirEntry{name: "plans", isDir: true}, nil)
 		_ = fn("/real/memory/notes.md", &fakeDirEntry{name: "notes.md"}, nil)
 		return nil
 	}
-	readFile = func(name string) ([]byte, error) {
-		return []byte("content of " + name), nil
-	}
 
 	ctx := context.Background()
 	s.store.On("GetMemoryFileHash", ctx, "/real/memory/notes.md", "").Return("", nil)
-	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1}}, nil)
-	s.embedder.On("Dimensions").Return(768)
-	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
+	s.expectEmbed(ctx)
 
 	// Exclude /project/memory/plans (pre-symlink path) — should resolve and match /real/memory/plans.
 	n, err := s.indexer.Index(ctx, "/project/memory", "", []string{"/project/memory/plans"})
@@ -666,12 +503,9 @@ func (s *IndexerSuite) TestIndexExcludeWithSymlinks() {
 }
 
 func (s *IndexerSuite) TestIndexExcludeDir() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
-
-	osStat = fakeStatDir
+	defer s.stubFSFunc(nil, func(name string) ([]byte, error) {
+		return []byte("content of " + name), nil
+	})()
 
 	// Walk visits both a regular file and a file inside an excluded directory.
 	walkDir = func(root string, fn fs.WalkDirFunc) error {
@@ -680,15 +514,10 @@ func (s *IndexerSuite) TestIndexExcludeDir() {
 		_ = fn("/memory/notes.md", &fakeDirEntry{name: "notes.md"}, nil)
 		return nil
 	}
-	readFile = func(name string) ([]byte, error) {
-		return []byte("content of " + name), nil
-	}
 
 	ctx := context.Background()
 	s.store.On("GetMemoryFileHash", ctx, "/memory/notes.md", "").Return("", nil)
-	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1}}, nil)
-	s.embedder.On("Dimensions").Return(768)
-	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
+	s.expectEmbed(ctx)
 
 	n, err := s.indexer.Index(ctx, "/memory", "", []string{"/memory/drafts"})
 	require.NoError(s.T(), err)
@@ -697,23 +526,13 @@ func (s *IndexerSuite) TestIndexExcludeDir() {
 }
 
 func (s *IndexerSuite) TestIndexExcludeFile() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
-
-	osStat = fakeStatDir
-
-	walkDir = fakeWalkDir([]string{"/memory/keep.md", "/memory/skip.md"})
-	readFile = func(name string) ([]byte, error) {
+	defer s.stubFSFunc([]string{"/memory/keep.md", "/memory/skip.md"}, func(name string) ([]byte, error) {
 		return []byte("content of " + name), nil
-	}
+	})()
 
 	ctx := context.Background()
 	s.store.On("GetMemoryFileHash", ctx, "/memory/keep.md", "").Return("", nil)
-	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1}}, nil)
-	s.embedder.On("Dimensions").Return(768)
-	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
+	s.expectEmbed(ctx)
 
 	n, err := s.indexer.Index(ctx, "/memory", "", []string{"/memory/skip.md"})
 	require.NoError(s.T(), err)
@@ -722,23 +541,11 @@ func (s *IndexerSuite) TestIndexExcludeFile() {
 }
 
 func (s *IndexerSuite) TestIndexExcludeNoMatch() {
-	origWalkDir := walkDir
-	origReadFile := readFile
-	origOsStat := osStat
-	defer func() { walkDir = origWalkDir; readFile = origReadFile; osStat = origOsStat }()
-
-	osStat = fakeStatDir
-
-	walkDir = fakeWalkDir([]string{"/memory/notes.md"})
-	readFile = func(name string) ([]byte, error) {
-		return []byte("content"), nil
-	}
+	defer s.stubFS([]string{"/memory/notes.md"}, "content")()
 
 	ctx := context.Background()
 	s.store.On("GetMemoryFileHash", ctx, "/memory/notes.md", "").Return("", nil)
-	s.embedder.On("Embed", ctx, mock.Anything).Return([][]float32{{0.1}}, nil)
-	s.embedder.On("Dimensions").Return(768)
-	s.store.On("UpsertMemoryFile", ctx, mock.AnythingOfType("*db.MemoryFile")).Return(nil)
+	s.expectEmbed(ctx)
 
 	// Exclusion that doesn't match any file — all files still indexed.
 	n, err := s.indexer.Index(ctx, "/memory", "", []string{"/memory/drafts"})
@@ -749,10 +556,7 @@ func (s *IndexerSuite) TestIndexExcludeNoMatch() {
 func (s *IndexerSuite) TestIndexSingleFileExcluded() {
 	origOsStat := osStat
 	defer func() { osStat = origOsStat }()
-
-	osStat = func(name string) (os.FileInfo, error) {
-		return &fakeFileInfo{name: name, isDir: false}, nil
-	}
+	osStat = fakeStatFile
 
 	n, err := s.indexer.Index(context.Background(), "/docs/notes.md", "", []string{"/docs/notes.md"})
 	require.NoError(s.T(), err)
@@ -872,32 +676,23 @@ func (s *IndexerSuite) TestContentHash() {
 
 // --- splitChunks tests ---
 
-func (s *IndexerSuite) TestSplitChunksSmall() {
-	chunks := splitChunks("hello world", 100)
-	require.Equal(s.T(), []string{"hello world"}, chunks)
-}
-
-func (s *IndexerSuite) TestSplitChunksAtNewline() {
-	content := "line1\nline2\nline3\nline4"
-	chunks := splitChunks(content, 12)
-	require.Len(s.T(), chunks, 2)
-	require.Equal(s.T(), "line1\nline2", chunks[0])
-	require.Equal(s.T(), "line3\nline4", chunks[1])
-}
-
-func (s *IndexerSuite) TestSplitChunksNoNewline() {
-	content := strings.Repeat("x", 20)
-	chunks := splitChunks(content, 8)
-	require.Len(s.T(), chunks, 3)
-	require.Equal(s.T(), "xxxxxxxx", chunks[0])
-	require.Equal(s.T(), "xxxxxxxx", chunks[1])
-	require.Equal(s.T(), "xxxx", chunks[2])
-}
-
-func (s *IndexerSuite) TestSplitChunksExactSize() {
-	content := strings.Repeat("x", 10)
-	chunks := splitChunks(content, 10)
-	require.Equal(s.T(), []string{content}, chunks)
+func (s *IndexerSuite) TestSplitChunks() {
+	tests := []struct {
+		name     string
+		content  string
+		maxChars int
+		expected []string
+	}{
+		{"small", "hello world", 100, []string{"hello world"}},
+		{"at newline", "line1\nline2\nline3\nline4", 12, []string{"line1\nline2", "line3\nline4"}},
+		{"no newline", strings.Repeat("x", 20), 8, []string{"xxxxxxxx", "xxxxxxxx", "xxxx"}},
+		{"exact size", strings.Repeat("x", 10), 10, []string{strings.Repeat("x", 10)}},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			require.Equal(s.T(), tt.expected, splitChunks(tt.content, tt.maxChars))
+		})
+	}
 }
 
 // --- Test helpers ---
@@ -905,6 +700,11 @@ func (s *IndexerSuite) TestSplitChunksExactSize() {
 // fakeStatDir is an osStat replacement that always returns a directory.
 func fakeStatDir(name string) (os.FileInfo, error) {
 	return &fakeFileInfo{name: name, isDir: true}, nil
+}
+
+// fakeStatFile is an osStat replacement that always returns a regular file.
+func fakeStatFile(name string) (os.FileInfo, error) {
+	return &fakeFileInfo{name: name, isDir: false}, nil
 }
 
 // fakeEvalSymlinks is an evalSymlinks replacement that returns the path as-is.
