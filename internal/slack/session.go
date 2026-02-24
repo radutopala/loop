@@ -9,6 +9,7 @@ import (
 type SlackSession interface {
 	PostMessage(channelID string, options ...goslack.MsgOption) (string, string, error)
 	DeleteMessage(channel, messageTimestamp string) (string, string, error)
+	UpdateMessage(channelID, timestamp string, options ...goslack.MsgOption) (string, string, string, error)
 	AuthTest() (*goslack.AuthTestResponse, error)
 	CreateConversation(params goslack.CreateConversationParams) (*goslack.Channel, error)
 	AddReaction(name string, item goslack.ItemRef) error

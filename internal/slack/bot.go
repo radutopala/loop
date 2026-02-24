@@ -397,14 +397,70 @@ func (b *SlackBot) PostMessage(ctx context.Context, channelID, content string) e
 	return nil
 }
 
-// DeleteThread deletes a thread by deleting its parent message.
+// RenameThread renames a Slack thread by doing a find-and-replace on the parent message text.
+// The name parameter is the new thread name; we extract the old and new emoji prefixes
+// and replace only the emoji in the existing message to preserve the original content.
+func (b *SlackBot) RenameThread(ctx context.Context, threadID, name string) error {
+	channelID, ts := parseCompositeID(threadID)
+	if ts == "" {
+		return fmt.Errorf("invalid thread ID: %s (expected channelID:timestamp)", threadID)
+	}
+	msgs, _, _, err := b.session.GetConversationReplies(&goslack.GetConversationRepliesParameters{
+		ChannelID: channelID,
+		Timestamp: ts,
+		Limit:     1,
+	})
+	if err != nil {
+		return fmt.Errorf("slack get parent message: %w", err)
+	}
+	if len(msgs) == 0 {
+		return fmt.Errorf("slack rename thread: parent message not found")
+	}
+	// Replace thread emoji with ephemeral emoji and strip [EPHEMERAL] marker.
+	// Slack returns Unicode emoji as shortcodes (e.g. :thread: instead of 🧵),
+	// so we must match both forms.
+	oldText := msgs[0].Text
+	newText := oldText
+	switch {
+	case strings.Contains(newText, "🧵"):
+		newText = strings.Replace(newText, "🧵", "💨", 1)
+	case strings.Contains(newText, ":thread:"):
+		newText = strings.Replace(newText, ":thread:", "💨", 1)
+	}
+	newText = strings.TrimSpace(strings.ReplaceAll(newText, "[EPHEMERAL]", ""))
+	if _, _, _, err := b.session.UpdateMessage(channelID, ts, goslack.MsgOptionText(newText, false)); err != nil {
+		return fmt.Errorf("slack rename thread: %w", err)
+	}
+	b.logger.InfoContext(ctx, "renamed slack thread", "thread_id", threadID)
+	return nil
+}
+
+// DeleteThread deletes a thread by deleting all its messages (replies and parent).
 func (b *SlackBot) DeleteThread(ctx context.Context, threadID string) error {
 	channelID, ts := parseCompositeID(threadID)
 	if ts == "" {
 		return fmt.Errorf("invalid thread ID: %s (expected channelID:timestamp)", threadID)
 	}
-	if _, _, err := b.session.DeleteMessage(channelID, ts); err != nil {
-		return fmt.Errorf("slack delete thread: %w", err)
+	// Fetch all replies (includes parent message)
+	var cursor string
+	for {
+		msgs, _, nextCursor, err := b.session.GetConversationReplies(&goslack.GetConversationRepliesParameters{
+			ChannelID: channelID,
+			Timestamp: ts,
+			Cursor:    cursor,
+		})
+		if err != nil {
+			return fmt.Errorf("slack get thread replies: %w", err)
+		}
+		for _, msg := range msgs {
+			if _, _, err := b.session.DeleteMessage(channelID, msg.Timestamp); err != nil {
+				b.logger.WarnContext(ctx, "deleting thread message", "error", err, "ts", msg.Timestamp)
+			}
+		}
+		if nextCursor == "" {
+			break
+		}
+		cursor = nextCursor
 	}
 	b.logger.InfoContext(ctx, "deleted slack thread", "thread_id", threadID)
 	return nil

@@ -105,6 +105,10 @@ func (m *MockBot) DeleteThread(ctx context.Context, threadID string) error {
 	return m.Called(ctx, threadID).Error(0)
 }
 
+func (m *MockBot) RenameThread(ctx context.Context, threadID, name string) error {
+	return m.Called(ctx, threadID, name).Error(0)
+}
+
 func (m *MockBot) PostMessage(ctx context.Context, channelID, content string) error {
 	return m.Called(ctx, channelID, content).Error(0)
 }

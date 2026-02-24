@@ -34,14 +34,19 @@ type AgentResponse struct {
 	Error     string `json:"error,omitempty"`
 }
 
-// BuildPrompt constructs a plain text prompt from messages and an optional system prompt.
-func BuildPrompt(messages []AgentMessage, systemPrompt string) string {
-	var prompt string
-	if systemPrompt != "" {
-		prompt = systemPrompt + "\n\n"
+// BuildPrompt returns the prompt text for this request.
+// When resuming a session, only the latest message is sent to avoid redundancy.
+func (r *AgentRequest) BuildPrompt() string {
+	switch {
+	case r.SessionID != "" && r.Prompt != "":
+		return r.Prompt
+	case r.SessionID != "" && len(r.Messages) > 0:
+		return r.Messages[len(r.Messages)-1].Content
+	default:
+		var prompt string
+		for _, msg := range r.Messages {
+			prompt += fmt.Sprintf("%s: %s\n", msg.Role, msg.Content)
+		}
+		return prompt
 	}
-	for _, msg := range messages {
-		prompt += fmt.Sprintf("%s: %s\n", msg.Role, msg.Content)
-	}
-	return prompt
 }

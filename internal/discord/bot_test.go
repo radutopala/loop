@@ -1601,6 +1601,26 @@ func (s *BotSuite) TestDeleteThreadError() {
 	require.Contains(s.T(), err.Error(), "discord delete thread")
 }
 
+// --- RenameThread ---
+
+func (s *BotSuite) TestRenameThreadSuccess() {
+	s.session.On("ChannelEdit", "thread-1", &discordgo.ChannelEdit{Name: "new name"}, mock.Anything).
+		Return(&discordgo.Channel{ID: "thread-1"}, nil)
+
+	err := s.bot.RenameThread(context.Background(), "thread-1", "new name")
+	require.NoError(s.T(), err)
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestRenameThreadError() {
+	s.session.On("ChannelEdit", "thread-1", &discordgo.ChannelEdit{Name: "new name"}, mock.Anything).
+		Return(nil, errors.New("edit failed"))
+
+	err := s.bot.RenameThread(context.Background(), "thread-1", "new name")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "discord rename thread")
+}
+
 // --- handleThreadCreate ---
 
 func (s *BotSuite) TestHandleThreadCreateJoins() {

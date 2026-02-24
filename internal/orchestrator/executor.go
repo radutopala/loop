@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/radutopala/loop/internal/agent"
@@ -43,26 +44,32 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		dirPath = channel.DirPath
 	}
 
+	systemPrompt := "IMPORTANT: Do NOT use the send_message, create_thread, or create_channel MCP tools. Your text responses are automatically delivered to the chat. Just respond with text directly."
+	if task.AutoDeleteSec > 0 {
+		systemPrompt += "\nIf you have nothing meaningful to report, start your response with [EPHEMERAL]. Otherwise respond normally."
+	}
+
 	req := &agent.AgentRequest{
 		SessionID: sessionID,
 		Messages: []agent.AgentMessage{
 			{Role: "user", Content: task.Prompt},
 		},
-		SystemPrompt: "IMPORTANT: Do NOT use the send_message, create_thread, or create_channel MCP tools. Your text responses are automatically delivered to the chat. Just respond with text directly.",
+		SystemPrompt: systemPrompt,
 		ChannelID:    task.ChannelID,
 		DirPath:      dirPath,
 	}
 
 	var tracker *streamTracker
 	var threadID string
+	var threadName string
 	var threadFailed bool
 	if e.streamingEnabled {
 		tracker = newStreamTracker(func(text string) {
 			if threadID == "" && !threadFailed {
 				// First turn — create a thread for the task output
 				prefix := fmt.Sprintf("🧵 task #%d (`%s`) ", task.ID, task.Schedule)
-				name := prefix + truncateString(task.Prompt, 80)
-				id, err := e.bot.CreateSimpleThread(ctx, task.ChannelID, name, prefix+text)
+				threadName = prefix + truncateString(task.Prompt, 80)
+				id, err := e.bot.CreateSimpleThread(ctx, task.ChannelID, threadName, prefix+text)
 				if err != nil {
 					e.logger.Error("creating task thread", "error", err, "task_id", task.ID, "channel_id", task.ChannelID)
 					threadFailed = true
@@ -85,7 +92,12 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				})
 			}
 		})
-		req.OnTurn = tracker.OnTurn
+		req.OnTurn = func(text string) {
+			// Strip [EPHEMERAL] before the tracker records it, so IsDuplicate
+			// correctly matches the final (also stripped) response.
+			text = strings.TrimSpace(strings.ReplaceAll(text, "[EPHEMERAL]", ""))
+			tracker.OnTurn(text)
+		}
 	}
 
 	runCtx, runCancel := context.WithTimeout(ctx, e.containerTimeout)
@@ -104,6 +116,13 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		e.logger.Error("updating session data after task", "error", err, "channel_id", task.ChannelID)
 	}
 
+	// Detect and strip [EPHEMERAL] tag (may appear at start or end of response)
+	ephemeral := false
+	if task.AutoDeleteSec > 0 && strings.Contains(resp.Response, "[EPHEMERAL]") {
+		ephemeral = true
+		resp.Response = strings.TrimSpace(strings.ReplaceAll(resp.Response, "[EPHEMERAL]", ""))
+	}
+
 	// Send final response to thread (if created) or channel
 	targetChannelID := task.ChannelID
 	if threadID != "" {
@@ -120,8 +139,13 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		}
 	}
 
-	// Schedule auto-deletion of the thread if configured
-	if task.AutoDeleteSec > 0 && threadID != "" {
+	// Schedule auto-deletion of the thread if ephemeral
+	if ephemeral && threadID != "" {
+		// Rename thread with ephemeral emoji
+		newName := strings.Replace(threadName, "🧵", "💨", 1)
+		if err := e.bot.RenameThread(ctx, threadID, newName); err != nil {
+			e.logger.Error("renaming ephemeral thread", "error", err, "thread_id", threadID, "task_id", task.ID)
+		}
 		delay := time.Duration(task.AutoDeleteSec) * time.Second
 		timeAfterFunc(delay, func() {
 			if err := e.bot.DeleteThread(context.Background(), threadID); err != nil {

@@ -437,6 +437,15 @@ func (b *DiscordBot) GetMemberRoles(_ context.Context, guildID, userID string) (
 	return member.Roles, nil
 }
 
+// RenameThread renames a Discord thread by its ID.
+func (b *DiscordBot) RenameThread(ctx context.Context, threadID, name string) error {
+	if _, err := b.session.ChannelEdit(threadID, &discordgo.ChannelEdit{Name: name}); err != nil {
+		return fmt.Errorf("discord rename thread: %w", err)
+	}
+	b.logger.InfoContext(ctx, "renamed discord thread", "thread_id", threadID, "name", name)
+	return nil
+}
+
 // DeleteThread deletes a Discord thread by its ID.
 func (b *DiscordBot) DeleteThread(ctx context.Context, threadID string) error {
 	if _, err := b.session.ChannelDelete(threadID); err != nil {

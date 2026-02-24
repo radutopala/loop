@@ -39,6 +39,7 @@ type Bot interface {
 	CreateThread(ctx context.Context, channelID, name, mentionUserID, message string) (string, error)
 	PostMessage(ctx context.Context, channelID, content string) error
 	DeleteThread(ctx context.Context, threadID string) error
+	RenameThread(ctx context.Context, threadID, name string) error
 	GetChannelParentID(ctx context.Context, channelID string) (string, error)
 	GetChannelName(ctx context.Context, channelID string) (string, error)
 	CreateSimpleThread(ctx context.Context, channelID, name, initialMessage string) (string, error)

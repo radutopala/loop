@@ -36,6 +36,11 @@ func (m *MockSession) DeleteMessage(channel, messageTimestamp string) (string, s
 	return args.String(0), args.String(1), args.Error(2)
 }
 
+func (m *MockSession) UpdateMessage(channelID, timestamp string, options ...goslack.MsgOption) (string, string, string, error) {
+	args := m.Called(channelID, timestamp, options)
+	return args.String(0), args.String(1), args.String(2), args.Error(3)
+}
+
 func (m *MockSession) AuthTest() (*goslack.AuthTestResponse, error) {
 	args := m.Called()
 	if args.Get(0) == nil {
@@ -755,10 +760,43 @@ func (s *BotSuite) TestPostMessageError() {
 // --- DeleteThread ---
 
 func (s *BotSuite) TestDeleteThreadSuccess() {
+	s.session.On("GetConversationReplies", &goslack.GetConversationRepliesParameters{
+		ChannelID: "C123",
+		Timestamp: "1111.2222",
+	}).Return([]goslack.Message{
+		{Msg: goslack.Msg{Timestamp: "1111.2222"}},
+		{Msg: goslack.Msg{Timestamp: "1111.3333"}},
+	}, false, "", nil)
 	s.session.On("DeleteMessage", "C123", "1111.2222").Return("C123", "1111.2222", nil)
+	s.session.On("DeleteMessage", "C123", "1111.3333").Return("C123", "1111.3333", nil)
 
 	err := s.bot.DeleteThread(context.Background(), "C123:1111.2222")
 	require.NoError(s.T(), err)
+	s.session.AssertNumberOfCalls(s.T(), "DeleteMessage", 2)
+}
+
+func (s *BotSuite) TestDeleteThreadPaginated() {
+	// First page returns one message and a cursor
+	s.session.On("GetConversationReplies", &goslack.GetConversationRepliesParameters{
+		ChannelID: "C123",
+		Timestamp: "1111.2222",
+	}).Return([]goslack.Message{
+		{Msg: goslack.Msg{Timestamp: "1111.2222"}},
+	}, false, "cursor1", nil)
+	// Second page returns another message and empty cursor
+	s.session.On("GetConversationReplies", &goslack.GetConversationRepliesParameters{
+		ChannelID: "C123",
+		Timestamp: "1111.2222",
+		Cursor:    "cursor1",
+	}).Return([]goslack.Message{
+		{Msg: goslack.Msg{Timestamp: "1111.3333"}},
+	}, false, "", nil)
+	s.session.On("DeleteMessage", "C123", "1111.2222").Return("C123", "1111.2222", nil)
+	s.session.On("DeleteMessage", "C123", "1111.3333").Return("C123", "1111.3333", nil)
+
+	err := s.bot.DeleteThread(context.Background(), "C123:1111.2222")
+	require.NoError(s.T(), err)
+	s.session.AssertNumberOfCalls(s.T(), "DeleteMessage", 2)
 }
 
 func (s *BotSuite) TestDeleteThreadInvalidID() {
@@ -767,12 +805,105 @@ func (s *BotSuite) TestDeleteThreadInvalidID() {
 	require.Contains(s.T(), err.Error(), "invalid thread ID")
 }
 
-func (s *BotSuite) TestDeleteThreadError() {
-	s.session.On("DeleteMessage", "C123", "1111.2222").Return("", "", errors.New("message_not_found"))
+func (s *BotSuite) TestDeleteThreadGetRepliesError() {
+	s.session.On("GetConversationReplies", mock.Anything).Return(nil, false, "", errors.New("fetch error"))
 
 	err := s.bot.DeleteThread(context.Background(), "C123:1111.2222")
 	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "slack delete thread")
+	require.Contains(s.T(), err.Error(), "slack get thread replies")
+}
+
+func (s *BotSuite) TestDeleteThreadDeleteMessageError() {
+	s.session.On("GetConversationReplies", mock.Anything).Return([]goslack.Message{
+		{Msg: goslack.Msg{Timestamp: "1111.2222"}},
+	}, false, "", nil)
+	s.session.On("DeleteMessage", "C123", "1111.2222").Return("", "", errors.New("delete failed"))
+
+	err := s.bot.DeleteThread(context.Background(), "C123:1111.2222")
+	require.NoError(s.T(), err) // individual delete errors are logged, not returned
+}
+
+// --- RenameThread ---
+
+func (s *BotSuite) TestRenameThreadSuccess() {
+	s.session.On("GetConversationReplies", &goslack.GetConversationRepliesParameters{
+		ChannelID: "C123",
+		Timestamp: "1111.2222",
+		Limit:     1,
+	}).Return([]goslack.Message{
+		{Msg: goslack.Msg{Text: "🧵 task #1 (`5m`) agent reply"}},
+	}, false, "", nil)
+	s.session.On("UpdateMessage", "C123", "1111.2222", mock.Anything).Return("C123", "1111.2222", "", nil)
+
+	err := s.bot.RenameThread(context.Background(), "C123:1111.2222", "💨 task #1 (`5m`) prompt")
+	require.NoError(s.T(), err)
+
+	// Verify the updated text has 💨 and no [EPHEMERAL]
+	call := s.session.Calls[1] // UpdateMessage call
+	opts := call.Arguments[2].([]goslack.MsgOption)
+	require.NotEmpty(s.T(), opts)
+}
+
+func (s *BotSuite) TestRenameThreadSlackShortcode() {
+	// Slack returns emoji as shortcodes (e.g. :thread: instead of 🧵)
+	s.session.On("GetConversationReplies", &goslack.GetConversationRepliesParameters{
+		ChannelID: "C123",
+		Timestamp: "1111.2222",
+		Limit:     1,
+	}).Return([]goslack.Message{
+		{Msg: goslack.Msg{Text: ":thread: task #1 (`5m`) agent reply"}},
+	}, false, "", nil)
+	s.session.On("UpdateMessage", "C123", "1111.2222", mock.Anything).Return("C123", "1111.2222", "", nil)
+
+	err := s.bot.RenameThread(context.Background(), "C123:1111.2222", "💨 task #1 (`5m`) prompt")
+	require.NoError(s.T(), err)
+}
+
+func (s *BotSuite) TestRenameThreadStripsEphemeral() {
+	s.session.On("GetConversationReplies", &goslack.GetConversationRepliesParameters{
+		ChannelID: "C123",
+		Timestamp: "1111.2222",
+		Limit:     1,
+	}).Return([]goslack.Message{
+		{Msg: goslack.Msg{Text: "🧵 task #1 (`5m`) [EPHEMERAL]\nNo ready work tickets."}},
+	}, false, "", nil)
+	s.session.On("UpdateMessage", "C123", "1111.2222", mock.Anything).Return("C123", "1111.2222", "", nil)
+
+	err := s.bot.RenameThread(context.Background(), "C123:1111.2222", "💨 task #1 (`5m`)")
+	require.NoError(s.T(), err)
+}
+
+func (s *BotSuite) TestRenameThreadInvalidID() {
+	err := s.bot.RenameThread(context.Background(), "C123", "new name")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "invalid thread ID")
+}
+
+func (s *BotSuite) TestRenameThreadGetRepliesError() {
+	s.session.On("GetConversationReplies", mock.Anything).Return(nil, false, "", errors.New("fetch error"))
+
+	err := s.bot.RenameThread(context.Background(), "C123:1111.2222", "new name")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "slack get parent message")
+}
+
+func (s *BotSuite) TestRenameThreadEmptyReplies() {
+	s.session.On("GetConversationReplies", mock.Anything).Return([]goslack.Message{}, false, "", nil)
+
+	err := s.bot.RenameThread(context.Background(), "C123:1111.2222", "new name")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "parent message not found")
+}
+
+func (s *BotSuite) TestRenameThreadUpdateError() {
+	s.session.On("GetConversationReplies", mock.Anything).Return([]goslack.Message{
+		{Msg: goslack.Msg{Text: "🧵 original"}},
+	}, false, "", nil)
+	s.session.On("UpdateMessage", "C123", "1111.2222", mock.Anything).Return("", "", "", errors.New("update_failed"))
+
+	err := s.bot.RenameThread(context.Background(), "C123:1111.2222", "new name")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "slack rename thread")
 }
 
 // --- GetChannelName ---

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"strings"
 	"testing"
 	"time"
 
@@ -483,6 +484,60 @@ func (s *TaskExecutorSuite) TestNoStreamingNoTurns() {
 	s.bot.AssertNotCalled(s.T(), "CreateSimpleThread", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
+func (s *TaskExecutorSuite) TestEphemeralInstructionInSystemPrompt() {
+	task := &db.ScheduledTask{
+		ID:            20,
+		ChannelID:     "ch20",
+		Prompt:        "check prompt",
+		Type:          db.TaskTypeCron,
+		Schedule:      "0 * * * *",
+		AutoDeleteSec: 60,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch20").Return(nil, nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return strings.Contains(req.SystemPrompt, "[EPHEMERAL]")
+	})).Return(&agent.AgentResponse{
+		Response:  "ok",
+		SessionID: "sess-prompt",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch20", "sess-prompt").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil).Once()
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	s.runner.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestNoEphemeralInstructionWhenAutoDeleteZero() {
+	task := &db.ScheduledTask{
+		ID:            21,
+		ChannelID:     "ch21",
+		Prompt:        "check prompt",
+		Type:          db.TaskTypeCron,
+		Schedule:      "0 * * * *",
+		AutoDeleteSec: 0,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch21").Return(nil, nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return !strings.Contains(req.SystemPrompt, "[EPHEMERAL]")
+	})).Return(&agent.AgentResponse{
+		Response:  "ok",
+		SessionID: "sess-prompt2",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch21", "sess-prompt2").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil).Once()
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	s.runner.AssertExpectations(s.T())
+}
+
 func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 	s.executor.streamingEnabled = true
 
@@ -502,14 +557,17 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Turn 1")
+		req.OnTurn("[EPHEMERAL] Nothing to report")
 		return true
 	})).Return(&agent.AgentResponse{
-		Response:  "Turn 1",
+		Response:  "[EPHEMERAL] Nothing to report",
 		SessionID: "sess-auto-del",
 	}, nil)
 
 	s.store.On("UpdateSessionID", s.ctx, "ch15", "sess-auto-del").Return(nil)
+	// [EPHEMERAL] is stripped before tracker records lastText, so IsDuplicate
+	// returns true and no final SendMessage is needed.
+	s.bot.On("RenameThread", s.ctx, "thread-auto-del", "💨 task #15 (`0 * * * *`) auto-del task").Return(nil).Once()
 	s.bot.On("DeleteThread", mock.Anything, "thread-auto-del").Return(nil).Once()
 
 	var capturedDelay time.Duration
@@ -525,12 +583,104 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), "Turn 1", resp)
+	require.Equal(s.T(), "Nothing to report", resp)
 	require.True(s.T(), callbackCalled, "timeAfterFunc should have been called")
 	require.Equal(s.T(), 60*time.Second, capturedDelay)
 
+	s.bot.AssertCalled(s.T(), "RenameThread", s.ctx, "thread-auto-del", "💨 task #15 (`0 * * * *`) auto-del task")
 	s.bot.AssertCalled(s.T(), "DeleteThread", mock.Anything, "thread-auto-del")
 	s.bot.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestAutoDeleteEphemeralSuffix() {
+	s.executor.streamingEnabled = true
+
+	task := &db.ScheduledTask{
+		ID:            23,
+		ChannelID:     "ch23",
+		Prompt:        "suffix task",
+		Type:          db.TaskTypeCron,
+		Schedule:      "0 * * * *",
+		AutoDeleteSec: 60,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch23").Return(nil, nil)
+	s.bot.On("CreateSimpleThread", s.ctx, "ch23", mock.Anything, mock.Anything).Return("thread-suffix", nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Nothing to report.\n\n[EPHEMERAL]")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:  "Nothing to report.\n\n[EPHEMERAL]",
+		SessionID: "sess-suffix",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch23", "sess-suffix").Return(nil)
+	// IsDuplicate returns true — no final SendMessage
+	s.bot.On("RenameThread", s.ctx, "thread-suffix", mock.Anything).Return(nil).Once()
+	s.bot.On("DeleteThread", mock.Anything, "thread-suffix").Return(nil).Once()
+
+	origTimeAfterFunc := timeAfterFunc
+	defer func() { timeAfterFunc = origTimeAfterFunc }()
+	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+		f()
+		return time.NewTimer(0)
+	}
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Nothing to report.", resp)
+
+	s.bot.AssertCalled(s.T(), "RenameThread", s.ctx, "thread-suffix", mock.Anything)
+	s.bot.AssertCalled(s.T(), "DeleteThread", mock.Anything, "thread-suffix")
+}
+
+func (s *TaskExecutorSuite) TestAutoDeleteRenameThreadError() {
+	s.executor.streamingEnabled = true
+
+	task := &db.ScheduledTask{
+		ID:            22,
+		ChannelID:     "ch22",
+		Prompt:        "rename-err task",
+		Type:          db.TaskTypeCron,
+		Schedule:      "0 * * * *",
+		AutoDeleteSec: 60,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch22").Return(nil, nil)
+	s.bot.On("CreateSimpleThread", s.ctx, "ch22", mock.Anything, mock.Anything).Return("thread-rename-err", nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("[EPHEMERAL] Nothing")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:  "[EPHEMERAL] Nothing",
+		SessionID: "sess-rename-err",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch22", "sess-rename-err").Return(nil)
+	s.bot.On("RenameThread", s.ctx, "thread-rename-err", mock.Anything).Return(errors.New("rename failed")).Once()
+	s.bot.On("DeleteThread", mock.Anything, "thread-rename-err").Return(nil).Once()
+
+	origTimeAfterFunc := timeAfterFunc
+	defer func() { timeAfterFunc = origTimeAfterFunc }()
+	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+		f()
+		return time.NewTimer(0)
+	}
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Nothing", resp)
+
+	s.bot.AssertCalled(s.T(), "RenameThread", s.ctx, "thread-rename-err", mock.Anything)
+	s.bot.AssertCalled(s.T(), "DeleteThread", mock.Anything, "thread-rename-err")
 }
 
 func (s *TaskExecutorSuite) TestAutoDeleteTimerDeleteThreadError() {
@@ -552,14 +702,15 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerDeleteThreadError() {
 		if req.OnTurn == nil {
 			return false
 		}
-		req.OnTurn("Turn 1")
+		req.OnTurn("[EPHEMERAL] Nothing")
 		return true
 	})).Return(&agent.AgentResponse{
-		Response:  "Turn 1",
+		Response:  "[EPHEMERAL] Nothing",
 		SessionID: "sess-del-err",
 	}, nil)
 
 	s.store.On("UpdateSessionID", s.ctx, "ch18", "sess-del-err").Return(nil)
+	s.bot.On("RenameThread", s.ctx, "thread-del-err", mock.Anything).Return(nil).Once()
 	s.bot.On("DeleteThread", mock.Anything, "thread-del-err").Return(errors.New("delete failed")).Once()
 
 	var capturedDelay time.Duration
@@ -575,12 +726,57 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerDeleteThreadError() {
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), "Turn 1", resp)
+	require.Equal(s.T(), "Nothing", resp)
 	require.True(s.T(), callbackCalled, "timeAfterFunc should have been called")
 	require.Equal(s.T(), 90*time.Second, capturedDelay)
 
 	s.bot.AssertCalled(s.T(), "DeleteThread", mock.Anything, "thread-del-err")
 	s.bot.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestAutoDeleteSkippedWhenNotEphemeral() {
+	s.executor.streamingEnabled = true
+
+	task := &db.ScheduledTask{
+		ID:            19,
+		ChannelID:     "ch19",
+		Prompt:        "important task",
+		Type:          db.TaskTypeCron,
+		Schedule:      "0 * * * *",
+		AutoDeleteSec: 60,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch19").Return(nil, nil)
+	s.bot.On("CreateSimpleThread", s.ctx, "ch19", mock.Anything, mock.Anything).Return("thread-keep", nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Important result")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:  "Important result",
+		SessionID: "sess-keep",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch19", "sess-keep").Return(nil)
+
+	var timerCalled bool
+	origTimeAfterFunc := timeAfterFunc
+	defer func() { timeAfterFunc = origTimeAfterFunc }()
+	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+		timerCalled = true
+		return time.NewTimer(0)
+	}
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Important result", resp)
+	require.False(s.T(), timerCalled, "timeAfterFunc should NOT have been called for non-ephemeral response")
+
+	s.bot.AssertNotCalled(s.T(), "DeleteThread", mock.Anything, mock.Anything)
+	s.bot.AssertNotCalled(s.T(), "RenameThread", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *TaskExecutorSuite) TestAutoDeleteSkippedWhenZero() {
@@ -642,7 +838,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteSkippedWhenNoThread() {
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.OnTurn == nil
 	})).Return(&agent.AgentResponse{
-		Response:  "Result",
+		Response:  "[EPHEMERAL] Result",
 		SessionID: "sess-no-thread",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch17", "sess-no-thread").Return(nil)
@@ -664,5 +860,6 @@ func (s *TaskExecutorSuite) TestAutoDeleteSkippedWhenNoThread() {
 	require.False(s.T(), timerCalled, "timeAfterFunc should NOT have been called when no thread was created")
 
 	s.bot.AssertNotCalled(s.T(), "DeleteThread", mock.Anything, mock.Anything)
+	s.bot.AssertNotCalled(s.T(), "RenameThread", mock.Anything, mock.Anything, mock.Anything)
 	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
 }

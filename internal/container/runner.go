@@ -346,8 +346,6 @@ func gitExcludesMount() string {
 
 // runOnce executes a single container run.
 func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
-	prompt := buildPrompt(req)
-
 	workDir := filepath.Join(r.cfg.LoopDir, req.ChannelID, "work")
 	if req.DirPath != "" {
 		workDir = req.DirPath
@@ -375,7 +373,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		env = append(env, "CHOWN_DIRS="+strings.Join(chownDirs, ":"))
 	}
 
-	cmd := buildClaudeCmd(cfg, mcpConfigPath, req, prompt)
+	cmd := buildClaudeCmd(cfg, mcpConfigPath, req)
 
 	containerID, err := r.createAndStartContainer(ctx, cfg, env, cmd, binds, workDir, req.ChannelID, req.DirPath)
 	if containerID != "" {
@@ -401,19 +399,6 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		Response:  claudeResp.Result,
 		SessionID: claudeResp.SessionID,
 	}, nil
-}
-
-// buildPrompt selects the appropriate prompt for the request.
-// When resuming a session, only the latest message is sent to avoid redundancy.
-func buildPrompt(req *agent.AgentRequest) string {
-	switch {
-	case req.SessionID != "" && req.Prompt != "":
-		return req.Prompt
-	case req.SessionID != "" && len(req.Messages) > 0:
-		return req.Messages[len(req.Messages)-1].Content
-	default:
-		return agent.BuildPrompt(req.Messages, req.SystemPrompt)
-	}
 }
 
 // buildContainerEnv assembles environment variables for the container,
@@ -509,7 +494,7 @@ func (r *DockerRunner) buildContainerMounts(mounts []string, workDir string) (bi
 }
 
 // buildClaudeCmd assembles the Claude CLI command with all flags.
-func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest, prompt string) []string {
+func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest) []string {
 	cmd := []string{cfg.ClaudeBinPath, "--mcp-config", mcpConfigPath}
 	if cfg.ClaudeModel != "" {
 		cmd = append(cmd, "--model", cfg.ClaudeModel)
@@ -521,7 +506,10 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 			cmd = append(cmd, "--fork-session")
 		}
 	}
-	return append(cmd, prompt)
+	if req.SystemPrompt != "" {
+		cmd = append(cmd, "--append-system-prompt", req.SystemPrompt)
+	}
+	return append(cmd, req.BuildPrompt())
 }
 
 // createAndStartContainer creates a Docker container and starts it.
