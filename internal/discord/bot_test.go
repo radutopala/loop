@@ -265,74 +265,70 @@ func (s *BotSuite) TestStop() {
 
 // --- SendMessage ---
 
-func (s *BotSuite) TestSendMessageSimple() {
-	s.session.On("ChannelMessageSend", "ch-1", "hello", mock.Anything).
-		Return(&discordgo.Message{}, nil)
-
-	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
-		ChannelID: "ch-1",
-		Content:   "hello",
-	})
-	require.NoError(s.T(), err)
-	s.session.AssertExpectations(s.T())
-}
-
-func (s *BotSuite) TestSendMessageWithReply() {
-	ref := &discordgo.MessageReference{MessageID: "msg-1"}
-	s.session.On("ChannelMessageSendReply", "ch-1", "hello", ref, mock.Anything).
-		Return(&discordgo.Message{}, nil)
-
-	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
-		ChannelID:        "ch-1",
-		Content:          "hello",
-		ReplyToMessageID: "msg-1",
-	})
-	require.NoError(s.T(), err)
-	s.session.AssertExpectations(s.T())
-}
-
-func (s *BotSuite) TestSendMessageSplit() {
-	longContent := strings.Repeat("a", 2500)
-	// First chunk is reply (2000 chars), second chunk is plain send (500 chars).
-	ref := &discordgo.MessageReference{MessageID: "msg-1"}
-	s.session.On("ChannelMessageSendReply", "ch-1", strings.Repeat("a", 2000), ref, mock.Anything).
-		Return(&discordgo.Message{}, nil)
-	s.session.On("ChannelMessageSend", "ch-1", strings.Repeat("a", 500), mock.Anything).
-		Return(&discordgo.Message{}, nil)
-
-	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
-		ChannelID:        "ch-1",
-		Content:          longContent,
-		ReplyToMessageID: "msg-1",
-	})
-	require.NoError(s.T(), err)
-	s.session.AssertExpectations(s.T())
-}
-
-func (s *BotSuite) TestSendMessageReplyError() {
-	ref := &discordgo.MessageReference{MessageID: "msg-1"}
-	s.session.On("ChannelMessageSendReply", "ch-1", "hello", ref, mock.Anything).
-		Return(nil, errors.New("send failed"))
-
-	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
-		ChannelID:        "ch-1",
-		Content:          "hello",
-		ReplyToMessageID: "msg-1",
-	})
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "discord send reply")
-}
-
-func (s *BotSuite) TestSendMessageError() {
-	s.session.On("ChannelMessageSend", "ch-1", "hello", mock.Anything).
-		Return(nil, errors.New("send failed"))
-
-	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
-		ChannelID: "ch-1",
-		Content:   "hello",
-	})
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "discord send message")
+func (s *BotSuite) TestSendMessage() {
+	tests := []struct {
+		name    string
+		msg     *orchestrator.OutgoingMessage
+		setup   func(*MockSession)
+		wantErr string
+	}{
+		{
+			name: "simple",
+			msg:  &orchestrator.OutgoingMessage{ChannelID: "ch-1", Content: "hello"},
+			setup: func(ss *MockSession) {
+				ss.On("ChannelMessageSend", "ch-1", "hello", mock.Anything).Return(&discordgo.Message{}, nil)
+			},
+		},
+		{
+			name: "with reply",
+			msg:  &orchestrator.OutgoingMessage{ChannelID: "ch-1", Content: "hello", ReplyToMessageID: "msg-1"},
+			setup: func(ss *MockSession) {
+				ss.On("ChannelMessageSendReply", "ch-1", "hello", &discordgo.MessageReference{MessageID: "msg-1"}, mock.Anything).
+					Return(&discordgo.Message{}, nil)
+			},
+		},
+		{
+			name: "split",
+			msg:  &orchestrator.OutgoingMessage{ChannelID: "ch-1", Content: strings.Repeat("a", 2500), ReplyToMessageID: "msg-1"},
+			setup: func(ss *MockSession) {
+				ss.On("ChannelMessageSendReply", "ch-1", strings.Repeat("a", 2000), &discordgo.MessageReference{MessageID: "msg-1"}, mock.Anything).
+					Return(&discordgo.Message{}, nil)
+				ss.On("ChannelMessageSend", "ch-1", strings.Repeat("a", 500), mock.Anything).Return(&discordgo.Message{}, nil)
+			},
+		},
+		{
+			name: "reply error",
+			msg:  &orchestrator.OutgoingMessage{ChannelID: "ch-1", Content: "hello", ReplyToMessageID: "msg-1"},
+			setup: func(ss *MockSession) {
+				ss.On("ChannelMessageSendReply", "ch-1", "hello", &discordgo.MessageReference{MessageID: "msg-1"}, mock.Anything).
+					Return(nil, errors.New("send failed"))
+			},
+			wantErr: "discord send reply",
+		},
+		{
+			name: "send error",
+			msg:  &orchestrator.OutgoingMessage{ChannelID: "ch-1", Content: "hello"},
+			setup: func(ss *MockSession) {
+				ss.On("ChannelMessageSend", "ch-1", "hello", mock.Anything).Return(nil, errors.New("send failed"))
+			},
+			wantErr: "discord send message",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			session := new(MockSession)
+			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			tc.setup(session)
+			err := b.SendMessage(context.Background(), tc.msg)
+			if tc.wantErr != "" {
+				require.Error(s.T(), err)
+				require.Contains(s.T(), err.Error(), tc.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+			}
+			session.AssertExpectations(s.T())
+		})
+	}
 }
 
 // --- SendTyping ---
@@ -382,38 +378,52 @@ func (s *BotSuite) TestRegisterCommandsError() {
 
 // --- RemoveCommands ---
 
-func (s *BotSuite) TestRemoveCommandsSuccess() {
-	existing := []*discordgo.ApplicationCommand{
-		{ID: "cmd-1", Name: "loop"},
+func (s *BotSuite) TestRemoveCommands() {
+	tests := []struct {
+		name    string
+		setup   func(*MockSession)
+		wantErr string
+	}{
+		{
+			name: "success",
+			setup: func(ss *MockSession) {
+				ss.On("ApplicationCommands", "test-app-id", "", mock.Anything).
+					Return([]*discordgo.ApplicationCommand{{ID: "cmd-1", Name: "loop"}}, nil)
+				ss.On("ApplicationCommandDelete", "test-app-id", "", "cmd-1", mock.Anything).Return(nil)
+			},
+		},
+		{
+			name: "list error",
+			setup: func(ss *MockSession) {
+				ss.On("ApplicationCommands", "test-app-id", "", mock.Anything).Return(nil, errors.New("list failed"))
+			},
+			wantErr: "discord list commands",
+		},
+		{
+			name: "delete error",
+			setup: func(ss *MockSession) {
+				ss.On("ApplicationCommands", "test-app-id", "", mock.Anything).
+					Return([]*discordgo.ApplicationCommand{{ID: "cmd-1", Name: "loop"}}, nil)
+				ss.On("ApplicationCommandDelete", "test-app-id", "", "cmd-1", mock.Anything).Return(errors.New("delete failed"))
+			},
+			wantErr: "discord delete command",
+		},
 	}
-	s.session.On("ApplicationCommands", "test-app-id", "", mock.Anything).Return(existing, nil)
-	s.session.On("ApplicationCommandDelete", "test-app-id", "", "cmd-1", mock.Anything).Return(nil)
-
-	err := s.bot.RemoveCommands(context.Background())
-	require.NoError(s.T(), err)
-	s.session.AssertExpectations(s.T())
-}
-
-func (s *BotSuite) TestRemoveCommandsListError() {
-	s.session.On("ApplicationCommands", "test-app-id", "", mock.Anything).
-		Return(nil, errors.New("list failed"))
-
-	err := s.bot.RemoveCommands(context.Background())
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "discord list commands")
-}
-
-func (s *BotSuite) TestRemoveCommandsDeleteError() {
-	existing := []*discordgo.ApplicationCommand{
-		{ID: "cmd-1", Name: "loop"},
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			session := new(MockSession)
+			b := NewBot(session, "test-app-id", slog.New(slog.NewTextHandler(discard{}, nil)))
+			tc.setup(session)
+			err := b.RemoveCommands(context.Background())
+			if tc.wantErr != "" {
+				require.Error(s.T(), err)
+				require.Contains(s.T(), err.Error(), tc.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+			}
+			session.AssertExpectations(s.T())
+		})
 	}
-	s.session.On("ApplicationCommands", "test-app-id", "", mock.Anything).Return(existing, nil)
-	s.session.On("ApplicationCommandDelete", "test-app-id", "", "cmd-1", mock.Anything).
-		Return(errors.New("delete failed"))
-
-	err := s.bot.RemoveCommands(context.Background())
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "discord delete command")
 }
 
 // --- OnMessage / OnInteraction ---
@@ -451,186 +461,113 @@ func (s *BotSuite) TestOnMessageRegistersHandler() {
 	require.True(s.T(), received.HasPrefix)
 }
 
-func (s *BotSuite) TestOnInteractionRegistersHandler() {
-	var received *orchestrator.Interaction
-	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
-		received = i
-		close(done)
-	})
-
-	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	ic := &discordgo.InteractionCreate{
-		Interaction: &discordgo.Interaction{
-			ID:        "int-1",
-			ChannelID: "ch-1",
-			GuildID:   "g-1",
-			Type:      discordgo.InteractionApplicationCommand,
-			Data: discordgo.ApplicationCommandInteractionData{
-				Name: "loop",
-				Options: []*discordgo.ApplicationCommandInteractionDataOption{
-					{
-						Name: "register",
-						Type: discordgo.ApplicationCommandOptionSubCommand,
+func (s *BotSuite) TestOnInteractionCommandParsing() {
+	tests := []struct {
+		name      string
+		intName   string
+		channelID string
+		guildID   string
+		options   []*discordgo.ApplicationCommandInteractionDataOption
+		wantCmd   string
+		wantOpts  map[string]any
+	}{
+		{
+			name:      "subcommand",
+			intName:   "loop",
+			channelID: "ch-1",
+			guildID:   "g-1",
+			options: []*discordgo.ApplicationCommandInteractionDataOption{
+				{Name: "register", Type: discordgo.ApplicationCommandOptionSubCommand},
+			},
+			wantCmd: "register",
+		},
+		{
+			name:      "subcommand with options",
+			intName:   "loop",
+			channelID: "ch-1",
+			options: []*discordgo.ApplicationCommandInteractionDataOption{
+				{
+					Name: "schedule", Type: discordgo.ApplicationCommandOptionSubCommand,
+					Options: []*discordgo.ApplicationCommandInteractionDataOption{
+						{Name: "schedule", Type: discordgo.ApplicationCommandOptionString, Value: "0 9 * * *"},
+						{Name: "prompt", Type: discordgo.ApplicationCommandOptionString, Value: "standup"},
+						{Name: "type", Type: discordgo.ApplicationCommandOptionString, Value: "cron"},
 					},
 				},
 			},
+			wantCmd:  "schedule",
+			wantOpts: map[string]any{"schedule": "0 9 * * *", "prompt": "standup", "type": "cron"},
 		},
-	}
-	s.bot.handleInteraction(nil, ic)
-	<-done
-
-	require.NotNil(s.T(), received)
-	require.Equal(s.T(), "register", received.CommandName)
-	require.Equal(s.T(), "ch-1", received.ChannelID)
-	require.Equal(s.T(), "g-1", received.GuildID)
-}
-
-func (s *BotSuite) TestOnInteractionWithOptions() {
-	var received *orchestrator.Interaction
-	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
-		received = i
-		close(done)
-	})
-
-	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	ic := &discordgo.InteractionCreate{
-		Interaction: &discordgo.Interaction{
-			ChannelID: "ch-1",
-			Type:      discordgo.InteractionApplicationCommand,
-			Data: discordgo.ApplicationCommandInteractionData{
-				Name: "loop",
-				Options: []*discordgo.ApplicationCommandInteractionDataOption{
-					{
-						Name: "schedule",
-						Type: discordgo.ApplicationCommandOptionSubCommand,
-						Options: []*discordgo.ApplicationCommandInteractionDataOption{
-							{Name: "schedule", Type: discordgo.ApplicationCommandOptionString, Value: "0 9 * * *"},
-							{Name: "prompt", Type: discordgo.ApplicationCommandOptionString, Value: "standup"},
-							{Name: "type", Type: discordgo.ApplicationCommandOptionString, Value: "cron"},
-						},
-					},
-				},
-			},
-		},
-	}
-	s.bot.handleInteraction(nil, ic)
-	<-done
-
-	require.NotNil(s.T(), received)
-	require.Equal(s.T(), "schedule", received.CommandName)
-	require.Equal(s.T(), "0 9 * * *", received.Options["schedule"])
-	require.Equal(s.T(), "standup", received.Options["prompt"])
-	require.Equal(s.T(), "cron", received.Options["type"])
-}
-
-func (s *BotSuite) TestOnInteractionSubcommandGroup() {
-	var received *orchestrator.Interaction
-	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
-		received = i
-		close(done)
-	})
-
-	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	ic := &discordgo.InteractionCreate{
-		Interaction: &discordgo.Interaction{
-			ChannelID: "ch-1",
-			GuildID:   "g-1",
-			Type:      discordgo.InteractionApplicationCommand,
-			Data: discordgo.ApplicationCommandInteractionData{
-				Name: "loop",
-				Options: []*discordgo.ApplicationCommandInteractionDataOption{
-					{
-						Name: "template",
-						Type: discordgo.ApplicationCommandOptionSubCommandGroup,
-						Options: []*discordgo.ApplicationCommandInteractionDataOption{
-							{
-								Name: "add",
-								Type: discordgo.ApplicationCommandOptionSubCommand,
-								Options: []*discordgo.ApplicationCommandInteractionDataOption{
-									{Name: "name", Type: discordgo.ApplicationCommandOptionString, Value: "daily-check"},
-								},
+		{
+			name:      "subcommand group",
+			intName:   "loop",
+			channelID: "ch-1",
+			guildID:   "g-1",
+			options: []*discordgo.ApplicationCommandInteractionDataOption{
+				{
+					Name: "template", Type: discordgo.ApplicationCommandOptionSubCommandGroup,
+					Options: []*discordgo.ApplicationCommandInteractionDataOption{
+						{
+							Name: "add", Type: discordgo.ApplicationCommandOptionSubCommand,
+							Options: []*discordgo.ApplicationCommandInteractionDataOption{
+								{Name: "name", Type: discordgo.ApplicationCommandOptionString, Value: "daily-check"},
 							},
 						},
 					},
 				},
 			},
+			wantCmd:  "template-add",
+			wantOpts: map[string]any{"name": "daily-check"},
+		},
+		{
+			name:      "subcommand group no sub",
+			intName:   "loop",
+			channelID: "ch-1",
+			options: []*discordgo.ApplicationCommandInteractionDataOption{
+				{Name: "template", Type: discordgo.ApplicationCommandOptionSubCommandGroup, Options: []*discordgo.ApplicationCommandInteractionDataOption{}},
+			},
+			wantCmd: "template",
+		},
+		{
+			name:      "top level command",
+			intName:   "ping",
+			channelID: "ch-1",
+			options:   []*discordgo.ApplicationCommandInteractionDataOption{},
+			wantCmd:   "ping",
 		},
 	}
-	s.bot.handleInteraction(nil, ic)
-	<-done
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			session := new(MockSession)
+			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			var received *orchestrator.Interaction
+			done := make(chan struct{})
+			b.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+				received = i
+				close(done)
+			})
+			session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
-	require.NotNil(s.T(), received)
-	require.Equal(s.T(), "template-add", received.CommandName)
-	require.Equal(s.T(), "daily-check", received.Options["name"])
-	require.Equal(s.T(), "ch-1", received.ChannelID)
-	require.Equal(s.T(), "g-1", received.GuildID)
-}
-
-func (s *BotSuite) TestOnInteractionSubcommandGroupNoSub() {
-	var received *orchestrator.Interaction
-	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
-		received = i
-		close(done)
-	})
-
-	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	ic := &discordgo.InteractionCreate{
-		Interaction: &discordgo.Interaction{
-			ChannelID: "ch-1",
-			Type:      discordgo.InteractionApplicationCommand,
-			Data: discordgo.ApplicationCommandInteractionData{
-				Name: "loop",
-				Options: []*discordgo.ApplicationCommandInteractionDataOption{
-					{
-						Name:    "template",
-						Type:    discordgo.ApplicationCommandOptionSubCommandGroup,
-						Options: []*discordgo.ApplicationCommandInteractionDataOption{},
-					},
+			ic := &discordgo.InteractionCreate{
+				Interaction: &discordgo.Interaction{
+					ChannelID: tc.channelID, GuildID: tc.guildID,
+					Type: discordgo.InteractionApplicationCommand,
+					Data: discordgo.ApplicationCommandInteractionData{Name: tc.intName, Options: tc.options},
 				},
-			},
-		},
+			}
+			b.handleInteraction(nil, ic)
+			<-done
+
+			require.NotNil(s.T(), received)
+			require.Equal(s.T(), tc.wantCmd, received.CommandName)
+			require.Equal(s.T(), tc.channelID, received.ChannelID)
+			require.Equal(s.T(), tc.guildID, received.GuildID)
+			for k, v := range tc.wantOpts {
+				require.Equal(s.T(), v, received.Options[k])
+			}
+			session.AssertExpectations(s.T())
+		})
 	}
-	s.bot.handleInteraction(nil, ic)
-	<-done
-
-	require.NotNil(s.T(), received)
-	require.Equal(s.T(), "template", received.CommandName)
-}
-
-func (s *BotSuite) TestOnInteractionTopLevelCommand() {
-	var received *orchestrator.Interaction
-	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
-		received = i
-		close(done)
-	})
-
-	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	// A top-level command with no subcommands (e.g. a simple /ping command).
-	ic := &discordgo.InteractionCreate{
-		Interaction: &discordgo.Interaction{
-			ChannelID: "ch-1",
-			Type:      discordgo.InteractionApplicationCommand,
-			Data: discordgo.ApplicationCommandInteractionData{
-				Name:    "ping",
-				Options: []*discordgo.ApplicationCommandInteractionDataOption{},
-			},
-		},
-	}
-	s.bot.handleInteraction(nil, ic)
-	<-done
-
-	require.NotNil(s.T(), received)
-	require.Equal(s.T(), "ping", received.CommandName)
 }
 
 func (s *BotSuite) TestOnInteractionRespondError() {
@@ -793,178 +730,95 @@ func (s *BotSuite) TestHandleComponentInteractionDMUser() {
 
 // --- handleMessage edge cases ---
 
-func (s *BotSuite) TestHandleMessageIgnoresNilAuthor() {
-	called := false
-	s.bot.OnMessage(func(_ context.Context, _ *orchestrator.IncomingMessage) {
-		called = true
-	})
-
-	m := &discordgo.MessageCreate{
-		Message: &discordgo.Message{Author: nil},
-	}
-	s.bot.handleMessage(nil, m)
-	require.False(s.T(), called)
-}
-
-func (s *BotSuite) TestHandleMessageIgnoresBotMessages() {
-	s.bot.mu.Lock()
-	s.bot.botUserID = "bot-123"
-	s.bot.mu.Unlock()
-
-	called := false
-	s.bot.OnMessage(func(_ context.Context, _ *orchestrator.IncomingMessage) {
-		called = true
-	})
-
-	m := &discordgo.MessageCreate{
-		Message: &discordgo.Message{
-			Author:  &discordgo.User{ID: "bot-123"},
-			Content: "just a normal response",
-		},
-	}
-	s.bot.handleMessage(nil, m)
-	require.False(s.T(), called)
-}
-
-func (s *BotSuite) TestHandleMessageBotSelfMentionProcessed() {
-	s.bot.mu.Lock()
-	s.bot.botUserID = "bot-123"
-	s.bot.mu.Unlock()
-
-	var received *orchestrator.IncomingMessage
-	done := make(chan struct{})
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
-		received = msg
-		close(done)
-	})
-
-	m := &discordgo.MessageCreate{
-		Message: &discordgo.Message{
-			ID:        "msg-1",
-			ChannelID: "ch-2",
-			Content:   "<@bot-123> check the last commit",
-			Author:    &discordgo.User{ID: "bot-123", Username: "LoopBot"},
-			Mentions:  []*discordgo.User{{ID: "bot-123"}},
-		},
-	}
-	s.bot.handleMessage(nil, m)
-	<-done
-
-	require.NotNil(s.T(), received)
-	require.Equal(s.T(), "check the last commit", received.Content)
-	require.True(s.T(), received.IsBotMention)
-}
-
-func (s *BotSuite) TestHandleMessageBotSelfMentionContentFallback() {
-	s.bot.mu.Lock()
-	s.bot.botUserID = "bot-123"
-	s.bot.mu.Unlock()
-
-	var received *orchestrator.IncomingMessage
-	done := make(chan struct{})
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
-		received = msg
-		close(done)
-	})
-
-	// Mentions slice is empty but content contains <@bot-123>.
-	m := &discordgo.MessageCreate{
-		Message: &discordgo.Message{
-			ID:        "msg-1",
-			ChannelID: "ch-2",
-			Content:   "<@bot-123> check the last commit",
-			Author:    &discordgo.User{ID: "bot-123", Username: "LoopBot"},
-			Mentions:  []*discordgo.User{},
-		},
-	}
-	s.bot.handleMessage(nil, m)
-	<-done
-
-	require.NotNil(s.T(), received)
-	require.Equal(s.T(), "check the last commit", received.Content)
-	require.True(s.T(), received.IsBotMention)
-}
-
-func (s *BotSuite) TestHandleMessageBotReplyToSelfNotTriggered() {
-	s.bot.mu.Lock()
-	s.bot.botUserID = "bot-123"
-	s.bot.mu.Unlock()
-
-	called := false
-	s.bot.OnMessage(func(_ context.Context, _ *orchestrator.IncomingMessage) {
-		called = true
-	})
-
-	// Bot response that is a reply to its own message. Discord auto-populates
-	// Mentions with the referenced message author, but the content does NOT
-	// contain <@bot-123>. This must NOT trigger a runner (prevents recursion).
-	m := &discordgo.MessageCreate{
-		Message: &discordgo.Message{
-			ID:        "msg-2",
-			ChannelID: "ch-2",
-			Content:   "The last commit is abc123",
-			Author:    &discordgo.User{ID: "bot-123", Username: "LoopBot"},
-			Mentions:  []*discordgo.User{{ID: "bot-123"}},
-			MessageReference: &discordgo.MessageReference{
-				MessageID: "msg-1",
+func (s *BotSuite) TestHandleMessageIgnored() {
+	tests := []struct {
+		name string
+		msg  *discordgo.Message
+	}{
+		{"nil author", &discordgo.Message{Author: nil}},
+		{"bot message", &discordgo.Message{Author: &discordgo.User{ID: "bot-123"}, Content: "just a normal response"}},
+		{
+			"bot reply to self", &discordgo.Message{
+				ID: "msg-2", ChannelID: "ch-2", Content: "The last commit is abc123",
+				Author: &discordgo.User{ID: "bot-123", Username: "LoopBot"},
+				Mentions: []*discordgo.User{{ID: "bot-123"}},
+				MessageReference:  &discordgo.MessageReference{MessageID: "msg-1"},
+				ReferencedMessage: &discordgo.Message{Author: &discordgo.User{ID: "bot-123"}},
 			},
-			ReferencedMessage: &discordgo.Message{
-				Author: &discordgo.User{ID: "bot-123"},
+		},
+		{
+			"non-triggered", &discordgo.Message{
+				GuildID: "g-1", Author: &discordgo.User{ID: "user-1"}, Content: "just a random message",
 			},
 		},
 	}
-	s.bot.handleMessage(nil, m)
-	require.False(s.T(), called)
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			session := new(MockSession)
+			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b.botUserID = "bot-123"
+			called := false
+			b.OnMessage(func(_ context.Context, _ *orchestrator.IncomingMessage) { called = true })
+			b.handleMessage(nil, &discordgo.MessageCreate{Message: tc.msg})
+			require.False(s.T(), called)
+		})
+	}
 }
 
-func (s *BotSuite) TestHandleMessageIgnoresNonTriggered() {
-	s.bot.mu.Lock()
-	s.bot.botUserID = "bot-123"
-	s.bot.mu.Unlock()
-
-	called := false
-	s.bot.OnMessage(func(_ context.Context, _ *orchestrator.IncomingMessage) {
-		called = true
-	})
-
-	m := &discordgo.MessageCreate{
-		Message: &discordgo.Message{
-			GuildID: "g-1", // Must set GuildID so it's not treated as a DM
-			Author:  &discordgo.User{ID: "user-1"},
-			Content: "just a random message",
+func (s *BotSuite) TestHandleMessageTriggered() {
+	tests := []struct {
+		name        string
+		msg         *discordgo.Message
+		wantContent string
+		wantMention bool
+		wantDM      bool
+	}{
+		{
+			name: "bot self-mention",
+			msg: &discordgo.Message{
+				ID: "msg-1", ChannelID: "ch-2", GuildID: "g-1", Content: "<@bot-123> check the last commit",
+				Author: &discordgo.User{ID: "bot-123", Username: "LoopBot"}, Mentions: []*discordgo.User{{ID: "bot-123"}},
+			},
+			wantContent: "check the last commit", wantMention: true,
+		},
+		{
+			name: "bot self-mention content fallback",
+			msg: &discordgo.Message{
+				ID: "msg-1", ChannelID: "ch-2", GuildID: "g-1", Content: "<@bot-123> check the last commit",
+				Author: &discordgo.User{ID: "bot-123", Username: "LoopBot"}, Mentions: []*discordgo.User{},
+			},
+			wantContent: "check the last commit", wantMention: true,
+		},
+		{
+			name: "DM always triggered",
+			msg: &discordgo.Message{
+				ID: "msg-1", ChannelID: "dm-ch-1", GuildID: "", Content: "hello in DM",
+				Author: &discordgo.User{ID: "user-1", Username: "testuser"},
+			},
+			wantContent: "hello in DM", wantDM: true,
 		},
 	}
-	s.bot.handleMessage(nil, m)
-	require.False(s.T(), called)
-}
-
-func (s *BotSuite) TestHandleMessageDMAlwaysTriggered() {
-	s.bot.mu.Lock()
-	s.bot.botUserID = "bot-123"
-	s.bot.mu.Unlock()
-
-	var received *orchestrator.IncomingMessage
-	done := make(chan struct{})
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
-		received = msg
-		close(done)
-	})
-
-	m := &discordgo.MessageCreate{
-		Message: &discordgo.Message{
-			ID:        "msg-1",
-			ChannelID: "dm-ch-1",
-			GuildID:   "", // DM
-			Content:   "hello in DM",
-			Author:    &discordgo.User{ID: "user-1", Username: "testuser"},
-		},
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			session := new(MockSession)
+			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b.botUserID = "bot-123"
+			session.On("GuildMember", mock.Anything, mock.Anything, mock.Anything).
+				Return(nil, errors.New("not mocked")).Maybe()
+			var received *orchestrator.IncomingMessage
+			done := make(chan struct{})
+			b.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
+				received = msg
+				close(done)
+			})
+			b.handleMessage(nil, &discordgo.MessageCreate{Message: tc.msg})
+			<-done
+			require.NotNil(s.T(), received)
+			require.Equal(s.T(), tc.wantContent, received.Content)
+			require.Equal(s.T(), tc.wantMention, received.IsBotMention)
+			require.Equal(s.T(), tc.wantDM, received.IsDM)
+		})
 	}
-	s.bot.handleMessage(nil, m)
-	<-done
-
-	require.NotNil(s.T(), received)
-	require.Equal(s.T(), "hello in DM", received.Content)
-	require.True(s.T(), received.IsDM)
 }
 
 func (s *BotSuite) TestHandleMessageMultipleHandlers() {
@@ -1153,97 +1007,83 @@ func (s *TriggerSuite) TestIsReplyToBot() {
 
 // --- parseIncomingMessage ---
 
-func (s *TriggerSuite) TestParseIncomingMessageMention() {
-	m := &discordgo.MessageCreate{
-		Message: &discordgo.Message{
-			ID:        "msg-1",
-			ChannelID: "ch-1",
-			GuildID:   "g-1",
-			Content:   "<@bot-1> hello there",
-			Author:    &discordgo.User{ID: "user-1", Username: "alice"},
-			Mentions:  []*discordgo.User{{ID: "bot-1"}},
-			Timestamp: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+func (s *TriggerSuite) TestParseIncomingMessage() {
+	tests := []struct {
+		name         string
+		msg          *discordgo.Message
+		wantNil      bool
+		wantContent  string
+		wantMention  bool
+		wantReply    bool
+		wantPrefix   bool
+		wantDM       bool
+		wantChannel  string
+		wantGuild    string
+		wantAuthorID string
+		wantAuthor   string
+	}{
+		{
+			name: "mention",
+			msg: &discordgo.Message{
+				ID: "msg-1", ChannelID: "ch-1", GuildID: "g-1", Content: "<@bot-1> hello there",
+				Author: &discordgo.User{ID: "user-1", Username: "alice"}, Mentions: []*discordgo.User{{ID: "bot-1"}},
+			},
+			wantContent: "hello there", wantMention: true,
+			wantChannel: "ch-1", wantGuild: "g-1", wantAuthorID: "user-1", wantAuthor: "alice",
+		},
+		{
+			name:        "prefix",
+			msg:         &discordgo.Message{ID: "msg-1", GuildID: "g-1", Content: "!loop what is Go?", Author: &discordgo.User{ID: "user-1", Username: "bob"}},
+			wantContent: "what is Go?", wantPrefix: true, wantGuild: "g-1",
+		},
+		{
+			name: "reply",
+			msg: &discordgo.Message{
+				ID: "msg-2", GuildID: "g-1", Content: "thanks", Author: &discordgo.User{ID: "user-1", Username: "carol"},
+				MessageReference: &discordgo.MessageReference{MessageID: "msg-1"}, ReferencedMessage: &discordgo.Message{Author: &discordgo.User{ID: "bot-1"}},
+			},
+			wantContent: "thanks", wantReply: true, wantGuild: "g-1",
+		},
+		{
+			name:    "no trigger",
+			msg:     &discordgo.Message{ID: "msg-1", GuildID: "g-1", Content: "just chatting", Author: &discordgo.User{ID: "user-1", Username: "dave"}},
+			wantNil: true,
+		},
+		{
+			name: "DM",
+			msg: &discordgo.Message{
+				ID: "msg-1", ChannelID: "dm-ch-1", GuildID: "", Content: "hello from DM",
+				Author: &discordgo.User{ID: "user-1", Username: "eve"},
+			},
+			wantContent: "hello from DM", wantDM: true,
+			wantChannel: "dm-ch-1", wantAuthorID: "user-1", wantAuthor: "eve",
 		},
 	}
-	msg := parseIncomingMessage(m, "bot-1")
-	require.NotNil(s.T(), msg)
-	require.Equal(s.T(), "hello there", msg.Content)
-	require.True(s.T(), msg.IsBotMention)
-	require.Equal(s.T(), "ch-1", msg.ChannelID)
-	require.Equal(s.T(), "g-1", msg.GuildID)
-	require.Equal(s.T(), "user-1", msg.AuthorID)
-	require.Equal(s.T(), "alice", msg.AuthorName)
-	require.Equal(s.T(), "msg-1", msg.MessageID)
-}
-
-func (s *TriggerSuite) TestParseIncomingMessagePrefix() {
-	m := &discordgo.MessageCreate{
-		Message: &discordgo.Message{
-			ID:      "msg-1",
-			Content: "!loop what is Go?",
-			Author:  &discordgo.User{ID: "user-1", Username: "bob"},
-		},
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			msg := parseIncomingMessage(&discordgo.MessageCreate{Message: tc.msg}, "bot-1")
+			if tc.wantNil {
+				require.Nil(s.T(), msg)
+				return
+			}
+			require.NotNil(s.T(), msg)
+			require.Equal(s.T(), tc.wantContent, msg.Content)
+			require.Equal(s.T(), tc.wantMention, msg.IsBotMention)
+			require.Equal(s.T(), tc.wantReply, msg.IsReplyToBot)
+			require.Equal(s.T(), tc.wantPrefix, msg.HasPrefix)
+			require.Equal(s.T(), tc.wantDM, msg.IsDM)
+			if tc.wantChannel != "" {
+				require.Equal(s.T(), tc.wantChannel, msg.ChannelID)
+			}
+			if tc.wantGuild != "" {
+				require.Equal(s.T(), tc.wantGuild, msg.GuildID)
+			}
+			if tc.wantAuthorID != "" {
+				require.Equal(s.T(), tc.wantAuthorID, msg.AuthorID)
+				require.Equal(s.T(), tc.wantAuthor, msg.AuthorName)
+			}
+		})
 	}
-	msg := parseIncomingMessage(m, "bot-1")
-	require.NotNil(s.T(), msg)
-	require.Equal(s.T(), "what is Go?", msg.Content)
-	require.True(s.T(), msg.HasPrefix)
-	require.False(s.T(), msg.IsBotMention)
-}
-
-func (s *TriggerSuite) TestParseIncomingMessageReply() {
-	m := &discordgo.MessageCreate{
-		Message: &discordgo.Message{
-			ID:                "msg-2",
-			Content:           "thanks",
-			Author:            &discordgo.User{ID: "user-1", Username: "carol"},
-			MessageReference:  &discordgo.MessageReference{MessageID: "msg-1"},
-			ReferencedMessage: &discordgo.Message{Author: &discordgo.User{ID: "bot-1"}},
-		},
-	}
-	msg := parseIncomingMessage(m, "bot-1")
-	require.NotNil(s.T(), msg)
-	require.Equal(s.T(), "thanks", msg.Content)
-	require.True(s.T(), msg.IsReplyToBot)
-	require.False(s.T(), msg.IsBotMention)
-	require.False(s.T(), msg.HasPrefix)
-}
-
-func (s *TriggerSuite) TestParseIncomingMessageNoTrigger() {
-	m := &discordgo.MessageCreate{
-		Message: &discordgo.Message{
-			ID:      "msg-1",
-			GuildID: "g-1",
-			Content: "just chatting",
-			Author:  &discordgo.User{ID: "user-1", Username: "dave"},
-		},
-	}
-	msg := parseIncomingMessage(m, "bot-1")
-	require.Nil(s.T(), msg)
-}
-
-func (s *TriggerSuite) TestParseIncomingMessageDM() {
-	m := &discordgo.MessageCreate{
-		Message: &discordgo.Message{
-			ID:        "msg-1",
-			ChannelID: "dm-ch-1",
-			GuildID:   "", // DMs have empty GuildID
-			Content:   "hello from DM",
-			Author:    &discordgo.User{ID: "user-1", Username: "eve"},
-			Timestamp: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-		},
-	}
-	msg := parseIncomingMessage(m, "bot-1")
-	require.NotNil(s.T(), msg)
-	require.Equal(s.T(), "hello from DM", msg.Content)
-	require.True(s.T(), msg.IsDM)
-	require.False(s.T(), msg.IsBotMention)
-	require.False(s.T(), msg.IsReplyToBot)
-	require.False(s.T(), msg.HasPrefix)
-	require.Equal(s.T(), "dm-ch-1", msg.ChannelID)
-	require.Equal(s.T(), "", msg.GuildID)
-	require.Equal(s.T(), "user-1", msg.AuthorID)
-	require.Equal(s.T(), "eve", msg.AuthorName)
 }
 
 // --- SendTyping refresh goroutine ---
@@ -1290,202 +1130,173 @@ func (s *BotSuite) TestSendTypingRefreshError() {
 
 // --- Pending interaction stored on successful defer ---
 
-func (s *BotSuite) TestHandleInteractionStoresPendingInteraction() {
-	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {})
-	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	interaction := &discordgo.Interaction{
-		ChannelID: "ch-1",
-		Type:      discordgo.InteractionApplicationCommand,
-		Data: discordgo.ApplicationCommandInteractionData{
-			Name: "loop",
-			Options: []*discordgo.ApplicationCommandInteractionDataOption{
-				{Name: "status", Type: discordgo.ApplicationCommandOptionSubCommand},
-			},
-		},
+func (s *BotSuite) TestHandleInteractionPendingStorage() {
+	tests := []struct {
+		name       string
+		respondErr error
+		wantStored bool
+	}{
+		{"stores on success", nil, true},
+		{"not stored on error", errors.New("respond failed"), false},
 	}
-	ic := &discordgo.InteractionCreate{Interaction: interaction}
-	s.bot.handleInteraction(nil, ic)
-
-	s.bot.mu.RLock()
-	pending, ok := s.bot.pendingInteractions["ch-1"]
-	s.bot.mu.RUnlock()
-	require.True(s.T(), ok)
-	require.Same(s.T(), interaction, pending)
-}
-
-func (s *BotSuite) TestHandleInteractionDoesNotStorePendingOnError() {
-	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {})
-	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("respond failed"))
-
-	ic := &discordgo.InteractionCreate{
-		Interaction: &discordgo.Interaction{
-			ChannelID: "ch-1",
-			Type:      discordgo.InteractionApplicationCommand,
-			Data: discordgo.ApplicationCommandInteractionData{
-				Name: "loop",
-				Options: []*discordgo.ApplicationCommandInteractionDataOption{
-					{Name: "status", Type: discordgo.ApplicationCommandOptionSubCommand},
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			session := new(MockSession)
+			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {})
+			session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(tc.respondErr)
+			interaction := &discordgo.Interaction{
+				ChannelID: "ch-1", Type: discordgo.InteractionApplicationCommand,
+				Data: discordgo.ApplicationCommandInteractionData{
+					Name:    "loop",
+					Options: []*discordgo.ApplicationCommandInteractionDataOption{{Name: "status", Type: discordgo.ApplicationCommandOptionSubCommand}},
 				},
-			},
-		},
+			}
+			b.handleInteraction(nil, &discordgo.InteractionCreate{Interaction: interaction})
+			b.mu.RLock()
+			pending, ok := b.pendingInteractions["ch-1"]
+			b.mu.RUnlock()
+			require.Equal(s.T(), tc.wantStored, ok)
+			if tc.wantStored {
+				require.Same(s.T(), interaction, pending)
+			}
+		})
 	}
-	s.bot.handleInteraction(nil, ic)
-
-	s.bot.mu.RLock()
-	_, ok := s.bot.pendingInteractions["ch-1"]
-	s.bot.mu.RUnlock()
-	require.False(s.T(), ok)
 }
 
 // --- SendMessage with pending interaction ---
 
 func (s *BotSuite) TestSendMessageWithPendingInteraction() {
-	interaction := &discordgo.Interaction{ChannelID: "ch-1"}
-	s.bot.mu.Lock()
-	s.bot.pendingInteractions["ch-1"] = interaction
-	s.bot.mu.Unlock()
-
-	content := "hello from interaction"
-	s.session.On("InteractionResponseEdit", interaction, &discordgo.WebhookEdit{Content: &content}, mock.Anything).
-		Return(&discordgo.Message{}, nil)
-
-	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
-		ChannelID: "ch-1",
-		Content:   content,
-	})
-	require.NoError(s.T(), err)
-	s.session.AssertExpectations(s.T())
-
-	// Pending interaction should be consumed.
-	s.bot.mu.RLock()
-	_, ok := s.bot.pendingInteractions["ch-1"]
-	s.bot.mu.RUnlock()
-	require.False(s.T(), ok)
-}
-
-func (s *BotSuite) TestSendMessageWithPendingInteractionSplit() {
-	interaction := &discordgo.Interaction{ChannelID: "ch-1"}
-	s.bot.mu.Lock()
-	s.bot.pendingInteractions["ch-1"] = interaction
-	s.bot.mu.Unlock()
-
-	longContent := strings.Repeat("a", 2500)
-	secondChunk := strings.Repeat("a", 500)
-
-	s.session.On("InteractionResponseEdit", interaction, &discordgo.WebhookEdit{Content: new(strings.Repeat("a", 2000))}, mock.Anything).
-		Return(&discordgo.Message{}, nil)
-	s.session.On("FollowupMessageCreate", interaction, true, &discordgo.WebhookParams{Content: secondChunk}, mock.Anything).
-		Return(&discordgo.Message{}, nil)
-
-	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
-		ChannelID: "ch-1",
-		Content:   longContent,
-	})
-	require.NoError(s.T(), err)
-	s.session.AssertExpectations(s.T())
-}
-
-func (s *BotSuite) TestSendMessageWithPendingInteractionEditError() {
-	interaction := &discordgo.Interaction{ChannelID: "ch-1"}
-	s.bot.mu.Lock()
-	s.bot.pendingInteractions["ch-1"] = interaction
-	s.bot.mu.Unlock()
-
-	content := "hello"
-	s.session.On("InteractionResponseEdit", interaction, &discordgo.WebhookEdit{Content: &content}, mock.Anything).
-		Return(nil, errors.New("edit failed"))
-
-	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
-		ChannelID: "ch-1",
-		Content:   content,
-	})
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "discord interaction edit")
-}
-
-func (s *BotSuite) TestSendMessageWithPendingInteractionFollowupError() {
-	interaction := &discordgo.Interaction{ChannelID: "ch-1"}
-	s.bot.mu.Lock()
-	s.bot.pendingInteractions["ch-1"] = interaction
-	s.bot.mu.Unlock()
-
-	longContent := strings.Repeat("a", 2500)
-	secondChunk := strings.Repeat("a", 500)
-
-	s.session.On("InteractionResponseEdit", interaction, &discordgo.WebhookEdit{Content: new(strings.Repeat("a", 2000))}, mock.Anything).
-		Return(&discordgo.Message{}, nil)
-	s.session.On("FollowupMessageCreate", interaction, true, &discordgo.WebhookParams{Content: secondChunk}, mock.Anything).
-		Return(nil, errors.New("followup failed"))
-
-	err := s.bot.SendMessage(context.Background(), &orchestrator.OutgoingMessage{
-		ChannelID: "ch-1",
-		Content:   longContent,
-	})
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "discord followup create")
+	tests := []struct {
+		name    string
+		content string
+		setup   func(*MockSession, *discordgo.Interaction)
+		wantErr string
+	}{
+		{
+			name: "success", content: "hello from interaction",
+			setup: func(ss *MockSession, i *discordgo.Interaction) {
+				content := "hello from interaction"
+				ss.On("InteractionResponseEdit", i, &discordgo.WebhookEdit{Content: &content}, mock.Anything).Return(&discordgo.Message{}, nil)
+			},
+		},
+		{
+			name: "split", content: strings.Repeat("a", 2500),
+			setup: func(ss *MockSession, i *discordgo.Interaction) {
+				ss.On("InteractionResponseEdit", i, &discordgo.WebhookEdit{Content: new(strings.Repeat("a", 2000))}, mock.Anything).Return(&discordgo.Message{}, nil)
+				ss.On("FollowupMessageCreate", i, true, &discordgo.WebhookParams{Content: strings.Repeat("a", 500)}, mock.Anything).Return(&discordgo.Message{}, nil)
+			},
+		},
+		{
+			name: "edit error", content: "hello",
+			setup: func(ss *MockSession, i *discordgo.Interaction) {
+				content := "hello"
+				ss.On("InteractionResponseEdit", i, &discordgo.WebhookEdit{Content: &content}, mock.Anything).Return(nil, errors.New("edit failed"))
+			},
+			wantErr: "discord interaction edit",
+		},
+		{
+			name: "followup error", content: strings.Repeat("a", 2500),
+			setup: func(ss *MockSession, i *discordgo.Interaction) {
+				ss.On("InteractionResponseEdit", i, &discordgo.WebhookEdit{Content: new(strings.Repeat("a", 2000))}, mock.Anything).Return(&discordgo.Message{}, nil)
+				ss.On("FollowupMessageCreate", i, true, &discordgo.WebhookParams{Content: strings.Repeat("a", 500)}, mock.Anything).Return(nil, errors.New("followup failed"))
+			},
+			wantErr: "discord followup create",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			session := new(MockSession)
+			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			interaction := &discordgo.Interaction{ChannelID: "ch-1"}
+			b.mu.Lock()
+			b.pendingInteractions["ch-1"] = interaction
+			b.mu.Unlock()
+			tc.setup(session, interaction)
+			err := b.SendMessage(context.Background(), &orchestrator.OutgoingMessage{ChannelID: "ch-1", Content: tc.content})
+			if tc.wantErr != "" {
+				require.Error(s.T(), err)
+				require.Contains(s.T(), err.Error(), tc.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+			}
+			session.AssertExpectations(s.T())
+		})
+	}
 }
 
 // --- CreateChannel ---
 
-func (s *BotSuite) TestCreateChannelSuccess() {
-	s.session.On("GuildChannels", "g-1", mock.Anything).
-		Return([]*discordgo.Channel{}, nil)
-	s.session.On("GuildChannelCreate", "g-1", "loop", discordgo.ChannelTypeGuildText, mock.Anything).
-		Return(&discordgo.Channel{ID: "new-ch-1"}, nil)
-
-	channelID, err := s.bot.CreateChannel(context.Background(), "g-1", "loop")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "new-ch-1", channelID)
-	s.session.AssertExpectations(s.T())
-}
-
-func (s *BotSuite) TestCreateChannelError() {
-	s.session.On("GuildChannels", "g-1", mock.Anything).
-		Return([]*discordgo.Channel{}, nil)
-	s.session.On("GuildChannelCreate", "g-1", "loop", discordgo.ChannelTypeGuildText, mock.Anything).
-		Return(nil, errors.New("create failed"))
-
-	channelID, err := s.bot.CreateChannel(context.Background(), "g-1", "loop")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "discord create channel")
-	require.Empty(s.T(), channelID)
-}
-
-func (s *BotSuite) TestCreateChannelExisting() {
-	s.session.On("GuildChannels", "g-1", mock.Anything).
-		Return([]*discordgo.Channel{
-			{ID: "ch-other", Name: "other", Type: discordgo.ChannelTypeGuildText},
-			{ID: "ch-loop", Name: "loop", Type: discordgo.ChannelTypeGuildText},
-		}, nil)
-
-	channelID, err := s.bot.CreateChannel(context.Background(), "g-1", "loop")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "ch-loop", channelID)
-	s.session.AssertNotCalled(s.T(), "GuildChannelCreate")
-}
-
-func (s *BotSuite) TestCreateChannelExistingWrongType() {
-	// A voice channel with the same name should not match.
-	s.session.On("GuildChannels", "g-1", mock.Anything).
-		Return([]*discordgo.Channel{
-			{ID: "ch-voice", Name: "loop", Type: discordgo.ChannelTypeGuildVoice},
-		}, nil)
-	s.session.On("GuildChannelCreate", "g-1", "loop", discordgo.ChannelTypeGuildText, mock.Anything).
-		Return(&discordgo.Channel{ID: "new-ch-1"}, nil)
-
-	channelID, err := s.bot.CreateChannel(context.Background(), "g-1", "loop")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "new-ch-1", channelID)
-}
-
-func (s *BotSuite) TestCreateChannelListError() {
-	s.session.On("GuildChannels", "g-1", mock.Anything).
-		Return(nil, errors.New("list failed"))
-
-	_, err := s.bot.CreateChannel(context.Background(), "g-1", "loop")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "discord list channels")
+func (s *BotSuite) TestCreateChannel() {
+	tests := []struct {
+		name      string
+		setup     func(*MockSession)
+		wantID    string
+		wantErr   string
+	}{
+		{
+			name: "success",
+			setup: func(ss *MockSession) {
+				ss.On("GuildChannels", "g-1", mock.Anything).Return([]*discordgo.Channel{}, nil)
+				ss.On("GuildChannelCreate", "g-1", "loop", discordgo.ChannelTypeGuildText, mock.Anything).
+					Return(&discordgo.Channel{ID: "new-ch-1"}, nil)
+			},
+			wantID: "new-ch-1",
+		},
+		{
+			name: "create error",
+			setup: func(ss *MockSession) {
+				ss.On("GuildChannels", "g-1", mock.Anything).Return([]*discordgo.Channel{}, nil)
+				ss.On("GuildChannelCreate", "g-1", "loop", discordgo.ChannelTypeGuildText, mock.Anything).
+					Return(nil, errors.New("create failed"))
+			},
+			wantErr: "discord create channel",
+		},
+		{
+			name: "existing",
+			setup: func(ss *MockSession) {
+				ss.On("GuildChannels", "g-1", mock.Anything).Return([]*discordgo.Channel{
+					{ID: "ch-other", Name: "other", Type: discordgo.ChannelTypeGuildText},
+					{ID: "ch-loop", Name: "loop", Type: discordgo.ChannelTypeGuildText},
+				}, nil)
+			},
+			wantID: "ch-loop",
+		},
+		{
+			name: "existing wrong type",
+			setup: func(ss *MockSession) {
+				ss.On("GuildChannels", "g-1", mock.Anything).Return([]*discordgo.Channel{
+					{ID: "ch-voice", Name: "loop", Type: discordgo.ChannelTypeGuildVoice},
+				}, nil)
+				ss.On("GuildChannelCreate", "g-1", "loop", discordgo.ChannelTypeGuildText, mock.Anything).
+					Return(&discordgo.Channel{ID: "new-ch-1"}, nil)
+			},
+			wantID: "new-ch-1",
+		},
+		{
+			name: "list error",
+			setup: func(ss *MockSession) {
+				ss.On("GuildChannels", "g-1", mock.Anything).Return(nil, errors.New("list failed"))
+			},
+			wantErr: "discord list channels",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			session := new(MockSession)
+			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			tc.setup(session)
+			channelID, err := b.CreateChannel(context.Background(), "g-1", "loop")
+			if tc.wantErr != "" {
+				require.Error(s.T(), err)
+				require.Contains(s.T(), err.Error(), tc.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), tc.wantID, channelID)
+			}
+			session.AssertExpectations(s.T())
+		})
+	}
 }
 
 // --- InviteUserToChannel ---
@@ -1623,57 +1434,29 @@ func (s *BotSuite) TestRenameThreadError() {
 
 // --- handleThreadCreate ---
 
-func (s *BotSuite) TestHandleThreadCreateJoins() {
-	cases := []struct {
+func (s *BotSuite) TestHandleThreadCreate() {
+	tests := []struct {
 		name     string
-		threadID string
-		chanType discordgo.ChannelType
+		channel  *discordgo.Channel
+		wantJoin bool
+		joinErr  error
 	}{
-		{"public thread", "thread-1", discordgo.ChannelTypeGuildPublicThread},
-		{"private thread", "thread-2", discordgo.ChannelTypeGuildPrivateThread},
+		{"public thread", &discordgo.Channel{ID: "thread-1", Type: discordgo.ChannelTypeGuildPublicThread, ParentID: "ch-1"}, true, nil},
+		{"private thread", &discordgo.Channel{ID: "thread-2", Type: discordgo.ChannelTypeGuildPrivateThread, ParentID: "ch-1"}, true, nil},
+		{"ignores non-thread", &discordgo.Channel{ID: "ch-1", Type: discordgo.ChannelTypeGuildText}, false, nil},
+		{"join error", &discordgo.Channel{ID: "thread-1", Type: discordgo.ChannelTypeGuildPublicThread, ParentID: "ch-1"}, true, errors.New("join failed")},
 	}
-	for _, tc := range cases {
+	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
 			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
-			session.On("ThreadJoin", tc.threadID, mock.Anything).Return(nil)
-
-			c := &discordgo.ThreadCreate{
-				Channel: &discordgo.Channel{
-					ID:       tc.threadID,
-					Type:     tc.chanType,
-					ParentID: "ch-1",
-				},
+			if tc.wantJoin {
+				session.On("ThreadJoin", tc.channel.ID, mock.Anything).Return(tc.joinErr)
 			}
-			b.handleThreadCreate(nil, c)
+			b.handleThreadCreate(nil, &discordgo.ThreadCreate{Channel: tc.channel})
 			session.AssertExpectations(s.T())
 		})
 	}
-}
-
-func (s *BotSuite) TestHandleThreadCreateIgnoresNonThread() {
-	c := &discordgo.ThreadCreate{
-		Channel: &discordgo.Channel{
-			ID:   "ch-1",
-			Type: discordgo.ChannelTypeGuildText,
-		},
-	}
-	s.bot.handleThreadCreate(nil, c)
-	s.session.AssertNotCalled(s.T(), "ThreadJoin", mock.Anything, mock.Anything)
-}
-
-func (s *BotSuite) TestHandleThreadCreateJoinError() {
-	s.session.On("ThreadJoin", "thread-1", mock.Anything).Return(errors.New("join failed"))
-
-	c := &discordgo.ThreadCreate{
-		Channel: &discordgo.Channel{
-			ID:       "thread-1",
-			Type:     discordgo.ChannelTypeGuildPublicThread,
-			ParentID: "ch-1",
-		},
-	}
-	s.bot.handleThreadCreate(nil, c)
-	s.session.AssertExpectations(s.T())
 }
 
 // --- handleThreadDelete ---
@@ -1788,36 +1571,43 @@ func (s *BotSuite) TestGetChannelNameError() {
 
 // --- GetChannelParentID ---
 
-func (s *BotSuite) TestGetChannelParentIDThread() {
-	s.session.On("Channel", "thread-1", mock.Anything).Return(&discordgo.Channel{
-		ID:       "thread-1",
-		Type:     discordgo.ChannelTypeGuildPublicThread,
-		ParentID: "ch-1",
-	}, nil)
-
-	parentID, err := s.bot.GetChannelParentID(context.Background(), "thread-1")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "ch-1", parentID)
-}
-
-func (s *BotSuite) TestGetChannelParentIDNotThread() {
-	s.session.On("Channel", "ch-1", mock.Anything).Return(&discordgo.Channel{
-		ID:   "ch-1",
-		Type: discordgo.ChannelTypeGuildText,
-	}, nil)
-
-	parentID, err := s.bot.GetChannelParentID(context.Background(), "ch-1")
-	require.NoError(s.T(), err)
-	require.Empty(s.T(), parentID)
-}
-
-func (s *BotSuite) TestGetChannelParentIDError() {
-	s.session.On("Channel", "ch-1", mock.Anything).Return(nil, errors.New("api error"))
-
-	parentID, err := s.bot.GetChannelParentID(context.Background(), "ch-1")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "discord get channel")
-	require.Empty(s.T(), parentID)
+func (s *BotSuite) TestGetChannelParentID() {
+	tests := []struct {
+		name       string
+		channelID  string
+		channel    *discordgo.Channel
+		err        error
+		wantParent string
+		wantErr    string
+	}{
+		{
+			name: "thread", channelID: "thread-1",
+			channel: &discordgo.Channel{ID: "thread-1", Type: discordgo.ChannelTypeGuildPublicThread, ParentID: "ch-1"},
+			wantParent: "ch-1",
+		},
+		{
+			name: "not thread", channelID: "ch-1",
+			channel: &discordgo.Channel{ID: "ch-1", Type: discordgo.ChannelTypeGuildText},
+		},
+		{
+			name: "error", channelID: "ch-1", err: errors.New("api error"), wantErr: "discord get channel",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			session := new(MockSession)
+			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			session.On("Channel", tc.channelID, mock.Anything).Return(tc.channel, tc.err)
+			parentID, err := b.GetChannelParentID(context.Background(), tc.channelID)
+			if tc.wantErr != "" {
+				require.Error(s.T(), err)
+				require.Contains(s.T(), err.Error(), tc.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+			}
+			require.Equal(s.T(), tc.wantParent, parentID)
+		})
+	}
 }
 
 // --- GetMemberRoles ---
@@ -1845,236 +1635,194 @@ func (s *BotSuite) TestGetMemberRolesError() {
 
 // --- handleMessage with role population ---
 
-func (s *BotSuite) TestHandleMessagePopulatesRoles() {
-	var received *orchestrator.IncomingMessage
-	done := make(chan struct{})
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
-		received = msg
-		close(done)
-	})
-
-	s.bot.mu.Lock()
-	s.bot.botUserID = "bot-123"
-	s.bot.mu.Unlock()
-
-	// Override GuildMember to return roles for this test.
-	s.session.On("GuildMember", "g-1", "user-1", mock.Anything).
-		Return(&discordgo.Member{Roles: []string{"role-admin"}}, nil)
-
-	m := &discordgo.MessageCreate{
-		Message: &discordgo.Message{
-			ID:        "msg-2",
-			ChannelID: "ch-1",
-			GuildID:   "g-1",
-			Content:   "!loop hello",
-			Author:    &discordgo.User{ID: "user-1", Username: "testuser"},
-			Timestamp: time.Now(),
-		},
+func (s *BotSuite) TestHandleMessageRolePopulation() {
+	tests := []struct {
+		name      string
+		member    *discordgo.Member
+		memberErr error
+		wantRoles []string
+	}{
+		{"success", &discordgo.Member{Roles: []string{"role-admin"}}, nil, []string{"role-admin"}},
+		{"fetch error", nil, errors.New("not found"), nil},
 	}
-	s.bot.handleMessage(nil, m)
-	<-done
-
-	require.NotNil(s.T(), received)
-	require.Equal(s.T(), []string{"role-admin"}, received.AuthorRoles)
-}
-
-func (s *BotSuite) TestHandleMessageRoleFetchError() {
-	var received *orchestrator.IncomingMessage
-	done := make(chan struct{})
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
-		received = msg
-		close(done)
-	})
-
-	s.bot.mu.Lock()
-	s.bot.botUserID = "bot-123"
-	s.bot.mu.Unlock()
-
-	// GuildMember returns error — roles should be nil.
-	s.session.On("GuildMember", "g-1", "user-1", mock.Anything).
-		Return(nil, errors.New("not found"))
-
-	m := &discordgo.MessageCreate{
-		Message: &discordgo.Message{
-			ID:        "msg-3",
-			ChannelID: "ch-1",
-			GuildID:   "g-1",
-			Content:   "!loop hello",
-			Author:    &discordgo.User{ID: "user-1", Username: "testuser"},
-			Timestamp: time.Now(),
-		},
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			session := new(MockSession)
+			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b.botUserID = "bot-123"
+			session.On("GuildMember", "g-1", "user-1", mock.Anything).Return(tc.member, tc.memberErr)
+			var received *orchestrator.IncomingMessage
+			done := make(chan struct{})
+			b.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
+				received = msg
+				close(done)
+			})
+			b.handleMessage(nil, &discordgo.MessageCreate{Message: &discordgo.Message{
+				ID: "msg-1", ChannelID: "ch-1", GuildID: "g-1", Content: "!loop hello",
+				Author: &discordgo.User{ID: "user-1", Username: "testuser"}, Timestamp: time.Now(),
+			}})
+			<-done
+			require.NotNil(s.T(), received)
+			require.Equal(s.T(), tc.wantRoles, received.AuthorRoles)
+		})
 	}
-	s.bot.handleMessage(nil, m)
-	<-done
-
-	require.NotNil(s.T(), received)
-	require.Nil(s.T(), received.AuthorRoles)
 }
 
 // --- handleInteraction with AuthorID/AuthorRoles ---
 
-func (s *BotSuite) TestHandleInteractionPopulatesAuthorGuild() {
-	var received *orchestrator.Interaction
-	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
-		received = i
-		close(done)
-	})
-
-	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	ic := &discordgo.InteractionCreate{
-		Interaction: &discordgo.Interaction{
-			ID:        "int-guild",
-			ChannelID: "ch-1",
-			GuildID:   "g-1",
-			Type:      discordgo.InteractionApplicationCommand,
-			Member: &discordgo.Member{
-				User:  &discordgo.User{ID: "user-guild"},
-				Roles: []string{"role-a", "role-b"},
-			},
-			Data: discordgo.ApplicationCommandInteractionData{
-				Name: "loop",
-				Options: []*discordgo.ApplicationCommandInteractionDataOption{
-					{Name: "status", Type: discordgo.ApplicationCommandOptionSubCommand},
-				},
-			},
+func (s *BotSuite) TestHandleInteractionAuthor() {
+	tests := []struct {
+		name      string
+		member    *discordgo.Member
+		user      *discordgo.User
+		guildID   string
+		wantID    string
+		wantRoles []string
+	}{
+		{
+			name:    "guild member",
+			member:  &discordgo.Member{User: &discordgo.User{ID: "user-guild"}, Roles: []string{"role-a", "role-b"}},
+			guildID: "g-1", wantID: "user-guild", wantRoles: []string{"role-a", "role-b"},
+		},
+		{
+			name: "DM user", user: &discordgo.User{ID: "user-dm"}, wantID: "user-dm",
 		},
 	}
-	s.bot.handleInteraction(nil, ic)
-	<-done
-
-	require.NotNil(s.T(), received)
-	require.Equal(s.T(), "user-guild", received.AuthorID)
-	require.Equal(s.T(), []string{"role-a", "role-b"}, received.AuthorRoles)
-}
-
-func (s *BotSuite) TestHandleInteractionPopulatesAuthorDM() {
-	var received *orchestrator.Interaction
-	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
-		received = i
-		close(done)
-	})
-
-	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	ic := &discordgo.InteractionCreate{
-		Interaction: &discordgo.Interaction{
-			ID:        "int-dm",
-			ChannelID: "dm-ch",
-			Type:      discordgo.InteractionApplicationCommand,
-			User:      &discordgo.User{ID: "user-dm"},
-			Data: discordgo.ApplicationCommandInteractionData{
-				Name: "loop",
-				Options: []*discordgo.ApplicationCommandInteractionDataOption{
-					{Name: "status", Type: discordgo.ApplicationCommandOptionSubCommand},
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			session := new(MockSession)
+			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			var received *orchestrator.Interaction
+			done := make(chan struct{})
+			b.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+				received = i
+				close(done)
+			})
+			session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+			ic := &discordgo.InteractionCreate{
+				Interaction: &discordgo.Interaction{
+					ChannelID: "ch-1", GuildID: tc.guildID,
+					Type: discordgo.InteractionApplicationCommand, Member: tc.member, User: tc.user,
+					Data: discordgo.ApplicationCommandInteractionData{
+						Name:    "loop",
+						Options: []*discordgo.ApplicationCommandInteractionDataOption{{Name: "status", Type: discordgo.ApplicationCommandOptionSubCommand}},
+					},
 				},
-			},
-		},
+			}
+			b.handleInteraction(nil, ic)
+			<-done
+			require.NotNil(s.T(), received)
+			require.Equal(s.T(), tc.wantID, received.AuthorID)
+			require.Equal(s.T(), tc.wantRoles, received.AuthorRoles)
+		})
 	}
-	s.bot.handleInteraction(nil, ic)
-	<-done
-
-	require.NotNil(s.T(), received)
-	require.Equal(s.T(), "user-dm", received.AuthorID)
-	require.Nil(s.T(), received.AuthorRoles)
 }
 
 // --- PostMessage ---
 
-func (s *BotSuite) TestPostMessageSuccess() {
-	s.session.On("ChannelMessageSend", "ch-1", "hello", mock.Anything).
-		Return(&discordgo.Message{}, nil)
-
-	err := s.bot.PostMessage(context.Background(), "ch-1", "hello")
-	require.NoError(s.T(), err)
-	s.session.AssertExpectations(s.T())
-}
-
-func (s *BotSuite) TestPostMessageConvertsTextMention() {
-	s.bot.mu.Lock()
-	s.bot.botUserID = "bot-123"
-	s.bot.botUsername = "LoopBot"
-	s.bot.mu.Unlock()
-
-	s.session.On("ChannelMessageSend", "ch-1", "<@bot-123> check the last commit", mock.Anything).
-		Return(&discordgo.Message{}, nil)
-
-	err := s.bot.PostMessage(context.Background(), "ch-1", "@LoopBot check the last commit")
-	require.NoError(s.T(), err)
-	s.session.AssertExpectations(s.T())
-}
-
-func (s *BotSuite) TestPostMessageConvertsTextMentionCaseInsensitive() {
-	s.bot.mu.Lock()
-	s.bot.botUserID = "bot-123"
-	s.bot.botUsername = "LoopBot"
-	s.bot.mu.Unlock()
-
-	s.session.On("ChannelMessageSend", "ch-1", "<@bot-123> check commits", mock.Anything).
-		Return(&discordgo.Message{}, nil)
-
-	err := s.bot.PostMessage(context.Background(), "ch-1", "@loopbot check commits")
-	require.NoError(s.T(), err)
-	s.session.AssertExpectations(s.T())
-}
-
-func (s *BotSuite) TestPostMessageError() {
-	s.session.On("ChannelMessageSend", "ch-1", "hello", mock.Anything).
-		Return(nil, errors.New("send failed"))
-
-	err := s.bot.PostMessage(context.Background(), "ch-1", "hello")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "discord post message")
+func (s *BotSuite) TestPostMessage() {
+	tests := []struct {
+		name        string
+		content     string
+		botUserID   string
+		botUsername string
+		expectedMsg string
+		sendErr     error
+		wantErr     string
+	}{
+		{name: "success", content: "hello", expectedMsg: "hello"},
+		{name: "converts text mention", content: "@LoopBot check the last commit", botUserID: "bot-123", botUsername: "LoopBot", expectedMsg: "<@bot-123> check the last commit"},
+		{name: "converts text mention case insensitive", content: "@loopbot check commits", botUserID: "bot-123", botUsername: "LoopBot", expectedMsg: "<@bot-123> check commits"},
+		{name: "error", content: "hello", expectedMsg: "hello", sendErr: errors.New("send failed"), wantErr: "discord post message"},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			session := new(MockSession)
+			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			if tc.botUserID != "" {
+				b.botUserID = tc.botUserID
+				b.botUsername = tc.botUsername
+			}
+			var ret *discordgo.Message
+			if tc.sendErr == nil {
+				ret = &discordgo.Message{}
+			}
+			session.On("ChannelMessageSend", "ch-1", tc.expectedMsg, mock.Anything).Return(ret, tc.sendErr)
+			err := b.PostMessage(context.Background(), "ch-1", tc.content)
+			if tc.wantErr != "" {
+				require.Error(s.T(), err)
+				require.Contains(s.T(), err.Error(), tc.wantErr)
+			} else {
+				require.NoError(s.T(), err)
+			}
+			session.AssertExpectations(s.T())
+		})
+	}
 }
 
 // --- CreateSimpleThread tests ---
 
-func (s *BotSuite) TestCreateSimpleThreadSuccess() {
-	s.session.On("ThreadStart", "ch-1", "task output", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
-		Return(&discordgo.Channel{ID: "thread-1"}, nil)
-	s.session.On("ChannelMessageSend", "thread-1", "First turn content", mock.Anything).
-		Return(&discordgo.Message{}, nil)
-
-	threadID, err := s.bot.CreateSimpleThread(context.Background(), "ch-1", "task output", "First turn content")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "thread-1", threadID)
-	s.session.AssertExpectations(s.T())
-}
-
-func (s *BotSuite) TestCreateSimpleThreadEmptyMessage() {
-	s.session.On("ThreadStart", "ch-1", "task name", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
-		Return(&discordgo.Channel{ID: "thread-2"}, nil)
-
-	threadID, err := s.bot.CreateSimpleThread(context.Background(), "ch-1", "task name", "")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "thread-2", threadID)
-	// ChannelMessageSend should not be called for empty message
-	s.session.AssertNotCalled(s.T(), "ChannelMessageSend", mock.Anything, mock.Anything, mock.Anything)
-}
-
-func (s *BotSuite) TestCreateSimpleThreadStartError() {
-	s.session.On("ThreadStart", "ch-1", "task", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
-		Return(nil, errors.New("thread start failed"))
-
-	threadID, err := s.bot.CreateSimpleThread(context.Background(), "ch-1", "task", "content")
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "discord create simple thread")
-	require.Empty(s.T(), threadID)
-}
-
-func (s *BotSuite) TestCreateSimpleThreadMessageSendError() {
-	s.session.On("ThreadStart", "ch-1", "task", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
-		Return(&discordgo.Channel{ID: "thread-3"}, nil)
-	s.session.On("ChannelMessageSend", "thread-3", "content", mock.Anything).
-		Return(nil, errors.New("send failed"))
-
-	// Message send error is logged but does not fail the thread creation
-	threadID, err := s.bot.CreateSimpleThread(context.Background(), "ch-1", "task", "content")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "thread-3", threadID)
-	s.session.AssertExpectations(s.T())
+func (s *BotSuite) TestCreateSimpleThread() {
+	tests := []struct {
+		name     string
+		title    string
+		message  string
+		setup    func(*MockSession)
+		wantID   string
+		wantErr  string
+	}{
+		{
+			name: "success", title: "task output", message: "First turn content",
+			setup: func(ss *MockSession) {
+				ss.On("ThreadStart", "ch-1", "task output", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
+					Return(&discordgo.Channel{ID: "thread-1"}, nil)
+				ss.On("ChannelMessageSend", "thread-1", "First turn content", mock.Anything).Return(&discordgo.Message{}, nil)
+			},
+			wantID: "thread-1",
+		},
+		{
+			name: "empty message", title: "task name", message: "",
+			setup: func(ss *MockSession) {
+				ss.On("ThreadStart", "ch-1", "task name", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
+					Return(&discordgo.Channel{ID: "thread-2"}, nil)
+			},
+			wantID: "thread-2",
+		},
+		{
+			name: "start error", title: "task", message: "content",
+			setup: func(ss *MockSession) {
+				ss.On("ThreadStart", "ch-1", "task", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
+					Return(nil, errors.New("thread start failed"))
+			},
+			wantErr: "discord create simple thread",
+		},
+		{
+			name: "message send error", title: "task", message: "content",
+			setup: func(ss *MockSession) {
+				ss.On("ThreadStart", "ch-1", "task", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
+					Return(&discordgo.Channel{ID: "thread-3"}, nil)
+				ss.On("ChannelMessageSend", "thread-3", "content", mock.Anything).Return(nil, errors.New("send failed"))
+			},
+			wantID: "thread-3", // message send error is logged but doesn't fail creation
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			session := new(MockSession)
+			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			tc.setup(session)
+			threadID, err := b.CreateSimpleThread(context.Background(), "ch-1", tc.title, tc.message)
+			if tc.wantErr != "" {
+				require.Error(s.T(), err)
+				require.Contains(s.T(), err.Error(), tc.wantErr)
+				require.Empty(s.T(), threadID)
+			} else {
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), tc.wantID, threadID)
+			}
+			session.AssertExpectations(s.T())
+		})
+	}
 }
 
 // --- Stop button tests ---
