@@ -133,6 +133,25 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("GET /api/readme", s.srv.handleGetReadme)
 }
 
+// testRequest is a helper that sends an HTTP request and returns the recorder.
+func (s *ServerSuite) testRequest(method, path, body string) *httptest.ResponseRecorder {
+	var req *http.Request
+	if body != "" {
+		req = httptest.NewRequest(method, path, bytes.NewBufferString(body))
+	} else {
+		req = httptest.NewRequest(method, path, nil)
+	}
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// nilServer creates a server with nil dependencies for testing not-implemented paths.
+func nilServer() *Server {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	return NewServer(nil, nil, nil, nil, nil, logger)
+}
+
 func (s *ServerSuite) TestNewServer() {
 	require.NotNil(s.T(), s.srv)
 	require.NotNil(s.T(), s.srv.scheduler)
@@ -140,6 +159,92 @@ func (s *ServerSuite) TestNewServer() {
 	require.NotNil(s.T(), s.srv.store)
 	require.NotNil(s.T(), s.srv.messages)
 	require.NotNil(s.T(), s.srv.logger)
+}
+
+// --- Invalid JSON body tests (table-driven) ---
+
+func (s *ServerSuite) TestInvalidBodyReturns400() {
+	tests := []struct {
+		name   string
+		method string
+		path   string
+	}{
+		{"CreateTask", "POST", "/api/tasks"},
+		{"UpdateTask", "PATCH", "/api/tasks/42"},
+		{"EnsureChannel", "POST", "/api/channels"},
+		{"CreateChannel", "POST", "/api/channels/create"},
+		{"CreateThread", "POST", "/api/threads"},
+		{"SendMessage", "POST", "/api/messages"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			rec := s.testRequest(tt.method, tt.path, "not json")
+			require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+		})
+	}
+}
+
+func (s *ServerSuite) TestInvalidBodyMemoryEndpoints() {
+	indexer := new(MockMemoryIndexer)
+	s.srv.SetMemoryIndexer(indexer)
+
+	for _, path := range []string{"/api/memory/search", "/api/memory/index"} {
+		s.Run(path, func() {
+			rec := s.testRequest("POST", path, "not json")
+			require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+		})
+	}
+}
+
+// --- Nil dependency tests (table-driven) ---
+
+func (s *ServerSuite) TestNilDependencyReturns501() {
+	srv := nilServer()
+
+	tests := []struct {
+		name    string
+		method  string
+		pattern string
+		path    string
+		body    string
+	}{
+		{"EnsureChannel", "POST", "POST /api/channels", "/api/channels", `{"dir_path":"/path"}`},
+		{"CreateChannel", "POST", "POST /api/channels/create", "/api/channels/create", `{"name":"trial"}`},
+		{"CreateThread", "POST", "POST /api/threads", "/api/threads", `{"channel_id":"ch-1","name":"my-thread"}`},
+		{"DeleteThread", "DELETE", "DELETE /api/threads/{id}", "/api/threads/thread-1", ""},
+		{"SearchChannels", "GET", "GET /api/channels", "/api/channels", ""},
+		{"SendMessage", "POST", "POST /api/messages", "/api/messages", `{"channel_id":"ch-1","content":"hello"}`},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			mux := http.NewServeMux()
+			switch tt.name {
+			case "EnsureChannel":
+				mux.HandleFunc(tt.pattern, srv.handleEnsureChannel)
+			case "CreateChannel":
+				mux.HandleFunc(tt.pattern, srv.handleCreateChannel)
+			case "CreateThread":
+				mux.HandleFunc(tt.pattern, srv.handleCreateThread)
+			case "DeleteThread":
+				mux.HandleFunc(tt.pattern, srv.handleDeleteThread)
+			case "SearchChannels":
+				mux.HandleFunc(tt.pattern, srv.handleSearchChannels)
+			case "SendMessage":
+				mux.HandleFunc(tt.pattern, srv.handleSendMessage)
+			}
+
+			var req *http.Request
+			if tt.body != "" {
+				req = httptest.NewRequest(tt.method, tt.path, bytes.NewBufferString(tt.body))
+			} else {
+				req = httptest.NewRequest(tt.method, tt.path, nil)
+			}
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+
+			require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+		})
+	}
 }
 
 // --- CreateTask tests ---
@@ -150,11 +255,7 @@ func (s *ServerSuite) TestCreateTaskSuccess() {
 			task.Type == db.TaskTypeCron && task.Prompt == "check standup"
 	})).Return(int64(42), nil)
 
-	body := `{"channel_id":"ch1","schedule":"0 9 * * *","type":"cron","prompt":"check standup"}`
-	req := httptest.NewRequest("POST", "/api/tasks", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/tasks", `{"channel_id":"ch1","schedule":"0 9 * * *","type":"cron","prompt":"check standup"}`)
 
 	require.Equal(s.T(), http.StatusCreated, rec.Code)
 
@@ -164,23 +265,10 @@ func (s *ServerSuite) TestCreateTaskSuccess() {
 	s.scheduler.AssertExpectations(s.T())
 }
 
-func (s *ServerSuite) TestCreateTaskInvalidBody() {
-	req := httptest.NewRequest("POST", "/api/tasks", bytes.NewBufferString("not json"))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
-}
-
 func (s *ServerSuite) TestCreateTaskSchedulerError() {
 	s.scheduler.On("AddTask", mock.Anything, mock.Anything).Return(int64(0), errors.New("bad schedule"))
 
-	body := `{"channel_id":"ch1","schedule":"bad","type":"cron","prompt":"test"}`
-	req := httptest.NewRequest("POST", "/api/tasks", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/tasks", `{"channel_id":"ch1","schedule":"bad","type":"cron","prompt":"test"}`)
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.scheduler.AssertExpectations(s.T())
@@ -196,10 +284,7 @@ func (s *ServerSuite) TestListTasksSuccess() {
 	}
 	s.scheduler.On("ListTasks", mock.Anything, "ch1").Return(tasks, nil)
 
-	req := httptest.NewRequest("GET", "/api/tasks?channel_id=ch1", nil)
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("GET", "/api/tasks?channel_id=ch1", "")
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -217,10 +302,7 @@ func (s *ServerSuite) TestListTasksSuccess() {
 func (s *ServerSuite) TestListTasksEmpty() {
 	s.scheduler.On("ListTasks", mock.Anything, "ch1").Return([]*db.ScheduledTask{}, nil)
 
-	req := httptest.NewRequest("GET", "/api/tasks?channel_id=ch1", nil)
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("GET", "/api/tasks?channel_id=ch1", "")
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -231,21 +313,14 @@ func (s *ServerSuite) TestListTasksEmpty() {
 }
 
 func (s *ServerSuite) TestListTasksMissingChannelID() {
-	req := httptest.NewRequest("GET", "/api/tasks", nil)
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
-
+	rec := s.testRequest("GET", "/api/tasks", "")
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
 func (s *ServerSuite) TestListTasksSchedulerError() {
 	s.scheduler.On("ListTasks", mock.Anything, "ch1").Return(nil, errors.New("db error"))
 
-	req := httptest.NewRequest("GET", "/api/tasks?channel_id=ch1", nil)
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("GET", "/api/tasks?channel_id=ch1", "")
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.scheduler.AssertExpectations(s.T())
@@ -256,31 +331,21 @@ func (s *ServerSuite) TestListTasksSchedulerError() {
 func (s *ServerSuite) TestDeleteTaskSuccess() {
 	s.scheduler.On("RemoveTask", mock.Anything, int64(42)).Return(nil)
 
-	req := httptest.NewRequest("DELETE", "/api/tasks/42", nil)
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("DELETE", "/api/tasks/42", "")
 
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	s.scheduler.AssertExpectations(s.T())
 }
 
 func (s *ServerSuite) TestDeleteTaskInvalidID() {
-	req := httptest.NewRequest("DELETE", "/api/tasks/abc", nil)
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
-
+	rec := s.testRequest("DELETE", "/api/tasks/abc", "")
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
 func (s *ServerSuite) TestDeleteTaskSchedulerError() {
 	s.scheduler.On("RemoveTask", mock.Anything, int64(42)).Return(errors.New("not found"))
 
-	req := httptest.NewRequest("DELETE", "/api/tasks/42", nil)
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("DELETE", "/api/tasks/42", "")
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.scheduler.AssertExpectations(s.T())
@@ -288,57 +353,34 @@ func (s *ServerSuite) TestDeleteTaskSchedulerError() {
 
 // --- UpdateTask tests ---
 
-func (s *ServerSuite) TestUpdateTaskDisable() {
-	s.scheduler.On("SetTaskEnabled", mock.Anything, int64(42), false).Return(nil)
+func (s *ServerSuite) TestUpdateTaskToggle() {
+	tests := []struct {
+		name    string
+		body    string
+		enabled bool
+	}{
+		{"Disable", `{"enabled":false}`, false},
+		{"Enable", `{"enabled":true}`, true},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.scheduler.On("SetTaskEnabled", mock.Anything, int64(42), tt.enabled).Return(nil).Once()
 
-	body := `{"enabled":false}`
-	req := httptest.NewRequest("PATCH", "/api/tasks/42", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
+			rec := s.testRequest("PATCH", "/api/tasks/42", tt.body)
 
-	s.mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusOK, rec.Code)
-	s.scheduler.AssertExpectations(s.T())
-}
-
-func (s *ServerSuite) TestUpdateTaskEnable() {
-	s.scheduler.On("SetTaskEnabled", mock.Anything, int64(42), true).Return(nil)
-
-	body := `{"enabled":true}`
-	req := httptest.NewRequest("PATCH", "/api/tasks/42", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusOK, rec.Code)
-	s.scheduler.AssertExpectations(s.T())
+			require.Equal(s.T(), http.StatusOK, rec.Code)
+			s.scheduler.AssertExpectations(s.T())
+		})
+	}
 }
 
 func (s *ServerSuite) TestUpdateTaskInvalidID() {
-	req := httptest.NewRequest("PATCH", "/api/tasks/abc", bytes.NewBufferString(`{"enabled":true}`))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
-}
-
-func (s *ServerSuite) TestUpdateTaskInvalidBody() {
-	req := httptest.NewRequest("PATCH", "/api/tasks/42", bytes.NewBufferString("not json"))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
-
+	rec := s.testRequest("PATCH", "/api/tasks/abc", `{"enabled":true}`)
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
 func (s *ServerSuite) TestUpdateTaskNoFields() {
-	body := `{}`
-	req := httptest.NewRequest("PATCH", "/api/tasks/42", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
-
+	rec := s.testRequest("PATCH", "/api/tasks/42", `{}`)
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
@@ -347,11 +389,7 @@ func (s *ServerSuite) TestUpdateTaskEditPrompt() {
 		return p != nil && *p == "new prompt"
 	}), (*int)(nil)).Return(nil)
 
-	body := `{"prompt":"new prompt"}`
-	req := httptest.NewRequest("PATCH", "/api/tasks/42", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("PATCH", "/api/tasks/42", `{"prompt":"new prompt"}`)
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	s.scheduler.AssertExpectations(s.T())
@@ -360,11 +398,7 @@ func (s *ServerSuite) TestUpdateTaskEditPrompt() {
 func (s *ServerSuite) TestUpdateTaskEditSchedulerError() {
 	s.scheduler.On("EditTask", mock.Anything, int64(42), mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("edit error"))
 
-	body := `{"prompt":"new"}`
-	req := httptest.NewRequest("PATCH", "/api/tasks/42", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("PATCH", "/api/tasks/42", `{"prompt":"new"}`)
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.scheduler.AssertExpectations(s.T())
@@ -373,11 +407,7 @@ func (s *ServerSuite) TestUpdateTaskEditSchedulerError() {
 func (s *ServerSuite) TestUpdateTaskSchedulerError() {
 	s.scheduler.On("SetTaskEnabled", mock.Anything, int64(42), true).Return(errors.New("db error"))
 
-	body := `{"enabled":true}`
-	req := httptest.NewRequest("PATCH", "/api/tasks/42", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("PATCH", "/api/tasks/42", `{"enabled":true}`)
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.scheduler.AssertExpectations(s.T())
@@ -402,8 +432,7 @@ func (s *ServerSuite) TestStartListenError() {
 
 	// Try to start another server — won't get the same port, but
 	// we can test with an invalid address
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv2 := NewServer(s.scheduler, nil, nil, nil, nil, logger)
+	srv2 := nilServer()
 	err = srv2.Start("invalid-addr-no-port")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "listening on")
@@ -411,9 +440,7 @@ func (s *ServerSuite) TestStartListenError() {
 }
 
 func (s *ServerSuite) TestStopNilServer() {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(s.scheduler, nil, nil, nil, nil, logger)
-
+	srv := nilServer()
 	err := srv.Stop(context.Background())
 	require.NoError(s.T(), err)
 }
@@ -436,11 +463,7 @@ func (s *ServerSuite) TestEnsureChannelSuccess() {
 	s.channels.On("EnsureChannel", mock.Anything, "/home/user/dev/loop").
 		Return("ch-123", nil)
 
-	body := `{"dir_path":"/home/user/dev/loop"}`
-	req := httptest.NewRequest("POST", "/api/channels", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/channels", `{"dir_path":"/home/user/dev/loop"}`)
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -451,21 +474,7 @@ func (s *ServerSuite) TestEnsureChannelSuccess() {
 }
 
 func (s *ServerSuite) TestEnsureChannelMissingDirPath() {
-	body := `{"dir_path":""}`
-	req := httptest.NewRequest("POST", "/api/channels", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
-}
-
-func (s *ServerSuite) TestEnsureChannelInvalidBody() {
-	req := httptest.NewRequest("POST", "/api/channels", bytes.NewBufferString("not json"))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
-
+	rec := s.testRequest("POST", "/api/channels", `{"dir_path":""}`)
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
@@ -473,30 +482,10 @@ func (s *ServerSuite) TestEnsureChannelError() {
 	s.channels.On("EnsureChannel", mock.Anything, "/path").
 		Return("", errors.New("ensure failed"))
 
-	body := `{"dir_path":"/path"}`
-	req := httptest.NewRequest("POST", "/api/channels", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/channels", `{"dir_path":"/path"}`)
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.channels.AssertExpectations(s.T())
-}
-
-func (s *ServerSuite) TestEnsureChannelNilEnsurer() {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(s.scheduler, nil, nil, nil, nil, logger)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/channels", srv.handleEnsureChannel)
-
-	body := `{"dir_path":"/path"}`
-	req := httptest.NewRequest("POST", "/api/channels", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
 // --- CreateChannel tests ---
@@ -505,11 +494,7 @@ func (s *ServerSuite) TestCreateChannelSuccess() {
 	s.channels.On("CreateChannel", mock.Anything, "trial", "").
 		Return("ch-new", nil)
 
-	body := `{"name":"trial"}`
-	req := httptest.NewRequest("POST", "/api/channels/create", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/channels/create", `{"name":"trial"}`)
 
 	require.Equal(s.T(), http.StatusCreated, rec.Code)
 
@@ -520,21 +505,7 @@ func (s *ServerSuite) TestCreateChannelSuccess() {
 }
 
 func (s *ServerSuite) TestCreateChannelMissingName() {
-	body := `{"name":""}`
-	req := httptest.NewRequest("POST", "/api/channels/create", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
-}
-
-func (s *ServerSuite) TestCreateChannelInvalidBody() {
-	req := httptest.NewRequest("POST", "/api/channels/create", bytes.NewBufferString("not json"))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
-
+	rec := s.testRequest("POST", "/api/channels/create", `{"name":""}`)
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
@@ -542,11 +513,7 @@ func (s *ServerSuite) TestCreateChannelWithAuthorID() {
 	s.channels.On("CreateChannel", mock.Anything, "trial", "user-42").
 		Return("ch-new", nil)
 
-	body := `{"name":"trial","author_id":"user-42"}`
-	req := httptest.NewRequest("POST", "/api/channels/create", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/channels/create", `{"name":"trial","author_id":"user-42"}`)
 
 	require.Equal(s.T(), http.StatusCreated, rec.Code)
 
@@ -560,30 +527,10 @@ func (s *ServerSuite) TestCreateChannelError() {
 	s.channels.On("CreateChannel", mock.Anything, "trial", "").
 		Return("", errors.New("create failed"))
 
-	body := `{"name":"trial"}`
-	req := httptest.NewRequest("POST", "/api/channels/create", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/channels/create", `{"name":"trial"}`)
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.channels.AssertExpectations(s.T())
-}
-
-func (s *ServerSuite) TestCreateChannelNilEnsurer() {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(s.scheduler, nil, nil, nil, nil, logger)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/channels/create", srv.handleCreateChannel)
-
-	body := `{"name":"trial"}`
-	req := httptest.NewRequest("POST", "/api/channels/create", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
 // --- CreateThread tests ---
@@ -592,11 +539,7 @@ func (s *ServerSuite) TestCreateThreadSuccess() {
 	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread", "", "").
 		Return("thread-1", nil)
 
-	body := `{"channel_id":"ch-1","name":"my-thread"}`
-	req := httptest.NewRequest("POST", "/api/threads", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/threads", `{"channel_id":"ch-1","name":"my-thread"}`)
 
 	require.Equal(s.T(), http.StatusCreated, rec.Code)
 
@@ -610,11 +553,7 @@ func (s *ServerSuite) TestCreateThreadSuccessWithAuthorID() {
 	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread", "user-42", "").
 		Return("thread-1", nil)
 
-	body := `{"channel_id":"ch-1","name":"my-thread","author_id":"user-42"}`
-	req := httptest.NewRequest("POST", "/api/threads", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/threads", `{"channel_id":"ch-1","name":"my-thread","author_id":"user-42"}`)
 
 	require.Equal(s.T(), http.StatusCreated, rec.Code)
 
@@ -628,11 +567,7 @@ func (s *ServerSuite) TestCreateThreadSuccessWithMessage() {
 	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread", "", "Do the task").
 		Return("thread-1", nil)
 
-	body := `{"channel_id":"ch-1","name":"my-thread","message":"Do the task"}`
-	req := httptest.NewRequest("POST", "/api/threads", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/threads", `{"channel_id":"ch-1","name":"my-thread","message":"Do the task"}`)
 
 	require.Equal(s.T(), http.StatusCreated, rec.Code)
 
@@ -642,44 +577,27 @@ func (s *ServerSuite) TestCreateThreadSuccessWithMessage() {
 	s.threads.AssertExpectations(s.T())
 }
 
-func (s *ServerSuite) TestCreateThreadMissingChannelID() {
-	body := `{"name":"my-thread"}`
-	req := httptest.NewRequest("POST", "/api/threads", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
-}
-
-func (s *ServerSuite) TestCreateThreadMissingName() {
-	body := `{"channel_id":"ch-1"}`
-	req := httptest.NewRequest("POST", "/api/threads", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
-}
-
-func (s *ServerSuite) TestCreateThreadInvalidBody() {
-	req := httptest.NewRequest("POST", "/api/threads", bytes.NewBufferString("not json"))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+func (s *ServerSuite) TestCreateThreadMissingFields() {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"MissingChannelID", `{"name":"my-thread"}`},
+		{"MissingName", `{"channel_id":"ch-1"}`},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			rec := s.testRequest("POST", "/api/threads", tt.body)
+			require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+		})
+	}
 }
 
 func (s *ServerSuite) TestCreateThreadError() {
 	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread", "", "").
 		Return("", errors.New("create failed"))
 
-	body := `{"channel_id":"ch-1","name":"my-thread"}`
-	req := httptest.NewRequest("POST", "/api/threads", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/threads", `{"channel_id":"ch-1","name":"my-thread"}`)
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.threads.AssertExpectations(s.T())
@@ -690,10 +608,7 @@ func (s *ServerSuite) TestCreateThreadError() {
 func (s *ServerSuite) TestDeleteThreadSuccess() {
 	s.threads.On("DeleteThread", mock.Anything, "thread-1").Return(nil)
 
-	req := httptest.NewRequest("DELETE", "/api/threads/thread-1", nil)
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("DELETE", "/api/threads/thread-1", "")
 
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	s.threads.AssertExpectations(s.T())
@@ -703,44 +618,10 @@ func (s *ServerSuite) TestDeleteThreadError() {
 	s.threads.On("DeleteThread", mock.Anything, "thread-1").
 		Return(errors.New("delete failed"))
 
-	req := httptest.NewRequest("DELETE", "/api/threads/thread-1", nil)
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("DELETE", "/api/threads/thread-1", "")
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.threads.AssertExpectations(s.T())
-}
-
-func (s *ServerSuite) TestDeleteThreadNilEnsurer() {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(s.scheduler, nil, nil, nil, nil, logger)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("DELETE /api/threads/{id}", srv.handleDeleteThread)
-
-	req := httptest.NewRequest("DELETE", "/api/threads/thread-1", nil)
-	rec := httptest.NewRecorder()
-
-	mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
-}
-
-func (s *ServerSuite) TestCreateThreadNilEnsurer() {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(s.scheduler, nil, nil, nil, nil, logger)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/threads", srv.handleCreateThread)
-
-	body := `{"channel_id":"ch-1","name":"my-thread"}`
-	req := httptest.NewRequest("POST", "/api/threads", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
 // --- SearchChannels tests ---
@@ -752,10 +633,7 @@ func (s *ServerSuite) TestSearchChannelsSuccess() {
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
 
-	req := httptest.NewRequest("GET", "/api/channels", nil)
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("GET", "/api/channels", "")
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -777,10 +655,7 @@ func (s *ServerSuite) TestSearchChannelsWithQuery() {
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
 
-	req := httptest.NewRequest("GET", "/api/channels?query=gen", nil)
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("GET", "/api/channels?query=gen", "")
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -797,10 +672,7 @@ func (s *ServerSuite) TestSearchChannelsWithQueryNoMatch() {
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
 
-	req := httptest.NewRequest("GET", "/api/channels?query=nonexistent", nil)
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("GET", "/api/channels?query=nonexistent", "")
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -813,10 +685,7 @@ func (s *ServerSuite) TestSearchChannelsWithQueryNoMatch() {
 func (s *ServerSuite) TestSearchChannelsEmpty() {
 	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{}, nil)
 
-	req := httptest.NewRequest("GET", "/api/channels", nil)
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("GET", "/api/channels", "")
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -829,28 +698,10 @@ func (s *ServerSuite) TestSearchChannelsEmpty() {
 func (s *ServerSuite) TestSearchChannelsError() {
 	s.store.On("ListChannels", mock.Anything).Return(nil, errors.New("db error"))
 
-	req := httptest.NewRequest("GET", "/api/channels", nil)
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("GET", "/api/channels", "")
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.store.AssertExpectations(s.T())
-}
-
-func (s *ServerSuite) TestSearchChannelsNilStore() {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(s.scheduler, nil, nil, nil, nil, logger)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/channels", srv.handleSearchChannels)
-
-	req := httptest.NewRequest("GET", "/api/channels", nil)
-	rec := httptest.NewRecorder()
-
-	mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
 // --- SendMessage tests ---
@@ -858,72 +709,35 @@ func (s *ServerSuite) TestSearchChannelsNilStore() {
 func (s *ServerSuite) TestSendMessageSuccess() {
 	s.messages.On("PostMessage", mock.Anything, "ch-1", "hello world").Return(nil)
 
-	body := `{"channel_id":"ch-1","content":"hello world"}`
-	req := httptest.NewRequest("POST", "/api/messages", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"hello world"}`)
 
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	s.messages.AssertExpectations(s.T())
 }
 
-func (s *ServerSuite) TestSendMessageMissingChannelID() {
-	body := `{"content":"hello"}`
-	req := httptest.NewRequest("POST", "/api/messages", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
-}
-
-func (s *ServerSuite) TestSendMessageMissingContent() {
-	body := `{"channel_id":"ch-1"}`
-	req := httptest.NewRequest("POST", "/api/messages", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
-}
-
-func (s *ServerSuite) TestSendMessageInvalidBody() {
-	req := httptest.NewRequest("POST", "/api/messages", bytes.NewBufferString("not json"))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+func (s *ServerSuite) TestSendMessageMissingFields() {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"MissingChannelID", `{"content":"hello"}`},
+		{"MissingContent", `{"channel_id":"ch-1"}`},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			rec := s.testRequest("POST", "/api/messages", tt.body)
+			require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+		})
+	}
 }
 
 func (s *ServerSuite) TestSendMessageError() {
 	s.messages.On("PostMessage", mock.Anything, "ch-1", "hello").Return(errors.New("send failed"))
 
-	body := `{"channel_id":"ch-1","content":"hello"}`
-	req := httptest.NewRequest("POST", "/api/messages", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"hello"}`)
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.messages.AssertExpectations(s.T())
-}
-
-func (s *ServerSuite) TestSendMessageNilSender() {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(s.scheduler, nil, nil, nil, nil, logger)
-
-	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/messages", srv.handleSendMessage)
-
-	body := `{"channel_id":"ch-1","content":"hello"}`
-	req := httptest.NewRequest("POST", "/api/messages", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-
-	mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
 // --- MemorySearch tests ---
@@ -937,10 +751,7 @@ func (s *ServerSuite) TestMemorySearchSuccess() {
 			{FilePath: "/tmp/memory/MEMORY.md", Content: "Tips", Score: 0.95},
 		}, nil)
 
-	body := `{"query":"docker tips","top_k":3,"dir_path":"/tmp/memory"}`
-	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/memory/search", `{"query":"docker tips","top_k":3,"dir_path":"/tmp/memory"}`)
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -953,47 +764,27 @@ func (s *ServerSuite) TestMemorySearchSuccess() {
 }
 
 func (s *ServerSuite) TestMemorySearchNotConfigured() {
-	body := `{"query":"test","dir_path":"/tmp/memory"}`
-	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
-
+	rec := s.testRequest("POST", "/api/memory/search", `{"query":"test","dir_path":"/tmp/memory"}`)
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
-func (s *ServerSuite) TestMemorySearchInvalidBody() {
+func (s *ServerSuite) TestMemorySearchValidation() {
 	indexer := new(MockMemoryIndexer)
 	s.srv.SetMemoryIndexer(indexer)
 
-	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString("not json"))
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
-}
-
-func (s *ServerSuite) TestMemorySearchEmptyQuery() {
-	indexer := new(MockMemoryIndexer)
-	s.srv.SetMemoryIndexer(indexer)
-
-	body := `{"query":"","dir_path":"/tmp/memory"}`
-	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
-}
-
-func (s *ServerSuite) TestMemorySearchEmptyDirPathAndChannelID() {
-	indexer := new(MockMemoryIndexer)
-	s.srv.SetMemoryIndexer(indexer)
-
-	body := `{"query":"test"}`
-	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"EmptyQuery", `{"query":"","dir_path":"/tmp/memory"}`},
+		{"EmptyDirPathAndChannelID", `{"query":"test"}`},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			rec := s.testRequest("POST", "/api/memory/search", tt.body)
+			require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+		})
+	}
 }
 
 func (s *ServerSuite) TestMemorySearchByChannelID() {
@@ -1007,10 +798,7 @@ func (s *ServerSuite) TestMemorySearchByChannelID() {
 			{FilePath: "/tmp/mem/MEMORY.md", Content: "Tips", Score: 0.9},
 		}, nil)
 
-	body := `{"query":"docker tips","top_k":5,"channel_id":"ch-1"}`
-	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/memory/search", `{"query":"docker tips","top_k":5,"channel_id":"ch-1"}`)
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	var resp memorySearchResponse
@@ -1027,10 +815,7 @@ func (s *ServerSuite) TestMemorySearchByChannelIDNotFound() {
 	s.store.On("GetChannel", mock.Anything, "ch-unknown").
 		Return(nil, nil)
 
-	body := `{"query":"test","channel_id":"ch-unknown"}`
-	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/memory/search", `{"query":"test","channel_id":"ch-unknown"}`)
 
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 	s.store.AssertExpectations(s.T())
@@ -1043,10 +828,7 @@ func (s *ServerSuite) TestMemorySearchError() {
 	indexer.On("Search", mock.Anything, "/tmp/memory", "test", 0).
 		Return(nil, errors.New("search failed"))
 
-	body := `{"query":"test","dir_path":"/tmp/memory"}`
-	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/memory/search", `{"query":"test","dir_path":"/tmp/memory"}`)
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	indexer.AssertExpectations(s.T())
@@ -1060,10 +842,7 @@ func (s *ServerSuite) TestMemoryIndexSuccess() {
 
 	indexer.On("Index", mock.Anything, "/tmp/memory").Return(15, nil)
 
-	body := `{"dir_path":"/tmp/memory"}`
-	req := httptest.NewRequest("POST", "/api/memory/index", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/memory/index", `{"dir_path":"/tmp/memory"}`)
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -1074,34 +853,15 @@ func (s *ServerSuite) TestMemoryIndexSuccess() {
 }
 
 func (s *ServerSuite) TestMemoryIndexNotConfigured() {
-	body := `{"dir_path":"/tmp/memory"}`
-	req := httptest.NewRequest("POST", "/api/memory/index", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
-
+	rec := s.testRequest("POST", "/api/memory/index", `{"dir_path":"/tmp/memory"}`)
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
-}
-
-func (s *ServerSuite) TestMemoryIndexInvalidBody() {
-	indexer := new(MockMemoryIndexer)
-	s.srv.SetMemoryIndexer(indexer)
-
-	req := httptest.NewRequest("POST", "/api/memory/index", bytes.NewBufferString("not json"))
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
-
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
 func (s *ServerSuite) TestMemoryIndexEmptyDirPathAndChannelID() {
 	indexer := new(MockMemoryIndexer)
 	s.srv.SetMemoryIndexer(indexer)
 
-	body := `{}`
-	req := httptest.NewRequest("POST", "/api/memory/index", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
-
+	rec := s.testRequest("POST", "/api/memory/index", `{}`)
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
@@ -1113,10 +873,7 @@ func (s *ServerSuite) TestMemoryIndexByChannelID() {
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: "/home/user/project"}, nil)
 	indexer.On("Index", mock.Anything, "/home/user/project").Return(10, nil)
 
-	body := `{"channel_id":"ch-1"}`
-	req := httptest.NewRequest("POST", "/api/memory/index", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/memory/index", `{"channel_id":"ch-1"}`)
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	var resp memoryIndexResponse
@@ -1132,10 +889,7 @@ func (s *ServerSuite) TestMemoryIndexError() {
 
 	indexer.On("Index", mock.Anything, "/tmp/memory").Return(0, errors.New("index failed"))
 
-	body := `{"dir_path":"/tmp/memory"}`
-	req := httptest.NewRequest("POST", "/api/memory/index", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/memory/index", `{"dir_path":"/tmp/memory"}`)
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	indexer.AssertExpectations(s.T())
@@ -1148,10 +902,7 @@ func (s *ServerSuite) TestMemorySearchByChannelIDLookupError() {
 	s.store.On("GetChannel", mock.Anything, "ch-err").
 		Return(nil, errors.New("db error"))
 
-	body := `{"query":"test","channel_id":"ch-err"}`
-	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/memory/search", `{"query":"test","channel_id":"ch-err"}`)
 
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 	s.store.AssertExpectations(s.T())
@@ -1165,10 +916,7 @@ func (s *ServerSuite) TestMemorySearchByChannelIDEmptyDirPath() {
 		Return(&db.Channel{ChannelID: "ch-nodir", DirPath: ""}, nil)
 
 	// Without loopDir set, should return error.
-	body := `{"query":"test","channel_id":"ch-nodir"}`
-	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/memory/search", `{"query":"test","channel_id":"ch-nodir"}`)
 
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 	s.store.AssertExpectations(s.T())
@@ -1184,10 +932,7 @@ func (s *ServerSuite) TestMemorySearchByChannelIDEmptyDirPathFallback() {
 	indexer.On("Search", mock.Anything, "/home/test/.loop/ch-nodir/work", "test", 0).
 		Return([]memory.SearchResult{}, nil)
 
-	body := `{"query":"test","channel_id":"ch-nodir"}`
-	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
-	rec := httptest.NewRecorder()
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("POST", "/api/memory/search", `{"query":"test","channel_id":"ch-nodir"}`)
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	indexer.AssertExpectations(s.T())
@@ -1198,16 +943,14 @@ func (s *ServerSuite) TestMemorySearchByChannelIDEmptyDirPathFallback() {
 }
 
 func (s *ServerSuite) TestMemorySearchByChannelIDNilStore() {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(s.scheduler, nil, nil, nil, nil, logger)
+	srv := nilServer()
 	indexer := new(MockMemoryIndexer)
 	srv.SetMemoryIndexer(indexer)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /api/memory/search", srv.handleMemorySearch)
 
-	body := `{"query":"test","channel_id":"ch-1"}`
-	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(body))
+	req := httptest.NewRequest("POST", "/api/memory/search", bytes.NewBufferString(`{"query":"test","channel_id":"ch-1"}`))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -1225,10 +968,7 @@ func (s *ServerSuite) TestSetMemoryIndexer() {
 // --- GetReadme tests ---
 
 func (s *ServerSuite) TestGetReadme() {
-	req := httptest.NewRequest("GET", "/api/readme", nil)
-	rec := httptest.NewRecorder()
-
-	s.mux.ServeHTTP(rec, req)
+	rec := s.testRequest("GET", "/api/readme", "")
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.Equal(s.T(), "text/plain; charset=utf-8", rec.Header().Get("Content-Type"))
