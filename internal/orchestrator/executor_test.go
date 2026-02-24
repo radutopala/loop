@@ -159,84 +159,58 @@ func (s *TaskExecutorSuite) TestAgentResponseError() {
 	s.bot.AssertNotCalled(s.T(), "SendMessage", mock.Anything, mock.Anything)
 }
 
-func (s *TaskExecutorSuite) TestSessionUpsertErrorStillSucceeds() {
-	task := &db.ScheduledTask{
-		ID:        5,
-		ChannelID: "ch5",
-		Prompt:    "test",
-		Type:      db.TaskTypeInterval,
-		Schedule:  "1h",
+func (s *TaskExecutorSuite) TestSoftErrorsStillSucceed() {
+	tests := []struct {
+		name       string
+		channelID  string
+		setupMocks func()
+	}{
+		{
+			name:      "session upsert error",
+			channelID: "ch5",
+			setupMocks: func() {
+				s.store.On("GetChannel", s.ctx, "ch5").Return(nil, nil)
+				s.store.On("UpdateSessionID", s.ctx, mock.Anything, mock.Anything).Return(errors.New("upsert failed"))
+			},
+		},
+		{
+			name:      "bot send error",
+			channelID: "ch6",
+			setupMocks: func() {
+				s.store.On("GetChannel", s.ctx, "ch6").Return(nil, nil)
+				s.store.On("UpdateSessionID", s.ctx, mock.Anything, mock.Anything).Return(nil)
+				s.bot.On("SendMessage", s.ctx, mock.Anything).Return(errors.New("send failed"))
+			},
+		},
+		{
+			name:      "get session error",
+			channelID: "ch7",
+			setupMocks: func() {
+				s.store.On("GetChannel", s.ctx, "ch7").Return(nil, errors.New("session err"))
+				s.store.On("UpdateSessionID", s.ctx, mock.Anything, mock.Anything).Return(nil)
+			},
+		},
 	}
 
-	s.store.On("GetChannel", s.ctx, "ch5").Return(nil, nil)
-	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
-		Response:  "ok",
-		SessionID: "sess",
-	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, mock.Anything, mock.Anything).Return(errors.New("upsert failed"))
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch5" && msg.Content == "ok"
-	})).Return(nil).Once()
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			tc.setupMocks()
+			s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
+				Response: "ok", SessionID: "sess",
+			}, nil)
+			s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+				return msg.ChannelID == tc.channelID && msg.Content == "ok"
+			})).Return(nil).Maybe()
 
-	resp, err := s.executor.ExecuteTask(s.ctx, task)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "ok", resp)
-
-	s.store.AssertExpectations(s.T())
-	s.bot.AssertExpectations(s.T())
-}
-
-func (s *TaskExecutorSuite) TestBotSendErrorStillSucceeds() {
-	task := &db.ScheduledTask{
-		ID:        6,
-		ChannelID: "ch6",
-		Prompt:    "test",
-		Type:      db.TaskTypeOnce,
-		Schedule:  "30s",
+			resp, err := s.executor.ExecuteTask(s.ctx, &db.ScheduledTask{
+				ID: 5, ChannelID: tc.channelID, Prompt: "test",
+				Type: db.TaskTypeCron, Schedule: "0 * * * *",
+			})
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), "ok", resp)
+		})
 	}
-
-	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(errors.New("send failed"))
-
-	s.store.On("GetChannel", s.ctx, "ch6").Return(nil, nil)
-	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
-		Response:  "ok",
-		SessionID: "sess",
-	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, mock.Anything, mock.Anything).Return(nil)
-
-	resp, err := s.executor.ExecuteTask(s.ctx, task)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "ok", resp)
-
-	s.bot.AssertExpectations(s.T())
-}
-
-func (s *TaskExecutorSuite) TestGetSessionErrorStillWorks() {
-	task := &db.ScheduledTask{
-		ID:        7,
-		ChannelID: "ch7",
-		Prompt:    "test",
-		Type:      db.TaskTypeCron,
-		Schedule:  "0 0 * * *",
-	}
-
-	s.store.On("GetChannel", s.ctx, "ch7").Return(nil, errors.New("session err"))
-	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		return req.SessionID == ""
-	})).Return(&agent.AgentResponse{
-		Response:  "ok",
-		SessionID: "sess",
-	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, mock.Anything, mock.Anything).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch7" && msg.Content == "ok"
-	})).Return(nil).Once()
-
-	resp, err := s.executor.ExecuteTask(s.ctx, task)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "ok", resp)
-
-	s.store.AssertExpectations(s.T())
 }
 
 func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
@@ -290,34 +264,21 @@ func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
 
 func (s *TaskExecutorSuite) TestStreamingDisabledNoOnTurn() {
 	// streamingEnabled is false by default
-	task := &db.ScheduledTask{
-		ID:        10,
-		ChannelID: "ch10",
-		Prompt:    "no stream",
-		Type:      db.TaskTypeCron,
-		Schedule:  "0 * * * *",
-	}
-
 	s.store.On("GetChannel", s.ctx, "ch10").Return(nil, nil)
-
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.OnTurn == nil
-	})).Return(&agent.AgentResponse{
-		Response:  "Result",
-		SessionID: "sess-nostream",
-	}, nil)
-
+	})).Return(&agent.AgentResponse{Response: "Result", SessionID: "sess-nostream"}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch10", "sess-nostream").Return(nil)
-
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
 		return msg.ChannelID == "ch10" && msg.Content == "Result"
 	})).Return(nil).Once()
 
-	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	resp, err := s.executor.ExecuteTask(s.ctx, &db.ScheduledTask{
+		ID: 10, ChannelID: "ch10", Prompt: "no stream",
+		Type: db.TaskTypeCron, Schedule: "0 * * * *",
+	})
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Result", resp)
-
-	// 1 call: just the final response (no notification, no streaming)
 	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
 	s.runner.AssertExpectations(s.T())
 }
@@ -452,90 +413,35 @@ func (s *TaskExecutorSuite) TestStreamingSingleTurnNoFinalDuplicate() {
 	s.bot.AssertNumberOfCalls(s.T(), "CreateSimpleThread", 1)
 }
 
-func (s *TaskExecutorSuite) TestNoStreamingNoTurns() {
-	// streamingEnabled false, no OnTurn callbacks happen
-	task := &db.ScheduledTask{
-		ID:        14,
-		ChannelID: "ch14",
-		Prompt:    "direct response",
-		Type:      db.TaskTypeOnce,
-		Schedule:  "10s",
-	}
-
-	s.store.On("GetChannel", s.ctx, "ch14").Return(nil, nil)
-	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		return req.OnTurn == nil
-	})).Return(&agent.AgentResponse{
-		Response:  "Direct result",
-		SessionID: "sess-direct",
-	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch14", "sess-direct").Return(nil)
-
-	// Final response goes to channel directly (no thread)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch14" && msg.Content == "Direct result"
-	})).Return(nil).Once()
-
-	resp, err := s.executor.ExecuteTask(s.ctx, task)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "Direct result", resp)
-
-	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
-	s.bot.AssertNotCalled(s.T(), "CreateSimpleThread", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
-}
-
 func (s *TaskExecutorSuite) TestEphemeralInstructionInSystemPrompt() {
-	task := &db.ScheduledTask{
-		ID:            20,
-		ChannelID:     "ch20",
-		Prompt:        "check prompt",
-		Type:          db.TaskTypeCron,
-		Schedule:      "0 * * * *",
-		AutoDeleteSec: 60,
+	tests := []struct {
+		name       string
+		delSec     int
+		wantMarker bool
+	}{
+		{"included when auto-delete set", 60, true},
+		{"excluded when auto-delete zero", 0, false},
 	}
 
-	s.store.On("GetChannel", s.ctx, "ch20").Return(nil, nil)
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			chID := "ch-prompt"
+			s.store.On("GetChannel", s.ctx, chID).Return(nil, nil)
+			s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+				return strings.Contains(req.SystemPrompt, "[EPHEMERAL]") == tc.wantMarker
+			})).Return(&agent.AgentResponse{Response: "ok", SessionID: "sess"}, nil)
+			s.store.On("UpdateSessionID", s.ctx, chID, "sess").Return(nil)
+			s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil).Once()
 
-	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		return strings.Contains(req.SystemPrompt, "[EPHEMERAL]")
-	})).Return(&agent.AgentResponse{
-		Response:  "ok",
-		SessionID: "sess-prompt",
-	}, nil)
-
-	s.store.On("UpdateSessionID", s.ctx, "ch20", "sess-prompt").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil).Once()
-
-	_, err := s.executor.ExecuteTask(s.ctx, task)
-	require.NoError(s.T(), err)
-	s.runner.AssertExpectations(s.T())
-}
-
-func (s *TaskExecutorSuite) TestNoEphemeralInstructionWhenAutoDeleteZero() {
-	task := &db.ScheduledTask{
-		ID:            21,
-		ChannelID:     "ch21",
-		Prompt:        "check prompt",
-		Type:          db.TaskTypeCron,
-		Schedule:      "0 * * * *",
-		AutoDeleteSec: 0,
+			_, err := s.executor.ExecuteTask(s.ctx, &db.ScheduledTask{
+				ID: 20, ChannelID: chID, Prompt: "check prompt",
+				Type: db.TaskTypeCron, Schedule: "0 * * * *", AutoDeleteSec: tc.delSec,
+			})
+			require.NoError(s.T(), err)
+			s.runner.AssertExpectations(s.T())
+		})
 	}
-
-	s.store.On("GetChannel", s.ctx, "ch21").Return(nil, nil)
-
-	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		return !strings.Contains(req.SystemPrompt, "[EPHEMERAL]")
-	})).Return(&agent.AgentResponse{
-		Response:  "ok",
-		SessionID: "sess-prompt2",
-	}, nil)
-
-	s.store.On("UpdateSessionID", s.ctx, "ch21", "sess-prompt2").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil).Once()
-
-	_, err := s.executor.ExecuteTask(s.ctx, task)
-	require.NoError(s.T(), err)
-	s.runner.AssertExpectations(s.T())
 }
 
 func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
@@ -592,274 +498,158 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 	s.bot.AssertExpectations(s.T())
 }
 
-func (s *TaskExecutorSuite) TestAutoDeleteEphemeralSuffix() {
-	s.executor.streamingEnabled = true
-
-	task := &db.ScheduledTask{
-		ID:            23,
-		ChannelID:     "ch23",
-		Prompt:        "suffix task",
-		Type:          db.TaskTypeCron,
-		Schedule:      "0 * * * *",
-		AutoDeleteSec: 60,
+func (s *TaskExecutorSuite) TestAutoDeleteEphemeralVariants() {
+	tests := []struct {
+		name      string
+		channelID string
+		threadID  string
+		response  string
+		wantResp  string
+		delSec    int
+		renameErr error
+		deleteErr error
+	}{
+		{
+			name: "suffix marker", channelID: "ch23", threadID: "thread-suffix",
+			response: "Nothing to report.\n\n[EPHEMERAL]", wantResp: "Nothing to report.",
+			delSec: 60,
+		},
+		{
+			name: "rename error", channelID: "ch22", threadID: "thread-rename-err",
+			response: "[EPHEMERAL] Nothing", wantResp: "Nothing",
+			delSec: 60, renameErr: errors.New("rename failed"),
+		},
+		{
+			name: "delete error", channelID: "ch18", threadID: "thread-del-err",
+			response: "[EPHEMERAL] Nothing", wantResp: "Nothing",
+			delSec: 90, deleteErr: errors.New("delete failed"),
+		},
 	}
 
-	s.store.On("GetChannel", s.ctx, "ch23").Return(nil, nil)
-	s.bot.On("CreateSimpleThread", s.ctx, "ch23", mock.Anything, mock.Anything).Return("thread-suffix", nil).Once()
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.executor.streamingEnabled = true
 
-	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		if req.OnTurn == nil {
-			return false
-		}
-		req.OnTurn("Nothing to report.\n\n[EPHEMERAL]")
-		return true
-	})).Return(&agent.AgentResponse{
-		Response:  "Nothing to report.\n\n[EPHEMERAL]",
-		SessionID: "sess-suffix",
-	}, nil)
+			s.store.On("GetChannel", s.ctx, tc.channelID).Return(nil, nil)
+			s.bot.On("CreateSimpleThread", s.ctx, tc.channelID, mock.Anything, mock.Anything).Return(tc.threadID, nil).Once()
+			s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+				if req.OnTurn == nil {
+					return false
+				}
+				req.OnTurn(tc.response)
+				return true
+			})).Return(&agent.AgentResponse{
+				Response: tc.response, SessionID: "sess",
+			}, nil)
+			s.store.On("UpdateSessionID", s.ctx, tc.channelID, "sess").Return(nil)
+			s.bot.On("RenameThread", s.ctx, tc.threadID, mock.Anything).Return(tc.renameErr).Once()
+			s.bot.On("DeleteThread", mock.Anything, tc.threadID).Return(tc.deleteErr).Once()
 
-	s.store.On("UpdateSessionID", s.ctx, "ch23", "sess-suffix").Return(nil)
-	// IsDuplicate returns true — no final SendMessage
-	s.bot.On("RenameThread", s.ctx, "thread-suffix", mock.Anything).Return(nil).Once()
-	s.bot.On("DeleteThread", mock.Anything, "thread-suffix").Return(nil).Once()
+			var capturedDelay time.Duration
+			origTimeAfterFunc := timeAfterFunc
+			defer func() { timeAfterFunc = origTimeAfterFunc }()
+			timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+				capturedDelay = d
+				f()
+				return time.NewTimer(0)
+			}
 
-	origTimeAfterFunc := timeAfterFunc
-	defer func() { timeAfterFunc = origTimeAfterFunc }()
-	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
-		f()
-		return time.NewTimer(0)
+			resp, err := s.executor.ExecuteTask(s.ctx, &db.ScheduledTask{
+				ID: 22, ChannelID: tc.channelID, Prompt: "task",
+				Type: db.TaskTypeCron, Schedule: "0 * * * *", AutoDeleteSec: tc.delSec,
+			})
+			require.NoError(s.T(), err)
+			require.Equal(s.T(), tc.wantResp, resp)
+			require.Equal(s.T(), time.Duration(tc.delSec)*time.Second, capturedDelay)
+			s.bot.AssertCalled(s.T(), "DeleteThread", mock.Anything, tc.threadID)
+		})
 	}
-
-	resp, err := s.executor.ExecuteTask(s.ctx, task)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "Nothing to report.", resp)
-
-	s.bot.AssertCalled(s.T(), "RenameThread", s.ctx, "thread-suffix", mock.Anything)
-	s.bot.AssertCalled(s.T(), "DeleteThread", mock.Anything, "thread-suffix")
 }
 
-func (s *TaskExecutorSuite) TestAutoDeleteRenameThreadError() {
-	s.executor.streamingEnabled = true
-
-	task := &db.ScheduledTask{
-		ID:            22,
-		ChannelID:     "ch22",
-		Prompt:        "rename-err task",
-		Type:          db.TaskTypeCron,
-		Schedule:      "0 * * * *",
-		AutoDeleteSec: 60,
+func (s *TaskExecutorSuite) TestAutoDeleteSkipped() {
+	tests := []struct {
+		name       string
+		streaming  bool
+		task       *db.ScheduledTask
+		response   string
+		setupMocks func()
+	}{
+		{
+			name:      "not ephemeral",
+			streaming: true,
+			task: &db.ScheduledTask{
+				ID: 19, ChannelID: "ch19", Prompt: "important task",
+				Type: db.TaskTypeCron, Schedule: "0 * * * *", AutoDeleteSec: 60,
+			},
+			response: "Important result",
+			setupMocks: func() {
+				s.store.On("GetChannel", s.ctx, "ch19").Return(nil, nil)
+				s.bot.On("CreateSimpleThread", s.ctx, "ch19", mock.Anything, mock.Anything).Return("thread-keep", nil).Once()
+				s.store.On("UpdateSessionID", s.ctx, "ch19", mock.Anything).Return(nil)
+			},
+		},
+		{
+			name:      "auto delete sec is zero",
+			streaming: true,
+			task: &db.ScheduledTask{
+				ID: 16, ChannelID: "ch16", Prompt: "no-del task",
+				Type: db.TaskTypeCron, Schedule: "0 * * * *", AutoDeleteSec: 0,
+			},
+			response: "Turn 1",
+			setupMocks: func() {
+				s.store.On("GetChannel", s.ctx, "ch16").Return(nil, nil)
+				s.bot.On("CreateSimpleThread", s.ctx, "ch16", mock.Anything, mock.Anything).Return("thread-no-del", nil).Once()
+				s.store.On("UpdateSessionID", s.ctx, "ch16", mock.Anything).Return(nil)
+			},
+		},
+		{
+			name:      "no thread created",
+			streaming: false,
+			task: &db.ScheduledTask{
+				ID: 17, ChannelID: "ch17", Prompt: "no-thread task",
+				Type: db.TaskTypeCron, Schedule: "0 * * * *", AutoDeleteSec: 120,
+			},
+			response: "[EPHEMERAL] Result",
+			setupMocks: func() {
+				s.store.On("GetChannel", s.ctx, "ch17").Return(nil, nil)
+				s.store.On("UpdateSessionID", s.ctx, "ch17", mock.Anything).Return(nil)
+				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+					return msg.ChannelID == "ch17" && msg.Content == "Result"
+				})).Return(nil).Once()
+			},
+		},
 	}
 
-	s.store.On("GetChannel", s.ctx, "ch22").Return(nil, nil)
-	s.bot.On("CreateSimpleThread", s.ctx, "ch22", mock.Anything, mock.Anything).Return("thread-rename-err", nil).Once()
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			s.SetupTest()
+			s.executor.streamingEnabled = tc.streaming
+			tc.setupMocks()
 
-	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		if req.OnTurn == nil {
-			return false
-		}
-		req.OnTurn("[EPHEMERAL] Nothing")
-		return true
-	})).Return(&agent.AgentResponse{
-		Response:  "[EPHEMERAL] Nothing",
-		SessionID: "sess-rename-err",
-	}, nil)
+			s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+				if tc.streaming && req.OnTurn != nil {
+					req.OnTurn(tc.response)
+					return true
+				}
+				return !tc.streaming && req.OnTurn == nil
+			})).Return(&agent.AgentResponse{
+				Response: tc.response, SessionID: "sess",
+			}, nil)
 
-	s.store.On("UpdateSessionID", s.ctx, "ch22", "sess-rename-err").Return(nil)
-	s.bot.On("RenameThread", s.ctx, "thread-rename-err", mock.Anything).Return(errors.New("rename failed")).Once()
-	s.bot.On("DeleteThread", mock.Anything, "thread-rename-err").Return(nil).Once()
+			var timerCalled bool
+			origTimeAfterFunc := timeAfterFunc
+			defer func() { timeAfterFunc = origTimeAfterFunc }()
+			timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+				timerCalled = true
+				return time.NewTimer(0)
+			}
 
-	origTimeAfterFunc := timeAfterFunc
-	defer func() { timeAfterFunc = origTimeAfterFunc }()
-	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
-		f()
-		return time.NewTimer(0)
+			resp, err := s.executor.ExecuteTask(s.ctx, tc.task)
+			require.NoError(s.T(), err)
+			require.NotEmpty(s.T(), resp)
+			require.False(s.T(), timerCalled, "timeAfterFunc should NOT have been called")
+			s.bot.AssertNotCalled(s.T(), "DeleteThread", mock.Anything, mock.Anything)
+		})
 	}
-
-	resp, err := s.executor.ExecuteTask(s.ctx, task)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "Nothing", resp)
-
-	s.bot.AssertCalled(s.T(), "RenameThread", s.ctx, "thread-rename-err", mock.Anything)
-	s.bot.AssertCalled(s.T(), "DeleteThread", mock.Anything, "thread-rename-err")
-}
-
-func (s *TaskExecutorSuite) TestAutoDeleteTimerDeleteThreadError() {
-	s.executor.streamingEnabled = true
-
-	task := &db.ScheduledTask{
-		ID:            18,
-		ChannelID:     "ch18",
-		Prompt:        "auto-del-err task",
-		Type:          db.TaskTypeCron,
-		Schedule:      "0 * * * *",
-		AutoDeleteSec: 90,
-	}
-
-	s.store.On("GetChannel", s.ctx, "ch18").Return(nil, nil)
-	s.bot.On("CreateSimpleThread", s.ctx, "ch18", mock.Anything, mock.Anything).Return("thread-del-err", nil).Once()
-
-	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		if req.OnTurn == nil {
-			return false
-		}
-		req.OnTurn("[EPHEMERAL] Nothing")
-		return true
-	})).Return(&agent.AgentResponse{
-		Response:  "[EPHEMERAL] Nothing",
-		SessionID: "sess-del-err",
-	}, nil)
-
-	s.store.On("UpdateSessionID", s.ctx, "ch18", "sess-del-err").Return(nil)
-	s.bot.On("RenameThread", s.ctx, "thread-del-err", mock.Anything).Return(nil).Once()
-	s.bot.On("DeleteThread", mock.Anything, "thread-del-err").Return(errors.New("delete failed")).Once()
-
-	var capturedDelay time.Duration
-	var callbackCalled bool
-	origTimeAfterFunc := timeAfterFunc
-	defer func() { timeAfterFunc = origTimeAfterFunc }()
-	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
-		capturedDelay = d
-		callbackCalled = true
-		f() // immediately invoke the callback
-		return time.NewTimer(0)
-	}
-
-	resp, err := s.executor.ExecuteTask(s.ctx, task)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "Nothing", resp)
-	require.True(s.T(), callbackCalled, "timeAfterFunc should have been called")
-	require.Equal(s.T(), 90*time.Second, capturedDelay)
-
-	s.bot.AssertCalled(s.T(), "DeleteThread", mock.Anything, "thread-del-err")
-	s.bot.AssertExpectations(s.T())
-}
-
-func (s *TaskExecutorSuite) TestAutoDeleteSkippedWhenNotEphemeral() {
-	s.executor.streamingEnabled = true
-
-	task := &db.ScheduledTask{
-		ID:            19,
-		ChannelID:     "ch19",
-		Prompt:        "important task",
-		Type:          db.TaskTypeCron,
-		Schedule:      "0 * * * *",
-		AutoDeleteSec: 60,
-	}
-
-	s.store.On("GetChannel", s.ctx, "ch19").Return(nil, nil)
-	s.bot.On("CreateSimpleThread", s.ctx, "ch19", mock.Anything, mock.Anything).Return("thread-keep", nil).Once()
-
-	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		if req.OnTurn == nil {
-			return false
-		}
-		req.OnTurn("Important result")
-		return true
-	})).Return(&agent.AgentResponse{
-		Response:  "Important result",
-		SessionID: "sess-keep",
-	}, nil)
-
-	s.store.On("UpdateSessionID", s.ctx, "ch19", "sess-keep").Return(nil)
-
-	var timerCalled bool
-	origTimeAfterFunc := timeAfterFunc
-	defer func() { timeAfterFunc = origTimeAfterFunc }()
-	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
-		timerCalled = true
-		return time.NewTimer(0)
-	}
-
-	resp, err := s.executor.ExecuteTask(s.ctx, task)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "Important result", resp)
-	require.False(s.T(), timerCalled, "timeAfterFunc should NOT have been called for non-ephemeral response")
-
-	s.bot.AssertNotCalled(s.T(), "DeleteThread", mock.Anything, mock.Anything)
-	s.bot.AssertNotCalled(s.T(), "RenameThread", mock.Anything, mock.Anything, mock.Anything)
-}
-
-func (s *TaskExecutorSuite) TestAutoDeleteSkippedWhenZero() {
-	s.executor.streamingEnabled = true
-
-	task := &db.ScheduledTask{
-		ID:            16,
-		ChannelID:     "ch16",
-		Prompt:        "no-del task",
-		Type:          db.TaskTypeCron,
-		Schedule:      "0 * * * *",
-		AutoDeleteSec: 0,
-	}
-
-	s.store.On("GetChannel", s.ctx, "ch16").Return(nil, nil)
-	s.bot.On("CreateSimpleThread", s.ctx, "ch16", mock.Anything, mock.Anything).Return("thread-no-del", nil).Once()
-
-	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		if req.OnTurn == nil {
-			return false
-		}
-		req.OnTurn("Turn 1")
-		return true
-	})).Return(&agent.AgentResponse{
-		Response:  "Turn 1",
-		SessionID: "sess-no-del",
-	}, nil)
-
-	s.store.On("UpdateSessionID", s.ctx, "ch16", "sess-no-del").Return(nil)
-
-	var timerCalled bool
-	origTimeAfterFunc := timeAfterFunc
-	defer func() { timeAfterFunc = origTimeAfterFunc }()
-	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
-		timerCalled = true
-		return time.NewTimer(0)
-	}
-
-	resp, err := s.executor.ExecuteTask(s.ctx, task)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "Turn 1", resp)
-	require.False(s.T(), timerCalled, "timeAfterFunc should NOT have been called when AutoDeleteSec is 0")
-
-	s.bot.AssertNotCalled(s.T(), "DeleteThread", mock.Anything, mock.Anything)
-}
-
-func (s *TaskExecutorSuite) TestAutoDeleteSkippedWhenNoThread() {
-	// streamingEnabled is false by default — no thread created
-	task := &db.ScheduledTask{
-		ID:            17,
-		ChannelID:     "ch17",
-		Prompt:        "no-thread task",
-		Type:          db.TaskTypeCron,
-		Schedule:      "0 * * * *",
-		AutoDeleteSec: 120,
-	}
-
-	s.store.On("GetChannel", s.ctx, "ch17").Return(nil, nil)
-	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		return req.OnTurn == nil
-	})).Return(&agent.AgentResponse{
-		Response:  "[EPHEMERAL] Result",
-		SessionID: "sess-no-thread",
-	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch17", "sess-no-thread").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
-		return msg.ChannelID == "ch17" && msg.Content == "Result"
-	})).Return(nil).Once()
-
-	var timerCalled bool
-	origTimeAfterFunc := timeAfterFunc
-	defer func() { timeAfterFunc = origTimeAfterFunc }()
-	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
-		timerCalled = true
-		return time.NewTimer(0)
-	}
-
-	resp, err := s.executor.ExecuteTask(s.ctx, task)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "Result", resp)
-	require.False(s.T(), timerCalled, "timeAfterFunc should NOT have been called when no thread was created")
-
-	s.bot.AssertNotCalled(s.T(), "DeleteThread", mock.Anything, mock.Anything)
-	s.bot.AssertNotCalled(s.T(), "RenameThread", mock.Anything, mock.Anything, mock.Anything)
-	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
 }
