@@ -511,6 +511,28 @@ The agent will use `search_channels` to find the backend channel, then `send_mes
 # The agent uses search_channels + send_message MCP tools under the hood
 ```
 
+**Reminders**
+
+```
+@LoopBot remind me in 30 minutes to check the deployment
+@LoopBot remind me in 2 hours to review the PR feedback
+@LoopBot remind me tomorrow morning to update the changelog
+@LoopBot remind me on Friday at 3pm to send the weekly report
+```
+
+**Agent-driven workflows**
+
+```
+# Ask the agent to create a thread and do autonomous work
+@LoopBot create a new thread and investigate the codebase for possible refactoring, then make a plan
+@LoopBot spin up a thread and review all open TODOs in the codebase
+@LoopBot start a thread to analyze test coverage gaps and suggest improvements
+
+# Ask the agent to coordinate across channels
+@LoopBot check the #backend channel for recent errors and summarize them here
+@LoopBot create a thread in #devops asking to rotate the API keys
+```
+
 **Stopping a run**
 
 ```
