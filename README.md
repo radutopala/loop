@@ -200,6 +200,7 @@ loop serve
 # Or run as a background daemon (macOS: launchd, Linux: systemd user service)
 loop daemon:start
 loop daemon:status   # check status
+loop daemon:restart  # restart
 loop daemon:stop     # stop
 ```
 
@@ -415,6 +416,7 @@ For development: `make docker-build` builds from `container/Dockerfile` in the r
 | `loop onboard:local` | `o:local`, `init` | Register Loop MCP server in current project (`--owner-id` to set RBAC owner) |
 | `loop daemon:start` | `d:start`, `up` | Install and start the daemon |
 | `loop daemon:stop` | `d:stop`, `down` | Stop and uninstall the daemon |
+| `loop daemon:restart` | `d:restart`, `restart` | Restart the daemon |
 | `loop daemon:status` | `d:status` | Show daemon status |
 | `loop readme` | `r` | Print the README documentation |
 

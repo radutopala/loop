@@ -65,6 +65,7 @@ func newRootCmd() *cobra.Command {
 	root.AddCommand(newMCPCmd())
 	root.AddCommand(newDaemonStartCmd())
 	root.AddCommand(newDaemonStopCmd())
+	root.AddCommand(newDaemonRestartCmd())
 	root.AddCommand(newDaemonStatusCmd())
 	root.AddCommand(newOnboardGlobalCmd())
 	root.AddCommand(newOnboardLocalCmd())
@@ -95,6 +96,7 @@ Available Commands:
     --owner-id             Set RBAC owner user ID in project config
   daemon:start             Install and start the daemon — launchd on macOS, systemd on Linux (aliases: d:start, up)
   daemon:stop              Stop and uninstall the daemon (aliases: d:stop, down)
+  daemon:restart           Restart the daemon (aliases: d:restart, restart)
   daemon:status            Show daemon status (alias: d:status)
   version                  Print version information (alias: v)
   readme                   Print the README documentation (alias: r)
@@ -212,6 +214,26 @@ func newDaemonStopCmd() *cobra.Command {
 				return err
 			}
 			fmt.Println("Daemon stopped.")
+			return nil
+		},
+	}
+}
+
+func newDaemonRestartCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "daemon:restart",
+		Aliases: []string{"d:restart", "restart"},
+		Short:   "Restart the daemon",
+		RunE: func(_ *cobra.Command, _ []string) error {
+			cfg, err := configLoad()
+			if err != nil {
+				return err
+			}
+			_ = daemonStop(newSystem()) // ignore error — may not be running
+			if err := daemonStart(newSystem(), cfg.LogFile); err != nil {
+				return err
+			}
+			fmt.Println("Daemon restarted.")
 			return nil
 		},
 	}

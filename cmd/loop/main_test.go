@@ -2090,6 +2090,56 @@ func (s *MainSuite) TestDaemonStopError() {
 	require.Contains(s.T(), err.Error(), "stop fail")
 }
 
+func (s *MainSuite) TestNewDaemonRestartCmd() {
+	cmd := newDaemonRestartCmd()
+	require.Equal(s.T(), "daemon:restart", cmd.Use)
+	require.Equal(s.T(), []string{"d:restart", "restart"}, cmd.Aliases)
+	require.NotNil(s.T(), cmd.RunE)
+}
+
+func (s *MainSuite) TestDaemonRestartSuccess() {
+	configLoad = func() (*config.Config, error) { return testConfig(), nil }
+	daemonStop = func(_ daemon.System) error { return nil }
+	daemonStart = func(_ daemon.System, _ string) error { return nil }
+	newSystem = func() daemon.System { return daemon.RealSystem{} }
+
+	cmd := newDaemonRestartCmd()
+	err := cmd.Execute()
+	require.NoError(s.T(), err)
+}
+
+func (s *MainSuite) TestDaemonRestartSuccessWhenNotRunning() {
+	configLoad = func() (*config.Config, error) { return testConfig(), nil }
+	daemonStop = func(_ daemon.System) error { return errors.New("not running") }
+	daemonStart = func(_ daemon.System, _ string) error { return nil }
+	newSystem = func() daemon.System { return daemon.RealSystem{} }
+
+	cmd := newDaemonRestartCmd()
+	err := cmd.Execute()
+	require.NoError(s.T(), err)
+}
+
+func (s *MainSuite) TestDaemonRestartStartError() {
+	configLoad = func() (*config.Config, error) { return testConfig(), nil }
+	daemonStop = func(_ daemon.System) error { return nil }
+	daemonStart = func(_ daemon.System, _ string) error { return errors.New("start fail") }
+	newSystem = func() daemon.System { return daemon.RealSystem{} }
+
+	cmd := newDaemonRestartCmd()
+	err := cmd.Execute()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "start fail")
+}
+
+func (s *MainSuite) TestDaemonRestartConfigError() {
+	configLoad = func() (*config.Config, error) { return nil, errors.New("config fail") }
+
+	cmd := newDaemonRestartCmd()
+	err := cmd.Execute()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "config fail")
+}
+
 func (s *MainSuite) TestDaemonStatusSuccess() {
 	daemonStatus = func(_ daemon.System) (string, error) { return "running", nil }
 	newSystem = func() daemon.System { return daemon.RealSystem{} }
