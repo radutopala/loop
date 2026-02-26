@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/readme"
@@ -15,14 +16,14 @@ import (
 
 // sendReply sends a simple text message to the interaction's channel.
 func (o *Orchestrator) sendReply(ctx context.Context, channelID, content string) {
-	_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+	_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 		ChannelID: channelID,
 		Content:   content,
 	})
 }
 
 // HandleInteraction processes a slash command interaction.
-func (o *Orchestrator) HandleInteraction(ctx context.Context, inter *Interaction) {
+func (o *Orchestrator) HandleInteraction(ctx context.Context, inter *bot.Interaction) {
 	ch, _ := o.store.GetChannel(ctx, inter.ChannelID)
 	var dbPerms db.ChannelPermissions
 	dirPath := ""
@@ -85,7 +86,7 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, inter *Interaction
 	}
 }
 
-func (o *Orchestrator) handleScheduleInteraction(ctx context.Context, inter *Interaction) {
+func (o *Orchestrator) handleScheduleInteraction(ctx context.Context, inter *bot.Interaction) {
 	task := &db.ScheduledTask{
 		ChannelID: inter.ChannelID,
 		GuildID:   inter.GuildID,
@@ -104,7 +105,7 @@ func (o *Orchestrator) handleScheduleInteraction(ctx context.Context, inter *Int
 	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Task scheduled (ID: %d).", id))
 }
 
-func (o *Orchestrator) handleTasksInteraction(ctx context.Context, inter *Interaction) {
+func (o *Orchestrator) handleTasksInteraction(ctx context.Context, inter *bot.Interaction) {
 	tasks, err := o.scheduler.ListTasks(ctx, inter.ChannelID)
 	if err != nil {
 		o.logger.Error("listing tasks", "error", err, "channel_id", inter.ChannelID)
@@ -141,7 +142,7 @@ func (o *Orchestrator) handleTasksInteraction(ctx context.Context, inter *Intera
 	o.sendReply(ctx, inter.ChannelID, sb.String())
 }
 
-func (o *Orchestrator) handleCancelInteraction(ctx context.Context, inter *Interaction) {
+func (o *Orchestrator) handleCancelInteraction(ctx context.Context, inter *bot.Interaction) {
 	idStr := inter.Options["task_id"]
 	taskID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
@@ -157,7 +158,7 @@ func (o *Orchestrator) handleCancelInteraction(ctx context.Context, inter *Inter
 	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Task %d cancelled.", taskID))
 }
 
-func (o *Orchestrator) handleToggleInteraction(ctx context.Context, inter *Interaction) {
+func (o *Orchestrator) handleToggleInteraction(ctx context.Context, inter *bot.Interaction) {
 	idStr := inter.Options["task_id"]
 	taskID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
@@ -179,7 +180,7 @@ func (o *Orchestrator) handleToggleInteraction(ctx context.Context, inter *Inter
 	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Task %d %s.", taskID, state))
 }
 
-func (o *Orchestrator) handleEditInteraction(ctx context.Context, inter *Interaction) {
+func (o *Orchestrator) handleEditInteraction(ctx context.Context, inter *bot.Interaction) {
 	idStr := inter.Options["task_id"]
 	taskID, err := strconv.ParseInt(idStr, 10, 64)
 	if err != nil {
@@ -212,11 +213,11 @@ func (o *Orchestrator) handleEditInteraction(ctx context.Context, inter *Interac
 	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Task %d updated.", taskID))
 }
 
-func (o *Orchestrator) handleStatusInteraction(ctx context.Context, inter *Interaction) {
+func (o *Orchestrator) handleStatusInteraction(ctx context.Context, inter *bot.Interaction) {
 	o.sendReply(ctx, inter.ChannelID, "Loop bot is running.")
 }
 
-func (o *Orchestrator) handleStopInteraction(ctx context.Context, inter *Interaction) {
+func (o *Orchestrator) handleStopInteraction(ctx context.Context, inter *bot.Interaction) {
 	targetChannelID := inter.ChannelID
 	if v, ok := inter.Options["channel_id"]; ok && v != "" {
 		targetChannelID = v
@@ -231,11 +232,11 @@ func (o *Orchestrator) handleStopInteraction(ctx context.Context, inter *Interac
 	o.logger.Info("run stopped by user", "channel_id", targetChannelID, "author_id", inter.AuthorID)
 }
 
-func (o *Orchestrator) handleReadmeInteraction(ctx context.Context, inter *Interaction) {
+func (o *Orchestrator) handleReadmeInteraction(ctx context.Context, inter *bot.Interaction) {
 	o.sendReply(ctx, inter.ChannelID, readme.Content)
 }
 
-func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *Interaction) {
+func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *bot.Interaction) {
 	name := inter.Options["name"]
 
 	var tmpl *config.TaskTemplate
@@ -288,7 +289,7 @@ func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *
 	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Template '%s' loaded (task ID: %d).", name, id))
 }
 
-func (o *Orchestrator) handleTemplateListInteraction(ctx context.Context, inter *Interaction) {
+func (o *Orchestrator) handleTemplateListInteraction(ctx context.Context, inter *bot.Interaction) {
 	if len(o.cfg.TaskTemplates) == 0 {
 		o.sendReply(ctx, inter.ChannelID, "No templates configured.")
 		return
@@ -304,7 +305,7 @@ func (o *Orchestrator) handleTemplateListInteraction(ctx context.Context, inter 
 
 // handlePermissionUpdate is a parameterized handler for allow_user, allow_role, deny_user, deny_role.
 // targetType is "user" or "role"; allow true grants a role, false revokes all grants.
-func (o *Orchestrator) handlePermissionUpdate(ctx context.Context, inter *Interaction, ch *db.Channel, targetType string, allow bool) {
+func (o *Orchestrator) handlePermissionUpdate(ctx context.Context, inter *bot.Interaction, ch *db.Channel, targetType string, allow bool) {
 	if ch == nil {
 		o.sendReply(ctx, inter.ChannelID, "⛔ Channel not registered.")
 		return
@@ -361,7 +362,7 @@ func (o *Orchestrator) handlePermissionUpdate(ctx context.Context, inter *Intera
 	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ %s removed from channel permissions.", mention))
 }
 
-func (o *Orchestrator) handleIAmTheOwner(ctx context.Context, inter *Interaction, ch *db.Channel, cfgPerms config.PermissionsConfig, dbPerms db.ChannelPermissions) {
+func (o *Orchestrator) handleIAmTheOwner(ctx context.Context, inter *bot.Interaction, ch *db.Channel, cfgPerms config.PermissionsConfig, dbPerms db.ChannelPermissions) {
 	if !cfgPerms.IsEmpty() || !dbPerms.IsEmpty() {
 		o.sendReply(ctx, inter.ChannelID, "⛔ An owner is already configured. Use `/loop allow_user` to manage permissions.")
 		return

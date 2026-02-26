@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/radutopala/loop/internal/agent"
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/testutil"
@@ -37,7 +38,7 @@ func (m *MockBot) Stop() error {
 	return args.Error(0)
 }
 
-func (m *MockBot) SendMessage(ctx context.Context, msg *OutgoingMessage) error {
+func (m *MockBot) SendMessage(ctx context.Context, msg *bot.OutgoingMessage) error {
 	args := m.Called(ctx, msg)
 	return args.Error(0)
 }
@@ -57,11 +58,11 @@ func (m *MockBot) RemoveCommands(ctx context.Context) error {
 	return args.Error(0)
 }
 
-func (m *MockBot) OnMessage(handler func(ctx context.Context, msg *IncomingMessage)) {
+func (m *MockBot) OnMessage(handler func(ctx context.Context, msg *bot.IncomingMessage)) {
 	m.Called(handler)
 }
 
-func (m *MockBot) OnInteraction(handler func(ctx context.Context, i *Interaction)) {
+func (m *MockBot) OnInteraction(handler func(ctx context.Context, i *bot.Interaction)) {
 	m.Called(handler)
 }
 
@@ -271,7 +272,7 @@ func (s *OrchestratorSuite) TestHandleMessageUnregisteredChannel() {
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(false, nil)
 	s.bot.On("GetChannelParentID", s.ctx, "ch1").Return("", nil)
 
-	s.orch.HandleMessage(s.ctx, &IncomingMessage{
+	s.orch.HandleMessage(s.ctx, &bot.IncomingMessage{
 		ChannelID: "ch1",
 		Content:   "hello",
 	})
@@ -281,7 +282,7 @@ func (s *OrchestratorSuite) TestHandleMessageUnregisteredChannel() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageThreadResolved() {
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID:    "thread1",
 		GuildID:      "g1",
 		AuthorID:     "user1",
@@ -328,7 +329,7 @@ func (s *OrchestratorSuite) TestHandleMessageThreadResolved() {
 		SessionID: "sess-forked",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "thread1", "sess-forked").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "thread1" && out.Content == "Hi from thread!"
 	})).Return(nil)
 	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
@@ -347,7 +348,7 @@ func (s *OrchestratorSuite) TestHandleMessageThreadAlreadyUpserted() {
 	}, nil)
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 
-	s.orch.HandleMessage(s.ctx, &IncomingMessage{
+	s.orch.HandleMessage(s.ctx, &bot.IncomingMessage{
 		ChannelID: "thread1",
 		GuildID:   "g1",
 		Content:   "just context",
@@ -362,7 +363,7 @@ func (s *OrchestratorSuite) TestHandleMessageThreadInactiveParent() {
 	s.bot.On("GetChannelParentID", s.ctx, "thread1").Return("ch1", nil)
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(false, nil)
 
-	s.orch.HandleMessage(s.ctx, &IncomingMessage{
+	s.orch.HandleMessage(s.ctx, &bot.IncomingMessage{
 		ChannelID: "thread1",
 		Content:   "hello",
 	})
@@ -434,7 +435,7 @@ func (s *OrchestratorSuite) TestHandleMessageThreadResolutionErrors() {
 			s.SetupTest()
 			tc.setupMock()
 
-			s.orch.HandleMessage(s.ctx, &IncomingMessage{
+			s.orch.HandleMessage(s.ctx, &bot.IncomingMessage{
 				ChannelID: "thread1",
 				Content:   "hello",
 			})
@@ -445,7 +446,7 @@ func (s *OrchestratorSuite) TestHandleMessageThreadResolutionErrors() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageDMAutoCreatesChannel() {
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID:  "dm-ch1",
 		GuildID:    "",
 		AuthorID:   "user1",
@@ -476,7 +477,7 @@ func (s *OrchestratorSuite) TestHandleMessageDMAutoCreatesChannel() {
 		SessionID: "sess-dm",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "dm-ch1", "sess-dm").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "dm-ch1" && out.Content == "Hello from DM!"
 	})).Return(nil)
 	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
@@ -488,7 +489,7 @@ func (s *OrchestratorSuite) TestHandleMessageDMAutoCreatesChannel() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageDMAutoCreateFails() {
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID: "dm-ch1",
 		GuildID:   "",
 		Content:   "hello",
@@ -510,7 +511,7 @@ func (s *OrchestratorSuite) TestHandleMessageNonDMUnregisteredChannelDropped() {
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(false, nil)
 	s.bot.On("GetChannelParentID", s.ctx, "ch1").Return("", nil)
 
-	s.orch.HandleMessage(s.ctx, &IncomingMessage{
+	s.orch.HandleMessage(s.ctx, &bot.IncomingMessage{
 		ChannelID: "ch1",
 		Content:   "hello",
 		// No trigger flags set
@@ -521,7 +522,7 @@ func (s *OrchestratorSuite) TestHandleMessageNonDMUnregisteredChannelDropped() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageMentionAutoCreatesChannel() {
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
 		GuildID:      "g1",
 		AuthorID:     "user1",
@@ -549,7 +550,7 @@ func (s *OrchestratorSuite) TestHandleMessageMentionAutoCreatesChannel() {
 		SessionID: "sess1",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess1").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "ch1" && out.Content == "Hello!"
 	})).Return(nil)
 	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
@@ -561,7 +562,7 @@ func (s *OrchestratorSuite) TestHandleMessageMentionAutoCreatesChannel() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageMentionAutoCreateFails() {
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
 		Content:      "hello bot",
 		IsBotMention: true,
@@ -578,7 +579,7 @@ func (s *OrchestratorSuite) TestHandleMessageMentionAutoCreateFails() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessagePrefixAutoCreatesChannel() {
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID:  "ch1",
 		AuthorID:   "user1",
 		AuthorName: "Alice",
@@ -647,7 +648,7 @@ func (s *OrchestratorSuite) TestHandleMessageEarlyErrors() {
 	tests := []struct {
 		name      string
 		setupMock func()
-		msg       *IncomingMessage
+		msg       *bot.IncomingMessage
 		notCalled string
 	}{
 		{
@@ -655,7 +656,7 @@ func (s *OrchestratorSuite) TestHandleMessageEarlyErrors() {
 			setupMock: func() {
 				s.store.On("IsChannelActive", s.ctx, "ch1").Return(false, errors.New("db err"))
 			},
-			msg:       &IncomingMessage{ChannelID: "ch1"},
+			msg:       &bot.IncomingMessage{ChannelID: "ch1"},
 			notCalled: "GetChannel",
 		},
 		{
@@ -664,7 +665,7 @@ func (s *OrchestratorSuite) TestHandleMessageEarlyErrors() {
 				s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 				s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("channel err"))
 			},
-			msg:       &IncomingMessage{ChannelID: "ch1", GuildID: "g1"},
+			msg:       &bot.IncomingMessage{ChannelID: "ch1", GuildID: "g1"},
 			notCalled: "InsertMessage",
 		},
 		{
@@ -673,7 +674,7 @@ func (s *OrchestratorSuite) TestHandleMessageEarlyErrors() {
 				s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 				s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 			},
-			msg:       &IncomingMessage{ChannelID: "ch1", GuildID: "g1"},
+			msg:       &bot.IncomingMessage{ChannelID: "ch1", GuildID: "g1"},
 			notCalled: "InsertMessage",
 		},
 		{
@@ -683,7 +684,7 @@ func (s *OrchestratorSuite) TestHandleMessageEarlyErrors() {
 				s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
 				s.store.On("InsertMessage", s.ctx, mock.Anything).Return(errors.New("insert err"))
 			},
-			msg:       &IncomingMessage{ChannelID: "ch1", IsBotMention: true},
+			msg:       &bot.IncomingMessage{ChannelID: "ch1", IsBotMention: true},
 			notCalled: "GetRecentMessages",
 		},
 	}
@@ -700,8 +701,8 @@ func (s *OrchestratorSuite) TestHandleMessageEarlyErrors() {
 }
 
 // triggeredMsg returns a standard triggered IncomingMessage for tests.
-func triggeredMsg() *IncomingMessage {
-	return &IncomingMessage{
+func triggeredMsg() *bot.IncomingMessage {
+	return &bot.IncomingMessage{
 		ChannelID:    "ch1",
 		GuildID:      "g1",
 		AuthorName:   "Alice",
@@ -735,7 +736,7 @@ func (s *OrchestratorSuite) TestHandleMessageNotTriggered() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 
-	s.orch.HandleMessage(s.ctx, &IncomingMessage{
+	s.orch.HandleMessage(s.ctx, &bot.IncomingMessage{
 		ChannelID: "ch1",
 		GuildID:   "g1",
 		Content:   "just a message",
@@ -746,7 +747,7 @@ func (s *OrchestratorSuite) TestHandleMessageNotTriggered() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageTriggeredFullFlow() {
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
 		GuildID:      "g1",
 		AuthorID:     "user1",
@@ -776,7 +777,7 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredFullFlow() {
 		SessionID: "session456",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch1", "session456").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "ch1" && out.Content == "Hello Alice!" && out.ReplyToMessageID == "msg1"
 	})).Return(nil)
 	s.store.On("MarkMessagesProcessed", s.ctx, []int64{2, 1}).Return(nil)
@@ -789,7 +790,7 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredFullFlow() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageTriggeredWithNilSession() {
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID:  "ch1",
 		GuildID:    "g1",
 		AuthorName: "Alice",
@@ -855,7 +856,7 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredErrors() {
 				s.setupTriggeredBase()
 				s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 				s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("runner err"))
-				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 					return out.Content == "Sorry, I encountered an error processing your request."
 				})).Return(nil)
 			},
@@ -867,12 +868,12 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredErrors() {
 				s.setupTriggeredBase()
 				s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 				s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Error: "agent broke"}, nil)
-				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 					return out.Content == "Agent error: agent broke"
 				})).Return(nil)
 			},
 			assertFn: func() {
-				s.bot.AssertCalled(s.T(), "SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+				s.bot.AssertCalled(s.T(), "SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 					return out.Content == "Agent error: agent broke"
 				}))
 			},
@@ -987,7 +988,7 @@ func (s *OrchestratorSuite) TestHandleMessageInsertBotResponseErrors() {
 
 func (s *OrchestratorSuite) TestHandleInteractionUnknownCommand() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "unknown",
 	})
@@ -999,11 +1000,11 @@ func (s *OrchestratorSuite) TestHandleInteractionSchedule() {
 	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
 		return task.ChannelID == "ch1" && task.Prompt == "do stuff" && task.Schedule == "0 * * * *" && task.Type == db.TaskTypeCron
 	})).Return(int64(42), nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Task scheduled (ID: 42)."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		GuildID:     "g1",
 		CommandName: "schedule",
@@ -1022,11 +1023,11 @@ func (s *OrchestratorSuite) TestHandleInteractionScheduleInterval() {
 	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
 		return task.Type == db.TaskTypeInterval && task.Schedule == "5m"
 	})).Return(int64(43), nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Task scheduled (ID: 43)."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		GuildID:     "g1",
 		CommandName: "schedule",
@@ -1043,11 +1044,11 @@ func (s *OrchestratorSuite) TestHandleInteractionScheduleInterval() {
 func (s *OrchestratorSuite) TestHandleInteractionScheduleError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.Anything).Return(int64(0), errors.New("sched err"))
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Failed to schedule task."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "schedule",
 		Options: map[string]string{
@@ -1070,7 +1071,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTasks() {
 		{ID: 4, Prompt: "task4", Schedule: "0 12 * * *", Type: db.TaskTypeCron, Enabled: true, NextRunAt: nextRun.Add(15 * time.Minute), AutoDeleteSec: 120},
 	}
 	s.scheduler.On("ListTasks", s.ctx, "ch1").Return(tasks, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "ch1" &&
 			strings.Contains(out.Content, "Scheduled tasks:") &&
 			strings.Contains(out.Content, "ID 1") &&
@@ -1087,7 +1088,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTasks() {
 			strings.Contains(out.Content, "(auto_delete: 120s)")
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "tasks",
 	})
@@ -1102,13 +1103,13 @@ func (s *OrchestratorSuite) TestHandleInteractionTasksAutoDeleteNotShownWhenZero
 		{ID: 1, Prompt: "task1", Schedule: "0 * * * *", Type: db.TaskTypeCron, Enabled: true, NextRunAt: nextRun, AutoDeleteSec: 0},
 	}
 	s.scheduler.On("ListTasks", s.ctx, "ch1").Return(tasks, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "ch1" &&
 			strings.Contains(out.Content, "ID 1") &&
 			!strings.Contains(out.Content, "auto_delete")
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "tasks",
 	})
@@ -1119,11 +1120,11 @@ func (s *OrchestratorSuite) TestHandleInteractionTasksAutoDeleteNotShownWhenZero
 func (s *OrchestratorSuite) TestHandleInteractionTasksEmpty() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("ListTasks", s.ctx, "ch1").Return([]*db.ScheduledTask{}, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "No scheduled tasks."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "tasks",
 	})
@@ -1134,11 +1135,11 @@ func (s *OrchestratorSuite) TestHandleInteractionTasksEmpty() {
 func (s *OrchestratorSuite) TestHandleInteractionTasksError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("ListTasks", s.ctx, "ch1").Return(nil, errors.New("list err"))
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Failed to list tasks."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "tasks",
 	})
@@ -1149,11 +1150,11 @@ func (s *OrchestratorSuite) TestHandleInteractionTasksError() {
 func (s *OrchestratorSuite) TestHandleInteractionCancel() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("RemoveTask", s.ctx, int64(42)).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Task 42 cancelled."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "cancel",
 		Options:     map[string]string{"task_id": "42"},
@@ -1164,11 +1165,11 @@ func (s *OrchestratorSuite) TestHandleInteractionCancel() {
 
 func (s *OrchestratorSuite) TestHandleInteractionCancelInvalidID() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Invalid task ID."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "cancel",
 		Options:     map[string]string{"task_id": "abc"},
@@ -1180,11 +1181,11 @@ func (s *OrchestratorSuite) TestHandleInteractionCancelInvalidID() {
 func (s *OrchestratorSuite) TestHandleInteractionCancelError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("RemoveTask", s.ctx, int64(42)).Return(errors.New("remove err"))
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Failed to cancel task."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "cancel",
 		Options:     map[string]string{"task_id": "42"},
@@ -1196,11 +1197,11 @@ func (s *OrchestratorSuite) TestHandleInteractionCancelError() {
 func (s *OrchestratorSuite) TestHandleInteractionToggleEnable() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("ToggleTask", s.ctx, int64(42)).Return(true, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Task 42 enabled."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "toggle",
 		Options:     map[string]string{"task_id": "42"},
@@ -1213,11 +1214,11 @@ func (s *OrchestratorSuite) TestHandleInteractionToggleEnable() {
 func (s *OrchestratorSuite) TestHandleInteractionToggleDisable() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("ToggleTask", s.ctx, int64(42)).Return(false, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Task 42 disabled."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "toggle",
 		Options:     map[string]string{"task_id": "42"},
@@ -1229,11 +1230,11 @@ func (s *OrchestratorSuite) TestHandleInteractionToggleDisable() {
 
 func (s *OrchestratorSuite) TestHandleInteractionToggleInvalidID() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Invalid task ID."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "toggle",
 		Options:     map[string]string{"task_id": "abc"},
@@ -1245,11 +1246,11 @@ func (s *OrchestratorSuite) TestHandleInteractionToggleInvalidID() {
 func (s *OrchestratorSuite) TestHandleInteractionToggleError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("ToggleTask", s.ctx, int64(42)).Return(false, errors.New("toggle err"))
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Failed to toggle task."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "toggle",
 		Options:     map[string]string{"task_id": "42"},
@@ -1261,11 +1262,11 @@ func (s *OrchestratorSuite) TestHandleInteractionToggleError() {
 func (s *OrchestratorSuite) TestHandleInteractionEditSuccess() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("EditTask", s.ctx, int64(42), new("0 9 * * *"), (*string)(nil), (*string)(nil), (*int)(nil)).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Task 42 updated."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "edit",
 		Options:     map[string]string{"task_id": "42", "schedule": "0 9 * * *"},
@@ -1278,11 +1279,11 @@ func (s *OrchestratorSuite) TestHandleInteractionEditSuccess() {
 func (s *OrchestratorSuite) TestHandleInteractionEditWithTypeAndPrompt() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("EditTask", s.ctx, int64(10), (*string)(nil), new("interval"), new("new prompt"), (*int)(nil)).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Task 10 updated."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "edit",
 		Options:     map[string]string{"task_id": "10", "type": "interval", "prompt": "new prompt"},
@@ -1294,11 +1295,11 @@ func (s *OrchestratorSuite) TestHandleInteractionEditWithTypeAndPrompt() {
 
 func (s *OrchestratorSuite) TestHandleInteractionEditInvalidID() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Invalid task ID."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "edit",
 		Options:     map[string]string{"task_id": "abc"},
@@ -1309,11 +1310,11 @@ func (s *OrchestratorSuite) TestHandleInteractionEditInvalidID() {
 
 func (s *OrchestratorSuite) TestHandleInteractionEditNoFields() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "At least one of schedule, type, or prompt is required."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "edit",
 		Options:     map[string]string{"task_id": "42"},
@@ -1325,11 +1326,11 @@ func (s *OrchestratorSuite) TestHandleInteractionEditNoFields() {
 func (s *OrchestratorSuite) TestHandleInteractionEditError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("EditTask", s.ctx, int64(42), (*string)(nil), (*string)(nil), new("new"), (*int)(nil)).Return(errors.New("edit err"))
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Failed to edit task."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "edit",
 		Options:     map[string]string{"task_id": "42", "prompt": "new"},
@@ -1340,11 +1341,11 @@ func (s *OrchestratorSuite) TestHandleInteractionEditError() {
 
 func (s *OrchestratorSuite) TestHandleInteractionStatus() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Loop bot is running."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "status",
 	})
@@ -1356,11 +1357,11 @@ func (s *OrchestratorSuite) TestHandleInteractionStatus() {
 
 func (s *OrchestratorSuite) TestHandleInteractionStopNoActiveRun() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "ch1" && out.Content == "No active run to stop."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "stop",
 	})
@@ -1375,7 +1376,7 @@ func (s *OrchestratorSuite) TestHandleInteractionStopCancelsActiveRun() {
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		AuthorID:    "user1",
 		CommandName: "stop",
@@ -1394,7 +1395,7 @@ func (s *OrchestratorSuite) TestHandleInteractionStopWithChannelIDOption() {
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		AuthorID:    "user1",
 		CommandName: "stop",
@@ -1412,7 +1413,7 @@ func (s *OrchestratorSuite) TestHandleMessageSendStopButtonError() {
 	s.bot.On("SendStopButton", mock.Anything, "ch1", "ch1").Return("", errors.New("button failed")).Once()
 	s.bot.On("RemoveStopButton", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
 		GuildID:      "g1",
 		AuthorName:   "Alice",
@@ -1447,7 +1448,7 @@ func (s *OrchestratorSuite) TestHandleMessageRemoveStopButtonError() {
 	s.bot.On("SendStopButton", mock.Anything, "ch1", "ch1").Return("stop-msg-1", nil).Once()
 	s.bot.On("RemoveStopButton", mock.Anything, "ch1", "stop-msg-1").Return(errors.New("remove failed")).Once()
 
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
 		GuildID:      "g1",
 		AuthorName:   "Alice",
@@ -1479,7 +1480,7 @@ func (s *OrchestratorSuite) TestHandleMessageRunCanceledByStopButton() {
 	// Set a real timeout so runCtx doesn't expire immediately.
 	s.orch.cfg.ContainerTimeout = 10 * time.Second
 
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
 		GuildID:      "g1",
 		AuthorName:   "Alice",
@@ -1507,13 +1508,13 @@ func (s *OrchestratorSuite) TestHandleMessageRunCanceledByStopButton() {
 		<-ctx.Done()
 	}).Return(nil, context.Canceled)
 
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "ch1" && out.Content == "Run stopped." && out.ReplyToMessageID == "msg1"
 	})).Return(nil)
 
 	s.orch.HandleMessage(s.ctx, msg)
 
-	s.bot.AssertCalled(s.T(), "SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.AssertCalled(s.T(), "SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Run stopped."
 	}))
 }
@@ -1522,11 +1523,11 @@ func (s *OrchestratorSuite) TestHandleMessageRunCanceledByStopButton() {
 
 func (s *OrchestratorSuite) TestHandleInteractionReadme() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "ch1" && len(out.Content) > 0
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "readme",
 	})
@@ -1656,11 +1657,11 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSuccess() {
 	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
 		return task.ChannelID == "ch1" && task.TemplateName == "daily-check" && task.Schedule == "0 9 * * *" && task.Type == db.TaskTypeCron && task.Prompt == "check stuff" && task.AutoDeleteSec == 0
 	})).Return(int64(10), nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Template 'daily-check' loaded (task ID: 10)."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		GuildID:     "g1",
 		CommandName: "template-add",
@@ -1684,11 +1685,11 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddWithAutoDelete() {
 	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
 		return task.ChannelID == "ch1" && task.TemplateName == "ephemeral-check" && task.AutoDeleteSec == 300
 	})).Return(int64(11), nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Template 'ephemeral-check' loaded (task ID: 11)."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		GuildID:     "g1",
 		CommandName: "template-add",
@@ -1709,11 +1710,11 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddIdempotent() {
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(&db.ScheduledTask{ID: 5, TemplateName: "daily-check"}, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Template 'daily-check' already loaded (task ID: 5)."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "template-add",
 		Options:     map[string]string{"name": "daily-check"},
@@ -1725,11 +1726,11 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddIdempotent() {
 
 func (s *OrchestratorSuite) TestHandleInteractionTemplateAddUnknown() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Unknown template: nonexistent"
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "template-add",
 		Options:     map[string]string{"name": "nonexistent"},
@@ -1747,11 +1748,11 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddStoreError() {
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, errors.New("db error"))
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Failed to check existing templates."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "template-add",
 		Options:     map[string]string{"name": "daily-check"},
@@ -1771,11 +1772,11 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSchedulerError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
 	s.scheduler.On("AddTask", s.ctx, mock.Anything).Return(int64(0), errors.New("sched error"))
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Failed to add template task."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "template-add",
 		Options:     map[string]string{"name": "daily-check"},
@@ -1794,7 +1795,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateList() {
 	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return strings.Contains(out.Content, "Available templates:") &&
 			strings.Contains(out.Content, "**daily-check**") &&
 			strings.Contains(out.Content, "**weekly-report**") &&
@@ -1803,7 +1804,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateList() {
 			strings.Contains(out.Content, "Daily check")
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "template-list",
 	})
@@ -1814,11 +1815,11 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateList() {
 func (s *OrchestratorSuite) TestHandleInteractionTemplateListEmpty() {
 	// s.orch already has nil templates from SetupTest
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "No templates configured."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "template-list",
 	})
@@ -1845,11 +1846,11 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddWithPromptPath() {
 	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
 		return task.Prompt == "Do daily stuff" && task.TemplateName == "daily-from-file"
 	})).Return(int64(20), nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Template 'daily-from-file' loaded (task ID: 20)."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		GuildID:     "g1",
 		CommandName: "template-add",
@@ -1871,11 +1872,11 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddResolvePromptError()
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "bad-template").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return strings.Contains(out.Content, "Failed to resolve template prompt")
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "template-add",
 		Options:     map[string]string{"name": "bad-template"},
@@ -2079,7 +2080,7 @@ func (s *OrchestratorSuite) TestHandleMessagePermissionDenied() {
 		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"allowed-user"}}},
 	}
 
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
 		AuthorID:     "denied-user",
 		Content:      "hello bot",
@@ -2104,7 +2105,7 @@ func (s *OrchestratorSuite) TestHandleMessageBotSelfMentionBypassesPermissions()
 		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"allowed-user"}}},
 	}
 
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
 		AuthorID:     "BOT", // same as BotUserID()
 		AuthorName:   "LoopBot",
@@ -2139,7 +2140,7 @@ func (s *OrchestratorSuite) TestHandleMessagePermissionAllowed() {
 		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"allowed-user"}}},
 	}
 
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
 		AuthorID:     "allowed-user",
 		AuthorName:   "Alice",
@@ -2176,11 +2177,11 @@ func (s *OrchestratorSuite) TestHandleInteractionPermissionDenied() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1", DirPath: "",
 	}, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "⛔ You don't have permission to use this command."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "tasks",
 		AuthorID:    "denied-user",
@@ -2200,11 +2201,11 @@ func (s *OrchestratorSuite) TestHandleInteractionPermissionAllowed() {
 		ID: 1, ChannelID: "ch1", DirPath: "",
 	}, nil)
 	s.scheduler.On("ListTasks", s.ctx, "ch1").Return([]*db.ScheduledTask{}, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "No scheduled tasks."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "tasks",
 		AuthorID:    "allowed-user",
@@ -2224,11 +2225,11 @@ func (s *OrchestratorSuite) TestHandleInteractionPermissionByRole() {
 		ID: 1, ChannelID: "ch1", DirPath: "",
 	}, nil)
 	s.scheduler.On("ListTasks", s.ctx, "ch1").Return([]*db.ScheduledTask{}, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "No scheduled tasks."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "tasks",
 		AuthorID:    "some-user",
@@ -2247,11 +2248,11 @@ func (s *OrchestratorSuite) TestHandleInteractionGetChannelNil() {
 
 	// Channel not found — dirPath will be empty, permissions come from global.
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "⛔ You don't have permission to use this command."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "tasks",
 		AuthorID:    "denied-user",
@@ -2273,11 +2274,11 @@ func (s *OrchestratorSuite) TestHandleInteractionPermCmdRequiresOwner() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1", DirPath: "",
 	}, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "⛔ Only owners can manage permissions."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "allow_user",
 		AuthorID:    "member-user",
@@ -2296,11 +2297,11 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowUserSuccess() {
 	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
 		Members: db.ChannelRoleGrant{Users: []string{"U99"}},
 	}).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "✅ <@U99> granted member role."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "allow_user",
 		Options:     map[string]string{"target_id": "U99", "role": "member"},
@@ -2318,11 +2319,11 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowUserOwner() {
 	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
 		Owners: db.ChannelRoleGrant{Users: []string{"U99"}},
 	}).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "✅ <@U99> granted owner role."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "allow_user",
 		Options:     map[string]string{"target_id": "U99", "role": "owner"},
@@ -2334,11 +2335,11 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowUserOwner() {
 
 func (s *OrchestratorSuite) TestHandleInteractionAllowUserChannelNotRegistered() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "⛔ Channel not registered."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "allow_user",
 		Options:     map[string]string{"target_id": "U99", "role": "member"},
@@ -2354,11 +2355,11 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowUserStoreError() {
 		Permissions: db.ChannelPermissions{},
 	}, nil)
 	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.Anything).Return(errors.New("db err"))
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Failed to update permissions."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "allow_user",
 		Options:     map[string]string{"target_id": "U99", "role": "member"},
@@ -2376,11 +2377,11 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowRoleSuccess() {
 	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
 		Owners: db.ChannelRoleGrant{Roles: []string{"R1"}},
 	}).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "✅ Role <@&R1> granted owner role."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "allow_role",
 		Options:     map[string]string{"target_id": "R1", "role": "owner"},
@@ -2403,11 +2404,11 @@ func (s *OrchestratorSuite) TestHandleInteractionDenyUserSuccess() {
 		return len(p.Owners.Users) == 1 && p.Owners.Users[0] == "owner-user" &&
 			len(p.Members.Users) == 0
 	})).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "✅ <@U99> removed from channel permissions."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "deny_user",
 		AuthorID:    "owner-user",
@@ -2430,11 +2431,11 @@ func (s *OrchestratorSuite) TestHandleInteractionDenyRoleSuccess() {
 		return len(p.Owners.Users) == 1 && p.Owners.Users[0] == "owner-user" &&
 			len(p.Owners.Roles) == 0
 	})).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "✅ Role <@&R1> removed from channel permissions."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "deny_role",
 		AuthorID:    "owner-user",
@@ -2464,11 +2465,11 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowUserDefaultRole() {
 	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
 		Members: db.ChannelRoleGrant{Users: []string{"U99"}},
 	}).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "✅ <@U99> granted member role."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "allow_user",
 		Options:     map[string]string{"target_id": "U99"},
@@ -2480,11 +2481,11 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowUserDefaultRole() {
 
 func (s *OrchestratorSuite) TestHandleInteractionAllowRoleChannelNotRegistered() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "⛔ Channel not registered."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "allow_role",
 		Options:     map[string]string{"target_id": "R1", "role": "owner"},
@@ -2500,11 +2501,11 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowRoleStoreError() {
 		Permissions: db.ChannelPermissions{},
 	}, nil)
 	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.Anything).Return(errors.New("db err"))
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Failed to update permissions."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "allow_role",
 		Options:     map[string]string{"target_id": "R1", "role": "owner"},
@@ -2522,11 +2523,11 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowRoleMember() {
 	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
 		Members: db.ChannelRoleGrant{Roles: []string{"R1"}},
 	}).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "✅ Role <@&R1> granted member role."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "allow_role",
 		Options:     map[string]string{"target_id": "R1", "role": "member"},
@@ -2545,11 +2546,11 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowRoleDefaultRole() {
 	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
 		Members: db.ChannelRoleGrant{Roles: []string{"R1"}},
 	}).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "✅ Role <@&R1> granted member role."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "allow_role",
 		Options:     map[string]string{"target_id": "R1"},
@@ -2562,11 +2563,11 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowRoleDefaultRole() {
 func (s *OrchestratorSuite) TestHandleInteractionDenyUserChannelNotRegistered() {
 	// Bootstrap mode (no config perms, no db perms) → everyone is RoleOwner.
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "⛔ Channel not registered."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "deny_user",
 		Options:     map[string]string{"target_id": "U99"},
@@ -2584,11 +2585,11 @@ func (s *OrchestratorSuite) TestHandleInteractionDenyUserStoreError() {
 		},
 	}, nil)
 	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.Anything).Return(errors.New("db err"))
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Failed to update permissions."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "deny_user",
 		AuthorID:    "owner-user",
@@ -2602,11 +2603,11 @@ func (s *OrchestratorSuite) TestHandleInteractionDenyUserStoreError() {
 func (s *OrchestratorSuite) TestHandleInteractionDenyRoleChannelNotRegistered() {
 	// Bootstrap mode (no config perms, no db perms) → everyone is RoleOwner.
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "⛔ Channel not registered."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "deny_role",
 		Options:     map[string]string{"target_id": "R1"},
@@ -2624,11 +2625,11 @@ func (s *OrchestratorSuite) TestHandleInteractionDenyRoleStoreError() {
 		},
 	}, nil)
 	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.Anything).Return(errors.New("db err"))
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Failed to update permissions."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "deny_role",
 		AuthorID:    "owner-user",
@@ -2644,7 +2645,7 @@ func (s *OrchestratorSuite) TestHandleInteractionDenyRoleStoreError() {
 func (s *OrchestratorSuite) TestHandleMessageStreamingSkipsDuplicate() {
 	s.orch.cfg.StreamingEnabled = true
 
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
 		GuildID:      "g1",
 		AuthorID:     "user1",
@@ -2677,7 +2678,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingSkipsDuplicate() {
 	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-1").Return(nil)
 
 	// Both OnTurn calls go to channel with reply-to
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "ch1" && out.ReplyToMessageID == "msg1" &&
 			(out.Content == "Let me check..." || out.Content == "Here is the answer.")
 	})).Return(nil).Twice()
@@ -2695,7 +2696,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingSkipsDuplicate() {
 func (s *OrchestratorSuite) TestHandleMessageStreamingSendsFinalWhenDifferent() {
 	s.orch.cfg.StreamingEnabled = true
 
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
 		GuildID:      "g1",
 		AuthorName:   "Alice",
@@ -2725,7 +2726,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingSendsFinalWhenDifferent() 
 	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-2").Return(nil)
 
 	// OnTurn + final (different) both go to channel with reply-to
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.ChannelID == "ch1" && out.ReplyToMessageID == "msg1" &&
 			(out.Content == "Intermediate turn" || out.Content == "Final different response")
 	})).Return(nil).Twice()
@@ -2741,7 +2742,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingSendsFinalWhenDifferent() 
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingDisabledNoOnTurn() {
 	// streamingEnabled is false by default (set in SetupTest)
-	msg := &IncomingMessage{
+	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
 		GuildID:      "g1",
 		AuthorName:   "Alice",
@@ -2766,7 +2767,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingDisabledNoOnTurn() {
 	}, nil)
 
 	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-3").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Hello!" && out.ReplyToMessageID == "msg1"
 	})).Return(nil)
 	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
@@ -2789,11 +2790,11 @@ func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerSuccess() {
 	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
 		Owners: db.ChannelRoleGrant{Users: []string{"user1"}},
 	}).Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "✅ <@user1> is now the owner of this channel."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "iamtheowner",
 		AuthorID:    "user1",
@@ -2810,11 +2811,11 @@ func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerAlreadyConfigured() 
 			Owners: db.ChannelRoleGrant{Users: []string{"existing-owner"}},
 		},
 	}, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "⛔ An owner is already configured. Use `/loop allow_user` to manage permissions."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "iamtheowner",
 		AuthorID:    "user1",
@@ -2826,11 +2827,11 @@ func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerAlreadyConfigured() 
 
 func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerChannelNotRegistered() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "⛔ Channel not registered."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "iamtheowner",
 		AuthorID:    "user1",
@@ -2846,11 +2847,11 @@ func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerStoreError() {
 		Permissions: db.ChannelPermissions{},
 	}, nil)
 	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.Anything).Return(errors.New("db err"))
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Failed to update permissions."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "iamtheowner",
 		AuthorID:    "user1",
@@ -2869,11 +2870,11 @@ func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerBlockedByCfgPerms() 
 		ID: 1, ChannelID: "ch1", DirPath: "",
 		Permissions: db.ChannelPermissions{},
 	}, nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "⛔ An owner is already configured. Use `/loop allow_user` to manage permissions."
 	})).Return(nil)
 
-	s.orch.HandleInteraction(s.ctx, &Interaction{
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
 		ChannelID:   "ch1",
 		CommandName: "iamtheowner",
 		AuthorID:    "user1",

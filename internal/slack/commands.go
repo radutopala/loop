@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/radutopala/loop/internal/orchestrator"
+	"github.com/radutopala/loop/internal/bot"
 )
 
 // parseSlashCommand parses the text from a /loop slash command into an Interaction.
@@ -25,7 +25,7 @@ import (
 //	allow user <@U...> [owner|member]
 //	deny user <@U...>
 //	iamtheowner
-func parseSlashCommand(channelID, teamID, text string) (*orchestrator.Interaction, string) {
+func parseSlashCommand(channelID, teamID, text string) (*bot.Interaction, string) {
 	text = strings.TrimSpace(text)
 	if text == "" {
 		return nil, helpText()
@@ -35,7 +35,7 @@ func parseSlashCommand(channelID, teamID, text string) (*orchestrator.Interactio
 	subcommand := strings.ToLower(parts[0])
 	args := parts[1:]
 
-	inter := &orchestrator.Interaction{
+	inter := &bot.Interaction{
 		ChannelID: channelID,
 		GuildID:   teamID,
 		Options:   make(map[string]string),
@@ -78,7 +78,7 @@ func parseSlashCommand(channelID, teamID, text string) (*orchestrator.Interactio
 
 // parseSchedule parses: schedule <schedule> <type> <prompt>
 // The type must be one of: cron, interval, once
-func parseSchedule(inter *orchestrator.Interaction, args []string) (*orchestrator.Interaction, string) {
+func parseSchedule(inter *bot.Interaction, args []string) (*bot.Interaction, string) {
 	if len(args) < 3 {
 		return nil, "Usage: `/loop schedule <schedule> <type> <prompt>`\n" +
 			"Types: cron, interval, once\n" +
@@ -114,7 +114,7 @@ func parseSchedule(inter *orchestrator.Interaction, args []string) (*orchestrato
 }
 
 // parseCancel parses: cancel <task_id>
-func parseCancel(inter *orchestrator.Interaction, args []string) (*orchestrator.Interaction, string) {
+func parseCancel(inter *bot.Interaction, args []string) (*bot.Interaction, string) {
 	if len(args) != 1 {
 		return nil, "Usage: `/loop cancel <task_id>`"
 	}
@@ -127,7 +127,7 @@ func parseCancel(inter *orchestrator.Interaction, args []string) (*orchestrator.
 }
 
 // parseToggle parses: toggle <task_id>
-func parseToggle(inter *orchestrator.Interaction, args []string) (*orchestrator.Interaction, string) {
+func parseToggle(inter *bot.Interaction, args []string) (*bot.Interaction, string) {
 	if len(args) != 1 {
 		return nil, "Usage: `/loop toggle <task_id>`"
 	}
@@ -140,7 +140,7 @@ func parseToggle(inter *orchestrator.Interaction, args []string) (*orchestrator.
 }
 
 // parseEdit parses: edit <task_id> [--schedule X] [--type Y] [--prompt Z]
-func parseEdit(inter *orchestrator.Interaction, args []string) (*orchestrator.Interaction, string) {
+func parseEdit(inter *bot.Interaction, args []string) (*bot.Interaction, string) {
 	if len(args) < 1 {
 		return nil, "Usage: `/loop edit <task_id> [--schedule X] [--type Y] [--prompt Z]`"
 	}
@@ -184,7 +184,7 @@ func parseEdit(inter *orchestrator.Interaction, args []string) (*orchestrator.In
 }
 
 // parseTemplate parses: template add <name> | template list
-func parseTemplate(inter *orchestrator.Interaction, args []string) (*orchestrator.Interaction, string) {
+func parseTemplate(inter *bot.Interaction, args []string) (*bot.Interaction, string) {
 	if len(args) < 1 {
 		return nil, "Usage: `/loop template add <name>` or `/loop template list`"
 	}
@@ -206,7 +206,7 @@ func parseTemplate(inter *orchestrator.Interaction, args []string) (*orchestrato
 }
 
 // parseAllow parses: allow user <@USERID> [owner|member]
-func parseAllow(inter *orchestrator.Interaction, args []string) (*orchestrator.Interaction, string) {
+func parseAllow(inter *bot.Interaction, args []string) (*bot.Interaction, string) {
 	if len(args) < 2 {
 		return nil, "Usage: `/loop allow user <@U...> [owner|member]`"
 	}
@@ -236,7 +236,7 @@ func parseAllow(inter *orchestrator.Interaction, args []string) (*orchestrator.I
 }
 
 // parseDeny parses: deny user <@USERID>
-func parseDeny(inter *orchestrator.Interaction, args []string) (*orchestrator.Interaction, string) {
+func parseDeny(inter *bot.Interaction, args []string) (*bot.Interaction, string) {
 	if len(args) < 2 {
 		return nil, "Usage: `/loop deny user <@U...>`"
 	}

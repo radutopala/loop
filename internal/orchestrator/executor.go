@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/radutopala/loop/internal/agent"
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 )
 
@@ -74,7 +75,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 					e.logger.Error("creating task thread", "error", err, "task_id", task.ID, "channel_id", task.ChannelID)
 					threadFailed = true
 					// Fallback: send to channel directly
-					_ = e.bot.SendMessage(ctx, &OutgoingMessage{
+					_ = e.bot.SendMessage(ctx, &bot.OutgoingMessage{
 						ChannelID: task.ChannelID,
 						Content:   text,
 					})
@@ -86,7 +87,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				if targetID == "" {
 					targetID = task.ChannelID
 				}
-				_ = e.bot.SendMessage(ctx, &OutgoingMessage{
+				_ = e.bot.SendMessage(ctx, &bot.OutgoingMessage{
 					ChannelID: targetID,
 					Content:   text,
 				})
@@ -131,7 +132,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 
 	// Skip final send if it duplicates the last streamed turn
 	if tracker == nil || !tracker.IsDuplicate(resp.Response) {
-		if err := e.bot.SendMessage(ctx, &OutgoingMessage{
+		if err := e.bot.SendMessage(ctx, &bot.OutgoingMessage{
 			ChannelID: targetChannelID,
 			Content:   resp.Response,
 		}); err != nil {

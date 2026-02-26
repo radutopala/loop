@@ -311,15 +311,15 @@ func serve() error {
 
 	platform := cfg.Platform()
 
-	var bot orchestrator.Bot
+	var chatBot orchestrator.Bot
 	switch platform {
 	case types.PlatformSlack:
-		bot, err = newSlackBot(cfg.SlackBotToken, cfg.SlackAppToken, logger)
+		chatBot, err = newSlackBot(cfg.SlackBotToken, cfg.SlackAppToken, logger)
 		if err != nil {
 			return fmt.Errorf("creating slack bot: %w", err)
 		}
 	default:
-		bot, err = newDiscordBot(cfg.DiscordToken, cfg.DiscordAppID, logger)
+		chatBot, err = newDiscordBot(cfg.DiscordToken, cfg.DiscordAppID, logger)
 		if err != nil {
 			return fmt.Errorf("creating discord bot: %w", err)
 		}
@@ -343,7 +343,7 @@ func serve() error {
 
 	runner := container.NewDockerRunner(dockerClient, cfg)
 
-	executor := orchestrator.NewTaskExecutor(runner, bot, store, logger, cfg.ContainerTimeout, cfg.StreamingEnabled)
+	executor := orchestrator.NewTaskExecutor(runner, chatBot, store, logger, cfg.ContainerTimeout, cfg.StreamingEnabled)
 	sched := scheduler.NewTaskScheduler(store, executor, cfg.PollInterval, logger)
 
 	var channelSvc api.ChannelEnsurer
@@ -351,16 +351,16 @@ func serve() error {
 	switch platform {
 	case types.PlatformSlack:
 		// Slack doesn't use guild IDs — channel/thread services are always available.
-		channelSvc = api.NewChannelService(store, bot, "", platform)
-		threadSvc = api.NewThreadService(store, bot, platform)
+		channelSvc = api.NewChannelService(store, chatBot, "", platform)
+		threadSvc = api.NewThreadService(store, chatBot, platform)
 	default:
 		if cfg.DiscordGuildID != "" {
-			channelSvc = api.NewChannelService(store, bot, cfg.DiscordGuildID, platform)
-			threadSvc = api.NewThreadService(store, bot, platform)
+			channelSvc = api.NewChannelService(store, chatBot, cfg.DiscordGuildID, platform)
+			threadSvc = api.NewThreadService(store, chatBot, platform)
 		}
 	}
 
-	apiSrv := newAPIServer(sched, channelSvc, threadSvc, store, bot, logger)
+	apiSrv := newAPIServer(sched, channelSvc, threadSvc, store, chatBot, logger)
 	apiSrv.SetLoopDir(cfg.LoopDir)
 
 	// Configure embeddings and memory indexer at the daemon level.
@@ -385,7 +385,7 @@ func serve() error {
 		return fmt.Errorf("starting api server: %w", err)
 	}
 
-	orch := orchestrator.New(store, bot, runner, sched, logger, platform, *cfg)
+	orch := orchestrator.New(store, chatBot, runner, sched, logger, platform, *cfg)
 
 	if err := orch.Start(ctx); err != nil {
 		_ = apiSrv.Stop(context.Background())

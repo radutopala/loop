@@ -14,7 +14,6 @@ import (
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/radutopala/loop/internal/bot"
-	"github.com/radutopala/loop/internal/orchestrator"
 )
 
 const (
@@ -656,7 +655,7 @@ func (b *SlackBot) handleInteractive(evt socketmode.Event) {
 		}
 		targetChannelID := strings.TrimPrefix(action.ActionID, "stop:")
 
-		inter := &orchestrator.Interaction{
+		inter := &bot.Interaction{
 			ChannelID:   callback.Channel.ID,
 			GuildID:     callback.Team.ID,
 			CommandName: "stop",
@@ -674,7 +673,7 @@ func (b *SlackBot) dispatchMessage(msg *bot.IncomingMessage) {
 	}
 }
 
-func (b *SlackBot) dispatchInteraction(inter *orchestrator.Interaction) {
+func (b *SlackBot) dispatchInteraction(inter *bot.Interaction) {
 	for _, h := range bot.CopyHandlers(&b.mu, b.interactionHandlers) {
 		go h(context.Background(), inter)
 	}

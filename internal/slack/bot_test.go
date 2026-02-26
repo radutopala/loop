@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/orchestrator"
 )
 
@@ -273,16 +274,16 @@ func (s *BotSuite) TestSendMessage() {
 
 	tests := []struct {
 		name      string
-		msg       *orchestrator.OutgoingMessage
+		msg       *bot.OutgoingMessage
 		postErr   error
 		wantErr   string
 		wantCalls int
 	}{
-		{"plain", &orchestrator.OutgoingMessage{ChannelID: "C123", Content: "hello world"}, nil, "", 1},
-		{"thread", &orchestrator.OutgoingMessage{ChannelID: "C123:1111.2222", Content: "reply in thread"}, nil, "", 1},
-		{"reply_to", &orchestrator.OutgoingMessage{ChannelID: "C123", Content: "replying", ReplyToMessageID: "9999.0000"}, nil, "", 1},
-		{"split", &orchestrator.OutgoingMessage{ChannelID: "C123", Content: longContent}, nil, "", 2},
-		{"error", &orchestrator.OutgoingMessage{ChannelID: "C123", Content: "hello"}, errors.New("channel_not_found"), "slack send message", 1},
+		{"plain", &bot.OutgoingMessage{ChannelID: "C123", Content: "hello world"}, nil, "", 1},
+		{"thread", &bot.OutgoingMessage{ChannelID: "C123:1111.2222", Content: "reply in thread"}, nil, "", 1},
+		{"reply_to", &bot.OutgoingMessage{ChannelID: "C123", Content: "replying", ReplyToMessageID: "9999.0000"}, nil, "", 1},
+		{"split", &bot.OutgoingMessage{ChannelID: "C123", Content: longContent}, nil, "", 2},
+		{"error", &bot.OutgoingMessage{ChannelID: "C123", Content: "hello"}, errors.New("channel_not_found"), "slack send message", 1},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
@@ -392,12 +393,12 @@ func (s *BotSuite) TestRemoveCommandsNoOp() {
 // --- Handler Registration ---
 
 func (s *BotSuite) TestOnMessage() {
-	s.bot.OnMessage(func(_ context.Context, _ *orchestrator.IncomingMessage) {})
+	s.bot.OnMessage(func(_ context.Context, _ *bot.IncomingMessage) {})
 	require.Len(s.T(), s.bot.messageHandlers, 1)
 }
 
 func (s *BotSuite) TestOnInteraction() {
-	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {})
+	s.bot.OnInteraction(func(_ context.Context, _ *bot.Interaction) {})
 	require.Len(s.T(), s.bot.interactionHandlers, 1)
 }
 
@@ -1013,8 +1014,8 @@ func (s *BotSuite) TestSlackTSToTime() {
 // --- Event Handling ---
 
 func (s *BotSuite) TestHandleMessageMentionInChannel() {
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		received <- msg
 	})
 
@@ -1039,8 +1040,8 @@ func (s *BotSuite) TestHandleMessageMentionInChannel() {
 }
 
 func (s *BotSuite) TestHandleMessageMentionInThread() {
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		received <- msg
 	})
 
@@ -1067,8 +1068,8 @@ func (s *BotSuite) TestHandleMessageMentionInThread() {
 }
 
 func (s *BotSuite) TestHandleMessageWithPrefix() {
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		received <- msg
 	})
 
@@ -1091,8 +1092,8 @@ func (s *BotSuite) TestHandleMessageWithPrefix() {
 }
 
 func (s *BotSuite) TestHandleMessageDM() {
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		received <- msg
 	})
 
@@ -1125,8 +1126,8 @@ func (s *BotSuite) TestHandleMessageIgnored() {
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			received := make(chan *orchestrator.IncomingMessage, 1)
-			s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) { received <- msg })
+			received := make(chan *bot.IncomingMessage, 1)
+			s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) { received <- msg })
 			s.bot.handleMessage(tt.ev)
 
 			select {
@@ -1145,8 +1146,8 @@ func (s *BotSuite) TestHandleMessageReplyToBot() {
 		false, "", nil,
 	)
 
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		received <- msg
 	})
 
@@ -1190,17 +1191,17 @@ func (s *BotSuite) TestHandleSlashCommandDispatched() {
 		s.Run(tt.name, func() {
 			session := new(MockSession)
 			sc := newMockSocketClient()
-			bot := NewBot(session, sc, testLogger())
-			bot.botUserID = "U123BOT"
+			b := NewBot(session, sc, testLogger())
+			b.botUserID = "U123BOT"
 
-			received := make(chan *orchestrator.Interaction, 1)
-			bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) { received <- i })
+			received := make(chan *bot.Interaction, 1)
+			b.OnInteraction(func(_ context.Context, i *bot.Interaction) { received <- i })
 			sc.On("Ack", mock.Anything, mock.Anything).Return()
 
 			evt := socketmode.Event{
 				Type: socketmode.EventTypeSlashCommand, Data: tt.cmd, Request: &socketmode.Request{},
 			}
-			bot.handleSlashCommand(evt)
+			b.handleSlashCommand(evt)
 
 			select {
 			case inter := <-received:
@@ -1239,8 +1240,8 @@ func (s *BotSuite) TestHandleSlashCommandHelp() {
 }
 
 func (s *BotSuite) TestHandleEventsAPIChannelMention() {
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		received <- msg
 	})
 
@@ -1414,11 +1415,11 @@ func (s *BotSuite) TestEventLoopProcessesEvent() {
 	session := new(MockSession)
 	events := make(chan socketmode.Event, 10)
 	sc := &MockSocketModeClient{events: events}
-	bot := NewBot(session, sc, testLogger())
-	bot.botUserID = "U123BOT"
+	b := NewBot(session, sc, testLogger())
+	b.botUserID = "U123BOT"
 
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	b.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		received <- msg
 	})
 
@@ -1427,7 +1428,7 @@ func (s *BotSuite) TestEventLoopProcessesEvent() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	go bot.eventLoop(ctx)
+	go b.eventLoop(ctx)
 
 	// Send a mention via message event through the channel.
 	events <- socketmode.Event{
@@ -1572,8 +1573,8 @@ func (s *BotSuite) TestHandleEventsAPIUnknownInnerEvent() {
 }
 
 func (s *BotSuite) TestHandleEventsAPIMessageEvent() {
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		received <- msg
 	})
 
@@ -1757,8 +1758,8 @@ func (s *BotSuite) TestHandleMessageInThread() {
 	s.session.On("GetConversationReplies", mock.Anything).
 		Return([]goslack.Message{{Msg: goslack.Msg{User: "U123BOT"}}}, false, "", nil)
 
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		received <- msg
 	})
 	s.bot.handleMessage(ev)
@@ -1775,8 +1776,8 @@ func (s *BotSuite) TestHandleMessageInThread() {
 func (s *BotSuite) TestHandleMessageSelfMentionCreatesThread() {
 	// Bot self-mention in a channel (e.g. from CreateThread) should be
 	// processed by handleMessage and use the message's own TS as thread TS.
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		received <- msg
 	})
 
@@ -1801,8 +1802,8 @@ func (s *BotSuite) TestHandleMessageSelfMentionCreatesThread() {
 
 func (s *BotSuite) TestHandleMessageSelfMentionInThread() {
 	// Bot self-mention inside a thread should use the thread TS, not the message TS.
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		received <- msg
 	})
 
@@ -1840,8 +1841,8 @@ func (s *BotSuite) TestHandleMessageMentionDM() {
 		ChannelType: "im",
 	}
 
-	received := make(chan *orchestrator.IncomingMessage, 1)
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
+	received := make(chan *bot.IncomingMessage, 1)
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		received <- msg
 	})
 	s.bot.handleMessage(ev)
@@ -2001,8 +2002,8 @@ func (s *BotSuite) TestRemoveStopButton() {
 // --- handleInteractive tests ---
 
 func (s *BotSuite) TestHandleInteractiveStopAction() {
-	received := make(chan *orchestrator.Interaction, 1)
-	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+	received := make(chan *bot.Interaction, 1)
+	s.bot.OnInteraction(func(_ context.Context, i *bot.Interaction) {
 		received <- i
 	})
 
@@ -2068,22 +2069,22 @@ func (s *BotSuite) TestHandleInteractiveIgnored() {
 		s.Run(tt.name, func() {
 			session := new(MockSession)
 			sc := newMockSocketClient()
-			bot := NewBot(session, sc, testLogger())
-			bot.botUserID = "U123BOT"
+			b := NewBot(session, sc, testLogger())
+			b.botUserID = "U123BOT"
 
 			called := false
-			bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) { called = true })
+			b.OnInteraction(func(_ context.Context, _ *bot.Interaction) { called = true })
 			sc.On("Ack", mock.Anything, mock.Anything).Return()
 
-			bot.handleInteractive(tt.evt)
+			b.handleInteractive(tt.evt)
 			require.False(s.T(), called)
 		})
 	}
 }
 
 func (s *BotSuite) TestHandleEventInteractiveType() {
-	received := make(chan *orchestrator.Interaction, 1)
-	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+	received := make(chan *bot.Interaction, 1)
+	s.bot.OnInteraction(func(_ context.Context, i *bot.Interaction) {
 		received <- i
 	})
 

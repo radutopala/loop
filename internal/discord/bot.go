@@ -11,10 +11,10 @@ import (
 	"github.com/bwmarrin/discordgo"
 
 	"github.com/radutopala/loop/internal/bot"
-	"github.com/radutopala/loop/internal/orchestrator"
 )
 
 const maxMessageLen = 2000
+const typingInterval = 8 * time.Second
 
 // DiscordSession abstracts the discordgo.Session methods used by the bot,
 // enabling test mocking.
@@ -80,7 +80,7 @@ func NewBot(session DiscordSession, appID string, logger *slog.Logger) *DiscordB
 		session:             session,
 		appID:               appID,
 		logger:              logger,
-		typingInterval:      orchestrator.TypingInterval,
+		typingInterval:      typingInterval,
 		pendingInteractions: make(map[string]*discordgo.Interaction),
 	}
 }
@@ -560,7 +560,7 @@ func (b *DiscordBot) handleSlashCommandInteraction(i *discordgo.InteractionCreat
 		authorID = i.User.ID
 	}
 
-	inter := &orchestrator.Interaction{
+	inter := &bot.Interaction{
 		ChannelID:   i.ChannelID,
 		GuildID:     i.GuildID,
 		CommandName: commandName,
@@ -596,7 +596,7 @@ func (b *DiscordBot) handleComponentInteraction(i *discordgo.InteractionCreate) 
 		authorID = i.User.ID
 	}
 
-	inter := &orchestrator.Interaction{
+	inter := &bot.Interaction{
 		ChannelID:   i.ChannelID,
 		GuildID:     i.GuildID,
 		CommandName: "stop",
@@ -608,7 +608,7 @@ func (b *DiscordBot) handleComponentInteraction(i *discordgo.InteractionCreate) 
 	b.dispatchInteraction(inter)
 }
 
-func (b *DiscordBot) dispatchInteraction(inter *orchestrator.Interaction) {
+func (b *DiscordBot) dispatchInteraction(inter *bot.Interaction) {
 	for _, h := range bot.CopyHandlers(&b.mu, b.interactionHandlers) {
 		go h(context.Background(), inter)
 	}

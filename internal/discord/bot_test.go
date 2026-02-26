@@ -14,8 +14,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/orchestrator"
 )
+
+// Compile-time check that DiscordBot implements orchestrator.Bot.
+var _ orchestrator.Bot = (*DiscordBot)(nil)
 
 // --- Mock DiscordSession ---
 
@@ -268,20 +272,20 @@ func (s *BotSuite) TestStop() {
 func (s *BotSuite) TestSendMessage() {
 	tests := []struct {
 		name    string
-		msg     *orchestrator.OutgoingMessage
+		msg     *bot.OutgoingMessage
 		setup   func(*MockSession)
 		wantErr string
 	}{
 		{
 			name: "simple",
-			msg:  &orchestrator.OutgoingMessage{ChannelID: "ch-1", Content: "hello"},
+			msg:  &bot.OutgoingMessage{ChannelID: "ch-1", Content: "hello"},
 			setup: func(ss *MockSession) {
 				ss.On("ChannelMessageSend", "ch-1", "hello", mock.Anything).Return(&discordgo.Message{}, nil)
 			},
 		},
 		{
 			name: "with reply",
-			msg:  &orchestrator.OutgoingMessage{ChannelID: "ch-1", Content: "hello", ReplyToMessageID: "msg-1"},
+			msg:  &bot.OutgoingMessage{ChannelID: "ch-1", Content: "hello", ReplyToMessageID: "msg-1"},
 			setup: func(ss *MockSession) {
 				ss.On("ChannelMessageSendReply", "ch-1", "hello", &discordgo.MessageReference{MessageID: "msg-1"}, mock.Anything).
 					Return(&discordgo.Message{}, nil)
@@ -289,7 +293,7 @@ func (s *BotSuite) TestSendMessage() {
 		},
 		{
 			name: "split",
-			msg:  &orchestrator.OutgoingMessage{ChannelID: "ch-1", Content: strings.Repeat("a", 2500), ReplyToMessageID: "msg-1"},
+			msg:  &bot.OutgoingMessage{ChannelID: "ch-1", Content: strings.Repeat("a", 2500), ReplyToMessageID: "msg-1"},
 			setup: func(ss *MockSession) {
 				ss.On("ChannelMessageSendReply", "ch-1", strings.Repeat("a", 2000), &discordgo.MessageReference{MessageID: "msg-1"}, mock.Anything).
 					Return(&discordgo.Message{}, nil)
@@ -298,7 +302,7 @@ func (s *BotSuite) TestSendMessage() {
 		},
 		{
 			name: "reply error",
-			msg:  &orchestrator.OutgoingMessage{ChannelID: "ch-1", Content: "hello", ReplyToMessageID: "msg-1"},
+			msg:  &bot.OutgoingMessage{ChannelID: "ch-1", Content: "hello", ReplyToMessageID: "msg-1"},
 			setup: func(ss *MockSession) {
 				ss.On("ChannelMessageSendReply", "ch-1", "hello", &discordgo.MessageReference{MessageID: "msg-1"}, mock.Anything).
 					Return(nil, errors.New("send failed"))
@@ -307,7 +311,7 @@ func (s *BotSuite) TestSendMessage() {
 		},
 		{
 			name: "send error",
-			msg:  &orchestrator.OutgoingMessage{ChannelID: "ch-1", Content: "hello"},
+			msg:  &bot.OutgoingMessage{ChannelID: "ch-1", Content: "hello"},
 			setup: func(ss *MockSession) {
 				ss.On("ChannelMessageSend", "ch-1", "hello", mock.Anything).Return(nil, errors.New("send failed"))
 			},
@@ -429,9 +433,9 @@ func (s *BotSuite) TestRemoveCommands() {
 // --- OnMessage / OnInteraction ---
 
 func (s *BotSuite) TestOnMessageRegistersHandler() {
-	var received *orchestrator.IncomingMessage
+	var received *bot.IncomingMessage
 	done := make(chan struct{})
-	s.bot.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
+	s.bot.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 		received = msg
 		close(done)
 	})
@@ -540,9 +544,9 @@ func (s *BotSuite) TestOnInteractionCommandParsing() {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
 			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
-			var received *orchestrator.Interaction
+			var received *bot.Interaction
 			done := make(chan struct{})
-			b.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+			b.OnInteraction(func(_ context.Context, i *bot.Interaction) {
 				received = i
 				close(done)
 			})
@@ -571,9 +575,9 @@ func (s *BotSuite) TestOnInteractionCommandParsing() {
 }
 
 func (s *BotSuite) TestOnInteractionRespondError() {
-	var received *orchestrator.Interaction
+	var received *bot.Interaction
 	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+	s.bot.OnInteraction(func(_ context.Context, i *bot.Interaction) {
 		received = i
 		close(done)
 	})
@@ -606,7 +610,7 @@ func (s *BotSuite) TestOnInteractionRespondError() {
 
 func (s *BotSuite) TestOnInteractionIgnoresUnhandledType() {
 	called := false
-	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {
+	s.bot.OnInteraction(func(_ context.Context, _ *bot.Interaction) {
 		called = true
 	})
 
@@ -621,9 +625,9 @@ func (s *BotSuite) TestOnInteractionIgnoresUnhandledType() {
 }
 
 func (s *BotSuite) TestHandleComponentInteractionStopButton() {
-	var received *orchestrator.Interaction
+	var received *bot.Interaction
 	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+	s.bot.OnInteraction(func(_ context.Context, i *bot.Interaction) {
 		received = i
 		close(done)
 	})
@@ -661,7 +665,7 @@ func (s *BotSuite) TestHandleComponentInteractionStopButton() {
 
 func (s *BotSuite) TestHandleComponentInteractionNonStopIgnored() {
 	called := false
-	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {
+	s.bot.OnInteraction(func(_ context.Context, _ *bot.Interaction) {
 		called = true
 	})
 
@@ -683,7 +687,7 @@ func (s *BotSuite) TestHandleComponentInteractionNonStopIgnored() {
 }
 
 func (s *BotSuite) TestHandleComponentInteractionAckError() {
-	s.bot.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {})
+	s.bot.OnInteraction(func(_ context.Context, _ *bot.Interaction) {})
 
 	s.session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("ack failed"))
 
@@ -702,9 +706,9 @@ func (s *BotSuite) TestHandleComponentInteractionAckError() {
 }
 
 func (s *BotSuite) TestHandleComponentInteractionDMUser() {
-	var received *orchestrator.Interaction
+	var received *bot.Interaction
 	done := make(chan struct{})
-	s.bot.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+	s.bot.OnInteraction(func(_ context.Context, i *bot.Interaction) {
 		received = i
 		close(done)
 	})
@@ -758,7 +762,7 @@ func (s *BotSuite) TestHandleMessageIgnored() {
 			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			b.botUserID = "bot-123"
 			called := false
-			b.OnMessage(func(_ context.Context, _ *orchestrator.IncomingMessage) { called = true })
+			b.OnMessage(func(_ context.Context, _ *bot.IncomingMessage) { called = true })
 			b.handleMessage(nil, &discordgo.MessageCreate{Message: tc.msg})
 			require.False(s.T(), called)
 		})
@@ -805,9 +809,9 @@ func (s *BotSuite) TestHandleMessageTriggered() {
 			b.botUserID = "bot-123"
 			session.On("GuildMember", mock.Anything, mock.Anything, mock.Anything).
 				Return(nil, errors.New("not mocked")).Maybe()
-			var received *orchestrator.IncomingMessage
+			var received *bot.IncomingMessage
 			done := make(chan struct{})
-			b.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
+			b.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 				received = msg
 				close(done)
 			})
@@ -829,7 +833,7 @@ func (s *BotSuite) TestHandleMessageMultipleHandlers() {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	count := 0
-	handler := func(_ context.Context, _ *orchestrator.IncomingMessage) {
+	handler := func(_ context.Context, _ *bot.IncomingMessage) {
 		mu.Lock()
 		count++
 		mu.Unlock()
@@ -857,7 +861,7 @@ func (s *BotSuite) TestHandleInteractionMultipleHandlers() {
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	count := 0
-	handler := func(_ context.Context, _ *orchestrator.Interaction) {
+	handler := func(_ context.Context, _ *bot.Interaction) {
 		mu.Lock()
 		count++
 		mu.Unlock()
@@ -1143,7 +1147,7 @@ func (s *BotSuite) TestHandleInteractionPendingStorage() {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
 			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
-			b.OnInteraction(func(_ context.Context, _ *orchestrator.Interaction) {})
+			b.OnInteraction(func(_ context.Context, _ *bot.Interaction) {})
 			session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(tc.respondErr)
 			interaction := &discordgo.Interaction{
 				ChannelID: "ch-1", Type: discordgo.InteractionApplicationCommand,
@@ -1213,7 +1217,7 @@ func (s *BotSuite) TestSendMessageWithPendingInteraction() {
 			b.pendingInteractions["ch-1"] = interaction
 			b.mu.Unlock()
 			tc.setup(session, interaction)
-			err := b.SendMessage(context.Background(), &orchestrator.OutgoingMessage{ChannelID: "ch-1", Content: tc.content})
+			err := b.SendMessage(context.Background(), &bot.OutgoingMessage{ChannelID: "ch-1", Content: tc.content})
 			if tc.wantErr != "" {
 				require.Error(s.T(), err)
 				require.Contains(s.T(), err.Error(), tc.wantErr)
@@ -1651,9 +1655,9 @@ func (s *BotSuite) TestHandleMessageRolePopulation() {
 			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			b.botUserID = "bot-123"
 			session.On("GuildMember", "g-1", "user-1", mock.Anything).Return(tc.member, tc.memberErr)
-			var received *orchestrator.IncomingMessage
+			var received *bot.IncomingMessage
 			done := make(chan struct{})
-			b.OnMessage(func(_ context.Context, msg *orchestrator.IncomingMessage) {
+			b.OnMessage(func(_ context.Context, msg *bot.IncomingMessage) {
 				received = msg
 				close(done)
 			})
@@ -1692,9 +1696,9 @@ func (s *BotSuite) TestHandleInteractionAuthor() {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
 			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
-			var received *orchestrator.Interaction
+			var received *bot.Interaction
 			done := make(chan struct{})
-			b.OnInteraction(func(_ context.Context, i *orchestrator.Interaction) {
+			b.OnInteraction(func(_ context.Context, i *bot.Interaction) {
 				received = i
 				close(done)
 			})

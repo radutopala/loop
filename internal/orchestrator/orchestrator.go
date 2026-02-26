@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/radutopala/loop/internal/agent"
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/scheduler"
@@ -21,14 +22,14 @@ import (
 type Bot interface {
 	Start(ctx context.Context) error
 	Stop() error
-	SendMessage(ctx context.Context, msg *OutgoingMessage) error
+	SendMessage(ctx context.Context, msg *bot.OutgoingMessage) error
 	SendTyping(ctx context.Context, channelID string) error
 	SendStopButton(ctx context.Context, channelID, runID string) (messageID string, err error)
 	RemoveStopButton(ctx context.Context, channelID, messageID string) error
 	RegisterCommands(ctx context.Context) error
 	RemoveCommands(ctx context.Context) error
-	OnMessage(handler func(ctx context.Context, msg *IncomingMessage))
-	OnInteraction(handler func(ctx context.Context, i *Interaction))
+	OnMessage(handler func(ctx context.Context, msg *bot.IncomingMessage))
+	OnInteraction(handler func(ctx context.Context, i *bot.Interaction))
 	OnChannelDelete(handler func(ctx context.Context, channelID string, isThread bool))
 	OnChannelJoin(handler func(ctx context.Context, channelID string))
 	BotUserID() string
@@ -46,43 +47,10 @@ type Bot interface {
 	GetMemberRoles(ctx context.Context, guildID, userID string) ([]string, error)
 }
 
-// IncomingMessage from the chat platform.
-type IncomingMessage struct {
-	ChannelID    string
-	GuildID      string
-	AuthorID     string
-	AuthorName   string
-	Content      string
-	MessageID    string
-	IsBotMention bool
-	IsReplyToBot bool
-	HasPrefix    bool
-	IsDM         bool
-	Timestamp    time.Time
-	AuthorRoles  []string // role IDs for permission checking (Discord only)
-}
-
-// OutgoingMessage to the chat platform.
-type OutgoingMessage struct {
-	ChannelID        string
-	Content          string
-	ReplyToMessageID string
-}
-
 // Runner runs Claude agent in a container.
 type Runner interface {
 	Run(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error)
 	Cleanup(ctx context.Context) error
-}
-
-// Interaction represents a slash command interaction.
-type Interaction struct {
-	ChannelID   string
-	GuildID     string
-	CommandName string
-	Options     map[string]string
-	AuthorID    string   // user who invoked the command
-	AuthorRoles []string // role IDs (Discord only)
 }
 
 // Orchestrator coordinates all components of the loop bot.
@@ -108,7 +76,7 @@ func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logg
 		scheduler:      sched,
 		queue:          NewChannelQueue(),
 		logger:         logger,
-		typingInterval: TypingInterval,
+		typingInterval: typingInterval,
 		platform:       platform,
 		cfg:            cfg,
 	}
@@ -163,8 +131,8 @@ func (o *Orchestrator) Stop() error {
 
 const recentMessageLimit = 50
 
-// TypingInterval is the default interval between typing indicator refreshes.
-const TypingInterval = 8 * time.Second
+// typingInterval is the default interval between typing indicator refreshes.
+const typingInterval = 8 * time.Second
 
 // HandleChannelJoin auto-registers a channel when the bot is added to it.
 func (o *Orchestrator) HandleChannelJoin(ctx context.Context, channelID string) {

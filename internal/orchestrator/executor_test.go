@@ -14,6 +14,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/radutopala/loop/internal/agent"
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/testutil"
 )
@@ -75,7 +76,7 @@ func (s *TaskExecutorSuite) TestHappyPathWithSession() {
 		SessionID: "new-session",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch1", "new-session").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
 		return msg.ChannelID == "ch1" && msg.Content == "done!"
 	})).Return(nil).Once()
 
@@ -105,7 +106,7 @@ func (s *TaskExecutorSuite) TestHappyPathWithoutSession() {
 		SessionID: "fresh-session",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch2", "fresh-session").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
 		return msg.ChannelID == "ch2" && msg.Content == "hi!"
 	})).Return(nil).Once()
 
@@ -199,7 +200,7 @@ func (s *TaskExecutorSuite) TestSoftErrorsStillSucceed() {
 			s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 				Response: "ok", SessionID: "sess",
 			}, nil)
-			s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+			s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
 				return msg.ChannelID == tc.channelID && msg.Content == "ok"
 			})).Return(nil).Maybe()
 
@@ -246,7 +247,7 @@ func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
 	s.store.On("UpdateSessionID", s.ctx, "ch9", "sess-stream").Return(nil)
 
 	// Second OnTurn sends to thread
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
 		return msg.ChannelID == "thread-1" && msg.Content == "Final answer"
 	})).Return(nil).Once()
 
@@ -269,7 +270,7 @@ func (s *TaskExecutorSuite) TestStreamingDisabledNoOnTurn() {
 		return req.OnTurn == nil
 	})).Return(&agent.AgentResponse{Response: "Result", SessionID: "sess-nostream"}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch10", "sess-nostream").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
 		return msg.ChannelID == "ch10" && msg.Content == "Result"
 	})).Return(nil).Once()
 
@@ -313,7 +314,7 @@ func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
 	s.store.On("UpdateSessionID", s.ctx, "ch11", "sess-diff").Return(nil)
 
 	// Final response (different from last streamed) goes to thread
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
 		return msg.ChannelID == "thread-2" && msg.Content == "Different final"
 	})).Return(nil).Once()
 
@@ -358,11 +359,11 @@ func (s *TaskExecutorSuite) TestStreamingThreadCreationFailsFallsBack() {
 	s.store.On("UpdateSessionID", s.ctx, "ch12", "sess-fb").Return(nil)
 
 	// Fallback: first turn goes to channel directly
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
 		return msg.ChannelID == "ch12" && msg.Content == "Turn 1"
 	})).Return(nil).Once()
 	// Second turn also goes to channel (threadID never set)
-	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
 		return msg.ChannelID == "ch12" && msg.Content == "Turn 2"
 	})).Return(nil).Once()
 
@@ -614,7 +615,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteSkipped() {
 			setupMocks: func() {
 				s.store.On("GetChannel", s.ctx, "ch17").Return(nil, nil)
 				s.store.On("UpdateSessionID", s.ctx, "ch17", mock.Anything).Return(nil)
-				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *OutgoingMessage) bool {
+				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
 					return msg.ChannelID == "ch17" && msg.Content == "Result"
 				})).Return(nil).Once()
 			},

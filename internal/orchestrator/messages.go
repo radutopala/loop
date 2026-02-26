@@ -6,11 +6,12 @@ import (
 	"time"
 
 	"github.com/radutopala/loop/internal/agent"
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 )
 
 // HandleMessage processes an incoming chat message.
-func (o *Orchestrator) HandleMessage(ctx context.Context, msg *IncomingMessage) {
+func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessage) {
 	active, err := o.store.IsChannelActive(ctx, msg.ChannelID)
 	if err != nil {
 		o.logger.Error("checking channel active", "error", err, "channel_id", msg.ChannelID)
@@ -134,7 +135,7 @@ func (o *Orchestrator) resolveThread(ctx context.Context, channelID string) bool
 	return true
 }
 
-func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *IncomingMessage) {
+func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *bot.IncomingMessage) {
 	o.queue.Acquire(msg.ChannelID)
 	defer o.queue.Release(msg.ChannelID)
 
@@ -170,7 +171,7 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *Incomin
 }
 
 // prepareAgentRequest fetches recent messages and channel data, then builds an AgentRequest.
-func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *IncomingMessage) (*agent.AgentRequest, []*db.Message, error) {
+func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.IncomingMessage) (*agent.AgentRequest, []*db.Message, error) {
 	recent, err := o.store.GetRecentMessages(ctx, msg.ChannelID, recentMessageLimit)
 	if err != nil {
 		o.logger.Error("getting recent messages", "error", err, "channel_id", msg.ChannelID)
@@ -202,7 +203,7 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *IncomingMes
 // executeAgentRun runs the agent with timeout, streaming, and stop-button cancellation.
 // Returns the agent response and the last streamed text (for dedup), or an error if the
 // run failed and the caller should abort.
-func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *IncomingMessage, req *agent.AgentRequest) (*agent.AgentResponse, string, error) {
+func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMessage, req *agent.AgentRequest) (*agent.AgentResponse, string, error) {
 	runCtx, runCancel := context.WithTimeout(ctx, o.cfg.ContainerTimeout)
 	defer runCancel()
 
@@ -212,7 +213,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *IncomingMessage
 	var tracker *streamTracker
 	if o.cfg.StreamingEnabled {
 		tracker = newStreamTracker(func(text string) {
-			_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 				ChannelID:        msg.ChannelID,
 				Content:          text,
 				ReplyToMessageID: msg.MessageID,
@@ -225,7 +226,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *IncomingMessage
 	if err != nil {
 		if runCtx.Err() == context.Canceled {
 			o.logger.Info("run stopped by user", "channel_id", msg.ChannelID)
-			_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+			_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 				ChannelID:        msg.ChannelID,
 				Content:          "Run stopped.",
 				ReplyToMessageID: msg.MessageID,
@@ -233,7 +234,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *IncomingMessage
 			return nil, "", err
 		}
 		o.logger.Error("running agent", "error", err, "channel_id", msg.ChannelID)
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+		_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 			ChannelID:        msg.ChannelID,
 			Content:          "Sorry, I encountered an error processing your request.",
 			ReplyToMessageID: msg.MessageID,
@@ -243,7 +244,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *IncomingMessage
 
 	if resp.Error != "" {
 		o.logger.Error("agent returned error", "error", resp.Error, "channel_id", msg.ChannelID)
-		_ = o.bot.SendMessage(ctx, &OutgoingMessage{
+		_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 			ChannelID:        msg.ChannelID,
 			Content:          fmt.Sprintf("Agent error: %s", resp.Error),
 			ReplyToMessageID: msg.MessageID,
@@ -259,7 +260,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *IncomingMessage
 }
 
 // deliverResponse sends the final response, records the bot message, and marks messages as processed.
-func (o *Orchestrator) deliverResponse(ctx context.Context, msg *IncomingMessage, resp *agent.AgentResponse, recent []*db.Message, lastStreamedText string) {
+func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMessage, resp *agent.AgentResponse, recent []*db.Message, lastStreamedText string) {
 	if err := o.store.UpdateSessionID(ctx, msg.ChannelID, resp.SessionID); err != nil {
 		o.logger.Error("updating session data", "error", err, "channel_id", msg.ChannelID)
 	}
@@ -271,7 +272,7 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *IncomingMessage
 
 	// Skip final send if it duplicates the last streamed turn
 	if lastStreamedText == "" || resp.Response != lastStreamedText {
-		if err := o.bot.SendMessage(ctx, &OutgoingMessage{
+		if err := o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 			ChannelID:        msg.ChannelID,
 			Content:          resp.Response,
 			ReplyToMessageID: msg.MessageID,

@@ -22,6 +22,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/radutopala/loop/internal/api"
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/daemon"
@@ -276,7 +277,7 @@ func (m *mockBot) Stop() error {
 	return m.Called().Error(0)
 }
 
-func (m *mockBot) SendMessage(ctx context.Context, msg *orchestrator.OutgoingMessage) error {
+func (m *mockBot) SendMessage(ctx context.Context, msg *bot.OutgoingMessage) error {
 	return m.Called(ctx, msg).Error(0)
 }
 
@@ -292,11 +293,11 @@ func (m *mockBot) RemoveCommands(ctx context.Context) error {
 	return m.Called(ctx).Error(0)
 }
 
-func (m *mockBot) OnMessage(handler func(ctx context.Context, msg *orchestrator.IncomingMessage)) {
+func (m *mockBot) OnMessage(handler func(ctx context.Context, msg *bot.IncomingMessage)) {
 	m.Called(handler)
 }
 
-func (m *mockBot) OnInteraction(handler func(ctx context.Context, i *orchestrator.Interaction)) {
+func (m *mockBot) OnInteraction(handler func(ctx context.Context, i *bot.Interaction)) {
 	m.Called(handler)
 }
 
