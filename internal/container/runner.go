@@ -716,35 +716,20 @@ func localhostToDockerHost(v string) string {
 // parseStreamJSON scans newline-delimited JSON events from Claude's
 // --output-format stream-json and returns the final "result" event.
 func parseStreamJSON(r io.Reader) (*claudeResponse, error) {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // allow lines up to 1MB
-	var result *claudeResponse
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
-			continue
-		}
-		var evt claudeResponse
-		if err := json.Unmarshal([]byte(line), &evt); err != nil {
-			continue // skip non-JSON lines (e.g. ANSI noise)
-		}
-		if evt.Type == "result" {
-			result = &evt
-		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("reading container output: %w", err)
-	}
-	if result == nil {
-		return nil, fmt.Errorf("parsing claude response: no result event found")
-	}
-	return result, nil
+	return scanStreamJSON(r, nil)
 }
 
 // parseStreamingJSON scans newline-delimited JSON events from Claude's
 // streaming output, calling onTurn for each assistant turn's text content.
 // Returns the final "result" event.
 func parseStreamingJSON(r io.Reader, onTurn func(string)) (*claudeResponse, error) {
+	return scanStreamJSON(r, onTurn)
+}
+
+// scanStreamJSON is the shared scanner for Claude's stream-json output.
+// It scans newline-delimited JSON events, dispatches "assistant" events
+// to onTurn (when non-nil), and returns the final "result" event.
+func scanStreamJSON(r io.Reader, onTurn func(string)) (*claudeResponse, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // allow lines up to 1MB
 	var result *claudeResponse
@@ -754,22 +739,23 @@ func parseStreamingJSON(r io.Reader, onTurn func(string)) (*claudeResponse, erro
 			continue
 		}
 
-		// Quick type check to avoid full unmarshal of irrelevant events
 		var typeCheck struct {
 			Type string `json:"type"`
 		}
 		if err := json.Unmarshal([]byte(line), &typeCheck); err != nil {
-			continue
+			continue // skip non-JSON lines (e.g. ANSI noise)
 		}
 
 		switch typeCheck.Type {
 		case "assistant":
-			var msg assistantMessage
-			if err := json.Unmarshal([]byte(line), &msg); err != nil {
-				continue
-			}
-			if text := msg.extractText(); text != "" {
-				onTurn(text)
+			if onTurn != nil {
+				var msg assistantMessage
+				if err := json.Unmarshal([]byte(line), &msg); err != nil {
+					continue
+				}
+				if text := msg.extractText(); text != "" {
+					onTurn(text)
+				}
 			}
 		case "result":
 			var evt claudeResponse
