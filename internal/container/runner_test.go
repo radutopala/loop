@@ -1077,6 +1077,80 @@ func (s *RunnerSuite) TestDefaultUserHomeDir() {
 	require.NotEmpty(s.T(), home)
 }
 
+func (s *RunnerSuite) TestAddAuthEnv() {
+	tests := []struct {
+		name       string
+		oauthToken string
+		apiKey     string
+		want       []string
+	}{
+		{
+			name:       "OAuth token set",
+			oauthToken: "oauth-tok",
+			want:       []string{"BASE=1", "CLAUDE_CODE_OAUTH_TOKEN=oauth-tok"},
+		},
+		{
+			name:   "API key set",
+			apiKey: "api-key",
+			want:   []string{"BASE=1", "ANTHROPIC_API_KEY=api-key"},
+		},
+		{
+			name:       "OAuth takes precedence",
+			oauthToken: "oauth-tok",
+			apiKey:     "api-key",
+			want:       []string{"BASE=1", "CLAUDE_CODE_OAUTH_TOKEN=oauth-tok"},
+		},
+		{
+			name: "neither set",
+			want: []string{"BASE=1"},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			cfg := &config.Config{
+				ClaudeCodeOAuthToken: tc.oauthToken,
+				AnthropicAPIKey:      tc.apiKey,
+			}
+			result := addAuthEnv([]string{"BASE=1"}, cfg)
+			require.Equal(s.T(), tc.want, result)
+		})
+	}
+}
+
+func (s *RunnerSuite) TestAddProxyEnv() {
+	tests := []struct {
+		name string
+		envs map[string]string
+		want []string
+	}{
+		{
+			name: "no proxy vars",
+			envs: map[string]string{},
+			want: []string{"BASE=1"},
+		},
+		{
+			name: "HTTP_PROXY forwarded with NO_PROXY added",
+			envs: map[string]string{"HTTP_PROXY": "http://proxy:8080"},
+			want: []string{"BASE=1", "HTTP_PROXY=http://proxy:8080", "NO_PROXY=host.docker.internal", "no_proxy=host.docker.internal"},
+		},
+		{
+			name: "localhost rewritten to docker host",
+			envs: map[string]string{"HTTP_PROXY": "http://localhost:3128"},
+			want: []string{"BASE=1", "HTTP_PROXY=http://host.docker.internal:3128", "NO_PROXY=host.docker.internal", "no_proxy=host.docker.internal"},
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			origGetenv := osGetenv
+			defer func() { osGetenv = origGetenv }()
+			osGetenv = func(key string) string { return tc.envs[key] }
+
+			result := addProxyEnv([]string{"BASE=1"})
+			require.Equal(s.T(), tc.want, result)
+		})
+	}
+}
+
 func (s *RunnerSuite) TestLocalhostToDockerHost() {
 	tests := []struct {
 		name  string

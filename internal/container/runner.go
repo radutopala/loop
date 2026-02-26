@@ -425,12 +425,35 @@ func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL s
 		"HOST_USER=" + osGetenv("USER"),
 		"TZ=" + localTimezone(),
 	}
-	if cfg.ClaudeCodeOAuthToken != "" {
-		env = append(env, "CLAUDE_CODE_OAUTH_TOKEN="+cfg.ClaudeCodeOAuthToken)
-	} else if cfg.AnthropicAPIKey != "" {
-		env = append(env, "ANTHROPIC_API_KEY="+cfg.AnthropicAPIKey)
+	env = addAuthEnv(env, cfg)
+	env = addProxyEnv(env)
+
+	for k, v := range cfg.Envs {
+		expanded, err := expandPath(v)
+		if err != nil {
+			return nil, fmt.Errorf("expanding env %s value: %w", k, err)
+		}
+		env = append(env, k+"="+expanded)
 	}
 
+	return env, nil
+}
+
+// addAuthEnv appends authentication environment variables to env.
+// Prefers OAuth token over API key.
+func addAuthEnv(env []string, cfg *config.Config) []string {
+	if cfg.ClaudeCodeOAuthToken != "" {
+		return append(env, "CLAUDE_CODE_OAUTH_TOKEN="+cfg.ClaudeCodeOAuthToken)
+	}
+	if cfg.AnthropicAPIKey != "" {
+		return append(env, "ANTHROPIC_API_KEY="+cfg.AnthropicAPIKey)
+	}
+	return env
+}
+
+// addProxyEnv forwards host proxy environment variables into env,
+// rewriting localhost addresses to host.docker.internal.
+func addProxyEnv(env []string) []string {
 	hasProxy := false
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
 		if v := osGetenv(key); v != "" {
@@ -443,16 +466,7 @@ func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL s
 	if hasProxy {
 		env = ensureNoProxy(env)
 	}
-
-	for k, v := range cfg.Envs {
-		expanded, err := expandPath(v)
-		if err != nil {
-			return nil, fmt.Errorf("expanding env %s value: %w", k, err)
-		}
-		env = append(env, k+"="+expanded)
-	}
-
-	return env, nil
+	return env
 }
 
 // writeMCPConfig creates host directories and writes the per-channel MCP
