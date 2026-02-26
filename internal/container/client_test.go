@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"testing"
 
 	containertypes "github.com/docker/docker/api/types/container"
@@ -598,4 +599,46 @@ func (s *ClientSuite) TestDefaultDockerBuildCmd() {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
 	_, _ = dockerBuildCmd(ctx, "/nonexistent", "test:latest")
+}
+
+func (s *ClientSuite) TestGitconfigSecretPath() {
+	origHome := userHomeDir
+	origStat := osStat
+	defer func() {
+		userHomeDir = origHome
+		osStat = origStat
+	}()
+
+	userHomeDir = func() (string, error) { return "/home/testuser", nil }
+	osStat = func(name string) (os.FileInfo, error) {
+		if name == "/home/testuser/.gitconfig" {
+			return nil, nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	require.Equal(s.T(), "/home/testuser/.gitconfig", gitconfigSecretPath())
+}
+
+func (s *ClientSuite) TestGitconfigSecretPathNotExists() {
+	origHome := userHomeDir
+	origStat := osStat
+	defer func() {
+		userHomeDir = origHome
+		osStat = origStat
+	}()
+
+	userHomeDir = func() (string, error) { return "/home/testuser", nil }
+	osStat = func(_ string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+
+	require.Empty(s.T(), gitconfigSecretPath())
+}
+
+func (s *ClientSuite) TestGitconfigSecretPathHomeDirError() {
+	origHome := userHomeDir
+	defer func() { userHomeDir = origHome }()
+
+	userHomeDir = func() (string, error) { return "", errors.New("no home") }
+
+	require.Empty(s.T(), gitconfigSecretPath())
 }

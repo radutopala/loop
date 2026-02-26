@@ -15,7 +15,7 @@ COPY --from=builder /go/bin/loop /usr/local/bin/loop
 COPY --from=builder /go/bin/tk /usr/local/bin/tk
 COPY --from=builder /go/bin/gopls /usr/local/bin/gopls
 COPY setup.sh /usr/local/bin/setup.sh
-RUN chmod +x /usr/local/bin/setup.sh && /usr/local/bin/setup.sh
+RUN --mount=type=secret,id=gitconfig,target=/root/.gitconfig chmod +x /usr/local/bin/setup.sh && /usr/local/bin/setup.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 RUN chmod +x /usr/local/bin/entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

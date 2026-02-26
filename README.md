@@ -84,7 +84,7 @@ Choose **Slack** or **Discord**:
 <summary><strong>Slack</strong></summary>
 
 1. Go to https://api.slack.com/apps → **Create New App** → **From a manifest**
-2. Select your workspace, choose **JSON**, and paste the contents of `~/.loop/slack-manifest.json` (created by `loop onboard:global`)
+2. Select your workspace, choose **JSON**, and paste the contents of [`slack.manifest.json`](https://github.com/radutopala/loop/blob/main/internal/config/slack.manifest.json)
 3. Click **Create**
 4. Go to **Socket Mode** → generate an app-level token with `connections:write` scope → copy the token (starts with `xapp-`)
 5. Go to **Install App** → install to workspace → copy the **Bot User OAuth Token** (starts with `xoxb-`)

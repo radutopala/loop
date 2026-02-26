@@ -27,12 +27,19 @@ import (
 
 func init() {
 	cobra.EnablePrefixMatching = true
+	version = resolveVersion(version)
+}
 
-	if version == "dev" {
-		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
-			version = info.Main.Version
-		}
+// resolveVersion uses debug.ReadBuildInfo to replace "dev" with the actual
+// module version when installed via `go install`.
+var resolveVersion = func(v string) string {
+	if v != "dev" {
+		return v
 	}
+	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+		return info.Main.Version
+	}
+	return v
 }
 
 var (

@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -233,7 +234,25 @@ var latestClaudeVersion = func() string {
 // errors because the CLI uses BuildKit by default.
 var dockerBuildCmd = func(ctx context.Context, contextDir, tag string) ([]byte, error) {
 	claudeVersion := "CLAUDE_VERSION=" + latestClaudeVersion()
-	return exec.CommandContext(ctx, "docker", "build", "--build-arg", claudeVersion, "-t", tag, contextDir).CombinedOutput()
+	args := []string{"build", "--build-arg", claudeVersion}
+	if gitconfigPath := gitconfigSecretPath(); gitconfigPath != "" {
+		args = append(args, "--secret", "id=gitconfig,src="+gitconfigPath)
+	}
+	args = append(args, "-t", tag, contextDir)
+	return exec.CommandContext(ctx, "docker", args...).CombinedOutput()
+}
+
+// gitconfigSecretPath returns the path to ~/.gitconfig if it exists, or "" otherwise.
+func gitconfigSecretPath() string {
+	home, err := userHomeDir()
+	if err != nil {
+		return ""
+	}
+	p := filepath.Join(home, ".gitconfig")
+	if _, err := osStat(p); err != nil {
+		return ""
+	}
+	return p
 }
 
 // ImageBuild builds a Docker image from the given context directory.

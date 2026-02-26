@@ -3086,6 +3086,62 @@ func (s *MainSuite) TestEnsureImageWriteErrors() {
 	}
 }
 
+// --- resolveVersion ---
+
+func (s *MainSuite) TestResolveVersionFromBuildInfo() {
+	orig := resolveVersion
+	defer func() { resolveVersion = orig }()
+
+	resolveVersion = func(v string) string {
+		if v == "dev" {
+			return "v1.0.0"
+		}
+		return v
+	}
+
+	require.Equal(s.T(), "v1.0.0", resolveVersion("dev"))
+}
+
+func (s *MainSuite) TestResolveVersionKeepsNonDev() {
+	require.Equal(s.T(), "1.2.3", resolveVersion("1.2.3"))
+}
+
+func (s *MainSuite) TestResolveVersionDevFallback() {
+	// Default resolveVersion with "dev" — ReadBuildInfo returns "(devel)" in tests
+	require.Equal(s.T(), "dev", resolveVersion("dev"))
+}
+
+// --- dumpTemplates ---
+
+func (s *MainSuite) TestDumpTemplatesSkipsDirectories() {
+	origFS := templatesFS
+	defer func() { templatesFS = origFS }()
+
+	templatesFS = &dirEntryFS{}
+
+	err := dumpTemplates(s.T().TempDir())
+	require.NoError(s.T(), err)
+}
+
+// dirEntryFS returns a directory entry that dumpTemplates should skip.
+type dirEntryFS struct{}
+
+func (dirEntryFS) Open(name string) (fs.File, error) {
+	if name == "templates" {
+		return &fakeDirFile{entries: []fs.DirEntry{&fakeDirEntry{name: "subdir"}}}, nil
+	}
+	return nil, errors.New("not found")
+}
+
+func (dirEntryFS) ReadFile(string) ([]byte, error) { return nil, errors.New("should not be called") }
+
+type fakeDirEntry struct{ name string }
+
+func (e *fakeDirEntry) Name() string               { return e.name }
+func (e *fakeDirEntry) IsDir() bool                { return true }
+func (e *fakeDirEntry) Type() fs.FileMode          { return fs.ModeDir }
+func (e *fakeDirEntry) Info() (fs.FileInfo, error) { return nil, nil }
+
 // --- version ---
 
 func (s *MainSuite) TestNewVersionCmd() {
