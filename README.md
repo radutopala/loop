@@ -541,6 +541,97 @@ The agent will use `search_channels` to find the backend channel, then `send_mes
 /loop stop
 ```
 
+### Parallel Work with `tk` Tickets
+
+Loop ships with a ticket-driven workflow that lets you split work across multiple parallel threads, each working in its own git worktree. A dispatcher automatically creates worker threads and chains merge tickets so branches are merged back into main in order.
+
+#### How it works
+
+1. **You ask the bot** to break a task into work tickets:
+   ```
+   @LoopBot analyze the test files and create tk work tickets to reduce verbosity
+     in each test file. Tag them with "work". Don't start working on them yet.
+   ```
+   The agent creates tickets like:
+   ```
+   tk create "Reduce db_test.go verbosity" -d "Extract helpers, table-drive tests..." --tags work
+   tk create "Reduce api_test.go verbosity" -d "Consolidate error scenarios..." --tags work
+   ```
+
+2. **The heartbeat** (`tk-heartbeat` template) polls every 5 minutes. When it detects ready work tickets, it enables the dispatcher.
+
+3. **The dispatcher** (`tk-auto-worker` template) runs every minute when enabled:
+   - For each ready **work ticket**: creates a thread with a worker agent that checks out a git worktree (`tk-<id>` branch), implements the solution, commits, and closes the ticket — without merging into main.
+   - For each work ticket, also creates a **merge ticket** (tagged `merge`) chained in dependency order so merges happen sequentially.
+   - For each ready **merge ticket**: creates a thread with a worker that rebases the branch onto main and fast-forward merges it (`git rebase main && git merge --ff-only`), then cleans up the worktree and branch.
+
+4. **Work happens in parallel** — multiple worker threads run simultaneously in isolated worktrees. Merges happen one at a time in the correct order via the dependency chain.
+
+5. **When no tickets remain**, the heartbeat disables the dispatcher to save resources.
+
+#### Setup
+
+Add both templates to your `~/.loop/config.json`:
+
+```jsonc
+{
+  "task_templates": [
+    {
+      "name": "tk-auto-worker",
+      "description": "Dispatch ready tickets to worker threads",
+      "schedule": "* * * * *",
+      "type": "cron",
+      "prompt_path": "tk-auto-worker.md"
+    },
+    {
+      "name": "tk-heartbeat",
+      "description": "Enable/disable dispatcher based on ready tickets",
+      "schedule": "5m",
+      "type": "interval",
+      "prompt_path": "tk-heartbeat.md",
+      "auto_delete_sec": 60
+    }
+  ]
+}
+```
+
+The prompt files (`tk-auto-worker.md`, `tk-heartbeat.md`) are installed to `~/.loop/templates/` during `loop onboard:global`.
+
+Then add both templates to your channel:
+```
+/loop template add tk-heartbeat
+/loop template add tk-auto-worker
+```
+
+The heartbeat starts polling immediately. The dispatcher stays disabled until work tickets appear.
+
+#### Example workflow
+
+```
+# 1. Ask the bot to plan and create work tickets
+@LoopBot look at all test files over 1000 lines, create a tk work ticket for
+  each one to reduce verbosity with table-driven tests. Tag them with "work".
+
+# 2. The bot creates tickets:
+#    tic-a1b2 [work] Reduce db_test.go verbosity
+#    tic-c3d4 [work] Reduce api_test.go verbosity
+#    tic-e5f6 [work] Reduce bot_test.go verbosity
+
+# 3. Heartbeat detects ready tickets → enables dispatcher
+# 4. Dispatcher creates worker threads + merge tickets:
+#    Thread "tic-a1b2" → worker creates worktree, implements, commits, closes
+#    Thread "tic-c3d4" → worker creates worktree, implements, commits, closes
+#    Thread "tic-e5f6" → worker creates worktree, implements, commits, closes
+#    (all three run in parallel)
+
+# 5. As work tickets close, merge tickets become ready (in order):
+#    Thread "tic-m001" → rebase tk-a1b2, merge --ff-only into main
+#    Thread "tic-m002" → rebase tk-c3d4, merge --ff-only into main (after m001)
+#    Thread "tic-m003" → rebase tk-e5f6, merge --ff-only into main (after m002)
+
+# 6. All done — heartbeat disables dispatcher
+```
+
 ### Task Templates
 
 The config.json file can include a `task_templates` array with reusable task patterns. Use `/loop template add <name>` in Discord to load a template as a scheduled task in the current channel. Templates are idempotent — adding the same template twice to a channel is a no-op.
