@@ -362,28 +362,10 @@ func (b *DiscordBot) CreateThread(ctx context.Context, channelID, name, mentionU
 	if err != nil {
 		return "", fmt.Errorf("discord create thread: %w", err)
 	}
-	var initialMsg string
-	switch {
-	case message != "":
-		botID := b.BotUserID()
-		// Strip any existing bot mentions from the message to avoid duplicates.
-		clean := strings.ReplaceAll(message, "<@"+botID+">", "")
-		b.mu.RLock()
-		username := b.botUsername
-		b.mu.RUnlock()
-		if username != "" {
-			clean = bot.ReplaceTextMention(clean, username, "")
-		}
-		clean = strings.TrimSpace(clean)
-		initialMsg = fmt.Sprintf("<@%s> %s", botID, clean)
-		if mentionUserID != "" {
-			initialMsg += fmt.Sprintf(" <@%s>", mentionUserID)
-		}
-	case mentionUserID != "":
-		initialMsg = fmt.Sprintf("Hey <@%s>, tag me to get started!", mentionUserID)
-	default:
-		initialMsg = "Tag me to get started!"
-	}
+	b.mu.RLock()
+	username := b.botUsername
+	b.mu.RUnlock()
+	initialMsg := bot.FormatThreadMessage(b.BotUserID(), username, mentionUserID, message, "")
 	if _, err := b.session.ChannelMessageSend(ch.ID, initialMsg); err != nil {
 		b.logger.WarnContext(ctx, "sending initial thread message", "error", err, "thread_id", ch.ID)
 	}

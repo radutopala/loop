@@ -322,28 +322,11 @@ func (b *SlackBot) SetChannelTopic(ctx context.Context, channelID, topic string)
 // CreateThread creates a new thread by posting an initial message in the channel.
 // Returns a composite ID "channelID:messageTS" that represents the thread.
 func (b *SlackBot) CreateThread(ctx context.Context, channelID, name, mentionUserID, message string) (string, error) {
-	botID := b.BotUserID()
-	var initialMsg string
-	switch {
-	case message != "":
-		// Strip any existing bot mentions from the message to avoid duplicates.
-		clean := strings.ReplaceAll(message, "<@"+botID+">", "")
-		b.mu.RLock()
-		username := b.botUsername
-		b.mu.RUnlock()
-		if username != "" {
-			clean = bot.ReplaceTextMention(clean, username, "")
-		}
-		clean = strings.TrimSpace(clean)
-		initialMsg = fmt.Sprintf("<@%s> %s", botID, clean)
-		if mentionUserID != "" {
-			initialMsg += fmt.Sprintf(" <@%s>", mentionUserID)
-		}
-	case mentionUserID != "":
-		initialMsg = fmt.Sprintf("*%s*\nHey <@%s>, tag me to get started!", name, mentionUserID)
-	default:
-		initialMsg = fmt.Sprintf("*%s*\nTag me to get started!", name)
-	}
+	b.mu.RLock()
+	username := b.botUsername
+	b.mu.RUnlock()
+	greetingPrefix := fmt.Sprintf("*%s*\n", name)
+	initialMsg := bot.FormatThreadMessage(b.BotUserID(), username, mentionUserID, message, greetingPrefix)
 
 	_, ts, err := b.session.PostMessage(channelID, goslack.MsgOptionText(initialMsg, false))
 	if err != nil {

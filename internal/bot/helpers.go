@@ -1,6 +1,9 @@
 package bot
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 // CommandPrefix is the text prefix used to trigger bot commands.
 const CommandPrefix = "!loop"
@@ -37,6 +40,31 @@ func ReplaceTextMention(content, username, mention string) string {
 		return content
 	}
 	return content[:idx] + mention + content[idx+len(target):]
+}
+
+// FormatThreadMessage builds the initial message for a new thread.
+// When message is non-empty it strips existing bot mentions, prepends a bot
+// mention, and optionally appends a user mention.
+// When message is empty, it returns a greeting (optionally mentioning the user)
+// prefixed by greetingPrefix (e.g. Slack uses "*threadName*\n").
+func FormatThreadMessage(botID, botUsername, mentionUserID, message, greetingPrefix string) string {
+	switch {
+	case message != "":
+		clean := strings.ReplaceAll(message, "<@"+botID+">", "")
+		if botUsername != "" {
+			clean = ReplaceTextMention(clean, botUsername, "")
+		}
+		clean = strings.TrimSpace(clean)
+		msg := fmt.Sprintf("<@%s> %s", botID, clean)
+		if mentionUserID != "" {
+			msg += fmt.Sprintf(" <@%s>", mentionUserID)
+		}
+		return msg
+	case mentionUserID != "":
+		return greetingPrefix + fmt.Sprintf("Hey <@%s>, tag me to get started!", mentionUserID)
+	default:
+		return greetingPrefix + "Tag me to get started!"
+	}
 }
 
 // SplitMessage splits a message into chunks of at most maxLen characters,
