@@ -120,36 +120,36 @@ func NewDockerRunner(client DockerClient, cfg *config.Config) *DockerRunner {
 
 const containerLabel = "loop-agent"
 
-var mkdirAll = os.MkdirAll
-var getenv = os.Getenv
-var writeFile = os.WriteFile
-var userHomeDir = os.UserHomeDir
+var osMkdirAll = os.MkdirAll
+var osGetenv = os.Getenv
+var osWriteFile = os.WriteFile
+var osUserHomeDir = os.UserHomeDir
 var osStat = os.Stat
-var execCommand = exec.Command
-var timeAfterFunc = time.AfterFunc
-var randRead = rand.Read
-var readlink = os.Readlink
-var readFile = os.ReadFile
-var timeLocalName = func() string { return time.Now().Location().String() }
+var osExecCommand = exec.Command
+var osTimeAfterFunc = time.AfterFunc
+var osRandRead = rand.Read
+var osReadlink = os.Readlink
+var osReadFile = os.ReadFile
+var osTimeLocalName = func() string { return time.Now().Location().String() }
 
 var nonAlphanumRegexp = regexp.MustCompile(`[^a-z0-9]+`)
 
 // localTimezone returns the IANA timezone name (e.g. "Europe/Bucharest").
 func localTimezone() string {
-	if tz := getenv("TZ"); tz != "" && tz != "Local" {
+	if tz := osGetenv("TZ"); tz != "" && tz != "Local" {
 		return tz
 	}
-	if loc := timeLocalName(); loc != "Local" {
+	if loc := osTimeLocalName(); loc != "Local" {
 		return loc
 	}
 	// Linux: /etc/timezone contains the IANA name directly.
-	if data, err := readFile("/etc/timezone"); err == nil {
+	if data, err := osReadFile("/etc/timezone"); err == nil {
 		if tz := strings.TrimSpace(string(data)); tz != "" {
 			return tz
 		}
 	}
 	// macOS/Linux: /etc/localtime is a symlink into the zoneinfo directory.
-	if target, err := readlink("/etc/localtime"); err == nil {
+	if target, err := osReadlink("/etc/localtime"); err == nil {
 		if _, after, ok := strings.Cut(target, "zoneinfo/"); ok {
 			return after
 		}
@@ -181,7 +181,7 @@ func containerName(channelID, dirPath string) string {
 	}
 	sanitized := sanitizeName(base)
 	b := make([]byte, 3)
-	_, _ = randRead(b)
+	_, _ = osRandRead(b)
 	return "loop-" + sanitized + "-" + hex.EncodeToString(b)
 }
 
@@ -260,7 +260,7 @@ func expandPath(path string) (string, error) {
 	if !strings.HasPrefix(path, "~/") {
 		return path, nil
 	}
-	home, err := userHomeDir()
+	home, err := osUserHomeDir()
 	if err != nil {
 		return "", err
 	}
@@ -319,7 +319,7 @@ func processMount(mount string) (string, error) {
 // mount string so the file is available inside the container at the path git
 // will look for it. Returns "" if unconfigured or the file doesn't exist.
 func gitExcludesMount() string {
-	out, err := execCommand("git", "config", "--global", "--get", "core.excludesFile").Output()
+	out, err := osExecCommand("git", "config", "--global", "--get", "core.excludesFile").Output()
 	if err != nil {
 		return ""
 	}
@@ -331,7 +331,7 @@ func gitExcludesMount() string {
 	// Expand ~ for the host path (source)
 	hostPath := raw
 	if strings.HasPrefix(hostPath, "~/") {
-		home, err := userHomeDir()
+		home, err := osUserHomeDir()
 		if err != nil {
 			return ""
 		}
@@ -413,7 +413,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 // buildContainerEnv assembles environment variables for the container,
 // including auth credentials, proxy settings, timezone, and custom envs.
 func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL string) ([]string, error) {
-	hostHome, err := userHomeDir()
+	hostHome, err := osUserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("getting home directory: %w", err)
 	}
@@ -422,7 +422,7 @@ func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL s
 		"CHANNEL_ID=" + channelID,
 		"API_URL=" + apiURL,
 		"HOME=" + hostHome,
-		"HOST_USER=" + getenv("USER"),
+		"HOST_USER=" + osGetenv("USER"),
 		"TZ=" + localTimezone(),
 	}
 	if cfg.ClaudeCodeOAuthToken != "" {
@@ -433,7 +433,7 @@ func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL s
 
 	hasProxy := false
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
-		if v := getenv(key); v != "" {
+		if v := osGetenv(key); v != "" {
 			env = append(env, key+"="+localhostToDockerHost(v))
 			if key != "NO_PROXY" && key != "no_proxy" {
 				hasProxy = true
@@ -459,7 +459,7 @@ func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL s
 // config file. Returns the config file path.
 func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID string, cfg *config.Config) (string, error) {
 	for _, dir := range []string{workDir, filepath.Join(workDir, ".loop")} {
-		if err := mkdirAll(dir, 0o755); err != nil {
+		if err := osMkdirAll(dir, 0o755); err != nil {
 			return "", fmt.Errorf("creating host directory %s: %w", dir, err)
 		}
 	}
@@ -467,7 +467,7 @@ func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID strin
 	mcpConfigPath := filepath.Join(workDir, ".loop", "mcp-"+channelID+".json")
 	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, authorID, cfg.Memory.Enabled, cfg.MCPServers)
 	mcpJSON, _ := json.MarshalIndent(mcpCfg, "", "  ")
-	if err := writeFile(mcpConfigPath, mcpJSON, 0o644); err != nil {
+	if err := osWriteFile(mcpConfigPath, mcpJSON, 0o644); err != nil {
 		return "", fmt.Errorf("writing mcp config: %w", err)
 	}
 	return mcpConfigPath, nil
@@ -531,7 +531,7 @@ func (r *DockerRunner) copyFiles(ctx context.Context, containerID string, files 
 			return fmt.Errorf("expanding path %s: %w", f, err)
 		}
 
-		data, err := readFile(expanded)
+		data, err := osReadFile(expanded)
 		if os.IsNotExist(err) {
 			continue
 		}
@@ -793,7 +793,7 @@ func (r *DockerRunner) Cleanup(ctx context.Context) error {
 // scheduleRemove removes a container after a delay so that `docker logs`
 // remains available for debugging shortly after the run completes.
 func (r *DockerRunner) scheduleRemove(containerID string) {
-	timeAfterFunc(r.cfg.ContainerKeepAlive, func() {
+	osTimeAfterFunc(r.cfg.ContainerKeepAlive, func() {
 		_ = r.client.ContainerRemove(context.Background(), containerID)
 	})
 }

@@ -123,7 +123,7 @@ func (s *RunnerSuite) TestLocalTimezone() {
 		{
 			name: "from TZ env",
 			setup: func() {
-				getenv = func(key string) string {
+				osGetenv = func(key string) string {
 					if key == "TZ" {
 						return "America/New_York"
 					}
@@ -133,9 +133,9 @@ func (s *RunnerSuite) TestLocalTimezone() {
 			expected: "America/New_York",
 		},
 		{
-			name: "from readlink",
+			name: "from osReadlink",
 			setup: func() {
-				readlink = func(string) (string, error) {
+				osReadlink = func(string) (string, error) {
 					return "/var/db/timezone/zoneinfo/Europe/Bucharest", nil
 				}
 			},
@@ -144,7 +144,7 @@ func (s *RunnerSuite) TestLocalTimezone() {
 		{
 			name: "from /etc/timezone",
 			setup: func() {
-				readFile = func(path string) ([]byte, error) {
+				osReadFile = func(path string) ([]byte, error) {
 					if path == "/etc/timezone" {
 						return []byte("Asia/Tokyo\n"), nil
 					}
@@ -156,7 +156,7 @@ func (s *RunnerSuite) TestLocalTimezone() {
 		{
 			name: "from time.Local name",
 			setup: func() {
-				timeLocalName = func() string { return "Europe/Berlin" }
+				osTimeLocalName = func() string { return "Europe/Berlin" }
 			},
 			expected: "Europe/Berlin",
 		},
@@ -168,11 +168,11 @@ func (s *RunnerSuite) TestLocalTimezone() {
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			// Reset to defaults: no TZ, no readFile, no readlink
-			getenv = func(string) string { return "" }
-			readFile = func(string) ([]byte, error) { return nil, os.ErrNotExist }
-			readlink = func(string) (string, error) { return "", os.ErrNotExist }
-			timeLocalName = func() string { return "Local" }
+			// Reset to defaults: no TZ, no osReadFile, no osReadlink
+			osGetenv = func(string) string { return "" }
+			osReadFile = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+			osReadlink = func(string) (string, error) { return "", os.ErrNotExist }
+			osTimeLocalName = func() string { return "Local" }
 			tt.setup()
 			require.Equal(s.T(), tt.expected, localTimezone())
 		})
@@ -184,41 +184,41 @@ func TestRunnerSuite(t *testing.T) {
 }
 
 func (s *RunnerSuite) SetupTest() {
-	s.origMkdirAll = mkdirAll
-	mkdirAll = func(_ string, _ os.FileMode) error { return nil }
-	s.origGetenv = getenv
-	getenv = func(key string) string {
+	s.origMkdirAll = osMkdirAll
+	osMkdirAll = func(_ string, _ os.FileMode) error { return nil }
+	s.origGetenv = osGetenv
+	osGetenv = func(key string) string {
 		if key == "USER" {
 			return "testuser"
 		}
 		return ""
 	}
-	s.origWriteFile = writeFile
-	writeFile = func(_ string, _ []byte, _ os.FileMode) error { return nil }
-	s.origUserHomeDir = userHomeDir
-	userHomeDir = func() (string, error) { return "/home/testuser", nil }
+	s.origWriteFile = osWriteFile
+	osWriteFile = func(_ string, _ []byte, _ os.FileMode) error { return nil }
+	s.origUserHomeDir = osUserHomeDir
+	osUserHomeDir = func() (string, error) { return "/home/testuser", nil }
 	s.origOsStat = osStat
 	osStat = func(_ string) (os.FileInfo, error) { return nil, os.ErrNotExist }
-	s.origExecCommand = execCommand
-	execCommand = func(_ string, _ ...string) *exec.Cmd {
+	s.origExecCommand = osExecCommand
+	osExecCommand = func(_ string, _ ...string) *exec.Cmd {
 		return exec.Command("echo", "")
 	}
-	s.origTimeAfterFunc = timeAfterFunc
-	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+	s.origTimeAfterFunc = osTimeAfterFunc
+	osTimeAfterFunc = func(d time.Duration, f func()) *time.Timer {
 		f() // execute immediately in tests
 		return time.NewTimer(0)
 	}
-	s.origRandRead = randRead
-	randRead = func(b []byte) (int, error) {
+	s.origRandRead = osRandRead
+	osRandRead = func(b []byte) (int, error) {
 		copy(b, []byte{0xaa, 0xbb, 0xcc})
 		return len(b), nil
 	}
-	s.origReadlink = readlink
-	readlink = func(string) (string, error) { return "", os.ErrNotExist }
-	s.origReadFile = readFile
-	readFile = func(string) ([]byte, error) { return nil, os.ErrNotExist }
-	s.origTimeLocalName = timeLocalName
-	timeLocalName = func() string { return "Local" }
+	s.origReadlink = osReadlink
+	osReadlink = func(string) (string, error) { return "", os.ErrNotExist }
+	s.origReadFile = osReadFile
+	osReadFile = func(string) ([]byte, error) { return nil, os.ErrNotExist }
+	s.origTimeLocalName = osTimeLocalName
+	osTimeLocalName = func() string { return "Local" }
 	s.client = new(MockDockerClient)
 	s.cfg = &config.Config{
 		ClaudeBinPath:      "claude",
@@ -234,17 +234,17 @@ func (s *RunnerSuite) SetupTest() {
 }
 
 func (s *RunnerSuite) TearDownTest() {
-	mkdirAll = s.origMkdirAll
-	getenv = s.origGetenv
-	writeFile = s.origWriteFile
-	userHomeDir = s.origUserHomeDir
+	osMkdirAll = s.origMkdirAll
+	osGetenv = s.origGetenv
+	osWriteFile = s.origWriteFile
+	osUserHomeDir = s.origUserHomeDir
 	osStat = s.origOsStat
-	execCommand = s.origExecCommand
-	timeAfterFunc = s.origTimeAfterFunc
-	randRead = s.origRandRead
-	readlink = s.origReadlink
-	readFile = s.origReadFile
-	timeLocalName = s.origTimeLocalName
+	osExecCommand = s.origExecCommand
+	osTimeAfterFunc = s.origTimeAfterFunc
+	osRandRead = s.origRandRead
+	osReadlink = s.origReadlink
+	osReadFile = s.origReadFile
+	osTimeLocalName = s.origTimeLocalName
 }
 
 // setupMockRun sets up mocks for a successful non-streaming container Run cycle.
@@ -824,7 +824,7 @@ func (s *RunnerSuite) TestRunProxyEnv() {
 		s.Run(tt.name, func() {
 			s.client = new(MockDockerClient)
 			s.runner = NewDockerRunner(s.client, s.cfg)
-			getenv = func(key string) string {
+			osGetenv = func(key string) string {
 				if key == "USER" {
 					return "testuser"
 				}
@@ -877,7 +877,7 @@ func (s *RunnerSuite) TestRunConfigEnvsExpandError() {
 		"BAD_VAR": "~/some/path",
 	}
 	callCount := 0
-	userHomeDir = func() (string, error) {
+	osUserHomeDir = func() (string, error) {
 		callCount++
 		if callCount == 1 {
 			return "/home/testuser", nil // hostHome succeeds
@@ -1037,7 +1037,7 @@ func (s *RunnerSuite) TestRunRetryAlsoFails() {
 }
 
 func (s *RunnerSuite) TestRunHomeDirError() {
-	userHomeDir = func() (string, error) { return "", errors.New("home dir error") }
+	osUserHomeDir = func() (string, error) { return "", errors.New("home dir error") }
 
 	ctx := context.Background()
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
@@ -1049,7 +1049,7 @@ func (s *RunnerSuite) TestRunHomeDirError() {
 }
 
 func (s *RunnerSuite) TestRunMkdirAllError() {
-	mkdirAll = func(_ string, _ os.FileMode) error { return errors.New("mkdir fail") }
+	osMkdirAll = func(_ string, _ os.FileMode) error { return errors.New("mkdir fail") }
 
 	ctx := context.Background()
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
@@ -1219,7 +1219,7 @@ func (s *RunnerSuite) TestRunWithDirPath() {
 }
 
 func (s *RunnerSuite) TestRunMCPConfigWriteError() {
-	writeFile = func(_ string, _ []byte, _ os.FileMode) error {
+	osWriteFile = func(_ string, _ []byte, _ os.FileMode) error {
 		return errors.New("write failed")
 	}
 
@@ -1235,7 +1235,7 @@ func (s *RunnerSuite) TestRunMCPConfigWriteError() {
 func (s *RunnerSuite) TestRunMCPConfigWritten() {
 	var writtenPath string
 	var writtenData []byte
-	writeFile = func(path string, data []byte, _ os.FileMode) error {
+	osWriteFile = func(path string, data []byte, _ os.FileMode) error {
 		writtenPath = path
 		writtenData = data
 		return nil
@@ -1363,10 +1363,10 @@ func TestParseStreamJSONReaderError(t *testing.T) {
 // --- Tests for new mount processing functions ---
 
 func TestExpandPath(t *testing.T) {
-	origUserHomeDir := userHomeDir
-	defer func() { userHomeDir = origUserHomeDir }()
+	origUserHomeDir := osUserHomeDir
+	defer func() { osUserHomeDir = origUserHomeDir }()
 
-	userHomeDir = func() (string, error) {
+	osUserHomeDir = func() (string, error) {
 		return "/home/testuser", nil
 	}
 
@@ -1410,10 +1410,10 @@ func TestExpandPath(t *testing.T) {
 }
 
 func TestExpandPathHomeDirError(t *testing.T) {
-	origUserHomeDir := userHomeDir
-	defer func() { userHomeDir = origUserHomeDir }()
+	origUserHomeDir := osUserHomeDir
+	defer func() { osUserHomeDir = origUserHomeDir }()
 
-	userHomeDir = func() (string, error) {
+	osUserHomeDir = func() (string, error) {
 		return "", errors.New("home dir error")
 	}
 
@@ -1423,14 +1423,14 @@ func TestExpandPathHomeDirError(t *testing.T) {
 }
 
 func TestProcessMount(t *testing.T) {
-	origUserHomeDir := userHomeDir
+	origUserHomeDir := osUserHomeDir
 	origOsStat := osStat
 	defer func() {
-		userHomeDir = origUserHomeDir
+		osUserHomeDir = origUserHomeDir
 		osStat = origOsStat
 	}()
 
-	userHomeDir = func() (string, error) {
+	osUserHomeDir = func() (string, error) {
 		return "/home/testuser", nil
 	}
 
@@ -1525,10 +1525,10 @@ func TestIsNamedVolume(t *testing.T) {
 }
 
 func TestProcessMountExpandPathError(t *testing.T) {
-	origUserHomeDir := userHomeDir
-	defer func() { userHomeDir = origUserHomeDir }()
+	origUserHomeDir := osUserHomeDir
+	defer func() { osUserHomeDir = origUserHomeDir }()
 
-	userHomeDir = func() (string, error) {
+	osUserHomeDir = func() (string, error) {
 		return "", errors.New("home dir error")
 	}
 
@@ -1539,15 +1539,15 @@ func TestProcessMountExpandPathError(t *testing.T) {
 }
 
 func TestProcessMountContainerPathExpandError(t *testing.T) {
-	origUserHomeDir := userHomeDir
+	origUserHomeDir := osUserHomeDir
 	origOsStat := osStat
 	defer func() {
-		userHomeDir = origUserHomeDir
+		osUserHomeDir = origUserHomeDir
 		osStat = origOsStat
 	}()
 
 	callCount := 0
-	userHomeDir = func() (string, error) {
+	osUserHomeDir = func() (string, error) {
 		callCount++
 		if callCount == 1 {
 			return "/home/testuser", nil // host tilde expansion succeeds
@@ -1559,7 +1559,7 @@ func TestProcessMountContainerPathExpandError(t *testing.T) {
 		return nil, nil // path exists
 	}
 
-	// Host uses ~ (triggers first userHomeDir call), container uses ~ (triggers second call that fails)
+	// Host uses ~ (triggers first osUserHomeDir call), container uses ~ (triggers second call that fails)
 	result, err := processMount("~/.claude:~/.claude")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "expanding container path")
@@ -1567,10 +1567,10 @@ func TestProcessMountContainerPathExpandError(t *testing.T) {
 }
 
 func TestProcessMountNamedVolumeContainerPathExpandError(t *testing.T) {
-	origUserHomeDir := userHomeDir
-	defer func() { userHomeDir = origUserHomeDir }()
+	origUserHomeDir := osUserHomeDir
+	defer func() { osUserHomeDir = origUserHomeDir }()
 
-	userHomeDir = func() (string, error) {
+	osUserHomeDir = func() (string, error) {
 		return "", errors.New("home dir error")
 	}
 
@@ -1602,14 +1602,14 @@ func (s *RunnerSuite) TestRunWithInvalidMount() {
 }
 
 func (s *RunnerSuite) TestRunWithCustomMounts() {
-	origUserHomeDir := userHomeDir
+	origUserHomeDir := osUserHomeDir
 	origOsStat := osStat
 	defer func() {
-		userHomeDir = origUserHomeDir
+		osUserHomeDir = origUserHomeDir
 		osStat = origOsStat
 	}()
 
-	userHomeDir = func() (string, error) {
+	osUserHomeDir = func() (string, error) {
 		return "/home/testuser", nil
 	}
 
@@ -1652,14 +1652,14 @@ func (s *RunnerSuite) TestRunWithCustomMounts() {
 }
 
 func (s *RunnerSuite) TestRunNamedVolumesChownDirs() {
-	origUserHomeDir := userHomeDir
+	origUserHomeDir := osUserHomeDir
 	origOsStat := osStat
 	defer func() {
-		userHomeDir = origUserHomeDir
+		osUserHomeDir = origUserHomeDir
 		osStat = origOsStat
 	}()
 
-	userHomeDir = func() (string, error) {
+	osUserHomeDir = func() (string, error) {
 		return "/home/testuser", nil
 	}
 	osStat = func(_ string) (os.FileInfo, error) {
@@ -1698,12 +1698,12 @@ func (s *RunnerSuite) TestRunNamedVolumesChownDirs() {
 }
 
 func TestGitExcludesMount(t *testing.T) {
-	origExecCommand := execCommand
-	origUserHomeDir := userHomeDir
+	origExecCommand := osExecCommand
+	origUserHomeDir := osUserHomeDir
 	origOsStat := osStat
 	defer func() {
-		execCommand = origExecCommand
-		userHomeDir = origUserHomeDir
+		osExecCommand = origExecCommand
+		osUserHomeDir = origUserHomeDir
 		osStat = origOsStat
 	}()
 
@@ -1758,21 +1758,21 @@ func TestGitExcludesMount(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.gitErr {
-				execCommand = func(_ string, _ ...string) *exec.Cmd {
+				osExecCommand = func(_ string, _ ...string) *exec.Cmd {
 					return exec.Command("false")
 				}
 			} else {
-				execCommand = func(_ string, _ ...string) *exec.Cmd {
+				osExecCommand = func(_ string, _ ...string) *exec.Cmd {
 					return exec.Command("echo", "-n", tc.gitOutput)
 				}
 			}
 
 			if tc.homeDirErr {
-				userHomeDir = func() (string, error) {
+				osUserHomeDir = func() (string, error) {
 					return "", errors.New("home dir error")
 				}
 			} else {
-				userHomeDir = func() (string, error) {
+				osUserHomeDir = func() (string, error) {
 					return tc.homeDir, nil
 				}
 			}
@@ -1835,18 +1835,18 @@ func (s *RunnerSuite) TestRunClaudeModelConfig() {
 }
 
 func (s *RunnerSuite) TestRunWithGitExcludesMount() {
-	origUserHomeDir := userHomeDir
+	origUserHomeDir := osUserHomeDir
 	origOsStat := osStat
 	defer func() {
-		userHomeDir = origUserHomeDir
+		osUserHomeDir = origUserHomeDir
 		osStat = origOsStat
 	}()
 
-	userHomeDir = func() (string, error) {
+	osUserHomeDir = func() (string, error) {
 		return "/home/testuser", nil
 	}
 
-	execCommand = func(_ string, _ ...string) *exec.Cmd {
+	osExecCommand = func(_ string, _ ...string) *exec.Cmd {
 		return exec.Command("echo", "-n", "~/.gitignore_global\n")
 	}
 
@@ -1881,7 +1881,7 @@ func (s *RunnerSuite) TestDefaultExecCommand() {
 
 func (s *RunnerSuite) TestScheduleRemove() {
 	var capturedDuration time.Duration
-	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+	osTimeAfterFunc = func(d time.Duration, f func()) *time.Timer {
 		capturedDuration = d
 		f()
 		return time.NewTimer(0)
@@ -1896,7 +1896,7 @@ func (s *RunnerSuite) TestScheduleRemove() {
 }
 
 func (s *RunnerSuite) TestScheduleRemoveIgnoresError() {
-	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+	osTimeAfterFunc = func(d time.Duration, f func()) *time.Timer {
 		f()
 		return time.NewTimer(0)
 	}
@@ -1932,7 +1932,7 @@ func (s *RunnerSuite) TestRunProjectConfigError() {
 		DirPath:      "/project/path",
 	}
 
-	// Mock readFile to simulate project config error
+	// Mock osReadFile to simulate project config error
 	origReadFile := config.TestSetReadFile(func(path string) ([]byte, error) {
 		if strings.Contains(path, ".loop/config.json") {
 			return nil, errors.New("permission denied")
@@ -1984,10 +1984,10 @@ func TestSanitizeName(t *testing.T) {
 // --- Tests for containerName ---
 
 func TestContainerName(t *testing.T) {
-	origRandRead := randRead
-	defer func() { randRead = origRandRead }()
+	origRandRead := osRandRead
+	defer func() { osRandRead = origRandRead }()
 
-	randRead = func(b []byte) (int, error) {
+	osRandRead = func(b []byte) (int, error) {
 		copy(b, []byte{0xde, 0xad, 0x42})
 		return len(b), nil
 	}
@@ -2376,7 +2376,7 @@ func (s *RunnerSuite) TestCopyFilesSingleFile() {
 	containerID := "cid-copy"
 	fileContent := []byte(`{"oauth_token":"tok-123"}`)
 
-	readFile = func(path string) ([]byte, error) {
+	osReadFile = func(path string) ([]byte, error) {
 		if path == "/home/testuser/.claude.json" {
 			return fileContent, nil
 		}
@@ -2409,7 +2409,7 @@ func (s *RunnerSuite) TestCopyFilesMultiple() {
 	ctx := context.Background()
 	containerID := "cid-multi"
 
-	readFile = func(path string) ([]byte, error) {
+	osReadFile = func(path string) ([]byte, error) {
 		switch path {
 		case "/home/testuser/.claude.json":
 			return []byte(`{"token":"t"}`), nil
@@ -2438,7 +2438,7 @@ func (s *RunnerSuite) TestCopyFilesMultiple() {
 
 func (s *RunnerSuite) TestCopyFilesNotExists() {
 	ctx := context.Background()
-	// readFile already returns os.ErrNotExist by default in SetupTest
+	// osReadFile already returns os.ErrNotExist by default in SetupTest
 
 	err := s.runner.copyFiles(ctx, "cid-nofile", []string{"~/.claude.json"})
 	require.NoError(s.T(), err)
@@ -2449,7 +2449,7 @@ func (s *RunnerSuite) TestCopyFilesCopyError() {
 	ctx := context.Background()
 	containerID := "cid-copyerr"
 
-	readFile = func(path string) ([]byte, error) {
+	osReadFile = func(path string) ([]byte, error) {
 		if path == "/home/testuser/.claude.json" {
 			return []byte(`{}`), nil
 		}
@@ -2467,7 +2467,7 @@ func (s *RunnerSuite) TestCopyFilesCopyError() {
 func (s *RunnerSuite) TestCopyFilesExpandError() {
 	ctx := context.Background()
 
-	userHomeDir = func() (string, error) { return "", errors.New("no home") }
+	osUserHomeDir = func() (string, error) { return "", errors.New("no home") }
 
 	err := s.runner.copyFiles(ctx, "cid-nohome", []string{"~/.claude.json"})
 	require.Error(s.T(), err)
@@ -2479,7 +2479,7 @@ func (s *RunnerSuite) TestRunCopyFilesFails() {
 	s.cfg.CopyFiles = []string{"~/.claude.json"}
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
 
-	readFile = func(path string) ([]byte, error) {
+	osReadFile = func(path string) ([]byte, error) {
 		if path == "/home/testuser/.claude.json" {
 			return nil, errors.New("permission denied")
 		}
@@ -2500,7 +2500,7 @@ func (s *RunnerSuite) TestRunCopyFilesFails() {
 func (s *RunnerSuite) TestCopyFilesReadError() {
 	ctx := context.Background()
 
-	readFile = func(path string) ([]byte, error) {
+	osReadFile = func(path string) ([]byte, error) {
 		if path == "/home/testuser/.claude.json" {
 			return nil, errors.New("permission denied")
 		}
@@ -2516,7 +2516,7 @@ func (s *RunnerSuite) TestCopyFilesAbsolutePath() {
 	ctx := context.Background()
 	containerID := "cid-abs"
 
-	readFile = func(path string) ([]byte, error) {
+	osReadFile = func(path string) ([]byte, error) {
 		if path == "/etc/some.conf" {
 			return []byte("config"), nil
 		}

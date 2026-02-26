@@ -245,7 +245,7 @@ var dockerBuildCmd = func(ctx context.Context, contextDir, tag string) ([]byte, 
 
 // gitconfigSecretPath returns the path to ~/.gitconfig if it exists, or "" otherwise.
 func gitconfigSecretPath() string {
-	home, err := userHomeDir()
+	home, err := osUserHomeDir()
 	if err != nil {
 		return ""
 	}

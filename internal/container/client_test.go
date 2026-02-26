@@ -607,14 +607,14 @@ func (s *ClientSuite) TestDefaultDockerBuildCmd() {
 }
 
 func (s *ClientSuite) TestGitconfigSecretPath() {
-	origHome := userHomeDir
+	origHome := osUserHomeDir
 	origStat := osStat
 	defer func() {
-		userHomeDir = origHome
+		osUserHomeDir = origHome
 		osStat = origStat
 	}()
 
-	userHomeDir = func() (string, error) { return "/home/testuser", nil }
+	osUserHomeDir = func() (string, error) { return "/home/testuser", nil }
 	osStat = func(name string) (os.FileInfo, error) {
 		if name == "/home/testuser/.gitconfig" {
 			return nil, nil
@@ -626,24 +626,24 @@ func (s *ClientSuite) TestGitconfigSecretPath() {
 }
 
 func (s *ClientSuite) TestGitconfigSecretPathNotExists() {
-	origHome := userHomeDir
+	origHome := osUserHomeDir
 	origStat := osStat
 	defer func() {
-		userHomeDir = origHome
+		osUserHomeDir = origHome
 		osStat = origStat
 	}()
 
-	userHomeDir = func() (string, error) { return "/home/testuser", nil }
+	osUserHomeDir = func() (string, error) { return "/home/testuser", nil }
 	osStat = func(_ string) (os.FileInfo, error) { return nil, os.ErrNotExist }
 
 	require.Empty(s.T(), gitconfigSecretPath())
 }
 
 func (s *ClientSuite) TestGitconfigSecretPathHomeDirError() {
-	origHome := userHomeDir
-	defer func() { userHomeDir = origHome }()
+	origHome := osUserHomeDir
+	defer func() { osUserHomeDir = origHome }()
 
-	userHomeDir = func() (string, error) { return "", errors.New("no home") }
+	osUserHomeDir = func() (string, error) { return "", errors.New("no home") }
 
 	require.Empty(s.T(), gitconfigSecretPath())
 }
