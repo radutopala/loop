@@ -162,6 +162,7 @@ func (o *Orchestrator) Stop() error {
 }
 
 const recentMessageLimit = 50
+
 // TypingInterval is the default interval between typing indicator refreshes.
 const TypingInterval = 8 * time.Second
 
