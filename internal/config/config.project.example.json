@@ -25,6 +25,10 @@
   //  }
   //},
 
+  // Files copied into containers (replaces global copy_files when set)
+  // Default: ["~/.claude.json"]
+  //"copy_files": ["~/.claude.json"],
+
   // MCP server configurations specific to this project
   // Project servers take precedence over global config servers with the same name
   //"mcp": {
@@ -45,7 +49,6 @@
   // Relative paths are resolved relative to the project directory
   //"mounts": [
   //  "~/.claude:~/.claude",
-  //  "~/.claude.json:~/.claude.json",
   //  "~/.gitconfig:~/.gitconfig:ro",
   //  "~/.ssh:~/.ssh:ro",
   //  "~/.aws:~/.aws",

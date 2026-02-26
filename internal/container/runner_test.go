@@ -1,6 +1,7 @@
 package container
 
 import (
+	"archive/tar"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -82,6 +83,11 @@ func (m *MockDockerClient) ImageBuild(ctx context.Context, contextDir, tag strin
 func (m *MockDockerClient) ContainerList(ctx context.Context, labelKey, labelValue string) ([]string, error) {
 	args := m.Called(ctx, labelKey, labelValue)
 	return args.Get(0).([]string), args.Error(1)
+}
+
+func (m *MockDockerClient) CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader) error {
+	args := m.Called(ctx, containerID, dstPath, content)
+	return args.Error(0)
 }
 
 type RunnerSuite struct {
@@ -1674,7 +1680,7 @@ func (s *RunnerSuite) TestRunNamedVolumesChownDirs() {
 	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		hasChownDirs := false
 		for _, e := range cfg.Env {
-			if val, ok := strings.CutPrefix(e, "CHOWN_DIRS="); ok {
+			if val, ok := strings.CutPrefix(e, "CHOWN_PATHS="); ok {
 				hasChownDirs = strings.Contains(val, "/go/pkg/mod") &&
 					strings.Contains(val, "/home/testuser/.npm")
 			}
@@ -2362,5 +2368,168 @@ func (s *RunnerSuite) TestRunWithOnTurnTimeout() {
 	// "no result event found" — then ContainerWait hits ctx.Done()
 	require.Contains(s.T(), err.Error(), "container execution timed out")
 
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestCopyFilesSingleFile() {
+	ctx := context.Background()
+	containerID := "cid-copy"
+	fileContent := []byte(`{"oauth_token":"tok-123"}`)
+
+	readFile = func(path string) ([]byte, error) {
+		if path == "/home/testuser/.claude.json" {
+			return fileContent, nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	s.client.On("CopyToContainer", ctx, containerID, "/home/testuser", mock.MatchedBy(func(r io.Reader) bool {
+		// Read the tar archive and verify contents.
+		tr := tar.NewReader(r)
+		hdr, err := tr.Next()
+		if err != nil {
+			return false
+		}
+		if hdr.Name != ".claude.json" || hdr.Mode != 0644 {
+			return false
+		}
+		data, err := io.ReadAll(tr)
+		if err != nil {
+			return false
+		}
+		return string(data) == string(fileContent)
+	})).Return(nil)
+
+	err := s.runner.copyFiles(ctx, containerID, []string{"~/.claude.json"})
+	require.NoError(s.T(), err)
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestCopyFilesMultiple() {
+	ctx := context.Background()
+	containerID := "cid-multi"
+
+	readFile = func(path string) ([]byte, error) {
+		switch path {
+		case "/home/testuser/.claude.json":
+			return []byte(`{"token":"t"}`), nil
+		case "/home/testuser/.npmrc":
+			return []byte("registry=https://npm.pkg.github.com"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	var tarNames []string
+	s.client.On("CopyToContainer", ctx, containerID, "/home/testuser", mock.Anything).
+		Run(func(args mock.Arguments) {
+			r := args.Get(3).(io.Reader)
+			tr := tar.NewReader(r)
+			hdr, _ := tr.Next()
+			if hdr != nil {
+				tarNames = append(tarNames, hdr.Name)
+			}
+		}).Return(nil).Times(2)
+
+	err := s.runner.copyFiles(ctx, containerID, []string{"~/.claude.json", "~/.npmrc"})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{".claude.json", ".npmrc"}, tarNames)
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestCopyFilesNotExists() {
+	ctx := context.Background()
+	// readFile already returns os.ErrNotExist by default in SetupTest
+
+	err := s.runner.copyFiles(ctx, "cid-nofile", []string{"~/.claude.json"})
+	require.NoError(s.T(), err)
+	s.client.AssertNotCalled(s.T(), "CopyToContainer")
+}
+
+func (s *RunnerSuite) TestCopyFilesCopyError() {
+	ctx := context.Background()
+	containerID := "cid-copyerr"
+
+	readFile = func(path string) ([]byte, error) {
+		if path == "/home/testuser/.claude.json" {
+			return []byte(`{}`), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	s.client.On("CopyToContainer", ctx, containerID, "/home/testuser", mock.Anything).Return(errors.New("copy failed"))
+
+	err := s.runner.copyFiles(ctx, containerID, []string{"~/.claude.json"})
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "copy failed")
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestCopyFilesExpandError() {
+	ctx := context.Background()
+
+	userHomeDir = func() (string, error) { return "", errors.New("no home") }
+
+	err := s.runner.copyFiles(ctx, "cid-nohome", []string{"~/.claude.json"})
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "expanding path")
+}
+
+func (s *RunnerSuite) TestRunCopyFilesFails() {
+	ctx := context.Background()
+	s.cfg.CopyFiles = []string{"~/.claude.json"}
+	req := &agent.AgentRequest{ChannelID: "ch-1"}
+
+	readFile = func(path string) ([]byte, error) {
+		if path == "/home/testuser/.claude.json" {
+			return nil, errors.New("permission denied")
+		}
+		return nil, os.ErrNotExist
+	}
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
+	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Nil(s.T(), resp)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "copying files")
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestCopyFilesReadError() {
+	ctx := context.Background()
+
+	readFile = func(path string) ([]byte, error) {
+		if path == "/home/testuser/.claude.json" {
+			return nil, errors.New("permission denied")
+		}
+		return nil, os.ErrNotExist
+	}
+
+	err := s.runner.copyFiles(ctx, "cid-readerr", []string{"~/.claude.json"})
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading ~/.claude.json")
+}
+
+func (s *RunnerSuite) TestCopyFilesAbsolutePath() {
+	ctx := context.Background()
+	containerID := "cid-abs"
+
+	readFile = func(path string) ([]byte, error) {
+		if path == "/etc/some.conf" {
+			return []byte("config"), nil
+		}
+		return nil, os.ErrNotExist
+	}
+
+	s.client.On("CopyToContainer", ctx, containerID, "/etc", mock.MatchedBy(func(r io.Reader) bool {
+		tr := tar.NewReader(r)
+		hdr, _ := tr.Next()
+		return hdr != nil && hdr.Name == "some.conf"
+	})).Return(nil)
+
+	err := s.runner.copyFiles(ctx, containerID, []string{"/etc/some.conf"})
+	require.NoError(s.T(), err)
 	s.client.AssertExpectations(s.T())
 }

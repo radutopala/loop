@@ -256,6 +256,7 @@ This does four things:
 | `claude_model` | `""` | Override Claude model (e.g. `"claude-sonnet-4-6"`) |
 | `claude_bin_path` | `"claude"` | Path to Claude Code binary |
 | `mounts` | `[]` | Host directories to mount into containers |
+| `copy_files` | `["~/.claude.json"]` | Files copied (not mounted) into each container |
 | `mcp` | `{}` | MCP server configurations |
 | `task_templates` | `[]` | Reusable task templates |
 | `memory` | `{}` | Semantic memory search configuration (see below) |
@@ -345,7 +346,6 @@ The `mounts` array mounts host directories into all agent containers. Format: `"
 ```jsonc
 "mounts": [
   "~/.claude:~/.claude",                      // Claude sessions (writable)
-  "~/.claude.json:~/.claude.json",            // Claude config (writable)
   "~/.gitconfig:~/.gitconfig:ro",             // Git identity (read-only)
   "~/.ssh:~/.ssh:ro",                         // SSH keys (read-only)
   "~/.aws:~/.aws",                            // AWS credentials (writable)
@@ -359,6 +359,19 @@ The `mounts` array mounts host directories into all agent containers. Format: `"
 - The Docker socket's GID is auto-detected and added to the container process
 - Project directories (`workDir`) and MCP logs (`mcpDir`) are always mounted automatically at their actual paths
 
+### Copied Files
+
+The `copy_files` array lists host files that are **copied** (not mounted) into each container. This avoids corruption when concurrent containers write to the same file. Default: `["~/.claude.json"]`.
+
+```jsonc
+"copy_files": [
+  "~/.claude.json"
+]
+```
+
+- Paths starting with `~/` are expanded to the user's home directory
+- Non-existent files are silently skipped
+
 ### Per-Project Config (`{project}/.loop/config.json`)
 
 Project config overrides specific global settings. Only these fields are allowed:
@@ -366,6 +379,7 @@ Project config overrides specific global settings. Only these fields are allowed
 | Field | Merge behavior |
 |---|---|
 | `mounts` | **Replaces** global mounts entirely |
+| `copy_files` | **Replaces** global copy_files entirely |
 | `mcp` | **Merged** with global; project servers take precedence |
 | `task_templates` | **Merged** with global; project overrides by name |
 | `claude_model` | **Overrides** global model |

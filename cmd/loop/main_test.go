@@ -260,6 +260,10 @@ func (m *mockDockerClient) ContainerList(ctx context.Context, labelKey, labelVal
 	return args.Get(0).([]string), args.Error(1)
 }
 
+func (m *mockDockerClient) CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader) error {
+	return m.Called(ctx, containerID, dstPath, content).Error(0)
+}
+
 type mockBot struct {
 	mock.Mock
 }

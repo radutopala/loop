@@ -8,13 +8,16 @@ mkdir -p "$AGENT_HOME"
 adduser -D -h "$AGENT_HOME" -H "$AGENT_USER" 2>/dev/null || true
 chown "$AGENT_USER":"$AGENT_USER" "$AGENT_HOME" 2>/dev/null || true
 
-# Fix ownership of named volume mount points (created as root by Docker).
-# CHOWN_DIRS is set by the runner with colon-separated container paths.
-if [ -n "$CHOWN_DIRS" ]; then
+# Fix ownership of paths that need to be writable by the agent user
+# (named volumes created as root, files copied via CopyToContainer, etc.).
+# CHOWN_PATHS is set by the runner with colon-separated container paths.
+if [ -n "$CHOWN_PATHS" ]; then
     IFS=:
-    for dir in $CHOWN_DIRS; do
-        if [ -d "$dir" ]; then
-            chown -R "$AGENT_USER":"$AGENT_USER" "$dir" 2>/dev/null || true
+    for path in $CHOWN_PATHS; do
+        if [ -d "$path" ]; then
+            chown -R "$AGENT_USER":"$AGENT_USER" "$path" 2>/dev/null || true
+        elif [ -f "$path" ]; then
+            chown "$AGENT_USER":"$AGENT_USER" "$path" 2>/dev/null || true
         fi
     done
     unset IFS

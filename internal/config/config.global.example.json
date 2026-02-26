@@ -78,12 +78,18 @@
     "BASH_ENV": "~/.bashrc"
   },
 
+  // Files copied into containers on each run (not mounted — each container gets its own copy).
+  // Avoids corruption from concurrent containers writing to the same file.
+  // Default: ["~/.claude.json"]
+  "copy_files": [
+    "~/.claude.json"
+  ],
+
   // Mounts for all containers
   // Format: "host_path:container_path" or "host_path:container_path:ro"
   "mounts": [
     // Mount Claude code and config to allow agents to use Claude for reasoning and decision-making
     "~/.claude:~/.claude",
-    "~/.claude.json:~/.claude.json",
     // Mount Git config read-only to allow agents to perform Git operations with correct user identity without risking modification of the host's Git config
     "~/.gitconfig:~/.gitconfig:ro",
     // Mount SSH keys read-only to allow agents to perform Git operations with authentication (e.g. cloning private repos, pushing commits)

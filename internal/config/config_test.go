@@ -74,6 +74,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Empty(s.T(), cfg.DiscordGuildID)
 	require.Nil(s.T(), cfg.MCPServers)
 	require.True(s.T(), cfg.StreamingEnabled)
+	require.Equal(s.T(), []string{"~/.claude.json"}, cfg.CopyFiles)
 }
 
 func (s *ConfigSuite) TestLoadCustomValues() {
@@ -1427,6 +1428,44 @@ func (s *ConfigSuite) TestLoadWithPermissions() {
 	require.Equal(s.T(), []string{"U1", "U2"}, cfg.Permissions.Owners.Users)
 	require.Equal(s.T(), []string{"R1"}, cfg.Permissions.Owners.Roles)
 	require.Equal(s.T(), []string{"U3"}, cfg.Permissions.Members.Users)
+}
+
+func (s *ConfigSuite) TestCopyFilesDefault() {
+	readFile = func(_ string) ([]byte, error) {
+		return s.minimalJSON(), nil
+	}
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"~/.claude.json"}, cfg.CopyFiles)
+}
+
+func (s *ConfigSuite) TestCopyFilesExplicit() {
+	readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platform":"discord","discord_token":"t","discord_app_id":"a",
+			"copy_files": ["~/.claude.json", "~/.npmrc"]
+		}`), nil
+	}
+	cfg, err := Load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"~/.claude.json", "~/.npmrc"}, cfg.CopyFiles)
+}
+
+func (s *ConfigSuite) TestCopyFilesProjectOverride() {
+	s.setupProjectReadFile(`{"copy_files": ["~/.npmrc"]}`)
+	mainCfg := &Config{CopyFiles: []string{"~/.claude.json"}}
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"~/.npmrc"}, merged.CopyFiles)
+	require.Equal(s.T(), []string{"~/.claude.json"}, mainCfg.CopyFiles)
+}
+
+func (s *ConfigSuite) TestCopyFilesProjectNoOverride() {
+	s.setupProjectReadFile(`{}`)
+	mainCfg := &Config{CopyFiles: []string{"~/.claude.json"}}
+	merged, err := LoadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"~/.claude.json"}, merged.CopyFiles)
 }
 
 func (s *ConfigSuite) TestMemoryConfigOllamaCustomURL() {

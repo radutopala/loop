@@ -1,7 +1,9 @@
 package container
 
 import (
+	"archive/tar"
 	"bufio"
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/hex"
@@ -93,6 +95,7 @@ type DockerClient interface {
 	ImagePull(ctx context.Context, image string) error
 	ImageBuild(ctx context.Context, contextDir, tag string) error
 	ContainerList(ctx context.Context, labelKey, labelValue string) ([]string, error)
+	CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader) error
 }
 
 // Runner executes agent requests inside containers.
@@ -368,9 +371,15 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		return nil, err
 	}
 
-	binds, chownDirs := r.buildContainerMounts(cfg.Mounts, workDir)
-	if len(chownDirs) > 0 {
-		env = append(env, "CHOWN_DIRS="+strings.Join(chownDirs, ":"))
+	binds, chownPaths := r.buildContainerMounts(cfg.Mounts, workDir)
+	// Include copied files for CopyToContainer ownership fix.
+	for _, f := range cfg.CopyFiles {
+		if expanded, err := expandPath(f); err == nil {
+			chownPaths = append(chownPaths, expanded)
+		}
+	}
+	if len(chownPaths) > 0 {
+		env = append(env, "CHOWN_PATHS="+strings.Join(chownPaths, ":"))
 	}
 
 	cmd := buildClaudeCmd(cfg, mcpConfigPath, req)
@@ -466,13 +475,13 @@ func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID strin
 
 // buildContainerMounts processes config mounts and adds the workDir bind.
 // Returns the bind strings and any named-volume container paths that need chown.
-func (r *DockerRunner) buildContainerMounts(mounts []string, workDir string) (binds, chownDirs []string) {
+func (r *DockerRunner) buildContainerMounts(mounts []string, workDir string) (binds, chownPaths []string) {
 	for _, mount := range mounts {
 		parts := strings.Split(mount, ":")
 		if len(parts) >= 2 && config.IsNamedVolume(parts[0]) {
 			expanded, _ := expandPath(parts[1])
 			if expanded != "" {
-				chownDirs = append(chownDirs, expanded)
+				chownPaths = append(chownPaths, expanded)
 			}
 		}
 		bind, err := processMount(mount)
@@ -490,7 +499,7 @@ func (r *DockerRunner) buildContainerMounts(mounts []string, workDir string) (bi
 	}
 
 	binds = append(binds, workDir+":"+workDir)
-	return binds, chownDirs
+	return binds, chownPaths
 }
 
 // buildClaudeCmd assembles the Claude CLI command with all flags.
@@ -512,6 +521,44 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 	return append(cmd, req.BuildPrompt())
 }
 
+// copyFiles copies the given host files into the container so that each
+// container gets its own copy instead of sharing a Docker volume.
+// Files that don't exist are silently skipped.
+func (r *DockerRunner) copyFiles(ctx context.Context, containerID string, files []string) error {
+	for _, f := range files {
+		expanded, err := expandPath(f)
+		if err != nil {
+			return fmt.Errorf("expanding path %s: %w", f, err)
+		}
+
+		data, err := readFile(expanded)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("reading %s: %w", f, err)
+		}
+
+		dir := filepath.Dir(expanded)
+		name := filepath.Base(expanded)
+
+		var buf bytes.Buffer
+		tw := tar.NewWriter(&buf)
+		_ = tw.WriteHeader(&tar.Header{
+			Name: name,
+			Mode: 0644,
+			Size: int64(len(data)),
+		})
+		_, _ = tw.Write(data)
+		_ = tw.Close()
+
+		if err := r.client.CopyToContainer(ctx, containerID, dir, &buf); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // createAndStartContainer creates a Docker container and starts it.
 func (r *DockerRunner) createAndStartContainer(ctx context.Context, cfg *config.Config, env, cmd, binds []string, workDir, channelID, dirPath string) (string, error) {
 	containerCfg := &ContainerConfig{
@@ -528,6 +575,10 @@ func (r *DockerRunner) createAndStartContainer(ctx context.Context, cfg *config.
 	containerID, err := r.client.ContainerCreate(ctx, containerCfg, name)
 	if err != nil {
 		return "", fmt.Errorf("creating container: %w", err)
+	}
+
+	if err := r.copyFiles(ctx, containerID, cfg.CopyFiles); err != nil {
+		return containerID, fmt.Errorf("copying files: %w", err)
 	}
 
 	if err := r.client.ContainerStart(ctx, containerID); err != nil {

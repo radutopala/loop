@@ -146,6 +146,7 @@ type Config struct {
 	MCPServers           map[string]MCPServerConfig
 	TaskTemplates        []TaskTemplate
 	Mounts               []string
+	CopyFiles            []string
 	Envs                 map[string]string
 	ClaudeModel          string
 	StreamingEnabled     bool
@@ -183,6 +184,7 @@ type jsonConfig struct {
 	MCP                   *jsonMCPConfig         `json:"mcp"`
 	TaskTemplates         []TaskTemplate         `json:"task_templates"`
 	Mounts                []string               `json:"mounts"`
+	CopyFiles             []string               `json:"copy_files"`
 	Envs                  map[string]any         `json:"envs"`
 	ClaudeModel           string                 `json:"claude_model"`
 	ClaudeBinPath         string                 `json:"claude_bin_path"`
@@ -286,6 +288,7 @@ func Load() (*Config, error) {
 
 	cfg.TaskTemplates = jc.TaskTemplates
 	cfg.Mounts = jc.Mounts
+	cfg.CopyFiles = sliceDefault(jc.CopyFiles, []string{"~/.claude.json"})
 	cfg.Envs = stringifyEnvs(jc.Envs)
 
 	// Memory config: enabled must be explicitly true.
@@ -342,6 +345,13 @@ func stringDefault(val, def string) string {
 	return def
 }
 
+func sliceDefault[T any](v []T, def []T) []T {
+	if len(v) > 0 {
+		return v
+	}
+	return def
+}
+
 func ptrDefault[T comparable](val *T, def T) T {
 	if val != nil {
 		return *val
@@ -374,6 +384,7 @@ func stringifyEnvs(raw map[string]any) map[string]string {
 // projectConfig is the structure for project-specific .loop/config.json files.
 type projectConfig struct {
 	Mounts               []string               `json:"mounts"`
+	CopyFiles            []string               `json:"copy_files"`
 	Envs                 map[string]any         `json:"envs"`
 	MCP                  *jsonMCPConfig         `json:"mcp"`
 	ClaudeModel          string                 `json:"claude_model"`
@@ -450,6 +461,11 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 		}
 
 		merged.Mounts = resolvedMounts
+	}
+
+	// CopyFiles: project replaces global when set.
+	if len(pc.CopyFiles) > 0 {
+		merged.CopyFiles = pc.CopyFiles
 	}
 
 	// Merge MCP servers: project takes precedence

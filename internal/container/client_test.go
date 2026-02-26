@@ -71,6 +71,11 @@ func (m *mockDockerAPI) ContainerLogs(ctx context.Context, container string, opt
 	return rc, args.Error(1)
 }
 
+func (m *mockDockerAPI) CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options containertypes.CopyToContainerOptions) error {
+	args := m.Called(ctx, containerID, dstPath, content, options)
+	return args.Error(0)
+}
+
 func (m *mockDockerAPI) Close() error {
 	args := m.Called()
 	return args.Error(0)
@@ -641,4 +646,27 @@ func (s *ClientSuite) TestGitconfigSecretPathHomeDirError() {
 	userHomeDir = func() (string, error) { return "", errors.New("no home") }
 
 	require.Empty(s.T(), gitconfigSecretPath())
+}
+
+func (s *ClientSuite) TestCopyToContainer() {
+	ctx := context.Background()
+	content := bytes.NewReader([]byte("data"))
+
+	s.api.On("CopyToContainer", ctx, "cid-1", "/home/user", content, containertypes.CopyToContainerOptions{}).Return(nil)
+
+	err := s.client.CopyToContainer(ctx, "cid-1", "/home/user", content)
+	require.NoError(s.T(), err)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestCopyToContainerError() {
+	ctx := context.Background()
+	content := bytes.NewReader([]byte("data"))
+
+	s.api.On("CopyToContainer", ctx, "cid-1", "/home/user", content, containertypes.CopyToContainerOptions{}).Return(errors.New("copy failed"))
+
+	err := s.client.CopyToContainer(ctx, "cid-1", "/home/user", content)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "copy failed")
+	s.api.AssertExpectations(s.T())
 }

@@ -29,6 +29,7 @@ type dockerAPI interface {
 	ContainerList(ctx context.Context, options containertypes.ListOptions) ([]containertypes.Summary, error)
 	ImageList(ctx context.Context, options image.ListOptions) ([]image.Summary, error)
 	ImagePull(ctx context.Context, refStr string, options image.PullOptions) (io.ReadCloser, error)
+	CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options containertypes.CopyToContainerOptions) error
 	Close() error
 }
 
@@ -282,4 +283,9 @@ func (c *Client) ContainerList(ctx context.Context, labelKey, labelValue string)
 		ids = append(ids, ctr.ID)
 	}
 	return ids, nil
+}
+
+// CopyToContainer copies a tar archive into the container at the given path.
+func (c *Client) CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader) error {
+	return c.api.CopyToContainer(ctx, containerID, dstPath, content, containertypes.CopyToContainerOptions{})
 }
