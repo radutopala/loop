@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"runtime/debug"
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
@@ -26,6 +27,12 @@ import (
 
 func init() {
 	cobra.EnablePrefixMatching = true
+
+	if version == "dev" {
+		if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+			version = info.Main.Version
+		}
+	}
 }
 
 var (
