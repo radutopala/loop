@@ -14,10 +14,7 @@ import (
 	"github.com/radutopala/loop/internal/orchestrator"
 )
 
-const (
-	maxMessageLen     = 2000
-	typingIntervalSec = 8
-)
+const maxMessageLen = 2000
 
 // DiscordSession abstracts the discordgo.Session methods used by the bot,
 // enabling test mocking.
@@ -83,7 +80,7 @@ func NewBot(session DiscordSession, appID string, logger *slog.Logger) *DiscordB
 		session:             session,
 		appID:               appID,
 		logger:              logger,
-		typingInterval:      typingIntervalSec * time.Second,
+		typingInterval:      orchestrator.TypingInterval,
 		pendingInteractions: make(map[string]*discordgo.Interaction),
 	}
 }
@@ -188,7 +185,7 @@ func (b *DiscordBot) sendRegularChunks(msg *bot.OutgoingMessage, chunks []string
 	return nil
 }
 
-// SendTyping sends a typing indicator that refreshes every 8 seconds
+// SendTyping sends a typing indicator that refreshes periodically
 // until the context is cancelled.
 func (b *DiscordBot) SendTyping(ctx context.Context, channelID string) error {
 	if err := b.session.ChannelTyping(channelID); err != nil {

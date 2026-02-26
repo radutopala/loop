@@ -118,7 +118,11 @@ func NewDockerRunner(client DockerClient, cfg *config.Config) *DockerRunner {
 	}
 }
 
-const containerLabel = "loop-agent"
+const (
+	containerLabel    = "loop-agent"
+	scannerBufInit    = 64 * 1024   // initial scanner buffer capacity
+	scannerBufMaxLine = 1024 * 1024 // max line size (1 MB)
+)
 
 var mkdirAll = os.MkdirAll
 var getenv = os.Getenv
@@ -717,7 +721,7 @@ func localhostToDockerHost(v string) string {
 // --output-format stream-json and returns the final "result" event.
 func parseStreamJSON(r io.Reader) (*claudeResponse, error) {
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // allow lines up to 1MB
+	scanner.Buffer(make([]byte, 0, scannerBufInit), scannerBufMaxLine)
 	var result *claudeResponse
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
@@ -746,7 +750,7 @@ func parseStreamJSON(r io.Reader) (*claudeResponse, error) {
 // Returns the final "result" event.
 func parseStreamingJSON(r io.Reader, onTurn func(string)) (*claudeResponse, error) {
 	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024) // allow lines up to 1MB
+	scanner.Buffer(make([]byte, 0, scannerBufInit), scannerBufMaxLine)
 	var result *claudeResponse
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
