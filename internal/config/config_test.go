@@ -1090,9 +1090,9 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 				}
 			}`,
 			mainCfg: &Config{
-				Permissions: PermissionsConfig{
-					Owners:  RoleGrant{Users: []string{"U1"}, Roles: []string{"R1"}},
-					Members: RoleGrant{Users: []string{"U2"}},
+				Permissions: types.Permissions{
+					Owners:  types.RoleGrant{Users: []string{"U1"}, Roles: []string{"R1"}},
+					Members: types.RoleGrant{Users: []string{"U2"}},
 				},
 			},
 			assert: func(merged, _ *Config) {
@@ -1103,8 +1103,8 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			name:        "Permissions/NoOverride",
 			projectJSON: `{}`,
 			mainCfg: &Config{
-				Permissions: PermissionsConfig{
-					Owners: RoleGrant{Users: []string{"U1"}},
+				Permissions: types.Permissions{
+					Owners: types.RoleGrant{Users: []string{"U1"}},
 				},
 			},
 			assert: func(merged, _ *Config) {
@@ -1363,18 +1363,18 @@ func (s *ConfigSuite) TestMemoryMaxChunkCharsDefault() {
 	require.Equal(s.T(), 0, cfg.Memory.MaxChunkChars)
 }
 
-func (s *ConfigSuite) TestPermissionsConfigIsEmpty() {
+func (s *ConfigSuite) TestPermissionsIsEmpty() {
 	tests := []struct {
 		name     string
-		perms    PermissionsConfig
+		perms    types.Permissions
 		expected bool
 	}{
-		{"both empty", PermissionsConfig{}, true},
-		{"owners users only", PermissionsConfig{Owners: RoleGrant{Users: []string{"U1"}}}, false},
-		{"owners roles only", PermissionsConfig{Owners: RoleGrant{Roles: []string{"R1"}}}, false},
-		{"members users only", PermissionsConfig{Members: RoleGrant{Users: []string{"U1"}}}, false},
-		{"members roles only", PermissionsConfig{Members: RoleGrant{Roles: []string{"R1"}}}, false},
-		{"all set", PermissionsConfig{Owners: RoleGrant{Users: []string{"U1"}, Roles: []string{"R1"}}, Members: RoleGrant{Users: []string{"U2"}}}, false},
+		{"both empty", types.Permissions{}, true},
+		{"owners users only", types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}}, false},
+		{"owners roles only", types.Permissions{Owners: types.RoleGrant{Roles: []string{"R1"}}}, false},
+		{"members users only", types.Permissions{Members: types.RoleGrant{Users: []string{"U1"}}}, false},
+		{"members roles only", types.Permissions{Members: types.RoleGrant{Roles: []string{"R1"}}}, false},
+		{"all set", types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}, Roles: []string{"R1"}}, Members: types.RoleGrant{Users: []string{"U2"}}}, false},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
@@ -1383,25 +1383,25 @@ func (s *ConfigSuite) TestPermissionsConfigIsEmpty() {
 	}
 }
 
-func (s *ConfigSuite) TestPermissionsConfigGetRole() {
+func (s *ConfigSuite) TestPermissionsGetRole() {
 	tests := []struct {
 		name        string
-		perms       PermissionsConfig
+		perms       types.Permissions
 		authorID    string
 		authorRoles []string
 		expected    types.Role
 	}{
-		{"empty config returns empty role", PermissionsConfig{}, "any-user", nil, ""},
-		{"owner by user", PermissionsConfig{Owners: RoleGrant{Users: []string{"U1", "U2"}}}, "U1", nil, types.RoleOwner},
-		{"owner by role", PermissionsConfig{Owners: RoleGrant{Roles: []string{"R1"}}}, "U3", []string{"R1"}, types.RoleOwner},
-		{"member by user", PermissionsConfig{Members: RoleGrant{Users: []string{"U1"}}}, "U1", nil, types.RoleMember},
-		{"member by role", PermissionsConfig{Members: RoleGrant{Roles: []string{"R1"}}}, "U3", []string{"R1"}, types.RoleMember},
-		{"owner beats member", PermissionsConfig{Owners: RoleGrant{Users: []string{"U1"}}, Members: RoleGrant{Users: []string{"U1"}}}, "U1", nil, types.RoleOwner},
-		{"user not in any list", PermissionsConfig{Owners: RoleGrant{Users: []string{"U1"}}}, "U2", nil, ""},
-		{"role match as owner", PermissionsConfig{Owners: RoleGrant{Roles: []string{"R1"}}}, "U2", []string{"R1", "R2"}, types.RoleOwner},
-		{"role match as member", PermissionsConfig{Members: RoleGrant{Roles: []string{"R2"}}}, "U2", []string{"R1", "R2"}, types.RoleMember},
-		{"no role match", PermissionsConfig{Owners: RoleGrant{Roles: []string{"R1"}}}, "U3", []string{"R2", "R3"}, ""},
-		{"nil author roles with role restriction", PermissionsConfig{Owners: RoleGrant{Roles: []string{"R1"}}}, "U1", nil, ""},
+		{"empty config returns empty role", types.Permissions{}, "any-user", nil, ""},
+		{"owner by user", types.Permissions{Owners: types.RoleGrant{Users: []string{"U1", "U2"}}}, "U1", nil, types.RoleOwner},
+		{"owner by role", types.Permissions{Owners: types.RoleGrant{Roles: []string{"R1"}}}, "U3", []string{"R1"}, types.RoleOwner},
+		{"member by user", types.Permissions{Members: types.RoleGrant{Users: []string{"U1"}}}, "U1", nil, types.RoleMember},
+		{"member by role", types.Permissions{Members: types.RoleGrant{Roles: []string{"R1"}}}, "U3", []string{"R1"}, types.RoleMember},
+		{"owner beats member", types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}, Members: types.RoleGrant{Users: []string{"U1"}}}, "U1", nil, types.RoleOwner},
+		{"user not in any list", types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}}, "U2", nil, ""},
+		{"role match as owner", types.Permissions{Owners: types.RoleGrant{Roles: []string{"R1"}}}, "U2", []string{"R1", "R2"}, types.RoleOwner},
+		{"role match as member", types.Permissions{Members: types.RoleGrant{Roles: []string{"R2"}}}, "U2", []string{"R1", "R2"}, types.RoleMember},
+		{"no role match", types.Permissions{Owners: types.RoleGrant{Roles: []string{"R1"}}}, "U3", []string{"R2", "R3"}, ""},
+		{"nil author roles with role restriction", types.Permissions{Owners: types.RoleGrant{Roles: []string{"R1"}}}, "U1", nil, ""},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {

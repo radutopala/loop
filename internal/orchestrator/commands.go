@@ -25,7 +25,7 @@ func (o *Orchestrator) sendReply(ctx context.Context, channelID, content string)
 // HandleInteraction processes a slash command interaction.
 func (o *Orchestrator) HandleInteraction(ctx context.Context, inter *bot.Interaction) {
 	ch, _ := o.store.GetChannel(ctx, inter.ChannelID)
-	var dbPerms db.ChannelPermissions
+	var dbPerms types.Permissions
 	dirPath := ""
 	if ch != nil {
 		dbPerms = ch.Permissions
@@ -366,8 +366,8 @@ func (o *Orchestrator) handlePermissionUpdate(ctx context.Context, inter *bot.In
 	targetID := inter.Options["target_id"]
 	perms := ch.Permissions
 
-	// slicePtr returns a pointer to the Users or Roles slice in a ChannelRoleGrant.
-	slicePtr := func(g *db.ChannelRoleGrant) *[]string {
+	// slicePtr returns a pointer to the Users or Roles slice in a RoleGrant.
+	slicePtr := func(g *types.RoleGrant) *[]string {
 		if targetType == "role" {
 			return &g.Roles
 		}
@@ -415,7 +415,7 @@ func (o *Orchestrator) handlePermissionUpdate(ctx context.Context, inter *bot.In
 	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ %s removed from channel permissions.", mention))
 }
 
-func (o *Orchestrator) handleIAmTheOwner(ctx context.Context, inter *bot.Interaction, ch *db.Channel, cfgPerms config.PermissionsConfig, dbPerms db.ChannelPermissions) {
+func (o *Orchestrator) handleIAmTheOwner(ctx context.Context, inter *bot.Interaction, ch *db.Channel, cfgPerms, dbPerms types.Permissions) {
 	if !cfgPerms.IsEmpty() || !dbPerms.IsEmpty() {
 		o.sendReply(ctx, inter.ChannelID, "⛔ An owner is already configured. Use `/loop allow_user` to manage permissions.")
 		return

@@ -300,9 +300,9 @@ func (s *OrchestratorSuite) TestHandleMessageThreadResolved() {
 	// Parent is active
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 	// Get parent channel for inheritance
-	parentPerms := db.ChannelPermissions{
-		Owners:  db.ChannelRoleGrant{Users: []string{"user1"}},
-		Members: db.ChannelRoleGrant{Users: []string{"member1"}},
+	parentPerms := types.Permissions{
+		Owners:  types.RoleGrant{Users: []string{"user1"}},
+		Members: types.RoleGrant{Users: []string{"member1"}},
 	}
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1", GuildID: "g1", DirPath: "/project", Platform: types.PlatformDiscord, SessionID: "sess-parent", Permissions: parentPerms, Active: true,
@@ -2078,7 +2078,7 @@ func (s *OrchestratorSuite) TestConfigPermissionsForEmptyConfig() {
 
 func (s *OrchestratorSuite) TestConfigPermissionsForGlobalNoProjectConfig() {
 	s.orch.cfg = config.Config{
-		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}},
+		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}},
 	}
 	// Empty dirPath → global permissions returned directly.
 	perms := s.orch.configPermissionsFor("")
@@ -2092,7 +2092,7 @@ func (s *OrchestratorSuite) TestConfigPermissionsForWithDirPath() {
 	defer config.TestSetReadFile(orig)
 
 	s.orch.cfg = config.Config{
-		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}},
+		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}},
 	}
 	// Non-existent project config → LoadProjectConfig returns global config → global permissions returned.
 	perms := s.orch.configPermissionsFor("/some/project")
@@ -2106,7 +2106,7 @@ func (s *OrchestratorSuite) TestConfigPermissionsForLoadError() {
 	defer config.TestSetReadFile(orig)
 
 	s.orch.cfg = config.Config{
-		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}},
+		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}},
 	}
 	// Read error (not ErrNotExist) → LoadProjectConfig returns error → global permissions returned as fallback.
 	perms := s.orch.configPermissionsFor("/some/project")
@@ -2123,7 +2123,7 @@ func (s *OrchestratorSuite) TestConfigPermissionsForProjectOverridesGlobal() {
 	defer config.TestSetReadFile(orig)
 
 	s.orch.cfg = config.Config{
-		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}},
+		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}},
 	}
 	perms := s.orch.configPermissionsFor("/project")
 	require.Equal(s.T(), []string{"U2"}, perms.Owners.Users)
@@ -2132,65 +2132,65 @@ func (s *OrchestratorSuite) TestConfigPermissionsForProjectOverridesGlobal() {
 func (s *OrchestratorSuite) TestResolveRole() {
 	tests := []struct {
 		name        string
-		cfgPerms    config.PermissionsConfig
-		dbPerms     db.ChannelPermissions
+		cfgPerms    types.Permissions
+		dbPerms     types.Permissions
 		authorID    string
 		authorRoles []string
 		expected    types.Role
 	}{
 		{
 			name:     "bootstrap: both empty → owner",
-			cfgPerms: config.PermissionsConfig{},
-			dbPerms:  db.ChannelPermissions{},
+			cfgPerms: types.Permissions{},
+			dbPerms:  types.Permissions{},
 			expected: types.RoleOwner,
 		},
 		{
 			name:     "cfg owner only",
-			cfgPerms: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}},
-			dbPerms:  db.ChannelPermissions{},
+			cfgPerms: types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}},
+			dbPerms:  types.Permissions{},
 			authorID: "U1",
 			expected: types.RoleOwner,
 		},
 		{
 			name:     "db owner only",
-			cfgPerms: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}},
-			dbPerms:  db.ChannelPermissions{Owners: db.ChannelRoleGrant{Users: []string{"U2"}}},
+			cfgPerms: types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}},
+			dbPerms:  types.Permissions{Owners: types.RoleGrant{Users: []string{"U2"}}},
 			authorID: "U2",
 			expected: types.RoleOwner,
 		},
 		{
 			name:     "cfg member only",
-			cfgPerms: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}, Members: config.RoleGrant{Users: []string{"U2"}}},
-			dbPerms:  db.ChannelPermissions{},
+			cfgPerms: types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}, Members: types.RoleGrant{Users: []string{"U2"}}},
+			dbPerms:  types.Permissions{},
 			authorID: "U2",
 			expected: types.RoleMember,
 		},
 		{
 			name:     "db member wins when cfg empty",
-			cfgPerms: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}},
-			dbPerms:  db.ChannelPermissions{Members: db.ChannelRoleGrant{Users: []string{"U3"}}},
+			cfgPerms: types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}},
+			dbPerms:  types.Permissions{Members: types.RoleGrant{Users: []string{"U3"}}},
 			authorID: "U3",
 			expected: types.RoleMember,
 		},
 		{
 			name:     "denied when not in any list",
-			cfgPerms: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}},
-			dbPerms:  db.ChannelPermissions{},
+			cfgPerms: types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}},
+			dbPerms:  types.Permissions{},
 			authorID: "U99",
 			expected: "",
 		},
 		{
 			name:        "cfg owner by role",
-			cfgPerms:    config.PermissionsConfig{Owners: config.RoleGrant{Roles: []string{"admin"}}},
-			dbPerms:     db.ChannelPermissions{},
+			cfgPerms:    types.Permissions{Owners: types.RoleGrant{Roles: []string{"admin"}}},
+			dbPerms:     types.Permissions{},
 			authorID:    "U5",
 			authorRoles: []string{"admin"},
 			expected:    types.RoleOwner,
 		},
 		{
 			name:     "db owner beats cfg member",
-			cfgPerms: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"U1"}}, Members: config.RoleGrant{Users: []string{"U2"}}},
-			dbPerms:  db.ChannelPermissions{Owners: db.ChannelRoleGrant{Users: []string{"U2"}}},
+			cfgPerms: types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}, Members: types.RoleGrant{Users: []string{"U2"}}},
+			dbPerms:  types.Permissions{Owners: types.RoleGrant{Users: []string{"U2"}}},
 			authorID: "U2",
 			expected: types.RoleOwner,
 		},
@@ -2205,7 +2205,7 @@ func (s *OrchestratorSuite) TestResolveRole() {
 
 func (s *OrchestratorSuite) TestHandleMessagePermissionDenied() {
 	s.orch.cfg = config.Config{
-		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"allowed-user"}}},
+		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
 	}
 
 	msg := &bot.IncomingMessage{
@@ -2230,7 +2230,7 @@ func (s *OrchestratorSuite) TestHandleMessagePermissionDenied() {
 
 func (s *OrchestratorSuite) TestHandleMessageBotSelfMentionBypassesPermissions() {
 	s.orch.cfg = config.Config{
-		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"allowed-user"}}},
+		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
 	}
 
 	msg := &bot.IncomingMessage{
@@ -2265,7 +2265,7 @@ func (s *OrchestratorSuite) TestHandleMessageBotSelfMentionBypassesPermissions()
 
 func (s *OrchestratorSuite) TestHandleMessagePermissionAllowed() {
 	s.orch.cfg = config.Config{
-		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"allowed-user"}}},
+		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
 	}
 
 	msg := &bot.IncomingMessage{
@@ -2299,7 +2299,7 @@ func (s *OrchestratorSuite) TestHandleMessagePermissionAllowed() {
 
 func (s *OrchestratorSuite) TestHandleInteractionPermissionDenied() {
 	s.orch.cfg = config.Config{
-		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"allowed-user"}}},
+		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
 	}
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
@@ -2322,7 +2322,7 @@ func (s *OrchestratorSuite) TestHandleInteractionPermissionDenied() {
 
 func (s *OrchestratorSuite) TestHandleInteractionPermissionAllowed() {
 	s.orch.cfg = config.Config{
-		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"allowed-user"}}},
+		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
 	}
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
@@ -2346,7 +2346,7 @@ func (s *OrchestratorSuite) TestHandleInteractionPermissionAllowed() {
 
 func (s *OrchestratorSuite) TestHandleInteractionPermissionByRole() {
 	s.orch.cfg = config.Config{
-		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Roles: []string{"admin-role"}}},
+		Permissions: types.Permissions{Owners: types.RoleGrant{Roles: []string{"admin-role"}}},
 	}
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
@@ -2371,7 +2371,7 @@ func (s *OrchestratorSuite) TestHandleInteractionPermissionByRole() {
 
 func (s *OrchestratorSuite) TestHandleInteractionGetChannelNil() {
 	s.orch.cfg = config.Config{
-		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"allowed-user"}}},
+		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
 	}
 
 	// Channel not found — dirPath will be empty, permissions come from global.
@@ -2393,9 +2393,9 @@ func (s *OrchestratorSuite) TestHandleInteractionGetChannelNil() {
 func (s *OrchestratorSuite) TestHandleInteractionPermCmdRequiresOwner() {
 	// Member user cannot manage permissions.
 	s.orch.cfg = config.Config{
-		Permissions: config.PermissionsConfig{
-			Owners:  config.RoleGrant{Users: []string{"owner-user"}},
-			Members: config.RoleGrant{Users: []string{"member-user"}},
+		Permissions: types.Permissions{
+			Owners:  types.RoleGrant{Users: []string{"owner-user"}},
+			Members: types.RoleGrant{Users: []string{"member-user"}},
 		},
 	}
 
@@ -2420,10 +2420,10 @@ func (s *OrchestratorSuite) TestHandleInteractionPermCmdRequiresOwner() {
 func (s *OrchestratorSuite) TestHandleInteractionAllowUserSuccess() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1", DirPath: "",
-		Permissions: db.ChannelPermissions{},
+		Permissions: types.Permissions{},
 	}, nil)
-	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
-		Members: db.ChannelRoleGrant{Users: []string{"U99"}},
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", types.Permissions{
+		Members: types.RoleGrant{Users: []string{"U99"}},
 	}).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "✅ <@U99> granted member role."
@@ -2442,10 +2442,10 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowUserSuccess() {
 func (s *OrchestratorSuite) TestHandleInteractionAllowUserOwner() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1", DirPath: "",
-		Permissions: db.ChannelPermissions{},
+		Permissions: types.Permissions{},
 	}, nil)
-	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
-		Owners: db.ChannelRoleGrant{Users: []string{"U99"}},
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", types.Permissions{
+		Owners: types.RoleGrant{Users: []string{"U99"}},
 	}).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "✅ <@U99> granted owner role."
@@ -2480,7 +2480,7 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowUserChannelNotRegistered()
 func (s *OrchestratorSuite) TestHandleInteractionAllowUserStoreError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1",
-		Permissions: db.ChannelPermissions{},
+		Permissions: types.Permissions{},
 	}, nil)
 	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.Anything).Return(errors.New("db err"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
@@ -2500,10 +2500,10 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowUserStoreError() {
 func (s *OrchestratorSuite) TestHandleInteractionAllowRoleSuccess() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1",
-		Permissions: db.ChannelPermissions{},
+		Permissions: types.Permissions{},
 	}, nil)
-	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
-		Owners: db.ChannelRoleGrant{Roles: []string{"R1"}},
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", types.Permissions{
+		Owners: types.RoleGrant{Roles: []string{"R1"}},
 	}).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "✅ Role <@&R1> granted owner role."
@@ -2522,12 +2522,12 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowRoleSuccess() {
 func (s *OrchestratorSuite) TestHandleInteractionDenyUserSuccess() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1",
-		Permissions: db.ChannelPermissions{
-			Owners:  db.ChannelRoleGrant{Users: []string{"owner-user"}},
-			Members: db.ChannelRoleGrant{Users: []string{"U99"}},
+		Permissions: types.Permissions{
+			Owners:  types.RoleGrant{Users: []string{"owner-user"}},
+			Members: types.RoleGrant{Users: []string{"U99"}},
 		},
 	}, nil)
-	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.MatchedBy(func(p db.ChannelPermissions) bool {
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.MatchedBy(func(p types.Permissions) bool {
 		// U99 removed from Members; owner-user remains in Owners
 		return len(p.Owners.Users) == 1 && p.Owners.Users[0] == "owner-user" &&
 			len(p.Members.Users) == 0
@@ -2550,11 +2550,11 @@ func (s *OrchestratorSuite) TestHandleInteractionDenyUserSuccess() {
 func (s *OrchestratorSuite) TestHandleInteractionDenyRoleSuccess() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1",
-		Permissions: db.ChannelPermissions{
-			Owners: db.ChannelRoleGrant{Users: []string{"owner-user"}, Roles: []string{"R1"}},
+		Permissions: types.Permissions{
+			Owners: types.RoleGrant{Users: []string{"owner-user"}, Roles: []string{"R1"}},
 		},
 	}, nil)
-	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.MatchedBy(func(p db.ChannelPermissions) bool {
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.MatchedBy(func(p types.Permissions) bool {
 		// R1 removed from Owners.Roles; owner-user remains in Owners.Users
 		return len(p.Owners.Users) == 1 && p.Owners.Users[0] == "owner-user" &&
 			len(p.Owners.Roles) == 0
@@ -2588,10 +2588,10 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowUserDefaultRole() {
 	// When "role" option is absent, it defaults to "member".
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1",
-		Permissions: db.ChannelPermissions{},
+		Permissions: types.Permissions{},
 	}, nil)
-	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
-		Members: db.ChannelRoleGrant{Users: []string{"U99"}},
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", types.Permissions{
+		Members: types.RoleGrant{Users: []string{"U99"}},
 	}).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "✅ <@U99> granted member role."
@@ -2626,7 +2626,7 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowRoleChannelNotRegistered()
 func (s *OrchestratorSuite) TestHandleInteractionAllowRoleStoreError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1",
-		Permissions: db.ChannelPermissions{},
+		Permissions: types.Permissions{},
 	}, nil)
 	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.Anything).Return(errors.New("db err"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
@@ -2646,10 +2646,10 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowRoleStoreError() {
 func (s *OrchestratorSuite) TestHandleInteractionAllowRoleMember() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1",
-		Permissions: db.ChannelPermissions{},
+		Permissions: types.Permissions{},
 	}, nil)
-	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
-		Members: db.ChannelRoleGrant{Roles: []string{"R1"}},
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", types.Permissions{
+		Members: types.RoleGrant{Roles: []string{"R1"}},
 	}).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "✅ Role <@&R1> granted member role."
@@ -2669,10 +2669,10 @@ func (s *OrchestratorSuite) TestHandleInteractionAllowRoleDefaultRole() {
 	// When "role" option is absent, it defaults to "member".
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1",
-		Permissions: db.ChannelPermissions{},
+		Permissions: types.Permissions{},
 	}, nil)
-	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
-		Members: db.ChannelRoleGrant{Roles: []string{"R1"}},
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", types.Permissions{
+		Members: types.RoleGrant{Roles: []string{"R1"}},
 	}).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "✅ Role <@&R1> granted member role."
@@ -2708,8 +2708,8 @@ func (s *OrchestratorSuite) TestHandleInteractionDenyUserChannelNotRegistered() 
 func (s *OrchestratorSuite) TestHandleInteractionDenyUserStoreError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1",
-		Permissions: db.ChannelPermissions{
-			Owners: db.ChannelRoleGrant{Users: []string{"owner-user"}},
+		Permissions: types.Permissions{
+			Owners: types.RoleGrant{Users: []string{"owner-user"}},
 		},
 	}, nil)
 	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.Anything).Return(errors.New("db err"))
@@ -2748,8 +2748,8 @@ func (s *OrchestratorSuite) TestHandleInteractionDenyRoleChannelNotRegistered() 
 func (s *OrchestratorSuite) TestHandleInteractionDenyRoleStoreError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1",
-		Permissions: db.ChannelPermissions{
-			Owners: db.ChannelRoleGrant{Users: []string{"owner-user"}, Roles: []string{"R1"}},
+		Permissions: types.Permissions{
+			Owners: types.RoleGrant{Users: []string{"owner-user"}, Roles: []string{"R1"}},
 		},
 	}, nil)
 	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.Anything).Return(errors.New("db err"))
@@ -2913,10 +2913,10 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingDisabledNoOnTurn() {
 func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerSuccess() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1", DirPath: "",
-		Permissions: db.ChannelPermissions{},
+		Permissions: types.Permissions{},
 	}, nil)
-	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", db.ChannelPermissions{
-		Owners: db.ChannelRoleGrant{Users: []string{"user1"}},
+	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", types.Permissions{
+		Owners: types.RoleGrant{Users: []string{"user1"}},
 	}).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "✅ <@user1> is now the owner of this channel."
@@ -2935,8 +2935,8 @@ func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerSuccess() {
 func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerAlreadyConfigured() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1", DirPath: "",
-		Permissions: db.ChannelPermissions{
-			Owners: db.ChannelRoleGrant{Users: []string{"existing-owner"}},
+		Permissions: types.Permissions{
+			Owners: types.RoleGrant{Users: []string{"existing-owner"}},
 		},
 	}, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
@@ -2972,7 +2972,7 @@ func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerChannelNotRegistered
 func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerStoreError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1", DirPath: "",
-		Permissions: db.ChannelPermissions{},
+		Permissions: types.Permissions{},
 	}, nil)
 	s.store.On("UpdateChannelPermissions", s.ctx, "ch1", mock.Anything).Return(errors.New("db err"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
@@ -2991,12 +2991,12 @@ func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerStoreError() {
 
 func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerBlockedByCfgPerms() {
 	s.orch.cfg = config.Config{
-		Permissions: config.PermissionsConfig{Owners: config.RoleGrant{Users: []string{"cfg-owner"}}},
+		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"cfg-owner"}}},
 	}
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1", DirPath: "",
-		Permissions: db.ChannelPermissions{},
+		Permissions: types.Permissions{},
 	}, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "⛔ An owner is already configured. Use `/loop allow_user` to manage permissions."

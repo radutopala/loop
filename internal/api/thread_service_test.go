@@ -47,9 +47,9 @@ func (s *ThreadServiceSuite) SetupTest() {
 }
 
 func (s *ThreadServiceSuite) TestCreateThreadSuccess() {
-	parentPerms := db.ChannelPermissions{
-		Owners:  db.ChannelRoleGrant{Users: []string{"owner1"}},
-		Members: db.ChannelRoleGrant{Users: []string{"member1"}},
+	parentPerms := types.Permissions{
+		Owners:  types.RoleGrant{Users: []string{"owner1"}},
+		Members: types.RoleGrant{Users: []string{"member1"}},
 	}
 	s.store.On("GetChannel", s.ctx, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", GuildID: "guild-1", DirPath: "/work", Platform: types.PlatformDiscord, SessionID: "sess-1", Permissions: parentPerms}, nil)

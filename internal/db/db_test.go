@@ -129,9 +129,9 @@ func (s *StoreSuite) TestUpsertChannelError() {
 }
 
 func (s *StoreSuite) TestUpsertChannelWithPermissions() {
-	perms := ChannelPermissions{
-		Owners:  ChannelRoleGrant{Users: []string{"U1"}, Roles: []string{"admin"}},
-		Members: ChannelRoleGrant{Users: []string{"U2"}, Roles: []string{}},
+	perms := types.Permissions{
+		Owners:  types.RoleGrant{Users: []string{"U1"}, Roles: []string{"admin"}},
+		Members: types.RoleGrant{Users: []string{"U2"}, Roles: []string{}},
 	}
 	ch := &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test-channel", Permissions: perms, Active: true}
 	s.mock.ExpectExec(`INSERT INTO channels`).
@@ -235,16 +235,16 @@ func (s *StoreSuite) TestUpdateSessionID() {
 }
 
 func (s *StoreSuite) TestUpdateChannelPermissions() {
-	perms := ChannelPermissions{
-		Owners:  ChannelRoleGrant{Users: []string{"U1"}, Roles: []string{"admin"}},
-		Members: ChannelRoleGrant{Users: []string{"U2"}},
+	perms := types.Permissions{
+		Owners:  types.RoleGrant{Users: []string{"U1"}, Roles: []string{"admin"}},
+		Members: types.RoleGrant{Users: []string{"U2"}},
 	}
 	s.mock.ExpectExec(`UPDATE channels SET permissions`).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "ch1", "ch1").WillReturnResult(sqlmock.NewResult(0, 3))
 	require.NoError(s.T(), s.store.UpdateChannelPermissions(context.Background(), "ch1", perms))
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 
 	s.mock.ExpectExec(`UPDATE channels SET permissions`).WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), "ch1", "ch1").WillReturnError(sql.ErrConnDone)
-	require.Error(s.T(), s.store.UpdateChannelPermissions(context.Background(), "ch1", ChannelPermissions{}))
+	require.Error(s.T(), s.store.UpdateChannelPermissions(context.Background(), "ch1", types.Permissions{}))
 }
 
 // --- DeleteChannel tests ---

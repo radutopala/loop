@@ -149,9 +149,9 @@ func (o *Orchestrator) HandleChannelJoin(ctx context.Context, channelID string) 
 	o.logger.Info("auto-created channel on bot join", "channel_id", channelID, "name", name)
 }
 
-// configPermissionsFor returns the effective PermissionsConfig for the given dirPath.
+// configPermissionsFor returns the effective Permissions for the given dirPath.
 // Project config overrides global when present; falls back to global on error.
-func (o *Orchestrator) configPermissionsFor(dirPath string) config.PermissionsConfig {
+func (o *Orchestrator) configPermissionsFor(dirPath string) types.Permissions {
 	if dirPath == "" {
 		return o.cfg.Permissions
 	}
@@ -165,7 +165,7 @@ func (o *Orchestrator) configPermissionsFor(dirPath string) config.PermissionsCo
 // resolveRole returns the effective role for the given author by merging config and DB grants.
 // Bootstrap rule: if both config and DB are empty, everyone is RoleOwner.
 // Otherwise the more privileged role (owner > member) from either source wins.
-func resolveRole(cfgPerms config.PermissionsConfig, dbPerms db.ChannelPermissions, authorID string, authorRoles []string) types.Role {
+func resolveRole(cfgPerms, dbPerms types.Permissions, authorID string, authorRoles []string) types.Role {
 	if cfgPerms.IsEmpty() && dbPerms.IsEmpty() {
 		return types.RoleOwner // bootstrap: no restrictions configured
 	}

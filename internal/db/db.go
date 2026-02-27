@@ -19,7 +19,7 @@ type Store interface {
 	GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*Channel, error)
 	IsChannelActive(ctx context.Context, channelID string) (bool, error)
 	UpdateSessionID(ctx context.Context, channelID string, sessionID string) error
-	UpdateChannelPermissions(ctx context.Context, channelID string, perms ChannelPermissions) error
+	UpdateChannelPermissions(ctx context.Context, channelID string, perms types.Permissions) error
 	DeleteChannel(ctx context.Context, channelID string) error
 	DeleteChannelsByParentID(ctx context.Context, parentID string) error
 	InsertMessage(ctx context.Context, msg *Message) error
@@ -95,7 +95,7 @@ func (s *SQLiteStore) Close() error {
 func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
 	var permStr string
 	if !ch.Permissions.IsEmpty() {
-		data, _ := json.Marshal(ch.Permissions) // ChannelPermissions is always serializable
+		data, _ := json.Marshal(ch.Permissions) // Permissions is always serializable
 		permStr = string(data)
 	}
 	_, err := s.db.ExecContext(ctx,
@@ -178,8 +178,8 @@ func (s *SQLiteStore) UpdateSessionID(ctx context.Context, channelID string, ses
 	return err
 }
 
-func (s *SQLiteStore) UpdateChannelPermissions(ctx context.Context, channelID string, perms ChannelPermissions) error {
-	data, _ := json.Marshal(perms) // ChannelPermissions is always serializable
+func (s *SQLiteStore) UpdateChannelPermissions(ctx context.Context, channelID string, perms types.Permissions) error {
+	data, _ := json.Marshal(perms) // Permissions is always serializable
 	permStr := string(data)
 	now := time.Now().UTC()
 	// Update the channel and propagate to all child threads

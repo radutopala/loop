@@ -54,56 +54,6 @@ func (t *TaskTemplate) ResolvePrompt(loopDir string) (string, error) {
 	return string(data), nil
 }
 
-// RoleGrant lists the users and Discord role IDs that are granted a specific RBAC role.
-type RoleGrant struct {
-	Users []string `json:"users"` // platform user IDs
-	Roles []string `json:"roles"` // Discord role IDs (ignored on Slack)
-}
-
-// PermissionsConfig configures per-channel RBAC with owner and member roles.
-// An empty config (all slices nil/empty) allows all users as owners (bootstrap mode).
-type PermissionsConfig struct {
-	Owners  RoleGrant `json:"owners"`
-	Members RoleGrant `json:"members"`
-}
-
-// IsEmpty returns true when no role grants are configured.
-func (p PermissionsConfig) IsEmpty() bool {
-	return len(p.Owners.Users) == 0 && len(p.Owners.Roles) == 0 &&
-		len(p.Members.Users) == 0 && len(p.Members.Roles) == 0
-}
-
-// GetRole returns the role for the given author based on config grants.
-// Returns "" when the author is not granted any role.
-func (p PermissionsConfig) GetRole(authorID string, authorRoles []string) types.Role {
-	if sliceContains(p.Owners.Users, authorID) {
-		return types.RoleOwner
-	}
-	for _, r := range authorRoles {
-		if sliceContains(p.Owners.Roles, r) {
-			return types.RoleOwner
-		}
-	}
-	if sliceContains(p.Members.Users, authorID) {
-		return types.RoleMember
-	}
-	for _, r := range authorRoles {
-		if sliceContains(p.Members.Roles, r) {
-			return types.RoleMember
-		}
-	}
-	return ""
-}
-
-func sliceContains(s []string, v string) bool {
-	for _, item := range s {
-		if item == v {
-			return true
-		}
-	}
-	return false
-}
-
 // EmbeddingsConfig configures the embedding provider for semantic memory search.
 type EmbeddingsConfig struct {
 	Provider  string `json:"provider"`   // "ollama"
@@ -151,7 +101,7 @@ type Config struct {
 	ClaudeModel          string
 	StreamingEnabled     bool
 	Memory               MemoryConfig
-	Permissions          PermissionsConfig
+	Permissions          types.Permissions
 }
 
 // Platform returns the configured chat platform.
@@ -531,7 +481,7 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 
 	// Permissions: project config replaces global when set.
 	if pc.Permissions != nil {
-		merged.Permissions = PermissionsConfig{}
+		merged.Permissions = types.Permissions{}
 		if pc.Permissions.Owners != nil {
 			merged.Permissions.Owners.Users = pc.Permissions.Owners.Users
 			merged.Permissions.Owners.Roles = pc.Permissions.Owners.Roles

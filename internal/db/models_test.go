@@ -18,61 +18,61 @@ func TestModelsSuite(t *testing.T) {
 }
 
 func (s *ModelsSuite) TestIsEmptyTrue() {
-	p := ChannelPermissions{}
+	p := types.Permissions{}
 	require.True(s.T(), p.IsEmpty())
 }
 
 func (s *ModelsSuite) TestIsEmptyFalseOwnerUser() {
-	p := ChannelPermissions{Owners: ChannelRoleGrant{Users: []string{"U1"}}}
+	p := types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}}
 	require.False(s.T(), p.IsEmpty())
 }
 
 func (s *ModelsSuite) TestIsEmptyFalseOwnerRole() {
-	p := ChannelPermissions{Owners: ChannelRoleGrant{Roles: []string{"admin"}}}
+	p := types.Permissions{Owners: types.RoleGrant{Roles: []string{"admin"}}}
 	require.False(s.T(), p.IsEmpty())
 }
 
 func (s *ModelsSuite) TestIsEmptyFalseMemberUser() {
-	p := ChannelPermissions{Members: ChannelRoleGrant{Users: []string{"U2"}}}
+	p := types.Permissions{Members: types.RoleGrant{Users: []string{"U2"}}}
 	require.False(s.T(), p.IsEmpty())
 }
 
 func (s *ModelsSuite) TestIsEmptyFalseMemberRole() {
-	p := ChannelPermissions{Members: ChannelRoleGrant{Roles: []string{"member-role"}}}
+	p := types.Permissions{Members: types.RoleGrant{Roles: []string{"member-role"}}}
 	require.False(s.T(), p.IsEmpty())
 }
 
 func (s *ModelsSuite) TestGetRoleOwnerByUser() {
-	p := ChannelPermissions{
-		Owners: ChannelRoleGrant{Users: []string{"U1"}},
+	p := types.Permissions{
+		Owners: types.RoleGrant{Users: []string{"U1"}},
 	}
 	require.Equal(s.T(), types.RoleOwner, p.GetRole("U1", nil))
 }
 
 func (s *ModelsSuite) TestGetRoleOwnerByRole() {
-	p := ChannelPermissions{
-		Owners: ChannelRoleGrant{Roles: []string{"admin"}},
+	p := types.Permissions{
+		Owners: types.RoleGrant{Roles: []string{"admin"}},
 	}
 	require.Equal(s.T(), types.RoleOwner, p.GetRole("U1", []string{"admin"}))
 }
 
 func (s *ModelsSuite) TestGetRoleMemberByUser() {
-	p := ChannelPermissions{
-		Members: ChannelRoleGrant{Users: []string{"U2"}},
+	p := types.Permissions{
+		Members: types.RoleGrant{Users: []string{"U2"}},
 	}
 	require.Equal(s.T(), types.RoleMember, p.GetRole("U2", nil))
 }
 
 func (s *ModelsSuite) TestGetRoleMemberByRole() {
-	p := ChannelPermissions{
-		Members: ChannelRoleGrant{Roles: []string{"member-role"}},
+	p := types.Permissions{
+		Members: types.RoleGrant{Roles: []string{"member-role"}},
 	}
 	require.Equal(s.T(), types.RoleMember, p.GetRole("U2", []string{"member-role"}))
 }
 
 func (s *ModelsSuite) TestGetRoleNone() {
-	p := ChannelPermissions{
-		Owners: ChannelRoleGrant{Users: []string{"U1"}},
+	p := types.Permissions{
+		Owners: types.RoleGrant{Users: []string{"U1"}},
 	}
 	require.Equal(s.T(), types.Role(""), p.GetRole("U2", nil))
 }
