@@ -12,6 +12,7 @@ import (
 
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/embeddings"
+	"github.com/radutopala/loop/internal/testutil"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -31,33 +32,10 @@ func (m *mockEmbedder) Dimensions() int {
 	return m.Called().Int(0)
 }
 
-// mockStore mocks the Store interface.
-type mockStore struct {
-	mock.Mock
-}
-
-func (m *mockStore) UpsertMemoryFile(ctx context.Context, file *db.MemoryFile) error {
-	return m.Called(ctx, file).Error(0)
-}
-
-func (m *mockStore) GetMemoryFilesByDirPath(ctx context.Context, dirPath string) ([]*db.MemoryFile, error) {
-	args := m.Called(ctx, dirPath)
-	return args.Get(0).([]*db.MemoryFile), args.Error(1)
-}
-
-func (m *mockStore) GetMemoryFileHash(ctx context.Context, filePath, dirPath string) (string, error) {
-	args := m.Called(ctx, filePath, dirPath)
-	return args.String(0), args.Error(1)
-}
-
-func (m *mockStore) DeleteMemoryFile(ctx context.Context, filePath, dirPath string) error {
-	return m.Called(ctx, filePath, dirPath).Error(0)
-}
-
 type IndexerSuite struct {
 	suite.Suite
 	embedder         *mockEmbedder
-	store            *mockStore
+	store            *testutil.MockStore
 	indexer          *Indexer
 	origEvalSymlinks func(string) (string, error)
 }
@@ -68,7 +46,7 @@ func TestIndexerSuite(t *testing.T) {
 
 func (s *IndexerSuite) SetupTest() {
 	s.embedder = new(mockEmbedder)
-	s.store = new(mockStore)
+	s.store = new(testutil.MockStore)
 	s.indexer = NewIndexer(s.embedder, s.store, slog.New(slog.NewTextHandler(os.Stderr, nil)), 0)
 	// Default to no-op symlink resolution for all tests.
 	s.origEvalSymlinks = evalSymlinks

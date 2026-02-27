@@ -2883,27 +2883,3 @@ func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerBlockedByCfgPerms() 
 	s.store.AssertExpectations(s.T())
 	s.bot.AssertExpectations(s.T())
 }
-
-func TestTruncateString(t *testing.T) {
-	tests := []struct {
-		name   string
-		input  string
-		maxLen int
-		want   string
-	}{
-		{"short string unchanged", "hello", 10, "hello"},
-		{"exact length unchanged", "hello", 5, "hello"},
-		{"truncated with ellipsis", "hello world", 8, "hello..."},
-		{"maxLen 3 gives ellipsis only", "hello", 3, "hel"},
-		{"maxLen 2 no ellipsis", "hello", 2, "he"},
-		{"maxLen 1", "hello", 1, "h"},
-		{"maxLen 4 truncates", "hello world", 4, "h..."},
-		{"empty string", "", 5, ""},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			got := truncateString(tt.input, tt.maxLen)
-			require.Equal(t, tt.want, got)
-		})
-	}
-}

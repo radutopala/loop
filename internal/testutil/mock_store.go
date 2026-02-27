@@ -48,14 +48,6 @@ func (m *MockStore) InsertMessage(ctx context.Context, msg *db.Message) error {
 	return m.Called(ctx, msg).Error(0)
 }
 
-func (m *MockStore) GetUnprocessedMessages(ctx context.Context, channelID string) ([]*db.Message, error) {
-	args := m.Called(ctx, channelID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.Message), args.Error(1)
-}
-
 func (m *MockStore) MarkMessagesProcessed(ctx context.Context, ids []int64) error {
 	return m.Called(ctx, ids).Error(0)
 }
@@ -152,6 +144,9 @@ func (m *MockStore) UpsertMemoryFile(ctx context.Context, file *db.MemoryFile) e
 
 func (m *MockStore) GetMemoryFilesByDirPath(ctx context.Context, dirPath string) ([]*db.MemoryFile, error) {
 	args := m.Called(ctx, dirPath)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
 	return args.Get(0).([]*db.MemoryFile), args.Error(1)
 }
 

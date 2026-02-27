@@ -259,14 +259,3 @@ func generateMessageID() string {
 	_, _ = rand.Read(b)
 	return "ask-" + hex.EncodeToString(b)
 }
-
-// truncateString truncates s to maxLen characters, appending "..." if truncated.
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	if maxLen <= 3 {
-		return s[:maxLen]
-	}
-	return s[:maxLen-3] + "..."
-}

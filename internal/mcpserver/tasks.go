@@ -9,6 +9,8 @@ import (
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/radutopala/loop/internal/types"
 )
 
 type scheduleTaskInput struct {
@@ -102,10 +104,11 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 
 	var text strings.Builder
 	for _, t := range *tasks {
+		prompt := types.TruncateString(t.Prompt, 80)
 		if t.TemplateName != "" {
-			fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v, template_name: %s", t.ID, t.Prompt, t.Schedule, t.Type, t.Enabled, t.TemplateName)
+			fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v, template_name: %s", t.ID, prompt, t.Schedule, t.Type, t.Enabled, t.TemplateName)
 		} else {
-			fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v", t.ID, t.Prompt, t.Schedule, t.Type, t.Enabled)
+			fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v", t.ID, prompt, t.Schedule, t.Type, t.Enabled)
 		}
 		if t.AutoDeleteSec > 0 {
 			fmt.Fprintf(&text, ", auto_delete: %ds", t.AutoDeleteSec)

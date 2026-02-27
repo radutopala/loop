@@ -23,7 +23,6 @@ type Store interface {
 	DeleteChannel(ctx context.Context, channelID string) error
 	DeleteChannelsByParentID(ctx context.Context, parentID string) error
 	InsertMessage(ctx context.Context, msg *Message) error
-	GetUnprocessedMessages(ctx context.Context, channelID string) ([]*Message, error)
 	MarkMessagesProcessed(ctx context.Context, ids []int64) error
 	GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*Message, error)
 	CreateScheduledTask(ctx context.Context, task *ScheduledTask) (int64, error)
@@ -252,19 +251,6 @@ func (s *SQLiteStore) InsertMessage(ctx context.Context, msg *Message) error {
 	}
 	msg.ID = id
 	return nil
-}
-
-func (s *SQLiteStore) GetUnprocessedMessages(ctx context.Context, channelID string) ([]*Message, error) {
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at
-		 FROM messages WHERE channel_id = ? AND is_processed = 0 ORDER BY created_at ASC`,
-		channelID,
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanMessages(rows)
 }
 
 func (s *SQLiteStore) MarkMessagesProcessed(ctx context.Context, ids []int64) error {

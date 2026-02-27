@@ -378,35 +378,6 @@ func (s *StoreSuite) TestInsertMessageErrors() {
 	require.Error(s.T(), err)
 }
 
-func (s *StoreSuite) TestGetUnprocessedMessages() {
-	now := time.Now().UTC()
-	rows := newMockMessageRows().
-		AddRow(1, 1, "ch1", "msg1", "u1", "user1", "hello", 0, 0, now).
-		AddRow(2, 1, "ch1", "msg2", "u2", "user2", "world", 1, 0, now)
-	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id .+ AND is_processed = 0`).
-		WithArgs("ch1").
-		WillReturnRows(rows)
-
-	msgs, err := s.store.GetUnprocessedMessages(context.Background(), "ch1")
-	require.NoError(s.T(), err)
-	require.Len(s.T(), msgs, 2)
-	require.False(s.T(), msgs[0].IsBot)
-	require.True(s.T(), msgs[1].IsBot)
-}
-
-func (s *StoreSuite) TestGetUnprocessedMessagesErrors() {
-	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
-	msgs, err := s.store.GetUnprocessedMessages(context.Background(), "ch1")
-	require.Error(s.T(), err)
-	require.Nil(s.T(), msgs)
-
-	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id .+ AND is_processed = 0`).WithArgs("ch1").WillReturnRows(
-		newMockMessageRows().AddRow("not-an-int", 1, "ch1", "msg1", "u1", "user1", "hello", 0, 0, time.Now().UTC()))
-	msgs, err = s.store.GetUnprocessedMessages(context.Background(), "ch1")
-	require.Error(s.T(), err)
-	require.Nil(s.T(), msgs)
-}
-
 func (s *StoreSuite) TestMarkMessagesProcessed() {
 	s.mock.ExpectExec(`UPDATE messages SET is_processed = 1`).
 		WithArgs(int64(1)).
@@ -446,6 +417,13 @@ func (s *StoreSuite) TestGetRecentMessages() {
 func (s *StoreSuite) TestGetRecentMessagesError() {
 	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id`).WithArgs("ch1", 10).WillReturnError(sql.ErrConnDone)
 	msgs, err := s.store.GetRecentMessages(context.Background(), "ch1", 10)
+	require.Error(s.T(), err)
+	require.Nil(s.T(), msgs)
+
+	// Scan error inside scanMessages.
+	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id`).WithArgs("ch1", 10).WillReturnRows(
+		newMockMessageRows().AddRow("not-an-int", 1, "ch1", "msg1", "u1", "user1", "hello", 0, 0, time.Now().UTC()))
+	msgs, err = s.store.GetRecentMessages(context.Background(), "ch1", 10)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), msgs)
 }

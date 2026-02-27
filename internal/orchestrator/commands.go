@@ -133,7 +133,8 @@ func (o *Orchestrator) handleTasksInteraction(ctx context.Context, inter *bot.In
 			schedule = fmt.Sprintf("`%s`", t.Schedule)
 		}
 		nextRun := formatDuration(t.NextRunAt.Sub(now))
-		fmt.Fprintf(&sb, "- **ID %d** [%s] [%s] %s — %s (next: %s)", t.ID, t.Type, status, schedule, t.Prompt, nextRun)
+		prompt := types.TruncateString(t.Prompt, 80)
+		fmt.Fprintf(&sb, "- **ID %d** [%s] [%s] %s — %s (next: %s)", t.ID, t.Type, status, schedule, prompt, nextRun)
 		if t.AutoDeleteSec > 0 {
 			fmt.Fprintf(&sb, " (auto_delete: %ds)", t.AutoDeleteSec)
 		}

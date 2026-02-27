@@ -32,170 +32,11 @@ import (
 	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/scheduler"
+	"github.com/radutopala/loop/internal/testutil"
 	"github.com/radutopala/loop/internal/types"
 )
 
 // --- Mock implementations ---
-
-type mockStore struct {
-	mock.Mock
-}
-
-func (m *mockStore) UpsertChannel(ctx context.Context, ch *db.Channel) error {
-	return m.Called(ctx, ch).Error(0)
-}
-
-func (m *mockStore) GetChannel(ctx context.Context, channelID string) (*db.Channel, error) {
-	args := m.Called(ctx, channelID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*db.Channel), args.Error(1)
-}
-
-func (m *mockStore) GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*db.Channel, error) {
-	args := m.Called(ctx, dirPath, platform)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*db.Channel), args.Error(1)
-}
-
-func (m *mockStore) IsChannelActive(ctx context.Context, channelID string) (bool, error) {
-	args := m.Called(ctx, channelID)
-	return args.Bool(0), args.Error(1)
-}
-
-func (m *mockStore) UpdateSessionID(ctx context.Context, channelID string, sessionID string) error {
-	return m.Called(ctx, channelID, sessionID).Error(0)
-}
-
-func (m *mockStore) InsertMessage(ctx context.Context, msg *db.Message) error {
-	return m.Called(ctx, msg).Error(0)
-}
-
-func (m *mockStore) GetUnprocessedMessages(ctx context.Context, channelID string) ([]*db.Message, error) {
-	args := m.Called(ctx, channelID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.Message), args.Error(1)
-}
-
-func (m *mockStore) MarkMessagesProcessed(ctx context.Context, ids []int64) error {
-	return m.Called(ctx, ids).Error(0)
-}
-
-func (m *mockStore) GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*db.Message, error) {
-	args := m.Called(ctx, channelID, limit)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.Message), args.Error(1)
-}
-
-func (m *mockStore) CreateScheduledTask(ctx context.Context, task *db.ScheduledTask) (int64, error) {
-	args := m.Called(ctx, task)
-	return args.Get(0).(int64), args.Error(1)
-}
-
-func (m *mockStore) GetDueTasks(ctx context.Context, now time.Time) ([]*db.ScheduledTask, error) {
-	args := m.Called(ctx, now)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.ScheduledTask), args.Error(1)
-}
-
-func (m *mockStore) UpdateScheduledTask(ctx context.Context, task *db.ScheduledTask) error {
-	return m.Called(ctx, task).Error(0)
-}
-
-func (m *mockStore) DeleteScheduledTask(ctx context.Context, id int64) error {
-	return m.Called(ctx, id).Error(0)
-}
-
-func (m *mockStore) ListScheduledTasks(ctx context.Context, channelID string) ([]*db.ScheduledTask, error) {
-	args := m.Called(ctx, channelID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.ScheduledTask), args.Error(1)
-}
-
-func (m *mockStore) UpdateScheduledTaskEnabled(ctx context.Context, id int64, enabled bool) error {
-	return m.Called(ctx, id, enabled).Error(0)
-}
-
-func (m *mockStore) GetScheduledTask(ctx context.Context, id int64) (*db.ScheduledTask, error) {
-	args := m.Called(ctx, id)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*db.ScheduledTask), args.Error(1)
-}
-
-func (m *mockStore) InsertTaskRunLog(ctx context.Context, trl *db.TaskRunLog) (int64, error) {
-	args := m.Called(ctx, trl)
-	return args.Get(0).(int64), args.Error(1)
-}
-
-func (m *mockStore) UpdateTaskRunLog(ctx context.Context, trl *db.TaskRunLog) error {
-	return m.Called(ctx, trl).Error(0)
-}
-
-func (m *mockStore) DeleteChannel(ctx context.Context, channelID string) error {
-	return m.Called(ctx, channelID).Error(0)
-}
-
-func (m *mockStore) DeleteChannelsByParentID(ctx context.Context, parentID string) error {
-	return m.Called(ctx, parentID).Error(0)
-}
-
-func (m *mockStore) Close() error {
-	return m.Called().Error(0)
-}
-
-func (m *mockStore) GetScheduledTaskByTemplateName(ctx context.Context, channelID, templateName string) (*db.ScheduledTask, error) {
-	args := m.Called(ctx, channelID, templateName)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*db.ScheduledTask), args.Error(1)
-}
-
-func (m *mockStore) ListChannels(ctx context.Context) ([]*db.Channel, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.Channel), args.Error(1)
-}
-
-func (m *mockStore) UpsertMemoryFile(ctx context.Context, file *db.MemoryFile) error {
-	return m.Called(ctx, file).Error(0)
-}
-
-func (m *mockStore) GetMemoryFilesByDirPath(ctx context.Context, dirPath string) ([]*db.MemoryFile, error) {
-	args := m.Called(ctx, dirPath)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.MemoryFile), args.Error(1)
-}
-
-func (m *mockStore) GetMemoryFileHash(ctx context.Context, filePath, dirPath string) (string, error) {
-	args := m.Called(ctx, filePath, dirPath)
-	return args.String(0), args.Error(1)
-}
-
-func (m *mockStore) DeleteMemoryFile(ctx context.Context, filePath, dirPath string) error {
-	return m.Called(ctx, filePath, dirPath).Error(0)
-}
-
-func (m *mockStore) UpdateChannelPermissions(ctx context.Context, channelID string, perms db.ChannelPermissions) error {
-	return m.Called(ctx, channelID, perms).Error(0)
-}
 
 type mockDockerClient struct {
 	mock.Mock
@@ -529,7 +370,7 @@ func fakeAPIServer() func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEns
 // serveSetupMocks creates and wires the standard mock objects for serve() tests.
 // It returns the mocks so callers can add extra expectations or adjust config.
 type serveMocks struct {
-	store        *mockStore
+	store        *testutil.MockStore
 	bot          *mockBot
 	dockerClient *mockDockerClient
 	cfg          *config.Config
@@ -537,7 +378,7 @@ type serveMocks struct {
 
 func setupServeMocks() *serveMocks {
 	m := &serveMocks{
-		store:        new(mockStore),
+		store:        new(testutil.MockStore),
 		bot:          new(mockBot),
 		dockerClient: new(mockDockerClient),
 		cfg:          testConfig(),
@@ -871,7 +712,7 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPaths() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store := new(mockStore)
+	store := new(testutil.MockStore)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
 	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
 
@@ -890,7 +731,7 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsHomeDirError() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store := new(mockStore)
+	store := new(testutil.MockStore)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
 	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
 
@@ -908,7 +749,7 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsWithGlobalAndProject() 
 	loadProjectMemoryPaths = func(_ string) []string { return []string{"./docs/arch.md"} }
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store := new(mockStore)
+	store := new(testutil.MockStore)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
 	mdi := &multiDirIndexer{
 		indexer:           indexer,
@@ -937,7 +778,7 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsDedup() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store := new(mockStore)
+	store := new(testutil.MockStore)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
 	mdi := &multiDirIndexer{
 		indexer:           indexer,
@@ -961,7 +802,7 @@ func (s *MainSuite) TestResolveMemoryPathsWithExclusions() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store := new(mockStore)
+	store := new(testutil.MockStore)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
 	mdi := &multiDirIndexer{
 		indexer:           indexer,
@@ -981,7 +822,7 @@ func (s *MainSuite) TestResolveMemoryPathsAbsoluteExclusion() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store := new(mockStore)
+	store := new(testutil.MockStore)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
 	mdi := &multiDirIndexer{
 		indexer:           indexer,
@@ -1004,7 +845,7 @@ func (s *MainSuite) TestResolveMemoryPathsProjectExclusion() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store := new(mockStore)
+	store := new(testutil.MockStore)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
 	mdi := &multiDirIndexer{indexer: indexer, logger: logger}
 
@@ -1091,7 +932,7 @@ func (s *MainSuite) TestMultiDirIndexerSearch() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store := new(mockStore)
+	store := new(testutil.MockStore)
 	store.On("GetMemoryFilesByDirPath", mock.Anything, mock.Anything).Return([]*db.MemoryFile{}, nil)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
 	mdi := &multiDirIndexer{indexer: indexer, logger: logger}
@@ -1108,7 +949,7 @@ func (s *MainSuite) TestMultiDirIndexerSearchWithError() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store := new(mockStore)
+	store := new(testutil.MockStore)
 	// GetMemoryFilesByDirPath returning an error triggers the error path
 	store.On("GetMemoryFilesByDirPath", mock.Anything, mock.Anything).Return(nil, errors.New("db error"))
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
@@ -1126,7 +967,7 @@ func (s *MainSuite) TestMultiDirIndexerIndex() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store := new(mockStore)
+	store := new(testutil.MockStore)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
 	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
 
@@ -1165,7 +1006,7 @@ func (s *MainSuite) TestMultiDirIndexerIndexWithCount() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store := new(mockStore)
+	store := new(testutil.MockStore)
 	store.On("GetMemoryFileHash", mock.Anything, mock.Anything, mock.Anything).Return("", nil)
 	store.On("UpsertMemoryFile", mock.Anything, mock.Anything).Return(nil)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
@@ -1189,7 +1030,7 @@ func (s *MainSuite) TestMultiDirIndexerSearchWithSortAndTopK() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store := new(mockStore)
+	store := new(testutil.MockStore)
 	store.On("GetMemoryFileHash", mock.Anything, mock.Anything, mock.Anything).Return("", nil)
 	store.On("UpsertMemoryFile", mock.Anything, mock.Anything).Return(nil)
 	emb1 := embeddings.SerializeFloat32([]float32{0.1, 0.2, 0.3})
@@ -1294,7 +1135,7 @@ func (s *MainSuite) TestReindexAll() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store := new(mockStore)
+	store := new(testutil.MockStore)
 	store.On("GetMemoryFileHash", mock.Anything, mock.Anything, mock.Anything).Return("", nil)
 	store.On("UpsertMemoryFile", mock.Anything, mock.Anything).Return(nil)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
@@ -1314,7 +1155,7 @@ func (s *MainSuite) TestReindexAll() {
 
 func (s *MainSuite) TestReindexAllListError() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store := new(mockStore)
+	store := new(testutil.MockStore)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
 	mdi := &multiDirIndexer{indexer: indexer, logger: logger}
 
@@ -1331,7 +1172,7 @@ func (s *MainSuite) TestReindexAllCancelledContext() {
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	store := new(mockStore)
+	store := new(testutil.MockStore)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
 	mdi := &multiDirIndexer{indexer: indexer, logger: logger}
 
@@ -1578,12 +1419,12 @@ func (s *MainSuite) TestRunMCPWithMemoryFlag() {
 func (s *MainSuite) TestServeEarlyErrors() {
 	tests := []struct {
 		name    string
-		setup   func(store *mockStore)
+		setup   func(store *testutil.MockStore)
 		wantErr string
 	}{
 		{
 			name: "config load error",
-			setup: func(_ *mockStore) {
+			setup: func(_ *testutil.MockStore) {
 				configLoad = func() (*config.Config, error) {
 					return nil, errors.New("config error")
 				}
@@ -1592,7 +1433,7 @@ func (s *MainSuite) TestServeEarlyErrors() {
 		},
 		{
 			name: "sqlite store error",
-			setup: func(_ *mockStore) {
+			setup: func(_ *testutil.MockStore) {
 				configLoad = func() (*config.Config, error) { return testConfig(), nil }
 				newSQLiteStore = func(_ string) (db.Store, error) {
 					return nil, errors.New("db error")
@@ -1602,7 +1443,7 @@ func (s *MainSuite) TestServeEarlyErrors() {
 		},
 		{
 			name: "discord bot error",
-			setup: func(store *mockStore) {
+			setup: func(store *testutil.MockStore) {
 				store.On("Close").Return(nil)
 				configLoad = func() (*config.Config, error) { return testConfig(), nil }
 				newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
@@ -1614,7 +1455,7 @@ func (s *MainSuite) TestServeEarlyErrors() {
 		},
 		{
 			name: "slack bot error",
-			setup: func(store *mockStore) {
+			setup: func(store *testutil.MockStore) {
 				store.On("Close").Return(nil)
 				configLoad = func() (*config.Config, error) { return testSlackConfig(), nil }
 				newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
@@ -1626,7 +1467,7 @@ func (s *MainSuite) TestServeEarlyErrors() {
 		},
 		{
 			name: "docker client error",
-			setup: func(store *mockStore) {
+			setup: func(store *testutil.MockStore) {
 				store.On("Close").Return(nil)
 				configLoad = func() (*config.Config, error) { return testConfig(), nil }
 				newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
@@ -1641,7 +1482,7 @@ func (s *MainSuite) TestServeEarlyErrors() {
 		},
 		{
 			name: "ensure image error",
-			setup: func(store *mockStore) {
+			setup: func(store *testutil.MockStore) {
 				store.On("Close").Return(nil)
 				configLoad = func() (*config.Config, error) { return testConfig(), nil }
 				newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
@@ -1660,7 +1501,7 @@ func (s *MainSuite) TestServeEarlyErrors() {
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			store := new(mockStore)
+			store := new(testutil.MockStore)
 			tt.setup(store)
 			err := serve()
 			require.Error(s.T(), err)
@@ -1850,7 +1691,7 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 
 func (s *MainSuite) TestServeWithMemoryEnabled() {
 	m := setupServeMocks()
-	m.store.On("ListChannels", mock.Anything).Maybe().Return([]*db.Channel{}, nil)
+	m.store.On("ListChannels", mock.Anything).Maybe().Return(nil, nil)
 	m.bot.On("OnMessage", mock.Anything).Return()
 	m.bot.On("OnInteraction", mock.Anything).Return()
 	m.bot.On("OnChannelDelete", mock.Anything).Return()

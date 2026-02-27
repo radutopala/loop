@@ -180,32 +180,27 @@ func (s *SchedulerSuite) TestListTasks() {
 		{ID: 1, ChannelID: "ch1"},
 		{ID: 2, ChannelID: "ch1"},
 	}
-	cases := []struct {
-		name     string
-		result   []*db.ScheduledTask
-		storeErr error
-	}{
-		{"success", expected, nil},
-		{"error", nil, errors.New("list error")},
-	}
-	for _, tc := range cases {
-		s.Run(tc.name, func() {
-			store := new(testutil.MockStore)
-			store.On("ListScheduledTasks", mock.Anything, "ch1").Return(tc.result, tc.storeErr)
+	s.Run("success", func() {
+		store := new(testutil.MockStore)
+		store.On("ListScheduledTasks", mock.Anything, "ch1").Return(expected, nil)
 
-			ts := NewTaskScheduler(store, s.executor, time.Second, s.logger)
-			tasks, err := ts.ListTasks(context.Background(), "ch1")
+		ts := NewTaskScheduler(store, s.executor, time.Second, s.logger)
+		tasks, err := ts.ListTasks(context.Background(), "ch1")
+		require.NoError(s.T(), err)
+		require.Equal(s.T(), expected, tasks)
+		store.AssertExpectations(s.T())
+	})
 
-			if tc.storeErr != nil {
-				require.Error(s.T(), err)
-				require.Nil(s.T(), tasks)
-			} else {
-				require.NoError(s.T(), err)
-				require.Equal(s.T(), tc.result, tasks)
-			}
-			store.AssertExpectations(s.T())
-		})
-	}
+	s.Run("error", func() {
+		store := new(testutil.MockStore)
+		store.On("ListScheduledTasks", mock.Anything, "ch1").Return(nil, errors.New("list error"))
+
+		ts := NewTaskScheduler(store, s.executor, time.Second, s.logger)
+		tasks, err := ts.ListTasks(context.Background(), "ch1")
+		require.Error(s.T(), err)
+		require.Nil(s.T(), tasks)
+		store.AssertExpectations(s.T())
+	})
 }
 
 func (s *SchedulerSuite) TestStartAndStop() {
