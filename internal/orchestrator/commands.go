@@ -55,6 +55,8 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, inter *bot.Interac
 		o.handleScheduleInteraction(ctx, inter)
 	case "tasks":
 		o.handleTasksInteraction(ctx, inter)
+	case "task":
+		o.handleTaskInteraction(ctx, inter)
 	case "cancel":
 		o.handleCancelInteraction(ctx, inter)
 	case "toggle":
@@ -140,6 +142,56 @@ func (o *Orchestrator) handleTasksInteraction(ctx context.Context, inter *bot.In
 		}
 		sb.WriteString("\n")
 	}
+	o.sendReply(ctx, inter.ChannelID, sb.String())
+}
+
+func (o *Orchestrator) handleTaskInteraction(ctx context.Context, inter *bot.Interaction) {
+	idStr := inter.Options["task_id"]
+	taskID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		o.sendReply(ctx, inter.ChannelID, "Invalid task ID.")
+		return
+	}
+
+	task, err := o.store.GetScheduledTask(ctx, taskID)
+	if err != nil {
+		o.logger.Error("getting task", "error", err, "channel_id", inter.ChannelID)
+		o.sendReply(ctx, inter.ChannelID, "Failed to get task.")
+		return
+	}
+	if task == nil {
+		o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Task %d not found.", taskID))
+		return
+	}
+
+	status := "enabled"
+	if !task.Enabled {
+		status = "disabled"
+	}
+
+	now := time.Now().UTC()
+	var schedule string
+	if task.Type == db.TaskTypeOnce {
+		schedule = task.NextRunAt.Local().Format("2006-01-02 15:04 MST")
+	} else {
+		schedule = fmt.Sprintf("`%s`", task.Schedule)
+	}
+	nextRun := formatDuration(task.NextRunAt.Sub(now))
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb, "**Task %d**\n", task.ID)
+	fmt.Fprintf(&sb, "Type: %s\n", task.Type)
+	fmt.Fprintf(&sb, "Schedule: %s\n", schedule)
+	fmt.Fprintf(&sb, "Status: %s\n", status)
+	fmt.Fprintf(&sb, "Next run: %s\n", nextRun)
+	if task.TemplateName != "" {
+		fmt.Fprintf(&sb, "Template: %s\n", task.TemplateName)
+	}
+	if task.AutoDeleteSec > 0 {
+		fmt.Fprintf(&sb, "Auto-delete: %ds\n", task.AutoDeleteSec)
+	}
+	fmt.Fprintf(&sb, "\n**Prompt:**\n%s", task.Prompt)
+
 	o.sendReply(ctx, inter.ChannelID, sb.String())
 }
 

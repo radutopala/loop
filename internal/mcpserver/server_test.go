@@ -105,7 +105,7 @@ func (s *MCPServerSuite) TestMCPServer() {
 func (s *MCPServerSuite) TestListTools() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 11)
+	require.Len(s.T(), res.Tools, 12)
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -113,6 +113,7 @@ func (s *MCPServerSuite) TestListTools() {
 	}
 	require.True(s.T(), names["schedule_task"])
 	require.True(s.T(), names["list_tasks"])
+	require.True(s.T(), names["show_task"])
 	require.True(s.T(), names["cancel_task"])
 	require.True(s.T(), names["toggle_task"])
 	require.True(s.T(), names["edit_task"])
@@ -272,6 +273,61 @@ func (s *MCPServerSuite) TestListTasksErrors() {
 		s.Run(tt.name, func() {
 			s.httpClient.doFunc = tt.doFunc
 			text, isError := s.callTool("list_tasks", map[string]any{})
+			require.True(s.T(), isError)
+			require.Contains(s.T(), text, tt.wantText)
+		})
+	}
+}
+
+// --- show_task ---
+
+func (s *MCPServerSuite) TestShowTaskSuccess() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "GET", req.Method)
+		require.Contains(s.T(), req.URL.String(), "/api/tasks/42")
+		return jsonResponse(http.StatusOK, `{"id":42,"schedule":"0 9 * * *","type":"cron","prompt":"full prompt text here","enabled":true,"next_run_at":"2025-01-01T09:00:00Z","template_name":"my-tmpl","auto_delete_sec":60}`), nil
+	}
+
+	text, isError := s.callTool("show_task", map[string]any{"task_id": float64(42)})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "Task 42")
+	require.Contains(s.T(), text, "Type: cron")
+	require.Contains(s.T(), text, "Schedule: 0 9 * * *")
+	require.Contains(s.T(), text, "Status: enabled")
+	require.Contains(s.T(), text, "Template: my-tmpl")
+	require.Contains(s.T(), text, "Auto-delete: 60s")
+	require.Contains(s.T(), text, "Prompt:\nfull prompt text here")
+}
+
+func (s *MCPServerSuite) TestShowTaskDisabled() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"id":1,"schedule":"5m","type":"interval","prompt":"test","enabled":false,"next_run_at":"2025-01-01T09:00:00Z"}`), nil
+	}
+
+	text, isError := s.callTool("show_task", map[string]any{"task_id": float64(1)})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "Status: disabled")
+	require.NotContains(s.T(), text, "Template:")
+	require.NotContains(s.T(), text, "Auto-delete:")
+}
+
+func (s *MCPServerSuite) TestShowTaskErrors() {
+	tests := []struct {
+		name     string
+		doFunc   func(*http.Request) (*http.Response, error)
+		wantText string
+	}{
+		{"API error", func(*http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusNotFound, "task not found"), nil
+		}, "API error"},
+		{"HTTP error", func(*http.Request) (*http.Response, error) {
+			return nil, fmt.Errorf("connection refused")
+		}, "calling API"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.httpClient.doFunc = tt.doFunc
+			text, isError := s.callTool("show_task", map[string]any{"task_id": float64(42)})
 			require.True(s.T(), isError)
 			require.Contains(s.T(), text, tt.wantText)
 		})
@@ -856,7 +912,7 @@ func (s *MCPMemorySuite) callTool(name string, args map[string]any) (string, boo
 func (s *MCPMemorySuite) TestListToolsIncludesMemory() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 13) // 11 base + 2 memory
+	require.Len(s.T(), res.Tools, 14) // 12 base + 2 memory
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -1052,7 +1108,7 @@ func (s *MCPMemoryChannelIDSuite) TestMemoryEnabledWithEmptyDirPath() {
 func (s *MCPMemoryChannelIDSuite) TestListToolsIncludesMemory() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 13)
+	require.Len(s.T(), res.Tools, 14)
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {

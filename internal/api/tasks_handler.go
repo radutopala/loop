@@ -99,6 +99,40 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	_ = json.NewEncoder(w).Encode(resp)
 }
 
+func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
+	idStr := r.PathValue("id")
+	taskID, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil {
+		http.Error(w, "invalid task id", http.StatusBadRequest)
+		return
+	}
+
+	task, err := s.scheduler.GetTask(r.Context(), taskID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if task == nil {
+		http.Error(w, "task not found", http.StatusNotFound)
+		return
+	}
+
+	resp := taskResponse{
+		ID:            task.ID,
+		ChannelID:     task.ChannelID,
+		Schedule:      task.Schedule,
+		Type:          string(task.Type),
+		Prompt:        task.Prompt,
+		Enabled:       task.Enabled,
+		NextRunAt:     task.NextRunAt,
+		TemplateName:  task.TemplateName,
+		AutoDeleteSec: task.AutoDeleteSec,
+	}
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(resp)
+}
+
 func (s *Server) handleDeleteTask(w http.ResponseWriter, r *http.Request) {
 	idStr := r.PathValue("id")
 	taskID, err := strconv.ParseInt(idStr, 10, 64)

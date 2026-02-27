@@ -126,6 +126,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("DELETE /api/threads/{id}", s.srv.handleDeleteThread)
 	s.mux.HandleFunc("POST /api/tasks", s.srv.handleCreateTask)
 	s.mux.HandleFunc("GET /api/tasks", s.srv.handleListTasks)
+	s.mux.HandleFunc("GET /api/tasks/{id}", s.srv.handleGetTask)
 	s.mux.HandleFunc("DELETE /api/tasks/{id}", s.srv.handleDeleteTask)
 	s.mux.HandleFunc("PATCH /api/tasks/{id}", s.srv.handleUpdateTask)
 	s.mux.HandleFunc("POST /api/memory/search", s.srv.handleMemorySearch)
@@ -321,6 +322,53 @@ func (s *ServerSuite) TestListTasksSchedulerError() {
 	s.scheduler.On("ListTasks", mock.Anything, "ch1").Return(nil, errors.New("db error"))
 
 	rec := s.testRequest("GET", "/api/tasks?channel_id=ch1", "")
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+// --- GetTask tests ---
+
+func (s *ServerSuite) TestGetTaskSuccess() {
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	task := &db.ScheduledTask{
+		ID: 42, ChannelID: "ch1", Schedule: "0 9 * * *", Type: db.TaskTypeCron,
+		Prompt: "full prompt text here", Enabled: true, NextRunAt: now,
+		TemplateName: "my-template", AutoDeleteSec: 60,
+	}
+	s.scheduler.On("GetTask", mock.Anything, int64(42)).Return(task, nil)
+
+	rec := s.testRequest("GET", "/api/tasks/42", "")
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp taskResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(s.T(), int64(42), resp.ID)
+	require.Equal(s.T(), "full prompt text here", resp.Prompt)
+	require.Equal(s.T(), "my-template", resp.TemplateName)
+	require.Equal(s.T(), 60, resp.AutoDeleteSec)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestGetTaskNotFound() {
+	s.scheduler.On("GetTask", mock.Anything, int64(99)).Return(nil, nil)
+
+	rec := s.testRequest("GET", "/api/tasks/99", "")
+
+	require.Equal(s.T(), http.StatusNotFound, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestGetTaskInvalidID() {
+	rec := s.testRequest("GET", "/api/tasks/abc", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestGetTaskSchedulerError() {
+	s.scheduler.On("GetTask", mock.Anything, int64(42)).Return(nil, errors.New("db error"))
+
+	rec := s.testRequest("GET", "/api/tasks/42", "")
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.scheduler.AssertExpectations(s.T())

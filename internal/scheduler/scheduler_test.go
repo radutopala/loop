@@ -203,6 +203,42 @@ func (s *SchedulerSuite) TestListTasks() {
 	})
 }
 
+func (s *SchedulerSuite) TestGetTask() {
+	expected := &db.ScheduledTask{ID: 42, ChannelID: "ch1", Prompt: "test task"}
+	s.Run("success", func() {
+		store := new(testutil.MockStore)
+		store.On("GetScheduledTask", mock.Anything, int64(42)).Return(expected, nil)
+
+		ts := NewTaskScheduler(store, s.executor, time.Second, s.logger)
+		task, err := ts.GetTask(context.Background(), 42)
+		require.NoError(s.T(), err)
+		require.Equal(s.T(), expected, task)
+		store.AssertExpectations(s.T())
+	})
+
+	s.Run("not found", func() {
+		store := new(testutil.MockStore)
+		store.On("GetScheduledTask", mock.Anything, int64(99)).Return(nil, nil)
+
+		ts := NewTaskScheduler(store, s.executor, time.Second, s.logger)
+		task, err := ts.GetTask(context.Background(), 99)
+		require.NoError(s.T(), err)
+		require.Nil(s.T(), task)
+		store.AssertExpectations(s.T())
+	})
+
+	s.Run("error", func() {
+		store := new(testutil.MockStore)
+		store.On("GetScheduledTask", mock.Anything, int64(42)).Return(nil, errors.New("db error"))
+
+		ts := NewTaskScheduler(store, s.executor, time.Second, s.logger)
+		task, err := ts.GetTask(context.Background(), 42)
+		require.Error(s.T(), err)
+		require.Nil(s.T(), task)
+		store.AssertExpectations(s.T())
+	})
+}
+
 func (s *SchedulerSuite) TestStartAndStop() {
 	setupDueTasks(s.store, []*db.ScheduledTask{})
 

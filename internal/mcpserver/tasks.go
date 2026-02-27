@@ -37,6 +37,10 @@ type editTaskInput struct {
 	AutoDeleteSec *int    `json:"auto_delete_sec,omitempty" jsonschema:"Seconds after execution to auto-delete the thread (0 = disabled)"`
 }
 
+type showTaskInput struct {
+	TaskID int64 `json:"task_id" jsonschema:"The ID of the task to show"`
+}
+
 type listTasksInput struct{}
 
 func (s *Server) handleScheduleTask(_ context.Context, _ *mcp.CallToolRequest, input scheduleTaskInput) (*mcp.CallToolResult, any, error) {
@@ -115,6 +119,50 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 		}
 		text.WriteString(")\n")
 	}
+
+	return &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: text.String()},
+		},
+	}, nil, nil
+}
+
+func (s *Server) handleShowTask(_ context.Context, _ *mcp.CallToolRequest, input showTaskInput) (*mcp.CallToolResult, any, error) {
+	s.logger.Info("mcp tool call", "tool", "show_task", "task_id", input.TaskID)
+
+	type taskEntry struct {
+		ID            int64  `json:"id"`
+		Schedule      string `json:"schedule"`
+		Type          string `json:"type"`
+		Prompt        string `json:"prompt"`
+		Enabled       bool   `json:"enabled"`
+		NextRunAt     string `json:"next_run_at"`
+		TemplateName  string `json:"template_name"`
+		AutoDeleteSec int    `json:"auto_delete_sec"`
+	}
+	task, errResult, err := doAPICall[taskEntry](s, "GET", fmt.Sprintf("%s/api/tasks/%d", s.apiURL, input.TaskID), http.StatusOK, nil)
+	if errResult != nil || err != nil {
+		return errResult, nil, err
+	}
+
+	status := "enabled"
+	if !task.Enabled {
+		status = "disabled"
+	}
+
+	var text strings.Builder
+	fmt.Fprintf(&text, "Task %d\n", task.ID)
+	fmt.Fprintf(&text, "Type: %s\n", task.Type)
+	fmt.Fprintf(&text, "Schedule: %s\n", task.Schedule)
+	fmt.Fprintf(&text, "Status: %s\n", status)
+	fmt.Fprintf(&text, "Next run: %s\n", task.NextRunAt)
+	if task.TemplateName != "" {
+		fmt.Fprintf(&text, "Template: %s\n", task.TemplateName)
+	}
+	if task.AutoDeleteSec > 0 {
+		fmt.Fprintf(&text, "Auto-delete: %ds\n", task.AutoDeleteSec)
+	}
+	fmt.Fprintf(&text, "\nPrompt:\n%s", task.Prompt)
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{

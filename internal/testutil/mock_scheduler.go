@@ -38,6 +38,14 @@ func (m *MockScheduler) ListTasks(ctx context.Context, channelID string) ([]*db.
 	return args.Get(0).([]*db.ScheduledTask), args.Error(1)
 }
 
+func (m *MockScheduler) GetTask(ctx context.Context, taskID int64) (*db.ScheduledTask, error) {
+	args := m.Called(ctx, taskID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*db.ScheduledTask), args.Error(1)
+}
+
 func (m *MockScheduler) SetTaskEnabled(ctx context.Context, taskID int64, enabled bool) error {
 	return m.Called(ctx, taskID, enabled).Error(0)
 }

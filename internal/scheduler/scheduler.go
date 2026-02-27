@@ -24,6 +24,7 @@ type Scheduler interface {
 	AddTask(ctx context.Context, task *db.ScheduledTask) (int64, error)
 	RemoveTask(ctx context.Context, taskID int64) error
 	ListTasks(ctx context.Context, channelID string) ([]*db.ScheduledTask, error)
+	GetTask(ctx context.Context, taskID int64) (*db.ScheduledTask, error)
 	SetTaskEnabled(ctx context.Context, taskID int64, enabled bool) error
 	ToggleTask(ctx context.Context, taskID int64) (bool, error)
 	EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int) error
@@ -86,6 +87,11 @@ func (s *TaskScheduler) RemoveTask(ctx context.Context, taskID int64) error {
 // ListTasks returns all tasks for a channel.
 func (s *TaskScheduler) ListTasks(ctx context.Context, channelID string) ([]*db.ScheduledTask, error) {
 	return s.store.ListScheduledTasks(ctx, channelID)
+}
+
+// GetTask returns a single scheduled task by ID.
+func (s *TaskScheduler) GetTask(ctx context.Context, taskID int64) (*db.ScheduledTask, error) {
+	return s.store.GetScheduledTask(ctx, taskID)
 }
 
 // SetTaskEnabled enables or disables a scheduled task.

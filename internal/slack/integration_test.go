@@ -869,6 +869,13 @@ func (s *SlackIntegrationSuite) TestG02_SlashCommandTasks() {
 	require.Equal(s.T(), "tasks", inter.CommandName)
 }
 
+func (s *SlackIntegrationSuite) TestG02b_SlashCommandTask() {
+	inter, errText := parseSlashCommand(s.channelID, "T123", "task 74")
+	require.Empty(s.T(), errText)
+	require.Equal(s.T(), "task", inter.CommandName)
+	require.Equal(s.T(), "74", inter.Options["task_id"])
+}
+
 func (s *SlackIntegrationSuite) TestG03_SlashCommandCancel() {
 	inter, errText := parseSlashCommand(s.channelID, "T123", "cancel 42")
 	require.Empty(s.T(), errText)

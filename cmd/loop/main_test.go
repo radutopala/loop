@@ -559,7 +559,7 @@ func (s *MainSuite) TestRunMCPWithInMemoryTransport() {
 
 	res, err := session.ListTools(context.Background(), nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 11)
+	require.Len(s.T(), res.Tools, 12)
 }
 
 func (s *MainSuite) TestEnsureChannelSuccess() {

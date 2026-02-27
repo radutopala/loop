@@ -73,6 +73,11 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}, s.handleListTasks)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "show_task",
+		Description: "Show full details of a scheduled task by its ID, including the complete prompt text.",
+	}, s.handleShowTask)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "cancel_task",
 		Description: "Cancel a scheduled task by its ID.",
 	}, s.handleCancelTask)

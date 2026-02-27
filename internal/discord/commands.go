@@ -48,6 +48,19 @@ func Commands() []*discordgo.ApplicationCommand {
 				},
 				{
 					Type:        discordgo.ApplicationCommandOptionSubCommand,
+					Name:        "task",
+					Description: "Show full details of a scheduled task",
+					Options: []*discordgo.ApplicationCommandOption{
+						{
+							Type:        discordgo.ApplicationCommandOptionInteger,
+							Name:        "task_id",
+							Description: "ID of the task to show",
+							Required:    true,
+						},
+					},
+				},
+				{
+					Type:        discordgo.ApplicationCommandOptionSubCommand,
 					Name:        "cancel",
 					Description: "Cancel a scheduled task",
 					Options: []*discordgo.ApplicationCommandOption{

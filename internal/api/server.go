@@ -59,6 +59,7 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("DELETE /api/threads/{id}", s.handleDeleteThread)
 	mux.HandleFunc("POST /api/tasks", s.handleCreateTask)
 	mux.HandleFunc("GET /api/tasks", s.handleListTasks)
+	mux.HandleFunc("GET /api/tasks/{id}", s.handleGetTask)
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.handleDeleteTask)
 	mux.HandleFunc("PATCH /api/tasks/{id}", s.handleUpdateTask)
 	mux.HandleFunc("POST /api/memory/search", s.handleMemorySearch)

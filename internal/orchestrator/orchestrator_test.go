@@ -1147,6 +1147,134 @@ func (s *OrchestratorSuite) TestHandleInteractionTasksError() {
 	s.scheduler.AssertExpectations(s.T())
 }
 
+func (s *OrchestratorSuite) TestHandleInteractionTask() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	nextRun := time.Now().Add(30 * time.Minute)
+	task := &db.ScheduledTask{
+		ID: 74, Prompt: "full prompt text that is very long and would be truncated in list view",
+		Schedule: "0 * * * *", Type: db.TaskTypeCron, Enabled: false,
+		NextRunAt: nextRun, TemplateName: "tk-auto-worker", AutoDeleteSec: 60,
+	}
+	s.store.On("GetScheduledTask", s.ctx, int64(74)).Return(task, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+		return out.ChannelID == "ch1" &&
+			strings.Contains(out.Content, "**Task 74**") &&
+			strings.Contains(out.Content, "Type: cron") &&
+			strings.Contains(out.Content, "Schedule: `0 * * * *`") &&
+			strings.Contains(out.Content, "Status: disabled") &&
+			strings.Contains(out.Content, "Next run: in ") &&
+			strings.Contains(out.Content, "Template: tk-auto-worker") &&
+			strings.Contains(out.Content, "Auto-delete: 60s") &&
+			strings.Contains(out.Content, "**Prompt:**") &&
+			strings.Contains(out.Content, "full prompt text that is very long")
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
+		ChannelID:   "ch1",
+		CommandName: "task",
+		Options:     map[string]string{"task_id": "74"},
+	})
+
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTaskNotFound() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(99)).Return(nil, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+		return out.Content == "Task 99 not found."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
+		ChannelID:   "ch1",
+		CommandName: "task",
+		Options:     map[string]string{"task_id": "99"},
+	})
+
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTaskInvalidID() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+		return out.Content == "Invalid task ID."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
+		ChannelID:   "ch1",
+		CommandName: "task",
+		Options:     map[string]string{"task_id": "abc"},
+	})
+
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTaskStoreError() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(42)).Return(nil, errors.New("db error"))
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+		return out.Content == "Failed to get task."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
+		ChannelID:   "ch1",
+		CommandName: "task",
+		Options:     map[string]string{"task_id": "42"},
+	})
+
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTaskNoTemplateNoAutoDelete() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	nextRun := time.Now().Add(30 * time.Minute)
+	task := &db.ScheduledTask{
+		ID: 1, Prompt: "simple task", Schedule: "5m", Type: db.TaskTypeInterval,
+		Enabled: true, NextRunAt: nextRun,
+	}
+	s.store.On("GetScheduledTask", s.ctx, int64(1)).Return(task, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+		return out.ChannelID == "ch1" &&
+			strings.Contains(out.Content, "**Task 1**") &&
+			strings.Contains(out.Content, "Status: enabled") &&
+			!strings.Contains(out.Content, "Template:") &&
+			!strings.Contains(out.Content, "Auto-delete:")
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
+		ChannelID:   "ch1",
+		CommandName: "task",
+		Options:     map[string]string{"task_id": "1"},
+	})
+
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTaskOnceType() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	nextRun := time.Now().Add(30 * time.Minute)
+	task := &db.ScheduledTask{
+		ID: 5, Prompt: "one-time task", Schedule: "2026-03-01T09:00:00Z", Type: db.TaskTypeOnce,
+		Enabled: true, NextRunAt: nextRun,
+	}
+	s.store.On("GetScheduledTask", s.ctx, int64(5)).Return(task, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+		return out.ChannelID == "ch1" &&
+			strings.Contains(out.Content, "**Task 5**") &&
+			strings.Contains(out.Content, "Type: once") &&
+			strings.Contains(out.Content, "Schedule: "+nextRun.Local().Format("2006-01-02 15:04 MST")) &&
+			!strings.Contains(out.Content, "`2026-03-01T09:00:00Z`")
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
+		ChannelID:   "ch1",
+		CommandName: "task",
+		Options:     map[string]string{"task_id": "5"},
+	})
+
+	s.store.AssertExpectations(s.T())
+}
+
 func (s *OrchestratorSuite) TestHandleInteractionCancel() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("RemoveTask", s.ctx, int64(42)).Return(nil)

@@ -34,6 +34,7 @@ func (s *CommandsSuite) TestSubcommands() {
 	expected := map[string]discordgo.ApplicationCommandOptionType{
 		"schedule":    discordgo.ApplicationCommandOptionSubCommand,
 		"tasks":       discordgo.ApplicationCommandOptionSubCommand,
+		"task":        discordgo.ApplicationCommandOptionSubCommand,
 		"cancel":      discordgo.ApplicationCommandOptionSubCommand,
 		"toggle":      discordgo.ApplicationCommandOptionSubCommand,
 		"edit":        discordgo.ApplicationCommandOptionSubCommand,

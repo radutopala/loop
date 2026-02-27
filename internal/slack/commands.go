@@ -47,6 +47,8 @@ func parseSlashCommand(channelID, teamID, text string) (*bot.Interaction, string
 	case "tasks":
 		inter.CommandName = "tasks"
 		return inter, ""
+	case "task":
+		return parseTask(inter, args)
 	case "cancel":
 		return parseCancel(inter, args)
 	case "toggle":
@@ -110,6 +112,19 @@ func parseSchedule(inter *bot.Interaction, args []string) (*bot.Interaction, str
 	inter.Options["type"] = strings.ToLower(args[typeIdx])
 	inter.Options["prompt"] = strings.Join(args[typeIdx+1:], " ")
 
+	return inter, ""
+}
+
+// parseTask parses: task <task_id>
+func parseTask(inter *bot.Interaction, args []string) (*bot.Interaction, string) {
+	if len(args) != 1 {
+		return nil, "Usage: `/loop task <task_id>`"
+	}
+	if _, err := strconv.ParseInt(args[0], 10, 64); err != nil {
+		return nil, "Invalid task_id: must be an integer"
+	}
+	inter.CommandName = "task"
+	inter.Options["task_id"] = args[0]
 	return inter, ""
 }
 
@@ -275,6 +290,7 @@ func helpText() string {
 	return "Available commands:\n" +
 		"  `/loop schedule <schedule> <type> <prompt>` - Create a scheduled task\n" +
 		"  `/loop tasks` - List all scheduled tasks\n" +
+		"  `/loop task <task_id>` - Show full details of a task\n" +
 		"  `/loop cancel <task_id>` - Cancel a scheduled task\n" +
 		"  `/loop toggle <task_id>` - Toggle a task on/off\n" +
 		"  `/loop edit <task_id> [--schedule X] [--type Y] [--prompt Z]` - Edit a task\n" +

@@ -1291,6 +1291,10 @@ func (s *BotSuite) TestParseSlashCommand() {
 		{"schedule_type_at_start", "schedule cron prompt text", "", nil, "Usage:"},
 		{"schedule_type_at_end", "schedule daily cron", "", nil, "Usage:"},
 		{"schedule_no_type", "schedule daily something prompt", "", nil, "Usage:"},
+		// task
+		{"task", "task 74", "task", map[string]string{"task_id": "74"}, ""},
+		{"task_invalid_id", "task abc", "", nil, "Invalid task_id"},
+		{"task_no_args", "task", "", nil, "Usage:"},
 		// cancel
 		{"cancel", "cancel 42", "cancel", map[string]string{"task_id": "42"}, ""},
 		{"cancel_invalid_id", "cancel abc", "", nil, "Invalid task_id"},
@@ -1325,6 +1329,7 @@ func (s *BotSuite) TestParseSlashCommand() {
 		{"empty", "", "", nil, "Available commands"},
 		{"unknown", "foo", "", nil, "Unknown subcommand: foo"},
 		// help text checks
+		{"help_has_task", "", "", nil, "/loop task"},
 		{"help_has_stop", "", "", nil, "/loop stop"},
 		{"help_has_readme", "", "", nil, "/loop readme"},
 	}
