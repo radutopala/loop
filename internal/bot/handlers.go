@@ -1,6 +1,8 @@
 package bot
 
-import "sync"
+import (
+	"sync"
+)
 
 // RegisterHandler appends a handler to the slice under the given mutex.
 func RegisterHandler[T any](mu *sync.RWMutex, handlers *[]T, handler T) {

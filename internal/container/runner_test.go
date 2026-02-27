@@ -2607,3 +2607,59 @@ func (s *RunnerSuite) TestCopyFilesAbsolutePath() {
 	require.NoError(s.T(), err)
 	s.client.AssertExpectations(s.T())
 }
+
+func (s *RunnerSuite) TestFilterMountedCopyFiles() {
+	home := "/home/testuser"
+	osUserHomeDir = func() (string, error) { return home, nil }
+
+	tests := []struct {
+		name      string
+		copyFiles []string
+		binds     []string
+		expected  []string
+	}{
+		{
+			name:      "no overlap",
+			copyFiles: []string{"~/.claude.json"},
+			binds:     []string{home + "/.gitconfig:" + home + "/.gitconfig:ro"},
+			expected:  []string{"~/.claude.json"},
+		},
+		{
+			name:      "exact overlap filtered",
+			copyFiles: []string{"~/.claude.json"},
+			binds:     []string{home + "/.claude.json:" + home + "/.claude.json"},
+			expected:  nil,
+		},
+		{
+			name:      "partial overlap",
+			copyFiles: []string{"~/.claude.json", "~/.npmrc"},
+			binds:     []string{home + "/.claude.json:" + home + "/.claude.json"},
+			expected:  []string{"~/.npmrc"},
+		},
+		{
+			name:      "empty binds",
+			copyFiles: []string{"~/.claude.json"},
+			binds:     nil,
+			expected:  []string{"~/.claude.json"},
+		},
+		{
+			name:      "empty copy files",
+			copyFiles: nil,
+			binds:     []string{home + "/.claude.json:" + home + "/.claude.json"},
+			expected:  nil,
+		},
+		{
+			name:      "absolute path overlap",
+			copyFiles: []string{"/etc/some.conf"},
+			binds:     []string{"/etc/some.conf:/etc/some.conf:ro"},
+			expected:  nil,
+		},
+	}
+
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			result := filterMountedCopyFiles(tt.copyFiles, tt.binds)
+			require.Equal(s.T(), tt.expected, result)
+		})
+	}
+}

@@ -1,6 +1,8 @@
 package readme
 
-import _ "embed"
+import (
+	_ "embed"
+)
 
 //go:generate cp ../../README.md README.md
 

@@ -377,7 +377,8 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 
 	binds, chownPaths := r.buildContainerMounts(cfg.Mounts, workDir)
 	// Include copied files for CopyToContainer ownership fix.
-	for _, f := range cfg.CopyFiles {
+	// Skip files already bind-mounted (they won't be copied).
+	for _, f := range filterMountedCopyFiles(cfg.CopyFiles, binds) {
 		if expanded, err := expandPath(f); err == nil {
 			chownPaths = append(chownPaths, expanded)
 		}
@@ -539,6 +540,34 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 	return append(cmd, req.BuildPrompt())
 }
 
+// filterMountedCopyFiles removes entries from copyFiles whose expanded paths
+// are already bind-mounted into the container, avoiding "device or resource busy"
+// errors from CopyToContainer.
+func filterMountedCopyFiles(copyFiles, binds []string) []string {
+	// Build set of bind-mounted container paths.
+	mounted := make(map[string]struct{}, len(binds))
+	for _, b := range binds {
+		parts := strings.Split(b, ":")
+		if len(parts) >= 2 {
+			mounted[parts[1]] = struct{}{}
+		}
+	}
+
+	var filtered []string
+	for _, f := range copyFiles {
+		expanded, err := expandPath(f)
+		if err != nil {
+			filtered = append(filtered, f) // keep on error; copyFiles handles it
+			continue
+		}
+		if _, ok := mounted[expanded]; ok {
+			continue // skip — already bind-mounted
+		}
+		filtered = append(filtered, f)
+	}
+	return filtered
+}
+
 // copyFiles copies the given host files into the container so that each
 // container gets its own copy instead of sharing a Docker volume.
 // Files that don't exist are silently skipped.
@@ -595,7 +624,7 @@ func (r *DockerRunner) createAndStartContainer(ctx context.Context, cfg *config.
 		return "", fmt.Errorf("creating container: %w", err)
 	}
 
-	if err := r.copyFiles(ctx, containerID, cfg.CopyFiles); err != nil {
+	if err := r.copyFiles(ctx, containerID, filterMountedCopyFiles(cfg.CopyFiles, binds)); err != nil {
 		return containerID, fmt.Errorf("copying files: %w", err)
 	}
 
