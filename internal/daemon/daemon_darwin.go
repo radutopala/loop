@@ -144,6 +144,8 @@ func generatePlist(binaryPath, logFile string, extraEnv map[string]string) strin
 	<string>%s</string>
 	<key>ProgramArguments</key>
 	<array>
+		<string>/usr/bin/caffeinate</string>
+		<string>-s</string>
 		<string>%s</string>
 		<string>serve</string>
 	</array>

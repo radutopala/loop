@@ -312,6 +312,8 @@ func (s *DaemonSuite) TestStatusStatError() {
 func (s *DaemonSuite) TestGeneratePlist() {
 	plist := generatePlist("/usr/local/bin/loop", "/home/test/.loop/loop.log", nil)
 	require.Contains(s.T(), plist, "<string>com.loop.agent</string>")
+	require.Contains(s.T(), plist, "<string>/usr/bin/caffeinate</string>")
+	require.Contains(s.T(), plist, "<string>-s</string>")
 	require.Contains(s.T(), plist, "<string>/usr/local/bin/loop</string>")
 	require.Contains(s.T(), plist, "<string>serve</string>")
 	require.Contains(s.T(), plist, "<key>KeepAlive</key>")
