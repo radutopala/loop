@@ -3,7 +3,9 @@ package api
 import (
 	"context"
 	"fmt"
+	"log/slog"
 
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/types"
 )
@@ -24,14 +26,16 @@ type threadService struct {
 	store    db.Store
 	creator  ThreadCreator
 	platform types.Platform
+	logger   *slog.Logger
 }
 
 // NewThreadService creates a new ThreadEnsurer.
-func NewThreadService(store db.Store, creator ThreadCreator, platform types.Platform) ThreadEnsurer {
+func NewThreadService(store db.Store, creator ThreadCreator, platform types.Platform, logger *slog.Logger) ThreadEnsurer {
 	return &threadService{
 		store:    store,
 		creator:  creator,
 		platform: platform,
+		logger:   logger,
 	}
 }
 
@@ -45,6 +49,10 @@ func (s *threadService) DeleteThread(ctx context.Context, threadID string) error
 	}
 	if ch.ParentID == "" {
 		return fmt.Errorf("channel %s is not a thread", threadID)
+	}
+
+	if err := bot.RemoveMCPConfig(ch.DirPath, threadID); err != nil {
+		s.logger.Warn("removing MCP config for thread", "error", err, "thread_id", threadID)
 	}
 
 	if err := s.creator.DeleteThread(ctx, threadID); err != nil {

@@ -3,12 +3,15 @@ package api
 import (
 	"context"
 	"errors"
+	"io"
+	"log/slog"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/testutil"
 	"github.com/radutopala/loop/internal/types"
@@ -43,7 +46,8 @@ func (s *ThreadServiceSuite) SetupTest() {
 	s.store = new(testutil.MockStore)
 	s.creator = new(MockThreadCreator)
 	s.ctx = context.Background()
-	s.svc = NewThreadService(s.store, s.creator, types.PlatformDiscord)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s.svc = NewThreadService(s.store, s.creator, types.PlatformDiscord, logger)
 }
 
 func (s *ThreadServiceSuite) TestCreateThreadSuccess() {
@@ -239,4 +243,19 @@ func (s *ThreadServiceSuite) TestDeleteThreadDBError() {
 	err := s.svc.DeleteThread(s.ctx, "thread-1")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "deleting thread from db")
+}
+
+func (s *ThreadServiceSuite) TestDeleteThreadMCPConfigErrorLogsWarning() {
+	orig := bot.RemoveMCPConfig
+	s.T().Cleanup(func() { bot.RemoveMCPConfig = orig })
+	bot.RemoveMCPConfig = func(string, string) error { return errors.New("rm error") }
+
+	s.store.On("GetChannel", s.ctx, "thread-1").
+		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1", DirPath: "/work"}, nil)
+	s.creator.On("DeleteThread", s.ctx, "thread-1").Return(nil)
+	s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
+
+	err := s.svc.DeleteThread(s.ctx, "thread-1")
+	require.NoError(s.T(), err)
+	s.store.AssertExpectations(s.T())
 }

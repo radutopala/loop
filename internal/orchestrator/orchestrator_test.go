@@ -2022,22 +2022,81 @@ func (s *OrchestratorSuite) TestHandleChannelDelete() {
 		channelID string
 		isThread  bool
 		setupMock func()
+		setupFunc func()
 	}{
 		{
 			name: "thread success", channelID: "thread-1", isThread: true,
 			setupMock: func() {
+				s.store.On("GetChannel", s.ctx, "thread-1").
+					Return(&db.Channel{ChannelID: "thread-1", DirPath: "/work", ParentID: "ch-1"}, nil)
 				s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
 			},
 		},
 		{
-			name: "thread error", channelID: "thread-1", isThread: true,
+			name: "thread MCP config error logs warning", channelID: "thread-1", isThread: true,
+			setupFunc: func() {
+				bot.RemoveMCPConfig = func(string, string) error { return errors.New("rm error") }
+			},
 			setupMock: func() {
+				s.store.On("GetChannel", s.ctx, "thread-1").
+					Return(&db.Channel{ChannelID: "thread-1", DirPath: "/work", ParentID: "ch-1"}, nil)
+				s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
+			},
+		},
+		{
+			name: "thread lookup error still deletes", channelID: "thread-1", isThread: true,
+			setupMock: func() {
+				s.store.On("GetChannel", s.ctx, "thread-1").Return(nil, errors.New("db error"))
+				s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
+			},
+		},
+		{
+			name: "thread delete error", channelID: "thread-1", isThread: true,
+			setupMock: func() {
+				s.store.On("GetChannel", s.ctx, "thread-1").Return(nil, nil)
 				s.store.On("DeleteChannel", s.ctx, "thread-1").Return(errors.New("db error"))
 			},
 		},
 		{
 			name: "channel success", channelID: "ch-1", isThread: false,
 			setupMock: func() {
+				s.store.On("GetChannel", s.ctx, "ch-1").
+					Return(&db.Channel{ChannelID: "ch-1", DirPath: "/work"}, nil)
+				s.store.On("ListChannelIDsByParentID", s.ctx, "ch-1").
+					Return([]string{"t1", "t2"}, nil)
+				s.store.On("DeleteChannelsByParentID", s.ctx, "ch-1").Return(nil)
+				s.store.On("DeleteChannel", s.ctx, "ch-1").Return(nil)
+			},
+		},
+		{
+			name: "channel MCP config error logs warning", channelID: "ch-1", isThread: false,
+			setupFunc: func() {
+				bot.RemoveMCPConfig = func(string, string) error { return errors.New("rm error") }
+			},
+			setupMock: func() {
+				s.store.On("GetChannel", s.ctx, "ch-1").
+					Return(&db.Channel{ChannelID: "ch-1", DirPath: "/work"}, nil)
+				s.store.On("ListChannelIDsByParentID", s.ctx, "ch-1").
+					Return([]string{"t1"}, nil)
+				s.store.On("DeleteChannelsByParentID", s.ctx, "ch-1").Return(nil)
+				s.store.On("DeleteChannel", s.ctx, "ch-1").Return(nil)
+			},
+		},
+		{
+			name: "channel lookup error still deletes", channelID: "ch-1", isThread: false,
+			setupMock: func() {
+				s.store.On("GetChannel", s.ctx, "ch-1").Return(nil, errors.New("db error"))
+				s.store.On("DeleteChannelsByParentID", s.ctx, "ch-1").Return(nil)
+				s.store.On("DeleteChannel", s.ctx, "ch-1").Return(nil)
+			},
+		},
+		{
+			name: "channel list children error", channelID: "ch-1", isThread: false,
+			setupMock: func() {
+				s.store.On("GetChannel", s.ctx, "ch-1").
+					Return(&db.Channel{ChannelID: "ch-1", DirPath: "/work"}, nil)
+				s.store.On("ListChannelIDsByParentID", s.ctx, "ch-1").
+					Return(nil, errors.New("db error"))
 				s.store.On("DeleteChannelsByParentID", s.ctx, "ch-1").Return(nil)
 				s.store.On("DeleteChannel", s.ctx, "ch-1").Return(nil)
 			},
@@ -2045,6 +2104,10 @@ func (s *OrchestratorSuite) TestHandleChannelDelete() {
 		{
 			name: "channel children error", channelID: "ch-1", isThread: false,
 			setupMock: func() {
+				s.store.On("GetChannel", s.ctx, "ch-1").
+					Return(&db.Channel{ChannelID: "ch-1", DirPath: "/work"}, nil)
+				s.store.On("ListChannelIDsByParentID", s.ctx, "ch-1").
+					Return([]string{}, nil)
 				s.store.On("DeleteChannelsByParentID", s.ctx, "ch-1").Return(errors.New("db error"))
 				s.store.On("DeleteChannel", s.ctx, "ch-1").Return(nil)
 			},
@@ -2052,6 +2115,10 @@ func (s *OrchestratorSuite) TestHandleChannelDelete() {
 		{
 			name: "channel delete error", channelID: "ch-1", isThread: false,
 			setupMock: func() {
+				s.store.On("GetChannel", s.ctx, "ch-1").
+					Return(&db.Channel{ChannelID: "ch-1", DirPath: "/work"}, nil)
+				s.store.On("ListChannelIDsByParentID", s.ctx, "ch-1").
+					Return([]string{}, nil)
 				s.store.On("DeleteChannelsByParentID", s.ctx, "ch-1").Return(nil)
 				s.store.On("DeleteChannel", s.ctx, "ch-1").Return(errors.New("db error"))
 			},
@@ -2060,6 +2127,11 @@ func (s *OrchestratorSuite) TestHandleChannelDelete() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			s.SetupTest()
+			origRemoveMCP := bot.RemoveMCPConfig
+			s.T().Cleanup(func() { bot.RemoveMCPConfig = origRemoveMCP })
+			if tc.setupFunc != nil {
+				tc.setupFunc()
+			}
 			tc.setupMock()
 			s.orch.HandleChannelDelete(s.ctx, tc.channelID, tc.isThread)
 			s.store.AssertExpectations(s.T())

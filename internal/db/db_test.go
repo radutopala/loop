@@ -299,6 +299,50 @@ func (s *StoreSuite) TestDeleteChannelsByParentIDErrors() {
 	require.Error(s.T(), err)
 }
 
+func (s *StoreSuite) TestListChannelIDsByParentID() {
+	rows := sqlmock.NewRows([]string{"channel_id"}).AddRow("t1").AddRow("t2")
+	s.mock.ExpectQuery(`SELECT channel_id FROM channels WHERE parent_id`).
+		WithArgs("ch1").
+		WillReturnRows(rows)
+
+	ids, err := s.store.ListChannelIDsByParentID(context.Background(), "ch1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"t1", "t2"}, ids)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestListChannelIDsByParentIDEmpty() {
+	rows := sqlmock.NewRows([]string{"channel_id"})
+	s.mock.ExpectQuery(`SELECT channel_id FROM channels WHERE parent_id`).
+		WithArgs("ch1").
+		WillReturnRows(rows)
+
+	ids, err := s.store.ListChannelIDsByParentID(context.Background(), "ch1")
+	require.NoError(s.T(), err)
+	require.Nil(s.T(), ids)
+}
+
+func (s *StoreSuite) TestListChannelIDsByParentIDError() {
+	s.mock.ExpectQuery(`SELECT channel_id FROM channels WHERE parent_id`).
+		WithArgs("ch1").
+		WillReturnError(sql.ErrConnDone)
+
+	ids, err := s.store.ListChannelIDsByParentID(context.Background(), "ch1")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), ids)
+}
+
+func (s *StoreSuite) TestListChannelIDsByParentIDScanError() {
+	rows := sqlmock.NewRows([]string{"channel_id"}).AddRow(nil)
+	s.mock.ExpectQuery(`SELECT channel_id FROM channels WHERE parent_id`).
+		WithArgs("ch1").
+		WillReturnRows(rows)
+
+	ids, err := s.store.ListChannelIDsByParentID(context.Background(), "ch1")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), ids)
+}
+
 func (s *StoreSuite) TestListChannels() {
 	now := time.Now().UTC()
 	permJSON := `{"owners":{"users":["U1"],"roles":[]},"members":{"users":[],"roles":[]}}`

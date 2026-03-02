@@ -22,6 +22,7 @@ type Store interface {
 	UpdateChannelPermissions(ctx context.Context, channelID string, perms types.Permissions) error
 	DeleteChannel(ctx context.Context, channelID string) error
 	DeleteChannelsByParentID(ctx context.Context, parentID string) error
+	ListChannelIDsByParentID(ctx context.Context, parentID string) ([]string, error)
 	InsertMessage(ctx context.Context, msg *Message) error
 	MarkMessagesProcessed(ctx context.Context, ids []int64) error
 	GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*Message, error)
@@ -207,6 +208,24 @@ func (s *SQLiteStore) DeleteChannelsByParentID(ctx context.Context, parentID str
 	}
 	_, err = s.db.ExecContext(ctx, `DELETE FROM channels WHERE parent_id = ?`, parentID)
 	return err
+}
+
+func (s *SQLiteStore) ListChannelIDsByParentID(ctx context.Context, parentID string) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx, `SELECT channel_id FROM channels WHERE parent_id = ?`, parentID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 func (s *SQLiteStore) ListChannels(ctx context.Context) ([]*Channel, error) {

@@ -216,14 +216,46 @@ func (o *Orchestrator) resolveChannelName(ctx context.Context, channelID string,
 
 // HandleChannelDelete removes a deleted channel or thread from the database.
 // For channels (not threads), it also removes all child threads.
+// MCP config files are cleaned up on a best-effort basis.
 func (o *Orchestrator) HandleChannelDelete(ctx context.Context, channelID string, isThread bool) {
 	if isThread {
+		ch, err := o.store.GetChannel(ctx, channelID)
+		if err != nil {
+			o.logger.Error("looking up thread for MCP cleanup", "error", err, "thread_id", channelID)
+		}
+		if ch != nil {
+			if err := bot.RemoveMCPConfig(ch.DirPath, channelID); err != nil {
+				o.logger.Warn("removing MCP config for thread", "error", err, "thread_id", channelID)
+			}
+		}
 		if err := o.store.DeleteChannel(ctx, channelID); err != nil {
 			o.logger.Error("deleting thread from db", "error", err, "thread_id", channelID)
 			return
 		}
 		o.logger.Info("deleted thread from db", "thread_id", channelID)
 		return
+	}
+
+	// Look up channel for MCP cleanup.
+	ch, err := o.store.GetChannel(ctx, channelID)
+	if err != nil {
+		o.logger.Error("looking up channel for MCP cleanup", "error", err, "channel_id", channelID)
+	}
+	if ch != nil {
+		// Clean up MCP configs for child threads.
+		childIDs, err := o.store.ListChannelIDsByParentID(ctx, channelID)
+		if err != nil {
+			o.logger.Warn("listing child threads for MCP cleanup", "error", err, "channel_id", channelID)
+		}
+		for _, childID := range childIDs {
+			if err := bot.RemoveMCPConfig(ch.DirPath, childID); err != nil {
+				o.logger.Warn("removing MCP config for child thread", "error", err, "thread_id", childID)
+			}
+		}
+		// Clean up MCP config for the channel itself.
+		if err := bot.RemoveMCPConfig(ch.DirPath, channelID); err != nil {
+			o.logger.Warn("removing MCP config for channel", "error", err, "channel_id", channelID)
+		}
 	}
 
 	if err := o.store.DeleteChannelsByParentID(ctx, channelID); err != nil {

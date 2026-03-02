@@ -352,11 +352,11 @@ func serve() error {
 	case types.PlatformSlack:
 		// Slack doesn't use guild IDs — channel/thread services are always available.
 		channelSvc = api.NewChannelService(store, chatBot, "", platform)
-		threadSvc = api.NewThreadService(store, chatBot, platform)
+		threadSvc = api.NewThreadService(store, chatBot, platform, logger)
 	default:
 		if cfg.DiscordGuildID != "" {
 			channelSvc = api.NewChannelService(store, chatBot, cfg.DiscordGuildID, platform)
-			threadSvc = api.NewThreadService(store, chatBot, platform)
+			threadSvc = api.NewThreadService(store, chatBot, platform, logger)
 		}
 	}
 

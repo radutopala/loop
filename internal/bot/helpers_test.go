@@ -1,6 +1,8 @@
 package bot
 
 import (
+	"errors"
+	"os"
 	"strings"
 	"testing"
 
@@ -15,6 +17,54 @@ type HelpersSuite struct {
 
 func TestHelpersSuite(t *testing.T) {
 	suite.Run(t, new(HelpersSuite))
+}
+
+// --- RemoveMCPConfig ---
+
+func (s *HelpersSuite) TestRemoveMCPConfig() {
+	origRemove := osRemove
+	s.T().Cleanup(func() { osRemove = origRemove })
+
+	var removedPath string
+	osRemove = func(name string) error {
+		removedPath = name
+		return nil
+	}
+
+	err := removeMCPConfig("/work", "chan-1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "/work/.loop/mcp-chan-1.json", removedPath)
+}
+
+func (s *HelpersSuite) TestRemoveMCPConfigNotExist() {
+	origRemove := osRemove
+	s.T().Cleanup(func() { osRemove = origRemove })
+
+	osRemove = func(string) error { return os.ErrNotExist }
+
+	err := removeMCPConfig("/work", "chan-1")
+	require.NoError(s.T(), err)
+}
+
+func (s *HelpersSuite) TestRemoveMCPConfigError() {
+	origRemove := osRemove
+	s.T().Cleanup(func() { osRemove = origRemove })
+
+	osRemove = func(string) error { return errors.New("permission denied") }
+
+	err := removeMCPConfig("/work", "chan-1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "removing MCP config")
+}
+
+func (s *HelpersSuite) TestRemoveMCPConfigEmptyDirPath() {
+	err := removeMCPConfig("", "chan-1")
+	require.NoError(s.T(), err)
+}
+
+func (s *HelpersSuite) TestRemoveMCPConfigVar() {
+	// Verify the exported var points to the real implementation.
+	require.NotNil(s.T(), RemoveMCPConfig)
 }
 
 // --- HasCommandPrefix ---

@@ -118,6 +118,14 @@ func (m *MockStore) DeleteChannelsByParentID(ctx context.Context, parentID strin
 	return m.Called(ctx, parentID).Error(0)
 }
 
+func (m *MockStore) ListChannelIDsByParentID(ctx context.Context, parentID string) ([]string, error) {
+	args := m.Called(ctx, parentID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]string), args.Error(1)
+}
+
 func (m *MockStore) Close() error {
 	return m.Called().Error(0)
 }
