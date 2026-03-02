@@ -384,6 +384,7 @@ func setupServeMocks() *serveMocks {
 		cfg:          testConfig(),
 	}
 	m.store.On("Close").Return(nil)
+	m.store.On("ListChannels", mock.Anything).Return([]*db.Channel{}, nil).Maybe()
 	configLoad = func() (*config.Config, error) { return m.cfg, nil }
 	newSQLiteStore = func(_ string) (db.Store, error) { return m.store, nil }
 	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) { return m.bot, nil }
@@ -1253,6 +1254,101 @@ func (s *MainSuite) TestReindexLoopDefaultInterval() {
 	}()
 
 	// Wait for the startup reindexAll call.
+	require.Eventually(s.T(), func() bool {
+		return callCount.Load() >= 1
+	}, 2*time.Second, 50*time.Millisecond)
+
+	cancel()
+	<-done
+}
+
+// --- mcpSweep ---
+
+func (s *MainSuite) TestMcpSweep() {
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0755))
+
+	// Create MCP config files: one known, two orphaned.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(loopDir, "mcp-known1.json"), []byte("{}"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(loopDir, "mcp-orphan1.json"), []byte("{}"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(loopDir, "mcp-orphan2.json"), []byte("{}"), 0644))
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cl := new(mockChannelLister)
+	cl.On("ListChannels", mock.Anything).Return([]*db.Channel{
+		{ChannelID: "known1", DirPath: tmpDir},
+		{ChannelID: "known2", DirPath: tmpDir}, // duplicate dir — dedup branch
+		{ChannelID: "known3", DirPath: ""},     // empty dir — skip branch
+	}, nil)
+
+	mcpSweep(context.Background(), cl, logger)
+	cl.AssertExpectations(s.T())
+
+	// known1 should remain, orphans should be removed.
+	entries, err := os.ReadDir(loopDir)
+	require.NoError(s.T(), err)
+	var remaining []string
+	for _, e := range entries {
+		remaining = append(remaining, e.Name())
+	}
+	require.Equal(s.T(), []string{"mcp-known1.json"}, remaining)
+}
+
+func (s *MainSuite) TestMcpSweepListError() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	cl := new(mockChannelLister)
+	cl.On("ListChannels", mock.Anything).Return(nil, errors.New("db error"))
+
+	// Should not panic.
+	mcpSweep(context.Background(), cl, logger)
+	cl.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestMcpSweepLoop() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	var callCount atomic.Int32
+	cl := new(mockChannelLister)
+	cl.On("ListChannels", mock.Anything).Run(func(_ mock.Arguments) {
+		callCount.Add(1)
+	}).Return([]*db.Channel{}, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		mcpSweepLoop(ctx, cl, logger, 1) // 1-second interval
+		close(done)
+	}()
+
+	// Wait for at least 2 ListChannels calls (startup + one tick).
+	require.Eventually(s.T(), func() bool {
+		return callCount.Load() >= 2
+	}, 5*time.Second, 100*time.Millisecond)
+
+	cancel()
+	<-done
+}
+
+func (s *MainSuite) TestMcpSweepLoopDefaultInterval() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	var callCount atomic.Int32
+	cl := new(mockChannelLister)
+	cl.On("ListChannels", mock.Anything).Run(func(_ mock.Arguments) {
+		callCount.Add(1)
+	}).Return([]*db.Channel{}, nil)
+
+	ctx, cancel := context.WithCancel(context.Background())
+
+	done := make(chan struct{})
+	go func() {
+		mcpSweepLoop(ctx, cl, logger, 0) // 0 = default interval
+		close(done)
+	}()
+
+	// Wait for the startup sweep call.
 	require.Eventually(s.T(), func() bool {
 		return callCount.Load() >= 1
 	}, 2*time.Second, 50*time.Millisecond)

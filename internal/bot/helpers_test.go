@@ -2,6 +2,8 @@ package bot
 
 import (
 	"errors"
+	"io"
+	"log/slog"
 	"os"
 	"strings"
 	"testing"
@@ -318,4 +320,90 @@ func (s *HelpersSuite) TestFindCutPoint() {
 			require.Equal(s.T(), tc.want, FindCutPoint(tc.content, tc.maxLen))
 		})
 	}
+}
+
+// --- SweepOrphanedMCPConfigs ---
+
+func (s *HelpersSuite) TestSweepOrphanedMCPConfigs() {
+	origGlob := filepathGlob
+	origRemove := osRemove
+	s.T().Cleanup(func() { filepathGlob = origGlob; osRemove = origRemove })
+
+	filepathGlob = func(string) ([]string, error) {
+		return []string{
+			"/work/.loop/mcp-known1.json",
+			"/work/.loop/mcp-orphan1.json",
+			"/work/.loop/mcp-orphan2.json",
+		}, nil
+	}
+
+	var removed []string
+	osRemove = func(name string) error {
+		removed = append(removed, name)
+		return nil
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	knownIDs := map[string]struct{}{"known1": {}}
+	count := SweepOrphanedMCPConfigs([]string{"/work"}, knownIDs, logger)
+
+	require.Equal(s.T(), 2, count)
+	require.Equal(s.T(), []string{
+		"/work/.loop/mcp-orphan1.json",
+		"/work/.loop/mcp-orphan2.json",
+	}, removed)
+}
+
+func (s *HelpersSuite) TestSweepOrphanedMCPConfigsNoOrphans() {
+	origGlob := filepathGlob
+	origRemove := osRemove
+	s.T().Cleanup(func() { filepathGlob = origGlob; osRemove = origRemove })
+
+	filepathGlob = func(string) ([]string, error) {
+		return []string{"/work/.loop/mcp-known1.json"}, nil
+	}
+
+	osRemove = func(string) error {
+		s.T().Fatal("osRemove should not be called")
+		return nil
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	knownIDs := map[string]struct{}{"known1": {}}
+	count := SweepOrphanedMCPConfigs([]string{"/work"}, knownIDs, logger)
+	require.Equal(s.T(), 0, count)
+}
+
+func (s *HelpersSuite) TestSweepOrphanedMCPConfigsGlobError() {
+	origGlob := filepathGlob
+	s.T().Cleanup(func() { filepathGlob = origGlob })
+
+	filepathGlob = func(string) ([]string, error) {
+		return nil, errors.New("bad pattern")
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	count := SweepOrphanedMCPConfigs([]string{"/work"}, nil, logger)
+	require.Equal(s.T(), 0, count)
+}
+
+func (s *HelpersSuite) TestSweepOrphanedMCPConfigsRemoveError() {
+	origGlob := filepathGlob
+	origRemove := osRemove
+	s.T().Cleanup(func() { filepathGlob = origGlob; osRemove = origRemove })
+
+	filepathGlob = func(string) ([]string, error) {
+		return []string{"/work/.loop/mcp-orphan1.json"}, nil
+	}
+	osRemove = func(string) error { return errors.New("permission denied") }
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	count := SweepOrphanedMCPConfigs([]string{"/work"}, nil, logger)
+	require.Equal(s.T(), 0, count)
+}
+
+func (s *HelpersSuite) TestSweepOrphanedMCPConfigsEmptyDirPaths() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	count := SweepOrphanedMCPConfigs(nil, nil, logger)
+	require.Equal(s.T(), 0, count)
 }

@@ -17,6 +17,7 @@ import (
 	"github.com/tailscale/hujson"
 
 	"github.com/radutopala/loop/internal/api"
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	containerimage "github.com/radutopala/loop/internal/container/image"
@@ -210,6 +211,59 @@ func (m *multiDirIndexer) reindexLoop(ctx context.Context, store channelLister, 
 	}
 }
 
+// defaultSweepInterval is the default periodic MCP config sweep interval (5 minutes).
+const defaultSweepInterval = 5 * time.Minute
+
+// mcpSweep lists channels from the store, collects known IDs and unique dir paths,
+// then sweeps orphaned MCP config files.
+func mcpSweep(ctx context.Context, store channelLister, logger *slog.Logger) {
+	channels, err := store.ListChannels(ctx)
+	if err != nil {
+		logger.Warn("mcp sweep: listing channels", "error", err)
+		return
+	}
+
+	knownIDs := make(map[string]struct{}, len(channels))
+	seenDirs := make(map[string]struct{})
+	var dirPaths []string
+	for _, ch := range channels {
+		knownIDs[ch.ChannelID] = struct{}{}
+		if ch.DirPath == "" {
+			continue
+		}
+		if _, ok := seenDirs[ch.DirPath]; !ok {
+			seenDirs[ch.DirPath] = struct{}{}
+			dirPaths = append(dirPaths, ch.DirPath)
+		}
+	}
+
+	if n := bot.SweepOrphanedMCPConfigs(dirPaths, knownIDs, logger); n > 0 {
+		logger.Info("mcp sweep complete", "removed", n)
+	}
+}
+
+// mcpSweepLoop runs mcpSweep at startup then periodically at the given interval.
+// intervalSec <= 0 uses the default (5 minutes). Blocks until ctx is cancelled.
+func mcpSweepLoop(ctx context.Context, store channelLister, logger *slog.Logger, intervalSec int) {
+	mcpSweep(ctx, store, logger)
+
+	interval := defaultSweepInterval
+	if intervalSec > 0 {
+		interval = time.Duration(intervalSec) * time.Second
+	}
+
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			mcpSweep(ctx, store, logger)
+		}
+	}
+}
+
 func (m *multiDirIndexer) resolveMemoryPaths(dirPath string) ([]memoryPathEntry, []string) {
 	var entries []memoryPathEntry
 	var excludePaths []string
@@ -380,6 +434,9 @@ func serve() error {
 			go mdi.reindexLoop(ctx, store, cfg.Memory.ReindexIntervalSec)
 		}
 	}
+
+	// Periodically sweep orphaned MCP config files.
+	go mcpSweepLoop(ctx, store, logger, 0)
 
 	if err := apiSrv.Start(cfg.APIAddr); err != nil {
 		return fmt.Errorf("starting api server: %w", err)
