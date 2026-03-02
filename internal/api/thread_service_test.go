@@ -53,7 +53,7 @@ func (s *ThreadServiceSuite) TestCreateThreadSuccess() {
 	}
 	s.store.On("GetChannel", s.ctx, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", GuildID: "guild-1", DirPath: "/work", Platform: types.PlatformDiscord, SessionID: "sess-1", Permissions: parentPerms}, nil)
-	s.creator.On("CreateThread", s.ctx, "ch-1", "my-thread", "user-42", "").
+	s.creator.On("CreateThread", s.ctx, "ch-1", "my-thread", "user-42", "Do the task").
 		Return("thread-1", nil)
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "thread-1" && ch.GuildID == "guild-1" &&
@@ -64,7 +64,7 @@ func (s *ThreadServiceSuite) TestCreateThreadSuccess() {
 			ch.Active
 	})).Return(nil)
 
-	threadID, err := s.svc.CreateThread(s.ctx, "ch-1", "my-thread", "user-42", "")
+	threadID, err := s.svc.CreateThread(s.ctx, "ch-1", "my-thread", "user-42", "Do the task")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "thread-1", threadID)
 	s.store.AssertExpectations(s.T())
@@ -92,7 +92,7 @@ func (s *ThreadServiceSuite) TestCreateThreadParentLookupError() {
 	s.store.On("GetChannel", s.ctx, "ch-1").
 		Return(nil, errors.New("db error"))
 
-	threadID, err := s.svc.CreateThread(s.ctx, "ch-1", "my-thread", "", "")
+	threadID, err := s.svc.CreateThread(s.ctx, "ch-1", "my-thread", "", "Do the task")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "looking up parent channel")
 	require.Empty(s.T(), threadID)
@@ -102,7 +102,7 @@ func (s *ThreadServiceSuite) TestCreateThreadParentNotFound() {
 	s.store.On("GetChannel", s.ctx, "ch-1").
 		Return(nil, nil)
 
-	threadID, err := s.svc.CreateThread(s.ctx, "ch-1", "my-thread", "", "")
+	threadID, err := s.svc.CreateThread(s.ctx, "ch-1", "my-thread", "", "Do the task")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "parent channel ch-1 not found")
 	require.Empty(s.T(), threadID)
@@ -111,10 +111,10 @@ func (s *ThreadServiceSuite) TestCreateThreadParentNotFound() {
 func (s *ThreadServiceSuite) TestCreateThreadDiscordError() {
 	s.store.On("GetChannel", s.ctx, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", GuildID: "guild-1"}, nil)
-	s.creator.On("CreateThread", s.ctx, "ch-1", "my-thread", "", "").
+	s.creator.On("CreateThread", s.ctx, "ch-1", "my-thread", "", "Do the task").
 		Return("", errors.New("discord error"))
 
-	threadID, err := s.svc.CreateThread(s.ctx, "ch-1", "my-thread", "", "")
+	threadID, err := s.svc.CreateThread(s.ctx, "ch-1", "my-thread", "", "Do the task")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating thread")
 	require.Empty(s.T(), threadID)
@@ -123,12 +123,12 @@ func (s *ThreadServiceSuite) TestCreateThreadDiscordError() {
 func (s *ThreadServiceSuite) TestCreateThreadUpsertError() {
 	s.store.On("GetChannel", s.ctx, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", GuildID: "guild-1"}, nil)
-	s.creator.On("CreateThread", s.ctx, "ch-1", "my-thread", "", "").
+	s.creator.On("CreateThread", s.ctx, "ch-1", "my-thread", "", "Do the task").
 		Return("thread-1", nil)
 	s.store.On("UpsertChannel", s.ctx, mock.Anything).
 		Return(errors.New("upsert error"))
 
-	threadID, err := s.svc.CreateThread(s.ctx, "ch-1", "my-thread", "", "")
+	threadID, err := s.svc.CreateThread(s.ctx, "ch-1", "my-thread", "", "Do the task")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "storing thread mapping")
 	require.Empty(s.T(), threadID)
@@ -141,13 +141,13 @@ func (s *ThreadServiceSuite) TestCreateThreadFromThreadResolvesParent() {
 	// Second GetChannel resolves to the real parent.
 	s.store.On("GetChannel", s.ctx, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", GuildID: "guild-1", DirPath: "/work", Platform: types.PlatformDiscord, SessionID: "sess-1"}, nil)
-	s.creator.On("CreateThread", s.ctx, "ch-1", "new-thread", "user-1", "").
+	s.creator.On("CreateThread", s.ctx, "ch-1", "new-thread", "user-1", "Do the task").
 		Return("thread-2", nil)
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "thread-2" && ch.ParentID == "ch-1" && ch.GuildID == "guild-1"
 	})).Return(nil)
 
-	threadID, err := s.svc.CreateThread(s.ctx, "thread-1", "new-thread", "user-1", "")
+	threadID, err := s.svc.CreateThread(s.ctx, "thread-1", "new-thread", "user-1", "Do the task")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "thread-2", threadID)
 	s.store.AssertExpectations(s.T())
@@ -160,7 +160,7 @@ func (s *ThreadServiceSuite) TestCreateThreadFromThreadResolveError() {
 	s.store.On("GetChannel", s.ctx, "ch-1").
 		Return(nil, errors.New("db error"))
 
-	threadID, err := s.svc.CreateThread(s.ctx, "thread-1", "new-thread", "", "")
+	threadID, err := s.svc.CreateThread(s.ctx, "thread-1", "new-thread", "", "Do the task")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "looking up resolved parent channel")
 	require.Empty(s.T(), threadID)
@@ -172,7 +172,7 @@ func (s *ThreadServiceSuite) TestCreateThreadFromThreadResolvedParentNotFound() 
 	s.store.On("GetChannel", s.ctx, "ch-1").
 		Return(nil, nil)
 
-	threadID, err := s.svc.CreateThread(s.ctx, "thread-1", "new-thread", "", "")
+	threadID, err := s.svc.CreateThread(s.ctx, "thread-1", "new-thread", "", "Do the task")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "resolved parent channel ch-1 not found")
 	require.Empty(s.T(), threadID)

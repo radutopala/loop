@@ -1346,8 +1346,6 @@ func (s *BotSuite) TestCreateThreadSuccess() {
 		message     string
 		expectedMsg string
 	}{
-		{"default", "", "", "", "Tag me to get started!"},
-		{"with mention user", "", "user-42", "", "Hey <@user-42>, tag me to get started!"},
 		{"with message", "", "", "Do the task", "<@bot-123> Do the task"},
 		{"strips text mention", "LoopBot", "", "@LoopBot Do the task", "<@bot-123> Do the task"},
 		{"strips discord mention", "", "", "<@bot-123> Do the task", "<@bot-123> Do the task"},
@@ -1380,7 +1378,7 @@ func (s *BotSuite) TestCreateThreadMessageSendError() {
 	s.session.On("ChannelMessageSend", "thread-1", mock.Anything, mock.Anything).
 		Return(nil, errors.New("send failed"))
 
-	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread", "", "")
+	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread", "", "Do the task")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "thread-1", threadID)
 	s.session.AssertExpectations(s.T())
@@ -1390,7 +1388,7 @@ func (s *BotSuite) TestCreateThreadError() {
 	s.session.On("ThreadStart", "ch-1", "my-thread", discordgo.ChannelTypeGuildPublicThread, 10080, mock.Anything).
 		Return(nil, errors.New("thread create failed"))
 
-	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread", "", "")
+	threadID, err := s.bot.CreateThread(context.Background(), "ch-1", "my-thread", "", "Do the task")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "discord create thread")
 	require.Empty(s.T(), threadID)

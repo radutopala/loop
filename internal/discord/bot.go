@@ -362,7 +362,7 @@ func (b *DiscordBot) CreateThread(ctx context.Context, channelID, name, mentionU
 	b.mu.RLock()
 	username := b.botUsername
 	b.mu.RUnlock()
-	initialMsg := bot.FormatThreadMessage(b.BotUserID(), username, mentionUserID, message, "")
+	initialMsg := bot.FormatThreadMessage(b.BotUserID(), username, mentionUserID, message)
 	if _, err := b.session.ChannelMessageSend(ch.ID, initialMsg); err != nil {
 		b.logger.WarnContext(ctx, "sending initial thread message", "error", err, "thread_id", ch.ID)
 	}

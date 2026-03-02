@@ -632,18 +632,18 @@ func (s *BotSuite) TestCreateThreadSuccess() {
 			message:  "<@U123BOT> do something",
 		},
 		{
-			name:     "with mention (empty message)",
+			name:     "with mention and message",
 			channel:  "C123",
 			thread:   "my thread",
 			authorID: "U456",
-			message:  "",
+			message:  "Check the status",
 		},
 		{
-			name:     "default (no author, no message)",
+			name:     "message only",
 			channel:  "C123",
 			thread:   "my thread",
 			authorID: "",
-			message:  "",
+			message:  "Do the task",
 		},
 	}
 
@@ -667,7 +667,7 @@ func (s *BotSuite) TestCreateThreadSuccess() {
 func (s *BotSuite) TestCreateThreadError() {
 	s.session.On("PostMessage", "C123", mock.Anything).Return("", "", errors.New("not_in_channel"))
 
-	_, err := s.bot.CreateThread(context.Background(), "C123", "thread", "", "")
+	_, err := s.bot.CreateThread(context.Background(), "C123", "thread", "", "Do the task")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "slack create thread")
 }

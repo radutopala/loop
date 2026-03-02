@@ -403,7 +403,7 @@ func (s *SlackIntegrationSuite) TestC05_PostMessageInThread() {
 
 func (s *SlackIntegrationSuite) TestD01_CreateThreadDefault() {
 	rateSleep()
-	threadID, err := s.bot.CreateThread(s.ctx, s.channelID, "test-thread-default", "", "")
+	threadID, err := s.bot.CreateThread(s.ctx, s.channelID, "test-thread-default", "", "Tag me to get started")
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), threadID, s.channelID+":")
 	require.Contains(s.T(), threadID, ".") // Should contain a timestamp with dot.
@@ -433,7 +433,7 @@ func (s *SlackIntegrationSuite) TestD03_CreateThreadWithMention() {
 	require.NoError(s.T(), err)
 
 	rateSleep()
-	threadID, err := s.bot.CreateThread(s.ctx, s.channelID, "test-thread-mention", ownerID, "")
+	threadID, err := s.bot.CreateThread(s.ctx, s.channelID, "test-thread-mention", ownerID, "Check mentions")
 	require.NoError(s.T(), err)
 	require.NotEmpty(s.T(), threadID)
 
@@ -449,7 +449,7 @@ func (s *SlackIntegrationSuite) TestD03_CreateThreadWithMention() {
 
 func (s *SlackIntegrationSuite) TestD04_DeleteThread() {
 	rateSleep()
-	threadID, err := s.bot.CreateThread(s.ctx, s.channelID, "test-thread-delete", "", "")
+	threadID, err := s.bot.CreateThread(s.ctx, s.channelID, "test-thread-delete", "", "Test task")
 	require.NoError(s.T(), err)
 
 	rateSleep()
@@ -848,8 +848,8 @@ func (s *SlackIntegrationSuite) TestF01_ChannelDeleteEvent() {
 
 func (s *SlackIntegrationSuite) TestG01_SlashCommandSchedule() {
 	rateSleep()
-	received := make(chan any, 1)
-	s.bot.OnInteraction(func(_ context.Context, i any) {
+	received := make(chan *bot.Interaction, 1)
+	s.bot.OnInteraction(func(_ context.Context, i *bot.Interaction) {
 		received <- i
 	})
 

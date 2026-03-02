@@ -43,28 +43,23 @@ func ReplaceTextMention(content, username, mention string) string {
 }
 
 // FormatThreadMessage builds the initial message for a new thread.
-// When message is non-empty it strips existing bot mentions, prepends a bot
-// mention, and optionally appends a user mention.
-// When message is empty, it returns a greeting (optionally mentioning the user)
-// prefixed by greetingPrefix (e.g. Slack uses "*threadName*\n").
-func FormatThreadMessage(botID, botUsername, mentionUserID, message, greetingPrefix string) string {
-	switch {
-	case message != "":
-		clean := strings.ReplaceAll(message, "<@"+botID+">", "")
-		if botUsername != "" {
-			clean = ReplaceTextMention(clean, botUsername, "")
-		}
-		clean = strings.TrimSpace(clean)
-		msg := fmt.Sprintf("<@%s> %s", botID, clean)
-		if mentionUserID != "" {
-			msg += fmt.Sprintf(" <@%s>", mentionUserID)
-		}
-		return msg
-	case mentionUserID != "":
-		return greetingPrefix + fmt.Sprintf("Hey <@%s>, tag me to get started!", mentionUserID)
-	default:
-		return greetingPrefix + "Tag me to get started!"
+// It always includes a <@botID> mention so that the bot's event handler
+// recognises the message as a self-mention trigger and starts a new agent
+// run inside the thread.
+// Existing bot mentions (both <@botID> and @username forms) are stripped
+// from message before prepending a canonical <@botID>.
+// If mentionUserID is non-empty the user is appended as a mention.
+func FormatThreadMessage(botID, botUsername, mentionUserID, message string) string {
+	clean := strings.ReplaceAll(message, "<@"+botID+">", "")
+	if botUsername != "" {
+		clean = ReplaceTextMention(clean, botUsername, "")
 	}
+	clean = strings.TrimSpace(clean)
+	msg := fmt.Sprintf("<@%s> %s", botID, clean)
+	if mentionUserID != "" {
+		msg += fmt.Sprintf(" <@%s>", mentionUserID)
+	}
+	return msg
 }
 
 // SplitMessage splits a message into chunks of at most maxLen characters,

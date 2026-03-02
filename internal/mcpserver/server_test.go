@@ -610,7 +610,7 @@ func (s *MCPServerSuite) TestCreateThreadSuccessWithAuthorID() {
 		return jsonResponse(http.StatusCreated, `{"thread_id":"thread-1"}`), nil
 	}
 
-	text, isError := s.callTool("create_thread", map[string]any{"name": "my-thread"})
+	text, isError := s.callTool("create_thread", map[string]any{"name": "my-thread", "message": "Do something"})
 	require.False(s.T(), isError)
 	require.Contains(s.T(), text, "ID: thread-1")
 }
@@ -622,13 +622,19 @@ func (s *MCPServerSuite) TestCreateThreadSuccess() {
 		body, _ := io.ReadAll(req.Body)
 		require.Contains(s.T(), string(body), `"channel_id":"test-channel"`)
 		require.Contains(s.T(), string(body), `"name":"my-thread"`)
-		require.NotContains(s.T(), string(body), `"message"`)
+		require.Contains(s.T(), string(body), `"message":"Check the status"`)
 		return jsonResponse(http.StatusCreated, `{"thread_id":"thread-1"}`), nil
 	}
 
-	text, isError := s.callTool("create_thread", map[string]any{"name": "my-thread"})
+	text, isError := s.callTool("create_thread", map[string]any{"name": "my-thread", "message": "Check the status"})
 	require.False(s.T(), isError)
 	require.Contains(s.T(), text, "ID: thread-1")
+}
+
+func (s *MCPServerSuite) TestCreateThreadEmptyMessage() {
+	text, isError := s.callTool("create_thread", map[string]any{"name": "my-thread", "message": ""})
+	require.True(s.T(), isError)
+	require.Contains(s.T(), text, "message is required")
 }
 
 func (s *MCPServerSuite) TestCreateThreadSuccessWithMessage() {
@@ -647,7 +653,7 @@ func (s *MCPServerSuite) TestCreateThreadSuccessWithMessage() {
 }
 
 func (s *MCPServerSuite) TestCreateThreadEmptyName() {
-	text, isError := s.callTool("create_thread", map[string]any{"name": ""})
+	text, isError := s.callTool("create_thread", map[string]any{"name": "", "message": "Do something"})
 	require.True(s.T(), isError)
 	require.Contains(s.T(), text, "name is required")
 }
@@ -671,7 +677,7 @@ func (s *MCPServerSuite) TestCreateThreadErrors() {
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
 			s.httpClient.doFunc = tt.doFunc
-			text, isError := s.callTool("create_thread", map[string]any{"name": "my-thread"})
+			text, isError := s.callTool("create_thread", map[string]any{"name": "my-thread", "message": "Do something"})
 			require.True(s.T(), isError)
 			require.Contains(s.T(), text, tt.wantText)
 		})

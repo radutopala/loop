@@ -324,8 +324,7 @@ func (b *SlackBot) CreateThread(ctx context.Context, channelID, name, mentionUse
 	b.mu.RLock()
 	username := b.botUsername
 	b.mu.RUnlock()
-	greetingPrefix := fmt.Sprintf("*%s*\n", name)
-	initialMsg := bot.FormatThreadMessage(b.BotUserID(), username, mentionUserID, message, greetingPrefix)
+	initialMsg := fmt.Sprintf("*%s*\n", name) + bot.FormatThreadMessage(b.BotUserID(), username, mentionUserID, message)
 
 	_, ts, err := b.session.PostMessage(channelID, goslack.MsgOptionText(initialMsg, false))
 	if err != nil {

@@ -302,17 +302,17 @@ func (s *DiscordIntegrationSuite) TestC05_PostMessageTextMentionConversion() {
 func (s *DiscordIntegrationSuite) TestD01_CreateThreadDefault() {
 	rateSleep()
 	name := "inttest-thread-default-" + randomSuffix()
-	threadID, err := s.bot.CreateThread(s.ctx, s.channelID, name, "", "")
+	threadID, err := s.bot.CreateThread(s.ctx, s.channelID, name, "", "Tag me to get started")
 	require.NoError(s.T(), err)
 	require.NotEmpty(s.T(), threadID)
 	s.cleanupIDs = append(s.cleanupIDs, threadID)
 
-	// Verify thread exists and has the initial "Tag me" message.
+	// Verify thread exists and has the initial message.
 	rateSleep()
 	msg, err := waitForDiscordMessage(s.session, threadID,
-		messageContains("Tag me"), defaultTimeout)
+		messageContains("Tag me to get started"), defaultTimeout)
 	require.NoError(s.T(), err)
-	require.Contains(s.T(), msg.Content, "Tag me")
+	require.Contains(s.T(), msg.Content, "Tag me to get started")
 }
 
 func (s *DiscordIntegrationSuite) TestD02_CreateThreadWithMessage() {
@@ -337,7 +337,7 @@ func (s *DiscordIntegrationSuite) TestD03_CreateThreadWithMention() {
 	rateSleep()
 	name := "inttest-thread-mention-" + randomSuffix()
 	// Use bot's own ID as the mention user (no helper bot available).
-	threadID, err := s.bot.CreateThread(s.ctx, s.channelID, name, s.botUserID, "")
+	threadID, err := s.bot.CreateThread(s.ctx, s.channelID, name, s.botUserID, "Check mentions")
 	require.NoError(s.T(), err)
 	require.NotEmpty(s.T(), threadID)
 	s.cleanupIDs = append(s.cleanupIDs, threadID)
@@ -354,7 +354,7 @@ func (s *DiscordIntegrationSuite) TestD03_CreateThreadWithMention() {
 func (s *DiscordIntegrationSuite) TestD04_DeleteThread() {
 	rateSleep()
 	name := "inttest-thread-delete-" + randomSuffix()
-	threadID, err := s.bot.CreateThread(s.ctx, s.channelID, name, "", "")
+	threadID, err := s.bot.CreateThread(s.ctx, s.channelID, name, "", "Test task")
 	require.NoError(s.T(), err)
 
 	rateSleep()
@@ -370,7 +370,7 @@ func (s *DiscordIntegrationSuite) TestD04_DeleteThread() {
 func (s *DiscordIntegrationSuite) TestD05_GetChannelParentIDOnThread() {
 	rateSleep()
 	name := "inttest-thread-parent-" + randomSuffix()
-	threadID, err := s.bot.CreateThread(s.ctx, s.channelID, name, "", "")
+	threadID, err := s.bot.CreateThread(s.ctx, s.channelID, name, "", "Test task")
 	require.NoError(s.T(), err)
 	s.cleanupIDs = append(s.cleanupIDs, threadID)
 
@@ -446,7 +446,7 @@ func (s *DiscordIntegrationSuite) TestE01_SelfMentionEvent() {
 func (s *DiscordIntegrationSuite) TestE02_ThreadDeleteEvent() {
 	rateSleep()
 	name := "inttest-thread-delevent-" + randomSuffix()
-	threadID, err := s.bot.CreateThread(s.ctx, s.channelID, name, "", "")
+	threadID, err := s.bot.CreateThread(s.ctx, s.channelID, name, "", "Test task")
 	require.NoError(s.T(), err)
 
 	received := make(chan struct {

@@ -115,38 +115,13 @@ func (s *HelpersSuite) TestReplaceTextMention() {
 
 func (s *HelpersSuite) TestFormatThreadMessage() {
 	tests := []struct {
-		name           string
-		botID          string
-		botUsername    string
-		mentionUserID  string
-		message        string
-		greetingPrefix string
-		want           string
+		name          string
+		botID         string
+		botUsername   string
+		mentionUserID string
+		message       string
+		want          string
 	}{
-		{
-			name:  "default greeting no prefix",
-			botID: "B1", botUsername: "LoopBot",
-			want: "Tag me to get started!",
-		},
-		{
-			name:  "default greeting with prefix",
-			botID: "B1", botUsername: "LoopBot",
-			greetingPrefix: "*my thread*\n",
-			want:           "*my thread*\nTag me to get started!",
-		},
-		{
-			name:  "mention user no prefix",
-			botID: "B1", botUsername: "LoopBot",
-			mentionUserID: "U42",
-			want:          "Hey <@U42>, tag me to get started!",
-		},
-		{
-			name:  "mention user with prefix",
-			botID: "B1", botUsername: "LoopBot",
-			mentionUserID:  "U42",
-			greetingPrefix: "*my thread*\n",
-			want:           "*my thread*\nHey <@U42>, tag me to get started!",
-		},
 		{
 			name:  "message strips bot mention",
 			botID: "B1", botUsername: "LoopBot",
@@ -167,13 +142,6 @@ func (s *HelpersSuite) TestFormatThreadMessage() {
 			want:          "<@B1> do the thing <@U42>",
 		},
 		{
-			name:  "message ignores greeting prefix",
-			botID: "B1", botUsername: "LoopBot",
-			message:        "do the thing",
-			greetingPrefix: "*thread*\n",
-			want:           "<@B1> do the thing",
-		},
-		{
 			name:    "message with empty bot username",
 			botID:   "B1",
 			message: "do the thing",
@@ -182,7 +150,7 @@ func (s *HelpersSuite) TestFormatThreadMessage() {
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
-			got := FormatThreadMessage(tc.botID, tc.botUsername, tc.mentionUserID, tc.message, tc.greetingPrefix)
+			got := FormatThreadMessage(tc.botID, tc.botUsername, tc.mentionUserID, tc.message)
 			require.Equal(s.T(), tc.want, got)
 		})
 	}
