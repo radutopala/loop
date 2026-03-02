@@ -124,6 +124,7 @@ const (
 	scannerBufMaxLine = 1024 * 1024 // max line size (1 MB)
 )
 
+var osRemove = os.Remove
 var osMkdirAll = os.MkdirAll
 var osGetenv = os.Getenv
 var osWriteFile = os.WriteFile
@@ -374,6 +375,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 	if err != nil {
 		return nil, err
 	}
+	defer func() { _ = osRemove(mcpConfigPath) }()
 
 	binds, chownPaths := r.buildContainerMounts(cfg.Mounts, workDir)
 	// Include copied files for CopyToContainer ownership fix.

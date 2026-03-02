@@ -106,6 +106,7 @@ type RunnerSuite struct {
 	origReadlink      func(string) (string, error)
 	origReadFile      func(string) ([]byte, error)
 	origTimeLocalName func() string
+	origRemove        func(string) error
 }
 
 const (
@@ -219,6 +220,8 @@ func (s *RunnerSuite) SetupTest() {
 	osReadFile = func(string) ([]byte, error) { return nil, os.ErrNotExist }
 	s.origTimeLocalName = osTimeLocalName
 	osTimeLocalName = func() string { return "Local" }
+	s.origRemove = osRemove
+	osRemove = func(string) error { return nil }
 	s.client = new(MockDockerClient)
 	s.cfg = &config.Config{
 		ClaudeBinPath:      "claude",
@@ -245,6 +248,7 @@ func (s *RunnerSuite) TearDownTest() {
 	osReadlink = s.origReadlink
 	osReadFile = s.origReadFile
 	osTimeLocalName = s.origTimeLocalName
+	osRemove = s.origRemove
 }
 
 // setupMockRun sets up mocks for a successful non-streaming container Run cycle.
@@ -1335,6 +1339,28 @@ func (s *RunnerSuite) TestRunMCPConfigWritten() {
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
 	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222", "--log", "/home/testuser/.loop/ch-1/work/.loop/mcp.log"}, ls.Args)
 
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunMCPConfigRemovedAfterRun() {
+	var removedPath string
+	osRemove = func(path string) error {
+		removedPath = path
+		return nil
+	}
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	s.setupMockRun(ctx, mock.AnythingOfType("*container.ContainerConfig"), testContainerName, testJSONOK)
+
+	_, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+
+	require.Equal(s.T(), "/home/testuser/.loop/ch-1/work/.loop/mcp-ch-1.json", removedPath)
 	s.client.AssertExpectations(s.T())
 }
 

@@ -3,7 +3,6 @@ package bot
 import (
 	"errors"
 	"fmt"
-	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,9 +10,6 @@ import (
 
 // osRemove is a package-level variable to allow testing os.Remove.
 var osRemove = os.Remove
-
-// filepathGlob is a package-level variable to allow testing filepath.Glob.
-var filepathGlob = filepath.Glob
 
 // RemoveMCPConfig removes the per-channel MCP config file for the given channel.
 // It silently ignores os.ErrNotExist (the file may not exist if the agent never ran).
@@ -86,34 +82,6 @@ func FormatThreadMessage(botID, botUsername, mentionUserID, message string) stri
 		msg += fmt.Sprintf(" <@%s>", mentionUserID)
 	}
 	return msg
-}
-
-// SweepOrphanedMCPConfigs removes MCP config files from dirPaths whose channel IDs
-// are not in knownIDs. Returns the count of removed files.
-func SweepOrphanedMCPConfigs(dirPaths []string, knownIDs map[string]struct{}, logger *slog.Logger) int {
-	removed := 0
-	for _, dir := range dirPaths {
-		pattern := filepath.Join(dir, ".loop", "mcp-*.json")
-		matches, err := filepathGlob(pattern)
-		if err != nil {
-			logger.Warn("sweep: glob error", "pattern", pattern, "error", err)
-			continue
-		}
-		for _, path := range matches {
-			base := filepath.Base(path) // mcp-{ID}.json
-			id := strings.TrimSuffix(strings.TrimPrefix(base, "mcp-"), ".json")
-			if _, ok := knownIDs[id]; ok {
-				continue
-			}
-			if err := osRemove(path); err != nil {
-				logger.Warn("sweep: remove error", "path", path, "error", err)
-				continue
-			}
-			logger.Info("sweep: removed orphaned MCP config", "path", path)
-			removed++
-		}
-	}
-	return removed
 }
 
 // SplitMessage splits a message into chunks of at most maxLen characters,
