@@ -107,6 +107,45 @@ func (s *ChannelServiceSuite) TestEnsureChannelCreatesNewWithOwnerInvite() {
 	s.creator.AssertCalled(s.T(), "InviteUserToChannel", s.ctx, "new-ch-1", "U-OWNER")
 }
 
+func (s *ChannelServiceSuite) TestEnsureChannelSanitizesDots() {
+	s.store.On("GetChannelByDirPath", s.ctx, "/home/user/dev/my.dotted.project", types.PlatformDiscord).
+		Return(nil, nil)
+	s.creator.On("CreateChannel", s.ctx, "guild-1", "my-dotted-project-ab12").
+		Return("new-ch-2", nil)
+	s.creator.On("SetChannelTopic", s.ctx, "new-ch-2", "/home/user/dev/my.dotted.project").Return(nil)
+	s.creator.On("GetOwnerUserID", s.ctx).Return("", nil)
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "new-ch-2" && ch.Name == "my-dotted-project-ab12" &&
+			ch.DirPath == "/home/user/dev/my.dotted.project"
+	})).Return(nil)
+
+	channelID, err := s.svc.EnsureChannel(s.ctx, "/home/user/dev/my.dotted.project")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "new-ch-2", channelID)
+	s.store.AssertExpectations(s.T())
+	s.creator.AssertExpectations(s.T())
+}
+
+func (s *ChannelServiceSuite) TestSanitizeChannelName() {
+	tests := []struct {
+		input    string
+		expected string
+	}{
+		{"my.dotted.project", "my-dotted-project"},
+		{"My Project", "my-project"},
+		{"UPPER_case", "upper_case"},
+		{"--leading--", "leading"},
+		{"normal", "normal"},
+		{"a.b.c", "a-b-c"},
+		{"...", "project"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.input, func() {
+			require.Equal(s.T(), tt.expected, sanitizeChannelName(tt.input))
+		})
+	}
+}
+
 func (s *ChannelServiceSuite) TestEnsureChannelLookupError() {
 	s.store.On("GetChannelByDirPath", s.ctx, "/path", types.PlatformDiscord).
 		Return(nil, errors.New("db error"))

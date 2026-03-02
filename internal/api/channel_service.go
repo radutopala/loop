@@ -6,6 +6,8 @@ import (
 	"encoding/hex"
 	"fmt"
 	"path/filepath"
+	"regexp"
+	"strings"
 
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/types"
@@ -16,6 +18,20 @@ var randSuffix = func() string {
 	b := make([]byte, 2)
 	_, _ = rand.Read(b)
 	return hex.EncodeToString(b)
+}
+
+var invalidChannelChars = regexp.MustCompile(`[^a-z0-9_-]+`)
+
+// sanitizeChannelName normalises a directory base name into a valid
+// Slack/Discord channel name (lowercase, alphanumeric, hyphens, underscores).
+func sanitizeChannelName(name string) string {
+	name = strings.ToLower(name)
+	name = invalidChannelChars.ReplaceAllString(name, "-")
+	name = strings.Trim(name, "-")
+	if name == "" {
+		name = "project"
+	}
+	return name
 }
 
 // ChannelCreator can create channels on the chat platform.
@@ -84,7 +100,7 @@ func (s *channelService) EnsureChannel(ctx context.Context, dirPath string) (str
 		return ch.ChannelID, nil
 	}
 
-	name := filepath.Base(dirPath) + "-" + randSuffix()
+	name := sanitizeChannelName(filepath.Base(dirPath)) + "-" + randSuffix()
 	channelID, err := s.creator.CreateChannel(ctx, s.guildID, name)
 	if err != nil {
 		return "", fmt.Errorf("creating channel: %w", err)

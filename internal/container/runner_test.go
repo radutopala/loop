@@ -2663,3 +2663,24 @@ func (s *RunnerSuite) TestFilterMountedCopyFiles() {
 		})
 	}
 }
+
+func (s *RunnerSuite) TestFilterMountedCopyFilesExpandError() {
+	osUserHomeDir = func() (string, error) { return "", errors.New("no home") }
+
+	result := filterMountedCopyFiles(
+		[]string{"~/.claude.json", "/etc/some.conf"},
+		[]string{"/etc/some.conf:/etc/some.conf:ro"},
+	)
+	// ~/ path kept because expandPath errors; /etc/some.conf filtered by bind match
+	require.Equal(s.T(), []string{"~/.claude.json"}, result)
+}
+
+func (s *RunnerSuite) TestOsTimeLocalNameDefault() {
+	// Call the real osTimeLocalName to cover the default function literal.
+	origFn := osTimeLocalName
+	osTimeLocalName = s.origTimeLocalName
+	defer func() { osTimeLocalName = origFn }()
+
+	loc := osTimeLocalName()
+	require.NotEmpty(s.T(), loc)
+}
