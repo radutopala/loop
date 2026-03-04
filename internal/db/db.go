@@ -105,7 +105,7 @@ func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
 		 ON CONFLICT(channel_id) DO UPDATE SET
 		   guild_id = excluded.guild_id,
 		   name = excluded.name,
-		   dir_path = excluded.dir_path,
+		   dir_path = CASE WHEN excluded.dir_path != '' THEN excluded.dir_path ELSE channels.dir_path END,
 		   parent_id = excluded.parent_id,
 		   platform = CASE WHEN excluded.platform != '' THEN excluded.platform ELSE channels.platform END,
 		   session_id = CASE WHEN excluded.session_id != '' THEN excluded.session_id ELSE channels.session_id END,
