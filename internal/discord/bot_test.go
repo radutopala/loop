@@ -3,6 +3,7 @@ package discord
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"strings"
 	"sync"
@@ -444,6 +445,9 @@ func (s *BotSuite) TestOnMessageRegistersHandler() {
 	s.bot.botUserID = "bot-123"
 	s.bot.mu.Unlock()
 
+	s.session.On("Channel", mock.Anything, mock.Anything).
+		Maybe().
+		Return(&discordgo.Channel{Type: discordgo.ChannelTypeGuildText}, nil)
 	s.session.On("GuildMember", "g-1", "user-1", mock.Anything).
 		Return(nil, errors.New("not mocked"))
 
@@ -761,6 +765,9 @@ func (s *BotSuite) TestHandleMessageIgnored() {
 			session := new(MockSession)
 			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			b.botUserID = "bot-123"
+			session.On("Channel", mock.Anything, mock.Anything).
+				Maybe().
+				Return(&discordgo.Channel{Type: discordgo.ChannelTypeGuildText}, nil)
 			called := false
 			b.OnMessage(func(_ context.Context, _ *bot.IncomingMessage) { called = true })
 			b.handleMessage(nil, &discordgo.MessageCreate{Message: tc.msg})
@@ -807,6 +814,9 @@ func (s *BotSuite) TestHandleMessageTriggered() {
 			session := new(MockSession)
 			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			b.botUserID = "bot-123"
+			session.On("Channel", mock.Anything, mock.Anything).
+				Maybe().
+				Return(&discordgo.Channel{Type: discordgo.ChannelTypeGuildText}, nil)
 			session.On("GuildMember", mock.Anything, mock.Anything, mock.Anything).
 				Return(nil, errors.New("not mocked")).Maybe()
 			var received *bot.IncomingMessage
@@ -829,6 +839,9 @@ func (s *BotSuite) TestHandleMessageMultipleHandlers() {
 	s.bot.mu.Lock()
 	s.bot.botUserID = "bot-123"
 	s.bot.mu.Unlock()
+	s.session.On("Channel", mock.Anything, mock.Anything).
+		Maybe().
+		Return(&discordgo.Channel{Type: discordgo.ChannelTypeGuildText}, nil)
 
 	var wg sync.WaitGroup
 	var mu sync.Mutex
@@ -901,10 +914,20 @@ func (s *BotSuite) TestBotUserIDEmpty() {
 
 type TriggerSuite struct {
 	suite.Suite
+	session *MockSession
+	bot     *DiscordBot
 }
 
 func TestTriggerSuite(t *testing.T) {
 	suite.Run(t, new(TriggerSuite))
+}
+
+func (s *TriggerSuite) SetupTest() {
+	s.session = new(MockSession)
+	s.bot = &DiscordBot{
+		session: s.session,
+		logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+	}
 }
 
 func (s *TriggerSuite) TestIsBotMention() {
@@ -948,6 +971,8 @@ func (s *TriggerSuite) TestIsReplyToBot() {
 		name     string
 		msg      *discordgo.MessageCreate
 		botID    string
+		channel  *discordgo.Channel
+		chanErr  error
 		expected bool
 	}{
 		{
@@ -965,46 +990,89 @@ func (s *TriggerSuite) TestIsReplyToBot() {
 			name: "reply to other user",
 			msg: &discordgo.MessageCreate{
 				Message: &discordgo.Message{
+					ChannelID:         "ch-1",
 					MessageReference:  &discordgo.MessageReference{MessageID: "ref-1"},
 					ReferencedMessage: &discordgo.Message{Author: &discordgo.User{ID: "other"}},
 				},
 			},
 			botID:    "bot-1",
+			channel:  &discordgo.Channel{ID: "ch-1", Type: discordgo.ChannelTypeGuildText},
 			expected: false,
 		},
 		{
-			name: "no message reference",
+			name: "no message reference, not a thread",
 			msg: &discordgo.MessageCreate{
-				Message: &discordgo.Message{},
+				Message: &discordgo.Message{ChannelID: "ch-1"},
 			},
 			botID:    "bot-1",
+			channel:  &discordgo.Channel{ID: "ch-1", Type: discordgo.ChannelTypeGuildText},
 			expected: false,
 		},
 		{
 			name: "no referenced message",
 			msg: &discordgo.MessageCreate{
 				Message: &discordgo.Message{
+					ChannelID:        "ch-1",
 					MessageReference: &discordgo.MessageReference{MessageID: "ref-1"},
 				},
 			},
 			botID:    "bot-1",
+			channel:  &discordgo.Channel{ID: "ch-1", Type: discordgo.ChannelTypeGuildText},
 			expected: false,
 		},
 		{
 			name: "referenced message no author",
 			msg: &discordgo.MessageCreate{
 				Message: &discordgo.Message{
+					ChannelID:         "ch-1",
 					MessageReference:  &discordgo.MessageReference{MessageID: "ref-1"},
 					ReferencedMessage: &discordgo.Message{Author: nil},
 				},
 			},
 			botID:    "bot-1",
+			channel:  &discordgo.Channel{ID: "ch-1", Type: discordgo.ChannelTypeGuildText},
+			expected: false,
+		},
+		{
+			name: "message in bot-owned thread",
+			msg: &discordgo.MessageCreate{
+				Message: &discordgo.Message{ChannelID: "thread-1"},
+			},
+			botID:    "bot-1",
+			channel:  &discordgo.Channel{ID: "thread-1", Type: discordgo.ChannelTypeGuildPublicThread, OwnerID: "bot-1"},
+			expected: true,
+		},
+		{
+			name: "message in user-owned thread",
+			msg: &discordgo.MessageCreate{
+				Message: &discordgo.Message{ChannelID: "thread-2"},
+			},
+			botID:    "bot-1",
+			channel:  &discordgo.Channel{ID: "thread-2", Type: discordgo.ChannelTypeGuildPublicThread, OwnerID: "user-1"},
+			expected: false,
+		},
+		{
+			name: "channel lookup error falls back to false",
+			msg: &discordgo.MessageCreate{
+				Message: &discordgo.Message{ChannelID: "ch-1"},
+			},
+			botID:    "bot-1",
+			chanErr:  errors.New("not found"),
 			expected: false,
 		},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
-			require.Equal(s.T(), tc.expected, isReplyToBot(tc.msg, tc.botID))
+			session := new(MockSession)
+			b := &DiscordBot{
+				session: session,
+				logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+			}
+			if tc.channel != nil || tc.chanErr != nil {
+				session.On("Channel", tc.msg.ChannelID, mock.Anything).
+					Return(tc.channel, tc.chanErr)
+			}
+			require.Equal(s.T(), tc.expected, b.isReplyToBot(tc.msg, tc.botID))
 		})
 	}
 }
@@ -1065,7 +1133,15 @@ func (s *TriggerSuite) TestParseIncomingMessage() {
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
-			msg := parseIncomingMessage(&discordgo.MessageCreate{Message: tc.msg}, "bot-1")
+			session := new(MockSession)
+			b := &DiscordBot{
+				session: session,
+				logger:  slog.New(slog.NewTextHandler(io.Discard, nil)),
+			}
+			session.On("Channel", mock.Anything, mock.Anything).
+				Maybe().
+				Return(&discordgo.Channel{Type: discordgo.ChannelTypeGuildText}, nil)
+			msg := b.parseIncomingMessage(&discordgo.MessageCreate{Message: tc.msg}, "bot-1")
 			if tc.wantNil {
 				require.Nil(s.T(), msg)
 				return
@@ -1652,6 +1728,9 @@ func (s *BotSuite) TestHandleMessageRolePopulation() {
 			session := new(MockSession)
 			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			b.botUserID = "bot-123"
+			session.On("Channel", mock.Anything, mock.Anything).
+				Maybe().
+				Return(&discordgo.Channel{Type: discordgo.ChannelTypeGuildText}, nil)
 			session.On("GuildMember", "g-1", "user-1", mock.Anything).Return(tc.member, tc.memberErr)
 			var received *bot.IncomingMessage
 			done := make(chan struct{})

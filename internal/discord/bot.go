@@ -486,7 +486,7 @@ func (b *DiscordBot) handleMessage(_ *discordgo.Session, m *discordgo.MessageCre
 		return
 	}
 
-	msg := parseIncomingMessage(m, botID)
+	msg := b.parseIncomingMessage(m, botID)
 	if msg == nil {
 		return
 	}
@@ -617,10 +617,10 @@ func (b *DiscordBot) dispatchInteraction(inter *bot.Interaction) {
 // parseIncomingMessage converts a discordgo MessageCreate into an IncomingMessage.
 // Returns nil if the message has no trigger (mention, prefix, reply to bot, or DM).
 // DMs (GuildID is empty) are always treated as triggered.
-func parseIncomingMessage(m *discordgo.MessageCreate, botUserID string) *bot.IncomingMessage {
+func (b *DiscordBot) parseIncomingMessage(m *discordgo.MessageCreate, botUserID string) *bot.IncomingMessage {
 	isMention := isBotMention(m, botUserID)
 	hasPrefix := bot.HasCommandPrefix(m.Content)
-	isReply := isReplyToBot(m, botUserID)
+	isReply := b.isReplyToBot(m, botUserID)
 	isDM := m.GuildID == ""
 
 	if !isMention && !hasPrefix && !isReply && !isDM {
@@ -661,15 +661,16 @@ func isBotMention(m *discordgo.MessageCreate, botUserID string) bool {
 	return strings.Contains(m.Content, "<@"+botUserID+">")
 }
 
-func isReplyToBot(m *discordgo.MessageCreate, botUserID string) bool {
-	if m.MessageReference == nil {
-		return false
+func (b *DiscordBot) isReplyToBot(m *discordgo.MessageCreate, botUserID string) bool {
+	// Explicit reply to a bot message.
+	if m.MessageReference != nil && m.ReferencedMessage != nil &&
+		m.ReferencedMessage.Author != nil && m.ReferencedMessage.Author.ID == botUserID {
+		return true
 	}
-	if m.ReferencedMessage == nil {
-		return false
+	// Message in a thread owned by the bot (matches Slack behavior).
+	ch, err := b.session.Channel(m.ChannelID)
+	if err == nil && ch.IsThread() && ch.OwnerID == botUserID {
+		return true
 	}
-	if m.ReferencedMessage.Author == nil {
-		return false
-	}
-	return m.ReferencedMessage.Author.ID == botUserID
+	return false
 }
