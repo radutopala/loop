@@ -43,7 +43,7 @@ var wsUpgrader = websocket.Upgrader{
 }
 
 func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
-	if s.terminal == nil {
+	if s.termManager == nil {
 		http.Error(w, "terminal not configured", http.StatusNotImplemented)
 		return
 	}
@@ -97,7 +97,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	// detachCurrent detaches from the current session if attached.
 	detachCurrent := func() {
 		if sessionID != "" && outputCh != nil {
-			s.terminal.DetachSession(sessionID, outputCh)
+			s.termManager.DetachSession(sessionID, outputCh)
 			sessionID = ""
 			outputCh = nil
 		}
@@ -128,7 +128,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			}
 			detachCurrent()
 
-			sid, output, history, done, err := s.terminal.CreateSession(r.Context(), msg.ContainerID, msg.Cmd)
+			sid, output, history, done, err := s.termManager.CreateSession(r.Context(), msg.ContainerID, msg.Cmd)
 			if err != nil {
 				writeJSON(wsStatusMessage{Type: "error", Message: err.Error()})
 				continue
@@ -149,7 +149,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			}
 			detachCurrent()
 
-			output, history, done, err := s.terminal.AttachSession(msg.SessionID)
+			output, history, done, err := s.termManager.AttachSession(msg.SessionID)
 			if err != nil {
 				writeJSON(wsStatusMessage{Type: "error", Message: err.Error()})
 				continue
@@ -173,7 +173,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 				writeJSON(wsStatusMessage{Type: "error", Message: "invalid base64 data"})
 				continue
 			}
-			if err := s.terminal.SendInput(sessionID, data); err != nil {
+			if err := s.termManager.SendInput(sessionID, data); err != nil {
 				writeJSON(wsStatusMessage{Type: "error", Message: err.Error()})
 			}
 
@@ -186,7 +186,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 				writeJSON(wsStatusMessage{Type: "error", Message: "rows and cols required"})
 				continue
 			}
-			if err := s.terminal.Resize(r.Context(), sessionID, msg.Rows, msg.Cols); err != nil {
+			if err := s.termManager.Resize(r.Context(), sessionID, msg.Rows, msg.Cols); err != nil {
 				writeJSON(wsStatusMessage{Type: "error", Message: err.Error()})
 			}
 
@@ -195,7 +195,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 				writeJSON(wsStatusMessage{Type: "error", Message: "no active session"})
 				continue
 			}
-			if err := s.terminal.StopSession(sessionID); err != nil {
+			if err := s.termManager.StopSession(sessionID); err != nil {
 				writeJSON(wsStatusMessage{Type: "error", Message: err.Error()})
 				continue
 			}
@@ -210,5 +210,5 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 // SetTerminalManager configures the terminal manager for WebSocket terminal sessions.
 func (s *Server) SetTerminalManager(mgr TerminalManager) {
-	s.terminal = mgr
+	s.termManager = mgr
 }

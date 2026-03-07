@@ -89,10 +89,10 @@ func (s *TerminalHandlerSuite) SetupTest() {
 // dialWS creates a test HTTP server with the terminal WS handler and returns a connected websocket.
 func (s *TerminalHandlerSuite) dialWS() (*websocket.Conn, *httptest.Server) {
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/terminal/ws", s.srv.handleTerminalWS)
+	mux.HandleFunc("GET /api/ws/terminal", s.srv.handleTerminalWS)
 	ts := httptest.NewServer(mux)
 
-	wsURL := "ws" + ts.URL[4:] + "/api/terminal/ws"
+	wsURL := "ws" + ts.URL[4:] + "/api/ws/terminal"
 	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
 	require.NoError(s.T(), err)
 	return conn, ts
@@ -129,9 +129,9 @@ func sendControl(t *testing.T, conn *websocket.Conn, msg wsControlMessage) {
 func (s *TerminalHandlerSuite) TestTerminalNotConfigured() {
 	srv := nilServer() // no terminal manager
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/terminal/ws", srv.handleTerminalWS)
+	mux.HandleFunc("GET /api/ws/terminal", srv.handleTerminalWS)
 
-	req := httptest.NewRequest("GET", "/api/terminal/ws", nil)
+	req := httptest.NewRequest("GET", "/api/ws/terminal", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
@@ -140,10 +140,10 @@ func (s *TerminalHandlerSuite) TestTerminalNotConfigured() {
 
 func (s *TerminalHandlerSuite) TestSetTerminalManager() {
 	srv := nilServer()
-	require.Nil(s.T(), srv.terminal)
+	require.Nil(s.T(), srv.termManager)
 	mgr := new(MockTerminalManager)
 	srv.SetTerminalManager(mgr)
-	require.NotNil(s.T(), srv.terminal)
+	require.NotNil(s.T(), srv.termManager)
 }
 
 func (s *TerminalHandlerSuite) TestCreateSession() {
@@ -580,9 +580,9 @@ func (s *TerminalHandlerSuite) TestDetachOnNewCreate() {
 func (s *TerminalHandlerSuite) TestUpgradeError() {
 	// Send a plain HTTP GET (not a WebSocket upgrade) to trigger the upgrade error path.
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/terminal/ws", s.srv.handleTerminalWS)
+	mux.HandleFunc("GET /api/ws/terminal", s.srv.handleTerminalWS)
 
-	req := httptest.NewRequest("GET", "/api/terminal/ws", nil)
+	req := httptest.NewRequest("GET", "/api/ws/terminal", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 
