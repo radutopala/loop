@@ -20,10 +20,21 @@ type Server struct {
 	messages      MessageSender
 	memoryIndexer MemoryIndexer
 	termManager   TerminalManager
+	eventsHub     *EventsHub
 	loopDir       string
 	logger        *slog.Logger
 	server        *http.Server
 	listener      net.Listener
+}
+
+// SetEventsHub configures the events hub for the /api/ws endpoint.
+func (s *Server) SetEventsHub(hub *EventsHub) {
+	s.eventsHub = hub
+}
+
+// EventsHub returns the configured events hub, or nil if not set.
+func (s *Server) EventsHub() *EventsHub {
+	return s.eventsHub
 }
 
 // SetMemoryIndexer configures the memory indexer for the /api/memory/* endpoints.
@@ -67,6 +78,7 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("POST /api/memory/index", s.handleMemoryIndex)
 	mux.HandleFunc("GET /api/readme", s.handleGetReadme)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
+	mux.HandleFunc("GET /api/ws", s.handleEventsWS)
 
 	s.server = &http.Server{
 		Addr:    addr,

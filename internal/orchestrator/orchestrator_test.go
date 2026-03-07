@@ -146,6 +146,18 @@ func (m *MockBot) RemoveStopButton(ctx context.Context, channelID, messageID str
 	return m.Called(ctx, channelID, messageID).Error(0)
 }
 
+type MockEventBroadcaster struct {
+	mock.Mock
+}
+
+func (m *MockEventBroadcaster) BroadcastMessageCreated(channelID string, data MessageEventData) {
+	m.Called(channelID, data)
+}
+
+func (m *MockEventBroadcaster) BroadcastAgentStatus(channelID string, data AgentStatusEventData) {
+	m.Called(channelID, data)
+}
+
 type MockRunner struct {
 	mock.Mock
 }
@@ -198,6 +210,13 @@ func (s *OrchestratorSuite) SetupTest() {
 func (s *OrchestratorSuite) TestNew() {
 	require.NotNil(s.T(), s.orch)
 	require.NotNil(s.T(), s.orch.queue)
+}
+
+func (s *OrchestratorSuite) TestSetEventBroadcaster() {
+	require.Nil(s.T(), s.orch.events)
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+	require.Same(s.T(), eb, s.orch.events)
 }
 
 // --- Start tests ---
@@ -787,6 +806,115 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredFullFlow() {
 	s.store.AssertExpectations(s.T())
 	s.bot.AssertExpectations(s.T())
 	s.runner.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleMessageWithEventBroadcaster() {
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+
+	msg := &bot.IncomingMessage{
+		ChannelID:    "ch1",
+		GuildID:      "g1",
+		AuthorID:     "user1",
+		AuthorName:   "Alice",
+		Content:      "hi",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
+		Response:  "Hello!",
+		SessionID: "sess1",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess1").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	// Expect event broadcasts: user message, running status, completed status, bot message
+	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d MessageEventData) bool {
+		return d.AuthorName == "Alice" && d.Content == "hi" && !d.IsBot
+	})).Return()
+	eb.On("BroadcastAgentStatus", "ch1", AgentStatusEventData{Status: "running"}).Return()
+	eb.On("BroadcastAgentStatus", "ch1", AgentStatusEventData{Status: "completed"}).Return()
+	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d MessageEventData) bool {
+		return d.AuthorName == "assistant" && d.Content == "Hello!" && d.IsBot
+	})).Return()
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	eb.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleMessageWithEventBroadcasterRunError() {
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+
+	msg := &bot.IncomingMessage{
+		ChannelID:    "ch1",
+		AuthorID:     "user1",
+		AuthorName:   "Alice",
+		Content:      "hi",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("runner failed"))
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
+	eb.On("BroadcastAgentStatus", "ch1", AgentStatusEventData{Status: "running"}).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d AgentStatusEventData) bool {
+		return d.Status == "error" && d.Error == "runner failed"
+	})).Return()
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	eb.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleMessageWithEventBroadcasterAgentError() {
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+
+	msg := &bot.IncomingMessage{
+		ChannelID:    "ch1",
+		AuthorID:     "user1",
+		AuthorName:   "Alice",
+		Content:      "hi",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Error: "agent broke"}, nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
+	eb.On("BroadcastAgentStatus", "ch1", AgentStatusEventData{Status: "running"}).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d AgentStatusEventData) bool {
+		return d.Status == "error" && d.Error == "agent broke"
+	})).Return()
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	eb.AssertExpectations(s.T())
 }
 
 func (s *OrchestratorSuite) TestHandleMessageTriggeredWithNilSession() {

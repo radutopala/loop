@@ -45,6 +45,8 @@ type apiServer interface {
 	Start(addr string) error
 	Stop(ctx context.Context) error
 	SetMemoryIndexer(idx api.MemoryIndexer)
+	SetEventsHub(hub *api.EventsHub)
+	EventsHub() *api.EventsHub
 	SetLoopDir(dir string)
 }
 
@@ -381,11 +383,15 @@ func serve() error {
 		}
 	}
 
+	eventsHub := api.NewEventsHub()
+	apiSrv.SetEventsHub(eventsHub)
+
 	if err := apiSrv.Start(cfg.APIAddr); err != nil {
 		return fmt.Errorf("starting api server: %w", err)
 	}
 
 	orch := orchestrator.New(store, chatBot, runner, sched, logger, platform, *cfg)
+	orch.SetEventBroadcaster(&eventBroadcasterAdapter{hub: eventsHub})
 
 	if err := orch.Start(ctx); err != nil {
 		_ = apiSrv.Stop(context.Background())
@@ -404,4 +410,26 @@ func serve() error {
 	}
 
 	return nil
+}
+
+// eventBroadcasterAdapter adapts api.EventsHub to the orchestrator.EventBroadcaster interface.
+type eventBroadcasterAdapter struct {
+	hub *api.EventsHub
+}
+
+func (a *eventBroadcasterAdapter) BroadcastMessageCreated(channelID string, data orchestrator.MessageEventData) {
+	a.hub.BroadcastMessageCreated(channelID, api.MessageData{
+		MsgID:      data.MsgID,
+		AuthorID:   data.AuthorID,
+		AuthorName: data.AuthorName,
+		Content:    data.Content,
+		IsBot:      data.IsBot,
+	})
+}
+
+func (a *eventBroadcasterAdapter) BroadcastAgentStatus(channelID string, data orchestrator.AgentStatusEventData) {
+	a.hub.BroadcastAgentStatus(channelID, api.AgentStatusData{
+		Status: data.Status,
+		Error:  data.Error,
+	})
 }

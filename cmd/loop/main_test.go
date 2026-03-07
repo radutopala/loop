@@ -246,6 +246,18 @@ func (m *mockAPIServer) SetMemoryIndexer(idx api.MemoryIndexer) {
 	m.Called(idx)
 }
 
+func (m *mockAPIServer) SetEventsHub(hub *api.EventsHub) {
+	m.Called(hub)
+}
+
+func (m *mockAPIServer) EventsHub() *api.EventsHub {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(*api.EventsHub)
+}
+
 func (m *mockAPIServer) SetLoopDir(dir string) {
 	m.Called(dir)
 }
@@ -1663,6 +1675,7 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 
 	mockAPI := new(mockAPIServer)
 	mockAPI.On("SetLoopDir", mock.Anything).Return()
+	mockAPI.On("SetEventsHub", mock.Anything).Return()
 	mockAPI.On("Start", mock.Anything).Return(nil)
 	mockAPI.On("Stop", mock.Anything).Return(errors.New("api stop error"))
 	newAPIServer = func(_ scheduler.Scheduler, _ api.ChannelEnsurer, _ api.ThreadEnsurer, _ api.ChannelLister, _ api.MessageSender, _ *slog.Logger) apiServer {
@@ -3089,4 +3102,26 @@ func (s *MainSuite) TestReadmeOutput() {
 	cmd.SetArgs([]string{})
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
+}
+
+func (s *MainSuite) TestEventBroadcasterAdapterMessageCreated() {
+	hub := api.NewEventsHub()
+	adapter := &eventBroadcasterAdapter{hub: hub}
+
+	adapter.BroadcastMessageCreated("ch-1", orchestrator.MessageEventData{
+		MsgID:      "msg-1",
+		AuthorID:   "user-1",
+		AuthorName: "alice",
+		Content:    "hello",
+		IsBot:      false,
+	})
+}
+
+func (s *MainSuite) TestEventBroadcasterAdapterAgentStatus() {
+	hub := api.NewEventsHub()
+	adapter := &eventBroadcasterAdapter{hub: hub}
+
+	adapter.BroadcastAgentStatus("ch-1", orchestrator.AgentStatusEventData{
+		Status: "running",
+	})
 }

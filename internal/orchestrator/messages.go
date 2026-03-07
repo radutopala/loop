@@ -62,6 +62,15 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 		return
 	}
 
+	if o.events != nil {
+		o.events.BroadcastMessageCreated(msg.ChannelID, MessageEventData{
+			MsgID:      msgID,
+			AuthorID:   msg.AuthorID,
+			AuthorName: msg.AuthorName,
+			Content:    msg.Content,
+		})
+	}
+
 	o.logger.Info("incoming message",
 		"channel_id", msg.ChannelID,
 		"author", msg.AuthorName,
@@ -222,8 +231,15 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 		req.OnTurn = tracker.OnTurn
 	}
 
+	if o.events != nil {
+		o.events.BroadcastAgentStatus(msg.ChannelID, AgentStatusEventData{Status: "running"})
+	}
+
 	resp, err := o.runner.Run(runCtx, req)
 	if err != nil {
+		if o.events != nil {
+			o.events.BroadcastAgentStatus(msg.ChannelID, AgentStatusEventData{Status: "error", Error: err.Error()})
+		}
 		if runCtx.Err() == context.Canceled {
 			o.logger.Info("run stopped by user", "channel_id", msg.ChannelID)
 			_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
@@ -243,6 +259,9 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	}
 
 	if resp.Error != "" {
+		if o.events != nil {
+			o.events.BroadcastAgentStatus(msg.ChannelID, AgentStatusEventData{Status: "error", Error: resp.Error})
+		}
 		o.logger.Error("agent returned error", "error", resp.Error, "channel_id", msg.ChannelID)
 		_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 			ChannelID:        msg.ChannelID,
@@ -261,6 +280,9 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 
 // deliverResponse sends the final response, records the bot message, and marks messages as processed.
 func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMessage, resp *agent.AgentResponse, recent []*db.Message, lastStreamedText string) {
+	if o.events != nil {
+		o.events.BroadcastAgentStatus(msg.ChannelID, AgentStatusEventData{Status: "completed"})
+	}
 	if err := o.store.UpdateSessionID(ctx, msg.ChannelID, resp.SessionID); err != nil {
 		o.logger.Error("updating session data", "error", err, "channel_id", msg.ChannelID)
 	}
@@ -281,12 +303,13 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 		}
 	}
 
+	botMsgID := generateMessageID()
 	ch, err := o.store.GetChannel(ctx, msg.ChannelID)
 	if err == nil && ch != nil {
 		if insertErr := o.store.InsertMessage(ctx, &db.Message{
 			ChatID:     ch.ID,
 			ChannelID:  msg.ChannelID,
-			MsgID:      generateMessageID(),
+			MsgID:      botMsgID,
 			AuthorName: "assistant",
 			Content:    resp.Response,
 			IsBot:      true,
@@ -294,6 +317,15 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 		}); insertErr != nil {
 			o.logger.Error("inserting bot response", "error", insertErr, "channel_id", msg.ChannelID)
 		}
+	}
+
+	if o.events != nil {
+		o.events.BroadcastMessageCreated(msg.ChannelID, MessageEventData{
+			MsgID:      botMsgID,
+			AuthorName: "assistant",
+			Content:    resp.Response,
+			IsBot:      true,
+		})
 	}
 
 	ids := make([]int64, len(recent))

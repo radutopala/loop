@@ -59,6 +59,7 @@ type Orchestrator struct {
 	bot            Bot
 	runner         Runner
 	scheduler      scheduler.Scheduler
+	events         EventBroadcaster
 	queue          *ChannelQueue
 	activeRuns     sync.Map // map[channelID]context.CancelFunc
 	logger         *slog.Logger
@@ -80,6 +81,11 @@ func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logg
 		platform:       platform,
 		cfg:            cfg,
 	}
+}
+
+// SetEventBroadcaster configures the event broadcaster for real-time event streaming.
+func (o *Orchestrator) SetEventBroadcaster(eb EventBroadcaster) {
+	o.events = eb
 }
 
 // Start registers handlers, slash commands, and starts the bot and scheduler.
