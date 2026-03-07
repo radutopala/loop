@@ -11,8 +11,9 @@ type MessageSender interface {
 	PostMessage(ctx context.Context, channelID, content string) error
 }
 
-// ChannelLister can list and look up channels from the database.
+// ChannelLister can list and look up channels and their messages from the database.
 type ChannelLister interface {
 	ListChannels(ctx context.Context) ([]*db.Channel, error)
 	GetChannel(ctx context.Context, channelID string) (*db.Channel, error)
+	GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*db.Message, error)
 }

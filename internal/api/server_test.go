@@ -68,6 +68,14 @@ func (m *MockChannelLister) GetChannel(ctx context.Context, channelID string) (*
 	return args.Get(0).(*db.Channel), args.Error(1)
 }
 
+func (m *MockChannelLister) GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*db.Message, error) {
+	args := m.Called(ctx, channelID, cursor, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.Message), args.Error(1)
+}
+
 type MockMessageSender struct {
 	mock.Mock
 }
@@ -129,6 +137,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("GET /api/tasks/{id}", s.srv.handleGetTask)
 	s.mux.HandleFunc("DELETE /api/tasks/{id}", s.srv.handleDeleteTask)
 	s.mux.HandleFunc("PATCH /api/tasks/{id}", s.srv.handleUpdateTask)
+	s.mux.HandleFunc("GET /api/channels/{id}/messages", s.srv.handleListMessages)
 	s.mux.HandleFunc("POST /api/memory/search", s.srv.handleMemorySearch)
 	s.mux.HandleFunc("POST /api/memory/index", s.srv.handleMemoryIndex)
 	s.mux.HandleFunc("GET /api/readme", s.srv.handleGetReadme)
@@ -1022,6 +1031,106 @@ func (s *ServerSuite) TestGetReadme() {
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.Equal(s.T(), "text/plain; charset=utf-8", rec.Header().Get("Content-Type"))
 	require.NotEmpty(s.T(), rec.Body.String())
+}
+
+// --- ListMessages tests ---
+
+func (s *ServerSuite) TestListMessagesSuccess() {
+	now := time.Now().UTC()
+	msgs := []*db.Message{
+		{ID: 10, ChannelID: "ch-1", MsgID: "m10", AuthorID: "u1", AuthorName: "alice", Content: "hello", IsBot: false, CreatedAt: now},
+		{ID: 9, ChannelID: "ch-1", MsgID: "m9", AuthorID: "bot", AuthorName: "Bot", Content: "hi", IsBot: true, CreatedAt: now},
+	}
+	s.store.On("GetMessagesCursor", mock.Anything, "ch-1", int64(0), 51).Return(msgs, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/messages", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp messagesListResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp.Messages, 2)
+	require.Equal(s.T(), int64(10), resp.Messages[0].ID)
+	require.Equal(s.T(), "hello", resp.Messages[0].Content)
+	require.False(s.T(), resp.Messages[0].IsBot)
+	require.True(s.T(), resp.Messages[1].IsBot)
+	require.Nil(s.T(), resp.NextCursor)
+}
+
+func (s *ServerSuite) TestListMessagesWithCursor() {
+	now := time.Now().UTC()
+	msgs := []*db.Message{
+		{ID: 5, ChannelID: "ch-1", MsgID: "m5", AuthorID: "u1", AuthorName: "alice", Content: "five", CreatedAt: now},
+	}
+	s.store.On("GetMessagesCursor", mock.Anything, "ch-1", int64(10), 51).Return(msgs, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/messages?cursor=10", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp messagesListResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp.Messages, 1)
+	require.Nil(s.T(), resp.NextCursor)
+}
+
+func (s *ServerSuite) TestListMessagesWithLimit() {
+	now := time.Now().UTC()
+	// Return limit+1 messages to trigger pagination
+	msgs := []*db.Message{
+		{ID: 3, ChannelID: "ch-1", MsgID: "m3", AuthorID: "u1", AuthorName: "alice", Content: "three", CreatedAt: now},
+		{ID: 2, ChannelID: "ch-1", MsgID: "m2", AuthorID: "u1", AuthorName: "alice", Content: "two", CreatedAt: now},
+		{ID: 1, ChannelID: "ch-1", MsgID: "m1", AuthorID: "u1", AuthorName: "alice", Content: "one", CreatedAt: now},
+	}
+	s.store.On("GetMessagesCursor", mock.Anything, "ch-1", int64(0), 3).Return(msgs, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/messages?limit=2", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp messagesListResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp.Messages, 2)
+	require.NotNil(s.T(), resp.NextCursor)
+	require.Equal(s.T(), int64(2), *resp.NextCursor)
+}
+
+func (s *ServerSuite) TestListMessagesInvalidLimit() {
+	rec := s.testRequest("GET", "/api/channels/ch-1/messages?limit=abc", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+
+	rec = s.testRequest("GET", "/api/channels/ch-1/messages?limit=0", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestListMessagesInvalidCursor() {
+	rec := s.testRequest("GET", "/api/channels/ch-1/messages?cursor=abc", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+
+	rec = s.testRequest("GET", "/api/channels/ch-1/messages?cursor=0", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestListMessagesLimitCap() {
+	s.store.On("GetMessagesCursor", mock.Anything, "ch-1", int64(0), 201).Return([]*db.Message{}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/messages?limit=500", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+}
+
+func (s *ServerSuite) TestListMessagesError() {
+	s.store.On("GetMessagesCursor", mock.Anything, "ch-1", int64(0), 51).Return(nil, errors.New("db error"))
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/messages", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+func (s *ServerSuite) TestListMessagesNotConfigured() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewServer(nil, nil, nil, nil, nil, logger)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/messages", srv.handleListMessages)
+	req := httptest.NewRequest("GET", "/api/channels/ch-1/messages", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
 // --- containsFold tests ---
