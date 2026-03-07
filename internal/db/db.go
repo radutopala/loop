@@ -26,6 +26,7 @@ type Store interface {
 	InsertMessage(ctx context.Context, msg *Message) error
 	MarkMessagesProcessed(ctx context.Context, ids []int64) error
 	GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*Message, error)
+	GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*Message, error)
 	CreateScheduledTask(ctx context.Context, task *ScheduledTask) (int64, error)
 	GetDueTasks(ctx context.Context, now time.Time) ([]*ScheduledTask, error)
 	UpdateScheduledTask(ctx context.Context, task *ScheduledTask) error
@@ -287,6 +288,29 @@ func (s *SQLiteStore) GetRecentMessages(ctx context.Context, channelID string, l
 		 FROM messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?`,
 		channelID, limit,
 	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+func (s *SQLiteStore) GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*Message, error) {
+	var rows *sql.Rows
+	var err error
+	if cursor > 0 {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at
+			 FROM messages WHERE channel_id = ? AND id < ? ORDER BY id DESC LIMIT ?`,
+			channelID, cursor, limit,
+		)
+	} else {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at
+			 FROM messages WHERE channel_id = ? ORDER BY id DESC LIMIT ?`,
+			channelID, limit,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}

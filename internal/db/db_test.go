@@ -472,6 +472,48 @@ func (s *StoreSuite) TestGetRecentMessagesError() {
 	require.Nil(s.T(), msgs)
 }
 
+func (s *StoreSuite) TestGetMessagesCursor() {
+	now := time.Now().UTC()
+	rows := newMockMessageRows().
+		AddRow(5, 1, "ch1", "msg5", "u1", "user1", "five", 0, 0, now)
+	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id .+ ORDER BY id DESC LIMIT`).
+		WithArgs("ch1", 10).
+		WillReturnRows(rows)
+
+	msgs, err := s.store.GetMessagesCursor(context.Background(), "ch1", 0, 10)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), msgs, 1)
+	require.Equal(s.T(), int64(5), msgs[0].ID)
+}
+
+func (s *StoreSuite) TestGetMessagesCursorWithCursor() {
+	now := time.Now().UTC()
+	rows := newMockMessageRows().
+		AddRow(3, 1, "ch1", "msg3", "u1", "user1", "three", 0, 0, now)
+	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id .+ AND id < .+ ORDER BY id DESC LIMIT`).
+		WithArgs("ch1", int64(5), 10).
+		WillReturnRows(rows)
+
+	msgs, err := s.store.GetMessagesCursor(context.Background(), "ch1", 5, 10)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), msgs, 1)
+	require.Equal(s.T(), int64(3), msgs[0].ID)
+}
+
+func (s *StoreSuite) TestGetMessagesCursorError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id`).WithArgs("ch1", 10).WillReturnError(sql.ErrConnDone)
+	msgs, err := s.store.GetMessagesCursor(context.Background(), "ch1", 0, 10)
+	require.Error(s.T(), err)
+	require.Nil(s.T(), msgs)
+}
+
+func (s *StoreSuite) TestGetMessagesCursorWithCursorError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id`).WithArgs("ch1", int64(5), 10).WillReturnError(sql.ErrConnDone)
+	msgs, err := s.store.GetMessagesCursor(context.Background(), "ch1", 5, 10)
+	require.Error(s.T(), err)
+	require.Nil(s.T(), msgs)
+}
+
 // --- ScheduledTask tests ---
 
 func (s *StoreSuite) TestCreateScheduledTask() {
