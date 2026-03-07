@@ -132,6 +132,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("POST /api/memory/search", s.srv.handleMemorySearch)
 	s.mux.HandleFunc("POST /api/memory/index", s.srv.handleMemoryIndex)
 	s.mux.HandleFunc("GET /api/readme", s.srv.handleGetReadme)
+	s.mux.HandleFunc("GET /api/terminal/ws", s.srv.handleTerminalWS)
 }
 
 // testRequest is a helper that sends an HTTP request and returns the recorder.

@@ -19,6 +19,7 @@ type Server struct {
 	store         ChannelLister
 	messages      MessageSender
 	memoryIndexer MemoryIndexer
+	terminal      TerminalManager
 	loopDir       string
 	logger        *slog.Logger
 	server        *http.Server
@@ -65,6 +66,7 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("POST /api/memory/search", s.handleMemorySearch)
 	mux.HandleFunc("POST /api/memory/index", s.handleMemoryIndex)
 	mux.HandleFunc("GET /api/readme", s.handleGetReadme)
+	mux.HandleFunc("GET /api/terminal/ws", s.handleTerminalWS)
 
 	s.server = &http.Server{
 		Addr:    addr,
