@@ -1,18 +1,46 @@
 import { useCallback, useEffect, useState } from "react";
-import type { Channel } from "./types";
+import type { Channel, ViewMode } from "./types";
 import { colors, fonts } from "./theme";
 import { createThread, fetchChannels, initApiUrl } from "./api/loopApi";
 import { Sidebar } from "./components/Sidebar";
 import { Terminal } from "./components/Terminal";
 import { ChatView } from "./components/ChatView";
+import { ModeToggle } from "./components/ModeToggle";
 
-type ViewMode = "terminal" | "chat";
+const MODE_STORAGE_KEY = "loop-view-mode";
+
+function loadMode(channelId: string | null): ViewMode {
+  if (!channelId) return "terminal";
+  try {
+    const stored = localStorage.getItem(MODE_STORAGE_KEY);
+    if (stored) {
+      const prefs: Record<string, ViewMode> = JSON.parse(stored);
+      if (prefs[channelId] === "chat" || prefs[channelId] === "terminal") {
+        return prefs[channelId];
+      }
+    }
+  } catch {
+    /* ignore corrupt storage */
+  }
+  return "terminal";
+}
+
+function saveMode(channelId: string, mode: ViewMode) {
+  try {
+    const stored = localStorage.getItem(MODE_STORAGE_KEY);
+    const prefs: Record<string, ViewMode> = stored ? JSON.parse(stored) : {};
+    prefs[channelId] = mode;
+    localStorage.setItem(MODE_STORAGE_KEY, JSON.stringify(prefs));
+  } catch {
+    /* ignore storage errors */
+  }
+}
 
 export default function App() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
-  const [viewMode, setViewMode] = useState<ViewMode>("terminal");
   const [ready, setReady] = useState(false);
+  const [viewMode, setViewMode] = useState<ViewMode>("terminal");
 
   useEffect(() => {
     initApiUrl().then(() => setReady(true));
@@ -33,18 +61,34 @@ export default function App() {
     return () => clearInterval(id);
   }, [loadChannels]);
 
+  const handleSelect = useCallback((id: string | null) => {
+    setSelectedId(id);
+    setViewMode(loadMode(id));
+  }, []);
+
+  const handleModeChange = useCallback(
+    (mode: ViewMode) => {
+      setViewMode(mode);
+      if (selectedId) saveMode(selectedId, mode);
+    },
+    [selectedId],
+  );
+
   const handleCreateThread = useCallback(
     async (parentId: string, name: string) => {
       try {
         const threadId = await createThread(parentId, name);
         await loadChannels();
-        setSelectedId(threadId);
+        handleSelect(threadId);
       } catch {
         /* TODO: surface error to user */
       }
     },
-    [loadChannels],
+    [loadChannels, handleSelect],
   );
+
+  const containerId =
+    channels.find((c) => c.id === selectedId)?.container_id ?? null;
 
   return (
     <div
@@ -59,18 +103,24 @@ export default function App() {
       <Sidebar
         channels={channels}
         selectedId={selectedId}
-        onSelect={setSelectedId}
+        onSelect={handleSelect}
         onCreateThread={handleCreateThread}
       />
-      <div style={{ display: "flex", flexDirection: "column", flex: 1 }}>
-        <ViewModeToggle mode={viewMode} onToggle={setViewMode} />
+      <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+        {selectedId && (
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "flex-end",
+              padding: "4px 8px",
+              borderBottom: `1px solid ${colors.border}`,
+            }}
+          >
+            <ModeToggle mode={viewMode} onChange={handleModeChange} />
+          </div>
+        )}
         {viewMode === "terminal" ? (
-          <Terminal
-            channelId={selectedId}
-            containerId={
-              channels.find((c) => c.id === selectedId)?.container_id ?? null
-            }
-          />
+          <Terminal channelId={selectedId} containerId={containerId} />
         ) : (
           <ChatView channelId={selectedId} />
         )}
@@ -78,59 +128,3 @@ export default function App() {
     </div>
   );
 }
-
-function ViewModeToggle({
-  mode,
-  onToggle,
-}: {
-  mode: ViewMode;
-  onToggle: (mode: ViewMode) => void;
-}) {
-  return (
-    <div style={toggleStyles.bar}>
-      <button
-        onClick={() => onToggle("terminal")}
-        style={{
-          ...toggleStyles.button,
-          ...(mode === "terminal" ? toggleStyles.active : {}),
-        }}
-      >
-        Terminal
-      </button>
-      <button
-        onClick={() => onToggle("chat")}
-        style={{
-          ...toggleStyles.button,
-          ...(mode === "chat" ? toggleStyles.active : {}),
-        }}
-      >
-        Chat
-      </button>
-    </div>
-  );
-}
-
-const toggleStyles: Record<string, React.CSSProperties> = {
-  bar: {
-    display: "flex",
-    gap: 2,
-    padding: "4px 8px",
-    borderBottom: `1px solid ${colors.border}`,
-    backgroundColor: colors.surface,
-  },
-  button: {
-    padding: "4px 12px",
-    fontSize: 12,
-    fontFamily: fonts.sans,
-    fontWeight: 500,
-    color: colors.textMuted,
-    backgroundColor: "transparent",
-    border: "none",
-    borderRadius: 4,
-    cursor: "pointer",
-  },
-  active: {
-    color: colors.textLight,
-    backgroundColor: colors.selectedBg,
-  },
-};

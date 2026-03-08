@@ -37,6 +37,9 @@ export interface MessageCreatedData {
 // UI-level session status (mapped from server message types).
 export type SessionStatus = "connecting" | "running" | "completed" | "failed";
 
+// View mode per channel: interactive terminal or chat transcript.
+export type ViewMode = "terminal" | "chat";
+
 // --- Client → Server messages ---
 
 export interface CreateMessage {
