@@ -55,13 +55,18 @@ export async function createThread(
   return data.thread_id;
 }
 
+interface MessagesResponse {
+  messages: Message[];
+  next_cursor: number | null;
+}
+
 export async function fetchMessages(
   channelId: string,
-  opts?: { limit?: number; before?: string },
-): Promise<Message[]> {
+  opts?: { limit?: number; cursor?: number },
+): Promise<MessagesResponse> {
   const params = new URLSearchParams();
   if (opts?.limit) params.set("limit", String(opts.limit));
-  if (opts?.before) params.set("before", opts.before);
+  if (opts?.cursor) params.set("cursor", String(opts.cursor));
   const res = await fetch(
     `${apiUrl}/api/channels/${channelId}/messages?${params}`,
   );

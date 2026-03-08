@@ -8,12 +8,30 @@ export interface Channel {
 }
 
 export interface Message {
-  id: string;
+  id: number;
   channel_id: string;
+  msg_id: string;
+  author_id: string;
+  author_name: string;
   content: string;
-  author: string;
-  bot: boolean;
+  is_bot: boolean;
   created_at: string;
+}
+
+// Event stream types from /api/ws
+export interface WSEvent {
+  type: string;
+  channel_id: string;
+  data: unknown;
+  timestamp: number;
+}
+
+export interface MessageCreatedData {
+  msg_id: string;
+  author_id: string;
+  author_name: string;
+  content: string;
+  is_bot: boolean;
 }
 
 // UI-level session status (mapped from server message types).
