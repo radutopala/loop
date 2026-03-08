@@ -1,11 +1,16 @@
 appId: com.loop.app
 productName: Loop
+copyright: Copyright © 2026 Loop
+
 directories:
   buildResources: build
   output: release
+
 files:
   - dist
   - dist-electron
+  - "!node_modules/**/*"
+
 mac:
   target:
     - target: dmg
@@ -13,7 +18,16 @@ mac:
         - arm64
         - x64
   category: public.app-category.developer-tools
+  icon: build/icon.icns
+  darkModeSupport: true
+  hardenedRuntime: true
+  gatekeeperAssess: false
+  entitlements: build/entitlements.mac.plist
+  entitlementsInherit: build/entitlements.mac.plist
+
 dmg:
+  sign: false
+  artifactName: "${productName}-${version}-${arch}.dmg"
   contents:
     - x: 130
       y: 220
@@ -21,3 +35,6 @@ dmg:
       y: 220
       type: link
       path: /Applications
+
+extraMetadata:
+  main: dist-electron/main.js
