@@ -7,8 +7,6 @@ interface UseEventStreamOptions {
   onEvent: (event: WSEvent) => void;
 }
 
-const RECONNECT_DELAY = 5_000;
-
 export function useEventStream({ channelId, onEvent }: UseEventStreamOptions) {
   const handleMessage = useCallback(
     (event: MessageEvent) => {
@@ -26,6 +24,5 @@ export function useEventStream({ channelId, onEvent }: UseEventStreamOptions) {
     path: `/api/ws?channels=${encodeURIComponent(channelId ?? "")}`,
     enabled: !!channelId,
     onMessage: handleMessage,
-    reconnectDelay: RECONNECT_DELAY,
   });
 }

@@ -19,8 +19,6 @@ export function useXTerminal({
   onResize,
 }: UseXTerminalOptions) {
   const xtermRef = useRef<import("@xterm/xterm").Terminal | null>(null);
-  const fitAddonRef =
-    useRef<import("@xterm/addon-fit").FitAddon | null>(null);
 
   const write = useCallback((data: Uint8Array | string) => {
     xtermRef.current?.write(data);
@@ -57,7 +55,6 @@ export function useXTerminal({
       fitAddon.fit();
 
       xtermRef.current = term;
-      fitAddonRef.current = fitAddon;
 
       onResize(term.cols, term.rows);
 
@@ -86,7 +83,6 @@ export function useXTerminal({
       cleanup.then((fn) => fn?.());
       xtermRef.current?.dispose();
       xtermRef.current = null;
-      fitAddonRef.current = null;
     };
   }, [containerRef, onInput, onResize]);
 
