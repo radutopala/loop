@@ -67,5 +67,8 @@ docker-snapshot: ## Snapshot the most recent loop-agent container into loop-agen
 	echo "$$VOLS $$ENVS -w $$WORKDIR --add-host=host.docker.internal:host-gateway" > ~/.loop/snapshot-run; \
 	echo 'Run with: make docker-shell'
 
+app-web: ## Build the web app (PWA) for browser use
+	cd app && npx vite build --config vite.web.config.ts
+
 clean: ## Remove build artifacts
 	rm -rf bin/ coverage.out coverage.html
