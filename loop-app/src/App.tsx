@@ -58,7 +58,12 @@ export default function App() {
         onSelect={setSelectedId}
         onCreateThread={handleCreateThread}
       />
-      <Terminal channelId={selectedId} />
+      <Terminal
+        channelId={selectedId}
+        containerId={
+          channels.find((c) => c.id === selectedId)?.container_id ?? null
+        }
+      />
     </div>
   );
 }
