@@ -1,0 +1,23 @@
+appId: com.loop.app
+productName: Loop
+directories:
+  buildResources: build
+  output: release
+files:
+  - dist
+  - dist-electron
+mac:
+  target:
+    - target: dmg
+      arch:
+        - arm64
+        - x64
+  category: public.app-category.developer-tools
+dmg:
+  contents:
+    - x: 130
+      y: 220
+    - x: 410
+      y: 220
+      type: link
+      path: /Applications
