@@ -1,4 +1,4 @@
-.PHONY: help build install test test-integration lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot
+.PHONY: help build install test test-integration lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot app-dev
 .DEFAULT_GOAL := help
 
 help: ## Show available targets
@@ -66,6 +66,9 @@ docker-snapshot: ## Snapshot the most recent loop-agent container into loop-agen
 	WORKDIR=$$(docker inspect --format '{{.Config.WorkingDir}}' "$$CID"); \
 	echo "$$VOLS $$ENVS -w $$WORKDIR --add-host=host.docker.internal:host-gateway" > ~/.loop/snapshot-run; \
 	echo 'Run with: make docker-shell'
+
+app-dev: ## Start the Electron app frontend dev server
+	cd app && npm install && npm run dev
 
 clean: ## Remove build artifacts
 	rm -rf bin/ coverage.out coverage.html

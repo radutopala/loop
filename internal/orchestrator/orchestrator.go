@@ -77,7 +77,7 @@ func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logg
 		scheduler:      sched,
 		queue:          NewChannelQueue(),
 		logger:         logger,
-		typingInterval: typingInterval,
+		typingInterval: TypingInterval,
 		platform:       platform,
 		cfg:            cfg,
 	}
@@ -137,8 +137,8 @@ func (o *Orchestrator) Stop() error {
 
 const recentMessageLimit = 50
 
-// typingInterval is the default interval between typing indicator refreshes.
-const typingInterval = 8 * time.Second
+// TypingInterval is the default interval between typing indicator refreshes.
+const TypingInterval = 8 * time.Second
 
 // HandleChannelJoin auto-registers a channel when the bot is added to it.
 func (o *Orchestrator) HandleChannelJoin(ctx context.Context, channelID string) {

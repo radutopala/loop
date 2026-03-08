@@ -11,10 +11,10 @@ import (
 	"github.com/bwmarrin/discordgo"
 
 	"github.com/radutopala/loop/internal/bot"
+	"github.com/radutopala/loop/internal/orchestrator"
 )
 
 const maxMessageLen = 2000
-const typingInterval = 8 * time.Second
 
 // DiscordSession abstracts the discordgo.Session methods used by the bot,
 // enabling test mocking.
@@ -80,7 +80,7 @@ func NewBot(session DiscordSession, appID string, logger *slog.Logger) *DiscordB
 		session:             session,
 		appID:               appID,
 		logger:              logger,
-		typingInterval:      typingInterval,
+		typingInterval:      orchestrator.TypingInterval,
 		pendingInteractions: make(map[string]*discordgo.Interaction),
 	}
 }
