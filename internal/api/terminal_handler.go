@@ -90,20 +90,23 @@ func newTerminalWSConn(conn *websocket.Conn, manager TerminalManager, logger *sl
 	}
 }
 
-func (t *terminalWSConn) writeJSON(msg wsStatusMessage) {
+// writeMessage is the shared, mutex-protected write path for all WebSocket frames.
+func (t *terminalWSConn) writeMessage(msgType int, data []byte) {
 	t.writeMu.Lock()
 	defer t.writeMu.Unlock()
-	if err := t.conn.WriteJSON(msg); err != nil {
-		t.logger.Error("terminal ws: write JSON failed", "error", err, "type", msg.Type)
+	if err := t.conn.WriteMessage(msgType, data); err != nil {
+		t.logger.Error("terminal ws: write failed", "error", err, "msg_type", msgType, "len", len(data))
 	}
 }
 
+func (t *terminalWSConn) writeJSON(msg wsStatusMessage) {
+	// wsStatusMessage contains only string fields; Marshal cannot fail.
+	data, _ := json.Marshal(msg)
+	t.writeMessage(websocket.TextMessage, data)
+}
+
 func (t *terminalWSConn) writeBinary(data []byte) {
-	t.writeMu.Lock()
-	defer t.writeMu.Unlock()
-	if err := t.conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
-		t.logger.Error("terminal ws: write binary failed", "error", err, "len", len(data))
-	}
+	t.writeMessage(websocket.BinaryMessage, data)
 }
 
 func (t *terminalWSConn) sendError(message, code string) {
