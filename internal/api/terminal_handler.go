@@ -10,6 +10,24 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// Terminal WebSocket control message types (client → server).
+const (
+	wsMsgCreate = "create"
+	wsMsgAttach = "attach"
+	wsMsgInput  = "input"
+	wsMsgResize = "resize"
+	wsMsgStop   = "stop"
+)
+
+// Terminal WebSocket status message types (server → client).
+const (
+	wsStatusCreated  = "created"
+	wsStatusAttached = "attached"
+	wsStatusError    = "error"
+	wsStatusClosed   = "closed"
+	wsStatusStopped  = "stopped"
+)
+
 // TerminalManager abstracts the terminal session operations needed by the handler.
 type TerminalManager interface {
 	CreateSession(ctx context.Context, containerID string, cmd []string) (sessionID string, output <-chan []byte, history []byte, done <-chan struct{}, err error)
@@ -38,13 +56,8 @@ type wsStatusMessage struct {
 	Message   string `json:"message,omitempty"`
 }
 
-var wsUpgrader = websocket.Upgrader{
-	CheckOrigin: func(_ *http.Request) bool { return true },
-}
-
 func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
-	if s.termManager == nil {
-		http.Error(w, "terminal not configured", http.StatusNotImplemented)
+	if !requireConfigured(w, s.termManager, "terminal not configured") {
 		return
 	}
 
@@ -81,12 +94,12 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			select {
 			case data, ok := <-output:
 				if !ok {
-					writeJSON(wsStatusMessage{Type: "closed"})
+					writeJSON(wsStatusMessage{Type: wsStatusClosed})
 					return
 				}
 				writeBinary(data)
 			case <-done:
-				writeJSON(wsStatusMessage{Type: "closed"})
+				writeJSON(wsStatusMessage{Type: wsStatusClosed})
 				return
 			case <-stopCh:
 				return
@@ -116,94 +129,94 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 		var msg wsControlMessage
 		if err := json.Unmarshal(msgData, &msg); err != nil {
-			writeJSON(wsStatusMessage{Type: "error", Message: "invalid JSON"})
+			writeJSON(wsStatusMessage{Type: wsStatusError, Message: "invalid JSON"})
 			continue
 		}
 
 		switch msg.Type {
-		case "create":
+		case wsMsgCreate:
 			if msg.ContainerID == "" {
-				writeJSON(wsStatusMessage{Type: "error", Message: "container_id required"})
+				writeJSON(wsStatusMessage{Type: wsStatusError, Message: "container_id required"})
 				continue
 			}
 			detachCurrent()
 
 			sid, output, history, done, err := s.termManager.CreateSession(r.Context(), msg.ContainerID, msg.Cmd)
 			if err != nil {
-				writeJSON(wsStatusMessage{Type: "error", Message: err.Error()})
+				writeJSON(wsStatusMessage{Type: wsStatusError, Message: err.Error()})
 				continue
 			}
 			sessionID = sid
 			outputCh = output
 
-			writeJSON(wsStatusMessage{Type: "created", SessionID: sid})
+			writeJSON(wsStatusMessage{Type: wsStatusCreated, SessionID: sid})
 			if len(history) > 0 {
 				writeBinary(history)
 			}
 			go streamOutput(output, done)
 
-		case "attach":
+		case wsMsgAttach:
 			if msg.SessionID == "" {
-				writeJSON(wsStatusMessage{Type: "error", Message: "session_id required"})
+				writeJSON(wsStatusMessage{Type: wsStatusError, Message: "session_id required"})
 				continue
 			}
 			detachCurrent()
 
 			output, history, done, err := s.termManager.AttachSession(msg.SessionID)
 			if err != nil {
-				writeJSON(wsStatusMessage{Type: "error", Message: err.Error()})
+				writeJSON(wsStatusMessage{Type: wsStatusError, Message: err.Error()})
 				continue
 			}
 			sessionID = msg.SessionID
 			outputCh = output
 
-			writeJSON(wsStatusMessage{Type: "attached", SessionID: msg.SessionID})
+			writeJSON(wsStatusMessage{Type: wsStatusAttached, SessionID: msg.SessionID})
 			if len(history) > 0 {
 				writeBinary(history)
 			}
 			go streamOutput(output, done)
 
-		case "input":
+		case wsMsgInput:
 			if sessionID == "" {
-				writeJSON(wsStatusMessage{Type: "error", Message: "no active session"})
+				writeJSON(wsStatusMessage{Type: wsStatusError, Message: "no active session"})
 				continue
 			}
 			data, err := base64.StdEncoding.DecodeString(msg.Data)
 			if err != nil {
-				writeJSON(wsStatusMessage{Type: "error", Message: "invalid base64 data"})
+				writeJSON(wsStatusMessage{Type: wsStatusError, Message: "invalid base64 data"})
 				continue
 			}
 			if err := s.termManager.SendInput(sessionID, data); err != nil {
-				writeJSON(wsStatusMessage{Type: "error", Message: err.Error()})
+				writeJSON(wsStatusMessage{Type: wsStatusError, Message: err.Error()})
 			}
 
-		case "resize":
+		case wsMsgResize:
 			if sessionID == "" {
-				writeJSON(wsStatusMessage{Type: "error", Message: "no active session"})
+				writeJSON(wsStatusMessage{Type: wsStatusError, Message: "no active session"})
 				continue
 			}
 			if msg.Rows == 0 || msg.Cols == 0 {
-				writeJSON(wsStatusMessage{Type: "error", Message: "rows and cols required"})
+				writeJSON(wsStatusMessage{Type: wsStatusError, Message: "rows and cols required"})
 				continue
 			}
 			if err := s.termManager.Resize(r.Context(), sessionID, msg.Rows, msg.Cols); err != nil {
-				writeJSON(wsStatusMessage{Type: "error", Message: err.Error()})
+				writeJSON(wsStatusMessage{Type: wsStatusError, Message: err.Error()})
 			}
 
-		case "stop":
+		case wsMsgStop:
 			if sessionID == "" {
-				writeJSON(wsStatusMessage{Type: "error", Message: "no active session"})
+				writeJSON(wsStatusMessage{Type: wsStatusError, Message: "no active session"})
 				continue
 			}
 			if err := s.termManager.StopSession(sessionID); err != nil {
-				writeJSON(wsStatusMessage{Type: "error", Message: err.Error()})
+				writeJSON(wsStatusMessage{Type: wsStatusError, Message: err.Error()})
 				continue
 			}
 			detachCurrent()
-			writeJSON(wsStatusMessage{Type: "stopped"})
+			writeJSON(wsStatusMessage{Type: wsStatusStopped})
 
 		default:
-			writeJSON(wsStatusMessage{Type: "error", Message: "unknown message type: " + msg.Type})
+			writeJSON(wsStatusMessage{Type: wsStatusError, Message: "unknown message type: " + msg.Type})
 		}
 	}
 }

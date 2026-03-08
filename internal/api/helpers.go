@@ -3,7 +3,14 @@ package api
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/gorilla/websocket"
 )
+
+// wsUpgrader is the shared WebSocket upgrader for all WS endpoints.
+var wsUpgrader = websocket.Upgrader{
+	CheckOrigin: func(_ *http.Request) bool { return true },
+}
 
 // decodeJSON reads the request body into dst. On failure it writes a 400 response
 // and returns false so the caller can return early.

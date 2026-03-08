@@ -6,6 +6,8 @@ import (
 	"strings"
 )
 
+const eventMsgSubscribe = "subscribe"
+
 // eventSubscribeMessage is the JSON message a client sends to subscribe to channels.
 type eventSubscribeMessage struct {
 	Type     string   `json:"type"`
@@ -46,7 +48,7 @@ func (s *Server) handleEventsWS(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		if msg.Type == "subscribe" {
+		if msg.Type == eventMsgSubscribe {
 			ec.writeMu.Lock()
 			ec.channels = make(map[string]struct{}, len(msg.Channels))
 			for _, ch := range msg.Channels {

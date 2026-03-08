@@ -8,6 +8,12 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// Event type constants.
+const (
+	EventMessageCreated = "message.created"
+	EventAgentStatus    = "agent.status"
+)
+
 // Event represents a server-sent event to WebSocket clients.
 type Event struct {
 	Type      string `json:"type"`
@@ -107,7 +113,7 @@ func (h *EventsHub) Broadcast(evt Event) {
 // BroadcastMessageCreated sends a message.created event.
 func (h *EventsHub) BroadcastMessageCreated(channelID string, data MessageData) {
 	h.Broadcast(Event{
-		Type:      "message.created",
+		Type:      EventMessageCreated,
 		ChannelID: channelID,
 		Data:      data,
 	})
@@ -116,7 +122,7 @@ func (h *EventsHub) BroadcastMessageCreated(channelID string, data MessageData) 
 // BroadcastAgentStatus sends an agent.status event.
 func (h *EventsHub) BroadcastAgentStatus(channelID string, data AgentStatusData) {
 	h.Broadcast(Event{
-		Type:      "agent.status",
+		Type:      EventAgentStatus,
 		ChannelID: channelID,
 		Data:      data,
 	})
