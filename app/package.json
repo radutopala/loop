@@ -1,5 +1,5 @@
 {
-  "name": "loop-app",
+  "name": "app",
   "version": "0.1.0",
   "description": "Loop Terminal — Desktop client for Loop agents",
   "private": true,
