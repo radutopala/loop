@@ -1,10 +1,11 @@
 import type { SessionStatus } from "../types";
+import { colors } from "../theme";
 
 const statusColors: Record<SessionStatus, string> = {
-  connecting: "#f59e0b",
-  running: "#22c55e",
-  completed: "#6b7280",
-  failed: "#ef4444",
+  connecting: colors.warning,
+  running: colors.active,
+  completed: colors.textDim,
+  failed: colors.error,
 };
 
 interface StatusBadgeProps {
@@ -22,7 +23,7 @@ export function StatusBadge({ status }: StatusBadgeProps) {
         borderRadius: 12,
         fontSize: 12,
         fontWeight: 600,
-        color: "#fff",
+        color: colors.white,
         backgroundColor: statusColors[status],
         textTransform: "capitalize",
       }}
@@ -32,7 +33,7 @@ export function StatusBadge({ status }: StatusBadgeProps) {
           width: 6,
           height: 6,
           borderRadius: "50%",
-          backgroundColor: "#fff",
+          backgroundColor: colors.white,
           opacity: status === "running" ? 1 : 0.6,
         }}
       />

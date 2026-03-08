@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Channel } from "./types";
+import { colors, fonts } from "./theme";
 import { createThread, fetchChannels, initApiUrl } from "./api/loopApi";
 import { Sidebar } from "./components/Sidebar";
 import { Terminal } from "./components/Terminal";
@@ -46,10 +47,9 @@ export default function App() {
       style={{
         display: "flex",
         height: "100vh",
-        backgroundColor: "#1a1b26",
-        color: "#a9b1d6",
-        fontFamily:
-          "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
+        backgroundColor: colors.bg,
+        color: colors.text,
+        fontFamily: fonts.sans,
       }}
     >
       <Sidebar

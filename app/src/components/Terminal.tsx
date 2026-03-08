@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionStatus } from "../types";
+import { colors, fonts } from "../theme";
 import { useTerminalWs } from "../hooks/useTerminalWs";
-import { StatusBadge } from "./StatusBadge";
+import { TerminalToolbar } from "./TerminalToolbar";
 
 interface TerminalProps {
   channelId: string | null;
@@ -64,11 +65,11 @@ export function Terminal({ channelId, containerId }: TerminalProps) {
       const term = new XTerm({
         cursorBlink: true,
         fontSize: 13,
-        fontFamily: "'SF Mono', Menlo, Monaco, 'Courier New', monospace",
+        fontFamily: fonts.mono,
         theme: {
-          background: "#1a1b26",
-          foreground: "#a9b1d6",
-          cursor: "#c0caf5",
+          background: colors.bg,
+          foreground: colors.text,
+          cursor: colors.cursor,
         },
       });
 
@@ -116,13 +117,6 @@ export function Terminal({ channelId, containerId }: TerminalProps) {
     };
   }, [channelId, sendInput, sendResize]);
 
-  const formatElapsed = (s: number) => {
-    const h = Math.floor(s / 3600);
-    const m = Math.floor((s % 3600) / 60);
-    const sec = s % 60;
-    return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
-  };
-
   if (!channelId) {
     return (
       <div
@@ -131,7 +125,7 @@ export function Terminal({ channelId, containerId }: TerminalProps) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
-          color: "#6b7280",
+          color: colors.textDim,
           fontSize: 14,
         }}
       >
@@ -142,36 +136,7 @@ export function Terminal({ channelId, containerId }: TerminalProps) {
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 12,
-          padding: "8px 16px",
-          borderBottom: "1px solid #2d2d2d",
-          backgroundColor: "#1e1e2e",
-        }}
-      >
-        <StatusBadge status={status} />
-        <button
-          onClick={sendStop}
-          disabled={status !== "running"}
-          style={{
-            padding: "4px 12px",
-            borderRadius: 6,
-            border: "1px solid #ef4444",
-            backgroundColor: "transparent",
-            color: status === "running" ? "#ef4444" : "#4b5563",
-            cursor: status === "running" ? "pointer" : "default",
-            fontSize: 12,
-          }}
-        >
-          Stop
-        </button>
-        <span style={{ color: "#9ca3af", fontSize: 12, fontFamily: "monospace" }}>
-          {formatElapsed(elapsed)}
-        </span>
-      </div>
+      <TerminalToolbar status={status} elapsed={elapsed} onStop={sendStop} />
       <div ref={terminalRef} style={{ flex: 1 }} />
     </div>
   );
