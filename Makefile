@@ -70,5 +70,8 @@ docker-snapshot: ## Snapshot the most recent loop-agent container into loop-agen
 app-dev: ## Start the Electron app frontend dev server
 	cd app && npm install && npm run dev
 
+app-web: ## Build the web app (PWA) for browser use
+	cd app && npx vite build --config vite.web.config.ts
+
 clean: ## Remove build artifacts
 	rm -rf bin/ coverage.out coverage.html
