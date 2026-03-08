@@ -119,45 +119,27 @@ func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
 }
 
 func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channel, error) {
-	ch := &Channel{}
-	var active int
-	var permJSON string
-	err := s.db.QueryRowContext(ctx,
+	row := s.db.QueryRowContext(ctx,
 		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, created_at, updated_at FROM channels WHERE channel_id = ?`,
 		channelID,
-	).Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &ch.CreatedAt, &ch.UpdatedAt)
+	)
+	ch, err := scanChannel(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	ch.Active = active == 1
-	if permJSON != "" {
-		_ = json.Unmarshal([]byte(permJSON), &ch.Permissions)
-	}
-	return ch, nil
+	return ch, err
 }
 
 func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*Channel, error) {
-	ch := &Channel{}
-	var active int
-	var permJSON string
-	err := s.db.QueryRowContext(ctx,
+	row := s.db.QueryRowContext(ctx,
 		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, created_at, updated_at FROM channels WHERE dir_path = ? AND platform = ?`,
 		dirPath, platform,
-	).Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath, &ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &ch.CreatedAt, &ch.UpdatedAt)
+	)
+	ch, err := scanChannel(row)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
-	if err != nil {
-		return nil, err
-	}
-	ch.Active = active == 1
-	if permJSON != "" {
-		_ = json.Unmarshal([]byte(permJSON), &ch.Permissions)
-	}
-	return ch, nil
+	return ch, err
 }
 
 func (s *SQLiteStore) IsChannelActive(ctx context.Context, channelID string) (bool, error) {
@@ -237,23 +219,7 @@ func (s *SQLiteStore) ListChannels(ctx context.Context) ([]*Channel, error) {
 		return nil, err
 	}
 	defer rows.Close()
-
-	var channels []*Channel
-	for rows.Next() {
-		ch := &Channel{}
-		var active int
-		var permJSON string
-		if err := rows.Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath,
-			&ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
-			return nil, err
-		}
-		ch.Active = active == 1
-		if permJSON != "" {
-			_ = json.Unmarshal([]byte(permJSON), &ch.Permissions)
-		}
-		channels = append(channels, ch)
-	}
-	return channels, rows.Err()
+	return scanChannels(rows)
 }
 
 func (s *SQLiteStore) InsertMessage(ctx context.Context, msg *Message) error {
@@ -516,6 +482,42 @@ func boolToInt(b bool) int {
 		return 1
 	}
 	return 0
+}
+
+// rowScanner is satisfied by both *sql.Row and *sql.Rows.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanChannelFrom(scanner rowScanner) (*Channel, error) {
+	ch := &Channel{}
+	var active int
+	var permJSON string
+	if err := scanner.Scan(&ch.ID, &ch.ChannelID, &ch.GuildID, &ch.Name, &ch.DirPath,
+		&ch.ParentID, &ch.Platform, &active, &ch.SessionID, &permJSON, &ch.CreatedAt, &ch.UpdatedAt); err != nil {
+		return nil, err
+	}
+	ch.Active = active == 1
+	if permJSON != "" {
+		_ = json.Unmarshal([]byte(permJSON), &ch.Permissions)
+	}
+	return ch, nil
+}
+
+func scanChannel(row *sql.Row) (*Channel, error) {
+	return scanChannelFrom(row)
+}
+
+func scanChannels(rows *sql.Rows) ([]*Channel, error) {
+	var channels []*Channel
+	for rows.Next() {
+		ch, err := scanChannelFrom(rows)
+		if err != nil {
+			return nil, err
+		}
+		channels = append(channels, ch)
+	}
+	return channels, rows.Err()
 }
 
 func scanMessages(rows *sql.Rows) ([]*Message, error) {
