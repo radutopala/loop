@@ -5,9 +5,10 @@ import { StatusBadge } from "./StatusBadge";
 
 interface TerminalProps {
   channelId: string | null;
+  containerId: string | null;
 }
 
-export function Terminal({ channelId }: TerminalProps) {
+export function Terminal({ channelId, containerId }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const xtermRef = useRef<import("@xterm/xterm").Terminal | null>(null);
   const fitAddonRef =
@@ -15,7 +16,7 @@ export function Terminal({ channelId }: TerminalProps) {
   const [status, setStatus] = useState<SessionStatus>("connecting");
   const [elapsed, setElapsed] = useState(0);
   const startTimeRef = useRef<number | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval>>();
+  const timerRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
   const onData = useCallback((data: ArrayBuffer) => {
     xtermRef.current?.write(new Uint8Array(data));
@@ -36,7 +37,17 @@ export function Terminal({ channelId }: TerminalProps) {
     }
   }, []);
 
-  const { send } = useTerminalWs({ channelId, onData, onStatus });
+  const onError = useCallback((message: string) => {
+    xtermRef.current?.write(`\r\n\x1b[31m[error] ${message}\x1b[0m\r\n`);
+  }, []);
+
+  const { sendInput, sendResize, sendStop } = useTerminalWs({
+    channelId,
+    containerId,
+    onData,
+    onStatus,
+    onError,
+  });
 
   useEffect(() => {
     if (!terminalRef.current) return;
@@ -71,14 +82,14 @@ export function Terminal({ channelId }: TerminalProps) {
       xtermRef.current = term;
       fitAddonRef.current = fitAddon;
 
-      send({ type: "resize", cols: term.cols, rows: term.rows });
+      sendResize(term.cols, term.rows);
 
       term.onData((data) => {
-        send({ type: "input", data });
+        sendInput(data);
       });
 
       term.onResize(({ cols, rows }) => {
-        send({ type: "resize", cols, rows });
+        sendResize(cols, rows);
       });
 
       const resizeObserver = new ResizeObserver(() => {
@@ -103,7 +114,7 @@ export function Terminal({ channelId }: TerminalProps) {
       startTimeRef.current = null;
       setElapsed(0);
     };
-  }, [channelId, send]);
+  }, [channelId, sendInput, sendResize]);
 
   const formatElapsed = (s: number) => {
     const h = Math.floor(s / 3600);
@@ -143,7 +154,7 @@ export function Terminal({ channelId }: TerminalProps) {
       >
         <StatusBadge status={status} />
         <button
-          onClick={() => send({ type: "stop" })}
+          onClick={sendStop}
           disabled={status !== "running"}
           style={{
             padding: "4px 12px",

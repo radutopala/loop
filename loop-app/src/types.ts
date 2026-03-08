@@ -5,6 +5,7 @@ export interface Channel {
   platform: string;
   dir_path: string;
   active: boolean;
+  container_id?: string;
 }
 
 export interface Message {
@@ -16,35 +17,58 @@ export interface Message {
   created_at: string;
 }
 
+// UI-level session status (mapped from server message types).
 export type SessionStatus = "connecting" | "running" | "completed" | "failed";
 
-export interface StatusMessage {
-  type: "status";
-  status: SessionStatus;
+// --- Client → Server messages ---
+
+export interface CreateMessage {
+  type: "create";
+  container_id: string;
+  cmd?: string[];
 }
 
-export interface ErrorMessage {
-  type: "error";
-  message: string;
+export interface AttachMessage {
+  type: "attach";
+  session_id: string;
 }
 
 export interface InputMessage {
   type: "input";
-  data: string;
+  data: string; // base64-encoded
 }
 
 export interface ResizeMessage {
   type: "resize";
-  cols: number;
   rows: number;
+  cols: number;
 }
 
 export interface StopMessage {
   type: "stop";
 }
 
-export type ClientMessage = InputMessage | ResizeMessage | StopMessage;
-export type ServerMessage = StatusMessage | ErrorMessage;
+export type ClientMessage =
+  | CreateMessage
+  | AttachMessage
+  | InputMessage
+  | ResizeMessage
+  | StopMessage;
+
+// --- Server → Client messages ---
+
+export interface ServerStatusMessage {
+  type: "created" | "attached" | "stopped" | "closed";
+  session_id?: string;
+  message?: string;
+}
+
+export interface ServerErrorMessage {
+  type: "error";
+  message: string;
+}
+
+export type ServerMessage = ServerStatusMessage | ServerErrorMessage;
 
 declare global {
   interface Window {

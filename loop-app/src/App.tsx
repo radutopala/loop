@@ -44,7 +44,12 @@ export default function App() {
         selectedId={selectedId}
         onSelect={setSelectedId}
       />
-      <Terminal channelId={selectedId} />
+      <Terminal
+        channelId={selectedId}
+        containerId={
+          channels.find((c) => c.id === selectedId)?.container_id ?? null
+        }
+      />
     </div>
   );
 }
