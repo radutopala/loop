@@ -81,8 +81,8 @@ export function useTerminalWs({
           onError(msg.message);
           // Session-related errors clear the session.
           if (
-            msg.message === "no active session" ||
-            msg.message.startsWith("session ")
+            msg.error_code === "no_session" ||
+            msg.error_code === "session_failed"
           ) {
             sessionIdRef.current = null;
             onStatus("failed");

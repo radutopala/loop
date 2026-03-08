@@ -65,6 +65,7 @@ export interface ServerStatusMessage {
 export interface ServerErrorMessage {
   type: "error";
   message: string;
+  error_code?: string;
 }
 
 export type ServerMessage = ServerStatusMessage | ServerErrorMessage;

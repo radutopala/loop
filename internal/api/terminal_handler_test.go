@@ -186,6 +186,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionError() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "error", msg.Type)
 	require.Contains(s.T(), msg.Message, "exec failed")
+	require.Equal(s.T(), wsErrCodeSessionFailed, msg.ErrorCode)
 }
 
 func (s *TerminalHandlerSuite) TestCreateSessionMissingContainerID() {
@@ -198,6 +199,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionMissingContainerID() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "error", msg.Type)
 	require.Contains(s.T(), msg.Message, "container_id required")
+	require.Equal(s.T(), wsErrCodeMissingField, msg.ErrorCode)
 }
 
 func (s *TerminalHandlerSuite) TestAttachSession() {
@@ -236,6 +238,7 @@ func (s *TerminalHandlerSuite) TestAttachSessionError() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "error", msg.Type)
 	require.Contains(s.T(), msg.Message, "session not found")
+	require.Equal(s.T(), wsErrCodeSessionFailed, msg.ErrorCode)
 }
 
 func (s *TerminalHandlerSuite) TestAttachSessionMissingID() {
@@ -248,6 +251,7 @@ func (s *TerminalHandlerSuite) TestAttachSessionMissingID() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "error", msg.Type)
 	require.Contains(s.T(), msg.Message, "session_id required")
+	require.Equal(s.T(), wsErrCodeMissingField, msg.ErrorCode)
 }
 
 func (s *TerminalHandlerSuite) TestSendInput() {
@@ -284,6 +288,7 @@ func (s *TerminalHandlerSuite) TestSendInputNoSession() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "error", msg.Type)
 	require.Contains(s.T(), msg.Message, "no active session")
+	require.Equal(s.T(), wsErrCodeNoSession, msg.ErrorCode)
 }
 
 func (s *TerminalHandlerSuite) TestSendInputInvalidBase64() {
@@ -305,6 +310,7 @@ func (s *TerminalHandlerSuite) TestSendInputInvalidBase64() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "error", msg.Type)
 	require.Contains(s.T(), msg.Message, "invalid base64")
+	require.Equal(s.T(), wsErrCodeInvalidInput, msg.ErrorCode)
 
 	close(doneCh)
 }
@@ -329,6 +335,7 @@ func (s *TerminalHandlerSuite) TestSendInputError() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "error", msg.Type)
 	require.Contains(s.T(), msg.Message, "write failed")
+	require.Equal(s.T(), wsErrCodeSessionFailed, msg.ErrorCode)
 
 	close(doneCh)
 }
@@ -366,6 +373,7 @@ func (s *TerminalHandlerSuite) TestResizeNoSession() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "error", msg.Type)
 	require.Contains(s.T(), msg.Message, "no active session")
+	require.Equal(s.T(), wsErrCodeNoSession, msg.ErrorCode)
 }
 
 func (s *TerminalHandlerSuite) TestResizeZeroDimensions() {
@@ -387,6 +395,7 @@ func (s *TerminalHandlerSuite) TestResizeZeroDimensions() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "error", msg.Type)
 	require.Contains(s.T(), msg.Message, "rows and cols required")
+	require.Equal(s.T(), wsErrCodeMissingField, msg.ErrorCode)
 
 	close(doneCh)
 }
@@ -411,6 +420,7 @@ func (s *TerminalHandlerSuite) TestResizeError() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "error", msg.Type)
 	require.Contains(s.T(), msg.Message, "resize failed")
+	require.Equal(s.T(), wsErrCodeSessionFailed, msg.ErrorCode)
 
 	close(doneCh)
 }
@@ -448,6 +458,7 @@ func (s *TerminalHandlerSuite) TestStopSessionNoSession() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "error", msg.Type)
 	require.Contains(s.T(), msg.Message, "no active session")
+	require.Equal(s.T(), wsErrCodeNoSession, msg.ErrorCode)
 }
 
 func (s *TerminalHandlerSuite) TestStopSessionError() {
@@ -470,6 +481,7 @@ func (s *TerminalHandlerSuite) TestStopSessionError() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "error", msg.Type)
 	require.Contains(s.T(), msg.Message, "stop failed")
+	require.Equal(s.T(), wsErrCodeSessionFailed, msg.ErrorCode)
 
 	close(doneCh)
 }
@@ -484,6 +496,7 @@ func (s *TerminalHandlerSuite) TestUnknownMessageType() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "error", msg.Type)
 	require.Contains(s.T(), msg.Message, "unknown message type: bogus")
+	require.Equal(s.T(), wsErrCodeUnknownMessage, msg.ErrorCode)
 }
 
 func (s *TerminalHandlerSuite) TestInvalidJSON() {
@@ -496,6 +509,7 @@ func (s *TerminalHandlerSuite) TestInvalidJSON() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "error", msg.Type)
 	require.Contains(s.T(), msg.Message, "invalid JSON")
+	require.Equal(s.T(), wsErrCodeInvalidJSON, msg.ErrorCode)
 }
 
 func (s *TerminalHandlerSuite) TestSessionClosedNotification() {

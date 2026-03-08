@@ -29,6 +29,16 @@ const (
 	wsStatusStopped  = "stopped"
 )
 
+// Terminal WebSocket error codes sent alongside error messages.
+const (
+	wsErrCodeInvalidJSON    = "invalid_json"
+	wsErrCodeNoSession      = "no_session"
+	wsErrCodeMissingField   = "missing_field"
+	wsErrCodeInvalidInput   = "invalid_input"
+	wsErrCodeSessionFailed  = "session_failed"
+	wsErrCodeUnknownMessage = "unknown_message"
+)
+
 // TerminalManager abstracts the terminal session operations needed by the handler.
 type TerminalManager interface {
 	CreateSession(ctx context.Context, containerID string, cmd []string) (sessionID string, output <-chan []byte, history []byte, done <-chan struct{}, err error)
@@ -55,6 +65,7 @@ type wsStatusMessage struct {
 	Type      string `json:"type"`
 	SessionID string `json:"session_id,omitempty"`
 	Message   string `json:"message,omitempty"`
+	ErrorCode string `json:"error_code,omitempty"`
 }
 
 // terminalWSConn manages a single WebSocket terminal connection.
@@ -95,8 +106,8 @@ func (t *terminalWSConn) writeBinary(data []byte) {
 	}
 }
 
-func (t *terminalWSConn) sendError(message string) {
-	t.writeJSON(wsStatusMessage{Type: wsStatusError, Message: message})
+func (t *terminalWSConn) sendError(message, code string) {
+	t.writeJSON(wsStatusMessage{Type: wsStatusError, Message: message, ErrorCode: code})
 }
 
 // streamOutput forwards terminal output to the WebSocket client.
@@ -146,14 +157,14 @@ func (t *terminalWSConn) startSession(sessionID string, output <-chan []byte, hi
 
 func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage) {
 	if msg.ContainerID == "" {
-		t.sendError("container_id required")
+		t.sendError("container_id required", wsErrCodeMissingField)
 		return
 	}
 	t.detachCurrent()
 
 	sid, output, history, done, err := t.manager.CreateSession(ctx, msg.ContainerID, msg.Cmd)
 	if err != nil {
-		t.sendError(err.Error())
+		t.sendError(err.Error(), wsErrCodeSessionFailed)
 		return
 	}
 	t.startSession(sid, output, history, done, wsStatusCreated)
@@ -161,14 +172,14 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 
 func (t *terminalWSConn) handleAttach(msg wsControlMessage) {
 	if msg.SessionID == "" {
-		t.sendError("session_id required")
+		t.sendError("session_id required", wsErrCodeMissingField)
 		return
 	}
 	t.detachCurrent()
 
 	output, history, done, err := t.manager.AttachSession(msg.SessionID)
 	if err != nil {
-		t.sendError(err.Error())
+		t.sendError(err.Error(), wsErrCodeSessionFailed)
 		return
 	}
 	t.startSession(msg.SessionID, output, history, done, wsStatusAttached)
@@ -176,40 +187,40 @@ func (t *terminalWSConn) handleAttach(msg wsControlMessage) {
 
 func (t *terminalWSConn) handleInput(msg wsControlMessage) {
 	if t.sessionID == "" {
-		t.sendError("no active session")
+		t.sendError("no active session", wsErrCodeNoSession)
 		return
 	}
 	data, err := base64.StdEncoding.DecodeString(msg.Data)
 	if err != nil {
-		t.sendError("invalid base64 data")
+		t.sendError("invalid base64 data", wsErrCodeInvalidInput)
 		return
 	}
 	if err := t.manager.SendInput(t.sessionID, data); err != nil {
-		t.sendError(err.Error())
+		t.sendError(err.Error(), wsErrCodeSessionFailed)
 	}
 }
 
 func (t *terminalWSConn) handleResize(ctx context.Context, msg wsControlMessage) {
 	if t.sessionID == "" {
-		t.sendError("no active session")
+		t.sendError("no active session", wsErrCodeNoSession)
 		return
 	}
 	if msg.Rows == 0 || msg.Cols == 0 {
-		t.sendError("rows and cols required")
+		t.sendError("rows and cols required", wsErrCodeMissingField)
 		return
 	}
 	if err := t.manager.Resize(ctx, t.sessionID, msg.Rows, msg.Cols); err != nil {
-		t.sendError(err.Error())
+		t.sendError(err.Error(), wsErrCodeSessionFailed)
 	}
 }
 
 func (t *terminalWSConn) handleStop() {
 	if t.sessionID == "" {
-		t.sendError("no active session")
+		t.sendError("no active session", wsErrCodeNoSession)
 		return
 	}
 	if err := t.manager.StopSession(t.sessionID); err != nil {
-		t.sendError(err.Error())
+		t.sendError(err.Error(), wsErrCodeSessionFailed)
 		return
 	}
 	t.detachCurrent()
@@ -239,7 +250,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 
 		var msg wsControlMessage
 		if err := json.Unmarshal(msgData, &msg); err != nil {
-			tc.sendError("invalid JSON")
+			tc.sendError("invalid JSON", wsErrCodeInvalidJSON)
 			continue
 		}
 
@@ -255,7 +266,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 		case wsMsgStop:
 			tc.handleStop()
 		default:
-			tc.sendError("unknown message type: " + msg.Type)
+			tc.sendError("unknown message type: "+msg.Type, wsErrCodeUnknownMessage)
 		}
 	}
 }
