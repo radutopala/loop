@@ -54,8 +54,8 @@ func (m *MockTerminalManager) AttachSession(sessionID string) (<-chan []byte, []
 	return outCh, history, doneCh, args.Error(3)
 }
 
-func (m *MockTerminalManager) DetachSession(sessionID string, output <-chan []byte) {
-	m.Called(sessionID, output)
+func (m *MockTerminalManager) DetachSession(sessionID string, output <-chan []byte) error {
+	return m.Called(sessionID, output).Error(0)
 }
 
 func (m *MockTerminalManager) SendInput(sessionID string, data []byte) error {
@@ -151,7 +151,7 @@ func (s *TerminalHandlerSuite) TestCreateSession() {
 	doneCh := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", []string{"/bin/bash"}).
 		Return("sess-1", (<-chan []byte)(outCh), []byte("history"), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -207,7 +207,7 @@ func (s *TerminalHandlerSuite) TestAttachSession() {
 	doneCh := make(chan struct{})
 	s.terminal.On("AttachSession", "sess-1").
 		Return((<-chan []byte)(outCh), []byte("old output"), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -260,7 +260,7 @@ func (s *TerminalHandlerSuite) TestSendInput() {
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
 	s.terminal.On("SendInput", "sess-1", []byte("hello")).Return(nil)
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -296,7 +296,7 @@ func (s *TerminalHandlerSuite) TestSendInputInvalidBase64() {
 	doneCh := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -321,7 +321,7 @@ func (s *TerminalHandlerSuite) TestSendInputError() {
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
 	s.terminal.On("SendInput", "sess-1", []byte("x")).Return(errors.New("write failed"))
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -346,7 +346,7 @@ func (s *TerminalHandlerSuite) TestResize() {
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
 	s.terminal.On("Resize", mock.Anything, "sess-1", uint(24), uint(80)).Return(nil)
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -381,7 +381,7 @@ func (s *TerminalHandlerSuite) TestResizeZeroDimensions() {
 	doneCh := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -406,7 +406,7 @@ func (s *TerminalHandlerSuite) TestResizeError() {
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
 	s.terminal.On("Resize", mock.Anything, "sess-1", uint(24), uint(80)).Return(errors.New("resize failed"))
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -431,7 +431,7 @@ func (s *TerminalHandlerSuite) TestStopSession() {
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
 	s.terminal.On("StopSession", "sess-1").Return(nil)
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -467,7 +467,7 @@ func (s *TerminalHandlerSuite) TestStopSessionError() {
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
 	s.terminal.On("StopSession", "sess-1").Return(errors.New("stop failed"))
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -517,7 +517,7 @@ func (s *TerminalHandlerSuite) TestSessionClosedNotification() {
 	doneCh := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -537,7 +537,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionNoHistory() {
 	doneCh := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -565,7 +565,7 @@ func (s *TerminalHandlerSuite) TestDetachOnNewCreate() {
 	doneCh2 := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "ctr-2", ([]string)(nil)).
 		Return("sess-2", (<-chan []byte)(outCh2), ([]byte)(nil), (<-chan struct{})(doneCh2), nil).Once()
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -580,6 +580,45 @@ func (s *TerminalHandlerSuite) TestDetachOnNewCreate() {
 	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-2"})
 
 	// Drain messages until we get "created" for sess-2
+	for {
+		msg := readStatusMsg(s.T(), conn)
+		if msg.Type == "created" {
+			require.Equal(s.T(), "sess-2", msg.SessionID)
+			break
+		}
+	}
+
+	close(doneCh2)
+}
+
+func (s *TerminalHandlerSuite) TestDetachErrorLogged() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
+		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil).Once()
+
+	outCh2 := make(chan []byte, 1)
+	doneCh2 := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-2", ([]string)(nil)).
+		Return("sess-2", (<-chan []byte)(outCh2), ([]byte)(nil), (<-chan struct{})(doneCh2), nil).Once()
+
+	// DetachSession returns an error to exercise the warning log path.
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(errors.New("detach failed")).Maybe()
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	// Create first session.
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1"})
+	readStatusMsg(s.T(), conn) // created sess-1
+
+	close(doneCh)
+	time.Sleep(50 * time.Millisecond)
+
+	// Create second session — triggers detachCurrent with error.
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-2"})
+
 	for {
 		msg := readStatusMsg(s.T(), conn)
 		if msg.Type == "created" {
@@ -610,7 +649,7 @@ func (s *TerminalHandlerSuite) TestOutputChannelClosed() {
 	doneCh := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -632,7 +671,7 @@ func (s *TerminalHandlerSuite) TestStopChOnDisconnect() {
 	doneCh := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -655,7 +694,7 @@ func (s *TerminalHandlerSuite) TestWriteJSONErrorLogged() {
 	doneCh := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -677,7 +716,7 @@ func (s *TerminalHandlerSuite) TestWriteBinaryErrorLogged() {
 	doneCh := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
 		Return("sess-1", (<-chan []byte)(outCh), []byte("history"), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	// Use a custom server to control timing.
 	mux := http.NewServeMux()

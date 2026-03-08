@@ -43,7 +43,7 @@ const (
 type TerminalManager interface {
 	CreateSession(ctx context.Context, containerID string, cmd []string) (sessionID string, output <-chan []byte, history []byte, done <-chan struct{}, err error)
 	AttachSession(sessionID string) (output <-chan []byte, history []byte, done <-chan struct{}, err error)
-	DetachSession(sessionID string, output <-chan []byte)
+	DetachSession(sessionID string, output <-chan []byte) error
 	SendInput(sessionID string, data []byte) error
 	Resize(ctx context.Context, sessionID string, rows, cols uint) error
 	StopSession(sessionID string) error
@@ -132,7 +132,9 @@ func (t *terminalWSConn) streamOutput(output <-chan []byte, done <-chan struct{}
 // detachCurrent detaches from the current session if attached.
 func (t *terminalWSConn) detachCurrent() {
 	if t.sessionID != "" && t.outputCh != nil {
-		t.manager.DetachSession(t.sessionID, t.outputCh)
+		if err := t.manager.DetachSession(t.sessionID, t.outputCh); err != nil {
+			t.logger.Warn("terminal ws: detach failed", "session_id", t.sessionID, "error", err)
+		}
 		t.sessionID = ""
 		t.outputCh = nil
 	}

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -13,6 +14,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 )
+
+var testLogger = slog.Default()
 
 // mockExecClient implements ExecClient for testing.
 type mockExecClient struct {
@@ -83,7 +86,7 @@ func (s *TerminalSuite) TestCreateSession() {
 	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
 	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
 	require.NoError(s.T(), err)
 	require.NotEmpty(s.T(), sess.ID())
@@ -103,7 +106,7 @@ func (s *TerminalSuite) TestCreateSessionWithCmd() {
 	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/bash"}, true).Return("exec-1", nil)
 	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", []string{"/bin/bash"})
 	require.NoError(s.T(), err)
 	require.NotEmpty(s.T(), sess.ID())
@@ -118,7 +121,7 @@ func (s *TerminalSuite) TestCreateSessionExecCreateError() {
 	client := new(mockExecClient)
 	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("", errors.New("exec failed"))
 
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 	_, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating exec")
@@ -131,7 +134,7 @@ func (s *TerminalSuite) TestCreateSessionAttachError() {
 	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
 	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(nil, errors.New("attach failed"))
 
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 	_, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "attaching exec")
@@ -147,7 +150,7 @@ func (s *TerminalSuite) TestAttachDetach() {
 	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
 	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
 	require.NoError(s.T(), err)
 
@@ -165,7 +168,8 @@ func (s *TerminalSuite) TestAttachDetach() {
 		s.T().Fatal("timeout waiting for data")
 	}
 
-	sess.Detach(ch)
+	err = sess.Detach(ch)
+	require.NoError(s.T(), err)
 
 	// Channel should be closed after detach.
 	_, ok := <-ch
@@ -185,7 +189,7 @@ func (s *TerminalSuite) TestAttachReceivesHistory() {
 	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
 	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 	mgr.SetRingBufSize(1024)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
 	require.NoError(s.T(), err)
@@ -197,7 +201,7 @@ func (s *TerminalSuite) TestAttachReceivesHistory() {
 	ch, history := sess.Attach()
 	require.Equal(s.T(), []byte("previous"), history)
 
-	sess.Detach(ch)
+	require.NoError(s.T(), sess.Detach(ch))
 	pw.Close()
 	<-sess.Done()
 
@@ -212,13 +216,14 @@ func (s *TerminalSuite) TestDetachUnknownChannel() {
 	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
 	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
 	require.NoError(s.T(), err)
 
-	// Detach a channel that was never attached — should not panic.
+	// Detach a channel that was never attached — should return error.
 	unknownCh := make(chan []byte)
-	sess.Detach(unknownCh)
+	err = sess.Detach(unknownCh)
+	require.ErrorIs(s.T(), err, ErrClientNotFound)
 
 	pw.Close()
 	<-sess.Done()
@@ -235,7 +240,7 @@ func (s *TerminalSuite) TestSendInput() {
 	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
 	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
 	require.NoError(s.T(), err)
 
@@ -251,7 +256,7 @@ func (s *TerminalSuite) TestSendInput() {
 
 func (s *TerminalSuite) TestSendInputNotFound() {
 	client := new(mockExecClient)
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 
 	err := mgr.SendInput("nonexistent", []byte("data"))
 	require.ErrorIs(s.T(), err, ErrSessionNotFound)
@@ -268,7 +273,7 @@ func (s *TerminalSuite) TestSendInputWriteError() {
 	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
 	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(errWriter, nil)
 
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
 	require.NoError(s.T(), err)
 
@@ -299,7 +304,7 @@ func (s *TerminalSuite) TestResize() {
 	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 	client.On("ContainerExecResize", mock.Anything, "exec-1", uint(24), uint(80)).Return(nil)
 
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
 	require.NoError(s.T(), err)
 
@@ -314,7 +319,7 @@ func (s *TerminalSuite) TestResize() {
 
 func (s *TerminalSuite) TestResizeNotFound() {
 	client := new(mockExecClient)
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 
 	err := mgr.Resize(context.Background(), "nonexistent", 24, 80)
 	require.ErrorIs(s.T(), err, ErrSessionNotFound)
@@ -329,7 +334,7 @@ func (s *TerminalSuite) TestResizeError() {
 	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 	client.On("ContainerExecResize", mock.Anything, "exec-1", uint(24), uint(80)).Return(errors.New("resize failed"))
 
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
 	require.NoError(s.T(), err)
 
@@ -360,7 +365,7 @@ func (s *TerminalSuite) TestStopSession() {
 	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
 	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
 	require.NoError(s.T(), err)
 
@@ -384,7 +389,7 @@ func (s *TerminalSuite) TestStopSession() {
 
 func (s *TerminalSuite) TestStopSessionNotFound() {
 	client := new(mockExecClient)
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 
 	err := mgr.StopSession("nonexistent")
 	require.ErrorIs(s.T(), err, ErrSessionNotFound)
@@ -392,7 +397,7 @@ func (s *TerminalSuite) TestStopSessionNotFound() {
 
 func (s *TerminalSuite) TestGetSessionNotFound() {
 	client := new(mockExecClient)
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 
 	_, err := mgr.GetSession("nonexistent")
 	require.ErrorIs(s.T(), err, ErrSessionNotFound)
@@ -410,7 +415,7 @@ func (s *TerminalSuite) TestListSessions() {
 	client.On("ContainerExecCreate", mock.Anything, "ctr-2", []string{"/bin/sh"}, true).Return("exec-2", nil).Once()
 	client.On("ContainerExecAttach", mock.Anything, "exec-2").Return(conn2, nil).Once()
 
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 
 	sess1, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
 	require.NoError(s.T(), err)
@@ -437,7 +442,7 @@ func (s *TerminalSuite) TestMultipleClients() {
 	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
 	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
 	require.NoError(s.T(), err)
 
@@ -471,8 +476,8 @@ func (s *TerminalSuite) TestMultipleClients() {
 		s.T().Fatal("timeout waiting for broadcast")
 	}
 
-	sess.Detach(ch1)
-	sess.Detach(ch2)
+	require.NoError(s.T(), sess.Detach(ch1))
+	require.NoError(s.T(), sess.Detach(ch2))
 	pw.Close()
 	<-sess.Done()
 
@@ -481,7 +486,7 @@ func (s *TerminalSuite) TestMultipleClients() {
 
 func (s *TerminalSuite) TestSetRingBufSize() {
 	client := new(mockExecClient)
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 	mgr.SetRingBufSize(128)
 	require.Equal(s.T(), 128, mgr.ringBufSize)
 }
@@ -494,7 +499,7 @@ func (s *TerminalSuite) TestReadLoopClosesOnEOF() {
 	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
 	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
-	mgr := NewManager(client)
+	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
 	require.NoError(s.T(), err)
 
@@ -505,6 +510,59 @@ func (s *TerminalSuite) TestReadLoopClosesOnEOF() {
 	case <-time.After(time.Second):
 		s.T().Fatal("timeout waiting for session done")
 	}
+
+	client.AssertExpectations(s.T())
+}
+
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) contains(str string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return bytes.Contains(b.buf.Bytes(), []byte(str))
+}
+
+func (s *TerminalSuite) TestSlowConsumerDrop() {
+	logBuf := &syncBuffer{}
+	logger := slog.New(slog.NewTextHandler(logBuf, nil))
+
+	client := new(mockExecClient)
+	pr, pw := io.Pipe()
+	conn := &mockConn{r: pr, w: io.Discard}
+
+	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
+	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+
+	mgr := NewManager(client, logger)
+	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
+	require.NoError(s.T(), err)
+
+	// Attach a client but never read from the channel.
+	ch, _ := sess.Attach()
+
+	// Fill the channel buffer (capacity 64) then trigger a drop.
+	for i := 0; i < 65; i++ {
+		_, _ = pw.Write([]byte("x"))
+		time.Sleep(time.Millisecond)
+	}
+
+	// Verify the warning was logged.
+	require.Eventually(s.T(), func() bool {
+		return logBuf.contains("slow consumer")
+	}, time.Second, 10*time.Millisecond)
+
+	require.NoError(s.T(), sess.Detach(ch))
+	pw.Close()
+	<-sess.Done()
 
 	client.AssertExpectations(s.T())
 }

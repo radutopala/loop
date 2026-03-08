@@ -11,6 +11,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"sync"
 )
 
@@ -42,6 +43,7 @@ type Session struct {
 	execID      string
 	conn        io.ReadWriteCloser
 	buf         *RingBuffer
+	logger      *slog.Logger
 	mu          sync.Mutex
 	clients     map[chan []byte]struct{}
 	done        chan struct{}
@@ -68,8 +70,12 @@ func (s *Session) Attach() (<-chan []byte, []byte) {
 	return ch, history
 }
 
+// ErrClientNotFound is returned when a detach is attempted with an
+// unrecognized client channel.
+var ErrClientNotFound = errors.New("client not found")
+
 // Detach removes a previously attached client channel.
-func (s *Session) Detach(ch <-chan []byte) {
+func (s *Session) Detach(ch <-chan []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -78,9 +84,10 @@ func (s *Session) Detach(ch <-chan []byte) {
 		if c == ch {
 			delete(s.clients, c)
 			close(c)
-			return
+			return nil
 		}
 	}
+	return ErrClientNotFound
 }
 
 // Done returns a channel that is closed when the session ends.
@@ -105,7 +112,7 @@ func (s *Session) readLoop() {
 				select {
 				case ch <- data:
 				default:
-					// slow consumer — drop
+					s.logger.Warn("slow consumer, dropped output", "session_id", s.id, "bytes", len(data))
 				}
 			}
 			s.mu.Unlock()
@@ -121,14 +128,16 @@ type Manager struct {
 	mu          sync.Mutex
 	sessions    map[string]*Session
 	client      ExecClient
+	logger      *slog.Logger
 	ringBufSize int
 }
 
 // NewManager creates a new terminal session manager.
-func NewManager(client ExecClient) *Manager {
+func NewManager(client ExecClient, logger *slog.Logger) *Manager {
 	return &Manager{
 		sessions:    make(map[string]*Session),
 		client:      client,
+		logger:      logger,
 		ringBufSize: defaultRingBufSize,
 	}
 }
@@ -161,6 +170,7 @@ func (m *Manager) CreateSession(ctx context.Context, containerID string, cmd []s
 		execID:      execID,
 		conn:        conn,
 		buf:         NewRingBuffer(m.ringBufSize),
+		logger:      m.logger,
 		clients:     make(map[chan []byte]struct{}),
 		done:        make(chan struct{}),
 	}
