@@ -41,6 +41,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
   const [viewMode, setViewMode] = useState<ViewMode>("terminal");
+  const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     initApiUrl().then(() => setReady(true));
@@ -76,12 +77,15 @@ export default function App() {
 
   const handleCreateThread = useCallback(
     async (parentId: string, name: string) => {
+      setError(null);
       try {
         const threadId = await createThread(parentId, name);
         await loadChannels();
         handleSelect(threadId);
-      } catch {
-        /* TODO: surface error to user */
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to create thread";
+        setError(message);
+        console.error("create thread failed:", err);
       }
     },
     [loadChannels, handleSelect],
@@ -107,6 +111,34 @@ export default function App() {
         onCreateThread={handleCreateThread}
       />
       <div style={{ flex: 1, display: "flex", flexDirection: "column" }}>
+        {error && (
+          <div
+            role="alert"
+            style={{
+              padding: "8px 12px",
+              backgroundColor: "#5c1d1d",
+              color: "#fca5a5",
+              fontSize: "13px",
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+            }}
+          >
+            <span>{error}</span>
+            <button
+              onClick={() => setError(null)}
+              style={{
+                background: "none",
+                border: "none",
+                color: "#fca5a5",
+                cursor: "pointer",
+                fontSize: "16px",
+              }}
+            >
+              &times;
+            </button>
+          </div>
+        )}
         {selectedId && (
           <div
             style={{

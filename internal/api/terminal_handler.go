@@ -214,6 +214,7 @@ func (t *terminalWSConn) handleInput(msg wsControlMessage) {
 		return
 	}
 	if err := t.manager.SendInput(t.sessionID, data); err != nil {
+		t.logger.Error("terminal ws: send input failed", "session_id", t.sessionID, "error", err)
 		t.sendError(err.Error(), wsErrCodeSessionFailed)
 	}
 }

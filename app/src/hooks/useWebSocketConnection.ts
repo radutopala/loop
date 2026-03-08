@@ -60,7 +60,7 @@ export function useWebSocketConnection({
     ws.onerror = () => {
       ws.close();
     };
-  }, [path]);
+  }, [path, reconnectDelay]);
 
   useEffect(() => {
     if (!enabled) return;
