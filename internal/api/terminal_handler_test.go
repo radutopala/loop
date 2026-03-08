@@ -781,6 +781,37 @@ func (s *TerminalHandlerSuite) TestWriteJSONErrorLogged() {
 	close(doneCh)
 }
 
+func (s *TerminalHandlerSuite) TestCreateSessionEmptyCmdArg() {
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1", Cmd: []string{"/bin/bash", ""}})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "error", msg.Type)
+	require.Contains(s.T(), msg.Message, "cmd contains empty argument")
+	require.Equal(s.T(), wsErrCodeInvalidInput, msg.ErrorCode)
+}
+
+func (s *TerminalHandlerSuite) TestCreateSessionTooManyCmdArgs() {
+	args := make([]string, maxCmdArgs+1)
+	for i := range args {
+		args[i] = "arg"
+	}
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1", Cmd: args})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "error", msg.Type)
+	require.Contains(s.T(), msg.Message, "cmd exceeds maximum arguments")
+	require.Equal(s.T(), wsErrCodeInvalidInput, msg.ErrorCode)
+}
+
 func (s *TerminalHandlerSuite) TestWriteBinaryErrorLogged() {
 	// Trigger writeBinary failure by closing connection before streaming output.
 	outCh := make(chan []byte, 1)

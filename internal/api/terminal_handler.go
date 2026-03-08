@@ -160,10 +160,23 @@ func (t *terminalWSConn) startSession(sessionID string, output <-chan []byte, hi
 	go t.streamOutput(output, done)
 }
 
+// maxCmdArgs is the maximum number of arguments allowed in a create command.
+const maxCmdArgs = 64
+
 func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage) {
 	if msg.ContainerID == "" {
 		t.sendError("container_id required", wsErrCodeMissingField)
 		return
+	}
+	if len(msg.Cmd) > maxCmdArgs {
+		t.sendError("cmd exceeds maximum arguments", wsErrCodeInvalidInput)
+		return
+	}
+	for _, arg := range msg.Cmd {
+		if arg == "" {
+			t.sendError("cmd contains empty argument", wsErrCodeInvalidInput)
+			return
+		}
 	}
 	t.detachCurrent()
 

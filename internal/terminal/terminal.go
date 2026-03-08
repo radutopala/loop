@@ -13,6 +13,7 @@ import (
 	"io"
 	"log/slog"
 	"sync"
+	"time"
 )
 
 // Default ring buffer size: 64 KB.
@@ -48,6 +49,7 @@ type Session struct {
 	clients     map[chan []byte]struct{}
 	done        chan struct{}
 	closeOnce   sync.Once
+	idleTimeout time.Duration
 }
 
 // ID returns the session identifier.
@@ -93,31 +95,71 @@ func (s *Session) Detach(ch <-chan []byte) error {
 // Done returns a channel that is closed when the session ends.
 func (s *Session) Done() <-chan struct{} { return s.done }
 
+// readResult holds the result of a single conn.Read call.
+type readResult struct {
+	data []byte
+	err  error
+}
+
 // readLoop reads from the exec connection, writes to the ring buffer,
-// and fans out to all attached clients.
+// and fans out to all attached clients. If an idle timeout is set, the
+// session closes when no output is received within the timeout period.
 func (s *Session) readLoop() {
 	defer s.closeOnce.Do(func() { close(s.done) })
 
-	tmp := make([]byte, 4096)
+	ch := make(chan readResult, 1)
+	go func() {
+		tmp := make([]byte, 4096)
+		for {
+			n, err := s.conn.Read(tmp)
+			if n > 0 {
+				data := make([]byte, n)
+				copy(data, tmp[:n])
+				ch <- readResult{data: data}
+			}
+			if err != nil {
+				ch <- readResult{err: err}
+				return
+			}
+		}
+	}()
+
+	var timer *time.Timer
+	var timerC <-chan time.Time
+	if s.idleTimeout > 0 {
+		timer = time.NewTimer(s.idleTimeout)
+		timerC = timer.C
+		defer timer.Stop()
+	}
+
 	for {
-		n, err := s.conn.Read(tmp)
-		if n > 0 {
-			data := make([]byte, n)
-			copy(data, tmp[:n])
+		select {
+		case res := <-ch:
+			if res.data != nil {
+				_, _ = s.buf.Write(res.data)
 
-			_, _ = s.buf.Write(data)
+				s.mu.Lock()
+				for c := range s.clients {
+					select {
+					case c <- res.data:
+					default:
+						s.logger.Warn("slow consumer, dropped output", "session_id", s.id, "bytes", len(res.data))
+					}
+				}
+				s.mu.Unlock()
 
-			s.mu.Lock()
-			for ch := range s.clients {
-				select {
-				case ch <- data:
-				default:
-					s.logger.Warn("slow consumer, dropped output", "session_id", s.id, "bytes", len(data))
+				if timer != nil {
+					timer.Stop()
+					timer = time.NewTimer(s.idleTimeout)
+					timerC = timer.C
 				}
 			}
-			s.mu.Unlock()
-		}
-		if err != nil {
+			if res.err != nil {
+				return
+			}
+		case <-timerC:
+			s.logger.Info("terminal session idle timeout", "session_id", s.id, "timeout", s.idleTimeout)
+			s.conn.Close()
 			return
 		}
 	}
@@ -130,6 +172,7 @@ type Manager struct {
 	client      ExecClient
 	logger      *slog.Logger
 	ringBufSize int
+	idleTimeout time.Duration
 }
 
 // NewManager creates a new terminal session manager.
@@ -145,6 +188,13 @@ func NewManager(client ExecClient, logger *slog.Logger) *Manager {
 // SetRingBufSize sets the ring buffer size for new sessions.
 func (m *Manager) SetRingBufSize(size int) {
 	m.ringBufSize = size
+}
+
+// SetIdleTimeout sets the idle timeout for new sessions. Sessions that
+// receive no output within this duration are automatically closed.
+// A zero value disables the timeout.
+func (m *Manager) SetIdleTimeout(d time.Duration) {
+	m.idleTimeout = d
 }
 
 // CreateSession starts a new interactive terminal session by creating a
@@ -173,6 +223,7 @@ func (m *Manager) CreateSession(ctx context.Context, containerID string, cmd []s
 		logger:      m.logger,
 		clients:     make(map[chan []byte]struct{}),
 		done:        make(chan struct{}),
+		idleTimeout: m.idleTimeout,
 	}
 
 	go s.readLoop()

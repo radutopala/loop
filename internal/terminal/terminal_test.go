@@ -531,6 +531,101 @@ func (b *syncBuffer) contains(str string) bool {
 	return bytes.Contains(b.buf.Bytes(), []byte(str))
 }
 
+func (s *TerminalSuite) TestIdleTimeout() {
+	client := new(mockExecClient)
+	pr, _ := io.Pipe()
+	conn := &mockConn{r: pr, w: io.Discard}
+
+	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
+	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+
+	mgr := NewManager(client, testLogger)
+	mgr.SetIdleTimeout(100 * time.Millisecond)
+
+	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
+	require.NoError(s.T(), err)
+
+	// Session should close after idle timeout with no output.
+	select {
+	case <-sess.Done():
+	case <-time.After(2 * time.Second):
+		s.T().Fatal("timeout waiting for idle session to close")
+	}
+
+	client.AssertExpectations(s.T())
+}
+
+func (s *TerminalSuite) TestIdleTimeoutResetOnOutput() {
+	client := new(mockExecClient)
+	pr, pw := io.Pipe()
+	conn := &mockConn{r: pr, w: io.Discard}
+
+	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
+	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+
+	mgr := NewManager(client, testLogger)
+	mgr.SetIdleTimeout(200 * time.Millisecond)
+
+	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
+	require.NoError(s.T(), err)
+
+	// Write data before timeout expires to reset the timer.
+	time.Sleep(100 * time.Millisecond)
+	_, _ = pw.Write([]byte("keep alive"))
+
+	// Session should still be active right after the write.
+	select {
+	case <-sess.Done():
+		s.T().Fatal("session closed too early")
+	case <-time.After(50 * time.Millisecond):
+		// Good — still alive.
+	}
+
+	// Now let it idle out.
+	select {
+	case <-sess.Done():
+	case <-time.After(2 * time.Second):
+		s.T().Fatal("timeout waiting for idle session to close")
+	}
+
+	client.AssertExpectations(s.T())
+}
+
+func (s *TerminalSuite) TestNoIdleTimeoutByDefault() {
+	client := new(mockExecClient)
+	pr, pw := io.Pipe()
+	conn := &mockConn{r: pr, w: io.Discard}
+
+	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
+	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+
+	mgr := NewManager(client, testLogger)
+	// No SetIdleTimeout — default is 0 (disabled).
+
+	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
+	require.NoError(s.T(), err)
+
+	// Session should NOT close after a brief wait (no timeout configured).
+	select {
+	case <-sess.Done():
+		s.T().Fatal("session closed unexpectedly")
+	case <-time.After(200 * time.Millisecond):
+		// Good — still alive.
+	}
+
+	pw.Close()
+	<-sess.Done()
+
+	client.AssertExpectations(s.T())
+}
+
+func (s *TerminalSuite) TestSetIdleTimeout() {
+	client := new(mockExecClient)
+	mgr := NewManager(client, testLogger)
+	mgr.SetIdleTimeout(5 * time.Minute)
+	require.Equal(s.T(), 5*time.Minute, mgr.idleTimeout)
+}
+
 func (s *TerminalSuite) TestConcurrentAttachDetach() {
 	client := new(mockExecClient)
 	pr, pw := io.Pipe()
