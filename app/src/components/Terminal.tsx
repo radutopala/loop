@@ -1,7 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useRef, useState } from "react";
 import type { SessionStatus } from "../types";
-import { colors, fonts } from "../theme";
+import { colors } from "../theme";
 import { useTerminalWs } from "../hooks/useTerminalWs";
+import { useElapsedTimer } from "../hooks/useElapsedTimer";
+import { useXTerminal } from "../hooks/useXTerminal";
 import { TerminalToolbar } from "./TerminalToolbar";
 
 interface TerminalProps {
@@ -11,35 +13,26 @@ interface TerminalProps {
 
 export function Terminal({ channelId, containerId }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
-  const xtermRef = useRef<import("@xterm/xterm").Terminal | null>(null);
-  const fitAddonRef =
-    useRef<import("@xterm/addon-fit").FitAddon | null>(null);
   const [status, setStatus] = useState<SessionStatus>("connecting");
-  const [elapsed, setElapsed] = useState(0);
-  const startTimeRef = useRef<number | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval>>(undefined);
+  const { elapsed, start, stop } = useElapsedTimer();
 
   const onData = useCallback((data: ArrayBuffer) => {
-    xtermRef.current?.write(new Uint8Array(data));
+    writeRef.current?.(new Uint8Array(data));
   }, []);
 
-  const onStatus = useCallback((newStatus: SessionStatus) => {
-    setStatus(newStatus);
-    if (newStatus === "running" && !startTimeRef.current) {
-      startTimeRef.current = Date.now();
-      timerRef.current = setInterval(() => {
-        if (startTimeRef.current) {
-          setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
-        }
-      }, 1000);
-    }
-    if (newStatus === "completed" || newStatus === "failed") {
-      clearInterval(timerRef.current);
-    }
-  }, []);
+  const onStatus = useCallback(
+    (newStatus: SessionStatus) => {
+      setStatus(newStatus);
+      if (newStatus === "running") start();
+      if (newStatus === "completed" || newStatus === "failed") stop();
+    },
+    [start, stop],
+  );
 
   const onError = useCallback((message: string) => {
-    xtermRef.current?.write(`\r\n\x1b[31m[error] ${message}\x1b[0m\r\n`);
+    writeRef.current?.(
+      new TextEncoder().encode(`\r\n\x1b[31m[error] ${message}\x1b[0m\r\n`),
+    );
   }, []);
 
   const { sendInput, sendResize, sendStop } = useTerminalWs({
@@ -50,72 +43,15 @@ export function Terminal({ channelId, containerId }: TerminalProps) {
     onError,
   });
 
-  useEffect(() => {
-    if (!terminalRef.current) return;
+  const { write } = useXTerminal({
+    containerRef: terminalRef,
+    onInput: sendInput,
+    onResize: sendResize,
+  });
 
-    let disposed = false;
-
-    async function init() {
-      const { Terminal: XTerm } = await import("@xterm/xterm");
-      const { FitAddon } = await import("@xterm/addon-fit");
-      const { WebLinksAddon } = await import("@xterm/addon-web-links");
-
-      if (disposed) return;
-
-      const term = new XTerm({
-        cursorBlink: true,
-        fontSize: 13,
-        fontFamily: fonts.mono,
-        theme: {
-          background: colors.bg,
-          foreground: colors.text,
-          cursor: colors.cursor,
-        },
-      });
-
-      const fitAddon = new FitAddon();
-      term.loadAddon(fitAddon);
-      term.loadAddon(new WebLinksAddon());
-
-      term.open(terminalRef.current!);
-      fitAddon.fit();
-
-      xtermRef.current = term;
-      fitAddonRef.current = fitAddon;
-
-      sendResize(term.cols, term.rows);
-
-      term.onData((data) => {
-        sendInput(data);
-      });
-
-      term.onResize(({ cols, rows }) => {
-        sendResize(cols, rows);
-      });
-
-      const resizeObserver = new ResizeObserver(() => {
-        fitAddon.fit();
-      });
-      resizeObserver.observe(terminalRef.current!);
-
-      return () => {
-        resizeObserver.disconnect();
-      };
-    }
-
-    const cleanup = init();
-
-    return () => {
-      disposed = true;
-      cleanup.then((fn) => fn?.());
-      xtermRef.current?.dispose();
-      xtermRef.current = null;
-      fitAddonRef.current = null;
-      clearInterval(timerRef.current);
-      startTimeRef.current = null;
-      setElapsed(0);
-    };
-  }, [channelId, sendInput, sendResize]);
+  // Stable ref so callbacks created before useXTerminal can access write.
+  const writeRef = useRef(write);
+  writeRef.current = write;
 
   if (!channelId) {
     return (
