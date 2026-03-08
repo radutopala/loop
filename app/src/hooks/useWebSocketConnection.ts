@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { getWsUrl } from "../api/loopApi";
 
-const RECONNECT_DELAY_MS = 3_000;
+const DEFAULT_RECONNECT_DELAY_MS = 3_000;
 
 interface UseWebSocketConnectionOptions {
   /** URL path appended to the WS base URL (e.g. "/api/ws/terminal"). */
@@ -12,6 +12,8 @@ interface UseWebSocketConnectionOptions {
   onOpen?: (ws: WebSocket) => void;
   /** Called for each incoming message. */
   onMessage?: (event: MessageEvent) => void;
+  /** Reconnection delay in ms (default 3000). */
+  reconnectDelay?: number;
 }
 
 /**
@@ -23,6 +25,7 @@ export function useWebSocketConnection({
   enabled,
   onOpen,
   onMessage,
+  reconnectDelay = DEFAULT_RECONNECT_DELAY_MS,
 }: UseWebSocketConnectionOptions) {
   const wsRef = useRef<WebSocket | null>(null);
   const reconnectTimer = useRef<ReturnType<typeof setTimeout>>(undefined);
@@ -51,7 +54,7 @@ export function useWebSocketConnection({
     ws.onclose = () => {
       setConnected(false);
       wsRef.current = null;
-      reconnectTimer.current = setTimeout(connect, RECONNECT_DELAY_MS);
+      reconnectTimer.current = setTimeout(connect, reconnectDelay);
     };
 
     ws.onerror = () => {
