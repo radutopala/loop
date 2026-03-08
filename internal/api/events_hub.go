@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"log/slog"
 	"sync"
 	"time"
 
@@ -41,6 +42,7 @@ type AgentStatusData struct {
 type EventsHub struct {
 	mu          sync.RWMutex
 	subscribers map[*eventConn]struct{}
+	logger      *slog.Logger
 }
 
 type eventConn struct {
@@ -50,9 +52,10 @@ type eventConn struct {
 }
 
 // NewEventsHub creates a new EventsHub.
-func NewEventsHub() *EventsHub {
+func NewEventsHub(logger *slog.Logger) *EventsHub {
 	return &EventsHub{
 		subscribers: make(map[*eventConn]struct{}),
+		logger:      logger,
 	}
 }
 
@@ -84,6 +87,7 @@ func (h *EventsHub) Broadcast(evt Event) {
 	evt.Timestamp = time.Now().UnixMilli()
 	data, err := json.Marshal(evt)
 	if err != nil {
+		h.logger.Error("events hub: marshal failed", "error", err, "type", evt.Type)
 		return
 	}
 
@@ -105,6 +109,7 @@ func (h *EventsHub) Broadcast(evt Event) {
 		err := ec.conn.WriteMessage(websocket.TextMessage, data)
 		ec.writeMu.Unlock()
 		if err != nil {
+			h.logger.Error("events hub: write failed, unregistering client", "error", err)
 			h.Unregister(ec)
 		}
 	}

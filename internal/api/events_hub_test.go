@@ -22,13 +22,13 @@ func TestEventsHubSuite(t *testing.T) {
 }
 
 func (s *EventsHubSuite) TestNewEventsHub() {
-	hub := NewEventsHub()
+	hub := NewEventsHub(testLogger())
 	require.NotNil(s.T(), hub)
 	require.NotNil(s.T(), hub.subscribers)
 }
 
 func (s *EventsHubSuite) TestRegisterUnregister() {
-	hub := NewEventsHub()
+	hub := NewEventsHub(testLogger())
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := wsUpgrader.Upgrade(w, r, nil)
@@ -59,7 +59,7 @@ func (s *EventsHubSuite) TestRegisterUnregister() {
 }
 
 func (s *EventsHubSuite) TestBroadcastToAll() {
-	hub := NewEventsHub()
+	hub := NewEventsHub(testLogger())
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := wsUpgrader.Upgrade(w, r, nil)
@@ -96,7 +96,7 @@ func (s *EventsHubSuite) TestBroadcastToAll() {
 }
 
 func (s *EventsHubSuite) TestBroadcastFilteredByChannel() {
-	hub := NewEventsHub()
+	hub := NewEventsHub(testLogger())
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := wsUpgrader.Upgrade(w, r, nil)
@@ -131,7 +131,7 @@ func (s *EventsHubSuite) TestBroadcastFilteredByChannel() {
 }
 
 func (s *EventsHubSuite) TestBroadcastAgentStatus() {
-	hub := NewEventsHub()
+	hub := NewEventsHub(testLogger())
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := wsUpgrader.Upgrade(w, r, nil)
@@ -162,7 +162,7 @@ func (s *EventsHubSuite) TestBroadcastAgentStatus() {
 }
 
 func (s *EventsHubSuite) TestBroadcastRemovesClosedConnections() {
-	hub := NewEventsHub()
+	hub := NewEventsHub(testLogger())
 
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := wsUpgrader.Upgrade(w, r, nil)
@@ -197,4 +197,15 @@ func (s *EventsHubSuite) TestBroadcastRemovesClosedConnections() {
 	hub.mu.RLock()
 	require.Empty(s.T(), hub.subscribers)
 	hub.mu.RUnlock()
+}
+
+func (s *EventsHubSuite) TestBroadcastMarshalError() {
+	hub := NewEventsHub(testLogger())
+
+	// Use a Data value that cannot be marshaled to trigger the marshal error path.
+	hub.Broadcast(Event{
+		Type:      "test",
+		ChannelID: "ch-1",
+		Data:      func() {}, // functions cannot be marshaled to JSON
+	})
 }

@@ -158,10 +158,13 @@ func (s *ServerSuite) testRequest(method, path, body string) *httptest.ResponseR
 	return rec
 }
 
+func testLogger() *slog.Logger {
+	return slog.New(slog.NewTextHandler(io.Discard, nil))
+}
+
 // nilServer creates a server with nil dependencies for testing not-implemented paths.
 func nilServer() *Server {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	return NewServer(nil, nil, nil, nil, nil, logger)
+	return NewServer(nil, nil, nil, nil, nil, testLogger())
 }
 
 func (s *ServerSuite) TestNewServer() {

@@ -3105,7 +3105,7 @@ func (s *MainSuite) TestReadmeOutput() {
 }
 
 func (s *MainSuite) TestEventBroadcasterAdapterMessageCreated() {
-	hub := api.NewEventsHub()
+	hub := api.NewEventsHub(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	adapter := &eventBroadcasterAdapter{hub: hub}
 
 	adapter.BroadcastMessageCreated("ch-1", orchestrator.MessageEventData{
@@ -3118,7 +3118,7 @@ func (s *MainSuite) TestEventBroadcasterAdapterMessageCreated() {
 }
 
 func (s *MainSuite) TestEventBroadcasterAdapterAgentStatus() {
-	hub := api.NewEventsHub()
+	hub := api.NewEventsHub(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	adapter := &eventBroadcasterAdapter{hub: hub}
 
 	adapter.BroadcastAgentStatus("ch-1", orchestrator.AgentStatusEventData{

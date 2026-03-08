@@ -383,7 +383,7 @@ func serve() error {
 		}
 	}
 
-	eventsHub := api.NewEventsHub()
+	eventsHub := api.NewEventsHub(logger)
 	apiSrv.SetEventsHub(eventsHub)
 
 	if err := apiSrv.Start(cfg.APIAddr); err != nil {

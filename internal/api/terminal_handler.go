@@ -79,13 +79,17 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	writeJSON := func(msg wsStatusMessage) {
 		writeMu.Lock()
 		defer writeMu.Unlock()
-		_ = conn.WriteJSON(msg)
+		if err := conn.WriteJSON(msg); err != nil {
+			s.logger.Error("terminal ws: write JSON failed", "error", err, "type", msg.Type)
+		}
 	}
 
 	writeBinary := func(data []byte) {
 		writeMu.Lock()
 		defer writeMu.Unlock()
-		_ = conn.WriteMessage(websocket.BinaryMessage, data)
+		if err := conn.WriteMessage(websocket.BinaryMessage, data); err != nil {
+			s.logger.Error("terminal ws: write binary failed", "error", err, "len", len(data))
+		}
 	}
 
 	// streamOutput forwards terminal output to the WebSocket client.

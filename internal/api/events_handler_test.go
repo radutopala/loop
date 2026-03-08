@@ -2,8 +2,6 @@ package api
 
 import (
 	"encoding/json"
-	"io"
-	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -24,16 +22,14 @@ func TestEventsHandlerSuite(t *testing.T) {
 }
 
 func (s *EventsHandlerSuite) newServer() *Server {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(nil, nil, nil, nil, nil, logger)
-	hub := NewEventsHub()
+	srv := nilServer()
+	hub := NewEventsHub(testLogger())
 	srv.SetEventsHub(hub)
 	return srv
 }
 
 func (s *EventsHandlerSuite) TestEventsWSNotConfigured() {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(nil, nil, nil, nil, nil, logger)
+	srv := nilServer()
 	// No events hub set
 
 	mux := http.NewServeMux()
@@ -206,12 +202,11 @@ func (s *EventsHandlerSuite) TestEventsWSUpgradeError() {
 }
 
 func (s *EventsHandlerSuite) TestSetEventsHub() {
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := NewServer(nil, nil, nil, nil, nil, logger)
+	srv := nilServer()
 
 	require.Nil(s.T(), srv.EventsHub())
 
-	hub := NewEventsHub()
+	hub := NewEventsHub(testLogger())
 	srv.SetEventsHub(hub)
 
 	require.Same(s.T(), hub, srv.EventsHub())

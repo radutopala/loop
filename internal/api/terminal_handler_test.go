@@ -634,3 +634,54 @@ func (s *TerminalHandlerSuite) TestStopChOnDisconnect() {
 
 	close(doneCh)
 }
+
+func (s *TerminalHandlerSuite) TestWriteJSONErrorLogged() {
+	// Close the connection before the handler sends a response so writeJSON hits a write error.
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
+		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1"})
+	readStatusMsg(s.T(), conn) // created
+
+	// Close conn, then push output to trigger writeBinary on a closed connection.
+	conn.Close()
+	outCh <- []byte("data after close")
+
+	time.Sleep(100 * time.Millisecond)
+	close(doneCh)
+}
+
+func (s *TerminalHandlerSuite) TestWriteBinaryErrorLogged() {
+	// Trigger writeBinary failure by closing connection before streaming output.
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
+		Return("sess-1", (<-chan []byte)(outCh), []byte("history"), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Maybe()
+
+	// Use a custom server to control timing.
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/ws/terminal", s.srv.handleTerminalWS)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	wsURL := "ws" + ts.URL[4:] + "/api/ws/terminal"
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1"})
+	readStatusMsg(s.T(), conn) // created
+	readBinaryMsg(s.T(), conn) // history
+
+	// Close the conn, then send output — writeBinary will fail.
+	conn.Close()
+	outCh <- []byte("after close")
+	time.Sleep(100 * time.Millisecond)
+	close(doneCh)
+}
