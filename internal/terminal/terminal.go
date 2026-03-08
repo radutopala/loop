@@ -19,6 +19,12 @@ import (
 // Default ring buffer size: 64 KB.
 const defaultRingBufSize = 64 * 1024
 
+// clientChannelBuffer is the capacity of per-client output channels.
+const clientChannelBuffer = 64
+
+// readBufSize is the size of the temporary buffer used in readLoop.
+const readBufSize = 4096
+
 // ExecClient abstracts the Docker exec operations needed by the terminal
 // manager, making it testable without a real Docker daemon.
 type ExecClient interface {
@@ -67,7 +73,7 @@ func (s *Session) Attach() (<-chan []byte, []byte) {
 	defer s.mu.Unlock()
 
 	history := s.buf.Bytes()
-	ch := make(chan []byte, 64)
+	ch := make(chan []byte, clientChannelBuffer)
 	s.clients[ch] = struct{}{}
 	return ch, history
 }
@@ -109,7 +115,7 @@ func (s *Session) readLoop() {
 
 	ch := make(chan readResult, 1)
 	go func() {
-		tmp := make([]byte, 4096)
+		tmp := make([]byte, readBufSize)
 		for {
 			n, err := s.conn.Read(tmp)
 			if n > 0 {

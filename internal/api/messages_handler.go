@@ -40,6 +40,9 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 
 const defaultMessageLimit = 50
 
+// maxMessageLimit is the upper bound for the limit query parameter.
+const maxMessageLimit = 200
+
 type messageResponse struct {
 	ID         int64     `json:"id"`
 	ChannelID  string    `json:"channel_id"`
@@ -70,8 +73,8 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "invalid limit", http.StatusBadRequest)
 			return
 		}
-		if parsed > 200 {
-			parsed = 200
+		if parsed > maxMessageLimit {
+			parsed = maxMessageLimit
 		}
 		limit = parsed
 	}
