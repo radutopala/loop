@@ -688,6 +688,77 @@ func (s *TerminalHandlerSuite) TestStopChOnDisconnect() {
 	close(doneCh)
 }
 
+func (s *TerminalHandlerSuite) TestSendInputEmptyBase64() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
+		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("SendInput", "sess-1", []byte{}).Return(nil)
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1"})
+	readStatusMsg(s.T(), conn) // created
+
+	// Empty string is valid base64 that decodes to empty bytes.
+	sendControl(s.T(), conn, wsControlMessage{Type: "input", Data: ""})
+
+	time.Sleep(50 * time.Millisecond)
+	close(doneCh)
+	time.Sleep(50 * time.Millisecond)
+	s.terminal.AssertCalled(s.T(), "SendInput", "sess-1", []byte{})
+}
+
+func (s *TerminalHandlerSuite) TestRapidCreateSessions() {
+	// Rapidly create sessions — each should detach the previous.
+	var outChs []chan []byte
+	var doneChs []chan struct{}
+	for i := range 3 {
+		outCh := make(chan []byte, 1)
+		doneCh := make(chan struct{})
+		outChs = append(outChs, outCh)
+		doneChs = append(doneChs, doneCh)
+		ctr := "ctr-" + string(rune('a'+i))
+		sessID := "sess-" + string(rune('a'+i))
+		s.terminal.On("CreateSession", mock.Anything, ctr, ([]string)(nil)).
+			Return(sessID, (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil).Once()
+	}
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	// Create three sessions in rapid succession.
+	for i := range 3 {
+		ctr := "ctr-" + string(rune('a'+i))
+		// Close done channel of previous session before creating the next one.
+		if i > 0 {
+			close(doneChs[i-1])
+			time.Sleep(50 * time.Millisecond) // let streamOutput exit
+		}
+		sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: ctr})
+		// Drain messages until we get "created" for this session.
+		for {
+			msg := readStatusMsg(s.T(), conn)
+			if msg.Type == "created" {
+				require.Equal(s.T(), "sess-"+string(rune('a'+i)), msg.SessionID)
+				break
+			}
+		}
+	}
+
+	// The last session should be active — send output on it.
+	outChs[2] <- []byte("final")
+	data := readBinaryMsg(s.T(), conn)
+	require.Equal(s.T(), []byte("final"), data)
+
+	close(doneChs[2])
+}
+
 func (s *TerminalHandlerSuite) TestWriteJSONErrorLogged() {
 	// Close the connection before the handler sends a response so writeJSON hits a write error.
 	outCh := make(chan []byte, 1)

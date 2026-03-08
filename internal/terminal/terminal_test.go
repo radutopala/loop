@@ -531,6 +531,56 @@ func (b *syncBuffer) contains(str string) bool {
 	return bytes.Contains(b.buf.Bytes(), []byte(str))
 }
 
+func (s *TerminalSuite) TestConcurrentAttachDetach() {
+	client := new(mockExecClient)
+	pr, pw := io.Pipe()
+	conn := &mockConn{r: pr, w: io.Discard}
+
+	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
+	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+
+	mgr := NewManager(client, testLogger)
+	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
+	require.NoError(s.T(), err)
+
+	const goroutines = 20
+	var wg sync.WaitGroup
+	wg.Add(goroutines)
+
+	for range goroutines {
+		go func() {
+			defer wg.Done()
+			ch, _ := sess.Attach()
+			// Read one message to ensure the channel is live.
+			select {
+			case <-ch:
+			case <-time.After(200 * time.Millisecond):
+			}
+			_ = sess.Detach(ch)
+		}()
+	}
+
+	// Feed data while goroutines attach/detach concurrently.
+	go func() {
+		for range 50 {
+			_, _ = pw.Write([]byte("x"))
+			time.Sleep(time.Millisecond)
+		}
+	}()
+
+	wg.Wait()
+
+	// All clients detached — no clients should remain.
+	sess.mu.Lock()
+	require.Empty(s.T(), sess.clients)
+	sess.mu.Unlock()
+
+	pw.Close()
+	<-sess.Done()
+
+	client.AssertExpectations(s.T())
+}
+
 func (s *TerminalSuite) TestSlowConsumerDrop() {
 	logBuf := &syncBuffer{}
 	logger := slog.New(slog.NewTextHandler(logBuf, nil))

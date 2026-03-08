@@ -199,6 +199,18 @@ func (s *EventsHubSuite) TestBroadcastRemovesClosedConnections() {
 	hub.mu.RUnlock()
 }
 
+func (s *EventsHubSuite) TestBroadcastNoSubscribers() {
+	hub := NewEventsHub(testLogger())
+
+	// Broadcast with zero subscribers — must not panic or leak.
+	hub.BroadcastMessageCreated("ch-1", MessageData{Content: "hello"})
+	hub.BroadcastAgentStatus("ch-1", AgentStatusData{Status: "running"})
+
+	hub.mu.RLock()
+	require.Empty(s.T(), hub.subscribers)
+	hub.mu.RUnlock()
+}
+
 func (s *EventsHubSuite) TestBroadcastMarshalError() {
 	hub := NewEventsHub(testLogger())
 
