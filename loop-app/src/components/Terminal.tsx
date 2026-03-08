@@ -15,7 +15,7 @@ export function Terminal({ channelId }: TerminalProps) {
   const [status, setStatus] = useState<SessionStatus>("connecting");
   const [elapsed, setElapsed] = useState(0);
   const startTimeRef = useRef<number | null>(null);
-  const timerRef = useRef<ReturnType<typeof setInterval>>();
+  const timerRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
   const onData = useCallback((data: ArrayBuffer) => {
     xtermRef.current?.write(new Uint8Array(data));

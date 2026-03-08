@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import type { Channel } from "./types";
-import { fetchChannels, initApiUrl } from "./api/loopApi";
+import { createThread, fetchChannels, initApiUrl } from "./api/loopApi";
 import { Sidebar } from "./components/Sidebar";
 import { Terminal } from "./components/Terminal";
 
@@ -28,6 +28,19 @@ export default function App() {
     return () => clearInterval(id);
   }, [loadChannels]);
 
+  const handleCreateThread = useCallback(
+    async (parentId: string, name: string) => {
+      try {
+        const threadId = await createThread(parentId, name);
+        await loadChannels();
+        setSelectedId(threadId);
+      } catch {
+        /* TODO: surface error to user */
+      }
+    },
+    [loadChannels],
+  );
+
   return (
     <div
       style={{
@@ -43,6 +56,7 @@ export default function App() {
         channels={channels}
         selectedId={selectedId}
         onSelect={setSelectedId}
+        onCreateThread={handleCreateThread}
       />
       <Terminal channelId={selectedId} />
     </div>

@@ -2,7 +2,6 @@ export interface Channel {
   id: string;
   name: string;
   parent_id: string;
-  platform: string;
   dir_path: string;
   active: boolean;
 }
