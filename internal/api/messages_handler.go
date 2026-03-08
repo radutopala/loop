@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -120,6 +119,5 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		resp.NextCursor = &last
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp, s.logger)
 }

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 )
 
@@ -41,9 +40,7 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(createThreadResponse{ThreadID: threadID})
+	writeJSON(w, http.StatusCreated, createThreadResponse{ThreadID: threadID}, s.logger)
 }
 
 func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {

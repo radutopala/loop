@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"strconv"
 	"time"
@@ -62,9 +61,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(createTaskResponse{ID: id})
+	writeJSON(w, http.StatusCreated, createTaskResponse{ID: id}, s.logger)
 }
 
 func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
@@ -95,8 +92,7 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp, s.logger)
 }
 
 func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
@@ -129,8 +125,7 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		AutoDeleteSec: task.AutoDeleteSec,
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp, s.logger)
 }
 
 func (s *Server) handleDeleteTask(w http.ResponseWriter, r *http.Request) {

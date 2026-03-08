@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -63,8 +62,7 @@ func (s *Server) handleMemorySearch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(memorySearchResponse{Results: results})
+	writeJSON(w, http.StatusOK, memorySearchResponse{Results: results}, s.logger)
 }
 
 func (s *Server) handleMemoryIndex(w http.ResponseWriter, r *http.Request) {
@@ -89,8 +87,7 @@ func (s *Server) handleMemoryIndex(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(memoryIndexResponse{Count: count})
+	writeJSON(w, http.StatusOK, memoryIndexResponse{Count: count}, s.logger)
 }
 
 // resolveDirPath returns the dir_path from the request, resolving via channel_id lookup if needed.

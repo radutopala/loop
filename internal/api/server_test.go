@@ -1146,3 +1146,20 @@ func (s *ServerSuite) TestContainsFold() {
 	require.False(s.T(), containsFold("general", "random"))
 	require.True(s.T(), containsFold("abc", ""))
 }
+
+// --- writeJSON tests ---
+
+func (s *ServerSuite) TestWriteJSONSuccess() {
+	w := httptest.NewRecorder()
+	writeJSON(w, http.StatusCreated, map[string]string{"id": "123"}, s.srv.logger)
+	require.Equal(s.T(), http.StatusCreated, w.Code)
+	require.Equal(s.T(), "application/json", w.Header().Get("Content-Type"))
+	require.JSONEq(s.T(), `{"id":"123"}`, w.Body.String())
+}
+
+func (s *ServerSuite) TestWriteJSONEncodeError() {
+	w := httptest.NewRecorder()
+	// Channels are not JSON-encodable, so this triggers the error branch.
+	writeJSON(w, http.StatusOK, make(chan int), s.srv.logger)
+	require.Equal(s.T(), http.StatusOK, w.Code)
+}

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"encoding/json"
 	"net/http"
 	"strings"
 )
@@ -54,8 +53,7 @@ func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(ensureChannelResponse{ChannelID: channelID})
+	writeJSON(w, http.StatusOK, ensureChannelResponse{ChannelID: channelID}, s.logger)
 }
 
 func (s *Server) handleCreateChannel(w http.ResponseWriter, r *http.Request) {
@@ -79,9 +77,7 @@ func (s *Server) handleCreateChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(http.StatusCreated)
-	_ = json.NewEncoder(w).Encode(createChannelResponse{ChannelID: channelID})
+	writeJSON(w, http.StatusCreated, createChannelResponse{ChannelID: channelID}, s.logger)
 }
 
 func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
@@ -111,8 +107,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	_ = json.NewEncoder(w).Encode(resp)
+	writeJSON(w, http.StatusOK, resp, s.logger)
 }
 
 func containsFold(s, substr string) bool {
