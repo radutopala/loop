@@ -33,9 +33,9 @@ func requireConfigured(w http.ResponseWriter, service any, msg string) bool {
 	return true
 }
 
-// writeJSON encodes data as JSON and writes it to w with the given status code.
+// writeHTTPJSON encodes data as JSON and writes it to w with the given status code.
 // It sets the Content-Type header and logs any encoding errors.
-func writeJSON(w http.ResponseWriter, status int, data any, logger *slog.Logger) {
+func writeHTTPJSON(w http.ResponseWriter, status int, data any, logger *slog.Logger) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {

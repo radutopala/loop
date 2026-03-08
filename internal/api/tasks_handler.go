@@ -61,7 +61,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, createTaskResponse{ID: id}, s.logger)
+	writeHTTPJSON(w, http.StatusCreated, createTaskResponse{ID: id}, s.logger)
 }
 
 func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
@@ -92,7 +92,7 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, resp, s.logger)
+	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }
 
 func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
@@ -125,7 +125,7 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		AutoDeleteSec: task.AutoDeleteSec,
 	}
 
-	writeJSON(w, http.StatusOK, resp, s.logger)
+	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }
 
 func (s *Server) handleDeleteTask(w http.ResponseWriter, r *http.Request) {

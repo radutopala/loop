@@ -53,7 +53,7 @@ func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, ensureChannelResponse{ChannelID: channelID}, s.logger)
+	writeHTTPJSON(w, http.StatusOK, ensureChannelResponse{ChannelID: channelID}, s.logger)
 }
 
 func (s *Server) handleCreateChannel(w http.ResponseWriter, r *http.Request) {
@@ -77,7 +77,7 @@ func (s *Server) handleCreateChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, createChannelResponse{ChannelID: channelID}, s.logger)
+	writeHTTPJSON(w, http.StatusCreated, createChannelResponse{ChannelID: channelID}, s.logger)
 }
 
 func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
@@ -107,7 +107,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	writeJSON(w, http.StatusOK, resp, s.logger)
+	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }
 
 func containsFold(s, substr string) bool {

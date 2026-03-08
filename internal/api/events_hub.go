@@ -39,6 +39,14 @@ type AgentStatusData struct {
 }
 
 // EventsHub manages WebSocket event subscribers and broadcasts events.
+//
+// Thread-safety: The hub's subscriber set is protected by mu (RWMutex).
+// Broadcast takes a snapshot of subscribers under RLock, then releases the lock
+// before writing to each connection. Each connection has its own writeMu to
+// serialize writes. This means a concurrent Unregister may remove a subscriber
+// that Broadcast is about to write to — this is safe because writeMu still
+// guards the connection, and a failed write triggers Unregister (idempotent
+// delete from the map).
 type EventsHub struct {
 	mu          sync.RWMutex
 	subscribers map[*eventConn]struct{}
@@ -48,7 +56,7 @@ type EventsHub struct {
 type eventConn struct {
 	conn     *websocket.Conn
 	channels map[string]struct{} // subscribed channel IDs; empty = all
-	writeMu  sync.Mutex
+	writeMu  sync.Mutex          // serializes writes to conn; held during Broadcast per-connection send
 }
 
 // NewEventsHub creates a new EventsHub.

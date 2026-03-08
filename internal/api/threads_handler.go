@@ -40,7 +40,7 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusCreated, createThreadResponse{ThreadID: threadID}, s.logger)
+	writeHTTPJSON(w, http.StatusCreated, createThreadResponse{ThreadID: threadID}, s.logger)
 }
 
 func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {

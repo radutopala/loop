@@ -119,5 +119,5 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		resp.NextCursor = &last
 	}
 
-	writeJSON(w, http.StatusOK, resp, s.logger)
+	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }
