@@ -45,7 +45,7 @@ interface SidebarProps {
   selectedId: string | null;
   collapsed: boolean;
   onSelect: (id: string) => void;
-  onCreateChannel: () => void;
+  onCreateChannel: (name: string) => void;
   onCreateThread: (parentId: string, name: string) => void;
   onDeleteThread: (threadId: string) => void;
 }
@@ -64,6 +64,9 @@ export function Sidebar({
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
   const [channelOrder, setChannelOrder] = useState<string[]>(loadOrder);
   const [dragOverId, setDragOverId] = useState<string | null>(null);
+  const [creatingChannel, setCreatingChannel] = useState(false);
+  const [newChannelName, setNewChannelName] = useState("");
+  const newChannelInputRef = useRef<HTMLInputElement>(null);
   const draggedIdRef = useRef<string | null>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
 
@@ -219,7 +222,11 @@ export function Sidebar({
           Channels
         </span>
         <button
-          onClick={onCreateChannel}
+          onClick={() => {
+            setCreatingChannel(true);
+            setNewChannelName("");
+            setTimeout(() => newChannelInputRef.current?.focus(), 0);
+          }}
           title="New channel"
           style={{
             background: "none",
@@ -237,6 +244,41 @@ export function Sidebar({
           + new
         </button>
       </div>
+      {creatingChannel && (
+        <div style={{ padding: "4px 12px 8px" }}>
+          <input
+            ref={newChannelInputRef}
+            value={newChannelName}
+            onChange={(e) => setNewChannelName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && newChannelName.trim()) {
+                onCreateChannel(newChannelName.trim());
+                setCreatingChannel(false);
+                setNewChannelName("");
+              } else if (e.key === "Escape") {
+                setCreatingChannel(false);
+                setNewChannelName("");
+              }
+            }}
+            onBlur={() => {
+              setCreatingChannel(false);
+              setNewChannelName("");
+            }}
+            placeholder="Channel name..."
+            style={{
+              width: "100%",
+              background: colors.bg,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 4,
+              color: colors.textLight,
+              fontSize: 13,
+              padding: "4px 8px",
+              outline: "none",
+              boxSizing: "border-box",
+            }}
+          />
+        </div>
+      )}
       {topLevel.map((channel) => (
         <ChannelItem
           key={channel.id}

@@ -145,10 +145,9 @@ export default function App() {
     [selectedId],
   );
 
-  const handleCreateChannel = useCallback(async () => {
+  const handleCreateChannel = useCallback(async (name: string) => {
     setError(null);
     try {
-      const name = `chat-${Date.now().toString(36)}`;
       const channelId = await createChannel(name);
       await loadChannels();
       handleSelect(channelId);

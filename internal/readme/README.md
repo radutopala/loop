@@ -2,7 +2,7 @@
 
 [![Go](https://img.shields.io/badge/Go-1.26-blue)](https://go.dev/) [![CI](https://github.com/radutopala/loop/actions/workflows/ci.yaml/badge.svg)](https://github.com/radutopala/loop/actions/workflows/ci.yaml) [![release](https://img.shields.io/github/v/release/radutopala/loop)](https://github.com/radutopala/loop/releases/latest) [![license](https://img.shields.io/badge/license-GPL--3.0-orange)](LICENSE)
 
-A Slack/Discord bot powered by Claude that runs AI agents in Docker containers.
+A Slack/Discord bot powered by Claude that runs AI agents in Docker containers — with a native macOS desktop app for chat, terminal, and diff views.
 
 ## Architecture
 
@@ -747,6 +747,36 @@ Project configs (`.loop/config.json`) can define their own `task_templates` that
 }
 ```
 
+## Desktop App (Electron)
+
+Loop includes a native macOS desktop app built with Electron + React.
+
+### Features
+
+- **Chat view** — send messages and stream agent responses in real-time
+- **Terminal view** — interactive xterm.js terminal with attach/detach support for agent containers
+- **Diff panel** — view git changes with file-level additions/deletions stats
+- **Sidebar** — browse channels and threads, create new ones, see running status (green dot)
+- **Deep links** — `loop://channel/<id>` opens the app directly to a channel
+- **Mode toggle** — switch between Chat and Terminal views per channel
+
+### Build & Install
+
+Requires [Node.js 22+](https://nodejs.org/).
+
+```sh
+# Development
+cd app && npm install && npm run dev
+
+# Build and install to /Applications
+make app-install
+```
+
+### Release Builds
+
+Release builds are signed with a Developer ID Application certificate and notarized by Apple. DMGs for both arm64 and x64 are built automatically on GitHub Actions (macOS 26 runners) and attached to each release.
+
+
 ## REST API
 
 | Method | Endpoint | Description |
@@ -758,11 +788,17 @@ Project configs (`.loop/config.json`) can define their own `task_templates` that
 | `GET` | `/api/channels?query=<term>` | Search channels and threads (optional query filter) |
 | `POST` | `/api/channels` | Ensure/create a channel for a directory |
 | `POST` | `/api/channels/create` | Create a channel by name |
+| `DELETE` | `/api/channels/{id}` | Delete a channel and its child threads |
 | `POST` | `/api/messages` | Send a message to a channel or thread |
 | `POST` | `/api/threads` | Create a thread in an existing channel |
 | `DELETE` | `/api/threads/{id}` | Delete a thread |
+| `GET` | `/api/channels/{id}/diff` | Get git diff for a channel's working directory |
+| `GET` | `/api/channels/{id}/messages` | List messages with cursor-based pagination |
+| `POST` | `/api/commands` | Send a slash command to a channel |
 | `POST` | `/api/memory/search` | Semantic search across memory files |
 | `POST` | `/api/memory/index` | Re-index memory files |
+| `GET` | `/api/ws` | WebSocket for real-time event streaming |
+| `GET` | `/api/ws/terminal` | WebSocket for interactive terminal sessions |
 
 ## MCP Tools
 
@@ -795,6 +831,7 @@ make test             # Run tests
 make lint             # Run linter
 make coverage-check   # Enforce 100% test coverage
 make coverage         # Generate HTML coverage report
+make app-install      # Build Electron app and copy to /Applications
 make clean            # Remove build artifacts
 ```
 
