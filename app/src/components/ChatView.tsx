@@ -560,7 +560,7 @@ function ChatInput({ channelId, isRunning, onSent }: { channelId: string; isRunn
         value={text}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
-        placeholder="Ask anything..."
+        placeholder="Ask Loop anything, / for commands"
         rows={3}
         disabled={sending}
       />

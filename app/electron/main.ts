@@ -25,13 +25,12 @@ if (!gotTheLock) {
   app.quit();
 }
 
-// In dev mode, set the dock icon explicitly since we're running the
-// generic Electron binary which shows the Electron icon by default.
-// In production, the .icns from electron-builder handles the app icon.
+// Set the dock icon explicitly from the PNG so macOS doesn't apply the
+// rounded-rectangle mask that .icns icons get.
 const iconPng = process.env.VITE_DEV_SERVER_URL
   ? path.join(__dirname, "../public/loop.png")
-  : undefined;
-if (iconPng && process.platform === "darwin") {
+  : path.join(__dirname, "../dist/loop.png");
+if (process.platform === "darwin") {
   app.dock?.setIcon(iconPng);
 }
 
