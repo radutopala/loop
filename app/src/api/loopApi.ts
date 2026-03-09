@@ -68,6 +68,13 @@ export async function deleteThread(threadId: string): Promise<void> {
   if (!res.ok) throw new Error(`Failed to delete thread: ${res.statusText}`);
 }
 
+export async function deleteChannel(channelId: string): Promise<void> {
+  const res = await fetch(`${apiUrl}/api/channels/${channelId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`Failed to delete channel: ${res.statusText}`);
+}
+
 export async function createChannel(name: string): Promise<string> {
   const res = await fetch(`${apiUrl}/api/channels/create`, {
     method: "POST",

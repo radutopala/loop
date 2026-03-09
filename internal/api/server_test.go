@@ -81,6 +81,14 @@ func (m *MockChannelLister) GetMessagesCursor(ctx context.Context, channelID str
 	return args.Get(0).([]*db.Message), args.Error(1)
 }
 
+func (m *MockChannelLister) DeleteChannel(ctx context.Context, channelID string) error {
+	return m.Called(ctx, channelID).Error(0)
+}
+
+func (m *MockChannelLister) DeleteChannelsByParentID(ctx context.Context, parentID string) error {
+	return m.Called(ctx, parentID).Error(0)
+}
+
 type MockMessageSender struct {
 	mock.Mock
 }
@@ -186,6 +194,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("POST /api/messages", s.srv.handleSendMessage)
 	s.mux.HandleFunc("POST /api/threads", s.srv.handleCreateThread)
 	s.mux.HandleFunc("DELETE /api/threads/{id}", s.srv.handleDeleteThread)
+	s.mux.HandleFunc("DELETE /api/channels/{id}", s.srv.handleDeleteChannel)
 	s.mux.HandleFunc("POST /api/tasks", s.srv.handleCreateTask)
 	s.mux.HandleFunc("GET /api/tasks", s.srv.handleListTasks)
 	s.mux.HandleFunc("GET /api/tasks/{id}", s.srv.handleGetTask)
@@ -828,6 +837,82 @@ func (s *ServerSuite) TestDeleteThreadError() {
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.threads.AssertExpectations(s.T())
+}
+
+// --- DeleteChannel tests ---
+
+func (s *ServerSuite) TestDeleteChannelNotConfigured() {
+	srv := NewServer(nil, nil, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE /api/channels/{id}", srv.handleDeleteChannel)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/channels/ch-1", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+func (s *ServerSuite) TestDeleteChannelSuccess() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", Name: "test"}, nil)
+	s.store.On("DeleteChannelsByParentID", mock.Anything, "ch-1").Return(nil)
+	s.store.On("DeleteChannel", mock.Anything, "ch-1").Return(nil)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/channels/ch-1", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusNoContent, w.Code)
+}
+
+func (s *ServerSuite) TestDeleteChannelNotFound() {
+	s.store.On("GetChannel", mock.Anything, "missing").
+		Return((*db.Channel)(nil), nil)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/channels/missing", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusNotFound, w.Code)
+}
+
+func (s *ServerSuite) TestDeleteChannelGetError() {
+	s.store.On("GetChannel", mock.Anything, "ch-err").
+		Return((*db.Channel)(nil), errors.New("db error"))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/channels/ch-err", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+}
+
+func (s *ServerSuite) TestDeleteChannelChildrenError() {
+	s.store.On("GetChannel", mock.Anything, "ch-err").
+		Return(&db.Channel{ChannelID: "ch-err"}, nil)
+	s.store.On("DeleteChannelsByParentID", mock.Anything, "ch-err").
+		Return(errors.New("db error"))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/channels/ch-err", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+}
+
+func (s *ServerSuite) TestDeleteChannelDeleteError() {
+	s.store.On("GetChannel", mock.Anything, "ch-err").
+		Return(&db.Channel{ChannelID: "ch-err"}, nil)
+	s.store.On("DeleteChannelsByParentID", mock.Anything, "ch-err").Return(nil)
+	s.store.On("DeleteChannel", mock.Anything, "ch-err").
+		Return(errors.New("db error"))
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/channels/ch-err", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
 }
 
 // --- SearchChannels tests ---

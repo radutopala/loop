@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Channel, ViewMode } from "./types";
 import { colors, fonts } from "./theme";
-import { createChannel, createThread, deleteThread, fetchChannels, fetchDiff, initApiUrl } from "./api/loopApi";
+import { createChannel, createThread, deleteChannel, deleteThread, fetchChannels, fetchDiff, initApiUrl } from "./api/loopApi";
 import { Sidebar } from "./components/Sidebar";
 import { Terminal } from "./components/Terminal";
 import { ChatView } from "./components/ChatView";
@@ -175,22 +175,27 @@ export default function App() {
     [loadChannels, handleSelect],
   );
 
-  const handleDeleteThread = useCallback(
-    async (threadId: string) => {
+  const handleDelete = useCallback(
+    async (id: string) => {
       setError(null);
       try {
-        await deleteThread(threadId);
+        const ch = channels.find((c) => c.id === id);
+        if (ch && ch.parent_id) {
+          await deleteThread(id);
+        } else {
+          await deleteChannel(id);
+        }
         await loadChannels();
-        if (selectedId === threadId) {
+        if (selectedId === id) {
           setSelectedId(null);
         }
       } catch (err) {
-        const message = err instanceof Error ? err.message : "Failed to delete thread";
+        const message = err instanceof Error ? err.message : "Failed to delete";
         setError(message);
-        console.error("delete thread failed:", err);
+        console.error("delete failed:", err);
       }
     },
-    [loadChannels, selectedId],
+    [channels, loadChannels, selectedId],
   );
 
   return (
@@ -210,7 +215,7 @@ export default function App() {
         onSelect={handleSelect}
         onCreateChannel={handleCreateChannel}
         onCreateThread={handleCreateThread}
-        onDeleteThread={handleDeleteThread}
+        onDeleteThread={handleDelete}
       />
       <div style={{ flex: 1, minWidth: 360, display: "flex", flexDirection: "column" }}>
         {/* Drag region for macOS hiddenInset title bar — enables double-click to zoom */}

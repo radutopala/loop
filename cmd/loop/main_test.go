@@ -1199,19 +1199,16 @@ func (s *MainSuite) TestReindexAll() {
 	store := new(testutil.MockStore)
 	store.On("GetMemoryFileHash", mock.Anything, mock.Anything, mock.Anything).Return("", nil)
 	store.On("UpsertMemoryFile", mock.Anything, mock.Anything).Return(nil)
-	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
-	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
-
-	cl := new(mockChannelLister)
-	cl.On("ListChannels", mock.Anything).Return([]*db.Channel{
+	store.On("ListChannels", mock.Anything).Return([]*db.Channel{
 		{ChannelID: "ch1", DirPath: tmpDir},
 		{ChannelID: "ch2", DirPath: ""},             // empty dir_path — skipped
 		{ChannelID: "ch3", DirPath: "/nonexistent"}, // no files — 0 indexed
 	}, nil)
+	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
 
-	mdi.reindexAll(context.Background(), cl)
-	cl.AssertExpectations(s.T())
-	store.AssertCalled(s.T(), "UpsertMemoryFile", mock.Anything, mock.Anything)
+	mdi.reindexAll(context.Background(), store)
+	store.AssertExpectations(s.T())
 }
 
 func (s *MainSuite) TestReindexAllListError() {
@@ -1220,11 +1217,10 @@ func (s *MainSuite) TestReindexAllListError() {
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
 	mdi := &multiDirIndexer{indexer: indexer, logger: logger}
 
-	cl := new(mockChannelLister)
-	cl.On("ListChannels", mock.Anything).Return(nil, errors.New("db error"))
+	store.On("ListChannels", mock.Anything).Return(nil, errors.New("db error"))
 
-	mdi.reindexAll(context.Background(), cl)
-	cl.AssertExpectations(s.T())
+	mdi.reindexAll(context.Background(), store)
+	store.AssertExpectations(s.T())
 }
 
 func (s *MainSuite) TestReindexAllCancelledContext() {

@@ -157,6 +157,37 @@ func gitBranch(ctx context.Context, dir string) string {
 	return strings.TrimSpace(string(out))
 }
 
+func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel deletion not configured") {
+		return
+	}
+
+	channelID := r.PathValue("id")
+
+	ch, err := s.store.GetChannel(r.Context(), channelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if ch == nil {
+		http.Error(w, "channel not found", http.StatusNotFound)
+		return
+	}
+
+	// Delete child threads first.
+	if err := s.store.DeleteChannelsByParentID(r.Context(), channelID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if err := s.store.DeleteChannel(r.Context(), channelID); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
 func containsFold(s, substr string) bool {
 	return strings.Contains(strings.ToLower(s), strings.ToLower(substr))
 }
