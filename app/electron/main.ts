@@ -27,8 +27,11 @@ if (!gotTheLock) {
 
 // In dev mode, set the dock icon explicitly since we're running the
 // generic Electron binary which shows the Electron icon by default.
-const iconPng = path.join(__dirname, "../public/loop.png");
-if (process.platform === "darwin") {
+// In production, the .icns from electron-builder handles the app icon.
+const iconPng = process.env.VITE_DEV_SERVER_URL
+  ? path.join(__dirname, "../public/loop.png")
+  : undefined;
+if (iconPng && process.platform === "darwin") {
   app.dock?.setIcon(iconPng);
 }
 
@@ -49,7 +52,7 @@ function parseChannelId(url: string): string {
 function createWindow(hash?: string) {
   mainWindow = new BrowserWindow({
     title: "Loop",
-    icon: iconPng,
+    icon: iconPng, // undefined in production — uses .icns from electron-builder
     width: 1200,
     height: 800,
     minWidth: 900,

@@ -35,6 +35,7 @@ export default defineConfig({
     ]),
     renderer(),
   ],
+  base: "./",
   build: {
     outDir: "dist",
   },

@@ -61,6 +61,11 @@ export function ChatView({ channelId, initialRunning }: ChatViewProps) {
     }
   }, [messages, streamingContent]);
 
+  const scrollToBottom = useCallback(() => {
+    autoScrollRef.current = true;
+    requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }));
+  }, []);
+
   // Track whether user has scrolled up.
   const handleScroll = useCallback(() => {
     const el = containerRef.current;
@@ -101,7 +106,7 @@ export function ChatView({ channelId, initialRunning }: ChatViewProps) {
           <WelcomeScreen />
         </div>
         <div style={styles.inputBar}>
-          <ChatInput channelId={channelId} />
+          <ChatInput channelId={channelId} onSent={scrollToBottom} />
         </div>
       </div>
     );
@@ -130,7 +135,7 @@ export function ChatView({ channelId, initialRunning }: ChatViewProps) {
         </div>
       </div>
       <div style={styles.inputBar}>
-        <ChatInput channelId={channelId} isRunning={isRunning} />
+        <ChatInput channelId={channelId} isRunning={isRunning} onSent={scrollToBottom} />
       </div>
     </div>
   );
@@ -139,7 +144,7 @@ export function ChatView({ channelId, initialRunning }: ChatViewProps) {
 function WelcomeScreen() {
   return (
     <div style={styles.welcomeContent}>
-      <img src="/loop.png" alt="Loop" style={{ width: 48, height: 48, opacity: 0.7 }} />
+      <img src="./loop.png" alt="Loop" style={{ width: 128, height: 128, opacity: 0.7 }} />
       <div style={styles.welcomeTitle}>What can we build?</div>
     </div>
   );
@@ -333,7 +338,7 @@ const LOOP_COMMANDS: CommandDef[] = [
   { name: "iamtheowner", description: "Claim channel ownership" },
 ];
 
-function ChatInput({ channelId, isRunning }: { channelId: string; isRunning?: boolean }) {
+function ChatInput({ channelId, isRunning, onSent }: { channelId: string; isRunning?: boolean; onSent?: () => void }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [showMention, setShowMention] = useState(false);
@@ -377,9 +382,7 @@ function ChatInput({ channelId, isRunning }: { channelId: string; isRunning?: bo
         await sendMessage(channelId, trimmed);
       }
       setText("");
-      // Force scroll to bottom after sending.
-      autoScrollRef.current = true;
-      requestAnimationFrame(() => bottomRef.current?.scrollIntoView({ behavior: "smooth" }));
+      onSent?.();
     } finally {
       setSending(false);
       // Re-focus after React re-enables the textarea on the next render.
