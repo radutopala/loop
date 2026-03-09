@@ -9,6 +9,9 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -16,9 +19,11 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/testutil"
+	"github.com/radutopala/loop/internal/types"
 )
 
 type MockChannelEnsurer struct {
@@ -101,6 +106,43 @@ func (m *MockMemoryIndexer) Index(ctx context.Context, memoryDir string) (int, e
 	return args.Int(0), args.Error(1)
 }
 
+type MockRunningChannelLister struct {
+	mock.Mock
+}
+
+func (m *MockRunningChannelLister) RunningChannelIDs(ctx context.Context) (map[string]struct{}, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]struct{}), args.Error(1)
+}
+
+type MockIncomingMessageHandler struct {
+	mock.Mock
+}
+
+func (m *MockIncomingMessageHandler) HandleIncomingMessage(ctx context.Context, channelID, authorID, content string) {
+	m.Called(ctx, channelID, authorID, content)
+}
+
+type MockInteractionHandler struct {
+	mock.Mock
+	called chan struct{}
+}
+
+func newMockInteractionHandler() *MockInteractionHandler {
+	return &MockInteractionHandler{called: make(chan struct{}, 1)}
+}
+
+func (m *MockInteractionHandler) HandleInteraction(ctx context.Context, inter *bot.Interaction) {
+	m.Called(ctx, inter)
+	select {
+	case m.called <- struct{}{}:
+	default:
+	}
+}
+
 type ServerSuite struct {
 	suite.Suite
 	scheduler *testutil.MockScheduler
@@ -138,6 +180,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("DELETE /api/tasks/{id}", s.srv.handleDeleteTask)
 	s.mux.HandleFunc("PATCH /api/tasks/{id}", s.srv.handleUpdateTask)
 	s.mux.HandleFunc("GET /api/channels/{id}/messages", s.srv.handleListMessages)
+	s.mux.HandleFunc("POST /api/commands", s.srv.handleCommand)
 	s.mux.HandleFunc("POST /api/memory/search", s.srv.handleMemorySearch)
 	s.mux.HandleFunc("POST /api/memory/index", s.srv.handleMemoryIndex)
 	s.mux.HandleFunc("GET /api/readme", s.srv.handleGetReadme)
@@ -277,6 +320,23 @@ func (s *ServerSuite) TestCreateTaskSuccess() {
 	var resp createTaskResponse
 	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
 	require.Equal(s.T(), int64(42), resp.ID)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCreateTaskWithTemplateName() {
+	s.scheduler.On("AddTask", mock.Anything, mock.MatchedBy(func(task *db.ScheduledTask) bool {
+		return task.ChannelID == "ch1" && task.Schedule == "* * * * *" &&
+			task.Type == db.TaskTypeCron && task.Prompt == "dispatch" &&
+			task.TemplateName == "tk-auto-worker"
+	})).Return(int64(55), nil)
+
+	rec := s.testRequest("POST", "/api/tasks", `{"channel_id":"ch1","schedule":"* * * * *","type":"cron","prompt":"dispatch","template_name":"tk-auto-worker"}`)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+
+	var resp createTaskResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(s.T(), int64(55), resp.ID)
 	s.scheduler.AssertExpectations(s.T())
 }
 
@@ -639,6 +699,78 @@ func (s *ServerSuite) TestCreateThreadSuccessWithMessage() {
 	s.threads.AssertExpectations(s.T())
 }
 
+func (s *ServerSuite) TestCreateThreadLocalAutoTrigger() {
+	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread", "user-42", "Do the task").
+		Return("thread-1", nil)
+
+	handler := new(MockIncomingMessageHandler)
+	s.srv.SetIncomingMessageHandler(handler)
+	defer func() { s.srv.msgHandler = nil }()
+
+	called := make(chan struct{}, 1)
+	handler.On("HandleIncomingMessage", mock.Anything, "thread-1", "user-42", "@LoopBot Do the task").
+		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
+
+	rec := s.testRequest("POST", "/api/threads", `{"channel_id":"ch-1","name":"my-thread","author_id":"user-42","message":"Do the task"}`)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+
+	var resp createThreadResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(s.T(), "thread-1", resp.ThreadID)
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		s.T().Fatal("HandleIncomingMessage was not called within 1s")
+	}
+
+	handler.AssertExpectations(s.T())
+	s.threads.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCreateThreadLocalAutoTriggerDefaultAuthor() {
+	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread", "", "Do the task").
+		Return("thread-1", nil)
+
+	handler := new(MockIncomingMessageHandler)
+	s.srv.SetIncomingMessageHandler(handler)
+	defer func() { s.srv.msgHandler = nil }()
+
+	called := make(chan struct{}, 1)
+	// No author_id provided — should default to "local-user".
+	handler.On("HandleIncomingMessage", mock.Anything, "thread-1", "local-user", "@LoopBot Do the task").
+		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
+
+	rec := s.testRequest("POST", "/api/threads", `{"channel_id":"ch-1","name":"my-thread","message":"Do the task"}`)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		s.T().Fatal("HandleIncomingMessage was not called within 1s")
+	}
+
+	handler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCreateThreadLocalNoTriggerWithoutMessage() {
+	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread", "", "").
+		Return("thread-1", nil)
+
+	handler := new(MockIncomingMessageHandler)
+	s.srv.SetIncomingMessageHandler(handler)
+	defer func() { s.srv.msgHandler = nil }()
+
+	rec := s.testRequest("POST", "/api/threads", `{"channel_id":"ch-1","name":"my-thread"}`)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+
+	// No message means no auto-trigger.
+	handler.AssertNotCalled(s.T(), "HandleIncomingMessage", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
 func (s *ServerSuite) TestCreateThreadMissingFields() {
 	tests := []struct {
 		name string
@@ -689,9 +821,10 @@ func (s *ServerSuite) TestDeleteThreadError() {
 // --- SearchChannels tests ---
 
 func (s *ServerSuite) TestSearchChannelsSuccess() {
+	s.srv.SetPlatform(types.PlatformLocal)
 	channels := []*db.Channel{
-		{ChannelID: "ch-1", Name: "general", DirPath: "/home/user/general", Active: true},
-		{ChannelID: "ch-2", Name: "random", DirPath: "/home/user/random", ParentID: "ch-1", Active: false},
+		{ChannelID: "ch-1", Name: "general", DirPath: "/home/user/general", Active: true, Platform: types.PlatformLocal},
+		{ChannelID: "ch-2", Name: "random", DirPath: "/home/user/random", ParentID: "ch-1", Active: false, Platform: types.PlatformLocal},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
 
@@ -711,9 +844,10 @@ func (s *ServerSuite) TestSearchChannelsSuccess() {
 }
 
 func (s *ServerSuite) TestSearchChannelsWithQuery() {
+	s.srv.SetPlatform(types.PlatformLocal)
 	channels := []*db.Channel{
-		{ChannelID: "ch-1", Name: "general", DirPath: "/home/user/general", Active: true},
-		{ChannelID: "ch-2", Name: "random", DirPath: "/home/user/random", Active: true},
+		{ChannelID: "ch-1", Name: "general", DirPath: "/home/user/general", Active: true, Platform: types.PlatformLocal},
+		{ChannelID: "ch-2", Name: "random", DirPath: "/home/user/random", Active: true, Platform: types.PlatformLocal},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
 
@@ -729,8 +863,9 @@ func (s *ServerSuite) TestSearchChannelsWithQuery() {
 }
 
 func (s *ServerSuite) TestSearchChannelsWithQueryNoMatch() {
+	s.srv.SetPlatform(types.PlatformLocal)
 	channels := []*db.Channel{
-		{ChannelID: "ch-1", Name: "general", DirPath: "/home/user/general", Active: true},
+		{ChannelID: "ch-1", Name: "general", DirPath: "/home/user/general", Active: true, Platform: types.PlatformLocal},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
 
@@ -757,6 +892,76 @@ func (s *ServerSuite) TestSearchChannelsEmpty() {
 	s.store.AssertExpectations(s.T())
 }
 
+func (s *ServerSuite) TestSearchChannelsFiltersByPlatform() {
+	s.srv.SetPlatform(types.PlatformLocal)
+	channels := []*db.Channel{
+		{ChannelID: "ch-1", Name: "local-ch", Platform: types.PlatformLocal, Active: true},
+		{ChannelID: "ch-2", Name: "discord-ch", Platform: types.PlatformDiscord, Active: true},
+		{ChannelID: "ch-3", Name: "slack-ch", Platform: types.PlatformSlack, Active: true},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+
+	rec := s.testRequest("GET", "/api/channels", "")
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 1)
+	require.Equal(s.T(), "local-ch", resp[0].Name)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSearchChannelsRunningFromContainers() {
+	s.srv.SetPlatform(types.PlatformLocal)
+
+	lister := new(MockRunningChannelLister)
+	s.srv.SetRunningChannelLister(lister)
+
+	channels := []*db.Channel{
+		{ChannelID: "ch-1", Name: "running-ch", Platform: types.PlatformLocal, Active: true},
+		{ChannelID: "ch-2", Name: "idle-ch", Platform: types.PlatformLocal, Active: true},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	lister.On("RunningChannelIDs", mock.Anything).Return(map[string]struct{}{"ch-1": {}}, nil)
+
+	rec := s.testRequest("GET", "/api/channels", "")
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 2)
+	require.True(s.T(), resp[0].Running)
+	require.False(s.T(), resp[1].Running)
+	s.store.AssertExpectations(s.T())
+	lister.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSearchChannelsRunningListerError() {
+	s.srv.SetPlatform(types.PlatformLocal)
+
+	lister := new(MockRunningChannelLister)
+	s.srv.SetRunningChannelLister(lister)
+
+	channels := []*db.Channel{
+		{ChannelID: "ch-1", Name: "ch", Platform: types.PlatformLocal, Active: true},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	lister.On("RunningChannelIDs", mock.Anything).Return(nil, errors.New("docker error"))
+
+	rec := s.testRequest("GET", "/api/channels", "")
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 1)
+	require.False(s.T(), resp[0].Running)
+	s.store.AssertExpectations(s.T())
+	lister.AssertExpectations(s.T())
+}
+
 func (s *ServerSuite) TestSearchChannelsError() {
 	s.store.On("ListChannels", mock.Anything).Return(nil, errors.New("db error"))
 
@@ -764,6 +969,64 @@ func (s *ServerSuite) TestSearchChannelsError() {
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSearchChannelsDirPathFallback() {
+	s.srv.SetPlatform(types.PlatformLocal)
+	s.srv.SetLoopDir("/home/test/.loop")
+	channels := []*db.Channel{
+		{ChannelID: "ch-1", Name: "no-dir", Active: true, Platform: types.PlatformLocal},
+		{ChannelID: "ch-2", Name: "has-dir", DirPath: "/custom/path", Active: true, Platform: types.PlatformLocal},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+
+	rec := s.testRequest("GET", "/api/channels", "")
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 2)
+	require.Equal(s.T(), "/home/test/.loop/ch-1/work", resp[0].DirPath)
+	require.Equal(s.T(), "/custom/path", resp[1].DirPath)
+	s.srv.SetLoopDir("")
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSearchChannelsBranch() {
+	s.srv.SetPlatform(types.PlatformLocal)
+
+	// Create a temp git repo so gitBranch returns a real branch name.
+	dir := s.T().TempDir()
+	for _, args := range [][]string{
+		{"git", "init"},
+		{"git", "config", "user.email", "t@t.com"},
+		{"git", "config", "user.name", "T"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		require.NoError(s.T(), cmd.Run())
+	}
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x"), 0o644))
+	add := exec.Command("git", "add", ".")
+	add.Dir = dir
+	require.NoError(s.T(), add.Run())
+	ci := exec.Command("git", "commit", "-m", "init")
+	ci.Dir = dir
+	require.NoError(s.T(), ci.Run())
+
+	channels := []*db.Channel{
+		{ChannelID: "ch-br", Name: "with-branch", DirPath: dir, Active: true, Platform: types.PlatformLocal},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+
+	rec := s.testRequest("GET", "/api/channels", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 1)
+	require.NotEmpty(s.T(), resp[0].Branch)
 }
 
 // --- SendMessage tests ---
@@ -800,6 +1063,40 @@ func (s *ServerSuite) TestSendMessageError() {
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.messages.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSendMessageViaHandler() {
+	handler := new(MockIncomingMessageHandler)
+	s.srv.SetIncomingMessageHandler(handler)
+
+	called := make(chan struct{}, 1)
+	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "local-user", "hello world").
+		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
+
+	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"hello world"}`)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	// Wait for the goroutine to invoke the handler.
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		s.T().Fatal("HandleIncomingMessage was not called within 1s")
+	}
+
+	handler.AssertExpectations(s.T())
+	// PostMessage must NOT be called when the handler is set.
+	s.messages.AssertNotCalled(s.T(), "PostMessage")
+}
+
+func (s *ServerSuite) TestSetIncomingMessageHandler() {
+	require.Nil(s.T(), s.srv.msgHandler)
+
+	handler := new(MockIncomingMessageHandler)
+	s.srv.SetIncomingMessageHandler(handler)
+
+	require.NotNil(s.T(), s.srv.msgHandler)
+	require.Equal(s.T(), handler, s.srv.msgHandler)
 }
 
 // --- MemorySearch tests ---
@@ -1162,4 +1459,164 @@ func (s *ServerSuite) TestWriteJSONEncodeError() {
 	// Channels are not JSON-encodable, so this triggers the error branch.
 	writeHTTPJSON(w, http.StatusOK, make(chan int), s.srv.logger)
 	require.Equal(s.T(), http.StatusOK, w.Code)
+}
+
+func (s *ServerSuite) TestCorsMiddleware() {
+	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// Regular GET request
+	req := httptest.NewRequest("GET", "/test", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	require.Equal(s.T(), "*", w.Header().Get("Access-Control-Allow-Origin"))
+	require.Contains(s.T(), w.Header().Get("Access-Control-Allow-Methods"), "GET")
+}
+
+func (s *ServerSuite) TestCorsMiddlewareOptions() {
+	handler := corsMiddleware(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	// OPTIONS preflight
+	req := httptest.NewRequest("OPTIONS", "/test", nil)
+	w := httptest.NewRecorder()
+	handler.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusNoContent, w.Code)
+	require.Equal(s.T(), "*", w.Header().Get("Access-Control-Allow-Origin"))
+}
+
+// --- Command handler tests ---
+
+func (s *ServerSuite) TestCommandNotConfigured() {
+	rec := s.testRequest("POST", "/api/commands", `{"channel_id":"ch-1","command":"tasks"}`)
+	require.Equal(s.T(), http.StatusServiceUnavailable, rec.Code)
+}
+
+func (s *ServerSuite) TestCommandInvalidJSON() {
+	handler := newMockInteractionHandler()
+	s.srv.SetInteractionHandler(handler)
+
+	rec := s.testRequest("POST", "/api/commands", `{invalid}`)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestCommandMissingChannelID() {
+	handler := newMockInteractionHandler()
+	s.srv.SetInteractionHandler(handler)
+
+	rec := s.testRequest("POST", "/api/commands", `{"command":"tasks"}`)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestCommandMissingCommand() {
+	handler := newMockInteractionHandler()
+	s.srv.SetInteractionHandler(handler)
+
+	rec := s.testRequest("POST", "/api/commands", `{"channel_id":"ch-1"}`)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestCommandUnknownCommand() {
+	handler := newMockInteractionHandler()
+	s.srv.SetInteractionHandler(handler)
+
+	rec := s.testRequest("POST", "/api/commands", `{"channel_id":"ch-1","command":"nonexistent"}`)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestCommandTasksSuccess() {
+	handler := newMockInteractionHandler()
+	s.srv.SetInteractionHandler(handler)
+
+	handler.On("HandleInteraction", mock.Anything, mock.MatchedBy(func(inter *bot.Interaction) bool {
+		return inter.ChannelID == "ch-1" &&
+			inter.CommandName == "tasks" &&
+			inter.AuthorID == "local-user"
+	})).Return()
+
+	rec := s.testRequest("POST", "/api/commands", `{"channel_id":"ch-1","command":"tasks"}`)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	select {
+	case <-handler.called:
+	case <-time.After(time.Second):
+		s.T().Fatal("HandleInteraction was not called within 1s")
+	}
+	handler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCommandWithAuthorID() {
+	handler := newMockInteractionHandler()
+	s.srv.SetInteractionHandler(handler)
+
+	handler.On("HandleInteraction", mock.Anything, mock.MatchedBy(func(inter *bot.Interaction) bool {
+		return inter.AuthorID == "user-42" && inter.CommandName == "status"
+	})).Return()
+
+	rec := s.testRequest("POST", "/api/commands", `{"channel_id":"ch-1","author_id":"user-42","command":"status"}`)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	select {
+	case <-handler.called:
+	case <-time.After(time.Second):
+		s.T().Fatal("HandleInteraction was not called within 1s")
+	}
+	handler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCommandScheduleWithOptions() {
+	handler := newMockInteractionHandler()
+	s.srv.SetInteractionHandler(handler)
+
+	handler.On("HandleInteraction", mock.Anything, mock.MatchedBy(func(inter *bot.Interaction) bool {
+		return inter.CommandName == "schedule" &&
+			inter.Options["type"] == "cron" &&
+			inter.Options["schedule"] == "0 9 * * *" &&
+			inter.Options["prompt"] == "check status"
+	})).Return()
+
+	rec := s.testRequest("POST", "/api/commands",
+		`{"channel_id":"ch-1","command":"schedule type=cron schedule=\"0 9 * * *\" prompt=\"check status\""}`)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	select {
+	case <-handler.called:
+	case <-time.After(time.Second):
+		s.T().Fatal("HandleInteraction was not called within 1s")
+	}
+	handler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCommandCancelWithTaskID() {
+	handler := newMockInteractionHandler()
+	s.srv.SetInteractionHandler(handler)
+
+	handler.On("HandleInteraction", mock.Anything, mock.MatchedBy(func(inter *bot.Interaction) bool {
+		return inter.CommandName == "cancel" && inter.Options["task_id"] == "5"
+	})).Return()
+
+	rec := s.testRequest("POST", "/api/commands", `{"channel_id":"ch-1","command":"cancel 5"}`)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	select {
+	case <-handler.called:
+	case <-time.After(time.Second):
+		s.T().Fatal("HandleInteraction was not called within 1s")
+	}
+	handler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSetInteractionHandler() {
+	require.Nil(s.T(), s.srv.interactionHandler)
+
+	handler := newMockInteractionHandler()
+	s.srv.SetInteractionHandler(handler)
+
+	require.NotNil(s.T(), s.srv.interactionHandler)
+	require.Equal(s.T(), handler, s.srv.interactionHandler)
 }

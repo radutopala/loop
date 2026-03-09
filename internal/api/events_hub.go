@@ -11,8 +11,9 @@ import (
 
 // Event type constants.
 const (
-	EventMessageCreated = "message.created"
-	EventAgentStatus    = "agent.status"
+	EventMessageCreated   = "message.created"
+	EventMessageStreaming = "message.streaming"
+	EventAgentStatus      = "agent.status"
 )
 
 // Event represents a server-sent event to WebSocket clients.
@@ -30,6 +31,11 @@ type MessageData struct {
 	AuthorName string `json:"author_name"`
 	Content    string `json:"content"`
 	IsBot      bool   `json:"is_bot"`
+}
+
+// MessageStreamingData is the data payload for message.streaming events.
+type MessageStreamingData struct {
+	Content string `json:"content"`
 }
 
 // AgentStatusData is the data payload for agent.status events.
@@ -127,6 +133,15 @@ func (h *EventsHub) Broadcast(evt Event) {
 func (h *EventsHub) BroadcastMessageCreated(channelID string, data MessageData) {
 	h.Broadcast(Event{
 		Type:      EventMessageCreated,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastMessageStreaming sends a message.streaming event with partial bot response.
+func (h *EventsHub) BroadcastMessageStreaming(channelID string, data MessageStreamingData) {
+	h.Broadcast(Event{
+		Type:      EventMessageStreaming,
 		ChannelID: channelID,
 		Data:      data,
 	})

@@ -21,6 +21,7 @@ type Platform string
 const (
 	PlatformDiscord Platform = "discord"
 	PlatformSlack   Platform = "slack"
+	PlatformLocal   Platform = "local"
 )
 
 // Role represents the RBAC role for channel access control.

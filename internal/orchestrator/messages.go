@@ -227,6 +227,31 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 				Content:          text,
 				ReplyToMessageID: msg.MessageID,
 			})
+
+			// Store each intermediate turn and broadcast as a created message
+			// so the frontend displays it immediately and it persists on reload.
+			turnMsgID := generateMessageID()
+			ch, chErr := o.store.GetChannel(ctx, msg.ChannelID)
+			if chErr == nil && ch != nil {
+				_ = o.store.InsertMessage(ctx, &db.Message{
+					ChatID:     ch.ID,
+					ChannelID:  msg.ChannelID,
+					MsgID:      turnMsgID,
+					AuthorName: "assistant",
+					Content:    text,
+					IsBot:      true,
+					CreatedAt:  time.Now().UTC(),
+				})
+			}
+
+			if o.events != nil {
+				o.events.BroadcastMessageCreated(msg.ChannelID, MessageEventData{
+					MsgID:      turnMsgID,
+					AuthorName: "assistant",
+					Content:    text,
+					IsBot:      true,
+				})
+			}
 		})
 		req.OnTurn = tracker.OnTurn
 	}
@@ -292,8 +317,10 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 		"content", resp.Response,
 	)
 
-	// Skip final send if it duplicates the last streamed turn
-	if lastStreamedText == "" || resp.Response != lastStreamedText {
+	// Skip final send/store/broadcast if it duplicates the last streamed turn
+	// (already stored and broadcast during streaming).
+	isDuplicate := lastStreamedText != "" && resp.Response == lastStreamedText
+	if !isDuplicate {
 		if err := o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 			ChannelID:        msg.ChannelID,
 			Content:          resp.Response,
@@ -301,31 +328,31 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 		}); err != nil {
 			o.logger.Error("sending response", "error", err, "channel_id", msg.ChannelID)
 		}
-	}
 
-	botMsgID := generateMessageID()
-	ch, err := o.store.GetChannel(ctx, msg.ChannelID)
-	if err == nil && ch != nil {
-		if insertErr := o.store.InsertMessage(ctx, &db.Message{
-			ChatID:     ch.ID,
-			ChannelID:  msg.ChannelID,
-			MsgID:      botMsgID,
-			AuthorName: "assistant",
-			Content:    resp.Response,
-			IsBot:      true,
-			CreatedAt:  time.Now().UTC(),
-		}); insertErr != nil {
-			o.logger.Error("inserting bot response", "error", insertErr, "channel_id", msg.ChannelID)
+		botMsgID := generateMessageID()
+		ch, err := o.store.GetChannel(ctx, msg.ChannelID)
+		if err == nil && ch != nil {
+			if insertErr := o.store.InsertMessage(ctx, &db.Message{
+				ChatID:     ch.ID,
+				ChannelID:  msg.ChannelID,
+				MsgID:      botMsgID,
+				AuthorName: "assistant",
+				Content:    resp.Response,
+				IsBot:      true,
+				CreatedAt:  time.Now().UTC(),
+			}); insertErr != nil {
+				o.logger.Error("inserting bot response", "error", insertErr, "channel_id", msg.ChannelID)
+			}
 		}
-	}
 
-	if o.events != nil {
-		o.events.BroadcastMessageCreated(msg.ChannelID, MessageEventData{
-			MsgID:      botMsgID,
-			AuthorName: "assistant",
-			Content:    resp.Response,
-			IsBot:      true,
-		})
+		if o.events != nil {
+			o.events.BroadcastMessageCreated(msg.ChannelID, MessageEventData{
+				MsgID:      botMsgID,
+				AuthorName: "assistant",
+				Content:    resp.Response,
+				IsBot:      true,
+			})
+		}
 	}
 
 	ids := make([]int64, len(recent))

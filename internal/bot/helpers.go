@@ -54,6 +54,22 @@ func StripMention(content, botUserID string) string {
 	return strings.TrimSpace(content)
 }
 
+// HasTextMention reports whether content contains @username (case-insensitive).
+func HasTextMention(content, username string) bool {
+	target := "@" + username
+	return strings.Contains(strings.ToLower(content), strings.ToLower(target))
+}
+
+// StripTextMention removes the first case-insensitive @username from content
+// and collapses any resulting double spaces.
+func StripTextMention(content, username string) string {
+	s := strings.TrimSpace(ReplaceTextMention(content, username, ""))
+	for strings.Contains(s, "  ") {
+		s = strings.ReplaceAll(s, "  ", " ")
+	}
+	return s
+}
+
 // ReplaceTextMention replaces a case-insensitive @username with the given mention string.
 func ReplaceTextMention(content, username, mention string) string {
 	target := "@" + username

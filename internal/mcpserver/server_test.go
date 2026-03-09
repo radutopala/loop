@@ -143,6 +143,40 @@ func (s *MCPServerSuite) TestScheduleTaskSuccess() {
 	require.Contains(s.T(), text, "ID: 42")
 }
 
+func (s *MCPServerSuite) TestScheduleTaskWithTemplateName() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "POST", req.Method)
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"template_name":"tk-auto-worker"`)
+		return jsonResponse(http.StatusCreated, `{"id":55}`), nil
+	}
+
+	text, isError := s.callTool("schedule_task", map[string]any{
+		"schedule":      "* * * * *",
+		"type":          "cron",
+		"prompt":        "dispatch",
+		"template_name": "tk-auto-worker",
+	})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "ID: 55")
+}
+
+func (s *MCPServerSuite) TestScheduleTaskWithoutTemplateName() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		require.NotContains(s.T(), string(body), "template_name")
+		return jsonResponse(http.StatusCreated, `{"id":56}`), nil
+	}
+
+	text, isError := s.callTool("schedule_task", map[string]any{
+		"schedule": "0 9 * * *",
+		"type":     "cron",
+		"prompt":   "test",
+	})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "ID: 56")
+}
+
 func (s *MCPServerSuite) TestScheduleTaskScheduleValidation() {
 	tests := []struct {
 		name     string

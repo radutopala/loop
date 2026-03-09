@@ -21,13 +21,25 @@ export function useElapsedTimer() {
 
   const stop = useCallback(() => {
     clearInterval(timerRef.current);
+    timerRef.current = undefined;
+  }, []);
+
+  /** Resume the timer from where it was paused (keeps the original start time). */
+  const resume = useCallback(() => {
+    if (!startTimeRef.current || timerRef.current) return;
+    timerRef.current = setInterval(() => {
+      if (startTimeRef.current) {
+        setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
+      }
+    }, 1000);
   }, []);
 
   const reset = useCallback(() => {
     clearInterval(timerRef.current);
+    timerRef.current = undefined;
     startTimeRef.current = null;
     setElapsed(0);
   }, []);
 
-  return { elapsed, start, stop, reset };
+  return { elapsed, start, stop, resume, reset };
 }

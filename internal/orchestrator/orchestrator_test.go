@@ -154,6 +154,10 @@ func (m *MockEventBroadcaster) BroadcastMessageCreated(channelID string, data Me
 	m.Called(channelID, data)
 }
 
+func (m *MockEventBroadcaster) BroadcastMessageStreaming(channelID string, data MessageStreamingData) {
+	m.Called(channelID, data)
+}
+
 func (m *MockEventBroadcaster) BroadcastAgentStatus(channelID string, data AgentStatusEventData) {
 	m.Called(channelID, data)
 }
@@ -3108,6 +3112,54 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingDisabledNoOnTurn() {
 	s.runner.AssertExpectations(s.T())
 }
 
+func (s *OrchestratorSuite) TestHandleMessageStreamingBroadcastsViaEvents() {
+	s.orch.cfg.StreamingEnabled = true
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+
+	msg := &bot.IncomingMessage{
+		ChannelID:    "ch1",
+		GuildID:      "g1",
+		AuthorID:     "user1",
+		AuthorName:   "Alice",
+		Content:      "hello",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("partial response")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:  "final response",
+		SessionID: "sess-1",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-1").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	// Expect event broadcasts: each turn as message.created + final (different) as message.created
+	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.Anything).Return()
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	// 3 BroadcastMessageCreated calls: user message, intermediate turn, final response
+	eb.AssertNumberOfCalls(s.T(), "BroadcastMessageCreated", 3)
+	eb.AssertExpectations(s.T())
+}
+
 // --- IAmTheOwner tests ---
 
 func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerSuccess() {
@@ -3210,4 +3262,39 @@ func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerBlockedByCfgPerms() 
 
 	s.store.AssertExpectations(s.T())
 	s.bot.AssertExpectations(s.T())
+}
+
+// --- sendReply platform behavior ---
+
+func (s *OrchestratorSuite) TestSendReplyLocalPlatformStoresAndBroadcasts() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	localOrch := New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformLocal, config.Config{})
+	eb := new(MockEventBroadcaster)
+	localOrch.SetEventBroadcaster(eb)
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 10, ChannelID: "ch1"}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.MatchedBy(func(m *db.Message) bool {
+		return m.ChatID == 10 && m.ChannelID == "ch1" && m.Content == "Loop bot is running." && m.IsBot
+	})).Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d MessageEventData) bool {
+		return d.Content == "Loop bot is running." && d.IsBot && d.AuthorName == "assistant"
+	}))
+
+	localOrch.sendReply(s.ctx, "ch1", "Loop bot is running.")
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+	eb.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestSendReplyDiscordPlatformDoesNotStore() {
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+		return out.Content == "hello"
+	})).Return(nil)
+
+	s.orch.sendReply(s.ctx, "ch1", "hello")
+
+	s.bot.AssertExpectations(s.T())
+	s.store.AssertNotCalled(s.T(), "InsertMessage", mock.Anything, mock.Anything)
 }

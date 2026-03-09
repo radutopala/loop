@@ -75,6 +75,7 @@ type ContainerConfig struct {
 	Binds      []string
 	WorkingDir string
 	GroupAdd   []string
+	Labels     map[string]string
 }
 
 // WaitResponse represents the result of waiting for a container to finish.
@@ -83,7 +84,11 @@ type WaitResponse struct {
 	Error      error
 }
 
-// DockerClient abstracts the Docker SDK methods used by DockerRunner.
+// DockerClient abstracts the Docker SDK container lifecycle methods used by
+// DockerRunner. It handles creating, starting, stopping, and removing containers.
+//
+// This is distinct from terminal.ExecClient, which handles exec-ing into
+// already-running containers for interactive PTY sessions (docker exec).
 type DockerClient interface {
 	ContainerCreate(ctx context.Context, cfg *ContainerConfig, name string) (string, error)
 	ContainerStart(ctx context.Context, containerID string) error
@@ -96,6 +101,7 @@ type DockerClient interface {
 	ImageBuild(ctx context.Context, contextDir, tag string) error
 	ContainerList(ctx context.Context, labelKey, labelValue string) ([]string, error)
 	CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader) error
+	RunningChannelIDs(ctx context.Context) (map[string]struct{}, error)
 }
 
 // Runner executes agent requests inside containers.
@@ -354,44 +360,14 @@ func gitExcludesMount() string {
 
 // runOnce executes a single container run.
 func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
-	workDir := filepath.Join(r.cfg.LoopDir, req.ChannelID, "work")
-	if req.DirPath != "" {
-		workDir = req.DirPath
+	containerID, mcpConfigPath, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID,
+		func(cfg *config.Config, mcpConfigPath string) []string {
+			return buildClaudeCmd(cfg, mcpConfigPath, req)
+		},
+	)
+	if mcpConfigPath != "" {
+		defer func() { _ = osRemove(mcpConfigPath) }()
 	}
-
-	cfg, err := config.LoadProjectConfig(workDir, r.cfg)
-	if err != nil {
-		return nil, fmt.Errorf("loading project config: %w", err)
-	}
-
-	apiURL := "http://host.docker.internal" + cfg.APIAddr
-
-	env, err := r.buildContainerEnv(cfg, req.ChannelID, apiURL)
-	if err != nil {
-		return nil, err
-	}
-
-	mcpConfigPath, err := r.writeMCPConfig(workDir, req.ChannelID, apiURL, req.AuthorID, cfg)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = osRemove(mcpConfigPath) }()
-
-	binds, chownPaths := r.buildContainerMounts(cfg.Mounts, workDir)
-	// Include copied files for CopyToContainer ownership fix.
-	// Skip files already bind-mounted (they won't be copied).
-	for _, f := range filterMountedCopyFiles(cfg.CopyFiles, binds) {
-		if expanded, err := expandPath(f); err == nil {
-			chownPaths = append(chownPaths, expanded)
-		}
-	}
-	if len(chownPaths) > 0 {
-		env = append(env, "CHOWN_PATHS="+strings.Join(chownPaths, ":"))
-	}
-
-	cmd := buildClaudeCmd(cfg, mcpConfigPath, req)
-
-	containerID, err := r.createAndStartContainer(ctx, cfg, env, cmd, binds, workDir, req.ChannelID, req.DirPath)
 	if containerID != "" {
 		defer r.scheduleRemove(containerID)
 	}
@@ -431,6 +407,7 @@ func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL s
 		"HOME=" + hostHome,
 		"HOST_USER=" + osGetenv("USER"),
 		"TZ=" + localTimezone(),
+		"PATH=" + hostHome + "/.local/bin:" + hostHome + "/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 	}
 	env = addAuthEnv(env, cfg)
 	env = addProxyEnv(env)
@@ -523,23 +500,64 @@ func (r *DockerRunner) buildContainerMounts(mounts []string, workDir string) (bi
 	return binds, chownPaths
 }
 
-// buildClaudeCmd assembles the Claude CLI command with all flags.
-func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest) []string {
+// buildBaseClaudeCmd returns the common Claude CLI flags shared by both
+// batch and interactive modes.
+func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID string, forkSession bool) []string {
 	cmd := []string{cfg.ClaudeBinPath, "--mcp-config", mcpConfigPath}
 	if cfg.ClaudeModel != "" {
 		cmd = append(cmd, "--model", cfg.ClaudeModel)
 	}
-	cmd = append(cmd, "--print", "--verbose", "--output-format", "stream-json", "--dangerously-skip-permissions")
-	if req.SessionID != "" {
-		cmd = append(cmd, "--resume", req.SessionID)
-		if req.ForkSession {
+	cmd = append(cmd, "--dangerously-skip-permissions")
+	if sessionID != "" {
+		cmd = append(cmd, "--resume", sessionID)
+		if forkSession {
 			cmd = append(cmd, "--fork-session")
 		}
 	}
+	return cmd
+}
+
+// buildClaudeCmd assembles the Claude CLI command with all flags for batch mode.
+func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest) []string {
+	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.ForkSession)
+	cmd = append(cmd, "--print", "--verbose", "--output-format", "stream-json")
 	if req.SystemPrompt != "" {
 		cmd = append(cmd, "--append-system-prompt", req.SystemPrompt)
 	}
 	return append(cmd, req.BuildPrompt())
+}
+
+// BuildInteractiveClaudeCmd assembles the Claude CLI shell command for interactive
+// terminal sessions (no --print, --verbose, --output-format flags).
+func BuildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID string, forkSession bool) string {
+	mcpConfigPath := filepath.Join(workDir, ".loop", "mcp-"+channelID+".json")
+	return strings.Join(buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, forkSession), " ")
+}
+
+// ClaudeCmdBuilder builds the interactive Claude command for terminal sessions.
+// It implements api.InteractiveCmdBuilder.
+type ClaudeCmdBuilder struct {
+	cfg *config.Config
+}
+
+// NewClaudeCmdBuilder creates a builder that uses the given config.
+func NewClaudeCmdBuilder(cfg *config.Config) *ClaudeCmdBuilder {
+	return &ClaudeCmdBuilder{cfg: cfg}
+}
+
+// BuildInteractiveCmd returns the interactive Claude shell command for the given channel.
+// It loads the project-specific config (if any) to apply per-project overrides
+// such as claude_model before building the command.
+func (b *ClaudeCmdBuilder) BuildInteractiveCmd(channelID, dirPath, sessionID string, forkSession bool) string {
+	workDir := dirPath
+	if workDir == "" {
+		workDir = filepath.Join(b.cfg.LoopDir, channelID, "work")
+	}
+	cfg := b.cfg
+	if merged, err := config.LoadProjectConfig(workDir, b.cfg); err == nil {
+		cfg = merged
+	}
+	return BuildInteractiveClaudeCmd(cfg, channelID, workDir, sessionID, forkSession)
 }
 
 // filterMountedCopyFiles removes entries from copyFiles whose expanded paths
@@ -608,8 +626,54 @@ func (r *DockerRunner) copyFiles(ctx context.Context, containerID string, files 
 	return nil
 }
 
-// createAndStartContainer creates a Docker container and starts it.
-func (r *DockerRunner) createAndStartContainer(ctx context.Context, cfg *config.Config, env, cmd, binds []string, workDir, channelID, dirPath string) (string, error) {
+// createAndStartContainer resolves the work directory, loads project config,
+// builds environment and mounts, writes MCP config, creates the Docker
+// container with the command returned by buildCmd, and starts it.
+// The mcpConfigPath is returned so the caller can clean it up if needed.
+func (r *DockerRunner) createAndStartContainer(
+	ctx context.Context,
+	channelID, dirPath, authorID string,
+	buildCmd func(cfg *config.Config, mcpConfigPath string) []string,
+) (containerID, mcpConfigPath string, err error) {
+	workDir := filepath.Join(r.cfg.LoopDir, channelID, "work")
+	if dirPath != "" {
+		workDir = dirPath
+	}
+
+	cfg, err := config.LoadProjectConfig(workDir, r.cfg)
+	if err != nil {
+		return "", "", fmt.Errorf("loading project config: %w", err)
+	}
+
+	apiURL := "http://host.docker.internal" + cfg.APIAddr
+
+	env, err := r.buildContainerEnv(cfg, channelID, apiURL)
+	if err != nil {
+		return "", "", err
+	}
+
+	binds, chownPaths := r.buildContainerMounts(cfg.Mounts, workDir)
+	for _, f := range filterMountedCopyFiles(cfg.CopyFiles, binds) {
+		if expanded, err := expandPath(f); err == nil {
+			chownPaths = append(chownPaths, expanded)
+		}
+	}
+	if len(chownPaths) > 0 {
+		env = append(env, "CHOWN_PATHS="+strings.Join(chownPaths, ":"))
+	}
+
+	// Ensure workDir exists on host (it's bind-mounted into the container).
+	if err := osMkdirAll(workDir, 0o755); err != nil {
+		return "", "", fmt.Errorf("creating work dir: %w", err)
+	}
+
+	mcpConfigPath, err = r.writeMCPConfig(workDir, channelID, apiURL, authorID, cfg)
+	if err != nil {
+		return "", "", err
+	}
+
+	cmd := buildCmd(cfg, mcpConfigPath)
+
 	containerCfg := &ContainerConfig{
 		Image:      cfg.ContainerImage,
 		MemoryMB:   cfg.ContainerMemoryMB,
@@ -618,23 +682,24 @@ func (r *DockerRunner) createAndStartContainer(ctx context.Context, cfg *config.
 		Cmd:        cmd,
 		Binds:      binds,
 		WorkingDir: workDir,
+		Labels:     map[string]string{channelLabelKey: channelID},
 	}
 
 	name := containerName(channelID, dirPath)
-	containerID, err := r.client.ContainerCreate(ctx, containerCfg, name)
+	containerID, err = r.client.ContainerCreate(ctx, containerCfg, name)
 	if err != nil {
-		return "", fmt.Errorf("creating container: %w", err)
+		return "", mcpConfigPath, fmt.Errorf("creating container: %w", err)
 	}
 
 	if err := r.copyFiles(ctx, containerID, filterMountedCopyFiles(cfg.CopyFiles, binds)); err != nil {
-		return containerID, fmt.Errorf("copying files: %w", err)
+		return containerID, mcpConfigPath, fmt.Errorf("copying files: %w", err)
 	}
 
 	if err := r.client.ContainerStart(ctx, containerID); err != nil {
-		return containerID, fmt.Errorf("starting container: %w", err)
+		return containerID, mcpConfigPath, fmt.Errorf("starting container: %w", err)
 	}
 
-	return containerID, nil
+	return containerID, mcpConfigPath, nil
 }
 
 // collectOutput reads container logs (streaming or batch) and waits for exit.
@@ -821,6 +886,16 @@ func scanStreamJSON(r io.Reader, onTurn func(string)) (*claudeResponse, error) {
 		return nil, fmt.Errorf("parsing claude response: no result event found")
 	}
 	return result, nil
+}
+
+// CreateShellContainer creates a long-lived shell container for terminal access.
+// Unlike Run, the container runs "sleep infinity" instead of Claude CLI and is
+// not auto-removed — it persists until explicitly stopped.
+func (r *DockerRunner) CreateShellContainer(ctx context.Context, channelID, dirPath string) (string, error) {
+	containerID, _, err := r.createAndStartContainer(ctx, channelID, dirPath, "", func(*config.Config, string) []string {
+		return []string{"sleep", "infinity"}
+	})
+	return containerID, err
 }
 
 // Cleanup removes any lingering containers with the loop-agent label.

@@ -17,6 +17,7 @@ import (
 	"github.com/tailscale/hujson"
 
 	"github.com/radutopala/loop/internal/api"
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	containerimage "github.com/radutopala/loop/internal/container/image"
@@ -26,6 +27,7 @@ import (
 	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/scheduler"
+	"github.com/radutopala/loop/internal/terminal"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -47,7 +49,15 @@ type apiServer interface {
 	SetMemoryIndexer(idx api.MemoryIndexer)
 	SetEventsHub(hub *api.EventsHub)
 	EventsHub() *api.EventsHub
+	SetPlatform(p types.Platform)
 	SetLoopDir(dir string)
+	SetTerminalManager(mgr api.TerminalManager)
+	SetContainerFinder(finder api.ContainerFinder)
+	SetContainerStopper(stopper api.ContainerStopper)
+	SetInteractiveCmdBuilder(builder api.InteractiveCmdBuilder)
+	SetRunningChannelLister(lister api.RunningChannelLister)
+	SetIncomingMessageHandler(h api.IncomingMessageHandler)
+	SetInteractionHandler(h api.InteractionHandler)
 }
 
 var ensureImage = func(ctx context.Context, client container.DockerClient, cfg *config.Config) error {
@@ -100,6 +110,10 @@ var newEmbedder = func(cfg *config.Config) (embeddings.Embedder, error) {
 
 var newDockerClient = func() (container.DockerClient, error) {
 	return container.NewClient()
+}
+
+var newDockerExecClient = func() (terminal.ExecClient, error) {
+	return terminal.NewDockerExecClient()
 }
 
 var newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) apiServer {
@@ -315,6 +329,8 @@ func serve() error {
 
 	var chatBot orchestrator.Bot
 	switch platform {
+	case types.PlatformLocal:
+		chatBot = bot.NewLocalBot()
 	case types.PlatformSlack:
 		chatBot, err = newSlackBot(cfg.SlackBotToken, cfg.SlackAppToken, logger)
 		if err != nil {
@@ -351,6 +367,10 @@ func serve() error {
 	var channelSvc api.ChannelEnsurer
 	var threadSvc api.ThreadEnsurer
 	switch platform {
+	case types.PlatformLocal:
+		// Local platform — channel/thread services operate DB-only (no chat bot).
+		channelSvc = api.NewChannelService(store, chatBot, "", platform)
+		threadSvc = api.NewThreadService(store, chatBot, platform, logger)
 	case types.PlatformSlack:
 		// Slack doesn't use guild IDs — channel/thread services are always available.
 		channelSvc = api.NewChannelService(store, chatBot, "", platform)
@@ -363,7 +383,21 @@ func serve() error {
 	}
 
 	apiSrv := newAPIServer(sched, channelSvc, threadSvc, store, chatBot, logger)
+	apiSrv.SetPlatform(platform)
 	apiSrv.SetLoopDir(cfg.LoopDir)
+	apiSrv.SetRunningChannelLister(dockerClient)
+
+	// Configure terminal manager for WebSocket terminal sessions.
+	execClient, err := newDockerExecClient()
+	if err != nil {
+		logger.Warn("terminal manager unavailable", "error", err)
+	} else {
+		termMgr := terminal.NewManager(execClient, logger)
+		apiSrv.SetTerminalManager(terminal.NewManagerAdapter(termMgr))
+		apiSrv.SetContainerFinder(container.NewChannelContainerEnsurer(dockerClient, runner))
+		apiSrv.SetContainerStopper(dockerClient)
+		apiSrv.SetInteractiveCmdBuilder(container.NewClaudeCmdBuilder(cfg))
+	}
 
 	// Configure embeddings and memory indexer at the daemon level.
 	if cfg.Memory.Enabled {
@@ -386,12 +420,17 @@ func serve() error {
 	eventsHub := api.NewEventsHub(logger)
 	apiSrv.SetEventsHub(eventsHub)
 
+	executor.SetPlatform(platform)
+	executor.SetEventBroadcaster(&eventBroadcasterAdapter{hub: eventsHub})
+
 	if err := apiSrv.Start(cfg.APIAddr); err != nil {
 		return fmt.Errorf("starting api server: %w", err)
 	}
 
 	orch := orchestrator.New(store, chatBot, runner, sched, logger, platform, *cfg)
 	orch.SetEventBroadcaster(&eventBroadcasterAdapter{hub: eventsHub})
+	apiSrv.SetIncomingMessageHandler(&orchMessageAdapter{orch: orch})
+	apiSrv.SetInteractionHandler(orch)
 
 	if err := orch.Start(ctx); err != nil {
 		_ = apiSrv.Stop(context.Background())
@@ -427,9 +466,46 @@ func (a *eventBroadcasterAdapter) BroadcastMessageCreated(channelID string, data
 	})
 }
 
+func (a *eventBroadcasterAdapter) BroadcastMessageStreaming(channelID string, data orchestrator.MessageStreamingData) {
+	a.hub.BroadcastMessageStreaming(channelID, api.MessageStreamingData{
+		Content: data.Content,
+	})
+}
+
 func (a *eventBroadcasterAdapter) BroadcastAgentStatus(channelID string, data orchestrator.AgentStatusEventData) {
 	a.hub.BroadcastAgentStatus(channelID, api.AgentStatusData{
 		Status: data.Status,
 		Error:  data.Error,
+	})
+}
+
+// orchMessageAdapter routes API messages through the orchestrator.
+type orchMessageAdapter struct {
+	orch *orchestrator.Orchestrator
+}
+
+// localBotUsername is the bot name used for @mention detection on local platform.
+const localBotUsername = "LoopBot"
+
+func (a *orchMessageAdapter) HandleIncomingMessage(ctx context.Context, channelID, authorID, content string) {
+	isMention := bot.HasTextMention(content, localBotUsername)
+	hasPrefix := bot.HasCommandPrefix(content)
+
+	if isMention {
+		content = bot.StripTextMention(content, localBotUsername)
+	}
+	if hasPrefix {
+		content = bot.StripPrefix(content)
+	}
+
+	a.orch.HandleMessage(ctx, &bot.IncomingMessage{
+		ChannelID:    channelID,
+		AuthorID:     authorID,
+		AuthorName:   authorID,
+		Content:      content,
+		IsBotMention: isMention,
+		HasPrefix:    hasPrefix,
+		IsDM:         true,
+		Timestamp:    time.Now().UTC(),
 	})
 }

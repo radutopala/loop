@@ -372,8 +372,9 @@ func (s *TerminalSuite) TestStopSession() {
 	// Attach a client.
 	ch, _ := sess.Attach()
 
-	err = mgr.StopSession(sess.ID())
+	containerID, err := mgr.StopSession(sess.ID())
 	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ctr-1", containerID)
 	require.True(s.T(), closed)
 
 	// Client channel should be closed.
@@ -391,7 +392,7 @@ func (s *TerminalSuite) TestStopSessionNotFound() {
 	client := new(mockExecClient)
 	mgr := NewManager(client, testLogger)
 
-	err := mgr.StopSession("nonexistent")
+	_, err := mgr.StopSession("nonexistent")
 	require.ErrorIs(s.T(), err, ErrSessionNotFound)
 }
 

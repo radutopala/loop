@@ -64,7 +64,7 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "schedule_task",
-		Description: "Create a scheduled task. Use cron expressions (e.g. '0 9 * * *' for daily at 9am) with type 'cron', Go time.Duration (e.g. '5m', '1h') with type 'interval', or RFC3339 timestamp (e.g. '2026-02-09T14:30:00Z') with type 'once' for one-time execution. When using 'once', first check the user's local time to compute the correct offset. Prefer RFC3339 timestamps for absolute scheduling.",
+		Description: "Create a scheduled task. Use cron expressions (e.g. '0 9 * * *' for daily at 9am) with type 'cron', Go time.Duration (e.g. '5m', '1h') with type 'interval', or RFC3339 timestamp (e.g. '2026-02-09T14:30:00Z') with type 'once' for one-time execution. When using 'once', first check the user's local time to compute the correct offset. Prefer RFC3339 timestamps for absolute scheduling. Optionally set template_name to associate the task with a named template for identification and deduplication.",
 	}, s.handleScheduleTask)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{

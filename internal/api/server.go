@@ -9,22 +9,41 @@ import (
 	"net/http"
 
 	"github.com/radutopala/loop/internal/scheduler"
+	"github.com/radutopala/loop/internal/types"
 )
+
+// RunningChannelLister returns the set of channel IDs that have running containers.
+type RunningChannelLister interface {
+	RunningChannelIDs(ctx context.Context) (map[string]struct{}, error)
+}
+
+// IncomingMessageHandler processes a user message from the API, routing it
+// through the orchestrator so Claude can respond.
+type IncomingMessageHandler interface {
+	HandleIncomingMessage(ctx context.Context, channelID, authorID, content string)
+}
 
 // Server exposes a lightweight HTTP API for task CRUD operations.
 type Server struct {
-	scheduler     scheduler.Scheduler
-	channels      ChannelEnsurer
-	threads       ThreadEnsurer
-	store         ChannelLister
-	messages      MessageSender
-	memoryIndexer MemoryIndexer
-	termManager   TerminalManager
-	eventsHub     *EventsHub
-	loopDir       string
-	logger        *slog.Logger
-	server        *http.Server
-	listener      net.Listener
+	scheduler          scheduler.Scheduler
+	channels           ChannelEnsurer
+	threads            ThreadEnsurer
+	store              ChannelLister
+	messages           MessageSender
+	memoryIndexer      MemoryIndexer
+	termManager        TerminalManager
+	containerFinder    ContainerFinder
+	containerStopper   ContainerStopper
+	cmdBuilder         InteractiveCmdBuilder
+	runningChLister    RunningChannelLister
+	msgHandler         IncomingMessageHandler
+	interactionHandler InteractionHandler
+	eventsHub          *EventsHub
+	platform           types.Platform
+	loopDir            string
+	logger             *slog.Logger
+	server             *http.Server
+	listener           net.Listener
 }
 
 // SetEventsHub configures the events hub for the /api/ws endpoint.
@@ -42,9 +61,29 @@ func (s *Server) SetMemoryIndexer(idx MemoryIndexer) {
 	s.memoryIndexer = idx
 }
 
+// SetPlatform sets the platform used for filtering channels.
+func (s *Server) SetPlatform(p types.Platform) {
+	s.platform = p
+}
+
 // SetLoopDir sets the loop directory used for fallback work dir resolution.
 func (s *Server) SetLoopDir(dir string) {
 	s.loopDir = dir
+}
+
+// SetRunningChannelLister configures the running channel lister for the channel list endpoint.
+func (s *Server) SetRunningChannelLister(lister RunningChannelLister) {
+	s.runningChLister = lister
+}
+
+// SetIncomingMessageHandler configures the handler for user messages from the API.
+func (s *Server) SetIncomingMessageHandler(h IncomingMessageHandler) {
+	s.msgHandler = h
+}
+
+// SetInteractionHandler configures the handler for slash command interactions.
+func (s *Server) SetInteractionHandler(h InteractionHandler) {
+	s.interactionHandler = h
 }
 
 // NewServer creates a new API server. The channels, threads, store, and messages
@@ -75,15 +114,17 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.handleDeleteTask)
 	mux.HandleFunc("PATCH /api/tasks/{id}", s.handleUpdateTask)
 	mux.HandleFunc("GET /api/channels/{id}/messages", s.handleListMessages)
+	mux.HandleFunc("POST /api/commands", s.handleCommand)
 	mux.HandleFunc("POST /api/memory/search", s.handleMemorySearch)
 	mux.HandleFunc("POST /api/memory/index", s.handleMemoryIndex)
 	mux.HandleFunc("GET /api/readme", s.handleGetReadme)
+	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
 	mux.HandleFunc("GET /api/ws", s.handleEventsWS)
 
 	s.server = &http.Server{
 		Addr:    addr,
-		Handler: mux,
+		Handler: corsMiddleware(mux),
 	}
 
 	ln, err := net.Listen("tcp", addr)
@@ -100,6 +141,21 @@ func (s *Server) Start(addr string) error {
 
 	s.logger.Info("api server started", "addr", addr)
 	return nil
+}
+
+// corsMiddleware adds CORS headers to all responses, allowing the
+// Electron desktop app (or any local client) to call the API.
+func corsMiddleware(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Access-Control-Allow-Origin", "*")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		if r.Method == http.MethodOptions {
+			w.WriteHeader(http.StatusNoContent)
+			return
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 // Stop gracefully shuts down the HTTP server.

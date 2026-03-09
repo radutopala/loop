@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 )
 
@@ -38,6 +39,20 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	// For local platform: trigger the agent in the new thread by routing the
+	// initial message through the orchestrator (analogous to Discord/Slack
+	// sending a bot-mention greeting message in the thread).
+	if s.msgHandler != nil && req.Message != "" {
+		authorID := req.AuthorID
+		if authorID == "" {
+			authorID = "local-user"
+		}
+		go s.msgHandler.HandleIncomingMessage(
+			context.Background(), threadID,
+			authorID, "@LoopBot "+req.Message,
+		)
 	}
 
 	writeHTTPJSON(w, http.StatusCreated, createThreadResponse{ThreadID: threadID}, s.logger)

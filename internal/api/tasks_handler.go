@@ -13,6 +13,7 @@ type createTaskRequest struct {
 	Schedule      string `json:"schedule"`
 	Type          string `json:"type"`
 	Prompt        string `json:"prompt"`
+	TemplateName  string `json:"template_name,omitempty"`
 	AutoDeleteSec int    `json:"auto_delete_sec"`
 }
 
@@ -52,6 +53,7 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		Type:          db.TaskType(req.Type),
 		Prompt:        req.Prompt,
 		Enabled:       true,
+		TemplateName:  req.TemplateName,
 		AutoDeleteSec: req.AutoDeleteSec,
 	}
 

@@ -2,6 +2,8 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"log/slog"
 
@@ -9,6 +11,13 @@ import (
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/types"
 )
+
+// generateThreadID creates a random hex ID for local-platform threads.
+var generateThreadID = func() string {
+	b := make([]byte, 6)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
 
 // ThreadCreator can create and delete threads on the chat platform.
 type ThreadCreator interface {
@@ -55,8 +64,10 @@ func (s *threadService) DeleteThread(ctx context.Context, threadID string) error
 		s.logger.Warn("removing MCP config for thread", "error", err, "thread_id", threadID)
 	}
 
-	if err := s.creator.DeleteThread(ctx, threadID); err != nil {
-		return fmt.Errorf("deleting thread: %w", err)
+	if s.creator != nil {
+		if err := s.creator.DeleteThread(ctx, threadID); err != nil {
+			return fmt.Errorf("deleting thread: %w", err)
+		}
 	}
 
 	if err := s.store.DeleteChannel(ctx, threadID); err != nil {
@@ -87,9 +98,16 @@ func (s *threadService) CreateThread(ctx context.Context, channelID, name, autho
 		}
 	}
 
-	threadID, err := s.creator.CreateThread(ctx, channelID, name, authorID, message)
-	if err != nil {
-		return "", fmt.Errorf("creating thread: %w", err)
+	var threadID string
+	if s.creator != nil {
+		threadID, err = s.creator.CreateThread(ctx, channelID, name, authorID, message)
+		if err != nil {
+			return "", fmt.Errorf("creating thread: %w", err)
+		}
+	}
+	if threadID == "" {
+		// No-op creator (e.g. local platform) — generate ID locally.
+		threadID = generateThreadID()
 	}
 
 	if err := s.store.UpsertChannel(ctx, &db.Channel{

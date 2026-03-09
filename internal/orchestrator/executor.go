@@ -25,11 +25,52 @@ type TaskExecutor struct {
 	logger           *slog.Logger
 	containerTimeout time.Duration
 	streamingEnabled bool
+	platform         types.Platform
+	events           EventBroadcaster
 }
 
 // NewTaskExecutor creates a new TaskExecutor.
 func NewTaskExecutor(runner Runner, bot Bot, store db.Store, logger *slog.Logger, containerTimeout time.Duration, streamingEnabled bool) *TaskExecutor {
 	return &TaskExecutor{runner: runner, bot: bot, store: store, logger: logger, containerTimeout: containerTimeout, streamingEnabled: streamingEnabled}
+}
+
+// SetPlatform sets the platform for local-specific behavior.
+func (e *TaskExecutor) SetPlatform(p types.Platform) {
+	e.platform = p
+}
+
+// SetEventBroadcaster sets the event broadcaster for real-time updates.
+func (e *TaskExecutor) SetEventBroadcaster(eb EventBroadcaster) {
+	e.events = eb
+}
+
+// broadcastBotMessage stores a bot message in the database and broadcasts it
+// via the events hub. Only runs on the local platform where bot.SendMessage is a no-op.
+func (e *TaskExecutor) broadcastBotMessage(ctx context.Context, channelID, content string) {
+	if e.platform != types.PlatformLocal {
+		return
+	}
+	msgID := generateMessageID()
+	ch, err := e.store.GetChannel(ctx, channelID)
+	if err == nil && ch != nil {
+		_ = e.store.InsertMessage(ctx, &db.Message{
+			ChatID:     ch.ID,
+			ChannelID:  channelID,
+			MsgID:      msgID,
+			AuthorName: "assistant",
+			Content:    content,
+			IsBot:      true,
+			CreatedAt:  time.Now().UTC(),
+		})
+	}
+	if e.events != nil {
+		e.events.BroadcastMessageCreated(channelID, MessageEventData{
+			MsgID:      msgID,
+			AuthorName: "assistant",
+			Content:    content,
+			IsBot:      true,
+		})
+	}
 }
 
 // ExecuteTask runs an agent for the given scheduled task and sends the result to the chat platform.
@@ -80,9 +121,11 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 						ChannelID: task.ChannelID,
 						Content:   text,
 					})
+					e.broadcastBotMessage(ctx, task.ChannelID, text)
 					return
 				}
 				threadID = id
+				e.broadcastBotMessage(ctx, task.ChannelID, prefix+text)
 			} else {
 				targetID := threadID
 				if targetID == "" {
@@ -92,6 +135,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 					ChannelID: targetID,
 					Content:   text,
 				})
+				e.broadcastBotMessage(ctx, targetID, text)
 			}
 		})
 		req.OnTurn = func(text string) {
@@ -139,6 +183,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		}); err != nil {
 			e.logger.Error("sending task response", "error", err, "channel_id", task.ChannelID)
 		}
+		e.broadcastBotMessage(ctx, targetChannelID, resp.Response)
 	}
 
 	// Schedule auto-deletion of the thread if ephemeral

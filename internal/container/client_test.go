@@ -203,6 +203,24 @@ func (s *ClientSuite) TestContainerCreateEmptyName() {
 	s.api.AssertExpectations(s.T())
 }
 
+func (s *ClientSuite) TestContainerCreateWithLabels() {
+	ctx := context.Background()
+	cfg := &ContainerConfig{
+		Image:  "img:latest",
+		Labels: map[string]string{"loop-channel": "ch-1"},
+	}
+
+	s.api.On("ContainerCreate", ctx, mock.MatchedBy(func(c *containertypes.Config) bool {
+		return c.Labels["app"] == "loop-agent" && c.Labels["loop-channel"] == "ch-1"
+	}), mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "test").
+		Return(containertypes.CreateResponse{ID: "labeled-123"}, nil)
+
+	id, err := s.client.ContainerCreate(ctx, cfg, "test")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "labeled-123", id)
+	s.api.AssertExpectations(s.T())
+}
+
 func (s *ClientSuite) TestContainerCreateError() {
 	ctx := context.Background()
 	cfg := &ContainerConfig{Image: "img:latest"}
@@ -536,7 +554,7 @@ func (s *ClientSuite) TestContainerList() {
 	ctx := context.Background()
 
 	s.api.On("ContainerList", ctx, mock.MatchedBy(func(opts containertypes.ListOptions) bool {
-		return opts.All && opts.Filters.Get("label")[0] == "app=loop-agent"
+		return !opts.All && opts.Filters.Get("label")[0] == "app=loop-agent"
 	})).Return([]containertypes.Summary{
 		{ID: "cid-1"},
 		{ID: "cid-2"},
@@ -568,6 +586,38 @@ func (s *ClientSuite) TestContainerListError() {
 	require.Error(s.T(), err)
 	require.Nil(s.T(), ids)
 	require.Contains(s.T(), err.Error(), "list failed")
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestRunningChannelIDs() {
+	ctx := context.Background()
+
+	s.api.On("ContainerList", ctx, mock.MatchedBy(func(opts containertypes.ListOptions) bool {
+		return !opts.All && opts.Filters.Get("label")[0] == channelLabelKey
+	})).Return([]containertypes.Summary{
+		{ID: "cid-1", Labels: map[string]string{channelLabelKey: "ch-1"}},
+		{ID: "cid-2", Labels: map[string]string{channelLabelKey: "ch-2"}},
+		{ID: "cid-3", Labels: map[string]string{channelLabelKey: "ch-1"}}, // duplicate channel
+	}, nil)
+
+	result, err := s.client.RunningChannelIDs(ctx)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), result, 2)
+	_, ok := result["ch-1"]
+	require.True(s.T(), ok)
+	_, ok = result["ch-2"]
+	require.True(s.T(), ok)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestRunningChannelIDsError() {
+	ctx := context.Background()
+
+	s.api.On("ContainerList", ctx, mock.Anything).Return([]containertypes.Summary(nil), errors.New("docker err"))
+
+	result, err := s.client.RunningChannelIDs(ctx)
+	require.Error(s.T(), err)
+	require.Nil(s.T(), result)
 	s.api.AssertExpectations(s.T())
 }
 

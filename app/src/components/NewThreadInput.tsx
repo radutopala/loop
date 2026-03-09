@@ -10,7 +10,7 @@ export function NewThreadInput({ onSubmit, onCancel }: NewThreadInputProps) {
   const [name, setName] = useState("");
 
   return (
-    <div style={{ padding: "4px 12px 4px 32px" }}>
+    <div style={{ display: "flex", alignItems: "center", gap: 4, padding: "4px 12px 4px 32px" }}>
       <input
         autoFocus
         value={name}
@@ -24,7 +24,8 @@ export function NewThreadInput({ onSubmit, onCancel }: NewThreadInputProps) {
         }}
         placeholder="Thread name..."
         style={{
-          width: "100%",
+          flex: 1,
+          minWidth: 0,
           padding: "4px 8px",
           fontSize: 12,
           backgroundColor: colors.surface,
@@ -35,6 +36,22 @@ export function NewThreadInput({ onSubmit, onCancel }: NewThreadInputProps) {
           boxSizing: "border-box",
         }}
       />
+      <button
+        onClick={onCancel}
+        title="Cancel"
+        style={{
+          background: "none",
+          border: "none",
+          color: colors.textDim,
+          cursor: "pointer",
+          padding: "2px 4px",
+          fontSize: 14,
+          lineHeight: 1,
+          flexShrink: 0,
+        }}
+      >
+        ✕
+      </button>
     </div>
   );
 }

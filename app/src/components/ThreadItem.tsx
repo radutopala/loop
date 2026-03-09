@@ -1,40 +1,61 @@
+import { useState } from "react";
 import type { Channel } from "../types";
 import { colors } from "../theme";
 
 interface ThreadItemProps {
   thread: Channel;
   selected: boolean;
+  isLast?: boolean;
   onSelect: (id: string) => void;
+  onContextMenu: (e: React.MouseEvent, channel: Channel) => void;
 }
 
-export function ThreadItem({ thread, selected, onSelect }: ThreadItemProps) {
+export function ThreadItem({ thread, selected, isLast, onSelect, onContextMenu }: ThreadItemProps) {
+  const [hovered, setHovered] = useState(false);
+
   return (
-    <button
-      onClick={() => onSelect(thread.id)}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 6,
-        width: "100%",
-        padding: "4px 12px 4px 32px",
-        border: "none",
-        background: selected ? colors.selectedBg : "transparent",
-        color: selected ? colors.textLight : colors.textDim,
-        fontSize: 12,
-        textAlign: "left",
-        cursor: "pointer",
-        borderRadius: 4,
-      }}
-    >
-      <span
+    <div style={{ position: "relative", margin: "0 8px" }}>
+      {/* Tree connector line — positioned absolutely to span full row height */}
+      <svg
+        width="10"
+        height="100%"
         style={{
-          width: 5,
-          height: 5,
-          borderRadius: "50%",
-          backgroundColor: thread.active ? colors.active : colors.textDisabled,
-          flexShrink: 0,
+          position: "absolute",
+          left: 26,
+          top: 0,
+          bottom: 0,
+          height: "100%",
+          overflow: "visible",
         }}
-      />
+      >
+        <line x1="1" y1="0" x2="1" y2={isLast ? "50%" : "100%"} stroke={colors.textDisabled} strokeWidth="1.5" />
+        <line x1="1" y1="50%" x2="10" y2="50%" stroke={colors.textDisabled} strokeWidth="1.5" />
+      </svg>
+      <button
+        title={thread.dir_path || undefined}
+        onClick={() => onSelect(thread.id)}
+        onContextMenu={(e) => onContextMenu(e, thread)}
+        onMouseEnter={() => setHovered(true)}
+        onMouseLeave={() => setHovered(false)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          width: "100%",
+          padding: "4px 8px 4px 40px",
+          border: "none",
+          background: selected
+            ? colors.selectedBg
+            : hovered
+              ? colors.hoverBg
+              : "transparent",
+          color: selected ? colors.textLight : colors.textDim,
+          fontSize: 14,
+          textAlign: "left",
+          cursor: "pointer",
+          borderRadius: 6,
+        }}
+      >
       <span
         style={{
           overflow: "hidden",
@@ -42,8 +63,21 @@ export function ThreadItem({ thread, selected, onSelect }: ThreadItemProps) {
           whiteSpace: "nowrap",
         }}
       >
-        {thread.name}
+        {thread.name || thread.id}
       </span>
+      {thread.running && (
+        <span
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            backgroundColor: colors.active,
+            flexShrink: 0,
+            marginLeft: "auto",
+          }}
+        />
+      )}
     </button>
+    </div>
   );
 }

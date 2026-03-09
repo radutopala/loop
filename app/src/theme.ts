@@ -1,20 +1,21 @@
 // Shared color palette and typography constants.
 
 export const colors = {
-  bg: "#1a1b26",
-  surface: "#1e1e2e",
-  sidebar: "#161622",
-  border: "#2d2d2d",
-  selectedBg: "#2d2d4d",
-  inputBorder: "#3d3d5d",
+  bg: "#212121",
+  surface: "#2a2a2a",
+  sidebar: "#171717",
+  border: "#333333",
+  selectedBg: "#333333",
+  hoverBg: "#2a2a2a",
+  inputBorder: "#444444",
 
-  text: "#a9b1d6",
-  textLight: "#e2e8f0",
-  textMuted: "#9ca3af",
-  textDim: "#6b7280",
-  textDisabled: "#4b5563",
+  text: "#d4d4d4",
+  textLight: "#ececec",
+  textMuted: "#999999",
+  textDim: "#717171",
+  textDisabled: "#555555",
 
-  cursor: "#c0caf5",
+  cursor: "#d4d4d4",
   active: "#22c55e",
   error: "#ef4444",
   warning: "#f59e0b",

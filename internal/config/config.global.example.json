@@ -1,6 +1,7 @@
 {
-  // Required: "discord" or "slack"
-  "platform": "discord",
+  // Required: "discord", "slack", or "local"
+  // "local" runs without a chat platform — use the Electron desktop app as the UI.
+  "platform": "local",
 
   // Discord credentials (required when platform is "discord")
   "discord_token": "your-discord-bot-token-here",
@@ -27,7 +28,7 @@
   //"log_format": "text",
   //"container_image": "loop-agent:latest",
   //"container_timeout_sec": 3600,
-  //"container_memory_mb": 512,
+  //"container_memory_mb": 1024,
   //"container_cpus": 1.0,
   //"container_keep_alive_sec": 300,
   //"poll_interval_sec": 30,
@@ -75,7 +76,9 @@
   // Extra environment variables passed to all containers
   "envs": {
     // Ensure .bashrc is sourced in non-interactive shells (e.g. Claude's bash subshells)
-    "BASH_ENV": "~/.bashrc"
+    "BASH_ENV": "~/.bashrc",
+    // Enable LSP tools (e.g. gopls) for faster code navigation
+    "ENABLE_LSP_TOOL": false
   },
 
   // Files copied into containers on each run (not mounted — each container gets its own copy).

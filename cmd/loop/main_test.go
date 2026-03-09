@@ -32,6 +32,7 @@ import (
 	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/scheduler"
+	"github.com/radutopala/loop/internal/terminal"
 	"github.com/radutopala/loop/internal/testutil"
 	"github.com/radutopala/loop/internal/types"
 )
@@ -100,6 +101,14 @@ func (m *mockDockerClient) ContainerList(ctx context.Context, labelKey, labelVal
 		return nil, args.Error(1)
 	}
 	return args.Get(0).([]string), args.Error(1)
+}
+
+func (m *mockDockerClient) RunningChannelIDs(ctx context.Context) (map[string]struct{}, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]struct{}), args.Error(1)
 }
 
 func (m *mockDockerClient) CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader) error {
@@ -258,8 +267,40 @@ func (m *mockAPIServer) EventsHub() *api.EventsHub {
 	return args.Get(0).(*api.EventsHub)
 }
 
+func (m *mockAPIServer) SetPlatform(p types.Platform) {
+	m.Called(p)
+}
+
 func (m *mockAPIServer) SetLoopDir(dir string) {
 	m.Called(dir)
+}
+
+func (m *mockAPIServer) SetTerminalManager(mgr api.TerminalManager) {
+	m.Called(mgr)
+}
+
+func (m *mockAPIServer) SetContainerFinder(finder api.ContainerFinder) {
+	m.Called(finder)
+}
+
+func (m *mockAPIServer) SetContainerStopper(stopper api.ContainerStopper) {
+	m.Called(stopper)
+}
+
+func (m *mockAPIServer) SetInteractiveCmdBuilder(builder api.InteractiveCmdBuilder) {
+	m.Called(builder)
+}
+
+func (m *mockAPIServer) SetRunningChannelLister(lister api.RunningChannelLister) {
+	m.Called(lister)
+}
+
+func (m *mockAPIServer) SetIncomingMessageHandler(h api.IncomingMessageHandler) {
+	m.Called(h)
+}
+
+func (m *mockAPIServer) SetInteractionHandler(h api.InteractionHandler) {
+	m.Called(h)
 }
 
 // --- Test Suite ---
@@ -288,6 +329,7 @@ type MainSuite struct {
 	origOsReadFile             func(string) ([]byte, error)
 	origNewEmbedder            func(*config.Config) (embeddings.Embedder, error)
 	origLoadProjectMemoryPaths func(string) []string
+	origNewDockerExecClient    func() (terminal.ExecClient, error)
 }
 
 func TestMainSuite(t *testing.T) {
@@ -317,6 +359,7 @@ func (s *MainSuite) SetupTest() {
 	s.origOsReadFile = osReadFile
 	s.origNewEmbedder = newEmbedder
 	s.origLoadProjectMemoryPaths = loadProjectMemoryPaths
+	s.origNewDockerExecClient = newDockerExecClient
 	loadProjectMemoryPaths = func(_ string) []string { return nil }
 }
 
@@ -343,6 +386,7 @@ func (s *MainSuite) TearDownTest() {
 	osReadFile = s.origOsReadFile
 	newEmbedder = s.origNewEmbedder
 	loadProjectMemoryPaths = s.origLoadProjectMemoryPaths
+	newDockerExecClient = s.origNewDockerExecClient
 }
 
 func testConfig() *config.Config {
@@ -401,6 +445,7 @@ func setupServeMocks() *serveMocks {
 	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) { return m.bot, nil }
 	newDockerClient = func() (container.DockerClient, error) { return m.dockerClient, nil }
 	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error { return nil }
+	newDockerExecClient = func() (terminal.ExecClient, error) { return nil, errors.New("no docker") }
 	newAPIServer = fakeAPIServer()
 	return m
 }
@@ -1674,8 +1719,16 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 	m.setupHappyBot()
 
 	mockAPI := new(mockAPIServer)
+	mockAPI.On("SetPlatform", mock.Anything).Return()
 	mockAPI.On("SetLoopDir", mock.Anything).Return()
 	mockAPI.On("SetEventsHub", mock.Anything).Return()
+	mockAPI.On("SetTerminalManager", mock.Anything).Return().Maybe()
+	mockAPI.On("SetContainerFinder", mock.Anything).Return().Maybe()
+	mockAPI.On("SetContainerStopper", mock.Anything).Return().Maybe()
+	mockAPI.On("SetInteractiveCmdBuilder", mock.Anything).Return().Maybe()
+	mockAPI.On("SetRunningChannelLister", mock.Anything).Return()
+	mockAPI.On("SetIncomingMessageHandler", mock.Anything).Return()
+	mockAPI.On("SetInteractionHandler", mock.Anything).Return()
 	mockAPI.On("Start", mock.Anything).Return(nil)
 	mockAPI.On("Stop", mock.Anything).Return(errors.New("api stop error"))
 	newAPIServer = func(_ scheduler.Scheduler, _ api.ChannelEnsurer, _ api.ThreadEnsurer, _ api.ChannelLister, _ api.MessageSender, _ *slog.Logger) apiServer {
@@ -3124,4 +3177,170 @@ func (s *MainSuite) TestEventBroadcasterAdapterAgentStatus() {
 	adapter.BroadcastAgentStatus("ch-1", orchestrator.AgentStatusEventData{
 		Status: "running",
 	})
+}
+
+func (s *MainSuite) TestEventBroadcasterAdapterMessageStreaming() {
+	hub := api.NewEventsHub(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	adapter := &eventBroadcasterAdapter{hub: hub}
+
+	adapter.BroadcastMessageStreaming("ch-1", orchestrator.MessageStreamingData{
+		Content: "partial response...",
+	})
+}
+
+func (s *MainSuite) TestServeLocalPlatformHappyPath() {
+	m := setupServeMocks()
+	m.cfg.PlatformType = types.PlatformLocal
+	// No bot tokens needed for local platform.
+	m.cfg.DiscordToken = ""
+	m.cfg.DiscordAppID = ""
+
+	// Local platform doesn't create a bot, so no bot expectations needed.
+	m.dockerClient.On("ContainerList", mock.Anything, "app", "loop-agent").Return([]string{}, nil)
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- serve() }()
+
+	time.Sleep(100 * time.Millisecond)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+
+	m.store.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestServeWithTerminalManager() {
+	m := setupServeMocks()
+	m.setupHappyBot()
+
+	// Provide a successful exec client to cover the terminal manager wiring path.
+	newDockerExecClient = func() (terminal.ExecClient, error) {
+		return &noopExecClient{}, nil
+	}
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- serve() }()
+
+	time.Sleep(100 * time.Millisecond)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+}
+
+func (s *MainSuite) TestOrchMessageAdapter() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := &testutil.MockStore{}
+	localBot := bot.NewLocalBot()
+	sched := scheduler.NewTaskScheduler(store, nil, 0, logger)
+
+	orch := orchestrator.New(store, localBot, nil, sched, logger, types.PlatformLocal, config.Config{})
+
+	// IsChannelActive returns an error so HandleMessage exits early.
+	store.On("IsChannelActive", mock.Anything, "ch-1").Return(false, errors.New("db error"))
+
+	adapter := &orchMessageAdapter{orch: orch}
+	adapter.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello")
+
+	store.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestOrchMessageAdapterMentionParsing() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := &testutil.MockStore{}
+	localBot := bot.NewLocalBot()
+	sched := scheduler.NewTaskScheduler(store, nil, 0, logger)
+	orch := orchestrator.New(store, localBot, nil, sched, logger, types.PlatformLocal, config.Config{})
+
+	ch := &db.Channel{ID: 1, ChannelID: "ch-1"}
+	store.On("IsChannelActive", mock.Anything, "ch-1").Return(true, nil)
+	store.On("GetChannel", mock.Anything, "ch-1").Return(ch, nil)
+	store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
+		// Content should have @LoopBot stripped.
+		return m.Content == "do this" && m.ChannelID == "ch-1"
+	})).Return(nil)
+	// Triggered (mention detected) — GetRecentMessages is called next but
+	// returns an error so processing stops early.
+	store.On("GetRecentMessages", mock.Anything, "ch-1", mock.Anything).
+		Return(nil, errors.New("stop early"))
+
+	adapter := &orchMessageAdapter{orch: orch}
+	adapter.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "@LoopBot do this")
+
+	store.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestOrchMessageAdapterPrefixParsing() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := &testutil.MockStore{}
+	localBot := bot.NewLocalBot()
+	sched := scheduler.NewTaskScheduler(store, nil, 0, logger)
+	orch := orchestrator.New(store, localBot, nil, sched, logger, types.PlatformLocal, config.Config{})
+
+	ch := &db.Channel{ID: 1, ChannelID: "ch-1"}
+	store.On("IsChannelActive", mock.Anything, "ch-1").Return(true, nil)
+	store.On("GetChannel", mock.Anything, "ch-1").Return(ch, nil)
+	store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
+		// Content should have !loop prefix stripped.
+		return m.Content == "check status" && m.ChannelID == "ch-1"
+	})).Return(nil)
+	store.On("GetRecentMessages", mock.Anything, "ch-1", mock.Anything).
+		Return(nil, errors.New("stop early"))
+
+	adapter := &orchMessageAdapter{orch: orch}
+	adapter.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "!loop check status")
+
+	store.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestOrchMessageAdapterPlainMessageTriggers() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	store := &testutil.MockStore{}
+	localBot := bot.NewLocalBot()
+	sched := scheduler.NewTaskScheduler(store, nil, 0, logger)
+	orch := orchestrator.New(store, localBot, nil, sched, logger, types.PlatformLocal, config.Config{})
+
+	// Plain messages (no @LoopBot, no !loop) still trigger on local platform
+	// because IsDM is always true.
+	ch := &db.Channel{ID: 1, ChannelID: "ch-1"}
+	store.On("IsChannelActive", mock.Anything, "ch-1").Return(true, nil)
+	store.On("GetChannel", mock.Anything, "ch-1").Return(ch, nil)
+	store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
+		return m.Content == "just a note" && m.ChannelID == "ch-1"
+	})).Return(nil)
+	store.On("GetRecentMessages", mock.Anything, "ch-1", mock.Anything).
+		Return(nil, errors.New("stop early"))
+
+	adapter := &orchMessageAdapter{orch: orch}
+	adapter.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "just a note")
+
+	store.AssertExpectations(s.T())
+}
+
+// noopExecClient satisfies terminal.ExecClient for testing.
+type noopExecClient struct{}
+
+func (n *noopExecClient) ContainerExecCreate(_ context.Context, _ string, _ []string, _ bool) (string, error) {
+	return "", nil
+}
+
+func (n *noopExecClient) ContainerExecAttach(_ context.Context, _ string) (io.ReadWriteCloser, error) {
+	return nil, nil
+}
+
+func (n *noopExecClient) ContainerExecResize(_ context.Context, _ string, _, _ uint) error {
+	return nil
 }

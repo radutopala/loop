@@ -67,8 +67,13 @@ export function useWebSocketConnection({
     connect();
     return () => {
       clearTimeout(reconnectTimer.current);
-      wsRef.current?.close();
-      wsRef.current = null;
+      if (wsRef.current) {
+        // Null out onclose before closing to prevent the reconnect timer
+        // from being scheduled after cleanup (e.g. React StrictMode).
+        wsRef.current.onclose = null;
+        wsRef.current.close();
+        wsRef.current = null;
+      }
     };
   }, [enabled, connect]);
 

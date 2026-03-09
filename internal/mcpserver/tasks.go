@@ -17,6 +17,7 @@ type scheduleTaskInput struct {
 	Schedule      string `json:"schedule" jsonschema:"Cron expression (e.g. 0 9 * * *), Go time.Duration (e.g. 5m, 1h), or RFC3339 timestamp (e.g. 2026-02-09T14:30:00Z) for once type"`
 	Type          string `json:"type" jsonschema:"Task type: cron, interval, or once"`
 	Prompt        string `json:"prompt" jsonschema:"The prompt to execute on schedule"`
+	TemplateName  string `json:"template_name,omitempty" jsonschema:"Optional template name to associate with this task (for identification and deduplication)"`
 	AutoDeleteSec int    `json:"auto_delete_sec,omitempty" jsonschema:"Seconds after execution to auto-delete the thread (0 = disabled)"`
 }
 
@@ -57,13 +58,17 @@ func (s *Server) handleScheduleTask(_ context.Context, _ *mcp.CallToolRequest, i
 		}
 	}
 
-	data, _ := json.Marshal(map[string]any{
+	body := map[string]any{
 		"channel_id":      s.channelID,
 		"schedule":        input.Schedule,
 		"type":            input.Type,
 		"prompt":          input.Prompt,
 		"auto_delete_sec": input.AutoDeleteSec,
-	})
+	}
+	if input.TemplateName != "" {
+		body["template_name"] = input.TemplateName
+	}
+	data, _ := json.Marshal(body)
 
 	type taskResult struct {
 		ID int64 `json:"id"`

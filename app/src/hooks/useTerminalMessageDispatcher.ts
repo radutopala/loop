@@ -6,6 +6,8 @@ interface UseTerminalMessageDispatcherOptions {
   onStatus: (status: SessionStatus) => void;
   onError: (message: string) => void;
   onSessionChange: (sessionId: string | null) => void;
+  /** Called when an attach/create fails so the caller can retry with create. */
+  onSessionFailed?: () => void;
 }
 
 /**
@@ -17,6 +19,7 @@ export function useTerminalMessageDispatcher({
   onStatus,
   onError,
   onSessionChange,
+  onSessionFailed,
 }: UseTerminalMessageDispatcherOptions) {
   const handleMessage = useCallback(
     (event: MessageEvent) => {
@@ -32,6 +35,10 @@ export function useTerminalMessageDispatcher({
           onSessionChange(msg.session_id ?? null);
           onStatus("running");
           break;
+        case "detached":
+          // Session is still alive, keep the session ID for reattach.
+          onStatus("completed");
+          break;
         case "stopped":
         case "closed":
           onSessionChange(null);
@@ -44,7 +51,7 @@ export function useTerminalMessageDispatcher({
             msg.error_code === "session_failed"
           ) {
             onSessionChange(null);
-            onStatus("failed");
+            onSessionFailed?.();
           }
           break;
       }

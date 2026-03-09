@@ -40,6 +40,9 @@ var newDockerClientFunc = func() (dockerAPI, error) {
 }
 
 // Client implements DockerClient by delegating to the Docker SDK.
+// It wraps container lifecycle operations (create/start/stop/rm/list).
+// For exec-ing into running containers (interactive PTY sessions), see
+// terminal.DockerExecClient instead.
 type Client struct {
 	api dockerAPI
 }
@@ -60,11 +63,16 @@ func (c *Client) Close() error {
 
 // ContainerCreate creates a new Docker container from the given config.
 func (c *Client) ContainerCreate(ctx context.Context, cfg *ContainerConfig, name string) (string, error) {
+	labels := map[string]string{"app": "loop-agent"}
+	for k, v := range cfg.Labels {
+		labels[k] = v
+	}
+
 	containerCfg := &containertypes.Config{
 		Image:        cfg.Image,
 		AttachStdout: true,
 		AttachStderr: true,
-		Labels:       map[string]string{"app": "loop-agent"},
+		Labels:       labels,
 		Env:          cfg.Env,
 		Cmd:          cfg.Cmd,
 		WorkingDir:   cfg.WorkingDir,
@@ -265,13 +273,12 @@ func (c *Client) ImageBuild(ctx context.Context, contextDir, tag string) error {
 	return nil
 }
 
-// ContainerList returns the IDs of containers matching the given label.
+// ContainerList returns the IDs of running containers matching the given label.
 func (c *Client) ContainerList(ctx context.Context, labelKey, labelValue string) ([]string, error) {
 	f := filters.NewArgs()
 	f.Add("label", fmt.Sprintf("%s=%s", labelKey, labelValue))
 
 	containers, err := c.api.ContainerList(ctx, containertypes.ListOptions{
-		All:     true,
 		Filters: f,
 	})
 	if err != nil {
@@ -283,6 +290,28 @@ func (c *Client) ContainerList(ctx context.Context, labelKey, labelValue string)
 		ids = append(ids, ctr.ID)
 	}
 	return ids, nil
+}
+
+// RunningChannelIDs returns the set of channel IDs that have at least one
+// running Docker container (containers labeled with the loop-channel key).
+func (c *Client) RunningChannelIDs(ctx context.Context) (map[string]struct{}, error) {
+	f := filters.NewArgs()
+	f.Add("label", channelLabelKey)
+
+	containers, err := c.api.ContainerList(ctx, containertypes.ListOptions{
+		Filters: f,
+	})
+	if err != nil {
+		return nil, err
+	}
+
+	result := make(map[string]struct{}, len(containers))
+	for _, ctr := range containers {
+		if chID := ctr.Labels[channelLabelKey]; chID != "" {
+			result[chID] = struct{}{}
+		}
+	}
+	return result, nil
 }
 
 // CopyToContainer copies a tar archive into the container at the given path.

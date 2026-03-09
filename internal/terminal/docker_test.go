@@ -74,10 +74,15 @@ func (s *DockerSuite) TestNewDockerExecClientError() {
 }
 
 func (s *DockerSuite) TestContainerExecCreate() {
+	orig := osGetenv
+	osGetenv = func(string) string { return "testuser" }
+	defer func() { osGetenv = orig }()
+
 	api := new(mockDockerExecAPI)
 	client := &DockerExecClient{api: api}
 
 	expectedOpts := containertypes.ExecOptions{
+		User:         "testuser",
 		Cmd:          []string{"/bin/sh"},
 		Tty:          true,
 		AttachStdin:  true,
@@ -256,10 +261,15 @@ func (s *DockerSuite) TestHijackedConnReadEOF() {
 }
 
 func (s *DockerSuite) TestContainerExecCreateNoTTY() {
+	orig := osGetenv
+	osGetenv = func(string) string { return "testuser" }
+	defer func() { osGetenv = orig }()
+
 	api := new(mockDockerExecAPI)
 	client := &DockerExecClient{api: api}
 
 	expectedOpts := containertypes.ExecOptions{
+		User:         "testuser",
 		Cmd:          []string{"ls", "-la"},
 		Tty:          false,
 		AttachStdin:  true,

@@ -248,3 +248,63 @@ func (s *ChannelServiceSuite) TestCreateChannelUpsertError() {
 	require.Contains(s.T(), err.Error(), "storing channel mapping")
 	require.Empty(s.T(), channelID)
 }
+
+func (s *ChannelServiceSuite) TestCreateChannelCreatorReturnsEmptyID() {
+	s.creator.On("CreateChannel", s.ctx, "guild-1", "trial").
+		Return("", nil)
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "ab12ab12ab12" && ch.Name == "trial" && ch.Active
+	})).Return(nil)
+
+	channelID, err := s.svc.CreateChannel(s.ctx, "trial", "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ab12ab12ab12", channelID)
+	s.store.AssertExpectations(s.T())
+	s.creator.AssertExpectations(s.T())
+}
+
+func (s *ChannelServiceSuite) TestEnsureChannelCreatorReturnsEmptyID() {
+	s.store.On("GetChannelByDirPath", s.ctx, "/home/user/dev/loop", types.PlatformDiscord).
+		Return(nil, nil)
+	s.creator.On("CreateChannel", s.ctx, "guild-1", "loop-ab12").
+		Return("", nil)
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "ab12ab12ab12" && ch.Name == "loop-ab12" &&
+			ch.DirPath == "/home/user/dev/loop" && ch.Active
+	})).Return(nil)
+
+	channelID, err := s.svc.EnsureChannel(s.ctx, "/home/user/dev/loop")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ab12ab12ab12", channelID)
+	s.store.AssertExpectations(s.T())
+	s.creator.AssertExpectations(s.T())
+}
+
+func (s *ChannelServiceSuite) TestCreateChannelLocalPlatformNilCreator() {
+	svc := NewChannelService(s.store, nil, "", types.PlatformLocal)
+
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.Name == "my-project" && ch.Platform == types.PlatformLocal && ch.Active && ch.ChannelID != ""
+	})).Return(nil)
+
+	channelID, err := svc.CreateChannel(s.ctx, "my-project", "")
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), channelID)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ChannelServiceSuite) TestEnsureChannelLocalPlatformNilCreator() {
+	svc := NewChannelService(s.store, nil, "", types.PlatformLocal)
+
+	s.store.On("GetChannelByDirPath", s.ctx, "/home/user/dev/loop", types.PlatformLocal).
+		Return(nil, nil)
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.Name == "loop-ab12" && ch.DirPath == "/home/user/dev/loop" &&
+			ch.Platform == types.PlatformLocal && ch.Active && ch.ChannelID != ""
+	})).Return(nil)
+
+	channelID, err := svc.EnsureChannel(s.ctx, "/home/user/dev/loop")
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), channelID)
+	s.store.AssertExpectations(s.T())
+}

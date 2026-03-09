@@ -1,6 +1,6 @@
 import type { Channel, Message } from "../types";
 
-let apiUrl = "http://localhost:8080";
+let apiUrl = "http://localhost:8222";
 
 export async function initApiUrl(): Promise<void> {
   if (window.loopAPI) {
@@ -22,6 +22,8 @@ interface ChannelAPIResponse {
   dir_path: string;
   parent_id: string;
   active: boolean;
+  running: boolean;
+  branch?: string;
 }
 
 export async function fetchChannels(): Promise<Channel[]> {
@@ -34,6 +36,8 @@ export async function fetchChannels(): Promise<Channel[]> {
     dir_path: c.dir_path,
     parent_id: c.parent_id,
     active: c.active,
+    running: c.running,
+    branch: c.branch || "",
   }));
 }
 
@@ -55,9 +59,71 @@ export async function createThread(
   return data.thread_id;
 }
 
+export async function deleteThread(threadId: string): Promise<void> {
+  const res = await fetch(`${apiUrl}/api/threads/${threadId}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`Failed to delete thread: ${res.statusText}`);
+}
+
+export async function createChannel(name: string): Promise<string> {
+  const res = await fetch(`${apiUrl}/api/channels/create`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ name }),
+  });
+  if (!res.ok) throw new Error(`Failed to create channel: ${res.statusText}`);
+  const data: { channel_id: string } = await res.json();
+  return data.channel_id;
+}
+
+export async function sendMessage(
+  channelId: string,
+  content: string,
+): Promise<void> {
+  const res = await fetch(`${apiUrl}/api/messages`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel_id: channelId, content }),
+  });
+  if (!res.ok) throw new Error(`Failed to send message: ${res.statusText}`);
+}
+
 interface MessagesResponse {
   messages: Message[];
   next_cursor: number | null;
+}
+
+export async function sendCommand(
+  channelId: string,
+  command: string,
+): Promise<void> {
+  const res = await fetch(`${apiUrl}/api/commands`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel_id: channelId, command }),
+  });
+  if (!res.ok) throw new Error(`Failed to send command: ${res.statusText}`);
+}
+
+export interface DiffFile {
+  path: string;
+  additions: number;
+  deletions: number;
+  binary: boolean;
+}
+
+export interface DiffResponse {
+  files: DiffFile[];
+  diff: string;
+  total_additions: number;
+  total_deletions: number;
+}
+
+export async function fetchDiff(channelId: string): Promise<DiffResponse> {
+  const res = await fetch(`${apiUrl}/api/channels/${channelId}/diff`);
+  if (!res.ok) throw new Error(`Failed to fetch diff: ${res.statusText}`);
+  return res.json();
 }
 
 export async function fetchMessages(

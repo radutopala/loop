@@ -14,10 +14,21 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/db"
 )
 
 type MockTerminalManager struct {
 	mock.Mock
+}
+
+type MockContainerFinder struct {
+	mock.Mock
+}
+
+func (m *MockContainerFinder) FindContainerByChannel(ctx context.Context, channelID, dirPath string) (string, error) {
+	args := m.Called(ctx, channelID, dirPath)
+	return args.String(0), args.Error(1)
 }
 
 func (m *MockTerminalManager) CreateSession(ctx context.Context, containerID string, cmd []string) (string, <-chan []byte, []byte, <-chan struct{}, error) {
@@ -66,8 +77,25 @@ func (m *MockTerminalManager) Resize(ctx context.Context, sessionID string, rows
 	return m.Called(ctx, sessionID, rows, cols).Error(0)
 }
 
-func (m *MockTerminalManager) StopSession(sessionID string) error {
-	return m.Called(sessionID).Error(0)
+func (m *MockTerminalManager) StopSession(sessionID string) (string, error) {
+	args := m.Called(sessionID)
+	return args.String(0), args.Error(1)
+}
+
+type MockContainerStopper struct {
+	mock.Mock
+}
+
+func (m *MockContainerStopper) ContainerRemove(ctx context.Context, containerID string) error {
+	return m.Called(ctx, containerID).Error(0)
+}
+
+type MockInteractiveCmdBuilder struct {
+	mock.Mock
+}
+
+func (m *MockInteractiveCmdBuilder) BuildInteractiveCmd(channelID, dirPath, sessionID string, forkSession bool) string {
+	return m.Called(channelID, dirPath, sessionID, forkSession).String(0)
 }
 
 type TerminalHandlerSuite struct {
@@ -173,6 +201,53 @@ func (s *TerminalHandlerSuite) TestCreateSession() {
 	close(doneCh)
 }
 
+func (s *TerminalHandlerSuite) TestCreateSessionWithInitialResize() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-1", []string{"/bin/bash"}).
+		Return("sess-1", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("Resize", mock.Anything, "sess-1", uint(40), uint(120)).Return(nil)
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1", Cmd: []string{"/bin/bash"}, Rows: 40, Cols: 120})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	require.Equal(s.T(), "sess-1", msg.SessionID)
+
+	time.Sleep(50 * time.Millisecond)
+	s.terminal.AssertCalled(s.T(), "Resize", mock.Anything, "sess-1", uint(40), uint(120))
+	close(doneCh)
+}
+
+func (s *TerminalHandlerSuite) TestCreateSessionWithInitialResizeError() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
+		Return("sess-1", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("Resize", mock.Anything, "sess-1", uint(30), uint(100)).Return(errors.New("resize failed"))
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1", Rows: 30, Cols: 100})
+
+	// Session is still created successfully despite initial resize error.
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	require.Equal(s.T(), "sess-1", msg.SessionID)
+
+	time.Sleep(50 * time.Millisecond)
+	s.terminal.AssertCalled(s.T(), "Resize", mock.Anything, "sess-1", uint(30), uint(100))
+	close(doneCh)
+}
+
 func (s *TerminalHandlerSuite) TestCreateSessionError() {
 	s.terminal.On("CreateSession", mock.Anything, "ctr-bad", ([]string)(nil)).
 		Return("", nil, nil, nil, errors.New("exec failed"))
@@ -198,8 +273,329 @@ func (s *TerminalHandlerSuite) TestCreateSessionMissingContainerID() {
 
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "error", msg.Type)
-	require.Contains(s.T(), msg.Message, "container_id required")
+	require.Contains(s.T(), msg.Message, "container_id or channel_id required")
 	require.Equal(s.T(), wsErrCodeMissingField, msg.ErrorCode)
+}
+
+func (s *TerminalHandlerSuite) TestCreateSessionWithChannelID() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "resolved-container-123", []string(nil)).
+		Return("sess-new", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-42", mock.Anything).Return("resolved-container-123", nil)
+	s.srv.SetContainerFinder(finder)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-42"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	require.Equal(s.T(), "sess-new", msg.SessionID)
+	finder.AssertExpectations(s.T())
+}
+
+func (s *TerminalHandlerSuite) TestCreateSessionWithChannelIDResolvesDirPath() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "resolved-container-456", []string(nil)).
+		Return("sess-dir", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-proj").
+		Return(&db.Channel{ChannelID: "ch-proj", DirPath: "/home/user/dev/loop"}, nil)
+	s.srv.store = store
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-proj", "/home/user/dev/loop").Return("resolved-container-456", nil)
+	s.srv.SetContainerFinder(finder)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-proj"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	require.Equal(s.T(), "sess-dir", msg.SessionID)
+	store.AssertExpectations(s.T())
+	finder.AssertExpectations(s.T())
+}
+
+func (s *TerminalHandlerSuite) TestCreateSessionWithChannelIDNotFound() {
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-missing", mock.Anything).
+		Return("", errors.New("no container found"))
+	s.srv.SetContainerFinder(finder)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-missing"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "error", msg.Type)
+	require.Contains(s.T(), msg.Message, "no running container")
+	require.Equal(s.T(), wsErrCodeSessionFailed, msg.ErrorCode)
+}
+
+func (s *TerminalHandlerSuite) TestSetContainerFinder() {
+	srv := nilServer()
+	require.Nil(s.T(), srv.containerFinder)
+	finder := new(MockContainerFinder)
+	srv.SetContainerFinder(finder)
+	require.NotNil(s.T(), srv.containerFinder)
+}
+
+func (s *TerminalHandlerSuite) TestSetContainerStopper() {
+	srv := nilServer()
+	require.Nil(s.T(), srv.containerStopper)
+	stopper := new(MockContainerStopper)
+	srv.SetContainerStopper(stopper)
+	require.NotNil(s.T(), srv.containerStopper)
+}
+
+func (s *TerminalHandlerSuite) TestSetInteractiveCmdBuilder() {
+	srv := nilServer()
+	require.Nil(s.T(), srv.cmdBuilder)
+	builder := new(MockInteractiveCmdBuilder)
+	srv.SetInteractiveCmdBuilder(builder)
+	require.NotNil(s.T(), srv.cmdBuilder)
+}
+
+func (s *TerminalHandlerSuite) TestCreateSessionSendsInteractiveCmd() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "resolved-ctr", []string(nil)).
+		Return("sess-claude", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("SendInput", "sess-claude", []byte("claude --dangerously-skip-permissions\n")).Return(nil)
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-99", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.SetContainerFinder(finder)
+
+	builder := new(MockInteractiveCmdBuilder)
+	builder.On("BuildInteractiveCmd", "ch-99", "", "", false).Return("claude --dangerously-skip-permissions")
+	s.srv.SetInteractiveCmdBuilder(builder)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-99"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	require.Equal(s.T(), "sess-claude", msg.SessionID)
+	builder.AssertExpectations(s.T())
+	s.terminal.AssertCalled(s.T(), "SendInput", "sess-claude", []byte("claude --dangerously-skip-permissions\n"))
+}
+
+func (s *TerminalHandlerSuite) TestCreateSessionSendsInteractiveCmdWithDirPath() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "resolved-ctr-dir", []string(nil)).
+		Return("sess-dir", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("SendInput", "sess-dir", []byte("claude --mcp-config /projects/app/.loop/mcp-ch-dir.json\n")).Return(nil)
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-dir").
+		Return(&db.Channel{ChannelID: "ch-dir", DirPath: "/projects/app"}, nil)
+	s.srv.store = store
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-dir", "/projects/app").Return("resolved-ctr-dir", nil)
+	s.srv.SetContainerFinder(finder)
+
+	builder := new(MockInteractiveCmdBuilder)
+	builder.On("BuildInteractiveCmd", "ch-dir", "/projects/app", "", false).Return("claude --mcp-config /projects/app/.loop/mcp-ch-dir.json")
+	s.srv.SetInteractiveCmdBuilder(builder)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-dir"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	require.Equal(s.T(), "sess-dir", msg.SessionID)
+	builder.AssertExpectations(s.T())
+}
+
+func (s *TerminalHandlerSuite) TestCreateSessionResumesChannelSession() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "resolved-ctr", []string(nil)).
+		Return("sess-resume", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("SendInput", "sess-resume", []byte("claude --dangerously-skip-permissions --resume sess-existing\n")).Return(nil)
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-resume").
+		Return(&db.Channel{ChannelID: "ch-resume", SessionID: "sess-existing"}, nil)
+	s.srv.store = store
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-resume", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.SetContainerFinder(finder)
+
+	builder := new(MockInteractiveCmdBuilder)
+	builder.On("BuildInteractiveCmd", "ch-resume", "", "sess-existing", false).
+		Return("claude --dangerously-skip-permissions --resume sess-existing")
+	s.srv.SetInteractiveCmdBuilder(builder)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-resume"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	builder.AssertExpectations(s.T())
+	s.terminal.AssertCalled(s.T(), "SendInput", "sess-resume", []byte("claude --dangerously-skip-permissions --resume sess-existing\n"))
+}
+
+func (s *TerminalHandlerSuite) TestCreateSessionForksThreadFromParent() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "resolved-ctr", []string(nil)).
+		Return("sess-fork", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("SendInput", "sess-fork", []byte("claude --dangerously-skip-permissions --resume sess-parent --fork-session\n")).Return(nil)
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	store := new(MockChannelLister)
+	// Thread inherited the parent's session ID at creation time.
+	store.On("GetChannel", mock.Anything, "thread-1").
+		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-parent", SessionID: "sess-parent"}, nil)
+	// Parent channel has the same session ID — should fork.
+	store.On("GetChannel", mock.Anything, "ch-parent").
+		Return(&db.Channel{ChannelID: "ch-parent", SessionID: "sess-parent"}, nil)
+	s.srv.store = store
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "thread-1", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.SetContainerFinder(finder)
+
+	builder := new(MockInteractiveCmdBuilder)
+	builder.On("BuildInteractiveCmd", "thread-1", "", "sess-parent", true).
+		Return("claude --dangerously-skip-permissions --resume sess-parent --fork-session")
+	s.srv.SetInteractiveCmdBuilder(builder)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "thread-1"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	builder.AssertExpectations(s.T())
+	store.AssertCalled(s.T(), "GetChannel", mock.Anything, "ch-parent")
+}
+
+func (s *TerminalHandlerSuite) TestCreateSessionThreadWithOwnSession() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "resolved-ctr", []string(nil)).
+		Return("sess-thread", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("SendInput", "sess-thread", []byte("claude --dangerously-skip-permissions --resume sess-thread-own\n")).Return(nil)
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	store := new(MockChannelLister)
+	// Thread already has its own session ID (was forked previously).
+	store.On("GetChannel", mock.Anything, "thread-2").
+		Return(&db.Channel{ChannelID: "thread-2", ParentID: "ch-parent", SessionID: "sess-thread-own"}, nil)
+	// Parent has a different session — thread's session diverged after fork.
+	store.On("GetChannel", mock.Anything, "ch-parent").
+		Return(&db.Channel{ChannelID: "ch-parent", SessionID: "sess-parent"}, nil)
+	s.srv.store = store
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "thread-2", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.SetContainerFinder(finder)
+
+	builder := new(MockInteractiveCmdBuilder)
+	// Has its own session — uses resume, not fork.
+	builder.On("BuildInteractiveCmd", "thread-2", "", "sess-thread-own", false).
+		Return("claude --dangerously-skip-permissions --resume sess-thread-own")
+	s.srv.SetInteractiveCmdBuilder(builder)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "thread-2"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	builder.AssertExpectations(s.T())
+}
+
+func (s *TerminalHandlerSuite) TestCreateSessionInteractiveCmdSendInputError() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "resolved-ctr", []string(nil)).
+		Return("sess-err", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("SendInput", "sess-err", mock.Anything).Return(errors.New("write failed"))
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-err", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.SetContainerFinder(finder)
+
+	builder := new(MockInteractiveCmdBuilder)
+	builder.On("BuildInteractiveCmd", "ch-err", "", "", false).Return("claude --dangerously-skip-permissions")
+	s.srv.SetInteractiveCmdBuilder(builder)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-err"})
+
+	// Session is still created successfully despite SendInput error.
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	require.Equal(s.T(), "sess-err", msg.SessionID)
+}
+
+func (s *TerminalHandlerSuite) TestCreateSessionExplicitCmdSkipsInteractiveCmd() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	explicitCmd := []string{"/bin/bash"}
+	s.terminal.On("CreateSession", mock.Anything, "resolved-ctr", explicitCmd).
+		Return("sess-bash", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-explicit", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.SetContainerFinder(finder)
+
+	builder := new(MockInteractiveCmdBuilder)
+	s.srv.SetInteractiveCmdBuilder(builder)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-explicit", Cmd: explicitCmd})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	builder.AssertNotCalled(s.T(), "BuildInteractiveCmd", mock.Anything, mock.Anything, mock.Anything)
+	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
 }
 
 func (s *TerminalHandlerSuite) TestAttachSession() {
@@ -430,8 +826,11 @@ func (s *TerminalHandlerSuite) TestStopSession() {
 	doneCh := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("StopSession", "sess-1").Return(nil)
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.terminal.On("StopSession", "sess-1").Return("ctr-1", nil)
+
+	stopper := new(MockContainerStopper)
+	stopper.On("ContainerRemove", mock.Anything, "ctr-1").Return(nil)
+	s.srv.SetContainerStopper(stopper)
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -444,6 +843,10 @@ func (s *TerminalHandlerSuite) TestStopSession() {
 
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "stopped", msg.Type)
+
+	// Allow goroutine cleanup.
+	time.Sleep(50 * time.Millisecond)
+	stopper.AssertCalled(s.T(), "ContainerRemove", mock.Anything, "ctr-1")
 
 	close(doneCh)
 }
@@ -466,8 +869,7 @@ func (s *TerminalHandlerSuite) TestStopSessionError() {
 	doneCh := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("StopSession", "sess-1").Return(errors.New("stop failed"))
-	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.terminal.On("StopSession", "sess-1").Return("", errors.New("stop failed"))
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -482,6 +884,35 @@ func (s *TerminalHandlerSuite) TestStopSessionError() {
 	require.Equal(s.T(), "error", msg.Type)
 	require.Contains(s.T(), msg.Message, "stop failed")
 	require.Equal(s.T(), wsErrCodeSessionFailed, msg.ErrorCode)
+
+	close(doneCh)
+}
+
+func (s *TerminalHandlerSuite) TestStopSessionContainerRemoveError() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
+		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("StopSession", "sess-1").Return("ctr-1", nil)
+
+	stopper := new(MockContainerStopper)
+	stopper.On("ContainerRemove", mock.Anything, "ctr-1").Return(errors.New("remove failed"))
+	s.srv.SetContainerStopper(stopper)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1"})
+	readStatusMsg(s.T(), conn)
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "stop"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "stopped", msg.Type)
+
+	time.Sleep(50 * time.Millisecond)
+	stopper.AssertCalled(s.T(), "ContainerRemove", mock.Anything, "ctr-1")
 
 	close(doneCh)
 }
@@ -628,6 +1059,67 @@ func (s *TerminalHandlerSuite) TestDetachErrorLogged() {
 	}
 
 	close(doneCh2)
+}
+
+func (s *TerminalHandlerSuite) TestDetachMessage() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
+		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("DetachSession", "sess-1", mock.Anything).Return(nil)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1"})
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+
+	// Send detach message.
+	sendControl(s.T(), conn, wsControlMessage{Type: "detach"})
+	msg = readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "detached", msg.Type)
+
+	close(doneCh)
+}
+
+func (s *TerminalHandlerSuite) TestDetachMessageNoSession() {
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "detach"})
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "error", msg.Type)
+	require.Equal(s.T(), wsErrCodeNoSession, msg.ErrorCode)
+}
+
+func (s *TerminalHandlerSuite) TestStopWithSessionID() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
+		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("DetachSession", "sess-1", mock.Anything).Return(nil)
+	s.terminal.On("StopSession", "sess-1").Return("ctr-1", nil)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	// Create then detach.
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1"})
+	readStatusMsg(s.T(), conn) // created
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "detach"})
+	readStatusMsg(s.T(), conn) // detached
+
+	// Stop using explicit session_id (since server session is cleared by detach).
+	sendControl(s.T(), conn, wsControlMessage{Type: "stop", SessionID: "sess-1"})
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "stopped", msg.Type)
+
+	close(doneCh)
 }
 
 func (s *TerminalHandlerSuite) TestUpgradeError() {

@@ -17,6 +17,7 @@ import (
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/testutil"
+	"github.com/radutopala/loop/internal/types"
 )
 
 type TaskExecutorSuite struct {
@@ -653,4 +654,92 @@ func (s *TaskExecutorSuite) TestAutoDeleteSkipped() {
 			s.bot.AssertNotCalled(s.T(), "DeleteThread", mock.Anything, mock.Anything)
 		})
 	}
+}
+
+// --- broadcastBotMessage tests ---
+
+func (s *TaskExecutorSuite) TestBroadcastBotMessageLocalPlatform() {
+	s.executor.SetPlatform(types.PlatformLocal)
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 5, ChannelID: "ch1"}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.MatchedBy(func(m *db.Message) bool {
+		return m.ChatID == 5 && m.ChannelID == "ch1" && m.Content == "task done" && m.IsBot
+	})).Return(nil)
+	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d MessageEventData) bool {
+		return d.Content == "task done" && d.IsBot && d.AuthorName == "assistant"
+	}))
+
+	s.executor.broadcastBotMessage(s.ctx, "ch1", "task done")
+
+	s.store.AssertExpectations(s.T())
+	eb.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestBroadcastBotMessageDiscordNoOp() {
+	s.executor.SetPlatform(types.PlatformDiscord)
+
+	s.executor.broadcastBotMessage(s.ctx, "ch1", "task done")
+
+	s.store.AssertNotCalled(s.T(), "InsertMessage", mock.Anything, mock.Anything)
+}
+
+func (s *TaskExecutorSuite) TestBroadcastBotMessageLocalGetChannelError() {
+	s.executor.SetPlatform(types.PlatformLocal)
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("db error"))
+	eb.On("BroadcastMessageCreated", "ch1", mock.Anything)
+
+	s.executor.broadcastBotMessage(s.ctx, "ch1", "task done")
+
+	s.store.AssertNotCalled(s.T(), "InsertMessage", mock.Anything, mock.Anything)
+	eb.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestSetPlatformAndEventBroadcaster() {
+	require.Equal(s.T(), types.Platform(""), s.executor.platform)
+	require.Nil(s.T(), s.executor.events)
+
+	s.executor.SetPlatform(types.PlatformLocal)
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+
+	require.Equal(s.T(), types.PlatformLocal, s.executor.platform)
+	require.Same(s.T(), eb, s.executor.events)
+}
+
+func (s *TaskExecutorSuite) TestLocalPlatformFinalResponseBroadcasts() {
+	s.executor.SetPlatform(types.PlatformLocal)
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+
+	task := &db.ScheduledTask{
+		ID: 1, ChannelID: "ch1", Prompt: "check", Type: db.TaskTypeCron, Schedule: "0 * * * *",
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 5, ChannelID: "ch1"}, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
+		Response: "all good", SessionID: "s1",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "s1").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "ch1" && msg.Content == "all good"
+	})).Return(nil)
+	s.store.On("InsertMessage", s.ctx, mock.MatchedBy(func(m *db.Message) bool {
+		return m.ChatID == 5 && m.Content == "all good" && m.IsBot
+	})).Return(nil)
+	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d MessageEventData) bool {
+		return d.Content == "all good" && d.IsBot
+	}))
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "all good", resp)
+
+	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+	eb.AssertExpectations(s.T())
 }

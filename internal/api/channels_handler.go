@@ -1,7 +1,10 @@
 package api
 
 import (
+	"context"
 	"net/http"
+	"os/exec"
+	"path/filepath"
 	"strings"
 )
 
@@ -30,6 +33,8 @@ type channelResponse struct {
 	DirPath   string `json:"dir_path"`
 	ParentID  string `json:"parent_id"`
 	Active    bool   `json:"active"`
+	Running   bool   `json:"running"`
+	Branch    string `json:"branch,omitempty"`
 }
 
 func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
@@ -91,23 +96,56 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Get running container channel IDs if a lister is configured.
+	var runningIDs map[string]struct{}
+	if s.runningChLister != nil {
+		runningIDs, err = s.runningChLister.RunningChannelIDs(r.Context())
+		if err != nil {
+			s.logger.Warn("failed to list running channels", "error", err)
+		}
+	}
+
 	query := r.URL.Query().Get("query")
 
 	resp := make([]channelResponse, 0, len(channels))
 	for _, ch := range channels {
+		if s.platform != "" && ch.Platform != s.platform {
+			continue
+		}
 		if query != "" && !containsFold(ch.Name, query) {
 			continue
+		}
+		_, running := runningIDs[ch.ChannelID]
+		dirPath := ch.DirPath
+		if dirPath == "" && s.loopDir != "" {
+			dirPath = filepath.Join(s.loopDir, ch.ChannelID, "work")
 		}
 		resp = append(resp, channelResponse{
 			ChannelID: ch.ChannelID,
 			Name:      ch.Name,
-			DirPath:   ch.DirPath,
+			DirPath:   dirPath,
 			ParentID:  ch.ParentID,
 			Active:    ch.Active,
+			Running:   running,
+			Branch:    gitBranch(r.Context(), dirPath),
 		})
 	}
 
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
+}
+
+// gitBranch returns the current git branch for the given directory, or "".
+func gitBranch(ctx context.Context, dir string) string {
+	if dir == "" {
+		return ""
+	}
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }
 
 func containsFold(s, substr string) bool {

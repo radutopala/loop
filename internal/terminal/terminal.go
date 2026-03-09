@@ -26,7 +26,11 @@ const clientChannelBuffer = 64
 const readBufSize = 4096
 
 // ExecClient abstracts the Docker exec operations needed by the terminal
-// manager, making it testable without a real Docker daemon.
+// manager (docker exec), making it testable without a real Docker daemon.
+//
+// This is distinct from container.DockerClient, which handles container
+// lifecycle (docker create/start/stop/rm). ExecClient runs commands inside
+// already-running containers for interactive PTY sessions.
 type ExecClient interface {
 	ContainerExecCreate(ctx context.Context, containerID string, cmd []string, tty bool) (string, error)
 	ContainerExecAttach(ctx context.Context, execID string) (io.ReadWriteCloser, error)
@@ -281,12 +285,13 @@ func (m *Manager) Resize(ctx context.Context, id string, rows, cols uint) error 
 }
 
 // StopSession closes the exec connection and removes the session.
-func (m *Manager) StopSession(id string) error {
+// It returns the container ID the session was running in.
+func (m *Manager) StopSession(id string) (string, error) {
 	m.mu.Lock()
 	s, ok := m.sessions[id]
 	if !ok {
 		m.mu.Unlock()
-		return ErrSessionNotFound
+		return "", ErrSessionNotFound
 	}
 	delete(m.sessions, id)
 	m.mu.Unlock()
@@ -301,7 +306,7 @@ func (m *Manager) StopSession(id string) error {
 	}
 	s.mu.Unlock()
 
-	return err
+	return s.containerID, err
 }
 
 // ListSessions returns all active session IDs.

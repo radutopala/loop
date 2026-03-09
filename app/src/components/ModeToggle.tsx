@@ -7,8 +7,8 @@ interface ModeToggleProps {
 }
 
 const modes: { value: ViewMode; label: string }[] = [
-  { value: "terminal", label: "Terminal" },
   { value: "chat", label: "Chat" },
+  { value: "terminal", label: "Terminal" },
 ];
 
 export function ModeToggle({ mode, onChange }: ModeToggleProps) {

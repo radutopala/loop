@@ -15,11 +15,40 @@ import (
 )
 
 // sendReply sends a simple text message to the interaction's channel.
+// On the local platform, it also stores the message in the database and
+// broadcasts via the events hub so the response is visible in the UI.
 func (o *Orchestrator) sendReply(ctx context.Context, channelID, content string) {
 	_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 		ChannelID: channelID,
 		Content:   content,
 	})
+
+	if o.platform != types.PlatformLocal {
+		return
+	}
+
+	msgID := generateMessageID()
+	ch, err := o.store.GetChannel(ctx, channelID)
+	if err == nil && ch != nil {
+		_ = o.store.InsertMessage(ctx, &db.Message{
+			ChatID:     ch.ID,
+			ChannelID:  channelID,
+			MsgID:      msgID,
+			AuthorName: "assistant",
+			Content:    content,
+			IsBot:      true,
+			CreatedAt:  time.Now().UTC(),
+		})
+	}
+
+	if o.events != nil {
+		o.events.BroadcastMessageCreated(channelID, MessageEventData{
+			MsgID:      msgID,
+			AuthorName: "assistant",
+			Content:    content,
+			IsBot:      true,
+		})
+	}
 }
 
 // HandleInteraction processes a slash command interaction.

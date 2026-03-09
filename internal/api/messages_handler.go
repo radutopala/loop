@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"strconv"
 	"time"
@@ -12,10 +13,6 @@ type sendMessageRequest struct {
 }
 
 func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.messages, "message sending not configured") {
-		return
-	}
-
 	var req sendMessageRequest
 	if !decodeJSON(w, r, &req) {
 		return
@@ -27,6 +24,18 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Content == "" {
 		http.Error(w, "content is required", http.StatusBadRequest)
+		return
+	}
+
+	// Route through the orchestrator when available (local platform).
+	if s.msgHandler != nil {
+		// Use a detached context — r.Context() is cancelled when the HTTP response is sent.
+		go s.msgHandler.HandleIncomingMessage(context.Background(), req.ChannelID, "local-user", req.Content)
+		w.WriteHeader(http.StatusNoContent)
+		return
+	}
+
+	if !requireConfigured(w, s.messages, "message sending not configured") {
 		return
 	}
 

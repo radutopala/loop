@@ -67,15 +67,23 @@ func NewChannelService(store db.Store, creator ChannelCreator, guildID string, p
 }
 
 func (s *channelService) CreateChannel(ctx context.Context, name, authorID string) (string, error) {
-	channelID, err := s.creator.CreateChannel(ctx, s.guildID, name)
-	if err != nil {
-		return "", fmt.Errorf("creating channel: %w", err)
-	}
-
-	if authorID != "" {
-		if err := s.creator.InviteUserToChannel(ctx, channelID, authorID); err != nil {
-			return "", fmt.Errorf("inviting user to channel: %w", err)
+	var channelID string
+	if s.creator != nil {
+		var err error
+		channelID, err = s.creator.CreateChannel(ctx, s.guildID, name)
+		if err != nil {
+			return "", fmt.Errorf("creating channel: %w", err)
 		}
+
+		if authorID != "" && channelID != "" {
+			if err := s.creator.InviteUserToChannel(ctx, channelID, authorID); err != nil {
+				return "", fmt.Errorf("inviting user to channel: %w", err)
+			}
+		}
+	}
+	if channelID == "" {
+		// No-op creator (e.g. local platform) — generate ID locally.
+		channelID = randSuffix() + randSuffix() + randSuffix()
 	}
 
 	if err := s.store.UpsertChannel(ctx, &db.Channel{
@@ -101,15 +109,25 @@ func (s *channelService) EnsureChannel(ctx context.Context, dirPath string) (str
 	}
 
 	name := sanitizeChannelName(filepath.Base(dirPath)) + "-" + randSuffix()
-	channelID, err := s.creator.CreateChannel(ctx, s.guildID, name)
-	if err != nil {
-		return "", fmt.Errorf("creating channel: %w", err)
+	var channelID string
+	if s.creator != nil {
+		var err error
+		channelID, err = s.creator.CreateChannel(ctx, s.guildID, name)
+		if err != nil {
+			return "", fmt.Errorf("creating channel: %w", err)
+		}
+
+		if channelID != "" {
+			_ = s.creator.SetChannelTopic(ctx, channelID, dirPath)
+
+			if ownerID, ownerErr := s.creator.GetOwnerUserID(ctx); ownerErr == nil && ownerID != "" {
+				_ = s.creator.InviteUserToChannel(ctx, channelID, ownerID)
+			}
+		}
 	}
-
-	_ = s.creator.SetChannelTopic(ctx, channelID, dirPath)
-
-	if ownerID, ownerErr := s.creator.GetOwnerUserID(ctx); ownerErr == nil && ownerID != "" {
-		_ = s.creator.InviteUserToChannel(ctx, channelID, ownerID)
+	if channelID == "" {
+		// No-op creator (e.g. local platform) — generate ID locally.
+		channelID = randSuffix() + randSuffix() + randSuffix()
 	}
 
 	if err := s.store.UpsertChannel(ctx, &db.Channel{

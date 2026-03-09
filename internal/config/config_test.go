@@ -64,7 +64,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Equal(s.T(), "text", cfg.LogFormat)
 	require.Equal(s.T(), "loop-agent:latest", cfg.ContainerImage)
 	require.Equal(s.T(), 3600*time.Second, cfg.ContainerTimeout)
-	require.Equal(s.T(), int64(512), cfg.ContainerMemoryMB)
+	require.Equal(s.T(), int64(1024), cfg.ContainerMemoryMB)
 	require.Equal(s.T(), 1.0, cfg.ContainerCPUs)
 	require.Equal(s.T(), 300*time.Second, cfg.ContainerKeepAlive)
 	require.Equal(s.T(), 30*time.Second, cfg.PollInterval)

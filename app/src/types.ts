@@ -4,7 +4,8 @@ export interface Channel {
   parent_id: string;
   dir_path: string;
   active: boolean;
-  container_id?: string;
+  running: boolean;
+  branch: string;
 }
 
 export interface Message {
@@ -34,6 +35,15 @@ export interface MessageCreatedData {
   is_bot: boolean;
 }
 
+export interface MessageStreamingData {
+  content: string;
+}
+
+export interface AgentStatusData {
+  status: "running" | "completed" | "error";
+  error?: string;
+}
+
 // UI-level session status (mapped from server message types).
 export type SessionStatus = "connecting" | "running" | "completed" | "failed";
 
@@ -44,7 +54,7 @@ export type ViewMode = "terminal" | "chat";
 
 export interface CreateMessage {
   type: "create";
-  container_id: string;
+  channel_id: string;
   cmd?: string[];
 }
 
@@ -78,7 +88,7 @@ export type ClientMessage =
 // --- Server → Client messages ---
 
 export interface ServerStatusMessage {
-  type: "created" | "attached" | "stopped" | "closed";
+  type: "created" | "attached" | "detached" | "stopped" | "closed";
   session_id?: string;
   message?: string;
 }
@@ -95,6 +105,7 @@ declare global {
   interface Window {
     loopAPI: {
       getApiUrl: () => Promise<string>;
+      onNavigateChannel: (callback: (channelId: string) => void) => void;
     };
   }
 }

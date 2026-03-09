@@ -135,6 +135,49 @@ func (s *HelpersSuite) TestStripMention() {
 	}
 }
 
+// --- HasTextMention ---
+
+func (s *HelpersSuite) TestHasTextMention() {
+	tests := []struct {
+		content  string
+		username string
+		want     bool
+	}{
+		{"@LoopBot do this", "LoopBot", true},
+		{"@loopbot do this", "LoopBot", true},
+		{"hey @LOOPBOT check", "LoopBot", true},
+		{"no mention here", "LoopBot", false},
+		{"just a message", "LoopBot", false},
+		{"@LoopBot", "LoopBot", true},
+	}
+	for _, tc := range tests {
+		s.Run(tc.content, func() {
+			require.Equal(s.T(), tc.want, HasTextMention(tc.content, tc.username))
+		})
+	}
+}
+
+// --- StripTextMention ---
+
+func (s *HelpersSuite) TestStripTextMention() {
+	tests := []struct {
+		content  string
+		username string
+		want     string
+	}{
+		{"@LoopBot do this", "LoopBot", "do this"},
+		{"@loopbot do this", "LoopBot", "do this"},
+		{"hey @LoopBot check", "LoopBot", "hey check"},
+		{"no mention here", "LoopBot", "no mention here"},
+		{"@LoopBot", "LoopBot", ""},
+	}
+	for _, tc := range tests {
+		s.Run(tc.content, func() {
+			require.Equal(s.T(), tc.want, StripTextMention(tc.content, tc.username))
+		})
+	}
+}
+
 // --- ReplaceTextMention ---
 
 func (s *HelpersSuite) TestReplaceTextMention() {

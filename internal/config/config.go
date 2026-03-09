@@ -222,7 +222,7 @@ func Load() (*Config, error) {
 		DBPath:               stringDefault(jc.DBPath, filepath.Join(loopDir, "loop.db")),
 		ContainerImage:       stringDefault(jc.ContainerImage, "loop-agent:latest"),
 		ContainerTimeout:     time.Duration(ptrDefault(jc.ContainerTimeoutSec, 3600)) * time.Second,
-		ContainerMemoryMB:    ptrDefault(jc.ContainerMemoryMB, 512),
+		ContainerMemoryMB:    ptrDefault(jc.ContainerMemoryMB, 1024),
 		ContainerCPUs:        ptrDefault(jc.ContainerCPUs, 1.0),
 		ContainerKeepAlive:   time.Duration(ptrDefault(jc.ContainerKeepAliveSec, 300)) * time.Second,
 		PollInterval:         time.Duration(ptrDefault(jc.PollIntervalSec, 30)) * time.Second,
@@ -279,10 +279,12 @@ func Load() (*Config, error) {
 		if cfg.SlackBotToken == "" || cfg.SlackAppToken == "" {
 			return nil, fmt.Errorf("platform \"slack\" requires slack_bot_token and slack_app_token")
 		}
+	case types.PlatformLocal:
+		// Local platform requires no external credentials.
 	case "":
-		return nil, fmt.Errorf("missing required config: \"platform\" must be set to \"discord\" or \"slack\"")
+		return nil, fmt.Errorf("missing required config: \"platform\" must be set to \"discord\", \"slack\", or \"local\"")
 	default:
-		return nil, fmt.Errorf("unsupported platform %q: must be \"discord\" or \"slack\"", cfg.PlatformType)
+		return nil, fmt.Errorf("unsupported platform %q: must be \"discord\", \"slack\", or \"local\"", cfg.PlatformType)
 	}
 
 	return cfg, nil

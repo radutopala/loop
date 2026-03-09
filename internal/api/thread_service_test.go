@@ -245,6 +245,60 @@ func (s *ThreadServiceSuite) TestDeleteThreadDBError() {
 	require.Contains(s.T(), err.Error(), "deleting thread from db")
 }
 
+func (s *ThreadServiceSuite) TestCreateThreadCreatorReturnsEmptyID() {
+	origGen := generateThreadID
+	generateThreadID = func() string { return "fallback-id" }
+	s.T().Cleanup(func() { generateThreadID = origGen })
+
+	s.store.On("GetChannel", s.ctx, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", GuildID: "guild-1", DirPath: "/work", Platform: types.PlatformLocal}, nil)
+	// Creator returns empty string (like LocalBot).
+	s.creator.On("CreateThread", s.ctx, "ch-1", "my-thread", "desktop", "").
+		Return("", nil)
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "fallback-id" && ch.ParentID == "ch-1" && ch.Name == "my-thread"
+	})).Return(nil)
+
+	threadID, err := s.svc.CreateThread(s.ctx, "ch-1", "my-thread", "desktop", "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "fallback-id", threadID)
+	s.store.AssertExpectations(s.T())
+	s.creator.AssertExpectations(s.T())
+}
+
+func (s *ThreadServiceSuite) TestCreateThreadLocalPlatformNilCreator() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := NewThreadService(s.store, nil, types.PlatformLocal, logger)
+
+	origGen := generateThreadID
+	generateThreadID = func() string { return "local-thread-abc" }
+	s.T().Cleanup(func() { generateThreadID = origGen })
+
+	s.store.On("GetChannel", s.ctx, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", GuildID: "", DirPath: "/work", Platform: types.PlatformLocal}, nil)
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "local-thread-abc" && ch.ParentID == "ch-1" && ch.Name == "my-thread"
+	})).Return(nil)
+
+	threadID, err := svc.CreateThread(s.ctx, "ch-1", "my-thread", "", "Do the task")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "local-thread-abc", threadID)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ThreadServiceSuite) TestDeleteThreadLocalPlatformNilCreator() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := NewThreadService(s.store, nil, types.PlatformLocal, logger)
+
+	s.store.On("GetChannel", s.ctx, "thread-1").
+		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1"}, nil)
+	s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
+
+	err := svc.DeleteThread(s.ctx, "thread-1")
+	require.NoError(s.T(), err)
+	s.store.AssertExpectations(s.T())
+}
+
 func (s *ThreadServiceSuite) TestDeleteThreadMCPConfigErrorLogsWarning() {
 	orig := bot.RemoveMCPConfig
 	s.T().Cleanup(func() { bot.RemoveMCPConfig = orig })

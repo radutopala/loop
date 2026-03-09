@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -83,6 +84,14 @@ func (m *MockDockerClient) ImageBuild(ctx context.Context, contextDir, tag strin
 func (m *MockDockerClient) ContainerList(ctx context.Context, labelKey, labelValue string) ([]string, error) {
 	args := m.Called(ctx, labelKey, labelValue)
 	return args.Get(0).([]string), args.Error(1)
+}
+
+func (m *MockDockerClient) RunningChannelIDs(ctx context.Context) (map[string]struct{}, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]struct{}), args.Error(1)
 }
 
 func (m *MockDockerClient) CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader) error {
@@ -1054,6 +1063,26 @@ func (s *RunnerSuite) TestRunHomeDirError() {
 
 func (s *RunnerSuite) TestRunMkdirAllError() {
 	osMkdirAll = func(_ string, _ os.FileMode) error { return errors.New("mkdir fail") }
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{ChannelID: "ch-1"}
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Nil(s.T(), resp)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating work dir")
+}
+
+func (s *RunnerSuite) TestRunMkdirAllMCPSubdirError() {
+	// workDir mkdir succeeds, but .loop subdir fails inside writeMCPConfig.
+	callCount := 0
+	osMkdirAll = func(_ string, _ os.FileMode) error {
+		callCount++
+		if callCount > 1 {
+			return errors.New("mkdir subdir fail")
+		}
+		return nil
+	}
 
 	ctx := context.Background()
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
@@ -2709,4 +2738,231 @@ func (s *RunnerSuite) TestOsTimeLocalNameDefault() {
 
 	loc := osTimeLocalName()
 	require.NotEmpty(s.T(), loc)
+}
+
+func (s *RunnerSuite) TestCreateShellContainerHappyPath() {
+	ctx := context.Background()
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return cfg.Image == "loop-agent:latest" &&
+			slices.Equal(cfg.Cmd, []string{"sleep", "infinity"}) &&
+			cfg.WorkingDir == "/home/testuser/.loop/ch-1/work" &&
+			cfg.Labels["loop-channel"] == "ch-1"
+	}), testContainerName).Return(testContainerID, nil)
+	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
+
+	id, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), testContainerID, id)
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestCreateShellContainerMkdirError() {
+	ctx := context.Background()
+	osMkdirAll = func(_ string, _ os.FileMode) error { return errors.New("mkdir failed") }
+
+	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating work dir")
+}
+
+func (s *RunnerSuite) TestCreateShellContainerCreateError() {
+	ctx := context.Background()
+
+	s.client.On("ContainerCreate", ctx, mock.Anything, mock.Anything).Return("", errors.New("create failed"))
+
+	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating container")
+}
+
+func (s *RunnerSuite) TestCreateShellContainerEnvError() {
+	ctx := context.Background()
+	osUserHomeDir = func() (string, error) { return "", errors.New("no home") }
+
+	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "getting home directory")
+}
+
+func (s *RunnerSuite) TestCreateShellContainerStartError() {
+	ctx := context.Background()
+
+	s.client.On("ContainerCreate", ctx, mock.Anything, testContainerName).Return(testContainerID, nil)
+	s.client.On("ContainerStart", ctx, testContainerID).Return(errors.New("start failed"))
+	s.client.On("ContainerRemove", ctx, testContainerID).Return(nil)
+
+	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "starting container")
+}
+
+func (s *RunnerSuite) TestCreateShellContainerProjectConfigError() {
+	ctx := context.Background()
+
+	origReadFile := config.TestSetReadFile(func(path string) ([]byte, error) {
+		if strings.Contains(path, ".loop/config.json") {
+			return nil, errors.New("permission denied")
+		}
+		return nil, os.ErrNotExist
+	})
+	defer config.TestSetReadFile(origReadFile)
+
+	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "loading project config")
+}
+
+func (s *RunnerSuite) TestBuildInteractiveClaudeCmd() {
+	tests := []struct {
+		name        string
+		model       string
+		binPath     string
+		sessionID   string
+		forkSession bool
+		expected    string
+	}{
+		{
+			name:     "default without model",
+			binPath:  "claude",
+			expected: "claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions",
+		},
+		{
+			name:     "with model",
+			model:    "claude-opus-4-6",
+			binPath:  "claude",
+			expected: "claude --mcp-config /work/.loop/mcp-ch-1.json --model claude-opus-4-6 --dangerously-skip-permissions",
+		},
+		{
+			name:     "custom bin path",
+			binPath:  "/usr/local/bin/claude",
+			expected: "/usr/local/bin/claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions",
+		},
+		{
+			name:      "with session uses resume",
+			binPath:   "claude",
+			sessionID: "sess-abc-123",
+			expected:  "claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions --resume sess-abc-123",
+		},
+		{
+			name:        "with session fork uses resume and fork-session",
+			binPath:     "claude",
+			sessionID:   "sess-parent",
+			forkSession: true,
+			expected:    "claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions --resume sess-parent --fork-session",
+		},
+		{
+			name:      "with model and session uses resume",
+			model:     "claude-opus-4-6",
+			binPath:   "claude",
+			sessionID: "sess-xyz",
+			expected:  "claude --mcp-config /work/.loop/mcp-ch-1.json --model claude-opus-4-6 --dangerously-skip-permissions --resume sess-xyz",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			cfg := &config.Config{ClaudeBinPath: tc.binPath, ClaudeModel: tc.model}
+			got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", tc.sessionID, tc.forkSession)
+			require.Equal(s.T(), tc.expected, got)
+		})
+	}
+}
+
+func (s *RunnerSuite) TestClaudeCmdBuilder() {
+	tests := []struct {
+		name        string
+		dirPath     string
+		channelID   string
+		sessionID   string
+		forkSession bool
+		loopDir     string
+		wantDir     string
+		wantExtra   string
+	}{
+		{
+			name:      "with dirPath",
+			dirPath:   "/projects/myapp",
+			channelID: "ch-1",
+			loopDir:   "/home/user/.loop",
+			wantDir:   "/projects/myapp",
+		},
+		{
+			name:      "empty dirPath falls back to loopDir",
+			dirPath:   "",
+			channelID: "ch-2",
+			loopDir:   "/home/user/.loop",
+			wantDir:   "/home/user/.loop/ch-2/work",
+		},
+		{
+			name:      "with session ID adds resume",
+			dirPath:   "/projects/myapp",
+			channelID: "ch-1",
+			sessionID: "sess-resume-1",
+			loopDir:   "/home/user/.loop",
+			wantDir:   "/projects/myapp",
+			wantExtra: " --resume sess-resume-1",
+		},
+		{
+			name:        "with session ID and fork adds resume and fork-session",
+			dirPath:     "/projects/myapp",
+			channelID:   "ch-thread",
+			sessionID:   "sess-parent-1",
+			forkSession: true,
+			loopDir:     "/home/user/.loop",
+			wantDir:     "/projects/myapp",
+			wantExtra:   " --resume sess-parent-1 --fork-session",
+		},
+	}
+	for _, tc := range tests {
+		s.Run(tc.name, func() {
+			cfg := &config.Config{
+				ClaudeBinPath: "claude",
+				LoopDir:       tc.loopDir,
+			}
+			builder := NewClaudeCmdBuilder(cfg)
+			got := builder.BuildInteractiveCmd(tc.channelID, tc.dirPath, tc.sessionID, tc.forkSession)
+			expectedMCP := tc.wantDir + "/.loop/mcp-" + tc.channelID + ".json"
+			require.Equal(s.T(), "claude --mcp-config "+expectedMCP+" --dangerously-skip-permissions"+tc.wantExtra, got)
+		})
+	}
+}
+
+func (s *RunnerSuite) TestClaudeCmdBuilderProjectConfigModel() {
+	// Create a temp dir with a .loop/config.json that sets claude_model.
+	tmpDir := s.T().TempDir()
+	loopConfigDir := filepath.Join(tmpDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(loopConfigDir, 0755))
+	require.NoError(s.T(), os.WriteFile(
+		filepath.Join(loopConfigDir, "config.json"),
+		[]byte(`{"claude_model": "claude-opus-4-6"}`),
+		0644,
+	))
+
+	cfg := &config.Config{
+		ClaudeBinPath: "claude",
+		ClaudeModel:   "claude-sonnet-4-5-20250929",
+		LoopDir:       "/home/user/.loop",
+	}
+	builder := NewClaudeCmdBuilder(cfg)
+	got := builder.BuildInteractiveCmd("ch-1", tmpDir, "", false)
+
+	// Project config's claude_model should override the global one.
+	expectedMCP := tmpDir + "/.loop/mcp-ch-1.json"
+	require.Equal(s.T(), "claude --mcp-config "+expectedMCP+" --model claude-opus-4-6 --dangerously-skip-permissions", got)
+}
+
+func (s *RunnerSuite) TestCreateShellContainerWithCopyFiles() {
+	ctx := context.Background()
+	s.cfg.CopyFiles = []string{"~/.claude.json"}
+	// Make expandPath work for copyFiles
+	osStat = func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Equal(cfg.Cmd, []string{"sleep", "infinity"})
+	}), testContainerName).Return(testContainerID, nil)
+	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
+
+	id, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), testContainerID, id)
 }

@@ -3,11 +3,15 @@ package terminal
 import (
 	"context"
 	"io"
+	"os"
 
 	"github.com/docker/docker/api/types"
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/client"
 )
+
+// osGetenv is a shim for os.Getenv, overridable in tests.
+var osGetenv = os.Getenv
 
 // dockerExecAPI abstracts the Docker SDK exec methods for testing.
 type dockerExecAPI interface {
@@ -17,6 +21,9 @@ type dockerExecAPI interface {
 }
 
 // DockerExecClient implements ExecClient using the Docker SDK.
+// It wraps the Docker exec API (docker exec) to create interactive processes
+// inside running containers. This is separate from container.Client which
+// handles container lifecycle (docker create/start/stop/rm).
 type DockerExecClient struct {
 	api dockerExecAPI
 }
@@ -37,9 +44,11 @@ func NewDockerExecClient() (*DockerExecClient, error) {
 }
 
 // ContainerExecCreate creates a new exec process in the container with the
-// given command and TTY setting.
+// given command and TTY setting. The exec runs as the host user (matching the
+// container's non-root agent user created by the entrypoint).
 func (c *DockerExecClient) ContainerExecCreate(ctx context.Context, containerID string, cmd []string, tty bool) (string, error) {
 	resp, err := c.api.ContainerExecCreate(ctx, containerID, containertypes.ExecOptions{
+		User:         osGetenv("USER"),
 		Cmd:          cmd,
 		Tty:          tty,
 		AttachStdin:  true,

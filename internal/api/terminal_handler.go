@@ -15,6 +15,7 @@ import (
 const (
 	wsMsgCreate = "create"
 	wsMsgAttach = "attach"
+	wsMsgDetach = "detach"
 	wsMsgInput  = "input"
 	wsMsgResize = "resize"
 	wsMsgStop   = "stop"
@@ -24,6 +25,7 @@ const (
 const (
 	wsStatusCreated  = "created"
 	wsStatusAttached = "attached"
+	wsStatusDetached = "detached"
 	wsStatusError    = "error"
 	wsStatusClosed   = "closed"
 	wsStatusStopped  = "stopped"
@@ -46,13 +48,24 @@ type TerminalManager interface {
 	DetachSession(sessionID string, output <-chan []byte) error
 	SendInput(sessionID string, data []byte) error
 	Resize(ctx context.Context, sessionID string, rows, cols uint) error
-	StopSession(sessionID string) error
+	StopSession(sessionID string) (containerID string, err error)
+}
+
+// ContainerFinder resolves a channel ID to a running container ID.
+type ContainerFinder interface {
+	FindContainerByChannel(ctx context.Context, channelID, dirPath string) (string, error)
+}
+
+// ContainerStopper removes a container by ID.
+type ContainerStopper interface {
+	ContainerRemove(ctx context.Context, containerID string) error
 }
 
 // wsControlMessage represents a JSON control message from the client.
 type wsControlMessage struct {
 	Type        string   `json:"type"`
 	ContainerID string   `json:"container_id,omitempty"`
+	ChannelID   string   `json:"channel_id,omitempty"`
 	Cmd         []string `json:"cmd,omitempty"`
 	SessionID   string   `json:"session_id,omitempty"`
 	Data        string   `json:"data,omitempty"` // base64-encoded input
@@ -68,25 +81,38 @@ type wsStatusMessage struct {
 	ErrorCode string `json:"error_code,omitempty"`
 }
 
+// InteractiveCmdBuilder builds the interactive Claude command for a terminal session.
+type InteractiveCmdBuilder interface {
+	BuildInteractiveCmd(channelID, dirPath, sessionID string, forkSession bool) string
+}
+
 // terminalWSConn manages a single WebSocket terminal connection.
 type terminalWSConn struct {
-	conn     *websocket.Conn
-	manager  TerminalManager
-	logger   *slog.Logger
-	writeMu  sync.Mutex
-	stopOnce sync.Once
-	stopCh   chan struct{}
+	conn             *websocket.Conn
+	manager          TerminalManager
+	containerFinder  ContainerFinder
+	containerStopper ContainerStopper
+	cmdBuilder       InteractiveCmdBuilder
+	store            ChannelLister
+	logger           *slog.Logger
+	writeMu          sync.Mutex
+	stopOnce         sync.Once
+	stopCh           chan struct{}
 
 	sessionID string
 	outputCh  <-chan []byte
 }
 
-func newTerminalWSConn(conn *websocket.Conn, manager TerminalManager, logger *slog.Logger) *terminalWSConn {
+func newTerminalWSConn(conn *websocket.Conn, manager TerminalManager, finder ContainerFinder, stopper ContainerStopper, cmdBuilder InteractiveCmdBuilder, store ChannelLister, logger *slog.Logger) *terminalWSConn {
 	return &terminalWSConn{
-		conn:    conn,
-		manager: manager,
-		logger:  logger,
-		stopCh:  make(chan struct{}),
+		conn:             conn,
+		manager:          manager,
+		containerFinder:  finder,
+		containerStopper: stopper,
+		cmdBuilder:       cmdBuilder,
+		store:            store,
+		logger:           logger,
+		stopCh:           make(chan struct{}),
 	}
 }
 
@@ -164,8 +190,36 @@ func (t *terminalWSConn) startSession(sessionID string, output <-chan []byte, hi
 const maxCmdArgs = 64
 
 func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage) {
+	// Resolve channel_id to container_id via ContainerFinder.
+	var dirPath, claudeSessionID string
+	var forkSession bool
+	if msg.ContainerID == "" && msg.ChannelID != "" && t.containerFinder != nil {
+		// Look up channel's dir_path and session_id for the interactive command.
+		if t.store != nil {
+			if ch, err := t.store.GetChannel(ctx, msg.ChannelID); err == nil && ch != nil {
+				dirPath = ch.DirPath
+				claudeSessionID = ch.SessionID
+				// For threads still using the parent's session, fork so the thread
+				// gets its own session while inheriting the parent's context.
+				if ch.ParentID != "" {
+					if parent, err := t.store.GetChannel(ctx, ch.ParentID); err == nil && parent != nil && parent.SessionID != "" {
+						if claudeSessionID == "" || claudeSessionID == parent.SessionID {
+							claudeSessionID = parent.SessionID
+							forkSession = true
+						}
+					}
+				}
+			}
+		}
+		containerID, err := t.containerFinder.FindContainerByChannel(ctx, msg.ChannelID, dirPath)
+		if err != nil {
+			t.sendError("no running container for channel: "+err.Error(), wsErrCodeSessionFailed)
+			return
+		}
+		msg.ContainerID = containerID
+	}
 	if msg.ContainerID == "" {
-		t.sendError("container_id required", wsErrCodeMissingField)
+		t.sendError("container_id or channel_id required", wsErrCodeMissingField)
 		return
 	}
 	if len(msg.Cmd) > maxCmdArgs {
@@ -178,6 +232,7 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 			return
 		}
 	}
+
 	t.detachCurrent()
 
 	sid, output, history, done, err := t.manager.CreateSession(ctx, msg.ContainerID, msg.Cmd)
@@ -186,6 +241,22 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 		return
 	}
 	t.startSession(sid, output, history, done, wsStatusCreated)
+
+	// Resize the PTY to match the client's terminal dimensions if provided.
+	if msg.Rows > 0 && msg.Cols > 0 {
+		if err := t.manager.Resize(ctx, sid, msg.Rows, msg.Cols); err != nil {
+			t.logger.Warn("terminal ws: initial resize failed", "session_id", sid, "error", err)
+		}
+	}
+
+	// When no explicit command was provided, send the interactive Claude
+	// command as shell input so the terminal starts Claude automatically.
+	if len(msg.Cmd) == 0 && t.cmdBuilder != nil && msg.ChannelID != "" {
+		cmd := t.cmdBuilder.BuildInteractiveCmd(msg.ChannelID, dirPath, claudeSessionID, forkSession)
+		if err := t.manager.SendInput(sid, []byte(cmd+"\n")); err != nil {
+			t.logger.Warn("terminal ws: failed to send interactive cmd", "session_id", sid, "error", err)
+		}
+	}
 }
 
 func (t *terminalWSConn) handleAttach(msg wsControlMessage) {
@@ -233,16 +304,42 @@ func (t *terminalWSConn) handleResize(ctx context.Context, msg wsControlMessage)
 	}
 }
 
-func (t *terminalWSConn) handleStop() {
+func (t *terminalWSConn) handleDetach() {
 	if t.sessionID == "" {
 		t.sendError("no active session", wsErrCodeNoSession)
 		return
 	}
-	if err := t.manager.StopSession(t.sessionID); err != nil {
+	t.detachCurrent()
+	t.writeJSON(wsStatusMessage{Type: wsStatusDetached})
+}
+
+func (t *terminalWSConn) handleStop(ctx context.Context, msg wsControlMessage) {
+	// Allow stopping a detached session by passing session_id explicitly.
+	sid := t.sessionID
+	if sid == "" {
+		sid = msg.SessionID
+	}
+	if sid == "" {
+		t.sendError("no active session", wsErrCodeNoSession)
+		return
+	}
+	containerID, err := t.manager.StopSession(sid)
+	if err != nil {
 		t.sendError(err.Error(), wsErrCodeSessionFailed)
 		return
 	}
-	t.detachCurrent()
+	// Clear session state directly — StopSession already removed the session
+	// from the manager, so calling detachCurrent would fail with "session not found".
+	t.sessionID = ""
+	t.outputCh = nil
+
+	// Remove the container before notifying the client, so the channel list
+	// API reflects the updated running state when the client refreshes.
+	if containerID != "" && t.containerStopper != nil {
+		if err := t.containerStopper.ContainerRemove(ctx, containerID); err != nil {
+			t.logger.Warn("terminal ws: container remove failed", "container_id", containerID, "error", err)
+		}
+	}
 	t.writeJSON(wsStatusMessage{Type: wsStatusStopped})
 }
 
@@ -258,7 +355,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	tc := newTerminalWSConn(conn, s.termManager, s.logger)
+	tc := newTerminalWSConn(conn, s.termManager, s.containerFinder, s.containerStopper, s.cmdBuilder, s.store, s.logger)
 	defer tc.close()
 
 	for {
@@ -278,12 +375,14 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			tc.handleCreate(r.Context(), msg)
 		case wsMsgAttach:
 			tc.handleAttach(msg)
+		case wsMsgDetach:
+			tc.handleDetach()
 		case wsMsgInput:
 			tc.handleInput(msg)
 		case wsMsgResize:
 			tc.handleResize(r.Context(), msg)
 		case wsMsgStop:
-			tc.handleStop()
+			tc.handleStop(r.Context(), msg)
 		default:
 			tc.sendError("unknown message type: "+msg.Type, wsErrCodeUnknownMessage)
 		}
@@ -293,4 +392,19 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 // SetTerminalManager configures the terminal manager for WebSocket terminal sessions.
 func (s *Server) SetTerminalManager(mgr TerminalManager) {
 	s.termManager = mgr
+}
+
+// SetContainerFinder configures the container finder for channel_id → container resolution.
+func (s *Server) SetContainerFinder(finder ContainerFinder) {
+	s.containerFinder = finder
+}
+
+// SetContainerStopper configures the container stopper for removing containers on session stop.
+func (s *Server) SetContainerStopper(stopper ContainerStopper) {
+	s.containerStopper = stopper
+}
+
+// SetInteractiveCmdBuilder configures the command builder for interactive terminal sessions.
+func (s *Server) SetInteractiveCmdBuilder(builder InteractiveCmdBuilder) {
+	s.cmdBuilder = builder
 }
