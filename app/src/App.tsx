@@ -1,12 +1,13 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Channel, ViewMode } from "./types";
 import { colors, fonts } from "./theme";
-import { createChannel, createThread, deleteThread, fetchChannels, initApiUrl } from "./api/loopApi";
+import { createChannel, createThread, deleteThread, fetchChannels, fetchDiff, initApiUrl } from "./api/loopApi";
 import { Sidebar } from "./components/Sidebar";
 import { Terminal } from "./components/Terminal";
 import { ChatView } from "./components/ChatView";
 import { ModeToggle } from "./components/ModeToggle";
 import { DiffPanel } from "./components/DiffPanel";
+import { useEventStream } from "./hooks/useEventStream";
 
 const MODE_STORAGE_KEY = "loop-view-mode";
 
@@ -51,6 +52,31 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mountKey, setMountKey] = useState(0);
   const [diffOpen, setDiffOpen] = useState(false);
+  const [diffStats, setDiffStats] = useState<{ add: number; del: number }>({ add: 0, del: 0 });
+
+  // Fetch diff stats for the selected channel and keep them updated via events.
+  const loadDiffStats = useCallback(async () => {
+    if (!selectedId) return;
+    try {
+      const d = await fetchDiff(selectedId);
+      setDiffStats({ add: d.total_additions, del: d.total_deletions });
+    } catch {
+      /* ignore */
+    }
+  }, [selectedId]);
+
+  useEffect(() => {
+    setDiffStats({ add: 0, del: 0 });
+    loadDiffStats();
+  }, [loadDiffStats]);
+
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const onDiffEvent = useCallback(() => {
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(loadDiffStats, 1_000);
+  }, [loadDiffStats]);
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+  useEventStream({ channelId: selectedId, onEvent: onDiffEvent });
 
   useEffect(() => {
     initApiUrl().then(() => setReady(true));
@@ -325,7 +351,12 @@ export default function App() {
                   <path d="M8 8l-4 4 4 4" />
                   <path d="M16 8l4 4-4 4" />
                 </svg>
-                Diff
+                {(diffStats.add > 0 || diffStats.del > 0) ? (
+                  <>
+                    <span style={{ color: "#86efac" }}>+{diffStats.add}</span>
+                    <span style={{ color: "#fca5a5" }}>-{diffStats.del}</span>
+                  </>
+                ) : "Diff"}
               </button>
             </div>
           </div>
@@ -333,7 +364,7 @@ export default function App() {
         {viewMode === "terminal" ? (
           <Terminal key={`${selectedId}-${mountKey}`} channelId={selectedId} onStatusChange={loadChannels} />
         ) : (
-          <ChatView key={`${selectedId}-${mountKey}`} channelId={selectedId} initialRunning={channels.find((c) => c.id === selectedId)?.running ?? false} />
+          <ChatView key={`${selectedId}-${mountKey}`} channelId={selectedId} initialRunningBot={channels.find((c) => c.id === selectedId)?.agent_running} />
         )}
       </div>
       {diffOpen && selectedId && (

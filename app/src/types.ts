@@ -4,7 +4,8 @@ export interface Channel {
   parent_id: string;
   dir_path: string;
   active: boolean;
-  running: boolean;
+  container_running: boolean;
+  agent_running: boolean;
   branch: string;
 }
 

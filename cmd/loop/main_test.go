@@ -295,6 +295,10 @@ func (m *mockAPIServer) SetRunningChannelLister(lister api.RunningChannelLister)
 	m.Called(lister)
 }
 
+func (m *mockAPIServer) SetActiveChatLister(lister api.ActiveChatLister) {
+	m.Called(lister)
+}
+
 func (m *mockAPIServer) SetIncomingMessageHandler(h api.IncomingMessageHandler) {
 	m.Called(h)
 }
@@ -1727,6 +1731,7 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 	mockAPI.On("SetContainerStopper", mock.Anything).Return().Maybe()
 	mockAPI.On("SetInteractiveCmdBuilder", mock.Anything).Return().Maybe()
 	mockAPI.On("SetRunningChannelLister", mock.Anything).Return()
+	mockAPI.On("SetActiveChatLister", mock.Anything).Return()
 	mockAPI.On("SetIncomingMessageHandler", mock.Anything).Return()
 	mockAPI.On("SetInteractionHandler", mock.Anything).Return()
 	mockAPI.On("Start", mock.Anything).Return(nil)

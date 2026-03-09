@@ -65,7 +65,7 @@ export function ThreadItem({ thread, selected, isLast, onSelect, onContextMenu }
       >
         {thread.name || thread.id}
       </span>
-      {thread.running && (
+      {(thread.container_running || thread.agent_running) && (
         <span
           style={{
             width: 6,

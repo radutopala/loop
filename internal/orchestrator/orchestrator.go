@@ -83,6 +83,17 @@ func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logg
 	}
 }
 
+// ActiveChatChannelIDs returns the set of channel IDs that have an active
+// chat agent run (as opposed to just having a running container for terminal use).
+func (o *Orchestrator) ActiveChatChannelIDs() map[string]struct{} {
+	result := make(map[string]struct{})
+	o.activeRuns.Range(func(key, _ any) bool {
+		result[key.(string)] = struct{}{}
+		return true
+	})
+	return result
+}
+
 // SetEventBroadcaster configures the event broadcaster for real-time event streaming.
 func (o *Orchestrator) SetEventBroadcaster(eb EventBroadcaster) {
 	o.events = eb

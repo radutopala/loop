@@ -22,7 +22,8 @@ interface ChannelAPIResponse {
   dir_path: string;
   parent_id: string;
   active: boolean;
-  running: boolean;
+  container_running: boolean;
+  agent_running: boolean;
   branch?: string;
 }
 
@@ -36,7 +37,8 @@ export async function fetchChannels(): Promise<Channel[]> {
     dir_path: c.dir_path,
     parent_id: c.parent_id,
     active: c.active,
-    running: c.running,
+    container_running: c.container_running,
+    agent_running: c.agent_running,
     branch: c.branch || "",
   }));
 }

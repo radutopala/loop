@@ -128,7 +128,7 @@ export function ChannelItem({
           >
             {channel.name || channel.dir_path?.split("/").pop() || channel.id}
           </span>
-          {channel.running && (
+          {(channel.container_running || channel.agent_running) && (
             <span
               style={{
                 width: 6,

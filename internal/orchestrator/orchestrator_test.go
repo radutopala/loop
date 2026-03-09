@@ -3298,3 +3298,20 @@ func (s *OrchestratorSuite) TestSendReplyDiscordPlatformDoesNotStore() {
 	s.bot.AssertExpectations(s.T())
 	s.store.AssertNotCalled(s.T(), "InsertMessage", mock.Anything, mock.Anything)
 }
+
+func (s *OrchestratorSuite) TestActiveChatChannelIDs() {
+	// Empty initially.
+	ids := s.orch.ActiveChatChannelIDs()
+	require.Empty(s.T(), ids)
+
+	// Store some active runs.
+	s.orch.activeRuns.Store("ch-1", context.CancelFunc(func() {}))
+	s.orch.activeRuns.Store("ch-2", context.CancelFunc(func() {}))
+
+	ids = s.orch.ActiveChatChannelIDs()
+	require.Len(s.T(), ids, 2)
+	_, ok1 := ids["ch-1"]
+	_, ok2 := ids["ch-2"]
+	require.True(s.T(), ok1)
+	require.True(s.T(), ok2)
+}

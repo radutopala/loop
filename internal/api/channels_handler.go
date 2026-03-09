@@ -28,13 +28,14 @@ type createChannelResponse struct {
 }
 
 type channelResponse struct {
-	ChannelID string `json:"channel_id"`
-	Name      string `json:"name"`
-	DirPath   string `json:"dir_path"`
-	ParentID  string `json:"parent_id"`
-	Active    bool   `json:"active"`
-	Running   bool   `json:"running"`
-	Branch    string `json:"branch,omitempty"`
+	ChannelID  string `json:"channel_id"`
+	Name       string `json:"name"`
+	DirPath    string `json:"dir_path"`
+	ParentID   string `json:"parent_id"`
+	Active     bool   `json:"active"`
+	ContainerRunning bool `json:"container_running"`
+	AgentRunning     bool `json:"agent_running"`
+	Branch     string `json:"branch,omitempty"`
 }
 
 func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
@@ -105,6 +106,12 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Get channels with active chat agent runs.
+	var chatRunIDs map[string]struct{}
+	if s.activeChatLister != nil {
+		chatRunIDs = s.activeChatLister.ActiveChatChannelIDs()
+	}
+
 	query := r.URL.Query().Get("query")
 
 	resp := make([]channelResponse, 0, len(channels))
@@ -116,18 +123,20 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		_, running := runningIDs[ch.ChannelID]
+		_, runningBot := chatRunIDs[ch.ChannelID]
 		dirPath := ch.DirPath
 		if dirPath == "" && s.loopDir != "" {
 			dirPath = filepath.Join(s.loopDir, ch.ChannelID, "work")
 		}
 		resp = append(resp, channelResponse{
-			ChannelID: ch.ChannelID,
-			Name:      ch.Name,
-			DirPath:   dirPath,
-			ParentID:  ch.ParentID,
-			Active:    ch.Active,
-			Running:   running,
-			Branch:    gitBranch(r.Context(), dirPath),
+			ChannelID:        ch.ChannelID,
+			Name:             ch.Name,
+			DirPath:          dirPath,
+			ParentID:         ch.ParentID,
+			Active:           ch.Active,
+			ContainerRunning: running,
+			AgentRunning:     runningBot,
+			Branch:           gitBranch(r.Context(), dirPath),
 		})
 	}
 

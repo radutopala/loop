@@ -1,4 +1,4 @@
-.PHONY: help build install test test-integration lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot app-dev
+.PHONY: help build install test test-integration lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot app-dev app-install
 .DEFAULT_GOAL := help
 
 help: ## Show available targets
@@ -70,8 +70,11 @@ docker-snapshot: ## Snapshot the most recent loop-agent container into loop-agen
 app-dev: ## Start the Electron app frontend dev server
 	cd app && npm install && npm run dev
 
-app-web: ## Build the web app (PWA) for browser use
-	cd app && npx vite build --config vite.web.config.ts
+app-install: ## Build the Electron app and copy to /Applications
+	cd app && npm install && npm run dist:mac:arm64
+	rm -rf /Applications/Loop.app
+	cp -R app/release/mac-arm64/Loop.app /Applications/Loop.app
+	@echo "Installed Loop.app to /Applications"
 
 clean: ## Remove build artifacts
 	rm -rf bin/ coverage.out coverage.html

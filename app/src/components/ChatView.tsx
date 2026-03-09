@@ -7,17 +7,17 @@ import { colors, fonts } from "../theme";
 
 interface ChatViewProps {
   channelId: string | null;
-  initialRunning?: boolean;
+  initialRunningBot?: boolean;
 }
 
-export function ChatView({ channelId, initialRunning }: ChatViewProps) {
+export function ChatView({ channelId, initialRunningBot }: ChatViewProps) {
   const { messages, loading, loadMore, hasMore, addMessage } =
     useMessages(channelId);
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
-  const [isRunning, setIsRunning] = useState(initialRunning ?? false);
+  const [isRunning, setIsRunning] = useState(initialRunningBot ?? false);
 
   const handleEvent = useCallback(
     (event: WSEvent) => {

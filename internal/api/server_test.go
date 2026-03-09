@@ -118,6 +118,18 @@ func (m *MockRunningChannelLister) RunningChannelIDs(ctx context.Context) (map[s
 	return args.Get(0).(map[string]struct{}), args.Error(1)
 }
 
+type MockActiveChatLister struct {
+	mock.Mock
+}
+
+func (m *MockActiveChatLister) ActiveChatChannelIDs() map[string]struct{} {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(map[string]struct{})
+}
+
 type MockIncomingMessageHandler struct {
 	mock.Mock
 }
@@ -932,8 +944,8 @@ func (s *ServerSuite) TestSearchChannelsRunningFromContainers() {
 	var resp []channelResponse
 	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
 	require.Len(s.T(), resp, 2)
-	require.True(s.T(), resp[0].Running)
-	require.False(s.T(), resp[1].Running)
+	require.True(s.T(), resp[0].ContainerRunning)
+	require.False(s.T(), resp[1].ContainerRunning)
 	s.store.AssertExpectations(s.T())
 	lister.AssertExpectations(s.T())
 }
@@ -957,9 +969,35 @@ func (s *ServerSuite) TestSearchChannelsRunningListerError() {
 	var resp []channelResponse
 	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
 	require.Len(s.T(), resp, 1)
-	require.False(s.T(), resp[0].Running)
+	require.False(s.T(), resp[0].ContainerRunning)
 	s.store.AssertExpectations(s.T())
 	lister.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSearchChannelsAgentRunning() {
+	s.srv.SetPlatform(types.PlatformLocal)
+
+	chatLister := new(MockActiveChatLister)
+	s.srv.SetActiveChatLister(chatLister)
+
+	channels := []*db.Channel{
+		{ChannelID: "ch-1", Name: "active-chat", Platform: types.PlatformLocal, Active: true},
+		{ChannelID: "ch-2", Name: "idle-chat", Platform: types.PlatformLocal, Active: true},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	chatLister.On("ActiveChatChannelIDs").Return(map[string]struct{}{"ch-1": {}})
+
+	rec := s.testRequest("GET", "/api/channels", "")
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 2)
+	require.True(s.T(), resp[0].AgentRunning)
+	require.False(s.T(), resp[1].AgentRunning)
+	s.store.AssertExpectations(s.T())
+	chatLister.AssertExpectations(s.T())
 }
 
 func (s *ServerSuite) TestSearchChannelsError() {

@@ -17,6 +17,11 @@ type RunningChannelLister interface {
 	RunningChannelIDs(ctx context.Context) (map[string]struct{}, error)
 }
 
+// ActiveChatLister returns channel IDs with active chat agent runs.
+type ActiveChatLister interface {
+	ActiveChatChannelIDs() map[string]struct{}
+}
+
 // IncomingMessageHandler processes a user message from the API, routing it
 // through the orchestrator so Claude can respond.
 type IncomingMessageHandler interface {
@@ -36,6 +41,7 @@ type Server struct {
 	containerStopper   ContainerStopper
 	cmdBuilder         InteractiveCmdBuilder
 	runningChLister    RunningChannelLister
+	activeChatLister   ActiveChatLister
 	msgHandler         IncomingMessageHandler
 	interactionHandler InteractionHandler
 	eventsHub          *EventsHub
@@ -74,6 +80,11 @@ func (s *Server) SetLoopDir(dir string) {
 // SetRunningChannelLister configures the running channel lister for the channel list endpoint.
 func (s *Server) SetRunningChannelLister(lister RunningChannelLister) {
 	s.runningChLister = lister
+}
+
+// SetActiveChatLister configures the active chat lister for the channel list endpoint.
+func (s *Server) SetActiveChatLister(lister ActiveChatLister) {
+	s.activeChatLister = lister
 }
 
 // SetIncomingMessageHandler configures the handler for user messages from the API.

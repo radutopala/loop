@@ -56,6 +56,7 @@ type apiServer interface {
 	SetContainerStopper(stopper api.ContainerStopper)
 	SetInteractiveCmdBuilder(builder api.InteractiveCmdBuilder)
 	SetRunningChannelLister(lister api.RunningChannelLister)
+	SetActiveChatLister(lister api.ActiveChatLister)
 	SetIncomingMessageHandler(h api.IncomingMessageHandler)
 	SetInteractionHandler(h api.InteractionHandler)
 }
@@ -431,6 +432,7 @@ func serve() error {
 	orch.SetEventBroadcaster(&eventBroadcasterAdapter{hub: eventsHub})
 	apiSrv.SetIncomingMessageHandler(&orchMessageAdapter{orch: orch})
 	apiSrv.SetInteractionHandler(orch)
+	apiSrv.SetActiveChatLister(orch)
 
 	if err := orch.Start(ctx); err != nil {
 		_ = apiSrv.Stop(context.Background())
