@@ -54,3 +54,15 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: go build -o loop-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/loop
+
+  electron-typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+      - run: cd app && npm ci
+      - run: cd app && npx tsc --noEmit
