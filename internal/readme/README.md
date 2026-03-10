@@ -755,10 +755,12 @@ Loop includes a native macOS desktop app built with Electron + React.
 
 - **Chat view** — send messages and stream agent responses in real-time
 - **Terminal view** — interactive xterm.js terminal with attach/detach support for agent containers
-- **Diff panel** — view git changes with file-level additions/deletions stats
+- **Diff panel** — view git changes with file-level additions/deletions stats; supports maximize to full width
+- **Multi-window** — open multiple windows (Cmd+N); each navigates independently
 - **Sidebar** — browse channels and threads, create new ones, see running status (green dot)
 - **Deep links** — `loop://channel/<id>` opens the app directly to a channel
 - **Mode toggle** — switch between Chat and Terminal views per channel
+- **Dynamic title** — window title reflects the selected channel/thread name
 
 ### Build & Install
 
@@ -776,18 +778,19 @@ make app-install
 
 Release builds are signed with a Developer ID Application certificate and notarized by Apple. DMGs for both arm64 and x64 are built automatically on GitHub Actions (macOS 26 runners) and attached to each release.
 
-
 ## REST API
 
 | Method | Endpoint | Description |
 |---|---|---|
 | `POST` | `/api/tasks` | Create a scheduled task |
 | `GET` | `/api/tasks?channel_id=<id>` | List tasks for a channel |
+| `GET` | `/api/tasks/{id}` | Get a single task by ID |
 | `PATCH` | `/api/tasks/{id}` | Update a task (enabled, schedule, type, prompt) |
 | `DELETE` | `/api/tasks/{id}` | Delete a task |
 | `GET` | `/api/channels?query=<term>` | Search channels and threads (optional query filter) |
 | `POST` | `/api/channels` | Ensure/create a channel for a directory |
 | `POST` | `/api/channels/create` | Create a channel by name |
+| `POST` | `/api/channels/ensure-all` | Ensure channels exist for all configured directories |
 | `DELETE` | `/api/channels/{id}` | Delete a channel and its child threads |
 | `POST` | `/api/messages` | Send a message to a channel or thread |
 | `POST` | `/api/threads` | Create a thread in an existing channel |
@@ -797,6 +800,7 @@ Release builds are signed with a Developer ID Application certificate and notari
 | `POST` | `/api/commands` | Send a slash command to a channel |
 | `POST` | `/api/memory/search` | Semantic search across memory files |
 | `POST` | `/api/memory/index` | Re-index memory files |
+| `GET` | `/api/readme` | Get the Loop README documentation |
 | `GET` | `/api/ws` | WebSocket for real-time event streaming |
 | `GET` | `/api/ws/terminal` | WebSocket for interactive terminal sessions |
 
@@ -806,6 +810,7 @@ Release builds are signed with a Developer ID Application certificate and notari
 |---|---|
 | `schedule_task` | Create a scheduled task (cron/interval/once) |
 | `list_tasks` | List all scheduled tasks for this channel |
+| `show_task` | Show details of a scheduled task by ID |
 | `cancel_task` | Cancel a scheduled task by ID |
 | `toggle_task` | Enable or disable a scheduled task by ID |
 | `edit_task` | Edit a task's schedule, type, and/or prompt |
