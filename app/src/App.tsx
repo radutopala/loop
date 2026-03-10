@@ -52,6 +52,7 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mountKey, setMountKey] = useState(0);
   const [diffOpen, setDiffOpen] = useState(false);
+  const [diffMaximized, setDiffMaximized] = useState(false);
   const [diffStats, setDiffStats] = useState<{ add: number; del: number }>({ add: 0, del: 0 });
 
   // Fetch diff stats for the selected channel and keep them updated via events.
@@ -136,6 +137,27 @@ export default function App() {
   }, [loadDiffStats, selectedId, loadChannels]);
   useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
   useEventStream({ channelId: selectedId, onEvent: onAppEvent });
+
+  // Update window title based on selected channel/thread.
+  useEffect(() => {
+    if (!selectedId) {
+      document.title = "Loop";
+      return;
+    }
+    const selected = channels.find((c) => c.id === selectedId);
+    if (!selected) {
+      document.title = "Loop";
+      return;
+    }
+    if (selected.parent_id) {
+      const parent = channels.find((c) => c.id === selected.parent_id);
+      document.title = parent
+        ? `${parent.name} › ${selected.name} — Loop`
+        : `${selected.name} — Loop`;
+    } else {
+      document.title = `${selected.name} — Loop`;
+    }
+  }, [selectedId, channels]);
 
   const handleSelect = useCallback((id: string | null) => {
     setSelectedId((prev) => {
@@ -228,7 +250,7 @@ export default function App() {
         onCreateThread={handleCreateThread}
         onDeleteThread={handleDelete}
       />
-      <div style={{ flex: 1, minWidth: 360, display: "flex", flexDirection: "column" }}>
+      <div style={{ flex: 1, minWidth: diffMaximized ? 0 : 360, display: diffMaximized ? "none" : "flex", flexDirection: "column" }}>
         {/* Drag region for macOS hiddenInset title bar — enables double-click to zoom */}
         <div
           style={{
@@ -396,7 +418,12 @@ export default function App() {
         )}
       </div>
       {diffOpen && selectedId && (
-        <DiffPanel channelId={selectedId} onClose={() => setDiffOpen(false)} />
+        <DiffPanel
+          channelId={selectedId}
+          maximized={diffMaximized}
+          onToggleMaximize={() => setDiffMaximized((v) => !v)}
+          onClose={() => { setDiffOpen(false); setDiffMaximized(false); }}
+        />
       )}
     </div>
   );

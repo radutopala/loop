@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, Menu } from "electron";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -34,8 +34,6 @@ if (process.platform === "darwin") {
   app.dock?.setIcon(iconPng);
 }
 
-let mainWindow: BrowserWindow | null = null;
-
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
 
 function parseChannelId(url: string): string {
@@ -48,8 +46,8 @@ function parseChannelId(url: string): string {
   }
 }
 
-function createWindow(hash?: string) {
-  mainWindow = new BrowserWindow({
+function createWindow(hash?: string): BrowserWindow {
+  const win = new BrowserWindow({
     title: "Loop",
     icon: iconPng, // undefined in production — uses .icns from electron-builder
     width: 1200,
@@ -67,35 +65,43 @@ function createWindow(hash?: string) {
   const fragment = hash ? `#${hash}` : "";
 
   if (VITE_DEV_SERVER_URL) {
-    mainWindow.loadURL(`${VITE_DEV_SERVER_URL}${fragment}`);
+    win.loadURL(`${VITE_DEV_SERVER_URL}${fragment}`);
   } else {
-    mainWindow.loadFile(path.join(__dirname, "../dist/index.html"), {
+    win.loadFile(path.join(__dirname, "../dist/index.html"), {
       hash: hash || undefined,
     });
   }
 
   // Handle protocol URLs that arrived while the page was loading.
-  mainWindow.webContents.on("did-finish-load", () => {
+  win.webContents.on("did-finish-load", () => {
     if (pendingChannelId) {
       navigateToChannel(pendingChannelId);
       pendingChannelId = null;
     }
   });
 
-  mainWindow.on("closed", () => {
-    mainWindow = null;
-  });
+  return win;
+}
+
+/** Returns the most recently focused window, or the first available one. */
+function getFocusedOrLastWindow(): BrowserWindow | null {
+  return (
+    BrowserWindow.getFocusedWindow() ??
+    BrowserWindow.getAllWindows()[0] ??
+    null
+  );
 }
 
 function navigateToChannel(channelId: string) {
-  if (!channelId || !mainWindow) return;
+  const win = getFocusedOrLastWindow();
+  if (!channelId || !win) return;
   // Set hash directly on the page — triggers the renderer's hashchange listener.
   // This avoids IPC timing issues where the listener isn't mounted yet.
-  mainWindow.webContents.executeJavaScript(
+  win.webContents.executeJavaScript(
     `window.location.hash = ${JSON.stringify(channelId)}`,
   );
-  if (mainWindow.isMinimized()) mainWindow.restore();
-  mainWindow.focus();
+  if (win.isMinimized()) win.restore();
+  win.focus();
 }
 
 let pendingChannelId: string | null = null;
@@ -106,7 +112,8 @@ app.on("open-url", (event, url) => {
   event.preventDefault();
   const channelId = parseChannelId(url);
   if (!channelId) return;
-  if (mainWindow && !mainWindow.webContents.isLoading()) {
+  const win = getFocusedOrLastWindow();
+  if (win && !win.webContents.isLoading()) {
     navigateToChannel(channelId);
   } else {
     // Window not ready yet — store for createWindow hash or did-finish-load.
@@ -121,13 +128,82 @@ app.on("second-instance", (_event, argv) => {
     const channelId = parseChannelId(url);
     if (channelId) navigateToChannel(channelId);
   }
-  if (mainWindow) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
+  const win = getFocusedOrLastWindow();
+  if (win) {
+    if (win.isMinimized()) win.restore();
+    win.focus();
   }
 });
 
+function buildMenu() {
+  const isMac = process.platform === "darwin";
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(isMac
+      ? [
+          {
+            label: app.name,
+            submenu: [
+              { role: "about" as const },
+              { type: "separator" as const },
+              { role: "services" as const },
+              { type: "separator" as const },
+              { role: "hide" as const },
+              { role: "hideOthers" as const },
+              { role: "unhide" as const },
+              { type: "separator" as const },
+              { role: "quit" as const },
+            ],
+          },
+        ]
+      : []),
+    {
+      label: "File",
+      submenu: [
+        {
+          label: "New Window",
+          accelerator: "CmdOrCtrl+N",
+          click: () => createWindow(),
+        },
+        { type: "separator" },
+        isMac ? { role: "close" } : { role: "quit" },
+      ],
+    },
+    {
+      label: "Edit",
+      submenu: [
+        { role: "undo" },
+        { role: "redo" },
+        { type: "separator" },
+        { role: "cut" },
+        { role: "copy" },
+        { role: "paste" },
+        { role: "selectAll" },
+      ],
+    },
+    {
+      label: "View",
+      submenu: [
+        { role: "reload" },
+        { role: "forceReload" },
+        { role: "toggleDevTools" },
+        { type: "separator" },
+        { role: "resetZoom" },
+        { role: "zoomIn" },
+        { role: "zoomOut" },
+        { type: "separator" },
+        { role: "togglefullscreen" },
+      ],
+    },
+    {
+      role: "windowMenu",
+    },
+  ];
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template));
+}
+
 app.on("ready", () => {
+  buildMenu();
   createWindow(pendingChannelId || undefined);
   pendingChannelId = null;
 });
@@ -139,7 +215,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("activate", () => {
-  if (mainWindow === null) {
+  if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }
 });
