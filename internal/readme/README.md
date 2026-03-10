@@ -656,7 +656,7 @@ Each template requires exactly one of:
 - `prompt` — inline prompt text
 - `prompt_path` — path to a prompt file relative to the `templates/` directory (`~/.loop/templates/` for global, `.loop/templates/` for project)
 
-Optional: `auto_delete_sec` — when set (> 0), the agent is instructed to prefix its response with `[EPHEMERAL]` if it has nothing meaningful to report. If the prefix is detected, the thread is renamed with a 💨 emoji and auto-deleted after the specified number of seconds. Non-ephemeral responses keep the 🧵 thread permanently (0 = disabled, default).
+Optional: `auto_delete_sec` — when set (> 0), the thread is auto-deleted after the specified number of seconds. The agent is also instructed to prefix its response with `[EPHEMERAL]` if it has nothing meaningful to report — ephemeral responses rename the thread with a 💨 emoji before deletion, while non-ephemeral responses keep the 🧵 emoji (0 = disabled, default).
 
 Example templates in `~/.loop/config.json`:
 
