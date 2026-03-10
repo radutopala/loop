@@ -3181,6 +3181,13 @@ func (s *MainSuite) TestEventBroadcasterAdapterMessageStreaming() {
 	})
 }
 
+func (s *MainSuite) TestEventBroadcasterAdapterChannelDeleted() {
+	hub := api.NewEventsHub(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	adapter := &eventBroadcasterAdapter{hub: hub}
+
+	adapter.BroadcastChannelDeleted("ch-1")
+}
+
 func (s *MainSuite) TestServeLocalPlatformHappyPath() {
 	m := setupServeMocks()
 	m.cfg.Platforms = []types.Platform{types.PlatformLocal}

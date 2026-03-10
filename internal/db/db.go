@@ -133,7 +133,8 @@ func (s *SQLiteStore) GetChannel(ctx context.Context, channelID string) (*Channe
 
 func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*Channel, error) {
 	row := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, created_at, updated_at FROM channels WHERE dir_path = ? AND platform = ?`,
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, created_at, updated_at
+		 FROM channels WHERE dir_path = ? AND platform = ? AND parent_id = ''`,
 		dirPath, platform,
 	)
 	ch, err := scanChannel(row)
@@ -146,7 +147,7 @@ func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string, p
 func (s *SQLiteStore) GetChannelsByDirPath(ctx context.Context, dirPath string) ([]*Channel, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, created_at, updated_at
-		 FROM channels WHERE dir_path = ?`,
+		 FROM channels WHERE dir_path = ? AND parent_id = ''`,
 		dirPath,
 	)
 	if err != nil {

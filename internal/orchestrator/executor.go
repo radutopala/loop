@@ -116,6 +116,22 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 					return
 				}
 				threadID = id
+				// Upsert thread channel inheriting from parent so botForChannel
+				// can resolve it for subsequent operations (rename, delete, etc.).
+				if channel != nil {
+					_ = e.store.UpsertChannel(ctx, &db.Channel{
+						ChannelID:   threadID,
+						GuildID:     channel.GuildID,
+						Name:        threadName,
+						DirPath:     channel.DirPath,
+						ParentID:    task.ChannelID,
+						Platform:    channel.Platform,
+						SessionID:   channel.SessionID,
+						Permissions: channel.Permissions,
+						Active:      true,
+					})
+					e.invitePermissionUsers(ctx, threadID, channel.Permissions)
+				}
 				// Broadcast to the thread (not the parent channel) so the
 				// Electron app shows the initial message in the thread view.
 				// Don't use broadcastBotMessage here — CreateSimpleThread
@@ -188,20 +204,39 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		e.broadcastBotMessage(ctx, targetChannelID, resp.Response)
 	}
 
-	// Schedule auto-deletion of the thread if ephemeral
-	if ephemeral && threadID != "" {
-		// Rename thread with ephemeral emoji
-		newName := strings.Replace(threadName, "🧵", "💨", 1)
-		if err := e.bot.RenameThread(ctx, threadID, newName); err != nil {
-			e.logger.Error("renaming ephemeral thread", "error", err, "thread_id", threadID, "task_id", task.ID)
+	// Schedule auto-deletion of the thread when auto_delete_sec is configured
+	if task.AutoDeleteSec > 0 && threadID != "" {
+		if ephemeral {
+			// Rename thread with ephemeral emoji for "nothing to report" responses
+			newName := strings.Replace(threadName, "🧵", "💨", 1)
+			if err := e.bot.RenameThread(ctx, threadID, newName); err != nil {
+				e.logger.Error("renaming ephemeral thread", "error", err, "thread_id", threadID, "task_id", task.ID)
+			}
 		}
 		delay := time.Duration(task.AutoDeleteSec) * time.Second
 		timeAfterFunc(delay, func() {
 			if err := e.bot.DeleteThread(context.Background(), threadID); err != nil {
 				e.logger.Error("auto-deleting task thread", "error", err, "thread_id", threadID, "task_id", task.ID)
 			}
+			if e.events != nil {
+				e.events.BroadcastChannelDeleted(threadID)
+			}
 		})
 	}
 
 	return resp.Response, nil
+}
+
+// invitePermissionUsers invites all RBAC owner and member users to a thread.
+func (e *TaskExecutor) invitePermissionUsers(ctx context.Context, threadID string, perms types.Permissions) {
+	for _, userID := range perms.Owners.Users {
+		if err := e.bot.InviteUserToChannel(ctx, threadID, userID); err != nil {
+			e.logger.Error("inviting owner to task thread", "error", err, "thread_id", threadID, "user_id", userID)
+		}
+	}
+	for _, userID := range perms.Members.Users {
+		if err := e.bot.InviteUserToChannel(ctx, threadID, userID); err != nil {
+			e.logger.Error("inviting member to task thread", "error", err, "thread_id", threadID, "user_id", userID)
+		}
+	}
 }

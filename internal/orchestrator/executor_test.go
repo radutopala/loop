@@ -17,6 +17,7 @@ import (
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/testutil"
+	"github.com/radutopala/loop/internal/types"
 )
 
 type TaskExecutorSuite struct {
@@ -457,6 +458,8 @@ func (s *TaskExecutorSuite) TestEphemeralInstructionInSystemPrompt() {
 
 func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 	s.executor.streamingEnabled = true
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
 
 	task := &db.ScheduledTask{
 		ID:            15,
@@ -468,6 +471,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 	}
 
 	s.store.On("GetChannel", s.ctx, "ch15").Return(nil, nil)
+	s.allowBotInserts()
 	s.bot.On("CreateSimpleThread", s.ctx, "ch15", mock.Anything, mock.Anything).Return("thread-auto-del", nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
@@ -484,8 +488,11 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 	s.store.On("UpdateSessionID", s.ctx, "ch15", "sess-auto-del").Return(nil)
 	// [EPHEMERAL] is stripped before tracker records lastText, so IsDuplicate
 	// returns true and no final SendMessage is needed.
+	// First turn broadcasts to thread (via CreateSimpleThread path)
+	eb.On("BroadcastMessageCreated", "thread-auto-del", mock.Anything).Maybe()
 	s.bot.On("RenameThread", s.ctx, "thread-auto-del", "💨 task #15 (`0 * * * *`) auto-del task").Return(nil).Once()
 	s.bot.On("DeleteThread", mock.Anything, "thread-auto-del").Return(nil).Once()
+	eb.On("BroadcastChannelDeleted", "thread-auto-del")
 
 	var capturedDelay time.Duration
 	var callbackCalled bool
@@ -506,7 +513,9 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 
 	s.bot.AssertCalled(s.T(), "RenameThread", s.ctx, "thread-auto-del", "💨 task #15 (`0 * * * *`) auto-del task")
 	s.bot.AssertCalled(s.T(), "DeleteThread", mock.Anything, "thread-auto-del")
+	eb.AssertCalled(s.T(), "BroadcastChannelDeleted", "thread-auto-del")
 	s.bot.AssertExpectations(s.T())
+	eb.AssertExpectations(s.T())
 }
 
 func (s *TaskExecutorSuite) TestAutoDeleteEphemeralVariants() {
@@ -578,6 +587,48 @@ func (s *TaskExecutorSuite) TestAutoDeleteEphemeralVariants() {
 	}
 }
 
+func (s *TaskExecutorSuite) TestAutoDeleteNonEphemeralNoRename() {
+	s.executor.streamingEnabled = true
+
+	task := &db.ScheduledTask{
+		ID: 19, ChannelID: "ch19", Prompt: "important task",
+		Type: db.TaskTypeCron, Schedule: "0 * * * *", AutoDeleteSec: 60,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch19").Return(nil, nil)
+	s.bot.On("CreateSimpleThread", s.ctx, "ch19", mock.Anything, mock.Anything).Return("thread-del", nil).Once()
+	s.store.On("UpdateSessionID", s.ctx, "ch19", mock.Anything).Return(nil)
+	s.bot.On("DeleteThread", mock.Anything, "thread-del").Return(nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Important result")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response: "Important result", SessionID: "sess",
+	}, nil)
+
+	var capturedDelay time.Duration
+	origTimeAfterFunc := timeAfterFunc
+	defer func() { timeAfterFunc = origTimeAfterFunc }()
+	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+		capturedDelay = d
+		f()
+		return time.NewTimer(0)
+	}
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Important result", resp)
+	require.Equal(s.T(), 60*time.Second, capturedDelay)
+
+	// Should delete but NOT rename (not ephemeral)
+	s.bot.AssertNotCalled(s.T(), "RenameThread", mock.Anything, mock.Anything, mock.Anything)
+	s.bot.AssertCalled(s.T(), "DeleteThread", mock.Anything, "thread-del")
+}
+
 func (s *TaskExecutorSuite) TestAutoDeleteSkipped() {
 	tests := []struct {
 		name       string
@@ -586,20 +637,6 @@ func (s *TaskExecutorSuite) TestAutoDeleteSkipped() {
 		response   string
 		setupMocks func()
 	}{
-		{
-			name:      "not ephemeral",
-			streaming: true,
-			task: &db.ScheduledTask{
-				ID: 19, ChannelID: "ch19", Prompt: "important task",
-				Type: db.TaskTypeCron, Schedule: "0 * * * *", AutoDeleteSec: 60,
-			},
-			response: "Important result",
-			setupMocks: func() {
-				s.store.On("GetChannel", s.ctx, "ch19").Return(nil, nil)
-				s.bot.On("CreateSimpleThread", s.ctx, "ch19", mock.Anything, mock.Anything).Return("thread-keep", nil).Once()
-				s.store.On("UpdateSessionID", s.ctx, "ch19", mock.Anything).Return(nil)
-			},
-		},
 		{
 			name:      "auto delete sec is zero",
 			streaming: true,
@@ -750,6 +787,9 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 	}
 
 	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(&db.Channel{ID: 5, ChannelID: "ch20"}, nil)
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "thread-20" && ch.ParentID == "ch20"
+	})).Return(nil)
 
 	// Thread creation succeeds
 	s.bot.On("CreateSimpleThread", s.ctx, "ch20",
@@ -799,4 +839,92 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 
 	s.bot.AssertExpectations(s.T())
 	eb.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestStreamingInvitesPermissionUsersToThread() {
+	s.executor.streamingEnabled = true
+	s.allowBotInserts()
+
+	task := &db.ScheduledTask{
+		ID: 21, ChannelID: "ch21", Prompt: "check perms",
+		Type: db.TaskTypeCron, Schedule: "0 * * * *",
+	}
+
+	s.store.On("GetChannel", mock.Anything, "ch21").Return(&db.Channel{
+		ChannelID: "ch21",
+		Permissions: types.Permissions{
+			Owners:  types.RoleGrant{Users: []string{"owner-1"}},
+			Members: types.RoleGrant{Users: []string{"member-1", "member-2"}},
+		},
+	}, nil)
+
+	s.bot.On("CreateSimpleThread", s.ctx, "ch21", mock.Anything, mock.Anything).Return("thread-21", nil).Once()
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "thread-21" && ch.ParentID == "ch21"
+	})).Return(nil)
+	s.bot.On("InviteUserToChannel", s.ctx, "thread-21", "owner-1").Return(nil).Once()
+	s.bot.On("InviteUserToChannel", s.ctx, "thread-21", "member-1").Return(nil).Once()
+	s.bot.On("InviteUserToChannel", s.ctx, "thread-21", "member-2").Return(nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Turn 1")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response: "Turn 1", SessionID: "s21",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch21", "s21").Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Turn 1", resp)
+
+	s.bot.AssertCalled(s.T(), "InviteUserToChannel", s.ctx, "thread-21", "owner-1")
+	s.bot.AssertCalled(s.T(), "InviteUserToChannel", s.ctx, "thread-21", "member-1")
+	s.bot.AssertCalled(s.T(), "InviteUserToChannel", s.ctx, "thread-21", "member-2")
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestStreamingInviteErrorsAreLogged() {
+	s.executor.streamingEnabled = true
+	s.allowBotInserts()
+
+	task := &db.ScheduledTask{
+		ID: 22, ChannelID: "ch22", Prompt: "check perms err",
+		Type: db.TaskTypeCron, Schedule: "0 * * * *",
+	}
+
+	s.store.On("GetChannel", mock.Anything, "ch22").Return(&db.Channel{
+		ChannelID: "ch22",
+		Permissions: types.Permissions{
+			Owners:  types.RoleGrant{Users: []string{"owner-bad"}},
+			Members: types.RoleGrant{Users: []string{"member-bad"}},
+		},
+	}, nil)
+
+	s.bot.On("CreateSimpleThread", s.ctx, "ch22", mock.Anything, mock.Anything).Return("thread-22", nil).Once()
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "thread-22" && ch.ParentID == "ch22"
+	})).Return(nil)
+	s.bot.On("InviteUserToChannel", s.ctx, "thread-22", "owner-bad").Return(errors.New("invite failed")).Once()
+	s.bot.On("InviteUserToChannel", s.ctx, "thread-22", "member-bad").Return(errors.New("invite failed")).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Turn 1")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response: "Turn 1", SessionID: "s22",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch22", "s22").Return(nil)
+
+	// Should not fail — invite errors are just logged
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Turn 1", resp)
+	s.bot.AssertExpectations(s.T())
 }

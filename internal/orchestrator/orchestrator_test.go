@@ -157,6 +157,10 @@ func (m *MockEventBroadcaster) BroadcastAgentStatus(channelID string, data Agent
 	m.Called(channelID, data)
 }
 
+func (m *MockEventBroadcaster) BroadcastChannelDeleted(channelID string) {
+	m.Called(channelID)
+}
+
 type MockRunner struct {
 	mock.Mock
 }

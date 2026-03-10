@@ -179,6 +179,12 @@ func (s *TaskScheduler) processDueTasks(ctx context.Context) {
 }
 
 func (s *TaskScheduler) executeAndUpdate(ctx context.Context, task *db.ScheduledTask) {
+	platform := ""
+	if ch, err := s.store.GetChannel(ctx, task.ChannelID); err == nil && ch != nil {
+		platform = string(ch.Platform)
+	}
+	s.logger.Info("executing task", "task_id", task.ID, "channel_id", task.ChannelID, "platform", platform, "type", task.Type, "schedule", task.Schedule)
+
 	runLog := &db.TaskRunLog{
 		TaskID:    task.ID,
 		Status:    db.RunStatusRunning,
@@ -197,9 +203,11 @@ func (s *TaskScheduler) executeAndUpdate(ctx context.Context, task *db.Scheduled
 	if execErr != nil {
 		runLog.Status = db.RunStatusFailed
 		runLog.ErrorText = execErr.Error()
+		s.logger.Error("task execution failed", "task_id", task.ID, "platform", platform, "error", execErr)
 	} else {
 		runLog.Status = db.RunStatusSuccess
 		runLog.ResponseText = response
+		s.logger.Info("task execution completed", "task_id", task.ID, "channel_id", task.ChannelID, "platform", platform)
 	}
 
 	if err := s.store.UpdateTaskRunLog(ctx, runLog); err != nil {

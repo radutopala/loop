@@ -292,6 +292,11 @@ func (b *SlackBot) findChannelByName(name string) (string, error) {
 
 // InviteUserToChannel invites a user to a Slack channel.
 func (b *SlackBot) InviteUserToChannel(ctx context.Context, channelID, userID string) error {
+	// Slack threads (channelID contains ":") are visible to all parent channel
+	// members — inviting users to them is not supported and not needed.
+	if strings.Contains(channelID, ":") {
+		return nil
+	}
 	_, err := b.session.InviteUsersToConversation(channelID, userID)
 	if err != nil {
 		return fmt.Errorf("slack invite user to channel: %w", err)

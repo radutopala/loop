@@ -43,6 +43,8 @@ type DiscordSession interface {
 	GuildMember(guildID string, userID string, options ...discordgo.RequestOption) (*discordgo.Member, error)
 	ChannelMessageSendComplex(channelID string, data *discordgo.MessageSend, options ...discordgo.RequestOption) (*discordgo.Message, error)
 	ChannelMessageDelete(channelID string, messageID string, options ...discordgo.RequestOption) error
+	Guild(guildID string, options ...discordgo.RequestOption) (*discordgo.Guild, error)
+	ThreadMemberAdd(threadID, memberID string, options ...discordgo.RequestOption) error
 }
 
 // Bot defines the interface for a Discord bot.
@@ -314,14 +316,31 @@ func (b *DiscordBot) CreateChannel(ctx context.Context, name string) (string, er
 	return ch.ID, nil
 }
 
-// InviteUserToChannel is a no-op for Discord since channels are visible to all guild members.
-func (b *DiscordBot) InviteUserToChannel(_ context.Context, _, _ string) error {
+// InviteUserToChannel adds a user to a thread so they receive notifications.
+// For regular channels this is a no-op since all guild members can see them.
+func (b *DiscordBot) InviteUserToChannel(ctx context.Context, channelID, userID string) error {
+	ch, err := b.session.Channel(channelID)
+	if err != nil {
+		return fmt.Errorf("discord get channel: %w", err)
+	}
+	if !ch.IsThread() {
+		return nil
+	}
+	if err := b.session.ThreadMemberAdd(channelID, userID); err != nil {
+		return fmt.Errorf("discord add thread member: %w", err)
+	}
+	b.logger.InfoContext(ctx, "added user to discord thread", "thread_id", channelID, "user_id", userID)
 	return nil
 }
 
-// GetOwnerUserID is a no-op for Discord — channels are visible to all guild members.
-func (b *DiscordBot) GetOwnerUserID(_ context.Context) (string, error) {
-	return "", nil
+// GetOwnerUserID returns the Discord guild (server) owner's user ID.
+func (b *DiscordBot) GetOwnerUserID(ctx context.Context) (string, error) {
+	guild, err := b.session.Guild(b.guildID)
+	if err != nil {
+		return "", fmt.Errorf("discord get guild: %w", err)
+	}
+	b.logger.InfoContext(ctx, "resolved guild owner", "guild_id", b.guildID, "owner_id", guild.OwnerID)
+	return guild.OwnerID, nil
 }
 
 // SetChannelTopic sets the topic/description of a Discord channel.

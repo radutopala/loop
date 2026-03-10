@@ -3,6 +3,7 @@ package local
 import (
 	"context"
 	"errors"
+	"io"
 	"log/slog"
 	"testing"
 	"time"
@@ -53,7 +54,7 @@ func TestBotSuite(t *testing.T) {
 
 func (s *BotSuite) SetupTest() {
 	s.store = new(MockLocalStore)
-	s.logger = slog.New(slog.NewTextHandler(nil, nil))
+	s.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	s.bot = NewBot(s.store, s.logger)
 	// Use deterministic ID generation.
 	generateThreadID = func() string { return "test-thread-id" }

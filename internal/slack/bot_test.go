@@ -557,6 +557,13 @@ func (s *BotSuite) TestInviteUserToChannelError() {
 	require.Contains(s.T(), err.Error(), "slack invite user to channel")
 }
 
+func (s *BotSuite) TestInviteUserToChannelSkipsThreads() {
+	// Thread IDs contain ":" — inviting to threads is a no-op in Slack
+	err := s.bot.InviteUserToChannel(context.Background(), "C456:1234567890.123456", "U789")
+	require.NoError(s.T(), err)
+	s.session.AssertNotCalled(s.T(), "InviteUsersToConversation", mock.Anything, mock.Anything)
+}
+
 // --- GetOwnerUserID ---
 
 func (s *BotSuite) TestGetOwnerUserIDSuccess() {

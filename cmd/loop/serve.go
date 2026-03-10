@@ -455,3 +455,7 @@ func (a *eventBroadcasterAdapter) BroadcastAgentStatus(channelID string, data or
 		Error:  data.Error,
 	})
 }
+
+func (a *eventBroadcasterAdapter) BroadcastChannelDeleted(channelID string) {
+	a.hub.BroadcastChannelDeleted(channelID)
+}

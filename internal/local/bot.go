@@ -59,8 +59,14 @@ func NewBot(store LocalStore, logger *slog.Logger) *Bot {
 
 // --- Lifecycle (no-ops) ---
 
-func (b *Bot) Start(_ context.Context) error            { return nil }
-func (b *Bot) Stop() error                              { return nil }
+func (b *Bot) Start(ctx context.Context) error {
+	b.logger.InfoContext(ctx, "local bot started")
+	return nil
+}
+func (b *Bot) Stop() error {
+	b.logger.Info("local bot stopped")
+	return nil
+}
 func (b *Bot) RegisterCommands(_ context.Context) error { return nil }
 func (b *Bot) RemoveCommands(_ context.Context) error   { return nil }
 func (b *Bot) BotUserID() string                        { return BotUserID }
@@ -142,6 +148,7 @@ func (b *Bot) CreateSimpleThread(ctx context.Context, channelID, name, initialMe
 		}
 	}
 
+	b.logger.InfoContext(ctx, "created simple local thread", "thread_id", threadID, "name", name, "parent_id", channelID)
 	return threadID, nil
 }
 
@@ -151,7 +158,11 @@ func (b *Bot) CreateThread(ctx context.Context, channelID, name, _, message stri
 }
 
 func (b *Bot) DeleteThread(ctx context.Context, threadID string) error {
-	return b.store.DeleteChannel(ctx, threadID)
+	if err := b.store.DeleteChannel(ctx, threadID); err != nil {
+		return err
+	}
+	b.logger.InfoContext(ctx, "deleted local thread", "thread_id", threadID)
+	return nil
 }
 
 func (b *Bot) RenameThread(ctx context.Context, threadID, name string) error {
@@ -163,7 +174,11 @@ func (b *Bot) RenameThread(ctx context.Context, threadID, name string) error {
 		return nil
 	}
 	ch.Name = name
-	return b.store.UpsertChannel(ctx, ch)
+	if err := b.store.UpsertChannel(ctx, ch); err != nil {
+		return err
+	}
+	b.logger.InfoContext(ctx, "renamed local thread", "thread_id", threadID)
+	return nil
 }
 
 func (b *Bot) InviteUserToChannel(_ context.Context, _, _ string) error { return nil }

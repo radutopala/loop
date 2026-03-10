@@ -195,15 +195,16 @@ func (s *DiscordIntegrationSuite) TestB05_GetChannelParentID() {
 
 func (s *DiscordIntegrationSuite) TestB06_InviteUserToChannel() {
 	rateSleep()
+	// Regular channels: no-op (all guild members can see them)
 	err := s.bot.InviteUserToChannel(s.ctx, s.channelID, s.botUserID)
-	require.NoError(s.T(), err, "InviteUserToChannel is a no-op, should not error")
+	require.NoError(s.T(), err)
 }
 
 func (s *DiscordIntegrationSuite) TestB07_GetOwnerUserID() {
 	rateSleep()
 	ownerID, err := s.bot.GetOwnerUserID(s.ctx)
 	require.NoError(s.T(), err)
-	require.Empty(s.T(), ownerID, "GetOwnerUserID is a no-op for Discord, should return empty")
+	require.NotEmpty(s.T(), ownerID, "GetOwnerUserID should return guild owner ID")
 }
 
 // ===== Group C: Message Sending =====

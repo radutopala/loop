@@ -14,6 +14,7 @@ const (
 	EventMessageCreated   = "message.created"
 	EventMessageStreaming = "message.streaming"
 	EventAgentStatus      = "agent.status"
+	EventChannelDeleted   = "channel.deleted"
 )
 
 // Event represents a server-sent event to WebSocket clients.
@@ -144,6 +145,14 @@ func (h *EventsHub) BroadcastMessageStreaming(channelID string, data MessageStre
 		Type:      EventMessageStreaming,
 		ChannelID: channelID,
 		Data:      data,
+	})
+}
+
+// BroadcastChannelDeleted sends a channel.deleted event.
+func (h *EventsHub) BroadcastChannelDeleted(channelID string) {
+	h.Broadcast(Event{
+		Type:      EventChannelDeleted,
+		ChannelID: channelID,
 	})
 }
 

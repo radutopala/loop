@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Channel, ViewMode } from "./types";
+import type { Channel, ViewMode, WSEvent } from "./types";
 import { colors, fonts } from "./theme";
 import { createChannel, createThread, deleteChannel, deleteThread, fetchChannels, fetchDiff, initApiUrl } from "./api/loopApi";
 import { Sidebar } from "./components/Sidebar";
@@ -71,12 +71,6 @@ export default function App() {
   }, [loadDiffStats]);
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const onDiffEvent = useCallback(() => {
-    if (debounceRef.current) clearTimeout(debounceRef.current);
-    debounceRef.current = setTimeout(loadDiffStats, 1_000);
-  }, [loadDiffStats]);
-  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
-  useEventStream({ channelId: selectedId, onEvent: onDiffEvent });
 
   useEffect(() => {
     initApiUrl().then(() => setReady(true));
@@ -124,6 +118,20 @@ export default function App() {
     const id = setInterval(loadChannels, 30_000);
     return () => clearInterval(id);
   }, [loadChannels]);
+
+  const onAppEvent = useCallback((event: WSEvent) => {
+    if (event.type === "channel.deleted") {
+      if (event.channel_id === selectedId) {
+        setSelectedId(null);
+      }
+      loadChannels();
+      return;
+    }
+    if (debounceRef.current) clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(loadDiffStats, 1_000);
+  }, [loadDiffStats, selectedId, loadChannels]);
+  useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
+  useEventStream({ channelId: selectedId, onEvent: onAppEvent });
 
   const handleSelect = useCallback((id: string | null) => {
     setSelectedId((prev) => {

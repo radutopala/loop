@@ -189,6 +189,19 @@ func (m *MockSession) ChannelMessageDelete(channelID string, messageID string, o
 	return args.Error(0)
 }
 
+func (m *MockSession) Guild(guildID string, options ...discordgo.RequestOption) (*discordgo.Guild, error) {
+	args := m.Called(guildID, options)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*discordgo.Guild), args.Error(1)
+}
+
+func (m *MockSession) ThreadMemberAdd(threadID, memberID string, options ...discordgo.RequestOption) error {
+	args := m.Called(threadID, memberID, options)
+	return args.Error(0)
+}
+
 // --- Test Suite ---
 
 type BotSuite struct {
@@ -1388,15 +1401,61 @@ func (s *BotSuite) TestCreateChannel() {
 
 // --- InviteUserToChannel ---
 
-func (s *BotSuite) TestInviteUserToChannelNoOp() {
+func (s *BotSuite) TestInviteUserToChannelRegularChannelNoOp() {
+	s.session.On("Channel", "ch-1", mock.Anything).Return(&discordgo.Channel{
+		ID:   "ch-1",
+		Type: discordgo.ChannelTypeGuildText,
+	}, nil)
 	err := s.bot.InviteUserToChannel(context.Background(), "ch-1", "user-1")
 	require.NoError(s.T(), err)
+	s.session.AssertNotCalled(s.T(), "ThreadMemberAdd", mock.Anything, mock.Anything, mock.Anything)
 }
 
-func (s *BotSuite) TestGetOwnerUserIDNoOp() {
+func (s *BotSuite) TestInviteUserToChannelThread() {
+	s.session.On("Channel", "thread-1", mock.Anything).Return(&discordgo.Channel{
+		ID:   "thread-1",
+		Type: discordgo.ChannelTypeGuildPublicThread,
+	}, nil)
+	s.session.On("ThreadMemberAdd", "thread-1", "user-1", mock.Anything).Return(nil)
+	err := s.bot.InviteUserToChannel(context.Background(), "thread-1", "user-1")
+	require.NoError(s.T(), err)
+	s.session.AssertCalled(s.T(), "ThreadMemberAdd", "thread-1", "user-1", mock.Anything)
+}
+
+func (s *BotSuite) TestInviteUserToChannelChannelError() {
+	s.session.On("Channel", "ch-1", mock.Anything).Return(nil, errors.New("not found"))
+	err := s.bot.InviteUserToChannel(context.Background(), "ch-1", "user-1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "discord get channel")
+}
+
+func (s *BotSuite) TestInviteUserToChannelThreadMemberAddError() {
+	s.session.On("Channel", "thread-1", mock.Anything).Return(&discordgo.Channel{
+		ID:   "thread-1",
+		Type: discordgo.ChannelTypeGuildPublicThread,
+	}, nil)
+	s.session.On("ThreadMemberAdd", "thread-1", "user-1", mock.Anything).Return(errors.New("api error"))
+	err := s.bot.InviteUserToChannel(context.Background(), "thread-1", "user-1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "discord add thread member")
+}
+
+func (s *BotSuite) TestGetOwnerUserIDSuccess() {
+	s.session.On("Guild", "", mock.Anything).
+		Return(&discordgo.Guild{OwnerID: "U-OWNER-123"}, nil)
+
 	id, err := s.bot.GetOwnerUserID(context.Background())
 	require.NoError(s.T(), err)
-	require.Empty(s.T(), id)
+	require.Equal(s.T(), "U-OWNER-123", id)
+}
+
+func (s *BotSuite) TestGetOwnerUserIDError() {
+	s.session.On("Guild", "", mock.Anything).
+		Return(nil, errors.New("api error"))
+
+	_, err := s.bot.GetOwnerUserID(context.Background())
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "discord get guild")
 }
 
 // --- HandleIncomingMessage / HandleThreadCreated (no-ops) ---

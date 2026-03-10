@@ -44,9 +44,17 @@ func (s *SchedulerSuite) SetupTest() {
 }
 
 // setupDueTasks configures the mock store to return tasks once, then empty.
+// It also allows GetChannel lookups used for platform logging.
 func setupDueTasks(store *testutil.MockStore, tasks []*db.ScheduledTask) {
 	store.On("GetDueTasks", mock.Anything, mock.Anything).Return(tasks, nil).Once()
 	store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{}, nil).Maybe()
+	if len(tasks) > 0 {
+		store.On("GetChannel", mock.Anything, tasks[0].ChannelID).Return(&db.Channel{
+			ChannelID: tasks[0].ChannelID,
+			Platform:  "local",
+		}, nil).Maybe()
+	}
+	store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 }
 
 // signalDone returns a channel and a mock.Run callback that signals it.
