@@ -14,6 +14,7 @@ const (
 	EventMessageCreated   = "message.created"
 	EventMessageStreaming = "message.streaming"
 	EventAgentStatus      = "agent.status"
+	EventChannelCreated   = "channel.created"
 	EventChannelDeleted   = "channel.deleted"
 )
 
@@ -145,6 +146,15 @@ func (h *EventsHub) BroadcastMessageStreaming(channelID string, data MessageStre
 		Type:      EventMessageStreaming,
 		ChannelID: channelID,
 		Data:      data,
+	})
+}
+
+// BroadcastChannelCreated sends a channel.created event to the parent channel.
+func (h *EventsHub) BroadcastChannelCreated(parentChannelID, channelID string) {
+	h.Broadcast(Event{
+		Type:      EventChannelCreated,
+		ChannelID: parentChannelID,
+		Data:      map[string]string{"channel_id": channelID},
 	})
 }
 

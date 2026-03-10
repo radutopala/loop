@@ -120,6 +120,10 @@ export default function App() {
   }, [loadChannels]);
 
   const onAppEvent = useCallback((event: WSEvent) => {
+    if (event.type === "channel.created") {
+      loadChannels();
+      return;
+    }
     if (event.type === "channel.deleted") {
       if (event.channel_id === selectedId) {
         setSelectedId(null);

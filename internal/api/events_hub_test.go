@@ -192,6 +192,37 @@ func (s *EventsHubSuite) TestBroadcastMessageStreaming() {
 	require.Equal(s.T(), "ch-1", evt.ChannelID)
 }
 
+func (s *EventsHubSuite) TestBroadcastChannelCreated() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastChannelCreated("parent-1", "thread-1")
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), "channel.created", evt.Type)
+	require.Equal(s.T(), "parent-1", evt.ChannelID)
+}
+
 func (s *EventsHubSuite) TestBroadcastChannelDeleted() {
 	hub := NewEventsHub(testLogger())
 

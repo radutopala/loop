@@ -456,6 +456,10 @@ func (a *eventBroadcasterAdapter) BroadcastAgentStatus(channelID string, data or
 	})
 }
 
+func (a *eventBroadcasterAdapter) BroadcastChannelCreated(parentChannelID, channelID string) {
+	a.hub.BroadcastChannelCreated(parentChannelID, channelID)
+}
+
 func (a *eventBroadcasterAdapter) BroadcastChannelDeleted(channelID string) {
 	a.hub.BroadcastChannelDeleted(channelID)
 }

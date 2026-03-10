@@ -132,6 +132,11 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 					})
 					e.invitePermissionUsers(ctx, threadID, channel.Permissions)
 				}
+				// Notify the UI that a new thread was created so the
+				// sidebar refreshes immediately.
+				if e.events != nil {
+					e.events.BroadcastChannelCreated(task.ChannelID, threadID)
+				}
 				// Broadcast to the thread (not the parent channel) so the
 				// Electron app shows the initial message in the thread view.
 				// Don't use broadcastBotMessage here — CreateSimpleThread

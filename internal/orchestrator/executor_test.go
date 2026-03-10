@@ -488,7 +488,8 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 	s.store.On("UpdateSessionID", s.ctx, "ch15", "sess-auto-del").Return(nil)
 	// [EPHEMERAL] is stripped before tracker records lastText, so IsDuplicate
 	// returns true and no final SendMessage is needed.
-	// First turn broadcasts to thread (via CreateSimpleThread path)
+	// First turn broadcasts channel created + message to thread
+	eb.On("BroadcastChannelCreated", "ch15", "thread-auto-del").Once()
 	eb.On("BroadcastMessageCreated", "thread-auto-del", mock.Anything).Maybe()
 	s.bot.On("RenameThread", s.ctx, "thread-auto-del", "💨 task #15 (`0 * * * *`) auto-del task").Return(nil).Once()
 	s.bot.On("DeleteThread", mock.Anything, "thread-auto-del").Return(nil).Once()
@@ -816,6 +817,8 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 		return m.IsBot
 	})).Return(nil).Maybe()
 
+	// Channel created broadcast goes to parent
+	eb.On("BroadcastChannelCreated", "ch20", "thread-20").Once()
 	// First turn broadcast goes to THREAD, not parent channel
 	eb.On("BroadcastMessageCreated", "thread-20", mock.MatchedBy(func(d MessageEventData) bool {
 		return d.Content == "🧵 task #20 (`0 * * * *`) Turn 1" && d.IsBot

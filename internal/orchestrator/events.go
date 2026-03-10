@@ -5,6 +5,7 @@ type EventBroadcaster interface {
 	BroadcastMessageCreated(channelID string, data MessageEventData)
 	BroadcastMessageStreaming(channelID string, data MessageStreamingData)
 	BroadcastAgentStatus(channelID string, data AgentStatusEventData)
+	BroadcastChannelCreated(parentChannelID, channelID string)
 	BroadcastChannelDeleted(channelID string)
 }
 

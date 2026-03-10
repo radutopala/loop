@@ -3181,6 +3181,13 @@ func (s *MainSuite) TestEventBroadcasterAdapterMessageStreaming() {
 	})
 }
 
+func (s *MainSuite) TestEventBroadcasterAdapterChannelCreated() {
+	hub := api.NewEventsHub(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	adapter := &eventBroadcasterAdapter{hub: hub}
+
+	adapter.BroadcastChannelCreated("parent-1", "thread-1")
+}
+
 func (s *MainSuite) TestEventBroadcasterAdapterChannelDeleted() {
 	hub := api.NewEventsHub(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	adapter := &eventBroadcasterAdapter{hub: hub}
