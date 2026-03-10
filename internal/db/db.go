@@ -17,6 +17,7 @@ type Store interface {
 	UpsertChannel(ctx context.Context, ch *Channel) error
 	GetChannel(ctx context.Context, channelID string) (*Channel, error)
 	GetChannelByDirPath(ctx context.Context, dirPath string, platform types.Platform) (*Channel, error)
+	GetChannelsByDirPath(ctx context.Context, dirPath string) ([]*Channel, error)
 	IsChannelActive(ctx context.Context, channelID string) (bool, error)
 	UpdateSessionID(ctx context.Context, channelID string, sessionID string) error
 	UpdateChannelPermissions(ctx context.Context, channelID string, perms types.Permissions) error
@@ -140,6 +141,19 @@ func (s *SQLiteStore) GetChannelByDirPath(ctx context.Context, dirPath string, p
 		return nil, nil
 	}
 	return ch, err
+}
+
+func (s *SQLiteStore) GetChannelsByDirPath(ctx context.Context, dirPath string) ([]*Channel, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, channel_id, guild_id, name, dir_path, parent_id, platform, active, session_id, permissions, created_at, updated_at
+		 FROM channels WHERE dir_path = ?`,
+		dirPath,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanChannels(rows)
 }
 
 func (s *SQLiteStore) IsChannelActive(ctx context.Context, channelID string) (bool, error) {

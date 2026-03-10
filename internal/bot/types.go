@@ -3,6 +3,8 @@ package bot
 import (
 	"context"
 	"time"
+
+	"github.com/radutopala/loop/internal/types"
 )
 
 // IncomingMessage from the chat platform.
@@ -13,6 +15,7 @@ type IncomingMessage struct {
 	AuthorName   string
 	Content      string
 	MessageID    string
+	Platform     types.Platform
 	IsBotMention bool
 	IsReplyToBot bool
 	HasPrefix    bool
@@ -34,8 +37,9 @@ type Interaction struct {
 	GuildID     string
 	CommandName string
 	Options     map[string]string
-	AuthorID    string   // user who invoked the command
-	AuthorRoles []string // role IDs (Discord only)
+	AuthorID    string         // user who invoked the command
+	AuthorRoles []string       // role IDs (Discord only)
+	Platform    types.Platform // set by the bot that received the interaction
 }
 
 // MessageHandler is a callback for incoming messages.
@@ -48,4 +52,4 @@ type InteractionHandler = func(ctx context.Context, i *Interaction)
 type ChannelDeleteHandler = func(ctx context.Context, channelID string, isThread bool)
 
 // ChannelJoinHandler is a callback for when the bot joins a channel.
-type ChannelJoinHandler = func(ctx context.Context, channelID string)
+type ChannelJoinHandler = func(ctx context.Context, channelID string, platform types.Platform)

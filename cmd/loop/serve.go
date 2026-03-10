@@ -17,7 +17,6 @@ import (
 	"github.com/tailscale/hujson"
 
 	"github.com/radutopala/loop/internal/api"
-	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	containerimage "github.com/radutopala/loop/internal/container/image"
@@ -40,25 +39,6 @@ func newServeCmd() *cobra.Command {
 			return serve()
 		},
 	}
-}
-
-// apiServer is the interface used by serve() to decouple from api.Server for testing.
-type apiServer interface {
-	Start(addr string) error
-	Stop(ctx context.Context) error
-	SetMemoryIndexer(idx api.MemoryIndexer)
-	SetEventsHub(hub *api.EventsHub)
-	EventsHub() *api.EventsHub
-	SetPlatform(p types.Platform)
-	SetLoopDir(dir string)
-	SetTerminalManager(mgr api.TerminalManager)
-	SetContainerFinder(finder api.ContainerFinder)
-	SetContainerStopper(stopper api.ContainerStopper)
-	SetInteractiveCmdBuilder(builder api.InteractiveCmdBuilder)
-	SetRunningChannelLister(lister api.RunningChannelLister)
-	SetActiveChatLister(lister api.ActiveChatLister)
-	SetIncomingMessageHandler(h api.IncomingMessageHandler)
-	SetInteractionHandler(h api.InteractionHandler)
 }
 
 var ensureImage = func(ctx context.Context, client container.DockerClient, cfg *config.Config) error {
@@ -117,9 +97,7 @@ var newDockerExecClient = func() (terminal.ExecClient, error) {
 	return terminal.NewDockerExecClient()
 }
 
-var newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) apiServer {
-	return api.NewServer(sched, channels, threads, store, messages, logger)
-}
+var newAPIServer = api.NewServer
 
 // memIndexer is the subset of *memory.Indexer used by multiDirIndexer.
 type memIndexer interface {
@@ -326,23 +304,29 @@ func serve() error {
 	}
 	defer store.Close()
 
-	platform := cfg.Platform()
+	localBot := newLocalBot(store, logger)
 
-	var chatBot orchestrator.Bot
-	switch platform {
-	case types.PlatformLocal:
-		chatBot = bot.NewLocalBot()
-	case types.PlatformSlack:
-		chatBot, err = newSlackBot(cfg.SlackBotToken, cfg.SlackAppToken, logger)
-		if err != nil {
-			return fmt.Errorf("creating slack bot: %w", err)
-		}
-	default:
-		chatBot, err = newDiscordBot(cfg.DiscordToken, cfg.DiscordAppID, logger)
-		if err != nil {
-			return fmt.Errorf("creating discord bot: %w", err)
+	bots := make(map[types.Platform]orchestrator.Bot)
+	for _, p := range cfg.Platforms {
+		switch p {
+		case types.PlatformLocal:
+			bots[p] = localBot
+		case types.PlatformSlack:
+			slackBot, slackErr := newSlackBot(cfg.SlackBotToken, cfg.SlackAppToken, logger)
+			if slackErr != nil {
+				return fmt.Errorf("creating slack bot: %w", slackErr)
+			}
+			bots[p] = slackBot
+		case types.PlatformDiscord:
+			discordBot, discordErr := newDiscordBot(cfg.DiscordToken, cfg.DiscordAppID, cfg.DiscordGuildID, logger)
+			if discordErr != nil {
+				return fmt.Errorf("creating discord bot: %w", discordErr)
+			}
+			bots[p] = discordBot
 		}
 	}
+
+	chatBot := orchestrator.NewBotRouter(bots, store, logger)
 
 	dockerClient, err := newDockerClient()
 	if err != nil {
@@ -365,26 +349,18 @@ func serve() error {
 	executor := orchestrator.NewTaskExecutor(runner, chatBot, store, logger, cfg.ContainerTimeout, cfg.StreamingEnabled)
 	sched := scheduler.NewTaskScheduler(store, executor, cfg.PollInterval, logger)
 
-	var channelSvc api.ChannelEnsurer
-	var threadSvc api.ThreadEnsurer
-	switch platform {
-	case types.PlatformLocal:
-		// Local platform — channel/thread services operate DB-only (no chat bot).
-		channelSvc = api.NewChannelService(store, chatBot, "", platform)
-		threadSvc = api.NewThreadService(store, chatBot, platform, logger)
-	case types.PlatformSlack:
-		// Slack doesn't use guild IDs — channel/thread services are always available.
-		channelSvc = api.NewChannelService(store, chatBot, "", platform)
-		threadSvc = api.NewThreadService(store, chatBot, platform, logger)
-	default:
-		if cfg.DiscordGuildID != "" {
-			channelSvc = api.NewChannelService(store, chatBot, cfg.DiscordGuildID, platform)
-			threadSvc = api.NewThreadService(store, chatBot, platform, logger)
+	// Channel service: build creators map from bots for platform-aware routing.
+	channelCreators := make(map[types.Platform]api.ChannelCreator, len(bots))
+	for p, b := range bots {
+		if cc, ok := b.(api.ChannelCreator); ok {
+			channelCreators[p] = cc
 		}
 	}
+	channelSvc := api.NewChannelService(store, channelCreators)
+	// Thread service: BotRouter routes to correct platform bot.
+	threadSvc := api.NewThreadService(store, chatBot, logger)
 
 	apiSrv := newAPIServer(sched, channelSvc, threadSvc, store, chatBot, logger)
-	apiSrv.SetPlatform(platform)
 	apiSrv.SetLoopDir(cfg.LoopDir)
 	apiSrv.SetRunningChannelLister(dockerClient)
 
@@ -421,16 +397,15 @@ func serve() error {
 	eventsHub := api.NewEventsHub(logger)
 	apiSrv.SetEventsHub(eventsHub)
 
-	executor.SetPlatform(platform)
 	executor.SetEventBroadcaster(&eventBroadcasterAdapter{hub: eventsHub})
 
 	if err := apiSrv.Start(cfg.APIAddr); err != nil {
 		return fmt.Errorf("starting api server: %w", err)
 	}
 
-	orch := orchestrator.New(store, chatBot, runner, sched, logger, platform, *cfg)
+	orch := orchestrator.New(store, chatBot, runner, sched, logger, *cfg)
 	orch.SetEventBroadcaster(&eventBroadcasterAdapter{hub: eventsHub})
-	apiSrv.SetIncomingMessageHandler(&orchMessageAdapter{orch: orch})
+	apiSrv.SetIncomingMessageHandler(chatBot)
 	apiSrv.SetInteractionHandler(orch)
 	apiSrv.SetActiveChatLister(orch)
 
@@ -478,36 +453,5 @@ func (a *eventBroadcasterAdapter) BroadcastAgentStatus(channelID string, data or
 	a.hub.BroadcastAgentStatus(channelID, api.AgentStatusData{
 		Status: data.Status,
 		Error:  data.Error,
-	})
-}
-
-// orchMessageAdapter routes API messages through the orchestrator.
-type orchMessageAdapter struct {
-	orch *orchestrator.Orchestrator
-}
-
-// localBotUsername is the bot name used for @mention detection on local platform.
-const localBotUsername = "LoopBot"
-
-func (a *orchMessageAdapter) HandleIncomingMessage(ctx context.Context, channelID, authorID, content string) {
-	isMention := bot.HasTextMention(content, localBotUsername)
-	hasPrefix := bot.HasCommandPrefix(content)
-
-	if isMention {
-		content = bot.StripTextMention(content, localBotUsername)
-	}
-	if hasPrefix {
-		content = bot.StripPrefix(content)
-	}
-
-	a.orch.HandleMessage(ctx, &bot.IncomingMessage{
-		ChannelID:    channelID,
-		AuthorID:     authorID,
-		AuthorName:   authorID,
-		Content:      content,
-		IsBotMention: isMention,
-		HasPrefix:    hasPrefix,
-		IsDM:         true,
-		Timestamp:    time.Now().UTC(),
 	})
 }

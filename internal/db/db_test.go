@@ -209,6 +209,45 @@ func (s *StoreSuite) TestGetChannelByDirPathNotFoundAndError() {
 	require.Nil(s.T(), ch)
 }
 
+func (s *StoreSuite) TestGetChannelsByDirPath() {
+	now := time.Now().UTC()
+	rows := newMockChannelRows().
+		AddRow(1, "ch1", "", "loop-local", "/home/user/dev/loop", "", "local", 1, "", "", now, now).
+		AddRow(2, "ch2", "g1", "loop-discord", "/home/user/dev/loop", "", "discord", 1, "", "", now, now)
+	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
+		WithArgs("/home/user/dev/loop").
+		WillReturnRows(rows)
+
+	channels, err := s.store.GetChannelsByDirPath(context.Background(), "/home/user/dev/loop")
+	require.NoError(s.T(), err)
+	require.Len(s.T(), channels, 2)
+	require.Equal(s.T(), "ch1", channels[0].ChannelID)
+	require.Equal(s.T(), "ch2", channels[1].ChannelID)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestGetChannelsByDirPathEmpty() {
+	rows := newMockChannelRows()
+	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
+		WithArgs("/nonexistent").
+		WillReturnRows(rows)
+
+	channels, err := s.store.GetChannelsByDirPath(context.Background(), "/nonexistent")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), channels)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestGetChannelsByDirPathError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM channels WHERE dir_path`).
+		WithArgs("/path").
+		WillReturnError(sql.ErrConnDone)
+
+	channels, err := s.store.GetChannelsByDirPath(context.Background(), "/path")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), channels)
+}
+
 func (s *StoreSuite) TestIsChannelActive() {
 	s.mock.ExpectQuery(`SELECT COUNT`).WithArgs("ch1").WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
 	active, err := s.store.IsChannelActive(context.Background(), "ch1")

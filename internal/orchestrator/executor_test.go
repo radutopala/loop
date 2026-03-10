@@ -17,7 +17,6 @@ import (
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/testutil"
-	"github.com/radutopala/loop/internal/types"
 )
 
 type TaskExecutorSuite struct {
@@ -43,6 +42,13 @@ func (s *TaskExecutorSuite) SetupTest() {
 	s.executor = NewTaskExecutor(s.runner, s.bot, s.store, logger, 5*time.Minute, false)
 }
 
+// allowBotInserts adds an InsertMessage expectation for bot messages from broadcastBotMessage.
+func (s *TaskExecutorSuite) allowBotInserts() {
+	s.store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(msg *db.Message) bool {
+		return msg.IsBot
+	})).Return(nil).Maybe()
+}
+
 func (s *TaskExecutorSuite) TestNew() {
 	require.NotNil(s.T(), s.executor)
 	require.NotNil(s.T(), s.executor.runner)
@@ -65,6 +71,7 @@ func (s *TaskExecutorSuite) TestHappyPathWithSession() {
 		SessionID: "existing-session",
 		DirPath:   "/home/user/project",
 	}, nil)
+	s.allowBotInserts()
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.SessionID == "existing-session" &&
 			req.ChannelID == "ch1" &&
@@ -217,6 +224,7 @@ func (s *TaskExecutorSuite) TestSoftErrorsStillSucceed() {
 
 func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
 	s.executor.streamingEnabled = true
+	s.allowBotInserts()
 
 	task := &db.ScheduledTask{
 		ID:        9,
@@ -226,7 +234,7 @@ func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
 		Schedule:  "0 * * * *",
 	}
 
-	s.store.On("GetChannel", s.ctx, "ch9").Return(nil, nil)
+	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil)
 
 	// First OnTurn creates a thread with the first turn text
 	s.bot.On("CreateSimpleThread", s.ctx, "ch9", "🧵 task #9 (`0 * * * *`) stream task", "🧵 task #9 (`0 * * * *`) Intermediate").Return("thread-1", nil).Once()
@@ -287,6 +295,7 @@ func (s *TaskExecutorSuite) TestStreamingDisabledNoOnTurn() {
 
 func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
 	s.executor.streamingEnabled = true
+	s.allowBotInserts()
 
 	task := &db.ScheduledTask{
 		ID:        11,
@@ -296,7 +305,7 @@ func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
 		Schedule:  "5m",
 	}
 
-	s.store.On("GetChannel", s.ctx, "ch11").Return(nil, nil)
+	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil)
 
 	// First OnTurn creates thread
 	s.bot.On("CreateSimpleThread", s.ctx, "ch11", "🧵 task #11 (`5m`) stream diff", "🧵 task #11 (`5m`) Intermediate").Return("thread-2", nil).Once()
@@ -658,8 +667,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteSkipped() {
 
 // --- broadcastBotMessage tests ---
 
-func (s *TaskExecutorSuite) TestBroadcastBotMessageLocalPlatform() {
-	s.executor.SetPlatform(types.PlatformLocal)
+func (s *TaskExecutorSuite) TestBroadcastBotMessage() {
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 
@@ -677,16 +685,7 @@ func (s *TaskExecutorSuite) TestBroadcastBotMessageLocalPlatform() {
 	eb.AssertExpectations(s.T())
 }
 
-func (s *TaskExecutorSuite) TestBroadcastBotMessageDiscordNoOp() {
-	s.executor.SetPlatform(types.PlatformDiscord)
-
-	s.executor.broadcastBotMessage(s.ctx, "ch1", "task done")
-
-	s.store.AssertNotCalled(s.T(), "InsertMessage", mock.Anything, mock.Anything)
-}
-
-func (s *TaskExecutorSuite) TestBroadcastBotMessageLocalGetChannelError() {
-	s.executor.SetPlatform(types.PlatformLocal)
+func (s *TaskExecutorSuite) TestBroadcastBotMessageGetChannelError() {
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 
@@ -699,20 +698,16 @@ func (s *TaskExecutorSuite) TestBroadcastBotMessageLocalGetChannelError() {
 	eb.AssertExpectations(s.T())
 }
 
-func (s *TaskExecutorSuite) TestSetPlatformAndEventBroadcaster() {
-	require.Equal(s.T(), types.Platform(""), s.executor.platform)
+func (s *TaskExecutorSuite) TestSetEventBroadcaster() {
 	require.Nil(s.T(), s.executor.events)
 
-	s.executor.SetPlatform(types.PlatformLocal)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 
-	require.Equal(s.T(), types.PlatformLocal, s.executor.platform)
 	require.Same(s.T(), eb, s.executor.events)
 }
 
-func (s *TaskExecutorSuite) TestLocalPlatformFinalResponseBroadcasts() {
-	s.executor.SetPlatform(types.PlatformLocal)
+func (s *TaskExecutorSuite) TestFinalResponseBroadcasts() {
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 

@@ -559,6 +559,7 @@ func (s *MCPServerSuite) TestCreateChannelSuccess() {
 		require.Contains(s.T(), req.URL.String(), "/api/channels/create")
 		body, _ := io.ReadAll(req.Body)
 		require.Contains(s.T(), string(body), `"name":"trial"`)
+		require.Contains(s.T(), string(body), `"channel_id":"test-channel"`)
 		require.NotContains(s.T(), string(body), `"author_id"`)
 		return jsonResponse(http.StatusCreated, `{"channel_id":"ch-new"}`), nil
 	}

@@ -12,6 +12,7 @@ import (
 
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/orchestrator"
+	"github.com/radutopala/loop/internal/types"
 )
 
 const maxMessageLen = 2000
@@ -61,6 +62,7 @@ type Bot interface {
 type DiscordBot struct {
 	session               DiscordSession
 	appID                 string
+	guildID               string
 	logger                *slog.Logger
 	botUserID             string
 	botUsername           string
@@ -74,11 +76,12 @@ type DiscordBot struct {
 	pendingInteractions   map[string]*discordgo.Interaction
 }
 
-// NewBot creates a new DiscordBot with the given session, app ID, and logger.
-func NewBot(session DiscordSession, appID string, logger *slog.Logger) *DiscordBot {
+// NewBot creates a new DiscordBot with the given session, app ID, guild ID, and logger.
+func NewBot(session DiscordSession, appID, guildID string, logger *slog.Logger) *DiscordBot {
 	return &DiscordBot{
 		session:             session,
 		appID:               appID,
+		guildID:             guildID,
 		logger:              logger,
 		typingInterval:      orchestrator.TypingInterval,
 		pendingInteractions: make(map[string]*discordgo.Interaction),
@@ -288,26 +291,26 @@ func (b *DiscordBot) OnChannelJoin(handler bot.ChannelJoinHandler) {
 	bot.RegisterHandler(&b.mu, &b.channelJoinHandlers, handler)
 }
 
-// CreateChannel creates a new text channel in the given guild. If a text
+// CreateChannel creates a new text channel in the bot's guild. If a text
 // channel with the same name already exists, it returns the existing channel's ID.
-func (b *DiscordBot) CreateChannel(ctx context.Context, guildID, name string) (string, error) {
+func (b *DiscordBot) CreateChannel(ctx context.Context, name string) (string, error) {
 	// Check if a channel with this name already exists.
-	channels, err := b.session.GuildChannels(guildID)
+	channels, err := b.session.GuildChannels(b.guildID)
 	if err != nil {
 		return "", fmt.Errorf("discord list channels: %w", err)
 	}
 	for _, ch := range channels {
 		if ch.Name == name && ch.Type == discordgo.ChannelTypeGuildText {
-			b.logger.InfoContext(ctx, "found existing discord channel", "channel_id", ch.ID, "name", name, "guild_id", guildID)
+			b.logger.InfoContext(ctx, "found existing discord channel", "channel_id", ch.ID, "name", name, "guild_id", b.guildID)
 			return ch.ID, nil
 		}
 	}
 
-	ch, err := b.session.GuildChannelCreate(guildID, name, discordgo.ChannelTypeGuildText)
+	ch, err := b.session.GuildChannelCreate(b.guildID, name, discordgo.ChannelTypeGuildText)
 	if err != nil {
 		return "", fmt.Errorf("discord create channel: %w", err)
 	}
-	b.logger.InfoContext(ctx, "created discord channel", "channel_id", ch.ID, "name", name, "guild_id", guildID)
+	b.logger.InfoContext(ctx, "created discord channel", "channel_id", ch.ID, "name", name, "guild_id", b.guildID)
 	return ch.ID, nil
 }
 
@@ -385,6 +388,9 @@ func (b *DiscordBot) CreateSimpleThread(ctx context.Context, channelID, name, in
 	b.logger.InfoContext(ctx, "created simple discord thread", "thread_id", ch.ID, "name", name, "parent_id", channelID)
 	return ch.ID, nil
 }
+
+func (b *DiscordBot) HandleIncomingMessage(_ context.Context, _, _, _ string) {}
+func (b *DiscordBot) HandleThreadCreated(_ context.Context, _, _, _ string)   {}
 
 // PostMessage sends a simple message to the given channel or thread.
 // Text mentions of the bot (e.g. @LoopBot) are converted to proper Discord
@@ -469,6 +475,11 @@ func (b *DiscordBot) BotUserID() string {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.botUserID
+}
+
+// IsBotUser returns true if the given userID matches the bot's user ID.
+func (b *DiscordBot) IsBotUser(userID string) bool {
+	return userID == b.BotUserID()
 }
 
 func (b *DiscordBot) handleMessage(_ *discordgo.Session, m *discordgo.MessageCreate) {
@@ -567,6 +578,7 @@ func (b *DiscordBot) handleSlashCommandInteraction(i *discordgo.InteractionCreat
 		Options:     options,
 		AuthorID:    authorID,
 		AuthorRoles: authorRoles,
+		Platform:    types.PlatformDiscord,
 	}
 
 	b.dispatchInteraction(inter)
@@ -603,6 +615,7 @@ func (b *DiscordBot) handleComponentInteraction(i *discordgo.InteractionCreate) 
 		Options:     map[string]string{"channel_id": targetChannelID},
 		AuthorID:    authorID,
 		AuthorRoles: authorRoles,
+		Platform:    types.PlatformDiscord,
 	}
 
 	b.dispatchInteraction(inter)
@@ -641,6 +654,7 @@ func (b *DiscordBot) parseIncomingMessage(m *discordgo.MessageCreate, botUserID 
 		AuthorName:   m.Author.Username,
 		Content:      content,
 		MessageID:    m.ID,
+		Platform:     types.PlatformDiscord,
 		IsBotMention: isMention,
 		IsReplyToBot: isReply,
 		HasPrefix:    hasPrefix,

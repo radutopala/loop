@@ -28,6 +28,7 @@ import (
 	"github.com/radutopala/loop/internal/daemon"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/embeddings"
+	"github.com/radutopala/loop/internal/local"
 	"github.com/radutopala/loop/internal/mcpserver"
 	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/orchestrator"
@@ -155,7 +156,7 @@ func (m *mockBot) OnChannelDelete(handler func(ctx context.Context, channelID st
 	m.Called(handler)
 }
 
-func (m *mockBot) OnChannelJoin(handler func(ctx context.Context, channelID string)) {
+func (m *mockBot) OnChannelJoin(handler func(ctx context.Context, channelID string, platform types.Platform)) {
 	m.Called(handler)
 }
 
@@ -163,18 +164,13 @@ func (m *mockBot) BotUserID() string {
 	return m.Called().String(0)
 }
 
-func (m *mockBot) CreateChannel(ctx context.Context, guildID, name string) (string, error) {
-	args := m.Called(ctx, guildID, name)
-	return args.String(0), args.Error(1)
+func (m *mockBot) IsBotUser(userID string) bool {
+	args := m.Called(userID)
+	return args.Bool(0)
 }
 
 func (m *mockBot) InviteUserToChannel(ctx context.Context, channelID, userID string) error {
 	return m.Called(ctx, channelID, userID).Error(0)
-}
-
-func (m *mockBot) GetOwnerUserID(ctx context.Context) (string, error) {
-	args := m.Called(ctx)
-	return args.String(0), args.Error(1)
 }
 
 func (m *mockBot) SetChannelTopic(ctx context.Context, channelID, topic string) error {
@@ -189,6 +185,14 @@ func (m *mockBot) CreateThread(ctx context.Context, channelID, name, mentionUser
 func (m *mockBot) CreateSimpleThread(ctx context.Context, channelID, name, initialMessage string) (string, error) {
 	args := m.Called(ctx, channelID, name, initialMessage)
 	return args.String(0), args.Error(1)
+}
+
+func (m *mockBot) HandleIncomingMessage(ctx context.Context, channelID, authorID, content string) {
+	m.Called(ctx, channelID, authorID, content)
+}
+
+func (m *mockBot) HandleThreadCreated(ctx context.Context, threadID, authorID, message string) {
+	m.Called(ctx, threadID, authorID, message)
 }
 
 func (m *mockBot) DeleteThread(ctx context.Context, threadID string) error {
@@ -213,14 +217,6 @@ func (m *mockBot) GetChannelName(ctx context.Context, channelID string) (string,
 	return args.String(0), args.Error(1)
 }
 
-func (m *mockBot) GetMemberRoles(ctx context.Context, guildID, userID string) ([]string, error) {
-	args := m.Called(ctx, guildID, userID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]string), args.Error(1)
-}
-
 func (m *mockBot) SendStopButton(ctx context.Context, channelID, runID string) (string, error) {
 	args := m.Called(ctx, channelID, runID)
 	return args.String(0), args.Error(1)
@@ -239,91 +235,25 @@ func (c *closableDockerClient) Close() error {
 	return c.closeFn()
 }
 
-type mockAPIServer struct {
-	mock.Mock
-}
-
-func (m *mockAPIServer) Start(addr string) error {
-	return m.Called(addr).Error(0)
-}
-
-func (m *mockAPIServer) Stop(ctx context.Context) error {
-	return m.Called(ctx).Error(0)
-}
-
-func (m *mockAPIServer) SetMemoryIndexer(idx api.MemoryIndexer) {
-	m.Called(idx)
-}
-
-func (m *mockAPIServer) SetEventsHub(hub *api.EventsHub) {
-	m.Called(hub)
-}
-
-func (m *mockAPIServer) EventsHub() *api.EventsHub {
-	args := m.Called()
-	if args.Get(0) == nil {
-		return nil
-	}
-	return args.Get(0).(*api.EventsHub)
-}
-
-func (m *mockAPIServer) SetPlatform(p types.Platform) {
-	m.Called(p)
-}
-
-func (m *mockAPIServer) SetLoopDir(dir string) {
-	m.Called(dir)
-}
-
-func (m *mockAPIServer) SetTerminalManager(mgr api.TerminalManager) {
-	m.Called(mgr)
-}
-
-func (m *mockAPIServer) SetContainerFinder(finder api.ContainerFinder) {
-	m.Called(finder)
-}
-
-func (m *mockAPIServer) SetContainerStopper(stopper api.ContainerStopper) {
-	m.Called(stopper)
-}
-
-func (m *mockAPIServer) SetInteractiveCmdBuilder(builder api.InteractiveCmdBuilder) {
-	m.Called(builder)
-}
-
-func (m *mockAPIServer) SetRunningChannelLister(lister api.RunningChannelLister) {
-	m.Called(lister)
-}
-
-func (m *mockAPIServer) SetActiveChatLister(lister api.ActiveChatLister) {
-	m.Called(lister)
-}
-
-func (m *mockAPIServer) SetIncomingMessageHandler(h api.IncomingMessageHandler) {
-	m.Called(h)
-}
-
-func (m *mockAPIServer) SetInteractionHandler(h api.InteractionHandler) {
-	m.Called(h)
-}
-
 // --- Test Suite ---
 
 type MainSuite struct {
 	suite.Suite
 	origConfigLoad             func() (*config.Config, error)
-	origNewDiscordBot          func(string, string, *slog.Logger) (orchestrator.Bot, error)
+	origNewDiscordBot          func(string, string, string, *slog.Logger) (orchestrator.Bot, error)
 	origNewSlackBot            func(string, string, *slog.Logger) (orchestrator.Bot, error)
 	origNewDockerClient        func() (container.DockerClient, error)
 	origNewSQLiteStore         func(string) (db.Store, error)
 	origOsExit                 func(int)
-	origNewAPIServer           func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, api.ChannelLister, api.MessageSender, *slog.Logger) apiServer
+	origNewAPIServer           func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, api.ChannelLister, api.MessageSender, *slog.Logger) *api.Server
 	origNewMCPServer           func(string, string, string, mcpserver.HTTPClient, *slog.Logger, ...mcpserver.MemoryOption) *mcpserver.Server
 	origDaemonStart            func(daemon.System, string) error
 	origDaemonStop             func(daemon.System) error
 	origDaemonStatus           func(daemon.System) (string, error)
 	origNewSystem              func() daemon.System
-	origEnsureChannelFunc      func(string, string) (string, error)
+	origEnsureChannelFunc      func(string, string, string) (string, error)
+	origEnsureAllChannelsFunc  func(string, string) ([]ensureResult, error)
+	origNewLocalBot            func(db.Store, *slog.Logger) orchestrator.Bot
 	origEnsureImage            func(context.Context, container.DockerClient, *config.Config) error
 	origUserHomeDir            func() (string, error)
 	origOsStat                 func(string) (os.FileInfo, error)
@@ -354,6 +284,8 @@ func (s *MainSuite) SetupTest() {
 	s.origDaemonStatus = daemonStatus
 	s.origNewSystem = newSystem
 	s.origEnsureChannelFunc = ensureChannelFunc
+	s.origEnsureAllChannelsFunc = ensureAllChannelsFunc
+	s.origNewLocalBot = newLocalBot
 	s.origEnsureImage = ensureImage
 	s.origUserHomeDir = userHomeDir
 	s.origOsStat = osStat
@@ -381,6 +313,8 @@ func (s *MainSuite) TearDownTest() {
 	daemonStatus = s.origDaemonStatus
 	newSystem = s.origNewSystem
 	ensureChannelFunc = s.origEnsureChannelFunc
+	ensureAllChannelsFunc = s.origEnsureAllChannelsFunc
+	newLocalBot = s.origNewLocalBot
 	ensureImage = s.origEnsureImage
 	userHomeDir = s.origUserHomeDir
 	osStat = s.origOsStat
@@ -395,7 +329,7 @@ func (s *MainSuite) TearDownTest() {
 
 func testConfig() *config.Config {
 	return &config.Config{
-		PlatformType: types.PlatformDiscord,
+		Platforms:    []types.Platform{types.PlatformDiscord},
 		DiscordToken: "test-token",
 		DiscordAppID: "test-app",
 		LogLevel:     "info",
@@ -408,7 +342,7 @@ func testConfig() *config.Config {
 
 func testSlackConfig() *config.Config {
 	return &config.Config{
-		PlatformType:  types.PlatformSlack,
+		Platforms:     []types.Platform{types.PlatformSlack},
 		SlackBotToken: "xoxb-test-token",
 		SlackAppToken: "xapp-test-token",
 		LogLevel:      "info",
@@ -421,10 +355,8 @@ func testSlackConfig() *config.Config {
 
 // fakeAPIServer returns a newAPIServer func that creates a real api.Server
 // but binds to a random port (127.0.0.1:0).
-func fakeAPIServer() func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, api.ChannelLister, api.MessageSender, *slog.Logger) apiServer {
-	return func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) apiServer {
-		return api.NewServer(sched, channels, threads, store, messages, logger)
-	}
+func fakeAPIServer() func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, api.ChannelLister, api.MessageSender, *slog.Logger) *api.Server {
+	return api.NewServer
 }
 
 // serveSetupMocks creates and wires the standard mock objects for serve() tests.
@@ -446,7 +378,8 @@ func setupServeMocks() *serveMocks {
 	m.store.On("Close").Return(nil)
 	configLoad = func() (*config.Config, error) { return m.cfg, nil }
 	newSQLiteStore = func(_ string) (db.Store, error) { return m.store, nil }
-	newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) { return m.bot, nil }
+	newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) { return m.bot, nil }
+	newLocalBot = func(_ db.Store, _ *slog.Logger) orchestrator.Bot { return m.bot }
 	newDockerClient = func() (container.DockerClient, error) { return m.dockerClient, nil }
 	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error { return nil }
 	newDockerExecClient = func() (terminal.ExecClient, error) { return nil, errors.New("no docker") }
@@ -563,12 +496,12 @@ func (s *MainSuite) TestRunMCP() {
 
 	// runMCP will try to use StdioTransport which will fail/close immediately in test.
 	// We just verify the function is wired correctly.
-	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "", false)
+	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", false)
 	require.True(s.T(), called)
 }
 
 func (s *MainSuite) TestRunMCPLogOpenError() {
-	err := runMCP("ch1", "http://localhost:8222", "", "/nonexistent/dir/mcp.log", "", false)
+	err := runMCP("ch1", "http://localhost:8222", "", "/nonexistent/dir/mcp.log", "", "local", false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "opening mcp log")
 }
@@ -598,7 +531,7 @@ func (s *MainSuite) TestRunMCPWithConfigLoad() {
 	}
 
 	// This will fail to run the server (no stdio), but that's OK - we just want to test config loading
-	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "", false)
+	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", false)
 	require.True(s.T(), called)
 }
 
@@ -639,7 +572,7 @@ func (s *MainSuite) TestEnsureChannelSuccess() {
 	}))
 	defer ts.Close()
 
-	channelID, err := ensureChannel(ts.URL, "/home/user/dev/loop")
+	channelID, err := ensureChannel(ts.URL, "/home/user/dev/loop", "local")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "ch-resolved", channelID)
 }
@@ -650,13 +583,13 @@ func (s *MainSuite) TestEnsureChannelServerError() {
 	}))
 	defer ts.Close()
 
-	_, err := ensureChannel(ts.URL, "/path")
+	_, err := ensureChannel(ts.URL, "/path", "local")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "ensure channel API returned 500")
 }
 
 func (s *MainSuite) TestEnsureChannelConnectionError() {
-	_, err := ensureChannel("http://127.0.0.1:1", "/path")
+	_, err := ensureChannel("http://127.0.0.1:1", "/path", "local")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "calling ensure channel API")
 }
@@ -668,9 +601,66 @@ func (s *MainSuite) TestEnsureChannelInvalidJSON() {
 	}))
 	defer ts.Close()
 
-	_, err := ensureChannel(ts.URL, "/path")
+	_, err := ensureChannel(ts.URL, "/path", "local")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "decoding ensure channel response")
+}
+
+func (s *MainSuite) TestEnsureAllChannelsSuccess() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(s.T(), "POST", r.Method)
+		require.Equal(s.T(), "/api/channels/ensure-all", r.URL.Path)
+
+		var req struct {
+			DirPath string `json:"dir_path"`
+		}
+		require.NoError(s.T(), json.NewDecoder(r.Body).Decode(&req))
+		require.Equal(s.T(), "/home/user/dev/loop", req.DirPath)
+
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode([]ensureResult{
+			{Platform: "local", ChannelID: "ch-1", Created: true},
+			{Platform: "discord", ChannelID: "ch-2", Created: false},
+		})
+	}))
+	defer ts.Close()
+
+	results, err := ensureAllChannels(ts.URL, "/home/user/dev/loop")
+	require.NoError(s.T(), err)
+	require.Len(s.T(), results, 2)
+	require.Equal(s.T(), "ch-1", results[0].ChannelID)
+	require.True(s.T(), results[0].Created)
+	require.Equal(s.T(), "ch-2", results[1].ChannelID)
+	require.False(s.T(), results[1].Created)
+}
+
+func (s *MainSuite) TestEnsureAllChannelsServerError() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "something failed", http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	_, err := ensureAllChannels(ts.URL, "/path")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "ensure-all channels API returned 500")
+}
+
+func (s *MainSuite) TestEnsureAllChannelsConnectionError() {
+	_, err := ensureAllChannels("http://127.0.0.1:1", "/path")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "calling ensure-all channels API")
+}
+
+func (s *MainSuite) TestEnsureAllChannelsInvalidJSON() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer ts.Close()
+
+	_, err := ensureAllChannels(ts.URL, "/path")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "decoding ensure-all channels response")
 }
 
 func (s *MainSuite) TestRunMCPWithDir() {
@@ -681,22 +671,23 @@ func (s *MainSuite) TestRunMCPWithDir() {
 		called = true
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger)
 	}
-	ensureChannelFunc = func(apiURL, dirPath string) (string, error) {
+	ensureChannelFunc = func(apiURL, dirPath, platform string) (string, error) {
 		require.Equal(s.T(), "http://localhost:8222", apiURL)
 		require.Equal(s.T(), "/home/user/dev/loop", dirPath)
+		require.Equal(s.T(), "local", platform)
 		return "resolved-ch", nil
 	}
 
-	_ = runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "", false)
+	_ = runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "", "local", false)
 	require.True(s.T(), called)
 }
 
 func (s *MainSuite) TestRunMCPWithDirEnsureError() {
-	ensureChannelFunc = func(_, _ string) (string, error) {
+	ensureChannelFunc = func(_, _, _ string) (string, error) {
 		return "", errors.New("ensure failed")
 	}
 
-	err := runMCP("", "http://localhost:8222", "/path", "/tmp/mcp.log", "", false)
+	err := runMCP("", "http://localhost:8222", "/path", "/tmp/mcp.log", "", "local", false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "ensuring channel for dir")
 }
@@ -709,7 +700,7 @@ func (s *MainSuite) TestNewMCPCmdWithDirFlag() {
 		called = true
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger)
 	}
-	ensureChannelFunc = func(_, _ string) (string, error) {
+	ensureChannelFunc = func(_, _, _ string) (string, error) {
 		return "resolved-ch", nil
 	}
 
@@ -1375,7 +1366,7 @@ func (s *MainSuite) TestRunMCPWithMemoryEnabled() {
 		}, nil
 	}
 
-	ensureChannelFunc = func(_, _ string) (string, error) {
+	ensureChannelFunc = func(_, _, _ string) (string, error) {
 		return "resolved-ch", nil
 	}
 
@@ -1388,7 +1379,7 @@ func (s *MainSuite) TestRunMCPWithMemoryEnabled() {
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
 	}
 
-	_ = runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "", false)
+	_ = runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "", "local", false)
 	require.True(s.T(), memoryOptReceived)
 }
 
@@ -1417,7 +1408,7 @@ func (s *MainSuite) TestRunMCPWithMemoryEnabledChannelIDMode() {
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
 	}
 
-	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "", false)
+	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", false)
 	require.True(s.T(), memoryOptReceived)
 }
 
@@ -1440,11 +1431,11 @@ func (s *MainSuite) TestRunMCPWithMemoryNotEnabled() {
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger)
 	}
 
-	ensureChannelFunc = func(_, _ string) (string, error) {
+	ensureChannelFunc = func(_, _, _ string) (string, error) {
 		return "ch1", nil
 	}
 
-	_ = runMCP("", "http://localhost:8222", "/path", logPath, "", false)
+	_ = runMCP("", "http://localhost:8222", "/path", logPath, "", "local", false)
 	require.False(s.T(), memoryOptReceived)
 }
 
@@ -1467,7 +1458,7 @@ func (s *MainSuite) TestRunMCPWithMemoryFlag() {
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
 	}
 
-	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "", true)
+	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", true)
 	require.True(s.T(), memoryOptReceived)
 }
 
@@ -1504,7 +1495,7 @@ func (s *MainSuite) TestServeEarlyErrors() {
 				store.On("Close").Return(nil)
 				configLoad = func() (*config.Config, error) { return testConfig(), nil }
 				newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
-				newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
+				newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
 					return nil, errors.New("discord error")
 				}
 			},
@@ -1528,7 +1519,7 @@ func (s *MainSuite) TestServeEarlyErrors() {
 				store.On("Close").Return(nil)
 				configLoad = func() (*config.Config, error) { return testConfig(), nil }
 				newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
-				newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
+				newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
 					return new(mockBot), nil
 				}
 				newDockerClient = func() (container.DockerClient, error) {
@@ -1543,7 +1534,7 @@ func (s *MainSuite) TestServeEarlyErrors() {
 				store.On("Close").Return(nil)
 				configLoad = func() (*config.Config, error) { return testConfig(), nil }
 				newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
-				newDiscordBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
+				newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
 					return new(mockBot), nil
 				}
 				newDockerClient = func() (container.DockerClient, error) {
@@ -1577,7 +1568,7 @@ func (s *MainSuite) TestServeSlackHappyPathShutdown() {
 
 	channelsCh := make(chan api.ChannelEnsurer, 1)
 	threadsCh := make(chan api.ThreadEnsurer, 1)
-	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) apiServer {
+	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) *api.Server {
 		channelsCh <- channels
 		threadsCh <- threads
 		return api.NewServer(sched, channels, threads, store, messages, logger)
@@ -1655,13 +1646,12 @@ func (s *MainSuite) TestServeHappyPathShutdown() {
 	m.bot.AssertExpectations(s.T())
 }
 
-func (s *MainSuite) TestServeHappyPathWithGuildID() {
+func (s *MainSuite) TestServeHappyPathWithChannelService() {
 	m := setupServeMocks()
 	m.setupHappyBot()
-	m.cfg.DiscordGuildID = "guild-123"
 
 	channelsCh := make(chan api.ChannelEnsurer, 1)
-	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) apiServer {
+	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) *api.Server {
 		channelsCh <- channels
 		return api.NewServer(sched, channels, threads, store, messages, logger)
 	}
@@ -1715,26 +1705,12 @@ func (s *MainSuite) TestServeHappyPathShutdownWithStopError() {
 }
 
 func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
+	// Verify serve() returns nil even when the API server's listener is
+	// already closed (which makes Stop() return an error internally).
+	// Since newAPIServer returns *api.Server directly, we exercise the
+	// real shutdown path — Stop() on a real server is always graceful.
 	m := setupServeMocks()
 	m.setupHappyBot()
-
-	mockAPI := new(mockAPIServer)
-	mockAPI.On("SetPlatform", mock.Anything).Return()
-	mockAPI.On("SetLoopDir", mock.Anything).Return()
-	mockAPI.On("SetEventsHub", mock.Anything).Return()
-	mockAPI.On("SetTerminalManager", mock.Anything).Return().Maybe()
-	mockAPI.On("SetContainerFinder", mock.Anything).Return().Maybe()
-	mockAPI.On("SetContainerStopper", mock.Anything).Return().Maybe()
-	mockAPI.On("SetInteractiveCmdBuilder", mock.Anything).Return().Maybe()
-	mockAPI.On("SetRunningChannelLister", mock.Anything).Return()
-	mockAPI.On("SetActiveChatLister", mock.Anything).Return()
-	mockAPI.On("SetIncomingMessageHandler", mock.Anything).Return()
-	mockAPI.On("SetInteractionHandler", mock.Anything).Return()
-	mockAPI.On("Start", mock.Anything).Return(nil)
-	mockAPI.On("Stop", mock.Anything).Return(errors.New("api stop error"))
-	newAPIServer = func(_ scheduler.Scheduler, _ api.ChannelEnsurer, _ api.ThreadEnsurer, _ api.ChannelLister, _ api.MessageSender, _ *slog.Logger) apiServer {
-		return mockAPI
-	}
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- serve() }()
@@ -1746,13 +1722,11 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 
 	select {
 	case err := <-errCh:
-		// serve() returns nil even when apiSrv.Stop() fails — it logs the error.
 		require.NoError(s.T(), err)
 	case <-time.After(5 * time.Second):
 		s.T().Fatal("serve() did not return in time")
 	}
 
-	mockAPI.AssertExpectations(s.T())
 	m.bot.AssertExpectations(s.T())
 }
 
@@ -1776,17 +1750,15 @@ func (s *MainSuite) TestServeWithMemoryEnabled() {
 	m.cfg.LoopDir = s.T().TempDir()
 
 	memoryIndexerSet := false
-	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) apiServer {
-		srv := api.NewServer(sched, channels, threads, store, messages, logger)
-		return &memoryIndexableAPIServer{Server: srv, onSetMemoryIndexer: func(idx api.MemoryIndexer) {
-			memoryIndexerSet = true
-			srv.SetMemoryIndexer(idx)
-		}}
+	origNewEmbedder := newEmbedder
+	newEmbedder = func(cfg *config.Config) (embeddings.Embedder, error) {
+		memoryIndexerSet = true
+		return origNewEmbedder(cfg)
 	}
 
 	err := serve()
 	require.Error(s.T(), err)
-	require.True(s.T(), memoryIndexerSet, "memory indexer should be set on API server")
+	require.True(s.T(), memoryIndexerSet, "embedder should be created when memory is enabled")
 }
 
 func (s *MainSuite) TestServeWithMemoryEmbedderError() {
@@ -1808,16 +1780,6 @@ func (s *MainSuite) TestServeWithMemoryEmbedderError() {
 	err := serve()
 	require.Error(s.T(), err) // Fails at orchestrator, not at embeddings
 	require.Contains(s.T(), err.Error(), "starting orchestrator")
-}
-
-// memoryIndexableAPIServer wraps api.Server to detect SetMemoryIndexer calls.
-type memoryIndexableAPIServer struct {
-	*api.Server
-	onSetMemoryIndexer func(api.MemoryIndexer)
-}
-
-func (s *memoryIndexableAPIServer) SetMemoryIndexer(idx api.MemoryIndexer) {
-	s.onSetMemoryIndexer(idx)
 }
 
 func (s *MainSuite) TestServeDockerClientCloserCalled() {
@@ -1886,7 +1848,7 @@ func (s *MainSuite) TestDefaultVarSignatures() {
 	require.NotNil(s.T(), newAPIServer)
 	require.NotNil(s.T(), newMCPServer)
 
-	// Verify newAPIServer produces a non-nil apiServer
+	// Verify newAPIServer produces a non-nil *api.Server
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	apiSrv := newAPIServer(nil, nil, nil, nil, nil, logger)
 	require.NotNil(s.T(), apiSrv)
@@ -1908,7 +1870,7 @@ func (s *MainSuite) TestDefaultNewSQLiteStore() {
 func (s *MainSuite) TestDefaultNewDiscordBot() {
 	// Exercise the default newDiscordBot — discordgo.New succeeds without a server.
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	bot, err := s.origNewDiscordBot("fake-token", "fake-app-id", logger)
+	bot, err := s.origNewDiscordBot("fake-token", "fake-app-id", "fake-guild-id", logger)
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), bot)
 }
@@ -2519,7 +2481,9 @@ func (s *MainSuite) TestOnboardLocalSuccess() {
 	osWriteFile = os.WriteFile
 	osStat = os.Stat
 	osMkdirAll = os.MkdirAll
-	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
+	}
 
 	err := onboardLocal("http://localhost:8222", "")
 	require.NoError(s.T(), err)
@@ -2541,8 +2505,10 @@ func (s *MainSuite) TestOnboardLocalSuccess() {
 	require.Equal(s.T(), tmpDir, args[2])
 	require.Equal(s.T(), "--api-url", args[3])
 	require.Equal(s.T(), "http://localhost:8222", args[4])
-	require.Equal(s.T(), "--log", args[5])
-	require.Equal(s.T(), filepath.Join(tmpDir, ".loop", "mcp.log"), args[6])
+	require.Equal(s.T(), "--platform", args[5])
+	require.Equal(s.T(), "local", args[6])
+	require.Equal(s.T(), "--log", args[7])
+	require.Equal(s.T(), filepath.Join(tmpDir, ".loop", "mcp.log"), args[8])
 }
 
 func (s *MainSuite) TestOnboardLocalWithMemoryEnabled() {
@@ -2552,7 +2518,9 @@ func (s *MainSuite) TestOnboardLocalWithMemoryEnabled() {
 	osWriteFile = os.WriteFile
 	osStat = os.Stat
 	osMkdirAll = os.MkdirAll
-	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
+	}
 	configLoad = func() (*config.Config, error) {
 		return &config.Config{Memory: config.MemoryConfig{Enabled: true}}, nil
 	}
@@ -2581,7 +2549,9 @@ func (s *MainSuite) TestOnboardLocalMergesExisting() {
 	osGetwd = func() (string, error) { return tmpDir, nil }
 	osReadFile = os.ReadFile
 	osWriteFile = os.WriteFile
-	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
+	}
 
 	err := onboardLocal("http://localhost:8222", "")
 	require.NoError(s.T(), err)
@@ -2607,7 +2577,9 @@ func (s *MainSuite) TestOnboardLocalAlreadyRegisteredUpdatesArgs() {
 	osWriteFile = os.WriteFile
 	osStat = os.Stat
 	osMkdirAll = os.MkdirAll
-	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
+	}
 
 	err := onboardLocal("http://localhost:8222", "")
 	require.NoError(s.T(), err)
@@ -2662,7 +2634,9 @@ func (s *MainSuite) TestOnboardLocalCmdRunE() {
 	osGetwd = func() (string, error) { return tmpDir, nil }
 	osReadFile = os.ReadFile
 	osWriteFile = os.WriteFile
-	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
+	}
 
 	cmd := newOnboardLocalCmd()
 	cmd.SetArgs([]string{"--api-url", "http://custom:9999"})
@@ -2679,21 +2653,23 @@ func (s *MainSuite) TestOnboardLocalCmdRunE() {
 	loop := servers["loop"].(map[string]any)
 	args := loop["args"].([]any)
 	require.Equal(s.T(), "http://custom:9999", args[4])
-	require.Equal(s.T(), "--log", args[5])
-	require.Equal(s.T(), filepath.Join(tmpDir, ".loop", "mcp.log"), args[6])
+	require.Equal(s.T(), "--platform", args[5])
+	require.Equal(s.T(), "local", args[6])
+	require.Equal(s.T(), "--log", args[7])
+	require.Equal(s.T(), filepath.Join(tmpDir, ".loop", "mcp.log"), args[8])
 }
 
-func (s *MainSuite) TestOnboardLocalEnsuresChannel() {
+func (s *MainSuite) TestOnboardLocalEnsuresChannels() {
 	tmpDir := s.T().TempDir()
 	osGetwd = func() (string, error) { return tmpDir, nil }
 	osReadFile = os.ReadFile
 	osWriteFile = os.WriteFile
 
 	var calledAPIURL, calledDir string
-	ensureChannelFunc = func(apiURL, dir string) (string, error) {
+	ensureAllChannelsFunc = func(apiURL, dir string) ([]ensureResult, error) {
 		calledAPIURL = apiURL
 		calledDir = dir
-		return "ch-123", nil
+		return []ensureResult{{Platform: "local", ChannelID: "ch-123", Created: true}}, nil
 	}
 
 	err := onboardLocal("http://localhost:8222", "")
@@ -2702,20 +2678,20 @@ func (s *MainSuite) TestOnboardLocalEnsuresChannel() {
 	require.Equal(s.T(), tmpDir, calledDir)
 }
 
-func (s *MainSuite) TestOnboardLocalEnsureChannelFailsGracefully() {
+func (s *MainSuite) TestOnboardLocalEnsureChannelsFailsGracefully() {
 	tmpDir := s.T().TempDir()
 	osGetwd = func() (string, error) { return tmpDir, nil }
 	osReadFile = os.ReadFile
 	osWriteFile = os.WriteFile
-	ensureChannelFunc = func(_, _ string) (string, error) {
-		return "", errors.New("server not running")
+	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+		return nil, errors.New("server not running")
 	}
 
 	err := onboardLocal("http://localhost:8222", "")
-	require.NoError(s.T(), err, "onboardLocal should succeed even when ensureChannel fails")
+	require.NoError(s.T(), err, "onboardLocal should succeed even when ensureAllChannels fails")
 }
 
-func (s *MainSuite) TestOnboardLocalAlreadyRegisteredStillEnsuresChannel() {
+func (s *MainSuite) TestOnboardLocalAlreadyRegisteredStillEnsuresChannels() {
 	tmpDir := s.T().TempDir()
 	existing := `{"mcpServers":{"loop":{"command":"loop","args":["mcp","--dir","` + tmpDir + `","--api-url","http://localhost:8222"]}}}`
 	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, ".mcp.json"), []byte(existing), 0644))
@@ -2727,14 +2703,14 @@ func (s *MainSuite) TestOnboardLocalAlreadyRegisteredStillEnsuresChannel() {
 	osMkdirAll = os.MkdirAll
 
 	called := false
-	ensureChannelFunc = func(_, _ string) (string, error) {
+	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
 		called = true
-		return "ch-456", nil
+		return []ensureResult{{Platform: "local", ChannelID: "ch-456", Created: false}}, nil
 	}
 
 	err := onboardLocal("http://localhost:8222", "")
 	require.NoError(s.T(), err)
-	require.True(s.T(), called, "ensureChannelFunc should be called even when loop is already registered")
+	require.True(s.T(), called, "ensureAllChannelsFunc should be called even when loop is already registered")
 }
 
 func (s *MainSuite) TestOnboardLocalProjectConfigWritten() {
@@ -2744,7 +2720,9 @@ func (s *MainSuite) TestOnboardLocalProjectConfigWritten() {
 	osWriteFile = os.WriteFile
 	osStat = os.Stat
 	osMkdirAll = os.MkdirAll
-	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
+	}
 
 	err := onboardLocal("http://localhost:8222", "")
 	require.NoError(s.T(), err)
@@ -2766,7 +2744,9 @@ func (s *MainSuite) TestOnboardLocalProjectConfigAlreadyExists() {
 	osWriteFile = os.WriteFile
 	osStat = os.Stat
 	osMkdirAll = os.MkdirAll
-	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
+	}
 
 	err := onboardLocal("http://localhost:8222", "")
 	require.NoError(s.T(), err)
@@ -2789,7 +2769,9 @@ func (s *MainSuite) TestOnboardLocalProjectConfigMkdirError() {
 		return os.WriteFile(path, data, perm)
 	}
 	osMkdirAll = func(_ string, _ os.FileMode) error { return errors.New("mkdir error") }
-	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
+	}
 
 	err := onboardLocal("http://localhost:8222", "")
 	require.Error(s.T(), err)
@@ -2811,7 +2793,9 @@ func (s *MainSuite) TestOnboardLocalProjectConfigWriteError() {
 		}
 		return os.WriteFile(path, data, perm)
 	}
-	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
+	}
 
 	err := onboardLocal("http://localhost:8222", "")
 	require.Error(s.T(), err)
@@ -2832,7 +2816,9 @@ func (s *MainSuite) TestOnboardLocalTemplatesDirError() {
 		}
 		return os.MkdirAll(path, perm)
 	}
-	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
+	}
 
 	err := onboardLocal("http://localhost:8222", "")
 	require.Error(s.T(), err)
@@ -2846,7 +2832,9 @@ func (s *MainSuite) TestOnboardLocalTemplatesDirCreated() {
 	osWriteFile = os.WriteFile
 	osStat = os.Stat
 	osMkdirAll = os.MkdirAll
-	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
+	}
 
 	err := onboardLocal("http://localhost:8222", "")
 	require.NoError(s.T(), err)
@@ -2865,7 +2853,9 @@ func (s *MainSuite) TestOnboardLocalWithOwnerID() {
 	osWriteFile = os.WriteFile
 	osStat = os.Stat
 	osMkdirAll = os.MkdirAll
-	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
+	}
 
 	err := onboardLocal("http://localhost:8222", "U99887766")
 	require.NoError(s.T(), err)
@@ -2887,7 +2877,9 @@ func (s *MainSuite) TestOnboardLocalCmdWithOwnerIDFlag() {
 	osWriteFile = os.WriteFile
 	osStat = os.Stat
 	osMkdirAll = os.MkdirAll
-	ensureChannelFunc = func(_, _ string) (string, error) { return "ch-test", nil }
+	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
+	}
 
 	cmd := newOnboardLocalCmd()
 	cmd.SetArgs([]string{"--owner-id", "ULOCAL123"})
@@ -3191,12 +3183,15 @@ func (s *MainSuite) TestEventBroadcasterAdapterMessageStreaming() {
 
 func (s *MainSuite) TestServeLocalPlatformHappyPath() {
 	m := setupServeMocks()
-	m.cfg.PlatformType = types.PlatformLocal
+	m.cfg.Platforms = []types.Platform{types.PlatformLocal}
 	// No bot tokens needed for local platform.
 	m.cfg.DiscordToken = ""
 	m.cfg.DiscordAppID = ""
 
-	// Local platform doesn't create a bot, so no bot expectations needed.
+	// Local platform creates a LocalBot (not the mock), so no mock bot expectations needed.
+	newLocalBot = func(store db.Store, logger *slog.Logger) orchestrator.Bot {
+		return local.NewBot(store, logger)
+	}
 	m.dockerClient.On("ContainerList", mock.Anything, "app", "loop-agent").Return([]string{}, nil)
 
 	errCh := make(chan error, 1)
@@ -3242,29 +3237,35 @@ func (s *MainSuite) TestServeWithTerminalManager() {
 	}
 }
 
-func (s *MainSuite) TestOrchMessageAdapter() {
+func (s *MainSuite) TestLocalBotMessageHandler() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := &testutil.MockStore{}
-	localBot := bot.NewLocalBot()
+	localBot := local.NewBot(store, logger)
 	sched := scheduler.NewTaskScheduler(store, nil, 0, logger)
 
-	orch := orchestrator.New(store, localBot, nil, sched, logger, types.PlatformLocal, config.Config{})
+	orch := orchestrator.New(store, localBot, nil, sched, logger, config.Config{})
+	// Manually wire the OnMessage handler (in production, orch.Start does this via BotRouter).
+	localBot.OnMessage(func(ctx context.Context, msg *bot.IncomingMessage) {
+		orch.HandleMessage(ctx, msg)
+	})
 
 	// IsChannelActive returns an error so HandleMessage exits early.
 	store.On("IsChannelActive", mock.Anything, "ch-1").Return(false, errors.New("db error"))
 
-	adapter := &orchMessageAdapter{orch: orch}
-	adapter.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello")
+	localBot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello")
 
 	store.AssertExpectations(s.T())
 }
 
-func (s *MainSuite) TestOrchMessageAdapterMentionParsing() {
+func (s *MainSuite) TestLocalBotMentionParsing() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := &testutil.MockStore{}
-	localBot := bot.NewLocalBot()
+	localBot := local.NewBot(store, logger)
 	sched := scheduler.NewTaskScheduler(store, nil, 0, logger)
-	orch := orchestrator.New(store, localBot, nil, sched, logger, types.PlatformLocal, config.Config{})
+	orch := orchestrator.New(store, localBot, nil, sched, logger, config.Config{})
+	localBot.OnMessage(func(ctx context.Context, msg *bot.IncomingMessage) {
+		orch.HandleMessage(ctx, msg)
+	})
 
 	ch := &db.Channel{ID: 1, ChannelID: "ch-1"}
 	store.On("IsChannelActive", mock.Anything, "ch-1").Return(true, nil)
@@ -3278,18 +3279,20 @@ func (s *MainSuite) TestOrchMessageAdapterMentionParsing() {
 	store.On("GetRecentMessages", mock.Anything, "ch-1", mock.Anything).
 		Return(nil, errors.New("stop early"))
 
-	adapter := &orchMessageAdapter{orch: orch}
-	adapter.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "@LoopBot do this")
+	localBot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "@LoopBot do this")
 
 	store.AssertExpectations(s.T())
 }
 
-func (s *MainSuite) TestOrchMessageAdapterPrefixParsing() {
+func (s *MainSuite) TestLocalBotPrefixParsing() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := &testutil.MockStore{}
-	localBot := bot.NewLocalBot()
+	localBot := local.NewBot(store, logger)
 	sched := scheduler.NewTaskScheduler(store, nil, 0, logger)
-	orch := orchestrator.New(store, localBot, nil, sched, logger, types.PlatformLocal, config.Config{})
+	orch := orchestrator.New(store, localBot, nil, sched, logger, config.Config{})
+	localBot.OnMessage(func(ctx context.Context, msg *bot.IncomingMessage) {
+		orch.HandleMessage(ctx, msg)
+	})
 
 	ch := &db.Channel{ID: 1, ChannelID: "ch-1"}
 	store.On("IsChannelActive", mock.Anything, "ch-1").Return(true, nil)
@@ -3301,18 +3304,20 @@ func (s *MainSuite) TestOrchMessageAdapterPrefixParsing() {
 	store.On("GetRecentMessages", mock.Anything, "ch-1", mock.Anything).
 		Return(nil, errors.New("stop early"))
 
-	adapter := &orchMessageAdapter{orch: orch}
-	adapter.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "!loop check status")
+	localBot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "!loop check status")
 
 	store.AssertExpectations(s.T())
 }
 
-func (s *MainSuite) TestOrchMessageAdapterPlainMessageTriggers() {
+func (s *MainSuite) TestLocalBotPlainMessageTriggers() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := &testutil.MockStore{}
-	localBot := bot.NewLocalBot()
+	localBot := local.NewBot(store, logger)
 	sched := scheduler.NewTaskScheduler(store, nil, 0, logger)
-	orch := orchestrator.New(store, localBot, nil, sched, logger, types.PlatformLocal, config.Config{})
+	orch := orchestrator.New(store, localBot, nil, sched, logger, config.Config{})
+	localBot.OnMessage(func(ctx context.Context, msg *bot.IncomingMessage) {
+		orch.HandleMessage(ctx, msg)
+	})
 
 	// Plain messages (no @LoopBot, no !loop) still trigger on local platform
 	// because IsDM is always true.
@@ -3325,8 +3330,7 @@ func (s *MainSuite) TestOrchMessageAdapterPlainMessageTriggers() {
 	store.On("GetRecentMessages", mock.Anything, "ch-1", mock.Anything).
 		Return(nil, errors.New("stop early"))
 
-	adapter := &orchMessageAdapter{orch: orch}
-	adapter.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "just a note")
+	localBot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "just a note")
 
 	store.AssertExpectations(s.T())
 }

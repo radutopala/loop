@@ -17,6 +17,7 @@ import (
 
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/orchestrator"
+	"github.com/radutopala/loop/internal/types"
 )
 
 // Compile-time check that SlackBot implements orchestrator.Bot.
@@ -408,7 +409,7 @@ func (s *BotSuite) TestOnChannelDelete() {
 }
 
 func (s *BotSuite) TestOnChannelJoin() {
-	s.bot.OnChannelJoin(func(_ context.Context, _ string) {})
+	s.bot.OnChannelJoin(func(_ context.Context, _ string, _ types.Platform) {})
 	require.Len(s.T(), s.bot.channelJoinHandlers, 1)
 }
 
@@ -416,6 +417,11 @@ func (s *BotSuite) TestOnChannelJoin() {
 
 func (s *BotSuite) TestBotUserID() {
 	require.Equal(s.T(), "U123BOT", s.bot.BotUserID())
+}
+
+func (s *BotSuite) TestIsBotUser() {
+	require.True(s.T(), s.bot.IsBotUser("U123BOT"))
+	require.False(s.T(), s.bot.IsBotUser("other"))
 }
 
 // --- CreateChannel ---
@@ -427,7 +433,7 @@ func (s *BotSuite) TestCreateChannelSuccess() {
 		Conversation: goslack.Conversation{ID: "C456"},
 	}}, nil)
 
-	id, err := s.bot.CreateChannel(context.Background(), "", "test-channel")
+	id, err := s.bot.CreateChannel(context.Background(), "test-channel")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "C456", id)
 }
@@ -437,7 +443,7 @@ func (s *BotSuite) TestCreateChannelError() {
 		ChannelName: "test-channel",
 	}).Return(nil, errors.New("some_other_error"))
 
-	_, err := s.bot.CreateChannel(context.Background(), "", "test-channel")
+	_, err := s.bot.CreateChannel(context.Background(), "test-channel")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "slack create channel")
 }
@@ -461,7 +467,7 @@ func (s *BotSuite) TestCreateChannelNameTaken() {
 		}, "", nil,
 	)
 
-	id, err := s.bot.CreateChannel(context.Background(), "", "existing-channel")
+	id, err := s.bot.CreateChannel(context.Background(), "existing-channel")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "C222", id)
 }
@@ -476,7 +482,7 @@ func (s *BotSuite) TestCreateChannelNameTakenLookupError() {
 		nil, "", errors.New("api_error"),
 	)
 
-	_, err := s.bot.CreateChannel(context.Background(), "", "existing-channel")
+	_, err := s.bot.CreateChannel(context.Background(), "existing-channel")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "slack find existing channel")
 }
@@ -491,7 +497,7 @@ func (s *BotSuite) TestCreateChannelNameTakenNotFound() {
 		[]goslack.Channel{}, "", nil,
 	)
 
-	_, err := s.bot.CreateChannel(context.Background(), "", "existing-channel")
+	_, err := s.bot.CreateChannel(context.Background(), "existing-channel")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "not found")
 }
@@ -526,7 +532,7 @@ func (s *BotSuite) TestCreateChannelNameTakenPagination() {
 		}, "", nil,
 	)
 
-	id, err := s.bot.CreateChannel(context.Background(), "", "existing-channel")
+	id, err := s.bot.CreateChannel(context.Background(), "existing-channel")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "C333", id)
 }
@@ -592,6 +598,16 @@ func (s *BotSuite) TestGetOwnerUserIDSkipsBot() {
 	_, err := s.bot.GetOwnerUserID(context.Background())
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "no workspace owner found")
+}
+
+// --- HandleIncomingMessage / HandleThreadCreated (no-ops) ---
+
+func (s *BotSuite) TestHandleIncomingMessageNoOp() {
+	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello")
+}
+
+func (s *BotSuite) TestHandleThreadCreatedNoOp() {
+	s.bot.HandleThreadCreated(context.Background(), "thread-1", "user-1", "hi")
 }
 
 // --- SetChannelTopic ---
@@ -1632,7 +1648,7 @@ func (s *BotSuite) TestHandleEventsAPINilRequest() {
 
 func (s *BotSuite) TestHandleMemberJoinedChannelBotJoins() {
 	received := make(chan string, 1)
-	s.bot.OnChannelJoin(func(_ context.Context, channelID string) {
+	s.bot.OnChannelJoin(func(_ context.Context, channelID string, _ types.Platform) {
 		received <- channelID
 	})
 
@@ -1652,7 +1668,7 @@ func (s *BotSuite) TestHandleMemberJoinedChannelBotJoins() {
 
 func (s *BotSuite) TestHandleMemberJoinedChannelOtherUser() {
 	called := false
-	s.bot.OnChannelJoin(func(_ context.Context, _ string) {
+	s.bot.OnChannelJoin(func(_ context.Context, _ string, _ types.Platform) {
 		called = true
 	})
 
@@ -1669,7 +1685,7 @@ func (s *BotSuite) TestHandleMemberJoinedChannelOtherUser() {
 
 func (s *BotSuite) TestHandleEventsAPIMemberJoinedChannel() {
 	received := make(chan string, 1)
-	s.bot.OnChannelJoin(func(_ context.Context, channelID string) {
+	s.bot.OnChannelJoin(func(_ context.Context, channelID string, _ types.Platform) {
 		received <- channelID
 	})
 

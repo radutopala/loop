@@ -2,22 +2,19 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/randutil"
 	"github.com/radutopala/loop/internal/types"
 )
 
 // randSuffix generates a short random hex suffix for channel names.
 var randSuffix = func() string {
-	b := make([]byte, 2)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	return randutil.HexID(2)
 }
 
 var invalidChannelChars = regexp.MustCompile(`[^a-z0-9_-]+`)
@@ -36,61 +33,75 @@ func sanitizeChannelName(name string) string {
 
 // ChannelCreator can create channels on the chat platform.
 type ChannelCreator interface {
-	CreateChannel(ctx context.Context, guildID, name string) (string, error)
+	CreateChannel(ctx context.Context, name string) (string, error)
 	InviteUserToChannel(ctx context.Context, channelID, userID string) error
 	GetOwnerUserID(ctx context.Context) (string, error)
 	SetChannelTopic(ctx context.Context, channelID, topic string) error
 }
 
+// EnsureResult describes the outcome of ensuring a channel for one platform.
+type EnsureResult struct {
+	Platform  types.Platform `json:"platform"`
+	ChannelID string         `json:"channel_id"`
+	Created   bool           `json:"created"`
+}
+
 // ChannelEnsurer resolves a directory path to a channel ID,
 // creating the channel if it does not yet exist.
 type ChannelEnsurer interface {
-	EnsureChannel(ctx context.Context, dirPath string) (string, error)
-	CreateChannel(ctx context.Context, name, authorID string) (string, error)
+	EnsureChannel(ctx context.Context, dirPath, platform string) (string, error)
+	CreateChannel(ctx context.Context, name, authorID, sourceChannelID, platform string) (string, error)
+	EnsureChannelAllPlatforms(ctx context.Context, dirPath string) ([]EnsureResult, error)
 }
 
 type channelService struct {
 	store    db.Store
-	creator  ChannelCreator
-	guildID  string
-	platform types.Platform
+	creators map[types.Platform]ChannelCreator
 }
 
 // NewChannelService creates a new ChannelEnsurer.
-func NewChannelService(store db.Store, creator ChannelCreator, guildID string, platform types.Platform) ChannelEnsurer {
+func NewChannelService(store db.Store, creators map[types.Platform]ChannelCreator) ChannelEnsurer {
 	return &channelService{
 		store:    store,
-		creator:  creator,
-		guildID:  guildID,
-		platform: platform,
+		creators: creators,
 	}
 }
 
-func (s *channelService) CreateChannel(ctx context.Context, name, authorID string) (string, error) {
+func (s *channelService) CreateChannel(ctx context.Context, name, authorID, sourceChannelID, platform string) (string, error) {
+	p := types.Platform(platform)
+	var guildID string
+	if sourceChannelID != "" {
+		if ch, err := s.store.GetChannel(ctx, sourceChannelID); err == nil && ch != nil {
+			p = ch.Platform
+			guildID = ch.GuildID
+		}
+	}
+
+	creator := s.creators[p]
+
 	var channelID string
-	if s.creator != nil {
+	if creator != nil {
 		var err error
-		channelID, err = s.creator.CreateChannel(ctx, s.guildID, name)
+		channelID, err = creator.CreateChannel(ctx, name)
 		if err != nil {
 			return "", fmt.Errorf("creating channel: %w", err)
 		}
 
 		if authorID != "" && channelID != "" {
-			if err := s.creator.InviteUserToChannel(ctx, channelID, authorID); err != nil {
+			if err := creator.InviteUserToChannel(ctx, channelID, authorID); err != nil {
 				return "", fmt.Errorf("inviting user to channel: %w", err)
 			}
 		}
 	}
 	if channelID == "" {
-		// No-op creator (e.g. local platform) — generate ID locally.
 		channelID = randSuffix() + randSuffix() + randSuffix()
 	}
 
 	if err := s.store.UpsertChannel(ctx, &db.Channel{
 		ChannelID: channelID,
-		GuildID:   s.guildID,
+		GuildID:   guildID,
 		Name:      name,
-		Platform:  s.platform,
+		Platform:  p,
 		Active:    true,
 	}); err != nil {
 		return "", fmt.Errorf("storing channel mapping: %w", err)
@@ -99,8 +110,9 @@ func (s *channelService) CreateChannel(ctx context.Context, name, authorID strin
 	return channelID, nil
 }
 
-func (s *channelService) EnsureChannel(ctx context.Context, dirPath string) (string, error) {
-	ch, err := s.store.GetChannelByDirPath(ctx, dirPath, s.platform)
+func (s *channelService) EnsureChannel(ctx context.Context, dirPath, platform string) (string, error) {
+	p := types.Platform(platform)
+	ch, err := s.store.GetChannelByDirPath(ctx, dirPath, p)
 	if err != nil {
 		return "", fmt.Errorf("looking up channel by dir path: %w", err)
 	}
@@ -108,38 +120,63 @@ func (s *channelService) EnsureChannel(ctx context.Context, dirPath string) (str
 		return ch.ChannelID, nil
 	}
 
+	creator := s.creators[p]
+
 	name := sanitizeChannelName(filepath.Base(dirPath)) + "-" + randSuffix()
 	var channelID string
-	if s.creator != nil {
+	if creator != nil {
 		var err error
-		channelID, err = s.creator.CreateChannel(ctx, s.guildID, name)
+		channelID, err = creator.CreateChannel(ctx, name)
 		if err != nil {
 			return "", fmt.Errorf("creating channel: %w", err)
 		}
 
 		if channelID != "" {
-			_ = s.creator.SetChannelTopic(ctx, channelID, dirPath)
+			_ = creator.SetChannelTopic(ctx, channelID, dirPath)
 
-			if ownerID, ownerErr := s.creator.GetOwnerUserID(ctx); ownerErr == nil && ownerID != "" {
-				_ = s.creator.InviteUserToChannel(ctx, channelID, ownerID)
+			if ownerID, ownerErr := creator.GetOwnerUserID(ctx); ownerErr == nil && ownerID != "" {
+				_ = creator.InviteUserToChannel(ctx, channelID, ownerID)
 			}
 		}
 	}
 	if channelID == "" {
-		// No-op creator (e.g. local platform) — generate ID locally.
 		channelID = randSuffix() + randSuffix() + randSuffix()
 	}
 
 	if err := s.store.UpsertChannel(ctx, &db.Channel{
 		ChannelID: channelID,
-		GuildID:   s.guildID,
 		Name:      name,
 		DirPath:   dirPath,
-		Platform:  s.platform,
+		Platform:  p,
 		Active:    true,
 	}); err != nil {
 		return "", fmt.Errorf("storing channel mapping: %w", err)
 	}
 
 	return channelID, nil
+}
+
+func (s *channelService) EnsureChannelAllPlatforms(ctx context.Context, dirPath string) ([]EnsureResult, error) {
+	existing, err := s.store.GetChannelsByDirPath(ctx, dirPath)
+	if err != nil {
+		return nil, fmt.Errorf("looking up channels by dir path: %w", err)
+	}
+	havePlatform := make(map[types.Platform]string, len(existing))
+	for _, ch := range existing {
+		havePlatform[ch.Platform] = ch.ChannelID
+	}
+
+	var results []EnsureResult
+	for platform := range s.creators {
+		if id, ok := havePlatform[platform]; ok {
+			results = append(results, EnsureResult{Platform: platform, ChannelID: id, Created: false})
+			continue
+		}
+		channelID, err := s.EnsureChannel(ctx, dirPath, string(platform))
+		if err != nil {
+			return nil, fmt.Errorf("ensuring channel for platform %s: %w", platform, err)
+		}
+		results = append(results, EnsureResult{Platform: platform, ChannelID: channelID, Created: true})
+	}
+	return results, nil
 }

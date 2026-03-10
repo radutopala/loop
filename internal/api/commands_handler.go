@@ -41,7 +41,7 @@ func (s *Server) handleCommand(w http.ResponseWriter, r *http.Request) {
 
 	authorID := req.AuthorID
 	if authorID == "" {
-		authorID = "local-user"
+		authorID = "api-user"
 	}
 
 	inter := parseCommand(req.Command, req.ChannelID, authorID)

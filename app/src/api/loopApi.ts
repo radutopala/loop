@@ -28,7 +28,7 @@ interface ChannelAPIResponse {
 }
 
 export async function fetchChannels(): Promise<Channel[]> {
-  const res = await fetch(`${apiUrl}/api/channels`);
+  const res = await fetch(`${apiUrl}/api/channels?platform=local`);
   if (!res.ok) throw new Error(`Failed to fetch channels: ${res.statusText}`);
   const data: ChannelAPIResponse[] = await res.json();
   return data.map((c) => ({

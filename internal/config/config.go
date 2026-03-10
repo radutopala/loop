@@ -72,7 +72,7 @@ type MemoryConfig struct {
 
 // Config holds all application configuration loaded from config.json.
 type Config struct {
-	PlatformType         types.Platform
+	Platforms            []types.Platform
 	DiscordToken         string
 	DiscordAppID         string
 	SlackBotToken        string
@@ -104,15 +104,20 @@ type Config struct {
 	Permissions          types.Permissions
 }
 
-// Platform returns the configured chat platform.
-func (c *Config) Platform() types.Platform {
-	return c.PlatformType
+// HasPlatform returns true if the given platform is enabled.
+func (c *Config) HasPlatform(p types.Platform) bool {
+	for _, plat := range c.Platforms {
+		if plat == p {
+			return true
+		}
+	}
+	return false
 }
 
 // jsonConfig is an intermediate struct for JSON unmarshalling.
 // Pointer types for numerics distinguish "missing" (nil) from "zero".
 type jsonConfig struct {
-	Platform              string                 `json:"platform"`
+	Platforms             []string               `json:"platforms"`
 	DiscordToken          string                 `json:"discord_token"`
 	DiscordAppID          string                 `json:"discord_app_id"`
 	SlackBotToken         string                 `json:"slack_bot_token"`
@@ -207,7 +212,6 @@ func Load() (*Config, error) {
 	}
 
 	cfg := &Config{
-		PlatformType:         types.Platform(strings.ToLower(jc.Platform)),
 		DiscordToken:         jc.DiscordToken,
 		DiscordAppID:         jc.DiscordAppID,
 		SlackBotToken:        jc.SlackBotToken,
@@ -270,21 +274,31 @@ func Load() (*Config, error) {
 		}
 	}
 
-	switch cfg.PlatformType {
-	case types.PlatformDiscord:
-		if cfg.DiscordToken == "" || cfg.DiscordAppID == "" {
-			return nil, fmt.Errorf("platform \"discord\" requires discord_token and discord_app_id")
+	// Build the platforms list.
+	for _, p := range jc.Platforms {
+		cfg.Platforms = append(cfg.Platforms, types.Platform(strings.ToLower(p)))
+	}
+
+	if len(cfg.Platforms) == 0 {
+		return nil, fmt.Errorf("missing required config: \"platforms\" must be set")
+	}
+
+	// Validate credentials for each listed platform.
+	for _, p := range cfg.Platforms {
+		switch p {
+		case types.PlatformDiscord:
+			if cfg.DiscordToken == "" || cfg.DiscordAppID == "" {
+				return nil, fmt.Errorf("platform \"discord\" requires discord_token and discord_app_id")
+			}
+		case types.PlatformSlack:
+			if cfg.SlackBotToken == "" || cfg.SlackAppToken == "" {
+				return nil, fmt.Errorf("platform \"slack\" requires slack_bot_token and slack_app_token")
+			}
+		case types.PlatformLocal:
+			// Local platform requires no external credentials.
+		default:
+			return nil, fmt.Errorf("unsupported platform %q: must be \"discord\", \"slack\", or \"local\"", p)
 		}
-	case types.PlatformSlack:
-		if cfg.SlackBotToken == "" || cfg.SlackAppToken == "" {
-			return nil, fmt.Errorf("platform \"slack\" requires slack_bot_token and slack_app_token")
-		}
-	case types.PlatformLocal:
-		// Local platform requires no external credentials.
-	case "":
-		return nil, fmt.Errorf("missing required config: \"platform\" must be set to \"discord\", \"slack\", or \"local\"")
-	default:
-		return nil, fmt.Errorf("unsupported platform %q: must be \"discord\", \"slack\", or \"local\"", cfg.PlatformType)
 	}
 
 	return cfg, nil

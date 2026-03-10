@@ -2,8 +2,6 @@ package orchestrator
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -14,6 +12,7 @@ import (
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/randutil"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/types"
 )
@@ -31,11 +30,10 @@ type Bot interface {
 	OnMessage(handler func(ctx context.Context, msg *bot.IncomingMessage))
 	OnInteraction(handler func(ctx context.Context, i *bot.Interaction))
 	OnChannelDelete(handler func(ctx context.Context, channelID string, isThread bool))
-	OnChannelJoin(handler func(ctx context.Context, channelID string))
+	OnChannelJoin(handler func(ctx context.Context, channelID string, platform types.Platform))
 	BotUserID() string
-	CreateChannel(ctx context.Context, guildID, name string) (string, error)
+	IsBotUser(userID string) bool
 	InviteUserToChannel(ctx context.Context, channelID, userID string) error
-	GetOwnerUserID(ctx context.Context) (string, error)
 	SetChannelTopic(ctx context.Context, channelID, topic string) error
 	CreateThread(ctx context.Context, channelID, name, mentionUserID, message string) (string, error)
 	PostMessage(ctx context.Context, channelID, content string) error
@@ -44,7 +42,8 @@ type Bot interface {
 	GetChannelParentID(ctx context.Context, channelID string) (string, error)
 	GetChannelName(ctx context.Context, channelID string) (string, error)
 	CreateSimpleThread(ctx context.Context, channelID, name, initialMessage string) (string, error)
-	GetMemberRoles(ctx context.Context, guildID, userID string) ([]string, error)
+	HandleIncomingMessage(ctx context.Context, channelID, authorID, content string)
+	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }
 
 // Runner runs Claude agent in a container.
@@ -64,12 +63,11 @@ type Orchestrator struct {
 	activeRuns     sync.Map // map[channelID]context.CancelFunc
 	logger         *slog.Logger
 	typingInterval time.Duration
-	platform       types.Platform
 	cfg            config.Config
 }
 
 // New creates a new Orchestrator.
-func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logger *slog.Logger, platform types.Platform, cfg config.Config) *Orchestrator {
+func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logger *slog.Logger, cfg config.Config) *Orchestrator {
 	return &Orchestrator{
 		store:          store,
 		bot:            bot,
@@ -78,7 +76,6 @@ func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logg
 		queue:          NewChannelQueue(),
 		logger:         logger,
 		typingInterval: TypingInterval,
-		platform:       platform,
 		cfg:            cfg,
 	}
 }
@@ -152,18 +149,18 @@ const recentMessageLimit = 50
 const TypingInterval = 8 * time.Second
 
 // HandleChannelJoin auto-registers a channel when the bot is added to it.
-func (o *Orchestrator) HandleChannelJoin(ctx context.Context, channelID string) {
+func (o *Orchestrator) HandleChannelJoin(ctx context.Context, channelID string, platform types.Platform) {
 	name := o.resolveChannelName(ctx, channelID, false)
 	if err := o.store.UpsertChannel(ctx, &db.Channel{
 		ChannelID: channelID,
 		Name:      name,
-		Platform:  o.platform,
+		Platform:  platform,
 		Active:    true,
 	}); err != nil {
-		o.logger.Error("auto-creating channel on join", "error", err, "channel_id", channelID)
+		o.logger.Error("auto-creating channel on join", "error", err, "channel_id", channelID, "platform", platform)
 		return
 	}
-	o.logger.Info("auto-created channel on bot join", "channel_id", channelID, "name", name)
+	o.logger.Info("auto-created channel on bot join", "channel_id", channelID, "platform", platform, "name", name)
 }
 
 // configPermissionsFor returns the effective Permissions for the given dirPath.
@@ -304,7 +301,5 @@ func formatDuration(d time.Duration) string {
 }
 
 func generateMessageID() string {
-	b := make([]byte, 16)
-	_, _ = rand.Read(b)
-	return "ask-" + hex.EncodeToString(b)
+	return "ask-" + randutil.HexID(16)
 }

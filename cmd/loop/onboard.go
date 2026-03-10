@@ -191,7 +191,7 @@ func onboardLocal(apiURL string, ownerID string) error {
 
 	// Build loop server entry (always rebuild to pick up config changes).
 	_, alreadyRegistered := servers["loop"]
-	args := []string{"mcp", "--dir", dir, "--api-url", apiURL, "--log", filepath.Join(dir, ".loop", "mcp.log")}
+	args := []string{"mcp", "--dir", dir, "--api-url", apiURL, "--platform", "local", "--log", filepath.Join(dir, ".loop", "mcp.log")}
 	if cfg, err := configLoad(); err == nil && cfg.Memory.Enabled {
 		args = append(args, "--memory")
 	}
@@ -245,12 +245,18 @@ func onboardLocal(apiURL string, ownerID string) error {
 		return fmt.Errorf("creating templates directory: %w", err)
 	}
 
-	// Eagerly create the channel so it's ready immediately
-	channelID, err := ensureChannelFunc(apiURL, dir)
+	// Eagerly create channels for all configured platforms
+	results, err := ensureAllChannelsFunc(apiURL, dir)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not register channel (is 'loop serve' running?): %v\n", err)
+		fmt.Fprintf(os.Stderr, "Warning: could not register channels (is 'loop serve' running?): %v\n", err)
 	} else {
-		fmt.Printf("Channel ready: %s\n", channelID)
+		for _, r := range results {
+			if r.Created {
+				fmt.Printf("Channel created (%s): %s\n", r.Platform, r.ChannelID)
+			} else {
+				fmt.Printf("Channel exists (%s): %s\n", r.Platform, r.ChannelID)
+			}
+		}
 	}
 
 	return nil

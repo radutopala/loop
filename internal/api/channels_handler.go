@@ -11,7 +11,8 @@ import (
 const channelsNotConfiguredMsg = "channel creation not configured (discord_guild_id not set or Slack not configured)"
 
 type ensureChannelRequest struct {
-	DirPath string `json:"dir_path"`
+	DirPath  string `json:"dir_path"`
+	Platform string `json:"platform,omitempty"`
 }
 
 type ensureChannelResponse struct {
@@ -19,8 +20,10 @@ type ensureChannelResponse struct {
 }
 
 type createChannelRequest struct {
-	Name     string `json:"name"`
-	AuthorID string `json:"author_id"`
+	Name      string `json:"name"`
+	AuthorID  string `json:"author_id"`
+	ChannelID string `json:"channel_id"`
+	Platform  string `json:"platform,omitempty"`
 }
 
 type createChannelResponse struct {
@@ -28,14 +31,14 @@ type createChannelResponse struct {
 }
 
 type channelResponse struct {
-	ChannelID  string `json:"channel_id"`
-	Name       string `json:"name"`
-	DirPath    string `json:"dir_path"`
-	ParentID   string `json:"parent_id"`
-	Active     bool   `json:"active"`
-	ContainerRunning bool `json:"container_running"`
-	AgentRunning     bool `json:"agent_running"`
-	Branch     string `json:"branch,omitempty"`
+	ChannelID        string `json:"channel_id"`
+	Name             string `json:"name"`
+	DirPath          string `json:"dir_path"`
+	ParentID         string `json:"parent_id"`
+	Active           bool   `json:"active"`
+	ContainerRunning bool   `json:"container_running"`
+	AgentRunning     bool   `json:"agent_running"`
+	Branch           string `json:"branch,omitempty"`
 }
 
 func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
@@ -53,7 +56,7 @@ func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	channelID, err := s.channels.EnsureChannel(r.Context(), req.DirPath)
+	channelID, err := s.channels.EnsureChannel(r.Context(), req.DirPath, req.Platform)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -77,7 +80,7 @@ func (s *Server) handleCreateChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	channelID, err := s.channels.CreateChannel(r.Context(), req.Name, req.AuthorID)
+	channelID, err := s.channels.CreateChannel(r.Context(), req.Name, req.AuthorID, req.ChannelID, req.Platform)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -113,10 +116,11 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 	}
 
 	query := r.URL.Query().Get("query")
+	platformFilter := r.URL.Query().Get("platform")
 
 	resp := make([]channelResponse, 0, len(channels))
 	for _, ch := range channels {
-		if s.platform != "" && ch.Platform != s.platform {
+		if platformFilter != "" && string(ch.Platform) != platformFilter {
 			continue
 		}
 		if query != "" && !containsFold(ch.Name, query) {
@@ -186,6 +190,34 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+type ensureAllChannelsRequest struct {
+	DirPath string `json:"dir_path"`
+}
+
+func (s *Server) handleEnsureAllChannels(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.channels, channelsNotConfiguredMsg) {
+		return
+	}
+
+	var req ensureAllChannelsRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	if req.DirPath == "" {
+		http.Error(w, "dir_path is required", http.StatusBadRequest)
+		return
+	}
+
+	results, err := s.channels.EnsureChannelAllPlatforms(r.Context(), req.DirPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeHTTPJSON(w, http.StatusOK, results, s.logger)
 }
 
 func containsFold(s, substr string) bool {

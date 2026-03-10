@@ -14,7 +14,7 @@ import (
 )
 
 func newMCPCmd() *cobra.Command {
-	var channelID, apiURL, logPath, dirPath, authorID string
+	var channelID, apiURL, logPath, dirPath, authorID, platform string
 	var memoryEnabled bool
 
 	cmd := &cobra.Command{
@@ -22,7 +22,7 @@ func newMCPCmd() *cobra.Command {
 		Aliases: []string{"m"},
 		Short:   "Run as an MCP server over stdio",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runMCP(channelID, apiURL, dirPath, logPath, authorID, memoryEnabled)
+			return runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, memoryEnabled)
 		},
 	}
 
@@ -31,6 +31,7 @@ func newMCPCmd() *cobra.Command {
 	cmd.Flags().StringVar(&apiURL, "api-url", "", "Loop API base URL")
 	cmd.Flags().StringVar(&logPath, "log", ".loop/mcp.log", "Path to MCP log file")
 	cmd.Flags().StringVar(&authorID, "author-id", "", "User ID of the message author")
+	cmd.Flags().StringVar(&platform, "platform", "local", "Platform for channel creation (used with --dir)")
 	cmd.Flags().BoolVar(&memoryEnabled, "memory", false, "Enable memory search/index tools")
 	cmd.MarkFlagsOneRequired("channel-id", "dir")
 	cmd.MarkFlagsMutuallyExclusive("channel-id", "dir")
@@ -41,9 +42,9 @@ func newMCPCmd() *cobra.Command {
 
 var newMCPServer = mcpserver.New
 
-func runMCP(channelID, apiURL, dirPath, logPath, authorID string, memoryEnabled bool) error {
+func runMCP(channelID, apiURL, dirPath, logPath, authorID, platform string, memoryEnabled bool) error {
 	if dirPath != "" {
-		resolved, err := ensureChannelFunc(apiURL, dirPath)
+		resolved, err := ensureChannelFunc(apiURL, dirPath, platform)
 		if err != nil {
 			return fmt.Errorf("ensuring channel for dir %s: %w", dirPath, err)
 		}

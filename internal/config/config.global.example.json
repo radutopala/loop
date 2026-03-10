@@ -1,7 +1,8 @@
 {
-  // Required: "discord", "slack", or "local"
+  // Required: one or more of "discord", "slack", "local"
   // "local" runs without a chat platform — use the Electron desktop app as the UI.
-  "platform": "local",
+  // Multiple platforms can run simultaneously: ["discord", "local"]
+  "platforms": ["local"],
 
   // Discord credentials (required when platform is "discord")
   "discord_token": "your-discord-bot-token-here",

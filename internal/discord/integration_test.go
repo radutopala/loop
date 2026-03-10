@@ -49,7 +49,7 @@ func (s *DiscordIntegrationSuite) SetupSuite() {
 	s.session = session
 
 	logger := slog.Default()
-	s.bot = NewBot(session, cfg.AppID, logger)
+	s.bot = NewBot(session, cfg.AppID, s.guildID, logger)
 
 	// Start the bot (opens gateway, resolves bot user ID).
 	err = s.bot.Start(s.ctx)
@@ -61,7 +61,7 @@ func (s *DiscordIntegrationSuite) SetupSuite() {
 	// Create a dedicated test channel.
 	for range 3 {
 		name := "inttest-" + randomSuffix()
-		chID, createErr := s.bot.CreateChannel(s.ctx, s.guildID, name)
+		chID, createErr := s.bot.CreateChannel(s.ctx, name)
 		if createErr == nil {
 			s.channelID = chID
 			s.cleanupIDs = append(s.cleanupIDs, chID)
@@ -140,7 +140,7 @@ func (s *DiscordIntegrationSuite) TestA01_AuthAndBotUserID() {
 func (s *DiscordIntegrationSuite) TestB01_CreateChannel() {
 	rateSleep()
 	name := "inttest-create-" + randomSuffix()
-	id, err := s.bot.CreateChannel(s.ctx, s.guildID, name)
+	id, err := s.bot.CreateChannel(s.ctx, name)
 	require.NoError(s.T(), err)
 	require.NotEmpty(s.T(), id)
 	s.cleanupIDs = append(s.cleanupIDs, id)
@@ -156,12 +156,12 @@ func (s *DiscordIntegrationSuite) TestB02_CreateChannelDuplicate() {
 	rateSleep()
 	name := "inttest-dup-" + randomSuffix()
 
-	id1, err := s.bot.CreateChannel(s.ctx, s.guildID, name)
+	id1, err := s.bot.CreateChannel(s.ctx, name)
 	require.NoError(s.T(), err)
 	s.cleanupIDs = append(s.cleanupIDs, id1)
 
 	rateSleep()
-	id2, err := s.bot.CreateChannel(s.ctx, s.guildID, name)
+	id2, err := s.bot.CreateChannel(s.ctx, name)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), id1, id2, "duplicate create should return same channel ID")
 }
@@ -481,7 +481,7 @@ func (s *DiscordIntegrationSuite) TestE02_ThreadDeleteEvent() {
 func (s *DiscordIntegrationSuite) TestE03_ChannelDeleteEvent() {
 	rateSleep()
 	name := "inttest-ch-delevent-" + randomSuffix()
-	chID, err := s.bot.CreateChannel(s.ctx, s.guildID, name)
+	chID, err := s.bot.CreateChannel(s.ctx, name)
 	require.NoError(s.T(), err)
 
 	received := make(chan struct {

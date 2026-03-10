@@ -27,10 +27,10 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Route through the orchestrator when available (local platform).
+	// Route through the orchestrator when available.
 	if s.msgHandler != nil {
 		// Use a detached context — r.Context() is cancelled when the HTTP response is sent.
-		go s.msgHandler.HandleIncomingMessage(context.Background(), req.ChannelID, "local-user", req.Content)
+		go s.msgHandler.HandleIncomingMessage(context.Background(), req.ChannelID, "", req.Content)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

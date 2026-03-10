@@ -28,6 +28,9 @@ func (s *Server) handleCreateChannel(_ context.Context, _ *mcp.CallToolRequest, 
 	reqBody := map[string]string{
 		"name": input.Name,
 	}
+	if s.channelID != "" {
+		reqBody["channel_id"] = s.channelID
+	}
 	if s.authorID != "" {
 		reqBody["author_id"] = s.authorID
 	}

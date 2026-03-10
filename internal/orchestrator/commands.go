@@ -15,17 +15,13 @@ import (
 )
 
 // sendReply sends a simple text message to the interaction's channel.
-// On the local platform, it also stores the message in the database and
-// broadcasts via the events hub so the response is visible in the UI.
+// It also stores the message in the database and broadcasts via the events hub
+// so the response is visible in the UI.
 func (o *Orchestrator) sendReply(ctx context.Context, channelID, content string) {
 	_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 		ChannelID: channelID,
 		Content:   content,
 	})
-
-	if o.platform != types.PlatformLocal {
-		return
-	}
 
 	msgID := generateMessageID()
 	ch, err := o.store.GetChannel(ctx, channelID)
@@ -113,7 +109,7 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, inter *bot.Interac
 	case "iamtheowner":
 		o.handleIAmTheOwner(ctx, inter, ch, cfgPerms, dbPerms)
 	default:
-		o.logger.Warn("unknown command", "command", inter.CommandName)
+		o.logger.Warn("unknown command", "command", inter.CommandName, "platform", inter.Platform)
 	}
 }
 

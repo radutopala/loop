@@ -47,7 +47,7 @@ func (s *ThreadServiceSuite) SetupTest() {
 	s.creator = new(MockThreadCreator)
 	s.ctx = context.Background()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.svc = NewThreadService(s.store, s.creator, types.PlatformDiscord, logger)
+	s.svc = NewThreadService(s.store, s.creator, logger)
 }
 
 func (s *ThreadServiceSuite) TestCreateThreadSuccess() {
@@ -268,7 +268,7 @@ func (s *ThreadServiceSuite) TestCreateThreadCreatorReturnsEmptyID() {
 
 func (s *ThreadServiceSuite) TestCreateThreadLocalPlatformNilCreator() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := NewThreadService(s.store, nil, types.PlatformLocal, logger)
+	svc := NewThreadService(s.store, nil, logger)
 
 	origGen := generateThreadID
 	generateThreadID = func() string { return "local-thread-abc" }
@@ -288,7 +288,7 @@ func (s *ThreadServiceSuite) TestCreateThreadLocalPlatformNilCreator() {
 
 func (s *ThreadServiceSuite) TestDeleteThreadLocalPlatformNilCreator() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := NewThreadService(s.store, nil, types.PlatformLocal, logger)
+	svc := NewThreadService(s.store, nil, logger)
 
 	s.store.On("GetChannel", s.ctx, "thread-1").
 		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1"}, nil)

@@ -17,6 +17,7 @@ import (
 
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/orchestrator"
+	"github.com/radutopala/loop/internal/types"
 )
 
 // Compile-time check that DiscordBot implements orchestrator.Bot.
@@ -204,7 +205,7 @@ func TestBotSuite(t *testing.T) {
 func (s *BotSuite) SetupTest() {
 	s.session = new(MockSession)
 	s.logger = slog.New(slog.NewTextHandler(discard{}, nil))
-	s.bot = NewBot(s.session, "test-app-id", s.logger)
+	s.bot = NewBot(s.session, "test-app-id", "", s.logger)
 }
 
 type discard struct{}
@@ -322,7 +323,7 @@ func (s *BotSuite) TestSendMessage() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
-			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b := NewBot(session, "app-1", "g-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			tc.setup(session)
 			err := b.SendMessage(context.Background(), tc.msg)
 			if tc.wantErr != "" {
@@ -417,7 +418,7 @@ func (s *BotSuite) TestRemoveCommands() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
-			b := NewBot(session, "test-app-id", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b := NewBot(session, "test-app-id", "", slog.New(slog.NewTextHandler(discard{}, nil)))
 			tc.setup(session)
 			err := b.RemoveCommands(context.Background())
 			if tc.wantErr != "" {
@@ -547,7 +548,7 @@ func (s *BotSuite) TestOnInteractionCommandParsing() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
-			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b := NewBot(session, "app-1", "g-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			var received *bot.Interaction
 			done := make(chan struct{})
 			b.OnInteraction(func(_ context.Context, i *bot.Interaction) {
@@ -763,7 +764,7 @@ func (s *BotSuite) TestHandleMessageIgnored() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
-			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b := NewBot(session, "app-1", "g-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			b.botUserID = "bot-123"
 			session.On("Channel", mock.Anything, mock.Anything).
 				Maybe().
@@ -812,7 +813,7 @@ func (s *BotSuite) TestHandleMessageTriggered() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
-			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b := NewBot(session, "app-1", "g-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			b.botUserID = "bot-123"
 			session.On("Channel", mock.Anything, mock.Anything).
 				Maybe().
@@ -908,6 +909,12 @@ func (s *BotSuite) TestHandleInteractionMultipleHandlers() {
 
 func (s *BotSuite) TestBotUserIDEmpty() {
 	require.Equal(s.T(), "", s.bot.BotUserID())
+}
+
+func (s *BotSuite) TestIsBotUser() {
+	s.bot.botUserID = "bot-123"
+	require.True(s.T(), s.bot.IsBotUser("bot-123"))
+	require.False(s.T(), s.bot.IsBotUser("other"))
 }
 
 // --- Trigger detection (table-driven) ---
@@ -1222,7 +1229,7 @@ func (s *BotSuite) TestHandleInteractionPendingStorage() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
-			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b := NewBot(session, "app-1", "g-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			b.OnInteraction(func(_ context.Context, _ *bot.Interaction) {})
 			session.On("InteractionRespond", mock.Anything, mock.Anything, mock.Anything).Return(tc.respondErr)
 			interaction := &discordgo.Interaction{
@@ -1287,7 +1294,7 @@ func (s *BotSuite) TestSendMessageWithPendingInteraction() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
-			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b := NewBot(session, "app-1", "g-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			interaction := &discordgo.Interaction{ChannelID: "ch-1"}
 			b.mu.Lock()
 			b.pendingInteractions["ch-1"] = interaction
@@ -1364,9 +1371,9 @@ func (s *BotSuite) TestCreateChannel() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
-			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b := NewBot(session, "app-1", "g-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			tc.setup(session)
-			channelID, err := b.CreateChannel(context.Background(), "g-1", "loop")
+			channelID, err := b.CreateChannel(context.Background(), "loop")
 			if tc.wantErr != "" {
 				require.Error(s.T(), err)
 				require.Contains(s.T(), err.Error(), tc.wantErr)
@@ -1390,6 +1397,16 @@ func (s *BotSuite) TestGetOwnerUserIDNoOp() {
 	id, err := s.bot.GetOwnerUserID(context.Background())
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), id)
+}
+
+// --- HandleIncomingMessage / HandleThreadCreated (no-ops) ---
+
+func (s *BotSuite) TestHandleIncomingMessageNoOp() {
+	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello")
+}
+
+func (s *BotSuite) TestHandleThreadCreatedNoOp() {
+	s.bot.HandleThreadCreated(context.Background(), "thread-1", "user-1", "hi")
 }
 
 // --- SetChannelTopic ---
@@ -1430,7 +1447,7 @@ func (s *BotSuite) TestCreateThreadSuccess() {
 	for _, tc := range cases {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
-			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b := NewBot(session, "app-1", "g-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			b.botUserID = "bot-123"
 			b.botUsername = tc.botUsername
 
@@ -1527,7 +1544,7 @@ func (s *BotSuite) TestHandleThreadCreate() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
-			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b := NewBot(session, "app-1", "g-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			if tc.wantJoin {
 				session.On("ThreadJoin", tc.channel.ID, mock.Anything).Return(tc.joinErr)
 			}
@@ -1617,7 +1634,7 @@ func (s *BotSuite) TestOnChannelDeleteRegistersHandler() {
 // --- OnChannelJoin ---
 
 func (s *BotSuite) TestOnChannelJoinRegistersHandler() {
-	handler := func(ctx context.Context, channelID string) {}
+	handler := func(ctx context.Context, channelID string, platform types.Platform) {}
 	s.bot.OnChannelJoin(handler)
 
 	s.bot.mu.RLock()
@@ -1674,7 +1691,7 @@ func (s *BotSuite) TestGetChannelParentID() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
-			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b := NewBot(session, "app-1", "g-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			session.On("Channel", tc.channelID, mock.Anything).Return(tc.channel, tc.err)
 			parentID, err := b.GetChannelParentID(context.Background(), tc.channelID)
 			if tc.wantErr != "" {
@@ -1726,7 +1743,7 @@ func (s *BotSuite) TestHandleMessageRolePopulation() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
-			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b := NewBot(session, "app-1", "g-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			b.botUserID = "bot-123"
 			session.On("Channel", mock.Anything, mock.Anything).
 				Maybe().
@@ -1772,7 +1789,7 @@ func (s *BotSuite) TestHandleInteractionAuthor() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
-			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b := NewBot(session, "app-1", "g-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			var received *bot.Interaction
 			done := make(chan struct{})
 			b.OnInteraction(func(_ context.Context, i *bot.Interaction) {
@@ -1819,7 +1836,7 @@ func (s *BotSuite) TestPostMessage() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
-			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b := NewBot(session, "app-1", "g-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			if tc.botUserID != "" {
 				b.botUserID = tc.botUserID
 				b.botUsername = tc.botUsername
@@ -1890,7 +1907,7 @@ func (s *BotSuite) TestCreateSimpleThread() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			session := new(MockSession)
-			b := NewBot(session, "app-1", slog.New(slog.NewTextHandler(discard{}, nil)))
+			b := NewBot(session, "app-1", "g-1", slog.New(slog.NewTextHandler(discard{}, nil)))
 			tc.setup(session)
 			threadID, err := b.CreateSimpleThread(context.Background(), "ch-1", tc.title, tc.message)
 			if tc.wantErr != "" {

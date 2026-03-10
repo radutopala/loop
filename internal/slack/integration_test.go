@@ -183,7 +183,7 @@ func (s *SlackIntegrationSuite) TestA01_AuthAndBotUserID() {
 func (s *SlackIntegrationSuite) TestB01_CreateChannel() {
 	rateSleep()
 	name := "inttest-create-" + randomSuffix()
-	id, err := s.bot.CreateChannel(s.ctx, "", name)
+	id, err := s.bot.CreateChannel(s.ctx, name)
 	require.NoError(s.T(), err)
 	require.NotEmpty(s.T(), id)
 	s.cleanupChannels = append(s.cleanupChannels, id)
@@ -201,13 +201,13 @@ func (s *SlackIntegrationSuite) TestB02_CreateChannelDuplicate() {
 	rateSleep()
 	name := "inttest-dup-" + randomSuffix()
 
-	id1, err := s.bot.CreateChannel(s.ctx, "", name)
+	id1, err := s.bot.CreateChannel(s.ctx, name)
 	require.NoError(s.T(), err)
 	s.cleanupChannels = append(s.cleanupChannels, id1)
 
 	// Allow Slack API to propagate the new channel before duplicate create.
 	time.Sleep(2 * time.Second)
-	id2, err := s.bot.CreateChannel(s.ctx, "", name)
+	id2, err := s.bot.CreateChannel(s.ctx, name)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), id1, id2, "duplicate create should return same channel ID")
 }
@@ -253,7 +253,7 @@ func (s *SlackIntegrationSuite) TestB07_InviteUserToChannel() {
 	rateSleep()
 	// Create a fresh channel to test invite.
 	name := "inttest-invite-" + randomSuffix()
-	chID, err := s.bot.CreateChannel(s.ctx, "", name)
+	chID, err := s.bot.CreateChannel(s.ctx, name)
 	require.NoError(s.T(), err)
 	s.cleanupChannels = append(s.cleanupChannels, chID)
 

@@ -70,7 +70,7 @@ func (m *MockBot) OnChannelDelete(handler func(ctx context.Context, channelID st
 	m.Called(handler)
 }
 
-func (m *MockBot) OnChannelJoin(handler func(ctx context.Context, channelID string)) {
+func (m *MockBot) OnChannelJoin(handler func(ctx context.Context, channelID string, platform types.Platform)) {
 	m.Called(handler)
 }
 
@@ -79,18 +79,8 @@ func (m *MockBot) BotUserID() string {
 	return args.String(0)
 }
 
-func (m *MockBot) CreateChannel(ctx context.Context, guildID, name string) (string, error) {
-	args := m.Called(ctx, guildID, name)
-	return args.String(0), args.Error(1)
-}
-
 func (m *MockBot) InviteUserToChannel(ctx context.Context, channelID, userID string) error {
 	return m.Called(ctx, channelID, userID).Error(0)
-}
-
-func (m *MockBot) GetOwnerUserID(ctx context.Context) (string, error) {
-	args := m.Called(ctx)
-	return args.String(0), args.Error(1)
 }
 
 func (m *MockBot) SetChannelTopic(ctx context.Context, channelID, topic string) error {
@@ -129,12 +119,17 @@ func (m *MockBot) CreateSimpleThread(ctx context.Context, channelID, name, initi
 	return args.String(0), args.Error(1)
 }
 
-func (m *MockBot) GetMemberRoles(ctx context.Context, guildID, userID string) ([]string, error) {
-	args := m.Called(ctx, guildID, userID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]string), args.Error(1)
+func (m *MockBot) HandleIncomingMessage(ctx context.Context, channelID, authorID, content string) {
+	m.Called(ctx, channelID, authorID, content)
+}
+
+func (m *MockBot) HandleThreadCreated(ctx context.Context, threadID, authorID, message string) {
+	m.Called(ctx, threadID, authorID, message)
+}
+
+func (m *MockBot) IsBotUser(userID string) bool {
+	args := m.Called(userID)
+	return args.Bool(0)
 }
 
 func (m *MockBot) SendStopButton(ctx context.Context, channelID, runID string) (string, error) {
@@ -204,11 +199,17 @@ func (s *OrchestratorSuite) SetupTest() {
 
 	// Default expectations for stop button (non-fatal, called during processTriggeredMessage)
 	s.bot.On("BotUserID").Return("BOT").Maybe()
+	s.bot.On("IsBotUser", mock.Anything).Return(false).Maybe()
 	s.bot.On("SendStopButton", mock.Anything, mock.Anything, mock.Anything).Return("stop-msg-1", nil).Maybe()
 	s.bot.On("RemoveStopButton", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
+	// sendReply now always stores bot messages — provide defaults so tests that don't care don't break.
+	s.store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(msg *db.Message) bool {
+		return msg.IsBot
+	})).Return(nil).Maybe()
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{})
 }
 
 func (s *OrchestratorSuite) TestNew() {
@@ -484,13 +485,13 @@ func (s *OrchestratorSuite) TestHandleMessageDMAutoCreatesChannel() {
 	s.store.On("IsChannelActive", s.ctx, "dm-ch1").Return(false, nil)
 	// Not a thread
 	s.bot.On("GetChannelParentID", s.ctx, "dm-ch1").Return("", nil)
-	// Auto-create DM channel
+	// Auto-create DM channel (platform comes from context, set by BotRouter in production)
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
-		return ch.ChannelID == "dm-ch1" && ch.Name == "DM" && ch.Platform == "discord" && ch.Active
+		return ch.ChannelID == "dm-ch1" && ch.Name == "DM" && ch.Active
 	})).Return(nil)
 	// Normal flow continues
 	s.store.On("GetChannel", s.ctx, "dm-ch1").Return(&db.Channel{
-		ID: 1, ChannelID: "dm-ch1", Active: true, Platform: types.PlatformDiscord,
+		ID: 1, ChannelID: "dm-ch1", Active: true, Platform: types.PlatformLocal,
 	}, nil)
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.bot.On("SendTyping", mock.Anything, "dm-ch1").Return(nil).Maybe()
@@ -560,10 +561,10 @@ func (s *OrchestratorSuite) TestHandleMessageMentionAutoCreatesChannel() {
 	s.bot.On("GetChannelParentID", s.ctx, "ch1").Return("", nil)
 	s.bot.On("GetChannelName", s.ctx, "ch1").Return("general", nil)
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
-		return ch.ChannelID == "ch1" && ch.GuildID == "g1" && ch.Name == "general" && ch.Platform == "discord" && ch.Active
+		return ch.ChannelID == "ch1" && ch.GuildID == "g1" && ch.Name == "general" && ch.Active
 	})).Return(nil)
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
-		ID: 1, ChannelID: "ch1", Active: true, Platform: types.PlatformDiscord,
+		ID: 1, ChannelID: "ch1", Active: true, Platform: types.PlatformLocal,
 	}, nil)
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
@@ -657,10 +658,10 @@ func (s *OrchestratorSuite) TestHandleChannelJoin() {
 			s.SetupTest()
 			s.bot.On("GetChannelName", s.ctx, "ch1").Return(tc.nameReturn, tc.nameErr)
 			s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
-				return ch.ChannelID == "ch1" && ch.Name == tc.expectedName && ch.Active
+				return ch.ChannelID == "ch1" && ch.Name == tc.expectedName && ch.Platform == types.PlatformDiscord && ch.Active
 			})).Return(tc.upsertErr)
 
-			s.orch.HandleChannelJoin(s.ctx, "ch1")
+			s.orch.HandleChannelJoin(s.ctx, "ch1", types.PlatformDiscord)
 
 			s.store.AssertExpectations(s.T())
 		})
@@ -1093,6 +1094,15 @@ func (s *OrchestratorSuite) TestHandleMessageInsertBotResponseErrors() {
 		{
 			name: "InsertMessage for bot response fails",
 			setupMock: func() {
+				// Remove the default Maybe() InsertMessage for bot messages so our specific expectation takes effect.
+				filtered := s.store.ExpectedCalls[:0]
+				for _, c := range s.store.ExpectedCalls {
+					if c.Method != "InsertMessage" {
+						filtered = append(filtered, c)
+					}
+				}
+				s.store.ExpectedCalls = filtered
+
 				s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 				s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
 				s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil).Once()
@@ -1670,6 +1680,7 @@ func (s *OrchestratorSuite) TestHandleInteractionStopWithChannelIDOption() {
 func (s *OrchestratorSuite) TestHandleMessageSendStopButtonError() {
 	s.bot.ExpectedCalls = nil // clear default
 	s.bot.On("BotUserID").Return("BOT").Maybe()
+	s.bot.On("IsBotUser", mock.Anything).Return(false).Maybe()
 	s.bot.On("SendStopButton", mock.Anything, "ch1", "ch1").Return("", errors.New("button failed")).Once()
 	s.bot.On("RemoveStopButton", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
@@ -1705,6 +1716,7 @@ func (s *OrchestratorSuite) TestHandleMessageSendStopButtonError() {
 func (s *OrchestratorSuite) TestHandleMessageRemoveStopButtonError() {
 	s.bot.ExpectedCalls = nil // clear default
 	s.bot.On("BotUserID").Return("BOT").Maybe()
+	s.bot.On("IsBotUser", mock.Anything).Return(false).Maybe()
 	s.bot.On("SendStopButton", mock.Anything, "ch1", "ch1").Return("stop-msg-1", nil).Once()
 	s.bot.On("RemoveStopButton", mock.Anything, "ch1", "stop-msg-1").Return(errors.New("remove failed")).Once()
 
@@ -1910,7 +1922,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSuccess() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
@@ -1938,7 +1950,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddWithAutoDelete() {
 		{Name: "ephemeral-check", Description: "Ephemeral check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff", AutoDeleteSec: 300},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "ephemeral-check").Return(nil, nil)
@@ -1966,7 +1978,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddIdempotent() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(&db.ScheduledTask{ID: 5, TemplateName: "daily-check"}, nil)
@@ -2004,7 +2016,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddStoreError() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, errors.New("db error"))
@@ -2027,7 +2039,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSchedulerError() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
@@ -2052,7 +2064,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateList() {
 		{Name: "weekly-report", Description: "Weekly report", Schedule: "0 17 * * 5", Type: "cron", Prompt: "generate report"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
@@ -2099,7 +2111,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddWithPromptPath() {
 		{Name: "daily-from-file", Description: "Daily from file", Schedule: "0 9 * * *", Type: "cron", PromptPath: "daily.md"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute, LoopDir: tmpDir})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute, LoopDir: tmpDir})
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-from-file").Return(nil, nil)
@@ -2128,7 +2140,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddResolvePromptError()
 		// Neither prompt nor prompt_path set
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformDiscord, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "bad-template").Return(nil, nil)
@@ -2436,6 +2448,15 @@ func (s *OrchestratorSuite) TestHandleMessageBotSelfMentionBypassesPermissions()
 	s.orch.cfg = config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
 	}
+	// Replace the default IsBotUser(mock.Anything)->false with a specific one for "BOT"->true.
+	filtered := s.bot.ExpectedCalls[:0]
+	for _, c := range s.bot.ExpectedCalls {
+		if c.Method != "IsBotUser" {
+			filtered = append(filtered, c)
+		}
+	}
+	s.bot.ExpectedCalls = filtered
+	s.bot.On("IsBotUser", "BOT").Return(true)
 
 	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
@@ -3268,7 +3289,7 @@ func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerBlockedByCfgPerms() 
 
 func (s *OrchestratorSuite) TestSendReplyLocalPlatformStoresAndBroadcasts() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	localOrch := New(s.store, s.bot, s.runner, s.scheduler, logger, types.PlatformLocal, config.Config{})
+	localOrch := New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{})
 	eb := new(MockEventBroadcaster)
 	localOrch.SetEventBroadcaster(eb)
 
@@ -3288,15 +3309,22 @@ func (s *OrchestratorSuite) TestSendReplyLocalPlatformStoresAndBroadcasts() {
 	eb.AssertExpectations(s.T())
 }
 
-func (s *OrchestratorSuite) TestSendReplyDiscordPlatformDoesNotStore() {
+func (s *OrchestratorSuite) TestSendReplyAlwaysStoresAndBroadcasts() {
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "hello"
 	})).Return(nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1"}, nil)
+
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d MessageEventData) bool {
+		return d.Content == "hello" && d.IsBot && d.AuthorName == "assistant"
+	}))
 
 	s.orch.sendReply(s.ctx, "ch1", "hello")
 
 	s.bot.AssertExpectations(s.T())
-	s.store.AssertNotCalled(s.T(), "InsertMessage", mock.Anything, mock.Anything)
+	eb.AssertExpectations(s.T())
 }
 
 func (s *OrchestratorSuite) TestActiveChatChannelIDs() {

@@ -25,13 +25,13 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 					ChannelID: msg.ChannelID,
 					GuildID:   msg.GuildID,
 					Name:      name,
-					Platform:  o.platform,
+					Platform:  msg.Platform,
 					Active:    true,
 				}); err != nil {
 					o.logger.Error("auto-creating channel", "error", err)
 					return
 				}
-				o.logger.Info("auto-created channel", "channel_id", msg.ChannelID, "name", name)
+				o.logger.Info("auto-created channel", "channel_id", msg.ChannelID, "platform", msg.Platform, "name", name)
 			} else {
 				return
 			}
@@ -73,6 +73,7 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 
 	o.logger.Info("incoming message",
 		"channel_id", msg.ChannelID,
+		"platform", msg.Platform,
 		"author", msg.AuthorName,
 		"content", msg.Content,
 		"triggered", msg.IsBotMention || msg.IsReplyToBot || msg.HasPrefix || msg.IsDM,
@@ -84,7 +85,7 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 	}
 
 	// Allow the bot's own self-mentions (e.g. from create_thread MCP tool) to bypass permissions.
-	if msg.AuthorID != o.bot.BotUserID() {
+	if !o.bot.IsBotUser(msg.AuthorID) {
 		cfgPerms := o.configPermissionsFor(channel.DirPath)
 		role := resolveRole(cfgPerms, channel.Permissions, msg.AuthorID, msg.AuthorRoles)
 		if role == "" {
@@ -314,6 +315,7 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 
 	o.logger.Info("outgoing message",
 		"channel_id", msg.ChannelID,
+		"platform", msg.Platform,
 		"content", resp.Response,
 	)
 

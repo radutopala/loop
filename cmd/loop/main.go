@@ -20,6 +20,7 @@ import (
 	"github.com/radutopala/loop/internal/daemon"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/discord"
+	"github.com/radutopala/loop/internal/local"
 	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/readme"
 	slackbot "github.com/radutopala/loop/internal/slack"
@@ -154,8 +155,8 @@ var (
 
 var ensureChannelFunc = ensureChannel
 
-func ensureChannel(apiURL, dirPath string) (string, error) {
-	body := fmt.Sprintf(`{"dir_path":%q}`, dirPath)
+func ensureChannel(apiURL, dirPath, platform string) (string, error) {
+	body := fmt.Sprintf(`{"dir_path":%q,"platform":%q}`, dirPath, platform)
 	resp, err := http.Post(apiURL+"/api/channels", "application/json", strings.NewReader(body))
 	if err != nil {
 		return "", fmt.Errorf("calling ensure channel API: %w", err)
@@ -174,6 +175,34 @@ func ensureChannel(apiURL, dirPath string) (string, error) {
 		return "", fmt.Errorf("decoding ensure channel response: %w", err)
 	}
 	return result.ChannelID, nil
+}
+
+type ensureResult struct {
+	Platform  string `json:"platform"`
+	ChannelID string `json:"channel_id"`
+	Created   bool   `json:"created"`
+}
+
+var ensureAllChannelsFunc = ensureAllChannels
+
+func ensureAllChannels(apiURL, dirPath string) ([]ensureResult, error) {
+	body := fmt.Sprintf(`{"dir_path":%q}`, dirPath)
+	resp, err := http.Post(apiURL+"/api/channels/ensure-all", "application/json", strings.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("calling ensure-all channels API: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("ensure-all channels API returned %d: %s", resp.StatusCode, string(respBody))
+	}
+
+	var results []ensureResult
+	if err := json.NewDecoder(resp.Body).Decode(&results); err != nil {
+		return nil, fmt.Errorf("decoding ensure-all channels response: %w", err)
+	}
+	return results, nil
 }
 
 // --- Daemon commands ---
@@ -258,17 +287,20 @@ func newDaemonStatusCmd() *cobra.Command {
 // --- Bot constructors (kept in main.go to isolate discordgo/slack-go imports) ---
 
 var (
-	newDiscordBot = func(token, appID string, logger *slog.Logger) (orchestrator.Bot, error) {
+	newDiscordBot = func(token, appID, guildID string, logger *slog.Logger) (orchestrator.Bot, error) {
 		session, err := discordgo.New("Bot " + token)
 		if err != nil {
 			return nil, err
 		}
 		session.Identify.Intents |= discordgo.IntentMessageContent
-		return discord.NewBot(session, appID, logger), nil
+		return discord.NewBot(session, appID, guildID, logger), nil
 	}
 	newSlackBot = func(botToken, appToken string, logger *slog.Logger) (orchestrator.Bot, error) {
 		api := goslack.New(botToken, goslack.OptionAppLevelToken(appToken))
 		smClient := socketmode.New(api)
 		return slackbot.NewBot(api, slackbot.NewSocketModeAdapter(smClient), logger), nil
+	}
+	newLocalBot = func(store db.Store, logger *slog.Logger) orchestrator.Bot {
+		return local.NewBot(store, logger)
 	}
 )

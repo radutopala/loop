@@ -30,13 +30,21 @@ type MockChannelEnsurer struct {
 	mock.Mock
 }
 
-func (m *MockChannelEnsurer) EnsureChannel(ctx context.Context, dirPath string) (string, error) {
-	args := m.Called(ctx, dirPath)
+func (m *MockChannelEnsurer) EnsureChannel(ctx context.Context, dirPath, platform string) (string, error) {
+	args := m.Called(ctx, dirPath, platform)
 	return args.String(0), args.Error(1)
 }
 
-func (m *MockChannelEnsurer) CreateChannel(ctx context.Context, name, authorID string) (string, error) {
-	args := m.Called(ctx, name, authorID)
+func (m *MockChannelEnsurer) EnsureChannelAllPlatforms(ctx context.Context, dirPath string) ([]EnsureResult, error) {
+	args := m.Called(ctx, dirPath)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]EnsureResult), args.Error(1)
+}
+
+func (m *MockChannelEnsurer) CreateChannel(ctx context.Context, name, authorID, sourceChannelID, platform string) (string, error) {
+	args := m.Called(ctx, name, authorID, sourceChannelID, platform)
 	return args.String(0), args.Error(1)
 }
 
@@ -146,6 +154,10 @@ func (m *MockIncomingMessageHandler) HandleIncomingMessage(ctx context.Context, 
 	m.Called(ctx, channelID, authorID, content)
 }
 
+func (m *MockIncomingMessageHandler) HandleThreadCreated(ctx context.Context, threadID, authorID, message string) {
+	m.Called(ctx, threadID, authorID, message)
+}
+
 type MockInteractionHandler struct {
 	mock.Mock
 	called chan struct{}
@@ -191,6 +203,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("GET /api/channels", s.srv.handleSearchChannels)
 	s.mux.HandleFunc("POST /api/channels", s.srv.handleEnsureChannel)
 	s.mux.HandleFunc("POST /api/channels/create", s.srv.handleCreateChannel)
+	s.mux.HandleFunc("POST /api/channels/ensure-all", s.srv.handleEnsureAllChannels)
 	s.mux.HandleFunc("POST /api/messages", s.srv.handleSendMessage)
 	s.mux.HandleFunc("POST /api/threads", s.srv.handleCreateThread)
 	s.mux.HandleFunc("DELETE /api/threads/{id}", s.srv.handleDeleteThread)
@@ -288,6 +301,7 @@ func (s *ServerSuite) TestNilDependencyReturns501() {
 		body    string
 	}{
 		{"EnsureChannel", "POST", "POST /api/channels", "/api/channels", `{"dir_path":"/path"}`},
+		{"EnsureAllChannels", "POST", "POST /api/channels/ensure-all", "/api/channels/ensure-all", `{"dir_path":"/path"}`},
 		{"CreateChannel", "POST", "POST /api/channels/create", "/api/channels/create", `{"name":"trial"}`},
 		{"CreateThread", "POST", "POST /api/threads", "/api/threads", `{"channel_id":"ch-1","name":"my-thread"}`},
 		{"DeleteThread", "DELETE", "DELETE /api/threads/{id}", "/api/threads/thread-1", ""},
@@ -300,6 +314,8 @@ func (s *ServerSuite) TestNilDependencyReturns501() {
 			switch tt.name {
 			case "EnsureChannel":
 				mux.HandleFunc(tt.pattern, srv.handleEnsureChannel)
+			case "EnsureAllChannels":
+				mux.HandleFunc(tt.pattern, srv.handleEnsureAllChannels)
 			case "CreateChannel":
 				mux.HandleFunc(tt.pattern, srv.handleCreateChannel)
 			case "CreateThread":
@@ -603,7 +619,7 @@ func (s *ServerSuite) TestStartServeError() {
 // --- EnsureChannel tests ---
 
 func (s *ServerSuite) TestEnsureChannelSuccess() {
-	s.channels.On("EnsureChannel", mock.Anything, "/home/user/dev/loop").
+	s.channels.On("EnsureChannel", mock.Anything, "/home/user/dev/loop", "").
 		Return("ch-123", nil)
 
 	rec := s.testRequest("POST", "/api/channels", `{"dir_path":"/home/user/dev/loop"}`)
@@ -616,13 +632,27 @@ func (s *ServerSuite) TestEnsureChannelSuccess() {
 	s.channels.AssertExpectations(s.T())
 }
 
+func (s *ServerSuite) TestEnsureChannelWithPlatform() {
+	s.channels.On("EnsureChannel", mock.Anything, "/home/user/dev/loop", "discord").
+		Return("ch-discord-1", nil)
+
+	rec := s.testRequest("POST", "/api/channels", `{"dir_path":"/home/user/dev/loop","platform":"discord"}`)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp ensureChannelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(s.T(), "ch-discord-1", resp.ChannelID)
+	s.channels.AssertExpectations(s.T())
+}
+
 func (s *ServerSuite) TestEnsureChannelMissingDirPath() {
 	rec := s.testRequest("POST", "/api/channels", `{"dir_path":""}`)
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
 func (s *ServerSuite) TestEnsureChannelError() {
-	s.channels.On("EnsureChannel", mock.Anything, "/path").
+	s.channels.On("EnsureChannel", mock.Anything, "/path", "").
 		Return("", errors.New("ensure failed"))
 
 	rec := s.testRequest("POST", "/api/channels", `{"dir_path":"/path"}`)
@@ -631,10 +661,47 @@ func (s *ServerSuite) TestEnsureChannelError() {
 	s.channels.AssertExpectations(s.T())
 }
 
+// --- EnsureAllChannels tests ---
+
+func (s *ServerSuite) TestEnsureAllChannelsSuccess() {
+	s.channels.On("EnsureChannelAllPlatforms", mock.Anything, "/home/user/dev/loop").
+		Return([]EnsureResult{
+			{Platform: "local", ChannelID: "ch-local", Created: true},
+			{Platform: "discord", ChannelID: "ch-discord", Created: false},
+		}, nil)
+
+	rec := s.testRequest("POST", "/api/channels/ensure-all", `{"dir_path":"/home/user/dev/loop"}`)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []EnsureResult
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 2)
+	s.channels.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestEnsureAllChannelsMissingDirPath() {
+	rec := s.testRequest("POST", "/api/channels/ensure-all", `{"dir_path":""}`)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestEnsureAllChannelsBadJSON() {
+	rec := s.testRequest("POST", "/api/channels/ensure-all", `not json`)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestEnsureAllChannelsError() {
+	s.channels.On("EnsureChannelAllPlatforms", mock.Anything, "/path").
+		Return(nil, errors.New("ensure failed"))
+
+	rec := s.testRequest("POST", "/api/channels/ensure-all", `{"dir_path":"/path"}`)
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.channels.AssertExpectations(s.T())
+}
+
 // --- CreateChannel tests ---
 
 func (s *ServerSuite) TestCreateChannelSuccess() {
-	s.channels.On("CreateChannel", mock.Anything, "trial", "").
+	s.channels.On("CreateChannel", mock.Anything, "trial", "", "", "").
 		Return("ch-new", nil)
 
 	rec := s.testRequest("POST", "/api/channels/create", `{"name":"trial"}`)
@@ -653,7 +720,7 @@ func (s *ServerSuite) TestCreateChannelMissingName() {
 }
 
 func (s *ServerSuite) TestCreateChannelWithAuthorID() {
-	s.channels.On("CreateChannel", mock.Anything, "trial", "user-42").
+	s.channels.On("CreateChannel", mock.Anything, "trial", "user-42", "", "").
 		Return("ch-new", nil)
 
 	rec := s.testRequest("POST", "/api/channels/create", `{"name":"trial","author_id":"user-42"}`)
@@ -666,8 +733,22 @@ func (s *ServerSuite) TestCreateChannelWithAuthorID() {
 	s.channels.AssertExpectations(s.T())
 }
 
+func (s *ServerSuite) TestCreateChannelWithChannelID() {
+	s.channels.On("CreateChannel", mock.Anything, "trial", "", "source-ch", "").
+		Return("ch-new", nil)
+
+	rec := s.testRequest("POST", "/api/channels/create", `{"name":"trial","channel_id":"source-ch"}`)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+
+	var resp createChannelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(s.T(), "ch-new", resp.ChannelID)
+	s.channels.AssertExpectations(s.T())
+}
+
 func (s *ServerSuite) TestCreateChannelError() {
-	s.channels.On("CreateChannel", mock.Anything, "trial", "").
+	s.channels.On("CreateChannel", mock.Anything, "trial", "", "", "").
 		Return("", errors.New("create failed"))
 
 	rec := s.testRequest("POST", "/api/channels/create", `{"name":"trial"}`)
@@ -729,7 +810,7 @@ func (s *ServerSuite) TestCreateThreadLocalAutoTrigger() {
 	defer func() { s.srv.msgHandler = nil }()
 
 	called := make(chan struct{}, 1)
-	handler.On("HandleIncomingMessage", mock.Anything, "thread-1", "user-42", "@LoopBot Do the task").
+	handler.On("HandleThreadCreated", mock.Anything, "thread-1", "user-42", "Do the task").
 		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
 
 	rec := s.testRequest("POST", "/api/threads", `{"channel_id":"ch-1","name":"my-thread","author_id":"user-42","message":"Do the task"}`)
@@ -743,7 +824,7 @@ func (s *ServerSuite) TestCreateThreadLocalAutoTrigger() {
 	select {
 	case <-called:
 	case <-time.After(time.Second):
-		s.T().Fatal("HandleIncomingMessage was not called within 1s")
+		s.T().Fatal("HandleThreadCreated was not called within 1s")
 	}
 
 	handler.AssertExpectations(s.T())
@@ -759,8 +840,7 @@ func (s *ServerSuite) TestCreateThreadLocalAutoTriggerDefaultAuthor() {
 	defer func() { s.srv.msgHandler = nil }()
 
 	called := make(chan struct{}, 1)
-	// No author_id provided — should default to "local-user".
-	handler.On("HandleIncomingMessage", mock.Anything, "thread-1", "local-user", "@LoopBot Do the task").
+	handler.On("HandleThreadCreated", mock.Anything, "thread-1", "", "Do the task").
 		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
 
 	rec := s.testRequest("POST", "/api/threads", `{"channel_id":"ch-1","name":"my-thread","message":"Do the task"}`)
@@ -770,7 +850,7 @@ func (s *ServerSuite) TestCreateThreadLocalAutoTriggerDefaultAuthor() {
 	select {
 	case <-called:
 	case <-time.After(time.Second):
-		s.T().Fatal("HandleIncomingMessage was not called within 1s")
+		s.T().Fatal("HandleThreadCreated was not called within 1s")
 	}
 
 	handler.AssertExpectations(s.T())
@@ -789,7 +869,7 @@ func (s *ServerSuite) TestCreateThreadLocalNoTriggerWithoutMessage() {
 	require.Equal(s.T(), http.StatusCreated, rec.Code)
 
 	// No message means no auto-trigger.
-	handler.AssertNotCalled(s.T(), "HandleIncomingMessage", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	handler.AssertNotCalled(s.T(), "HandleThreadCreated", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *ServerSuite) TestCreateThreadMissingFields() {
@@ -918,7 +998,6 @@ func (s *ServerSuite) TestDeleteChannelDeleteError() {
 // --- SearchChannels tests ---
 
 func (s *ServerSuite) TestSearchChannelsSuccess() {
-	s.srv.SetPlatform(types.PlatformLocal)
 	channels := []*db.Channel{
 		{ChannelID: "ch-1", Name: "general", DirPath: "/home/user/general", Active: true, Platform: types.PlatformLocal},
 		{ChannelID: "ch-2", Name: "random", DirPath: "/home/user/random", ParentID: "ch-1", Active: false, Platform: types.PlatformLocal},
@@ -941,7 +1020,6 @@ func (s *ServerSuite) TestSearchChannelsSuccess() {
 }
 
 func (s *ServerSuite) TestSearchChannelsWithQuery() {
-	s.srv.SetPlatform(types.PlatformLocal)
 	channels := []*db.Channel{
 		{ChannelID: "ch-1", Name: "general", DirPath: "/home/user/general", Active: true, Platform: types.PlatformLocal},
 		{ChannelID: "ch-2", Name: "random", DirPath: "/home/user/random", Active: true, Platform: types.PlatformLocal},
@@ -960,7 +1038,6 @@ func (s *ServerSuite) TestSearchChannelsWithQuery() {
 }
 
 func (s *ServerSuite) TestSearchChannelsWithQueryNoMatch() {
-	s.srv.SetPlatform(types.PlatformLocal)
 	channels := []*db.Channel{
 		{ChannelID: "ch-1", Name: "general", DirPath: "/home/user/general", Active: true, Platform: types.PlatformLocal},
 	}
@@ -990,7 +1067,6 @@ func (s *ServerSuite) TestSearchChannelsEmpty() {
 }
 
 func (s *ServerSuite) TestSearchChannelsFiltersByPlatform() {
-	s.srv.SetPlatform(types.PlatformLocal)
 	channels := []*db.Channel{
 		{ChannelID: "ch-1", Name: "local-ch", Platform: types.PlatformLocal, Active: true},
 		{ChannelID: "ch-2", Name: "discord-ch", Platform: types.PlatformDiscord, Active: true},
@@ -998,7 +1074,7 @@ func (s *ServerSuite) TestSearchChannelsFiltersByPlatform() {
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
 
-	rec := s.testRequest("GET", "/api/channels", "")
+	rec := s.testRequest("GET", "/api/channels?platform=local", "")
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -1010,8 +1086,6 @@ func (s *ServerSuite) TestSearchChannelsFiltersByPlatform() {
 }
 
 func (s *ServerSuite) TestSearchChannelsRunningFromContainers() {
-	s.srv.SetPlatform(types.PlatformLocal)
-
 	lister := new(MockRunningChannelLister)
 	s.srv.SetRunningChannelLister(lister)
 
@@ -1036,8 +1110,6 @@ func (s *ServerSuite) TestSearchChannelsRunningFromContainers() {
 }
 
 func (s *ServerSuite) TestSearchChannelsRunningListerError() {
-	s.srv.SetPlatform(types.PlatformLocal)
-
 	lister := new(MockRunningChannelLister)
 	s.srv.SetRunningChannelLister(lister)
 
@@ -1060,8 +1132,6 @@ func (s *ServerSuite) TestSearchChannelsRunningListerError() {
 }
 
 func (s *ServerSuite) TestSearchChannelsAgentRunning() {
-	s.srv.SetPlatform(types.PlatformLocal)
-
 	chatLister := new(MockActiveChatLister)
 	s.srv.SetActiveChatLister(chatLister)
 
@@ -1095,7 +1165,6 @@ func (s *ServerSuite) TestSearchChannelsError() {
 }
 
 func (s *ServerSuite) TestSearchChannelsDirPathFallback() {
-	s.srv.SetPlatform(types.PlatformLocal)
 	s.srv.SetLoopDir("/home/test/.loop")
 	channels := []*db.Channel{
 		{ChannelID: "ch-1", Name: "no-dir", Active: true, Platform: types.PlatformLocal},
@@ -1117,8 +1186,6 @@ func (s *ServerSuite) TestSearchChannelsDirPathFallback() {
 }
 
 func (s *ServerSuite) TestSearchChannelsBranch() {
-	s.srv.SetPlatform(types.PlatformLocal)
-
 	// Create a temp git repo so gitBranch returns a real branch name.
 	dir := s.T().TempDir()
 	for _, args := range [][]string{
@@ -1193,7 +1260,7 @@ func (s *ServerSuite) TestSendMessageViaHandler() {
 	s.srv.SetIncomingMessageHandler(handler)
 
 	called := make(chan struct{}, 1)
-	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "local-user", "hello world").
+	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "hello world").
 		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
 
 	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"hello world"}`)
@@ -1659,7 +1726,7 @@ func (s *ServerSuite) TestCommandTasksSuccess() {
 	handler.On("HandleInteraction", mock.Anything, mock.MatchedBy(func(inter *bot.Interaction) bool {
 		return inter.ChannelID == "ch-1" &&
 			inter.CommandName == "tasks" &&
-			inter.AuthorID == "local-user"
+			inter.AuthorID == "api-user"
 	})).Return()
 
 	rec := s.testRequest("POST", "/api/commands", `{"channel_id":"ch-1","command":"tasks"}`)

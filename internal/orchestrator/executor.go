@@ -25,7 +25,6 @@ type TaskExecutor struct {
 	logger           *slog.Logger
 	containerTimeout time.Duration
 	streamingEnabled bool
-	platform         types.Platform
 	events           EventBroadcaster
 }
 
@@ -34,22 +33,14 @@ func NewTaskExecutor(runner Runner, bot Bot, store db.Store, logger *slog.Logger
 	return &TaskExecutor{runner: runner, bot: bot, store: store, logger: logger, containerTimeout: containerTimeout, streamingEnabled: streamingEnabled}
 }
 
-// SetPlatform sets the platform for local-specific behavior.
-func (e *TaskExecutor) SetPlatform(p types.Platform) {
-	e.platform = p
-}
-
 // SetEventBroadcaster sets the event broadcaster for real-time updates.
 func (e *TaskExecutor) SetEventBroadcaster(eb EventBroadcaster) {
 	e.events = eb
 }
 
 // broadcastBotMessage stores a bot message in the database and broadcasts it
-// via the events hub. Only runs on the local platform where bot.SendMessage is a no-op.
+// via the events hub so the response is visible in all UIs.
 func (e *TaskExecutor) broadcastBotMessage(ctx context.Context, channelID, content string) {
-	if e.platform != types.PlatformLocal {
-		return
-	}
 	msgID := generateMessageID()
 	ch, err := e.store.GetChannel(ctx, channelID)
 	if err == nil && ch != nil {

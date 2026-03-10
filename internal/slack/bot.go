@@ -14,6 +14,7 @@ import (
 	"github.com/slack-go/slack/socketmode"
 
 	"github.com/radutopala/loop/internal/bot"
+	"github.com/radutopala/loop/internal/types"
 )
 
 const (
@@ -236,9 +237,14 @@ func (b *SlackBot) BotUserID() string {
 	return b.botUserID
 }
 
+// IsBotUser returns true if the given userID matches the bot's user ID.
+func (b *SlackBot) IsBotUser(userID string) bool {
+	return userID == b.BotUserID()
+}
+
 // CreateChannel creates a new public Slack channel. If the channel name is
 // already taken, it looks up the existing channel and returns its ID.
-func (b *SlackBot) CreateChannel(ctx context.Context, _, name string) (string, error) {
+func (b *SlackBot) CreateChannel(ctx context.Context, name string) (string, error) {
 	ch, err := b.session.CreateConversation(goslack.CreateConversationParams{
 		ChannelName: name,
 	})
@@ -352,6 +358,9 @@ func (b *SlackBot) CreateSimpleThread(ctx context.Context, channelID, name, init
 	b.logger.InfoContext(ctx, "created simple slack thread", "thread_id", threadID, "name", name, "parent_id", channelID)
 	return threadID, nil
 }
+
+func (b *SlackBot) HandleIncomingMessage(_ context.Context, _, _, _ string) {}
+func (b *SlackBot) HandleThreadCreated(_ context.Context, _, _, _ string)   {}
 
 // PostMessage sends a simple message to the given channel or thread.
 // Text mentions of the bot (e.g. @BotName) are converted to proper Slack mentions.
@@ -569,6 +578,7 @@ func (b *SlackBot) handleMessage(ev *slackevents.MessageEvent) {
 		AuthorName:   ev.User,
 		Content:      content,
 		MessageID:    ev.TimeStamp,
+		Platform:     types.PlatformSlack,
 		IsBotMention: isMention,
 		IsReplyToBot: isReply,
 		HasPrefix:    hasPrefix,
@@ -610,7 +620,7 @@ func (b *SlackBot) handleMemberJoinedChannel(ev *slackevents.MemberJoinedChannel
 	}
 
 	for _, h := range bot.CopyHandlers(&b.mu, b.channelJoinHandlers) {
-		go h(context.Background(), ev.Channel)
+		go h(context.Background(), ev.Channel, types.PlatformSlack)
 	}
 }
 
@@ -660,6 +670,7 @@ func (b *SlackBot) handleInteractive(evt socketmode.Event) {
 			CommandName: "stop",
 			Options:     map[string]string{"channel_id": targetChannelID},
 			AuthorID:    callback.User.ID,
+			Platform:    types.PlatformSlack,
 		}
 
 		b.dispatchInteraction(inter)

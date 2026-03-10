@@ -9,7 +9,6 @@ import (
 	"net/http"
 
 	"github.com/radutopala/loop/internal/scheduler"
-	"github.com/radutopala/loop/internal/types"
 )
 
 // RunningChannelLister returns the set of channel IDs that have running containers.
@@ -26,6 +25,7 @@ type ActiveChatLister interface {
 // through the orchestrator so Claude can respond.
 type IncomingMessageHandler interface {
 	HandleIncomingMessage(ctx context.Context, channelID, authorID, content string)
+	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }
 
 // Server exposes a lightweight HTTP API for task CRUD operations.
@@ -45,7 +45,6 @@ type Server struct {
 	msgHandler         IncomingMessageHandler
 	interactionHandler InteractionHandler
 	eventsHub          *EventsHub
-	platform           types.Platform
 	loopDir            string
 	logger             *slog.Logger
 	server             *http.Server
@@ -65,11 +64,6 @@ func (s *Server) EventsHub() *EventsHub {
 // SetMemoryIndexer configures the memory indexer for the /api/memory/* endpoints.
 func (s *Server) SetMemoryIndexer(idx MemoryIndexer) {
 	s.memoryIndexer = idx
-}
-
-// SetPlatform sets the platform used for filtering channels.
-func (s *Server) SetPlatform(p types.Platform) {
-	s.platform = p
 }
 
 // SetLoopDir sets the loop directory used for fallback work dir resolution.
@@ -116,6 +110,7 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("GET /api/channels", s.handleSearchChannels)
 	mux.HandleFunc("POST /api/channels", s.handleEnsureChannel)
 	mux.HandleFunc("POST /api/channels/create", s.handleCreateChannel)
+	mux.HandleFunc("POST /api/channels/ensure-all", s.handleEnsureAllChannels)
 	mux.HandleFunc("POST /api/messages", s.handleSendMessage)
 	mux.HandleFunc("POST /api/threads", s.handleCreateThread)
 	mux.HandleFunc("DELETE /api/threads/{id}", s.handleDeleteThread)

@@ -19,7 +19,7 @@ install: ## Install loop to GOPATH/bin
 
 test: ## Run all tests
 	go generate ./internal/readme/
-	go test -race -count=1 ./...
+	go test -race -count=1 -timeout 60s ./...
 
 test-integration: ## Run integration tests (requires tokens in ~/.loop/config.integration.json)
 	go test -v -tags integration -race -count=1 -timeout 10m ./internal/slack/ ./internal/discord/

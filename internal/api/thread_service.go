@@ -2,21 +2,17 @@ package api
 
 import (
 	"context"
-	"crypto/rand"
-	"encoding/hex"
 	"fmt"
 	"log/slog"
 
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
-	"github.com/radutopala/loop/internal/types"
+	"github.com/radutopala/loop/internal/randutil"
 )
 
-// generateThreadID creates a random hex ID for local-platform threads.
+// generateThreadID creates a random hex ID for platforms without native thread IDs.
 var generateThreadID = func() string {
-	b := make([]byte, 6)
-	_, _ = rand.Read(b)
-	return hex.EncodeToString(b)
+	return randutil.HexID(6)
 }
 
 // ThreadCreator can create and delete threads on the chat platform.
@@ -32,19 +28,17 @@ type ThreadEnsurer interface {
 }
 
 type threadService struct {
-	store    db.Store
-	creator  ThreadCreator
-	platform types.Platform
-	logger   *slog.Logger
+	store   db.Store
+	creator ThreadCreator
+	logger  *slog.Logger
 }
 
 // NewThreadService creates a new ThreadEnsurer.
-func NewThreadService(store db.Store, creator ThreadCreator, platform types.Platform, logger *slog.Logger) ThreadEnsurer {
+func NewThreadService(store db.Store, creator ThreadCreator, logger *slog.Logger) ThreadEnsurer {
 	return &threadService{
-		store:    store,
-		creator:  creator,
-		platform: platform,
-		logger:   logger,
+		store:   store,
+		creator: creator,
+		logger:  logger,
 	}
 }
 
