@@ -11,6 +11,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/events"
 )
 
 type EventsHubSuite struct {
@@ -79,7 +81,7 @@ func (s *EventsHubSuite) TestBroadcastToAll() {
 
 	time.Sleep(50 * time.Millisecond)
 
-	hub.BroadcastMessageCreated("ch-1", MessageData{
+	hub.BroadcastMessageCreated("ch-1", events.MessageEventData{
 		MsgID:      "msg-1",
 		AuthorName: "alice",
 		Content:    "hello",
@@ -116,10 +118,10 @@ func (s *EventsHubSuite) TestBroadcastFilteredByChannel() {
 	time.Sleep(50 * time.Millisecond)
 
 	// Send to ch-1 — subscriber is on ch-2, should not receive
-	hub.BroadcastMessageCreated("ch-1", MessageData{Content: "nope"})
+	hub.BroadcastMessageCreated("ch-1", events.MessageEventData{Content: "nope"})
 
 	// Send to ch-2 — subscriber should receive
-	hub.BroadcastAgentStatus("ch-2", AgentStatusData{Status: "running"})
+	hub.BroadcastAgentStatus("ch-2", events.AgentStatusEventData{Status: "running"})
 
 	_, msg, err := conn.ReadMessage()
 	require.NoError(s.T(), err)
@@ -150,7 +152,7 @@ func (s *EventsHubSuite) TestBroadcastAgentStatus() {
 
 	time.Sleep(50 * time.Millisecond)
 
-	hub.BroadcastAgentStatus("ch-1", AgentStatusData{Status: "error", Error: "boom"})
+	hub.BroadcastAgentStatus("ch-1", events.AgentStatusEventData{Status: "error", Error: "boom"})
 
 	_, msg, err := conn.ReadMessage()
 	require.NoError(s.T(), err)
@@ -181,7 +183,7 @@ func (s *EventsHubSuite) TestBroadcastMessageStreaming() {
 
 	time.Sleep(50 * time.Millisecond)
 
-	hub.BroadcastMessageStreaming("ch-1", MessageStreamingData{Content: "partial..."})
+	hub.BroadcastMessageStreaming("ch-1", events.MessageStreamingData{Content: "partial..."})
 
 	_, msg, err := conn.ReadMessage()
 	require.NoError(s.T(), err)
@@ -283,7 +285,7 @@ func (s *EventsHubSuite) TestBroadcastRemovesClosedConnections() {
 
 	// May take more than one broadcast for the write error to surface.
 	for range 5 {
-		hub.BroadcastMessageCreated("ch-1", MessageData{Content: "test"})
+		hub.BroadcastMessageCreated("ch-1", events.MessageEventData{Content: "test"})
 		time.Sleep(50 * time.Millisecond)
 	}
 
@@ -296,8 +298,8 @@ func (s *EventsHubSuite) TestBroadcastNoSubscribers() {
 	hub := NewEventsHub(testLogger())
 
 	// Broadcast with zero subscribers — must not panic or leak.
-	hub.BroadcastMessageCreated("ch-1", MessageData{Content: "hello"})
-	hub.BroadcastAgentStatus("ch-1", AgentStatusData{Status: "running"})
+	hub.BroadcastMessageCreated("ch-1", events.MessageEventData{Content: "hello"})
+	hub.BroadcastAgentStatus("ch-1", events.AgentStatusEventData{Status: "running"})
 
 	hub.mu.RLock()
 	require.Empty(s.T(), hub.subscribers)

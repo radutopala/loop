@@ -718,7 +718,7 @@ func (r *DockerRunner) collectStreamingOutput(ctx context.Context, containerID s
 		return nil, fmt.Errorf("following container logs: %w", err)
 	}
 
-	claudeResp, parseErr := parseStreamingJSON(logsReader, onTurn)
+	claudeResp, parseErr := scanStreamJSON(logsReader, onTurn)
 	logsReader.Close()
 
 	exitCode, err := r.waitForExit(ctx, containerID)
@@ -747,7 +747,7 @@ func (r *DockerRunner) collectBatchOutput(ctx context.Context, containerID strin
 		return nil, fmt.Errorf("reading container logs: %w", err)
 	}
 
-	claudeResp, parseErr := parseStreamJSON(reader)
+	claudeResp, parseErr := scanStreamJSON(reader, nil)
 	if parseErr != nil {
 		if exitCode != 0 {
 			return nil, fmt.Errorf("container exited with code %d: %w", exitCode, parseErr)
@@ -827,20 +827,7 @@ func localhostToDockerHost(v string) string {
 	return result
 }
 
-// parseStreamJSON scans newline-delimited JSON events from Claude's
-// --output-format stream-json and returns the final "result" event.
-func parseStreamJSON(r io.Reader) (*claudeResponse, error) {
-	return scanStreamJSON(r, nil)
-}
-
-// parseStreamingJSON scans newline-delimited JSON events from Claude's
-// streaming output, calling onTurn for each assistant turn's text content.
-// Returns the final "result" event.
-func parseStreamingJSON(r io.Reader, onTurn func(string)) (*claudeResponse, error) {
-	return scanStreamJSON(r, onTurn)
-}
-
-// scanStreamJSON is the shared scanner for Claude's stream-json output.
+// scanStreamJSON scans newline-delimited JSON events from Claude's stream-json output.
 // It scans newline-delimited JSON events, dispatches "assistant" events
 // to onTurn (when non-nil), and returns the final "result" event.
 func scanStreamJSON(r io.Reader, onTurn func(string)) (*claudeResponse, error) {

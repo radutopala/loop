@@ -12,6 +12,7 @@ import (
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/randutil"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/types"
@@ -58,7 +59,7 @@ type Orchestrator struct {
 	bot            Bot
 	runner         Runner
 	scheduler      scheduler.Scheduler
-	events         EventBroadcaster
+	events         events.Broadcaster
 	queue          *ChannelQueue
 	activeRuns     sync.Map // map[channelID]context.CancelFunc
 	logger         *slog.Logger
@@ -92,7 +93,7 @@ func (o *Orchestrator) ActiveChatChannelIDs() map[string]struct{} {
 }
 
 // SetEventBroadcaster configures the event broadcaster for real-time event streaming.
-func (o *Orchestrator) SetEventBroadcaster(eb EventBroadcaster) {
+func (o *Orchestrator) SetEventBroadcaster(eb events.Broadcaster) {
 	o.events = eb
 }
 

@@ -10,6 +10,7 @@ import (
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -25,7 +26,7 @@ type TaskExecutor struct {
 	logger           *slog.Logger
 	containerTimeout time.Duration
 	streamingEnabled bool
-	events           EventBroadcaster
+	events           events.Broadcaster
 }
 
 // NewTaskExecutor creates a new TaskExecutor.
@@ -34,34 +35,14 @@ func NewTaskExecutor(runner Runner, bot Bot, store db.Store, logger *slog.Logger
 }
 
 // SetEventBroadcaster sets the event broadcaster for real-time updates.
-func (e *TaskExecutor) SetEventBroadcaster(eb EventBroadcaster) {
+func (e *TaskExecutor) SetEventBroadcaster(eb events.Broadcaster) {
 	e.events = eb
 }
 
 // broadcastBotMessage stores a bot message in the database and broadcasts it
 // via the events hub so the response is visible in all UIs.
 func (e *TaskExecutor) broadcastBotMessage(ctx context.Context, channelID, content string) {
-	msgID := generateMessageID()
-	ch, err := e.store.GetChannel(ctx, channelID)
-	if err == nil && ch != nil {
-		_ = e.store.InsertMessage(ctx, &db.Message{
-			ChatID:     ch.ID,
-			ChannelID:  channelID,
-			MsgID:      msgID,
-			AuthorName: "assistant",
-			Content:    content,
-			IsBot:      true,
-			CreatedAt:  time.Now().UTC(),
-		})
-	}
-	if e.events != nil {
-		e.events.BroadcastMessageCreated(channelID, MessageEventData{
-			MsgID:      msgID,
-			AuthorName: "assistant",
-			Content:    content,
-			IsBot:      true,
-		})
-	}
+	storeBotMessage(ctx, e.store, e.events, channelID, content)
 }
 
 // ExecuteTask runs an agent for the given scheduled task and sends the result to the chat platform.
@@ -142,7 +123,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				// Don't use broadcastBotMessage here — CreateSimpleThread
 				// already stored the message in the DB for the thread.
 				if e.events != nil {
-					e.events.BroadcastMessageCreated(threadID, MessageEventData{
+					e.events.BroadcastMessageCreated(threadID, events.MessageEventData{
 						MsgID:      generateMessageID(),
 						AuthorName: "assistant",
 						Content:    prefix + text,

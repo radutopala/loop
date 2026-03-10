@@ -16,6 +16,7 @@ import (
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/testutil"
 	"github.com/radutopala/loop/internal/types"
 )
@@ -713,7 +714,7 @@ func (s *TaskExecutorSuite) TestBroadcastBotMessage() {
 	s.store.On("InsertMessage", s.ctx, mock.MatchedBy(func(m *db.Message) bool {
 		return m.ChatID == 5 && m.ChannelID == "ch1" && m.Content == "task done" && m.IsBot
 	})).Return(nil)
-	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d MessageEventData) bool {
+	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
 		return d.Content == "task done" && d.IsBot && d.AuthorName == "assistant"
 	}))
 
@@ -764,7 +765,7 @@ func (s *TaskExecutorSuite) TestFinalResponseBroadcasts() {
 	s.store.On("InsertMessage", s.ctx, mock.MatchedBy(func(m *db.Message) bool {
 		return m.ChatID == 5 && m.Content == "all good" && m.IsBot
 	})).Return(nil)
-	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d MessageEventData) bool {
+	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
 		return d.Content == "all good" && d.IsBot
 	}))
 
@@ -820,11 +821,11 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 	// Channel created broadcast goes to parent
 	eb.On("BroadcastChannelCreated", "ch20", "thread-20").Once()
 	// First turn broadcast goes to THREAD, not parent channel
-	eb.On("BroadcastMessageCreated", "thread-20", mock.MatchedBy(func(d MessageEventData) bool {
+	eb.On("BroadcastMessageCreated", "thread-20", mock.MatchedBy(func(d events.MessageEventData) bool {
 		return d.Content == "🧵 task #20 (`0 * * * *`) Turn 1" && d.IsBot
 	})).Once()
 	// Final response broadcast goes to thread
-	eb.On("BroadcastMessageCreated", "thread-20", mock.MatchedBy(func(d MessageEventData) bool {
+	eb.On("BroadcastMessageCreated", "thread-20", mock.MatchedBy(func(d events.MessageEventData) bool {
 		return d.Content == "Final" && d.IsBot
 	})).Once()
 

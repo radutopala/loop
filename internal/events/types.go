@@ -1,7 +1,7 @@
-package orchestrator
+package events
 
-// EventBroadcaster broadcasts events to connected clients.
-type EventBroadcaster interface {
+// Broadcaster broadcasts events to connected clients.
+type Broadcaster interface {
 	BroadcastMessageCreated(channelID string, data MessageEventData)
 	BroadcastMessageStreaming(channelID string, data MessageStreamingData)
 	BroadcastAgentStatus(channelID string, data AgentStatusEventData)

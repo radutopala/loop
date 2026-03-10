@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+	"github.com/radutopala/loop/internal/events"
 )
 
 // Event type constants.
@@ -24,26 +25,6 @@ type Event struct {
 	ChannelID string `json:"channel_id"`
 	Data      any    `json:"data"`
 	Timestamp int64  `json:"timestamp"`
-}
-
-// MessageData is the data payload for message.created events.
-type MessageData struct {
-	MsgID      string `json:"msg_id"`
-	AuthorID   string `json:"author_id"`
-	AuthorName string `json:"author_name"`
-	Content    string `json:"content"`
-	IsBot      bool   `json:"is_bot"`
-}
-
-// MessageStreamingData is the data payload for message.streaming events.
-type MessageStreamingData struct {
-	Content string `json:"content"`
-}
-
-// AgentStatusData is the data payload for agent.status events.
-type AgentStatusData struct {
-	Status string `json:"status"` // "running", "completed", "error"
-	Error  string `json:"error,omitempty"`
 }
 
 // EventsHub manages WebSocket event subscribers and broadcasts events.
@@ -132,7 +113,7 @@ func (h *EventsHub) Broadcast(evt Event) {
 }
 
 // BroadcastMessageCreated sends a message.created event.
-func (h *EventsHub) BroadcastMessageCreated(channelID string, data MessageData) {
+func (h *EventsHub) BroadcastMessageCreated(channelID string, data events.MessageEventData) {
 	h.Broadcast(Event{
 		Type:      EventMessageCreated,
 		ChannelID: channelID,
@@ -141,7 +122,7 @@ func (h *EventsHub) BroadcastMessageCreated(channelID string, data MessageData) 
 }
 
 // BroadcastMessageStreaming sends a message.streaming event with partial bot response.
-func (h *EventsHub) BroadcastMessageStreaming(channelID string, data MessageStreamingData) {
+func (h *EventsHub) BroadcastMessageStreaming(channelID string, data events.MessageStreamingData) {
 	h.Broadcast(Event{
 		Type:      EventMessageStreaming,
 		ChannelID: channelID,
@@ -167,7 +148,7 @@ func (h *EventsHub) BroadcastChannelDeleted(channelID string) {
 }
 
 // BroadcastAgentStatus sends an agent.status event.
-func (h *EventsHub) BroadcastAgentStatus(channelID string, data AgentStatusData) {
+func (h *EventsHub) BroadcastAgentStatus(channelID string, data events.AgentStatusEventData) {
 	h.Broadcast(Event{
 		Type:      EventAgentStatus,
 		ChannelID: channelID,

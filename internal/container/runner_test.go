@@ -1408,7 +1408,7 @@ func (r *errReader) Read([]byte) (int, error) {
 	return 0, r.err
 }
 
-// --- Tests for parseStreamJSON ---
+// --- Tests for scanStreamJSON ---
 
 func TestParseStreamJSON(t *testing.T) {
 	tests := []struct {
@@ -1469,7 +1469,7 @@ func TestParseStreamJSON(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			resp, err := parseStreamJSON(strings.NewReader(tc.input))
+			resp, err := scanStreamJSON(strings.NewReader(tc.input), nil)
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tc.wantErr)
@@ -1483,7 +1483,7 @@ func TestParseStreamJSON(t *testing.T) {
 }
 
 func TestParseStreamJSONReaderError(t *testing.T) {
-	resp, err := parseStreamJSON(&errReader{err: errors.New("read error")})
+	resp, err := scanStreamJSON(&errReader{err: errors.New("read error")}, nil)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "reading container output")
 	require.Nil(t, resp)
@@ -2222,7 +2222,7 @@ func TestAssistantMessageExtractText(t *testing.T) {
 	}
 }
 
-// --- Tests for parseStreamingJSON ---
+// --- Tests for scanStreamJSON with onTurn ---
 
 func TestParseStreamingJSON(t *testing.T) {
 	t.Run("happy path with assistant and result events", func(t *testing.T) {
@@ -2237,7 +2237,7 @@ func TestParseStreamingJSON(t *testing.T) {
 			turns = append(turns, text)
 		}
 
-		resp, err := parseStreamingJSON(strings.NewReader(input), onTurn)
+		resp, err := scanStreamJSON(strings.NewReader(input), onTurn)
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 		require.Equal(t, "Here is the answer.", resp.Result)
@@ -2249,7 +2249,7 @@ func TestParseStreamingJSON(t *testing.T) {
 	t.Run("no result event", func(t *testing.T) {
 		input := `{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]}}
 `
-		resp, err := parseStreamingJSON(strings.NewReader(input), func(string) {})
+		resp, err := scanStreamJSON(strings.NewReader(input), func(string) {})
 		require.Error(t, err)
 		require.Nil(t, resp)
 		require.Contains(t, err.Error(), "no result event found")
@@ -2260,7 +2260,7 @@ func TestParseStreamingJSON(t *testing.T) {
 {"type":"result","result":"Done.","session_id":"sess-2","is_error":false}
 `
 		var turns []string
-		resp, err := parseStreamingJSON(strings.NewReader(input), func(text string) {
+		resp, err := scanStreamJSON(strings.NewReader(input), func(text string) {
 			turns = append(turns, text)
 		})
 		require.NoError(t, err)
@@ -2273,7 +2273,7 @@ func TestParseStreamingJSON(t *testing.T) {
 		input := `not json at all
 {"type":"result","result":"OK","session_id":"sess-3","is_error":false}
 `
-		resp, err := parseStreamingJSON(strings.NewReader(input), func(string) {})
+		resp, err := scanStreamJSON(strings.NewReader(input), func(string) {})
 		require.NoError(t, err)
 		require.Equal(t, "OK", resp.Result)
 	})
@@ -2283,7 +2283,7 @@ func TestParseStreamingJSON(t *testing.T) {
 
 {"type":"result","result":"OK","session_id":"sess-4","is_error":false}
 `
-		resp, err := parseStreamingJSON(strings.NewReader(input), func(string) {})
+		resp, err := scanStreamJSON(strings.NewReader(input), func(string) {})
 		require.NoError(t, err)
 		require.Equal(t, "OK", resp.Result)
 	})
@@ -2293,7 +2293,7 @@ func TestParseStreamingJSON(t *testing.T) {
 {"type":"result","result":"OK","session_id":"sess-5","is_error":false}
 `
 		var turns []string
-		resp, err := parseStreamingJSON(strings.NewReader(input), func(text string) {
+		resp, err := scanStreamJSON(strings.NewReader(input), func(text string) {
 			turns = append(turns, text)
 		})
 		require.NoError(t, err)
@@ -2305,7 +2305,7 @@ func TestParseStreamingJSON(t *testing.T) {
 		input := `{"type":"result","result":123}
 {"type":"result","result":"OK","session_id":"sess-6","is_error":false}
 `
-		resp, err := parseStreamingJSON(strings.NewReader(input), func(string) {})
+		resp, err := scanStreamJSON(strings.NewReader(input), func(string) {})
 		require.NoError(t, err)
 		require.Equal(t, "OK", resp.Result)
 	})
@@ -2313,7 +2313,7 @@ func TestParseStreamingJSON(t *testing.T) {
 	t.Run("error result", func(t *testing.T) {
 		input := `{"type":"result","result":"something broke","session_id":"sess-err","is_error":true}
 `
-		resp, err := parseStreamingJSON(strings.NewReader(input), func(string) {})
+		resp, err := scanStreamJSON(strings.NewReader(input), func(string) {})
 		require.NoError(t, err)
 		require.True(t, resp.IsError)
 		require.Equal(t, "something broke", resp.Result)
@@ -2493,7 +2493,7 @@ func (s *RunnerSuite) TestRunWithOnTurnTimeout() {
 	resp, err := s.runner.Run(ctx, req)
 	require.Nil(s.T(), resp)
 	require.Error(s.T(), err)
-	// After pipe closes due to context cancel, parseStreamingJSON returns
+	// After pipe closes due to context cancel, scanStreamJSON returns
 	// "no result event found" — then ContainerWait hits ctx.Done()
 	require.Contains(s.T(), err.Error(), "container execution timed out")
 

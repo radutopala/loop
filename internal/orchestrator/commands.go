@@ -22,29 +22,7 @@ func (o *Orchestrator) sendReply(ctx context.Context, channelID, content string)
 		ChannelID: channelID,
 		Content:   content,
 	})
-
-	msgID := generateMessageID()
-	ch, err := o.store.GetChannel(ctx, channelID)
-	if err == nil && ch != nil {
-		_ = o.store.InsertMessage(ctx, &db.Message{
-			ChatID:     ch.ID,
-			ChannelID:  channelID,
-			MsgID:      msgID,
-			AuthorName: "assistant",
-			Content:    content,
-			IsBot:      true,
-			CreatedAt:  time.Now().UTC(),
-		})
-	}
-
-	if o.events != nil {
-		o.events.BroadcastMessageCreated(channelID, MessageEventData{
-			MsgID:      msgID,
-			AuthorName: "assistant",
-			Content:    content,
-			IsBot:      true,
-		})
-	}
+	storeBotMessage(ctx, o.store, o.events, channelID, content)
 }
 
 // HandleInteraction processes a slash command interaction.
@@ -419,11 +397,7 @@ func (o *Orchestrator) handlePermissionUpdate(ctx context.Context, inter *bot.In
 			o.sendReply(ctx, inter.ChannelID, "Failed to update permissions.")
 			return
 		}
-		mention := fmt.Sprintf("<@%s>", targetID)
-		if targetType == "role" {
-			mention = fmt.Sprintf("Role <@&%s>", targetID)
-		}
-		o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ %s granted %s role.", mention, roleStr))
+		o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ %s granted %s role.", formatMention(targetID, targetType), roleStr))
 		return
 	}
 
@@ -433,11 +407,7 @@ func (o *Orchestrator) handlePermissionUpdate(ctx context.Context, inter *bot.In
 		o.sendReply(ctx, inter.ChannelID, "Failed to update permissions.")
 		return
 	}
-	mention := fmt.Sprintf("<@%s>", targetID)
-	if targetType == "role" {
-		mention = fmt.Sprintf("Role <@&%s>", targetID)
-	}
-	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ %s removed from channel permissions.", mention))
+	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ %s removed from channel permissions.", formatMention(targetID, targetType)))
 }
 
 func (o *Orchestrator) handleIAmTheOwner(ctx context.Context, inter *bot.Interaction, ch *db.Channel, cfgPerms, dbPerms types.Permissions) {

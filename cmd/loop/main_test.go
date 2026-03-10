@@ -3150,51 +3150,6 @@ func (s *MainSuite) TestReadmeOutput() {
 	require.NoError(s.T(), err)
 }
 
-func (s *MainSuite) TestEventBroadcasterAdapterMessageCreated() {
-	hub := api.NewEventsHub(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	adapter := &eventBroadcasterAdapter{hub: hub}
-
-	adapter.BroadcastMessageCreated("ch-1", orchestrator.MessageEventData{
-		MsgID:      "msg-1",
-		AuthorID:   "user-1",
-		AuthorName: "alice",
-		Content:    "hello",
-		IsBot:      false,
-	})
-}
-
-func (s *MainSuite) TestEventBroadcasterAdapterAgentStatus() {
-	hub := api.NewEventsHub(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	adapter := &eventBroadcasterAdapter{hub: hub}
-
-	adapter.BroadcastAgentStatus("ch-1", orchestrator.AgentStatusEventData{
-		Status: "running",
-	})
-}
-
-func (s *MainSuite) TestEventBroadcasterAdapterMessageStreaming() {
-	hub := api.NewEventsHub(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	adapter := &eventBroadcasterAdapter{hub: hub}
-
-	adapter.BroadcastMessageStreaming("ch-1", orchestrator.MessageStreamingData{
-		Content: "partial response...",
-	})
-}
-
-func (s *MainSuite) TestEventBroadcasterAdapterChannelCreated() {
-	hub := api.NewEventsHub(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	adapter := &eventBroadcasterAdapter{hub: hub}
-
-	adapter.BroadcastChannelCreated("parent-1", "thread-1")
-}
-
-func (s *MainSuite) TestEventBroadcasterAdapterChannelDeleted() {
-	hub := api.NewEventsHub(slog.New(slog.NewTextHandler(io.Discard, nil)))
-	adapter := &eventBroadcasterAdapter{hub: hub}
-
-	adapter.BroadcastChannelDeleted("ch-1")
-}
-
 func (s *MainSuite) TestServeLocalPlatformHappyPath() {
 	m := setupServeMocks()
 	m.cfg.Platforms = []types.Platform{types.PlatformLocal}

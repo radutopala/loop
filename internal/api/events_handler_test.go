@@ -11,6 +11,8 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/events"
 )
 
 type EventsHandlerSuite struct {
@@ -55,7 +57,7 @@ func (s *EventsHandlerSuite) TestEventsWSReceivesEvents() {
 
 	time.Sleep(50 * time.Millisecond)
 
-	srv.eventsHub.BroadcastMessageCreated("ch-1", MessageData{
+	srv.eventsHub.BroadcastMessageCreated("ch-1", events.MessageEventData{
 		MsgID:      "msg-1",
 		AuthorName: "alice",
 		Content:    "hello",
@@ -84,10 +86,10 @@ func (s *EventsHandlerSuite) TestEventsWSChannelQueryParam() {
 	time.Sleep(50 * time.Millisecond)
 
 	// Should not receive ch-1 events
-	srv.eventsHub.BroadcastMessageCreated("ch-1", MessageData{Content: "skip"})
+	srv.eventsHub.BroadcastMessageCreated("ch-1", events.MessageEventData{Content: "skip"})
 
 	// Should receive ch-2 events
-	srv.eventsHub.BroadcastAgentStatus("ch-2", AgentStatusData{Status: "running"})
+	srv.eventsHub.BroadcastAgentStatus("ch-2", events.AgentStatusEventData{Status: "running"})
 
 	_, msg, err := conn.ReadMessage()
 	require.NoError(s.T(), err)
@@ -118,10 +120,10 @@ func (s *EventsHandlerSuite) TestEventsWSSubscribeMessage() {
 	time.Sleep(50 * time.Millisecond)
 
 	// ch-1 event should be filtered
-	srv.eventsHub.BroadcastMessageCreated("ch-1", MessageData{Content: "skip"})
+	srv.eventsHub.BroadcastMessageCreated("ch-1", events.MessageEventData{Content: "skip"})
 
 	// ch-3 event should arrive
-	srv.eventsHub.BroadcastMessageCreated("ch-3", MessageData{Content: "pass"})
+	srv.eventsHub.BroadcastMessageCreated("ch-3", events.MessageEventData{Content: "pass"})
 
 	_, msg, err := conn.ReadMessage()
 	require.NoError(s.T(), err)
@@ -148,7 +150,7 @@ func (s *EventsHandlerSuite) TestEventsWSInvalidJSON() {
 	time.Sleep(50 * time.Millisecond)
 
 	// Connection should still work
-	srv.eventsHub.BroadcastMessageCreated("ch-1", MessageData{Content: "still works"})
+	srv.eventsHub.BroadcastMessageCreated("ch-1", events.MessageEventData{Content: "still works"})
 
 	_, msg, err := conn.ReadMessage()
 	require.NoError(s.T(), err)
@@ -178,7 +180,7 @@ func (s *EventsHandlerSuite) TestEventsWSDisconnect() {
 	time.Sleep(100 * time.Millisecond)
 
 	// Trigger broadcast to clean up
-	srv.eventsHub.BroadcastMessageCreated("ch-1", MessageData{Content: "cleanup"})
+	srv.eventsHub.BroadcastMessageCreated("ch-1", events.MessageEventData{Content: "cleanup"})
 	time.Sleep(50 * time.Millisecond)
 
 	srv.eventsHub.mu.RLock()

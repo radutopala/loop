@@ -397,14 +397,14 @@ func serve() error {
 	eventsHub := api.NewEventsHub(logger)
 	apiSrv.SetEventsHub(eventsHub)
 
-	executor.SetEventBroadcaster(&eventBroadcasterAdapter{hub: eventsHub})
+	executor.SetEventBroadcaster(eventsHub)
 
 	if err := apiSrv.Start(cfg.APIAddr); err != nil {
 		return fmt.Errorf("starting api server: %w", err)
 	}
 
 	orch := orchestrator.New(store, chatBot, runner, sched, logger, *cfg)
-	orch.SetEventBroadcaster(&eventBroadcasterAdapter{hub: eventsHub})
+	orch.SetEventBroadcaster(eventsHub)
 	apiSrv.SetIncomingMessageHandler(chatBot)
 	apiSrv.SetInteractionHandler(orch)
 	apiSrv.SetActiveChatLister(orch)
@@ -426,40 +426,4 @@ func serve() error {
 	}
 
 	return nil
-}
-
-// eventBroadcasterAdapter adapts api.EventsHub to the orchestrator.EventBroadcaster interface.
-type eventBroadcasterAdapter struct {
-	hub *api.EventsHub
-}
-
-func (a *eventBroadcasterAdapter) BroadcastMessageCreated(channelID string, data orchestrator.MessageEventData) {
-	a.hub.BroadcastMessageCreated(channelID, api.MessageData{
-		MsgID:      data.MsgID,
-		AuthorID:   data.AuthorID,
-		AuthorName: data.AuthorName,
-		Content:    data.Content,
-		IsBot:      data.IsBot,
-	})
-}
-
-func (a *eventBroadcasterAdapter) BroadcastMessageStreaming(channelID string, data orchestrator.MessageStreamingData) {
-	a.hub.BroadcastMessageStreaming(channelID, api.MessageStreamingData{
-		Content: data.Content,
-	})
-}
-
-func (a *eventBroadcasterAdapter) BroadcastAgentStatus(channelID string, data orchestrator.AgentStatusEventData) {
-	a.hub.BroadcastAgentStatus(channelID, api.AgentStatusData{
-		Status: data.Status,
-		Error:  data.Error,
-	})
-}
-
-func (a *eventBroadcasterAdapter) BroadcastChannelCreated(parentChannelID, channelID string) {
-	a.hub.BroadcastChannelCreated(parentChannelID, channelID)
-}
-
-func (a *eventBroadcasterAdapter) BroadcastChannelDeleted(channelID string) {
-	a.hub.BroadcastChannelDeleted(channelID)
 }
