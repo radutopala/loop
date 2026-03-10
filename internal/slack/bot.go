@@ -348,18 +348,22 @@ func (b *SlackBot) CreateThread(ctx context.Context, channelID, name, mentionUse
 }
 
 // CreateSimpleThread creates a new thread with a plain initial message (no bot mention).
+// The name is posted as the parent message (the thread "title" in Slack), and the
+// initialMessage is posted as the first reply inside the thread.
 // Returns a composite "channelID:messageTS" thread ID.
 func (b *SlackBot) CreateSimpleThread(ctx context.Context, channelID, name, initialMessage string) (string, error) {
 	chID, _ := parseCompositeID(channelID)
-	msg := initialMessage
-	if msg == "" {
-		msg = name
-	}
-	_, ts, err := b.session.PostMessage(chID, goslack.MsgOptionText(msg, false))
+	_, ts, err := b.session.PostMessage(chID, goslack.MsgOptionText(name, false))
 	if err != nil {
 		return "", fmt.Errorf("slack create simple thread: %w", err)
 	}
 	threadID := compositeID(chID, ts)
+	// Post the initial message as the first reply in the thread.
+	if initialMessage != "" {
+		if _, _, err := b.session.PostMessage(chID, goslack.MsgOptionText(initialMessage, false), goslack.MsgOptionTS(ts)); err != nil {
+			b.logger.WarnContext(ctx, "posting initial thread reply", "error", err, "thread_id", threadID)
+		}
+	}
 	b.logger.InfoContext(ctx, "created simple slack thread", "thread_id", threadID, "name", name, "parent_id", channelID)
 	return threadID, nil
 }
@@ -393,7 +397,7 @@ func (b *SlackBot) PostMessage(ctx context.Context, channelID, content string) e
 }
 
 // RenameThread renames a Slack thread by updating the parent message text.
-// Slack threads don't have a separate name field — the parent message IS the thread title.
+// The parent message acts as the thread "title" — response content lives in replies.
 func (b *SlackBot) RenameThread(ctx context.Context, threadID, name string) error {
 	channelID, ts := parseCompositeID(threadID)
 	if ts == "" {

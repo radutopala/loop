@@ -724,6 +724,7 @@ func (s *BotSuite) TestCreateSimpleThread() {
 			if tt.postErr != nil {
 				session.On("PostMessage", "C123", mock.Anything).Return("", "", tt.postErr)
 			} else {
+				// Parent message (name as thread title)
 				session.On("PostMessage", "C123", mock.Anything).Return("C123", tt.postTS, nil)
 			}
 
@@ -737,6 +738,21 @@ func (s *BotSuite) TestCreateSimpleThread() {
 			}
 		})
 	}
+}
+
+func (s *BotSuite) TestCreateSimpleThreadReplyError() {
+	// Parent succeeds but reply fails — thread is still created, error just logged.
+	session := new(MockSession)
+	sc := newMockSocketClient()
+	bot := NewBot(session, sc, testLogger())
+	bot.botUserID = "U123BOT"
+
+	session.On("PostMessage", "C123", mock.Anything).Return("C123", "1111.2222", nil).Once()
+	session.On("PostMessage", "C123", mock.Anything).Return("", "", errors.New("reply failed")).Once()
+
+	id, err := bot.CreateSimpleThread(context.Background(), "C123", "thread name", "reply content")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "C123:1111.2222", id)
 }
 
 // --- PostMessage ---
