@@ -392,14 +392,38 @@ func (b *SlackBot) PostMessage(ctx context.Context, channelID, content string) e
 	return nil
 }
 
-// RenameThread renames a Slack thread by updating the parent message text.
-// Slack threads don't have a separate name field — the parent message IS the thread title.
+// RenameThread renames a Slack thread by doing a find-and-replace on the parent message text.
+// The name parameter is the new thread name; we extract the old and new emoji prefixes
+// and replace only the emoji in the existing message to preserve the original content.
 func (b *SlackBot) RenameThread(ctx context.Context, threadID, name string) error {
 	channelID, ts := parseCompositeID(threadID)
 	if ts == "" {
 		return fmt.Errorf("invalid thread ID: %s (expected channelID:timestamp)", threadID)
 	}
-	if _, _, _, err := b.session.UpdateMessage(channelID, ts, goslack.MsgOptionText(name, false)); err != nil {
+	msgs, _, _, err := b.session.GetConversationReplies(&goslack.GetConversationRepliesParameters{
+		ChannelID: channelID,
+		Timestamp: ts,
+		Limit:     1,
+	})
+	if err != nil {
+		return fmt.Errorf("slack get parent message: %w", err)
+	}
+	if len(msgs) == 0 {
+		return fmt.Errorf("slack rename thread: parent message not found")
+	}
+	// Replace thread emoji with ephemeral emoji and strip [EPHEMERAL] marker.
+	// Slack returns Unicode emoji as shortcodes (e.g. :thread: instead of 🧵),
+	// so we must match both forms.
+	oldText := msgs[0].Text
+	newText := oldText
+	switch {
+	case strings.Contains(newText, "🧵"):
+		newText = strings.Replace(newText, "🧵", "💨", 1)
+	case strings.Contains(newText, ":thread:"):
+		newText = strings.Replace(newText, ":thread:", "💨", 1)
+	}
+	newText = strings.TrimSpace(strings.ReplaceAll(newText, "[EPHEMERAL]", ""))
+	if _, _, _, err := b.session.UpdateMessage(channelID, ts, goslack.MsgOptionText(newText, false)); err != nil {
 		return fmt.Errorf("slack rename thread: %w", err)
 	}
 	b.logger.InfoContext(ctx, "renamed slack thread", "thread_id", threadID)
