@@ -388,6 +388,55 @@ func (s *BotRouterSuite) TestInviteUserToChannel() {
 	require.NoError(s.T(), err)
 }
 
+// --- Nil bot error paths ---
+
+func (s *BotRouterSuite) TestChannelMethodsReturnErrorWhenNoBotFound() {
+	// All channel-specific methods should return an error (not panic)
+	// when botForChannel returns nil.
+	s.store.On("GetChannel", mock.Anything, "unknown").Return(nil, nil)
+
+	ctx := context.Background()
+
+	err := s.router.SendMessage(ctx, &bot.OutgoingMessage{ChannelID: "unknown", Content: "hi"})
+	require.ErrorContains(s.T(), err, "no bot found for channel unknown")
+
+	err = s.router.SendTyping(ctx, "unknown")
+	require.ErrorContains(s.T(), err, "no bot found")
+
+	_, err = s.router.SendStopButton(ctx, "unknown", "run-1")
+	require.ErrorContains(s.T(), err, "no bot found")
+
+	err = s.router.RemoveStopButton(ctx, "unknown", "msg-1")
+	require.ErrorContains(s.T(), err, "no bot found")
+
+	err = s.router.SetChannelTopic(ctx, "unknown", "topic")
+	require.ErrorContains(s.T(), err, "no bot found")
+
+	err = s.router.DeleteThread(ctx, "unknown")
+	require.ErrorContains(s.T(), err, "no bot found")
+
+	err = s.router.RenameThread(ctx, "unknown", "name")
+	require.ErrorContains(s.T(), err, "no bot found")
+
+	err = s.router.PostMessage(ctx, "unknown", "hi")
+	require.ErrorContains(s.T(), err, "no bot found")
+
+	_, err = s.router.GetChannelParentID(ctx, "unknown")
+	require.ErrorContains(s.T(), err, "no bot found")
+
+	_, err = s.router.GetChannelName(ctx, "unknown")
+	require.ErrorContains(s.T(), err, "no bot found")
+
+	_, err = s.router.CreateThread(ctx, "unknown", "t", "u", "m")
+	require.ErrorContains(s.T(), err, "no bot found")
+
+	_, err = s.router.CreateSimpleThread(ctx, "unknown", "t", "m")
+	require.ErrorContains(s.T(), err, "no bot found")
+
+	err = s.router.InviteUserToChannel(ctx, "unknown", "user-1")
+	require.ErrorContains(s.T(), err, "no bot found")
+}
+
 // --- BotFor: explicit platform routing ---
 
 func (s *BotRouterSuite) TestBotForReturnsPlatformBot() {

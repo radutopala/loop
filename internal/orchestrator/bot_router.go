@@ -133,55 +133,113 @@ func (r *BotRouter) OnChannelJoin(handler func(ctx context.Context, channelID st
 // --- Channel-specific calls: route to channel's platform bot ---
 
 func (r *BotRouter) SendMessage(ctx context.Context, msg *bot.OutgoingMessage) error {
-	return r.botForChannel(ctx, msg.ChannelID).SendMessage(ctx, msg)
+	b := r.botForChannel(ctx, msg.ChannelID)
+	if b == nil {
+		return r.noBotErr("SendMessage", msg.ChannelID)
+	}
+	return b.SendMessage(ctx, msg)
 }
 
 func (r *BotRouter) SendTyping(ctx context.Context, channelID string) error {
-	return r.botForChannel(ctx, channelID).SendTyping(ctx, channelID)
+	b := r.botForChannel(ctx, channelID)
+	if b == nil {
+		return r.noBotErr("SendTyping", channelID)
+	}
+	return b.SendTyping(ctx, channelID)
 }
 
 func (r *BotRouter) SendStopButton(ctx context.Context, channelID, runID string) (string, error) {
-	return r.botForChannel(ctx, channelID).SendStopButton(ctx, channelID, runID)
+	b := r.botForChannel(ctx, channelID)
+	if b == nil {
+		return "", r.noBotErr("SendStopButton", channelID)
+	}
+	return b.SendStopButton(ctx, channelID, runID)
 }
 
 func (r *BotRouter) RemoveStopButton(ctx context.Context, channelID, messageID string) error {
-	return r.botForChannel(ctx, channelID).RemoveStopButton(ctx, channelID, messageID)
+	b := r.botForChannel(ctx, channelID)
+	if b == nil {
+		return r.noBotErr("RemoveStopButton", channelID)
+	}
+	return b.RemoveStopButton(ctx, channelID, messageID)
 }
 
 func (r *BotRouter) SetChannelTopic(ctx context.Context, channelID, topic string) error {
-	return r.botForChannel(ctx, channelID).SetChannelTopic(ctx, channelID, topic)
+	b := r.botForChannel(ctx, channelID)
+	if b == nil {
+		return r.noBotErr("SetChannelTopic", channelID)
+	}
+	return b.SetChannelTopic(ctx, channelID, topic)
 }
 
 func (r *BotRouter) DeleteThread(ctx context.Context, threadID string) error {
-	return r.botForChannel(ctx, threadID).DeleteThread(ctx, threadID)
+	b := r.botForChannel(ctx, threadID)
+	if b == nil {
+		return r.noBotErr("DeleteThread", threadID)
+	}
+	return b.DeleteThread(ctx, threadID)
 }
 
 func (r *BotRouter) RenameThread(ctx context.Context, threadID, name string) error {
-	return r.botForChannel(ctx, threadID).RenameThread(ctx, threadID, name)
+	b := r.botForChannel(ctx, threadID)
+	if b == nil {
+		return r.noBotErr("RenameThread", threadID)
+	}
+	return b.RenameThread(ctx, threadID, name)
 }
 
 func (r *BotRouter) PostMessage(ctx context.Context, channelID, content string) error {
-	return r.botForChannel(ctx, channelID).PostMessage(ctx, channelID, content)
+	b := r.botForChannel(ctx, channelID)
+	if b == nil {
+		return r.noBotErr("PostMessage", channelID)
+	}
+	return b.PostMessage(ctx, channelID, content)
 }
 
 func (r *BotRouter) GetChannelParentID(ctx context.Context, channelID string) (string, error) {
-	return r.botForChannel(ctx, channelID).GetChannelParentID(ctx, channelID)
+	b := r.botForChannel(ctx, channelID)
+	if b == nil {
+		return "", r.noBotErr("GetChannelParentID", channelID)
+	}
+	return b.GetChannelParentID(ctx, channelID)
 }
 
 func (r *BotRouter) GetChannelName(ctx context.Context, channelID string) (string, error) {
-	return r.botForChannel(ctx, channelID).GetChannelName(ctx, channelID)
+	b := r.botForChannel(ctx, channelID)
+	if b == nil {
+		return "", r.noBotErr("GetChannelName", channelID)
+	}
+	return b.GetChannelName(ctx, channelID)
 }
 
 func (r *BotRouter) CreateThread(ctx context.Context, channelID, name, mentionUserID, message string) (string, error) {
-	return r.botForChannel(ctx, channelID).CreateThread(ctx, channelID, name, mentionUserID, message)
+	b := r.botForChannel(ctx, channelID)
+	if b == nil {
+		return "", r.noBotErr("CreateThread", channelID)
+	}
+	return b.CreateThread(ctx, channelID, name, mentionUserID, message)
 }
 
 func (r *BotRouter) CreateSimpleThread(ctx context.Context, channelID, name, initialMessage string) (string, error) {
-	return r.botForChannel(ctx, channelID).CreateSimpleThread(ctx, channelID, name, initialMessage)
+	b := r.botForChannel(ctx, channelID)
+	if b == nil {
+		return "", r.noBotErr("CreateSimpleThread", channelID)
+	}
+	return b.CreateSimpleThread(ctx, channelID, name, initialMessage)
 }
 
 func (r *BotRouter) InviteUserToChannel(ctx context.Context, channelID, userID string) error {
-	return r.botForChannel(ctx, channelID).InviteUserToChannel(ctx, channelID, userID)
+	b := r.botForChannel(ctx, channelID)
+	if b == nil {
+		return r.noBotErr("InviteUserToChannel", channelID)
+	}
+	return b.InviteUserToChannel(ctx, channelID, userID)
+}
+
+// noBotErr logs a warning and returns an error when no bot is found for a channel.
+func (r *BotRouter) noBotErr(method, channelID string) error {
+	r.logger.Warn("no bot found for channel", "method", method, "channel_id", channelID)
+	return fmt.Errorf("no bot found for channel %s", channelID)
 }
 
 // --- API message routing: route to channel's platform bot ---

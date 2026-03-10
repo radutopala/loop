@@ -116,7 +116,18 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 					return
 				}
 				threadID = id
-				e.broadcastBotMessage(ctx, task.ChannelID, prefix+text)
+				// Broadcast to the thread (not the parent channel) so the
+				// Electron app shows the initial message in the thread view.
+				// Don't use broadcastBotMessage here — CreateSimpleThread
+				// already stored the message in the DB for the thread.
+				if e.events != nil {
+					e.events.BroadcastMessageCreated(threadID, MessageEventData{
+						MsgID:      generateMessageID(),
+						AuthorName: "assistant",
+						Content:    prefix + text,
+						IsBot:      true,
+					})
+				}
 			} else {
 				targetID := threadID
 				if targetID == "" {

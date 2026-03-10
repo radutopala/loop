@@ -738,3 +738,65 @@ func (s *TaskExecutorSuite) TestFinalResponseBroadcasts() {
 	s.bot.AssertExpectations(s.T())
 	eb.AssertExpectations(s.T())
 }
+
+func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
+	s.executor.streamingEnabled = true
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+
+	task := &db.ScheduledTask{
+		ID: 20, ChannelID: "ch20", Prompt: "check",
+		Type: db.TaskTypeCron, Schedule: "0 * * * *",
+	}
+
+	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(&db.Channel{ID: 5, ChannelID: "ch20"}, nil)
+
+	// Thread creation succeeds
+	s.bot.On("CreateSimpleThread", s.ctx, "ch20",
+		"🧵 task #20 (`0 * * * *`) check",
+		"🧵 task #20 (`0 * * * *`) Turn 1",
+	).Return("thread-20", nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Turn 1")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response: "Final", SessionID: "s20",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch20", "s20").Return(nil)
+
+	// Final response goes to thread
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "thread-20" && msg.Content == "Final"
+	})).Return(nil).Once()
+	s.store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
+		return m.IsBot
+	})).Return(nil).Maybe()
+
+	// First turn broadcast goes to THREAD, not parent channel
+	eb.On("BroadcastMessageCreated", "thread-20", mock.MatchedBy(func(d MessageEventData) bool {
+		return d.Content == "🧵 task #20 (`0 * * * *`) Turn 1" && d.IsBot
+	})).Once()
+	// Final response broadcast goes to thread
+	eb.On("BroadcastMessageCreated", "thread-20", mock.MatchedBy(func(d MessageEventData) bool {
+		return d.Content == "Final" && d.IsBot
+	})).Once()
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Final", resp)
+
+	// Verify NO broadcast to the parent channel ch20
+	for _, call := range eb.Calls {
+		if call.Method == "BroadcastMessageCreated" {
+			require.NotEqual(s.T(), "ch20", call.Arguments[0],
+				"should not broadcast to parent channel")
+		}
+	}
+
+	s.bot.AssertExpectations(s.T())
+	eb.AssertExpectations(s.T())
+}

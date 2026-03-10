@@ -430,7 +430,7 @@ export function DiffPanel({ channelId, onClose }: DiffPanelProps) {
               </button>
 
               {expanded && parsed && (
-                <div style={{ borderBottom: `1px solid ${colors.border}` }}>
+                <div style={{ borderBottom: `1px solid ${colors.border}`, overflow: "hidden" }}>
                   {parsed.hunks.map((hunk, hi) => (
                     <div key={hi}>
                       <div
@@ -440,77 +440,93 @@ export function DiffPanel({ channelId, onClose }: DiffPanelProps) {
                           fontFamily: fonts.mono,
                           color: colors.textDim,
                           backgroundColor: "rgba(100, 100, 100, 0.1)",
+                          whiteSpace: "pre",
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
                         }}
                       >
                         {hunk.header}
                       </div>
-                      {hunk.lines.map((line, li) => {
-                        const lc = lineColors[line.type];
-                        return (
-                          <div
-                            key={li}
-                            style={{
-                              display: "flex",
-                              fontSize: 12,
-                              fontFamily: fonts.mono,
-                              lineHeight: "20px",
-                              backgroundColor: lc.bg,
-                            }}
-                          >
-                            <span
-                              style={{
-                                width: 40,
-                                minWidth: 40,
-                                textAlign: "right",
-                                paddingRight: 4,
-                                color: colors.textDim,
-                                backgroundColor: lc.numBg,
-                                userSelect: "none",
-                                fontSize: 11,
-                              }}
-                            >
-                              {line.oldNum ?? ""}
-                            </span>
-                            <span
-                              style={{
-                                width: 40,
-                                minWidth: 40,
-                                textAlign: "right",
-                                paddingRight: 8,
-                                color: colors.textDim,
-                                backgroundColor: lc.numBg,
-                                userSelect: "none",
-                                fontSize: 11,
-                              }}
-                            >
-                              {line.newNum ?? ""}
-                            </span>
-                            <span
-                              style={{
-                                width: 14,
-                                minWidth: 14,
-                                textAlign: "center",
-                                color: line.type === "add" ? "#86efac" : line.type === "del" ? "#fca5a5" : "transparent",
-                                userSelect: "none",
-                              }}
-                            >
-                              {line.type === "add" ? "+" : line.type === "del" ? "−" : " "}
-                            </span>
-                            <span
-                              style={{
-                                flex: 1,
-                                whiteSpace: "pre",
-                                overflow: "hidden",
-                                textOverflow: "ellipsis",
-                                color: lc.text,
-                                paddingRight: 8,
-                              }}
-                            >
-                              {line.content}
-                            </span>
+                      <div style={{ display: "flex" }}>
+                        {/* Fixed gutter */}
+                        <div style={{ flexShrink: 0 }}>
+                          {hunk.lines.map((line, li) => {
+                            const lc = lineColors[line.type];
+                            return (
+                              <div
+                                key={li}
+                                style={{
+                                  display: "flex",
+                                  lineHeight: "20px",
+                                  fontFamily: fonts.mono,
+                                  backgroundColor: lc.bg,
+                                }}
+                              >
+                                <span
+                                  style={{
+                                    width: 40,
+                                    textAlign: "right",
+                                    paddingRight: 4,
+                                    color: colors.textDim,
+                                    backgroundColor: lc.numBg,
+                                    userSelect: "none",
+                                    fontSize: 11,
+                                  }}
+                                >
+                                  {line.oldNum ?? ""}
+                                </span>
+                                <span
+                                  style={{
+                                    width: 40,
+                                    textAlign: "right",
+                                    paddingRight: 8,
+                                    color: colors.textDim,
+                                    backgroundColor: lc.numBg,
+                                    userSelect: "none",
+                                    fontSize: 11,
+                                  }}
+                                >
+                                  {line.newNum ?? ""}
+                                </span>
+                                <span
+                                  style={{
+                                    width: 14,
+                                    textAlign: "center",
+                                    color: line.type === "add" ? "#86efac" : line.type === "del" ? "#fca5a5" : "transparent",
+                                    userSelect: "none",
+                                  }}
+                                >
+                                  {line.type === "add" ? "+" : line.type === "del" ? "−" : " "}
+                                </span>
+                              </div>
+                            );
+                          })}
+                        </div>
+                        {/* Scrollable code area */}
+                        <div style={{ flex: 1, overflowX: "auto", minWidth: 0 }}>
+                          <div style={{ display: "inline-block", minWidth: "100%" }}>
+                            {hunk.lines.map((line, li) => {
+                              const lc = lineColors[line.type];
+                              return (
+                                <div
+                                  key={li}
+                                  style={{
+                                    lineHeight: "20px",
+                                    fontFamily: fonts.mono,
+                                    fontSize: 12,
+                                    whiteSpace: "pre",
+                                    color: lc.text,
+                                    backgroundColor: lc.bg,
+                                    paddingRight: 8,
+                                  }}
+                                >
+                                  {line.content || " "}
+                                </div>
+                              );
+                            })}
                           </div>
-                        );
-                      })}
+                        </div>
+                      </div>
                     </div>
                   ))}
                   {file.binary && (
