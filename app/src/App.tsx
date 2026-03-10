@@ -267,6 +267,18 @@ export default function App() {
               }
             </svg>
           </button>
+          <div style={{ flex: 1 }} />
+          <span
+            style={{
+              fontSize: 13,
+              fontWeight: 600,
+              color: colors.textDim,
+              paddingRight: 12,
+              letterSpacing: 1,
+            }}
+          >
+            Loop
+          </span>
         </div>
         {error && (
           <div
