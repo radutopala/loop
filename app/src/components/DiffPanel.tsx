@@ -29,6 +29,8 @@ function saveWidth(w: number) {
 
 interface DiffPanelProps {
   channelId: string | null;
+  maximized?: boolean;
+  onToggleMaximize?: () => void;
   onClose: () => void;
 }
 
@@ -117,7 +119,7 @@ const lineColors = {
   ctx: { bg: "transparent", numBg: "transparent", text: colors.textMuted },
 };
 
-export function DiffPanel({ channelId, onClose }: DiffPanelProps) {
+export function DiffPanel({ channelId, maximized, onToggleMaximize, onClose }: DiffPanelProps) {
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
   const [data, setData] = useState<DiffResponse | null>(null);
@@ -217,35 +219,38 @@ export function DiffPanel({ channelId, onClose }: DiffPanelProps) {
     <div
       ref={panelRef}
       style={{
-        width,
-        minWidth: MIN_WIDTH,
-        maxWidth: `${MAX_WIDTH_PERCENT * 100}vw`,
-        flexShrink: 1,
+        width: maximized ? "100%" : width,
+        minWidth: maximized ? 0 : MIN_WIDTH,
+        maxWidth: maximized ? "none" : `${MAX_WIDTH_PERCENT * 100}vw`,
+        flex: maximized ? 1 : undefined,
+        flexShrink: maximized ? undefined : 1,
         backgroundColor: colors.sidebar,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
         position: "relative",
         userSelect: resizing ? "none" : undefined,
-        borderLeft: `1px solid ${colors.border}`,
+        borderLeft: maximized ? "none" : `1px solid ${colors.border}`,
       }}
     >
-      {/* Resize handle (left edge) */}
-      <div
-        onMouseDown={handleMouseDown}
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: 4,
-          height: "100%",
-          cursor: "col-resize",
-          backgroundColor: resizing ? colors.textDim : "transparent",
-          zIndex: 1,
-        }}
-        onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = colors.textDim; }}
-        onMouseLeave={(e) => { if (!resizing) (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent"; }}
-      />
+      {/* Resize handle (left edge) — hidden when maximized */}
+      {!maximized && (
+        <div
+          onMouseDown={handleMouseDown}
+          style={{
+            position: "absolute",
+            top: 0,
+            left: 0,
+            width: 4,
+            height: "100%",
+            cursor: "col-resize",
+            backgroundColor: resizing ? colors.textDim : "transparent",
+            zIndex: 1,
+          }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = colors.textDim; }}
+          onMouseLeave={(e) => { if (!resizing) (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent"; }}
+        />
+      )}
 
       {/* Drag region for macOS title bar alignment */}
       <div
@@ -333,6 +338,31 @@ export function DiffPanel({ channelId, onClose }: DiffPanelProps) {
               <polyline points="21,3 21,9 15,9" />
             </svg>
           </button>
+          {onToggleMaximize && (
+            <button
+              onClick={onToggleMaximize}
+              title={maximized ? "Restore panel" : "Maximize panel"}
+              style={headerBtnStyle}
+              onMouseEnter={hoverIn}
+              onMouseLeave={hoverOut}
+            >
+              {maximized ? (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="4,14 10,14 10,20" />
+                  <polyline points="20,10 14,10 14,4" />
+                  <line x1="14" y1="10" x2="21" y2="3" />
+                  <line x1="3" y1="21" x2="10" y2="14" />
+                </svg>
+              ) : (
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="15,3 21,3 21,9" />
+                  <polyline points="9,21 3,21 3,15" />
+                  <line x1="21" y1="3" x2="14" y2="10" />
+                  <line x1="3" y1="21" x2="10" y2="14" />
+                </svg>
+              )}
+            </button>
+          )}
           <button
             onClick={onClose}
             title="Close panel"
