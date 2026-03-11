@@ -119,7 +119,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				if e.events != nil {
 					e.events.BroadcastMessageCreated(threadID, events.MessageEventData{
 						MsgID:      generateMessageID(),
-						AuthorName: "assistant",
+						AuthorName: "agent",
 						Content:    prefix + text,
 						IsBot:      true,
 					})

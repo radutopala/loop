@@ -202,7 +202,7 @@ func (s *BotSuite) TestCreateSimpleThread() {
 			m.ChannelID == "test-thread-id" &&
 			m.Content == "hello" &&
 			m.IsBot &&
-			m.AuthorName == "assistant"
+			m.AuthorName == "agent"
 	})).Return(nil)
 
 	threadID, err := s.bot.CreateSimpleThread(context.Background(), "ch-1", "thread-name", "hello")

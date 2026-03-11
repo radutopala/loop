@@ -239,7 +239,7 @@ function StreamingBubble({ content }: { content: string }) {
       >
         <div style={styles.header}>
           <span style={{ ...styles.author, color: colors.active }}>
-            assistant
+            agent
           </span>
           <span style={{ ...styles.time, fontStyle: "italic" }}>streaming...</span>
         </div>

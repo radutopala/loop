@@ -857,7 +857,7 @@ func (s *OrchestratorSuite) TestHandleMessageWithEventBroadcaster() {
 	eb.On("BroadcastAgentStatus", "ch1", events.AgentStatusEventData{Status: "running"}).Return()
 	eb.On("BroadcastAgentStatus", "ch1", events.AgentStatusEventData{Status: "completed"}).Return()
 	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
-		return d.AuthorName == "assistant" && d.Content == "Hello!" && d.IsBot
+		return d.AuthorName == "agent" && d.Content == "Hello!" && d.IsBot
 	})).Return()
 
 	s.orch.HandleMessage(s.ctx, msg)
@@ -3353,7 +3353,7 @@ func (s *OrchestratorSuite) TestSendReplyLocalPlatformStoresAndBroadcasts() {
 	})).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
 	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
-		return d.Content == "Loop bot is running." && d.IsBot && d.AuthorName == "assistant"
+		return d.Content == "Loop bot is running." && d.IsBot && d.AuthorName == "agent"
 	}))
 
 	localOrch.sendReply(s.ctx, "ch1", "Loop bot is running.")
@@ -3372,7 +3372,7 @@ func (s *OrchestratorSuite) TestSendReplyAlwaysStoresAndBroadcasts() {
 	eb := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(eb)
 	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
-		return d.Content == "hello" && d.IsBot && d.AuthorName == "assistant"
+		return d.Content == "hello" && d.IsBot && d.AuthorName == "agent"
 	}))
 
 	s.orch.sendReply(s.ctx, "ch1", "hello")

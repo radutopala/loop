@@ -20,7 +20,7 @@ func storeBotMessage(ctx context.Context, store db.Store, broadcaster events.Bro
 				ChatID:     ch.ID,
 				ChannelID:  channelID,
 				MsgID:      msgID,
-				AuthorName: "assistant",
+				AuthorName: "agent",
 				Content:    content,
 				IsBot:      true,
 				CreatedAt:  time.Now().UTC(),
@@ -30,7 +30,7 @@ func storeBotMessage(ctx context.Context, store db.Store, broadcaster events.Bro
 	if broadcaster != nil {
 		broadcaster.BroadcastMessageCreated(channelID, events.MessageEventData{
 			MsgID:      msgID,
-			AuthorName: "assistant",
+			AuthorName: "agent",
 			Content:    content,
 			IsBot:      true,
 		})

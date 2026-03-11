@@ -761,7 +761,7 @@ func (s *TaskExecutorSuite) TestStoreBotMessage() {
 		return m.ChatID == 5 && m.ChannelID == "ch1" && m.Content == "task done" && m.IsBot
 	})).Return(nil)
 	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
-		return d.Content == "task done" && d.IsBot && d.AuthorName == "assistant"
+		return d.Content == "task done" && d.IsBot && d.AuthorName == "agent"
 	}))
 
 	storeBotMessage(s.ctx, s.store, eb, "ch1", "task done")

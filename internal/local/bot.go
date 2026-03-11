@@ -140,7 +140,7 @@ func (b *Bot) CreateSimpleThread(ctx context.Context, channelID, name, initialMe
 				ChatID:     ch.ID,
 				ChannelID:  threadID,
 				MsgID:      generateThreadID(), // reuse for unique msg ID
-				AuthorName: "assistant",
+				AuthorName: "agent",
 				Content:    initialMessage,
 				IsBot:      true,
 				CreatedAt:  time.Now().UTC(),
