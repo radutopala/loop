@@ -272,7 +272,7 @@ export function DiffPanel({ channelId, maximized, onToggleMaximize, onClose }: D
           borderBottom: `1px solid ${colors.border}`,
           flexShrink: 0,
           boxSizing: "border-box",
-          minHeight: 37,
+          height: 39,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>

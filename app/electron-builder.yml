@@ -37,5 +37,11 @@ dmg:
       type: link
       path: /Applications
 
+extraResources:
+  - from: resources/loop
+    to: loop
+    filter:
+      - "**/*"
+
 extraMetadata:
   main: dist-electron/main.js

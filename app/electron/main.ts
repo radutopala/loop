@@ -1,10 +1,216 @@
 import { app, BrowserWindow, ipcMain, Menu } from "electron";
+import { execFileSync, spawn, ChildProcess } from "node:child_process";
+import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 app.setName("Loop");
+
+// --- ~/.loop directory & config ---
+
+function loopDir(): string {
+  return path.join(os.homedir(), ".loop");
+}
+
+function loopConfigPath(): string {
+  return path.join(loopDir(), "config.json");
+}
+
+/** Strip HJSON comments (// and /* *​/) and trailing commas to get valid JSON. */
+function stripHJSON(text: string): string {
+  // Remove single-line comments (but not inside strings).
+  // Simple heuristic: remove lines where // is not inside a quoted value.
+  let result = "";
+  let inString = false;
+  let escape = false;
+  let i = 0;
+  while (i < text.length) {
+    const ch = text[i]!;
+    if (escape) {
+      result += ch;
+      escape = false;
+      i++;
+      continue;
+    }
+    if (ch === "\\") {
+      escape = true;
+      result += ch;
+      i++;
+      continue;
+    }
+    if (ch === '"') {
+      inString = !inString;
+      result += ch;
+      i++;
+      continue;
+    }
+    if (!inString) {
+      if (ch === "/" && text[i + 1] === "/") {
+        // Skip to end of line
+        while (i < text.length && text[i] !== "\n") i++;
+        continue;
+      }
+      if (ch === "/" && text[i + 1] === "*") {
+        i += 2;
+        while (i < text.length && !(text[i] === "*" && text[i + 1] === "/")) i++;
+        i += 2; // skip */
+        continue;
+      }
+    }
+    result += ch;
+    i++;
+  }
+  // Remove trailing commas before } or ]
+  return result.replace(/,\s*([}\]])/g, "$1");
+}
+
+interface LoopConfig {
+  api_addr?: string;
+}
+
+function readLoopConfig(): LoopConfig {
+  try {
+    const data = fs.readFileSync(loopConfigPath(), "utf-8");
+    return JSON.parse(stripHJSON(data));
+  } catch {
+    return {};
+  }
+}
+
+function hasLoopConfig(): boolean {
+  return fs.existsSync(loopConfigPath());
+}
+
+/** Resolve API base URL from config's api_addr (e.g. ":8222" → "http://localhost:8222"). */
+function resolveApiUrl(): string {
+  if (process.env.LOOP_API_URL) return process.env.LOOP_API_URL;
+  const cfg = readLoopConfig();
+  const addr = cfg.api_addr || ":8222";
+  const host = addr.startsWith(":") ? `localhost${addr}` : addr;
+  return `http://${host}`;
+}
+
+// --- App settings (stored in ~/.loop/app.json) ---
+
+interface Settings {
+  stopDaemonOnQuit: boolean;
+}
+
+const defaultSettings: Settings = {
+  stopDaemonOnQuit: false,
+};
+
+function appSettingsPath(): string {
+  return path.join(loopDir(), "app.json");
+}
+
+function loadSettings(): Settings {
+  try {
+    const data = fs.readFileSync(appSettingsPath(), "utf-8");
+    return { ...defaultSettings, ...JSON.parse(data) };
+  } catch {
+    return { ...defaultSettings };
+  }
+}
+
+function saveSettings(settings: Settings): void {
+  fs.mkdirSync(loopDir(), { recursive: true });
+  fs.writeFileSync(appSettingsPath(), JSON.stringify(settings, null, 2));
+}
+
+// --- Bundled binary resolution ---
+
+function bundledBinaryPath(): string | null {
+  // In production: resources/loop inside the .app bundle
+  // process.resourcesPath points to <app>/Contents/Resources
+  const resourcePath = path.join(process.resourcesPath, "loop");
+  if (fs.existsSync(resourcePath)) return resourcePath;
+  return null;
+}
+
+function findLoopBinary(): string | null {
+  // 1. Bundled binary
+  const bundled = bundledBinaryPath();
+  if (bundled) return bundled;
+
+  // 2. On PATH (for dev mode / Homebrew install)
+  try {
+    const result = execFileSync("which", ["loop"], { encoding: "utf-8" }).trim();
+    if (result) return result;
+  } catch {
+    // not found on PATH
+  }
+  return null;
+}
+
+// --- Daemon management ---
+
+let daemonProcess: ChildProcess | null = null;
+let managedDaemon = false; // true if we started the daemon ourselves
+
+async function isDaemonRunning(): Promise<boolean> {
+  try {
+    const resp = await fetch(`${resolveApiUrl()}/api/health`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+function ensureLoopConfig(): void {
+  if (hasLoopConfig()) return;
+
+  const binary = findLoopBinary();
+  if (!binary) return;
+
+  console.log("No ~/.loop/config.json found, running onboard:global");
+  try {
+    execFileSync(binary, ["onboard:global"], { encoding: "utf-8", timeout: 10_000 });
+    console.log("Created ~/.loop/config.json");
+  } catch (err) {
+    console.warn("onboard:global failed:", err);
+  }
+}
+
+async function ensureDaemon(): Promise<void> {
+  ensureLoopConfig();
+
+  if (await isDaemonRunning()) return;
+
+  const binary = findLoopBinary();
+  if (!binary) return; // no binary available — user must start daemon manually
+
+  console.log(`Starting loop daemon from: ${binary}`);
+  daemonProcess = spawn(binary, ["serve"], {
+    stdio: "ignore",
+    detached: true,
+  });
+  daemonProcess.unref();
+  managedDaemon = true;
+
+  // Wait for daemon to become healthy
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    if (await isDaemonRunning()) {
+      console.log("Loop daemon is ready");
+      return;
+    }
+  }
+  console.warn("Loop daemon did not become healthy within 15s");
+}
+
+async function stopDaemon(): Promise<void> {
+  if (!managedDaemon || !daemonProcess) return;
+  console.log("Stopping loop daemon");
+  daemonProcess.kill("SIGTERM");
+  daemonProcess = null;
+  managedDaemon = false;
+}
 
 const PROTOCOL = "loop";
 
@@ -47,6 +253,7 @@ function parseChannelId(url: string): string {
 }
 
 function createWindow(hash?: string): BrowserWindow {
+  const preloadPath = path.join(__dirname, "preload.cjs");
   const win = new BrowserWindow({
     title: "Loop",
     icon: iconMacos, // undefined in production — uses .icns from electron-builder
@@ -56,9 +263,10 @@ function createWindow(hash?: string): BrowserWindow {
     minHeight: 400,
     titleBarStyle: "hiddenInset",
     webPreferences: {
-      preload: path.join(__dirname, "preload.js"),
+      preload: preloadPath,
       contextIsolation: true,
       nodeIntegration: false,
+      sandbox: false,
     },
   });
 
@@ -145,6 +353,17 @@ function buildMenu() {
             submenu: [
               { role: "about" as const },
               { type: "separator" as const },
+              {
+                label: "Settings…",
+                accelerator: "CmdOrCtrl+," as const,
+                click: () => {
+                  const win = getFocusedOrLastWindow();
+                  if (win) {
+                    win.webContents.send("open-settings");
+                  }
+                },
+              },
+              { type: "separator" as const },
               { role: "services" as const },
               { type: "separator" as const },
               { role: "hide" as const },
@@ -202,8 +421,9 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
-app.on("ready", () => {
+app.on("ready", async () => {
   buildMenu();
+  await ensureDaemon();
   createWindow(pendingChannelId || undefined);
   pendingChannelId = null;
 });
@@ -214,6 +434,13 @@ app.on("window-all-closed", () => {
   }
 });
 
+app.on("before-quit", async () => {
+  const settings = loadSettings();
+  if (settings.stopDaemonOnQuit) {
+    await stopDaemon();
+  }
+});
+
 app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
@@ -221,5 +448,132 @@ app.on("activate", () => {
 });
 
 ipcMain.handle("get-api-url", () => {
-  return process.env.LOOP_API_URL ?? "http://localhost:8222";
+  return resolveApiUrl();
+});
+
+ipcMain.handle("get-settings", () => {
+  return loadSettings();
+});
+
+ipcMain.handle("save-settings", (_event, settings: Settings) => {
+  saveSettings(settings);
+  return true;
+});
+
+ipcMain.handle("get-daemon-info", async () => {
+  return {
+    running: await isDaemonRunning(),
+    managed: managedDaemon,
+    binaryPath: findLoopBinary(),
+  };
+});
+
+ipcMain.handle("get-config", () => {
+  try {
+    return {
+      path: loopConfigPath(),
+      content: fs.readFileSync(loopConfigPath(), "utf-8"),
+    };
+  } catch {
+    return { path: loopConfigPath(), content: null };
+  }
+});
+
+ipcMain.handle("get-project-config", (_event, dirPath: string) => {
+  const p = path.join(dirPath, ".loop", "config.json");
+  try {
+    return {
+      path: p,
+      content: fs.readFileSync(p, "utf-8"),
+    };
+  } catch {
+    return { path: p, content: null };
+  }
+});
+
+ipcMain.handle("save-config", (_event, filePath: string, content: string) => {
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.writeFileSync(filePath, content);
+    return { ok: true };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
+ipcMain.handle("restart-daemon", async () => {
+  const cfg = readLoopConfig();
+  const addr = cfg.api_addr || ":8222";
+  const port = addr.includes(":") ? addr.split(":").pop() : "8222";
+
+  /** Find PIDs listening on the daemon port. */
+  function findListeningPids(): number[] {
+    try {
+      const out = execFileSync("lsof", ["-ti", `TCP:${port}`, "-sTCP:LISTEN"], { encoding: "utf-8" }).trim();
+      if (!out) return [];
+      return out.split("\n").map((s) => parseInt(s, 10)).filter((n) => !isNaN(n));
+    } catch {
+      return [];
+    }
+  }
+
+  /** Check if loop is managed by launchctl (KeepAlive). */
+  function isLaunchctlManaged(): boolean {
+    try {
+      // If the service is loaded, launchctl list will show it.
+      const out = execFileSync("launchctl", ["list", "com.loop.agent"], { encoding: "utf-8" });
+      return out.includes("com.loop.agent");
+    } catch {
+      return false;
+    }
+  }
+
+  if (daemonProcess) {
+    // App-managed daemon: just kill it.
+    daemonProcess.kill("SIGTERM");
+    daemonProcess = null;
+    managedDaemon = false;
+    // Wait for port to be free.
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (findListeningPids().length === 0) break;
+    }
+  } else if (isLaunchctlManaged()) {
+    // System-installed daemon via launchctl: use kickstart to restart.
+    // This tells launchd to stop and immediately re-launch the service,
+    // avoiding the race where KeepAlive respawns before we can start our own.
+    console.log("Restarting daemon via launchctl kickstart");
+    try {
+      execFileSync("launchctl", ["kickstart", "-k", `gui/${process.getuid()}/com.loop.agent`], { encoding: "utf-8" });
+    } catch (err) {
+      console.warn("launchctl kickstart failed:", err);
+    }
+  } else {
+    // System daemon not managed by launchctl: kill and restart manually.
+    const pids = findListeningPids();
+    for (const pid of pids) {
+      try { process.kill(pid, "SIGTERM"); } catch { /* already dead */ }
+    }
+    for (let i = 0; i < 10; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (findListeningPids().length === 0) break;
+    }
+  }
+
+  // Wait for daemon to become healthy (launchctl restart or ensureDaemon).
+  if (!isLaunchctlManaged()) {
+    await ensureDaemon();
+  } else {
+    // Wait for launchctl-managed daemon to come back up.
+    for (let i = 0; i < 30; i++) {
+      await new Promise((r) => setTimeout(r, 500));
+      if (await isDaemonRunning()) break;
+    }
+  }
+
+  return {
+    running: await isDaemonRunning(),
+    managed: managedDaemon,
+    binaryPath: findLoopBinary(),
+  };
 });

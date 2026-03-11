@@ -128,6 +128,7 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("POST /api/memory/index", s.handleMemoryIndex)
 	mux.HandleFunc("GET /api/readme", s.handleGetReadme)
 	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
+	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
 	mux.HandleFunc("GET /api/ws", s.handleEventsWS)
 
@@ -150,6 +151,11 @@ func (s *Server) Start(addr string) error {
 
 	s.logger.Info("api server started", "addr", addr)
 	return nil
+}
+
+func handleHealth(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Write([]byte(`{"status":"ok"}`)) //nolint:errcheck
 }
 
 // corsMiddleware adds CORS headers to all responses, allowing the

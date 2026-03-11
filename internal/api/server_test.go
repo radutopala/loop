@@ -186,6 +186,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("POST /api/memory/search", s.srv.handleMemorySearch)
 	s.mux.HandleFunc("POST /api/memory/index", s.srv.handleMemoryIndex)
 	s.mux.HandleFunc("GET /api/readme", s.srv.handleGetReadme)
+	s.mux.HandleFunc("GET /api/health", handleHealth)
 	s.mux.HandleFunc("GET /api/ws/terminal", s.srv.handleTerminalWS)
 	s.mux.HandleFunc("GET /api/ws", s.srv.handleEventsWS)
 }
@@ -219,6 +220,12 @@ func (s *ServerSuite) TestNewServer() {
 	require.NotNil(s.T(), s.srv.store)
 	require.NotNil(s.T(), s.srv.messages)
 	require.NotNil(s.T(), s.srv.logger)
+}
+
+func (s *ServerSuite) TestHealth() {
+	rec := s.testRequest("GET", "/api/health", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.JSONEq(s.T(), `{"status":"ok"}`, rec.Body.String())
 }
 
 // --- Invalid JSON body tests (table-driven) ---

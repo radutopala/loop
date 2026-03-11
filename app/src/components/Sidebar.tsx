@@ -48,6 +48,8 @@ interface SidebarProps {
   onCreateChannel: (name: string) => void;
   onCreateThread: (parentId: string, name: string) => void;
   onDeleteThread: (threadId: string) => void;
+  onOpenSettings?: () => void;
+  onOpenConfig?: (dirPath: string) => void;
 }
 
 export function Sidebar({
@@ -58,6 +60,8 @@ export function Sidebar({
   onCreateChannel,
   onCreateThread,
   onDeleteThread,
+  onOpenSettings,
+  onOpenConfig,
 }: SidebarProps) {
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const [resizing, setResizing] = useState(false);
@@ -345,6 +349,7 @@ export function Sidebar({
           selectedId={selectedId}
           onSelect={onSelect}
           onCreateThread={onCreateThread}
+          onOpenConfig={onOpenConfig}
           onContextMenu={handleContextMenu}
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
@@ -353,6 +358,38 @@ export function Sidebar({
           isDragOver={dragOverId === channel.id}
         />
       ))}
+
+      {/* Spacer to push footer to bottom */}
+      <div style={{ flex: 1 }} />
+
+      {/* Settings footer */}
+      <div style={{ padding: "8px 12px", borderTop: `1px solid ${colors.border}` }}>
+        <button
+          onClick={onOpenSettings}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            width: "100%",
+            background: "none",
+            border: "none",
+            color: colors.textDim,
+            cursor: "pointer",
+            padding: "6px 8px",
+            fontSize: 12,
+            borderRadius: 6,
+            fontFamily: "inherit",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z" />
+            <circle cx="12" cy="12" r="3" />
+          </svg>
+          Settings
+        </button>
+      </div>
 
       {contextMenu && (
         <ContextMenu

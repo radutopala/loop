@@ -22,6 +22,7 @@ export function NewThreadInput({ onSubmit, onCancel }: NewThreadInputProps) {
           }
           if (e.key === "Escape") onCancel();
         }}
+        onBlur={onCancel}
         placeholder="Thread name..."
         style={{
           flex: 1,
@@ -36,22 +37,6 @@ export function NewThreadInput({ onSubmit, onCancel }: NewThreadInputProps) {
           boxSizing: "border-box",
         }}
       />
-      <button
-        onClick={onCancel}
-        title="Cancel"
-        style={{
-          background: "none",
-          border: "none",
-          color: colors.textDim,
-          cursor: "pointer",
-          padding: "2px 4px",
-          fontSize: 14,
-          lineHeight: 1,
-          flexShrink: 0,
-        }}
-      >
-        ✕
-      </button>
     </div>
   );
 }

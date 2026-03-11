@@ -8,6 +8,7 @@ import { ChatView } from "./components/ChatView";
 import { ModeToggle } from "./components/ModeToggle";
 import { DiffPanel } from "./components/DiffPanel";
 import { CommandPalette } from "./components/CommandPalette";
+import { Settings } from "./components/Settings";
 import { useEventStream } from "./hooks/useEventStream";
 
 const MODE_STORAGE_KEY = "loop-view-mode";
@@ -79,6 +80,8 @@ export default function App() {
   const [diffMaximized, setDiffMaximized] = useState(false);
   const [diffStats, setDiffStats] = useState<{ add: number; del: number }>({ add: 0, del: 0 });
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [settingsDirPath, setSettingsDirPath] = useState<string | null>(null);
   const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(null);
   const [splitRatio, setSplitRatio] = useState(() => loadSplitRatio(getHashChannelId()));
   const splitContainerRef = useRef<HTMLDivElement>(null);
@@ -165,9 +168,24 @@ export default function App() {
         e.preventDefault();
         setPaletteOpen((v) => !v);
       }
+      if ((e.metaKey || e.ctrlKey) && e.key === ",") {
+        e.preventDefault();
+        setSettingsOpen((v) => {
+          if (!v) { setDiffOpen(false); setDiffMaximized(false); }
+          return !v;
+        });
+        setSettingsDirPath(null);
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  // Listen for Settings menu item from main process.
+  useEffect(() => {
+    if (window.loopAPI?.onOpenSettings) {
+      window.loopAPI.onOpenSettings(() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); });
+    }
   }, []);
 
   const loadChannels = useCallback(async () => {
@@ -352,6 +370,8 @@ export default function App() {
         onCreateChannel={handleCreateChannel}
         onCreateThread={handleCreateThread}
         onDeleteThread={handleDelete}
+        onOpenSettings={() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); }}
+        onOpenConfig={(dirPath) => { setSettingsOpen(true); setSettingsDirPath(dirPath); setDiffOpen(false); setDiffMaximized(false); }}
       />
       <div style={{ flex: 1, minWidth: diffMaximized ? 0 : 360, display: diffMaximized ? "none" : "flex", flexDirection: "column" }}>
         {/* Drag region for macOS hiddenInset title bar — enables double-click to zoom */}
@@ -457,6 +477,8 @@ export default function App() {
               alignItems: "center",
               padding: "3px 8px",
               borderBottom: `1px solid ${colors.border}`,
+              height: 39,
+              boxSizing: "border-box",
             }}
           >
             <span
@@ -498,7 +520,7 @@ export default function App() {
             <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
               <ModeToggle mode={viewMode} onChange={handleModeChange} />
               <button
-                onClick={() => setDiffOpen((v) => !v)}
+                onClick={() => setDiffOpen((v) => { if (!v) setSettingsOpen(false); return !v; })}
                 title="Toggle diff panel"
                 style={{
                   background: diffOpen ? colors.selectedBg : "none",
@@ -561,6 +583,9 @@ export default function App() {
           onToggleMaximize={() => setDiffMaximized((v) => !v)}
           onClose={() => { setDiffOpen(false); setDiffMaximized(false); }}
         />
+      )}
+      {settingsOpen && (
+        <Settings open={settingsOpen} projectDirPath={settingsDirPath} onClose={() => setSettingsOpen(false)} onDaemonRestarted={loadChannels} />
       )}
       <CommandPalette
         channels={channels}

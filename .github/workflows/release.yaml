@@ -37,9 +37,34 @@ jobs:
     strategy:
       matrix:
         arch: [arm64, x64]
+        include:
+          - arch: arm64
+            goarch: arm64
+          - arch: x64
+            goarch: amd64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Build loop binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: darwin
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          COMMIT="$(git rev-parse --short HEAD)"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          go generate ./internal/readme/
+          go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+            -o app/resources/loop ./cmd/loop
 
       - name: Set up Node.js
         uses: actions/setup-node@v4

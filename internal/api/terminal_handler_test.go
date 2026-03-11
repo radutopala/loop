@@ -145,6 +145,18 @@ func readBinaryMsg(t *testing.T, conn *websocket.Conn) []byte {
 	return data
 }
 
+// onSendInputCalled sets up a "SendInput" mock expectation that signals the
+// returned channel when called. BuildInteractiveCmd + SendInput run
+// asynchronously after the "created" status is written to the WebSocket,
+// so tests must wait on this channel before asserting expectations.
+func onSendInputCalled(m *MockTerminalManager, sessionID string, data []byte) <-chan struct{} {
+	ch := make(chan struct{}, 1)
+	m.On("SendInput", sessionID, data).Return(nil).Run(func(_ mock.Arguments) {
+		ch <- struct{}{}
+	})
+	return ch
+}
+
 func sendControl(t *testing.T, conn *websocket.Conn, msg wsControlMessage) {
 	t.Helper()
 	data, err := json.Marshal(msg)
@@ -376,7 +388,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionSendsInteractiveCmd() {
 	doneCh := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "resolved-ctr", []string(nil)).
 		Return("sess-claude", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("SendInput", "sess-claude", []byte("claude --dangerously-skip-permissions\n")).Return(nil)
+	inputSent := onSendInputCalled(s.terminal, "sess-claude", []byte("claude --dangerously-skip-permissions\n"))
 	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	finder := new(MockContainerFinder)
@@ -396,8 +408,12 @@ func (s *TerminalHandlerSuite) TestCreateSessionSendsInteractiveCmd() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "created", msg.Type)
 	require.Equal(s.T(), "sess-claude", msg.SessionID)
+	select {
+	case <-inputSent:
+	case <-time.After(time.Second):
+		s.T().Fatal("timed out waiting for SendInput")
+	}
 	builder.AssertExpectations(s.T())
-	s.terminal.AssertCalled(s.T(), "SendInput", "sess-claude", []byte("claude --dangerously-skip-permissions\n"))
 }
 
 func (s *TerminalHandlerSuite) TestCreateSessionSendsInteractiveCmdWithDirPath() {
@@ -405,7 +421,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionSendsInteractiveCmdWithDirPath()
 	doneCh := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "resolved-ctr-dir", []string(nil)).
 		Return("sess-dir", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("SendInput", "sess-dir", []byte("claude --mcp-config /projects/app/.loop/mcp-ch-dir.json\n")).Return(nil)
+	inputSent := onSendInputCalled(s.terminal, "sess-dir", []byte("claude --mcp-config /projects/app/.loop/mcp-ch-dir.json\n"))
 	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	store := new(MockChannelLister)
@@ -430,6 +446,11 @@ func (s *TerminalHandlerSuite) TestCreateSessionSendsInteractiveCmdWithDirPath()
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "created", msg.Type)
 	require.Equal(s.T(), "sess-dir", msg.SessionID)
+	select {
+	case <-inputSent:
+	case <-time.After(time.Second):
+		s.T().Fatal("timed out waiting for SendInput")
+	}
 	builder.AssertExpectations(s.T())
 }
 
@@ -438,7 +459,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionResumesChannelSession() {
 	doneCh := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "resolved-ctr", []string(nil)).
 		Return("sess-resume", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("SendInput", "sess-resume", []byte("claude --dangerously-skip-permissions --resume sess-existing\n")).Return(nil)
+	inputSent := onSendInputCalled(s.terminal, "sess-resume", []byte("claude --dangerously-skip-permissions --resume sess-existing\n"))
 	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	store := new(MockChannelLister)
@@ -463,8 +484,12 @@ func (s *TerminalHandlerSuite) TestCreateSessionResumesChannelSession() {
 
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "created", msg.Type)
+	select {
+	case <-inputSent:
+	case <-time.After(time.Second):
+		s.T().Fatal("timed out waiting for SendInput")
+	}
 	builder.AssertExpectations(s.T())
-	s.terminal.AssertCalled(s.T(), "SendInput", "sess-resume", []byte("claude --dangerously-skip-permissions --resume sess-existing\n"))
 }
 
 func (s *TerminalHandlerSuite) TestCreateSessionForksThreadFromParent() {
@@ -472,7 +497,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionForksThreadFromParent() {
 	doneCh := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "resolved-ctr", []string(nil)).
 		Return("sess-fork", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("SendInput", "sess-fork", []byte("claude --dangerously-skip-permissions --resume sess-parent --fork-session\n")).Return(nil)
+	inputSent := onSendInputCalled(s.terminal, "sess-fork", []byte("claude --dangerously-skip-permissions --resume sess-parent --fork-session\n"))
 	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	store := new(MockChannelLister)
@@ -501,6 +526,11 @@ func (s *TerminalHandlerSuite) TestCreateSessionForksThreadFromParent() {
 
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "created", msg.Type)
+	select {
+	case <-inputSent:
+	case <-time.After(time.Second):
+		s.T().Fatal("timed out waiting for SendInput")
+	}
 	builder.AssertExpectations(s.T())
 	store.AssertCalled(s.T(), "GetChannel", mock.Anything, "ch-parent")
 }
@@ -510,7 +540,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionThreadWithOwnSession() {
 	doneCh := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "resolved-ctr", []string(nil)).
 		Return("sess-thread", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("SendInput", "sess-thread", []byte("claude --dangerously-skip-permissions --resume sess-thread-own\n")).Return(nil)
+	inputSent := onSendInputCalled(s.terminal, "sess-thread", []byte("claude --dangerously-skip-permissions --resume sess-thread-own\n"))
 	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	store := new(MockChannelLister)
@@ -540,6 +570,11 @@ func (s *TerminalHandlerSuite) TestCreateSessionThreadWithOwnSession() {
 
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "created", msg.Type)
+	select {
+	case <-inputSent:
+	case <-time.After(time.Second):
+		s.T().Fatal("timed out waiting for SendInput")
+	}
 	builder.AssertExpectations(s.T())
 }
 

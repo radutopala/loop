@@ -117,11 +117,34 @@ export interface ServerErrorMessage {
 
 export type ServerMessage = ServerStatusMessage | ServerErrorMessage;
 
+export interface AppSettings {
+  stopDaemonOnQuit: boolean;
+}
+
+export interface DaemonInfo {
+  running: boolean;
+  managed: boolean;
+  binaryPath: string | null;
+}
+
+export interface ConfigInfo {
+  path: string;
+  content: string | null;
+}
+
 declare global {
   interface Window {
     loopAPI: {
       getApiUrl: () => Promise<string>;
       onNavigateChannel: (callback: (channelId: string) => void) => void;
+      getSettings: () => Promise<AppSettings>;
+      saveSettings: (settings: AppSettings) => Promise<void>;
+      getDaemonInfo: () => Promise<DaemonInfo>;
+      getConfig: () => Promise<ConfigInfo>;
+      getProjectConfig: (dirPath: string) => Promise<ConfigInfo>;
+      saveConfig: (filePath: string, content: string) => Promise<{ ok: boolean; error?: string }>;
+      restartDaemon: () => Promise<DaemonInfo>;
+      onOpenSettings: (callback: () => void) => void;
     };
   }
 }

@@ -417,7 +417,9 @@ func serve() error {
 	<-ctx.Done()
 	logger.Info("shutting down")
 
-	if err := apiSrv.Stop(context.Background()); err != nil {
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer shutdownCancel()
+	if err := apiSrv.Stop(shutdownCtx); err != nil {
 		slog.Error("api server stop error", "error", err)
 	}
 
