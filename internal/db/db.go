@@ -270,8 +270,7 @@ func (s *SQLiteStore) MarkMessagesProcessed(ctx context.Context, ids []int64) er
 
 func (s *SQLiteStore) GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*Message, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at
-		 FROM messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?`,
+		`SELECT `+messageColumns+` FROM messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?`,
 		channelID, limit,
 	)
 	if err != nil {
@@ -286,14 +285,12 @@ func (s *SQLiteStore) GetMessagesCursor(ctx context.Context, channelID string, c
 	var err error
 	if cursor > 0 {
 		rows, err = s.db.QueryContext(ctx,
-			`SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at
-			 FROM messages WHERE channel_id = ? AND id < ? ORDER BY id DESC LIMIT ?`,
+			`SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND id < ? ORDER BY id DESC LIMIT ?`,
 			channelID, cursor, limit,
 		)
 	} else {
 		rows, err = s.db.QueryContext(ctx,
-			`SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at
-			 FROM messages WHERE channel_id = ? ORDER BY id DESC LIMIT ?`,
+			`SELECT `+messageColumns+` FROM messages WHERE channel_id = ? ORDER BY id DESC LIMIT ?`,
 			channelID, limit,
 		)
 	}
@@ -306,8 +303,7 @@ func (s *SQLiteStore) GetMessagesCursor(ctx context.Context, channelID string, c
 
 func (s *SQLiteStore) SearchMessages(ctx context.Context, query string, limit int) ([]*Message, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at
-		 FROM messages WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?`,
+		`SELECT `+messageColumns+` FROM messages WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?`,
 		"%"+query+"%", limit,
 	)
 	if err != nil {
@@ -320,13 +316,11 @@ func (s *SQLiteStore) SearchMessages(ctx context.Context, query string, limit in
 func (s *SQLiteStore) GetMessagesAround(ctx context.Context, channelID string, messageID int64, limit int) ([]*Message, error) {
 	half := limit / 2
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at FROM (
-		   SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at
-		   FROM messages WHERE channel_id = ? AND id < ? ORDER BY id DESC LIMIT ?
+		`SELECT `+messageColumns+` FROM (
+		   SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND id < ? ORDER BY id DESC LIMIT ?
 		 ) UNION ALL
-		 SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at FROM (
-		   SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at
-		   FROM messages WHERE channel_id = ? AND id >= ? ORDER BY id ASC LIMIT ?
+		 SELECT `+messageColumns+` FROM (
+		   SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND id >= ? ORDER BY id ASC LIMIT ?
 		 ) ORDER BY id ASC`,
 		channelID, messageID, half,
 		channelID, messageID, limit-half,
@@ -358,8 +352,7 @@ func (s *SQLiteStore) CreateScheduledTask(ctx context.Context, task *ScheduledTa
 
 func (s *SQLiteStore) GetDueTasks(ctx context.Context, now time.Time) ([]*ScheduledTask, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec
-		 FROM scheduled_tasks WHERE enabled = 1 AND next_run_at <= ?`,
+		`SELECT `+taskColumns+` FROM scheduled_tasks WHERE enabled = 1 AND next_run_at <= ?`,
 		now,
 	)
 	if err != nil {
@@ -387,8 +380,7 @@ func (s *SQLiteStore) DeleteScheduledTask(ctx context.Context, id int64) error {
 
 func (s *SQLiteStore) ListScheduledTasks(ctx context.Context, channelID string) ([]*ScheduledTask, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec
-		 FROM scheduled_tasks WHERE channel_id = ? AND (type != 'once' OR next_run_at > ?) ORDER BY next_run_at ASC`,
+		`SELECT `+taskColumns+` FROM scheduled_tasks WHERE channel_id = ? AND (type != 'once' OR next_run_at > ?) ORDER BY next_run_at ASC`,
 		channelID, nowFunc(),
 	)
 	if err != nil {
@@ -411,8 +403,7 @@ func (s *SQLiteStore) GetScheduledTask(ctx context.Context, id int64) (*Schedule
 	var enabled int
 	var taskType string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec
-		 FROM scheduled_tasks WHERE id = ?`,
+		`SELECT `+taskColumns+` FROM scheduled_tasks WHERE id = ?`,
 		id,
 	).Scan(&task.ID, &task.ChannelID, &task.GuildID, &task.Schedule,
 		&taskType, &task.Prompt, &enabled, &task.NextRunAt,
@@ -433,8 +424,7 @@ func (s *SQLiteStore) GetScheduledTaskByTemplateName(ctx context.Context, channe
 	var enabled int
 	var taskType string
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec
-		 FROM scheduled_tasks WHERE channel_id = ? AND template_name = ?`,
+		`SELECT `+taskColumns+` FROM scheduled_tasks WHERE channel_id = ? AND template_name = ?`,
 		channelID, templateName,
 	).Scan(&task.ID, &task.ChannelID, &task.GuildID, &task.Schedule,
 		&taskType, &task.Prompt, &enabled, &task.NextRunAt,
@@ -528,6 +518,12 @@ func (s *SQLiteStore) DeleteMemoryFile(ctx context.Context, filePath, dirPath st
 	_, err := s.db.ExecContext(ctx, `DELETE FROM memory_files WHERE file_path = ? AND dir_path = ?`, filePath, dirPath)
 	return err
 }
+
+// Column lists for SELECT queries.
+const (
+	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at`
+	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec`
+)
 
 // helpers
 
