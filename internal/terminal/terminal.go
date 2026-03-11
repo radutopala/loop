@@ -16,8 +16,8 @@ import (
 	"time"
 )
 
-// Default ring buffer size: 64 KB.
-const defaultRingBufSize = 64 * 1024
+// Default ring buffer size: 1 MB.
+const defaultRingBufSize = 1024 * 1024
 
 // clientChannelBuffer is the capacity of per-client output channels.
 const clientChannelBuffer = 64
@@ -32,9 +32,9 @@ const readBufSize = 4096
 // lifecycle (docker create/start/stop/rm). ExecClient runs commands inside
 // already-running containers for interactive PTY sessions.
 type ExecClient interface {
-	ContainerExecCreate(ctx context.Context, containerID string, cmd []string, tty bool) (string, error)
-	ContainerExecAttach(ctx context.Context, execID string) (io.ReadWriteCloser, error)
-	ContainerExecResize(ctx context.Context, execID string, height, width uint) error
+	ExecCreate(ctx context.Context, targetID string, cmd []string, tty bool) (string, error)
+	ExecAttach(ctx context.Context, execID string) (io.ReadWriteCloser, error)
+	ExecResize(ctx context.Context, execID string, height, width uint) error
 }
 
 var randRead = rand.Read
@@ -209,17 +209,14 @@ func (m *Manager) SetIdleTimeout(d time.Duration) {
 
 // CreateSession starts a new interactive terminal session by creating a
 // Docker exec with a PTY, attaching to it, and starting the read loop.
+// If cmd is empty, the ExecClient decides the default shell.
 func (m *Manager) CreateSession(ctx context.Context, containerID string, cmd []string) (*Session, error) {
-	if len(cmd) == 0 {
-		cmd = []string{"/bin/sh"}
-	}
-
-	execID, err := m.client.ContainerExecCreate(ctx, containerID, cmd, true)
+	execID, err := m.client.ExecCreate(ctx, containerID, cmd, true)
 	if err != nil {
 		return nil, fmt.Errorf("creating exec: %w", err)
 	}
 
-	conn, err := m.client.ContainerExecAttach(ctx, execID)
+	conn, err := m.client.ExecAttach(ctx, execID)
 	if err != nil {
 		return nil, fmt.Errorf("attaching exec: %w", err)
 	}
@@ -278,7 +275,7 @@ func (m *Manager) Resize(ctx context.Context, id string, rows, cols uint) error 
 	if err != nil {
 		return err
 	}
-	if err := m.client.ContainerExecResize(ctx, s.execID, rows, cols); err != nil {
+	if err := m.client.ExecResize(ctx, s.execID, rows, cols); err != nil {
 		return fmt.Errorf("resizing exec: %w", err)
 	}
 	return nil

@@ -7,10 +7,14 @@ interface TerminalToolbarProps {
   status: SessionStatus;
   elapsed: number;
   onKill: () => void;
+  onRestart?: () => void;
+  killLabel?: string;
+  killTitle?: string;
 }
 
-export function TerminalToolbar({ status, elapsed, onKill }: TerminalToolbarProps) {
+export function TerminalToolbar({ status, elapsed, onKill, onRestart, killLabel = "Kill", killTitle = "Kill session and remove container" }: TerminalToolbarProps) {
   const isRunning = status === "running";
+  const isDead = status === "completed" || status === "failed";
 
   return (
     <div
@@ -24,22 +28,40 @@ export function TerminalToolbar({ status, elapsed, onKill }: TerminalToolbarProp
       }}
     >
       <StatusBadge status={status} />
-      <button
-        onClick={onKill}
-        disabled={!isRunning}
-        title="Kill session and remove container"
-        style={{
-          padding: "4px 12px",
-          borderRadius: 6,
-          border: `1px solid ${colors.error}`,
-          backgroundColor: "transparent",
-          color: isRunning ? colors.error : colors.textDisabled,
-          cursor: isRunning ? "pointer" : "default",
-          fontSize: 12,
-        }}
-      >
-        Kill
-      </button>
+      {isDead && onRestart ? (
+        <button
+          onClick={onRestart}
+          title="Start a new session"
+          style={{
+            padding: "4px 12px",
+            borderRadius: 6,
+            border: `1px solid ${colors.active}`,
+            backgroundColor: "transparent",
+            color: colors.active,
+            cursor: "pointer",
+            fontSize: 12,
+          }}
+        >
+          Restart
+        </button>
+      ) : (
+        <button
+          onClick={onKill}
+          disabled={!isRunning}
+          title={killTitle}
+          style={{
+            padding: "4px 12px",
+            borderRadius: 6,
+            border: `1px solid ${colors.error}`,
+            backgroundColor: "transparent",
+            color: isRunning ? colors.error : colors.textDisabled,
+            cursor: isRunning ? "pointer" : "default",
+            fontSize: 12,
+          }}
+        >
+          {killLabel}
+        </button>
+      )}
       <ElapsedTimer seconds={elapsed} />
     </div>
   );

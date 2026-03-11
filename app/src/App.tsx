@@ -7,12 +7,14 @@ import { Terminal } from "./components/Terminal";
 import { ChatView } from "./components/ChatView";
 import { ModeToggle } from "./components/ModeToggle";
 import { DiffPanel } from "./components/DiffPanel";
+import { ShellPanel } from "./components/ShellPanel";
 import { CommandPalette } from "./components/CommandPalette";
 import { Settings } from "./components/Settings";
 import { useEventStream } from "./hooks/useEventStream";
 
 const MODE_STORAGE_KEY = "loop-view-mode";
 const SPLIT_STORAGE_KEY = "loop-split-ratio";
+const SHELL_OPEN_KEY = "loop-shell-open";
 
 function loadMode(channelId: string | null): ViewMode {
   if (!channelId) return "chat";
@@ -63,6 +65,30 @@ function saveSplitRatio(channelId: string, ratio: number) {
   } catch { /* ignore */ }
 }
 
+function loadShellOpen(channelId: string | null): boolean {
+  if (!channelId) return false;
+  try {
+    const stored = localStorage.getItem(SHELL_OPEN_KEY);
+    if (stored) {
+      const prefs = JSON.parse(stored);
+      if (typeof prefs === "object" && prefs !== null) {
+        return prefs[channelId] === true;
+      }
+    }
+  } catch { /* ignore */ }
+  return false;
+}
+
+function saveShellOpen(channelId: string, open: boolean) {
+  try {
+    const stored = localStorage.getItem(SHELL_OPEN_KEY);
+    const parsed = stored ? JSON.parse(stored) : null;
+    const prefs: Record<string, boolean> = (typeof parsed === "object" && parsed !== null) ? parsed : {};
+    prefs[channelId] = open;
+    localStorage.setItem(SHELL_OPEN_KEY, JSON.stringify(prefs));
+  } catch { /* ignore */ }
+}
+
 function getHashChannelId(): string | null {
   const hash = window.location.hash.slice(1);
   return hash || null;
@@ -83,6 +109,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsDirPath, setSettingsDirPath] = useState<string | null>(null);
   const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(null);
+  const [shellOpen, setShellOpen] = useState(() => loadShellOpen(getHashChannelId()));
+  const [shellMaximized, setShellMaximized] = useState(false);
   const [splitRatio, setSplitRatio] = useState(() => loadSplitRatio(getHashChannelId()));
   const splitContainerRef = useRef<HTMLDivElement>(null);
 
@@ -146,6 +174,8 @@ export default function App() {
       const id = getHashChannelId();
       setSelectedId(id);
       setViewMode(loadMode(id));
+      setShellOpen(loadShellOpen(id));
+      setShellMaximized(false);
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
@@ -157,6 +187,8 @@ export default function App() {
       window.loopAPI.onNavigateChannel((channelId: string) => {
         setSelectedId(channelId);
         setViewMode(loadMode(channelId));
+        setShellOpen(loadShellOpen(channelId));
+        setShellMaximized(false);
       });
     }
   }, []);
@@ -171,7 +203,7 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === ",") {
         e.preventDefault();
         setSettingsOpen((v) => {
-          if (!v) { setDiffOpen(false); setDiffMaximized(false); }
+          if (!v) { setDiffOpen(false); setDiffMaximized(false); setShellOpen(false); setShellMaximized(false); }
           return !v;
         });
         setSettingsDirPath(null);
@@ -184,7 +216,7 @@ export default function App() {
   // Listen for Settings menu item from main process.
   useEffect(() => {
     if (window.loopAPI?.onOpenSettings) {
-      window.loopAPI.onOpenSettings(() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); });
+      window.loopAPI.onOpenSettings(() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); setShellOpen(false); setShellMaximized(false); });
     }
   }, []);
 
@@ -266,6 +298,8 @@ export default function App() {
       return id;
     });
     setViewMode(loadMode(id));
+    setShellOpen(loadShellOpen(id));
+    setShellMaximized(false);
     setSplitRatio(loadSplitRatio(id));
   }, []);
 
@@ -294,7 +328,15 @@ export default function App() {
 
   const handleModeChange = useCallback(
     (mode: ViewMode) => {
-      setViewMode(mode);
+      setViewMode((prev) => {
+        // When switching between terminal-showing modes (or re-clicking the same one),
+        // bump mountKey so the Terminal remounts. This restarts a killed session while
+        // a running session is seamlessly reattached via the persisted session ID.
+        if (mode !== "chat" && prev !== "chat") {
+          setMountKey((k) => k + 1);
+        }
+        return mode;
+      });
       if (selectedId) saveMode(selectedId, mode);
     },
     [selectedId],
@@ -421,10 +463,10 @@ export default function App() {
         onCreateThread={handleCreateThread}
         onDeleteThread={handleDelete}
         onDeleteBatch={handleDeleteBatch}
-        onOpenSettings={() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); }}
-        onOpenConfig={(dirPath) => { setSettingsOpen(true); setSettingsDirPath(dirPath); setDiffOpen(false); setDiffMaximized(false); }}
+        onOpenSettings={() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); setShellOpen(false); setShellMaximized(false); }}
+        onOpenConfig={(dirPath) => { setSettingsOpen(true); setSettingsDirPath(dirPath); setDiffOpen(false); setDiffMaximized(false); setShellOpen(false); setShellMaximized(false); }}
       />
-      <div style={{ flex: 1, minWidth: diffMaximized ? 0 : 360, display: diffMaximized ? "none" : "flex", flexDirection: "column" }}>
+      <div style={{ flex: 1, minWidth: (diffMaximized || shellMaximized) ? 0 : 360, display: (diffMaximized || shellMaximized) ? "none" : "flex", flexDirection: "column" }}>
         {/* Drag region for macOS hiddenInset title bar — enables double-click to zoom */}
         <div
           style={{
@@ -571,7 +613,31 @@ export default function App() {
             <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
               <ModeToggle mode={viewMode} onChange={handleModeChange} />
               <button
-                onClick={() => setDiffOpen((v) => { if (!v) setSettingsOpen(false); return !v; })}
+                onClick={() => setShellOpen((v) => { const next = !v; if (next) { setDiffOpen(false); setDiffMaximized(false); setSettingsOpen(false); } else { setShellMaximized(false); } if (selectedId) saveShellOpen(selectedId, next); return next; })}
+                title="Toggle shell terminal"
+                style={{
+                  background: shellOpen ? colors.selectedBg : "none",
+                  border: `1px solid ${shellOpen ? colors.textDim : colors.border}`,
+                  color: shellOpen ? colors.textLight : colors.textDim,
+                  cursor: "pointer",
+                  padding: "2px 6px",
+                  fontSize: 10,
+                  fontFamily: fonts.mono,
+                  lineHeight: 1,
+                  borderRadius: 6,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="4 17 10 11 4 5" />
+                  <line x1="12" y1="19" x2="20" y2="19" />
+                </svg>
+                Shell
+              </button>
+              <button
+                onClick={() => setDiffOpen((v) => { if (!v) { setShellOpen(false); setShellMaximized(false); setSettingsOpen(false); } return !v; })}
                 title="Toggle diff panel"
                 style={{
                   background: diffOpen ? colors.selectedBg : "none",
@@ -633,6 +699,14 @@ export default function App() {
           maximized={diffMaximized}
           onToggleMaximize={() => setDiffMaximized((v) => !v)}
           onClose={() => { setDiffOpen(false); setDiffMaximized(false); }}
+        />
+      )}
+      {shellOpen && selectedId && (
+        <ShellPanel
+          channelId={selectedId}
+          maximized={shellMaximized}
+          onToggleMaximize={() => setShellMaximized((v) => !v)}
+          onClose={() => { setShellOpen(false); setShellMaximized(false); if (selectedId) saveShellOpen(selectedId, false); }}
         />
       )}
       {settingsOpen && (

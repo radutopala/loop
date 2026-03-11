@@ -43,10 +43,14 @@ func NewDockerExecClient() (*DockerExecClient, error) {
 	return &DockerExecClient{api: api}, nil
 }
 
-// ContainerExecCreate creates a new exec process in the container with the
+// ExecCreate creates a new exec process in the container with the
 // given command and TTY setting. The exec runs as the host user (matching the
 // container's non-root agent user created by the entrypoint).
-func (c *DockerExecClient) ContainerExecCreate(ctx context.Context, containerID string, cmd []string, tty bool) (string, error) {
+// If cmd is empty, defaults to /bin/sh.
+func (c *DockerExecClient) ExecCreate(ctx context.Context, containerID string, cmd []string, tty bool) (string, error) {
+	if len(cmd) == 0 {
+		cmd = []string{"/bin/sh"}
+	}
 	resp, err := c.api.ContainerExecCreate(ctx, containerID, containertypes.ExecOptions{
 		User:         osGetenv("USER"),
 		Cmd:          cmd,
@@ -61,9 +65,9 @@ func (c *DockerExecClient) ContainerExecCreate(ctx context.Context, containerID 
 	return resp.ID, nil
 }
 
-// ContainerExecAttach attaches to an exec process and returns an
+// ExecAttach attaches to an exec process and returns an
 // io.ReadWriteCloser over the hijacked connection.
-func (c *DockerExecClient) ContainerExecAttach(ctx context.Context, execID string) (io.ReadWriteCloser, error) {
+func (c *DockerExecClient) ExecAttach(ctx context.Context, execID string) (io.ReadWriteCloser, error) {
 	resp, err := c.api.ContainerExecAttach(ctx, execID, containertypes.ExecAttachOptions{
 		Tty: true,
 	})
@@ -73,8 +77,8 @@ func (c *DockerExecClient) ContainerExecAttach(ctx context.Context, execID strin
 	return &hijackedConn{resp: resp}, nil
 }
 
-// ContainerExecResize changes the PTY dimensions of the exec process.
-func (c *DockerExecClient) ContainerExecResize(ctx context.Context, execID string, height, width uint) error {
+// ExecResize changes the PTY dimensions of the exec process.
+func (c *DockerExecClient) ExecResize(ctx context.Context, execID string, height, width uint) error {
 	return c.api.ContainerExecResize(ctx, execID, containertypes.ResizeOptions{
 		Height: height,
 		Width:  width,

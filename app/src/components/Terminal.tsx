@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState } from "react";
-import type { SessionStatus } from "../types";
+import type { SessionStatus, TerminalTarget } from "../types";
 import { colors } from "../theme";
 import { useTerminalWs } from "../hooks/useTerminalWs";
 import { useElapsedTimer } from "../hooks/useElapsedTimer";
@@ -8,13 +8,17 @@ import { TerminalToolbar } from "./TerminalToolbar";
 
 interface TerminalProps {
   channelId: string | null;
+  target?: TerminalTarget;
   onStatusChange?: () => void;
+  onSessionEnd?: () => void;
 }
 
-export function Terminal({ channelId, onStatusChange }: TerminalProps) {
+export function Terminal({ channelId, target = "agent", onStatusChange, onSessionEnd }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<SessionStatus>("connecting");
-  const { elapsed, start, stop } = useElapsedTimer();
+  const { elapsed, start, stop, reset } = useElapsedTimer();
+
+  const getStartTimeRef = useRef<(() => number | undefined) | null>(null);
 
   const onData = useCallback((data: ArrayBuffer) => {
     writeRef.current?.(new Uint8Array(data));
@@ -24,10 +28,11 @@ export function Terminal({ channelId, onStatusChange }: TerminalProps) {
     (newStatus: SessionStatus) => {
       setStatus(newStatus);
       if (newStatus === "running") {
-        start();
+        start(getStartTimeRef.current?.());
       }
       if (newStatus === "completed" || newStatus === "failed") {
         stop();
+        onSessionEnd?.();
       }
       onStatusChange?.();
     },
@@ -43,8 +48,9 @@ export function Terminal({ channelId, onStatusChange }: TerminalProps) {
   // Ref to access xterm dimensions when sending create/attach messages.
   const xtermInstRef = useRef<import("@xterm/xterm").Terminal | null>(null);
 
-  const { sendInput, sendResize, sendKill } = useTerminalWs({
+  const { sendInput, sendResize, sendKill, sendCreate, getStartTime } = useTerminalWs({
     channelId,
+    target,
     onData,
     onStatus,
     onError,
@@ -53,6 +59,13 @@ export function Terminal({ channelId, onStatusChange }: TerminalProps) {
       return term ? { cols: term.cols, rows: term.rows } : null;
     },
   });
+
+  getStartTimeRef.current = getStartTime;
+
+  const handleRestart = useCallback(() => {
+    reset();
+    sendCreate();
+  }, [reset, sendCreate]);
 
   const { write, xtermRef } = useXTerminal({
     containerRef: terminalRef,
@@ -88,6 +101,9 @@ export function Terminal({ channelId, onStatusChange }: TerminalProps) {
         status={status}
         elapsed={elapsed}
         onKill={sendKill}
+        onRestart={handleRestart}
+        killLabel={target === "host" ? "Close" : "Kill"}
+        killTitle={target === "host" ? "Close shell session" : "Kill session and remove container"}
       />
       <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
         <div style={{ padding: "8px 12px", width: "100%", height: "100%", boxSizing: "border-box" }}>

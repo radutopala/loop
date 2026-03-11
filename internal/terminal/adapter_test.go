@@ -130,18 +130,18 @@ type adapterMockExecClient struct {
 	createErr error
 }
 
-func (m *adapterMockExecClient) ContainerExecCreate(_ context.Context, _ string, _ []string, _ bool) (string, error) {
+func (m *adapterMockExecClient) ExecCreate(_ context.Context, _ string, _ []string, _ bool) (string, error) {
 	if m.createErr != nil {
 		return "", m.createErr
 	}
 	return m.execID, nil
 }
 
-func (m *adapterMockExecClient) ContainerExecAttach(_ context.Context, _ string) (io.ReadWriteCloser, error) {
+func (m *adapterMockExecClient) ExecAttach(_ context.Context, _ string) (io.ReadWriteCloser, error) {
 	return m.conn, nil
 }
 
-func (m *adapterMockExecClient) ContainerExecResize(_ context.Context, _ string, _, _ uint) error {
+func (m *adapterMockExecClient) ExecResize(_ context.Context, _ string, _, _ uint) error {
 	return nil
 }
 

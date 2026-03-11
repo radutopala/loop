@@ -1,11 +1,12 @@
 import { useCallback, useRef } from "react";
-import type { SessionStatus } from "../types";
+import type { SessionStatus, TerminalTarget } from "../types";
 import { useWebSocketConnection } from "./useWebSocketConnection";
 import { useTerminalMessageDispatcher } from "./useTerminalMessageDispatcher";
 import { useSessionPersistence } from "./useSessionPersistence";
 
 interface UseTerminalWsOptions {
   channelId: string | null;
+  target?: TerminalTarget;
   onData: (data: ArrayBuffer) => void;
   onStatus: (status: SessionStatus) => void;
   onError: (message: string) => void;
@@ -15,6 +16,7 @@ interface UseTerminalWsOptions {
 
 export function useTerminalWs({
   channelId,
+  target = "agent",
   onData,
   onStatus,
   onError,
@@ -23,7 +25,7 @@ export function useTerminalWs({
   const getTerminalSizeRef = useRef(getTerminalSize);
   getTerminalSizeRef.current = getTerminalSize;
 
-  const { sessionIdRef, setSessionId, killedRef, handleOpen, markKilled } = useSessionPersistence(channelId, getTerminalSizeRef);
+  const { sessionIdRef, setSessionId, killedRef, handleOpen, markKilled, getStartTime } = useSessionPersistence(channelId, target, getTerminalSizeRef);
 
   // Use a ref for send to break the circular dependency between
   // handleMessage (needs onSessionFailed) and send (needs handleMessage).
@@ -37,10 +39,10 @@ export function useTerminalWs({
       retriedRef.current = true;
       const size = getTerminalSizeRef.current?.();
       sendRef.current(
-        JSON.stringify({ type: "create", channel_id: channelId, ...size }),
+        JSON.stringify({ type: "create", channel_id: channelId, target, ...size }),
       );
     }
-  }, [channelId, killedRef]);
+  }, [channelId, target, killedRef]);
 
   /** When a session is confirmed, send the current terminal dimensions.
    *  This handles the race where xterm wasn't ready when the create message was sent. */
@@ -98,5 +100,13 @@ export function useTerminalWs({
     send(JSON.stringify({ type: "stop", ...(sid ? { session_id: sid } : {}) }));
   }, [send, markKilled]);
 
-  return { connected, sendInput, sendResize, sendKill };
+  /** Create a new session (used to restart after kill). */
+  const sendCreate = useCallback(() => {
+    if (!channelId) return;
+    killedRef.current = false;
+    const size = getTerminalSizeRef.current?.();
+    send(JSON.stringify({ type: "create", channel_id: channelId, target, ...size }));
+  }, [channelId, target, send, killedRef]);
+
+  return { connected, sendInput, sendResize, sendKill, sendCreate, getStartTime };
 }

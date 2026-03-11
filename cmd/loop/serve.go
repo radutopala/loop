@@ -97,6 +97,10 @@ var newDockerExecClient = func() (terminal.ExecClient, error) {
 	return terminal.NewDockerExecClient()
 }
 
+var newHostExecClient = func() terminal.ExecClient {
+	return terminal.NewHostExecClient()
+}
+
 var newAPIServer = api.NewServer
 
 // memIndexer is the subset of *memory.Indexer used by multiDirIndexer.
@@ -375,6 +379,11 @@ func serve() error {
 		apiSrv.SetContainerStopper(dockerClient)
 		apiSrv.SetInteractiveCmdBuilder(container.NewClaudeCmdBuilder(cfg))
 	}
+
+	// Configure host terminal manager (no Docker needed).
+	hostExecClient := newHostExecClient()
+	hostTermMgr := terminal.NewManager(hostExecClient, logger)
+	apiSrv.SetHostTerminalManager(terminal.NewManagerAdapter(hostTermMgr))
 
 	// Configure embeddings and memory indexer at the daemon level.
 	if cfg.Memory.Enabled {

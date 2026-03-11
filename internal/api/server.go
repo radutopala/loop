@@ -37,6 +37,7 @@ type Server struct {
 	messages           MessageSender
 	memoryIndexer      MemoryIndexer
 	termManager        TerminalManager
+	hostTermManager    TerminalManager
 	containerFinder    ContainerFinder
 	containerStopper   ContainerStopper
 	cmdBuilder         InteractiveCmdBuilder

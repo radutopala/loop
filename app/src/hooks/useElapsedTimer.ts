@@ -9,9 +9,10 @@ export function useElapsedTimer() {
   const startTimeRef = useRef<number | null>(null);
   const timerRef = useRef<ReturnType<typeof setInterval>>(undefined);
 
-  const start = useCallback(() => {
+  const start = useCallback((fromTimestamp?: number) => {
     if (startTimeRef.current) return; // already running
-    startTimeRef.current = Date.now();
+    startTimeRef.current = fromTimestamp ?? Date.now();
+    setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));
     timerRef.current = setInterval(() => {
       if (startTimeRef.current) {
         setElapsed(Math.floor((Date.now() - startTimeRef.current) / 1000));

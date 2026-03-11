@@ -266,6 +266,7 @@ type MainSuite struct {
 	origNewEmbedder            func(*config.Config) (embeddings.Embedder, error)
 	origLoadProjectMemoryPaths func(string) []string
 	origNewDockerExecClient    func() (terminal.ExecClient, error)
+	origNewHostExecClient      func() terminal.ExecClient
 }
 
 func TestMainSuite(t *testing.T) {
@@ -298,6 +299,7 @@ func (s *MainSuite) SetupTest() {
 	s.origNewEmbedder = newEmbedder
 	s.origLoadProjectMemoryPaths = loadProjectMemoryPaths
 	s.origNewDockerExecClient = newDockerExecClient
+	s.origNewHostExecClient = newHostExecClient
 	loadProjectMemoryPaths = func(_ string) []string { return nil }
 }
 
@@ -327,6 +329,7 @@ func (s *MainSuite) TearDownTest() {
 	newEmbedder = s.origNewEmbedder
 	loadProjectMemoryPaths = s.origLoadProjectMemoryPaths
 	newDockerExecClient = s.origNewDockerExecClient
+	newHostExecClient = s.origNewHostExecClient
 }
 
 func testConfig() *config.Config {
@@ -385,6 +388,7 @@ func setupServeMocks() *serveMocks {
 	newDockerClient = func() (container.DockerClient, error) { return m.dockerClient, nil }
 	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error { return nil }
 	newDockerExecClient = func() (terminal.ExecClient, error) { return nil, errors.New("no docker") }
+	newHostExecClient = func() terminal.ExecClient { return &noopExecClient{} }
 	newAPIServer = fakeAPIServer()
 	return m
 }
@@ -1919,6 +1923,12 @@ func (s *MainSuite) TestDefaultNewDockerExecClient() {
 	_, _ = s.origNewDockerExecClient()
 }
 
+func (s *MainSuite) TestDefaultNewHostExecClient() {
+	// Exercise the default newHostExecClient to cover serve.go var body.
+	c := s.origNewHostExecClient()
+	require.NotNil(s.T(), c)
+}
+
 // --- daemon commands ---
 
 func (s *MainSuite) TestNewDaemonStartCmd() {
@@ -3344,14 +3354,14 @@ func (s *MainSuite) TestLocalBotPlainMessageTriggers() {
 // noopExecClient satisfies terminal.ExecClient for testing.
 type noopExecClient struct{}
 
-func (n *noopExecClient) ContainerExecCreate(_ context.Context, _ string, _ []string, _ bool) (string, error) {
+func (n *noopExecClient) ExecCreate(_ context.Context, _ string, _ []string, _ bool) (string, error) {
 	return "", nil
 }
 
-func (n *noopExecClient) ContainerExecAttach(_ context.Context, _ string) (io.ReadWriteCloser, error) {
+func (n *noopExecClient) ExecAttach(_ context.Context, _ string) (io.ReadWriteCloser, error) {
 	return nil, nil
 }
 
-func (n *noopExecClient) ContainerExecResize(_ context.Context, _ string, _, _ uint) error {
+func (n *noopExecClient) ExecResize(_ context.Context, _ string, _, _ uint) error {
 	return nil
 }

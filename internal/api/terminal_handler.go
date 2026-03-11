@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"net/http"
+	"os"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -69,6 +70,7 @@ type wsControlMessage struct {
 	Data        string   `json:"data,omitempty"` // base64-encoded input
 	Rows        uint     `json:"rows,omitempty"`
 	Cols        uint     `json:"cols,omitempty"`
+	Target      string   `json:"target,omitempty"` // "host" or "agent" (default)
 }
 
 // wsStatusMessage represents a JSON status message sent to the client.
@@ -88,6 +90,7 @@ type InteractiveCmdBuilder interface {
 type terminalWSConn struct {
 	conn             *websocket.Conn
 	manager          TerminalManager
+	hostManager      TerminalManager // may be nil
 	containerFinder  ContainerFinder
 	containerStopper ContainerStopper
 	cmdBuilder       InteractiveCmdBuilder
@@ -97,14 +100,24 @@ type terminalWSConn struct {
 	stopOnce         sync.Once
 	stopCh           chan struct{}
 
-	sessionID string
-	outputCh  <-chan []byte
+	sessionID     string
+	outputCh      <-chan []byte
+	sessionTarget string // "host" or "agent"
 }
 
-func newTerminalWSConn(conn *websocket.Conn, manager TerminalManager, finder ContainerFinder, stopper ContainerStopper, cmdBuilder InteractiveCmdBuilder, store ChannelLister, logger *slog.Logger) *terminalWSConn {
+// activeManager returns the correct manager based on the current session target.
+func (t *terminalWSConn) activeManager() TerminalManager {
+	if t.sessionTarget == "host" {
+		return t.hostManager
+	}
+	return t.manager
+}
+
+func newTerminalWSConn(conn *websocket.Conn, manager TerminalManager, hostManager TerminalManager, finder ContainerFinder, stopper ContainerStopper, cmdBuilder InteractiveCmdBuilder, store ChannelLister, logger *slog.Logger) *terminalWSConn {
 	return &terminalWSConn{
 		conn:             conn,
 		manager:          manager,
+		hostManager:      hostManager,
 		containerFinder:  finder,
 		containerStopper: stopper,
 		cmdBuilder:       cmdBuilder,
@@ -159,11 +172,14 @@ func (t *terminalWSConn) streamOutput(output <-chan []byte, done <-chan struct{}
 // detachCurrent detaches from the current session if attached.
 func (t *terminalWSConn) detachCurrent() {
 	if t.sessionID != "" && t.outputCh != nil {
-		if err := t.manager.DetachSession(t.sessionID, t.outputCh); err != nil {
-			t.logger.Warn("terminal ws: detach failed", "session_id", t.sessionID, "error", err)
+		if mgr := t.activeManager(); mgr != nil {
+			if err := mgr.DetachSession(t.sessionID, t.outputCh); err != nil {
+				t.logger.Warn("terminal ws: detach failed", "session_id", t.sessionID, "error", err)
+			}
 		}
 		t.sessionID = ""
 		t.outputCh = nil
+		t.sessionTarget = ""
 	}
 }
 
@@ -187,7 +203,60 @@ func (t *terminalWSConn) startSession(sessionID string, output <-chan []byte, hi
 // maxCmdArgs is the maximum number of arguments allowed in a create command.
 const maxCmdArgs = 64
 
+func (t *terminalWSConn) handleCreateHost(ctx context.Context, msg wsControlMessage) {
+	if t.hostManager == nil {
+		t.sendError("host terminal not configured", wsErrCodeSessionFailed)
+		return
+	}
+
+	// Resolve channel_id → dir_path. For threads, fall back to the parent's dir_path.
+	dirPath := os.Getenv("HOME")
+	if msg.ChannelID != "" && t.store != nil {
+		if ch, err := t.store.GetChannel(ctx, msg.ChannelID); err == nil && ch != nil {
+			if ch.DirPath != "" {
+				dirPath = ch.DirPath
+			} else if ch.ParentID != "" {
+				if parent, err := t.store.GetChannel(ctx, ch.ParentID); err == nil && parent != nil && parent.DirPath != "" {
+					dirPath = parent.DirPath
+				}
+			}
+		}
+	}
+
+	if len(msg.Cmd) > maxCmdArgs {
+		t.sendError("cmd exceeds maximum arguments", wsErrCodeInvalidInput)
+		return
+	}
+	for _, arg := range msg.Cmd {
+		if arg == "" {
+			t.sendError("cmd contains empty argument", wsErrCodeInvalidInput)
+			return
+		}
+	}
+
+	t.detachCurrent()
+
+	sid, output, history, done, err := t.hostManager.CreateSession(ctx, dirPath, msg.Cmd)
+	if err != nil {
+		t.sendError(err.Error(), wsErrCodeSessionFailed)
+		return
+	}
+	t.sessionTarget = "host"
+	t.startSession(sid, output, history, done, wsStatusCreated)
+
+	if msg.Rows > 0 && msg.Cols > 0 {
+		if err := t.hostManager.Resize(ctx, sid, msg.Rows, msg.Cols); err != nil {
+			t.logger.Warn("terminal ws: initial resize failed", "session_id", sid, "error", err)
+		}
+	}
+}
+
 func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage) {
+	if msg.Target == "host" {
+		t.handleCreateHost(ctx, msg)
+		return
+	}
+
 	// Resolve channel_id to container_id via ContainerFinder.
 	var dirPath, claudeSessionID string
 	var forkSession bool
@@ -264,11 +333,27 @@ func (t *terminalWSConn) handleAttach(msg wsControlMessage) {
 	}
 	t.detachCurrent()
 
-	output, history, done, err := t.manager.AttachSession(msg.SessionID)
+	// Try agent manager first, then host manager.
+	var output <-chan []byte
+	var history []byte
+	var done <-chan struct{}
+	var err error
+	target := "agent"
+
+	if t.manager != nil {
+		output, history, done, err = t.manager.AttachSession(msg.SessionID)
+	}
+	if (t.manager == nil || err != nil) && t.hostManager != nil {
+		output, history, done, err = t.hostManager.AttachSession(msg.SessionID)
+		if err == nil {
+			target = "host"
+		}
+	}
 	if err != nil {
 		t.sendError(err.Error(), wsErrCodeSessionFailed)
 		return
 	}
+	t.sessionTarget = target
 	t.startSession(msg.SessionID, output, history, done, wsStatusAttached)
 }
 
@@ -282,7 +367,7 @@ func (t *terminalWSConn) handleInput(msg wsControlMessage) {
 		t.sendError("invalid base64 data", wsErrCodeInvalidInput)
 		return
 	}
-	if err := t.manager.SendInput(t.sessionID, data); err != nil {
+	if err := t.activeManager().SendInput(t.sessionID, data); err != nil {
 		t.logger.Error("terminal ws: send input failed", "session_id", t.sessionID, "error", err)
 		t.sendError(err.Error(), wsErrCodeSessionFailed)
 	}
@@ -297,7 +382,7 @@ func (t *terminalWSConn) handleResize(ctx context.Context, msg wsControlMessage)
 		t.sendError("rows and cols required", wsErrCodeMissingField)
 		return
 	}
-	if err := t.manager.Resize(ctx, t.sessionID, msg.Rows, msg.Cols); err != nil {
+	if err := t.activeManager().Resize(ctx, t.sessionID, msg.Rows, msg.Cols); err != nil {
 		t.sendError(err.Error(), wsErrCodeSessionFailed)
 	}
 }
@@ -312,7 +397,8 @@ func (t *terminalWSConn) handleStop(ctx context.Context, msg wsControlMessage) {
 		t.sendError("no active session", wsErrCodeNoSession)
 		return
 	}
-	containerID, err := t.manager.StopSession(sid)
+	isHost := t.sessionTarget == "host"
+	containerID, err := t.activeManager().StopSession(sid)
 	if err != nil {
 		t.sendError(err.Error(), wsErrCodeSessionFailed)
 		return
@@ -321,10 +407,12 @@ func (t *terminalWSConn) handleStop(ctx context.Context, msg wsControlMessage) {
 	// from the manager, so calling detachCurrent would fail with "session not found".
 	t.sessionID = ""
 	t.outputCh = nil
+	t.sessionTarget = ""
 
 	// Remove the container before notifying the client, so the channel list
 	// API reflects the updated running state when the client refreshes.
-	if containerID != "" && t.containerStopper != nil {
+	// Skip container removal for host sessions (no container involved).
+	if !isHost && containerID != "" && t.containerStopper != nil {
 		if err := t.containerStopper.ContainerRemove(ctx, containerID); err != nil {
 			t.logger.Warn("terminal ws: container remove failed", "container_id", containerID, "error", err)
 		}
@@ -333,7 +421,8 @@ func (t *terminalWSConn) handleStop(ctx context.Context, msg wsControlMessage) {
 }
 
 func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
-	if !requireConfigured(w, s.termManager, "terminal not configured") {
+	if s.termManager == nil && s.hostTermManager == nil {
+		http.Error(w, "terminal not configured", http.StatusNotImplemented)
 		return
 	}
 
@@ -344,7 +433,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	tc := newTerminalWSConn(conn, s.termManager, s.containerFinder, s.containerStopper, s.cmdBuilder, s.store, s.logger)
+	tc := newTerminalWSConn(conn, s.termManager, s.hostTermManager, s.containerFinder, s.containerStopper, s.cmdBuilder, s.store, s.logger)
 	defer tc.close()
 
 	for {
@@ -394,4 +483,9 @@ func (s *Server) SetContainerStopper(stopper ContainerStopper) {
 // SetInteractiveCmdBuilder configures the command builder for interactive terminal sessions.
 func (s *Server) SetInteractiveCmdBuilder(builder InteractiveCmdBuilder) {
 	s.cmdBuilder = builder
+}
+
+// SetHostTerminalManager configures the host terminal manager for non-Docker shell sessions.
+func (s *Server) SetHostTerminalManager(mgr TerminalManager) {
+	s.hostTermManager = mgr
 }

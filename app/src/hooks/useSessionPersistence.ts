@@ -1,8 +1,17 @@
 import { useCallback, useRef } from "react";
 import type { RefObject } from "react";
+import type { TerminalTarget } from "../types";
 
-/** Module-level map so session IDs survive component remounts. */
+/** Module-level map so session IDs survive component remounts.
+ *  Keyed by `${channelId}:${target}` so agent and host sessions are tracked independently. */
 const sessionsByChannel = new Map<string, string>();
+
+/** Module-level map of session start timestamps (epoch ms) so timers survive remounts. */
+const sessionStartTimes = new Map<string, number>();
+
+function sessionKey(channelId: string, target: TerminalTarget): string {
+  return `${channelId}:${target}`;
+}
 
 type GetTerminalSize = (() => { cols: number; rows: number } | null) | undefined;
 
@@ -13,10 +22,12 @@ type GetTerminalSize = (() => { cols: number; rows: number } | null) | undefined
  */
 export function useSessionPersistence(
   channelId: string | null,
+  target: TerminalTarget,
   getTerminalSizeRef?: RefObject<GetTerminalSize>,
 ) {
+  const key = channelId ? sessionKey(channelId, target) : null;
   const sessionIdRef = useRef<string | null>(
-    channelId ? (sessionsByChannel.get(channelId) ?? null) : null,
+    key ? (sessionsByChannel.get(key) ?? null) : null,
   );
   /** Set to true after kill to prevent auto-creating a new session on reconnect. */
   const killedRef = useRef(false);
@@ -25,16 +36,26 @@ export function useSessionPersistence(
   const setSessionId = useCallback(
     (id: string | null) => {
       sessionIdRef.current = id;
-      if (channelId) {
+      if (key) {
         if (id) {
-          sessionsByChannel.set(channelId, id);
+          sessionsByChannel.set(key, id);
+          // Record start time if this is a new session.
+          if (!sessionStartTimes.has(key)) {
+            sessionStartTimes.set(key, Date.now());
+          }
         } else {
-          sessionsByChannel.delete(channelId);
+          sessionsByChannel.delete(key);
+          sessionStartTimes.delete(key);
         }
       }
     },
-    [channelId],
+    [key],
   );
+
+  /** Returns the stored start timestamp for the current session, if any. */
+  const getStartTime = useCallback((): number | undefined => {
+    return key ? sessionStartTimes.get(key) : undefined;
+  }, [key]);
 
   /** Mark the session as killed so reconnect doesn't auto-create. */
   const markKilled = useCallback(() => {
@@ -50,11 +71,11 @@ export function useSessionPersistence(
         );
       } else if (channelId && !killedRef.current) {
         const size = getTerminalSizeRef?.current?.();
-        ws.send(JSON.stringify({ type: "create", channel_id: channelId, ...size }));
+        ws.send(JSON.stringify({ type: "create", channel_id: channelId, target, ...size }));
       }
     },
-    [channelId, getTerminalSizeRef],
+    [channelId, target, getTerminalSizeRef],
   );
 
-  return { sessionIdRef, killedRef, setSessionId, handleOpen, markKilled };
+  return { sessionIdRef, killedRef, setSessionId, handleOpen, markKilled, getStartTime };
 }

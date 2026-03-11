@@ -66,12 +66,16 @@ export type SessionStatus = "connecting" | "running" | "completed" | "failed";
 // View mode per channel: interactive terminal, chat transcript, or both.
 export type ViewMode = "chat" | "terminal" | "split";
 
+// Terminal target: Docker agent or host shell.
+export type TerminalTarget = "agent" | "host";
+
 // --- Client → Server messages ---
 
 export interface CreateMessage {
   type: "create";
   channel_id: string;
   cmd?: string[];
+  target?: "host" | "agent";
 }
 
 export interface AttachMessage {

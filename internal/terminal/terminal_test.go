@@ -22,12 +22,12 @@ type mockExecClient struct {
 	mock.Mock
 }
 
-func (m *mockExecClient) ContainerExecCreate(ctx context.Context, containerID string, cmd []string, tty bool) (string, error) {
+func (m *mockExecClient) ExecCreate(ctx context.Context, containerID string, cmd []string, tty bool) (string, error) {
 	args := m.Called(ctx, containerID, cmd, tty)
 	return args.String(0), args.Error(1)
 }
 
-func (m *mockExecClient) ContainerExecAttach(ctx context.Context, execID string) (io.ReadWriteCloser, error) {
+func (m *mockExecClient) ExecAttach(ctx context.Context, execID string) (io.ReadWriteCloser, error) {
 	args := m.Called(ctx, execID)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
@@ -35,7 +35,7 @@ func (m *mockExecClient) ContainerExecAttach(ctx context.Context, execID string)
 	return args.Get(0).(io.ReadWriteCloser), args.Error(1)
 }
 
-func (m *mockExecClient) ContainerExecResize(ctx context.Context, execID string, height, width uint) error {
+func (m *mockExecClient) ExecResize(ctx context.Context, execID string, height, width uint) error {
 	args := m.Called(ctx, execID, height, width)
 	return args.Error(0)
 }
@@ -83,8 +83,8 @@ func (s *TerminalSuite) TestCreateSession() {
 	pr, pw := io.Pipe()
 	conn := &mockConn{r: pr, w: io.Discard}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
 	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
@@ -103,8 +103,8 @@ func (s *TerminalSuite) TestCreateSessionWithCmd() {
 	pr, pw := io.Pipe()
 	conn := &mockConn{r: pr, w: io.Discard}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/bash"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string{"/bin/bash"}, true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
 	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", []string{"/bin/bash"})
@@ -119,7 +119,7 @@ func (s *TerminalSuite) TestCreateSessionWithCmd() {
 
 func (s *TerminalSuite) TestCreateSessionExecCreateError() {
 	client := new(mockExecClient)
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("", errors.New("exec failed"))
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("", errors.New("exec failed"))
 
 	mgr := NewManager(client, testLogger)
 	_, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
@@ -131,8 +131,8 @@ func (s *TerminalSuite) TestCreateSessionExecCreateError() {
 
 func (s *TerminalSuite) TestCreateSessionAttachError() {
 	client := new(mockExecClient)
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(nil, errors.New("attach failed"))
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(nil, errors.New("attach failed"))
 
 	mgr := NewManager(client, testLogger)
 	_, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
@@ -147,8 +147,8 @@ func (s *TerminalSuite) TestAttachDetach() {
 	pr, pw := io.Pipe()
 	conn := &mockConn{r: pr, w: io.Discard}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
 	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
@@ -186,8 +186,8 @@ func (s *TerminalSuite) TestAttachReceivesHistory() {
 	pr, pw := io.Pipe()
 	conn := &mockConn{r: pr, w: io.Discard}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
 	mgr := NewManager(client, testLogger)
 	mgr.SetRingBufSize(1024)
@@ -213,8 +213,8 @@ func (s *TerminalSuite) TestDetachUnknownChannel() {
 	pr, pw := io.Pipe()
 	conn := &mockConn{r: pr, w: io.Discard}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
 	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
@@ -237,8 +237,8 @@ func (s *TerminalSuite) TestSendInput() {
 	var inputBuf bytes.Buffer
 	conn := &mockConn{r: pr, w: &inputBuf}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
 	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
@@ -270,8 +270,8 @@ func (s *TerminalSuite) TestSendInputWriteError() {
 		writeErr: errors.New("write failed"),
 	}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(errWriter, nil)
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(errWriter, nil)
 
 	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
@@ -300,9 +300,9 @@ func (s *TerminalSuite) TestResize() {
 	pr, pw := io.Pipe()
 	conn := &mockConn{r: pr, w: io.Discard}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
-	client.On("ContainerExecResize", mock.Anything, "exec-1", uint(24), uint(80)).Return(nil)
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+	client.On("ExecResize", mock.Anything, "exec-1", uint(24), uint(80)).Return(nil)
 
 	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
@@ -330,9 +330,9 @@ func (s *TerminalSuite) TestResizeError() {
 	pr, pw := io.Pipe()
 	conn := &mockConn{r: pr, w: io.Discard}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
-	client.On("ContainerExecResize", mock.Anything, "exec-1", uint(24), uint(80)).Return(errors.New("resize failed"))
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+	client.On("ExecResize", mock.Anything, "exec-1", uint(24), uint(80)).Return(errors.New("resize failed"))
 
 	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
@@ -362,8 +362,8 @@ func (s *TerminalSuite) TestStopSession() {
 		},
 	}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
 	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
@@ -411,10 +411,10 @@ func (s *TerminalSuite) TestListSessions() {
 	conn1 := &mockConn{r: pr1, w: io.Discard}
 	conn2 := &mockConn{r: pr2, w: io.Discard}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil).Once()
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn1, nil).Once()
-	client.On("ContainerExecCreate", mock.Anything, "ctr-2", []string{"/bin/sh"}, true).Return("exec-2", nil).Once()
-	client.On("ContainerExecAttach", mock.Anything, "exec-2").Return(conn2, nil).Once()
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil).Once()
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn1, nil).Once()
+	client.On("ExecCreate", mock.Anything, "ctr-2", []string(nil), true).Return("exec-2", nil).Once()
+	client.On("ExecAttach", mock.Anything, "exec-2").Return(conn2, nil).Once()
 
 	mgr := NewManager(client, testLogger)
 
@@ -440,8 +440,8 @@ func (s *TerminalSuite) TestMultipleClients() {
 	pr, pw := io.Pipe()
 	conn := &mockConn{r: pr, w: io.Discard}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
 	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
@@ -497,8 +497,8 @@ func (s *TerminalSuite) TestReadLoopClosesOnEOF() {
 	pr, pw := io.Pipe()
 	conn := &mockConn{r: pr, w: io.Discard}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
 	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
@@ -537,8 +537,8 @@ func (s *TerminalSuite) TestIdleTimeout() {
 	pr, _ := io.Pipe()
 	conn := &mockConn{r: pr, w: io.Discard}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
 	mgr := NewManager(client, testLogger)
 	mgr.SetIdleTimeout(100 * time.Millisecond)
@@ -561,8 +561,8 @@ func (s *TerminalSuite) TestIdleTimeoutResetOnOutput() {
 	pr, pw := io.Pipe()
 	conn := &mockConn{r: pr, w: io.Discard}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
 	mgr := NewManager(client, testLogger)
 	mgr.SetIdleTimeout(200 * time.Millisecond)
@@ -597,8 +597,8 @@ func (s *TerminalSuite) TestNoIdleTimeoutByDefault() {
 	pr, pw := io.Pipe()
 	conn := &mockConn{r: pr, w: io.Discard}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
 	mgr := NewManager(client, testLogger)
 	// No SetIdleTimeout — default is 0 (disabled).
@@ -632,8 +632,8 @@ func (s *TerminalSuite) TestConcurrentAttachDetach() {
 	pr, pw := io.Pipe()
 	conn := &mockConn{r: pr, w: io.Discard}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
 	mgr := NewManager(client, testLogger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
@@ -685,8 +685,8 @@ func (s *TerminalSuite) TestSlowConsumerDrop() {
 	pr, pw := io.Pipe()
 	conn := &mockConn{r: pr, w: io.Discard}
 
-	client.On("ContainerExecCreate", mock.Anything, "ctr-1", []string{"/bin/sh"}, true).Return("exec-1", nil)
-	client.On("ContainerExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+	client.On("ExecCreate", mock.Anything, "ctr-1", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
 	mgr := NewManager(client, logger)
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
