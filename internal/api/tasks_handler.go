@@ -81,17 +81,7 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 
 	resp := make([]taskResponse, 0, len(tasks))
 	for _, t := range tasks {
-		resp = append(resp, taskResponse{
-			ID:            t.ID,
-			ChannelID:     t.ChannelID,
-			Schedule:      t.Schedule,
-			Type:          string(t.Type),
-			Prompt:        t.Prompt,
-			Enabled:       t.Enabled,
-			NextRunAt:     t.NextRunAt,
-			TemplateName:  t.TemplateName,
-			AutoDeleteSec: t.AutoDeleteSec,
-		})
+		resp = append(resp, toTaskResponse(t))
 	}
 
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
@@ -115,19 +105,21 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := taskResponse{
-		ID:            task.ID,
-		ChannelID:     task.ChannelID,
-		Schedule:      task.Schedule,
-		Type:          string(task.Type),
-		Prompt:        task.Prompt,
-		Enabled:       task.Enabled,
-		NextRunAt:     task.NextRunAt,
-		TemplateName:  task.TemplateName,
-		AutoDeleteSec: task.AutoDeleteSec,
-	}
+	writeHTTPJSON(w, http.StatusOK, toTaskResponse(task), s.logger)
+}
 
-	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
+func toTaskResponse(t *db.ScheduledTask) taskResponse {
+	return taskResponse{
+		ID:            t.ID,
+		ChannelID:     t.ChannelID,
+		Schedule:      t.Schedule,
+		Type:          string(t.Type),
+		Prompt:        t.Prompt,
+		Enabled:       t.Enabled,
+		NextRunAt:     t.NextRunAt,
+		TemplateName:  t.TemplateName,
+		AutoDeleteSec: t.AutoDeleteSec,
+	}
 }
 
 func (s *Server) handleDeleteTask(w http.ResponseWriter, r *http.Request) {

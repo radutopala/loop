@@ -6,6 +6,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/radutopala/loop/internal/db"
 )
 
 type sendMessageRequest struct {
@@ -69,6 +71,30 @@ type messagesListResponse struct {
 	NextCursor *int64            `json:"next_cursor"`
 }
 
+func toMessageResponse(m *db.Message) messageResponse {
+	return messageResponse{
+		ID:         m.ID,
+		ChannelID:  m.ChannelID,
+		MsgID:      m.MsgID,
+		AuthorID:   m.AuthorID,
+		AuthorName: m.AuthorName,
+		Content:    m.Content,
+		IsBot:      m.IsBot,
+		CreatedAt:  m.CreatedAt,
+	}
+}
+
+func toSearchMessageResponse(m *db.Message) searchMessageResponse {
+	return searchMessageResponse{
+		ID:         m.ID,
+		ChannelID:  m.ChannelID,
+		AuthorName: m.AuthorName,
+		Content:    m.Content,
+		IsBot:      m.IsBot,
+		CreatedAt:  m.CreatedAt,
+	}
+}
+
 func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.store, "message listing not configured") {
 		return
@@ -102,11 +128,7 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		}
 		resp := messagesListResponse{Messages: make([]messageResponse, 0, len(msgs))}
 		for _, m := range msgs {
-			resp.Messages = append(resp.Messages, messageResponse{
-				ID: m.ID, ChannelID: m.ChannelID, MsgID: m.MsgID,
-				AuthorID: m.AuthorID, AuthorName: m.AuthorName,
-				Content: m.Content, IsBot: m.IsBot, CreatedAt: m.CreatedAt,
-			})
+			resp.Messages = append(resp.Messages, toMessageResponse(m))
 		}
 		writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 		return
@@ -151,16 +173,7 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	for _, m := range msgs {
-		resp.Messages = append(resp.Messages, messageResponse{
-			ID:         m.ID,
-			ChannelID:  m.ChannelID,
-			MsgID:      m.MsgID,
-			AuthorID:   m.AuthorID,
-			AuthorName: m.AuthorName,
-			Content:    m.Content,
-			IsBot:      m.IsBot,
-			CreatedAt:  m.CreatedAt,
-		})
+		resp.Messages = append(resp.Messages, toMessageResponse(m))
 	}
 
 	if hasMore {
@@ -215,14 +228,7 @@ func (s *Server) handleSearchMessages(w http.ResponseWriter, r *http.Request) {
 
 	results := make([]searchMessageResponse, 0, len(msgs))
 	for _, m := range msgs {
-		results = append(results, searchMessageResponse{
-			ID:         m.ID,
-			ChannelID:  m.ChannelID,
-			AuthorName: m.AuthorName,
-			Content:    m.Content,
-			IsBot:      m.IsBot,
-			CreatedAt:  m.CreatedAt,
-		})
+		results = append(results, toSearchMessageResponse(m))
 	}
 
 	writeHTTPJSON(w, http.StatusOK, results, s.logger)
