@@ -48,6 +48,10 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if s.eventsHub != nil {
+		s.eventsHub.BroadcastChannelCreated(req.ChannelID, threadID)
+	}
+
 	if s.msgHandler != nil && req.Message != "" {
 		go s.msgHandler.HandleThreadCreated(context.Background(), threadID, req.AuthorID, req.Message)
 	}

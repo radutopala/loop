@@ -827,6 +827,12 @@ func (s *ServerSuite) TestCreateThreadLocalAutoTrigger() {
 	s.srv.SetIncomingMessageHandler(handler)
 	defer func() { s.srv.msgHandler = nil }()
 
+	// Set eventsHub so BroadcastChannelCreated is exercised.
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	hub := NewEventsHub(logger)
+	s.srv.SetEventsHub(hub)
+	defer func() { s.srv.eventsHub = nil }()
+
 	called := make(chan struct{}, 1)
 	handler.On("HandleThreadCreated", mock.Anything, "thread-1", "user-42", "Do the task").
 		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
