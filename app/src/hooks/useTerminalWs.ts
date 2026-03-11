@@ -7,6 +7,7 @@ import { useSessionPersistence } from "./useSessionPersistence";
 interface UseTerminalWsOptions {
   channelId: string | null;
   target?: TerminalTarget;
+  instanceId?: string;
   onData: (data: ArrayBuffer) => void;
   onStatus: (status: SessionStatus) => void;
   onError: (message: string) => void;
@@ -17,6 +18,7 @@ interface UseTerminalWsOptions {
 export function useTerminalWs({
   channelId,
   target = "agent",
+  instanceId,
   onData,
   onStatus,
   onError,
@@ -25,7 +27,7 @@ export function useTerminalWs({
   const getTerminalSizeRef = useRef(getTerminalSize);
   getTerminalSizeRef.current = getTerminalSize;
 
-  const { sessionIdRef, setSessionId, killedRef, handleOpen, markKilled, getStartTime } = useSessionPersistence(channelId, target, getTerminalSizeRef);
+  const { sessionIdRef, setSessionId, killedRef, handleOpen, markKilled, getStartTime } = useSessionPersistence(channelId, target, getTerminalSizeRef, instanceId);
 
   // Use a ref for send to break the circular dependency between
   // handleMessage (needs onSessionFailed) and send (needs handleMessage).

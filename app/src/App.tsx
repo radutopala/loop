@@ -697,6 +697,9 @@ export default function App() {
         <DiffPanel
           channelId={selectedId}
           maximized={diffMaximized}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          onOpenPalette={() => setPaletteOpen(true)}
           onToggleMaximize={() => setDiffMaximized((v) => !v)}
           onClose={() => { setDiffOpen(false); setDiffMaximized(false); }}
         />
@@ -705,6 +708,9 @@ export default function App() {
         <ShellPanel
           channelId={selectedId}
           maximized={shellMaximized}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          onOpenPalette={() => setPaletteOpen(true)}
           onToggleMaximize={() => setShellMaximized((v) => !v)}
           onClose={() => { setShellOpen(false); setShellMaximized(false); if (selectedId) saveShellOpen(selectedId, false); }}
         />

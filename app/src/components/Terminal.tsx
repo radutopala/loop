@@ -9,11 +9,12 @@ import { TerminalToolbar } from "./TerminalToolbar";
 interface TerminalProps {
   channelId: string | null;
   target?: TerminalTarget;
+  instanceId?: string;
   onStatusChange?: () => void;
   onSessionEnd?: () => void;
 }
 
-export function Terminal({ channelId, target = "agent", onStatusChange, onSessionEnd }: TerminalProps) {
+export function Terminal({ channelId, target = "agent", instanceId, onStatusChange, onSessionEnd }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<SessionStatus>("connecting");
   const { elapsed, start, stop, reset } = useElapsedTimer();
@@ -51,6 +52,7 @@ export function Terminal({ channelId, target = "agent", onStatusChange, onSessio
   const { sendInput, sendResize, sendKill, sendCreate, getStartTime } = useTerminalWs({
     channelId,
     target,
+    instanceId,
     onData,
     onStatus,
     onError,

@@ -243,7 +243,7 @@ export function Sidebar({
       {/* Drag region over traffic lights area */}
       <div
         style={{
-          height: 24,
+          height: 38,
           flexShrink: 0,
           // @ts-expect-error: WebKit-specific CSS property for Electron drag region
           WebkitAppRegion: "drag",
@@ -254,12 +254,16 @@ export function Sidebar({
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "2px 12px 4px",
+          padding: "3px 12px",
+          borderBottom: `1px solid ${colors.border}`,
+          flexShrink: 0,
+          boxSizing: "border-box",
+          height: 39,
         }}
       >
         <span
           style={{
-            fontSize: 11,
+            fontSize: 10,
             fontWeight: 700,
             color: colors.textDim,
             textTransform: "uppercase",
@@ -320,7 +324,7 @@ export function Sidebar({
           )}
         </div>
       </div>
-      <div style={{ padding: "0 12px 4px" }}>
+      <div style={{ padding: "6px 12px 4px" }}>
         <div style={{ position: "relative" }}>
           <svg
             width="13"

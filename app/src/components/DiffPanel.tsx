@@ -30,6 +30,9 @@ function saveWidth(w: number) {
 interface DiffPanelProps {
   channelId: string | null;
   maximized?: boolean;
+  sidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
+  onOpenPalette?: () => void;
   onToggleMaximize?: () => void;
   onClose: () => void;
 }
@@ -119,7 +122,7 @@ const lineColors = {
   ctx: { bg: "transparent", numBg: "transparent", text: colors.textMuted },
 };
 
-export function DiffPanel({ channelId, maximized, onToggleMaximize, onClose }: DiffPanelProps) {
+export function DiffPanel({ channelId, maximized, sidebarOpen, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose }: DiffPanelProps) {
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
   const [data, setData] = useState<DiffResponse | null>(null);
@@ -257,10 +260,71 @@ export function DiffPanel({ channelId, maximized, onToggleMaximize, onClose }: D
         style={{
           height: 38,
           flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          paddingLeft: maximized && !sidebarOpen ? 76 : maximized ? 4 : 0,
           // @ts-expect-error: WebKit-specific CSS property for Electron drag region
           WebkitAppRegion: "drag",
         }}
-      />
+      >
+        {maximized && onToggleSidebar && (
+          <button
+            onClick={onToggleSidebar}
+            title="Toggle sidebar"
+            style={{
+              background: "none",
+              border: "none",
+              color: colors.textDim,
+              cursor: "pointer",
+              padding: "2px 4px",
+              lineHeight: 1,
+              borderRadius: 4,
+              display: "flex",
+              alignItems: "center",
+              // @ts-expect-error: WebKit-specific CSS property
+              WebkitAppRegion: "no-drag",
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="3" />
+              <line x1="9" y1="3" x2="9" y2="21" />
+              {sidebarOpen
+                ? <polyline points="15,9 12,12 15,15" />
+                : <polyline points="13,9 16,12 13,15" />
+              }
+            </svg>
+          </button>
+        )}
+        {maximized && onOpenPalette && (
+          <button
+            onClick={onOpenPalette}
+            title="Search messages (Cmd+K)"
+            style={{
+              background: "none",
+              border: `1px solid ${colors.border}`,
+              color: colors.textDim,
+              cursor: "pointer",
+              padding: "2px 8px",
+              lineHeight: 1,
+              borderRadius: 4,
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: 11,
+              fontFamily: fonts.mono,
+              marginLeft: 6,
+              // @ts-expect-error: WebKit-specific CSS property
+              WebkitAppRegion: "no-drag",
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <span style={{ opacity: 0.7 }}>{navigator.platform.includes("Mac") ? "\u2318K" : "Ctrl+K"}</span>
+          </button>
+        )}
+      </div>
 
       {/* Header — sized to match the main toolbar height so bottom borders align */}
       <div

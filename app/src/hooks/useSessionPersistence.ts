@@ -9,8 +9,9 @@ const sessionsByChannel = new Map<string, string>();
 /** Module-level map of session start timestamps (epoch ms) so timers survive remounts. */
 const sessionStartTimes = new Map<string, number>();
 
-function sessionKey(channelId: string, target: TerminalTarget): string {
-  return `${channelId}:${target}`;
+function sessionKey(channelId: string, target: TerminalTarget, instanceId?: string): string {
+  const base = `${channelId}:${target}`;
+  return instanceId ? `${base}:${instanceId}` : base;
 }
 
 type GetTerminalSize = (() => { cols: number; rows: number } | null) | undefined;
@@ -24,8 +25,9 @@ export function useSessionPersistence(
   channelId: string | null,
   target: TerminalTarget,
   getTerminalSizeRef?: RefObject<GetTerminalSize>,
+  instanceId?: string,
 ) {
-  const key = channelId ? sessionKey(channelId, target) : null;
+  const key = channelId ? sessionKey(channelId, target, instanceId) : null;
   const sessionIdRef = useRef<string | null>(
     key ? (sessionsByChannel.get(key) ?? null) : null,
   );
