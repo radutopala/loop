@@ -107,6 +107,9 @@ export function useXTerminal({
 
       const resizeObserver = new ResizeObserver(() => {
         fitAddon.fit();
+        // Scroll after fit reflow so terminal shows latest output on resize
+        // (e.g. switching from terminal-only to split mode).
+        requestAnimationFrame(() => term.scrollToBottom());
       });
       resizeObserver.observe(containerRef.current!);
 
