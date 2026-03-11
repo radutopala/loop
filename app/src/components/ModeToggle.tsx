@@ -8,7 +8,6 @@ interface ModeToggleProps {
 
 const modes: { value: ViewMode; label: string; hint: string }[] = [
   { value: "chat", label: "Chat", hint: "headless" },
-  { value: "split", label: "Split", hint: "both" },
   { value: "terminal", label: "Terminal", hint: "interactive" },
 ];
 

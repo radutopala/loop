@@ -3,7 +3,8 @@ import type { Channel, ViewMode, WSEvent } from "./types";
 import { colors, fonts } from "./theme";
 import { createChannel, createThread, deleteChannel, deleteThread, fetchChannels, fetchDiff, initApiUrl } from "./api/loopApi";
 import { Sidebar } from "./components/Sidebar";
-import { Terminal } from "./components/Terminal";
+import { TerminalPanes, SplitMenu } from "./components/TerminalPanes";
+import type { TerminalPanesRef } from "./components/TerminalPanes";
 import { ChatView } from "./components/ChatView";
 import { ModeToggle } from "./components/ModeToggle";
 import { DiffPanel } from "./components/DiffPanel";
@@ -13,7 +14,6 @@ import { Settings } from "./components/Settings";
 import { useEventStream } from "./hooks/useEventStream";
 
 const MODE_STORAGE_KEY = "loop-view-mode";
-const SPLIT_STORAGE_KEY = "loop-split-ratio";
 const SHELL_OPEN_KEY = "loop-shell-open";
 
 function loadMode(channelId: string | null): ViewMode {
@@ -22,7 +22,7 @@ function loadMode(channelId: string | null): ViewMode {
     const stored = localStorage.getItem(MODE_STORAGE_KEY);
     if (stored) {
       const prefs: Record<string, ViewMode> = JSON.parse(stored);
-      if (prefs[channelId] === "chat" || prefs[channelId] === "terminal" || prefs[channelId] === "split") {
+      if (prefs[channelId] === "chat" || prefs[channelId] === "terminal") {
         return prefs[channelId];
       }
     }
@@ -41,28 +41,6 @@ function saveMode(channelId: string, mode: ViewMode) {
   } catch {
     /* ignore storage errors */
   }
-}
-
-function loadSplitRatio(channelId: string | null): number {
-  if (!channelId) return 0.5;
-  try {
-    const stored = localStorage.getItem(SPLIT_STORAGE_KEY);
-    if (stored) {
-      const prefs: Record<string, number> = JSON.parse(stored);
-      const val = prefs[channelId];
-      if (typeof val === "number" && val >= 0.15 && val <= 0.85) return val;
-    }
-  } catch { /* ignore */ }
-  return 0.5;
-}
-
-function saveSplitRatio(channelId: string, ratio: number) {
-  try {
-    const stored = localStorage.getItem(SPLIT_STORAGE_KEY);
-    const prefs: Record<string, number> = stored ? JSON.parse(stored) : {};
-    prefs[channelId] = ratio;
-    localStorage.setItem(SPLIT_STORAGE_KEY, JSON.stringify(prefs));
-  } catch { /* ignore */ }
 }
 
 function loadShellOpen(channelId: string | null): boolean {
@@ -111,35 +89,10 @@ export default function App() {
   const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(null);
   const [shellOpen, setShellOpen] = useState(() => loadShellOpen(getHashChannelId()));
   const [shellMaximized, setShellMaximized] = useState(false);
-  const [splitRatio, setSplitRatio] = useState(() => loadSplitRatio(getHashChannelId()));
-  const splitContainerRef = useRef<HTMLDivElement>(null);
-
-  const handleSplitDrag = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    const container = splitContainerRef.current;
-    if (!container) return;
-    const channelId = selectedId;
-    const onMove = (ev: MouseEvent) => {
-      const rect = container.getBoundingClientRect();
-      const ratio = Math.max(0.15, Math.min(0.85, (ev.clientY - rect.top) / rect.height));
-      setSplitRatio(ratio);
-    };
-    const onUp = (ev: MouseEvent) => {
-      document.removeEventListener("mousemove", onMove);
-      document.removeEventListener("mouseup", onUp);
-      document.body.style.cursor = "";
-      document.body.style.userSelect = "";
-      if (channelId) {
-        const rect = container.getBoundingClientRect();
-        const ratio = Math.max(0.15, Math.min(0.85, (ev.clientY - rect.top) / rect.height));
-        saveSplitRatio(channelId, ratio);
-      }
-    };
-    document.body.style.cursor = "row-resize";
-    document.body.style.userSelect = "none";
-    document.addEventListener("mousemove", onMove);
-    document.addEventListener("mouseup", onUp);
-  }, [selectedId]);
+  const [agentSplitMenu, setAgentSplitMenu] = useState(false);
+  const [agentKillSignal, setAgentKillSignal] = useState(0);
+  const [agentRunning, setAgentRunning] = useState(true);
+  const agentPanesRef = useRef<TerminalPanesRef>(null);
 
   // Fetch diff stats for the selected channel and keep them updated via events.
   const loadDiffStats = useCallback(async () => {
@@ -300,7 +253,8 @@ export default function App() {
     setViewMode(loadMode(id));
     setShellOpen(loadShellOpen(id));
     setShellMaximized(false);
-    setSplitRatio(loadSplitRatio(id));
+    setAgentRunning(true);
+    setAgentKillSignal(0);
   }, []);
 
   // Auto-select DM channel if nothing is selected on first load.
@@ -669,26 +623,95 @@ export default function App() {
             </div>
           </div>
         )}
-        <div ref={splitContainerRef} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
           <div key="chat-pane" style={{
-            flex: viewMode === "split" ? `0 0 ${splitRatio * 100}%` : viewMode === "chat" ? 1 : undefined,
+            flex: viewMode === "chat" ? 1 : undefined,
             display: viewMode === "terminal" ? "none" : "flex",
             flexDirection: "column", overflow: "hidden", minHeight: 0,
           }}>
             <ChatView key={`chat-${selectedId}-${mountKey}`} channelId={selectedId} initialRunningBot={channels.find((c) => c.id === selectedId)?.agent_running} scrollToMessageId={scrollToMessageId} onScrollComplete={() => setScrollToMessageId(null)} />
           </div>
-          {viewMode === "split" && (
-            <div
-              key="split-divider"
-              onMouseDown={handleSplitDrag}
-              style={{ height: 5, flexShrink: 0, cursor: "row-resize", backgroundColor: colors.border, position: "relative" }}
-            >
-              <div style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: 32, height: 3, borderRadius: 2, backgroundColor: colors.textDim, opacity: 0.5 }} />
-            </div>
-          )}
           {viewMode !== "chat" && (
             <div key="term-pane" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-              <Terminal key={`term-${selectedId}-${mountKey}`} channelId={selectedId} onStatusChange={loadChannels} />
+              <div style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "0 8px",
+                borderBottom: `1px solid ${colors.border}`,
+                flexShrink: 0,
+                height: 28,
+              }}>
+                <span style={{ fontSize: 10, fontWeight: 700, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>
+                  Agent Terminal
+                </span>
+                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                  {agentRunning ? (
+                    <button
+                      onClick={() => setAgentKillSignal((k) => k + 1)}
+                      title="Kill all sessions and remove container"
+                      style={{
+                        padding: "1px 8px",
+                        borderRadius: 4,
+                        border: `1px solid ${colors.error}`,
+                        backgroundColor: "transparent",
+                        color: colors.error,
+                        cursor: "pointer",
+                        fontSize: 10,
+                      }}
+                    >
+                      Kill
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => { setAgentRunning(true); setMountKey((k) => k + 1); }}
+                      title="Start new sessions"
+                      style={{
+                        padding: "1px 8px",
+                        borderRadius: 4,
+                        border: `1px solid ${colors.active}`,
+                        backgroundColor: "transparent",
+                        color: colors.active,
+                        cursor: "pointer",
+                        fontSize: 10,
+                      }}
+                    >
+                      Restart
+                    </button>
+                  )}
+                  <div style={{ position: "relative" }}>
+                    <button
+                      onClick={() => setAgentSplitMenu((v) => !v)}
+                      title="Split pane"
+                      style={{
+                        background: "none",
+                        border: "none",
+                        color: colors.textDim,
+                        cursor: "pointer",
+                        padding: 4,
+                        lineHeight: 1,
+                        borderRadius: 4,
+                        display: "flex",
+                        alignItems: "center",
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <line x1="12" y1="5" x2="12" y2="19" />
+                        <line x1="5" y1="12" x2="19" y2="12" />
+                      </svg>
+                    </button>
+                    {agentSplitMenu && (
+                      <SplitMenu
+                        onSplit={(dir) => { setAgentSplitMenu(false); agentPanesRef.current?.splitLast(dir); }}
+                        onClose={() => setAgentSplitMenu(false)}
+                      />
+                    )}
+                  </div>
+                </div>
+              </div>
+              <TerminalPanes ref={agentPanesRef} key={`term-${selectedId}-${mountKey}`} channelId={selectedId} target="agent" storageKey="loop-agent-panes" mountKey={mountKey} hideActions killSignal={agentKillSignal} onStatusChange={loadChannels} onRunningChange={setAgentRunning} />
             </div>
           )}
         </div>
@@ -696,6 +719,8 @@ export default function App() {
       {diffOpen && selectedId && (
         <DiffPanel
           channelId={selectedId}
+          dirPath={channels.find((c) => c.id === selectedId)?.dir_path || ""}
+          branch={channels.find((c) => c.id === selectedId)?.branch || ""}
           maximized={diffMaximized}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
@@ -707,6 +732,8 @@ export default function App() {
       {shellOpen && selectedId && (
         <ShellPanel
           channelId={selectedId}
+          dirPath={channels.find((c) => c.id === selectedId)?.dir_path || ""}
+          branch={channels.find((c) => c.id === selectedId)?.branch || ""}
           maximized={shellMaximized}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}

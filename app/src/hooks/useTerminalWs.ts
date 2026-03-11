@@ -99,8 +99,9 @@ export function useTerminalWs({
   const sendKill = useCallback(() => {
     markKilled();
     const sid = sessionIdRef.current;
+    setSessionId(null);
     send(JSON.stringify({ type: "stop", ...(sid ? { session_id: sid } : {}) }));
-  }, [send, markKilled]);
+  }, [send, markKilled, setSessionId]);
 
   /** Create a new session (used to restart after kill). */
   const sendCreate = useCallback(() => {
@@ -110,5 +111,13 @@ export function useTerminalWs({
     send(JSON.stringify({ type: "create", channel_id: channelId, target, ...size }));
   }, [channelId, target, send, killedRef]);
 
-  return { connected, sendInput, sendResize, sendKill, sendCreate, getStartTime };
+  /** Close: stop the exec session but keep the container alive.
+   *  Does NOT set killedRef — only explicit Kill should prevent auto-create. */
+  const sendClose = useCallback(() => {
+    const sid = sessionIdRef.current;
+    setSessionId(null);
+    send(JSON.stringify({ type: "close", ...(sid ? { session_id: sid } : {}) }));
+  }, [send, setSessionId]);
+
+  return { connected, sendInput, sendResize, sendKill, sendClose, sendCreate, getStartTime };
 }

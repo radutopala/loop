@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionStatus, TerminalTarget } from "../types";
 import { colors } from "../theme";
 import { useTerminalWs } from "../hooks/useTerminalWs";
@@ -6,15 +6,28 @@ import { useElapsedTimer } from "../hooks/useElapsedTimer";
 import { useXTerminal } from "../hooks/useXTerminal";
 import { TerminalToolbar } from "./TerminalToolbar";
 
+/** Module-level registry so TerminalPanes can call sendClose for a specific instance. */
+const closeRegistry = new Map<string, () => void>();
+
+export function getCloseForInstance(key: string): (() => void) | undefined {
+  return closeRegistry.get(key);
+}
+
 interface TerminalProps {
   channelId: string | null;
   target?: TerminalTarget;
   instanceId?: string;
+  /** Hide Kill/Restart from the toolbar (used when a parent provides these). */
+  hideActions?: boolean;
+  /** Incrementing this value triggers sendKill from the parent. */
+  killSignal?: number;
   onStatusChange?: () => void;
+  /** Reports session status changes to the parent (e.g. for aggregate Kill/Restart). */
+  onPaneStatus?: (status: SessionStatus) => void;
   onSessionEnd?: () => void;
 }
 
-export function Terminal({ channelId, target = "agent", instanceId, onStatusChange, onSessionEnd }: TerminalProps) {
+export function Terminal({ channelId, target = "agent", instanceId, hideActions, killSignal, onStatusChange, onPaneStatus, onSessionEnd }: TerminalProps) {
   const terminalRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<SessionStatus>("connecting");
   const { elapsed, start, stop, reset } = useElapsedTimer();
@@ -36,8 +49,9 @@ export function Terminal({ channelId, target = "agent", instanceId, onStatusChan
         onSessionEnd?.();
       }
       onStatusChange?.();
+      onPaneStatus?.(newStatus);
     },
-    [start, stop, onStatusChange],
+    [start, stop, onStatusChange, onPaneStatus],
   );
 
   const onError = useCallback((message: string) => {
@@ -49,7 +63,7 @@ export function Terminal({ channelId, target = "agent", instanceId, onStatusChan
   // Ref to access xterm dimensions when sending create/attach messages.
   const xtermInstRef = useRef<import("@xterm/xterm").Terminal | null>(null);
 
-  const { sendInput, sendResize, sendKill, sendCreate, getStartTime } = useTerminalWs({
+  const { sendInput, sendResize, sendKill, sendClose, sendCreate, getStartTime } = useTerminalWs({
     channelId,
     target,
     instanceId,
@@ -63,6 +77,28 @@ export function Terminal({ channelId, target = "agent", instanceId, onStatusChan
   });
 
   getStartTimeRef.current = getStartTime;
+
+  // Register sendClose so TerminalPanes can call it when explicitly closing a pane.
+  const registryKey = `${target}:${channelId}:${instanceId}`;
+  const sendCloseRef = useRef(sendClose);
+  sendCloseRef.current = sendClose;
+  useEffect(() => {
+    const key = registryKey;
+    closeRegistry.set(key, () => sendCloseRef.current());
+    return () => { closeRegistry.delete(key); };
+  }, [registryKey]);
+
+  // Kill when killSignal increments from parent.
+  const killSignalRef = useRef(killSignal ?? 0);
+  const sendKillRef = useRef(sendKill);
+  sendKillRef.current = sendKill;
+  useEffect(() => {
+    const prev = killSignalRef.current;
+    killSignalRef.current = killSignal ?? 0;
+    if ((killSignal ?? 0) > prev) {
+      sendKillRef.current();
+    }
+  }, [killSignal]);
 
   const handleRestart = useCallback(() => {
     reset();
@@ -102,8 +138,8 @@ export function Terminal({ channelId, target = "agent", instanceId, onStatusChan
       <TerminalToolbar
         status={status}
         elapsed={elapsed}
-        onKill={sendKill}
-        onRestart={handleRestart}
+        onKill={hideActions ? undefined : sendKill}
+        onRestart={hideActions ? undefined : handleRestart}
         killLabel={target === "host" ? "Close" : "Kill"}
         killTitle={target === "host" ? "Close shell session" : "Kill session and remove container"}
       />

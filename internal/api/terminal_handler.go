@@ -19,6 +19,7 @@ const (
 	wsMsgInput  = "input"
 	wsMsgResize = "resize"
 	wsMsgStop   = "stop"
+	wsMsgClose  = "close"
 )
 
 // Terminal WebSocket status message types (server → client).
@@ -420,6 +421,27 @@ func (t *terminalWSConn) handleStop(ctx context.Context, msg wsControlMessage) {
 	t.writeJSON(wsStatusMessage{Type: wsStatusStopped})
 }
 
+// handleClose stops the exec session but does NOT remove the container.
+// Used when closing an individual terminal pane.
+func (t *terminalWSConn) handleClose(msg wsControlMessage) {
+	sid := t.sessionID
+	if sid == "" {
+		sid = msg.SessionID
+	}
+	if sid == "" {
+		t.sendError("no active session", wsErrCodeNoSession)
+		return
+	}
+	if _, err := t.activeManager().StopSession(sid); err != nil {
+		t.sendError(err.Error(), wsErrCodeSessionFailed)
+		return
+	}
+	t.sessionID = ""
+	t.outputCh = nil
+	t.sessionTarget = ""
+	t.writeJSON(wsStatusMessage{Type: wsStatusStopped})
+}
+
 func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	if s.termManager == nil && s.hostTermManager == nil {
 		http.Error(w, "terminal not configured", http.StatusNotImplemented)
@@ -459,6 +481,8 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			tc.handleResize(r.Context(), msg)
 		case wsMsgStop:
 			tc.handleStop(r.Context(), msg)
+		case wsMsgClose:
+			tc.handleClose(msg)
 		default:
 			tc.sendError("unknown message type: "+msg.Type, wsErrCodeUnknownMessage)
 		}

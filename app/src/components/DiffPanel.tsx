@@ -29,6 +29,8 @@ function saveWidth(w: number) {
 
 interface DiffPanelProps {
   channelId: string | null;
+  dirPath?: string;
+  branch?: string;
   maximized?: boolean;
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
@@ -122,7 +124,7 @@ const lineColors = {
   ctx: { bg: "transparent", numBg: "transparent", text: colors.textMuted },
 };
 
-export function DiffPanel({ channelId, maximized, sidebarOpen, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose }: DiffPanelProps) {
+export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose }: DiffPanelProps) {
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
   const [data, setData] = useState<DiffResponse | null>(null);
@@ -339,7 +341,7 @@ export function DiffPanel({ channelId, maximized, sidebarOpen, onToggleSidebar, 
           height: 39,
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, overflow: "hidden" }}>
           <span
             style={{
               fontSize: 10,
@@ -347,10 +349,42 @@ export function DiffPanel({ channelId, maximized, sidebarOpen, onToggleSidebar, 
               color: colors.textDim,
               textTransform: "uppercase",
               letterSpacing: 1,
+              flexShrink: 0,
             }}
           >
             Changes
           </span>
+          {maximized && dirPath && (
+            <span
+              style={{
+                fontSize: 12,
+                color: colors.textDim,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                minWidth: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+              }}
+            >
+              {dirPath}
+              {branch && (
+                <>
+                  <span style={{ color: colors.border, flexShrink: 0 }}>|</span>
+                  <span style={{ fontSize: 11, color: colors.active, fontFamily: fonts.mono, flexShrink: 0 }}>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 2, verticalAlign: -1 }}>
+                      <line x1="6" y1="3" x2="6" y2="15" />
+                      <circle cx="18" cy="6" r="3" />
+                      <circle cx="6" cy="18" r="3" />
+                      <path d="M18 9a9 9 0 0 1-9 9" />
+                    </svg>
+                    {branch}
+                  </span>
+                </>
+              )}
+            </span>
+          )}
           {totalFiles > 0 && (
             <span style={{ fontSize: 10, color: colors.textDim }}>
               {totalFiles}

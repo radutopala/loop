@@ -969,6 +969,72 @@ func (s *TerminalHandlerSuite) TestStopSessionContainerRemoveError() {
 	close(doneCh)
 }
 
+func (s *TerminalHandlerSuite) TestCloseSession() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
+		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("StopSession", "sess-1").Return("ctr-1", nil)
+
+	stopper := new(MockContainerStopper)
+	s.srv.SetContainerStopper(stopper)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1"})
+	readStatusMsg(s.T(), conn) // created
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "close"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "stopped", msg.Type)
+
+	// ContainerRemove should NOT be called for close (unlike stop).
+	time.Sleep(50 * time.Millisecond)
+	stopper.AssertNotCalled(s.T(), "ContainerRemove", mock.Anything, mock.Anything)
+
+	close(doneCh)
+}
+
+func (s *TerminalHandlerSuite) TestCloseSessionNoSession() {
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "close"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "error", msg.Type)
+	require.Contains(s.T(), msg.Message, "no active session")
+	require.Equal(s.T(), wsErrCodeNoSession, msg.ErrorCode)
+}
+
+func (s *TerminalHandlerSuite) TestCloseSessionError() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
+		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("StopSession", "sess-1").Return("", errors.New("close failed"))
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1"})
+	readStatusMsg(s.T(), conn)
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "close"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "error", msg.Type)
+	require.Contains(s.T(), msg.Message, "close failed")
+	require.Equal(s.T(), wsErrCodeSessionFailed, msg.ErrorCode)
+
+	close(doneCh)
+}
+
 func (s *TerminalHandlerSuite) TestUnknownMessageType() {
 	conn, ts := s.dialWS()
 	defer ts.Close()

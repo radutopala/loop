@@ -6,7 +6,7 @@ import { ElapsedTimer } from "./ElapsedTimer";
 interface TerminalToolbarProps {
   status: SessionStatus;
   elapsed: number;
-  onKill: () => void;
+  onKill?: () => void;
   onRestart?: () => void;
   killLabel?: string;
   killTitle?: string;
@@ -44,7 +44,7 @@ export function TerminalToolbar({ status, elapsed, onKill, onRestart, killLabel 
         >
           Restart
         </button>
-      ) : (
+      ) : onKill ? (
         <button
           onClick={onKill}
           disabled={!isRunning}
@@ -61,7 +61,7 @@ export function TerminalToolbar({ status, elapsed, onKill, onRestart, killLabel 
         >
           {killLabel}
         </button>
-      )}
+      ) : null}
       <ElapsedTimer seconds={elapsed} />
     </div>
   );
