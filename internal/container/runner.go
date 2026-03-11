@@ -278,34 +278,58 @@ func expandPath(path string) (string, error) {
 	return filepath.Join(home, path[2:]), nil
 }
 
+// mountSpec represents a parsed mount specification (host:container[:mode]).
+type mountSpec struct {
+	Host      string
+	Container string
+	Mode      string // optional, e.g. "ro"
+}
+
+// parseMountSpec splits a mount string into its components.
+func parseMountSpec(mount string) (mountSpec, error) {
+	parts := strings.Split(mount, ":")
+	if len(parts) < 2 {
+		return mountSpec{}, fmt.Errorf("invalid mount format: %s", mount)
+	}
+	ms := mountSpec{Host: parts[0], Container: parts[1]}
+	if len(parts) > 2 {
+		ms.Mode = parts[2]
+	}
+	return ms, nil
+}
+
+// String returns the mount spec as a bind string (host:container[:mode]).
+func (m mountSpec) String() string {
+	s := m.Host + ":" + m.Container
+	if m.Mode != "" {
+		s += ":" + m.Mode
+	}
+	return s
+}
+
 // processMount processes a single mount specification and returns the expanded bind string.
 // Returns empty string if the mount should be skipped.
 func processMount(mount string) (string, error) {
-	parts := strings.Split(mount, ":")
-	if len(parts) < 2 {
-		return "", fmt.Errorf("invalid mount format: %s", mount)
+	ms, err := parseMountSpec(mount)
+	if err != nil {
+		return "", err
 	}
-
-	hostPath := parts[0]
 
 	// Docker named volumes (e.g. "gomodcache:/go/pkg/mod") are passed through
 	// without host path expansion or existence checks — Docker manages them.
 	// The container path still needs ~ expansion since Docker requires absolute paths.
-	if config.IsNamedVolume(hostPath) {
-		containerPath, err := expandPath(parts[1])
+	if config.IsNamedVolume(ms.Host) {
+		containerPath, err := expandPath(ms.Container)
 		if err != nil {
-			return "", fmt.Errorf("expanding container path %s: %w", parts[1], err)
+			return "", fmt.Errorf("expanding container path %s: %w", ms.Container, err)
 		}
-		mode := ""
-		if len(parts) > 2 {
-			mode = ":" + parts[2]
-		}
-		return hostPath + ":" + containerPath + mode, nil
+		ms.Container = containerPath
+		return ms.String(), nil
 	}
 
-	expanded, err := expandPath(hostPath)
+	expanded, err := expandPath(ms.Host)
 	if err != nil {
-		return "", fmt.Errorf("expanding path %s: %w", hostPath, err)
+		return "", fmt.Errorf("expanding path %s: %w", ms.Host, err)
 	}
 
 	// Check if path exists
@@ -315,15 +339,13 @@ func processMount(mount string) (string, error) {
 	}
 
 	// Expand ~ in the container path too — container HOME matches host HOME.
-	containerPath, err := expandPath(parts[1])
+	containerPath, err := expandPath(ms.Container)
 	if err != nil {
-		return "", fmt.Errorf("expanding container path %s: %w", parts[1], err)
+		return "", fmt.Errorf("expanding container path %s: %w", ms.Container, err)
 	}
-	mode := ""
-	if len(parts) > 2 {
-		mode = ":" + parts[2]
-	}
-	return expanded + ":" + containerPath + mode, nil
+	ms.Host = expanded
+	ms.Container = containerPath
+	return ms.String(), nil
 }
 
 // gitExcludesMount detects the host git core.excludesFile and returns a bind
@@ -475,9 +497,8 @@ func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID strin
 // Returns the bind strings and any named-volume container paths that need chown.
 func (r *DockerRunner) buildContainerMounts(mounts []string, workDir string) (binds, chownPaths []string) {
 	for _, mount := range mounts {
-		parts := strings.Split(mount, ":")
-		if len(parts) >= 2 && config.IsNamedVolume(parts[0]) {
-			expanded, _ := expandPath(parts[1])
+		if ms, err := parseMountSpec(mount); err == nil && config.IsNamedVolume(ms.Host) {
+			expanded, _ := expandPath(ms.Container)
 			if expanded != "" {
 				chownPaths = append(chownPaths, expanded)
 			}
@@ -567,9 +588,8 @@ func filterMountedCopyFiles(copyFiles, binds []string) []string {
 	// Build set of bind-mounted container paths.
 	mounted := make(map[string]struct{}, len(binds))
 	for _, b := range binds {
-		parts := strings.Split(b, ":")
-		if len(parts) >= 2 {
-			mounted[parts[1]] = struct{}{}
+		if ms, err := parseMountSpec(b); err == nil {
+			mounted[ms.Container] = struct{}{}
 		}
 	}
 

@@ -1551,6 +1551,39 @@ func TestExpandPathHomeDirError(t *testing.T) {
 	require.Contains(t, err.Error(), "home dir error")
 }
 
+func TestParseMountSpec(t *testing.T) {
+	tests := []struct {
+		name      string
+		input     string
+		wantHost  string
+		wantCont  string
+		wantMode  string
+		wantStr   string
+		wantError bool
+	}{
+		{"host:container", "/src:/dst", "/src", "/dst", "", "/src:/dst", false},
+		{"with mode", "/src:/dst:ro", "/src", "/dst", "ro", "/src:/dst:ro", false},
+		{"named volume", "myvolume:/cache", "myvolume", "/cache", "", "myvolume:/cache", false},
+		{"named volume with mode", "myvolume:/cache:rw", "myvolume", "/cache", "rw", "myvolume:/cache:rw", false},
+		{"invalid no colon", "/src", "", "", "", "", true},
+		{"invalid empty", "", "", "", "", "", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ms, err := parseMountSpec(tt.input)
+			if tt.wantError {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.wantHost, ms.Host)
+			require.Equal(t, tt.wantCont, ms.Container)
+			require.Equal(t, tt.wantMode, ms.Mode)
+			require.Equal(t, tt.wantStr, ms.String())
+		})
+	}
+}
+
 func TestProcessMount(t *testing.T) {
 	origUserHomeDir := osUserHomeDir
 	origOsStat := osStat
