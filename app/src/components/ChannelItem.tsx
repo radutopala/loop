@@ -18,6 +18,10 @@ interface ChannelItemProps {
   onDrop: (e: React.DragEvent, channelId: string) => void;
   onDragEnd: () => void;
   isDragOver: boolean;
+  pinned?: boolean;
+  selectMode?: boolean;
+  checkedIds?: Set<string>;
+  onToggleCheck?: (id: string) => void;
 }
 
 export function ChannelItem({
@@ -34,6 +38,10 @@ export function ChannelItem({
   onDrop,
   onDragEnd,
   isDragOver,
+  pinned,
+  selectMode,
+  checkedIds,
+  onToggleCheck,
 }: ChannelItemProps) {
   const [creating, setCreating] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
@@ -67,7 +75,37 @@ export function ChannelItem({
         onMouseEnter={() => setHovered(true)}
         onMouseLeave={() => setHovered(false)}
       >
-        {hasThreads ? (
+        {selectMode && !pinned ? (
+          <span
+            onClick={(e) => { e.stopPropagation(); onToggleCheck?.(channel.id); }}
+            style={{
+              width: 20,
+              flexShrink: 0,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              cursor: "pointer",
+            }}
+          >
+            <span style={{
+              width: 12,
+              height: 12,
+              borderRadius: 3,
+              border: `1.5px solid ${checkedIds?.has(channel.id) ? colors.active : colors.textDim}`,
+              backgroundColor: checkedIds?.has(channel.id) ? colors.active : "transparent",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              transition: "all 0.15s",
+            }}>
+              {checkedIds?.has(channel.id) && (
+                <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                  <polyline points="20 6 9 17 4 12" />
+                </svg>
+              )}
+            </span>
+          </span>
+        ) : hasThreads ? (
           <button
             onClick={() => setCollapsed((v) => !v)}
             style={{
@@ -214,6 +252,9 @@ export function ChannelItem({
             isLast={i === threads.length - 1}
             onSelect={onSelect}
             onContextMenu={onContextMenu}
+            selectMode={selectMode}
+            checked={checkedIds?.has(thread.id)}
+            onToggleCheck={onToggleCheck}
           />
         ))}
     </div>

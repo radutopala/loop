@@ -48,6 +48,7 @@ interface SidebarProps {
   onCreateChannel: (name: string) => void;
   onCreateThread: (parentId: string, name: string) => void;
   onDeleteThread: (threadId: string) => void;
+  onDeleteBatch?: (ids: string[]) => void;
   onOpenSettings?: () => void;
   onOpenConfig?: (dirPath: string) => void;
 }
@@ -60,6 +61,7 @@ export function Sidebar({
   onCreateChannel,
   onCreateThread,
   onDeleteThread,
+  onDeleteBatch,
   onOpenSettings,
   onOpenConfig,
 }: SidebarProps) {
@@ -71,9 +73,26 @@ export function Sidebar({
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [newChannelName, setNewChannelName] = useState("");
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectMode, setSelectMode] = useState(false);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
   const newChannelInputRef = useRef<HTMLInputElement>(null);
   const draggedIdRef = useRef<string | null>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
+
+  const toggleSelected = useCallback((id: string) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleBatchDelete = useCallback(() => {
+    if (selected.size === 0) return;
+    onDeleteBatch?.([...selected]);
+    setSelected(new Set());
+    setSelectMode(false);
+  }, [selected, onDeleteBatch]);
 
   const handleDragStart = useCallback((channelId: string) => {
     draggedIdRef.current = channelId;
@@ -249,28 +268,57 @@ export function Sidebar({
         >
           Channels
         </span>
-        <button
-          onClick={() => {
-            setCreatingChannel(true);
-            setNewChannelName("");
-            setTimeout(() => newChannelInputRef.current?.focus(), 0);
-          }}
-          title="New channel"
-          style={{
-            background: "none",
-            border: "none",
-            color: colors.textDim,
-            cursor: "pointer",
-            padding: "3px 8px",
-            fontSize: 12,
-            lineHeight: 1,
-            borderRadius: 4,
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
-          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
-        >
-          + new
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 2 }}>
+          {selectMode ? (
+            <>
+              {selected.size > 0 && (
+                <button
+                  onClick={handleBatchDelete}
+                  title={`Delete ${selected.size} selected`}
+                  style={sidebarBtnStyle}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.error; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+                >
+                  Delete ({selected.size})
+                </button>
+              )}
+              <button
+                onClick={() => { setSelectMode(false); setSelected(new Set()); }}
+                title="Cancel selection"
+                style={sidebarBtnStyle}
+                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
+                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+              >
+                Cancel
+              </button>
+            </>
+          ) : (
+            <>
+              <button
+                onClick={() => { setSelectMode(true); setSelected(new Set()); }}
+                title="Select channels to delete"
+                style={sidebarBtnStyle}
+                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
+                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+              >
+                Select
+              </button>
+              <button
+                onClick={() => {
+                  setCreatingChannel(true);
+                  setNewChannelName("");
+                  setTimeout(() => newChannelInputRef.current?.focus(), 0);
+                }}
+                title="New channel"
+                style={sidebarBtnStyle}
+                onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
+                onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+              >
+                + new
+              </button>
+            </>
+          )}
+        </div>
       </div>
       <div style={{ padding: "0 12px 4px" }}>
         <div style={{ position: "relative" }}>
@@ -351,12 +399,17 @@ export function Sidebar({
           selectedId={selectedId}
           onSelect={onSelect}
           onCreateThread={onCreateThread}
+          onOpenConfig={onOpenConfig}
           onContextMenu={handleContextMenu}
           onDragStart={handleDragStart}
           onDragOver={handleDragOver}
           onDrop={handleDrop}
           onDragEnd={handleDragEnd}
           isDragOver={dragOverId === dmChannel.id}
+          pinned
+          selectMode={selectMode}
+          checkedIds={selected}
+          onToggleCheck={toggleSelected}
         />
       )}
       {topLevel.map((channel) => (
@@ -375,6 +428,9 @@ export function Sidebar({
           onDrop={handleDrop}
           onDragEnd={handleDragEnd}
           isDragOver={dragOverId === channel.id}
+          selectMode={selectMode}
+          checkedIds={selected}
+          onToggleCheck={toggleSelected}
         />
       ))}
 
@@ -446,3 +502,14 @@ export function Sidebar({
     </div>
   );
 }
+
+const sidebarBtnStyle: React.CSSProperties = {
+  background: "none",
+  border: "none",
+  color: colors.textDim,
+  cursor: "pointer",
+  padding: "3px 8px",
+  fontSize: 12,
+  lineHeight: 1,
+  borderRadius: 4,
+};

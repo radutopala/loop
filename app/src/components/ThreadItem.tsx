@@ -8,9 +8,12 @@ interface ThreadItemProps {
   isLast?: boolean;
   onSelect: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, channel: Channel) => void;
+  selectMode?: boolean;
+  checked?: boolean;
+  onToggleCheck?: (id: string) => void;
 }
 
-export function ThreadItem({ thread, selected, isLast, onSelect, onContextMenu }: ThreadItemProps) {
+export function ThreadItem({ thread, selected, isLast, onSelect, onContextMenu, selectMode, checked, onToggleCheck }: ThreadItemProps) {
   const [hovered, setHovered] = useState(false);
 
   return (
@@ -56,6 +59,30 @@ export function ThreadItem({ thread, selected, isLast, onSelect, onContextMenu }
           borderRadius: 6,
         }}
       >
+      {selectMode && (
+        <span
+          onClick={(e) => { e.stopPropagation(); onToggleCheck?.(thread.id); }}
+          style={{ display: "flex", alignItems: "center", flexShrink: 0, cursor: "pointer" }}
+        >
+          <span style={{
+            width: 12,
+            height: 12,
+            borderRadius: 3,
+            border: `1.5px solid ${checked ? colors.active : colors.textDim}`,
+            backgroundColor: checked ? colors.active : "transparent",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            transition: "all 0.15s",
+          }}>
+            {checked && (
+              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="20 6 9 17 4 12" />
+              </svg>
+            )}
+          </span>
+        </span>
+      )}
       <span
         style={{
           overflow: "hidden",

@@ -352,6 +352,31 @@ export default function App() {
     [channels, loadChannels, selectedId],
   );
 
+  const handleDeleteBatch = useCallback(
+    async (ids: string[]) => {
+      setError(null);
+      try {
+        for (const id of ids) {
+          const ch = channels.find((c) => c.id === id);
+          if (ch && ch.parent_id) {
+            await deleteThread(id);
+          } else {
+            await deleteChannel(id);
+          }
+          if (selectedId === id) {
+            setSelectedId(null);
+          }
+        }
+        await loadChannels();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to delete";
+        setError(message);
+        console.error("batch delete failed:", err);
+      }
+    },
+    [channels, loadChannels, selectedId],
+  );
+
   return (
     <div
       style={{
@@ -395,6 +420,7 @@ export default function App() {
         onCreateChannel={handleCreateChannel}
         onCreateThread={handleCreateThread}
         onDeleteThread={handleDelete}
+        onDeleteBatch={handleDeleteBatch}
         onOpenSettings={() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); }}
         onOpenConfig={(dirPath) => { setSettingsOpen(true); setSettingsDirPath(dirPath); setDiffOpen(false); setDiffMaximized(false); }}
       />
