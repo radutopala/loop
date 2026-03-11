@@ -75,11 +75,11 @@ export async function deleteChannel(channelId: string): Promise<void> {
   if (!res.ok) throw new Error(`Failed to delete channel: ${res.statusText}`);
 }
 
-export async function createChannel(name: string): Promise<string> {
+export async function createChannel(name: string, platform = "local"): Promise<string> {
   const res = await fetch(`${apiUrl}/api/channels/create`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ name }),
+    body: JSON.stringify({ name, platform }),
   });
   if (!res.ok) throw new Error(`Failed to create channel: ${res.statusText}`);
   const data: { channel_id: string } = await res.json();

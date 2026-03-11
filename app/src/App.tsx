@@ -188,10 +188,24 @@ export default function App() {
     }
   }, []);
 
+  const dmEnsuredRef = useRef(false);
+
   const loadChannels = useCallback(async () => {
     if (!ready) return;
     try {
-      setChannels(await fetchChannels());
+      let chs = await fetchChannels();
+      // Ensure a DM channel exists (once per session).
+      if (!dmEnsuredRef.current) {
+        dmEnsuredRef.current = true;
+        const hasDm = chs.some((c) => c.name === "dm" && !c.parent_id);
+        if (!hasDm) {
+          try {
+            await createChannel("dm");
+            chs = await fetchChannels();
+          } catch { /* ignore — channel creation might not be configured */ }
+        }
+      }
+      setChannels(chs);
     } catch {
       /* will retry on next poll */
     }
@@ -254,6 +268,17 @@ export default function App() {
     setViewMode(loadMode(id));
     setSplitRatio(loadSplitRatio(id));
   }, []);
+
+  // Auto-select DM channel if nothing is selected on first load.
+  const autoSelectedRef = useRef(false);
+  useEffect(() => {
+    if (autoSelectedRef.current || selectedId || getHashChannelId()) return;
+    const dm = channels.find((c) => c.name === "dm" && !c.parent_id);
+    if (dm) {
+      autoSelectedRef.current = true;
+      handleSelect(dm.id);
+    }
+  }, [channels, selectedId, handleSelect]);
 
   const handleSelectMessage = useCallback((channelId: string, messageId: number) => {
     setScrollToMessageId(messageId);

@@ -101,7 +101,7 @@ export function ChannelItem({
             </svg>
           </button>
         ) : (
-          <span style={{ width: 18, flexShrink: 0 }} />
+          <span style={{ width: 20, flexShrink: 0 }} />
         )}
         <button
           onClick={() => onSelect(channel.id)}

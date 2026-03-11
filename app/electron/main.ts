@@ -544,7 +544,8 @@ ipcMain.handle("restart-daemon", async () => {
     // avoiding the race where KeepAlive respawns before we can start our own.
     console.log("Restarting daemon via launchctl kickstart");
     try {
-      execFileSync("launchctl", ["kickstart", "-k", `gui/${process.getuid()}/com.loop.agent`], { encoding: "utf-8" });
+      const uid = process.getuid?.();
+      execFileSync("launchctl", ["kickstart", "-k", `gui/${uid}/com.loop.agent`], { encoding: "utf-8" });
     } catch (err) {
       console.warn("launchctl kickstart failed:", err);
     }

@@ -111,26 +111,26 @@ export function Sidebar({
   const handleContextMenu = useCallback(
     (e: React.MouseEvent, channel: Channel) => {
       e.preventDefault();
-      setContextMenu({
-        x: e.clientX,
-        y: e.clientY,
-        items: [
-          {
-            label: "Copy Link",
-            onClick: () => navigator.clipboard.writeText(`loop://channel/${channel.id}`),
-          },
-          {
-            label: "Copy Channel ID",
-            onClick: () => navigator.clipboard.writeText(channel.id),
-          },
-          {
-            label: "Delete Channel",
-            danger: true,
-            separator: true,
-            onClick: () => onDeleteThread(channel.id),
-          },
-        ],
-      });
+      const isDm = channel.name === "dm" && !channel.parent_id;
+      const items: MenuItem[] = [
+        {
+          label: "Copy Link",
+          onClick: () => navigator.clipboard.writeText(`loop://channel/${channel.id}`),
+        },
+        {
+          label: "Copy Channel ID",
+          onClick: () => navigator.clipboard.writeText(channel.id),
+        },
+      ];
+      if (!isDm) {
+        items.push({
+          label: "Delete Channel",
+          danger: true,
+          separator: true,
+          onClick: () => onDeleteThread(channel.id),
+        });
+      }
+      setContextMenu({ x: e.clientX, y: e.clientY, items });
     },
     [onDeleteThread],
   );
@@ -175,8 +175,10 @@ export function Sidebar({
     {},
   );
 
+  // Separate DM channel (pinned at top) from regular channels.
+  const dmChannel = channels.find((c) => c.name === "dm" && !c.parent_id);
   const allTopLevel = sortByOrder(
-    channels.filter((c) => !c.parent_id && (c.name || c.dir_path)),
+    channels.filter((c) => !c.parent_id && (c.name || c.dir_path) && !(c.name === "dm" && !c.parent_id)),
     channelOrder,
   );
 
@@ -339,6 +341,23 @@ export function Sidebar({
             }}
           />
         </div>
+      )}
+      {dmChannel && (
+        <ChannelItem
+          key={dmChannel.id}
+          channel={dmChannel}
+          threads={getFilteredThreads(dmChannel.id)}
+          selected={selectedId === dmChannel.id}
+          selectedId={selectedId}
+          onSelect={onSelect}
+          onCreateThread={onCreateThread}
+          onContextMenu={handleContextMenu}
+          onDragStart={handleDragStart}
+          onDragOver={handleDragOver}
+          onDrop={handleDrop}
+          onDragEnd={handleDragEnd}
+          isDragOver={dragOverId === dmChannel.id}
+        />
       )}
       {topLevel.map((channel) => (
         <ChannelItem
