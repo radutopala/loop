@@ -262,20 +262,23 @@ export function DiffPanel({ channelId, maximized, onToggleMaximize, onClose }: D
         }}
       />
 
-      {/* Header */}
+      {/* Header — sized to match the main toolbar height so bottom borders align */}
       <div
         style={{
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "4px 12px 8px",
+          padding: "3px 12px",
+          borderBottom: `1px solid ${colors.border}`,
           flexShrink: 0,
+          boxSizing: "border-box",
+          minHeight: 37,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span
             style={{
-              fontSize: 11,
+              fontSize: 10,
               fontWeight: 700,
               color: colors.textDim,
               textTransform: "uppercase",
@@ -285,12 +288,12 @@ export function DiffPanel({ channelId, maximized, onToggleMaximize, onClose }: D
             Changes
           </span>
           {totalFiles > 0 && (
-            <span style={{ fontSize: 11, color: colors.textDim }}>
+            <span style={{ fontSize: 10, color: colors.textDim }}>
               {totalFiles}
             </span>
           )}
           {(totalAdd > 0 || totalDel > 0) && (
-            <span style={{ fontSize: 11, fontFamily: fonts.mono }}>
+            <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
               <span style={{ color: "#86efac" }}>+{totalAdd}</span>
               {" "}
               <span style={{ color: "#fca5a5" }}>-{totalDel}</span>

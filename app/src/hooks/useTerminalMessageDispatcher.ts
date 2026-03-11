@@ -35,10 +35,6 @@ export function useTerminalMessageDispatcher({
           onSessionChange(msg.session_id ?? null);
           onStatus("running");
           break;
-        case "detached":
-          // Session is still alive, keep the session ID for reattach.
-          onStatus("completed");
-          break;
         case "stopped":
         case "closed":
           onSessionChange(null);

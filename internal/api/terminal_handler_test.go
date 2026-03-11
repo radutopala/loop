@@ -1061,67 +1061,6 @@ func (s *TerminalHandlerSuite) TestDetachErrorLogged() {
 	close(doneCh2)
 }
 
-func (s *TerminalHandlerSuite) TestDetachMessage() {
-	outCh := make(chan []byte, 1)
-	doneCh := make(chan struct{})
-	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
-		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("DetachSession", "sess-1", mock.Anything).Return(nil)
-
-	conn, ts := s.dialWS()
-	defer ts.Close()
-	defer conn.Close()
-
-	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1"})
-	msg := readStatusMsg(s.T(), conn)
-	require.Equal(s.T(), "created", msg.Type)
-
-	// Send detach message.
-	sendControl(s.T(), conn, wsControlMessage{Type: "detach"})
-	msg = readStatusMsg(s.T(), conn)
-	require.Equal(s.T(), "detached", msg.Type)
-
-	close(doneCh)
-}
-
-func (s *TerminalHandlerSuite) TestDetachMessageNoSession() {
-	conn, ts := s.dialWS()
-	defer ts.Close()
-	defer conn.Close()
-
-	sendControl(s.T(), conn, wsControlMessage{Type: "detach"})
-	msg := readStatusMsg(s.T(), conn)
-	require.Equal(s.T(), "error", msg.Type)
-	require.Equal(s.T(), wsErrCodeNoSession, msg.ErrorCode)
-}
-
-func (s *TerminalHandlerSuite) TestStopWithSessionID() {
-	outCh := make(chan []byte, 1)
-	doneCh := make(chan struct{})
-	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
-		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
-	s.terminal.On("DetachSession", "sess-1", mock.Anything).Return(nil)
-	s.terminal.On("StopSession", "sess-1").Return("ctr-1", nil)
-
-	conn, ts := s.dialWS()
-	defer ts.Close()
-	defer conn.Close()
-
-	// Create then detach.
-	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1"})
-	readStatusMsg(s.T(), conn) // created
-
-	sendControl(s.T(), conn, wsControlMessage{Type: "detach"})
-	readStatusMsg(s.T(), conn) // detached
-
-	// Stop using explicit session_id (since server session is cleared by detach).
-	sendControl(s.T(), conn, wsControlMessage{Type: "stop", SessionID: "sess-1"})
-	msg := readStatusMsg(s.T(), conn)
-	require.Equal(s.T(), "stopped", msg.Type)
-
-	close(doneCh)
-}
-
 func (s *TerminalHandlerSuite) TestUpgradeError() {
 	// Send a plain HTTP GET (not a WebSocket upgrade) to trigger the upgrade error path.
 	mux := http.NewServeMux()

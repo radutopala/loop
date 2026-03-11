@@ -15,7 +15,6 @@ import (
 const (
 	wsMsgCreate = "create"
 	wsMsgAttach = "attach"
-	wsMsgDetach = "detach"
 	wsMsgInput  = "input"
 	wsMsgResize = "resize"
 	wsMsgStop   = "stop"
@@ -25,7 +24,6 @@ const (
 const (
 	wsStatusCreated  = "created"
 	wsStatusAttached = "attached"
-	wsStatusDetached = "detached"
 	wsStatusError    = "error"
 	wsStatusClosed   = "closed"
 	wsStatusStopped  = "stopped"
@@ -304,15 +302,6 @@ func (t *terminalWSConn) handleResize(ctx context.Context, msg wsControlMessage)
 	}
 }
 
-func (t *terminalWSConn) handleDetach() {
-	if t.sessionID == "" {
-		t.sendError("no active session", wsErrCodeNoSession)
-		return
-	}
-	t.detachCurrent()
-	t.writeJSON(wsStatusMessage{Type: wsStatusDetached})
-}
-
 func (t *terminalWSConn) handleStop(ctx context.Context, msg wsControlMessage) {
 	// Allow stopping a detached session by passing session_id explicitly.
 	sid := t.sessionID
@@ -375,8 +364,6 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			tc.handleCreate(r.Context(), msg)
 		case wsMsgAttach:
 			tc.handleAttach(msg)
-		case wsMsgDetach:
-			tc.handleDetach()
 		case wsMsgInput:
 			tc.handleInput(msg)
 		case wsMsgResize:

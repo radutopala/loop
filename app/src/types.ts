@@ -48,8 +48,8 @@ export interface AgentStatusData {
 // UI-level session status (mapped from server message types).
 export type SessionStatus = "connecting" | "running" | "completed" | "failed";
 
-// View mode per channel: interactive terminal or chat transcript.
-export type ViewMode = "terminal" | "chat";
+// View mode per channel: interactive terminal, chat transcript, or both.
+export type ViewMode = "chat" | "terminal" | "split";
 
 // --- Client → Server messages ---
 
@@ -89,7 +89,7 @@ export type ClientMessage =
 // --- Server → Client messages ---
 
 export interface ServerStatusMessage {
-  type: "created" | "attached" | "detached" | "stopped" | "closed";
+  type: "created" | "attached" | "stopped" | "closed";
   session_id?: string;
   message?: string;
 }

@@ -98,26 +98,5 @@ export function useTerminalWs({
     send(JSON.stringify({ type: "stop", ...(sid ? { session_id: sid } : {}) }));
   }, [send, markKilled]);
 
-  /** Detach: tell the server to unsubscribe from output without killing the session. */
-  const sendDetach = useCallback(() => {
-    send(JSON.stringify({ type: "detach" }));
-    onStatus("completed");
-  }, [send, onStatus]);
-
-  /** Reattach: reconnect to the existing session after detaching. */
-  const sendReattach = useCallback(() => {
-    const sid = sessionIdRef.current;
-    if (sid) {
-      onStatus("connecting");
-      const size = getTerminalSizeRef.current?.();
-      send(JSON.stringify({ type: "attach", session_id: sid, ...size }));
-    } else if (channelId) {
-      // No session stored — create a new one.
-      onStatus("connecting");
-      const size = getTerminalSizeRef.current?.();
-      send(JSON.stringify({ type: "create", channel_id: channelId, ...size }));
-    }
-  }, [channelId, send, onStatus]);
-
-  return { connected, sendInput, sendResize, sendKill, sendDetach, sendReattach };
+  return { connected, sendInput, sendResize, sendKill };
 }

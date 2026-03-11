@@ -11,6 +11,7 @@ import { CommandPalette } from "./components/CommandPalette";
 import { useEventStream } from "./hooks/useEventStream";
 
 const MODE_STORAGE_KEY = "loop-view-mode";
+const SPLIT_STORAGE_KEY = "loop-split-ratio";
 
 function loadMode(channelId: string | null): ViewMode {
   if (!channelId) return "chat";
@@ -18,7 +19,7 @@ function loadMode(channelId: string | null): ViewMode {
     const stored = localStorage.getItem(MODE_STORAGE_KEY);
     if (stored) {
       const prefs: Record<string, ViewMode> = JSON.parse(stored);
-      if (prefs[channelId] === "chat" || prefs[channelId] === "terminal") {
+      if (prefs[channelId] === "chat" || prefs[channelId] === "terminal" || prefs[channelId] === "split") {
         return prefs[channelId];
       }
     }
@@ -39,6 +40,28 @@ function saveMode(channelId: string, mode: ViewMode) {
   }
 }
 
+function loadSplitRatio(channelId: string | null): number {
+  if (!channelId) return 0.5;
+  try {
+    const stored = localStorage.getItem(SPLIT_STORAGE_KEY);
+    if (stored) {
+      const prefs: Record<string, number> = JSON.parse(stored);
+      const val = prefs[channelId];
+      if (typeof val === "number" && val >= 0.15 && val <= 0.85) return val;
+    }
+  } catch { /* ignore */ }
+  return 0.5;
+}
+
+function saveSplitRatio(channelId: string, ratio: number) {
+  try {
+    const stored = localStorage.getItem(SPLIT_STORAGE_KEY);
+    const prefs: Record<string, number> = stored ? JSON.parse(stored) : {};
+    prefs[channelId] = ratio;
+    localStorage.setItem(SPLIT_STORAGE_KEY, JSON.stringify(prefs));
+  } catch { /* ignore */ }
+}
+
 function getHashChannelId(): string | null {
   const hash = window.location.hash.slice(1);
   return hash || null;
@@ -57,6 +80,35 @@ export default function App() {
   const [diffStats, setDiffStats] = useState<{ add: number; del: number }>({ add: 0, del: 0 });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(null);
+  const [splitRatio, setSplitRatio] = useState(() => loadSplitRatio(getHashChannelId()));
+  const splitContainerRef = useRef<HTMLDivElement>(null);
+
+  const handleSplitDrag = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    const container = splitContainerRef.current;
+    if (!container) return;
+    const channelId = selectedId;
+    const onMove = (ev: MouseEvent) => {
+      const rect = container.getBoundingClientRect();
+      const ratio = Math.max(0.15, Math.min(0.85, (ev.clientY - rect.top) / rect.height));
+      setSplitRatio(ratio);
+    };
+    const onUp = (ev: MouseEvent) => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+      if (channelId) {
+        const rect = container.getBoundingClientRect();
+        const ratio = Math.max(0.15, Math.min(0.85, (ev.clientY - rect.top) / rect.height));
+        saveSplitRatio(channelId, ratio);
+      }
+    };
+    document.body.style.cursor = "row-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [selectedId]);
 
   // Fetch diff stats for the selected channel and keep them updated via events.
   const loadDiffStats = useCallback(async () => {
@@ -175,14 +227,14 @@ export default function App() {
   const handleSelect = useCallback((id: string | null) => {
     setScrollToMessageId(null);
     setSelectedId((prev) => {
-      // Re-clicking the same channel increments mountKey to force re-mount
-      // (e.g. re-attach after detach).
+      // Re-clicking the same channel increments mountKey to force re-mount.
       if (id !== null && id === prev) {
         setMountKey((k) => k + 1);
       }
       return id;
     });
     setViewMode(loadMode(id));
+    setSplitRatio(loadSplitRatio(id));
   }, []);
 
   const handleSelectMessage = useCallback((channelId: string, messageId: number) => {
@@ -265,8 +317,33 @@ export default function App() {
         backgroundColor: colors.bg,
         color: colors.text,
         fontFamily: fonts.sans,
+        position: "relative",
       }}
     >
+      {/* Branding — always pinned to top-right corner */}
+      <span
+        style={{
+          position: "absolute",
+          top: 10,
+          right: 12,
+          fontSize: 13,
+          fontWeight: 600,
+          color: colors.textDim,
+          letterSpacing: 1,
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          zIndex: 10,
+          pointerEvents: "none",
+          // @ts-expect-error: WebKit-specific CSS property for Electron drag region
+          WebkitAppRegion: "drag",
+        }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 12c-2-2.67-4-4-6-4a4 4 0 1 0 0 8c2 0 4-1.33 6-4Zm0 0c2 2.67 4 4 6 4a4 4 0 0 0 0-8c-2 0-4 1.33-6 4Z" />
+        </svg>
+        Loop
+      </span>
       <Sidebar
         channels={channels}
         selectedId={selectedId}
@@ -315,18 +392,34 @@ export default function App() {
               }
             </svg>
           </button>
-          <div style={{ flex: 1 }} />
-          <span
+          <button
+            onClick={() => setPaletteOpen(true)}
+            title="Search messages (Cmd+K)"
             style={{
-              fontSize: 13,
-              fontWeight: 600,
+              background: "none",
+              border: `1px solid ${colors.border}`,
               color: colors.textDim,
-              paddingRight: 12,
-              letterSpacing: 1,
+              cursor: "pointer",
+              padding: "2px 8px",
+              lineHeight: 1,
+              borderRadius: 4,
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: 11,
+              fontFamily: fonts.mono,
+              marginLeft: 6,
+              // @ts-expect-error: WebKit-specific CSS property
+              WebkitAppRegion: "no-drag",
             }}
           >
-            Loop
-          </span>
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <span style={{ opacity: 0.7 }}>{navigator.platform.includes("Mac") ? "\u2318K" : "Ctrl+K"}</span>
+          </button>
+          <div style={{ flex: 1 }} />
         </div>
         {error && (
           <div
@@ -362,7 +455,7 @@ export default function App() {
               display: "flex",
               justifyContent: "space-between",
               alignItems: "center",
-              padding: "4px 8px",
+              padding: "3px 8px",
               borderBottom: `1px solid ${colors.border}`,
             }}
           >
@@ -402,7 +495,7 @@ export default function App() {
                 </>
               )}
             </span>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
               <ModeToggle mode={viewMode} onChange={handleModeChange} />
               <button
                 onClick={() => setDiffOpen((v) => !v)}
@@ -412,11 +505,11 @@ export default function App() {
                   border: `1px solid ${diffOpen ? colors.textDim : colors.border}`,
                   color: diffOpen ? colors.textLight : colors.textDim,
                   cursor: "pointer",
-                  padding: "3px 8px",
-                  fontSize: 11,
+                  padding: "2px 6px",
+                  fontSize: 10,
                   fontFamily: fonts.mono,
                   lineHeight: 1,
-                  borderRadius: 4,
+                  borderRadius: 6,
                   display: "flex",
                   alignItems: "center",
                   gap: 4,
@@ -437,11 +530,29 @@ export default function App() {
             </div>
           </div>
         )}
-        {viewMode === "terminal" ? (
-          <Terminal key={`${selectedId}-${mountKey}`} channelId={selectedId} onStatusChange={loadChannels} />
-        ) : (
-          <ChatView key={`${selectedId}-${mountKey}`} channelId={selectedId} initialRunningBot={channels.find((c) => c.id === selectedId)?.agent_running} scrollToMessageId={scrollToMessageId} onScrollComplete={() => setScrollToMessageId(null)} />
-        )}
+        <div ref={splitContainerRef} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
+          <div key="chat-pane" style={{
+            flex: viewMode === "split" ? `0 0 ${splitRatio * 100}%` : viewMode === "chat" ? 1 : undefined,
+            display: viewMode === "terminal" ? "none" : "flex",
+            flexDirection: "column", overflow: "hidden", minHeight: 0,
+          }}>
+            <ChatView key={`chat-${selectedId}-${mountKey}`} channelId={selectedId} initialRunningBot={channels.find((c) => c.id === selectedId)?.agent_running} scrollToMessageId={scrollToMessageId} onScrollComplete={() => setScrollToMessageId(null)} />
+          </div>
+          {viewMode === "split" && (
+            <div
+              key="split-divider"
+              onMouseDown={handleSplitDrag}
+              style={{ height: 5, flexShrink: 0, cursor: "row-resize", backgroundColor: colors.border, position: "relative" }}
+            >
+              <div style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", width: 32, height: 3, borderRadius: 2, backgroundColor: colors.textDim, opacity: 0.5 }} />
+            </div>
+          )}
+          {viewMode !== "chat" && (
+            <div key="term-pane" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+              <Terminal key={`term-${selectedId}-${mountKey}`} channelId={selectedId} onStatusChange={loadChannels} />
+            </div>
+          )}
+        </div>
       </div>
       {diffOpen && selectedId && (
         <DiffPanel
