@@ -819,7 +819,8 @@ func (s *ServerSuite) TestCreateThreadSuccessWithMessage() {
 }
 
 func (s *ServerSuite) TestCreateThreadLocalAutoTrigger() {
-	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread", "user-42", "Do the task").
+	// Message is NOT passed to CreateThread when msgHandler is set — it goes through HandleThreadCreated instead.
+	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread", "user-42", "").
 		Return("thread-1", nil)
 
 	handler := new(MockIncomingMessageHandler)
@@ -849,7 +850,7 @@ func (s *ServerSuite) TestCreateThreadLocalAutoTrigger() {
 }
 
 func (s *ServerSuite) TestCreateThreadLocalAutoTriggerDefaultAuthor() {
-	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread", "", "Do the task").
+	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread", "", "").
 		Return("thread-1", nil)
 
 	handler := new(MockIncomingMessageHandler)

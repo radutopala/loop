@@ -35,14 +35,19 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	threadID, err := s.threads.CreateThread(r.Context(), req.ChannelID, req.Name, req.AuthorID, req.Message)
+	// When msgHandler is set, skip storing the message in CreateThread —
+	// HandleThreadCreated will store it as a user message instead.
+	msg := req.Message
+	if s.msgHandler != nil {
+		msg = ""
+	}
+
+	threadID, err := s.threads.CreateThread(r.Context(), req.ChannelID, req.Name, req.AuthorID, msg)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	// Trigger the agent in the new thread by routing the initial message
-	// through the handler (which prepends the @mention and applies defaults).
 	if s.msgHandler != nil && req.Message != "" {
 		go s.msgHandler.HandleThreadCreated(context.Background(), threadID, req.AuthorID, req.Message)
 	}
