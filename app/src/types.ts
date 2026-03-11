@@ -63,9 +63,6 @@ export interface AgentActivityData {
 // UI-level session status (mapped from server message types).
 export type SessionStatus = "connecting" | "running" | "completed" | "failed";
 
-// View mode per channel: interactive terminal, chat transcript, or both.
-export type ViewMode = "chat" | "terminal";
-
 // Terminal target: Docker agent or host shell.
 export type TerminalTarget = "agent" | "host";
 

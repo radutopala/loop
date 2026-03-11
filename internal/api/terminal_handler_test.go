@@ -1787,3 +1787,104 @@ func (s *TerminalHandlerSuite) TestStopSessionByExplicitIDHost() {
 	require.Equal(s.T(), "stopped", msg.Type)
 	close(doneCh)
 }
+
+// --- Kill (container removal by channel_id, no session required) ---
+
+func (s *TerminalHandlerSuite) TestKillRemovesContainer() {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-kill").
+		Return(&db.Channel{ChannelID: "ch-kill", DirPath: "/projects/app"}, nil)
+	s.srv.store = store
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-kill", "/projects/app").Return("ctr-kill", nil)
+	s.srv.SetContainerFinder(finder)
+
+	stopper := new(MockContainerStopper)
+	stopper.On("ContainerRemove", mock.Anything, "ctr-kill").Return(nil)
+	s.srv.SetContainerStopper(stopper)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "kill", ChannelID: "ch-kill"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "stopped", msg.Type)
+
+	finder.AssertCalled(s.T(), "FindContainerByChannel", mock.Anything, "ch-kill", "/projects/app")
+	stopper.AssertCalled(s.T(), "ContainerRemove", mock.Anything, "ctr-kill")
+}
+
+func (s *TerminalHandlerSuite) TestKillNoContainerFound() {
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-gone", "").
+		Return("", errors.New("not found"))
+	s.srv.SetContainerFinder(finder)
+
+	stopper := new(MockContainerStopper)
+	s.srv.SetContainerStopper(stopper)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "kill", ChannelID: "ch-gone"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "stopped", msg.Type)
+
+	stopper.AssertNotCalled(s.T(), "ContainerRemove", mock.Anything, mock.Anything)
+}
+
+func (s *TerminalHandlerSuite) TestKillMissingChannelID() {
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "kill"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "error", msg.Type)
+	require.Contains(s.T(), msg.Message, "channel_id required")
+	require.Equal(s.T(), wsErrCodeMissingField, msg.ErrorCode)
+}
+
+func (s *TerminalHandlerSuite) TestKillWithActiveSession() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
+		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("StopSession", "sess-1").Return("ctr-1", nil)
+
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-active").
+		Return(&db.Channel{ChannelID: "ch-active"}, nil)
+	s.srv.store = store
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-active", "").Return("ctr-1", nil)
+	s.srv.SetContainerFinder(finder)
+
+	stopper := new(MockContainerStopper)
+	stopper.On("ContainerRemove", mock.Anything, "ctr-1").Return(nil)
+	s.srv.SetContainerStopper(stopper)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1"})
+	readStatusMsg(s.T(), conn) // created
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "kill", ChannelID: "ch-active"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "stopped", msg.Type)
+
+	s.terminal.AssertCalled(s.T(), "StopSession", "sess-1")
+	stopper.AssertCalled(s.T(), "ContainerRemove", mock.Anything, "ctr-1")
+
+	close(doneCh)
+}

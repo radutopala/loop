@@ -16,6 +16,20 @@ export function getWsUrl(): string {
   return apiUrl.replace(/^http/, "ws");
 }
 
+/** Open a one-shot WebSocket to send a kill message for a channel's agent container. */
+export function killAgentContainer(channelId: string): void {
+  const ws = new WebSocket(`${getWsUrl()}/api/ws/terminal`);
+  ws.onopen = () => {
+    ws.send(JSON.stringify({ type: "kill", channel_id: channelId }));
+  };
+  ws.onmessage = () => {
+    ws.close();
+  };
+  ws.onerror = () => {
+    ws.close();
+  };
+}
+
 interface ChannelAPIResponse {
   channel_id: string;
   name: string;

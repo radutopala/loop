@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -20,6 +21,7 @@ const (
 	wsMsgResize = "resize"
 	wsMsgStop   = "stop"
 	wsMsgClose  = "close"
+	wsMsgKill   = "kill"
 )
 
 // Terminal WebSocket status message types (server → client).
@@ -96,6 +98,7 @@ type terminalWSConn struct {
 	containerStopper ContainerStopper
 	cmdBuilder       InteractiveCmdBuilder
 	store            ChannelLister
+	loopDir          string // fallback work dir root (e.g. ~/.loop)
 	logger           *slog.Logger
 	writeMu          sync.Mutex
 	stopOnce         sync.Once
@@ -114,7 +117,7 @@ func (t *terminalWSConn) activeManager() TerminalManager {
 	return t.manager
 }
 
-func newTerminalWSConn(conn *websocket.Conn, manager TerminalManager, hostManager TerminalManager, finder ContainerFinder, stopper ContainerStopper, cmdBuilder InteractiveCmdBuilder, store ChannelLister, logger *slog.Logger) *terminalWSConn {
+func newTerminalWSConn(conn *websocket.Conn, manager TerminalManager, hostManager TerminalManager, finder ContainerFinder, stopper ContainerStopper, cmdBuilder InteractiveCmdBuilder, store ChannelLister, loopDir string, logger *slog.Logger) *terminalWSConn {
 	return &terminalWSConn{
 		conn:             conn,
 		manager:          manager,
@@ -123,6 +126,7 @@ func newTerminalWSConn(conn *websocket.Conn, manager TerminalManager, hostManage
 		containerStopper: stopper,
 		cmdBuilder:       cmdBuilder,
 		store:            store,
+		loopDir:          loopDir,
 		logger:           logger,
 		stopCh:           make(chan struct{}),
 	}
@@ -211,15 +215,21 @@ func (t *terminalWSConn) handleCreateHost(ctx context.Context, msg wsControlMess
 	}
 
 	// Resolve channel_id → dir_path. For threads, fall back to the parent's dir_path.
+	// When DirPath is empty, fall back to the loop work dir (same logic as channel listing).
 	dirPath := os.Getenv("HOME")
 	if msg.ChannelID != "" && t.store != nil {
 		if ch, err := t.store.GetChannel(ctx, msg.ChannelID); err == nil && ch != nil {
-			if ch.DirPath != "" {
+			switch {
+			case ch.DirPath != "":
 				dirPath = ch.DirPath
-			} else if ch.ParentID != "" {
+			case ch.ParentID != "":
 				if parent, err := t.store.GetChannel(ctx, ch.ParentID); err == nil && parent != nil && parent.DirPath != "" {
 					dirPath = parent.DirPath
+				} else if t.loopDir != "" {
+					dirPath = filepath.Join(t.loopDir, msg.ChannelID, "work")
 				}
+			case t.loopDir != "":
+				dirPath = filepath.Join(t.loopDir, msg.ChannelID, "work")
 			}
 		}
 	}
@@ -442,6 +452,47 @@ func (t *terminalWSConn) handleClose(msg wsControlMessage) {
 	t.writeJSON(wsStatusMessage{Type: wsStatusStopped})
 }
 
+// handleKill removes the container for a channel without requiring an active session.
+// Used when the terminal panel is closed and no panes are open.
+func (t *terminalWSConn) handleKill(ctx context.Context, msg wsControlMessage) {
+	if msg.ChannelID == "" {
+		t.sendError("channel_id required", wsErrCodeMissingField)
+		return
+	}
+	if t.containerFinder == nil || t.containerStopper == nil {
+		t.sendError("container management not configured", wsErrCodeSessionFailed)
+		return
+	}
+
+	// If there's an active agent session, stop it first.
+	if t.sessionID != "" && t.sessionTarget != "host" {
+		if _, err := t.activeManager().StopSession(t.sessionID); err != nil {
+			t.logger.Warn("terminal ws: kill session stop failed", "session_id", t.sessionID, "error", err)
+		}
+		t.sessionID = ""
+		t.outputCh = nil
+		t.sessionTarget = ""
+	}
+
+	// Resolve channel to container and remove it.
+	var dirPath string
+	if t.store != nil {
+		if ch, err := t.store.GetChannel(ctx, msg.ChannelID); err == nil && ch != nil {
+			dirPath = ch.DirPath
+		}
+	}
+	containerID, err := t.containerFinder.FindContainerByChannel(ctx, msg.ChannelID, dirPath)
+	if err != nil {
+		// No container found — nothing to kill, still report success.
+		t.writeJSON(wsStatusMessage{Type: wsStatusStopped})
+		return
+	}
+	if err := t.containerStopper.ContainerRemove(ctx, containerID); err != nil {
+		t.logger.Warn("terminal ws: kill container remove failed", "container_id", containerID, "error", err)
+	}
+	t.writeJSON(wsStatusMessage{Type: wsStatusStopped})
+}
+
 func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	if s.termManager == nil && s.hostTermManager == nil {
 		http.Error(w, "terminal not configured", http.StatusNotImplemented)
@@ -455,7 +506,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	tc := newTerminalWSConn(conn, s.termManager, s.hostTermManager, s.containerFinder, s.containerStopper, s.cmdBuilder, s.store, s.logger)
+	tc := newTerminalWSConn(conn, s.termManager, s.hostTermManager, s.containerFinder, s.containerStopper, s.cmdBuilder, s.store, s.loopDir, s.logger)
 	defer tc.close()
 
 	for {
@@ -483,6 +534,8 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 			tc.handleStop(r.Context(), msg)
 		case wsMsgClose:
 			tc.handleClose(msg)
+		case wsMsgKill:
+			tc.handleKill(r.Context(), msg)
 		default:
 			tc.sendError("unknown message type: "+msg.Type, wsErrCodeUnknownMessage)
 		}

@@ -1,12 +1,13 @@
 import { useCallback, useRef, useState } from "react";
-import { colors } from "../theme";
-import { TerminalPanes, SplitMenu } from "./TerminalPanes";
-import type { TerminalPanesRef, SplitDirection } from "./TerminalPanes";
+import { colors, fonts } from "../theme";
+import { TerminalPanes } from "./TerminalPanes";
+import type { TerminalPanesRef } from "./TerminalPanes";
+import { killAgentContainer } from "../api/loopApi";
 
 const MIN_WIDTH = 280;
-const MAX_WIDTH_PERCENT = 0.45;
-const WIDTH_STORAGE_KEY = "loop-shell-panel-width";
-const TREE_STORAGE_KEY = "loop-shell-tree";
+const MAX_WIDTH_PERCENT = 0.6;
+const WIDTH_STORAGE_KEY = "loop-terminal-panel-width";
+const TREE_STORAGE_KEY = "loop-terminal-panes";
 
 function loadWidth(): number {
   try {
@@ -25,9 +26,7 @@ function saveWidth(w: number) {
   } catch { /* ignore */ }
 }
 
-// ── Components ──
-
-interface ShellPanelProps {
+interface TerminalPanelProps {
   channelId: string | null;
   dirPath?: string;
   branch?: string;
@@ -37,14 +36,14 @@ interface ShellPanelProps {
   onOpenPalette?: () => void;
   onToggleMaximize?: () => void;
   onClose: () => void;
+  onStatusChange?: () => void;
 }
 
-export function ShellPanel({ channelId, dirPath, branch, maximized, sidebarOpen, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose }: ShellPanelProps) {
+export function TerminalPanel({ channelId, dirPath, branch, maximized, sidebarOpen, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose, onStatusChange }: TerminalPanelProps) {
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
-  const panelRef = useRef<HTMLDivElement>(null);
   const panesRef = useRef<TerminalPanesRef>(null);
-  const [splitMenu, setSplitMenu] = useState(false);
+  const [agentState, setAgentState] = useState<"running" | "stopped" | "none">("none");
 
   // Panel width resize (left edge).
   const handleMouseDown = useCallback(
@@ -75,14 +74,8 @@ export function ShellPanel({ channelId, dirPath, branch, maximized, sidebarOpen,
     [width],
   );
 
-  const handleSplit = useCallback((direction: SplitDirection) => {
-    setSplitMenu(false);
-    panesRef.current?.splitLast(direction);
-  }, []);
-
   return (
     <div
-      ref={panelRef}
       style={{
         width: maximized ? "100%" : width,
         minWidth: maximized ? 0 : MIN_WIDTH,
@@ -177,7 +170,7 @@ export function ShellPanel({ channelId, dirPath, branch, maximized, sidebarOpen,
               alignItems: "center",
               gap: 4,
               fontSize: 11,
-              fontFamily: "'SF Mono', Menlo, Monaco, 'Courier New', monospace",
+              fontFamily: fonts.mono,
               marginLeft: 6,
               // @ts-expect-error: WebKit-specific CSS property
               WebkitAppRegion: "no-drag",
@@ -216,7 +209,7 @@ export function ShellPanel({ channelId, dirPath, branch, maximized, sidebarOpen,
               flexShrink: 0,
             }}
           >
-            Host Shell
+            Terminal
           </span>
           {maximized && dirPath && (
             <span
@@ -236,7 +229,7 @@ export function ShellPanel({ channelId, dirPath, branch, maximized, sidebarOpen,
               {branch && (
                 <>
                   <span style={{ color: colors.border, flexShrink: 0 }}>|</span>
-                  <span style={{ fontSize: 11, color: colors.active, fontFamily: "'SF Mono', Menlo, Monaco, 'Courier New', monospace", flexShrink: 0 }}>
+                  <span style={{ fontSize: 11, color: colors.active, fontFamily: fonts.mono, flexShrink: 0 }}>
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 2, verticalAlign: -1 }}>
                       <line x1="6" y1="3" x2="6" y2="15" />
                       <circle cx="18" cy="6" r="3" />
@@ -251,23 +244,22 @@ export function ShellPanel({ channelId, dirPath, branch, maximized, sidebarOpen,
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 4, position: "relative" }}>
-          <button
-            onClick={() => setSplitMenu((v) => !v)}
-            title="Split pane"
-            style={headerBtnStyle}
-            onMouseEnter={hoverIn}
-            onMouseLeave={hoverOut}
-          >
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
-            </svg>
-          </button>
-          {splitMenu && (
-            <SplitMenu
-              onSplit={handleSplit}
-              onClose={() => setSplitMenu(false)}
-            />
+          {agentState === "running" && (
+            <button
+              onClick={() => { if (channelId) killAgentContainer(channelId); }}
+              title="Kill agent container"
+              style={{
+                padding: "1px 8px",
+                borderRadius: 4,
+                border: `1px solid ${colors.error}`,
+                backgroundColor: "transparent",
+                color: colors.error,
+                cursor: "pointer",
+                fontSize: 10,
+              }}
+            >
+              Kill
+            </button>
           )}
           {onToggleMaximize && (
             <button
@@ -312,10 +304,12 @@ export function ShellPanel({ channelId, dirPath, branch, maximized, sidebarOpen,
       {/* Pane tree */}
       <TerminalPanes
         ref={panesRef}
+        key={`term-${channelId}`}
         channelId={channelId}
-        target="host"
         storageKey={TREE_STORAGE_KEY}
-        onEmpty={onClose}
+        onStatusChange={onStatusChange}
+        onAgentStateChange={setAgentState}
+        onLastAgentRemoved={() => { if (channelId) killAgentContainer(channelId); }}
       />
     </div>
   );

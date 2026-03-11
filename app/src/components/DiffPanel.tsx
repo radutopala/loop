@@ -5,7 +5,7 @@ import { useEventStream } from "../hooks/useEventStream";
 import { colors, fonts } from "../theme";
 
 const MIN_WIDTH = 280;
-const MAX_WIDTH_PERCENT = 0.45;
+const MAX_WIDTH_PERCENT = 0.6;
 const POLL_INTERVAL = 5_000;
 const WIDTH_STORAGE_KEY = "loop-diff-panel-width";
 

@@ -1,52 +1,21 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Channel, ViewMode, WSEvent } from "./types";
+import type { Channel, WSEvent } from "./types";
 import { colors, fonts } from "./theme";
-import { createChannel, createThread, deleteChannel, deleteThread, fetchChannels, fetchDiff, initApiUrl } from "./api/loopApi";
+import { createChannel, createThread, deleteChannel, deleteThread, fetchChannels, fetchDiff, initApiUrl, killAgentContainer } from "./api/loopApi";
 import { Sidebar } from "./components/Sidebar";
-import { TerminalPanes, SplitMenu } from "./components/TerminalPanes";
-import type { TerminalPanesRef } from "./components/TerminalPanes";
 import { ChatView } from "./components/ChatView";
-import { ModeToggle } from "./components/ModeToggle";
 import { DiffPanel } from "./components/DiffPanel";
-import { ShellPanel } from "./components/ShellPanel";
+import { TerminalPanel } from "./components/TerminalPanel";
 import { CommandPalette } from "./components/CommandPalette";
 import { Settings } from "./components/Settings";
 import { useEventStream } from "./hooks/useEventStream";
 
-const MODE_STORAGE_KEY = "loop-view-mode";
-const SHELL_OPEN_KEY = "loop-shell-open";
+const TERMINAL_OPEN_KEY = "loop-terminal-open";
 
-function loadMode(channelId: string | null): ViewMode {
-  if (!channelId) return "chat";
-  try {
-    const stored = localStorage.getItem(MODE_STORAGE_KEY);
-    if (stored) {
-      const prefs: Record<string, ViewMode> = JSON.parse(stored);
-      if (prefs[channelId] === "chat" || prefs[channelId] === "terminal") {
-        return prefs[channelId];
-      }
-    }
-  } catch {
-    /* ignore corrupt storage */
-  }
-  return "chat";
-}
-
-function saveMode(channelId: string, mode: ViewMode) {
-  try {
-    const stored = localStorage.getItem(MODE_STORAGE_KEY);
-    const prefs: Record<string, ViewMode> = stored ? JSON.parse(stored) : {};
-    prefs[channelId] = mode;
-    localStorage.setItem(MODE_STORAGE_KEY, JSON.stringify(prefs));
-  } catch {
-    /* ignore storage errors */
-  }
-}
-
-function loadShellOpen(channelId: string | null): boolean {
+function loadTerminalOpen(channelId: string | null): boolean {
   if (!channelId) return false;
   try {
-    const stored = localStorage.getItem(SHELL_OPEN_KEY);
+    const stored = localStorage.getItem(TERMINAL_OPEN_KEY);
     if (stored) {
       const prefs = JSON.parse(stored);
       if (typeof prefs === "object" && prefs !== null) {
@@ -57,13 +26,28 @@ function loadShellOpen(channelId: string | null): boolean {
   return false;
 }
 
-function saveShellOpen(channelId: string, open: boolean) {
+function saveTerminalOpen(channelId: string, open: boolean) {
   try {
-    const stored = localStorage.getItem(SHELL_OPEN_KEY);
+    const stored = localStorage.getItem(TERMINAL_OPEN_KEY);
     const parsed = stored ? JSON.parse(stored) : null;
     const prefs: Record<string, boolean> = (typeof parsed === "object" && parsed !== null) ? parsed : {};
     prefs[channelId] = open;
-    localStorage.setItem(SHELL_OPEN_KEY, JSON.stringify(prefs));
+    localStorage.setItem(TERMINAL_OPEN_KEY, JSON.stringify(prefs));
+  } catch { /* ignore */ }
+}
+
+const TERMINAL_TREE_KEY = "loop-terminal-panes";
+
+function clearTerminalTree(channelId: string) {
+  try {
+    const stored = localStorage.getItem(TERMINAL_TREE_KEY);
+    if (stored) {
+      const all = JSON.parse(stored);
+      if (typeof all === "object" && all !== null) {
+        delete all[channelId];
+        localStorage.setItem(TERMINAL_TREE_KEY, JSON.stringify(all));
+      }
+    }
   } catch { /* ignore */ }
 }
 
@@ -76,7 +60,6 @@ export default function App() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(getHashChannelId);
   const [ready, setReady] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>("chat");
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mountKey, setMountKey] = useState(0);
@@ -87,12 +70,8 @@ export default function App() {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsDirPath, setSettingsDirPath] = useState<string | null>(null);
   const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(null);
-  const [shellOpen, setShellOpen] = useState(() => loadShellOpen(getHashChannelId()));
-  const [shellMaximized, setShellMaximized] = useState(false);
-  const [agentSplitMenu, setAgentSplitMenu] = useState(false);
-  const [agentKillSignal, setAgentKillSignal] = useState(0);
-  const [agentRunning, setAgentRunning] = useState(true);
-  const agentPanesRef = useRef<TerminalPanesRef>(null);
+  const [terminalOpen, setTerminalOpen] = useState(() => loadTerminalOpen(getHashChannelId()));
+  const [terminalMaximized, setTerminalMaximized] = useState(false);
 
   // Fetch diff stats for the selected channel and keep them updated via events.
   const loadDiffStats = useCallback(async () => {
@@ -126,9 +105,8 @@ export default function App() {
     const onHashChange = () => {
       const id = getHashChannelId();
       setSelectedId(id);
-      setViewMode(loadMode(id));
-      setShellOpen(loadShellOpen(id));
-      setShellMaximized(false);
+      setTerminalOpen(loadTerminalOpen(id));
+      setTerminalMaximized(false);
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
@@ -139,9 +117,8 @@ export default function App() {
     if (window.loopAPI?.onNavigateChannel) {
       window.loopAPI.onNavigateChannel((channelId: string) => {
         setSelectedId(channelId);
-        setViewMode(loadMode(channelId));
-        setShellOpen(loadShellOpen(channelId));
-        setShellMaximized(false);
+        setTerminalOpen(loadTerminalOpen(channelId));
+        setTerminalMaximized(false);
       });
     }
   }, []);
@@ -156,7 +133,7 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === ",") {
         e.preventDefault();
         setSettingsOpen((v) => {
-          if (!v) { setDiffOpen(false); setDiffMaximized(false); setShellOpen(false); setShellMaximized(false); }
+          if (!v) { setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); }
           return !v;
         });
         setSettingsDirPath(null);
@@ -169,7 +146,7 @@ export default function App() {
   // Listen for Settings menu item from main process.
   useEffect(() => {
     if (window.loopAPI?.onOpenSettings) {
-      window.loopAPI.onOpenSettings(() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); setShellOpen(false); setShellMaximized(false); });
+      window.loopAPI.onOpenSettings(() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); });
     }
   }, []);
 
@@ -250,11 +227,8 @@ export default function App() {
       }
       return id;
     });
-    setViewMode(loadMode(id));
-    setShellOpen(loadShellOpen(id));
-    setShellMaximized(false);
-    setAgentRunning(true);
-    setAgentKillSignal(0);
+    setTerminalOpen(loadTerminalOpen(id));
+    setTerminalMaximized(false);
   }, []);
 
   // Auto-select DM channel if nothing is selected on first load.
@@ -277,24 +251,7 @@ export default function App() {
       }
       return channelId;
     });
-    setViewMode("chat");
   }, []);
-
-  const handleModeChange = useCallback(
-    (mode: ViewMode) => {
-      setViewMode((prev) => {
-        // When switching between terminal-showing modes (or re-clicking the same one),
-        // bump mountKey so the Terminal remounts. This restarts a killed session while
-        // a running session is seamlessly reattached via the persisted session ID.
-        if (mode !== "chat" && prev !== "chat") {
-          setMountKey((k) => k + 1);
-        }
-        return mode;
-      });
-      if (selectedId) saveMode(selectedId, mode);
-    },
-    [selectedId],
-  );
 
   const handleCreateChannel = useCallback(async (name: string) => {
     setError(null);
@@ -417,10 +374,10 @@ export default function App() {
         onCreateThread={handleCreateThread}
         onDeleteThread={handleDelete}
         onDeleteBatch={handleDeleteBatch}
-        onOpenSettings={() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); setShellOpen(false); setShellMaximized(false); }}
-        onOpenConfig={(dirPath) => { setSettingsOpen(true); setSettingsDirPath(dirPath); setDiffOpen(false); setDiffMaximized(false); setShellOpen(false); setShellMaximized(false); }}
+        onOpenSettings={() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); }}
+        onOpenConfig={(dirPath) => { setSettingsOpen(true); setSettingsDirPath(dirPath); setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); }}
       />
-      <div style={{ flex: 1, minWidth: (diffMaximized || shellMaximized) ? 0 : 360, display: (diffMaximized || shellMaximized) ? "none" : "flex", flexDirection: "column" }}>
+      <div style={{ flex: 1, minWidth: (diffMaximized || terminalMaximized) ? 0 : 360, display: (diffMaximized || terminalMaximized) ? "none" : "flex", flexDirection: "column" }}>
         {/* Drag region for macOS hiddenInset title bar — enables double-click to zoom */}
         <div
           style={{
@@ -565,14 +522,13 @@ export default function App() {
               )}
             </span>
             <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
-              <ModeToggle mode={viewMode} onChange={handleModeChange} />
               <button
-                onClick={() => setShellOpen((v) => { const next = !v; if (next) { setDiffOpen(false); setDiffMaximized(false); setSettingsOpen(false); } else { setShellMaximized(false); } if (selectedId) saveShellOpen(selectedId, next); return next; })}
-                title="Toggle shell terminal"
+                onClick={() => setTerminalOpen((v) => { const next = !v; if (next) { setDiffOpen(false); setDiffMaximized(false); setSettingsOpen(false); } else { setTerminalMaximized(false); } if (selectedId) saveTerminalOpen(selectedId, next); return next; })}
+                title="Toggle terminal panel"
                 style={{
-                  background: shellOpen ? colors.selectedBg : "none",
-                  border: `1px solid ${shellOpen ? colors.textDim : colors.border}`,
-                  color: shellOpen ? colors.textLight : colors.textDim,
+                  background: terminalOpen ? colors.selectedBg : "none",
+                  border: `1px solid ${terminalOpen ? colors.textDim : colors.border}`,
+                  color: terminalOpen ? colors.textLight : colors.textDim,
                   cursor: "pointer",
                   padding: "2px 6px",
                   fontSize: 10,
@@ -588,10 +544,10 @@ export default function App() {
                   <polyline points="4 17 10 11 4 5" />
                   <line x1="12" y1="19" x2="20" y2="19" />
                 </svg>
-                Shell
+                Terminal
               </button>
               <button
-                onClick={() => setDiffOpen((v) => { if (!v) { setShellOpen(false); setShellMaximized(false); setSettingsOpen(false); } return !v; })}
+                onClick={() => setDiffOpen((v) => { if (!v) { setTerminalOpen(false); setTerminalMaximized(false); setSettingsOpen(false); } return !v; })}
                 title="Toggle diff panel"
                 style={{
                   background: diffOpen ? colors.selectedBg : "none",
@@ -624,98 +580,23 @@ export default function App() {
           </div>
         )}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          <div key="chat-pane" style={{
-            flex: viewMode === "chat" ? 1 : undefined,
-            display: viewMode === "terminal" ? "none" : "flex",
-            flexDirection: "column", overflow: "hidden", minHeight: 0,
-          }}>
-            <ChatView key={`chat-${selectedId}-${mountKey}`} channelId={selectedId} initialRunningBot={channels.find((c) => c.id === selectedId)?.agent_running} scrollToMessageId={scrollToMessageId} onScrollComplete={() => setScrollToMessageId(null)} />
-          </div>
-          {viewMode !== "chat" && (
-            <div key="term-pane" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-              <div style={{
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "0 8px",
-                borderBottom: `1px solid ${colors.border}`,
-                flexShrink: 0,
-                height: 28,
-              }}>
-                <span style={{ fontSize: 10, fontWeight: 700, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>
-                  Agent Terminal
-                </span>
-                <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-                  {agentRunning ? (
-                    <button
-                      onClick={() => setAgentKillSignal((k) => k + 1)}
-                      title="Kill all sessions and remove container"
-                      style={{
-                        padding: "1px 8px",
-                        borderRadius: 4,
-                        border: `1px solid ${colors.error}`,
-                        backgroundColor: "transparent",
-                        color: colors.error,
-                        cursor: "pointer",
-                        fontSize: 10,
-                      }}
-                    >
-                      Kill
-                    </button>
-                  ) : (
-                    <button
-                      onClick={() => { setAgentRunning(true); setMountKey((k) => k + 1); }}
-                      title="Start new sessions"
-                      style={{
-                        padding: "1px 8px",
-                        borderRadius: 4,
-                        border: `1px solid ${colors.active}`,
-                        backgroundColor: "transparent",
-                        color: colors.active,
-                        cursor: "pointer",
-                        fontSize: 10,
-                      }}
-                    >
-                      Restart
-                    </button>
-                  )}
-                  <div style={{ position: "relative" }}>
-                    <button
-                      onClick={() => setAgentSplitMenu((v) => !v)}
-                      title="Split pane"
-                      style={{
-                        background: "none",
-                        border: "none",
-                        color: colors.textDim,
-                        cursor: "pointer",
-                        padding: 4,
-                        lineHeight: 1,
-                        borderRadius: 4,
-                        display: "flex",
-                        alignItems: "center",
-                      }}
-                      onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
-                      onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
-                    >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <line x1="12" y1="5" x2="12" y2="19" />
-                        <line x1="5" y1="12" x2="19" y2="12" />
-                      </svg>
-                    </button>
-                    {agentSplitMenu && (
-                      <SplitMenu
-                        onSplit={(dir) => { setAgentSplitMenu(false); agentPanesRef.current?.splitLast(dir); }}
-                        onClose={() => setAgentSplitMenu(false)}
-                      />
-                    )}
-                  </div>
-                </div>
-              </div>
-              <TerminalPanes ref={agentPanesRef} key={`term-${selectedId}-${mountKey}`} channelId={selectedId} target="agent" storageKey="loop-agent-panes" mountKey={mountKey} hideActions killSignal={agentKillSignal} onStatusChange={loadChannels} onRunningChange={setAgentRunning} />
-            </div>
-          )}
+          <ChatView key={`chat-${selectedId}-${mountKey}`} channelId={selectedId} initialRunningBot={channels.find((c) => c.id === selectedId)?.agent_running} scrollToMessageId={scrollToMessageId} onScrollComplete={() => setScrollToMessageId(null)} />
         </div>
       </div>
+      {terminalOpen && selectedId && (
+        <TerminalPanel
+          channelId={selectedId}
+          dirPath={channels.find((c) => c.id === selectedId)?.dir_path || ""}
+          branch={channels.find((c) => c.id === selectedId)?.branch || ""}
+          maximized={terminalMaximized}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onToggleMaximize={() => setTerminalMaximized((v) => !v)}
+          onClose={() => { setTerminalOpen(false); setTerminalMaximized(false); if (selectedId) { saveTerminalOpen(selectedId, false); clearTerminalTree(selectedId); killAgentContainer(selectedId); } }}
+          onStatusChange={loadChannels}
+        />
+      )}
       {diffOpen && selectedId && (
         <DiffPanel
           channelId={selectedId}
@@ -727,19 +608,6 @@ export default function App() {
           onOpenPalette={() => setPaletteOpen(true)}
           onToggleMaximize={() => setDiffMaximized((v) => !v)}
           onClose={() => { setDiffOpen(false); setDiffMaximized(false); }}
-        />
-      )}
-      {shellOpen && selectedId && (
-        <ShellPanel
-          channelId={selectedId}
-          dirPath={channels.find((c) => c.id === selectedId)?.dir_path || ""}
-          branch={channels.find((c) => c.id === selectedId)?.branch || ""}
-          maximized={shellMaximized}
-          sidebarOpen={sidebarOpen}
-          onToggleSidebar={() => setSidebarOpen((v) => !v)}
-          onOpenPalette={() => setPaletteOpen(true)}
-          onToggleMaximize={() => setShellMaximized((v) => !v)}
-          onClose={() => { setShellOpen(false); setShellMaximized(false); if (selectedId) saveShellOpen(selectedId, false); }}
         />
       )}
       {settingsOpen && (
