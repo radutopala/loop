@@ -1180,3 +1180,39 @@ func (s *StoreSuite) TestDeleteMemoryFileError() {
 	s.mock.ExpectExec(`DELETE FROM memory_files`).WithArgs("/m/a.md", "").WillReturnError(sql.ErrConnDone)
 	require.Error(s.T(), s.store.DeleteMemoryFile(context.Background(), "/m/a.md", ""))
 }
+
+func (s *StoreSuite) TestNowFuncUsedInUpsertChannel() {
+	fixedTime := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+	orig := nowFunc
+	nowFunc = func() time.Time { return fixedTime }
+	defer func() { nowFunc = orig }()
+
+	ch := &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test", Active: true}
+	s.mock.ExpectExec(`INSERT INTO channels`).
+		WithArgs("ch1", "g1", "test", "", "", "", "", "", 1, fixedTime).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err := s.store.UpsertChannel(context.Background(), ch)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestNowFuncUsedInCreateScheduledTask() {
+	fixedTime := time.Date(2099, 6, 15, 12, 0, 0, 0, time.UTC)
+	orig := nowFunc
+	nowFunc = func() time.Time { return fixedTime }
+	defer func() { nowFunc = orig }()
+
+	task := &ScheduledTask{
+		ChannelID: "ch1", Schedule: "0 9 * * *", Type: TaskTypeCron,
+		Prompt: "test", Enabled: true, NextRunAt: fixedTime,
+	}
+	s.mock.ExpectExec(`INSERT INTO scheduled_tasks`).
+		WithArgs("ch1", "", "0 9 * * *", "cron", "test", 1, fixedTime, fixedTime, fixedTime, "", 0).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	id, err := s.store.CreateScheduledTask(context.Background(), task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(1), id)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}

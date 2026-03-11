@@ -53,6 +53,9 @@ type SQLiteStore struct {
 	db *sql.DB
 }
 
+// nowFunc returns the current time in UTC. Override in tests to control time.
+var nowFunc = func() time.Time { return time.Now().UTC() }
+
 // sqlOpenFunc is a package-level variable to allow testing sql.Open failures.
 var sqlOpenFunc = sql.Open
 
@@ -116,7 +119,7 @@ func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
 		   permissions = CASE WHEN excluded.permissions != '' THEN excluded.permissions ELSE channels.permissions END,
 		   active = excluded.active,
 		   updated_at = excluded.updated_at`,
-		ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, ch.ParentID, ch.Platform, ch.SessionID, permStr, boolToInt(ch.Active), time.Now().UTC(),
+		ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, ch.ParentID, ch.Platform, ch.SessionID, permStr, boolToInt(ch.Active), nowFunc(),
 	)
 	return err
 }
@@ -174,7 +177,7 @@ func (s *SQLiteStore) IsChannelActive(ctx context.Context, channelID string) (bo
 func (s *SQLiteStore) UpdateSessionID(ctx context.Context, channelID string, sessionID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE channels SET session_id = ?, updated_at = ? WHERE channel_id = ?`,
-		sessionID, time.Now().UTC(), channelID,
+		sessionID, nowFunc(), channelID,
 	)
 	return err
 }
@@ -182,7 +185,7 @@ func (s *SQLiteStore) UpdateSessionID(ctx context.Context, channelID string, ses
 func (s *SQLiteStore) UpdateChannelPermissions(ctx context.Context, channelID string, perms types.Permissions) error {
 	data, _ := json.Marshal(perms) // Permissions is always serializable
 	permStr := string(data)
-	now := time.Now().UTC()
+	now := nowFunc()
 	// Update the channel and propagate to all child threads
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE channels SET permissions = ?, updated_at = ? WHERE channel_id = ? OR parent_id = ?`,
@@ -336,7 +339,7 @@ func (s *SQLiteStore) GetMessagesAround(ctx context.Context, channelID string, m
 }
 
 func (s *SQLiteStore) CreateScheduledTask(ctx context.Context, task *ScheduledTask) (int64, error) {
-	now := time.Now().UTC()
+	now := nowFunc()
 	result, err := s.db.ExecContext(ctx,
 		`INSERT INTO scheduled_tasks (channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -369,7 +372,7 @@ func (s *SQLiteStore) GetDueTasks(ctx context.Context, now time.Time) ([]*Schedu
 func (s *SQLiteStore) UpdateScheduledTask(ctx context.Context, task *ScheduledTask) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE scheduled_tasks SET schedule = ?, type = ?, prompt = ?, enabled = ?, next_run_at = ?, updated_at = ?, auto_delete_sec = ? WHERE id = ?`,
-		task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, time.Now().UTC(), task.AutoDeleteSec, task.ID,
+		task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, nowFunc(), task.AutoDeleteSec, task.ID,
 	)
 	return err
 }
@@ -386,7 +389,7 @@ func (s *SQLiteStore) ListScheduledTasks(ctx context.Context, channelID string) 
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec
 		 FROM scheduled_tasks WHERE channel_id = ? AND (type != 'once' OR next_run_at > ?) ORDER BY next_run_at ASC`,
-		channelID, time.Now().UTC(),
+		channelID, nowFunc(),
 	)
 	if err != nil {
 		return nil, err
@@ -398,7 +401,7 @@ func (s *SQLiteStore) ListScheduledTasks(ctx context.Context, channelID string) 
 func (s *SQLiteStore) UpdateScheduledTaskEnabled(ctx context.Context, id int64, enabled bool) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE scheduled_tasks SET enabled = ?, updated_at = ? WHERE id = ?`,
-		boolToInt(enabled), time.Now().UTC(), id,
+		boolToInt(enabled), nowFunc(), id,
 	)
 	return err
 }
@@ -482,7 +485,7 @@ func (s *SQLiteStore) UpsertMemoryFile(ctx context.Context, file *MemoryFile) er
 		   embedding = excluded.embedding,
 		   dimensions = excluded.dimensions,
 		   updated_at = excluded.updated_at`,
-		file.FilePath, file.ChunkIndex, file.Content, file.ContentHash, file.Embedding, file.Dimensions, file.DirPath, time.Now().UTC(),
+		file.FilePath, file.ChunkIndex, file.Content, file.ContentHash, file.Embedding, file.Dimensions, file.DirPath, nowFunc(),
 	)
 	return err
 }
