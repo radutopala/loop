@@ -47,10 +47,22 @@ export function useMessages(channelId: string | null, aroundMessageId?: number |
         setMessages(sorted);
         setHasMore(resp.next_cursor !== null);
         cursorRef.current = resp.next_cursor;
-        // For "around" mode, set cursor to the oldest message so loadMore works.
+        // For "around" mode, set cursor to the oldest message so loadMore works,
+        // then also fetch the latest messages to fill the gap to the present.
         if (around && sorted.length > 0) {
           cursorRef.current = sorted[0]!.id;
           setHasMore(true); // assume there are older messages
+          // Fetch newest messages and merge to fill gap between around window and now.
+          fetchMessages(channelId, { limit: PAGE_SIZE }).then((latestResp) => {
+            if (cancelled) return;
+            const latest = [...latestResp.messages].reverse();
+            setMessages((prev) => {
+              const ids = new Set(prev.map((m) => m.msg_id));
+              const newer = latest.filter((m) => !ids.has(m.msg_id));
+              if (newer.length === 0) return prev;
+              return [...prev, ...newer].sort((a, b) => a.id - b.id);
+            });
+          });
         }
       })
       .catch(() => {
