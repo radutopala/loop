@@ -25,13 +25,13 @@ if (!gotTheLock) {
   app.quit();
 }
 
-// Set the dock icon explicitly from the PNG so macOS doesn't apply the
-// rounded-rectangle mask that .icns icons get.
-const iconPng = process.env.VITE_DEV_SERVER_URL
-  ? path.join(__dirname, "../public/loop.png")
-  : path.join(__dirname, "../dist/loop.png");
+// Use the macOS-specific icon for the dock (has rounded-rect background).
+// The original loop.png is kept for internal UI use (favicon, panels).
+const iconMacos = process.env.VITE_DEV_SERVER_URL
+  ? path.join(__dirname, "../public/loop-macos.png")
+  : path.join(__dirname, "../dist/loop-macos.png");
 if (process.platform === "darwin") {
-  app.dock?.setIcon(iconPng);
+  app.dock?.setIcon(iconMacos);
 }
 
 const VITE_DEV_SERVER_URL = process.env.VITE_DEV_SERVER_URL;
@@ -49,7 +49,7 @@ function parseChannelId(url: string): string {
 function createWindow(hash?: string): BrowserWindow {
   const win = new BrowserWindow({
     title: "Loop",
-    icon: iconPng, // undefined in production — uses .icns from electron-builder
+    icon: iconMacos, // undefined in production — uses .icns from electron-builder
     width: 1200,
     height: 800,
     minWidth: 900,
