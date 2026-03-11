@@ -31,13 +31,16 @@ func init() {
 	version = resolveVersion(version)
 }
 
+// readBuildInfo is a shim for debug.ReadBuildInfo, overridable in tests.
+var readBuildInfo = debug.ReadBuildInfo
+
 // resolveVersion uses debug.ReadBuildInfo to replace "dev" with the actual
 // module version when installed via `go install`.
 var resolveVersion = func(v string) string {
 	if v != "dev" {
 		return v
 	}
-	if info, ok := debug.ReadBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
+	if info, ok := readBuildInfo(); ok && info.Main.Version != "" && info.Main.Version != "(devel)" {
 		return info.Main.Version
 	}
 	return v
@@ -286,9 +289,12 @@ func newDaemonStatusCmd() *cobra.Command {
 
 // --- Bot constructors (kept in main.go to isolate discordgo/slack-go imports) ---
 
+// discordgoNew is a shim for discordgo.New, overridable in tests.
+var discordgoNew = discordgo.New
+
 var (
 	newDiscordBot = func(token, appID, guildID string, logger *slog.Logger) (orchestrator.Bot, error) {
-		session, err := discordgo.New("Bot " + token)
+		session, err := discordgoNew("Bot " + token)
 		if err != nil {
 			return nil, err
 		}

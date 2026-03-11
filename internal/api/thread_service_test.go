@@ -313,3 +313,11 @@ func (s *ThreadServiceSuite) TestDeleteThreadMCPConfigErrorLogsWarning() {
 	require.NoError(s.T(), err)
 	s.store.AssertExpectations(s.T())
 }
+
+// origGenerateThreadID captures the default generateThreadID before any test overrides it.
+var origGenerateThreadID = generateThreadID
+
+func TestGenerateThreadIDDefault(t *testing.T) {
+	got := origGenerateThreadID()
+	require.Len(t, got, 12) // 6 bytes = 12 hex chars
+}

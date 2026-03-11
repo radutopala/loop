@@ -5,7 +5,10 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	containertypes "github.com/docker/docker/api/types/container"
@@ -719,4 +722,52 @@ func (s *ClientSuite) TestCopyToContainerError() {
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "copy failed")
 	s.api.AssertExpectations(s.T())
+}
+
+// --- latestClaudeVersion tests ---
+
+func (s *ClientSuite) TestLatestClaudeVersionSuccess() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("  1.2.3  "))
+	}))
+	defer ts.Close()
+
+	orig := claudeVersionURL
+	s.T().Cleanup(func() { claudeVersionURL = orig })
+	claudeVersionURL = ts.URL
+
+	got := latestClaudeVersion()
+	require.Equal(s.T(), "1.2.3", got)
+}
+
+func (s *ClientSuite) TestLatestClaudeVersionHTTPError() {
+	orig := claudeVersionURL
+	s.T().Cleanup(func() { claudeVersionURL = orig })
+	claudeVersionURL = "http://127.0.0.1:0" // connection refused
+
+	got := latestClaudeVersion()
+	require.True(s.T(), strings.HasPrefix(got, "unknown-"))
+}
+
+func (s *ClientSuite) TestLatestClaudeVersionNon200() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer ts.Close()
+
+	orig := claudeVersionURL
+	s.T().Cleanup(func() { claudeVersionURL = orig })
+	claudeVersionURL = ts.URL
+
+	got := latestClaudeVersion()
+	require.True(s.T(), strings.HasPrefix(got, "unknown-"))
+}
+
+func (s *ClientSuite) TestLatestClaudeVersionInvalidURL() {
+	orig := claudeVersionURL
+	s.T().Cleanup(func() { claudeVersionURL = orig })
+	claudeVersionURL = "://bad-url"
+
+	got := latestClaudeVersion()
+	require.True(s.T(), strings.HasPrefix(got, "unknown-"))
 }

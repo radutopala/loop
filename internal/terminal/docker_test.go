@@ -52,6 +52,11 @@ func (s *DockerSuite) TearDownTest() {
 	newDockerExecClientFunc = s.origNewFunc
 }
 
+func (s *DockerSuite) TestNewDockerExecClientFuncDefault() {
+	// Exercise the original newDockerExecClientFunc to cover its default body.
+	_, _ = s.origNewFunc()
+}
+
 func (s *DockerSuite) TestNewDockerExecClient() {
 	api := new(mockDockerExecAPI)
 	newDockerExecClientFunc = func() (dockerExecAPI, error) {

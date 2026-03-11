@@ -49,6 +49,7 @@ type Server struct {
 	logger             *slog.Logger
 	server             *http.Server
 	listener           net.Listener
+	stopErr            error // if set, Stop returns this error (for testing)
 }
 
 // SetEventsHub configures the events hub for the /api/ws endpoint.
@@ -166,8 +167,21 @@ func corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
+// SetStopError sets a fixed error that Stop will return instead of calling Shutdown.
+// This is intended for testing shutdown error handling in callers.
+func (s *Server) SetStopError(err error) {
+	s.stopErr = err
+}
+
 // Stop gracefully shuts down the HTTP server.
 func (s *Server) Stop(ctx context.Context) error {
+	if s.stopErr != nil {
+		// Still perform the real shutdown, but return the injected error.
+		if s.server != nil {
+			_ = s.server.Shutdown(ctx)
+		}
+		return s.stopErr
+	}
 	if s.server == nil {
 		return nil
 	}

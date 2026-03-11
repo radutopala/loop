@@ -61,57 +61,8 @@ func (m *MockThreadEnsurer) DeleteThread(ctx context.Context, threadID string) e
 	return m.Called(ctx, threadID).Error(0)
 }
 
-type MockChannelLister struct {
-	mock.Mock
-}
-
-func (m *MockChannelLister) ListChannels(ctx context.Context) ([]*db.Channel, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.Channel), args.Error(1)
-}
-
-func (m *MockChannelLister) GetChannel(ctx context.Context, channelID string) (*db.Channel, error) {
-	args := m.Called(ctx, channelID)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(*db.Channel), args.Error(1)
-}
-
-func (m *MockChannelLister) GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*db.Message, error) {
-	args := m.Called(ctx, channelID, cursor, limit)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.Message), args.Error(1)
-}
-
-func (m *MockChannelLister) SearchMessages(ctx context.Context, query string, limit int) ([]*db.Message, error) {
-	args := m.Called(ctx, query, limit)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.Message), args.Error(1)
-}
-
-func (m *MockChannelLister) GetMessagesAround(ctx context.Context, channelID string, messageID int64, limit int) ([]*db.Message, error) {
-	args := m.Called(ctx, channelID, messageID, limit)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).([]*db.Message), args.Error(1)
-}
-
-func (m *MockChannelLister) DeleteChannel(ctx context.Context, channelID string) error {
-	return m.Called(ctx, channelID).Error(0)
-}
-
-func (m *MockChannelLister) DeleteChannelsByParentID(ctx context.Context, parentID string) error {
-	return m.Called(ctx, parentID).Error(0)
-}
+// MockChannelLister aliases testutil.MockStore which satisfies the ChannelLister interface.
+type MockChannelLister = testutil.MockStore
 
 type MockMessageSender struct {
 	mock.Mock

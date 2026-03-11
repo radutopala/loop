@@ -497,3 +497,8 @@ func (s *BotSuite) TestHandleThreadCreatedDefaultAuthor() {
 
 // keep a reference to the real generateThreadID for TearDownTest
 var defaultGenerateThreadID = generateThreadID
+
+func TestGenerateThreadIDDefault(t *testing.T) {
+	got := defaultGenerateThreadID()
+	require.Len(t, got, 12) // 6 bytes = 12 hex chars
+}

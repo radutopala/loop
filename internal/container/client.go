@@ -213,7 +213,7 @@ func (c *Client) ImagePull(ctx context.Context, imageName string) error {
 	return err
 }
 
-const claudeVersionURL = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest"
+var claudeVersionURL = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest"
 
 // latestClaudeVersion fetches the latest Claude CLI version string.
 // Falls back to a timestamp if the lookup fails, which busts the cache.

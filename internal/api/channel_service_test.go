@@ -460,3 +460,11 @@ func (s *ChannelServiceSuite) TestEnsureChannelWithExplicitPlatform() {
 	discordCreator.AssertExpectations(s.T())
 	s.creator.AssertNotCalled(s.T(), "CreateChannel", mock.Anything, mock.Anything)
 }
+
+// origRandSuffix captures the default randSuffix before any test overrides it.
+var origRandSuffix = randSuffix
+
+func TestRandSuffixDefault(t *testing.T) {
+	got := origRandSuffix()
+	require.Len(t, got, 4) // 2 bytes = 4 hex chars
+}

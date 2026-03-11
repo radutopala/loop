@@ -11,11 +11,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"sync/atomic"
 	"syscall"
 	"testing"
 	"time"
 
+	"github.com/bwmarrin/discordgo"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -1705,12 +1707,16 @@ func (s *MainSuite) TestServeHappyPathShutdownWithStopError() {
 }
 
 func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
-	// Verify serve() returns nil even when the API server's listener is
-	// already closed (which makes Stop() return an error internally).
-	// Since newAPIServer returns *api.Server directly, we exercise the
-	// real shutdown path — Stop() on a real server is always graceful.
+	// Verify serve() returns nil even when the API server's Stop() returns an
+	// error. We inject a stop error via SetStopError.
 	m := setupServeMocks()
 	m.setupHappyBot()
+
+	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) *api.Server {
+		srv := api.NewServer(sched, channels, threads, store, messages, logger)
+		srv.SetStopError(errors.New("injected stop error"))
+		return srv
+	}
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- serve() }()
@@ -1722,6 +1728,7 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 
 	select {
 	case err := <-errCh:
+		// serve() returns nil — it logs the Stop() error but doesn't propagate it.
 		require.NoError(s.T(), err)
 	case <-time.After(5 * time.Second):
 		s.T().Fatal("serve() did not return in time")
@@ -1875,6 +1882,20 @@ func (s *MainSuite) TestDefaultNewDiscordBot() {
 	require.NotNil(s.T(), bot)
 }
 
+func (s *MainSuite) TestDefaultNewDiscordBotSessionError() {
+	orig := discordgoNew
+	s.T().Cleanup(func() { discordgoNew = orig })
+
+	discordgoNew = func(string) (*discordgo.Session, error) {
+		return nil, errors.New("session error")
+	}
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	_, err := newDiscordBot("fake-token", "fake-app-id", "fake-guild-id", logger)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "session error")
+}
+
 func (s *MainSuite) TestDefaultNewSlackBot() {
 	// Exercise the default newSlackBot — creates a bot without needing a server.
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -1891,6 +1912,11 @@ func (s *MainSuite) TestDefaultNewDockerClient() {
 	if closer, ok := dc.(io.Closer); ok {
 		_ = closer.Close()
 	}
+}
+
+func (s *MainSuite) TestDefaultNewDockerExecClient() {
+	// Exercise the default newDockerExecClient to cover serve.go var body.
+	_, _ = s.origNewDockerExecClient()
 }
 
 // --- daemon commands ---
@@ -3064,6 +3090,17 @@ func (s *MainSuite) TestResolveVersionKeepsNonDev() {
 func (s *MainSuite) TestResolveVersionDevFallback() {
 	// Default resolveVersion with "dev" — ReadBuildInfo returns "(devel)" in tests
 	require.Equal(s.T(), "dev", resolveVersion("dev"))
+}
+
+func (s *MainSuite) TestResolveVersionFromRealBuildInfo() {
+	orig := readBuildInfo
+	s.T().Cleanup(func() { readBuildInfo = orig })
+
+	readBuildInfo = func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Version: "v2.3.4"}}, true
+	}
+
+	require.Equal(s.T(), "v2.3.4", resolveVersion("dev"))
 }
 
 // --- dumpTemplates ---
