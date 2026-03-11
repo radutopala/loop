@@ -3102,6 +3102,51 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingSendsFinalWhenDifferent() 
 	s.store.AssertExpectations(s.T())
 }
 
+func (s *OrchestratorSuite) TestHandleMessageStreamingSendErrorIsLogged() {
+	s.orch.cfg.StreamingEnabled = true
+
+	msg := &bot.IncomingMessage{
+		ChannelID:    "ch1",
+		GuildID:      "g1",
+		AuthorName:   "Alice",
+		Content:      "hello",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Streamed turn")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:  "Streamed turn",
+		SessionID: "sess-senderr",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-senderr").Return(nil)
+
+	// Streaming SendMessage fails — should be logged, not fatal
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+		return out.ChannelID == "ch1" && out.Content == "Streamed turn" && out.ReplyToMessageID == "msg1"
+	})).Return(errors.New("send failed")).Once()
+
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 1)
+	s.store.AssertExpectations(s.T())
+}
+
 func (s *OrchestratorSuite) TestHandleMessageStreamingDisabledNoOnTurn() {
 	// streamingEnabled is false by default (set in SetupTest)
 	msg := &bot.IncomingMessage{

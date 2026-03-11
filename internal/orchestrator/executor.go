@@ -135,10 +135,12 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				if targetID == "" {
 					targetID = task.ChannelID
 				}
-				_ = e.bot.SendMessage(ctx, &bot.OutgoingMessage{
+				if err := e.bot.SendMessage(ctx, &bot.OutgoingMessage{
 					ChannelID: targetID,
 					Content:   text,
-				})
+				}); err != nil {
+					e.logger.Error("streaming send failed", "error", err, "channel_id", targetID)
+				}
 				e.broadcastBotMessage(ctx, targetID, text)
 			}
 		})

@@ -66,6 +66,7 @@ export function Sidebar({
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [newChannelName, setNewChannelName] = useState("");
+  const [searchQuery, setSearchQuery] = useState("");
   const newChannelInputRef = useRef<HTMLInputElement>(null);
   const draggedIdRef = useRef<string | null>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
@@ -159,10 +160,7 @@ export function Sidebar({
     [width],
   );
 
-  const topLevel = sortByOrder(
-    channels.filter((c) => !c.parent_id && (c.name || c.dir_path)),
-    channelOrder,
-  );
+  const query = searchQuery.toLowerCase();
   const threadsByParent = channels.reduce<Record<string, Channel[]>>(
     (acc, c) => {
       if (c.parent_id) {
@@ -172,6 +170,30 @@ export function Sidebar({
     },
     {},
   );
+
+  const allTopLevel = sortByOrder(
+    channels.filter((c) => !c.parent_id && (c.name || c.dir_path)),
+    channelOrder,
+  );
+
+  // When searching, show channels that match or have matching threads.
+  const topLevel = query
+    ? allTopLevel.filter((c) => {
+        const nameMatch = c.name.toLowerCase().includes(query);
+        const threads = threadsByParent[c.id] ?? [];
+        const threadMatch = threads.some((t) => t.name.toLowerCase().includes(query));
+        return nameMatch || threadMatch;
+      })
+    : allTopLevel;
+
+  // Filter threads when searching.
+  const getFilteredThreads = (parentId: string): Channel[] => {
+    const threads = threadsByParent[parentId] ?? [];
+    if (!query) return threads;
+    const parentMatches = allTopLevel.find((c) => c.id === parentId)?.name.toLowerCase().includes(query);
+    if (parentMatches) return threads;
+    return threads.filter((t) => t.name.toLowerCase().includes(query));
+  };
 
   if (collapsed) {
     return null;
@@ -244,6 +266,41 @@ export function Sidebar({
           + new
         </button>
       </div>
+      <div style={{ padding: "0 12px 8px" }}>
+        <div style={{ position: "relative" }}>
+          <svg
+            width="13"
+            height="13"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke={colors.textDim}
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            style={{ position: "absolute", left: 7, top: "50%", transform: "translateY(-50%)", pointerEvents: "none" }}
+          >
+            <circle cx="11" cy="11" r="8" />
+            <line x1="21" y1="21" x2="16.65" y2="16.65" />
+          </svg>
+          <input
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Escape") setSearchQuery(""); }}
+            placeholder="Search..."
+            style={{
+              width: "100%",
+              background: colors.bg,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 4,
+              color: colors.textLight,
+              fontSize: 12,
+              padding: "4px 8px 4px 24px",
+              outline: "none",
+              boxSizing: "border-box",
+            }}
+          />
+        </div>
+      </div>
       {creatingChannel && (
         <div style={{ padding: "4px 12px 8px" }}>
           <input
@@ -283,7 +340,7 @@ export function Sidebar({
         <ChannelItem
           key={channel.id}
           channel={channel}
-          threads={threadsByParent[channel.id] ?? []}
+          threads={getFilteredThreads(channel.id)}
           selected={selectedId === channel.id}
           selectedId={selectedId}
           onSelect={onSelect}

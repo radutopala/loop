@@ -553,6 +553,67 @@ func (s *StoreSuite) TestGetMessagesCursorWithCursorError() {
 	require.Nil(s.T(), msgs)
 }
 
+// --- SearchMessages tests ---
+
+func (s *StoreSuite) TestSearchMessages() {
+	now := time.Now().UTC()
+	rows := newMockMessageRows().
+		AddRow(10, 1, "ch1", "msg10", "u1", "alice", "hello world", 0, 0, now).
+		AddRow(5, 2, "ch2", "msg5", "bot", "assistant", "hello there", 1, 1, now)
+	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE content LIKE .+ ORDER BY created_at DESC LIMIT`).
+		WithArgs("%hello%", 20).
+		WillReturnRows(rows)
+
+	msgs, err := s.store.SearchMessages(context.Background(), "hello", 20)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), msgs, 2)
+	require.Equal(s.T(), "hello world", msgs[0].Content)
+	require.Equal(s.T(), "ch1", msgs[0].ChannelID)
+	require.False(s.T(), msgs[0].IsBot)
+	require.Equal(s.T(), "hello there", msgs[1].Content)
+	require.True(s.T(), msgs[1].IsBot)
+}
+
+func (s *StoreSuite) TestSearchMessagesError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE content LIKE`).
+		WithArgs("%fail%", 10).
+		WillReturnError(sql.ErrConnDone)
+
+	msgs, err := s.store.SearchMessages(context.Background(), "fail", 10)
+	require.Error(s.T(), err)
+	require.Nil(s.T(), msgs)
+}
+
+// --- GetMessagesAround tests ---
+
+func (s *StoreSuite) TestGetMessagesAround() {
+	now := time.Now().UTC()
+	rows := newMockMessageRows().
+		AddRow(8, 1, "ch1", "msg8", "u1", "alice", "before", 0, 0, now).
+		AddRow(10, 1, "ch1", "msg10", "u1", "alice", "target", 0, 0, now).
+		AddRow(11, 1, "ch1", "msg11", "bot", "assistant", "after", 1, 1, now)
+	s.mock.ExpectQuery(`SELECT .+ FROM .+ UNION ALL .+ ORDER BY id ASC`).
+		WithArgs("ch1", int64(10), 25, "ch1", int64(10), 25).
+		WillReturnRows(rows)
+
+	msgs, err := s.store.GetMessagesAround(context.Background(), "ch1", 10, 50)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), msgs, 3)
+	require.Equal(s.T(), int64(8), msgs[0].ID)
+	require.Equal(s.T(), int64(10), msgs[1].ID)
+	require.Equal(s.T(), int64(11), msgs[2].ID)
+}
+
+func (s *StoreSuite) TestGetMessagesAroundError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM .+ UNION ALL`).
+		WithArgs("ch1", int64(5), 25, "ch1", int64(5), 25).
+		WillReturnError(sql.ErrConnDone)
+
+	msgs, err := s.store.GetMessagesAround(context.Background(), "ch1", 5, 50)
+	require.Error(s.T(), err)
+	require.Nil(s.T(), msgs)
+}
+
 // --- ScheduledTask tests ---
 
 func (s *StoreSuite) TestCreateScheduledTask() {

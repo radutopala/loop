@@ -388,6 +388,53 @@ func (s *TaskExecutorSuite) TestStreamingThreadCreationFailsFallsBack() {
 	s.bot.AssertExpectations(s.T())
 }
 
+func (s *TaskExecutorSuite) TestStreamingSendMessageErrorIsLogged() {
+	s.executor.streamingEnabled = true
+
+	task := &db.ScheduledTask{
+		ID:        14,
+		ChannelID: "ch14",
+		Prompt:    "send err task",
+		Type:      db.TaskTypeCron,
+		Schedule:  "0 * * * *",
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch14").Return(nil, nil)
+
+	// Thread creation fails → first turn falls back to channel, second turn hits else branch
+	s.bot.On("CreateSimpleThread", s.ctx, "ch14", mock.Anything, mock.Anything).Return("", errors.New("thread error")).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Turn 1") // goes through CreateSimpleThread fallback
+		req.OnTurn("Turn 2") // goes through else branch (SendMessage) which fails
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:  "Turn 2",
+		SessionID: "sess-senderr",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch14", "sess-senderr").Return(nil)
+
+	// First SendMessage (fallback from thread creation failure) succeeds
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "ch14" && msg.Content == "Turn 1"
+	})).Return(nil).Once()
+	// Second SendMessage (else branch) fails — error is logged, not fatal
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "ch14" && msg.Content == "Turn 2"
+	})).Return(errors.New("send failed")).Once()
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Turn 2", resp)
+
+	s.bot.AssertNumberOfCalls(s.T(), "SendMessage", 2)
+	s.bot.AssertExpectations(s.T())
+}
+
 func (s *TaskExecutorSuite) TestStreamingSingleTurnNoFinalDuplicate() {
 	s.executor.streamingEnabled = true
 

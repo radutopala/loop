@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -75,6 +76,42 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 
 	channelID := r.PathValue("id")
 
+	// "around" mode: return messages centered around a specific message ID.
+	if a := r.URL.Query().Get("around"); a != "" {
+		aroundID, err := strconv.ParseInt(a, 10, 64)
+		if err != nil || aroundID < 1 {
+			http.Error(w, "invalid around", http.StatusBadRequest)
+			return
+		}
+		limit := defaultMessageLimit
+		if l := r.URL.Query().Get("limit"); l != "" {
+			parsed, err := strconv.Atoi(l)
+			if err != nil || parsed < 1 {
+				http.Error(w, "invalid limit", http.StatusBadRequest)
+				return
+			}
+			if parsed > maxMessageLimit {
+				parsed = maxMessageLimit
+			}
+			limit = parsed
+		}
+		msgs, err := s.store.GetMessagesAround(r.Context(), channelID, aroundID, limit)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		resp := messagesListResponse{Messages: make([]messageResponse, 0, len(msgs))}
+		for _, m := range msgs {
+			resp.Messages = append(resp.Messages, messageResponse{
+				ID: m.ID, ChannelID: m.ChannelID, MsgID: m.MsgID,
+				AuthorID: m.AuthorID, AuthorName: m.AuthorName,
+				Content: m.Content, IsBot: m.IsBot, CreatedAt: m.CreatedAt,
+			})
+		}
+		writeHTTPJSON(w, http.StatusOK, resp, s.logger)
+		return
+	}
+
 	limit := defaultMessageLimit
 	if l := r.URL.Query().Get("limit"); l != "" {
 		parsed, err := strconv.Atoi(l)
@@ -132,4 +169,61 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
+}
+
+const defaultSearchLimit = 20
+const maxSearchLimit = 50
+
+type searchMessageResponse struct {
+	ID         int64     `json:"id"`
+	ChannelID  string    `json:"channel_id"`
+	AuthorName string    `json:"author_name"`
+	Content    string    `json:"content"`
+	IsBot      bool      `json:"is_bot"`
+	CreatedAt  time.Time `json:"created_at"`
+}
+
+func (s *Server) handleSearchMessages(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "message search not configured") {
+		return
+	}
+
+	q := strings.TrimSpace(r.URL.Query().Get("q"))
+	if q == "" {
+		http.Error(w, "q is required", http.StatusBadRequest)
+		return
+	}
+
+	limit := defaultSearchLimit
+	if l := r.URL.Query().Get("limit"); l != "" {
+		parsed, err := strconv.Atoi(l)
+		if err != nil || parsed < 1 {
+			http.Error(w, "invalid limit", http.StatusBadRequest)
+			return
+		}
+		if parsed > maxSearchLimit {
+			parsed = maxSearchLimit
+		}
+		limit = parsed
+	}
+
+	msgs, err := s.store.SearchMessages(r.Context(), q, limit)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	results := make([]searchMessageResponse, 0, len(msgs))
+	for _, m := range msgs {
+		results = append(results, searchMessageResponse{
+			ID:         m.ID,
+			ChannelID:  m.ChannelID,
+			AuthorName: m.AuthorName,
+			Content:    m.Content,
+			IsBot:      m.IsBot,
+			CreatedAt:  m.CreatedAt,
+		})
+	}
+
+	writeHTTPJSON(w, http.StatusOK, results, s.logger)
 }

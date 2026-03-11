@@ -12,35 +12,55 @@ interface UseMessagesResult {
   addMessage: (msg: Message) => void;
 }
 
-export function useMessages(channelId: string | null): UseMessagesResult {
+export function useMessages(channelId: string | null, aroundMessageId?: number | null): UseMessagesResult {
   const [messages, setMessages] = useState<Message[]>([]);
   const [loading, setLoading] = useState(false);
   const [hasMore, setHasMore] = useState(false);
   const cursorRef = useRef<number | null>(null);
+  const loadingRef = useRef(false);
+  const aroundRef = useRef(aroundMessageId);
+  aroundRef.current = aroundMessageId;
 
-  // Reset when channel changes.
+  // Reset when channel changes (or component re-mounts).
   useEffect(() => {
     setMessages([]);
     setHasMore(false);
     cursorRef.current = null;
+    loadingRef.current = false;
 
     if (!channelId) return;
 
     let cancelled = false;
     setLoading(true);
+    loadingRef.current = true;
 
-    fetchMessages(channelId, { limit: PAGE_SIZE })
+    const around = aroundRef.current;
+    const opts = around
+      ? { limit: PAGE_SIZE, around }
+      : { limit: PAGE_SIZE };
+
+    fetchMessages(channelId, opts)
       .then((resp) => {
         if (cancelled) return;
-        setMessages(resp.messages.reverse());
+        // "around" returns messages in ASC order already; cursor-based returns DESC.
+        const sorted = around ? resp.messages : [...resp.messages].reverse();
+        setMessages(sorted);
         setHasMore(resp.next_cursor !== null);
         cursorRef.current = resp.next_cursor;
+        // For "around" mode, set cursor to the oldest message so loadMore works.
+        if (around && sorted.length > 0) {
+          cursorRef.current = sorted[0]!.id;
+          setHasMore(true); // assume there are older messages
+        }
       })
       .catch(() => {
         /* will retry via event stream */
       })
       .finally(() => {
-        if (!cancelled) setLoading(false);
+        if (!cancelled) {
+          setLoading(false);
+          loadingRef.current = false;
+        }
       });
 
     return () => {
@@ -49,18 +69,23 @@ export function useMessages(channelId: string | null): UseMessagesResult {
   }, [channelId]);
 
   const loadMore = useCallback(() => {
-    if (!channelId || loading || !hasMore || cursorRef.current === null) return;
+    if (!channelId || loadingRef.current || !hasMore || cursorRef.current === null) return;
 
     setLoading(true);
+    loadingRef.current = true;
     fetchMessages(channelId, { limit: PAGE_SIZE, cursor: cursorRef.current })
       .then((resp) => {
-        setMessages((prev) => [...resp.messages.reverse(), ...prev]);
+        const older = [...resp.messages].reverse();
+        setMessages((prev) => [...older, ...prev]);
         setHasMore(resp.next_cursor !== null);
         cursorRef.current = resp.next_cursor;
       })
       .catch(() => {})
-      .finally(() => setLoading(false));
-  }, [channelId, loading, hasMore]);
+      .finally(() => {
+        setLoading(false);
+        loadingRef.current = false;
+      });
+  }, [channelId, hasMore]);
 
   const addMessage = useCallback((msg: Message) => {
     setMessages((prev) => {

@@ -556,11 +556,13 @@ func (b *SlackBot) handleMessage(ev *slackevents.MessageEvent) {
 		channelID = compositeID(ev.Channel, ev.TimeStamp)
 	}
 
+	authorID := ev.User
+
 	msg := &bot.IncomingMessage{
 		ChannelID:    channelID,
 		GuildID:      "",
-		AuthorID:     ev.User,
-		AuthorName:   ev.User,
+		AuthorID:     authorID,
+		AuthorName:   authorID,
 		Content:      content,
 		MessageID:    ev.TimeStamp,
 		Platform:     types.PlatformSlack,

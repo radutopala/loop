@@ -28,6 +28,8 @@ type Store interface {
 	MarkMessagesProcessed(ctx context.Context, ids []int64) error
 	GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*Message, error)
 	GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*Message, error)
+	SearchMessages(ctx context.Context, query string, limit int) ([]*Message, error)
+	GetMessagesAround(ctx context.Context, channelID string, messageID int64, limit int) ([]*Message, error)
 	CreateScheduledTask(ctx context.Context, task *ScheduledTask) (int64, error)
 	GetDueTasks(ctx context.Context, now time.Time) ([]*ScheduledTask, error)
 	UpdateScheduledTask(ctx context.Context, task *ScheduledTask) error
@@ -292,6 +294,40 @@ func (s *SQLiteStore) GetMessagesCursor(ctx context.Context, channelID string, c
 			channelID, limit,
 		)
 	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+func (s *SQLiteStore) SearchMessages(ctx context.Context, query string, limit int) ([]*Message, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at
+		 FROM messages WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?`,
+		"%"+query+"%", limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+func (s *SQLiteStore) GetMessagesAround(ctx context.Context, channelID string, messageID int64, limit int) ([]*Message, error) {
+	half := limit / 2
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at FROM (
+		   SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at
+		   FROM messages WHERE channel_id = ? AND id < ? ORDER BY id DESC LIMIT ?
+		 ) UNION ALL
+		 SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at FROM (
+		   SELECT id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at
+		   FROM messages WHERE channel_id = ? AND id >= ? ORDER BY id ASC LIMIT ?
+		 ) ORDER BY id ASC`,
+		channelID, messageID, half,
+		channelID, messageID, limit-half,
+	)
 	if err != nil {
 		return nil, err
 	}

@@ -89,6 +89,22 @@ func (m *MockChannelLister) GetMessagesCursor(ctx context.Context, channelID str
 	return args.Get(0).([]*db.Message), args.Error(1)
 }
 
+func (m *MockChannelLister) SearchMessages(ctx context.Context, query string, limit int) ([]*db.Message, error) {
+	args := m.Called(ctx, query, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.Message), args.Error(1)
+}
+
+func (m *MockChannelLister) GetMessagesAround(ctx context.Context, channelID string, messageID int64, limit int) ([]*db.Message, error) {
+	args := m.Called(ctx, channelID, messageID, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.Message), args.Error(1)
+}
+
 func (m *MockChannelLister) DeleteChannel(ctx context.Context, channelID string) error {
 	return m.Called(ctx, channelID).Error(0)
 }
@@ -214,6 +230,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("DELETE /api/tasks/{id}", s.srv.handleDeleteTask)
 	s.mux.HandleFunc("PATCH /api/tasks/{id}", s.srv.handleUpdateTask)
 	s.mux.HandleFunc("GET /api/channels/{id}/messages", s.srv.handleListMessages)
+	s.mux.HandleFunc("GET /api/messages/search", s.srv.handleSearchMessages)
 	s.mux.HandleFunc("POST /api/commands", s.srv.handleCommand)
 	s.mux.HandleFunc("POST /api/memory/search", s.srv.handleMemorySearch)
 	s.mux.HandleFunc("POST /api/memory/index", s.srv.handleMemoryIndex)
@@ -1619,6 +1636,150 @@ func (s *ServerSuite) TestListMessagesNotConfigured() {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/channels/{id}/messages", srv.handleListMessages)
 	req := httptest.NewRequest("GET", "/api/channels/ch-1/messages", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+// --- ListMessages around tests ---
+
+func (s *ServerSuite) TestListMessagesAroundSuccess() {
+	now := time.Now().UTC()
+	msgs := []*db.Message{
+		{ID: 8, ChannelID: "ch-1", MsgID: "m8", AuthorID: "u1", AuthorName: "alice", Content: "before", CreatedAt: now},
+		{ID: 10, ChannelID: "ch-1", MsgID: "m10", AuthorID: "u1", AuthorName: "alice", Content: "target", CreatedAt: now},
+		{ID: 12, ChannelID: "ch-1", MsgID: "m12", AuthorID: "bot", AuthorName: "assistant", Content: "after", IsBot: true, CreatedAt: now},
+	}
+	s.store.On("GetMessagesAround", mock.Anything, "ch-1", int64(10), 50).Return(msgs, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/messages?around=10", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp messagesListResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp.Messages, 3)
+	require.Equal(s.T(), int64(8), resp.Messages[0].ID)
+	require.Equal(s.T(), int64(10), resp.Messages[1].ID)
+	require.Equal(s.T(), int64(12), resp.Messages[2].ID)
+	require.Nil(s.T(), resp.NextCursor)
+}
+
+func (s *ServerSuite) TestListMessagesAroundInvalid() {
+	rec := s.testRequest("GET", "/api/channels/ch-1/messages?around=abc", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+
+	rec = s.testRequest("GET", "/api/channels/ch-1/messages?around=0", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestListMessagesAroundError() {
+	s.store.On("GetMessagesAround", mock.Anything, "ch-1", int64(5), 50).Return(nil, errors.New("db error"))
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/messages?around=5", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+func (s *ServerSuite) TestListMessagesAroundWithLimit() {
+	now := time.Now().UTC()
+	msgs := []*db.Message{
+		{ID: 10, ChannelID: "ch-1", MsgID: "m10", AuthorID: "u1", AuthorName: "alice", Content: "target", CreatedAt: now},
+	}
+	s.store.On("GetMessagesAround", mock.Anything, "ch-1", int64(10), 20).Return(msgs, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/messages?around=10&limit=20", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp messagesListResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp.Messages, 1)
+}
+
+func (s *ServerSuite) TestListMessagesAroundInvalidLimit() {
+	rec := s.testRequest("GET", "/api/channels/ch-1/messages?around=10&limit=abc", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+
+	rec = s.testRequest("GET", "/api/channels/ch-1/messages?around=10&limit=0", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestListMessagesAroundLimitCapped() {
+	now := time.Now().UTC()
+	msgs := []*db.Message{
+		{ID: 10, ChannelID: "ch-1", MsgID: "m10", AuthorID: "u1", AuthorName: "alice", Content: "target", CreatedAt: now},
+	}
+	// Limit > maxMessageLimit should be capped to maxMessageLimit (200)
+	s.store.On("GetMessagesAround", mock.Anything, "ch-1", int64(10), 200).Return(msgs, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/messages?around=10&limit=999", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+}
+
+// --- SearchMessages tests ---
+
+func (s *ServerSuite) TestSearchMessagesSuccess() {
+	now := time.Now().UTC()
+	msgs := []*db.Message{
+		{ID: 10, ChannelID: "ch-1", MsgID: "m10", AuthorID: "u1", AuthorName: "alice", Content: "hello world", IsBot: false, CreatedAt: now},
+		{ID: 5, ChannelID: "ch-2", MsgID: "m5", AuthorID: "bot", AuthorName: "assistant", Content: "hello there", IsBot: true, CreatedAt: now},
+	}
+	s.store.On("SearchMessages", mock.Anything, "hello", 20).Return(msgs, nil)
+
+	rec := s.testRequest("GET", "/api/messages/search?q=hello", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var results []searchMessageResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&results))
+	require.Len(s.T(), results, 2)
+	require.Equal(s.T(), "hello world", results[0].Content)
+	require.Equal(s.T(), "ch-1", results[0].ChannelID)
+	require.False(s.T(), results[0].IsBot)
+	require.Equal(s.T(), "hello there", results[1].Content)
+	require.True(s.T(), results[1].IsBot)
+}
+
+func (s *ServerSuite) TestSearchMessagesEmptyQuery() {
+	rec := s.testRequest("GET", "/api/messages/search?q=", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+
+	rec = s.testRequest("GET", "/api/messages/search", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestSearchMessagesWithLimit() {
+	s.store.On("SearchMessages", mock.Anything, "test", 5).Return([]*db.Message{}, nil)
+
+	rec := s.testRequest("GET", "/api/messages/search?q=test&limit=5", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+}
+
+func (s *ServerSuite) TestSearchMessagesInvalidLimit() {
+	rec := s.testRequest("GET", "/api/messages/search?q=test&limit=abc", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+
+	rec = s.testRequest("GET", "/api/messages/search?q=test&limit=0", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestSearchMessagesLimitCap() {
+	s.store.On("SearchMessages", mock.Anything, "test", 50).Return([]*db.Message{}, nil)
+
+	rec := s.testRequest("GET", "/api/messages/search?q=test&limit=100", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+}
+
+func (s *ServerSuite) TestSearchMessagesError() {
+	s.store.On("SearchMessages", mock.Anything, "fail", 20).Return(nil, errors.New("db error"))
+
+	rec := s.testRequest("GET", "/api/messages/search?q=fail", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+func (s *ServerSuite) TestSearchMessagesNotConfigured() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewServer(nil, nil, nil, nil, nil, logger)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/messages/search", srv.handleSearchMessages)
+	req := httptest.NewRequest("GET", "/api/messages/search?q=hello", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)

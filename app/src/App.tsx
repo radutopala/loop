@@ -7,6 +7,7 @@ import { Terminal } from "./components/Terminal";
 import { ChatView } from "./components/ChatView";
 import { ModeToggle } from "./components/ModeToggle";
 import { DiffPanel } from "./components/DiffPanel";
+import { CommandPalette } from "./components/CommandPalette";
 import { useEventStream } from "./hooks/useEventStream";
 
 const MODE_STORAGE_KEY = "loop-view-mode";
@@ -54,6 +55,8 @@ export default function App() {
   const [diffOpen, setDiffOpen] = useState(false);
   const [diffMaximized, setDiffMaximized] = useState(false);
   const [diffStats, setDiffStats] = useState<{ add: number; del: number }>({ add: 0, del: 0 });
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(null);
 
   // Fetch diff stats for the selected channel and keep them updated via events.
   const loadDiffStats = useCallback(async () => {
@@ -103,7 +106,17 @@ export default function App() {
     }
   }, []);
 
-
+  // Cmd+K / Ctrl+K to toggle command palette.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "k") {
+        e.preventDefault();
+        setPaletteOpen((v) => !v);
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
 
   const loadChannels = useCallback(async () => {
     if (!ready) return;
@@ -160,6 +173,7 @@ export default function App() {
   }, [selectedId, channels]);
 
   const handleSelect = useCallback((id: string | null) => {
+    setScrollToMessageId(null);
     setSelectedId((prev) => {
       // Re-clicking the same channel increments mountKey to force re-mount
       // (e.g. re-attach after detach).
@@ -169,6 +183,18 @@ export default function App() {
       return id;
     });
     setViewMode(loadMode(id));
+  }, []);
+
+  const handleSelectMessage = useCallback((channelId: string, messageId: number) => {
+    setScrollToMessageId(messageId);
+    setSelectedId((prev) => {
+      if (prev === channelId) {
+        // Already on this channel — force re-mount so ChatView picks up the scrollToMessageId.
+        setMountKey((k) => k + 1);
+      }
+      return channelId;
+    });
+    setViewMode("chat");
   }, []);
 
   const handleModeChange = useCallback(
@@ -414,7 +440,7 @@ export default function App() {
         {viewMode === "terminal" ? (
           <Terminal key={`${selectedId}-${mountKey}`} channelId={selectedId} onStatusChange={loadChannels} />
         ) : (
-          <ChatView key={`${selectedId}-${mountKey}`} channelId={selectedId} initialRunningBot={channels.find((c) => c.id === selectedId)?.agent_running} />
+          <ChatView key={`${selectedId}-${mountKey}`} channelId={selectedId} initialRunningBot={channels.find((c) => c.id === selectedId)?.agent_running} scrollToMessageId={scrollToMessageId} onScrollComplete={() => setScrollToMessageId(null)} />
         )}
       </div>
       {diffOpen && selectedId && (
@@ -425,6 +451,13 @@ export default function App() {
           onClose={() => { setDiffOpen(false); setDiffMaximized(false); }}
         />
       )}
+      <CommandPalette
+        channels={channels}
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onSelect={handleSelect}
+        onSelectMessage={handleSelectMessage}
+      />
     </div>
   );
 }

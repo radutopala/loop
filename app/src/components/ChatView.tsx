@@ -8,16 +8,19 @@ import { colors, fonts } from "../theme";
 interface ChatViewProps {
   channelId: string | null;
   initialRunningBot?: boolean;
+  scrollToMessageId?: number | null;
+  onScrollComplete?: () => void;
 }
 
-export function ChatView({ channelId, initialRunningBot }: ChatViewProps) {
+export function ChatView({ channelId, initialRunningBot, scrollToMessageId, onScrollComplete }: ChatViewProps) {
   const { messages, loading, loadMore, hasMore, addMessage } =
-    useMessages(channelId);
+    useMessages(channelId, scrollToMessageId);
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(initialRunningBot ?? false);
+  const [highlightedMsgId, setHighlightedMsgId] = useState<number | null>(null);
 
   const handleEvent = useCallback(
     (event: WSEvent) => {
@@ -60,6 +63,20 @@ export function ChatView({ channelId, initialRunningBot }: ChatViewProps) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
   }, [messages, streamingContent]);
+
+  // Scroll to a specific message (from search) and highlight it.
+  useEffect(() => {
+    if (!scrollToMessageId || !containerRef.current) return;
+    const el = containerRef.current.querySelector(`[data-msg-id="${scrollToMessageId}"]`);
+    if (el) {
+      autoScrollRef.current = false;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      setHighlightedMsgId(scrollToMessageId);
+      onScrollComplete?.();
+      const timer = setTimeout(() => setHighlightedMsgId(null), 2000);
+      return () => clearTimeout(timer);
+    }
+  }, [scrollToMessageId, messages]);
 
   const scrollToBottom = useCallback(() => {
     autoScrollRef.current = true;
@@ -126,6 +143,7 @@ export function ChatView({ channelId, initialRunningBot }: ChatViewProps) {
               key={msg.msg_id}
               message={msg}
               showEyes={isRunning && !msg.is_bot && msg.msg_id === lastUserMsgId}
+              highlighted={msg.id === highlightedMsgId}
             />
           ))}
           {streamingContent && (
@@ -150,7 +168,7 @@ function WelcomeScreen() {
   );
 }
 
-function MessageBubble({ message, showEyes }: { message: Message; showEyes?: boolean }) {
+function MessageBubble({ message, showEyes, highlighted }: { message: Message; showEyes?: boolean; highlighted?: boolean }) {
   const isUser = !message.is_bot;
   const time = new Date(message.created_at).toLocaleTimeString([], {
     hour: "2-digit",
@@ -159,11 +177,16 @@ function MessageBubble({ message, showEyes }: { message: Message; showEyes?: boo
 
   return (
     <div
+      data-msg-id={message.id}
       style={{
         display: "flex",
         flexDirection: "column",
         alignItems: isUser ? "flex-end" : "flex-start",
         marginBottom: 16,
+        borderRadius: 8,
+        transition: "background-color 0.5s ease",
+        backgroundColor: highlighted ? "rgba(99, 102, 241, 0.15)" : "transparent",
+        padding: highlighted ? "4px 8px" : 0,
       }}
     >
       <div

@@ -224,11 +224,13 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	var tracker *streamTracker
 	if o.cfg.StreamingEnabled {
 		tracker = newStreamTracker(func(text string) {
-			_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
+			if err := o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 				ChannelID:        msg.ChannelID,
 				Content:          text,
 				ReplyToMessageID: msg.MessageID,
-			})
+			}); err != nil {
+				o.logger.Error("streaming send failed", "error", err, "channel_id", msg.ChannelID)
+			}
 			storeBotMessage(ctx, o.store, o.events, msg.ChannelID, text)
 		})
 		req.OnTurn = tracker.OnTurn
