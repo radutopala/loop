@@ -19,6 +19,10 @@ type AgentRequest struct {
 	// for the container to exit. When nil, the runner uses the existing
 	// wait-then-read behavior.
 	OnTurn func(text string) `json:"-"`
+	// OnToolUse is called for each tool invocation in an assistant turn.
+	OnToolUse func(name, input string) `json:"-"`
+	// OnActivity is called for model detection and system events (subagent progress).
+	OnActivity func(activity, detail string) `json:"-"`
 }
 
 // AgentMessage represents a single message in the conversation context.
@@ -29,9 +33,13 @@ type AgentMessage struct {
 
 // AgentResponse is the output from the agent runner.
 type AgentResponse struct {
-	Response  string `json:"response"`
-	SessionID string `json:"session_id"`
-	Error     string `json:"error,omitempty"`
+	Response   string `json:"response"`
+	SessionID  string `json:"session_id"`
+	Error      string `json:"error,omitempty"`
+	DurationMs int    `json:"duration_ms,omitempty"`
+	NumTurns   int    `json:"num_turns,omitempty"`
+	StopReason string `json:"stop_reason,omitempty"`
+	Model      string `json:"model,omitempty"`
 }
 
 // BuildPrompt returns the prompt text for this request.

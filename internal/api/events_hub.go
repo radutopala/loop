@@ -15,6 +15,8 @@ const (
 	EventMessageCreated   = "message.created"
 	EventMessageStreaming = "message.streaming"
 	EventAgentStatus      = "agent.status"
+	EventToolUse          = "tool.use"
+	EventAgentActivity    = "agent.activity"
 	EventChannelCreated   = "channel.created"
 	EventChannelDeleted   = "channel.deleted"
 )
@@ -151,6 +153,24 @@ func (h *EventsHub) BroadcastChannelDeleted(channelID string) {
 func (h *EventsHub) BroadcastAgentStatus(channelID string, data events.AgentStatusEventData) {
 	h.Broadcast(Event{
 		Type:      EventAgentStatus,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastToolUse sends a tool.use event.
+func (h *EventsHub) BroadcastToolUse(channelID string, data events.ToolUseEventData) {
+	h.Broadcast(Event{
+		Type:      EventToolUse,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastAgentActivity sends an agent.activity event (model, subagent progress, etc.).
+func (h *EventsHub) BroadcastAgentActivity(channelID string, data events.AgentActivityEventData) {
+	h.Broadcast(Event{
+		Type:      EventAgentActivity,
 		ChannelID: channelID,
 		Data:      data,
 	})

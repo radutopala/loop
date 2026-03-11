@@ -31,7 +31,7 @@ export function ModeToggle({ mode, onChange }: ModeToggleProps) {
           style={{
             padding: "2px 8px",
             fontSize: 11,
-            border: "none",
+            border: mode === m.value ? "1px solid rgba(255,255,255,0.3)" : "1px solid transparent",
             borderRadius: 4,
             cursor: "pointer",
             backgroundColor:

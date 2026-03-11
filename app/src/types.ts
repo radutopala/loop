@@ -43,6 +43,21 @@ export interface MessageStreamingData {
 export interface AgentStatusData {
   status: "running" | "completed" | "error";
   error?: string;
+  duration_ms?: number;
+  num_turns?: number;
+  stop_reason?: string;
+  model?: string;
+}
+
+export interface ToolUseData {
+  tool_name: string;
+  input: string;
+}
+
+export interface AgentActivityData {
+  activity: "model" | "subagent_started" | "subagent_progress";
+  model?: string;
+  description?: string;
 }
 
 // UI-level session status (mapped from server message types).

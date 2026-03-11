@@ -158,6 +158,14 @@ func (m *MockEventBroadcaster) BroadcastAgentStatus(channelID string, data event
 	m.Called(channelID, data)
 }
 
+func (m *MockEventBroadcaster) BroadcastToolUse(channelID string, data events.ToolUseEventData) {
+	m.Called(channelID, data)
+}
+
+func (m *MockEventBroadcaster) BroadcastAgentActivity(channelID string, data events.AgentActivityEventData) {
+	m.Called(channelID, data)
+}
+
 func (m *MockEventBroadcaster) BroadcastChannelCreated(parentChannelID, channelID string) {
 	m.Called(parentChannelID, channelID)
 }
@@ -3232,6 +3240,118 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingBroadcastsViaEvents() {
 
 	// 3 BroadcastMessageCreated calls: user message, intermediate turn, final response
 	eb.AssertNumberOfCalls(s.T(), "BroadcastMessageCreated", 3)
+	eb.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleMessageStreamingOnToolUseBroadcasts() {
+	s.orch.cfg.StreamingEnabled = true
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+
+	msg := &bot.IncomingMessage{
+		ChannelID:    "ch1",
+		GuildID:      "g1",
+		AuthorID:     "user1",
+		AuthorName:   "Alice",
+		Content:      "hello",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnToolUse == nil {
+			return false
+		}
+		req.OnToolUse("Bash", "go test ./...")
+		req.OnTurn("done")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:  "done",
+		SessionID: "sess-tu",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-tu").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.Anything).Return()
+	eb.On("BroadcastToolUse", "ch1", mock.MatchedBy(func(d events.ToolUseEventData) bool {
+		return d.ToolName == "Bash" && d.Input == "go test ./..."
+	})).Once()
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	eb.AssertCalled(s.T(), "BroadcastToolUse", "ch1", mock.Anything)
+	eb.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleMessageStreamingOnActivityBroadcasts() {
+	s.orch.cfg.StreamingEnabled = true
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+
+	msg := &bot.IncomingMessage{
+		ChannelID:    "ch1",
+		GuildID:      "g1",
+		AuthorID:     "user1",
+		AuthorName:   "Alice",
+		Content:      "hello",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnActivity == nil {
+			return false
+		}
+		req.OnActivity("model", "claude-opus-4-6")
+		req.OnActivity("subagent_started", "Deep analysis")
+		req.OnTurn("done")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:   "done",
+		SessionID:  "sess-act",
+		DurationMs: 5000,
+		NumTurns:   2,
+		StopReason: "end_turn",
+		Model:      "claude-opus-4-6",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-act").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.Anything).Return()
+	eb.On("BroadcastAgentActivity", "ch1", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
+		return d.Activity == "model" && d.Model == "claude-opus-4-6"
+	})).Once()
+	eb.On("BroadcastAgentActivity", "ch1", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
+		return d.Activity == "subagent_started" && d.Description == "Deep analysis"
+	})).Once()
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	eb.AssertNumberOfCalls(s.T(), "BroadcastAgentActivity", 2)
+	// Verify completed status includes result metadata
+	eb.AssertCalled(s.T(), "BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "completed" && d.DurationMs == 5000 && d.NumTurns == 2 && d.StopReason == "end_turn" && d.Model == "claude-opus-4-6"
+	}))
 	eb.AssertExpectations(s.T())
 }
 

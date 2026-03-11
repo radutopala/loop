@@ -1469,7 +1469,7 @@ func TestParseStreamJSON(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			resp, err := scanStreamJSON(strings.NewReader(tc.input), nil)
+			resp, err := scanStreamJSON(strings.NewReader(tc.input), streamCallbacks{})
 			if tc.wantErr != "" {
 				require.Error(t, err)
 				require.Contains(t, err.Error(), tc.wantErr)
@@ -1483,7 +1483,7 @@ func TestParseStreamJSON(t *testing.T) {
 }
 
 func TestParseStreamJSONReaderError(t *testing.T) {
-	resp, err := scanStreamJSON(&errReader{err: errors.New("read error")}, nil)
+	resp, err := scanStreamJSON(&errReader{err: errors.New("read error")}, streamCallbacks{})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "reading container output")
 	require.Nil(t, resp)
@@ -2186,8 +2186,10 @@ func TestAssistantMessageExtractText(t *testing.T) {
 			msg: func() assistantMessage {
 				var m assistantMessage
 				m.Message.Content = append(m.Message.Content, struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
+					Type  string          `json:"type"`
+					Text  string          `json:"text"`
+					Name  string          `json:"name"`
+					Input json.RawMessage `json:"input"`
 				}{Type: "text", Text: "Hello!"})
 				return m
 			}(),
@@ -2199,12 +2201,16 @@ func TestAssistantMessageExtractText(t *testing.T) {
 				var m assistantMessage
 				m.Message.Content = append(m.Message.Content,
 					struct {
-						Type string `json:"type"`
-						Text string `json:"text"`
+						Type  string          `json:"type"`
+						Text  string          `json:"text"`
+						Name  string          `json:"name"`
+						Input json.RawMessage `json:"input"`
 					}{Type: "text", Text: "Line one"},
 					struct {
-						Type string `json:"type"`
-						Text string `json:"text"`
+						Type  string          `json:"type"`
+						Text  string          `json:"text"`
+						Name  string          `json:"name"`
+						Input json.RawMessage `json:"input"`
 					}{Type: "text", Text: "Line two"},
 				)
 				return m
@@ -2216,8 +2222,10 @@ func TestAssistantMessageExtractText(t *testing.T) {
 			msg: func() assistantMessage {
 				var m assistantMessage
 				m.Message.Content = append(m.Message.Content, struct {
-					Type string `json:"type"`
-					Text string `json:"text"`
+					Type  string          `json:"type"`
+					Text  string          `json:"text"`
+					Name  string          `json:"name"`
+					Input json.RawMessage `json:"input"`
 				}{Type: "tool_use", Text: ""})
 				return m
 			}(),
@@ -2229,12 +2237,16 @@ func TestAssistantMessageExtractText(t *testing.T) {
 				var m assistantMessage
 				m.Message.Content = append(m.Message.Content,
 					struct {
-						Type string `json:"type"`
-						Text string `json:"text"`
+						Type  string          `json:"type"`
+						Text  string          `json:"text"`
+						Name  string          `json:"name"`
+						Input json.RawMessage `json:"input"`
 					}{Type: "tool_use", Text: ""},
 					struct {
-						Type string `json:"type"`
-						Text string `json:"text"`
+						Type  string          `json:"type"`
+						Text  string          `json:"text"`
+						Name  string          `json:"name"`
+						Input json.RawMessage `json:"input"`
 					}{Type: "text", Text: "Result"},
 				)
 				return m
@@ -2255,6 +2267,165 @@ func TestAssistantMessageExtractText(t *testing.T) {
 	}
 }
 
+func TestExtractToolUses(t *testing.T) {
+	t.Run("extracts tool_use blocks", func(t *testing.T) {
+		input := `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"go test ./..."}},{"type":"text","text":"Running tests"}]}}`
+		var msg assistantMessage
+		require.NoError(t, json.Unmarshal([]byte(input), &msg))
+		tools := msg.extractToolUses()
+		require.Len(t, tools, 1)
+		require.Equal(t, "Bash", tools[0].Name)
+		require.Equal(t, "go test ./...", tools[0].Input)
+	})
+
+	t.Run("no tool_use blocks", func(t *testing.T) {
+		input := `{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]}}`
+		var msg assistantMessage
+		require.NoError(t, json.Unmarshal([]byte(input), &msg))
+		require.Empty(t, msg.extractToolUses())
+	})
+
+	t.Run("empty name skipped", func(t *testing.T) {
+		input := `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"","input":{}}]}}`
+		var msg assistantMessage
+		require.NoError(t, json.Unmarshal([]byte(input), &msg))
+		require.Empty(t, msg.extractToolUses())
+	})
+}
+
+func TestSummarizeToolInput(t *testing.T) {
+	tests := []struct {
+		name     string
+		toolName string
+		input    string
+		expected string
+	}{
+		{"Bash command", "Bash", `{"command":"go build ./..."}`, "go build ./..."},
+		{"Read file", "Read", `{"file_path":"/tmp/foo.go"}`, "/tmp/foo.go"},
+		{"Edit file", "Edit", `{"file_path":"/tmp/bar.go"}`, "/tmp/bar.go"},
+		{"Write file", "Write", `{"file_path":"/tmp/baz.go"}`, "/tmp/baz.go"},
+		{"Glob pattern", "Glob", `{"pattern":"**/*.ts"}`, "**/*.ts"},
+		{"Grep pattern", "Grep", `{"pattern":"TODO"}`, "TODO"},
+		{"Agent desc", "Agent", `{"description":"search code"}`, "search code"},
+		{"fallback key", "WebSearch", `{"query":"golang testing"}`, "golang testing"},
+		{"empty input", "Bash", `{}`, ""},
+		{"invalid json", "Bash", `not json`, ""},
+		{"empty raw", "Bash", ``, ""},
+		{"long command truncated", "Bash", `{"command":"` + strings.Repeat("x", 200) + `"}`, strings.Repeat("x", 120) + "..."},
+		{"long fallback truncated", "WebSearch", `{"query":"` + strings.Repeat("y", 200) + `"}`, strings.Repeat("y", 120) + "..."},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			result := summarizeToolInput(tc.toolName, json.RawMessage(tc.input))
+			require.Equal(t, tc.expected, result)
+		})
+	}
+}
+
+func TestScanStreamJSONOnToolUse(t *testing.T) {
+	input := `{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"go test"}}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+	var tools []string
+	cb := streamCallbacks{
+		onToolUse: func(name, input string) {
+			tools = append(tools, name+":"+input)
+		},
+	}
+	resp, err := scanStreamJSON(strings.NewReader(input), cb)
+	require.NoError(t, err)
+	require.Equal(t, "OK", resp.Result)
+	require.Equal(t, []string{"Bash:go test"}, tools)
+}
+
+func TestScanStreamJSONOnActivity(t *testing.T) {
+	t.Run("model detected from assistant events", func(t *testing.T) {
+		input := `{"type":"assistant","message":{"model":"claude-opus-4-6","content":[{"type":"text","text":"Hello"}]}}
+{"type":"assistant","message":{"model":"claude-opus-4-6","content":[{"type":"text","text":"World"}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+		var activities []string
+		cb := streamCallbacks{
+			onActivity: func(activity, detail string) {
+				activities = append(activities, activity+":"+detail)
+			},
+		}
+		resp, err := scanStreamJSON(strings.NewReader(input), cb)
+		require.NoError(t, err)
+		require.Equal(t, "OK", resp.Result)
+		require.Equal(t, "claude-opus-4-6", resp.Model)
+		// Model should only fire once (same model repeated)
+		require.Equal(t, []string{"model:claude-opus-4-6"}, activities)
+	})
+
+	t.Run("model change fires again", func(t *testing.T) {
+		input := `{"type":"assistant","message":{"model":"claude-opus-4-6","content":[{"type":"text","text":"Hello"}]}}
+{"type":"assistant","message":{"model":"claude-haiku-4-5-20251001","content":[{"type":"text","text":"Sub"}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+		var activities []string
+		cb := streamCallbacks{
+			onActivity: func(activity, detail string) {
+				activities = append(activities, activity+":"+detail)
+			},
+		}
+		resp, err := scanStreamJSON(strings.NewReader(input), cb)
+		require.NoError(t, err)
+		// Last model wins
+		require.Equal(t, "claude-haiku-4-5-20251001", resp.Model)
+		require.Equal(t, []string{
+			"model:claude-opus-4-6",
+			"model:claude-haiku-4-5-20251001",
+		}, activities)
+	})
+
+	t.Run("system events dispatched", func(t *testing.T) {
+		input := `{"type":"system","subtype":"init","cwd":"/work"}
+{"type":"system","subtype":"task_started","description":"Deep analysis"}
+{"type":"system","subtype":"task_progress","description":"Reading files"}
+{"type":"assistant","message":{"model":"claude-opus-4-6","content":[{"type":"text","text":"Done"}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+		var activities []string
+		cb := streamCallbacks{
+			onActivity: func(activity, detail string) {
+				activities = append(activities, activity+":"+detail)
+			},
+		}
+		resp, err := scanStreamJSON(strings.NewReader(input), cb)
+		require.NoError(t, err)
+		require.Equal(t, "OK", resp.Result)
+		require.Equal(t, []string{
+			"subagent_started:Deep analysis",
+			"subagent_progress:Reading files",
+			"model:claude-opus-4-6",
+		}, activities)
+	})
+
+	t.Run("result metadata parsed", func(t *testing.T) {
+		input := `{"type":"assistant","message":{"model":"claude-opus-4-6","content":[{"type":"text","text":"Done"}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false,"duration_ms":5000,"num_turns":3,"stop_reason":"end_turn"}
+`
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{})
+		require.NoError(t, err)
+		require.Equal(t, 5000, resp.DurationMs)
+		require.Equal(t, 3, resp.NumTurns)
+		require.Equal(t, "end_turn", resp.StopReason)
+		require.Equal(t, "claude-opus-4-6", resp.Model)
+	})
+
+	t.Run("no activity callback ignores system events", func(t *testing.T) {
+		input := `{"type":"system","subtype":"task_started","description":"test"}
+{"type":"assistant","message":{"model":"claude-opus-4-6","content":[{"type":"text","text":"Done"}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+		// No onActivity — should not panic
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{})
+		require.NoError(t, err)
+		require.Equal(t, "OK", resp.Result)
+	})
+}
+
 // --- Tests for scanStreamJSON with onTurn ---
 
 func TestParseStreamingJSON(t *testing.T) {
@@ -2270,7 +2441,7 @@ func TestParseStreamingJSON(t *testing.T) {
 			turns = append(turns, text)
 		}
 
-		resp, err := scanStreamJSON(strings.NewReader(input), onTurn)
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: onTurn})
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 		require.Equal(t, "Here is the answer.", resp.Result)
@@ -2282,7 +2453,7 @@ func TestParseStreamingJSON(t *testing.T) {
 	t.Run("no result event", func(t *testing.T) {
 		input := `{"type":"assistant","message":{"content":[{"type":"text","text":"Hello"}]}}
 `
-		resp, err := scanStreamJSON(strings.NewReader(input), func(string) {})
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(string) {}})
 		require.Error(t, err)
 		require.Nil(t, resp)
 		require.Contains(t, err.Error(), "no result event found")
@@ -2293,9 +2464,9 @@ func TestParseStreamingJSON(t *testing.T) {
 {"type":"result","result":"Done.","session_id":"sess-2","is_error":false}
 `
 		var turns []string
-		resp, err := scanStreamJSON(strings.NewReader(input), func(text string) {
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(text string) {
 			turns = append(turns, text)
-		})
+		}})
 		require.NoError(t, err)
 		require.NotNil(t, resp)
 		require.Equal(t, "Done.", resp.Result)
@@ -2306,7 +2477,7 @@ func TestParseStreamingJSON(t *testing.T) {
 		input := `not json at all
 {"type":"result","result":"OK","session_id":"sess-3","is_error":false}
 `
-		resp, err := scanStreamJSON(strings.NewReader(input), func(string) {})
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(string) {}})
 		require.NoError(t, err)
 		require.Equal(t, "OK", resp.Result)
 	})
@@ -2316,7 +2487,7 @@ func TestParseStreamingJSON(t *testing.T) {
 
 {"type":"result","result":"OK","session_id":"sess-4","is_error":false}
 `
-		resp, err := scanStreamJSON(strings.NewReader(input), func(string) {})
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(string) {}})
 		require.NoError(t, err)
 		require.Equal(t, "OK", resp.Result)
 	})
@@ -2326,9 +2497,9 @@ func TestParseStreamingJSON(t *testing.T) {
 {"type":"result","result":"OK","session_id":"sess-5","is_error":false}
 `
 		var turns []string
-		resp, err := scanStreamJSON(strings.NewReader(input), func(text string) {
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(text string) {
 			turns = append(turns, text)
-		})
+		}})
 		require.NoError(t, err)
 		require.Equal(t, "OK", resp.Result)
 		require.Empty(t, turns)
@@ -2338,7 +2509,7 @@ func TestParseStreamingJSON(t *testing.T) {
 		input := `{"type":"result","result":123}
 {"type":"result","result":"OK","session_id":"sess-6","is_error":false}
 `
-		resp, err := scanStreamJSON(strings.NewReader(input), func(string) {})
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(string) {}})
 		require.NoError(t, err)
 		require.Equal(t, "OK", resp.Result)
 	})
@@ -2346,7 +2517,7 @@ func TestParseStreamingJSON(t *testing.T) {
 	t.Run("error result", func(t *testing.T) {
 		input := `{"type":"result","result":"something broke","session_id":"sess-err","is_error":true}
 `
-		resp, err := scanStreamJSON(strings.NewReader(input), func(string) {})
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{onTurn: func(string) {}})
 		require.NoError(t, err)
 		require.True(t, resp.IsError)
 		require.Equal(t, "something broke", resp.Result)

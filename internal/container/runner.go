@@ -36,10 +36,14 @@ type mcpServerEntry struct {
 // claudeResponse represents a stream-json event from claude --output-format stream-json.
 // The final event has Type "result" and contains the response.
 type claudeResponse struct {
-	Type      string `json:"type"`
-	Result    string `json:"result"`
-	SessionID string `json:"session_id"`
-	IsError   bool   `json:"is_error"`
+	Type       string `json:"type"`
+	Result     string `json:"result"`
+	SessionID  string `json:"session_id"`
+	IsError    bool   `json:"is_error"`
+	DurationMs int    `json:"duration_ms"`
+	NumTurns   int    `json:"num_turns"`
+	StopReason string `json:"stop_reason"`
+	Model      string `json:"-"` // set by scanStreamJSON from assistant events
 }
 
 // assistantMessage represents an "assistant" event from Claude's stream-json output.
@@ -47,11 +51,21 @@ type claudeResponse struct {
 type assistantMessage struct {
 	Type    string `json:"type"`
 	Message struct {
+		Model   string `json:"model"`
 		Content []struct {
-			Type string `json:"type"`
-			Text string `json:"text"`
+			Type  string          `json:"type"`
+			Text  string          `json:"text"`
+			Name  string          `json:"name"`
+			Input json.RawMessage `json:"input"`
 		} `json:"content"`
 	} `json:"message"`
+}
+
+// systemEvent represents a "system" event from Claude's stream-json output.
+type systemEvent struct {
+	Type        string `json:"type"`
+	Subtype     string `json:"subtype"`
+	Description string `json:"description"`
 }
 
 // extractText joins all text content blocks from an assistant message.
@@ -63,6 +77,78 @@ func (m *assistantMessage) extractText() string {
 		}
 	}
 	return strings.Join(texts, "\n")
+}
+
+// ToolUse represents a tool invocation extracted from an assistant message.
+type ToolUse struct {
+	Name  string
+	Input string // short summary of the input
+}
+
+// extractToolUses returns tool_use content blocks from an assistant message.
+func (m *assistantMessage) extractToolUses() []ToolUse {
+	var tools []ToolUse
+	for _, c := range m.Message.Content {
+		if c.Type == "tool_use" && c.Name != "" {
+			summary := summarizeToolInput(c.Name, c.Input)
+			tools = append(tools, ToolUse{Name: c.Name, Input: summary})
+		}
+	}
+	return tools
+}
+
+// summarizeToolInput extracts a short description from tool input JSON.
+func summarizeToolInput(name string, raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return ""
+	}
+	switch name {
+	case "Bash":
+		if cmd, ok := m["command"].(string); ok {
+			if len(cmd) > 120 {
+				cmd = cmd[:120] + "..."
+			}
+			return cmd
+		}
+	case "Read":
+		if fp, ok := m["file_path"].(string); ok {
+			return fp
+		}
+	case "Edit":
+		if fp, ok := m["file_path"].(string); ok {
+			return fp
+		}
+	case "Write":
+		if fp, ok := m["file_path"].(string); ok {
+			return fp
+		}
+	case "Glob":
+		if p, ok := m["pattern"].(string); ok {
+			return p
+		}
+	case "Grep":
+		if p, ok := m["pattern"].(string); ok {
+			return p
+		}
+	case "Agent":
+		if desc, ok := m["description"].(string); ok {
+			return desc
+		}
+	}
+	// For other tools, try common keys.
+	for _, key := range []string{"description", "query", "prompt", "path", "url"} {
+		if v, ok := m[key].(string); ok {
+			if len(v) > 120 {
+				v = v[:120] + "..."
+			}
+			return v
+		}
+	}
+	return ""
 }
 
 // ContainerConfig holds settings for creating a container.
@@ -397,7 +483,11 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		return nil, err
 	}
 
-	claudeResp, err := r.collectOutput(ctx, containerID, req.OnTurn)
+	claudeResp, err := r.collectOutput(ctx, containerID, streamCallbacks{
+		onTurn:     req.OnTurn,
+		onToolUse:  req.OnToolUse,
+		onActivity: req.OnActivity,
+	})
 	if err != nil {
 		return nil, err
 	}
@@ -410,8 +500,12 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 	}
 
 	return &agent.AgentResponse{
-		Response:  claudeResp.Result,
-		SessionID: claudeResp.SessionID,
+		Response:   claudeResp.Result,
+		SessionID:  claudeResp.SessionID,
+		DurationMs: claudeResp.DurationMs,
+		NumTurns:   claudeResp.NumTurns,
+		StopReason: claudeResp.StopReason,
+		Model:      claudeResp.Model,
 	}, nil
 }
 
@@ -724,21 +818,21 @@ func (r *DockerRunner) createAndStartContainer(
 
 // collectOutput reads container logs (streaming or batch) and waits for exit.
 // Returns the parsed Claude response or an error.
-func (r *DockerRunner) collectOutput(ctx context.Context, containerID string, onTurn func(string)) (*claudeResponse, error) {
-	if onTurn != nil {
-		return r.collectStreamingOutput(ctx, containerID, onTurn)
+func (r *DockerRunner) collectOutput(ctx context.Context, containerID string, cb streamCallbacks) (*claudeResponse, error) {
+	if cb.onTurn != nil {
+		return r.collectStreamingOutput(ctx, containerID, cb)
 	}
 	return r.collectBatchOutput(ctx, containerID)
 }
 
 // collectStreamingOutput follows container logs in real-time, then waits for exit.
-func (r *DockerRunner) collectStreamingOutput(ctx context.Context, containerID string, onTurn func(string)) (*claudeResponse, error) {
+func (r *DockerRunner) collectStreamingOutput(ctx context.Context, containerID string, cb streamCallbacks) (*claudeResponse, error) {
 	logsReader, err := r.client.ContainerLogsFollow(ctx, containerID)
 	if err != nil {
 		return nil, fmt.Errorf("following container logs: %w", err)
 	}
 
-	claudeResp, parseErr := scanStreamJSON(logsReader, onTurn)
+	claudeResp, parseErr := scanStreamJSON(logsReader, cb)
 	logsReader.Close()
 
 	exitCode, err := r.waitForExit(ctx, containerID)
@@ -767,7 +861,7 @@ func (r *DockerRunner) collectBatchOutput(ctx context.Context, containerID strin
 		return nil, fmt.Errorf("reading container logs: %w", err)
 	}
 
-	claudeResp, parseErr := scanStreamJSON(reader, nil)
+	claudeResp, parseErr := scanStreamJSON(reader, streamCallbacks{})
 	if parseErr != nil {
 		if exitCode != 0 {
 			return nil, fmt.Errorf("container exited with code %d: %w", exitCode, parseErr)
@@ -847,13 +941,21 @@ func localhostToDockerHost(v string) string {
 	return result
 }
 
+// streamCallbacks holds optional callbacks for scanStreamJSON.
+type streamCallbacks struct {
+	onTurn     func(string)
+	onToolUse  func(name, input string)
+	onActivity func(activity, detail string)
+}
+
 // scanStreamJSON scans newline-delimited JSON events from Claude's stream-json output.
-// It scans newline-delimited JSON events, dispatches "assistant" events
-// to onTurn (when non-nil), and returns the final "result" event.
-func scanStreamJSON(r io.Reader, onTurn func(string)) (*claudeResponse, error) {
+// It dispatches "assistant" text to onTurn, tool_use blocks to onToolUse,
+// model/system events to onActivity, and returns the final "result" event.
+func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, scannerBufInit), scannerBufMaxLine)
 	var result *claudeResponse
+	var lastModel string
 	for scanner.Scan() {
 		line := strings.TrimSpace(scanner.Text())
 		if line == "" {
@@ -869,13 +971,37 @@ func scanStreamJSON(r io.Reader, onTurn func(string)) (*claudeResponse, error) {
 
 		switch typeCheck.Type {
 		case "assistant":
-			if onTurn != nil {
-				var msg assistantMessage
-				if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			var msg assistantMessage
+			if err := json.Unmarshal([]byte(line), &msg); err != nil {
+				continue
+			}
+			if msg.Message.Model != "" && msg.Message.Model != lastModel {
+				lastModel = msg.Message.Model
+				if cb.onActivity != nil {
+					cb.onActivity("model", lastModel)
+				}
+			}
+			if cb.onTurn != nil {
+				if text := msg.extractText(); text != "" {
+					cb.onTurn(text)
+				}
+			}
+			if cb.onToolUse != nil {
+				for _, tu := range msg.extractToolUses() {
+					cb.onToolUse(tu.Name, tu.Input)
+				}
+			}
+		case "system":
+			if cb.onActivity != nil {
+				var evt systemEvent
+				if err := json.Unmarshal([]byte(line), &evt); err != nil {
 					continue
 				}
-				if text := msg.extractText(); text != "" {
-					onTurn(text)
+				switch evt.Subtype {
+				case "task_started":
+					cb.onActivity("subagent_started", evt.Description)
+				case "task_progress":
+					cb.onActivity("subagent_progress", evt.Description)
 				}
 			}
 		case "result":
@@ -891,6 +1017,9 @@ func scanStreamJSON(r io.Reader, onTurn func(string)) (*claudeResponse, error) {
 	}
 	if result == nil {
 		return nil, fmt.Errorf("parsing claude response: no result event found")
+	}
+	if lastModel != "" {
+		result.Model = lastModel
 	}
 	return result, nil
 }

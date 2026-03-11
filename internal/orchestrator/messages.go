@@ -234,6 +234,23 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 			storeBotMessage(ctx, o.store, o.events, msg.ChannelID, text)
 		})
 		req.OnTurn = tracker.OnTurn
+		if o.events != nil {
+			req.OnToolUse = func(name, input string) {
+				o.events.BroadcastToolUse(msg.ChannelID, events.ToolUseEventData{
+					ToolName: name,
+					Input:    input,
+				})
+			}
+			req.OnActivity = func(activity, detail string) {
+				data := events.AgentActivityEventData{Activity: activity}
+				if activity == "model" {
+					data.Model = detail
+				} else {
+					data.Description = detail
+				}
+				o.events.BroadcastAgentActivity(msg.ChannelID, data)
+			}
+		}
 	}
 
 	if o.events != nil {
@@ -286,7 +303,13 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 // deliverResponse sends the final response, records the bot message, and marks messages as processed.
 func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMessage, resp *agent.AgentResponse, recent []*db.Message, lastStreamedText string) {
 	if o.events != nil {
-		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "completed"})
+		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{
+			Status:     "completed",
+			DurationMs: resp.DurationMs,
+			NumTurns:   resp.NumTurns,
+			StopReason: resp.StopReason,
+			Model:      resp.Model,
+		})
 	}
 	if err := o.store.UpdateSessionID(ctx, msg.ChannelID, resp.SessionID); err != nil {
 		o.logger.Error("updating session data", "error", err, "channel_id", msg.ChannelID)

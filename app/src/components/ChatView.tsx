@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentStatusData, Message, MessageCreatedData, MessageStreamingData, WSEvent } from "../types";
+import type { AgentActivityData, AgentStatusData, Message, MessageCreatedData, MessageStreamingData, ToolUseData, WSEvent } from "../types";
 import { useMessages } from "../hooks/useMessages";
 import { useEventStream } from "../hooks/useEventStream";
 import { sendCommand, sendMessage } from "../api/loopApi";
@@ -21,6 +21,9 @@ export function ChatView({ channelId, initialRunningBot, scrollToMessageId, onSc
   const [streamingContent, setStreamingContent] = useState<string | null>(null);
   const [isRunning, setIsRunning] = useState(initialRunningBot ?? false);
   const [highlightedMsgId, setHighlightedMsgId] = useState<number | null>(null);
+  const [toolActivity, setToolActivity] = useState<{ tool_name: string; input: string } | null>(null);
+  const [agentActivity, setAgentActivity] = useState<AgentActivityData | null>(null);
+  const [completionInfo, setCompletionInfo] = useState<{ duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null>(null);
 
   const handleEvent = useCallback(
     (event: WSEvent) => {
@@ -46,9 +49,34 @@ export function ChatView({ channelId, initialRunningBot, scrollToMessageId, onSc
         });
         return;
       }
+      if (event.type === "tool.use") {
+        const data = event.data as ToolUseData;
+        setToolActivity({ tool_name: data.tool_name, input: data.input });
+        return;
+      }
+      if (event.type === "agent.activity") {
+        const data = event.data as AgentActivityData;
+        setAgentActivity(data);
+        return;
+      }
       if (event.type === "agent.status") {
         const data = event.data as AgentStatusData;
-        setIsRunning(data.status === "running");
+        if (data.status === "running") {
+          setIsRunning(true);
+          setCompletionInfo(null);
+        } else {
+          setIsRunning(false);
+          setToolActivity(null);
+          setAgentActivity(null);
+          if (data.status === "completed" && (data.duration_ms || data.stop_reason)) {
+            setCompletionInfo({
+              duration_ms: data.duration_ms,
+              num_turns: data.num_turns,
+              stop_reason: data.stop_reason,
+              model: data.model,
+            });
+          }
+        }
         return;
       }
     },
@@ -62,7 +90,7 @@ export function ChatView({ channelId, initialRunningBot, scrollToMessageId, onSc
     if (autoScrollRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages, streamingContent]);
+  }, [messages, streamingContent, toolActivity, agentActivity]);
 
   // Scroll to a specific message (from search) and highlight it.
   useEffect(() => {
@@ -146,8 +174,17 @@ export function ChatView({ channelId, initialRunningBot, scrollToMessageId, onSc
               highlighted={msg.id === highlightedMsgId}
             />
           ))}
+          {isRunning && agentActivity && (
+            <AgentActivityIndicator activity={agentActivity} />
+          )}
+          {toolActivity && !streamingContent && isRunning && (
+            <ToolActivityIndicator toolName={toolActivity.tool_name} input={toolActivity.input} />
+          )}
           {streamingContent && (
             <StreamingBubble content={streamingContent} />
+          )}
+          {completionInfo && !isRunning && (
+            <CompletionSummary info={completionInfo} />
           )}
           <div ref={bottomRef} />
         </div>
@@ -250,6 +287,69 @@ function StreamingBubble({ content }: { content: string }) {
     </div>
   );
 }
+
+function AgentActivityIndicator({ activity }: { activity: AgentActivityData }) {
+  let icon = "&#9881;";
+  let label = "";
+  if (activity.activity === "model") {
+    icon = "&#129302;"; // robot
+    label = activity.model ?? "";
+  } else if (activity.activity === "subagent_started") {
+    icon = "&#128268;"; // link
+    label = `Agent: ${activity.description ?? ""}`;
+  } else if (activity.activity === "subagent_progress") {
+    icon = "&#128269;"; // magnifying glass
+    label = activity.description ?? "";
+  }
+  if (!label) return null;
+  if (label.length > 100) label = label.slice(0, 100) + "...";
+  return (
+    <div style={activityStyle}>
+      <span style={{ opacity: 0.5 }} dangerouslySetInnerHTML={{ __html: icon }} />
+      <span style={{ color: colors.textMuted }}>{label}</span>
+    </div>
+  );
+}
+
+function CompletionSummary({ info }: { info: { duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } }) {
+  const parts: string[] = [];
+  if (info.model) parts.push(info.model);
+  if (info.duration_ms) {
+    const sec = (info.duration_ms / 1000).toFixed(1);
+    parts.push(`${sec}s`);
+  }
+  if (info.num_turns) parts.push(`${info.num_turns} turn${info.num_turns === 1 ? "" : "s"}`);
+  if (info.stop_reason) parts.push(info.stop_reason);
+  if (parts.length === 0) return null;
+  return (
+    <div style={activityStyle}>
+      <span style={{ opacity: 0.5 }}>&#9203;</span>
+      <span style={{ color: colors.textDim }}>{parts.join(" · ")}</span>
+    </div>
+  );
+}
+
+function ToolActivityIndicator({ toolName, input }: { toolName: string; input: string }) {
+  const summary = input.length > 80 ? input.slice(0, 80) + "..." : input;
+  return (
+    <div style={activityStyle}>
+      <span style={{ opacity: 0.5 }}>&#9881;</span>
+      <span style={{ color: colors.textMuted, fontWeight: 500 }}>{toolName}</span>
+      {summary && <span style={{ opacity: 0.7 }}>{summary}</span>}
+    </div>
+  );
+}
+
+const activityStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  marginBottom: 8,
+  padding: "4px 0",
+  fontSize: 12,
+  color: colors.textDim,
+  fontFamily: fonts.mono,
+};
 
 function MarkdownContent({ content }: { content: string }) {
   const parts = parseMarkdown(content);

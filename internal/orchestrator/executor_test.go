@@ -890,6 +890,138 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 	eb.AssertExpectations(s.T())
 }
 
+func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcasts() {
+	s.executor.streamingEnabled = true
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+
+	task := &db.ScheduledTask{
+		ID: 25, ChannelID: "ch25", Prompt: "check tools",
+		Type: db.TaskTypeCron, Schedule: "0 * * * *",
+	}
+
+	s.store.On("GetChannel", mock.Anything, "ch25").Return(nil, nil)
+
+	s.bot.On("CreateSimpleThread", s.ctx, "ch25", mock.Anything, mock.Anything).Return("thread-25", nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnToolUse == nil {
+			return false
+		}
+		// OnToolUse should broadcast to thread once created
+		req.OnTurn("Turn 1") // creates thread
+		req.OnToolUse("Read", "/tmp/foo.go")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response: "Turn 1", SessionID: "sess-tu",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch25", "sess-tu").Return(nil)
+
+	eb.On("BroadcastChannelCreated", "ch25", "thread-25").Once()
+	eb.On("BroadcastMessageCreated", "thread-25", mock.Anything).Maybe()
+	eb.On("BroadcastToolUse", "thread-25", mock.MatchedBy(func(d events.ToolUseEventData) bool {
+		return d.ToolName == "Read" && d.Input == "/tmp/foo.go"
+	})).Once()
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Turn 1", resp)
+
+	eb.AssertCalled(s.T(), "BroadcastToolUse", "thread-25", mock.Anything)
+	eb.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcastsBeforeThread() {
+	s.executor.streamingEnabled = true
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+
+	task := &db.ScheduledTask{
+		ID: 26, ChannelID: "ch26", Prompt: "tools before thread",
+		Type: db.TaskTypeCron, Schedule: "0 * * * *",
+	}
+
+	s.store.On("GetChannel", mock.Anything, "ch26").Return(nil, nil)
+
+	s.bot.On("CreateSimpleThread", s.ctx, "ch26", mock.Anything, mock.Anything).Return("thread-26", nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnToolUse == nil {
+			return false
+		}
+		// OnToolUse fires BEFORE any OnTurn — threadID is empty, uses task.ChannelID
+		req.OnToolUse("Bash", "ls")
+		req.OnTurn("Turn 1")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response: "Turn 1", SessionID: "sess-tu2",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch26", "sess-tu2").Return(nil)
+
+	eb.On("BroadcastChannelCreated", "ch26", "thread-26").Once()
+	eb.On("BroadcastMessageCreated", "thread-26", mock.Anything).Maybe()
+	// Before thread is created, tool use broadcasts to parent channel
+	eb.On("BroadcastToolUse", "ch26", mock.MatchedBy(func(d events.ToolUseEventData) bool {
+		return d.ToolName == "Bash" && d.Input == "ls"
+	})).Once()
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Turn 1", resp)
+
+	eb.AssertCalled(s.T(), "BroadcastToolUse", "ch26", mock.Anything)
+	eb.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestStreamingOnActivityBroadcasts() {
+	s.executor.streamingEnabled = true
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+
+	task := &db.ScheduledTask{
+		ID: 27, ChannelID: "ch27", Prompt: "check activity",
+		Type: db.TaskTypeCron, Schedule: "0 * * * *",
+	}
+
+	s.store.On("GetChannel", mock.Anything, "ch27").Return(nil, nil)
+
+	s.bot.On("CreateSimpleThread", s.ctx, "ch27", mock.Anything, mock.Anything).Return("thread-27", nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnActivity == nil {
+			return false
+		}
+		req.OnActivity("model", "claude-opus-4-6")
+		req.OnTurn("Turn 1")
+		req.OnActivity("subagent_started", "Sub task")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response: "Turn 1", SessionID: "sess-act",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch27", "sess-act").Return(nil)
+
+	eb.On("BroadcastChannelCreated", "ch27", "thread-27").Once()
+	eb.On("BroadcastMessageCreated", "thread-27", mock.Anything).Maybe()
+	// Model activity fires before thread (uses channel ID)
+	eb.On("BroadcastAgentActivity", "ch27", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
+		return d.Activity == "model" && d.Model == "claude-opus-4-6"
+	})).Once()
+	// Subagent activity fires after thread (uses thread ID)
+	eb.On("BroadcastAgentActivity", "thread-27", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
+		return d.Activity == "subagent_started" && d.Description == "Sub task"
+	})).Once()
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Turn 1", resp)
+
+	eb.AssertNumberOfCalls(s.T(), "BroadcastAgentActivity", 2)
+	eb.AssertExpectations(s.T())
+}
+
 func (s *TaskExecutorSuite) TestStreamingInvitesPermissionUsersToThread() {
 	s.executor.streamingEnabled = true
 	s.allowBotInserts()

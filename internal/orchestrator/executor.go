@@ -144,6 +144,31 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			text = strings.TrimSpace(strings.ReplaceAll(text, "[EPHEMERAL]", ""))
 			tracker.OnTurn(text)
 		}
+		if e.events != nil {
+			req.OnToolUse = func(name, input string) {
+				targetID := threadID
+				if targetID == "" {
+					targetID = task.ChannelID
+				}
+				e.events.BroadcastToolUse(targetID, events.ToolUseEventData{
+					ToolName: name,
+					Input:    input,
+				})
+			}
+			req.OnActivity = func(activity, detail string) {
+				targetID := threadID
+				if targetID == "" {
+					targetID = task.ChannelID
+				}
+				data := events.AgentActivityEventData{Activity: activity}
+				if activity == "model" {
+					data.Model = detail
+				} else {
+					data.Description = detail
+				}
+				e.events.BroadcastAgentActivity(targetID, data)
+			}
+		}
 	}
 
 	runCtx, runCancel := context.WithTimeout(ctx, e.containerTimeout)

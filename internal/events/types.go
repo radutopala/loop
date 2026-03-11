@@ -5,6 +5,8 @@ type Broadcaster interface {
 	BroadcastMessageCreated(channelID string, data MessageEventData)
 	BroadcastMessageStreaming(channelID string, data MessageStreamingData)
 	BroadcastAgentStatus(channelID string, data AgentStatusEventData)
+	BroadcastToolUse(channelID string, data ToolUseEventData)
+	BroadcastAgentActivity(channelID string, data AgentActivityEventData)
 	BroadcastChannelCreated(parentChannelID, channelID string)
 	BroadcastChannelDeleted(channelID string)
 }
@@ -25,6 +27,24 @@ type MessageStreamingData struct {
 
 // AgentStatusEventData is the payload for agent.status events.
 type AgentStatusEventData struct {
-	Status string `json:"status"`
-	Error  string `json:"error,omitempty"`
+	Status     string `json:"status"`
+	Error      string `json:"error,omitempty"`
+	DurationMs int    `json:"duration_ms,omitempty"`
+	NumTurns   int    `json:"num_turns,omitempty"`
+	StopReason string `json:"stop_reason,omitempty"`
+	Model      string `json:"model,omitempty"`
+}
+
+// ToolUseEventData is the payload for tool.use events.
+type ToolUseEventData struct {
+	ToolName string `json:"tool_name"`
+	Input    string `json:"input"`
+}
+
+// AgentActivityEventData is the payload for agent.activity events.
+// Activity can be "model" (model detected), "subagent_started", "subagent_progress".
+type AgentActivityEventData struct {
+	Activity    string `json:"activity"`
+	Model       string `json:"model,omitempty"`
+	Description string `json:"description,omitempty"`
 }
