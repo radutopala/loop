@@ -44,7 +44,7 @@ func (s *TaskExecutorSuite) SetupTest() {
 	s.executor = NewTaskExecutor(s.runner, s.bot, s.store, logger, 5*time.Minute, false)
 }
 
-// allowBotInserts adds an InsertMessage expectation for bot messages from broadcastBotMessage.
+// allowBotInserts adds an InsertMessage expectation for bot messages from storeBotMessage.
 func (s *TaskExecutorSuite) allowBotInserts() {
 	s.store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(msg *db.Message) bool {
 		return msg.IsBot
@@ -751,11 +751,10 @@ func (s *TaskExecutorSuite) TestAutoDeleteSkipped() {
 	}
 }
 
-// --- broadcastBotMessage tests ---
+// --- storeBotMessage tests ---
 
-func (s *TaskExecutorSuite) TestBroadcastBotMessage() {
+func (s *TaskExecutorSuite) TestStoreBotMessage() {
 	eb := new(MockEventBroadcaster)
-	s.executor.SetEventBroadcaster(eb)
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 5, ChannelID: "ch1"}, nil)
 	s.store.On("InsertMessage", s.ctx, mock.MatchedBy(func(m *db.Message) bool {
@@ -765,20 +764,19 @@ func (s *TaskExecutorSuite) TestBroadcastBotMessage() {
 		return d.Content == "task done" && d.IsBot && d.AuthorName == "assistant"
 	}))
 
-	s.executor.broadcastBotMessage(s.ctx, "ch1", "task done")
+	storeBotMessage(s.ctx, s.store, eb, "ch1", "task done")
 
 	s.store.AssertExpectations(s.T())
 	eb.AssertExpectations(s.T())
 }
 
-func (s *TaskExecutorSuite) TestBroadcastBotMessageGetChannelError() {
+func (s *TaskExecutorSuite) TestStoreBotMessageGetChannelError() {
 	eb := new(MockEventBroadcaster)
-	s.executor.SetEventBroadcaster(eb)
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("db error"))
 	eb.On("BroadcastMessageCreated", "ch1", mock.Anything)
 
-	s.executor.broadcastBotMessage(s.ctx, "ch1", "task done")
+	storeBotMessage(s.ctx, s.store, eb, "ch1", "task done")
 
 	s.store.AssertNotCalled(s.T(), "InsertMessage", mock.Anything, mock.Anything)
 	eb.AssertExpectations(s.T())

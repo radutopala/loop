@@ -39,12 +39,6 @@ func (e *TaskExecutor) SetEventBroadcaster(eb events.Broadcaster) {
 	e.events = eb
 }
 
-// broadcastBotMessage stores a bot message in the database and broadcasts it
-// via the events hub so the response is visible in all UIs.
-func (e *TaskExecutor) broadcastBotMessage(ctx context.Context, channelID, content string) {
-	storeBotMessage(ctx, e.store, e.events, channelID, content)
-}
-
 // ExecuteTask runs an agent for the given scheduled task and sends the result to the chat platform.
 func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) (string, error) {
 	channel, err := e.store.GetChannel(ctx, task.ChannelID)
@@ -93,7 +87,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 						ChannelID: task.ChannelID,
 						Content:   text,
 					})
-					e.broadcastBotMessage(ctx, task.ChannelID, text)
+					storeBotMessage(ctx, e.store, e.events, task.ChannelID, text)
 					return
 				}
 				threadID = id
@@ -120,7 +114,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				}
 				// Broadcast to the thread (not the parent channel) so the
 				// Electron app shows the initial message in the thread view.
-				// Don't use broadcastBotMessage here — CreateSimpleThread
+				// Don't use storeBotMessage here — CreateSimpleThread
 				// already stored the message in the DB for the thread.
 				if e.events != nil {
 					e.events.BroadcastMessageCreated(threadID, events.MessageEventData{
@@ -141,7 +135,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				}); err != nil {
 					e.logger.Error("streaming send failed", "error", err, "channel_id", targetID)
 				}
-				e.broadcastBotMessage(ctx, targetID, text)
+				storeBotMessage(ctx, e.store, e.events, targetID, text)
 			}
 		})
 		req.OnTurn = func(text string) {
@@ -189,7 +183,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		}); err != nil {
 			e.logger.Error("sending task response", "error", err, "channel_id", task.ChannelID)
 		}
-		e.broadcastBotMessage(ctx, targetChannelID, resp.Response)
+		storeBotMessage(ctx, e.store, e.events, targetChannelID, resp.Response)
 	}
 
 	// Schedule auto-deletion of the thread when auto_delete_sec is configured
