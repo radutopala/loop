@@ -2,7 +2,6 @@ package api
 
 import (
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/radutopala/loop/internal/db"
@@ -88,10 +87,8 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	taskID, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		http.Error(w, "invalid task id", http.StatusBadRequest)
+	taskID, ok := parsePathInt64(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -123,10 +120,8 @@ func toTaskResponse(t *db.ScheduledTask) taskResponse {
 }
 
 func (s *Server) handleDeleteTask(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	taskID, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		http.Error(w, "invalid task id", http.StatusBadRequest)
+	taskID, ok := parsePathInt64(w, r, "id")
+	if !ok {
 		return
 	}
 
@@ -139,10 +134,8 @@ func (s *Server) handleDeleteTask(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
-	idStr := r.PathValue("id")
-	taskID, err := strconv.ParseInt(idStr, 10, 64)
-	if err != nil {
-		http.Error(w, "invalid task id", http.StatusBadRequest)
+	taskID, ok := parsePathInt64(w, r, "id")
+	if !ok {
 		return
 	}
 

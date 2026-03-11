@@ -2,8 +2,10 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strconv"
 
 	"github.com/gorilla/websocket"
 )
@@ -31,6 +33,51 @@ func requireConfigured(w http.ResponseWriter, service any, msg string) bool {
 		return false
 	}
 	return true
+}
+
+// parsePathInt64 parses a path value as int64. On failure it writes a 400 response
+// and returns 0, false.
+func parsePathInt64(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
+	v, err := strconv.ParseInt(r.PathValue(name), 10, 64)
+	if err != nil {
+		http.Error(w, fmt.Sprintf("invalid %s", name), http.StatusBadRequest)
+		return 0, false
+	}
+	return v, true
+}
+
+// parseQueryInt parses an optional integer query parameter with min/max clamping.
+// If the parameter is absent, defaultVal is returned. On parse error it writes a 400
+// response and returns 0, false.
+func parseQueryInt(w http.ResponseWriter, r *http.Request, name string, defaultVal, maxVal int) (int, bool) {
+	s := r.URL.Query().Get(name)
+	if s == "" {
+		return defaultVal, true
+	}
+	v, err := strconv.Atoi(s)
+	if err != nil || v < 1 {
+		http.Error(w, fmt.Sprintf("invalid %s", name), http.StatusBadRequest)
+		return 0, false
+	}
+	if v > maxVal {
+		v = maxVal
+	}
+	return v, true
+}
+
+// parseQueryInt64 parses an optional int64 query parameter. Returns 0 if absent.
+// On parse error it writes a 400 response and returns 0, false.
+func parseQueryInt64(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
+	s := r.URL.Query().Get(name)
+	if s == "" {
+		return 0, true
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || v < 1 {
+		http.Error(w, fmt.Sprintf("invalid %s", name), http.StatusBadRequest)
+		return 0, false
+	}
+	return v, true
 }
 
 // writeHTTPJSON encodes data as JSON and writes it to w with the given status code.

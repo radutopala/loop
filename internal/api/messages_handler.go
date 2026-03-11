@@ -3,7 +3,6 @@ package api
 import (
 	"context"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -103,23 +102,14 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	channelID := r.PathValue("id")
 
 	// "around" mode: return messages centered around a specific message ID.
-	if a := r.URL.Query().Get("around"); a != "" {
-		aroundID, err := strconv.ParseInt(a, 10, 64)
-		if err != nil || aroundID < 1 {
-			http.Error(w, "invalid around", http.StatusBadRequest)
+	aroundID, ok := parseQueryInt64(w, r, "around")
+	if !ok {
+		return
+	}
+	if aroundID > 0 {
+		limit, ok := parseQueryInt(w, r, "limit", defaultMessageLimit, maxMessageLimit)
+		if !ok {
 			return
-		}
-		limit := defaultMessageLimit
-		if l := r.URL.Query().Get("limit"); l != "" {
-			parsed, err := strconv.Atoi(l)
-			if err != nil || parsed < 1 {
-				http.Error(w, "invalid limit", http.StatusBadRequest)
-				return
-			}
-			if parsed > maxMessageLimit {
-				parsed = maxMessageLimit
-			}
-			limit = parsed
 		}
 		msgs, err := s.store.GetMessagesAround(r.Context(), channelID, aroundID, limit)
 		if err != nil {
@@ -134,27 +124,14 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := defaultMessageLimit
-	if l := r.URL.Query().Get("limit"); l != "" {
-		parsed, err := strconv.Atoi(l)
-		if err != nil || parsed < 1 {
-			http.Error(w, "invalid limit", http.StatusBadRequest)
-			return
-		}
-		if parsed > maxMessageLimit {
-			parsed = maxMessageLimit
-		}
-		limit = parsed
+	limit, ok2 := parseQueryInt(w, r, "limit", defaultMessageLimit, maxMessageLimit)
+	if !ok2 {
+		return
 	}
 
-	var cursor int64
-	if c := r.URL.Query().Get("cursor"); c != "" {
-		parsed, err := strconv.ParseInt(c, 10, 64)
-		if err != nil || parsed < 1 {
-			http.Error(w, "invalid cursor", http.StatusBadRequest)
-			return
-		}
-		cursor = parsed
+	cursor, ok2 := parseQueryInt64(w, r, "cursor")
+	if !ok2 {
+		return
 	}
 
 	msgs, err := s.store.GetMessagesCursor(r.Context(), channelID, cursor, limit+1)
@@ -207,17 +184,9 @@ func (s *Server) handleSearchMessages(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	limit := defaultSearchLimit
-	if l := r.URL.Query().Get("limit"); l != "" {
-		parsed, err := strconv.Atoi(l)
-		if err != nil || parsed < 1 {
-			http.Error(w, "invalid limit", http.StatusBadRequest)
-			return
-		}
-		if parsed > maxSearchLimit {
-			parsed = maxSearchLimit
-		}
-		limit = parsed
+	limit, ok := parseQueryInt(w, r, "limit", defaultSearchLimit, maxSearchLimit)
+	if !ok {
+		return
 	}
 
 	msgs, err := s.store.SearchMessages(r.Context(), q, limit)
