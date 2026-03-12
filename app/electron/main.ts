@@ -97,10 +97,12 @@ function resolveApiUrl(): string {
 
 interface Settings {
   stopDaemonOnQuit: boolean;
+  autoSaveOnBlur: boolean;
 }
 
 const defaultSettings: Settings = {
   stopDaemonOnQuit: false,
+  autoSaveOnBlur: true,
 };
 
 function appSettingsPath(): string {

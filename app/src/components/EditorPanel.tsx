@@ -183,7 +183,6 @@ function loadTreeWidth(): number {
 }
 
 const EDITOR_TABS_KEY = "loop-editor-tabs";
-const AUTO_SAVE_DELAY = 1500; // ms
 
 interface EditorTabsState { tabs: string[]; selected: string | null; }
 
@@ -230,57 +229,65 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   const [treeResizing, setTreeResizing] = useState(false);
   const [previewVisible, setPreviewVisible] = useState(true);
   const [previewHtml, setPreviewHtml] = useState("");
+  const [dirtyTabs, setDirtyTabs] = useState<Set<string>>(new Set());
+  const [autoSaveOnBlur, setAutoSaveOnBlur] = useState(true);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedPathRef = useRef(selectedPath);
   selectedPathRef.current = selectedPath;
 
   const isMd = selectedPath ? isMarkdownFile(selectedPath) : false;
 
+  // Load auto-save setting.
+  useEffect(() => {
+    window.loopAPI?.getSettings?.().then((s) => {
+      if (typeof s.autoSaveOnBlur === "boolean") setAutoSaveOnBlur(s.autoSaveOnBlur);
+    }).catch(() => {});
+  }, []);
+
   // Persist tab list to localStorage whenever it changes.
   useEffect(() => {
     saveEditorTabs(channelId, { tabs: openTabs, selected: selectedPath }, tabsKey);
   }, [channelId, openTabs, selectedPath, tabsKey]);
 
-  // Auto-save: flush pending save on unmount.
+  const dirtyTabsRef = useRef(dirtyTabs);
+  dirtyTabsRef.current = dirtyTabs;
+  const autoSaveOnBlurRef = useRef(autoSaveOnBlur);
+  autoSaveOnBlurRef.current = autoSaveOnBlur;
+  // Cache unsaved content so dirty tabs survive tab switches.
+  const dirtyContentRef = useRef(new Map<string, string>());
+
+  const markDirty = useCallback(() => {
+    const p = selectedPathRef.current;
+    if (p) setDirtyTabs((prev) => { if (prev.has(p)) return prev; const next = new Set(prev); next.add(p); return next; });
+  }, []);
+
+  const saveFile = useCallback((filePath?: string) => {
+    const savePath = filePath ?? selectedPathRef.current;
+    if (!savePath) return;
+    const view = viewRef.current;
+    // If saving a non-active tab we don't have its content — skip.
+    if (!view || savePath !== selectedPathRef.current) return;
+    const content = view.state.doc.toString();
+    saveFileContent(channelId, savePath, content).then(() => {
+      dirtyContentRef.current.delete(savePath);
+      setDirtyTabs((prev) => { if (!prev.has(savePath)) return prev; const next = new Set(prev); next.delete(savePath); return next; });
+    }).catch(() => {});
+  }, [channelId]);
+
+  const saveAllDirty = useCallback(() => {
+    // Only the active tab can be saved (we have its view).
+    if (dirtyTabsRef.current.has(selectedPathRef.current ?? "")) {
+      saveFile();
+    }
+  }, [saveFile]);
+
+  // Save on unmount only if auto-save on blur is enabled.
   useEffect(() => {
-    return () => {
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-        autoSaveTimerRef.current = null;
-        // Flush: save current content immediately.
-        if (viewRef.current && selectedPathRef.current) {
-          const content = viewRef.current.state.doc.toString();
-          saveFileContent(channelId, selectedPathRef.current, content).catch(() => {});
-        }
-      }
-    };
+    return () => { if (autoSaveOnBlurRef.current) saveAllDirty(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [channelId]);
-
-  const flushAutoSave = useCallback(() => {
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current);
-      autoSaveTimerRef.current = null;
-    }
-    if (viewRef.current && selectedPathRef.current) {
-      const content = viewRef.current.state.doc.toString();
-      saveFileContent(channelId, selectedPathRef.current, content).catch(() => {});
-    }
-  }, [channelId]);
-
-  const scheduleAutoSave = useCallback(() => {
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(() => {
-      autoSaveTimerRef.current = null;
-      if (viewRef.current && selectedPathRef.current) {
-        const content = viewRef.current.state.doc.toString();
-        saveFileContent(channelId, selectedPathRef.current, content).catch(() => {});
-      }
-    }, AUTO_SAVE_DELAY);
   }, [channelId]);
 
   const updatePreview = useCallback((doc: string) => {
@@ -368,27 +375,39 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   }, [dirContents, loadDir]);
 
   const switchToTab = useCallback((path: string) => {
-    // Flush any pending auto-save for current tab.
-    flushAutoSave();
+    // Snapshot current dirty content before switching away.
+    const curPath = selectedPathRef.current;
+    if (curPath && dirtyTabsRef.current.has(curPath)) {
+      const view = viewRef.current;
+      if (view) dirtyContentRef.current.set(curPath, view.state.doc.toString());
+      // Auto-save if enabled.
+      if (autoSaveOnBlurRef.current) saveAllDirty();
+    }
     setSelectedPath(path);
-    setLoading(true);
     setError(null);
     setIsBinary(false);
-    setFileContent(null);
-    fetchFileContent(channelId, path).then((result) => {
-      if (result.binary) {
-        setIsBinary(true);
-        setBinarySize(0);
-        setFileContent(null);
-      } else {
-        setFileContent(result.content);
-      }
-    }).catch((err) => {
-      setError(err instanceof Error ? err.message : "Failed to load file");
-    }).finally(() => {
-      setLoading(false);
-    });
-  }, [channelId, flushAutoSave]);
+    // Restore from dirty cache if available, otherwise fetch from disk.
+    const cached = dirtyContentRef.current.get(path);
+    if (cached !== undefined) {
+      setFileContent(cached);
+    } else {
+      setLoading(true);
+      setFileContent(null);
+      fetchFileContent(channelId, path).then((result) => {
+        if (result.binary) {
+          setIsBinary(true);
+          setBinarySize(0);
+          setFileContent(null);
+        } else {
+          setFileContent(result.content);
+        }
+      }).catch((err) => {
+        setError(err instanceof Error ? err.message : "Failed to load file");
+      }).finally(() => {
+        setLoading(false);
+      });
+    }
+  }, [channelId, saveAllDirty]);
 
   const handleFileClick = useCallback((path: string, _entry: FileEntry) => {
     setOpenTabs((prev) => prev.includes(path) ? prev : [...prev, path]);
@@ -398,8 +417,10 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
 
   const handleCloseTab = useCallback((path: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    // Flush any pending save for this tab if it's active.
-    if (path === selectedPath) flushAutoSave();
+    // Auto-save before closing (only if auto-save enabled).
+    if (autoSaveOnBlurRef.current && path === selectedPath) saveAllDirty();
+    dirtyContentRef.current.delete(path);
+    setDirtyTabs((prev) => { if (!prev.has(path)) return prev; const next = new Set(prev); next.delete(path); return next; });
     setOpenTabs((prev) => {
       const next = prev.filter((p) => p !== path);
       if (path === selectedPath) {
@@ -415,7 +436,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
       }
       return next;
     });
-  }, [selectedPath, flushAutoSave, switchToTab]);
+  }, [selectedPath, saveAllDirty, switchToTab]);
 
   // Mount/update CodeMirror editor.
   useEffect(() => {
@@ -451,7 +472,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
       ]),
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
-          scheduleAutoSave();
+          markDirty();
           if (selectedPathRef.current && isMarkdownFile(selectedPathRef.current)) {
             updatePreview(update.state.doc.toString());
           }
@@ -493,25 +514,20 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "s") {
         e.preventDefault();
-        flushAutoSave();
+        saveAllDirty();
       }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [flushAutoSave]);
+  }, [saveAllDirty]);
 
-  // Reload file from disk when window regains focus (picks up external edits).
+  // Save on blur (if enabled), reload from disk on focus (picks up external edits).
   useEffect(() => {
+    const onBlur = () => { if (autoSaveOnBlur) saveAllDirty(); };
     const onFocus = () => {
       const path = selectedPathRef.current;
       if (!path) return;
-      // Cancel any pending auto-save so we don't overwrite external changes.
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current);
-        autoSaveTimerRef.current = null;
-      }
       fetchFileContent(channelId, path).then((result) => {
-        // Only update if this is still the selected file.
         if (selectedPathRef.current !== path) return;
         if (result.binary) return;
         const view = viewRef.current;
@@ -521,16 +537,17 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
           view.dispatch({
             changes: { from: 0, to: current.length, insert: result.content },
           });
-          // Update markdown preview if needed.
+          setDirtyTabs((prev) => { if (!prev.has(path)) return prev; const next = new Set(prev); next.delete(path); return next; });
           if (isMarkdownFile(path)) {
             setPreviewHtml(marked.parse(result.content, { async: false }) as string);
           }
         }
       }).catch(() => { /* ignore — file may have been deleted */ });
     };
+    window.addEventListener("blur", onBlur);
     window.addEventListener("focus", onFocus);
-    return () => window.removeEventListener("focus", onFocus);
-  }, [channelId]);
+    return () => { window.removeEventListener("blur", onBlur); window.removeEventListener("focus", onFocus); };
+  }, [channelId, saveAllDirty, autoSaveOnBlur]);
 
   return (
     <FilePanel title="Editor" dirPath={dirPath} branch={branch} noPadding embedded={embedded} {...panelProps}>
@@ -586,6 +603,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
               <div style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0 }}>
                 {openTabs.map((tab) => {
                   const isActive = tab === selectedPath;
+                  const isDirty = dirtyTabs.has(tab);
                   const fileName = tab.split("/").pop() || tab;
                   return (
                     <button
@@ -612,14 +630,22 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
                       onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = "transparent"; }}
                     >
                       <FileIcon name={fileName} />
-                      <span>{fileName}</span>
+                      <span style={{ fontStyle: isDirty ? "italic" : undefined }}>{fileName}</span>
                       <span
                         onClick={(e) => handleCloseTab(tab, e)}
-                        style={{ marginLeft: 2, opacity: 0.5, fontSize: 14, lineHeight: 1, display: "flex" }}
-                        onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.5"; }}
+                        style={{ marginLeft: 2, width: 8, height: 8, display: "flex", alignItems: "center", justifyContent: "center" }}
                       >
-                        &times;
+                        {isDirty ? (
+                          <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: "#e5c07b", display: "block" }} />
+                        ) : (
+                          <span
+                            style={{ opacity: 0.5, fontSize: 14, lineHeight: 1 }}
+                            onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }}
+                            onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.5"; }}
+                          >
+                            &times;
+                          </span>
+                        )}
                       </span>
                     </button>
                   );

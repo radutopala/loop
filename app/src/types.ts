@@ -120,6 +120,7 @@ export type ServerMessage = ServerStatusMessage | ServerErrorMessage;
 
 export interface AppSettings {
   stopDaemonOnQuit: boolean;
+  autoSaveOnBlur: boolean;
 }
 
 export interface DaemonInfo {

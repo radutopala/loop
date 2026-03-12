@@ -13,7 +13,7 @@ interface SettingsProps {
 }
 
 export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, onOpenPalette, onClose, onDaemonRestarted }: SettingsProps) {
-  const [settings, setSettings] = useState<AppSettings>({ stopDaemonOnQuit: false });
+  const [settings, setSettings] = useState<AppSettings>({ stopDaemonOnQuit: false, autoSaveOnBlur: true });
   const [daemonInfo, setDaemonInfo] = useState<DaemonInfo | null>(null);
   const [restarting, setRestarting] = useState(false);
   const [globalConfig, setGlobalConfig] = useState<ConfigInfo | null>(null);
@@ -299,6 +299,13 @@ export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, o
               description="Only when the app started the daemon itself."
               checked={settings.stopDaemonOnQuit}
               onChange={() => handleToggle("stopDaemonOnQuit")}
+            />
+
+            <ToggleRow
+              label="Auto-save editor on blur"
+              description="Save open editor tabs when the window loses focus. Manual save with Cmd+S always works."
+              checked={settings.autoSaveOnBlur}
+              onChange={() => handleToggle("autoSaveOnBlur")}
             />
 
             {/* Global config */}
