@@ -219,11 +219,7 @@ export default function App() {
       }
       if ((e.metaKey || e.ctrlKey) && e.key === "e") {
         e.preventDefault();
-        setEditorOpen((v) => {
-          if (!v) { closeAllPanels(panelSetters); setEditorOpen(true); }
-          else { setEditorMaximized(false); }
-          return !v;
-        });
+        togglePanel("editor");
       }
     };
     window.addEventListener("keydown", onKeyDown);
@@ -420,6 +416,84 @@ export default function App() {
   const selectedDirPath = selectedChannel?.dir_path || "";
   const selectedBranch = selectedChannel?.branch || "";
 
+  const switchToPanel = useCallback((panel: "editor" | "memory" | "terminal" | "diff") => {
+    const wasMax = anyMaximized;
+    closeAllPanels(panelSetters);
+    switch (panel) {
+      case "editor": setEditorOpen(true); if (wasMax) setEditorMaximized(true); break;
+      case "memory": setMemoryOpen(true); if (wasMax) setMemoryMaximized(true); break;
+      case "terminal": setTerminalOpen(true); if (wasMax) setTerminalMaximized(true); break;
+      case "diff": setDiffOpen(true); if (wasMax) setDiffMaximized(true); break;
+    }
+  }, [anyMaximized]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const togglePanel = useCallback((panel: "editor" | "memory" | "terminal" | "diff") => {
+    const isOpen = panel === "editor" ? editorOpen : panel === "memory" ? memoryOpen : panel === "terminal" ? terminalOpen : diffOpen;
+    if (isOpen) {
+      // Close: un-maximize and close.
+      closeAllPanels(panelSetters);
+    } else {
+      switchToPanel(panel);
+    }
+  }, [editorOpen, memoryOpen, terminalOpen, diffOpen, switchToPanel]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const tabBarButtons = selectedId ? (
+    <>
+      <button
+        onClick={() => togglePanel("editor")}
+        title="Toggle editor panel (Cmd+E)"
+        style={tabButtonStyle(editorOpen)}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+          <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+        </svg>
+        Editor
+      </button>
+      <button
+        onClick={() => togglePanel("memory")}
+        title="Toggle memory panel"
+        style={tabButtonStyle(memoryOpen)}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+          <polyline points="14 2 14 8 20 8" />
+          <line x1="16" y1="13" x2="8" y2="13" />
+          <line x1="16" y1="17" x2="8" y2="17" />
+        </svg>
+        Memory
+      </button>
+      <button
+        onClick={() => togglePanel("terminal")}
+        title="Toggle terminal panel"
+        style={tabButtonStyle(terminalOpen)}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <polyline points="4 17 10 11 4 5" />
+          <line x1="12" y1="19" x2="20" y2="19" />
+        </svg>
+        Terminal
+      </button>
+      <button
+        onClick={() => togglePanel("diff")}
+        title="Toggle diff panel"
+        style={tabButtonStyle(diffOpen)}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M12 3v18" />
+          <path d="M8 8l-4 4 4 4" />
+          <path d="M16 8l4 4-4 4" />
+        </svg>
+        {(diffStats.add > 0 || diffStats.del > 0) ? (
+          <>
+            <span style={{ color: "#86efac" }}>+{diffStats.add}</span>
+            <span style={{ color: "#fca5a5" }}>-{diffStats.del}</span>
+          </>
+        ) : "Diff"}
+      </button>
+    </>
+  ) : null;
+
   return (
     <div
       style={{
@@ -607,7 +681,7 @@ export default function App() {
           </div>
         )}
         {/* Tab bar — all panel tabs */}
-        {selectedId && (
+        {tabBarButtons && (
           <div
             style={{
               display: "flex",
@@ -619,58 +693,7 @@ export default function App() {
               gap: 8,
             }}
           >
-            <button
-              onClick={() => setEditorOpen((v) => { if (!v) { closeAllPanels(panelSetters); setEditorOpen(true); } else { setEditorMaximized(false); } return !v; })}
-              title="Toggle editor panel (Cmd+E)"
-              style={tabButtonStyle(editorOpen)}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
-                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
-              </svg>
-              Editor
-            </button>
-            <button
-              onClick={() => setMemoryOpen((v) => { if (!v) { closeAllPanels(panelSetters); setMemoryOpen(true); } else { setMemoryMaximized(false); } return !v; })}
-              title="Toggle memory panel"
-              style={tabButtonStyle(memoryOpen)}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                <polyline points="14 2 14 8 20 8" />
-                <line x1="16" y1="13" x2="8" y2="13" />
-                <line x1="16" y1="17" x2="8" y2="17" />
-              </svg>
-              Memory
-            </button>
-            <button
-              onClick={() => setTerminalOpen((v) => { const next = !v; if (next) { closeAllPanels(panelSetters); setTerminalOpen(true); } else { setTerminalMaximized(false); } return next; })}
-              title="Toggle terminal panel"
-              style={tabButtonStyle(terminalOpen)}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <polyline points="4 17 10 11 4 5" />
-                <line x1="12" y1="19" x2="20" y2="19" />
-              </svg>
-              Terminal
-            </button>
-            <button
-              onClick={() => setDiffOpen((v) => { if (!v) { closeAllPanels(panelSetters); setDiffOpen(true); } return !v; })}
-              title="Toggle diff panel"
-              style={tabButtonStyle(diffOpen)}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M12 3v18" />
-                <path d="M8 8l-4 4 4 4" />
-                <path d="M16 8l4 4-4 4" />
-              </svg>
-              {(diffStats.add > 0 || diffStats.del > 0) ? (
-                <>
-                  <span style={{ color: "#86efac" }}>+{diffStats.add}</span>
-                  <span style={{ color: "#fca5a5" }}>-{diffStats.del}</span>
-                </>
-              ) : "Diff"}
-            </button>
+            {tabBarButtons}
           </div>
         )}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
@@ -684,6 +707,7 @@ export default function App() {
           branch={selectedBranch}
           maximized={terminalMaximized}
           sidebarOpen={sidebarOpen}
+          tabBar={tabBarButtons}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onOpenPalette={() => setPaletteOpen(true)}
           onToggleMaximize={() => setTerminalMaximized((v) => !v)}
@@ -698,6 +722,7 @@ export default function App() {
           branch={selectedBranch}
           maximized={diffMaximized}
           sidebarOpen={sidebarOpen}
+          tabBar={tabBarButtons}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onOpenPalette={() => setPaletteOpen(true)}
           onToggleMaximize={() => setDiffMaximized((v) => !v)}
@@ -723,6 +748,7 @@ export default function App() {
           branch={selectedBranch}
           maximized={memoryMaximized}
           sidebarOpen={sidebarOpen}
+          tabBar={tabBarButtons}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onOpenPalette={() => setPaletteOpen(true)}
           onToggleMaximize={() => setMemoryMaximized((v) => !v)}
@@ -736,6 +762,7 @@ export default function App() {
           branch={selectedBranch}
           maximized={editorMaximized}
           sidebarOpen={sidebarOpen}
+          tabBar={tabBarButtons}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onOpenPalette={() => setPaletteOpen(true)}
           onToggleMaximize={() => setEditorMaximized((v) => !v)}

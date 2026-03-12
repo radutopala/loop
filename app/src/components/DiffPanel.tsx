@@ -33,6 +33,7 @@ interface DiffPanelProps {
   branch?: string;
   maximized?: boolean;
   sidebarOpen?: boolean;
+  tabBar?: React.ReactNode;
   onToggleSidebar?: () => void;
   onOpenPalette?: () => void;
   onToggleMaximize?: () => void;
@@ -124,7 +125,7 @@ const lineColors = {
   ctx: { bg: "transparent", numBg: "transparent", text: colors.textMuted },
 };
 
-export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose }: DiffPanelProps) {
+export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, tabBar, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose }: DiffPanelProps) {
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
   const [data, setData] = useState<DiffResponse | null>(null);
@@ -375,32 +376,64 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, overflow: "hidden" }}>
-          <span
-            style={{
-              fontSize: 10,
-              fontWeight: 700,
-              color: colors.textDim,
-              textTransform: "uppercase",
-              letterSpacing: 1,
-              flexShrink: 0,
-            }}
-          >
-            Changes
-          </span>
-          {totalFiles > 0 && (
-            <span style={{ fontSize: 10, color: colors.textDim }}>
-              {totalFiles}
-            </span>
-          )}
-          {(totalAdd > 0 || totalDel > 0) && (
-            <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
-              <span style={{ color: "#86efac" }}>+{totalAdd}</span>
-              {" "}
-              <span style={{ color: "#fca5a5" }}>-{totalDel}</span>
-            </span>
+          {maximized && tabBar}
+          {!maximized && (
+            <>
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: colors.textDim,
+                  textTransform: "uppercase",
+                  letterSpacing: 1,
+                  flexShrink: 0,
+                }}
+              >
+                Changes
+              </span>
+              {totalFiles > 0 && (
+                <span style={{ fontSize: 10, color: colors.textDim }}>
+                  {totalFiles}
+                </span>
+              )}
+              {(totalAdd > 0 || totalDel > 0) && (
+                <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
+                  <span style={{ color: "#86efac" }}>+{totalAdd}</span>
+                  {" "}
+                  <span style={{ color: "#fca5a5" }}>-{totalDel}</span>
+                </span>
+              )}
+            </>
           )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {maximized && (
+            <span style={{ display: "flex", alignItems: "center", gap: 8, marginRight: 8 }}>
+              <span
+                style={{
+                  fontSize: 10,
+                  fontWeight: 700,
+                  color: colors.textDim,
+                  textTransform: "uppercase",
+                  letterSpacing: 1,
+                }}
+              >
+                Changes
+              </span>
+              {totalFiles > 0 && (
+                <span style={{ fontSize: 10, color: colors.textDim }}>
+                  {totalFiles}
+                </span>
+              )}
+              {(totalAdd > 0 || totalDel > 0) && (
+                <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
+                  <span style={{ color: "#86efac" }}>+{totalAdd}</span>
+                  {" "}
+                  <span style={{ color: "#fca5a5" }}>-{totalDel}</span>
+                </span>
+              )}
+            </span>
+          )}
           {totalFiles > 0 && (
             <>
               <button

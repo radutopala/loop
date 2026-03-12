@@ -33,6 +33,7 @@ interface FilePanelProps {
   maximized?: boolean;
   sidebarOpen?: boolean;
   noPadding?: boolean;
+  tabBar?: ReactNode;
   onToggleSidebar?: () => void;
   onOpenPalette?: () => void;
   onToggleMaximize?: () => void;
@@ -40,7 +41,7 @@ interface FilePanelProps {
   children: ReactNode;
 }
 
-export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPadding, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose, children }: FilePanelProps) {
+export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPadding, tabBar, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose, children }: FilePanelProps) {
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
 
@@ -226,20 +227,37 @@ export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPa
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, overflow: "hidden" }}>
-          <span
-            style={{
-              fontSize: 10,
-              fontWeight: 700,
-              color: colors.textDim,
-              textTransform: "uppercase",
-              letterSpacing: 1,
-              flexShrink: 0,
-            }}
-          >
-            {title}
-          </span>
+          {maximized && tabBar}
+          {!maximized && (
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                color: colors.textDim,
+                textTransform: "uppercase",
+                letterSpacing: 1,
+                flexShrink: 0,
+              }}
+            >
+              {title}
+            </span>
+          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          {maximized && (
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                color: colors.textDim,
+                textTransform: "uppercase",
+                letterSpacing: 1,
+                marginRight: 8,
+              }}
+            >
+              {title}
+            </span>
+          )}
           {onToggleMaximize && (
             <button
               onClick={onToggleMaximize}

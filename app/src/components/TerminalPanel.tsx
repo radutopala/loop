@@ -32,6 +32,7 @@ interface TerminalPanelProps {
   branch?: string;
   maximized?: boolean;
   sidebarOpen?: boolean;
+  tabBar?: React.ReactNode;
   onToggleSidebar?: () => void;
   onOpenPalette?: () => void;
   onToggleMaximize?: () => void;
@@ -39,7 +40,7 @@ interface TerminalPanelProps {
   onStatusChange?: () => void;
 }
 
-export function TerminalPanel({ channelId, dirPath, branch, maximized, sidebarOpen, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose, onStatusChange }: TerminalPanelProps) {
+export function TerminalPanel({ channelId, dirPath, branch, maximized, sidebarOpen, tabBar, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose, onStatusChange }: TerminalPanelProps) {
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
   const panesRef = useRef<TerminalPanesRef>(null);
@@ -238,20 +239,37 @@ export function TerminalPanel({ channelId, dirPath, branch, maximized, sidebarOp
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, overflow: "hidden" }}>
-          <span
-            style={{
-              fontSize: 10,
-              fontWeight: 700,
-              color: colors.textDim,
-              textTransform: "uppercase",
-              letterSpacing: 1,
-              flexShrink: 0,
-            }}
-          >
-            Terminal
-          </span>
+          {maximized && tabBar}
+          {!maximized && (
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                color: colors.textDim,
+                textTransform: "uppercase",
+                letterSpacing: 1,
+                flexShrink: 0,
+              }}
+            >
+              Terminal
+            </span>
+          )}
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 4, position: "relative" }}>
+          {maximized && (
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 700,
+                color: colors.textDim,
+                textTransform: "uppercase",
+                letterSpacing: 1,
+                marginRight: 8,
+              }}
+            >
+              Terminal
+            </span>
+          )}
           {agentState === "running" && (
             <button
               onClick={() => { if (channelId) killAgentContainer(channelId); }}

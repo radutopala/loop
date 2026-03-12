@@ -24,6 +24,7 @@ interface EditorPanelProps {
   branch: string;
   maximized?: boolean;
   sidebarOpen?: boolean;
+  tabBar?: React.ReactNode;
   onToggleSidebar?: () => void;
   onOpenPalette?: () => void;
   onToggleMaximize?: () => void;
