@@ -3,6 +3,7 @@ import type { DiffResponse } from "../api/loopApi";
 import { fetchDiff } from "../api/loopApi";
 import { useEventStream } from "../hooks/useEventStream";
 import { colors, fonts } from "../theme";
+import { ContextMenu } from "./ContextMenu";
 
 const MIN_WIDTH = 280;
 const MAX_WIDTH_PERCENT = 0.6;
@@ -133,6 +134,7 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
   const [parsedFiles, setParsedFiles] = useState<ParsedFile[]>([]);
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
+  const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
 
   const load = useCallback(async () => {
@@ -277,6 +279,7 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
           <div key={file.path}>
             <button
               onClick={() => toggleFile(file.path)}
+              onContextMenu={(e) => { e.preventDefault(); setFileContextMenu({ x: e.clientX, y: e.clientY, path: file.path }); }}
               style={{
                 display: "flex", alignItems: "center", gap: 6, width: "100%",
                 padding: "4px 12px", border: "none",
@@ -355,6 +358,17 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar }}>
         {diffToolbar}
         {diffContent}
+        {fileContextMenu && (
+          <ContextMenu
+            x={fileContextMenu.x}
+            y={fileContextMenu.y}
+            items={[
+              { label: "Copy relative path", onClick: () => navigator.clipboard.writeText(fileContextMenu.path) },
+              { label: "Copy absolute path", onClick: () => navigator.clipboard.writeText((dirPath || "") + "/" + fileContextMenu.path) },
+            ]}
+            onClose={() => setFileContextMenu(null)}
+          />
+        )}
       </div>
     );
   }
@@ -654,6 +668,17 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
 
       {/* File list + diffs */}
       {diffContent}
+      {fileContextMenu && (
+        <ContextMenu
+          x={fileContextMenu.x}
+          y={fileContextMenu.y}
+          items={[
+              { label: "Copy relative path", onClick: () => navigator.clipboard.writeText(fileContextMenu.path) },
+              { label: "Copy absolute path", onClick: () => navigator.clipboard.writeText((dirPath || "") + "/" + fileContextMenu.path) },
+            ]}
+          onClose={() => setFileContextMenu(null)}
+        />
+      )}
     </div>
   );
 }

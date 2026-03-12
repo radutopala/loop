@@ -498,13 +498,15 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   const getContextMenuItems = useCallback((): MenuItem[] => {
     if (!contextMenu) return [];
     const items: MenuItem[] = [];
+    items.push({ label: "Copy relative path", onClick: () => navigator.clipboard.writeText(contextMenu.path) });
+    items.push({ label: "Copy absolute path", onClick: () => navigator.clipboard.writeText(dirPath + "/" + contextMenu.path) });
     if (contextMenu.isDir) {
-      items.push({ label: "New file here", onClick: () => setNewFileName(contextMenu.path + "/") });
+      items.push({ label: "New file here", separator: true, onClick: () => setNewFileName(contextMenu.path + "/") });
     } else {
-      items.push({ label: "Delete", danger: true, onClick: () => handleDeleteFilePath(contextMenu.path) });
+      items.push({ label: "Delete", danger: true, separator: true, onClick: () => handleDeleteFilePath(contextMenu.path) });
     }
     return items;
-  }, [contextMenu, handleDeleteFilePath]);
+  }, [contextMenu, dirPath, handleDeleteFilePath]);
 
   // Mount/update CodeMirror editor.
   useEffect(() => {

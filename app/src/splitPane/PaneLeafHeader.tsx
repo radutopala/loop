@@ -90,7 +90,7 @@ export function PaneLeafHeader({ leafId, panel, usedSingletons, onRemove, onDrop
       >
         {label}
       </span>
-      <div style={{ flex: 1 }} />
+      <span style={{ width: 1, height: 10, backgroundColor: colors.border, flexShrink: 0, marginLeft: 2, marginRight: 2 }} />
       <PaneSplitMenu leafId={leafId} usedSingletons={usedSingletons} onSplitLeaf={onSplitLeaf} />
       <button
         onClick={onRemove}
@@ -104,6 +104,7 @@ export function PaneLeafHeader({ leafId, panel, usedSingletons, onRemove, onDrop
           <line x1="6" y1="6" x2="18" y2="18" />
         </svg>
       </button>
+      <div style={{ flex: 1 }} />
     </div>
   );
 }
@@ -139,7 +140,7 @@ function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf }: { leafId: string
         <div style={{
           position: "absolute",
           top: "100%",
-          right: 0,
+          left: 0,
           zIndex: 100,
           backgroundColor: colors.surface,
           border: `1px solid ${colors.border}`,
