@@ -184,9 +184,7 @@ function MessageBubble({ message, showEyes, highlighted }: { message: Message; s
       >
         {!isUser && (
           <div style={styles.header}>
-            <span style={{ ...styles.author, color: colors.active }}>
-              {message.author_name || message.author_id}
-            </span>
+            <span style={{ fontSize: 14, lineHeight: 1 }}>🤖</span>
             <span style={styles.time}>{time}</span>
           </div>
         )}
@@ -222,9 +220,7 @@ function StreamingBubble({ content }: { content: string }) {
         }}
       >
         <div style={styles.header}>
-          <span style={{ ...styles.author, color: colors.active }}>
-            agent
-          </span>
+          <span style={{ fontSize: 14, lineHeight: 1 }}>🤖</span>
           <span style={{ ...styles.time, fontStyle: "italic" }}>streaming...</span>
         </div>
         <div style={styles.content}>
@@ -774,7 +770,7 @@ const mentionStyles: Record<string, React.CSSProperties> = {
     backgroundColor: colors.selectedBg,
   },
   name: {
-    color: colors.active,
+    color: colors.textLight,
     fontWeight: 600,
     fontSize: 13,
     fontFamily: fonts.sans,
@@ -847,7 +843,7 @@ const styles: Record<string, React.CSSProperties> = {
   bubble: {},
   header: {
     display: "flex",
-    alignItems: "baseline",
+    alignItems: "center",
     gap: 8,
     marginBottom: 4,
   },
