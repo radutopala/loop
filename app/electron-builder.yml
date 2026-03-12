@@ -37,9 +37,22 @@ dmg:
       type: link
       path: /Applications
 
+linux:
+  target:
+    - target: AppImage
+      arch:
+        - x64
+        - arm64
+    - target: deb
+      arch:
+        - x64
+        - arm64
+  category: Development
+  icon: build/icon.icns
+
 extraResources:
-  - from: resources/loop
-    to: loop
+  - from: resources/${os}/${arch}
+    to: bin
     filter:
       - "**/*"
 

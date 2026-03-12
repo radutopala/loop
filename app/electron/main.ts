@@ -124,10 +124,13 @@ function saveSettings(settings: Settings): void {
 // --- Bundled binary resolution ---
 
 function bundledBinaryPath(): string | null {
-  // In production: resources/loop inside the .app bundle
-  // process.resourcesPath points to <app>/Contents/Resources
-  const resourcePath = path.join(process.resourcesPath, "loop");
+  // In production: resources/bin/loop
+  // process.resourcesPath points to <app>/Contents/Resources (macOS) or <app>/resources (Linux)
+  const resourcePath = path.join(process.resourcesPath, "bin", "loop");
   if (fs.existsSync(resourcePath)) return resourcePath;
+  // Fallback: old flat layout (resources/loop)
+  const flatPath = path.join(process.resourcesPath, "loop");
+  if (fs.existsSync(flatPath)) return flatPath;
   return null;
 }
 
@@ -136,7 +139,7 @@ function findLoopBinary(): string | null {
   const bundled = bundledBinaryPath();
   if (bundled) return bundled;
 
-  // 2. On PATH (for dev mode / Homebrew install)
+  // 2. On PATH (for dev mode / system install)
   try {
     const result = execFileSync("which", ["loop"], { encoding: "utf-8" }).trim();
     if (result) return result;

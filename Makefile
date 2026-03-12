@@ -1,4 +1,4 @@
-.PHONY: help build install test test-integration lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot app-dev app-install
+.PHONY: help build install test test-integration lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot app-dev app-install app-build-binary app-dist-linux
 .DEFAULT_GOAL := help
 
 help: ## Show available targets
@@ -67,14 +67,37 @@ docker-snapshot: ## Snapshot the most recent loop-agent container into loop-agen
 	echo "$$VOLS $$ENVS -w $$WORKDIR --add-host=host.docker.internal:host-gateway" > ~/.loop/snapshot-run; \
 	echo 'Run with: make docker-shell'
 
+# --- App build targets ---
+
+# Build Go binary for a specific GOOS/GOARCH into app/resources/{ebOS}/{ebArch}/
+# Maps Go naming to electron-builder naming: darwin→mac, linux→linux, amd64→x64
+# Usage: make app-build-binary GOOS=linux GOARCH=amd64
+app-build-binary: ## Cross-compile loop binary for app bundling (GOOS=, GOARCH=)
+	go generate ./internal/readme/
+	@EB_OS="$(GOOS)"; \
+	if [ "$(GOOS)" = "darwin" ]; then EB_OS="mac"; fi; \
+	EB_ARCH="$(GOARCH)"; \
+	if [ "$(GOARCH)" = "amd64" ]; then EB_ARCH="x64"; fi; \
+	mkdir -p app/resources/$$EB_OS/$$EB_ARCH; \
+	GOOS=$(GOOS) GOARCH=$(GOARCH) CGO_ENABLED=0 go build -ldflags "$(LDFLAGS)" \
+		-o app/resources/$$EB_OS/$$EB_ARCH/loop ./cmd/loop; \
+	echo "Built app/resources/$$EB_OS/$$EB_ARCH/"
+
 app-dev: ## Start the Electron app frontend dev server
 	cd app && npm install && npm run dev
 
-app-install: ## Build the Electron app and copy to /Applications
+app-install: build ## Build the Electron app and copy to /Applications
+	@mkdir -p app/resources/mac/arm64
+	cp bin/loop app/resources/mac/arm64/loop
 	cd app && npm install && npm run dist:mac:arm64
 	rm -rf /Applications/Loop.app
 	cp -R app/release/mac-arm64/Loop.app /Applications/Loop.app
 	@echo "Installed Loop.app to /Applications"
 
+app-dist-linux: ## Build Linux AppImage + deb (x64 and arm64)
+	$(MAKE) app-build-binary GOOS=linux GOARCH=amd64
+	$(MAKE) app-build-binary GOOS=linux GOARCH=arm64
+	cd app && npm install && npm run dist:linux
+
 clean: ## Remove build artifacts
-	rm -rf bin/ coverage.out coverage.html
+	rm -rf bin/ app/resources/ coverage.out coverage.html

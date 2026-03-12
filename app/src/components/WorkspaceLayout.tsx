@@ -144,11 +144,16 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
   const computeAgentState = useCallback((): AgentState => {
     const current = treeRef.current;
-    if (!current || !hasAgentLeaf(current)) return "none";
-    const agentStatuses = [...statusMapRef.current.entries()]
-      .filter(([leafId]) => findLeafById(current, leafId)?.panel === "agent");
-    if (agentStatuses.length === 0) return "running"; // agent leaves exist but no status yet
-    const allDead = agentStatuses.every(([, s]) => s === "completed" || s === "failed");
+    if (!current) return "none";
+    const terminalLeaves = collectLeaves(current).filter((l) => l.panel === "agent" || l.panel === "shell");
+    if (terminalLeaves.length === 0) return "none";
+    const terminalStatuses = [...statusMapRef.current.entries()]
+      .filter(([leafId]) => {
+        const p = findLeafById(current, leafId)?.panel;
+        return p === "agent" || p === "shell";
+      });
+    if (terminalStatuses.length === 0) return "running"; // terminal leaves exist but no status yet
+    const allDead = terminalStatuses.every(([, s]) => s === "completed" || s === "failed");
     return allDead ? "stopped" : "running";
   }, []);
 
@@ -222,6 +227,20 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
   const handleDeleteLayout = useCallback((name: string) => {
     if ((DEFAULT_LAYOUT_NAMES as readonly string[]).includes(name)) return;
+    // Kill terminal sessions if deleting the active layout
+    if (activeName === name) {
+      const current = treeRef.current;
+      if (current) {
+        for (const leaf of collectLeaves(current)) {
+          if (leaf.panel === "agent" || leaf.panel === "shell") {
+            const target = leaf.panel === "agent" ? "agent" : "host";
+            const closeKey = `${target}:${channelId}:${leaf.id}`;
+            getCloseForInstance(closeKey)?.();
+          }
+        }
+        if (hasAgentLeaf(current)) killAgentContainer(channelId);
+      }
+    }
     deleteLayout(channelId, name);
     const remaining = layoutNames.filter((n) => n !== name);
     setLayoutNames(remaining);
@@ -315,6 +334,17 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   );
 
   const handleKillAgents = useCallback(() => {
+    // Close all agent and shell terminal sessions in the current tree.
+    const current = treeRef.current;
+    if (current) {
+      for (const leaf of collectLeaves(current)) {
+        if (leaf.panel === "agent" || leaf.panel === "shell") {
+          const target = leaf.panel === "agent" ? "agent" : "host";
+          const closeKey = `${target}:${channelId}:${leaf.id}`;
+          getCloseForInstance(closeKey)?.();
+        }
+      }
+    }
     killAgentContainer(channelId);
   }, [channelId]);
 
@@ -420,7 +450,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                 channelId={channelId}
                 target="host"
                 instanceId={leaf.id}
+                hideActions
                 onStatusChange={onStatusChange}
+                onPaneStatus={(status) => handlePaneStatus(leaf.id, status)}
               />
             </div>
           );
