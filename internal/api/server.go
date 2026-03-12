@@ -130,6 +130,9 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("GET /api/memory/files", s.handleListMemoryFiles)
 	mux.HandleFunc("GET /api/memory/file", s.handleReadMemoryFile)
 	mux.HandleFunc("GET /api/readme", s.handleGetReadme)
+	mux.HandleFunc("GET /api/channels/{id}/files", s.handleListFiles)
+	mux.HandleFunc("GET /api/channels/{id}/file", s.handleReadFile)
+	mux.HandleFunc("PUT /api/channels/{id}/file", s.handleWriteFile)
 	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
@@ -166,7 +169,7 @@ func handleHealth(w http.ResponseWriter, _ *http.Request) {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PATCH, DELETE, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

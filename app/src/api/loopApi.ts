@@ -193,6 +193,41 @@ export async function fetchMemoryFileContent(filePath: string): Promise<string> 
   return res.text();
 }
 
+// ── File operations ──
+
+export interface FileEntry {
+  name: string;
+  type: "file" | "dir";
+  size?: number;
+}
+
+export async function fetchFiles(channelId: string, path: string): Promise<FileEntry[]> {
+  const params = new URLSearchParams({ path });
+  const res = await fetch(`${apiUrl}/api/channels/${channelId}/files?${params}`);
+  if (!res.ok) throw new Error(`Failed to fetch files: ${res.statusText}`);
+  const data: { entries: FileEntry[] } = await res.json();
+  return data.entries;
+}
+
+export async function fetchFileContent(channelId: string, path: string): Promise<{ content: string; binary: boolean }> {
+  const params = new URLSearchParams({ path });
+  const res = await fetch(`${apiUrl}/api/channels/${channelId}/file?${params}`);
+  if (!res.ok) throw new Error(`Failed to fetch file: ${res.statusText}`);
+  if (res.headers.get("X-File-Binary") === "true") {
+    return { content: "", binary: true };
+  }
+  return { content: await res.text(), binary: false };
+}
+
+export async function saveFileContent(channelId: string, path: string, content: string): Promise<void> {
+  const params = new URLSearchParams({ path });
+  const res = await fetch(`${apiUrl}/api/channels/${channelId}/file?${params}`, {
+    method: "PUT",
+    body: content,
+  });
+  if (!res.ok) throw new Error(`Failed to save file: ${res.statusText}`);
+}
+
 export async function fetchMessages(
   channelId: string,
   opts?: { limit?: number; cursor?: number; around?: number },

@@ -5,6 +5,7 @@ import { createChannel, createThread, deleteChannel, deleteThread, fetchChannels
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { DiffPanel } from "./components/DiffPanel";
+import { EditorPanel } from "./components/EditorPanel";
 import { MarkdownFilePanel } from "./components/FilePanel";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
@@ -12,29 +13,38 @@ import { CommandPalette } from "./components/CommandPalette";
 import { Settings } from "./components/Settings";
 import { useEventStream } from "./hooks/useEventStream";
 
-const TERMINAL_OPEN_KEY = "loop-terminal-open";
+type TabName = "readme" | "editor" | "memory" | "terminal" | "diff" | null;
+interface TabState { tab: TabName; maximized: boolean; }
+const ACTIVE_TAB_KEY = "loop-active-tab";
 
-function loadTerminalOpen(channelId: string | null): boolean {
-  if (!channelId) return false;
+function loadActiveTab(channelId: string | null): TabState {
+  if (!channelId) return { tab: null, maximized: false };
   try {
-    const stored = localStorage.getItem(TERMINAL_OPEN_KEY);
+    const stored = localStorage.getItem(ACTIVE_TAB_KEY);
     if (stored) {
       const prefs = JSON.parse(stored);
       if (typeof prefs === "object" && prefs !== null) {
-        return prefs[channelId] === true;
+        const val = prefs[channelId];
+        // Support old format (plain string) and new format ({tab, maximized}).
+        if (typeof val === "string") return { tab: val as TabName, maximized: false };
+        if (typeof val === "object" && val !== null) return { tab: val.tab || null, maximized: !!val.maximized };
       }
     }
   } catch { /* ignore */ }
-  return false;
+  return { tab: null, maximized: false };
 }
 
-function saveTerminalOpen(channelId: string, open: boolean) {
+function saveActiveTab(channelId: string, tab: TabName, maximized: boolean) {
   try {
-    const stored = localStorage.getItem(TERMINAL_OPEN_KEY);
+    const stored = localStorage.getItem(ACTIVE_TAB_KEY);
     const parsed = stored ? JSON.parse(stored) : null;
-    const prefs: Record<string, boolean> = (typeof parsed === "object" && parsed !== null) ? parsed : {};
-    prefs[channelId] = open;
-    localStorage.setItem(TERMINAL_OPEN_KEY, JSON.stringify(prefs));
+    const prefs: Record<string, TabState | null> = (typeof parsed === "object" && parsed !== null) ? parsed : {};
+    if (tab) {
+      prefs[channelId] = { tab, maximized };
+    } else {
+      delete prefs[channelId];
+    }
+    localStorage.setItem(ACTIVE_TAB_KEY, JSON.stringify(prefs));
   } catch { /* ignore */ }
 }
 
@@ -58,6 +68,44 @@ function getHashChannelId(): string | null {
   return hash || null;
 }
 
+function tabButtonStyle(active: boolean): React.CSSProperties {
+  return {
+    background: active ? colors.selectedBg : "none",
+    border: `1px solid ${active ? colors.textDim : colors.border}`,
+    color: active ? colors.textLight : colors.textDim,
+    cursor: "pointer",
+    padding: "2px 6px",
+    fontSize: 10,
+    fontFamily: fonts.mono,
+    lineHeight: 1,
+    borderRadius: 6,
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+  };
+}
+
+function closeAllPanels(setters: {
+  setDiffOpen: (v: boolean) => void;
+  setDiffMaximized: (v: boolean) => void;
+  setTerminalOpen: (v: boolean) => void;
+  setTerminalMaximized: (v: boolean) => void;
+  setReadmeOpen: (v: boolean) => void;
+  setReadmeMaximized: (v: boolean) => void;
+  setMemoryOpen: (v: boolean) => void;
+  setMemoryMaximized: (v: boolean) => void;
+  setEditorOpen: (v: boolean) => void;
+  setEditorMaximized: (v: boolean) => void;
+  setSettingsOpen: (v: boolean) => void;
+}) {
+  setters.setDiffOpen(false); setters.setDiffMaximized(false);
+  setters.setTerminalOpen(false); setters.setTerminalMaximized(false);
+  setters.setReadmeOpen(false); setters.setReadmeMaximized(false);
+  setters.setMemoryOpen(false); setters.setMemoryMaximized(false);
+  setters.setEditorOpen(false); setters.setEditorMaximized(false);
+  setters.setSettingsOpen(false);
+}
+
 export default function App() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(getHashChannelId);
@@ -65,19 +113,46 @@ export default function App() {
   const [error, setError] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [mountKey, setMountKey] = useState(0);
-  const [diffOpen, setDiffOpen] = useState(false);
-  const [diffMaximized, setDiffMaximized] = useState(false);
+  const [diffOpen, setDiffOpen] = useState(() => loadActiveTab(getHashChannelId()).tab === "diff");
+  const [diffMaximized, setDiffMaximized] = useState(() => { const s = loadActiveTab(getHashChannelId()); return s.tab === "diff" && s.maximized; });
   const [diffStats, setDiffStats] = useState<{ add: number; del: number }>({ add: 0, del: 0 });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsDirPath, setSettingsDirPath] = useState<string | null>(null);
   const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(null);
-  const [terminalOpen, setTerminalOpen] = useState(() => loadTerminalOpen(getHashChannelId()));
-  const [terminalMaximized, setTerminalMaximized] = useState(false);
-  const [readmeOpen, setReadmeOpen] = useState(false);
-  const [readmeMaximized, setReadmeMaximized] = useState(false);
-  const [memoryOpen, setMemoryOpen] = useState(false);
-  const [memoryMaximized, setMemoryMaximized] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(() => loadActiveTab(getHashChannelId()).tab === "terminal");
+  const [terminalMaximized, setTerminalMaximized] = useState(() => { const s = loadActiveTab(getHashChannelId()); return s.tab === "terminal" && s.maximized; });
+  const [readmeOpen, setReadmeOpen] = useState(() => loadActiveTab(getHashChannelId()).tab === "readme");
+  const [readmeMaximized, setReadmeMaximized] = useState(() => { const s = loadActiveTab(getHashChannelId()); return s.tab === "readme" && s.maximized; });
+  const [memoryOpen, setMemoryOpen] = useState(() => loadActiveTab(getHashChannelId()).tab === "memory");
+  const [memoryMaximized, setMemoryMaximized] = useState(() => { const s = loadActiveTab(getHashChannelId()); return s.tab === "memory" && s.maximized; });
+  const [editorOpen, setEditorOpen] = useState(() => loadActiveTab(getHashChannelId()).tab === "editor");
+  const [editorMaximized, setEditorMaximized] = useState(() => { const s = loadActiveTab(getHashChannelId()); return s.tab === "editor" && s.maximized; });
+
+  const panelSetters = { setDiffOpen, setDiffMaximized, setTerminalOpen, setTerminalMaximized, setReadmeOpen, setReadmeMaximized, setMemoryOpen, setMemoryMaximized, setEditorOpen, setEditorMaximized, setSettingsOpen };
+
+  const anyMaximized = diffMaximized || terminalMaximized || readmeMaximized || memoryMaximized || editorMaximized;
+
+  // Restore a saved tab for a channel.
+  const restoreTab = useCallback((channelId: string | null) => {
+    closeAllPanels(panelSetters);
+    const { tab, maximized } = loadActiveTab(channelId);
+    switch (tab) {
+      case "readme": setReadmeOpen(true); setReadmeMaximized(maximized); break;
+      case "editor": setEditorOpen(true); setEditorMaximized(maximized); break;
+      case "memory": setMemoryOpen(true); setMemoryMaximized(maximized); break;
+      case "terminal": setTerminalOpen(true); setTerminalMaximized(maximized); break;
+      case "diff": setDiffOpen(true); setDiffMaximized(maximized); break;
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Save the current active tab whenever it changes.
+  useEffect(() => {
+    if (!selectedId) return;
+    const tab: TabName = readmeOpen ? "readme" : editorOpen ? "editor" : memoryOpen ? "memory" : terminalOpen ? "terminal" : diffOpen ? "diff" : null;
+    const maximized = readmeMaximized || editorMaximized || memoryMaximized || terminalMaximized || diffMaximized;
+    saveActiveTab(selectedId, tab, maximized);
+  }, [selectedId, readmeOpen, editorOpen, memoryOpen, terminalOpen, diffOpen, readmeMaximized, editorMaximized, memoryMaximized, terminalMaximized, diffMaximized]);
 
   // Fetch diff stats for the selected channel and keep them updated via events.
   const loadDiffStats = useCallback(async () => {
@@ -111,13 +186,7 @@ export default function App() {
     const onHashChange = () => {
       const id = getHashChannelId();
       setSelectedId(id);
-      const termOpen = loadTerminalOpen(id);
-      setTerminalOpen(termOpen);
-      setTerminalMaximized(false);
-      setDiffOpen(false); setDiffMaximized(false);
-      setMemoryOpen(false); setMemoryMaximized(false);
-      setReadmeOpen(false); setReadmeMaximized(false);
-      setSettingsOpen(false);
+      restoreTab(id);
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
@@ -128,18 +197,12 @@ export default function App() {
     if (window.loopAPI?.onNavigateChannel) {
       window.loopAPI.onNavigateChannel((channelId: string) => {
         setSelectedId(channelId);
-        const termOpen = loadTerminalOpen(channelId);
-        setTerminalOpen(termOpen);
-        setTerminalMaximized(false);
-        setDiffOpen(false); setDiffMaximized(false);
-        setMemoryOpen(false); setMemoryMaximized(false);
-        setReadmeOpen(false); setReadmeMaximized(false);
-        setSettingsOpen(false);
+        restoreTab(channelId);
       });
     }
   }, []);
 
-  // Cmd+K / Ctrl+K to toggle command palette.
+  // Cmd+K / Ctrl+K to toggle command palette, Cmd+, for settings, Cmd+E for editor.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       if ((e.metaKey || e.ctrlKey) && e.key === "k") {
@@ -149,22 +212,30 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === ",") {
         e.preventDefault();
         setSettingsOpen((v) => {
-          if (!v) { setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setMemoryOpen(false); setMemoryMaximized(false); }
+          if (!v) { closeAllPanels(panelSetters); setSettingsOpen(true); }
           return !v;
         });
         setSettingsDirPath(null);
       }
+      if ((e.metaKey || e.ctrlKey) && e.key === "e") {
+        e.preventDefault();
+        setEditorOpen((v) => {
+          if (!v) { closeAllPanels(panelSetters); setEditorOpen(true); }
+          else { setEditorMaximized(false); }
+          return !v;
+        });
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Listen for Settings menu item from main process.
   useEffect(() => {
     if (window.loopAPI?.onOpenSettings) {
-      window.loopAPI.onOpenSettings(() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setMemoryOpen(false); setMemoryMaximized(false); });
+      window.loopAPI.onOpenSettings(() => { closeAllPanels(panelSetters); setSettingsOpen(true); setSettingsDirPath(null); });
     }
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const dmEnsuredRef = useRef(false);
 
@@ -243,14 +314,8 @@ export default function App() {
       }
       return id;
     });
-    const termOpen = loadTerminalOpen(id);
-    setTerminalOpen(termOpen);
-    setTerminalMaximized(false);
-    setDiffOpen(false); setDiffMaximized(false);
-    setMemoryOpen(false); setMemoryMaximized(false);
-    setReadmeOpen(false); setReadmeMaximized(false);
-    setSettingsOpen(false);
-  }, []);
+    restoreTab(id);
+  }, [restoreTab]);
 
   // Auto-select DM channel if nothing is selected on first load.
   const autoSelectedRef = useRef(false);
@@ -351,6 +416,10 @@ export default function App() {
     [channels, loadChannels, selectedId],
   );
 
+  const selectedChannel = channels.find((c) => c.id === selectedId);
+  const selectedDirPath = selectedChannel?.dir_path || "";
+  const selectedBranch = selectedChannel?.branch || "";
+
   return (
     <div
       style={{
@@ -395,11 +464,12 @@ export default function App() {
         onCreateThread={handleCreateThread}
         onDeleteThread={handleDelete}
         onDeleteBatch={handleDeleteBatch}
-        onOpenSettings={() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setMemoryOpen(false); setMemoryMaximized(false); }}
-        onOpenConfig={(dirPath) => { setSettingsOpen(true); setSettingsDirPath(dirPath); setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setMemoryOpen(false); setMemoryMaximized(false); }}
+        onOpenSettings={() => { closeAllPanels(panelSetters); setSettingsOpen(true); setSettingsDirPath(null); }}
+        onOpenConfig={(dirPath) => { closeAllPanels(panelSetters); setSettingsOpen(true); setSettingsDirPath(dirPath); }}
+        onOpenReadme={() => { closeAllPanels(panelSetters); setReadmeOpen(true); }}
       />
-      <div style={{ flex: 1, minWidth: (diffMaximized || terminalMaximized || readmeMaximized || memoryMaximized) ? 0 : 360, display: (diffMaximized || terminalMaximized || readmeMaximized || memoryMaximized) ? "none" : "flex", flexDirection: "column" }}>
-        {/* Drag region for macOS hiddenInset title bar — enables double-click to zoom */}
+      <div style={{ flex: 1, minWidth: anyMaximized ? 0 : 360, display: anyMaximized ? "none" : "flex", flexDirection: "column" }}>
+        {/* Top bar: sidebar toggle, search, dir path / branch */}
         <div
           style={{
             height: 38,
@@ -464,33 +534,48 @@ export default function App() {
             </svg>
             <span style={{ opacity: 0.7 }}>{navigator.platform.includes("Mac") ? "\u2318K" : "Ctrl+K"}</span>
           </button>
-          <button
-            onClick={() => setReadmeOpen((v) => { if (!v) { setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); setSettingsOpen(false); setMemoryOpen(false); setMemoryMaximized(false); } else { setReadmeMaximized(false); } return !v; })}
-            title="README"
-            style={{
-              background: readmeOpen ? colors.selectedBg : "none",
-              border: `1px solid ${readmeOpen ? colors.textDim : colors.border}`,
-              color: readmeOpen ? colors.textLight : colors.textDim,
-              cursor: "pointer",
-              padding: "2px 8px",
-              lineHeight: 1,
-              borderRadius: 4,
-              display: "flex",
-              alignItems: "center",
-              gap: 4,
-              fontSize: 11,
-              fontFamily: fonts.mono,
-              marginLeft: 6,
-              // @ts-expect-error: WebKit-specific CSS property
-              WebkitAppRegion: "no-drag",
-            }}
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
-              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
-            </svg>
-            README
-          </button>
+          {/* Dir path / branch display */}
+          {selectedId && selectedDirPath && (
+            <span
+              style={{
+                fontSize: 12,
+                color: colors.textDim,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                minWidth: 0,
+                display: "flex",
+                alignItems: "center",
+                gap: 6,
+                marginLeft: 12,
+                // @ts-expect-error: WebKit-specific CSS property
+                WebkitAppRegion: "no-drag",
+              }}
+            >
+              {selectedDirPath}
+              {selectedBranch && (
+                <>
+                  <span style={{ color: colors.border, flexShrink: 0 }}>|</span>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: colors.active,
+                      fontFamily: fonts.mono,
+                      flexShrink: 0,
+                    }}
+                  >
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 2, verticalAlign: -1 }}>
+                      <line x1="6" y1="3" x2="6" y2="15" />
+                      <circle cx="18" cy="6" r="3" />
+                      <circle cx="6" cy="18" r="3" />
+                      <path d="M18 9a9 9 0 0 1-9 9" />
+                    </svg>
+                    {selectedBranch}
+                  </span>
+                </>
+              )}
+            </span>
+          )}
           <div style={{ flex: 1 }} />
         </div>
         {error && (
@@ -521,161 +606,96 @@ export default function App() {
             </button>
           </div>
         )}
+        {/* Tab bar — all panel tabs */}
         {selectedId && (
           <div
             style={{
               display: "flex",
-              justifyContent: "space-between",
               alignItems: "center",
               padding: "3px 8px",
               borderBottom: `1px solid ${colors.border}`,
               height: 39,
               boxSizing: "border-box",
+              gap: 8,
             }}
           >
-            <span
-              style={{
-                fontSize: 12,
-                color: colors.textDim,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                minWidth: 0,
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-              }}
+            <button
+              onClick={() => setEditorOpen((v) => { if (!v) { closeAllPanels(panelSetters); setEditorOpen(true); } else { setEditorMaximized(false); } return !v; })}
+              title="Toggle editor panel (Cmd+E)"
+              style={tabButtonStyle(editorOpen)}
             >
-              {channels.find((c) => c.id === selectedId)?.dir_path || ""}
-              {channels.find((c) => c.id === selectedId)?.branch && (
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+                <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+              </svg>
+              Editor
+            </button>
+            <button
+              onClick={() => setMemoryOpen((v) => { if (!v) { closeAllPanels(panelSetters); setMemoryOpen(true); } else { setMemoryMaximized(false); } return !v; })}
+              title="Toggle memory panel"
+              style={tabButtonStyle(memoryOpen)}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="16" y1="13" x2="8" y2="13" />
+                <line x1="16" y1="17" x2="8" y2="17" />
+              </svg>
+              Memory
+            </button>
+            <button
+              onClick={() => setTerminalOpen((v) => { const next = !v; if (next) { closeAllPanels(panelSetters); setTerminalOpen(true); } else { setTerminalMaximized(false); } return next; })}
+              title="Toggle terminal panel"
+              style={tabButtonStyle(terminalOpen)}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="4 17 10 11 4 5" />
+                <line x1="12" y1="19" x2="20" y2="19" />
+              </svg>
+              Terminal
+            </button>
+            <button
+              onClick={() => setDiffOpen((v) => { if (!v) { closeAllPanels(panelSetters); setDiffOpen(true); } return !v; })}
+              title="Toggle diff panel"
+              style={tabButtonStyle(diffOpen)}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 3v18" />
+                <path d="M8 8l-4 4 4 4" />
+                <path d="M16 8l4 4-4 4" />
+              </svg>
+              {(diffStats.add > 0 || diffStats.del > 0) ? (
                 <>
-                <span style={{ color: colors.border, flexShrink: 0 }}>|</span>
-                <span
-                  style={{
-                    fontSize: 11,
-                    color: colors.active,
-                    fontFamily: fonts.mono,
-                    flexShrink: 0,
-                  }}
-                >
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 2, verticalAlign: -1 }}>
-                    <line x1="6" y1="3" x2="6" y2="15" />
-                    <circle cx="18" cy="6" r="3" />
-                    <circle cx="6" cy="18" r="3" />
-                    <path d="M18 9a9 9 0 0 1-9 9" />
-                  </svg>
-                  {channels.find((c) => c.id === selectedId)?.branch}
-                </span>
+                  <span style={{ color: "#86efac" }}>+{diffStats.add}</span>
+                  <span style={{ color: "#fca5a5" }}>-{diffStats.del}</span>
                 </>
-              )}
-            </span>
-            <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
-              <button
-                onClick={() => setMemoryOpen((v) => { if (!v) { setTerminalOpen(false); setTerminalMaximized(false); setDiffOpen(false); setDiffMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setSettingsOpen(false); } else { setMemoryMaximized(false); } return !v; })}
-                title="Toggle memory panel"
-                style={{
-                  background: memoryOpen ? colors.selectedBg : "none",
-                  border: `1px solid ${memoryOpen ? colors.textDim : colors.border}`,
-                  color: memoryOpen ? colors.textLight : colors.textDim,
-                  cursor: "pointer",
-                  padding: "2px 6px",
-                  fontSize: 10,
-                  fontFamily: fonts.mono,
-                  lineHeight: 1,
-                  borderRadius: 6,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                }}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-                  <polyline points="14 2 14 8 20 8" />
-                  <line x1="16" y1="13" x2="8" y2="13" />
-                  <line x1="16" y1="17" x2="8" y2="17" />
-                </svg>
-                Memory
-              </button>
-              <button
-                onClick={() => setTerminalOpen((v) => { const next = !v; if (next) { setDiffOpen(false); setDiffMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setSettingsOpen(false); setMemoryOpen(false); setMemoryMaximized(false); } else { setTerminalMaximized(false); } if (selectedId) saveTerminalOpen(selectedId, next); return next; })}
-                title="Toggle terminal panel"
-                style={{
-                  background: terminalOpen ? colors.selectedBg : "none",
-                  border: `1px solid ${terminalOpen ? colors.textDim : colors.border}`,
-                  color: terminalOpen ? colors.textLight : colors.textDim,
-                  cursor: "pointer",
-                  padding: "2px 6px",
-                  fontSize: 10,
-                  fontFamily: fonts.mono,
-                  lineHeight: 1,
-                  borderRadius: 6,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                }}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="4 17 10 11 4 5" />
-                  <line x1="12" y1="19" x2="20" y2="19" />
-                </svg>
-                Terminal
-              </button>
-              <button
-                onClick={() => setDiffOpen((v) => { if (!v) { setTerminalOpen(false); setTerminalMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setSettingsOpen(false); setMemoryOpen(false); setMemoryMaximized(false); } return !v; })}
-                title="Toggle diff panel"
-                style={{
-                  background: diffOpen ? colors.selectedBg : "none",
-                  border: `1px solid ${diffOpen ? colors.textDim : colors.border}`,
-                  color: diffOpen ? colors.textLight : colors.textDim,
-                  cursor: "pointer",
-                  padding: "2px 6px",
-                  fontSize: 10,
-                  fontFamily: fonts.mono,
-                  lineHeight: 1,
-                  borderRadius: 6,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                }}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <path d="M12 3v18" />
-                  <path d="M8 8l-4 4 4 4" />
-                  <path d="M16 8l4 4-4 4" />
-                </svg>
-                {(diffStats.add > 0 || diffStats.del > 0) ? (
-                  <>
-                    <span style={{ color: "#86efac" }}>+{diffStats.add}</span>
-                    <span style={{ color: "#fca5a5" }}>-{diffStats.del}</span>
-                  </>
-                ) : "Diff"}
-              </button>
-            </div>
+              ) : "Diff"}
+            </button>
           </div>
         )}
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-          <ChatView key={`chat-${selectedId}-${mountKey}`} channelId={selectedId} initialRunningBot={channels.find((c) => c.id === selectedId)?.agent_running} scrollToMessageId={scrollToMessageId} onScrollComplete={() => setScrollToMessageId(null)} />
+          <ChatView key={`chat-${selectedId}-${mountKey}`} channelId={selectedId} initialRunningBot={selectedChannel?.agent_running} scrollToMessageId={scrollToMessageId} onScrollComplete={() => setScrollToMessageId(null)} />
         </div>
       </div>
       {terminalOpen && selectedId && (
         <TerminalPanel
           channelId={selectedId}
-          dirPath={channels.find((c) => c.id === selectedId)?.dir_path || ""}
-          branch={channels.find((c) => c.id === selectedId)?.branch || ""}
+          dirPath={selectedDirPath}
+          branch={selectedBranch}
           maximized={terminalMaximized}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onOpenPalette={() => setPaletteOpen(true)}
           onToggleMaximize={() => setTerminalMaximized((v) => !v)}
-          onClose={() => { setTerminalOpen(false); setTerminalMaximized(false); if (selectedId) { saveTerminalOpen(selectedId, false); clearTerminalTree(selectedId); killAgentContainer(selectedId); } }}
+          onClose={() => { setTerminalOpen(false); setTerminalMaximized(false); if (selectedId) { clearTerminalTree(selectedId); killAgentContainer(selectedId); } }}
           onStatusChange={loadChannels}
         />
       )}
       {diffOpen && selectedId && (
         <DiffPanel
           channelId={selectedId}
-          dirPath={channels.find((c) => c.id === selectedId)?.dir_path || ""}
-          branch={channels.find((c) => c.id === selectedId)?.branch || ""}
+          dirPath={selectedDirPath}
+          branch={selectedBranch}
           maximized={diffMaximized}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
@@ -686,8 +706,8 @@ export default function App() {
       )}
       {readmeOpen && (
         <MarkdownFilePanel
-          dirPath={selectedId ? channels.find((c) => c.id === selectedId)?.dir_path || "" : ""}
-          branch={selectedId ? channels.find((c) => c.id === selectedId)?.branch || "" : ""}
+          dirPath={selectedDirPath}
+          branch={selectedBranch}
           maximized={readmeMaximized}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
@@ -699,14 +719,27 @@ export default function App() {
       {memoryOpen && selectedId && (
         <MemoryPanel
           channelId={selectedId}
-          dirPath={channels.find((c) => c.id === selectedId)?.dir_path || ""}
-          branch={channels.find((c) => c.id === selectedId)?.branch || ""}
+          dirPath={selectedDirPath}
+          branch={selectedBranch}
           maximized={memoryMaximized}
           sidebarOpen={sidebarOpen}
           onToggleSidebar={() => setSidebarOpen((v) => !v)}
           onOpenPalette={() => setPaletteOpen(true)}
           onToggleMaximize={() => setMemoryMaximized((v) => !v)}
           onClose={() => { setMemoryOpen(false); setMemoryMaximized(false); }}
+        />
+      )}
+      {editorOpen && selectedId && (
+        <EditorPanel
+          channelId={selectedId}
+          dirPath={selectedDirPath}
+          branch={selectedBranch}
+          maximized={editorMaximized}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onToggleMaximize={() => setEditorMaximized((v) => !v)}
+          onClose={() => { setEditorOpen(false); setEditorMaximized(false); }}
         />
       )}
       {settingsOpen && (

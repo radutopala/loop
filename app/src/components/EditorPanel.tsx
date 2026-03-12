@@ -1,0 +1,797 @@
+import "@fontsource/jetbrains-mono/400.css";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from "@codemirror/view";
+import { EditorState } from "@codemirror/state";
+import { defaultKeymap, indentWithTab, history, historyKeymap } from "@codemirror/commands";
+import { syntaxHighlighting, HighlightStyle, bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
+import { tags } from "@lezer/highlight";
+import { javascript } from "@codemirror/lang-javascript";
+import { go } from "@codemirror/lang-go";
+import { python } from "@codemirror/lang-python";
+import { json } from "@codemirror/lang-json";
+import { markdown } from "@codemirror/lang-markdown";
+import { css } from "@codemirror/lang-css";
+import { html } from "@codemirror/lang-html";
+import { yaml } from "@codemirror/lang-yaml";
+import { marked } from "marked";
+import { colors, fonts } from "../theme";
+import { fetchFiles, fetchFileContent, saveFileContent, type FileEntry } from "../api/loopApi";
+import { FilePanel, markdownStyles } from "./FilePanel";
+
+interface EditorPanelProps {
+  channelId: string;
+  dirPath: string;
+  branch: string;
+  maximized?: boolean;
+  sidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
+  onOpenPalette?: () => void;
+  onToggleMaximize?: () => void;
+  onClose: () => void;
+}
+
+function getLangExtension(filename: string) {
+  const ext = filename.split(".").pop()?.toLowerCase();
+  switch (ext) {
+    case "js": case "jsx": case "mjs": case "cjs":
+      return javascript();
+    case "ts": case "tsx":
+      return javascript({ typescript: true, jsx: ext.includes("x") });
+    case "go":
+      return go();
+    case "py":
+      return python();
+    case "json": case "jsonl":
+      return json();
+    case "md": case "mdx":
+      return markdown();
+    case "css": case "scss":
+      return css();
+    case "html": case "htm": case "svg":
+      return html();
+    case "yaml": case "yml":
+      return yaml();
+    default:
+      return null;
+  }
+}
+
+function isMarkdownFile(path: string): boolean {
+  const ext = path.split(".").pop()?.toLowerCase();
+  return ext === "md" || ext === "mdx";
+}
+
+function formatSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+// GoLand Darcula theme
+const darculaTheme = EditorView.theme({
+  "&": {
+    backgroundColor: colors.sidebar,
+    color: "#a9b7c6",
+    fontSize: "13px",
+    fontFamily: "'JetBrains Mono', " + fonts.mono,
+  },
+  ".cm-content": {
+    caretColor: "#bbbbbb",
+    padding: "4px 0",
+  },
+  ".cm-cursor, .cm-dropCursor": {
+    borderLeftColor: "#bbbbbb",
+  },
+  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
+    backgroundColor: "#214283 !important",
+  },
+  ".cm-gutters": {
+    backgroundColor: colors.sidebar,
+    color: "#606366",
+    borderRight: `1px solid ${colors.border}`,
+  },
+  ".cm-activeLineGutter": {
+    backgroundColor: colors.selectedBg,
+    color: "#a4a3a3",
+  },
+  ".cm-activeLine": {
+    backgroundColor: "rgba(255,255,255,0.04)",
+  },
+  ".cm-matchingBracket": {
+    backgroundColor: "#3b514d",
+    color: "#ffef28 !important",
+    outline: "none",
+  },
+  ".cm-selectionMatch": {
+    backgroundColor: "rgba(33, 66, 131, 0.4)",
+  },
+  ".cm-foldPlaceholder": {
+    backgroundColor: "#3c3f41",
+    color: "#a9b7c6",
+    border: "none",
+  },
+  ".cm-tooltip": {
+    backgroundColor: "#3c3f41",
+    border: "1px solid #555",
+    color: "#a9b7c6",
+  },
+}, { dark: true });
+
+const darculaHighlightStyle = HighlightStyle.define([
+  { tag: tags.keyword, color: "#cc7832" },
+  { tag: tags.controlKeyword, color: "#cc7832" },
+  { tag: tags.operatorKeyword, color: "#cc7832" },
+  { tag: tags.definitionKeyword, color: "#cc7832" },
+  { tag: tags.moduleKeyword, color: "#cc7832" },
+  { tag: tags.operator, color: "#a9b7c6" },
+  { tag: tags.separator, color: "#cc7832" },
+  { tag: tags.punctuation, color: "#a9b7c6" },
+  { tag: tags.bracket, color: "#a9b7c6" },
+  { tag: tags.number, color: "#6897bb" },
+  { tag: tags.bool, color: "#cc7832" },
+  { tag: tags.null, color: "#cc7832" },
+  { tag: tags.self, color: "#cc7832" },
+  { tag: tags.atom, color: "#cc7832" },
+  { tag: tags.string, color: "#6a8759" },
+  { tag: tags.special(tags.string), color: "#6a8759" },
+  { tag: tags.regexp, color: "#6a8759" },
+  { tag: tags.escape, color: "#cc7832" },
+  { tag: tags.comment, color: "#808080", fontStyle: "italic" },
+  { tag: tags.lineComment, color: "#808080", fontStyle: "italic" },
+  { tag: tags.blockComment, color: "#808080", fontStyle: "italic" },
+  { tag: tags.docComment, color: "#629755", fontStyle: "italic" },
+  { tag: tags.variableName, color: "#a9b7c6" },
+  { tag: tags.definition(tags.variableName), color: "#ffc66d" },
+  { tag: tags.function(tags.variableName), color: "#ffc66d" },
+  { tag: tags.typeName, color: "#ffc66d" },
+  { tag: tags.className, color: "#ffc66d" },
+  { tag: tags.definition(tags.typeName), color: "#ffc66d" },
+  { tag: tags.definition(tags.propertyName), color: "#ffc66d" },
+  { tag: tags.propertyName, color: "#9876aa" },
+  { tag: tags.special(tags.variableName), color: "#9876aa" },
+  { tag: tags.attributeName, color: "#bababa" },
+  { tag: tags.attributeValue, color: "#6a8759" },
+  { tag: tags.tagName, color: "#e8bf6a" },
+  { tag: tags.angleBracket, color: "#a9b7c6" },
+  { tag: tags.meta, color: "#bbb529" },
+  { tag: tags.annotation, color: "#bbb529" },
+  { tag: tags.processingInstruction, color: "#bbb529" },
+  { tag: tags.link, color: "#287bde", textDecoration: "underline" },
+  { tag: tags.heading, color: "#ffc66d", fontWeight: "bold" },
+  { tag: tags.emphasis, fontStyle: "italic" },
+  { tag: tags.strong, fontWeight: "bold" },
+  { tag: tags.strikethrough, textDecoration: "line-through" },
+]);
+
+const TREE_MIN_WIDTH = 120;
+const TREE_MAX_WIDTH = 500;
+const TREE_DEFAULT_WIDTH = 280;
+const TREE_WIDTH_KEY = "loop-editor-tree-width";
+
+function loadTreeWidth(): number {
+  try {
+    const stored = localStorage.getItem(TREE_WIDTH_KEY);
+    if (stored) {
+      const w = parseInt(stored, 10);
+      if (w >= TREE_MIN_WIDTH && w <= TREE_MAX_WIDTH) return w;
+    }
+  } catch { /* ignore */ }
+  return TREE_DEFAULT_WIDTH;
+}
+
+const EDITOR_TABS_KEY = "loop-editor-tabs";
+const AUTO_SAVE_DELAY = 1500; // ms
+
+interface EditorTabsState { tabs: string[]; selected: string | null; }
+
+function loadEditorTabs(channelId: string): EditorTabsState {
+  try {
+    const stored = localStorage.getItem(EDITOR_TABS_KEY);
+    if (stored) {
+      const all = JSON.parse(stored);
+      if (typeof all === "object" && all !== null && all[channelId]) {
+        return all[channelId];
+      }
+    }
+  } catch { /* ignore */ }
+  return { tabs: [], selected: null };
+}
+
+function saveEditorTabs(channelId: string, state: EditorTabsState) {
+  try {
+    const stored = localStorage.getItem(EDITOR_TABS_KEY);
+    const all = stored ? JSON.parse(stored) : {};
+    if (state.tabs.length > 0) {
+      all[channelId] = state;
+    } else {
+      delete all[channelId];
+    }
+    localStorage.setItem(EDITOR_TABS_KEY, JSON.stringify(all));
+  } catch { /* ignore */ }
+}
+
+export function EditorPanel({ channelId, dirPath, branch, ...panelProps }: EditorPanelProps) {
+  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set([""]));
+  const [dirContents, setDirContents] = useState<Map<string, FileEntry[]>>(new Map());
+
+  const [openTabs, setOpenTabs] = useState<string[]>(() => loadEditorTabs(channelId).tabs);
+  const [selectedPath, setSelectedPath] = useState<string | null>(() => loadEditorTabs(channelId).selected);
+
+  const [fileContent, setFileContent] = useState<string | null>(null);
+  const [isBinary, setIsBinary] = useState(false);
+  const [binarySize, setBinarySize] = useState(0);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [treeWidth, setTreeWidth] = useState(loadTreeWidth);
+  const [treeResizing, setTreeResizing] = useState(false);
+  const [previewVisible, setPreviewVisible] = useState(true);
+  const [previewHtml, setPreviewHtml] = useState("");
+
+  const editorRef = useRef<HTMLDivElement>(null);
+  const viewRef = useRef<EditorView | null>(null);
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const selectedPathRef = useRef(selectedPath);
+  selectedPathRef.current = selectedPath;
+
+  const isMd = selectedPath ? isMarkdownFile(selectedPath) : false;
+
+  // Persist tab list to localStorage whenever it changes.
+  useEffect(() => {
+    saveEditorTabs(channelId, { tabs: openTabs, selected: selectedPath });
+  }, [channelId, openTabs, selectedPath]);
+
+  // Auto-save: flush pending save on unmount.
+  useEffect(() => {
+    return () => {
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+        // Flush: save current content immediately.
+        if (viewRef.current && selectedPathRef.current) {
+          const content = viewRef.current.state.doc.toString();
+          saveFileContent(channelId, selectedPathRef.current, content).catch(() => {});
+        }
+      }
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelId]);
+
+  const flushAutoSave = useCallback(() => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = null;
+    }
+    if (viewRef.current && selectedPathRef.current) {
+      const content = viewRef.current.state.doc.toString();
+      saveFileContent(channelId, selectedPathRef.current, content).catch(() => {});
+    }
+  }, [channelId]);
+
+  const scheduleAutoSave = useCallback(() => {
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
+    autoSaveTimerRef.current = setTimeout(() => {
+      autoSaveTimerRef.current = null;
+      if (viewRef.current && selectedPathRef.current) {
+        const content = viewRef.current.state.doc.toString();
+        saveFileContent(channelId, selectedPathRef.current, content).catch(() => {});
+      }
+    }, AUTO_SAVE_DELAY);
+  }, [channelId]);
+
+  const updatePreview = useCallback((doc: string) => {
+    if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
+    previewTimerRef.current = setTimeout(() => {
+      previewTimerRef.current = null;
+      setPreviewHtml(marked.parse(doc, { async: false }) as string);
+    }, 300);
+  }, []);
+
+  // On mount: if we have a selected path, load it from server.
+  useEffect(() => {
+    if (!selectedPath) return;
+    setLoading(true);
+    fetchFileContent(channelId, selectedPath).then((result) => {
+      if (result.binary) {
+        setIsBinary(true);
+        setBinarySize(0);
+        setFileContent(null);
+      } else {
+        setFileContent(result.content);
+      }
+    }).catch((err) => {
+      setError(err instanceof Error ? err.message : "Failed to load file");
+    }).finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const handleTreeResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setTreeResizing(true);
+    const startX = e.clientX;
+    const startWidth = treeWidth;
+    let lastWidth = startWidth;
+
+    const onMouseMove = (ev: MouseEvent) => {
+      const newWidth = Math.min(TREE_MAX_WIDTH, Math.max(TREE_MIN_WIDTH, startWidth + (ev.clientX - startX)));
+      lastWidth = newWidth;
+      setTreeWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      setTreeResizing(false);
+      try { localStorage.setItem(TREE_WIDTH_KEY, String(lastWidth)); } catch { /* ignore */ }
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [treeWidth]);
+
+  // Load root directory on mount.
+  useEffect(() => {
+    loadDir(".");
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [channelId]);
+
+  const loadDir = useCallback(async (path: string) => {
+    try {
+      const entries = await fetchFiles(channelId, path);
+      setDirContents((prev) => {
+        const next = new Map(prev);
+        next.set(path === "." ? "" : path, entries);
+        return next;
+      });
+    } catch {
+      /* ignore - directory may not exist */
+    }
+  }, [channelId]);
+
+  const handleDirClick = useCallback((path: string) => {
+    setExpandedDirs((prev) => {
+      const next = new Set(prev);
+      if (next.has(path)) {
+        next.delete(path);
+      } else {
+        next.add(path);
+        if (!dirContents.has(path)) {
+          loadDir(path === "" ? "." : path);
+        }
+      }
+      return next;
+    });
+  }, [dirContents, loadDir]);
+
+  const switchToTab = useCallback((path: string) => {
+    // Flush any pending auto-save for current tab.
+    flushAutoSave();
+    setSelectedPath(path);
+    setLoading(true);
+    setError(null);
+    setIsBinary(false);
+    setFileContent(null);
+    fetchFileContent(channelId, path).then((result) => {
+      if (result.binary) {
+        setIsBinary(true);
+        setBinarySize(0);
+        setFileContent(null);
+      } else {
+        setFileContent(result.content);
+      }
+    }).catch((err) => {
+      setError(err instanceof Error ? err.message : "Failed to load file");
+    }).finally(() => {
+      setLoading(false);
+    });
+  }, [channelId, flushAutoSave]);
+
+  const handleFileClick = useCallback((path: string, _entry: FileEntry) => {
+    setOpenTabs((prev) => prev.includes(path) ? prev : [...prev, path]);
+    if (selectedPath === path) return;
+    switchToTab(path);
+  }, [selectedPath, switchToTab]);
+
+  const handleCloseTab = useCallback((path: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    // Flush any pending save for this tab if it's active.
+    if (path === selectedPath) flushAutoSave();
+    setOpenTabs((prev) => {
+      const next = prev.filter((p) => p !== path);
+      if (path === selectedPath) {
+        if (next.length > 0) {
+          const idx = Math.min(prev.indexOf(path), next.length - 1);
+          switchToTab(next[Math.max(0, idx)]!);
+        } else {
+          setSelectedPath(null);
+          setFileContent(null);
+          setIsBinary(false);
+          setError(null);
+        }
+      }
+      return next;
+    });
+  }, [selectedPath, flushAutoSave, switchToTab]);
+
+  // Mount/update CodeMirror editor.
+  useEffect(() => {
+    if (!editorRef.current || fileContent === null || isBinary) {
+      if (viewRef.current) {
+        viewRef.current.destroy();
+        viewRef.current = null;
+      }
+      return;
+    }
+
+    if (viewRef.current) {
+      viewRef.current.destroy();
+      viewRef.current = null;
+    }
+
+    const extensions = [
+      lineNumbers(),
+      highlightActiveLine(),
+      highlightActiveLineGutter(),
+      drawSelection(),
+      EditorView.lineWrapping,
+      bracketMatching(),
+      foldGutter(),
+      history(),
+      darculaTheme,
+      syntaxHighlighting(darculaHighlightStyle),
+      keymap.of([
+        ...defaultKeymap,
+        ...historyKeymap,
+        ...foldKeymap,
+        indentWithTab,
+      ]),
+      EditorView.updateListener.of((update) => {
+        if (update.docChanged) {
+          scheduleAutoSave();
+          if (selectedPathRef.current && isMarkdownFile(selectedPathRef.current)) {
+            updatePreview(update.state.doc.toString());
+          }
+        }
+      }),
+    ];
+
+    const lang = selectedPath ? getLangExtension(selectedPath) : null;
+    if (lang) extensions.push(lang);
+
+    const state = EditorState.create({
+      doc: fileContent,
+      extensions,
+    });
+
+    const view = new EditorView({
+      state,
+      parent: editorRef.current,
+    });
+
+    viewRef.current = view;
+
+    // Set initial markdown preview.
+    if (selectedPath && isMarkdownFile(selectedPath)) {
+      setPreviewHtml(marked.parse(fileContent, { async: false }) as string);
+    } else {
+      setPreviewHtml("");
+    }
+
+    return () => {
+      view.destroy();
+      viewRef.current = null;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileContent, isBinary, selectedPath]);
+
+  // Cmd+S keyboard shortcut — immediate save.
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
+        e.preventDefault();
+        flushAutoSave();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [flushAutoSave]);
+
+  return (
+    <FilePanel title="Editor" dirPath={dirPath} branch={branch} noPadding {...panelProps}>
+      <div style={{ display: "flex", height: "100%", userSelect: treeResizing ? "none" : undefined }}>
+        {/* File tree */}
+        <div
+          style={{
+            width: treeWidth,
+            minWidth: TREE_MIN_WIDTH,
+            maxWidth: TREE_MAX_WIDTH,
+            overflow: "auto",
+            padding: "4px 0",
+            flexShrink: 0,
+          }}
+        >
+          <FileTree
+            entries={dirContents.get("") || []}
+            dirContents={dirContents}
+            expandedDirs={expandedDirs}
+            selectedPath={selectedPath}
+            depth={0}
+            parentPath=""
+            onDirClick={handleDirClick}
+            onFileClick={handleFileClick}
+          />
+        </div>
+        {/* Tree resize handle */}
+        <div
+          onMouseDown={handleTreeResize}
+          style={{
+            width: 4,
+            cursor: "col-resize",
+            backgroundColor: treeResizing ? colors.textDim : "transparent",
+            flexShrink: 0,
+            borderRight: `1px solid ${colors.border}`,
+          }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = colors.textDim; }}
+          onMouseLeave={(e) => { if (!treeResizing) (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent"; }}
+        />
+        {/* Editor area */}
+        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar }}>
+          {/* Open file tabs */}
+          {openTabs.length > 0 && (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                borderBottom: `1px solid ${colors.border}`,
+                flexShrink: 0,
+                overflow: "auto",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0 }}>
+                {openTabs.map((tab) => {
+                  const isActive = tab === selectedPath;
+                  const fileName = tab.split("/").pop() || tab;
+                  return (
+                    <button
+                      key={tab}
+                      onClick={() => { if (!isActive) switchToTab(tab); }}
+                      title={tab}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
+                        padding: "5px 8px",
+                        border: "none",
+                        borderRight: `1px solid ${colors.border}`,
+                        borderBottom: isActive ? `2px solid ${colors.active}` : "2px solid transparent",
+                        background: isActive ? colors.sidebar : "transparent",
+                        color: isActive ? colors.textLight : colors.textDim,
+                        cursor: "pointer",
+                        fontSize: 11,
+                        fontFamily: fonts.mono,
+                        whiteSpace: "nowrap",
+                        flexShrink: 0,
+                      }}
+                      onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = colors.hoverBg; }}
+                      onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = "transparent"; }}
+                    >
+                      <FileIcon name={fileName} />
+                      <span>{fileName}</span>
+                      <span
+                        onClick={(e) => handleCloseTab(tab, e)}
+                        style={{ marginLeft: 2, opacity: 0.5, fontSize: 14, lineHeight: 1, display: "flex" }}
+                        onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.5"; }}
+                      >
+                        &times;
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              {isMd && (
+                <button
+                  onClick={() => setPreviewVisible((v) => !v)}
+                  title={previewVisible ? "Hide preview" : "Show preview"}
+                  style={{
+                    fontSize: 10,
+                    color: previewVisible ? colors.active : colors.textDim,
+                    flexShrink: 0,
+                    background: "none",
+                    border: `1px solid ${previewVisible ? colors.active : colors.border}`,
+                    borderRadius: 4,
+                    cursor: "pointer",
+                    padding: "1px 6px",
+                    margin: "0 6px",
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                    lineHeight: 1,
+                  }}
+                >
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
+                    <circle cx="12" cy="12" r="3" />
+                  </svg>
+                  Preview
+                </button>
+              )}
+            </div>
+          )}
+          {loading && (
+            <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Loading...</div>
+          )}
+          {error && (
+            <div style={{ padding: 16, color: colors.error, fontSize: 13 }}>{error}</div>
+          )}
+          {isBinary && (
+            <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>
+              Binary file ({formatSize(binarySize)})
+            </div>
+          )}
+          {!selectedPath && !loading && (
+            <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Select a file</div>
+          )}
+          <div style={{ flex: 1, display: fileContent !== null && !isBinary ? "flex" : "none", overflow: "hidden" }}>
+            <div
+              ref={editorRef}
+              style={{
+                flex: 1,
+                overflow: "auto",
+              }}
+            />
+            {isMd && previewVisible && previewHtml && (
+              <>
+                <div style={{ width: 1, backgroundColor: colors.border, flexShrink: 0 }} />
+                <div
+                  className="readme-content"
+                  dangerouslySetInnerHTML={{ __html: previewHtml }}
+                  style={{
+                    flex: 1,
+                    overflow: "auto",
+                    padding: "12px 16px",
+                    fontSize: 13,
+                    fontFamily: fonts.sans,
+                    color: colors.text,
+                    lineHeight: 1.7,
+                    backgroundColor: colors.sidebar,
+                  }}
+                />
+                <style>{markdownStyles}</style>
+              </>
+            )}
+          </div>
+        </div>
+      </div>
+    </FilePanel>
+  );
+}
+
+// ── File Icons ──
+
+function fileIcon(name: string): { color: string; label: string } {
+  const ext = name.split(".").pop()?.toLowerCase() || "";
+  switch (ext) {
+    case "go": return { color: "#00add8", label: "Go" };
+    case "ts": case "tsx": return { color: "#3178c6", label: "TS" };
+    case "js": case "jsx": case "mjs": case "cjs": return { color: "#f7df1e", label: "JS" };
+    case "py": return { color: "#3776ab", label: "Py" };
+    case "rs": return { color: "#dea584", label: "Rs" };
+    case "json": case "jsonl": return { color: "#cbcb41", label: "{}" };
+    case "yaml": case "yml": return { color: "#cb171e", label: "Y" };
+    case "toml": return { color: "#9c4221", label: "T" };
+    case "md": case "mdx": return { color: "#519aba", label: "M" };
+    case "html": case "htm": return { color: "#e34c26", label: "<>" };
+    case "css": case "scss": case "less": return { color: "#563d7c", label: "#" };
+    case "svg": return { color: "#ffb13b", label: "S" };
+    case "sh": case "bash": case "zsh": return { color: "#89e051", label: "$" };
+    case "sql": return { color: "#e38c00", label: "Q" };
+    case "mod": return { color: "#00add8", label: "Go" };
+    case "sum": return { color: "#00add8", label: "Go" };
+    case "dockerfile": return { color: "#384d54", label: "D" };
+    case "makefile": return { color: "#6d8086", label: "M" };
+    case "txt": case "log": case "out": return { color: "#6d8086", label: "" };
+    case "png": case "jpg": case "jpeg": case "gif": case "webp": case "ico": return { color: "#a074c4", label: "I" };
+    default: break;
+  }
+  const lower = name.toLowerCase();
+  if (lower === "makefile") return { color: "#6d8086", label: "M" };
+  if (lower === "dockerfile") return { color: "#384d54", label: "D" };
+  if (lower === "license") return { color: "#d4930d", label: "L" };
+  if (lower.startsWith(".git")) return { color: "#f14e32", label: "G" };
+  if (lower.startsWith(".env")) return { color: "#ecd53f", label: "E" };
+  return { color: colors.textDim, label: "" };
+}
+
+function FileIcon({ name }: { name: string }) {
+  const { color, label } = fileIcon(name);
+  return (
+    <svg width="12" height="12" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
+      <polyline points="14 2 14 8 20 8" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
+      {label && (
+        <text x="12" y="18" textAnchor="middle" fill={color} fontSize="7" fontWeight="bold" fontFamily={fonts.mono}>{label}</text>
+      )}
+    </svg>
+  );
+}
+
+// ── File Tree ──
+
+interface FileTreeProps {
+  entries: FileEntry[];
+  dirContents: Map<string, FileEntry[]>;
+  expandedDirs: Set<string>;
+  selectedPath: string | null;
+  depth: number;
+  parentPath: string;
+  onDirClick: (path: string) => void;
+  onFileClick: (path: string, entry: FileEntry) => void;
+}
+
+function FileTree({ entries, dirContents, expandedDirs, selectedPath, depth, parentPath, onDirClick, onFileClick }: FileTreeProps) {
+  return (
+    <>
+      {entries.map((entry) => {
+        const path = parentPath ? `${parentPath}/${entry.name}` : entry.name;
+        const isDir = entry.type === "dir";
+        const isExpanded = expandedDirs.has(path);
+        const isSelected = path === selectedPath;
+
+        return (
+          <div key={path}>
+            <button
+              onClick={() => isDir ? onDirClick(path) : onFileClick(path, entry)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                width: "max-content",
+                minWidth: "100%",
+                padding: `3px 8px 3px ${8 + depth * 16}px`,
+                border: "none",
+                background: isSelected ? colors.selectedBg : "none",
+                color: isSelected ? colors.textLight : colors.text,
+                cursor: "pointer",
+                fontSize: 12,
+                fontFamily: fonts.mono,
+                textAlign: "left",
+                whiteSpace: "nowrap",
+              }}
+              onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = colors.hoverBg; }}
+              onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = "transparent"; }}
+            >
+              {isDir ? (
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ flexShrink: 0, opacity: 0.6, transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}>
+                  <polyline points="3,1 7,5 3,9" />
+                </svg>
+              ) : (
+                <span style={{ width: 10, flexShrink: 0 }} />
+              )}
+              {isDir ? (
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.6 }}>
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                </svg>
+              ) : (
+                <FileIcon name={entry.name} />
+              )}
+              {entry.name}
+            </button>
+            {isDir && isExpanded && dirContents.has(path) && (
+              <FileTree
+                entries={dirContents.get(path)!}
+                dirContents={dirContents}
+                expandedDirs={expandedDirs}
+                selectedPath={selectedPath}
+                depth={depth + 1}
+                parentPath={path}
+                onDirClick={onDirClick}
+                onFileClick={onFileClick}
+              />
+            )}
+          </div>
+        );
+      })}
+    </>
+  );
+}

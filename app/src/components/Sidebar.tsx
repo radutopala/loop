@@ -51,6 +51,7 @@ interface SidebarProps {
   onDeleteBatch?: (ids: string[]) => void;
   onOpenSettings?: () => void;
   onOpenConfig?: (dirPath: string) => void;
+  onOpenReadme?: () => void;
 }
 
 export function Sidebar({
@@ -64,6 +65,7 @@ export function Sidebar({
   onDeleteBatch,
   onOpenSettings,
   onOpenConfig,
+  onOpenReadme,
 }: SidebarProps) {
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const [resizing, setResizing] = useState(false);
@@ -441,24 +443,11 @@ export function Sidebar({
       {/* Spacer to push footer to bottom */}
       <div style={{ flex: 1 }} />
 
-      {/* Settings footer */}
-      <div style={{ padding: "8px 12px", borderTop: `1px solid ${colors.border}` }}>
+      {/* Footer: Settings + README */}
+      <div style={{ padding: "8px 12px", borderTop: `1px solid ${colors.border}`, display: "flex", flexDirection: "column", gap: 2 }}>
         <button
           onClick={onOpenSettings}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 8,
-            width: "100%",
-            background: "none",
-            border: "none",
-            color: colors.textDim,
-            cursor: "pointer",
-            padding: "6px 8px",
-            fontSize: 12,
-            borderRadius: 6,
-            fontFamily: "inherit",
-          }}
+          style={footerBtnStyle}
           onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
           onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
         >
@@ -467,6 +456,18 @@ export function Sidebar({
             <circle cx="12" cy="12" r="3" />
           </svg>
           Settings
+        </button>
+        <button
+          onClick={onOpenReadme}
+          style={footerBtnStyle}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+            <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+          </svg>
+          README
         </button>
       </div>
 
@@ -516,4 +517,19 @@ const sidebarBtnStyle: React.CSSProperties = {
   fontSize: 12,
   lineHeight: 1,
   borderRadius: 4,
+};
+
+const footerBtnStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 8,
+  width: "100%",
+  background: "none",
+  border: "none",
+  color: colors.textDim,
+  cursor: "pointer",
+  padding: "6px 8px",
+  fontSize: 12,
+  borderRadius: 6,
+  fontFamily: "inherit",
 };

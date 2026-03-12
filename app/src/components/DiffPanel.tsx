@@ -326,6 +326,39 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
             <span style={{ opacity: 0.7 }}>{navigator.platform.includes("Mac") ? "\u2318K" : "Ctrl+K"}</span>
           </button>
         )}
+        {maximized && dirPath && (
+          <span
+            style={{
+              fontSize: 12,
+              color: colors.textDim,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+              minWidth: 0,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              marginLeft: 12,
+            }}
+          >
+            {dirPath}
+            {branch && (
+              <>
+                <span style={{ color: colors.border, flexShrink: 0 }}>|</span>
+                <span style={{ fontSize: 11, color: colors.active, fontFamily: fonts.mono, flexShrink: 0 }}>
+                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 2, verticalAlign: -1 }}>
+                    <line x1="6" y1="3" x2="6" y2="15" />
+                    <circle cx="18" cy="6" r="3" />
+                    <circle cx="6" cy="18" r="3" />
+                    <path d="M18 9a9 9 0 0 1-9 9" />
+                  </svg>
+                  {branch}
+                </span>
+              </>
+            )}
+          </span>
+        )}
+        <div style={{ flex: 1 }} />
       </div>
 
       {/* Header — sized to match the main toolbar height so bottom borders align */}
@@ -354,37 +387,6 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
           >
             Changes
           </span>
-          {maximized && dirPath && (
-            <span
-              style={{
-                fontSize: 12,
-                color: colors.textDim,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                minWidth: 0,
-                display: "flex",
-                alignItems: "center",
-                gap: 6,
-              }}
-            >
-              {dirPath}
-              {branch && (
-                <>
-                  <span style={{ color: colors.border, flexShrink: 0 }}>|</span>
-                  <span style={{ fontSize: 11, color: colors.active, fontFamily: fonts.mono, flexShrink: 0 }}>
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 2, verticalAlign: -1 }}>
-                      <line x1="6" y1="3" x2="6" y2="15" />
-                      <circle cx="18" cy="6" r="3" />
-                      <circle cx="6" cy="18" r="3" />
-                      <path d="M18 9a9 9 0 0 1-9 9" />
-                    </svg>
-                    {branch}
-                  </span>
-                </>
-              )}
-            </span>
-          )}
           {totalFiles > 0 && (
             <span style={{ fontSize: 10, color: colors.textDim }}>
               {totalFiles}

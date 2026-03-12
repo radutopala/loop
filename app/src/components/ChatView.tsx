@@ -193,7 +193,7 @@ export function ChatView({ channelId, initialRunningBot, scrollToMessageId, onSc
         <ChatInput channelId={channelId} isRunning={isRunning} onSent={scrollToBottom} />
       </div>
       <div style={styles.isolationLabel}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isRunning ? "#48bb78" : colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
           <polyline points="17 2 12 7 7 2" />
         </svg>

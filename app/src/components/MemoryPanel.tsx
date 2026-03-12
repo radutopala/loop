@@ -1,8 +1,24 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { marked } from "marked";
 import { colors, fonts } from "../theme";
 import { fetchMemoryFiles, fetchMemoryFileContent, type MemoryFileInfo } from "../api/loopApi";
 import { FilePanel, markdownStyles } from "./FilePanel";
+
+const TREE_MIN_WIDTH = 120;
+const TREE_MAX_WIDTH = 400;
+const TREE_DEFAULT_WIDTH = 200;
+const TREE_WIDTH_KEY = "loop-memory-tree-width";
+
+function loadTreeWidth(): number {
+  try {
+    const stored = localStorage.getItem(TREE_WIDTH_KEY);
+    if (stored) {
+      const w = parseInt(stored, 10);
+      if (w >= TREE_MIN_WIDTH && w <= TREE_MAX_WIDTH) return w;
+    }
+  } catch { /* ignore */ }
+  return TREE_DEFAULT_WIDTH;
+}
 
 interface MemoryPanelProps {
   channelId: string;
@@ -23,6 +39,32 @@ export function MemoryPanel({ channelId, dirPath, branch, ...panelProps }: Memor
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [contentError, setContentError] = useState<string | null>(null);
+  const [treeWidth, setTreeWidth] = useState(loadTreeWidth);
+  const [treeResizing, setTreeResizing] = useState(false);
+
+  const handleTreeResize = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    setTreeResizing(true);
+    const startX = e.clientX;
+    const startWidth = treeWidth;
+    let lastWidth = startWidth;
+
+    const onMouseMove = (ev: MouseEvent) => {
+      const newWidth = Math.min(TREE_MAX_WIDTH, Math.max(TREE_MIN_WIDTH, startWidth + (ev.clientX - startX)));
+      lastWidth = newWidth;
+      setTreeWidth(newWidth);
+    };
+
+    const onMouseUp = () => {
+      setTreeResizing(false);
+      try { localStorage.setItem(TREE_WIDTH_KEY, String(lastWidth)); } catch { /* ignore */ }
+      document.removeEventListener("mousemove", onMouseMove);
+      document.removeEventListener("mouseup", onMouseUp);
+    };
+
+    document.addEventListener("mousemove", onMouseMove);
+    document.addEventListener("mouseup", onMouseUp);
+  }, [treeWidth]);
 
   // Fetch file list when channelId changes.
   useEffect(() => {
@@ -73,7 +115,7 @@ export function MemoryPanel({ channelId, dirPath, branch, ...panelProps }: Memor
   }, [content]);
 
   return (
-    <FilePanel title="Memory" dirPath={dirPath} branch={branch} {...panelProps}>
+    <FilePanel title="Memory" dirPath={dirPath} branch={branch} noPadding={!loading && files.length > 0} {...panelProps}>
       {listError && (
         <div style={{ color: colors.error, fontSize: 13 }}>{listError}</div>
       )}
@@ -84,15 +126,16 @@ export function MemoryPanel({ channelId, dirPath, branch, ...panelProps }: Memor
         <div style={{ color: colors.textDim, fontSize: 13 }}>No memory files indexed</div>
       )}
       {!loading && files.length > 0 && (
-        <div style={{ display: "flex", height: "100%", margin: "-12px -16px" }}>
+        <div style={{ display: "flex", height: "100%", userSelect: treeResizing ? "none" : undefined }}>
           {/* File tree */}
           <div
             style={{
-              width: 200,
-              minWidth: 200,
-              borderRight: `1px solid ${colors.border}`,
+              width: treeWidth,
+              minWidth: TREE_MIN_WIDTH,
+              maxWidth: TREE_MAX_WIDTH,
               overflow: "auto",
               padding: "8px 0",
+              flexShrink: 0,
             }}
           >
             {[...groups.entries()].map(([dp, groupFiles]) => (
@@ -149,6 +192,19 @@ export function MemoryPanel({ channelId, dirPath, branch, ...panelProps }: Memor
               </div>
             ))}
           </div>
+          {/* Tree resize handle */}
+          <div
+            onMouseDown={handleTreeResize}
+            style={{
+              width: 4,
+              cursor: "col-resize",
+              backgroundColor: treeResizing ? colors.textDim : "transparent",
+              flexShrink: 0,
+              borderRight: `1px solid ${colors.border}`,
+            }}
+            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = colors.textDim; }}
+            onMouseLeave={(e) => { if (!treeResizing) (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent"; }}
+          />
           {/* Content viewer */}
           <div style={{ flex: 1, overflowY: "auto", padding: "12px 16px" }}>
             {selectedFile && (
