@@ -245,7 +245,7 @@ export function WorkspaceLayout({
           );
         case "agent":
           return (
-            <div key={`layout-agent-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", backgroundColor: colors.bg }}>
+            <div key={`layout-agent-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", backgroundColor: colors.sidebar }}>
               <Terminal
                 channelId={channelId}
                 target="agent"
@@ -258,7 +258,7 @@ export function WorkspaceLayout({
           );
         case "shell":
           return (
-            <div key={`layout-shell-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", backgroundColor: colors.bg }}>
+            <div key={`layout-shell-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", backgroundColor: colors.sidebar }}>
               <Terminal
                 channelId={channelId}
                 target="host"
