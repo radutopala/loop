@@ -27,6 +27,7 @@ Thumbs.db
 # Claude
 .claude/
 .mcp.json
+.worktrees/
 
 # SQLite databases
 *.db
