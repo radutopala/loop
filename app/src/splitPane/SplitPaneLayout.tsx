@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useRef } from "react";
-import type { PaneNode, LeafNode, DropPosition } from "./types";
+import type { PaneNode, LeafNode, PanelType, SplitDirection, DropPosition } from "./types";
+import { collectPanelTypes } from "./treeOps";
 import { PaneLeafHeader } from "./PaneLeafHeader";
 import { DropZoneOverlay } from "./DropZoneOverlay";
 import { colors } from "../theme";
@@ -12,17 +13,21 @@ interface SplitPaneLayoutProps {
   onUpdateFlex: (parentPath: number[], dividerIdx: number, flexA: number, flexB: number) => void;
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
   onRemoveLeaf: (id: string) => void;
+  onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void;
 }
 
-export function SplitPaneLayout({ tree, renderLeaf, onUpdateFlex, onDrop, onRemoveLeaf }: SplitPaneLayoutProps) {
+export function SplitPaneLayout({ tree, renderLeaf, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf }: SplitPaneLayoutProps) {
+  const usedSingletons = collectPanelTypes(tree);
   return (
     <PaneTree
       node={tree}
       path={[]}
+      usedSingletons={usedSingletons}
       renderLeaf={renderLeaf}
       onUpdateFlex={onUpdateFlex}
       onDrop={onDrop}
       onRemoveLeaf={onRemoveLeaf}
+      onSplitLeaf={onSplitLeaf}
     />
   );
 }
@@ -30,13 +35,15 @@ export function SplitPaneLayout({ tree, renderLeaf, onUpdateFlex, onDrop, onRemo
 interface PaneTreeProps {
   node: PaneNode;
   path: number[];
+  usedSingletons: Set<PanelType>;
   renderLeaf: (leaf: LeafNode) => React.ReactNode;
   onUpdateFlex: (parentPath: number[], dividerIdx: number, flexA: number, flexB: number) => void;
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
   onRemoveLeaf: (id: string) => void;
+  onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void;
 }
 
-function PaneTree({ node, path, renderLeaf, onUpdateFlex, onDrop, onRemoveLeaf }: PaneTreeProps) {
+function PaneTree({ node, path, usedSingletons, renderLeaf, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf }: PaneTreeProps) {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const handleDivider = useCallback(
@@ -87,8 +94,10 @@ function PaneTree({ node, path, renderLeaf, onUpdateFlex, onDrop, onRemoveLeaf }
         <PaneLeafHeader
           leafId={node.id}
           panel={node.panel}
+          usedSingletons={usedSingletons}
           onRemove={() => onRemoveLeaf(node.id)}
           onDrop={onDrop}
+          onSplitLeaf={onSplitLeaf}
         />
         <DropZoneOverlay leafId={node.id} headerHeight={HEADER_HEIGHT} onDrop={onDrop} />
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
@@ -143,10 +152,12 @@ function PaneTree({ node, path, renderLeaf, onUpdateFlex, onDrop, onRemoveLeaf }
           <PaneTree
             node={child}
             path={[...path, i]}
+            usedSingletons={usedSingletons}
             renderLeaf={renderLeaf}
             onUpdateFlex={onUpdateFlex}
             onDrop={onDrop}
             onRemoveLeaf={onRemoveLeaf}
+            onSplitLeaf={onSplitLeaf}
           />
         </Fragment>
       ))}

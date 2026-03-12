@@ -2,10 +2,10 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Channel } from "../types";
 import type { SessionStatus } from "../types";
 import type { PaneNode, LeafNode, PanelType, SplitDirection, DropPosition } from "../splitPane/types";
-import { makeLeaf, findLeafById, findLastLeaf, splitLeaf, removeLeaf, updateFlex, swapLeavesInTree, moveLeaf, leafCount, collectLeaves, canAddPanel, hasAgentLeaf } from "../splitPane/treeOps";
+import { makeLeaf, findLeafById, splitLeaf, removeLeaf, updateFlex, swapLeavesInTree, moveLeaf, leafCount, collectLeaves, canAddPanel, hasAgentLeaf } from "../splitPane/treeOps";
 import { loadLayout, saveLayout, clearLayout } from "../splitPane/persistence";
 import { SplitPaneLayout } from "../splitPane/SplitPaneLayout";
-import { AddPanelButton, EmptyLayoutPicker } from "../splitPane/AddPanelButton";
+import { EmptyLayoutPicker } from "../splitPane/AddPanelButton";
 import { Terminal, getCloseForInstance } from "./Terminal";
 import { ChatView } from "./ChatView";
 import { EditorPanel } from "./EditorPanel";
@@ -168,16 +168,12 @@ export function WorkspaceLayout({
     [channelId, computeAgentState],
   );
 
-  const handleAddPanel = useCallback(
-    (panel: PanelType, direction: SplitDirection) => {
+  const handleSplitLeaf = useCallback(
+    (leafId: string, panel: PanelType, direction: SplitDirection) => {
       setTree((prev) => {
-        if (!prev) {
-          return makeLeaf(leafIdForPanel(channelId, panel), panel);
-        }
+        if (!prev) return prev;
         if (!canAddPanel(prev, panel)) return prev;
-        const last = findLastLeaf(prev);
-        if (!last) return prev;
-        return splitLeaf(prev, last.id, direction, makeLeaf(leafIdForPanel(channelId, panel), panel));
+        return splitLeaf(prev, leafId, direction, makeLeaf(leafIdForPanel(channelId, panel), panel));
       });
     },
     [channelId],
@@ -420,7 +416,6 @@ export function WorkspaceLayout({
             Kill
           </button>
         )}
-        <AddPanelButton tree={tree} onAdd={handleAddPanel} />
         <button
           onClick={onClose}
           title="Close layout"
@@ -456,6 +451,7 @@ export function WorkspaceLayout({
             onUpdateFlex={handleUpdateFlex}
             onDrop={handleDrop}
             onRemoveLeaf={handleRemoveLeaf}
+            onSplitLeaf={handleSplitLeaf}
           />
         )}
       </div>
