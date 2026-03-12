@@ -22,7 +22,7 @@ export function removeLeaf(node: PaneNode, id: string): PaneNode | null {
     .map((c) => removeLeaf(c, id))
     .filter((c): c is PaneNode => c !== null);
   if (remaining.length === 0) return null;
-  if (remaining.length === 1) return remaining[0]!;
+  if (remaining.length === 1) return { ...remaining[0]!, flex: node.flex };
   return { ...node, children: remaining };
 }
 
