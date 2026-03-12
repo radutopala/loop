@@ -660,7 +660,7 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
           {name}
         </span>
       )}
-      {canDelete && active && !editing && (
+      {canDelete && !editing && (
         <button
           onClick={(e) => { e.stopPropagation(); onDelete(); }}
           title="Delete layout"
