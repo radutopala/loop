@@ -245,25 +245,27 @@ export function WorkspaceLayout({
           );
         case "agent":
           return (
-            <Terminal
-              key={`layout-agent-${channelId}-${leaf.id}`}
-              channelId={channelId}
-              target="agent"
-              instanceId={leaf.id}
-              hideActions
-              onStatusChange={onStatusChange}
-              onPaneStatus={(status) => handlePaneStatus(leaf.id, status)}
-            />
+            <div key={`layout-agent-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", backgroundColor: colors.bg }}>
+              <Terminal
+                channelId={channelId}
+                target="agent"
+                instanceId={leaf.id}
+                hideActions
+                onStatusChange={onStatusChange}
+                onPaneStatus={(status) => handlePaneStatus(leaf.id, status)}
+              />
+            </div>
           );
         case "shell":
           return (
-            <Terminal
-              key={`layout-shell-${channelId}-${leaf.id}`}
-              channelId={channelId}
-              target="host"
-              instanceId={leaf.id}
-              onStatusChange={onStatusChange}
-            />
+            <div key={`layout-shell-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", backgroundColor: colors.bg }}>
+              <Terminal
+                channelId={channelId}
+                target="host"
+                instanceId={leaf.id}
+                onStatusChange={onStatusChange}
+              />
+            </div>
           );
         default:
           return null;
