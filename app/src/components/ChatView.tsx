@@ -736,7 +736,7 @@ const commandStyles: Record<string, React.CSSProperties> = {
     gap: 2,
   },
   name: {
-    color: colors.active,
+    color: colors.textLight,
     fontWeight: 600,
     fontSize: 13,
     fontFamily: fonts.mono,
