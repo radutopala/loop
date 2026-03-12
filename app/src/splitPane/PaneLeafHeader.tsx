@@ -221,7 +221,7 @@ const menuItemStyle: React.CSSProperties = {
 };
 
 function menuHoverIn(e: React.MouseEvent<HTMLButtonElement>) {
-  e.currentTarget.style.backgroundColor = colors.hoverBg;
+  e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)";
 }
 
 function menuHoverOut(e: React.MouseEvent<HTMLButtonElement>) {

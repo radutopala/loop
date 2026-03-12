@@ -20,6 +20,8 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
+      // Only close on left-click; right-click will replace via contextmenu handler.
+      if (e.button !== 0) return;
       if (menuRef.current && !menuRef.current.contains(e.target as Node)) {
         onClose();
       }
@@ -42,13 +44,13 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
         position: "fixed",
         top: y,
         left: x,
-        backgroundColor: "#2b2d31",
+        backgroundColor: colors.surface,
         border: `1px solid ${colors.border}`,
-        borderRadius: 8,
-        padding: "6px",
-        minWidth: 180,
+        borderRadius: 6,
+        padding: 4,
+        minWidth: 150,
         zIndex: 1000,
-        boxShadow: "0 8px 24px rgba(0,0,0,0.6)",
+        boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
         fontFamily: fonts.sans,
       }}
     >
@@ -59,7 +61,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
               style={{
                 height: 1,
                 backgroundColor: colors.border,
-                margin: "4px 8px",
+                margin: "2px 4px",
               }}
             />
           )}
@@ -69,28 +71,26 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
               onClose();
             }}
             style={{
-              display: "block",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
               width: "100%",
-              padding: "8px 10px",
+              padding: "4px 8px",
               border: "none",
               background: "transparent",
               color: item.danger ? "#f47067" : colors.textLight,
-              fontSize: 14,
-              fontWeight: 500,
+              fontSize: 11,
               textAlign: "left",
               cursor: "pointer",
               borderRadius: 4,
               fontFamily: fonts.sans,
+              whiteSpace: "nowrap",
             }}
             onMouseEnter={(e) => {
-              const btn = e.currentTarget;
-              btn.style.backgroundColor = item.danger ? "#da373c" : colors.active;
-              btn.style.color = "#fff";
+              e.currentTarget.style.backgroundColor = item.danger ? "rgba(218, 55, 60, 0.2)" : "rgba(255,255,255,0.08)";
             }}
             onMouseLeave={(e) => {
-              const btn = e.currentTarget;
-              btn.style.backgroundColor = "transparent";
-              btn.style.color = item.danger ? "#f47067" : colors.textLight;
+              e.currentTarget.style.backgroundColor = "transparent";
             }}
           >
             {item.label}

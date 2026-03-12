@@ -133,6 +133,7 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("GET /api/channels/{id}/files", s.handleListFiles)
 	mux.HandleFunc("GET /api/channels/{id}/file", s.handleReadFile)
 	mux.HandleFunc("PUT /api/channels/{id}/file", s.handleWriteFile)
+	mux.HandleFunc("DELETE /api/channels/{id}/file", s.handleDeleteFile)
 	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)

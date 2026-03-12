@@ -249,3 +249,47 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 
 	writeHTTPJSON(w, http.StatusOK, writeFileResponse{OK: true}, s.logger)
 }
+
+var osRemove = os.Remove
+
+func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel listing not configured") {
+		return
+	}
+
+	channelID := r.PathValue("id")
+	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	relPath := r.URL.Query().Get("path")
+	absPath, err := validateFilePath(dirPath, relPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	info, err := osStat(absPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			http.Error(w, "file not found", http.StatusNotFound)
+			return
+		}
+		http.Error(w, "failed to stat file", http.StatusInternalServerError)
+		return
+	}
+
+	if info.IsDir() {
+		http.Error(w, "cannot delete directories", http.StatusBadRequest)
+		return
+	}
+
+	if err := osRemove(absPath); err != nil {
+		http.Error(w, "failed to delete file", http.StatusInternalServerError)
+		return
+	}
+
+	writeHTTPJSON(w, http.StatusOK, writeFileResponse{OK: true}, s.logger)
+}

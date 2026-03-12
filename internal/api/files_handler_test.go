@@ -512,6 +512,118 @@ func (r *errReader) Read([]byte) (int, error) {
 	return 0, fmt.Errorf("injected read error")
 }
 
+// ── handleDeleteFile ──
+
+func (s *ServerSuite) TestDeleteFile_Success() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "trash.txt"), []byte("bye"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("DELETE", "/api/channels/ch-1/file?path=trash.txt", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), `"ok":true`)
+
+	_, err := os.Stat(filepath.Join(tmpDir, "trash.txt"))
+	require.True(s.T(), os.IsNotExist(err))
+}
+
+func (s *ServerSuite) TestDeleteFile_NotFound() {
+	tmpDir := s.T().TempDir()
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("DELETE", "/api/channels/ch-1/file?path=missing.txt", "")
+	require.Equal(s.T(), http.StatusNotFound, rec.Code)
+}
+
+func (s *ServerSuite) TestDeleteFile_Directory() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(tmpDir, "subdir"), 0755))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("DELETE", "/api/channels/ch-1/file?path=subdir", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "cannot delete directories")
+}
+
+func (s *ServerSuite) TestDeleteFile_PathTraversal() {
+	tmpDir := s.T().TempDir()
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("DELETE", "/api/channels/ch-1/file?path=../evil.txt", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestDeleteFile_EmptyPath() {
+	tmpDir := s.T().TempDir()
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("DELETE", "/api/channels/ch-1/file?path=", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestDeleteFile_NotConfigured() {
+	srv := nilServer()
+	mux := http.NewServeMux()
+	mux.HandleFunc("DELETE /api/channels/{id}/file", srv.handleDeleteFile)
+
+	req, _ := http.NewRequest("DELETE", "/api/channels/ch-1/file?path=test.txt", nil)
+	w := newRecorder()
+	mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+func (s *ServerSuite) TestDeleteFile_ChannelNotFound() {
+	s.store.On("GetChannel", mock.Anything, "missing").
+		Return((*db.Channel)(nil), nil)
+
+	rec := s.testRequest("DELETE", "/api/channels/missing/file?path=test.txt", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestDeleteFile_RemoveError() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("ok"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	origRemove := osRemove
+	osRemove = func(name string) error {
+		return fmt.Errorf("injected remove error")
+	}
+	defer func() { osRemove = origRemove }()
+
+	rec := s.testRequest("DELETE", "/api/channels/ch-1/file?path=test.txt", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "failed to delete file")
+}
+
+func (s *ServerSuite) TestDeleteFile_StatError() {
+	tmpDir := s.T().TempDir()
+	subDir := filepath.Join(tmpDir, "locked")
+	require.NoError(s.T(), os.MkdirAll(subDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(subDir, "secret.txt"), []byte("x"), 0644))
+	require.NoError(s.T(), os.Chmod(subDir, 0000))
+	s.T().Cleanup(func() { require.NoError(s.T(), os.Chmod(subDir, 0755)) })
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("DELETE", "/api/channels/ch-1/file?path=locked/secret.txt", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
 // ── listDir ──
 
 func (s *ServerSuite) TestListDir_Success() {

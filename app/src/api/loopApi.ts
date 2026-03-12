@@ -228,6 +228,14 @@ export async function saveFileContent(channelId: string, path: string, content: 
   if (!res.ok) throw new Error(`Failed to save file: ${res.statusText}`);
 }
 
+export async function deleteFile(channelId: string, path: string): Promise<void> {
+  const params = new URLSearchParams({ path });
+  const res = await fetch(`${apiUrl}/api/channels/${channelId}/file?${params}`, {
+    method: "DELETE",
+  });
+  if (!res.ok) throw new Error(`Failed to delete file: ${res.statusText}`);
+}
+
 export async function fetchMessages(
   channelId: string,
   opts?: { limit?: number; cursor?: number; around?: number },

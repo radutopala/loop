@@ -15,8 +15,9 @@ import { html } from "@codemirror/lang-html";
 import { yaml } from "@codemirror/lang-yaml";
 import { marked } from "marked";
 import { colors, fonts } from "../theme";
-import { fetchFiles, fetchFileContent, saveFileContent, type FileEntry } from "../api/loopApi";
+import { fetchFiles, fetchFileContent, saveFileContent, deleteFile, type FileEntry } from "../api/loopApi";
 import { FilePanel, markdownStyles } from "./FilePanel";
+import { ContextMenu, type MenuItem } from "./ContextMenu";
 
 interface EditorPanelProps {
   channelId: string;
@@ -233,6 +234,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   const [dirtyTabs, setDirtyTabs] = useState<Set<string>>(new Set());
   const [autoSaveOnBlur, setAutoSaveOnBlur] = useState(true);
   const [newFileName, setNewFileName] = useState<string | null>(null);
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string; isDir: boolean } | null>(null);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -272,7 +274,11 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
     const view = viewRef.current;
     // If saving a non-active tab we don't have its content — skip.
     if (!view || savePath !== selectedPathRef.current) return;
-    const content = view.state.doc.toString();
+    let content = view.state.doc.toString();
+    if (content.length > 0 && !content.endsWith("\n")) {
+      content += "\n";
+      view.dispatch({ changes: { from: view.state.doc.length, insert: "\n" } });
+    }
     saveFileContent(channelId, savePath, content).then(() => {
       dirtyContentRef.current.delete(savePath);
       setDirtyTabs((prev) => { if (!prev.has(savePath)) return prev; const next = new Set(prev); next.delete(savePath); return next; });
@@ -457,6 +463,49 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
     });
   }, [channelId, loadDir, switchToTab]);
 
+  const handleDeleteFilePath = useCallback((path: string) => {
+    deleteFile(channelId, path).then(() => {
+      // Close the tab if it was open.
+      setOpenTabs((prev) => {
+        const next = prev.filter((p) => p !== path);
+        if (path === selectedPathRef.current) {
+          if (next.length > 0) {
+            switchToTab(next[Math.max(0, Math.min(prev.indexOf(path), next.length - 1))]!);
+          } else {
+            setSelectedPath(null);
+            setFileContent(null);
+            setIsBinary(false);
+            setError(null);
+          }
+        }
+        return next;
+      });
+      dirtyContentRef.current.delete(path);
+      setDirtyTabs((prev) => { if (!prev.has(path)) return prev; const next = new Set(prev); next.delete(path); return next; });
+      // Reload parent directory.
+      const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : ".";
+      loadDir(parent);
+    }).catch((err) => {
+      setError(err instanceof Error ? err.message : "Failed to delete file");
+    });
+  }, [channelId, loadDir, switchToTab]);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent, path: string, isDir: boolean) => {
+    e.preventDefault();
+    setContextMenu({ x: e.clientX, y: e.clientY, path, isDir });
+  }, []);
+
+  const getContextMenuItems = useCallback((): MenuItem[] => {
+    if (!contextMenu) return [];
+    const items: MenuItem[] = [];
+    if (contextMenu.isDir) {
+      items.push({ label: "New file here", onClick: () => setNewFileName(contextMenu.path + "/") });
+    } else {
+      items.push({ label: "Delete", danger: true, onClick: () => handleDeleteFilePath(contextMenu.path) });
+    }
+    return items;
+  }, [contextMenu, handleDeleteFilePath]);
+
   // Mount/update CodeMirror editor.
   useEffect(() => {
     if (!editorRef.current || fileContent === null || isBinary) {
@@ -628,6 +677,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
           <div style={{ flex: 1, overflow: "auto", padding: "2px 0" }}>
             <button
               onClick={() => { setSelectedDir(""); }}
+              onContextMenu={(e) => handleContextMenu(e, "", true)}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -663,6 +713,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
               parentPath=""
               onDirClick={handleDirClick}
               onFileClick={handleFileClick}
+              onContextMenu={handleContextMenu}
             />
           </div>
         </div>
@@ -817,6 +868,14 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
           </div>
         </div>
       </div>
+      {contextMenu && (
+        <ContextMenu
+          x={contextMenu.x}
+          y={contextMenu.y}
+          items={getContextMenuItems()}
+          onClose={() => setContextMenu(null)}
+        />
+      )}
     </FilePanel>
   );
 }
@@ -882,9 +941,10 @@ interface FileTreeProps {
   parentPath: string;
   onDirClick: (path: string) => void;
   onFileClick: (path: string, entry: FileEntry) => void;
+  onContextMenu: (e: React.MouseEvent, path: string, isDir: boolean) => void;
 }
 
-function FileTree({ entries, dirContents, expandedDirs, selectedPath, selectedDir, depth, parentPath, onDirClick, onFileClick }: FileTreeProps) {
+function FileTree({ entries, dirContents, expandedDirs, selectedPath, selectedDir, depth, parentPath, onDirClick, onFileClick, onContextMenu }: FileTreeProps) {
   return (
     <>
       {entries.map((entry) => {
@@ -898,6 +958,7 @@ function FileTree({ entries, dirContents, expandedDirs, selectedPath, selectedDi
           <div key={path}>
             <button
               onClick={() => isDir ? onDirClick(path) : onFileClick(path, entry)}
+              onContextMenu={(e) => onContextMenu(e, path, isDir)}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -944,6 +1005,7 @@ function FileTree({ entries, dirContents, expandedDirs, selectedPath, selectedDi
                 parentPath={path}
                 onDirClick={onDirClick}
                 onFileClick={onFileClick}
+                onContextMenu={onContextMenu}
               />
             )}
           </div>
