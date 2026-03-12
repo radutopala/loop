@@ -184,7 +184,16 @@ function MessageBubble({ message, showEyes, highlighted }: { message: Message; s
       >
         {!isUser && (
           <div style={styles.header}>
-            <span style={{ fontSize: 14, lineHeight: 1 }}>🤖</span>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+              <rect x="4" y="6" width="16" height="14" rx="3" stroke={colors.textLight} strokeWidth="1.5"/>
+              <circle cx="9" cy="12" r="2" fill={colors.textLight}/>
+              <circle cx="15" cy="12" r="2" fill={colors.textLight}/>
+              <line x1="12" y1="2" x2="12" y2="6" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round"/>
+              <circle cx="12" cy="2" r="1.5" fill={colors.textLight}/>
+              <line x1="1" y1="11" x2="4" y2="11" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round"/>
+              <line x1="20" y1="11" x2="23" y2="11" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round"/>
+              <line x1="9" y1="17" x2="15" y2="17" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round"/>
+            </svg>
             <span style={styles.time}>{time}</span>
           </div>
         )}
@@ -220,7 +229,16 @@ function StreamingBubble({ content }: { content: string }) {
         }}
       >
         <div style={styles.header}>
-          <span style={{ fontSize: 14, lineHeight: 1 }}>🤖</span>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" style={{ flexShrink: 0 }}>
+            <rect x="4" y="6" width="16" height="14" rx="3" stroke={colors.textLight} strokeWidth="1.5"/>
+            <circle cx="9" cy="12" r="2" fill={colors.textLight}/>
+            <circle cx="15" cy="12" r="2" fill={colors.textLight}/>
+            <line x1="12" y1="2" x2="12" y2="6" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round"/>
+            <circle cx="12" cy="2" r="1.5" fill={colors.textLight}/>
+            <line x1="1" y1="11" x2="4" y2="11" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round"/>
+            <line x1="20" y1="11" x2="23" y2="11" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round"/>
+            <line x1="9" y1="17" x2="15" y2="17" stroke={colors.textLight} strokeWidth="1.5" strokeLinecap="round"/>
+          </svg>
           <span style={{ ...styles.time, fontStyle: "italic" }}>streaming...</span>
         </div>
         <div style={styles.content}>
