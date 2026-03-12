@@ -3,7 +3,7 @@ import type { Channel } from "../types";
 import type { SessionStatus } from "../types";
 import type { PaneNode, LeafNode, PanelType, SplitDirection, DropPosition } from "../splitPane/types";
 import { makeLeaf, findLeafById, splitLeaf, removeLeaf, updateFlex, swapLeavesInTree, moveLeaf, leafCount, collectLeaves, canAddPanel, hasAgentLeaf } from "../splitPane/treeOps";
-import { loadLayout, saveLayout, clearLayout } from "../splitPane/persistence";
+import { loadChannelLayouts, saveLayout, clearLayout, saveActiveLayout, deleteLayout, renameLayout } from "../splitPane/persistence";
 import { SplitPaneLayout } from "../splitPane/SplitPaneLayout";
 import { EmptyLayoutPicker } from "../splitPane/AddPanelButton";
 import { Terminal, getCloseForInstance } from "./Terminal";
@@ -28,13 +28,15 @@ function nextId(channelId: string, panel: PanelType): string {
 
 function initIdCounter(channelId: string, tree: PaneNode) {
   const key = `layout-${channelId}`;
+  const cur = idCounters.get(key) ?? 0;
   let max = 0;
   for (const leaf of collectLeaves(tree)) {
     const parts = leaf.id.split("-");
     const num = parseInt(parts[parts.length - 1] ?? "0", 10);
     if (!isNaN(num) && num > max) max = num;
   }
-  idCounters.set(key, max + 1);
+  // Only increase, never decrease (other layouts may have higher IDs)
+  if (max + 1 > cur) idCounters.set(key, max + 1);
 }
 
 function leafIdForPanel(channelId: string, panel: PanelType): string {
@@ -69,10 +71,21 @@ export function WorkspaceLayout({
   onScrollComplete,
   onStatusChange,
 }: WorkspaceLayoutProps) {
+  // --- Named layouts state ---
+  const [layoutNames, setLayoutNames] = useState<string[]>(() => {
+    const ch = loadChannelLayouts(channelId);
+    return ch?.order ?? [];
+  });
+  const [activeName, setActiveName] = useState<string>(() => {
+    const ch = loadChannelLayouts(channelId);
+    return ch?.active ?? "Default";
+  });
   const [tree, setTree] = useState<PaneNode | null>(() => {
-    const saved = loadLayout(channelId);
-    if (saved) initIdCounter(channelId, saved);
-    return saved;
+    const ch = loadChannelLayouts(channelId);
+    if (!ch) return null;
+    const t = ch.layouts[ch.active] ?? null;
+    if (t) initIdCounter(channelId, t);
+    return t;
   });
   const treeRef = useRef(tree);
   treeRef.current = tree;
@@ -96,15 +109,19 @@ export function WorkspaceLayout({
     setAgentState(computeAgentState());
   }, [computeAgentState]);
 
-  // Reload tree when channelId changes.
+  // Reload when channelId changes.
   const prevChannelRef = useRef(channelId);
   useEffect(() => {
     if (channelId !== prevChannelRef.current) {
       prevChannelRef.current = channelId;
       statusMapRef.current.clear();
-      const saved = loadLayout(channelId);
-      if (saved) initIdCounter(channelId, saved);
-      setTree(saved);
+      const ch = loadChannelLayouts(channelId);
+      setLayoutNames(ch?.order ?? []);
+      const name = ch?.active ?? "Default";
+      setActiveName(name);
+      const t = ch?.layouts[name] ?? null;
+      if (t) initIdCounter(channelId, t);
+      setTree(t);
       setAgentState("none");
     }
   }, [channelId]);
@@ -112,10 +129,61 @@ export function WorkspaceLayout({
   // Save tree whenever it changes.
   useEffect(() => {
     if (tree) {
-      saveLayout(channelId, tree);
+      saveLayout(channelId, activeName, tree);
     }
-  }, [channelId, tree]);
+  }, [channelId, activeName, tree]);
 
+  // --- Layout tab operations ---
+  const switchLayout = useCallback((name: string) => {
+    const ch = loadChannelLayouts(channelId);
+    const t = ch?.layouts[name] ?? null;
+    if (t) initIdCounter(channelId, t);
+    statusMapRef.current.clear();
+    setActiveName(name);
+    setTree(t);
+    setAgentState("none");
+    saveActiveLayout(channelId, name);
+  }, [channelId]);
+
+  const addLayout = useCallback(() => {
+    let n = layoutNames.length + 1;
+    let name = `Layout ${n}`;
+    while (layoutNames.includes(name)) { n++; name = `Layout ${n}`; }
+    setLayoutNames((prev) => [...prev, name]);
+    setActiveName(name);
+    setTree(null);
+    statusMapRef.current.clear();
+    setAgentState("none");
+    // Persist the empty slot so the name is saved
+    saveActiveLayout(channelId, name);
+  }, [channelId, layoutNames]);
+
+  const handleRenameLayout = useCallback((oldName: string, newName: string) => {
+    const trimmed = newName.trim();
+    if (!trimmed || trimmed === oldName || layoutNames.includes(trimmed)) return;
+    renameLayout(channelId, oldName, trimmed);
+    setLayoutNames((prev) => prev.map((n) => (n === oldName ? trimmed : n)));
+    if (activeName === oldName) setActiveName(trimmed);
+  }, [channelId, layoutNames, activeName]);
+
+  const handleDeleteLayout = useCallback((name: string) => {
+    if (layoutNames.length <= 1) return; // don't delete last layout
+    deleteLayout(channelId, name);
+    const remaining = layoutNames.filter((n) => n !== name);
+    setLayoutNames(remaining);
+    if (activeName === name) {
+      const next = remaining[0]!;
+      const ch = loadChannelLayouts(channelId);
+      const t = ch?.layouts[next] ?? null;
+      if (t) initIdCounter(channelId, t);
+      setActiveName(next);
+      setTree(t);
+      statusMapRef.current.clear();
+      setAgentState("none");
+    }
+  }, [channelId, layoutNames, activeName]);
+
+  // --- Tree operations ---
   const handleDrop = useCallback(
     (dragId: string, dropId: string, position: DropPosition) => {
       if (dragId === dropId) return;
@@ -140,7 +208,6 @@ export function WorkspaceLayout({
       if (!current) return;
       const leaf = findLeafById(current, id);
       const wasAgent = leaf?.panel === "agent";
-      // Close terminal session for agent/shell panes
       if (leaf && (leaf.panel === "agent" || leaf.panel === "shell")) {
         const target = leaf.panel === "agent" ? "agent" : "host";
         const closeKey = `${target}:${channelId}:${id}`;
@@ -150,7 +217,7 @@ export function WorkspaceLayout({
       setTree((prev) => {
         if (!prev) return prev;
         if (leafCount(prev) <= 1) {
-          clearLayout(channelId);
+          clearLayout(channelId, activeName);
           if (wasAgent) killAgentContainer(channelId);
           setAgentState("none");
           return null;
@@ -165,7 +232,7 @@ export function WorkspaceLayout({
         return newTree;
       });
     },
-    [channelId, computeAgentState],
+    [channelId, activeName, computeAgentState],
   );
 
   const handleSplitLeaf = useCallback(
@@ -181,9 +248,15 @@ export function WorkspaceLayout({
 
   const handleEmptyAdd = useCallback(
     (panel: PanelType) => {
-      setTree(makeLeaf(leafIdForPanel(channelId, panel), panel));
+      const newTree = makeLeaf(leafIdForPanel(channelId, panel), panel);
+      setTree(newTree);
+      // If this is the first panel in a new layout, ensure it's persisted with a name
+      if (!layoutNames.includes(activeName)) {
+        setLayoutNames((prev) => [...prev, activeName]);
+      }
+      saveLayout(channelId, activeName, newTree);
     },
-    [channelId],
+    [channelId, activeName, layoutNames],
   );
 
   const handleKillAgents = useCallback(() => {
@@ -440,6 +513,58 @@ export function WorkspaceLayout({
         </button>
       </div>
 
+      {/* Layout tabs */}
+      {layoutNames.length > 0 && (
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            padding: "0 8px",
+            borderBottom: `1px solid ${colors.border}`,
+            height: 30,
+            flexShrink: 0,
+            gap: 0,
+            overflow: "hidden",
+          }}
+        >
+          {layoutNames.map((name) => (
+            <LayoutTab
+              key={name}
+              name={name}
+              active={name === activeName}
+              canDelete={layoutNames.length > 1}
+              onSelect={() => { if (name !== activeName) switchLayout(name); }}
+              onRename={(newName) => handleRenameLayout(name, newName)}
+              onDelete={() => handleDeleteLayout(name)}
+            />
+          ))}
+          <button
+            onClick={addLayout}
+            title="New layout"
+            style={{
+              background: "none",
+              border: "none",
+              color: colors.textDim,
+              cursor: "pointer",
+              padding: "2px 6px",
+              lineHeight: 1,
+              fontSize: 12,
+              borderRadius: 4,
+              display: "flex",
+              alignItems: "center",
+              marginLeft: 2,
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+          >
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="12" y1="5" x2="12" y2="19" />
+              <line x1="5" y1="12" x2="19" y2="12" />
+            </svg>
+          </button>
+        </div>
+      )}
+
       {/* Layout content */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
         {!tree ? (
@@ -455,6 +580,110 @@ export function WorkspaceLayout({
           />
         )}
       </div>
+    </div>
+  );
+}
+
+// ── Layout Tab ──
+
+function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
+  name: string;
+  active: boolean;
+  canDelete: boolean;
+  onSelect: () => void;
+  onRename: (newName: string) => void;
+  onDelete: () => void;
+}) {
+  const [editing, setEditing] = useState(false);
+  const [editValue, setEditValue] = useState(name);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (editing) inputRef.current?.select();
+  }, [editing]);
+
+  const commitRename = () => {
+    setEditing(false);
+    if (editValue.trim() && editValue.trim() !== name) {
+      onRename(editValue.trim());
+    } else {
+      setEditValue(name);
+    }
+  };
+
+  return (
+    <div
+      onClick={onSelect}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "2px 8px",
+        fontSize: 11,
+        cursor: "pointer",
+        color: active ? colors.textLight : colors.textDim,
+        borderBottom: active ? `2px solid ${colors.active}` : "2px solid transparent",
+        height: "100%",
+        boxSizing: "border-box",
+        flexShrink: 0,
+      }}
+      onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLDivElement).style.color = colors.textLight; }}
+      onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLDivElement).style.color = colors.textDim; }}
+    >
+      {editing ? (
+        <input
+          ref={inputRef}
+          value={editValue}
+          onChange={(e) => setEditValue(e.target.value)}
+          onBlur={commitRename}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") commitRename();
+            if (e.key === "Escape") { setEditValue(name); setEditing(false); }
+          }}
+          onClick={(e) => e.stopPropagation()}
+          style={{
+            background: "none",
+            border: `1px solid ${colors.border}`,
+            color: colors.textLight,
+            fontSize: 11,
+            padding: "0 4px",
+            borderRadius: 3,
+            outline: "none",
+            width: Math.max(40, editValue.length * 7),
+          }}
+        />
+      ) : (
+        <span
+          onDoubleClick={(e) => { e.stopPropagation(); setEditValue(name); setEditing(true); }}
+          title="Double-click to rename"
+        >
+          {name}
+        </span>
+      )}
+      {canDelete && active && !editing && (
+        <button
+          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          title="Delete layout"
+          style={{
+            background: "none",
+            border: "none",
+            color: colors.textDim,
+            cursor: "pointer",
+            padding: 0,
+            lineHeight: 1,
+            fontSize: 10,
+            display: "flex",
+            alignItems: "center",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+        >
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      )}
     </div>
   );
 }
