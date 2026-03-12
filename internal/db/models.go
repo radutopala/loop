@@ -81,6 +81,12 @@ const (
 	RunStatusFailed  RunStatus = "failed"
 )
 
+// MemoryFileInfo holds a distinct file_path + dir_path pair from the memory_files table.
+type MemoryFileInfo struct {
+	FilePath string `json:"file_path"`
+	DirPath  string `json:"dir_path"`
+}
+
 // MemoryFile represents an indexed memory file (or chunk) with its embedding.
 // ChunkIndex 0 is the header row (stores content_hash for the whole file).
 // ChunkIndex 1+ are content chunks with embeddings for large files.

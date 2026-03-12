@@ -1181,6 +1181,56 @@ func (s *StoreSuite) TestDeleteMemoryFileError() {
 	require.Error(s.T(), s.store.DeleteMemoryFile(context.Background(), "/m/a.md", ""))
 }
 
+func (s *StoreSuite) TestListDistinctMemoryFilePaths() {
+	rows := sqlmock.NewRows([]string{"file_path", "dir_path"}).
+		AddRow("/projects/foo/memory/a.md", "/projects/foo").
+		AddRow("/projects/foo/memory/b.md", "/projects/foo")
+	s.mock.ExpectQuery(`SELECT DISTINCT file_path, dir_path FROM memory_files`).
+		WithArgs("/projects/foo").
+		WillReturnRows(rows)
+
+	files, err := s.store.ListDistinctMemoryFilePaths(context.Background(), "/projects/foo")
+	require.NoError(s.T(), err)
+	require.Len(s.T(), files, 2)
+	require.Equal(s.T(), "/projects/foo/memory/a.md", files[0].FilePath)
+	require.Equal(s.T(), "/projects/foo/memory/b.md", files[1].FilePath)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestListDistinctMemoryFilePathsEmpty() {
+	rows := sqlmock.NewRows([]string{"file_path", "dir_path"})
+	s.mock.ExpectQuery(`SELECT DISTINCT file_path, dir_path FROM memory_files`).
+		WithArgs("/projects/foo").
+		WillReturnRows(rows)
+
+	files, err := s.store.ListDistinctMemoryFilePaths(context.Background(), "/projects/foo")
+	require.NoError(s.T(), err)
+	require.Nil(s.T(), files)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestListDistinctMemoryFilePathsError() {
+	s.mock.ExpectQuery(`SELECT DISTINCT file_path, dir_path FROM memory_files`).
+		WithArgs("/projects/foo").
+		WillReturnError(sql.ErrConnDone)
+
+	files, err := s.store.ListDistinctMemoryFilePaths(context.Background(), "/projects/foo")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), files)
+}
+
+func (s *StoreSuite) TestListDistinctMemoryFilePathsScanError() {
+	rows := sqlmock.NewRows([]string{"file_path", "dir_path"}).
+		AddRow(nil, "/projects/foo") // nil file_path causes scan error
+	s.mock.ExpectQuery(`SELECT DISTINCT file_path, dir_path FROM memory_files`).
+		WithArgs("/projects/foo").
+		WillReturnRows(rows)
+
+	files, err := s.store.ListDistinctMemoryFilePaths(context.Background(), "/projects/foo")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), files)
+}
+
 func (s *StoreSuite) TestNowFuncUsedInUpsertChannel() {
 	fixedTime := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
 	orig := nowFunc

@@ -45,6 +45,7 @@ type Store interface {
 	GetMemoryFilesByDirPath(ctx context.Context, dirPath string) ([]*MemoryFile, error)
 	GetMemoryFileHash(ctx context.Context, filePath, dirPath string) (string, error)
 	DeleteMemoryFile(ctx context.Context, filePath, dirPath string) error
+	ListDistinctMemoryFilePaths(ctx context.Context, dirPath string) ([]MemoryFileInfo, error)
 	Close() error
 }
 
@@ -517,6 +518,27 @@ func (s *SQLiteStore) GetMemoryFileHash(ctx context.Context, filePath, dirPath s
 func (s *SQLiteStore) DeleteMemoryFile(ctx context.Context, filePath, dirPath string) error {
 	_, err := s.db.ExecContext(ctx, `DELETE FROM memory_files WHERE file_path = ? AND dir_path = ?`, filePath, dirPath)
 	return err
+}
+
+func (s *SQLiteStore) ListDistinctMemoryFilePaths(ctx context.Context, dirPath string) ([]MemoryFileInfo, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT file_path, dir_path FROM memory_files WHERE (dir_path = ? OR dir_path = '') ORDER BY file_path ASC`,
+		dirPath,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var files []MemoryFileInfo
+	for rows.Next() {
+		var f MemoryFileInfo
+		if err := rows.Scan(&f.FilePath, &f.DirPath); err != nil {
+			return nil, err
+		}
+		files = append(files, f)
+	}
+	return files, rows.Err()
 }
 
 // Column lists for SELECT queries.

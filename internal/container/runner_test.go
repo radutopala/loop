@@ -2414,6 +2414,23 @@ func TestScanStreamJSONOnActivity(t *testing.T) {
 		require.Equal(t, "claude-opus-4-6", resp.Model)
 	})
 
+	t.Run("malformed system event JSON skipped", func(t *testing.T) {
+		// The line passes initial typeCheck unmarshal (has "type":"system") but fails
+		// the second unmarshal into systemEvent because of a bad field value.
+		input := `{"type":"system","subtype":123}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+		var activities []string
+		resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{
+			onActivity: func(kind, desc string) {
+				activities = append(activities, kind+":"+desc)
+			},
+		})
+		require.NoError(t, err)
+		require.Equal(t, "OK", resp.Result)
+		require.Empty(t, activities) // malformed system event was skipped
+	})
+
 	t.Run("no activity callback ignores system events", func(t *testing.T) {
 		input := `{"type":"system","subtype":"task_started","description":"test"}
 {"type":"assistant","message":{"model":"claude-opus-4-6","content":[{"type":"text","text":"Done"}]}}

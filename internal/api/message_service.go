@@ -20,4 +20,5 @@ type ChannelLister interface {
 	GetMessagesAround(ctx context.Context, channelID string, messageID int64, limit int) ([]*db.Message, error)
 	DeleteChannel(ctx context.Context, channelID string) error
 	DeleteChannelsByParentID(ctx context.Context, parentID string) error
+	ListDistinctMemoryFilePaths(ctx context.Context, dirPath string) ([]db.MemoryFileInfo, error)
 }

@@ -199,6 +199,14 @@ func (m *MockStore) DeleteMemoryFile(ctx context.Context, filePath, dirPath stri
 	return m.Called(ctx, filePath, dirPath).Error(0)
 }
 
+func (m *MockStore) ListDistinctMemoryFilePaths(ctx context.Context, dirPath string) ([]db.MemoryFileInfo, error) {
+	args := m.Called(ctx, dirPath)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]db.MemoryFileInfo), args.Error(1)
+}
+
 func (m *MockStore) UpdateChannelPermissions(ctx context.Context, channelID string, perms types.Permissions) error {
 	return m.Called(ctx, channelID, perms).Error(0)
 }

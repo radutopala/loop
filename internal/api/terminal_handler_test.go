@@ -1889,9 +1889,9 @@ func (s *TerminalHandlerSuite) TestKillWithActiveSession() {
 	close(doneCh)
 }
 
-func (s *TerminalHandlerSuite) TestHostSessionStoppedOnDisconnect() {
-	// Host shell sessions should be stopped (PTY killed) when the WS disconnects,
-	// not just detached.
+func (s *TerminalHandlerSuite) TestHostSessionDetachedOnDisconnect() {
+	// Host shell sessions should be detached (not killed) when the WS disconnects,
+	// so they can be reattached later.
 	hostMgr := new(MockTerminalManager)
 	s.srv.SetHostTerminalManager(hostMgr)
 
@@ -1899,7 +1899,7 @@ func (s *TerminalHandlerSuite) TestHostSessionStoppedOnDisconnect() {
 	doneCh := make(chan struct{})
 	hostMgr.On("CreateSession", mock.Anything, mock.AnythingOfType("string"), []string(nil)).
 		Return("host-sess-dc", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
-	hostMgr.On("StopSession", "host-sess-dc").Return("", nil)
+	hostMgr.On("DetachSession", "host-sess-dc", mock.Anything).Return(nil)
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -1907,12 +1907,12 @@ func (s *TerminalHandlerSuite) TestHostSessionStoppedOnDisconnect() {
 	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-1", Target: "host"})
 	readStatusMsg(s.T(), conn) // created
 
-	// Close the WS — should trigger StopSession for host, not just DetachSession.
+	// Close the WS — should trigger DetachSession for host, not StopSession.
 	conn.Close()
 	time.Sleep(100 * time.Millisecond)
 
-	hostMgr.AssertCalled(s.T(), "StopSession", "host-sess-dc")
-	hostMgr.AssertNotCalled(s.T(), "DetachSession", mock.Anything, mock.Anything)
+	hostMgr.AssertCalled(s.T(), "DetachSession", "host-sess-dc", mock.Anything)
+	hostMgr.AssertNotCalled(s.T(), "StopSession", mock.Anything)
 
 	close(doneCh)
 }
@@ -1940,4 +1940,144 @@ func (s *TerminalHandlerSuite) TestAgentSessionDetachedOnDisconnect() {
 	s.terminal.AssertNotCalled(s.T(), "StopSession", mock.Anything)
 
 	close(doneCh)
+}
+
+func (s *TerminalHandlerSuite) TestHostCreateParentFallbackLoopDir() {
+	// When the channel is a thread and parent lookup fails, should fall back to loopDir.
+	hostMgr := new(MockTerminalManager)
+	s.srv.SetHostTerminalManager(hostMgr)
+	s.srv.loopDir = "/tmp/loop-test"
+
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-thread").
+		Return(&db.Channel{ChannelID: "ch-thread", ParentID: "ch-parent"}, nil)
+	store.On("GetChannel", mock.Anything, "ch-parent").
+		Return(nil, errors.New("not found"))
+	s.srv.store = store
+
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	hostMgr.On("CreateSession", mock.Anything, "/tmp/loop-test/ch-thread/work", []string(nil)).
+		Return("host-fallback-1", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	hostMgr.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-thread", Target: "host"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	close(doneCh)
+}
+
+func (s *TerminalHandlerSuite) TestHostCreateLoopDirFallback() {
+	// When channel has no DirPath and no ParentID, should fall back to loopDir.
+	hostMgr := new(MockTerminalManager)
+	s.srv.SetHostTerminalManager(hostMgr)
+	s.srv.loopDir = "/tmp/loop-test"
+
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-nodir").
+		Return(&db.Channel{ChannelID: "ch-nodir"}, nil)
+	s.srv.store = store
+
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	hostMgr.On("CreateSession", mock.Anything, "/tmp/loop-test/ch-nodir/work", []string(nil)).
+		Return("host-fallback-2", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	hostMgr.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-nodir", Target: "host"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	close(doneCh)
+}
+
+func (s *TerminalHandlerSuite) TestKillNotConfigured() {
+	// When containerFinder or containerStopper is nil, kill should return an error.
+	s.srv.containerFinder = nil
+	s.srv.containerStopper = nil
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "kill", ChannelID: "ch-1"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "error", msg.Type)
+	require.Contains(s.T(), msg.Message, "container management not configured")
+}
+
+func (s *TerminalHandlerSuite) TestKillWithActiveSessionStopError() {
+	// When kill has an active agent session and StopSession fails, it should
+	// still proceed with container removal.
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
+		Return("sess-err", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("StopSession", "sess-err").Return("", errors.New("stop failed"))
+
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-err").
+		Return(&db.Channel{ChannelID: "ch-err"}, nil)
+	s.srv.store = store
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-err", "").Return("ctr-1", nil)
+	s.srv.SetContainerFinder(finder)
+
+	stopper := new(MockContainerStopper)
+	stopper.On("ContainerRemove", mock.Anything, "ctr-1").Return(nil)
+	s.srv.SetContainerStopper(stopper)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1"})
+	readStatusMsg(s.T(), conn) // created
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "kill", ChannelID: "ch-err"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "stopped", msg.Type)
+
+	s.terminal.AssertCalled(s.T(), "StopSession", "sess-err")
+	stopper.AssertCalled(s.T(), "ContainerRemove", mock.Anything, "ctr-1")
+	close(doneCh)
+}
+
+func (s *TerminalHandlerSuite) TestKillContainerRemoveError() {
+	// When ContainerRemove fails during kill, it should still report stopped.
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-rm-err").
+		Return(&db.Channel{ChannelID: "ch-rm-err"}, nil)
+	s.srv.store = store
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-rm-err", "").Return("ctr-rm", nil)
+	s.srv.SetContainerFinder(finder)
+
+	stopper := new(MockContainerStopper)
+	stopper.On("ContainerRemove", mock.Anything, "ctr-rm").Return(errors.New("remove failed"))
+	s.srv.SetContainerStopper(stopper)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "kill", ChannelID: "ch-rm-err"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "stopped", msg.Type)
+
+	stopper.AssertCalled(s.T(), "ContainerRemove", mock.Anything, "ctr-rm")
 }

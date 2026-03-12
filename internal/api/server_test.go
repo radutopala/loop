@@ -185,6 +185,8 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("POST /api/commands", s.srv.handleCommand)
 	s.mux.HandleFunc("POST /api/memory/search", s.srv.handleMemorySearch)
 	s.mux.HandleFunc("POST /api/memory/index", s.srv.handleMemoryIndex)
+	s.mux.HandleFunc("GET /api/memory/files", s.srv.handleListMemoryFiles)
+	s.mux.HandleFunc("GET /api/memory/file", s.srv.handleReadMemoryFile)
 	s.mux.HandleFunc("GET /api/readme", s.srv.handleGetReadme)
 	s.mux.HandleFunc("GET /api/health", handleHealth)
 	s.mux.HandleFunc("GET /api/ws/terminal", s.srv.handleTerminalWS)
@@ -577,6 +579,26 @@ func (s *ServerSuite) TestStopNilServer() {
 	srv := nilServer()
 	err := srv.Stop(context.Background())
 	require.NoError(s.T(), err)
+}
+
+func (s *ServerSuite) TestStopWithInjectedError() {
+	srv := nilServer()
+	require.NoError(s.T(), srv.Start("127.0.0.1:0"))
+
+	injectedErr := errors.New("injected stop error")
+	srv.SetStopError(injectedErr)
+
+	err := srv.Stop(context.Background())
+	require.ErrorIs(s.T(), err, injectedErr)
+}
+
+func (s *ServerSuite) TestStopWithInjectedErrorNilHTTPServer() {
+	srv := nilServer()
+	injectedErr := errors.New("injected stop error")
+	srv.SetStopError(injectedErr)
+
+	err := srv.Stop(context.Background())
+	require.ErrorIs(s.T(), err, injectedErr)
 }
 
 func (s *ServerSuite) TestStartServeError() {

@@ -175,6 +175,24 @@ export async function searchMessages(
   return res.json();
 }
 
+export interface MemoryFileInfo {
+  file_path: string;
+  dir_path: string;
+}
+
+export async function fetchMemoryFiles(channelId: string): Promise<MemoryFileInfo[]> {
+  const res = await fetch(`${apiUrl}/api/memory/files?channel_id=${encodeURIComponent(channelId)}`);
+  if (!res.ok) throw new Error(`Failed to fetch memory files: ${res.statusText}`);
+  const data: { files: MemoryFileInfo[] } = await res.json();
+  return data.files;
+}
+
+export async function fetchMemoryFileContent(filePath: string): Promise<string> {
+  const res = await fetch(`${apiUrl}/api/memory/file?path=${encodeURIComponent(filePath)}`);
+  if (!res.ok) throw new Error(`Failed to fetch memory file: ${res.statusText}`);
+  return res.text();
+}
+
 export async function fetchMessages(
   channelId: string,
   opts?: { limit?: number; cursor?: number; around?: number },

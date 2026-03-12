@@ -127,6 +127,8 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("POST /api/commands", s.handleCommand)
 	mux.HandleFunc("POST /api/memory/search", s.handleMemorySearch)
 	mux.HandleFunc("POST /api/memory/index", s.handleMemoryIndex)
+	mux.HandleFunc("GET /api/memory/files", s.handleListMemoryFiles)
+	mux.HandleFunc("GET /api/memory/file", s.handleReadMemoryFile)
 	mux.HandleFunc("GET /api/readme", s.handleGetReadme)
 	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
 	mux.HandleFunc("GET /api/health", handleHealth)

@@ -6,6 +6,7 @@ import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { DiffPanel } from "./components/DiffPanel";
 import { MarkdownFilePanel } from "./components/FilePanel";
+import { MemoryPanel } from "./components/MemoryPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { CommandPalette } from "./components/CommandPalette";
 import { Settings } from "./components/Settings";
@@ -75,6 +76,8 @@ export default function App() {
   const [terminalMaximized, setTerminalMaximized] = useState(false);
   const [readmeOpen, setReadmeOpen] = useState(false);
   const [readmeMaximized, setReadmeMaximized] = useState(false);
+  const [memoryOpen, setMemoryOpen] = useState(false);
+  const [memoryMaximized, setMemoryMaximized] = useState(false);
 
   // Fetch diff stats for the selected channel and keep them updated via events.
   const loadDiffStats = useCallback(async () => {
@@ -108,8 +111,13 @@ export default function App() {
     const onHashChange = () => {
       const id = getHashChannelId();
       setSelectedId(id);
-      setTerminalOpen(loadTerminalOpen(id));
+      const termOpen = loadTerminalOpen(id);
+      setTerminalOpen(termOpen);
       setTerminalMaximized(false);
+      setDiffOpen(false); setDiffMaximized(false);
+      setMemoryOpen(false); setMemoryMaximized(false);
+      setReadmeOpen(false); setReadmeMaximized(false);
+      setSettingsOpen(false);
     };
     window.addEventListener("hashchange", onHashChange);
     return () => window.removeEventListener("hashchange", onHashChange);
@@ -120,8 +128,13 @@ export default function App() {
     if (window.loopAPI?.onNavigateChannel) {
       window.loopAPI.onNavigateChannel((channelId: string) => {
         setSelectedId(channelId);
-        setTerminalOpen(loadTerminalOpen(channelId));
+        const termOpen = loadTerminalOpen(channelId);
+        setTerminalOpen(termOpen);
         setTerminalMaximized(false);
+        setDiffOpen(false); setDiffMaximized(false);
+        setMemoryOpen(false); setMemoryMaximized(false);
+        setReadmeOpen(false); setReadmeMaximized(false);
+        setSettingsOpen(false);
       });
     }
   }, []);
@@ -136,7 +149,7 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === ",") {
         e.preventDefault();
         setSettingsOpen((v) => {
-          if (!v) { setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); }
+          if (!v) { setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setMemoryOpen(false); setMemoryMaximized(false); }
           return !v;
         });
         setSettingsDirPath(null);
@@ -149,7 +162,7 @@ export default function App() {
   // Listen for Settings menu item from main process.
   useEffect(() => {
     if (window.loopAPI?.onOpenSettings) {
-      window.loopAPI.onOpenSettings(() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); });
+      window.loopAPI.onOpenSettings(() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setMemoryOpen(false); setMemoryMaximized(false); });
     }
   }, []);
 
@@ -230,8 +243,13 @@ export default function App() {
       }
       return id;
     });
-    setTerminalOpen(loadTerminalOpen(id));
+    const termOpen = loadTerminalOpen(id);
+    setTerminalOpen(termOpen);
     setTerminalMaximized(false);
+    setDiffOpen(false); setDiffMaximized(false);
+    setMemoryOpen(false); setMemoryMaximized(false);
+    setReadmeOpen(false); setReadmeMaximized(false);
+    setSettingsOpen(false);
   }, []);
 
   // Auto-select DM channel if nothing is selected on first load.
@@ -377,10 +395,10 @@ export default function App() {
         onCreateThread={handleCreateThread}
         onDeleteThread={handleDelete}
         onDeleteBatch={handleDeleteBatch}
-        onOpenSettings={() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); }}
-        onOpenConfig={(dirPath) => { setSettingsOpen(true); setSettingsDirPath(dirPath); setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); }}
+        onOpenSettings={() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setMemoryOpen(false); setMemoryMaximized(false); }}
+        onOpenConfig={(dirPath) => { setSettingsOpen(true); setSettingsDirPath(dirPath); setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setMemoryOpen(false); setMemoryMaximized(false); }}
       />
-      <div style={{ flex: 1, minWidth: (diffMaximized || terminalMaximized || readmeMaximized) ? 0 : 360, display: (diffMaximized || terminalMaximized || readmeMaximized) ? "none" : "flex", flexDirection: "column" }}>
+      <div style={{ flex: 1, minWidth: (diffMaximized || terminalMaximized || readmeMaximized || memoryMaximized) ? 0 : 360, display: (diffMaximized || terminalMaximized || readmeMaximized || memoryMaximized) ? "none" : "flex", flexDirection: "column" }}>
         {/* Drag region for macOS hiddenInset title bar — enables double-click to zoom */}
         <div
           style={{
@@ -447,7 +465,7 @@ export default function App() {
             <span style={{ opacity: 0.7 }}>{navigator.platform.includes("Mac") ? "\u2318K" : "Ctrl+K"}</span>
           </button>
           <button
-            onClick={() => setReadmeOpen((v) => { if (!v) { setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); setSettingsOpen(false); } else { setReadmeMaximized(false); } return !v; })}
+            onClick={() => setReadmeOpen((v) => { if (!v) { setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); setSettingsOpen(false); setMemoryOpen(false); setMemoryMaximized(false); } else { setReadmeMaximized(false); } return !v; })}
             title="README"
             style={{
               background: readmeOpen ? colors.selectedBg : "none",
@@ -553,7 +571,33 @@ export default function App() {
             </span>
             <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
               <button
-                onClick={() => setTerminalOpen((v) => { const next = !v; if (next) { setDiffOpen(false); setDiffMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setSettingsOpen(false); } else { setTerminalMaximized(false); } if (selectedId) saveTerminalOpen(selectedId, next); return next; })}
+                onClick={() => setMemoryOpen((v) => { if (!v) { setTerminalOpen(false); setTerminalMaximized(false); setDiffOpen(false); setDiffMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setSettingsOpen(false); } else { setMemoryMaximized(false); } return !v; })}
+                title="Toggle memory panel"
+                style={{
+                  background: memoryOpen ? colors.selectedBg : "none",
+                  border: `1px solid ${memoryOpen ? colors.textDim : colors.border}`,
+                  color: memoryOpen ? colors.textLight : colors.textDim,
+                  cursor: "pointer",
+                  padding: "2px 6px",
+                  fontSize: 10,
+                  fontFamily: fonts.mono,
+                  lineHeight: 1,
+                  borderRadius: 6,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 4,
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+                  <polyline points="14 2 14 8 20 8" />
+                  <line x1="16" y1="13" x2="8" y2="13" />
+                  <line x1="16" y1="17" x2="8" y2="17" />
+                </svg>
+                Memory
+              </button>
+              <button
+                onClick={() => setTerminalOpen((v) => { const next = !v; if (next) { setDiffOpen(false); setDiffMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setSettingsOpen(false); setMemoryOpen(false); setMemoryMaximized(false); } else { setTerminalMaximized(false); } if (selectedId) saveTerminalOpen(selectedId, next); return next; })}
                 title="Toggle terminal panel"
                 style={{
                   background: terminalOpen ? colors.selectedBg : "none",
@@ -577,7 +621,7 @@ export default function App() {
                 Terminal
               </button>
               <button
-                onClick={() => setDiffOpen((v) => { if (!v) { setTerminalOpen(false); setTerminalMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setSettingsOpen(false); } return !v; })}
+                onClick={() => setDiffOpen((v) => { if (!v) { setTerminalOpen(false); setTerminalMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setSettingsOpen(false); setMemoryOpen(false); setMemoryMaximized(false); } return !v; })}
                 title="Toggle diff panel"
                 style={{
                   background: diffOpen ? colors.selectedBg : "none",
@@ -650,6 +694,19 @@ export default function App() {
           onOpenPalette={() => setPaletteOpen(true)}
           onToggleMaximize={() => setReadmeMaximized((v) => !v)}
           onClose={() => { setReadmeOpen(false); setReadmeMaximized(false); }}
+        />
+      )}
+      {memoryOpen && selectedId && (
+        <MemoryPanel
+          channelId={selectedId}
+          dirPath={channels.find((c) => c.id === selectedId)?.dir_path || ""}
+          branch={channels.find((c) => c.id === selectedId)?.branch || ""}
+          maximized={memoryMaximized}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onToggleMaximize={() => setMemoryMaximized((v) => !v)}
+          onClose={() => { setMemoryOpen(false); setMemoryMaximized(false); }}
         />
       )}
       {settingsOpen && (

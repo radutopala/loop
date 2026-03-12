@@ -362,7 +362,7 @@ function hoverOut(e: React.MouseEvent<HTMLButtonElement>) {
   e.currentTarget.style.color = colors.textDim;
 }
 
-const markdownStyles = `
+export const markdownStyles = `
 .readme-content h1, .readme-content h2, .readme-content h3,
 .readme-content h4, .readme-content h5, .readme-content h6 {
   color: ${colors.textLight};
