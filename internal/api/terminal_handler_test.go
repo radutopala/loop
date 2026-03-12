@@ -1888,3 +1888,56 @@ func (s *TerminalHandlerSuite) TestKillWithActiveSession() {
 
 	close(doneCh)
 }
+
+func (s *TerminalHandlerSuite) TestHostSessionStoppedOnDisconnect() {
+	// Host shell sessions should be stopped (PTY killed) when the WS disconnects,
+	// not just detached.
+	hostMgr := new(MockTerminalManager)
+	s.srv.SetHostTerminalManager(hostMgr)
+
+	outCh := make(chan []byte, 64)
+	doneCh := make(chan struct{})
+	hostMgr.On("CreateSession", mock.Anything, mock.AnythingOfType("string"), []string(nil)).
+		Return("host-sess-dc", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	hostMgr.On("StopSession", "host-sess-dc").Return("", nil)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-1", Target: "host"})
+	readStatusMsg(s.T(), conn) // created
+
+	// Close the WS — should trigger StopSession for host, not just DetachSession.
+	conn.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	hostMgr.AssertCalled(s.T(), "StopSession", "host-sess-dc")
+	hostMgr.AssertNotCalled(s.T(), "DetachSession", mock.Anything, mock.Anything)
+
+	close(doneCh)
+}
+
+func (s *TerminalHandlerSuite) TestAgentSessionDetachedOnDisconnect() {
+	// Agent sessions should only be detached (not stopped) on WS disconnect —
+	// container lifecycle is managed separately.
+	outCh := make(chan []byte, 64)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
+		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("DetachSession", "sess-1", mock.Anything).Return(nil)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1"})
+	readStatusMsg(s.T(), conn) // created
+
+	// Close the WS — agent sessions should be detached, not stopped.
+	conn.Close()
+	time.Sleep(100 * time.Millisecond)
+
+	s.terminal.AssertCalled(s.T(), "DetachSession", "sess-1", mock.Anything)
+	s.terminal.AssertNotCalled(s.T(), "StopSession", mock.Anything)
+
+	close(doneCh)
+}

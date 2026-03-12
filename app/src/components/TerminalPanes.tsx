@@ -137,6 +137,11 @@ function updateFlex(node: PaneNode, parentPath: number[], dividerIndex: number, 
   };
 }
 
+function collectLeaves(node: PaneNode): LeafNode[] {
+  if (node.type === "leaf") return [node];
+  return node.children.flatMap(collectLeaves);
+}
+
 function findLastLeaf(node: PaneNode): LeafNode | null {
   if (node.type === "leaf") return node;
   for (let i = node.children.length - 1; i >= 0; i--) {
@@ -246,6 +251,8 @@ interface TerminalPanesProps {
 export interface TerminalPanesRef {
   splitLast: (dir: SplitDirection, target?: TerminalTarget) => void;
   addPane: (target: TerminalTarget, dir: SplitDirection) => void;
+  /** Close all terminal sessions (used before panel unmount). */
+  closeAllSessions: () => void;
 }
 
 export const TerminalPanes = forwardRef<TerminalPanesRef, TerminalPanesProps>(function TerminalPanes({ channelId, storageKey, onStatusChange, onAgentStateChange, onLastAgentRemoved }, ref) {
@@ -418,7 +425,16 @@ export const TerminalPanes = forwardRef<TerminalPanesRef, TerminalPanesProps>(fu
     setTree((prev) => prev ? updateFlex(prev, parentPath, dividerIndex, flexA, flexB) : prev);
   }, []);
 
-  useImperativeHandle(ref, () => ({ splitLast: handleSplitLast, addPane: handleAddPane }), [handleSplitLast, handleAddPane]);
+  const closeAllSessions = useCallback(() => {
+    const current = treeRef.current;
+    if (!current || !channelId) return;
+    for (const leaf of collectLeaves(current)) {
+      const closeKey = `${leaf.target}:${channelId}:${leaf.id}`;
+      getCloseForInstance(closeKey)?.();
+    }
+  }, [channelId]);
+
+  useImperativeHandle(ref, () => ({ splitLast: handleSplitLast, addPane: handleAddPane, closeAllSessions }), [handleSplitLast, handleAddPane, closeAllSessions]);
 
   if (!tree) {
     return (
@@ -739,8 +755,6 @@ function PaneHeader({ label, target, leafId, onToggleTarget, onRemove, onSplit, 
     }
   }, [leafId, onDrop]);
 
-  const [splitMenu, setSplitMenu] = useState(false);
-
   return (
     <div
       draggable
@@ -780,26 +794,8 @@ function PaneHeader({ label, target, leafId, onToggleTarget, onRemove, onSplit, 
         {label}
       </button>
       <div style={{ flex: 1 }} />
-      <div style={{ position: "relative" }}>
-        <button
-          onClick={() => setSplitMenu((v) => !v)}
-          title="Split pane"
-          style={paneHeaderBtnStyle}
-          onMouseEnter={hoverIn}
-          onMouseLeave={hoverOut}
-        >
-          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="12" y1="5" x2="12" y2="19" />
-            <line x1="5" y1="12" x2="19" y2="12" />
-          </svg>
-        </button>
-        {splitMenu && (
-          <PaneSplitMenu
-            onSplit={(dir, t) => { setSplitMenu(false); onSplit(dir, t); }}
-            onClose={() => setSplitMenu(false)}
-          />
-        )}
-      </div>
+      <PaneSplitButton label="Agent" target="agent" onSplit={onSplit} />
+      <PaneSplitButton label="Shell" target="host" onSplit={onSplit} />
       <button
         onClick={onRemove}
         title="Close pane"
@@ -816,18 +812,22 @@ function PaneHeader({ label, target, leafId, onToggleTarget, onRemove, onSplit, 
   );
 }
 
-function PaneSplitMenu({ onSplit, onClose }: {
+function PaneSplitButton({ label, target, onSplit }: {
+  label: string;
+  target: TerminalTarget;
   onSplit: (dir: SplitDirection, target: TerminalTarget) => void;
-  onClose: () => void;
 }) {
+  const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+
   useEffect(() => {
+    if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) onClose();
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [onClose]);
+  }, [open]);
 
   const itemStyle: React.CSSProperties = {
     display: "flex",
@@ -845,40 +845,43 @@ function PaneSplitMenu({ onSplit, onClose }: {
   };
 
   return (
-    <div
-      ref={ref}
-      style={{
-        position: "absolute",
-        top: "100%",
-        right: 0,
-        zIndex: 100,
-        backgroundColor: colors.surface,
-        border: `1px solid ${colors.border}`,
-        borderRadius: 6,
-        padding: 4,
-        minWidth: 140,
-        boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
-      }}
-    >
-      <div style={{ fontSize: 9, color: colors.textDim, padding: "2px 10px", textTransform: "uppercase", letterSpacing: 0.5 }}>Agent Terminal</div>
-      <button style={itemStyle} onClick={() => onSplit("vertical", "agent")} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="3" y1="12" x2="21" y2="12" /></svg>
-        Split Down
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((v) => !v)}
+        title={`Add ${label} pane`}
+        style={{ ...paneHeaderBtnStyle, fontSize: 9, gap: 1 }}
+        onMouseEnter={hoverIn}
+        onMouseLeave={hoverOut}
+      >
+        <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19" />
+          <line x1="5" y1="12" x2="19" y2="12" />
+        </svg>
+        {label}
       </button>
-      <button style={itemStyle} onClick={() => onSplit("horizontal", "agent")} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="12" y1="3" x2="12" y2="21" /></svg>
-        Split Right
-      </button>
-      <div style={{ height: 1, backgroundColor: colors.border, margin: "4px 0" }} />
-      <div style={{ fontSize: 9, color: colors.textDim, padding: "2px 10px", textTransform: "uppercase", letterSpacing: 0.5 }}>Host Shell</div>
-      <button style={itemStyle} onClick={() => onSplit("vertical", "host")} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="3" y1="12" x2="21" y2="12" /></svg>
-        Split Down
-      </button>
-      <button style={itemStyle} onClick={() => onSplit("horizontal", "host")} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="12" y1="3" x2="12" y2="21" /></svg>
-        Split Right
-      </button>
+      {open && (
+        <div style={{
+          position: "absolute",
+          top: "100%",
+          right: 0,
+          zIndex: 100,
+          backgroundColor: colors.surface,
+          border: `1px solid ${colors.border}`,
+          borderRadius: 6,
+          padding: 4,
+          minWidth: 110,
+          boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+        }}>
+          <button style={itemStyle} onClick={() => { setOpen(false); onSplit("vertical", target); }} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="3" y1="12" x2="21" y2="12" /></svg>
+            Split Down
+          </button>
+          <button style={itemStyle} onClick={() => { setOpen(false); onSplit("horizontal", target); }} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="12" y1="3" x2="12" y2="21" /></svg>
+            Split Right
+          </button>
+        </div>
+      )}
     </div>
   );
 }
@@ -886,68 +889,55 @@ function PaneSplitMenu({ onSplit, onClose }: {
 // ── Pane picker (initial empty state) ──
 
 function PanePicker({ onPick }: { onPick: (target: TerminalTarget) => void }) {
+  const btnStyle: React.CSSProperties = {
+    padding: "12px 24px",
+    borderRadius: 6,
+    border: `1px solid ${colors.border}`,
+    backgroundColor: "transparent",
+    color: colors.textDim,
+    cursor: "pointer",
+    fontSize: 13,
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+  };
   return (
     <div style={{
       flex: 1,
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      gap: 16,
-      padding: 24,
+      gap: 12,
     }}>
       <button
         onClick={() => onPick("agent")}
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 8,
-          padding: "20px 28px",
-          borderRadius: 8,
-          border: `1px solid ${colors.border}`,
-          backgroundColor: colors.surface,
-          color: colors.text,
-          cursor: "pointer",
-          fontSize: 13,
-          fontWeight: 500,
-          minWidth: 140,
-        }}
-        onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.active; e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-        onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.backgroundColor = colors.surface; }}
+        style={btnStyle}
+        onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textDim; e.currentTarget.style.color = colors.textLight; e.currentTarget.style.backgroundColor = colors.hoverBg; }}
+        onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = colors.textDim; e.currentTarget.style.backgroundColor = "transparent"; }}
       >
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={colors.active} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <rect x="4" y="4" width="16" height="16" rx="2" />
           <path d="M9 9h6M9 13h4" />
         </svg>
-        Agent Terminal
-        <span style={{ fontSize: 10, color: colors.textDim, fontWeight: 400 }}>Docker container</span>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+          <span>Agent Terminal</span>
+          <span style={{ fontSize: 10, opacity: 0.6 }}>Docker isolated interactive mode</span>
+        </div>
       </button>
       <button
         onClick={() => onPick("host")}
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          alignItems: "center",
-          gap: 8,
-          padding: "20px 28px",
-          borderRadius: 8,
-          border: `1px solid ${colors.border}`,
-          backgroundColor: colors.surface,
-          color: colors.text,
-          cursor: "pointer",
-          fontSize: 13,
-          fontWeight: 500,
-          minWidth: 140,
-        }}
-        onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.active; e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-        onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.backgroundColor = colors.surface; }}
+        style={btnStyle}
+        onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textDim; e.currentTarget.style.color = colors.textLight; e.currentTarget.style.backgroundColor = colors.hoverBg; }}
+        onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = colors.textDim; e.currentTarget.style.backgroundColor = "transparent"; }}
       >
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke={colors.active} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
           <polyline points="4 17 10 11 4 5" />
           <line x1="12" y1="19" x2="20" y2="19" />
         </svg>
-        Host Shell
-        <span style={{ fontSize: 10, color: colors.textDim, fontWeight: 400 }}>Local terminal</span>
+        <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
+          <span>Host Shell</span>
+          <span style={{ fontSize: 10, opacity: 0.6 }}>Local machine shell session</span>
+        </div>
       </button>
     </div>
   );

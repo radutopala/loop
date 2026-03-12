@@ -188,10 +188,24 @@ func (t *terminalWSConn) detachCurrent() {
 	}
 }
 
-// close stops streaming and detaches from the current session.
+// close stops streaming and cleans up the current session.
+// For host sessions the PTY process is stopped (killed) since there is no
+// container to reconnect to. Agent sessions are only detached — their
+// container lifecycle is managed separately.
 func (t *terminalWSConn) close() {
 	t.stopOnce.Do(func() { close(t.stopCh) })
-	t.detachCurrent()
+	if t.sessionID != "" && t.sessionTarget == "host" {
+		if mgr := t.activeManager(); mgr != nil {
+			if _, err := mgr.StopSession(t.sessionID); err != nil {
+				t.logger.Warn("terminal ws: close stop host session failed", "session_id", t.sessionID, "error", err)
+			}
+		}
+		t.sessionID = ""
+		t.outputCh = nil
+		t.sessionTarget = ""
+	} else {
+		t.detachCurrent()
+	}
 }
 
 // startSession attaches to a session and begins streaming output.

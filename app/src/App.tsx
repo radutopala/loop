@@ -5,6 +5,7 @@ import { createChannel, createThread, deleteChannel, deleteThread, fetchChannels
 import { Sidebar } from "./components/Sidebar";
 import { ChatView } from "./components/ChatView";
 import { DiffPanel } from "./components/DiffPanel";
+import { MarkdownFilePanel } from "./components/FilePanel";
 import { TerminalPanel } from "./components/TerminalPanel";
 import { CommandPalette } from "./components/CommandPalette";
 import { Settings } from "./components/Settings";
@@ -72,6 +73,8 @@ export default function App() {
   const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(null);
   const [terminalOpen, setTerminalOpen] = useState(() => loadTerminalOpen(getHashChannelId()));
   const [terminalMaximized, setTerminalMaximized] = useState(false);
+  const [readmeOpen, setReadmeOpen] = useState(false);
+  const [readmeMaximized, setReadmeMaximized] = useState(false);
 
   // Fetch diff stats for the selected channel and keep them updated via events.
   const loadDiffStats = useCallback(async () => {
@@ -133,7 +136,7 @@ export default function App() {
       if ((e.metaKey || e.ctrlKey) && e.key === ",") {
         e.preventDefault();
         setSettingsOpen((v) => {
-          if (!v) { setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); }
+          if (!v) { setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); }
           return !v;
         });
         setSettingsDirPath(null);
@@ -146,7 +149,7 @@ export default function App() {
   // Listen for Settings menu item from main process.
   useEffect(() => {
     if (window.loopAPI?.onOpenSettings) {
-      window.loopAPI.onOpenSettings(() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); });
+      window.loopAPI.onOpenSettings(() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); });
     }
   }, []);
 
@@ -377,7 +380,7 @@ export default function App() {
         onOpenSettings={() => { setSettingsOpen(true); setSettingsDirPath(null); setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); }}
         onOpenConfig={(dirPath) => { setSettingsOpen(true); setSettingsDirPath(dirPath); setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); }}
       />
-      <div style={{ flex: 1, minWidth: (diffMaximized || terminalMaximized) ? 0 : 360, display: (diffMaximized || terminalMaximized) ? "none" : "flex", flexDirection: "column" }}>
+      <div style={{ flex: 1, minWidth: (diffMaximized || terminalMaximized || readmeMaximized) ? 0 : 360, display: (diffMaximized || terminalMaximized || readmeMaximized) ? "none" : "flex", flexDirection: "column" }}>
         {/* Drag region for macOS hiddenInset title bar — enables double-click to zoom */}
         <div
           style={{
@@ -442,6 +445,33 @@ export default function App() {
               <line x1="21" y1="21" x2="16.65" y2="16.65" />
             </svg>
             <span style={{ opacity: 0.7 }}>{navigator.platform.includes("Mac") ? "\u2318K" : "Ctrl+K"}</span>
+          </button>
+          <button
+            onClick={() => setReadmeOpen((v) => { if (!v) { setDiffOpen(false); setDiffMaximized(false); setTerminalOpen(false); setTerminalMaximized(false); setSettingsOpen(false); } else { setReadmeMaximized(false); } return !v; })}
+            title="README"
+            style={{
+              background: readmeOpen ? colors.selectedBg : "none",
+              border: `1px solid ${readmeOpen ? colors.textDim : colors.border}`,
+              color: readmeOpen ? colors.textLight : colors.textDim,
+              cursor: "pointer",
+              padding: "2px 8px",
+              lineHeight: 1,
+              borderRadius: 4,
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: 11,
+              fontFamily: fonts.mono,
+              marginLeft: 6,
+              // @ts-expect-error: WebKit-specific CSS property
+              WebkitAppRegion: "no-drag",
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
+              <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
+            </svg>
+            README
           </button>
           <div style={{ flex: 1 }} />
         </div>
@@ -523,7 +553,7 @@ export default function App() {
             </span>
             <div style={{ display: "flex", alignItems: "stretch", gap: 8 }}>
               <button
-                onClick={() => setTerminalOpen((v) => { const next = !v; if (next) { setDiffOpen(false); setDiffMaximized(false); setSettingsOpen(false); } else { setTerminalMaximized(false); } if (selectedId) saveTerminalOpen(selectedId, next); return next; })}
+                onClick={() => setTerminalOpen((v) => { const next = !v; if (next) { setDiffOpen(false); setDiffMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setSettingsOpen(false); } else { setTerminalMaximized(false); } if (selectedId) saveTerminalOpen(selectedId, next); return next; })}
                 title="Toggle terminal panel"
                 style={{
                   background: terminalOpen ? colors.selectedBg : "none",
@@ -547,7 +577,7 @@ export default function App() {
                 Terminal
               </button>
               <button
-                onClick={() => setDiffOpen((v) => { if (!v) { setTerminalOpen(false); setTerminalMaximized(false); setSettingsOpen(false); } return !v; })}
+                onClick={() => setDiffOpen((v) => { if (!v) { setTerminalOpen(false); setTerminalMaximized(false); setReadmeOpen(false); setReadmeMaximized(false); setSettingsOpen(false); } return !v; })}
                 title="Toggle diff panel"
                 style={{
                   background: diffOpen ? colors.selectedBg : "none",
@@ -608,6 +638,18 @@ export default function App() {
           onOpenPalette={() => setPaletteOpen(true)}
           onToggleMaximize={() => setDiffMaximized((v) => !v)}
           onClose={() => { setDiffOpen(false); setDiffMaximized(false); }}
+        />
+      )}
+      {readmeOpen && (
+        <MarkdownFilePanel
+          dirPath={selectedId ? channels.find((c) => c.id === selectedId)?.dir_path || "" : ""}
+          branch={selectedId ? channels.find((c) => c.id === selectedId)?.branch || "" : ""}
+          maximized={readmeMaximized}
+          sidebarOpen={sidebarOpen}
+          onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onToggleMaximize={() => setReadmeMaximized((v) => !v)}
+          onClose={() => { setReadmeOpen(false); setReadmeMaximized(false); }}
         />
       )}
       {settingsOpen && (

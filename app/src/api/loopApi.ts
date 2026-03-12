@@ -149,6 +149,12 @@ export async function fetchDiff(channelId: string): Promise<DiffResponse> {
   return res.json();
 }
 
+export async function fetchReadme(): Promise<string> {
+  const res = await fetch(`${apiUrl}/api/readme`);
+  if (!res.ok) throw new Error(`Failed to fetch README: ${res.statusText}`);
+  return res.text();
+}
+
 export interface SearchMessageResult {
   id: number;
   channel_id: string;

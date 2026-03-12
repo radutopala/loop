@@ -1,13 +1,11 @@
-import { useCallback, useRef, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { marked } from "marked";
 import { colors, fonts } from "../theme";
-import { TerminalPanes } from "./TerminalPanes";
-import type { TerminalPanesRef } from "./TerminalPanes";
-import { killAgentContainer } from "../api/loopApi";
+import { fetchReadme } from "../api/loopApi";
 
 const MIN_WIDTH = 280;
 const MAX_WIDTH_PERCENT = 0.6;
-const WIDTH_STORAGE_KEY = "loop-terminal-panel-width";
-const TREE_STORAGE_KEY = "loop-terminal-panes";
+const WIDTH_STORAGE_KEY = "loop-file-panel-width";
 
 function loadWidth(): number {
   try {
@@ -26,8 +24,10 @@ function saveWidth(w: number) {
   } catch { /* ignore */ }
 }
 
-interface TerminalPanelProps {
-  channelId: string | null;
+// ── Base FilePanel ──
+
+interface FilePanelProps {
+  title: string;
   dirPath?: string;
   branch?: string;
   maximized?: boolean;
@@ -36,22 +36,13 @@ interface TerminalPanelProps {
   onOpenPalette?: () => void;
   onToggleMaximize?: () => void;
   onClose: () => void;
-  onStatusChange?: () => void;
+  children: ReactNode;
 }
 
-export function TerminalPanel({ channelId, dirPath, branch, maximized, sidebarOpen, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose, onStatusChange }: TerminalPanelProps) {
+export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose, children }: FilePanelProps) {
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
-  const panesRef = useRef<TerminalPanesRef>(null);
-  const [agentState, setAgentState] = useState<"running" | "stopped" | "none">("none");
 
-  // Close all sessions before unmounting the panel.
-  const handleClose = useCallback(() => {
-    panesRef.current?.closeAllSessions();
-    onClose();
-  }, [onClose]);
-
-  // Panel width resize (left edge).
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
       e.preventDefault();
@@ -88,7 +79,7 @@ export function TerminalPanel({ channelId, dirPath, branch, maximized, sidebarOp
         maxWidth: maximized ? "none" : `${MAX_WIDTH_PERCENT * 100}vw`,
         flex: maximized ? 1 : undefined,
         flexShrink: maximized ? undefined : 1,
-        backgroundColor: colors.bg,
+        backgroundColor: colors.sidebar,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
@@ -97,7 +88,7 @@ export function TerminalPanel({ channelId, dirPath, branch, maximized, sidebarOp
         borderLeft: maximized ? "none" : `1px solid ${colors.border}`,
       }}
     >
-      {/* Resize handle (left edge) — hidden when maximized */}
+      {/* Resize handle */}
       {!maximized && (
         <div
           onMouseDown={handleMouseDown}
@@ -111,16 +102,12 @@ export function TerminalPanel({ channelId, dirPath, branch, maximized, sidebarOp
             backgroundColor: resizing ? colors.textDim : "transparent",
             zIndex: 1,
           }}
-          onMouseEnter={(e) => {
-            (e.currentTarget as HTMLDivElement).style.backgroundColor = colors.textDim;
-          }}
-          onMouseLeave={(e) => {
-            if (!resizing) (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent";
-          }}
+          onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = colors.textDim; }}
+          onMouseLeave={(e) => { if (!resizing) (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent"; }}
         />
       )}
 
-      {/* Drag region for macOS title bar alignment */}
+      {/* Drag region */}
       <div
         style={{
           height: 38,
@@ -191,7 +178,7 @@ export function TerminalPanel({ channelId, dirPath, branch, maximized, sidebarOp
         )}
       </div>
 
-      {/* Panel header */}
+      {/* Header */}
       <div
         style={{
           display: "flex",
@@ -215,7 +202,7 @@ export function TerminalPanel({ channelId, dirPath, branch, maximized, sidebarOp
               flexShrink: 0,
             }}
           >
-            Terminal
+            {title}
           </span>
           {maximized && dirPath && (
             <span
@@ -249,24 +236,7 @@ export function TerminalPanel({ channelId, dirPath, branch, maximized, sidebarOp
             </span>
           )}
         </div>
-        <div style={{ display: "flex", alignItems: "center", gap: 4, position: "relative" }}>
-          {agentState === "running" && (
-            <button
-              onClick={() => { if (channelId) killAgentContainer(channelId); }}
-              title="Kill agent container"
-              style={{
-                padding: "1px 8px",
-                borderRadius: 4,
-                border: `1px solid ${colors.error}`,
-                backgroundColor: "transparent",
-                color: colors.error,
-                cursor: "pointer",
-                fontSize: 10,
-              }}
-            >
-              Kill
-            </button>
-          )}
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {onToggleMaximize && (
             <button
               onClick={onToggleMaximize}
@@ -293,7 +263,7 @@ export function TerminalPanel({ channelId, dirPath, branch, maximized, sidebarOp
             </button>
           )}
           <button
-            onClick={handleClose}
+            onClick={onClose}
             title="Close panel"
             style={headerBtnStyle}
             onMouseEnter={hoverIn}
@@ -307,17 +277,64 @@ export function TerminalPanel({ channelId, dirPath, branch, maximized, sidebarOp
         </div>
       </div>
 
-      {/* Pane tree */}
-      <TerminalPanes
-        ref={panesRef}
-        key={`term-${channelId}`}
-        channelId={channelId}
-        storageKey={TREE_STORAGE_KEY}
-        onStatusChange={onStatusChange}
-        onAgentStateChange={setAgentState}
-        onLastAgentRemoved={() => { if (channelId) killAgentContainer(channelId); }}
-      />
+      {/* Content */}
+      <div style={{ flex: 1, overflow: "auto", padding: "12px 16px" }}>
+        {children}
+      </div>
     </div>
+  );
+}
+
+// ── MarkdownFilePanel ──
+
+interface MarkdownFilePanelProps {
+  dirPath?: string;
+  branch?: string;
+  maximized?: boolean;
+  sidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
+  onOpenPalette?: () => void;
+  onToggleMaximize?: () => void;
+  onClose: () => void;
+}
+
+export function MarkdownFilePanel({ dirPath, branch, ...props }: MarkdownFilePanelProps) {
+  const [content, setContent] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchReadme()
+      .then(setContent)
+      .catch((err) => setError(err instanceof Error ? err.message : "Failed to load"));
+  }, []);
+
+  const html = useMemo(() => {
+    if (!content) return "";
+    return marked.parse(content, { async: false }) as string;
+  }, [content]);
+
+  return (
+    <FilePanel title="README" dirPath={dirPath} branch={branch} {...props}>
+      {error && (
+        <div style={{ color: colors.error, fontSize: 13 }}>{error}</div>
+      )}
+      {!content && !error && (
+        <div style={{ color: colors.textDim, fontSize: 13 }}>Loading...</div>
+      )}
+      {content && (
+        <div
+          className="readme-content"
+          dangerouslySetInnerHTML={{ __html: html }}
+          style={{
+            fontSize: 13,
+            fontFamily: fonts.sans,
+            color: colors.text,
+            lineHeight: 1.7,
+          }}
+        />
+      )}
+      <style>{markdownStyles}</style>
+    </FilePanel>
   );
 }
 
@@ -345,3 +362,56 @@ function hoverOut(e: React.MouseEvent<HTMLButtonElement>) {
   e.currentTarget.style.color = colors.textDim;
 }
 
+const markdownStyles = `
+.readme-content h1, .readme-content h2, .readme-content h3,
+.readme-content h4, .readme-content h5, .readme-content h6 {
+  color: ${colors.textLight};
+  margin: 1.2em 0 0.4em;
+  line-height: 1.3;
+}
+.readme-content h1 { font-size: 1.6em; border-bottom: 1px solid ${colors.border}; padding-bottom: 0.3em; }
+.readme-content h2 { font-size: 1.3em; border-bottom: 1px solid ${colors.border}; padding-bottom: 0.2em; }
+.readme-content h3 { font-size: 1.1em; }
+.readme-content p { margin: 0.6em 0; }
+.readme-content a { color: ${colors.active}; text-decoration: none; }
+.readme-content a:hover { text-decoration: underline; }
+.readme-content code {
+  font-family: ${fonts.mono};
+  font-size: 0.9em;
+  background: rgba(255,255,255,0.06);
+  padding: 2px 5px;
+  border-radius: 3px;
+}
+.readme-content pre {
+  background: rgba(0,0,0,0.3);
+  border: 1px solid ${colors.border};
+  border-radius: 6px;
+  padding: 12px;
+  overflow-x: auto;
+  margin: 0.8em 0;
+}
+.readme-content pre code {
+  background: none;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.readme-content ul, .readme-content ol { padding-left: 1.5em; margin: 0.5em 0; }
+.readme-content li { margin: 0.25em 0; }
+.readme-content blockquote {
+  border-left: 3px solid ${colors.border};
+  padding-left: 12px;
+  margin: 0.8em 0;
+  color: ${colors.textDim};
+}
+.readme-content table { border-collapse: collapse; margin: 0.8em 0; width: 100%; }
+.readme-content th, .readme-content td {
+  border: 1px solid ${colors.border};
+  padding: 6px 10px;
+  text-align: left;
+  font-size: 12px;
+}
+.readme-content th { background: rgba(255,255,255,0.04); font-weight: 600; }
+.readme-content hr { border: none; border-top: 1px solid ${colors.border}; margin: 1.2em 0; }
+.readme-content img { max-width: 100%; }
+`;
