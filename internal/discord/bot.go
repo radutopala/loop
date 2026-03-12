@@ -409,7 +409,7 @@ func (b *DiscordBot) CreateSimpleThread(ctx context.Context, channelID, name, in
 }
 
 func (b *DiscordBot) HandleIncomingMessage(_ context.Context, _, _, _, _ string) {}
-func (b *DiscordBot) HandleThreadCreated(_ context.Context, _, _, _ string)   {}
+func (b *DiscordBot) HandleThreadCreated(_ context.Context, _, _, _ string)      {}
 
 // PostMessage sends a simple message to the given channel or thread.
 // Text mentions of the bot (e.g. @LoopBot) are converted to proper Discord
