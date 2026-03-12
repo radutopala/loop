@@ -60,7 +60,7 @@ export function useXTerminal({
         fontSize: 13,
         fontFamily: fonts.mono,
         theme: {
-          background: colors.bg,
+          background: colors.sidebar,
           foreground: colors.text,
           cursor: colors.cursor,
         },
