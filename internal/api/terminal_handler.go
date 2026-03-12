@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 
 	"github.com/gorilla/websocket"
@@ -491,7 +492,10 @@ func (t *terminalWSConn) handleKill(ctx context.Context, msg wsControlMessage) {
 		return
 	}
 	if err := t.containerStopper.ContainerRemove(ctx, containerID); err != nil {
-		t.logger.Warn("terminal ws: kill container remove failed", "container_id", containerID, "error", err)
+		// Suppress benign race: another goroutine (e.g. scheduleRemove) already started removal.
+		if !strings.Contains(err.Error(), "already in progress") {
+			t.logger.Warn("terminal ws: kill container remove failed", "container_id", containerID, "error", err)
+		}
 	}
 	t.writeJSON(wsStatusMessage{Type: wsStatusStopped})
 }

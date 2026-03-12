@@ -235,7 +235,7 @@ export function TerminalPanel({ channelId, dirPath, branch, maximized, sidebarOp
           borderBottom: `1px solid ${colors.border}`,
           flexShrink: 0,
           boxSizing: "border-box",
-          height: 39,
+          height: 35,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, overflow: "hidden" }}>

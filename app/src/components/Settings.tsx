@@ -2,37 +2,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppSettings, ConfigInfo, DaemonInfo } from "../types";
 import { colors, fonts } from "../theme";
 
-const MIN_WIDTH = 320;
-const MAX_WIDTH_PERCENT = 0.45;
-const WIDTH_STORAGE_KEY = "loop-settings-panel-width";
-
-function loadWidth(): number {
-  try {
-    const stored = localStorage.getItem(WIDTH_STORAGE_KEY);
-    if (stored) {
-      const w = parseInt(stored, 10);
-      if (w >= MIN_WIDTH) return w;
-    }
-  } catch { /* ignore */ }
-  return Math.floor(window.innerWidth * MAX_WIDTH_PERCENT);
-}
-
-function saveWidth(w: number) {
-  try {
-    localStorage.setItem(WIDTH_STORAGE_KEY, String(w));
-  } catch { /* ignore */ }
-}
-
 interface SettingsProps {
   open: boolean;
   projectDirPath?: string | null;
+  sidebarOpen?: boolean;
+  onToggleSidebar?: () => void;
+  onOpenPalette?: () => void;
   onClose: () => void;
   onDaemonRestarted?: () => void;
 }
 
-export function Settings({ open, projectDirPath, onClose, onDaemonRestarted }: SettingsProps) {
-  const [width, setWidth] = useState(loadWidth);
-  const [resizing, setResizing] = useState(false);
+export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, onOpenPalette, onClose, onDaemonRestarted }: SettingsProps) {
   const [settings, setSettings] = useState<AppSettings>({ stopDaemonOnQuit: false });
   const [daemonInfo, setDaemonInfo] = useState<DaemonInfo | null>(null);
   const [restarting, setRestarting] = useState(false);
@@ -99,34 +79,6 @@ export function Settings({ open, projectDirPath, onClose, onDaemonRestarted }: S
     return null;
   };
 
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      e.preventDefault();
-      setResizing(true);
-      const startX = e.clientX;
-      const startWidth = width;
-
-      let lastWidth = startWidth;
-      const onMouseMove = (ev: MouseEvent) => {
-        const maxWidth = window.innerWidth * MAX_WIDTH_PERCENT;
-        const newWidth = Math.min(maxWidth, Math.max(MIN_WIDTH, startWidth - (ev.clientX - startX)));
-        lastWidth = newWidth;
-        setWidth(newWidth);
-      };
-
-      const onMouseUp = () => {
-        setResizing(false);
-        saveWidth(lastWidth);
-        document.removeEventListener("mousemove", onMouseMove);
-        document.removeEventListener("mouseup", onMouseUp);
-      };
-
-      document.addEventListener("mousemove", onMouseMove);
-      document.addEventListener("mouseup", onMouseUp);
-    },
-    [width],
-  );
-
   // Close on Escape.
   const closeRef = useRef(onClose);
   closeRef.current = onClose;
@@ -144,45 +96,84 @@ export function Settings({ open, projectDirPath, onClose, onDaemonRestarted }: S
   return (
     <div
       style={{
-        width,
-        minWidth: MIN_WIDTH,
-        maxWidth: `${MAX_WIDTH_PERCENT * 100}vw`,
-        flexShrink: 0,
+        flex: 1,
         backgroundColor: colors.sidebar,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
-        position: "relative",
-        userSelect: resizing ? "none" : undefined,
-        borderLeft: `1px solid ${colors.border}`,
       }}
     >
-      {/* Resize handle */}
-      <div
-        onMouseDown={handleMouseDown}
-        style={{
-          position: "absolute",
-          top: 0,
-          left: 0,
-          width: 4,
-          height: "100%",
-          cursor: "col-resize",
-          backgroundColor: resizing ? colors.textDim : "transparent",
-          zIndex: 1,
-        }}
-        onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = colors.textDim; }}
-        onMouseLeave={(e) => { if (!resizing) (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent"; }}
-      />
-
-      {/* Drag region for macOS title bar alignment */}
+      {/* Drag region */}
       <div
         style={{
           height: 38,
           flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+          paddingLeft: sidebarOpen === false ? 76 : 4,
           // @ts-expect-error: WebKit-specific CSS property for Electron drag region
           WebkitAppRegion: "drag",
         }}
-      />
+      >
+        {onToggleSidebar && (
+          <button
+            onClick={onToggleSidebar}
+            title="Toggle sidebar"
+            style={{
+              background: "none",
+              border: "none",
+              color: colors.textDim,
+              cursor: "pointer",
+              padding: "2px 4px",
+              lineHeight: 1,
+              borderRadius: 4,
+              display: "flex",
+              alignItems: "center",
+              // @ts-expect-error: WebKit-specific CSS property
+              WebkitAppRegion: "no-drag",
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="3" />
+              <line x1="9" y1="3" x2="9" y2="21" />
+              {sidebarOpen
+                ? <polyline points="15,9 12,12 15,15" />
+                : <polyline points="13,9 16,12 13,15" />
+              }
+            </svg>
+          </button>
+        )}
+        {onOpenPalette && (
+          <button
+            onClick={onOpenPalette}
+            title="Search messages (Cmd+K)"
+            style={{
+              background: "none",
+              border: `1px solid ${colors.border}`,
+              color: colors.textDim,
+              cursor: "pointer",
+              padding: "2px 8px",
+              lineHeight: 1,
+              borderRadius: 4,
+              display: "flex",
+              alignItems: "center",
+              gap: 4,
+              fontSize: 11,
+              fontFamily: fonts.mono,
+              marginLeft: 6,
+              // @ts-expect-error: WebKit-specific CSS property
+              WebkitAppRegion: "no-drag",
+            }}
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="8" />
+              <line x1="21" y1="21" x2="16.65" y2="16.65" />
+            </svg>
+            <span style={{ opacity: 0.7 }}>{navigator.platform.includes("Mac") ? "\u2318K" : "Ctrl+K"}</span>
+          </button>
+        )}
+        <div style={{ flex: 1 }} />
+      </div>
 
       {/* Header */}
       <div
@@ -194,7 +185,7 @@ export function Settings({ open, projectDirPath, onClose, onDaemonRestarted }: S
           borderBottom: `1px solid ${colors.border}`,
           flexShrink: 0,
           boxSizing: "border-box",
-          height: 39,
+          height: 35,
         }}
       >
         <span

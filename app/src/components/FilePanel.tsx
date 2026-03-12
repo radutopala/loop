@@ -33,7 +33,6 @@ interface FilePanelProps {
   maximized?: boolean;
   sidebarOpen?: boolean;
   noPadding?: boolean;
-  tabBar?: ReactNode;
   /** When true, suppress outer chrome (resize, drag region, header) and render only children. */
   embedded?: boolean;
   onToggleSidebar?: () => void;
@@ -43,7 +42,7 @@ interface FilePanelProps {
   children: ReactNode;
 }
 
-export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPadding, tabBar, embedded, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose, children }: FilePanelProps) {
+export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPadding, embedded, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose, children }: FilePanelProps) {
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
 
@@ -235,41 +234,24 @@ export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPa
           borderBottom: `1px solid ${colors.border}`,
           flexShrink: 0,
           boxSizing: "border-box",
-          height: 39,
+          height: 35,
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0, overflow: "hidden" }}>
-          {maximized && tabBar}
-          {!maximized && (
-            <span
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                color: colors.textDim,
-                textTransform: "uppercase",
-                letterSpacing: 1,
-                flexShrink: 0,
-              }}
-            >
-              {title}
-            </span>
-          )}
+          <span
+            style={{
+              fontSize: 10,
+              fontWeight: 700,
+              color: colors.textDim,
+              textTransform: "uppercase",
+              letterSpacing: 1,
+              flexShrink: 0,
+            }}
+          >
+            {title}
+          </span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
-          {maximized && (
-            <span
-              style={{
-                fontSize: 10,
-                fontWeight: 700,
-                color: colors.textDim,
-                textTransform: "uppercase",
-                letterSpacing: 1,
-                marginRight: 8,
-              }}
-            >
-              {title}
-            </span>
-          )}
           {onToggleMaximize && (
             <button
               onClick={onToggleMaximize}

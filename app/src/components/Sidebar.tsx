@@ -260,7 +260,7 @@ export function Sidebar({
           borderBottom: `1px solid ${colors.border}`,
           flexShrink: 0,
           boxSizing: "border-box",
-          height: 39,
+          height: 35,
         }}
       >
         <span

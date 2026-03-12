@@ -2,6 +2,9 @@ import type { PaneNode } from "./types";
 
 const LAYOUT_KEY = "loop-workspace-layout";
 
+/** Default layout names — these are the "fixed" buttons in the header. */
+export const DEFAULT_LAYOUT_NAMES = ["Chat", "Editor", "Memory", "Terminal", "Diff"] as const;
+
 export interface ChannelLayouts {
   active: string;
   layouts: Record<string, PaneNode>;
@@ -15,12 +18,12 @@ function loadAll(): Record<string, ChannelLayouts> {
     if (stored) {
       const parsed = JSON.parse(stored);
       if (typeof parsed === "object" && parsed !== null) {
-        // Migrate old format: { [channelId]: PaneNode } → new format
+        // Clean up old formats — ensureDefaultLayouts will recreate properly
         for (const key of Object.keys(parsed)) {
           const val = parsed[key];
           if (val && typeof val === "object" && "type" in val) {
-            // Old single-tree format — migrate
-            parsed[key] = { active: "Default", layouts: { Default: val }, order: ["Default"] };
+            // Old single-tree format — discard, ensureDefaultLayouts will create fresh defaults
+            delete parsed[key];
           } else if (val && typeof val === "object" && val.layouts && !val.order) {
             // Missing order field — derive from layouts keys
             val.order = Object.keys(val.layouts);
@@ -112,4 +115,59 @@ export function clearLayout(channelId: string, layoutName: string): void {
 export function getLayoutNames(channelId: string): string[] {
   const ch = loadChannelLayouts(channelId);
   return ch?.order ?? [];
+}
+
+export function createDefaultLayouts(): ChannelLayouts {
+  return {
+    active: "Chat",
+    order: ["Chat", "Editor", "Memory", "Terminal", "Diff"],
+    layouts: {
+      Chat: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 1 }, { type: "leaf", id: "diff", panel: "diff", flex: 1 }] },
+      Editor: { type: "leaf", id: "editor", panel: "editor", flex: 1 },
+      Memory: { type: "leaf", id: "memory", panel: "memory", flex: 1 },
+      Diff: { type: "leaf", id: "diff", panel: "diff", flex: 1 },
+    },
+  };
+}
+
+/** Load channel layouts, auto-creating default layouts if missing. */
+export function ensureDefaultLayouts(channelId: string): ChannelLayouts {
+  const all = loadAll();
+  let ch = all[channelId];
+
+  if (!ch) {
+    ch = createDefaultLayouts();
+    all[channelId] = ch;
+    saveAll(all);
+    return ch;
+  }
+
+  // Remove stale "Default" layout from old migration
+  if (ch.layouts["Default"]) {
+    delete ch.layouts["Default"];
+    ch.order = ch.order.filter((n) => n !== "Default");
+    if (ch.active === "Default") ch.active = "Chat";
+  }
+
+  // Add any missing default layouts
+  const defaults = createDefaultLayouts();
+  let changed = false;
+  for (const name of DEFAULT_LAYOUT_NAMES) {
+    if (!ch.layouts[name] && defaults.layouts[name]) {
+      ch.layouts[name] = defaults.layouts[name];
+      changed = true;
+    }
+    if (!ch.order.includes(name)) {
+      changed = true;
+    }
+  }
+
+  if (changed) {
+    // Ensure order: defaults first, then custom
+    const customOrder = ch.order.filter((n) => !(DEFAULT_LAYOUT_NAMES as readonly string[]).includes(n));
+    ch.order = [...DEFAULT_LAYOUT_NAMES, ...customOrder];
+    saveAll(all);
+  }
+
+  return ch;
 }

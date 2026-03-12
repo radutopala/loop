@@ -26,6 +26,7 @@ interface EditorPanelProps {
   sidebarOpen?: boolean;
   tabBar?: React.ReactNode;
   embedded?: boolean;
+  tabsStorageKey?: string;
   onToggleSidebar?: () => void;
   onOpenPalette?: () => void;
   onToggleMaximize?: () => void;
@@ -186,9 +187,9 @@ const AUTO_SAVE_DELAY = 1500; // ms
 
 interface EditorTabsState { tabs: string[]; selected: string | null; }
 
-function loadEditorTabs(channelId: string): EditorTabsState {
+function loadEditorTabs(channelId: string, key = EDITOR_TABS_KEY): EditorTabsState {
   try {
-    const stored = localStorage.getItem(EDITOR_TABS_KEY);
+    const stored = localStorage.getItem(key);
     if (stored) {
       const all = JSON.parse(stored);
       if (typeof all === "object" && all !== null && all[channelId]) {
@@ -199,25 +200,26 @@ function loadEditorTabs(channelId: string): EditorTabsState {
   return { tabs: [], selected: null };
 }
 
-function saveEditorTabs(channelId: string, state: EditorTabsState) {
+function saveEditorTabs(channelId: string, state: EditorTabsState, key = EDITOR_TABS_KEY) {
   try {
-    const stored = localStorage.getItem(EDITOR_TABS_KEY);
+    const stored = localStorage.getItem(key);
     const all = stored ? JSON.parse(stored) : {};
     if (state.tabs.length > 0) {
       all[channelId] = state;
     } else {
       delete all[channelId];
     }
-    localStorage.setItem(EDITOR_TABS_KEY, JSON.stringify(all));
+    localStorage.setItem(key, JSON.stringify(all));
   } catch { /* ignore */ }
 }
 
-export function EditorPanel({ channelId, dirPath, branch, embedded, ...panelProps }: EditorPanelProps) {
+export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageKey, ...panelProps }: EditorPanelProps) {
+  const tabsKey = tabsStorageKey ?? EDITOR_TABS_KEY;
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set([""]));
   const [dirContents, setDirContents] = useState<Map<string, FileEntry[]>>(new Map());
 
-  const [openTabs, setOpenTabs] = useState<string[]>(() => loadEditorTabs(channelId).tabs);
-  const [selectedPath, setSelectedPath] = useState<string | null>(() => loadEditorTabs(channelId).selected);
+  const [openTabs, setOpenTabs] = useState<string[]>(() => loadEditorTabs(channelId, tabsKey).tabs);
+  const [selectedPath, setSelectedPath] = useState<string | null>(() => loadEditorTabs(channelId, tabsKey).selected);
 
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [isBinary, setIsBinary] = useState(false);
@@ -240,8 +242,8 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, ...panelProp
 
   // Persist tab list to localStorage whenever it changes.
   useEffect(() => {
-    saveEditorTabs(channelId, { tabs: openTabs, selected: selectedPath });
-  }, [channelId, openTabs, selectedPath]);
+    saveEditorTabs(channelId, { tabs: openTabs, selected: selectedPath }, tabsKey);
+  }, [channelId, openTabs, selectedPath, tabsKey]);
 
   // Auto-save: flush pending save on unmount.
   useEffect(() => {

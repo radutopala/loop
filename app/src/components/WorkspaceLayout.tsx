@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { Channel } from "../types";
 import type { SessionStatus } from "../types";
 import type { PaneNode, LeafNode, PanelType, SplitDirection, DropPosition } from "../splitPane/types";
 import { makeLeaf, findLeafById, splitLeaf, removeLeaf, updateFlex, swapLeavesInTree, moveLeaf, leafCount, collectLeaves, canAddPanel, hasAgentLeaf } from "../splitPane/treeOps";
-import { loadChannelLayouts, saveLayout, clearLayout, saveActiveLayout, deleteLayout, renameLayout } from "../splitPane/persistence";
+import { saveLayout, clearLayout, saveActiveLayout, deleteLayout, renameLayout, loadChannelLayouts, ensureDefaultLayouts, createDefaultLayouts, DEFAULT_LAYOUT_NAMES } from "../splitPane/persistence";
 import { SplitPaneLayout } from "../splitPane/SplitPaneLayout";
 import { EmptyLayoutPicker } from "../splitPane/AddPanelButton";
 import { Terminal, getCloseForInstance } from "./Terminal";
@@ -46,43 +46,91 @@ function leafIdForPanel(channelId: string, panel: PanelType): string {
   return nextId(channelId, panel);
 }
 
+function tabButtonStyle(active: boolean): React.CSSProperties {
+  return {
+    background: active ? colors.bg : "transparent",
+    borderTop: `1px solid ${active ? colors.border : "transparent"}`,
+    borderLeft: `1px solid ${active ? colors.border : "transparent"}`,
+    borderRight: `1px solid ${active ? colors.border : "transparent"}`,
+    borderBottom: "none",
+    color: active ? colors.textLight : colors.textDim,
+    cursor: "pointer",
+    padding: "4px 8px",
+    fontSize: 10,
+    fontFamily: fonts.mono,
+    lineHeight: 1,
+    borderRadius: "6px 6px 0 0",
+    display: "flex",
+    alignItems: "center",
+    gap: 4,
+    // Active tab extends 1px below to cover the bar's bottom border
+    marginBottom: active ? -1 : 0,
+    paddingBottom: active ? 5 : 4,
+    position: "relative" as const,
+  };
+}
+
+function TabButton({ active, title, onClick, children }: {
+  active: boolean;
+  title?: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      style={tabButtonStyle(active)}
+      onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = colors.hoverBg; e.currentTarget.style.color = colors.textLight; } }}
+      onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = colors.textDim; } }}
+    >
+      {children}
+    </button>
+  );
+}
+
+export interface WorkspaceLayoutRef {
+  switchToLayout: (name: string) => void;
+}
+
 interface WorkspaceLayoutProps {
   channelId: string;
   channel: Channel;
   sidebarOpen: boolean;
-  tabBar: React.ReactNode;
   onToggleSidebar: () => void;
   onOpenPalette: () => void;
-  onClose: () => void;
   scrollToMessageId?: number | null;
   onScrollComplete?: () => void;
   onStatusChange?: () => void;
+  error?: string | null;
+  onDismissError?: () => void;
+  diffStats?: { add: number; del: number };
+  style?: React.CSSProperties;
 }
 
-export function WorkspaceLayout({
+export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutProps>(function WorkspaceLayout({
   channelId,
   channel,
   sidebarOpen,
-  tabBar,
   onToggleSidebar,
   onOpenPalette,
-  onClose,
   scrollToMessageId,
   onScrollComplete,
   onStatusChange,
-}: WorkspaceLayoutProps) {
+  error,
+  onDismissError,
+  diffStats,
+  style,
+}, ref) {
   // --- Named layouts state ---
   const [layoutNames, setLayoutNames] = useState<string[]>(() => {
-    const ch = loadChannelLayouts(channelId);
-    return ch?.order ?? [];
+    return ensureDefaultLayouts(channelId).order;
   });
   const [activeName, setActiveName] = useState<string>(() => {
-    const ch = loadChannelLayouts(channelId);
-    return ch?.active ?? "Default";
+    return ensureDefaultLayouts(channelId).active;
   });
   const [tree, setTree] = useState<PaneNode | null>(() => {
-    const ch = loadChannelLayouts(channelId);
-    if (!ch) return null;
+    const ch = ensureDefaultLayouts(channelId);
     const t = ch.layouts[ch.active] ?? null;
     if (t) initIdCounter(channelId, t);
     return t;
@@ -115,11 +163,11 @@ export function WorkspaceLayout({
     if (channelId !== prevChannelRef.current) {
       prevChannelRef.current = channelId;
       statusMapRef.current.clear();
-      const ch = loadChannelLayouts(channelId);
-      setLayoutNames(ch?.order ?? []);
-      const name = ch?.active ?? "Default";
+      const ch = ensureDefaultLayouts(channelId);
+      setLayoutNames(ch.order);
+      const name = ch.active;
       setActiveName(name);
-      const t = ch?.layouts[name] ?? null;
+      const t = ch.layouts[name] ?? null;
       if (t) initIdCounter(channelId, t);
       setTree(t);
       setAgentState("none");
@@ -145,8 +193,12 @@ export function WorkspaceLayout({
     saveActiveLayout(channelId, name);
   }, [channelId]);
 
+  useImperativeHandle(ref, () => ({
+    switchToLayout: switchLayout,
+  }), [switchLayout]);
+
   const addLayout = useCallback(() => {
-    let n = layoutNames.length + 1;
+    let n = 1;
     let name = `Layout ${n}`;
     while (layoutNames.includes(name)) { n++; name = `Layout ${n}`; }
     setLayoutNames((prev) => [...prev, name]);
@@ -159,20 +211,22 @@ export function WorkspaceLayout({
   }, [channelId, layoutNames]);
 
   const handleRenameLayout = useCallback((oldName: string, newName: string) => {
+    if ((DEFAULT_LAYOUT_NAMES as readonly string[]).includes(oldName)) return;
     const trimmed = newName.trim();
     if (!trimmed || trimmed === oldName || layoutNames.includes(trimmed)) return;
+    if ((DEFAULT_LAYOUT_NAMES as readonly string[]).includes(trimmed)) return;
     renameLayout(channelId, oldName, trimmed);
     setLayoutNames((prev) => prev.map((n) => (n === oldName ? trimmed : n)));
     if (activeName === oldName) setActiveName(trimmed);
   }, [channelId, layoutNames, activeName]);
 
   const handleDeleteLayout = useCallback((name: string) => {
-    if (layoutNames.length <= 1) return; // don't delete last layout
+    if ((DEFAULT_LAYOUT_NAMES as readonly string[]).includes(name)) return;
     deleteLayout(channelId, name);
     const remaining = layoutNames.filter((n) => n !== name);
     setLayoutNames(remaining);
     if (activeName === name) {
-      const next = remaining[0]!;
+      const next = "Chat";
       const ch = loadChannelLayouts(channelId);
       const t = ch?.layouts[next] ?? null;
       if (t) initIdCounter(channelId, t);
@@ -180,6 +234,7 @@ export function WorkspaceLayout({
       setTree(t);
       statusMapRef.current.clear();
       setAgentState("none");
+      saveActiveLayout(channelId, next);
     }
   }, [channelId, layoutNames, activeName]);
 
@@ -263,8 +318,40 @@ export function WorkspaceLayout({
     killAgentContainer(channelId);
   }, [channelId]);
 
+  const isDefaultLayout = (DEFAULT_LAYOUT_NAMES as readonly string[]).includes(activeName);
+
+  const handleResetLayout = useCallback(() => {
+    // Close any running terminal sessions in the current tree
+    const current = treeRef.current;
+    if (current) {
+      for (const leaf of collectLeaves(current)) {
+        if (leaf.panel === "agent" || leaf.panel === "shell") {
+          const target = leaf.panel === "agent" ? "agent" : "host";
+          const closeKey = `${target}:${channelId}:${leaf.id}`;
+          getCloseForInstance(closeKey)?.();
+        }
+      }
+      if (hasAgentLeaf(current)) {
+        killAgentContainer(channelId);
+      }
+    }
+    const defaults = createDefaultLayouts();
+    const defaultTree = defaults.layouts[activeName] ?? null;
+    if (defaultTree) {
+      saveLayout(channelId, activeName, defaultTree);
+      initIdCounter(channelId, defaultTree);
+    } else {
+      clearLayout(channelId, activeName);
+    }
+    statusMapRef.current.clear();
+    setTree(defaultTree);
+    setAgentState("none");
+  }, [channelId, activeName]);
+
   const dirPath = channel.dir_path || "";
   const branch = channel.branch || "";
+
+  const customLayoutNames = layoutNames.filter((n) => !(DEFAULT_LAYOUT_NAMES as readonly string[]).includes(n));
 
   const renderLeaf = useCallback(
     (leaf: LeafNode): React.ReactNode => {
@@ -287,6 +374,7 @@ export function WorkspaceLayout({
               dirPath={dirPath}
               branch={branch}
               embedded
+              tabsStorageKey="loop-layout-editor-tabs"
               onClose={() => handleRemoveLeaf(leaf.id)}
             />
           );
@@ -351,6 +439,7 @@ export function WorkspaceLayout({
         flexDirection: "column",
         backgroundColor: colors.sidebar,
         overflow: "hidden",
+        ...style,
       }}
     >
       {/* Drag region */}
@@ -453,19 +542,138 @@ export function WorkspaceLayout({
         <div style={{ flex: 1 }} />
       </div>
 
-      {/* Tab bar + controls */}
+      {/* Error bar */}
+      {error && (
+        <div
+          role="alert"
+          style={{
+            padding: "8px 12px",
+            backgroundColor: "#3b1616",
+            color: "#fca5a5",
+            fontSize: "13px",
+            display: "flex",
+            justifyContent: "space-between",
+            alignItems: "center",
+          }}
+        >
+          <span>{error}</span>
+          <button
+            onClick={onDismissError}
+            style={{
+              background: "none",
+              border: "none",
+              color: "#fca5a5",
+              cursor: "pointer",
+              fontSize: "16px",
+            }}
+          >
+            &times;
+          </button>
+        </div>
+      )}
+
+      {/* Layout buttons & tabs */}
       <div
         style={{
           display: "flex",
-          alignItems: "center",
-          padding: "3px 8px",
+          alignItems: "flex-end",
+          padding: "0 8px",
           borderBottom: `1px solid ${colors.border}`,
-          height: 39,
+          height: 35,
           boxSizing: "border-box",
-          gap: 8,
+          gap: 4,
+          overflow: "hidden",
         }}
       >
-        {tabBar}
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            color: colors.textDim,
+            textTransform: "uppercase",
+            letterSpacing: 1,
+            flexShrink: 0,
+            paddingBottom: 5,
+          }}
+        >
+          Layouts
+        </span>
+        <TabButton active={activeName === "Chat"} title="Chat" onClick={() => switchLayout("Chat")}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+          Chat
+        </TabButton>
+        <TabButton active={activeName === "Editor"} title="Editor (Cmd+E)" onClick={() => switchLayout("Editor")}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7" />
+            <path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z" />
+          </svg>
+          Editor
+        </TabButton>
+        <TabButton active={activeName === "Memory"} title="Memory" onClick={() => switchLayout("Memory")}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+            <polyline points="14 2 14 8 20 8" />
+            <line x1="16" y1="13" x2="8" y2="13" />
+            <line x1="16" y1="17" x2="8" y2="17" />
+          </svg>
+          Memory
+        </TabButton>
+        <TabButton active={activeName === "Terminal"} title="Terminal" onClick={() => switchLayout("Terminal")}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="4 17 10 11 4 5" />
+            <line x1="12" y1="19" x2="20" y2="19" />
+          </svg>
+          Terminal
+        </TabButton>
+        <TabButton active={activeName === "Diff"} title="Diff" onClick={() => switchLayout("Diff")}>
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M12 3v18" />
+            <path d="M8 8l-4 4 4 4" />
+            <path d="M16 8l4 4-4 4" />
+          </svg>
+          {diffStats && (diffStats.add > 0 || diffStats.del > 0) ? (
+            <>
+              <span style={{ color: "#86efac" }}>+{diffStats.add}</span>
+              <span style={{ color: "#fca5a5" }}>-{diffStats.del}</span>
+            </>
+          ) : "Diff"}
+        </TabButton>
+        {/* Custom layout tabs inline */}
+        {customLayoutNames.map((name) => (
+          <LayoutTab
+            key={name}
+            name={name}
+            active={name === activeName}
+            canDelete
+            onSelect={() => { if (name !== activeName) switchLayout(name); }}
+            onRename={(newName) => handleRenameLayout(name, newName)}
+            onDelete={() => handleDeleteLayout(name)}
+          />
+        ))}
+        <button
+          onClick={addLayout}
+          title="New layout"
+          style={{
+            background: "none",
+            border: "none",
+            color: colors.textDim,
+            cursor: "pointer",
+            padding: "4px",
+            lineHeight: 1,
+            borderRadius: "6px 6px 0 0",
+            display: "flex",
+            alignItems: "center",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; e.currentTarget.style.background = colors.hoverBg; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; e.currentTarget.style.background = "none"; }}
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="12" y1="5" x2="12" y2="19" />
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+        </button>
         <div style={{ flex: 1 }} />
         {agentState === "running" && (
           <button
@@ -480,90 +688,48 @@ export function WorkspaceLayout({
               fontSize: 10,
               fontFamily: fonts.mono,
               lineHeight: 1,
-              borderRadius: 6,
+              borderRadius: 10,
               display: "flex",
               alignItems: "center",
               gap: 4,
+              marginBottom: 4,
             }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.error; e.currentTarget.style.color = colors.textLight; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.error; }}
           >
             Kill
           </button>
         )}
-        <button
-          onClick={onClose}
-          title="Close layout"
-          style={{
-            background: "none",
-            border: "none",
-            color: colors.textDim,
-            cursor: "pointer",
-            padding: 4,
-            lineHeight: 1,
-            borderRadius: 4,
-            display: "flex",
-            alignItems: "center",
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
-          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
-        >
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
-      </div>
-
-      {/* Layout tabs */}
-      {layoutNames.length > 0 && (
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            padding: "0 8px",
-            borderBottom: `1px solid ${colors.border}`,
-            height: 30,
-            flexShrink: 0,
-            gap: 0,
-            overflow: "hidden",
-          }}
-        >
-          {layoutNames.map((name) => (
-            <LayoutTab
-              key={name}
-              name={name}
-              active={name === activeName}
-              canDelete={layoutNames.length > 1}
-              onSelect={() => { if (name !== activeName) switchLayout(name); }}
-              onRename={(newName) => handleRenameLayout(name, newName)}
-              onDelete={() => handleDeleteLayout(name)}
-            />
-          ))}
+        {isDefaultLayout && (
           <button
-            onClick={addLayout}
-            title="New layout"
+            onClick={handleResetLayout}
+            title="Reset layout to default"
             style={{
               background: "none",
-              border: "none",
+              border: `1px solid ${colors.border}`,
               color: colors.textDim,
               cursor: "pointer",
-              padding: "2px 6px",
+              padding: "2px 8px",
+              fontSize: 10,
+              fontFamily: fonts.mono,
               lineHeight: 1,
-              fontSize: 12,
-              borderRadius: 4,
+              borderRadius: 10,
               display: "flex",
               alignItems: "center",
-              marginLeft: 2,
+              gap: 4,
+              marginBottom: 4,
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
-            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+            onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; e.currentTarget.style.borderColor = colors.textDim; }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; e.currentTarget.style.borderColor = colors.border; }}
           >
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-              <line x1="12" y1="5" x2="12" y2="19" />
-              <line x1="5" y1="12" x2="19" y2="12" />
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 12a9 9 0 1 1-3-6.7" />
+              <polyline points="21,3 21,9 15,9" />
             </svg>
+            Reset
           </button>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Layout content */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
@@ -582,7 +748,7 @@ export function WorkspaceLayout({
       </div>
     </div>
   );
-}
+});
 
 // ── Layout Tab ──
 
@@ -615,20 +781,11 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
     <div
       onClick={onSelect}
       style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 4,
-        padding: "2px 8px",
-        fontSize: 11,
-        cursor: "pointer",
-        color: active ? colors.textLight : colors.textDim,
-        borderBottom: active ? `2px solid ${colors.active}` : "2px solid transparent",
-        height: "100%",
-        boxSizing: "border-box",
+        ...tabButtonStyle(active),
         flexShrink: 0,
       }}
-      onMouseEnter={(e) => { if (!active) (e.currentTarget as HTMLDivElement).style.color = colors.textLight; }}
-      onMouseLeave={(e) => { if (!active) (e.currentTarget as HTMLDivElement).style.color = colors.textDim; }}
+      onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = colors.hoverBg; e.currentTarget.style.color = colors.textLight; } }}
+      onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = colors.textDim; } }}
     >
       {editing ? (
         <input
@@ -645,7 +802,8 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
             background: "none",
             border: `1px solid ${colors.border}`,
             color: colors.textLight,
-            fontSize: 11,
+            fontSize: 10,
+            fontFamily: fonts.mono,
             padding: "0 4px",
             borderRadius: 3,
             outline: "none",
@@ -667,7 +825,7 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
           style={{
             background: "none",
             border: "none",
-            color: colors.textDim,
+            color: active ? colors.textLight : colors.textDim,
             cursor: "pointer",
             padding: 0,
             lineHeight: 1,
