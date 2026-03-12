@@ -216,6 +216,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   const tabsKey = tabsStorageKey ?? EDITOR_TABS_KEY;
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set([""]));
   const [dirContents, setDirContents] = useState<Map<string, FileEntry[]>>(new Map());
+  const [selectedDir, setSelectedDir] = useState("");
 
   const [openTabs, setOpenTabs] = useState<string[]>(() => loadEditorTabs(channelId, tabsKey).tabs);
   const [selectedPath, setSelectedPath] = useState<string | null>(() => loadEditorTabs(channelId, tabsKey).selected);
@@ -231,6 +232,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   const [previewHtml, setPreviewHtml] = useState("");
   const [dirtyTabs, setDirtyTabs] = useState<Set<string>>(new Set());
   const [autoSaveOnBlur, setAutoSaveOnBlur] = useState(true);
+  const [newFileName, setNewFileName] = useState<string | null>(null);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -360,6 +362,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   }, [channelId]);
 
   const handleDirClick = useCallback((path: string) => {
+    setSelectedDir(path);
     setExpandedDirs((prev) => {
       const next = new Set(prev);
       if (next.has(path)) {
@@ -437,6 +440,22 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
       return next;
     });
   }, [selectedPath, saveAllDirty, switchToTab]);
+
+  const handleCreateFile = useCallback((name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setNewFileName(null);
+    saveFileContent(channelId, trimmed, "").then(() => {
+      // Reload parent directory to show the new file.
+      const parent = trimmed.includes("/") ? trimmed.substring(0, trimmed.lastIndexOf("/")) : ".";
+      loadDir(parent);
+      // Open the new file in a tab.
+      setOpenTabs((prev) => prev.includes(trimmed) ? prev : [...prev, trimmed]);
+      switchToTab(trimmed);
+    }).catch((err) => {
+      setError(err instanceof Error ? err.message : "Failed to create file");
+    });
+  }, [channelId, loadDir, switchToTab]);
 
   // Mount/update CodeMirror editor.
   useEffect(() => {
@@ -559,20 +578,93 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
             minWidth: TREE_MIN_WIDTH,
             maxWidth: TREE_MAX_WIDTH,
             overflow: "auto",
-            padding: "4px 0",
             flexShrink: 0,
+            display: "flex",
+            flexDirection: "column",
           }}
         >
-          <FileTree
-            entries={dirContents.get("") || []}
-            dirContents={dirContents}
-            expandedDirs={expandedDirs}
-            selectedPath={selectedPath}
-            depth={0}
-            parentPath=""
-            onDirClick={handleDirClick}
-            onFileClick={handleFileClick}
-          />
+          <div style={{ display: "flex", alignItems: "center", padding: "4px 8px 2px", flexShrink: 0 }}>
+            <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Files</span>
+            <button
+              onClick={() => setNewFileName(selectedDir ? selectedDir + "/" : "")}
+              title="New file"
+              style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: 0, lineHeight: 1, display: "flex", alignItems: "center" }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+            </button>
+          </div>
+          {newFileName !== null && (
+            <div style={{ padding: "2px 8px" }}>
+              <input
+                autoFocus
+                placeholder="path/to/file.ext"
+                value={newFileName}
+                onChange={(e) => setNewFileName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleCreateFile(newFileName);
+                  if (e.key === "Escape") setNewFileName(null);
+                }}
+                onBlur={() => setNewFileName(null)}
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  background: colors.bg,
+                  border: `1px solid ${colors.active}`,
+                  color: colors.textLight,
+                  fontSize: 11,
+                  fontFamily: fonts.mono,
+                  padding: "2px 4px",
+                  borderRadius: 3,
+                  outline: "none",
+                }}
+              />
+            </div>
+          )}
+          <div style={{ flex: 1, overflow: "auto", padding: "2px 0" }}>
+            <button
+              onClick={() => { setSelectedDir(""); }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 4,
+                width: "max-content",
+                minWidth: "100%",
+                padding: "3px 8px",
+                border: "none",
+                background: selectedDir === "" ? "rgba(78, 154, 106, 0.15)" : "none",
+                color: colors.textLight,
+                cursor: "pointer",
+                fontSize: 12,
+                fontFamily: fonts.mono,
+                fontWeight: 700,
+                textAlign: "left",
+                whiteSpace: "nowrap",
+              }}
+              onMouseEnter={(e) => { if (selectedDir !== "") e.currentTarget.style.backgroundColor = colors.hoverBg; }}
+              onMouseLeave={(e) => { if (selectedDir !== "") e.currentTarget.style.backgroundColor = "transparent"; }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.6 }}>
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+              </svg>
+              {dirPath.split("/").pop() || dirPath}
+            </button>
+            <FileTree
+              entries={dirContents.get("") || []}
+              dirContents={dirContents}
+              expandedDirs={expandedDirs}
+              selectedPath={selectedPath}
+              selectedDir={selectedDir}
+              depth={1}
+              parentPath=""
+              onDirClick={handleDirClick}
+              onFileClick={handleFileClick}
+            />
+          </div>
         </div>
         {/* Tree resize handle */}
         <div
@@ -785,13 +877,14 @@ interface FileTreeProps {
   dirContents: Map<string, FileEntry[]>;
   expandedDirs: Set<string>;
   selectedPath: string | null;
+  selectedDir: string;
   depth: number;
   parentPath: string;
   onDirClick: (path: string) => void;
   onFileClick: (path: string, entry: FileEntry) => void;
 }
 
-function FileTree({ entries, dirContents, expandedDirs, selectedPath, depth, parentPath, onDirClick, onFileClick }: FileTreeProps) {
+function FileTree({ entries, dirContents, expandedDirs, selectedPath, selectedDir, depth, parentPath, onDirClick, onFileClick }: FileTreeProps) {
   return (
     <>
       {entries.map((entry) => {
@@ -799,6 +892,7 @@ function FileTree({ entries, dirContents, expandedDirs, selectedPath, depth, par
         const isDir = entry.type === "dir";
         const isExpanded = expandedDirs.has(path);
         const isSelected = path === selectedPath;
+        const isDirSelected = isDir && path === selectedDir;
 
         return (
           <div key={path}>
@@ -812,16 +906,16 @@ function FileTree({ entries, dirContents, expandedDirs, selectedPath, depth, par
                 minWidth: "100%",
                 padding: `3px 8px 3px ${8 + depth * 16}px`,
                 border: "none",
-                background: isSelected ? colors.selectedBg : "none",
-                color: isSelected ? colors.textLight : colors.text,
+                background: isSelected ? colors.selectedBg : isDirSelected ? "rgba(78, 154, 106, 0.15)" : "none",
+                color: isSelected || isDirSelected ? colors.textLight : colors.text,
                 cursor: "pointer",
                 fontSize: 12,
                 fontFamily: fonts.mono,
                 textAlign: "left",
                 whiteSpace: "nowrap",
               }}
-              onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-              onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = "transparent"; }}
+              onMouseEnter={(e) => { if (!isSelected && !isDirSelected) e.currentTarget.style.backgroundColor = colors.hoverBg; }}
+              onMouseLeave={(e) => { if (!isSelected && !isDirSelected) e.currentTarget.style.backgroundColor = "transparent"; }}
             >
               {isDir ? (
                 <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ flexShrink: 0, opacity: 0.6, transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}>
@@ -845,6 +939,7 @@ function FileTree({ entries, dirContents, expandedDirs, selectedPath, depth, par
                 dirContents={dirContents}
                 expandedDirs={expandedDirs}
                 selectedPath={selectedPath}
+                selectedDir={selectedDir}
                 depth={depth + 1}
                 parentPath={path}
                 onDirClick={onDirClick}

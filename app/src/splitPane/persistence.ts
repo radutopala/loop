@@ -122,8 +122,8 @@ export function createDefaultLayouts(): ChannelLayouts {
     active: "Chat",
     order: ["Chat", "Editor", "Memory", "Terminal", "Diff"],
     layouts: {
-      Chat: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 1 }, { type: "leaf", id: "diff", panel: "diff", flex: 1 }] },
-      Editor: { type: "leaf", id: "editor", panel: "editor", flex: 1 },
+      Chat: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 65 }, { type: "leaf", id: "diff", panel: "diff", flex: 35 }] },
+      Editor: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "editor", panel: "editor", flex: 65 }, { type: "leaf", id: "diff-1", panel: "diff", flex: 35 }] },
       Memory: { type: "leaf", id: "memory", panel: "memory", flex: 1 },
       Diff: { type: "leaf", id: "diff", panel: "diff", flex: 1 },
     },
