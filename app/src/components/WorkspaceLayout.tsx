@@ -12,6 +12,7 @@ import { EditorPanel } from "./EditorPanel";
 import { MemoryPanel } from "./MemoryPanel";
 import { DiffPanel } from "./DiffPanel";
 import { killAgentContainer } from "../api/loopApi";
+import { useChatState } from "../hooks/useChatState";
 import { colors, fonts } from "../theme";
 
 type AgentState = "running" | "stopped" | "none";
@@ -137,6 +138,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   });
   const treeRef = useRef(tree);
   treeRef.current = tree;
+
+  // Chat state — hoisted here so the WebSocket + messages survive layout switches.
+  const chatState = useChatState(channelId, channel.agent_running);
 
   // Track per-pane session status for aggregate agent state.
   const statusMapRef = useRef(new Map<string, SessionStatus>());
@@ -391,7 +395,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             <ChatView
               key={`layout-chat-${channelId}`}
               channelId={channelId}
-              initialRunningBot={channel.agent_running}
+              chatState={chatState}
               scrollToMessageId={scrollToMessageId}
               onScrollComplete={onScrollComplete}
             />
@@ -460,7 +464,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           return null;
       }
     },
-    [channelId, channel.agent_running, dirPath, branch, scrollToMessageId, onScrollComplete, onStatusChange, handlePaneStatus, handleRemoveLeaf],
+    [channelId, chatState, dirPath, branch, scrollToMessageId, onScrollComplete, onStatusChange, handlePaneStatus, handleRemoveLeaf],
   );
 
   return (
