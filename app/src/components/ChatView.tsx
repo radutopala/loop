@@ -192,6 +192,13 @@ export function ChatView({ channelId, initialRunningBot, scrollToMessageId, onSc
       <div style={styles.inputBar}>
         <ChatInput channelId={channelId} isRunning={isRunning} onSent={scrollToBottom} />
       </div>
+      <div style={styles.isolationLabel}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
+          <polyline points="17 2 12 7 7 2" />
+        </svg>
+        Running non-interactively in an isolated Docker container
+      </div>
     </div>
   );
 }
@@ -829,7 +836,17 @@ const styles: Record<string, React.CSSProperties> = {
   inputBar: {
     display: "flex",
     justifyContent: "center",
-    padding: "12px 24px 48px",
+    padding: "12px 24px 8px",
+  },
+  isolationLabel: {
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    gap: 6,
+    padding: "0 0 12px",
+    fontSize: 11,
+    color: colors.textDim,
+    fontFamily: fonts.mono,
   },
   loadMore: {
     display: "block",
