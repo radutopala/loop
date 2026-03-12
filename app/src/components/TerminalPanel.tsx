@@ -89,7 +89,7 @@ export function TerminalPanel({ channelId, dirPath, branch, maximized, sidebarOp
         maxWidth: maximized ? "none" : `${MAX_WIDTH_PERCENT * 100}vw`,
         flex: maximized ? 1 : undefined,
         flexShrink: maximized ? undefined : 1,
-        backgroundColor: colors.bg,
+        backgroundColor: colors.sidebar,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
