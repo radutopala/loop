@@ -117,8 +117,8 @@ type MockIncomingMessageHandler struct {
 	mock.Mock
 }
 
-func (m *MockIncomingMessageHandler) HandleIncomingMessage(ctx context.Context, channelID, authorID, content string) {
-	m.Called(ctx, channelID, authorID, content)
+func (m *MockIncomingMessageHandler) HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string) {
+	m.Called(ctx, channelID, authorID, content, mode)
 }
 
 func (m *MockIncomingMessageHandler) HandleThreadCreated(ctx context.Context, threadID, authorID, message string) {
@@ -1268,7 +1268,7 @@ func (s *ServerSuite) TestSendMessageViaHandler() {
 	s.srv.SetIncomingMessageHandler(handler)
 
 	called := make(chan struct{}, 1)
-	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "hello world").
+	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "hello world", "").
 		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
 
 	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"hello world"}`)
@@ -1285,6 +1285,27 @@ func (s *ServerSuite) TestSendMessageViaHandler() {
 	handler.AssertExpectations(s.T())
 	// PostMessage must NOT be called when the handler is set.
 	s.messages.AssertNotCalled(s.T(), "PostMessage")
+}
+
+func (s *ServerSuite) TestSendMessageViaHandlerPlanMode() {
+	handler := new(MockIncomingMessageHandler)
+	s.srv.SetIncomingMessageHandler(handler)
+
+	called := make(chan struct{}, 1)
+	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "plan this", "plan").
+		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
+
+	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"plan this","mode":"plan"}`)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		s.T().Fatal("HandleIncomingMessage was not called within 1s")
+	}
+
+	handler.AssertExpectations(s.T())
 }
 
 func (s *ServerSuite) TestSetIncomingMessageHandler() {
@@ -1878,7 +1899,7 @@ func (s *ServerSuite) TestCommandTasksSuccess() {
 	handler.On("HandleInteraction", mock.Anything, mock.MatchedBy(func(inter *bot.Interaction) bool {
 		return inter.ChannelID == "ch-1" &&
 			inter.CommandName == "tasks" &&
-			inter.AuthorID == "api-user"
+			inter.AuthorID == "local-user"
 	})).Return()
 
 	rec := s.testRequest("POST", "/api/commands", `{"channel_id":"ch-1","command":"tasks"}`)

@@ -1461,7 +1461,7 @@ func (s *BotSuite) TestGetOwnerUserIDError() {
 // --- HandleIncomingMessage / HandleThreadCreated (no-ops) ---
 
 func (s *BotSuite) TestHandleIncomingMessageNoOp() {
-	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello")
+	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello", "")
 }
 
 func (s *BotSuite) TestHandleThreadCreatedNoOp() {

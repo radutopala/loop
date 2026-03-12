@@ -189,8 +189,8 @@ func (m *mockBot) CreateSimpleThread(ctx context.Context, channelID, name, initi
 	return args.String(0), args.Error(1)
 }
 
-func (m *mockBot) HandleIncomingMessage(ctx context.Context, channelID, authorID, content string) {
-	m.Called(ctx, channelID, authorID, content)
+func (m *mockBot) HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string) {
+	m.Called(ctx, channelID, authorID, content, mode)
 }
 
 func (m *mockBot) HandleThreadCreated(ctx context.Context, threadID, authorID, message string) {
@@ -3268,7 +3268,7 @@ func (s *MainSuite) TestLocalBotMessageHandler() {
 	// IsChannelActive returns an error so HandleMessage exits early.
 	store.On("IsChannelActive", mock.Anything, "ch-1").Return(false, errors.New("db error"))
 
-	localBot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello")
+	localBot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello", "")
 
 	store.AssertExpectations(s.T())
 }
@@ -3295,7 +3295,7 @@ func (s *MainSuite) TestLocalBotMentionParsing() {
 	store.On("GetRecentMessages", mock.Anything, "ch-1", mock.Anything).
 		Return(nil, errors.New("stop early"))
 
-	localBot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "@LoopBot do this")
+	localBot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "@LoopBot do this", "")
 
 	store.AssertExpectations(s.T())
 }
@@ -3320,7 +3320,7 @@ func (s *MainSuite) TestLocalBotPrefixParsing() {
 	store.On("GetRecentMessages", mock.Anything, "ch-1", mock.Anything).
 		Return(nil, errors.New("stop early"))
 
-	localBot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "!loop check status")
+	localBot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "!loop check status", "")
 
 	store.AssertExpectations(s.T())
 }
@@ -3346,7 +3346,7 @@ func (s *MainSuite) TestLocalBotPlainMessageTriggers() {
 	store.On("GetRecentMessages", mock.Anything, "ch-1", mock.Anything).
 		Return(nil, errors.New("stop early"))
 
-	localBot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "just a note")
+	localBot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "just a note", "")
 
 	store.AssertExpectations(s.T())
 }

@@ -22,6 +22,7 @@ type IncomingMessage struct {
 	IsDM         bool
 	Timestamp    time.Time
 	AuthorRoles  []string // role IDs for permission checking (Discord only)
+	Mode         string   // "plan" or "" (default = agent)
 }
 
 // OutgoingMessage to the chat platform.

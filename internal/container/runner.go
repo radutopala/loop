@@ -617,12 +617,16 @@ func (r *DockerRunner) buildContainerMounts(mounts []string, workDir string) (bi
 
 // buildBaseClaudeCmd returns the common Claude CLI flags shared by both
 // batch and interactive modes.
-func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID string, forkSession bool) []string {
+func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID string, forkSession, planMode bool) []string {
 	cmd := []string{cfg.ClaudeBinPath, "--mcp-config", mcpConfigPath}
 	if cfg.ClaudeModel != "" {
 		cmd = append(cmd, "--model", cfg.ClaudeModel)
 	}
-	cmd = append(cmd, "--dangerously-skip-permissions")
+	if planMode {
+		cmd = append(cmd, "--permission-mode", "plan")
+	} else {
+		cmd = append(cmd, "--dangerously-skip-permissions")
+	}
 	if sessionID != "" {
 		cmd = append(cmd, "--resume", sessionID)
 		if forkSession {
@@ -634,7 +638,7 @@ func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID string, for
 
 // buildClaudeCmd assembles the Claude CLI command with all flags for batch mode.
 func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest) []string {
-	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.ForkSession)
+	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.ForkSession, req.PlanMode)
 	cmd = append(cmd, "--print", "--verbose", "--output-format", "stream-json")
 	if req.SystemPrompt != "" {
 		cmd = append(cmd, "--append-system-prompt", req.SystemPrompt)
@@ -646,7 +650,7 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 // terminal sessions (no --print, --verbose, --output-format flags).
 func BuildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID string, forkSession bool) string {
 	mcpConfigPath := filepath.Join(workDir, ".loop", "mcp-"+channelID+".json")
-	return strings.Join(buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, forkSession), " ")
+	return strings.Join(buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, forkSession, false), " ")
 }
 
 // ClaudeCmdBuilder builds the interactive Claude command for terminal sessions.

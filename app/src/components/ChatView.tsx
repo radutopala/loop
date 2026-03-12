@@ -411,6 +411,7 @@ const LOOP_COMMANDS: CommandDef[] = [
 function ChatInput({ channelId, isRunning, onSent }: { channelId: string; isRunning?: boolean; onSent?: () => void }) {
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
+  const [mode, setMode] = useState<"agent" | "plan">("agent");
   const [showMention, setShowMention] = useState(false);
   const [mentionIdx, setMentionIdx] = useState(-1);
   const [showCommands, setShowCommands] = useState(false);
@@ -449,7 +450,7 @@ function ChatInput({ channelId, isRunning, onSent }: { channelId: string; isRunn
           await sendCommand(channelId, cmdText);
         }
       } else {
-        await sendMessage(channelId, trimmed);
+        await sendMessage(channelId, trimmed, mode);
       }
       setText("");
       onSent?.();
@@ -634,14 +635,36 @@ function ChatInput({ channelId, isRunning, onSent }: { channelId: string; isRunn
         rows={3}
         disabled={sending}
       />
+      <div style={modeStyles.pill}>
+        <button
+          style={{
+            ...modeStyles.segment,
+            backgroundColor: mode === "agent" ? "#fff" : "transparent",
+            color: mode === "agent" ? "#000" : colors.textDim,
+          }}
+          onClick={() => setMode("agent")}
+        >
+          Agent
+        </button>
+        <button
+          style={{
+            ...modeStyles.segment,
+            backgroundColor: mode === "plan" ? "#fff" : "transparent",
+            color: mode === "plan" ? "#000" : colors.textDim,
+          }}
+          onClick={() => setMode("plan")}
+        >
+          Plan
+        </button>
+      </div>
       {isRunning ? (
         <button
-          style={{ ...styles.sendButton, background: "#c53030" }}
+          style={{ ...styles.sendButton, background: "transparent", border: `1px solid ${colors.textDim}`, color: colors.textDim }}
           onClick={handleStop}
           title="Stop"
         >
-          <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-            <rect x="2" y="2" width="10" height="10" rx="2" fill="currentColor"/>
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+            <rect width="10" height="10" rx="2" fill="currentColor"/>
           </svg>
         </button>
       ) : (
@@ -653,7 +676,7 @@ function ChatInput({ channelId, isRunning, onSent }: { channelId: string; isRunn
           onClick={handleSend}
           disabled={!text.trim() || sending}
         >
-          <svg width="16" height="16" viewBox="0 0 16 16" fill="none">
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
             <path d="M8 14V2M8 2L3 7M8 2L13 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
         </button>
@@ -661,6 +684,27 @@ function ChatInput({ channelId, isRunning, onSent }: { channelId: string; isRunn
     </div>
   );
 }
+
+const modeStyles: Record<string, React.CSSProperties> = {
+  pill: {
+    display: "flex",
+    height: 28,
+    borderRadius: 8,
+    border: `1px solid ${colors.border}`,
+    overflow: "hidden",
+    flexShrink: 0,
+  },
+  segment: {
+    padding: "0 10px",
+    fontSize: 11,
+    fontFamily: fonts.mono,
+    cursor: "pointer",
+    border: "none",
+    outline: "none",
+    transition: "background-color 0.2s",
+    lineHeight: "28px",
+  },
+};
 
 const commandStyles: Record<string, React.CSSProperties> = {
   dropdown: {
@@ -871,15 +915,15 @@ const styles: Record<string, React.CSSProperties> = {
     outline: "none",
   },
   sendButton: {
-    width: 32,
-    height: 32,
+    width: 28,
+    height: 28,
     display: "flex",
     alignItems: "center",
     justifyContent: "center",
-    background: colors.active,
+    background: "#fff",
     border: "none",
     borderRadius: 8,
-    color: "#fff",
+    color: "#000",
     cursor: "pointer",
     flexShrink: 0,
   },

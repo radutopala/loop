@@ -368,7 +368,7 @@ func (b *SlackBot) CreateSimpleThread(ctx context.Context, channelID, name, init
 	return threadID, nil
 }
 
-func (b *SlackBot) HandleIncomingMessage(_ context.Context, _, _, _ string) {}
+func (b *SlackBot) HandleIncomingMessage(_ context.Context, _, _, _, _ string) {}
 func (b *SlackBot) HandleThreadCreated(_ context.Context, _, _, _ string)   {}
 
 // PostMessage sends a simple message to the given channel or thread.

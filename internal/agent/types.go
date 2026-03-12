@@ -13,6 +13,7 @@ type AgentRequest struct {
 	ChannelID    string         `json:"channel_id"`
 	AuthorID     string         `json:"author_id,omitempty"`
 	DirPath      string         `json:"dir_path,omitempty"`
+	PlanMode     bool           `json:"plan_mode,omitempty"`
 	Prompt       string         `json:"prompt,omitempty"`
 	// OnTurn is called for each assistant turn's text content during streaming.
 	// When set, the runner follows container logs in real-time instead of waiting

@@ -103,11 +103,14 @@ export async function createChannel(name: string, platform = "local"): Promise<s
 export async function sendMessage(
   channelId: string,
   content: string,
+  mode?: "agent" | "plan",
 ): Promise<void> {
+  const body: Record<string, string> = { channel_id: channelId, content };
+  if (mode && mode !== "agent") body.mode = mode;
   const res = await fetch(`${apiUrl}/api/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ channel_id: channelId, content }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Failed to send message: ${res.statusText}`);
 }
