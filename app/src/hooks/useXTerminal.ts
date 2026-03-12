@@ -105,6 +105,12 @@ export function useXTerminal({
         onResize(cols, rows);
       });
 
+      // Copy selected text to clipboard automatically.
+      term.onSelectionChange(() => {
+        const sel = term.getSelection();
+        if (sel) navigator.clipboard.writeText(sel).catch(() => {});
+      });
+
       const resizeObserver = new ResizeObserver(() => {
         fitAddon.fit();
         // Scroll after fit reflow so terminal shows latest output on resize

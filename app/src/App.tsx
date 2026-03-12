@@ -9,11 +9,12 @@ import { EditorPanel } from "./components/EditorPanel";
 import { MarkdownFilePanel } from "./components/FilePanel";
 import { MemoryPanel } from "./components/MemoryPanel";
 import { TerminalPanel } from "./components/TerminalPanel";
+import { WorkspaceLayout } from "./components/WorkspaceLayout";
 import { CommandPalette } from "./components/CommandPalette";
 import { Settings } from "./components/Settings";
 import { useEventStream } from "./hooks/useEventStream";
 
-type TabName = "readme" | "editor" | "memory" | "terminal" | "diff" | null;
+type TabName = "readme" | "editor" | "memory" | "terminal" | "diff" | "layout" | null;
 interface TabState { tab: TabName; maximized: boolean; }
 const ACTIVE_TAB_KEY = "loop-active-tab";
 
@@ -96,6 +97,7 @@ function closeAllPanels(setters: {
   setMemoryMaximized: (v: boolean) => void;
   setEditorOpen: (v: boolean) => void;
   setEditorMaximized: (v: boolean) => void;
+  setLayoutOpen: (v: boolean) => void;
   setSettingsOpen: (v: boolean) => void;
 }) {
   setters.setDiffOpen(false); setters.setDiffMaximized(false);
@@ -103,6 +105,7 @@ function closeAllPanels(setters: {
   setters.setReadmeOpen(false); setters.setReadmeMaximized(false);
   setters.setMemoryOpen(false); setters.setMemoryMaximized(false);
   setters.setEditorOpen(false); setters.setEditorMaximized(false);
+  setters.setLayoutOpen(false);
   setters.setSettingsOpen(false);
 }
 
@@ -128,10 +131,11 @@ export default function App() {
   const [memoryMaximized, setMemoryMaximized] = useState(() => { const s = loadActiveTab(getHashChannelId()); return s.tab === "memory" && s.maximized; });
   const [editorOpen, setEditorOpen] = useState(() => loadActiveTab(getHashChannelId()).tab === "editor");
   const [editorMaximized, setEditorMaximized] = useState(() => { const s = loadActiveTab(getHashChannelId()); return s.tab === "editor" && s.maximized; });
+  const [layoutOpen, setLayoutOpen] = useState(() => loadActiveTab(getHashChannelId()).tab === "layout");
 
-  const panelSetters = { setDiffOpen, setDiffMaximized, setTerminalOpen, setTerminalMaximized, setReadmeOpen, setReadmeMaximized, setMemoryOpen, setMemoryMaximized, setEditorOpen, setEditorMaximized, setSettingsOpen };
+  const panelSetters = { setDiffOpen, setDiffMaximized, setTerminalOpen, setTerminalMaximized, setReadmeOpen, setReadmeMaximized, setMemoryOpen, setMemoryMaximized, setEditorOpen, setEditorMaximized, setLayoutOpen, setSettingsOpen };
 
-  const anyMaximized = diffMaximized || terminalMaximized || readmeMaximized || memoryMaximized || editorMaximized;
+  const anyMaximized = diffMaximized || terminalMaximized || readmeMaximized || memoryMaximized || editorMaximized || layoutOpen;
 
   // Restore a saved tab for a channel.
   const restoreTab = useCallback((channelId: string | null) => {
@@ -143,16 +147,17 @@ export default function App() {
       case "memory": setMemoryOpen(true); setMemoryMaximized(maximized); break;
       case "terminal": setTerminalOpen(true); setTerminalMaximized(maximized); break;
       case "diff": setDiffOpen(true); setDiffMaximized(maximized); break;
+      case "layout": setLayoutOpen(true); break;
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Save the current active tab whenever it changes.
   useEffect(() => {
     if (!selectedId) return;
-    const tab: TabName = readmeOpen ? "readme" : editorOpen ? "editor" : memoryOpen ? "memory" : terminalOpen ? "terminal" : diffOpen ? "diff" : null;
-    const maximized = readmeMaximized || editorMaximized || memoryMaximized || terminalMaximized || diffMaximized;
+    const tab: TabName = layoutOpen ? "layout" : readmeOpen ? "readme" : editorOpen ? "editor" : memoryOpen ? "memory" : terminalOpen ? "terminal" : diffOpen ? "diff" : null;
+    const maximized = readmeMaximized || editorMaximized || memoryMaximized || terminalMaximized || diffMaximized || layoutOpen;
     saveActiveTab(selectedId, tab, maximized);
-  }, [selectedId, readmeOpen, editorOpen, memoryOpen, terminalOpen, diffOpen, readmeMaximized, editorMaximized, memoryMaximized, terminalMaximized, diffMaximized]);
+  }, [selectedId, readmeOpen, editorOpen, memoryOpen, terminalOpen, diffOpen, layoutOpen, readmeMaximized, editorMaximized, memoryMaximized, terminalMaximized, diffMaximized]);
 
   // Fetch diff stats for the selected channel and keep them updated via events.
   const loadDiffStats = useCallback(async () => {
@@ -416,7 +421,7 @@ export default function App() {
   const selectedDirPath = selectedChannel?.dir_path || "";
   const selectedBranch = selectedChannel?.branch || "";
 
-  const switchToPanel = useCallback((panel: "editor" | "memory" | "terminal" | "diff") => {
+  const switchToPanel = useCallback((panel: "editor" | "memory" | "terminal" | "diff" | "layout") => {
     const wasMax = anyMaximized;
     closeAllPanels(panelSetters);
     switch (panel) {
@@ -424,18 +429,19 @@ export default function App() {
       case "memory": setMemoryOpen(true); if (wasMax) setMemoryMaximized(true); break;
       case "terminal": setTerminalOpen(true); if (wasMax) setTerminalMaximized(true); break;
       case "diff": setDiffOpen(true); if (wasMax) setDiffMaximized(true); break;
+      case "layout": setLayoutOpen(true); break; // layout is always fullscreen
     }
   }, [anyMaximized]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  const togglePanel = useCallback((panel: "editor" | "memory" | "terminal" | "diff") => {
-    const isOpen = panel === "editor" ? editorOpen : panel === "memory" ? memoryOpen : panel === "terminal" ? terminalOpen : diffOpen;
+  const togglePanel = useCallback((panel: "editor" | "memory" | "terminal" | "diff" | "layout") => {
+    const isOpen = panel === "layout" ? layoutOpen : panel === "editor" ? editorOpen : panel === "memory" ? memoryOpen : panel === "terminal" ? terminalOpen : diffOpen;
     if (isOpen) {
       // Close: un-maximize and close.
       closeAllPanels(panelSetters);
     } else {
       switchToPanel(panel);
     }
-  }, [editorOpen, memoryOpen, terminalOpen, diffOpen, switchToPanel]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [editorOpen, memoryOpen, terminalOpen, diffOpen, layoutOpen, switchToPanel]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const tabBarButtons = selectedId ? (
     <>
@@ -490,6 +496,19 @@ export default function App() {
             <span style={{ color: "#fca5a5" }}>-{diffStats.del}</span>
           </>
         ) : "Diff"}
+      </button>
+      <button
+        onClick={() => togglePanel("layout")}
+        title="Toggle workspace layout"
+        style={tabButtonStyle(layoutOpen)}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="3" y="3" width="7" height="7" />
+          <rect x="14" y="3" width="7" height="7" />
+          <rect x="3" y="14" width="7" height="7" />
+          <rect x="14" y="14" width="7" height="7" />
+        </svg>
+        Layout
       </button>
     </>
   ) : null;
@@ -767,6 +786,20 @@ export default function App() {
           onOpenPalette={() => setPaletteOpen(true)}
           onToggleMaximize={() => setEditorMaximized((v) => !v)}
           onClose={() => { setEditorOpen(false); setEditorMaximized(false); }}
+        />
+      )}
+      {layoutOpen && selectedId && selectedChannel && (
+        <WorkspaceLayout
+          channelId={selectedId}
+          channel={selectedChannel}
+          sidebarOpen={sidebarOpen}
+          tabBar={tabBarButtons}
+          onToggleSidebar={() => setSidebarOpen((v) => !v)}
+          onOpenPalette={() => setPaletteOpen(true)}
+          onClose={() => setLayoutOpen(false)}
+          scrollToMessageId={scrollToMessageId}
+          onScrollComplete={() => setScrollToMessageId(null)}
+          onStatusChange={loadChannels}
         />
       )}
       {settingsOpen && (

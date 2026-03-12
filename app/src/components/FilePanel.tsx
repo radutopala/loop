@@ -34,6 +34,8 @@ interface FilePanelProps {
   sidebarOpen?: boolean;
   noPadding?: boolean;
   tabBar?: ReactNode;
+  /** When true, suppress outer chrome (resize, drag region, header) and render only children. */
+  embedded?: boolean;
   onToggleSidebar?: () => void;
   onOpenPalette?: () => void;
   onToggleMaximize?: () => void;
@@ -41,9 +43,19 @@ interface FilePanelProps {
   children: ReactNode;
 }
 
-export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPadding, tabBar, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose, children }: FilePanelProps) {
+export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPadding, tabBar, embedded, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose, children }: FilePanelProps) {
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
+
+  if (embedded) {
+    return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar }}>
+        <div style={{ flex: 1, overflow: "auto", padding: noPadding ? 0 : "12px 16px" }}>
+          {children}
+        </div>
+      </div>
+    );
+  }
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {

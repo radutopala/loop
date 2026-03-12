@@ -25,6 +25,7 @@ interface EditorPanelProps {
   maximized?: boolean;
   sidebarOpen?: boolean;
   tabBar?: React.ReactNode;
+  embedded?: boolean;
   onToggleSidebar?: () => void;
   onOpenPalette?: () => void;
   onToggleMaximize?: () => void;
@@ -211,7 +212,7 @@ function saveEditorTabs(channelId: string, state: EditorTabsState) {
   } catch { /* ignore */ }
 }
 
-export function EditorPanel({ channelId, dirPath, branch, ...panelProps }: EditorPanelProps) {
+export function EditorPanel({ channelId, dirPath, branch, embedded, ...panelProps }: EditorPanelProps) {
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set([""]));
   const [dirContents, setDirContents] = useState<Map<string, FileEntry[]>>(new Map());
 
@@ -530,7 +531,7 @@ export function EditorPanel({ channelId, dirPath, branch, ...panelProps }: Edito
   }, [channelId]);
 
   return (
-    <FilePanel title="Editor" dirPath={dirPath} branch={branch} noPadding {...panelProps}>
+    <FilePanel title="Editor" dirPath={dirPath} branch={branch} noPadding embedded={embedded} {...panelProps}>
       <div style={{ display: "flex", height: "100%", userSelect: treeResizing ? "none" : undefined }}>
         {/* File tree */}
         <div

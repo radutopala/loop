@@ -27,13 +27,14 @@ interface MemoryPanelProps {
   maximized?: boolean;
   sidebarOpen?: boolean;
   tabBar?: React.ReactNode;
+  embedded?: boolean;
   onToggleSidebar?: () => void;
   onOpenPalette?: () => void;
   onToggleMaximize?: () => void;
   onClose: () => void;
 }
 
-export function MemoryPanel({ channelId, dirPath, branch, ...panelProps }: MemoryPanelProps) {
+export function MemoryPanel({ channelId, dirPath, branch, embedded, ...panelProps }: MemoryPanelProps) {
   const [files, setFiles] = useState<MemoryFileInfo[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [content, setContent] = useState<string | null>(null);
@@ -116,7 +117,7 @@ export function MemoryPanel({ channelId, dirPath, branch, ...panelProps }: Memor
   }, [content]);
 
   return (
-    <FilePanel title="Memory" dirPath={dirPath} branch={branch} noPadding={!loading && files.length > 0} {...panelProps}>
+    <FilePanel title="Memory" dirPath={dirPath} branch={branch} noPadding={!loading && files.length > 0} embedded={embedded} {...panelProps}>
       {listError && (
         <div style={{ color: colors.error, fontSize: 13 }}>{listError}</div>
       )}

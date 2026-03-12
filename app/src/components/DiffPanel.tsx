@@ -34,6 +34,7 @@ interface DiffPanelProps {
   maximized?: boolean;
   sidebarOpen?: boolean;
   tabBar?: React.ReactNode;
+  embedded?: boolean;
   onToggleSidebar?: () => void;
   onOpenPalette?: () => void;
   onToggleMaximize?: () => void;
@@ -125,7 +126,7 @@ const lineColors = {
   ctx: { bg: "transparent", numBg: "transparent", text: colors.textMuted },
 };
 
-export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, tabBar, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose }: DiffPanelProps) {
+export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, tabBar, embedded, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose }: DiffPanelProps) {
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
   const [data, setData] = useState<DiffResponse | null>(null);
@@ -220,6 +221,143 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
   const totalFiles = data?.files.length ?? 0;
   const totalAdd = data?.total_additions ?? 0;
   const totalDel = data?.total_deletions ?? 0;
+
+  const diffToolbar = (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "3px 8px",
+        borderBottom: `1px solid ${colors.border}`,
+        flexShrink: 0,
+        height: 28,
+        boxSizing: "border-box",
+      }}
+    >
+      <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Changes</span>
+        {totalFiles > 0 && <span style={{ fontSize: 10, color: colors.textDim }}>{totalFiles}</span>}
+        {(totalAdd > 0 || totalDel > 0) && (
+          <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
+            <span style={{ color: "#86efac" }}>+{totalAdd}</span>{" "}
+            <span style={{ color: "#fca5a5" }}>-{totalDel}</span>
+          </span>
+        )}
+      </span>
+      <div style={{ flex: 1 }} />
+      {totalFiles > 0 && (
+        <>
+          <button onClick={expandAll} title="Expand all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,8 12,13 17,8" /><polyline points="7,14 12,19 17,14" /></svg>
+          </button>
+          <button onClick={collapseAll} title="Collapse all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,14 12,9 17,14" /><polyline points="7,20 12,15 17,20" /></svg>
+          </button>
+        </>
+      )}
+      <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7" /><polyline points="21,3 21,9 15,9" /></svg>
+      </button>
+    </div>
+  );
+
+  const diffContent = (
+    <div style={{ flex: 1, overflow: "auto" }}>
+      {loading && !data && (
+        <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>Loading...</div>
+      )}
+      {data && totalFiles === 0 && (
+        <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>No changes</div>
+      )}
+      {data?.files.map((file) => {
+        const expanded = expandedFiles.has(file.path);
+        const parsed = parsedFiles.find((pf) => pf.path === file.path);
+        return (
+          <div key={file.path}>
+            <button
+              onClick={() => toggleFile(file.path)}
+              style={{
+                display: "flex", alignItems: "center", gap: 6, width: "100%",
+                padding: "4px 12px", border: "none",
+                background: expanded ? colors.hoverBg : "transparent",
+                color: colors.textLight, fontSize: 12, fontFamily: fonts.mono,
+                textAlign: "left", cursor: "pointer",
+              }}
+              onMouseEnter={(e) => { if (!expanded) e.currentTarget.style.background = colors.hoverBg; }}
+              onMouseLeave={(e) => { if (!expanded) e.currentTarget.style.background = "transparent"; }}
+            >
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+                style={{ transition: "transform 0.15s ease", transform: expanded ? "rotate(0deg)" : "rotate(-90deg)", flexShrink: 0, color: colors.textDim }}>
+                <path d="M2.5 3.5L5 6.5L7.5 3.5" />
+              </svg>
+              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", direction: "rtl", textAlign: "left" }}>
+                <bdi>{file.path}</bdi>
+              </span>
+              <span style={{ flexShrink: 0, fontSize: 11 }}>
+                {file.binary ? (
+                  <span style={{ color: colors.textDim }}>binary</span>
+                ) : (
+                  <><span style={{ color: "#86efac" }}>+{file.additions}</span>{" "}<span style={{ color: "#fca5a5" }}>-{file.deletions}</span></>
+                )}
+              </span>
+            </button>
+            {expanded && parsed && (
+              <div style={{ borderBottom: `1px solid ${colors.border}`, overflow: "hidden" }}>
+                {parsed.hunks.map((hunk, hi) => (
+                  <div key={hi}>
+                    <div style={{ padding: "2px 12px", fontSize: 11, fontFamily: fonts.mono, color: colors.textDim, backgroundColor: "rgba(100, 100, 100, 0.1)", whiteSpace: "pre", overflow: "hidden", textOverflow: "ellipsis" }}>
+                      {hunk.header}
+                    </div>
+                    <div style={{ display: "flex" }}>
+                      <div style={{ flexShrink: 0 }}>
+                        {hunk.lines.map((line, li) => {
+                          const lc = lineColors[line.type];
+                          return (
+                            <div key={li} style={{ display: "flex", lineHeight: "20px", fontFamily: fonts.mono, backgroundColor: lc.bg }}>
+                              <span style={{ width: 40, textAlign: "right", paddingRight: 4, color: colors.textDim, backgroundColor: lc.numBg, userSelect: "none", fontSize: 11 }}>{line.oldNum ?? ""}</span>
+                              <span style={{ width: 40, textAlign: "right", paddingRight: 8, color: colors.textDim, backgroundColor: lc.numBg, userSelect: "none", fontSize: 11 }}>{line.newNum ?? ""}</span>
+                              <span style={{ width: 14, textAlign: "center", color: line.type === "add" ? "#86efac" : line.type === "del" ? "#fca5a5" : "transparent", userSelect: "none" }}>
+                                {line.type === "add" ? "+" : line.type === "del" ? "−" : " "}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <div style={{ flex: 1, overflowX: "auto", minWidth: 0 }}>
+                        <div style={{ display: "inline-block", minWidth: "100%" }}>
+                          {hunk.lines.map((line, li) => {
+                            const lc = lineColors[line.type];
+                            return (
+                              <div key={li} style={{ lineHeight: "20px", fontFamily: fonts.mono, fontSize: 12, whiteSpace: "pre", color: lc.text, backgroundColor: lc.bg, paddingRight: 8 }}>
+                                {line.content || " "}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+                {file.binary && (
+                  <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>Binary file — no content preview</div>
+                )}
+              </div>
+            )}
+          </div>
+        );
+      })}
+    </div>
+  );
+
+  if (embedded) {
+    return (
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar }}>
+        {diffToolbar}
+        {diffContent}
+      </div>
+    );
+  }
 
   return (
     <div
@@ -515,197 +653,7 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
       </div>
 
       {/* File list + diffs */}
-      <div style={{ flex: 1, overflow: "auto" }}>
-        {loading && !data && (
-          <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>
-            Loading...
-          </div>
-        )}
-
-        {data && totalFiles === 0 && (
-          <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>
-            No changes
-          </div>
-        )}
-
-        {data?.files.map((file) => {
-          const expanded = expandedFiles.has(file.path);
-          const parsed = parsedFiles.find((pf) => pf.path === file.path);
-          return (
-            <div key={file.path}>
-              <button
-                onClick={() => toggleFile(file.path)}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6,
-                  width: "100%",
-                  padding: "4px 12px",
-                  border: "none",
-                  background: expanded ? colors.hoverBg : "transparent",
-                  color: colors.textLight,
-                  fontSize: 12,
-                  fontFamily: fonts.mono,
-                  textAlign: "left",
-                  cursor: "pointer",
-                }}
-                onMouseEnter={(e) => { if (!expanded) e.currentTarget.style.background = colors.hoverBg; }}
-                onMouseLeave={(e) => { if (!expanded) e.currentTarget.style.background = "transparent"; }}
-              >
-                <svg
-                  width="10"
-                  height="10"
-                  viewBox="0 0 10 10"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                  style={{
-                    transition: "transform 0.15s ease",
-                    transform: expanded ? "rotate(0deg)" : "rotate(-90deg)",
-                    flexShrink: 0,
-                    color: colors.textDim,
-                  }}
-                >
-                  <path d="M2.5 3.5L5 6.5L7.5 3.5" />
-                </svg>
-                <span
-                  style={{
-                    flex: 1,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                    direction: "rtl",
-                    textAlign: "left",
-                  }}
-                >
-                  <bdi>{file.path}</bdi>
-                </span>
-                <span style={{ flexShrink: 0, fontSize: 11 }}>
-                  {file.binary ? (
-                    <span style={{ color: colors.textDim }}>binary</span>
-                  ) : (
-                    <>
-                      <span style={{ color: "#86efac" }}>+{file.additions}</span>
-                      {" "}
-                      <span style={{ color: "#fca5a5" }}>-{file.deletions}</span>
-                    </>
-                  )}
-                </span>
-              </button>
-
-              {expanded && parsed && (
-                <div style={{ borderBottom: `1px solid ${colors.border}`, overflow: "hidden" }}>
-                  {parsed.hunks.map((hunk, hi) => (
-                    <div key={hi}>
-                      <div
-                        style={{
-                          padding: "2px 12px",
-                          fontSize: 11,
-                          fontFamily: fonts.mono,
-                          color: colors.textDim,
-                          backgroundColor: "rgba(100, 100, 100, 0.1)",
-                          whiteSpace: "pre",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                      >
-                        {hunk.header}
-                      </div>
-                      <div style={{ display: "flex" }}>
-                        {/* Fixed gutter */}
-                        <div style={{ flexShrink: 0 }}>
-                          {hunk.lines.map((line, li) => {
-                            const lc = lineColors[line.type];
-                            return (
-                              <div
-                                key={li}
-                                style={{
-                                  display: "flex",
-                                  lineHeight: "20px",
-                                  fontFamily: fonts.mono,
-                                  backgroundColor: lc.bg,
-                                }}
-                              >
-                                <span
-                                  style={{
-                                    width: 40,
-                                    textAlign: "right",
-                                    paddingRight: 4,
-                                    color: colors.textDim,
-                                    backgroundColor: lc.numBg,
-                                    userSelect: "none",
-                                    fontSize: 11,
-                                  }}
-                                >
-                                  {line.oldNum ?? ""}
-                                </span>
-                                <span
-                                  style={{
-                                    width: 40,
-                                    textAlign: "right",
-                                    paddingRight: 8,
-                                    color: colors.textDim,
-                                    backgroundColor: lc.numBg,
-                                    userSelect: "none",
-                                    fontSize: 11,
-                                  }}
-                                >
-                                  {line.newNum ?? ""}
-                                </span>
-                                <span
-                                  style={{
-                                    width: 14,
-                                    textAlign: "center",
-                                    color: line.type === "add" ? "#86efac" : line.type === "del" ? "#fca5a5" : "transparent",
-                                    userSelect: "none",
-                                  }}
-                                >
-                                  {line.type === "add" ? "+" : line.type === "del" ? "−" : " "}
-                                </span>
-                              </div>
-                            );
-                          })}
-                        </div>
-                        {/* Scrollable code area */}
-                        <div style={{ flex: 1, overflowX: "auto", minWidth: 0 }}>
-                          <div style={{ display: "inline-block", minWidth: "100%" }}>
-                            {hunk.lines.map((line, li) => {
-                              const lc = lineColors[line.type];
-                              return (
-                                <div
-                                  key={li}
-                                  style={{
-                                    lineHeight: "20px",
-                                    fontFamily: fonts.mono,
-                                    fontSize: 12,
-                                    whiteSpace: "pre",
-                                    color: lc.text,
-                                    backgroundColor: lc.bg,
-                                    paddingRight: 8,
-                                  }}
-                                >
-                                  {line.content || " "}
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                  {file.binary && (
-                    <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>
-                      Binary file — no content preview
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
+      {diffContent}
     </div>
   );
 }
