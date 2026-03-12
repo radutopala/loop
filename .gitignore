@@ -27,7 +27,6 @@ Thumbs.db
 # Claude
 .claude/
 .mcp.json
-.worktrees/
 
 # SQLite databases
 *.db
@@ -44,3 +43,4 @@ loop.db*
 memory/
 !internal/memory/
 tickets/
+.worktrees/

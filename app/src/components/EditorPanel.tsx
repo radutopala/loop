@@ -497,6 +497,38 @@ export function EditorPanel({ channelId, dirPath, branch, ...panelProps }: Edito
     return () => window.removeEventListener("keydown", onKeyDown);
   }, [flushAutoSave]);
 
+  // Reload file from disk when window regains focus (picks up external edits).
+  useEffect(() => {
+    const onFocus = () => {
+      const path = selectedPathRef.current;
+      if (!path) return;
+      // Cancel any pending auto-save so we don't overwrite external changes.
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current);
+        autoSaveTimerRef.current = null;
+      }
+      fetchFileContent(channelId, path).then((result) => {
+        // Only update if this is still the selected file.
+        if (selectedPathRef.current !== path) return;
+        if (result.binary) return;
+        const view = viewRef.current;
+        if (!view) return;
+        const current = view.state.doc.toString();
+        if (result.content !== current) {
+          view.dispatch({
+            changes: { from: 0, to: current.length, insert: result.content },
+          });
+          // Update markdown preview if needed.
+          if (isMarkdownFile(path)) {
+            setPreviewHtml(marked.parse(result.content, { async: false }) as string);
+          }
+        }
+      }).catch(() => { /* ignore — file may have been deleted */ });
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [channelId]);
+
   return (
     <FilePanel title="Editor" dirPath={dirPath} branch={branch} noPadding {...panelProps}>
       <div style={{ display: "flex", height: "100%", userSelect: treeResizing ? "none" : undefined }}>
