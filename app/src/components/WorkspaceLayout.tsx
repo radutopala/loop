@@ -794,11 +794,23 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
 }) {
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(name);
+  const [confirming, setConfirming] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (editing) inputRef.current?.select();
   }, [editing]);
+
+  // Close confirm popover on outside click.
+  useEffect(() => {
+    if (!confirming) return;
+    const handler = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      if (!target.closest("[data-confirm-popover]")) setConfirming(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [confirming]);
 
   const commitRename = () => {
     setEditing(false);
@@ -815,6 +827,7 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
       style={{
         ...tabButtonStyle(active),
         flexShrink: 0,
+        position: "relative",
       }}
       onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = colors.hoverBg; e.currentTarget.style.color = colors.textLight; } }}
       onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = colors.textDim; } }}
@@ -852,7 +865,7 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
       )}
       {canDelete && !editing && (
         <button
-          onClick={(e) => { e.stopPropagation(); onDelete(); }}
+          onClick={(e) => { e.stopPropagation(); setConfirming(true); }}
           title="Delete layout"
           style={{
             background: "none",
@@ -873,6 +886,69 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
             <line x1="6" y1="6" x2="18" y2="18" />
           </svg>
         </button>
+      )}
+      {confirming && (
+        <div
+          data-confirm-popover
+          onMouseDown={(e) => e.stopPropagation()}
+          style={{
+            position: "absolute",
+            top: "100%",
+            left: "50%",
+            transform: "translateX(-50%)",
+            marginTop: 6,
+            backgroundColor: colors.surface,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 6,
+            padding: "6px 8px",
+            zIndex: 1000,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            whiteSpace: "nowrap",
+            fontFamily: fonts.sans,
+            fontSize: 11,
+          }}
+        >
+          <span style={{ color: colors.textLight }}>Delete?</span>
+          <button
+            onClick={(e) => { e.stopPropagation(); setConfirming(false); onDelete(); }}
+            style={{
+              background: "rgba(218, 55, 60, 0.2)",
+              border: "1px solid #f47067",
+              color: "#f47067",
+              cursor: "pointer",
+              padding: "1px 8px",
+              fontSize: 10,
+              fontFamily: fonts.sans,
+              borderRadius: 4,
+              lineHeight: 1.4,
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "#f47067"; e.currentTarget.style.color = "#fff"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(218, 55, 60, 0.2)"; e.currentTarget.style.color = "#f47067"; }}
+          >
+            Yes
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); setConfirming(false); }}
+            style={{
+              background: "none",
+              border: `1px solid ${colors.border}`,
+              color: colors.textDim,
+              cursor: "pointer",
+              padding: "1px 8px",
+              fontSize: 10,
+              fontFamily: fonts.sans,
+              borderRadius: 4,
+              lineHeight: 1.4,
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; e.currentTarget.style.borderColor = colors.textDim; }}
+            onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; e.currentTarget.style.borderColor = colors.border; }}
+          >
+            No
+          </button>
+        </div>
       )}
     </div>
   );
