@@ -898,9 +898,11 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
             transform: "translateX(-50%)",
             marginTop: 8,
             backgroundColor: colors.surface,
-            border: `1px solid ${colors.border}`,
+            border: `1px solid ${colors.textLight}`,
             borderRadius: 6,
-            padding: "6px 8px",
+            padding: "0 8px",
+            height: 22,
+            boxSizing: "border-box",
             zIndex: 1000,
             boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
             display: "flex",
@@ -913,7 +915,7 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
         >
           {/* Arrow pointing up */}
           <svg width="16" height="9" viewBox="0 0 16 9" style={{ position: "absolute", top: -8, left: "50%", transform: "translateX(-50%)", filter: "drop-shadow(0 -2px 4px rgba(0,0,0,0.3))" }}>
-            <path d="M1 9 L7 2.5 Q8 1.5 9 2.5 L15 9 Z" fill={colors.surface} stroke={colors.textDim} strokeWidth="0.75" />
+            <path d="M1 9 L7 2.5 Q8 1.5 9 2.5 L15 9 Z" fill={colors.surface} stroke={colors.textLight} strokeWidth="0.75" />
             <rect x="0" y="8" width="16" height="2" fill={colors.surface} />
           </svg>
           <span style={{ color: colors.textLight }}>Delete?</span>
