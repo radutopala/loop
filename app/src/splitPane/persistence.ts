@@ -10,6 +10,8 @@ export interface ChannelLayouts {
   layouts: Record<string, PaneNode>;
   /** Ordered layout names for tab display. */
   order: string[];
+  /** Default layout names that were explicitly removed by the user. */
+  removed?: string[];
 }
 
 function loadAll(): Record<string, ChannelLayouts> {
@@ -83,6 +85,11 @@ export function deleteLayout(channelId: string, layoutName: string): void {
   if (!ch) return;
   delete ch.layouts[layoutName];
   ch.order = ch.order.filter((n) => n !== layoutName);
+  // Track removed defaults so ensureDefaultLayouts doesn't re-add them.
+  if ((DEFAULT_LAYOUT_NAMES as readonly string[]).includes(layoutName)) {
+    ch.removed = ch.removed ?? [];
+    if (!ch.removed.includes(layoutName)) ch.removed.push(layoutName);
+  }
   if (ch.order.length === 0) {
     delete all[channelId];
   } else if (ch.active === layoutName) {
@@ -149,10 +156,12 @@ export function ensureDefaultLayouts(channelId: string): ChannelLayouts {
     if (ch.active === "Default") ch.active = "Chat";
   }
 
-  // Add any missing default layouts
+  // Add any missing default layouts (unless explicitly removed by user)
   const defaults = createDefaultLayouts();
+  const removed = ch.removed ?? [];
   let changed = false;
   for (const name of DEFAULT_LAYOUT_NAMES) {
+    if (removed.includes(name)) continue;
     if (!ch.layouts[name] && defaults.layouts[name]) {
       ch.layouts[name] = defaults.layouts[name];
       changed = true;
@@ -163,11 +172,48 @@ export function ensureDefaultLayouts(channelId: string): ChannelLayouts {
   }
 
   if (changed) {
-    // Ensure order: defaults first, then custom
+    // Ensure order: non-removed defaults first, then custom
+    const activeDefaults = DEFAULT_LAYOUT_NAMES.filter((n) => !removed.includes(n));
     const customOrder = ch.order.filter((n) => !(DEFAULT_LAYOUT_NAMES as readonly string[]).includes(n));
-    ch.order = [...DEFAULT_LAYOUT_NAMES, ...customOrder];
+    ch.order = [...activeDefaults, ...customOrder];
     saveAll(all);
   }
 
+  return ch;
+}
+
+/** Restore any removed default layouts and clear the removed list. */
+export function restoreDefaultLayouts(channelId: string): ChannelLayouts {
+  const all = loadAll();
+  const ch = all[channelId];
+  if (!ch) return createDefaultLayouts();
+  const defaults = createDefaultLayouts();
+  const removed = ch.removed ?? [];
+  for (const name of removed) {
+    if (defaults.layouts[name] && !ch.layouts[name]) {
+      ch.layouts[name] = defaults.layouts[name];
+    }
+    if (!ch.order.includes(name)) {
+      // Insert at position matching DEFAULT_LAYOUT_NAMES order
+      const idx = DEFAULT_LAYOUT_NAMES.indexOf(name as typeof DEFAULT_LAYOUT_NAMES[number]);
+      const insertAt = ch.order.findIndex((n) => {
+        const nIdx = DEFAULT_LAYOUT_NAMES.indexOf(n as typeof DEFAULT_LAYOUT_NAMES[number]);
+        return nIdx >= 0 && nIdx > idx;
+      });
+      if (insertAt >= 0) {
+        ch.order.splice(insertAt, 0, name);
+      } else {
+        // Find the first custom layout position
+        const firstCustom = ch.order.findIndex((n) => !(DEFAULT_LAYOUT_NAMES as readonly string[]).includes(n));
+        if (firstCustom >= 0) {
+          ch.order.splice(firstCustom, 0, name);
+        } else {
+          ch.order.push(name);
+        }
+      }
+    }
+  }
+  ch.removed = [];
+  saveAll(all);
   return ch;
 }
