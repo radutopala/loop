@@ -6,6 +6,7 @@ import { Sidebar } from "./components/Sidebar";
 import { MarkdownFilePanel } from "./components/FilePanel";
 import { WorkspaceLayout, type WorkspaceLayoutRef } from "./components/WorkspaceLayout";
 import { LoopLogo } from "./components/LoopLogo";
+import horizontalLogo from "./assets/logo-horizontal.svg";
 import { CommandPalette } from "./components/CommandPalette";
 import { Settings } from "./components/Settings";
 import { useEventStream } from "./hooks/useEventStream";
@@ -336,29 +337,20 @@ export default function App() {
       }}
     >
       {/* Branding — always pinned to top-right corner */}
-      <span
+      <img
+        src={horizontalLogo}
+        alt="Loop"
+        width={52}
         style={{
           position: "absolute",
-          top: 10,
+          top: 12,
           right: 12,
-          fontSize: 13,
-          fontWeight: 600,
-          color: colors.textDim,
-          letterSpacing: 1,
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
           zIndex: 10,
           pointerEvents: "none",
           // @ts-expect-error: WebKit-specific CSS property for Electron drag region
           WebkitAppRegion: "drag",
         }}
-      >
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M12 12c-2-2.67-4-4-6-4a4 4 0 1 0 0 8c2 0 4-1.33 6-4Zm0 0c2 2.67 4 4 6 4a4 4 0 0 0 0-8c-2 0-4 1.33-6 4Z" />
-        </svg>
-        Loop
-      </span>
+      />
       <Sidebar
         channels={channels}
         selectedId={selectedId}
