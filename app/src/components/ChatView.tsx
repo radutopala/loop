@@ -3,6 +3,7 @@ import type { AgentActivityData, Message } from "../types";
 import type { ChatState } from "../hooks/useChatState";
 import { sendCommand, sendMessage } from "../api/loopApi";
 import { colors, fonts } from "../theme";
+import { LoopLogo } from "./LoopLogo";
 
 interface ChatViewProps {
   channelId: string | null;
@@ -146,8 +147,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
 function WelcomeScreen() {
   return (
     <div style={styles.welcomeContent}>
-      <img src="./loop.png" alt="Loop" style={{ width: 128, height: 128, opacity: 0.7 }} />
-      <div style={styles.welcomeTitle}>What can we build?</div>
+      <LoopLogo />
     </div>
   );
 }

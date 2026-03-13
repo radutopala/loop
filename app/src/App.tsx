@@ -5,6 +5,7 @@ import { createChannel, createThread, deleteChannel, deleteThread, ensureChannel
 import { Sidebar } from "./components/Sidebar";
 import { MarkdownFilePanel } from "./components/FilePanel";
 import { WorkspaceLayout, type WorkspaceLayoutRef } from "./components/WorkspaceLayout";
+import { LoopLogo } from "./components/LoopLogo";
 import { CommandPalette } from "./components/CommandPalette";
 import { Settings } from "./components/Settings";
 import { useEventStream } from "./hooks/useEventStream";
@@ -429,7 +430,9 @@ export default function App() {
               onDaemonRestarted={loadChannels}
             />
           ) : (
-            <div style={{ flex: 1 }} />
+            <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <LoopLogo />
+            </div>
           )}
         </>
       )}

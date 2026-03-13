@@ -1,0 +1,58 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#333333"/>
+      <stop offset="100%" stop-color="#1a1a1a"/>
+    </linearGradient>
+    <linearGradient id="edge" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#555555"/>
+      <stop offset="50%" stop-color="#3a3a3a"/>
+      <stop offset="100%" stop-color="#2a2a2a"/>
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="5" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    <!-- Border glow: top-left corner -->
+    <radialGradient id="glow-tl" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(0,0) scale(500)">
+      <stop offset="0%" stop-color="white" stop-opacity="0.6"/>
+      <stop offset="40%" stop-color="white" stop-opacity="0.15"/>
+      <stop offset="100%" stop-color="white" stop-opacity="0"/>
+    </radialGradient>
+    <!-- Border glow: bottom-right corner -->
+    <radialGradient id="glow-br" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(824,824) scale(500)">
+      <stop offset="0%" stop-color="white" stop-opacity="0.4"/>
+      <stop offset="40%" stop-color="white" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="white" stop-opacity="0"/>
+    </radialGradient>
+    <clipPath id="icon-shape">
+      <rect width="824" height="824" rx="185" ry="185"/>
+    </clipPath>
+  </defs>
+  <!-- Apple spec: 824x824 icon in 1024x1024 canvas (100px inset) -->
+  <g transform="translate(100, 100)">
+    <g clip-path="url(#icon-shape)">
+      <!-- Background fill -->
+      <rect width="824" height="824" fill="url(#bg)"/>
+      <!-- Infinity icon -->
+      <g transform="translate(412, 300)" filter="url(#glow)">
+        <path d="M0 0c-43-57.3-86-86-128.7-86a86 86 0 1 0 0 172c42.7 0 85.7-28.7 128.7-86Zm0 0c43 57.3 86 86 128.7 86a86 86 0 0 0 0-172c-42.7 0-85.7 28.7-128.7 86Z"
+              fill="none" stroke="white" stroke-width="25" stroke-linecap="round" stroke-linejoin="round" opacity="0.9"/>
+      </g>
+      <!-- LOOP_TEXT size=160 centerX=412 baselineY=610 opacity=0.9 -->
+      <g transform="translate(232, 610)" fill="white" opacity="0.9">
+        <path d="M9.92 0.00L9.92 -112.73L30.08 -112.73L30.08 -16.95L81.17 -16.95L81.17 0.00ZM128.79 1.64Q116.61 1.64 107.62 -3.55Q98.64 -8.75 93.68 -18.40Q88.72 -28.05 88.72 -41.41L88.72 -41.56Q88.72 -54.84 93.72 -64.49Q98.72 -74.14 107.70 -79.34Q116.68 -84.53 128.72 -84.53Q140.83 -84.53 149.85 -79.34Q158.87 -74.14 163.87 -64.53Q168.87 -54.92 168.87 -41.56L168.87 -41.41Q168.87 -27.97 163.91 -18.32Q158.95 -8.67 149.97 -3.52Q140.98 1.64 128.79 1.64ZM128.87 -14.06Q135.04 -14.06 139.58 -17.27Q144.11 -20.47 146.57 -26.60Q149.03 -32.73 149.03 -41.41L149.03 -41.56Q149.03 -50.16 146.53 -56.25Q144.03 -62.34 139.46 -65.55Q134.89 -68.75 128.72 -68.75Q122.70 -68.75 118.13 -65.55Q113.56 -62.34 111.02 -56.25Q108.48 -50.16 108.48 -41.56L108.48 -41.41Q108.48 -32.73 111.02 -26.60Q113.56 -20.47 118.13 -17.27Q122.70 -14.06 128.87 -14.06ZM217.97 1.64Q205.78 1.64 196.80 -3.55Q187.82 -8.75 182.85 -18.40Q177.89 -28.05 177.89 -41.41L177.89 -41.56Q177.89 -54.84 182.89 -64.49Q187.89 -74.14 196.88 -79.34Q205.86 -84.53 217.89 -84.53Q230.00 -84.53 239.03 -79.34Q248.05 -74.14 253.05 -64.53Q258.05 -54.92 258.05 -41.56L258.05 -41.41Q258.05 -27.97 253.09 -18.32Q248.13 -8.67 239.14 -3.52Q230.16 1.64 217.97 1.64ZM218.05 -14.06Q224.22 -14.06 228.75 -17.27Q233.28 -20.47 235.74 -26.60Q238.21 -32.73 238.21 -41.41L238.21 -41.56Q238.21 -50.16 235.71 -56.25Q233.21 -62.34 228.64 -65.55Q224.07 -68.75 217.89 -68.75Q211.88 -68.75 207.31 -65.55Q202.74 -62.34 200.20 -56.25Q197.66 -50.16 197.66 -41.56L197.66 -41.41Q197.66 -32.73 200.20 -26.60Q202.74 -20.47 207.31 -17.27Q211.88 -14.06 218.05 -14.06ZM270.51 27.34L270.51 -82.81L289.88 -82.81L289.88 -68.52L290.35 -68.52Q292.77 -73.52 296.48 -77.07Q300.20 -80.63 305.16 -82.58Q310.12 -84.53 315.98 -84.53Q326.52 -84.53 334.22 -79.34Q341.91 -74.14 346.09 -64.45Q350.27 -54.77 350.27 -41.41L350.27 -41.33Q350.27 -28.05 346.09 -18.40Q341.91 -8.75 334.30 -3.55Q326.68 1.64 316.29 1.64Q310.43 1.64 305.39 -0.23Q300.35 -2.11 296.52 -5.63Q292.70 -9.14 290.35 -13.98L289.88 -13.98L289.88 27.34ZM310.27 -14.69Q316.52 -14.69 321.05 -17.97Q325.59 -21.25 328.05 -27.23Q330.51 -33.20 330.51 -41.33L330.51 -41.41Q330.51 -49.77 328.05 -55.74Q325.59 -61.72 321.02 -64.92Q316.45 -68.13 310.27 -68.13Q304.26 -68.13 299.65 -64.84Q295.04 -61.56 292.42 -55.59Q289.80 -49.61 289.80 -41.41L289.80 -41.33Q289.80 -33.20 292.42 -27.23Q295.04 -21.25 299.65 -17.97Q304.26 -14.69 310.27 -14.69Z"/>
+      </g>
+      <!-- /LOOP_TEXT -->
+    </g>
+    <!-- Edge highlight -->
+    <rect width="824" height="824" rx="185" ry="185" fill="none" stroke="url(#edge)" stroke-width="2" opacity="0.5"/>
+    <!-- Corner glow on border: top-left -->
+    <rect width="824" height="824" rx="185" ry="185" fill="none" stroke="url(#glow-tl)" stroke-width="3"/>
+    <!-- Corner glow on border: bottom-right -->
+    <rect width="824" height="824" rx="185" ry="185" fill="none" stroke="url(#glow-br)" stroke-width="3"/>
+  </g>
+</svg>

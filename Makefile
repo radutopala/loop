@@ -1,4 +1,4 @@
-.PHONY: help build install test test-integration lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot app-dev app-install app-build-binary app-dist-linux
+.PHONY: help build install test test-integration lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot app-dev app-install app-build-binary app-dist-linux app-icons
 .DEFAULT_GOAL := help
 
 help: ## Show available targets
@@ -98,6 +98,25 @@ app-dist-linux: ## Build Linux AppImage + deb (x64 and arm64)
 	$(MAKE) app-build-binary GOOS=linux GOARCH=amd64
 	$(MAKE) app-build-binary GOOS=linux GOARCH=arm64
 	cd app && npm install && npm run dist:linux
+
+app-icons: ## Regenerate app icons from SVG sources (requires rsvg-convert, iconutil, fontkit)
+	@npm list --prefix /tmp fontkit >/dev/null 2>&1 || npm install --prefix /tmp fontkit
+	@node scripts/build-icons.js
+	@mkdir -p /tmp/Loop.iconset
+	@for size in 16 32 64 128 256 512; do \
+		rsvg-convert -w $$size -h $$size app/build/icon.svg -o /tmp/Loop.iconset/icon_$${size}x$${size}.png; \
+	done
+	@rsvg-convert -w 1024 -h 1024 app/build/icon.svg -o /tmp/Loop.iconset/icon_512x512@2x.png
+	@cp /tmp/Loop.iconset/icon_32x32.png /tmp/Loop.iconset/icon_16x16@2x.png
+	@cp /tmp/Loop.iconset/icon_64x64.png /tmp/Loop.iconset/icon_32x32@2x.png
+	@cp /tmp/Loop.iconset/icon_256x256.png /tmp/Loop.iconset/icon_128x128@2x.png
+	@cp /tmp/Loop.iconset/icon_512x512.png /tmp/Loop.iconset/icon_256x256@2x.png
+	@rm /tmp/Loop.iconset/icon_64x64.png
+	@iconutil -c icns /tmp/Loop.iconset -o app/build/icon.icns
+	@rm -rf /tmp/Loop.iconset
+	@rsvg-convert -w 512 -h 512 app/build/icon.svg -o app/public/loop-macos.png
+	@rsvg-convert -w 512 -h 512 app/build/icon-transparent.svg -o app/public/loop.png
+	@echo "Generated: app/build/icon.icns, app/public/loop-macos.png, app/public/loop.png"
 
 clean: ## Remove build artifacts
 	rm -rf bin/ app/resources/ coverage.out coverage.html
