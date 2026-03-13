@@ -896,7 +896,7 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
             top: "100%",
             left: "50%",
             transform: "translateX(-50%)",
-            marginTop: 8,
+            marginTop: 10,
             backgroundColor: colors.surface,
             border: `1px solid ${colors.textLight}`,
             borderRadius: 6,
