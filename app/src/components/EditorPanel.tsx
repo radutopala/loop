@@ -367,6 +367,29 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
     }
   }, [channelId]);
 
+  const refreshTree = useCallback(async () => {
+    // Reload root and all expanded directories.
+    await loadDir(".");
+    for (const dir of expandedDirs) {
+      loadDir(dir === "" ? "." : dir);
+    }
+    // Reload the currently open file from disk.
+    const path = selectedPathRef.current;
+    if (path) {
+      try {
+        const result = await fetchFileContent(channelId, path);
+        if (selectedPathRef.current !== path || result.binary) return;
+        const view = viewRef.current;
+        if (!view) return;
+        const current = view.state.doc.toString();
+        if (result.content !== current) {
+          view.dispatch({ changes: { from: 0, to: current.length, insert: result.content } });
+          setDirtyTabs((prev) => { if (!prev.has(path)) return prev; const next = new Set(prev); next.delete(path); return next; });
+        }
+      } catch { /* file may have been deleted */ }
+    }
+  }, [loadDir, expandedDirs, channelId]);
+
   const handleDirClick = useCallback((path: string) => {
     setSelectedDir(path);
     setExpandedDirs((prev) => {
@@ -637,9 +660,21 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
           <div style={{ display: "flex", alignItems: "center", padding: "4px 8px 2px", flexShrink: 0 }}>
             <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Files</span>
             <button
+              onClick={refreshTree}
+              title="Refresh files"
+              style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: 0, lineHeight: 1, display: "flex", alignItems: "center" }}
+              onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
+              onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+            >
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <polyline points="23 4 23 10 17 10" />
+                <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+              </svg>
+            </button>
+            <button
               onClick={() => setNewFileName(selectedDir ? selectedDir + "/" : "")}
               title="New file"
-              style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: 0, lineHeight: 1, display: "flex", alignItems: "center" }}
+              style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: 0, lineHeight: 1, display: "flex", alignItems: "center", marginLeft: 4 }}
               onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
               onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
             >
