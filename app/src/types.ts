@@ -118,6 +118,14 @@ export interface ServerErrorMessage {
 
 export type ServerMessage = ServerStatusMessage | ServerErrorMessage;
 
+export interface UpdateStatus {
+  available: boolean;
+  version?: string;
+  downloading: boolean;
+  downloaded: boolean;
+  error?: string;
+}
+
 export interface AppSettings {
   stopDaemonOnQuit: boolean;
   autoSaveOnBlur: boolean;
@@ -125,7 +133,6 @@ export interface AppSettings {
 
 export interface DaemonInfo {
   running: boolean;
-  managed: boolean;
   binaryPath: string | null;
 }
 
@@ -149,6 +156,10 @@ declare global {
       saveConfig: (filePath: string, content: string) => Promise<{ ok: boolean; error?: string }>;
       restartDaemon: () => Promise<DaemonInfo>;
       onOpenSettings: (callback: () => void) => void;
+      getUpdateStatus?: () => Promise<UpdateStatus>;
+      downloadUpdate?: () => Promise<void>;
+      installUpdate?: () => Promise<void>;
+      onUpdateStatus?: (callback: (status: UpdateStatus) => void) => void;
     };
   }
 }

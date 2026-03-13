@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Channel, WSEvent } from "./types";
+import type { Channel, UpdateStatus, WSEvent } from "./types";
 import { colors, fonts } from "./theme";
 import { createChannel, createThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, initApiUrl } from "./api/loopApi";
 import { Sidebar } from "./components/Sidebar";
@@ -27,6 +27,7 @@ export default function App() {
   const [settingsDirPath, setSettingsDirPath] = useState<string | null>(null);
   const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(null);
   const [readmeOpen, setReadmeOpen] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
 
   const layoutRef = useRef<WorkspaceLayoutRef>(null);
 
@@ -104,6 +105,20 @@ export default function App() {
     if (window.loopAPI?.onOpenSettings) {
       window.loopAPI.onOpenSettings(() => { setReadmeOpen(false); setSettingsOpen(true); setSettingsDirPath(null); });
     }
+  }, []);
+
+  // Auto-updater state.
+  useEffect(() => {
+    window.loopAPI?.getUpdateStatus?.().then(setUpdateStatus);
+    window.loopAPI?.onUpdateStatus?.((status) => setUpdateStatus(status));
+  }, []);
+
+  const handleDownloadUpdate = useCallback(async () => {
+    try { await window.loopAPI?.downloadUpdate?.(); } catch (e) { console.warn("download update failed:", e); }
+  }, []);
+
+  const handleInstallUpdate = useCallback(() => {
+    window.loopAPI?.installUpdate?.();
   }, []);
 
   const dmEnsuredRef = useRef(false);
@@ -356,6 +371,9 @@ export default function App() {
         onOpenSettings={() => { setReadmeOpen(false); setSettingsOpen((v) => !v); setSettingsDirPath(null); }}
         onOpenConfig={(dirPath) => { setReadmeOpen(false); setSettingsOpen((v) => { if (v && settingsDirPath === dirPath) return false; setSettingsDirPath(dirPath); return true; }); }}
         onOpenReadme={() => { setSettingsOpen(false); setReadmeOpen((v) => !v); }}
+        updateStatus={updateStatus}
+        onDownloadUpdate={handleDownloadUpdate}
+        onInstallUpdate={handleInstallUpdate}
       />
       {selectedId && selectedChannel ? (
         <>

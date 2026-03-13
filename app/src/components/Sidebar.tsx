@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Channel } from "../types";
+import type { Channel, UpdateStatus } from "../types";
 import { colors, fonts } from "../theme";
 import { ChannelItem } from "./ChannelItem";
 import { ContextMenu } from "./ContextMenu";
@@ -110,6 +110,9 @@ interface SidebarProps {
   onOpenSettings?: () => void;
   onOpenConfig?: (dirPath: string) => void;
   onOpenReadme?: () => void;
+  updateStatus?: UpdateStatus | null;
+  onDownloadUpdate?: () => void;
+  onInstallUpdate?: () => void;
 }
 
 export function Sidebar({
@@ -125,6 +128,9 @@ export function Sidebar({
   onOpenSettings,
   onOpenConfig,
   onOpenReadme,
+  updateStatus,
+  onDownloadUpdate,
+  onInstallUpdate,
 }: SidebarProps) {
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const [resizing, setResizing] = useState(false);
@@ -515,8 +521,32 @@ export function Sidebar({
       {/* Spacer to push footer to bottom */}
       <div style={{ flex: 1 }} />
 
-      {/* Footer: Settings + README */}
+      {/* Footer: Update + Settings + README */}
       <div style={{ padding: "8px 12px", borderTop: `1px solid ${colors.border}`, display: "flex", flexDirection: "column", gap: 2 }}>
+        {updateStatus?.available && (
+          <button
+            onClick={updateStatus.downloaded ? onInstallUpdate : updateStatus.downloading ? undefined : onDownloadUpdate}
+            disabled={updateStatus.downloading}
+            style={{
+              ...footerBtnStyle,
+              color: updateStatus.downloaded ? colors.active : updateStatus.downloading ? colors.textDim : colors.active,
+              cursor: updateStatus.downloading ? "default" : "pointer",
+            }}
+            onMouseEnter={(e) => { if (!updateStatus.downloading) { e.currentTarget.style.backgroundColor = colors.hoverBg; } }}
+            onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+              <polyline points="7 10 12 15 17 10" />
+              <line x1="12" y1="15" x2="12" y2="3" />
+            </svg>
+            {updateStatus.downloaded
+              ? "Restart to update"
+              : updateStatus.downloading
+                ? "Downloading..."
+                : `Update available${updateStatus.version ? ` v${updateStatus.version}` : ""}`}
+          </button>
+        )}
         <button
           onClick={onOpenSettings}
           style={footerBtnStyle}

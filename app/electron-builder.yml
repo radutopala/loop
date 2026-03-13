@@ -56,5 +56,10 @@ extraResources:
     filter:
       - "**/*"
 
+publish:
+  provider: github
+  owner: radutopala
+  repo: loop
+
 extraMetadata:
   main: dist-electron/main.js

@@ -19,4 +19,10 @@ contextBridge.exposeInMainWorld("loopAPI", {
   onOpenSettings: (callback) => {
     ipcRenderer.on("open-settings", () => callback());
   },
+  getUpdateStatus: () => ipcRenderer.invoke("get-update-status"),
+  downloadUpdate: () => ipcRenderer.invoke("download-update"),
+  installUpdate: () => ipcRenderer.invoke("install-update"),
+  onUpdateStatus: (callback) => {
+    ipcRenderer.on("update-status", (_event, status) => callback(status));
+  },
 });

@@ -247,9 +247,6 @@ export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, o
                     }}>
                       {daemonInfo.running ? "Running" : "Stopped"}
                     </span>
-                    {daemonInfo.managed && (
-                      <span style={{ color: colors.textDim, fontSize: 11 }}>(managed)</span>
-                    )}
                   </span>
                 </div>
                 {daemonInfo.binaryPath && (
@@ -296,7 +293,7 @@ export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, o
 
             <ToggleRow
               label="Stop daemon when app quits"
-              description="Only when the app started the daemon itself."
+              description="Uninstalls the daemon service on quit. It will be re-installed on next app launch."
               checked={settings.stopDaemonOnQuit}
               onChange={() => handleToggle("stopDaemonOnQuit")}
             />

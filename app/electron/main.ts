@@ -1,5 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
-import { execFileSync, spawn, ChildProcess } from "node:child_process";
+import { autoUpdater } from "electron-updater";
+import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -153,9 +154,6 @@ function findLoopBinary(): string | null {
 
 // --- Daemon management ---
 
-let daemonProcess: ChildProcess | null = null;
-let managedDaemon = false; // true if we started the daemon ourselves
-
 async function isDaemonRunning(): Promise<boolean> {
   try {
     const resp = await fetch(`${resolveApiUrl()}/api/health`, {
@@ -182,21 +180,19 @@ function ensureLoopConfig(): void {
   }
 }
 
+/** Start or restart daemon via `loop daemon:restart` (installs as launchd/systemd service). */
 async function ensureDaemon(): Promise<void> {
   ensureLoopConfig();
 
-  if (await isDaemonRunning()) return;
-
   const binary = findLoopBinary();
-  if (!binary) return; // no binary available — user must start daemon manually
+  if (!binary) return;
 
-  console.log(`Starting loop daemon from: ${binary}`);
-  daemonProcess = spawn(binary, ["serve"], {
-    stdio: "ignore",
-    detached: true,
-  });
-  daemonProcess.unref();
-  managedDaemon = true;
+  console.log(`Starting loop daemon via: ${binary} daemon:restart`);
+  try {
+    execFileSync(binary, ["daemon:restart"], { encoding: "utf-8", timeout: 30_000 });
+  } catch (err) {
+    console.warn("daemon:restart failed:", err);
+  }
 
   // Wait for daemon to become healthy
   for (let i = 0; i < 30; i++) {
@@ -207,14 +203,6 @@ async function ensureDaemon(): Promise<void> {
     }
   }
   console.warn("Loop daemon did not become healthy within 15s");
-}
-
-async function stopDaemon(): Promise<void> {
-  if (!managedDaemon || !daemonProcess) return;
-  console.log("Stopping loop daemon");
-  daemonProcess.kill("SIGTERM");
-  daemonProcess = null;
-  managedDaemon = false;
 }
 
 const PROTOCOL = "loop";
@@ -426,11 +414,61 @@ function buildMenu() {
   Menu.setApplicationMenu(Menu.buildFromTemplate(template));
 }
 
+// --- Auto-updater ---
+
+let updateStatus: { available: boolean; version?: string; downloading: boolean; downloaded: boolean; error?: string } = {
+  available: false, downloading: false, downloaded: false,
+};
+
+function setupAutoUpdater() {
+  autoUpdater.autoDownload = false;
+  autoUpdater.autoInstallOnAppQuit = false;
+
+  autoUpdater.on("update-available", (info) => {
+    updateStatus = { available: true, version: info.version, downloading: false, downloaded: false };
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send("update-status", updateStatus);
+    }
+  });
+
+  autoUpdater.on("update-not-available", () => {
+    updateStatus = { available: false, downloading: false, downloaded: false };
+  });
+
+  autoUpdater.on("download-progress", () => {
+    updateStatus = { ...updateStatus, downloading: true };
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send("update-status", updateStatus);
+    }
+  });
+
+  autoUpdater.on("update-downloaded", () => {
+    updateStatus = { ...updateStatus, downloading: false, downloaded: true };
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send("update-status", updateStatus);
+    }
+  });
+
+  autoUpdater.on("error", (err) => {
+    updateStatus = { ...updateStatus, downloading: false, error: String(err) };
+    console.warn("Auto-updater error:", err);
+  });
+
+  autoUpdater.checkForUpdates().catch(() => {});
+  setInterval(() => {
+    autoUpdater.checkForUpdates().catch(() => {});
+  }, 30 * 60 * 1000);
+}
+
 app.on("ready", async () => {
   buildMenu();
   await ensureDaemon();
   createWindow(pendingChannelId || undefined);
   pendingChannelId = null;
+
+  if (!VITE_DEV_SERVER_URL) {
+    setupAutoUpdater();
+  }
 });
 
 app.on("window-all-closed", () => {
@@ -439,10 +477,18 @@ app.on("window-all-closed", () => {
   }
 });
 
-app.on("before-quit", async () => {
+app.on("before-quit", () => {
   const settings = loadSettings();
   if (settings.stopDaemonOnQuit) {
-    await stopDaemon();
+    const binary = findLoopBinary();
+    if (binary) {
+      console.log(`Stopping loop daemon via: ${binary} daemon:stop`);
+      try {
+        execFileSync(binary, ["daemon:stop"], { encoding: "utf-8", timeout: 15_000 });
+      } catch (err) {
+        console.warn("daemon:stop failed:", err);
+      }
+    }
   }
 });
 
@@ -450,6 +496,25 @@ app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
     createWindow();
   }
+});
+
+ipcMain.handle("get-update-status", () => updateStatus);
+
+ipcMain.handle("download-update", async () => {
+  await autoUpdater.downloadUpdate();
+});
+
+ipcMain.handle("install-update", () => {
+  // Restart daemon so it picks up the new bundled binary.
+  const binary = findLoopBinary();
+  if (binary) {
+    try {
+      execFileSync(binary, ["daemon:restart"], { encoding: "utf-8", timeout: 30_000 });
+    } catch (err) {
+      console.warn("daemon:restart before update failed:", err);
+    }
+  }
+  autoUpdater.quitAndInstall(false, true);
 });
 
 ipcMain.handle("show-open-directory-dialog", async () => {
@@ -492,7 +557,6 @@ ipcMain.handle("save-settings", (_event, settings: Settings) => {
 ipcMain.handle("get-daemon-info", async () => {
   return {
     running: await isDaemonRunning(),
-    managed: managedDaemon,
     binaryPath: findLoopBinary(),
   };
 });
@@ -531,79 +595,23 @@ ipcMain.handle("save-config", (_event, filePath: string, content: string) => {
 });
 
 ipcMain.handle("restart-daemon", async () => {
-  const cfg = readLoopConfig();
-  const addr = cfg.api_addr || ":8222";
-  const port = addr.includes(":") ? addr.split(":").pop() : "8222";
-
-  /** Find PIDs listening on the daemon port. */
-  function findListeningPids(): number[] {
+  const binary = findLoopBinary();
+  if (binary) {
     try {
-      const out = execFileSync("lsof", ["-ti", `TCP:${port}`, "-sTCP:LISTEN"], { encoding: "utf-8" }).trim();
-      if (!out) return [];
-      return out.split("\n").map((s) => parseInt(s, 10)).filter((n) => !isNaN(n));
-    } catch {
-      return [];
-    }
-  }
-
-  /** Check if loop is managed by launchctl (KeepAlive). */
-  function isLaunchctlManaged(): boolean {
-    try {
-      // If the service is loaded, launchctl list will show it.
-      const out = execFileSync("launchctl", ["list", "com.loop.agent"], { encoding: "utf-8" });
-      return out.includes("com.loop.agent");
-    } catch {
-      return false;
-    }
-  }
-
-  if (daemonProcess) {
-    // App-managed daemon: just kill it.
-    daemonProcess.kill("SIGTERM");
-    daemonProcess = null;
-    managedDaemon = false;
-    // Wait for port to be free.
-    for (let i = 0; i < 10; i++) {
-      await new Promise((r) => setTimeout(r, 500));
-      if (findListeningPids().length === 0) break;
-    }
-  } else if (isLaunchctlManaged()) {
-    // System-installed daemon via launchctl: use kickstart to restart.
-    // This tells launchd to stop and immediately re-launch the service,
-    // avoiding the race where KeepAlive respawns before we can start our own.
-    console.log("Restarting daemon via launchctl kickstart");
-    try {
-      const uid = process.getuid?.();
-      execFileSync("launchctl", ["kickstart", "-k", `gui/${uid}/com.loop.agent`], { encoding: "utf-8" });
+      execFileSync(binary, ["daemon:restart"], { encoding: "utf-8", timeout: 30_000 });
     } catch (err) {
-      console.warn("launchctl kickstart failed:", err);
-    }
-  } else {
-    // System daemon not managed by launchctl: kill and restart manually.
-    const pids = findListeningPids();
-    for (const pid of pids) {
-      try { process.kill(pid, "SIGTERM"); } catch { /* already dead */ }
-    }
-    for (let i = 0; i < 10; i++) {
-      await new Promise((r) => setTimeout(r, 500));
-      if (findListeningPids().length === 0) break;
+      console.warn("daemon:restart failed:", err);
     }
   }
 
-  // Wait for daemon to become healthy (launchctl restart or ensureDaemon).
-  if (!isLaunchctlManaged()) {
-    await ensureDaemon();
-  } else {
-    // Wait for launchctl-managed daemon to come back up.
-    for (let i = 0; i < 30; i++) {
-      await new Promise((r) => setTimeout(r, 500));
-      if (await isDaemonRunning()) break;
-    }
+  // Wait for daemon to become healthy.
+  for (let i = 0; i < 30; i++) {
+    await new Promise((r) => setTimeout(r, 500));
+    if (await isDaemonRunning()) break;
   }
 
   return {
     running: await isDaemonRunning(),
-    managed: managedDaemon,
     binaryPath: findLoopBinary(),
   };
 });

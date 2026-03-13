@@ -67,7 +67,7 @@ const layoutMenuItemStyle: React.CSSProperties = {
 function tabButtonStyle(active: boolean): React.CSSProperties {
   return {
     background: active ? colors.surface : "transparent",
-    border: active ? `1px solid ${colors.border}` : "1px solid transparent",
+    border: active ? `1px solid ${colors.textLight}` : "1px solid transparent",
     color: active ? colors.textLight : colors.textDim,
     cursor: "pointer",
     padding: "3px 10px",
