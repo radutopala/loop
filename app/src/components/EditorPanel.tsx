@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from "@codemirror/view";
 import { EditorState } from "@codemirror/state";
 import { defaultKeymap, indentWithTab, history, historyKeymap } from "@codemirror/commands";
+import { search, searchKeymap, openSearchPanel } from "@codemirror/search";
 import { syntaxHighlighting, HighlightStyle, bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
 import { tags } from "@lezer/highlight";
 import { javascript } from "@codemirror/lang-javascript";
@@ -117,6 +118,29 @@ const darculaTheme = EditorView.theme({
   ".cm-tooltip": {
     backgroundColor: "#3c3f41",
     border: "1px solid #555",
+    color: "#a9b7c6",
+  },
+  ".cm-panels": {
+    backgroundColor: colors.surface,
+    color: "#a9b7c6",
+    borderBottom: `1px solid ${colors.border}`,
+  },
+  ".cm-panels button": {
+    backgroundImage: "none",
+    backgroundColor: colors.hoverBg,
+    color: "#a9b7c6",
+    border: `1px solid ${colors.border}`,
+    borderRadius: "3px",
+    cursor: "pointer",
+  },
+  ".cm-textfield": {
+    backgroundColor: colors.bg,
+    color: "#a9b7c6",
+    border: `1px solid ${colors.border}`,
+    borderRadius: "3px",
+    outline: "none",
+  },
+  ".cm-panels label": {
     color: "#a9b7c6",
   },
 }, { dark: true });
@@ -235,6 +259,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   const [autoSaveOnBlur, setAutoSaveOnBlur] = useState(true);
   const [newFileName, setNewFileName] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string; isDir: boolean } | null>(null);
+  const [editorMenu, setEditorMenu] = useState<{ x: number; y: number } | null>(null);
 
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -531,6 +556,27 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
     return items;
   }, [contextMenu, dirPath, handleDeleteFilePath]);
 
+  const handleEditorContextMenu = useCallback((e: React.MouseEvent) => {
+    // Only show custom menu when right-clicking inside the CodeMirror editor area.
+    const target = e.target as HTMLElement;
+    if (!target.closest(".cm-editor")) return;
+    e.preventDefault();
+    setEditorMenu({ x: e.clientX, y: e.clientY });
+  }, []);
+
+  const getEditorMenuItems = useCallback((): MenuItem[] => {
+    const view = viewRef.current;
+    const items: MenuItem[] = [];
+    const hasSelection = view ? view.state.selection.main.from !== view.state.selection.main.to : false;
+    if (hasSelection) {
+      items.push({ label: "Copy", onClick: () => { if (view) { const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to); navigator.clipboard.writeText(sel); } } });
+      items.push({ label: "Cut", onClick: () => { if (view) { const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to); navigator.clipboard.writeText(sel); view.dispatch({ changes: { from: view.state.selection.main.from, to: view.state.selection.main.to, insert: "" } }); } } });
+    }
+    items.push({ label: "Select All", separator: hasSelection, onClick: () => { if (view) view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } }); } });
+    items.push({ label: "Find...", separator: true, onClick: () => { if (view) openSearchPanel(view); } });
+    return items;
+  }, []);
+
   // Mount/update CodeMirror editor.
   useEffect(() => {
     if (!editorRef.current || fileContent === null || isBinary) {
@@ -555,12 +601,14 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
       bracketMatching(),
       foldGutter(),
       history(),
+      search({ top: true }),
       darculaTheme,
       syntaxHighlighting(darculaHighlightStyle),
       keymap.of([
         ...defaultKeymap,
         ...historyKeymap,
         ...foldKeymap,
+        ...searchKeymap,
         indentWithTab,
       ]),
       EditorView.updateListener.of((update) => {
@@ -874,7 +922,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
           {!selectedPath && !loading && (
             <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Select a file</div>
           )}
-          <div style={{ flex: 1, display: fileContent !== null && !isBinary ? "flex" : "none", overflow: "hidden" }}>
+          <div style={{ flex: 1, display: fileContent !== null && !isBinary ? "flex" : "none", overflow: "hidden" }} onContextMenu={handleEditorContextMenu}>
             <div
               ref={editorRef}
               style={{
@@ -911,6 +959,14 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
           y={contextMenu.y}
           items={getContextMenuItems()}
           onClose={() => setContextMenu(null)}
+        />
+      )}
+      {editorMenu && (
+        <ContextMenu
+          x={editorMenu.x}
+          y={editorMenu.y}
+          items={getEditorMenuItems()}
+          onClose={() => setEditorMenu(null)}
         />
       )}
     </FilePanel>

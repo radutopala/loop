@@ -70,7 +70,7 @@ function tabButtonStyle(active: boolean): React.CSSProperties {
     border: active ? `1px solid ${colors.border}` : "1px solid transparent",
     color: active ? colors.textLight : colors.textDim,
     cursor: "pointer",
-    padding: "3px 10px",
+    padding: "3px 14px",
     fontSize: 10,
     fontFamily: fonts.mono,
     lineHeight: 1,
