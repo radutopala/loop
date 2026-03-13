@@ -49,25 +49,18 @@ function leafIdForPanel(channelId: string, panel: PanelType): string {
 
 function tabButtonStyle(active: boolean): React.CSSProperties {
   return {
-    background: active ? colors.bg : "transparent",
-    borderTop: `1px solid ${active ? colors.border : "transparent"}`,
-    borderLeft: `1px solid ${active ? colors.border : "transparent"}`,
-    borderRight: `1px solid ${active ? colors.border : "transparent"}`,
-    borderBottom: "none",
+    background: active ? colors.surface : "transparent",
+    border: active ? `1px solid ${colors.border}` : "1px solid transparent",
     color: active ? colors.textLight : colors.textDim,
     cursor: "pointer",
-    padding: "4px 8px",
+    padding: "3px 10px",
     fontSize: 10,
     fontFamily: fonts.mono,
     lineHeight: 1,
-    borderRadius: "6px 6px 0 0",
+    borderRadius: 12,
     display: "flex",
     alignItems: "center",
     gap: 4,
-    // Active tab extends 1px below to cover the bar's bottom border
-    marginBottom: active ? -1 : 0,
-    paddingBottom: active ? 5 : 4,
-    position: "relative" as const,
   };
 }
 
@@ -612,7 +605,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       <div
         style={{
           display: "flex",
-          alignItems: "flex-end",
+          alignItems: "center",
           padding: "0 8px",
           borderBottom: `1px solid ${colors.border}`,
           height: 35,
@@ -629,7 +622,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             textTransform: "uppercase",
             letterSpacing: 1,
             flexShrink: 0,
-            paddingBottom: 5,
           }}
         >
           Layouts
@@ -698,7 +690,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             cursor: "pointer",
             padding: "4px",
             lineHeight: 1,
-            borderRadius: "6px 6px 0 0",
+            borderRadius: 12,
             display: "flex",
             alignItems: "center",
           }}
