@@ -153,7 +153,7 @@ function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf }: { leafId: string
           {PANEL_OPTIONS.map(({ panel: p, label: l }) => {
             const disabled = SINGLETON_PANELS.includes(p) && usedSingletons.has(p);
             return (
-              <div key={p} style={{ display: "flex", gap: 2, opacity: disabled ? 0.35 : 1 }}>
+              <div key={p} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2, opacity: disabled ? 0.35 : 1 }}>
                 <button
                   style={{ ...menuItemStyle, cursor: disabled ? "default" : "pointer" }}
                   disabled={disabled}
@@ -207,7 +207,6 @@ function hoverOut(e: React.MouseEvent<HTMLButtonElement>) {
 }
 
 const menuItemStyle: React.CSSProperties = {
-  flex: 1,
   background: "none",
   border: "none",
   color: colors.textLight,
