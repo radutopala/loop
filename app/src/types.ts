@@ -138,6 +138,7 @@ declare global {
   interface Window {
     loopAPI: {
       getApiUrl: () => Promise<string>;
+      showOpenDirectoryDialog?: () => Promise<string | null>;
       onNavigateChannel: (callback: (channelId: string) => void) => void;
       getSettings: () => Promise<AppSettings>;
       saveSettings: (settings: AppSettings) => Promise<void>;

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Channel, WSEvent } from "./types";
 import { colors, fonts } from "./theme";
-import { createChannel, createThread, deleteChannel, deleteThread, fetchChannels, fetchDiff, initApiUrl } from "./api/loopApi";
+import { createChannel, createThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, initApiUrl } from "./api/loopApi";
 import { Sidebar } from "./components/Sidebar";
 import { MarkdownFilePanel } from "./components/FilePanel";
 import { WorkspaceLayout, type WorkspaceLayoutRef } from "./components/WorkspaceLayout";
@@ -209,6 +209,19 @@ export default function App() {
     });
   }, []);
 
+  const handleOpenDirectory = useCallback(async (dirPath: string) => {
+    setError(null);
+    try {
+      const channel = await ensureChannel(dirPath);
+      await loadChannels();
+      handleSelect(channel.id);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Failed to open directory";
+      setError(message);
+      console.error("open directory failed:", err);
+    }
+  }, [loadChannels, handleSelect]);
+
   const handleCreateChannel = useCallback(async (name: string) => {
     setError(null);
     try {
@@ -330,6 +343,7 @@ export default function App() {
         selectedId={selectedId}
         collapsed={!sidebarOpen}
         onSelect={handleSelect}
+        onOpenDirectory={handleOpenDirectory}
         onCreateChannel={handleCreateChannel}
         onCreateThread={handleCreateThread}
         onDeleteThread={handleDelete}

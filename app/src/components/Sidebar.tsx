@@ -1,6 +1,6 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { Channel } from "../types";
-import { colors } from "../theme";
+import { colors, fonts } from "../theme";
 import { ChannelItem } from "./ChannelItem";
 import { ContextMenu } from "./ContextMenu";
 import type { MenuItem } from "./ContextMenu";
@@ -34,6 +34,63 @@ function sortByOrder(channels: Channel[], order: string[]): Channel[] {
   });
 }
 
+function NewMenu({ onNewProject, onOpenDirectory, onClose }: {
+  onNewProject: () => void;
+  onOpenDirectory?: () => void;
+  onClose: () => void;
+}) {
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClick = (e: MouseEvent) => {
+      if (e.button !== 0) return;
+      if (ref.current && !ref.current.contains(e.target as Node)) {
+        onClose();
+      }
+    };
+    document.addEventListener("mousedown", handleClick);
+    return () => document.removeEventListener("mousedown", handleClick);
+  }, [onClose]);
+
+  return (
+    <div
+      ref={ref}
+      style={{
+        position: "absolute",
+        top: 74,
+        right: 8,
+        backgroundColor: colors.surface,
+        border: `1px solid ${colors.border}`,
+        borderRadius: 6,
+        padding: 4,
+        zIndex: 100,
+        minWidth: 150,
+        boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+        fontFamily: fonts.sans,
+      }}
+    >
+      <button
+        onClick={onNewProject}
+        style={dropdownItemStyle}
+        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+      >
+        New project
+      </button>
+      {onOpenDirectory && (
+        <button
+          onClick={onOpenDirectory}
+          style={dropdownItemStyle}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+        >
+          Open directory...
+        </button>
+      )}
+    </div>
+  );
+}
+
 interface ContextMenuState {
   x: number;
   y: number;
@@ -49,6 +106,7 @@ interface SidebarProps {
   onCreateThread: (parentId: string, name: string) => void;
   onDeleteThread: (threadId: string) => void;
   onDeleteBatch?: (ids: string[]) => void;
+  onOpenDirectory?: (dirPath: string) => void;
   onOpenSettings?: () => void;
   onOpenConfig?: (dirPath: string) => void;
   onOpenReadme?: () => void;
@@ -63,6 +121,7 @@ export function Sidebar({
   onCreateThread,
   onDeleteThread,
   onDeleteBatch,
+  onOpenDirectory,
   onOpenSettings,
   onOpenConfig,
   onOpenReadme,
@@ -74,6 +133,7 @@ export function Sidebar({
   const [dragOverId, setDragOverId] = useState<string | null>(null);
   const [creatingChannel, setCreatingChannel] = useState(false);
   const [newChannelName, setNewChannelName] = useState("");
+  const [newMenuOpen, setNewMenuOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectMode, setSelectMode] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
@@ -310,11 +370,7 @@ export function Sidebar({
                 Select
               </button>
               <button
-                onClick={() => {
-                  setCreatingChannel(true);
-                  setNewChannelName("");
-                  setTimeout(() => newChannelInputRef.current?.focus(), 0);
-                }}
+                onClick={() => setNewMenuOpen((v) => !v)}
                 title="New channel"
                 style={sidebarBtnStyle}
                 onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
@@ -326,6 +382,22 @@ export function Sidebar({
           )}
         </div>
       </div>
+      {newMenuOpen && (
+        <NewMenu
+          onNewProject={() => {
+            setNewMenuOpen(false);
+            setCreatingChannel(true);
+            setNewChannelName("");
+            setTimeout(() => newChannelInputRef.current?.focus(), 0);
+          }}
+          onOpenDirectory={onOpenDirectory ? async () => {
+            setNewMenuOpen(false);
+            const dirPath = await window.loopAPI?.showOpenDirectoryDialog?.();
+            if (dirPath) onOpenDirectory(dirPath);
+          } : undefined}
+          onClose={() => setNewMenuOpen(false)}
+        />
+      )}
       <div style={{ padding: "6px 12px 4px" }}>
         <div style={{ position: "relative" }}>
           <svg
@@ -517,6 +589,23 @@ const sidebarBtnStyle: React.CSSProperties = {
   fontSize: 12,
   lineHeight: 1,
   borderRadius: 4,
+};
+
+const dropdownItemStyle: React.CSSProperties = {
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
+  width: "100%",
+  padding: "4px 8px",
+  border: "none",
+  background: "transparent",
+  color: colors.textLight,
+  fontSize: 11,
+  textAlign: "left",
+  cursor: "pointer",
+  borderRadius: 4,
+  fontFamily: fonts.sans,
+  whiteSpace: "nowrap",
 };
 
 const footerBtnStyle: React.CSSProperties = {

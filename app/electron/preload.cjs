@@ -7,6 +7,7 @@ contextBridge.exposeInMainWorld("loopAPI", {
       callback(channelId);
     });
   },
+  showOpenDirectoryDialog: () => ipcRenderer.invoke("show-open-directory-dialog"),
   getSettings: () => ipcRenderer.invoke("get-settings"),
   saveSettings: (settings) => ipcRenderer.invoke("save-settings", settings),
   getDaemonInfo: () => ipcRenderer.invoke("get-daemon-info"),

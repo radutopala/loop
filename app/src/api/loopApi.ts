@@ -89,6 +89,26 @@ export async function deleteChannel(channelId: string): Promise<void> {
   if (!res.ok) throw new Error(`Failed to delete channel: ${res.statusText}`);
 }
 
+export async function ensureChannel(dirPath: string): Promise<Channel> {
+  const res = await fetch(`${apiUrl}/api/channels`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ dir_path: dirPath, platform: "local" }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  const data: ChannelAPIResponse = await res.json();
+  return {
+    id: data.channel_id,
+    name: data.name,
+    dir_path: data.dir_path,
+    parent_id: data.parent_id,
+    active: data.active,
+    container_running: data.container_running,
+    agent_running: data.agent_running,
+    branch: data.branch || "",
+  };
+}
+
 export async function createChannel(name: string, platform = "local"): Promise<string> {
   const res = await fetch(`${apiUrl}/api/channels/create`, {
     method: "POST",
