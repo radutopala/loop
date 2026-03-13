@@ -70,7 +70,8 @@ function tabButtonStyle(active: boolean): React.CSSProperties {
     border: active ? `1px solid ${colors.border}` : "1px solid transparent",
     color: active ? colors.textLight : colors.textDim,
     cursor: "pointer",
-    padding: "3px 14px",
+    padding: "3px 10px",
+    minWidth: 70,
     fontSize: 10,
     fontFamily: fonts.mono,
     lineHeight: 1,
@@ -828,6 +829,8 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
         ...tabButtonStyle(active),
         flexShrink: 0,
         position: "relative",
+        paddingLeft: canDelete && !editing ? 4 : 10,
+        paddingRight: canDelete && !editing ? 10 : 10,
       }}
       onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = colors.hoverBg; e.currentTarget.style.color = colors.textLight; } }}
       onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = colors.textDim; } }}
@@ -883,6 +886,7 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
         <span
           onDoubleClick={(e) => { e.stopPropagation(); setEditValue(name); setEditing(true); }}
           title="Double-click to rename"
+          style={{ flex: 1, textAlign: "center" }}
         >
           {name}
         </span>
