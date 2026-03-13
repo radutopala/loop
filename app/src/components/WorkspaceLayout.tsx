@@ -910,7 +910,7 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
             gap: 6,
             whiteSpace: "nowrap",
             fontFamily: fonts.sans,
-            fontSize: 11,
+            fontSize: 9,
           }}
         >
           {/* Arrow pointing up */}
@@ -926,8 +926,8 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
               border: "1px solid #f47067",
               color: "#f47067",
               cursor: "pointer",
-              padding: "1px 8px",
-              fontSize: 10,
+              padding: "1px 6px",
+              fontSize: 9,
               fontFamily: fonts.sans,
               borderRadius: 4,
               lineHeight: 1.4,
@@ -944,8 +944,8 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
               border: `1px solid ${colors.border}`,
               color: colors.textDim,
               cursor: "pointer",
-              padding: "1px 8px",
-              fontSize: 10,
+              padding: "1px 6px",
+              fontSize: 9,
               fontFamily: fonts.sans,
               borderRadius: 4,
               lineHeight: 1.4,
