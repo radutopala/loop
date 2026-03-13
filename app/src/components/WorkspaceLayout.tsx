@@ -832,6 +832,30 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
       onMouseEnter={(e) => { if (!active) { e.currentTarget.style.background = colors.hoverBg; e.currentTarget.style.color = colors.textLight; } }}
       onMouseLeave={(e) => { if (!active) { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = colors.textDim; } }}
     >
+      {canDelete && !editing && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setConfirming(true); }}
+          title="Delete layout"
+          style={{
+            background: "none",
+            border: "none",
+            color: active ? colors.textLight : colors.textDim,
+            cursor: "pointer",
+            padding: 0,
+            lineHeight: 1,
+            fontSize: 10,
+            display: "flex",
+            alignItems: "center",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+        >
+          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="18" y1="6" x2="6" y2="18" />
+            <line x1="6" y1="6" x2="18" y2="18" />
+          </svg>
+        </button>
+      )}
       {editing ? (
         <input
           ref={inputRef}
@@ -862,30 +886,6 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
         >
           {name}
         </span>
-      )}
-      {canDelete && !editing && (
-        <button
-          onClick={(e) => { e.stopPropagation(); setConfirming(true); }}
-          title="Delete layout"
-          style={{
-            background: "none",
-            border: "none",
-            color: active ? colors.textLight : colors.textDim,
-            cursor: "pointer",
-            padding: 0,
-            lineHeight: 1,
-            fontSize: 10,
-            display: "flex",
-            alignItems: "center",
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
-        >
-          <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
-            <line x1="18" y1="6" x2="6" y2="18" />
-            <line x1="6" y1="6" x2="18" y2="18" />
-          </svg>
-        </button>
       )}
       {confirming && (
         <div
