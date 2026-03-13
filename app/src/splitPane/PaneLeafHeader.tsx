@@ -146,16 +146,19 @@ function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf }: { leafId: string
           border: `1px solid ${colors.border}`,
           borderRadius: 6,
           padding: 4,
-          minWidth: 150,
           boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
           marginTop: 2,
+          display: "grid",
+          gridTemplateColumns: "auto auto",
+          gap: 2,
         }}>
           {PANEL_OPTIONS.map(({ panel: p, label: l }) => {
             const disabled = SINGLETON_PANELS.includes(p) && usedSingletons.has(p);
             return (
-              <div key={p} style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 2, opacity: disabled ? 0.35 : 1 }}>
+              <>
                 <button
-                  style={{ ...menuItemStyle, cursor: disabled ? "default" : "pointer" }}
+                  key={`${p}-v`}
+                  style={{ ...menuItemStyle, cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.35 : 1 }}
                   disabled={disabled}
                   onClick={() => { setOpen(false); onSplitLeaf(leafId, p, "vertical"); }}
                   onMouseEnter={disabled ? undefined : menuHoverIn}
@@ -165,7 +168,8 @@ function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf }: { leafId: string
                   {l} ↓
                 </button>
                 <button
-                  style={{ ...menuItemStyle, cursor: disabled ? "default" : "pointer" }}
+                  key={`${p}-h`}
+                  style={{ ...menuItemStyle, cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.35 : 1 }}
                   disabled={disabled}
                   onClick={() => { setOpen(false); onSplitLeaf(leafId, p, "horizontal"); }}
                   onMouseEnter={disabled ? undefined : menuHoverIn}
@@ -174,7 +178,7 @@ function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf }: { leafId: string
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="12" y1="3" x2="12" y2="21" /></svg>
                   {l} →
                 </button>
-              </div>
+              </>
             );
           })}
         </div>
