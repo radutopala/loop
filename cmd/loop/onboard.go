@@ -40,11 +40,13 @@ func newOnboardLocalCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			apiURL, _ := cmd.Flags().GetString("api-url")
 			ownerID, _ := cmd.Flags().GetString("owner-id")
-			return onboardLocal(apiURL, ownerID)
+			platform, _ := cmd.Flags().GetString("platform")
+			return onboardLocal(apiURL, ownerID, platform)
 		},
 	}
 	cmd.Flags().String("api-url", "http://localhost:8222", "Loop API base URL")
 	cmd.Flags().String("owner-id", "", "Set RBAC owner user ID in project config")
+	cmd.Flags().String("platform", "", "Only register channel for this platform (e.g. local)")
 	return cmd
 }
 
@@ -167,7 +169,7 @@ func dumpTemplates(dir string) error {
 	return nil
 }
 
-func onboardLocal(apiURL string, ownerID string) error {
+func onboardLocal(apiURL, ownerID, platform string) error {
 	dir, err := osGetwd()
 	if err != nil {
 		return fmt.Errorf("getting working directory: %w", err)
@@ -245,16 +247,25 @@ func onboardLocal(apiURL string, ownerID string) error {
 		return fmt.Errorf("creating templates directory: %w", err)
 	}
 
-	// Eagerly create channels for all configured platforms
-	results, err := ensureAllChannelsFunc(apiURL, dir)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: could not register channels (is 'loop serve' running?): %v\n", err)
+	// Register channels — single platform or all configured platforms
+	if platform != "" {
+		channelID, err := ensureChannelFunc(apiURL, dir, platform)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not register channel (is 'loop serve' running?): %v\n", err)
+		} else {
+			fmt.Printf("Channel ready (%s): %s\n", platform, channelID)
+		}
 	} else {
-		for _, r := range results {
-			if r.Created {
-				fmt.Printf("Channel created (%s): %s\n", r.Platform, r.ChannelID)
-			} else {
-				fmt.Printf("Channel exists (%s): %s\n", r.Platform, r.ChannelID)
+		results, err := ensureAllChannelsFunc(apiURL, dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: could not register channels (is 'loop serve' running?): %v\n", err)
+		} else {
+			for _, r := range results {
+				if r.Created {
+					fmt.Printf("Channel created (%s): %s\n", r.Platform, r.ChannelID)
+				} else {
+					fmt.Printf("Channel exists (%s): %s\n", r.Platform, r.ChannelID)
+				}
 			}
 		}
 	}

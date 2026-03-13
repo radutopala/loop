@@ -139,6 +139,7 @@ declare global {
     loopAPI: {
       getApiUrl: () => Promise<string>;
       showOpenDirectoryDialog?: () => Promise<string | null>;
+      onboardLocal?: (dirPath: string) => Promise<{ ok: boolean; output?: string; error?: string }>;
       onNavigateChannel: (callback: (channelId: string) => void) => void;
       getSettings: () => Promise<AppSettings>;
       saveSettings: (settings: AppSettings) => Promise<void>;

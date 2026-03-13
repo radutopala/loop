@@ -212,6 +212,11 @@ export default function App() {
   const handleOpenDirectory = useCallback(async (dirPath: string) => {
     setError(null);
     try {
+      // Run onboard:local to set up .mcp.json, .loop/config.json, templates
+      const result = await window.loopAPI?.onboardLocal?.(dirPath);
+      if (result && !result.ok) {
+        console.warn("onboard:local failed:", result.error);
+      }
       const channel = await ensureChannel(dirPath);
       await loadChannels();
       handleSelect(channel.id);

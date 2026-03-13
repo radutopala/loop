@@ -2521,7 +2521,7 @@ func (s *MainSuite) TestOnboardLocalSuccess() {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "")
+	err := onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 
 	mcpPath := filepath.Join(tmpDir, ".mcp.json")
@@ -2562,7 +2562,7 @@ func (s *MainSuite) TestOnboardLocalWithMemoryEnabled() {
 	}
 	defer func() { configLoad = config.Load }()
 
-	err := onboardLocal("http://localhost:8222", "")
+	err := onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 
 	data, err := os.ReadFile(filepath.Join(tmpDir, ".mcp.json"))
@@ -2589,7 +2589,7 @@ func (s *MainSuite) TestOnboardLocalMergesExisting() {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "")
+	err := onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 
 	data, err := os.ReadFile(filepath.Join(tmpDir, ".mcp.json"))
@@ -2617,7 +2617,7 @@ func (s *MainSuite) TestOnboardLocalAlreadyRegisteredUpdatesArgs() {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "")
+	err := onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 
 	// Verify file was updated with rebuilt args
@@ -2639,7 +2639,7 @@ func (s *MainSuite) TestOnboardLocalInvalidExistingJSON() {
 	osGetwd = func() (string, error) { return tmpDir, nil }
 	osReadFile = os.ReadFile
 
-	err := onboardLocal("http://localhost:8222", "")
+	err := onboardLocal("http://localhost:8222", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "parsing existing .mcp.json")
 }
@@ -2647,7 +2647,7 @@ func (s *MainSuite) TestOnboardLocalInvalidExistingJSON() {
 func (s *MainSuite) TestOnboardLocalGetwdError() {
 	osGetwd = func() (string, error) { return "", errors.New("getwd error") }
 
-	err := onboardLocal("http://localhost:8222", "")
+	err := onboardLocal("http://localhost:8222", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "getting working directory")
 }
@@ -2660,7 +2660,7 @@ func (s *MainSuite) TestOnboardLocalWriteError() {
 		return errors.New("write error")
 	}
 
-	err := onboardLocal("http://localhost:8222", "")
+	err := onboardLocal("http://localhost:8222", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing .mcp.json")
 }
@@ -2708,7 +2708,7 @@ func (s *MainSuite) TestOnboardLocalEnsuresChannels() {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-123", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "")
+	err := onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "http://localhost:8222", calledAPIURL)
 	require.Equal(s.T(), tmpDir, calledDir)
@@ -2723,8 +2723,37 @@ func (s *MainSuite) TestOnboardLocalEnsureChannelsFailsGracefully() {
 		return nil, errors.New("server not running")
 	}
 
-	err := onboardLocal("http://localhost:8222", "")
+	err := onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err, "onboardLocal should succeed even when ensureAllChannels fails")
+}
+
+func (s *MainSuite) TestOnboardLocalWithPlatformFlag() {
+	tmpDir := s.T().TempDir()
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = os.WriteFile
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+
+	var calledAPIURL, calledDir, calledPlatform string
+	ensureChannelFunc = func(apiURL, dir, platform string) (string, error) {
+		calledAPIURL = apiURL
+		calledDir = dir
+		calledPlatform = platform
+		return "ch-local-123", nil
+	}
+	ensureAllCalled := false
+	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+		ensureAllCalled = true
+		return nil, nil
+	}
+
+	err := onboardLocal("http://localhost:8222", "", "local")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "http://localhost:8222", calledAPIURL)
+	require.Equal(s.T(), tmpDir, calledDir)
+	require.Equal(s.T(), "local", calledPlatform)
+	require.False(s.T(), ensureAllCalled, "ensureAllChannelsFunc should NOT be called when --platform is set")
 }
 
 func (s *MainSuite) TestOnboardLocalAlreadyRegisteredStillEnsuresChannels() {
@@ -2744,7 +2773,7 @@ func (s *MainSuite) TestOnboardLocalAlreadyRegisteredStillEnsuresChannels() {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-456", Created: false}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "")
+	err := onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 	require.True(s.T(), called, "ensureAllChannelsFunc should be called even when loop is already registered")
 }
@@ -2760,7 +2789,7 @@ func (s *MainSuite) TestOnboardLocalProjectConfigWritten() {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "")
+	err := onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 
 	projectConfigPath := filepath.Join(tmpDir, ".loop", "config.json")
@@ -2784,7 +2813,7 @@ func (s *MainSuite) TestOnboardLocalProjectConfigAlreadyExists() {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "")
+	err := onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 
 	// Verify existing config was NOT overwritten
@@ -2809,7 +2838,7 @@ func (s *MainSuite) TestOnboardLocalProjectConfigMkdirError() {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "")
+	err := onboardLocal("http://localhost:8222", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating .loop directory")
 }
@@ -2833,7 +2862,7 @@ func (s *MainSuite) TestOnboardLocalProjectConfigWriteError() {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "")
+	err := onboardLocal("http://localhost:8222", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing project config")
 }
@@ -2856,7 +2885,7 @@ func (s *MainSuite) TestOnboardLocalTemplatesDirError() {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "")
+	err := onboardLocal("http://localhost:8222", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating templates directory")
 }
@@ -2872,7 +2901,7 @@ func (s *MainSuite) TestOnboardLocalTemplatesDirCreated() {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "")
+	err := onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 
 	// Verify templates directory was created
@@ -2893,7 +2922,7 @@ func (s *MainSuite) TestOnboardLocalWithOwnerID() {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "U99887766")
+	err := onboardLocal("http://localhost:8222", "U99887766", "")
 	require.NoError(s.T(), err)
 
 	projectConfigPath := filepath.Join(tmpDir, ".loop", "config.json")

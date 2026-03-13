@@ -8,6 +8,7 @@ contextBridge.exposeInMainWorld("loopAPI", {
     });
   },
   showOpenDirectoryDialog: () => ipcRenderer.invoke("show-open-directory-dialog"),
+  onboardLocal: (dirPath) => ipcRenderer.invoke("onboard-local", dirPath),
   getSettings: () => ipcRenderer.invoke("get-settings"),
   saveSettings: (settings) => ipcRenderer.invoke("save-settings", settings),
   getDaemonInfo: () => ipcRenderer.invoke("get-daemon-info"),

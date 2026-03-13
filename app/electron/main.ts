@@ -461,6 +461,21 @@ ipcMain.handle("show-open-directory-dialog", async () => {
   return result.filePaths[0];
 });
 
+ipcMain.handle("onboard-local", async (_event, dirPath: string) => {
+  const binary = findLoopBinary();
+  if (!binary) return { ok: false, error: "loop binary not found" };
+  try {
+    const output = execFileSync(binary, ["onboard:local", "--api-url", resolveApiUrl(), "--platform", "local"], {
+      cwd: dirPath,
+      encoding: "utf-8",
+      timeout: 15_000,
+    });
+    return { ok: true, output };
+  } catch (err) {
+    return { ok: false, error: String(err) };
+  }
+});
+
 ipcMain.handle("get-api-url", () => {
   return resolveApiUrl();
 });
