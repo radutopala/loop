@@ -48,16 +48,20 @@ function leafIdForPanel(channelId: string, panel: PanelType): string {
 }
 
 const layoutMenuItemStyle: React.CSSProperties = {
-  display: "block",
+  display: "flex",
+  alignItems: "center",
+  gap: 6,
   width: "100%",
-  background: "none",
+  padding: "4px 8px",
   border: "none",
+  background: "transparent",
   color: colors.textLight,
-  cursor: "pointer",
-  padding: "6px 12px",
   fontSize: 11,
-  fontFamily: fonts.mono,
   textAlign: "left",
+  cursor: "pointer",
+  borderRadius: 4,
+  fontFamily: fonts.sans,
+  whiteSpace: "nowrap",
 };
 
 function tabButtonStyle(active: boolean): React.CSSProperties {
@@ -711,10 +715,10 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; e.currentTarget.style.borderColor = colors.border; }}
           >
             <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="5" r="1.5" fill="currentColor" />
-              <circle cx="12" cy="12" r="1.5" fill="currentColor" />
-              <circle cx="12" cy="19" r="1.5" fill="currentColor" />
+              <path d="M1 4v6h6" />
+              <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
             </svg>
+            Reset
           </button>
           {showLayoutMenu && (
             <div
@@ -723,13 +727,14 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                 top: "100%",
                 right: 0,
                 marginTop: 4,
-                backgroundColor: colors.sidebar,
+                backgroundColor: colors.surface,
                 border: `1px solid ${colors.border}`,
-                borderRadius: 8,
-                padding: "4px 0",
-                zIndex: 20,
-                minWidth: 160,
-                boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
+                borderRadius: 6,
+                padding: 4,
+                zIndex: 1000,
+                minWidth: 150,
+                boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+                fontFamily: fonts.sans,
               }}
               onMouseDown={(e) => e.stopPropagation()}
             >
@@ -737,8 +742,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                 <button
                   onClick={() => { restoreDefaults(); setShowLayoutMenu(false); }}
                   style={layoutMenuItemStyle}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
                 >
                   Restore defaults
                 </button>
@@ -747,8 +752,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                 <button
                   onClick={() => { handleResetLayout(); setShowLayoutMenu(false); }}
                   style={layoutMenuItemStyle}
-                  onMouseEnter={(e) => { e.currentTarget.style.background = "rgba(255,255,255,0.08)"; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.background = "none"; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
                 >
                   Reset current
                 </button>
