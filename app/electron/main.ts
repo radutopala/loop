@@ -452,6 +452,9 @@ function setupAutoUpdater() {
   autoUpdater.on("error", (err) => {
     updateStatus = { ...updateStatus, downloading: false, error: String(err) };
     console.warn("Auto-updater error:", err);
+    for (const win of BrowserWindow.getAllWindows()) {
+      win.webContents.send("update-status", updateStatus);
+    }
   });
 
   autoUpdater.checkForUpdates().catch(() => {});

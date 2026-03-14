@@ -21,8 +21,15 @@ jobs:
         with:
           go-version: "1.26"
 
-      - name: Run tests
-        run: go test -race -v ./...
+      - name: Run tests with coverage
+        run: |
+          go generate ./internal/readme/
+          go test -race -count=1 -coverpkg=./... -coverprofile=coverage.out ./...
+
+      - name: Enforce 100% coverage
+        run: |
+          go tool cover -func=coverage.out | grep total | awk '{print $3}' | sed 's/%//' | \
+            awk '{if ($1 < 100.0) {print "Coverage is " $1 "%, required 100%"; exit 1} else {print "Coverage: " $1 "%"}}'
 
   lint:
     runs-on: ubuntu-latest

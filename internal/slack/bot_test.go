@@ -707,6 +707,13 @@ func (s *BotSuite) TestCreateThreadSuccess() {
 			authorID: "",
 			message:  "Do the task",
 		},
+		{
+			name:     "mention user no message",
+			channel:  "C123",
+			thread:   "my thread",
+			authorID: "U456",
+			message:  "",
+		},
 	}
 
 	for _, tt := range tests {

@@ -1540,6 +1540,7 @@ func (s *BotSuite) TestCreateThreadSuccess() {
 		{"strips text mention", "LoopBot", "", "@LoopBot Do the task", "<@bot-123> Do the task"},
 		{"strips discord mention", "", "", "<@bot-123> Do the task", "<@bot-123> Do the task"},
 		{"message and mention user", "", "user-42", "Do the task", "<@bot-123> Do the task <@user-42>"},
+		{"mention user no message", "", "user-42", "", "<@user-42>"},
 	}
 	for _, tc := range cases {
 		s.Run(tc.name, func() {

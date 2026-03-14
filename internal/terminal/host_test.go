@@ -21,6 +21,7 @@ type HostSuite struct {
 	origDefaultShell   func() string
 	origPtyStart       func(cmd *exec.Cmd) (*os.File, error)
 	origPtySetsize     func(f *os.File, sz *pty.Winsize) error
+	origLookPath       func(file string) (string, error)
 	origCleanupTimeout time.Duration
 }
 
@@ -32,6 +33,7 @@ func (s *HostSuite) SetupTest() {
 	s.origDefaultShell = defaultShell
 	s.origPtyStart = ptyStart
 	s.origPtySetsize = ptySetsize
+	s.origLookPath = lookPath
 	s.origCleanupTimeout = processCleanupTimeout
 }
 
@@ -39,6 +41,7 @@ func (s *HostSuite) TearDownTest() {
 	defaultShell = s.origDefaultShell
 	ptyStart = s.origPtyStart
 	ptySetsize = s.origPtySetsize
+	lookPath = s.origLookPath
 	processCleanupTimeout = s.origCleanupTimeout
 }
 
@@ -65,6 +68,7 @@ func (s *HostSuite) TestExecCreate() {
 
 func (s *HostSuite) TestExecCreateDefaultShell() {
 	defaultShell = func() string { return "/bin/test-shell" }
+	lookPath = func(file string) (string, error) { return file, nil }
 
 	c := NewHostExecClient()
 	id, err := c.ExecCreate(context.Background(), "/tmp", nil, true)
@@ -74,6 +78,13 @@ func (s *HostSuite) TestExecCreateDefaultShell() {
 	he := c.execs[id]
 	c.mu.Unlock()
 	require.Equal(s.T(), []string{"/bin/test-shell", "-l"}, he.cmd.Args)
+}
+
+func (s *HostSuite) TestExecCreateCommandNotFound() {
+	c := NewHostExecClient()
+	_, err := c.ExecCreate(context.Background(), "/tmp", []string{"nonexistent-binary-xyz"}, true)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "command not found")
 }
 
 func (s *HostSuite) TestExecAttach() {

@@ -14,6 +14,7 @@ files:
 mac:
   target:
     - dmg
+    - zip
   category: public.app-category.developer-tools
   icon: build/icon.icns
   darkModeSupport: true

@@ -51,6 +51,9 @@ var ptyStart = pty.Start
 // ptySetsize wraps pty.Setsize for testing.
 var ptySetsize = pty.Setsize
 
+// lookPath wraps exec.LookPath for testing.
+var lookPath = exec.LookPath
+
 // ExecCreate creates a new exec process. The dirPath parameter
 // is used as the working directory. The process is not started until
 // ExecAttach is called.
@@ -60,7 +63,13 @@ func (c *HostExecClient) ExecCreate(_ context.Context, dirPath string, cmd []str
 		cmd = []string{shell, "-l"}
 	}
 
-	command := exec.Command(cmd[0], cmd[1:]...)
+	// Validate the command resolves to an actual executable on PATH.
+	resolvedPath, err := lookPath(cmd[0])
+	if err != nil {
+		return "", fmt.Errorf("command not found: %s", cmd[0])
+	}
+
+	command := exec.Command(resolvedPath, cmd[1:]...) // #nosec G204 — host terminal; user runs commands on their own machine
 	command.Dir = dirPath
 	command.Env = os.Environ()
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}

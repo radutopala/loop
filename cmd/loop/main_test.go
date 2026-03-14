@@ -2756,6 +2756,22 @@ func (s *MainSuite) TestOnboardLocalWithPlatformFlag() {
 	require.False(s.T(), ensureAllCalled, "ensureAllChannelsFunc should NOT be called when --platform is set")
 }
 
+func (s *MainSuite) TestOnboardLocalWithPlatformFlagEnsureError() {
+	tmpDir := s.T().TempDir()
+	osGetwd = func() (string, error) { return tmpDir, nil }
+	osReadFile = os.ReadFile
+	osWriteFile = os.WriteFile
+	osStat = os.Stat
+	osMkdirAll = os.MkdirAll
+
+	ensureChannelFunc = func(_, _, _ string) (string, error) {
+		return "", errors.New("server not running")
+	}
+
+	err := onboardLocal("http://localhost:8222", "", "local")
+	require.NoError(s.T(), err, "onboardLocal should succeed even when ensureChannel fails")
+}
+
 func (s *MainSuite) TestOnboardLocalAlreadyRegisteredStillEnsuresChannels() {
 	tmpDir := s.T().TempDir()
 	existing := `{"mcpServers":{"loop":{"command":"loop","args":["mcp","--dir","` + tmpDir + `","--api-url","http://localhost:8222"]}}}`

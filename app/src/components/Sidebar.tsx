@@ -542,9 +542,11 @@ export function Sidebar({
             </svg>
             {updateStatus.downloaded
               ? "Restart to update"
-              : updateStatus.downloading
-                ? "Downloading..."
-                : `Update available${updateStatus.version ? ` v${updateStatus.version}` : ""}`}
+              : updateStatus.error
+                ? "Update failed — click to retry"
+                : updateStatus.downloading
+                  ? "Downloading..."
+                  : `Update available${updateStatus.version ? ` v${updateStatus.version}` : ""}`}
           </button>
         )}
         <button

@@ -2598,6 +2598,31 @@ func (s *OrchestratorSuite) TestHandleInteractionPermissionDenied() {
 	s.scheduler.AssertNotCalled(s.T(), "ListTasks", mock.Anything, mock.Anything)
 }
 
+func (s *OrchestratorSuite) TestHandleInteractionLocalPlatformBypassesPermissions() {
+	s.orch.cfg = config.Config{
+		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", DirPath: "",
+	}, nil)
+	s.scheduler.On("ListTasks", s.ctx, "ch1").Return([]*db.ScheduledTask{}, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+		return out.Content == "No scheduled tasks."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
+		ChannelID:   "ch1",
+		CommandName: "tasks",
+		AuthorID:    "local-user",
+		Platform:    types.PlatformLocal,
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.scheduler.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
 func (s *OrchestratorSuite) TestHandleInteractionPermissionAllowed() {
 	s.orch.cfg = config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
