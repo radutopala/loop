@@ -381,13 +381,18 @@ func (b *DiscordBot) CreateThread(ctx context.Context, channelID, name, mentionU
 	if err != nil {
 		return "", fmt.Errorf("discord create thread: %w", err)
 	}
-	if message != "" || mentionUserID != "" {
+	if message != "" {
 		b.mu.RLock()
 		username := b.botUsername
 		b.mu.RUnlock()
 		initialMsg := bot.FormatThreadMessage(b.BotUserID(), username, mentionUserID, message)
 		if _, err := b.session.ChannelMessageSend(ch.ID, initialMsg); err != nil {
 			b.logger.WarnContext(ctx, "sending initial thread message", "error", err, "thread_id", ch.ID)
+		}
+	} else if mentionUserID != "" {
+		// Tag the user to add them to the thread, without a bot mention.
+		if _, err := b.session.ChannelMessageSend(ch.ID, fmt.Sprintf("<@%s>", mentionUserID)); err != nil {
+			b.logger.WarnContext(ctx, "sending thread user mention", "error", err, "thread_id", ch.ID)
 		}
 	}
 	b.logger.InfoContext(ctx, "created discord thread", "thread_id", ch.ID, "name", name, "parent_id", channelID)
