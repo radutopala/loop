@@ -182,4 +182,4 @@ jobs:
       - name: Upload manifests to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" latest-mac.yml latest-linux.yml --clobber
+        run: gh release upload "${{ github.ref_name }}" latest-mac.yml latest-linux.yml --clobber --repo "${{ github.repository }}"
