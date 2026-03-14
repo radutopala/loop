@@ -91,10 +91,16 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
         run: cd app && npm run dist:mac:${{ matrix.arch }} -- --publish never
 
-      - name: Upload DMG to release
+      - name: Upload DMG and blockmap to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" app/release/*.dmg --clobber
+        run: gh release upload "${{ github.ref_name }}" app/release/*.dmg app/release/*.blockmap --clobber
+
+      - name: Save update manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-yml-mac-${{ matrix.arch }}
+          path: app/release/latest-mac.yml
 
   electron-linux:
     needs: goreleaser
@@ -140,3 +146,40 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ github.ref_name }}" app/release/*.AppImage app/release/*.deb --clobber
+
+      - name: Save update manifest
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-yml-linux-${{ matrix.arch }}
+          path: app/release/latest-linux.yml
+
+  update-manifests:
+    needs: [electron-darwin, electron-linux]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download all update manifests
+        uses: actions/download-artifact@v4
+        with:
+          pattern: update-yml-*
+          path: manifests
+
+      - name: Merge macOS manifests
+        run: |
+          yq eval-all '
+            select(fi == 0).files += select(fi == 1).files |
+            select(fi == 0)
+          ' manifests/update-yml-mac-arm64/latest-mac.yml \
+            manifests/update-yml-mac-x64/latest-mac.yml > latest-mac.yml
+
+      - name: Merge Linux manifests
+        run: |
+          yq eval-all '
+            select(fi == 0).files += select(fi == 1).files |
+            select(fi == 0)
+          ' manifests/update-yml-linux-x64/latest-linux.yml \
+            manifests/update-yml-linux-arm64/latest-linux.yml > latest-linux.yml
+
+      - name: Upload manifests to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" latest-mac.yml latest-linux.yml --clobber
