@@ -62,6 +62,20 @@ jobs:
           CGO_ENABLED: 0
         run: go build -o loop-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/loop
 
+  test-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Run Windows terminal tests
+        run: go test -race -count=1 -v ./internal/terminal/
+
   electron-typecheck:
     runs-on: ubuntu-latest
     steps:

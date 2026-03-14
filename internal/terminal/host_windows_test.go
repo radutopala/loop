@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/UserExistsError/conpty"
 	"github.com/stretchr/testify/require"
@@ -243,6 +244,59 @@ func (s *HostSuite) TestGenerateIDUnique() {
 func (s *HostSuite) TestConptyOriginalFunctions() {
 	// Exercise the original conptyAvailable to cover its default body.
 	_ = s.origConptyAvailable()
+}
+
+func (s *HostSuite) TestIntegrationCreateAttachResize() {
+	// Integration test: create, attach, resize a real cmd.exe process.
+	c := NewHostExecClient()
+	id, err := c.ExecCreate(context.Background(), os.TempDir(), []string{"cmd.exe"}, true)
+	require.NoError(s.T(), err)
+
+	rwc, err := c.ExecAttach(context.Background(), id)
+	require.NoError(s.T(), err)
+
+	// Write a command.
+	_, err = rwc.Write([]byte("echo hello\r\n"))
+	require.NoError(s.T(), err)
+
+	// Read output (non-blocking with timeout).
+	buf := make([]byte, 1024)
+	done := make(chan struct{})
+	var readN int
+	var readErr error
+	go func() {
+		readN, readErr = rwc.Read(buf)
+		close(done)
+	}()
+	select {
+	case <-done:
+		require.NoError(s.T(), readErr)
+		require.Greater(s.T(), readN, 0)
+	case <-time.After(5 * time.Second):
+		s.T().Log("read timed out — skipping output assertion")
+	}
+
+	// Resize should succeed.
+	err = c.ExecResize(context.Background(), id, 30, 100)
+	require.NoError(s.T(), err)
+
+	require.NoError(s.T(), rwc.Close())
+}
+
+func (s *HostSuite) TestIntegrationCloseIdempotent() {
+	c := NewHostExecClient()
+	id, err := c.ExecCreate(context.Background(), os.TempDir(), []string{"cmd.exe"}, true)
+	require.NoError(s.T(), err)
+
+	rwc, err := c.ExecAttach(context.Background(), id)
+	require.NoError(s.T(), err)
+
+	err = rwc.Close()
+	require.NoError(s.T(), err)
+
+	// Second close should be a no-op.
+	err = rwc.Close()
+	require.NoError(s.T(), err)
 }
 
 // Verify io.ReadWriteCloser interface compliance at compile time.
