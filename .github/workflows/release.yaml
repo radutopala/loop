@@ -33,39 +33,29 @@ jobs:
           HOMEBREW_TAP_GITHUB_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
 
   electron-darwin:
+    needs: goreleaser
     runs-on: macos-26
     strategy:
       matrix:
         arch: [arm64, x64]
         include:
           - arch: arm64
-            goarch: arm64
+            goreleaser_arch: arm64
           - arch: x64
-            goarch: amd64
+            goreleaser_arch: amd64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.26"
-
-      - name: Build loop binary
+      - name: Download loop binary from release
         env:
-          CGO_ENABLED: "0"
-          GOOS: darwin
-          GOARCH: ${{ matrix.goarch }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          COMMIT="$(git rev-parse --short HEAD)"
-          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          go generate ./internal/readme/
+          ARCHIVE="loop_${VERSION}_darwin_${{ matrix.goreleaser_arch }}.tar.gz"
           mkdir -p app/resources/mac/${{ matrix.arch }}
-          go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
-            -o app/resources/mac/${{ matrix.arch }}/loop ./cmd/loop
+          gh release download "${{ github.ref_name }}" --pattern "$ARCHIVE" --dir /tmp
+          tar -xzf "/tmp/$ARCHIVE" -C app/resources/mac/${{ matrix.arch }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -107,39 +97,29 @@ jobs:
         run: gh release upload "${{ github.ref_name }}" app/release/*.dmg --clobber
 
   electron-linux:
+    needs: goreleaser
     runs-on: ubuntu-latest
     strategy:
       matrix:
         arch: [x64, arm64]
         include:
           - arch: x64
-            goarch: amd64
+            goreleaser_arch: amd64
           - arch: arm64
-            goarch: arm64
+            goreleaser_arch: arm64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.26"
-
-      - name: Build loop binary
+      - name: Download loop binary from release
         env:
-          CGO_ENABLED: "0"
-          GOOS: linux
-          GOARCH: ${{ matrix.goarch }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          COMMIT="$(git rev-parse --short HEAD)"
-          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          go generate ./internal/readme/
+          ARCHIVE="loop_${VERSION}_linux_${{ matrix.goreleaser_arch }}.tar.gz"
           mkdir -p app/resources/linux/${{ matrix.arch }}
-          go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
-            -o app/resources/linux/${{ matrix.arch }}/loop ./cmd/loop
+          gh release download "${{ github.ref_name }}" --pattern "$ARCHIVE" --dir /tmp
+          tar -xzf "/tmp/$ARCHIVE" -C app/resources/linux/${{ matrix.arch }}
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
