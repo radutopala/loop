@@ -13,10 +13,7 @@ files:
 
 mac:
   target:
-    - target: dmg
-      arch:
-        - arm64
-        - x64
+    - dmg
   category: public.app-category.developer-tools
   icon: build/icon.icns
   darkModeSupport: true
@@ -39,14 +36,8 @@ dmg:
 
 linux:
   target:
-    - target: AppImage
-      arch:
-        - x64
-        - arm64
-    - target: deb
-      arch:
-        - x64
-        - arm64
+    - AppImage
+    - deb
   category: Development
   icon: build/icon.icns
 
