@@ -89,7 +89,7 @@ jobs:
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: cd app && npm run dist:mac:${{ matrix.arch }}
+        run: cd app && npm run dist:mac:${{ matrix.arch }} -- --publish never
 
       - name: Upload DMG to release
         env:
@@ -134,7 +134,7 @@ jobs:
           npm pkg set version="${GITHUB_REF_NAME#v}"
 
       - name: Build AppImage and deb
-        run: cd app && npm run dist:linux:${{ matrix.arch }}
+        run: cd app && npm run dist:linux:${{ matrix.arch }} -- --publish never
 
       - name: Upload Linux artifacts to release
         env:
