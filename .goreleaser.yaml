@@ -61,9 +61,6 @@ brews:
       system "#{bin}/loop", "--help"
 
 release:
-  github:
-    owner: radutopala
-    name: loop
   draft: false
   prerelease: auto
   name_template: "v{{.Version}}"

@@ -2,6 +2,11 @@
   "name": "loop",
   "version": "0.1.0",
   "description": "Loop Terminal — Desktop client for Loop agents",
+  "homepage": "https://github.com/radutopala/loop",
+  "author": {
+    "name": "Radu Topala",
+    "email": "radu.topala@trisoft.ro"
+  },
   "private": true,
   "main": "dist-electron/main.js",
   "type": "module",
