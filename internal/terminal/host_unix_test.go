@@ -1,3 +1,5 @@
+//go:build darwin || linux
+
 package terminal
 
 import (
@@ -18,11 +20,12 @@ import (
 
 type HostSuite struct {
 	suite.Suite
-	origDefaultShell   func() string
-	origPtyStart       func(cmd *exec.Cmd) (*os.File, error)
-	origPtySetsize     func(f *os.File, sz *pty.Winsize) error
-	origLookPath       func(file string) (string, error)
-	origCleanupTimeout time.Duration
+	origDefaultShell     func() string
+	origDefaultShellArgs func() []string
+	origPtyStart         func(cmd *exec.Cmd) (*os.File, error)
+	origPtySetsize       func(f *os.File, sz *pty.Winsize) error
+	origLookPath         func(file string) (string, error)
+	origCleanupTimeout   time.Duration
 }
 
 func TestHostSuite(t *testing.T) {
@@ -31,6 +34,7 @@ func TestHostSuite(t *testing.T) {
 
 func (s *HostSuite) SetupTest() {
 	s.origDefaultShell = defaultShell
+	s.origDefaultShellArgs = defaultShellArgs
 	s.origPtyStart = ptyStart
 	s.origPtySetsize = ptySetsize
 	s.origLookPath = lookPath
@@ -39,6 +43,7 @@ func (s *HostSuite) SetupTest() {
 
 func (s *HostSuite) TearDownTest() {
 	defaultShell = s.origDefaultShell
+	defaultShellArgs = s.origDefaultShellArgs
 	ptyStart = s.origPtyStart
 	ptySetsize = s.origPtySetsize
 	lookPath = s.origLookPath
@@ -306,6 +311,11 @@ func (s *HostSuite) TestDefaultShellFallback() {
 	require.NotEmpty(s.T(), shell)
 	// Should be /bin/zsh or /bin/sh depending on what's available.
 	require.Contains(s.T(), []string{"/bin/zsh", "/bin/sh"}, shell)
+}
+
+func (s *HostSuite) TestDefaultShellArgs() {
+	args := s.origDefaultShellArgs()
+	require.Equal(s.T(), []string{"-l"}, args)
 }
 
 func (s *HostSuite) TestExecCreateEmptyCmd() {

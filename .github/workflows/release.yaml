@@ -154,6 +154,55 @@ jobs:
           name: update-yml-linux-${{ matrix.arch }}
           path: app/release/latest-linux.yml
 
+  electron-windows:
+    needs: goreleaser
+    runs-on: windows-latest
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+        include:
+          - arch: x64
+            goreleaser_arch: amd64
+          - arch: arm64
+            goreleaser_arch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download loop binary from release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          ARCHIVE="loop_${VERSION}_windows_${{ matrix.goreleaser_arch }}.zip"
+          mkdir -p app/resources/win/${{ matrix.arch }}
+          gh release download "${{ github.ref_name }}" --pattern "$ARCHIVE" --dir "$RUNNER_TEMP"
+          unzip "$RUNNER_TEMP/$ARCHIVE" -d app/resources/win/${{ matrix.arch }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies and set version
+        shell: bash
+        run: |
+          cd app && npm ci
+          npm pkg set version="${GITHUB_REF_NAME#v}"
+
+      - name: Build NSIS installer
+        shell: bash
+        run: cd app && npm run dist:win:${{ matrix.arch }} -- --publish never
+
+      - name: Upload Windows artifacts to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: gh release upload "${{ github.ref_name }}" app/release/*.exe --clobber
+
   update-manifests:
     needs: [electron-darwin, electron-linux]
     runs-on: ubuntu-latest

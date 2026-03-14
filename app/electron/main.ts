@@ -126,13 +126,18 @@ function saveSettings(settings: Settings): void {
 
 // --- Bundled binary resolution ---
 
+function binaryName(): string {
+  return process.platform === "win32" ? "loop.exe" : "loop";
+}
+
 function bundledBinaryPath(): string | null {
-  // In production: resources/bin/loop
-  // process.resourcesPath points to <app>/Contents/Resources (macOS) or <app>/resources (Linux)
-  const resourcePath = path.join(process.resourcesPath, "bin", "loop");
+  // In production: resources/bin/loop (or loop.exe on Windows)
+  // process.resourcesPath points to <app>/Contents/Resources (macOS) or <app>/resources (Linux/Windows)
+  const name = binaryName();
+  const resourcePath = path.join(process.resourcesPath, "bin", name);
   if (fs.existsSync(resourcePath)) return resourcePath;
   // Fallback: old flat layout (resources/loop)
-  const flatPath = path.join(process.resourcesPath, "loop");
+  const flatPath = path.join(process.resourcesPath, name);
   if (fs.existsSync(flatPath)) return flatPath;
   return null;
 }
@@ -144,8 +149,11 @@ function findLoopBinary(): string | null {
 
   // 2. On PATH (for dev mode / system install)
   try {
-    const result = execFileSync("which", ["loop"], { encoding: "utf-8" }).trim();
-    if (result) return result;
+    const whichCmd = process.platform === "win32" ? "where" : "which";
+    const result = execFileSync(whichCmd, [binaryName()], { encoding: "utf-8" }).trim();
+    // 'where' on Windows may return multiple lines — take the first.
+    const firstLine = result.split(/\r?\n/)[0];
+    if (firstLine) return firstLine;
   } catch {
     // not found on PATH
   }
@@ -183,6 +191,16 @@ function ensureLoopConfig(): void {
 /** Start or restart daemon via `loop daemon:restart` (installs as launchd/systemd service). */
 async function ensureDaemon(): Promise<void> {
   ensureLoopConfig();
+
+  // Daemon management is not supported on Windows yet — check if already running.
+  if (process.platform === "win32") {
+    if (await isDaemonRunning()) {
+      console.log("Loop daemon is already running");
+    } else {
+      console.log("Loop daemon not running — start it manually with 'loop serve' on Windows");
+    }
+    return;
+  }
 
   const binary = findLoopBinary();
   if (!binary) return;
@@ -254,7 +272,7 @@ function createWindow(hash?: string): BrowserWindow {
     height: 800,
     minWidth: 900,
     minHeight: 400,
-    titleBarStyle: "hiddenInset",
+    titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
     webPreferences: {
       preload: preloadPath,
       contextIsolation: true,

@@ -24,7 +24,10 @@
     "dist:mac:universal": "npm run build && electron-builder --mac --arm64 --x64",
     "dist:linux": "npm run build && electron-builder --linux",
     "dist:linux:x64": "npm run build && electron-builder --linux --x64",
-    "dist:linux:arm64": "npm run build && electron-builder --linux --arm64"
+    "dist:linux:arm64": "npm run build && electron-builder --linux --arm64",
+    "dist:win": "npm run build && electron-builder --win",
+    "dist:win:x64": "npm run build && electron-builder --win --x64",
+    "dist:win:arm64": "npm run build && electron-builder --win --arm64"
   },
   "dependencies": {
     "@codemirror/commands": "^6.10.2",
