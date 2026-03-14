@@ -63,8 +63,9 @@ jobs:
           COMMIT="$(git rev-parse --short HEAD)"
           DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
           go generate ./internal/readme/
+          mkdir -p app/resources/mac/${{ matrix.arch }}
           go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
-            -o app/resources/loop ./cmd/loop
+            -o app/resources/mac/${{ matrix.arch }}/loop ./cmd/loop
 
       - name: Set up Node.js
         uses: actions/setup-node@v4
@@ -88,8 +89,10 @@ jobs:
           security set-key-partition-list -S apple-tool:,apple: -k "" $KEYCHAIN_PATH
           security list-keychains -d user -s $KEYCHAIN_PATH login.keychain-db
 
-      - name: Install dependencies
-        run: cd app && npm ci
+      - name: Install dependencies and set version
+        run: |
+          cd app && npm ci
+          npm pkg set version="${GITHUB_REF_NAME#v}"
 
       - name: Build, sign, and notarize
         env:
@@ -102,3 +105,58 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ github.ref_name }}" app/release/*.dmg --clobber
+
+  electron-linux:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        arch: [x64, arm64]
+        include:
+          - arch: x64
+            goarch: amd64
+          - arch: arm64
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+
+      - name: Build loop binary
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          COMMIT="$(git rev-parse --short HEAD)"
+          DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          go generate ./internal/readme/
+          mkdir -p app/resources/linux/${{ matrix.arch }}
+          go build -ldflags "-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.date=${DATE}" \
+            -o app/resources/linux/${{ matrix.arch }}/loop ./cmd/loop
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: app/package-lock.json
+
+      - name: Install dependencies and set version
+        run: |
+          cd app && npm ci
+          npm pkg set version="${GITHUB_REF_NAME#v}"
+
+      - name: Build AppImage and deb
+        run: cd app && npm run dist:linux:${{ matrix.arch }}
+
+      - name: Upload Linux artifacts to release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh release upload "${{ github.ref_name }}" app/release/*.AppImage app/release/*.deb --clobber

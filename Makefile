@@ -4,10 +4,11 @@
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
 
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
-COMMIT  ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
-DATE    ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
-LDFLAGS := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
+VERSION     ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+APP_VERSION ?= $(shell git describe --tags --abbrev=0 2>/dev/null | sed 's/^v//' || echo 0.0.0)
+COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo none)
+DATE        ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
+LDFLAGS     := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(DATE)
 
 build: ## Build the loop binary
 	go generate ./internal/readme/
@@ -89,7 +90,7 @@ app-dev: ## Start the Electron app frontend dev server
 app-install: build ## Build the Electron app and copy to /Applications
 	@mkdir -p app/resources/mac/arm64
 	cp bin/loop app/resources/mac/arm64/loop
-	cd app && npm install && npm run dist:mac:arm64
+	cd app && npm install && npm pkg set version=$(APP_VERSION) && npm run dist:mac:arm64
 	rm -rf /Applications/Loop.app
 	cp -R app/release/mac-arm64/Loop.app /Applications/Loop.app
 	@echo "Installed Loop.app to /Applications"
@@ -97,7 +98,7 @@ app-install: build ## Build the Electron app and copy to /Applications
 app-dist-linux: ## Build Linux AppImage + deb (x64 and arm64)
 	$(MAKE) app-build-binary GOOS=linux GOARCH=amd64
 	$(MAKE) app-build-binary GOOS=linux GOARCH=arm64
-	cd app && npm install && npm run dist:linux
+	cd app && npm install && npm pkg set version=$(APP_VERSION) && npm run dist:linux
 
 app-icons: ## Regenerate app icons from SVG sources (requires rsvg-convert, iconutil, fontkit)
 	@npm list --prefix /tmp fontkit >/dev/null 2>&1 || npm install --prefix /tmp fontkit
