@@ -2461,6 +2461,42 @@ func (s *OrchestratorSuite) TestHandleMessagePermissionDenied() {
 	s.bot.AssertNotCalled(s.T(), "SendMessage", mock.Anything, mock.Anything)
 }
 
+func (s *OrchestratorSuite) TestHandleMessageLocalPlatformBypassesPermissions() {
+	s.orch.cfg = config.Config{
+		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
+	}
+
+	msg := &bot.IncomingMessage{
+		ChannelID:    "ch1",
+		AuthorID:     "local-user",
+		AuthorName:   "local-user",
+		Content:      "hello bot",
+		MessageID:    "msg-local",
+		Platform:     types.PlatformLocal,
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", Active: true,
+	}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
+		Response: "Hello local!", SessionID: "s1",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "s1").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	// The runner should have been called despite local-user not being in the owners list.
+	s.runner.AssertCalled(s.T(), "Run", mock.Anything, mock.Anything)
+}
+
 func (s *OrchestratorSuite) TestHandleMessageBotSelfMentionBypassesPermissions() {
 	s.orch.cfg = config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},

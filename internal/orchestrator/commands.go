@@ -36,6 +36,10 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, inter *bot.Interac
 	}
 	cfgPerms := o.configPermissionsFor(dirPath)
 	role := resolveRole(cfgPerms, dbPerms, inter.AuthorID, inter.AuthorRoles)
+	// Local platform is inherently trusted.
+	if inter.Platform == types.PlatformLocal && role == "" {
+		role = types.RoleOwner
+	}
 
 	isPermCmd := inter.CommandName == "allow_user" || inter.CommandName == "allow_role" ||
 		inter.CommandName == "deny_user" || inter.CommandName == "deny_role"

@@ -9,6 +9,7 @@ import (
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
+	"github.com/radutopala/loop/internal/types"
 )
 
 // HandleMessage processes an incoming chat message.
@@ -86,7 +87,8 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 	}
 
 	// Allow the bot's own self-mentions (e.g. from create_thread MCP tool) to bypass permissions.
-	if !o.bot.IsBotUser(msg.AuthorID) {
+	// Local platform is inherently trusted — the user is running on their own machine.
+	if !o.bot.IsBotUser(msg.AuthorID) && msg.Platform != types.PlatformLocal {
 		cfgPerms := o.configPermissionsFor(channel.DirPath)
 		role := resolveRole(cfgPerms, channel.Permissions, msg.AuthorID, msg.AuthorRoles)
 		if role == "" {
