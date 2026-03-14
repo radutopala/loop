@@ -203,8 +203,15 @@ jobs:
         shell: bash
         run: gh release upload "${{ github.ref_name }}" app/release/*.exe --clobber
 
+      - name: Save update manifest
+        if: hashFiles('app/release/latest.yml') != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: update-yml-win-${{ matrix.arch }}
+          path: app/release/latest.yml
+
   update-manifests:
-    needs: [electron-darwin, electron-linux]
+    needs: [electron-darwin, electron-linux, electron-windows]
     runs-on: ubuntu-latest
     steps:
       - name: Download all update manifests
@@ -240,6 +247,18 @@ jobs:
             cp "$ARM" latest-linux.yml
           fi
 
+      - name: Merge Windows manifests
+        run: |
+          X64="manifests/update-yml-win-x64/latest.yml"
+          ARM="manifests/update-yml-win-arm64/latest.yml"
+          if [ -f "$X64" ] && [ -f "$ARM" ]; then
+            yq eval-all 'select(fi == 0).files += select(fi == 1).files | select(fi == 0)' "$X64" "$ARM" > latest.yml
+          elif [ -f "$X64" ]; then
+            cp "$X64" latest.yml
+          elif [ -f "$ARM" ]; then
+            cp "$ARM" latest.yml
+          fi
+
       - name: Upload manifests to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -247,6 +266,7 @@ jobs:
           FILES=""
           [ -f latest-mac.yml ] && FILES="$FILES latest-mac.yml"
           [ -f latest-linux.yml ] && FILES="$FILES latest-linux.yml"
+          [ -f latest.yml ] && FILES="$FILES latest.yml"
           if [ -n "$FILES" ]; then
             gh release upload "${{ github.ref_name }}" $FILES --clobber --repo "${{ github.repository }}"
           fi
