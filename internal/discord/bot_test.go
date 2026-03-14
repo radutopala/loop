@@ -1464,8 +1464,46 @@ func (s *BotSuite) TestHandleIncomingMessageNoOp() {
 	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello", "")
 }
 
-func (s *BotSuite) TestHandleThreadCreatedNoOp() {
+func (s *BotSuite) TestHandleThreadCreatedPostsMessage() {
+	s.bot.botUserID = "bot-123"
+	s.session.On("ChannelMessageSend", "thread-1", "<@bot-123> do the task", mock.Anything).
+		Return(&discordgo.Message{}, nil)
+
+	s.bot.HandleThreadCreated(context.Background(), "thread-1", "user-1", "do the task")
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestHandleThreadCreatedStripsExistingMention() {
+	s.bot.botUserID = "bot-123"
+	s.session.On("ChannelMessageSend", "thread-1", "<@bot-123> do the task", mock.Anything).
+		Return(&discordgo.Message{}, nil)
+
+	s.bot.HandleThreadCreated(context.Background(), "thread-1", "user-1", "<@bot-123> do the task")
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestHandleThreadCreatedStripsTextMention() {
+	s.bot.botUserID = "bot-123"
+	s.bot.botUsername = "LoopBot"
+	s.session.On("ChannelMessageSend", "thread-1", "<@bot-123> do the task", mock.Anything).
+		Return(&discordgo.Message{}, nil)
+
+	s.bot.HandleThreadCreated(context.Background(), "thread-1", "user-1", "@LoopBot do the task")
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestHandleThreadCreatedEmptyMessage() {
+	s.bot.HandleThreadCreated(context.Background(), "thread-1", "user-1", "")
+	s.session.AssertNotCalled(s.T(), "ChannelMessageSend", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (s *BotSuite) TestHandleThreadCreatedSendError() {
+	s.bot.botUserID = "bot-123"
+	s.session.On("ChannelMessageSend", "thread-1", "<@bot-123> hi", mock.Anything).
+		Return(nil, errors.New("send failed"))
+
 	s.bot.HandleThreadCreated(context.Background(), "thread-1", "user-1", "hi")
+	s.session.AssertExpectations(s.T())
 }
 
 // --- SetChannelTopic ---

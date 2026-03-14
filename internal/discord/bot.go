@@ -381,12 +381,14 @@ func (b *DiscordBot) CreateThread(ctx context.Context, channelID, name, mentionU
 	if err != nil {
 		return "", fmt.Errorf("discord create thread: %w", err)
 	}
-	b.mu.RLock()
-	username := b.botUsername
-	b.mu.RUnlock()
-	initialMsg := bot.FormatThreadMessage(b.BotUserID(), username, mentionUserID, message)
-	if _, err := b.session.ChannelMessageSend(ch.ID, initialMsg); err != nil {
-		b.logger.WarnContext(ctx, "sending initial thread message", "error", err, "thread_id", ch.ID)
+	if message != "" || mentionUserID != "" {
+		b.mu.RLock()
+		username := b.botUsername
+		b.mu.RUnlock()
+		initialMsg := bot.FormatThreadMessage(b.BotUserID(), username, mentionUserID, message)
+		if _, err := b.session.ChannelMessageSend(ch.ID, initialMsg); err != nil {
+			b.logger.WarnContext(ctx, "sending initial thread message", "error", err, "thread_id", ch.ID)
+		}
 	}
 	b.logger.InfoContext(ctx, "created discord thread", "thread_id", ch.ID, "name", name, "parent_id", channelID)
 	return ch.ID, nil
@@ -409,7 +411,22 @@ func (b *DiscordBot) CreateSimpleThread(ctx context.Context, channelID, name, in
 }
 
 func (b *DiscordBot) HandleIncomingMessage(_ context.Context, _, _, _, _ string) {}
-func (b *DiscordBot) HandleThreadCreated(_ context.Context, _, _, _ string)      {}
+
+// HandleThreadCreated posts the initial message (with a bot mention) to the
+// thread so that the normal message event handler picks it up and triggers a
+// new agent run.
+func (b *DiscordBot) HandleThreadCreated(ctx context.Context, threadID, _, message string) {
+	if message == "" {
+		return
+	}
+	b.mu.RLock()
+	username := b.botUsername
+	b.mu.RUnlock()
+	message = bot.FormatThreadMessage(b.BotUserID(), username, "", message)
+	if _, err := b.session.ChannelMessageSend(threadID, message); err != nil {
+		b.logger.WarnContext(ctx, "posting thread initial message", "error", err, "thread_id", threadID)
+	}
+}
 
 // PostMessage sends a simple message to the given channel or thread.
 // Text mentions of the bot (e.g. @LoopBot) are converted to proper Discord

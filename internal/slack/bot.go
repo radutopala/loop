@@ -335,7 +335,10 @@ func (b *SlackBot) CreateThread(ctx context.Context, channelID, name, mentionUse
 	b.mu.RLock()
 	username := b.botUsername
 	b.mu.RUnlock()
-	initialMsg := fmt.Sprintf("*%s*\n", name) + bot.FormatThreadMessage(b.BotUserID(), username, mentionUserID, message)
+	initialMsg := fmt.Sprintf("*%s*\n", name)
+	if message != "" || mentionUserID != "" {
+		initialMsg += bot.FormatThreadMessage(b.BotUserID(), username, mentionUserID, message)
+	}
 
 	_, ts, err := b.session.PostMessage(channelID, goslack.MsgOptionText(initialMsg, false))
 	if err != nil {
@@ -369,7 +372,26 @@ func (b *SlackBot) CreateSimpleThread(ctx context.Context, channelID, name, init
 }
 
 func (b *SlackBot) HandleIncomingMessage(_ context.Context, _, _, _, _ string) {}
-func (b *SlackBot) HandleThreadCreated(_ context.Context, _, _, _ string)      {}
+
+// HandleThreadCreated posts the initial message (with a bot mention) to the
+// thread so that the normal message event handler picks it up and triggers a
+// new agent run.
+func (b *SlackBot) HandleThreadCreated(ctx context.Context, threadID, _, message string) {
+	if message == "" {
+		return
+	}
+	chID, threadTS := parseCompositeID(threadID)
+	if threadTS == "" {
+		return
+	}
+	b.mu.RLock()
+	username := b.botUsername
+	b.mu.RUnlock()
+	message = bot.FormatThreadMessage(b.BotUserID(), username, "", message)
+	if _, _, err := b.session.PostMessage(chID, goslack.MsgOptionText(message, false), goslack.MsgOptionTS(threadTS)); err != nil {
+		b.logger.WarnContext(ctx, "posting thread initial message", "error", err, "thread_id", threadID)
+	}
+}
 
 // PostMessage sends a simple message to the given channel or thread.
 // Text mentions of the bot (e.g. @BotName) are converted to proper Slack mentions.

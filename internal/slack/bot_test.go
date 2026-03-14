@@ -613,8 +613,47 @@ func (s *BotSuite) TestHandleIncomingMessageNoOp() {
 	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello", "")
 }
 
-func (s *BotSuite) TestHandleThreadCreatedNoOp() {
-	s.bot.HandleThreadCreated(context.Background(), "thread-1", "user-1", "hi")
+func (s *BotSuite) TestHandleThreadCreatedPostsMessage() {
+	s.bot.botUserID = "U123BOT"
+	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "9999.1111", nil)
+
+	s.bot.HandleThreadCreated(context.Background(), "C123:1234.5678", "user-1", "do the task")
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestHandleThreadCreatedStripsExistingMention() {
+	s.bot.botUserID = "U123BOT"
+	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "9999.1111", nil)
+
+	s.bot.HandleThreadCreated(context.Background(), "C123:1234.5678", "user-1", "<@U123BOT> do the task")
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestHandleThreadCreatedStripsTextMention() {
+	s.bot.botUserID = "U123BOT"
+	s.bot.botUsername = "LoopBot"
+	s.session.On("PostMessage", "C123", mock.Anything).Return("C123", "9999.1111", nil)
+
+	s.bot.HandleThreadCreated(context.Background(), "C123:1234.5678", "user-1", "@LoopBot do the task")
+	s.session.AssertExpectations(s.T())
+}
+
+func (s *BotSuite) TestHandleThreadCreatedEmptyMessage() {
+	s.bot.HandleThreadCreated(context.Background(), "C123:1234.5678", "user-1", "")
+	s.session.AssertNotCalled(s.T(), "PostMessage", mock.Anything, mock.Anything)
+}
+
+func (s *BotSuite) TestHandleThreadCreatedNoThreadTS() {
+	s.bot.HandleThreadCreated(context.Background(), "C123", "user-1", "hi")
+	s.session.AssertNotCalled(s.T(), "PostMessage", mock.Anything, mock.Anything)
+}
+
+func (s *BotSuite) TestHandleThreadCreatedSendError() {
+	s.bot.botUserID = "U123BOT"
+	s.session.On("PostMessage", "C123", mock.Anything).Return("", "", errors.New("send failed"))
+
+	s.bot.HandleThreadCreated(context.Background(), "C123:1234.5678", "user-1", "hi")
+	s.session.AssertExpectations(s.T())
 }
 
 // --- SetChannelTopic ---
