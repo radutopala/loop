@@ -129,6 +129,7 @@ export interface UpdateStatus {
 export interface AppSettings {
   stopDaemonOnQuit: boolean;
   autoSaveOnBlur: boolean;
+  previewTabs: boolean;
 }
 
 export interface DaemonInfo {

@@ -99,11 +99,13 @@ function resolveApiUrl(): string {
 interface Settings {
   stopDaemonOnQuit: boolean;
   autoSaveOnBlur: boolean;
+  previewTabs: boolean;
 }
 
 const defaultSettings: Settings = {
   stopDaemonOnQuit: false,
   autoSaveOnBlur: true,
+  previewTabs: true,
 };
 
 function appSettingsPath(): string {
@@ -281,6 +283,8 @@ function createWindow(hash?: string): BrowserWindow {
     },
   });
 
+  win.maximize();
+
   const fragment = hash ? `#${hash}` : "";
 
   if (VITE_DEV_SERVER_URL) {
@@ -392,7 +396,17 @@ function buildMenu() {
         {
           label: "New Window",
           accelerator: "CmdOrCtrl+N",
-          click: () => createWindow(),
+          click: async () => {
+            const focused = BrowserWindow.getFocusedWindow();
+            let hash: string | undefined;
+            if (focused) {
+              try {
+                const h = await focused.webContents.executeJavaScript("window.location.hash.slice(1)");
+                if (h) hash = h;
+              } catch { /* ignore */ }
+            }
+            createWindow(hash);
+          },
         },
         { type: "separator" },
         isMac ? { role: "close" } : { role: "quit" },

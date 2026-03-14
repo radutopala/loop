@@ -294,6 +294,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
 
   const [openTabs, setOpenTabs] = useState<string[]>(() => loadEditorTabs(channelId, tabsKey).tabs);
   const [selectedPath, setSelectedPath] = useState<string | null>(() => loadEditorTabs(channelId, tabsKey).selected);
+  const [previewTab, setPreviewTab] = useState<string | null>(null);
 
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [isBinary, setIsBinary] = useState(false);
@@ -318,17 +319,22 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
 
   const isMd = selectedPath ? isMarkdownFile(selectedPath) : false;
 
-  // Load auto-save setting.
+  const [previewTabsEnabled, setPreviewTabsEnabled] = useState(true);
+
+  // Load settings.
   useEffect(() => {
     window.loopAPI?.getSettings?.().then((s) => {
       if (typeof s.autoSaveOnBlur === "boolean") setAutoSaveOnBlur(s.autoSaveOnBlur);
+      if (typeof s.previewTabs === "boolean") setPreviewTabsEnabled(s.previewTabs);
     }).catch(() => {});
   }, []);
 
-  // Persist tab list to localStorage whenever it changes.
+  // Persist tab list to localStorage whenever it changes (exclude preview tab).
   useEffect(() => {
-    saveEditorTabs(channelId, { tabs: openTabs, selected: selectedPath }, tabsKey);
-  }, [channelId, openTabs, selectedPath, tabsKey]);
+    const persistedTabs = previewTab ? openTabs.filter((t) => t !== previewTab) : openTabs;
+    const persistedSelected = selectedPath === previewTab ? null : selectedPath;
+    saveEditorTabs(channelId, { tabs: persistedTabs, selected: persistedSelected }, tabsKey);
+  }, [channelId, openTabs, selectedPath, previewTab, tabsKey]);
 
   const dirtyTabsRef = useRef(dirtyTabs);
   dirtyTabsRef.current = dirtyTabs;
@@ -339,7 +345,11 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
 
   const markDirty = useCallback(() => {
     const p = selectedPathRef.current;
-    if (p) setDirtyTabs((prev) => { if (prev.has(p)) return prev; const next = new Set(prev); next.add(p); return next; });
+    if (p) {
+      setDirtyTabs((prev) => { if (prev.has(p)) return prev; const next = new Set(prev); next.add(p); return next; });
+      // Editing promotes a preview tab to permanent.
+      setPreviewTab((cur) => cur === p ? null : cur);
+    }
   }, []);
 
   const saveFile = useCallback((filePath?: string) => {
@@ -515,11 +525,36 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
     }
   }, [channelId, saveAllDirty]);
 
+  // Single-click: open file in a preview (transient) tab, or permanently if preview is disabled.
   const handleFileClick = useCallback((path: string, _entry: FileEntry) => {
+    if (!previewTabsEnabled) {
+      // Preview disabled — open permanently like before.
+      setOpenTabs((prev) => prev.includes(path) ? prev : [...prev, path]);
+      if (selectedPath !== path) switchToTab(path);
+      return;
+    }
+    // If already a permanent tab, just switch to it.
+    if (openTabs.includes(path) && path !== previewTab) {
+      if (selectedPath !== path) switchToTab(path);
+      return;
+    }
+    // Replace the existing preview tab with this file.
+    setOpenTabs((prev) => {
+      const without = previewTab ? prev.filter((t) => t !== previewTab) : prev;
+      return without.includes(path) ? without : [...without, path];
+    });
+    setPreviewTab(path);
+    if (selectedPath !== path) switchToTab(path);
+  }, [selectedPath, previewTab, previewTabsEnabled, openTabs, switchToTab]);
+
+  // Double-click: promote preview to permanent or open permanently.
+  const handleFileDoubleClick = useCallback((path: string, _entry: FileEntry) => {
+    // Ensure it's in the tab list.
     setOpenTabs((prev) => prev.includes(path) ? prev : [...prev, path]);
-    if (selectedPath === path) return;
-    switchToTab(path);
-  }, [selectedPath, switchToTab]);
+    // Promote from preview to permanent.
+    if (previewTab === path) setPreviewTab(null);
+    if (selectedPath !== path) switchToTab(path);
+  }, [selectedPath, previewTab, switchToTab]);
 
   const handleCloseTab = useCallback((path: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
@@ -527,6 +562,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
     if (autoSaveOnBlurRef.current && path === selectedPath) saveAllDirty();
     dirtyContentRef.current.delete(path);
     setDirtyTabs((prev) => { if (!prev.has(path)) return prev; const next = new Set(prev); next.delete(path); return next; });
+    if (previewTab === path) setPreviewTab(null);
     setOpenTabs((prev) => {
       const next = prev.filter((p) => p !== path);
       if (path === selectedPath) {
@@ -842,11 +878,13 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
               dirContents={dirContents}
               expandedDirs={expandedDirs}
               selectedPath={selectedPath}
+              previewTab={previewTab}
               selectedDir={selectedDir}
               depth={1}
               parentPath=""
               onDirClick={handleDirClick}
               onFileClick={handleFileClick}
+              onFileDoubleClick={handleFileDoubleClick}
               onContextMenu={handleContextMenu}
             />
           </div>
@@ -881,11 +919,13 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
                 {openTabs.map((tab) => {
                   const isActive = tab === selectedPath;
                   const isDirty = dirtyTabs.has(tab);
+                  const isPreview = tab === previewTab;
                   const fileName = tab.split("/").pop() || tab;
                   return (
                     <button
                       key={tab}
                       onClick={() => { if (!isActive) switchToTab(tab); }}
+                      onDoubleClick={() => { if (isPreview) setPreviewTab(null); }}
                       title={tab}
                       style={{
                         display: "flex",
@@ -907,7 +947,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
                       onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = "transparent"; }}
                     >
                       <FileIcon name={fileName} />
-                      <span style={{ fontStyle: isDirty ? "italic" : undefined }}>{fileName}</span>
+                      <span style={{ fontStyle: isPreview || isDirty ? "italic" : undefined }}>{fileName}</span>
                       <span
                         onClick={(e) => handleCloseTab(tab, e)}
                         style={{ marginLeft: 2, width: 8, height: 8, display: "flex", alignItems: "center", justifyContent: "center" }}
@@ -1078,15 +1118,17 @@ interface FileTreeProps {
   dirContents: Map<string, FileEntry[]>;
   expandedDirs: Set<string>;
   selectedPath: string | null;
+  previewTab: string | null;
   selectedDir: string;
   depth: number;
   parentPath: string;
   onDirClick: (path: string) => void;
   onFileClick: (path: string, entry: FileEntry) => void;
+  onFileDoubleClick: (path: string, entry: FileEntry) => void;
   onContextMenu: (e: React.MouseEvent, path: string, isDir: boolean) => void;
 }
 
-function FileTree({ entries, dirContents, expandedDirs, selectedPath, selectedDir, depth, parentPath, onDirClick, onFileClick, onContextMenu }: FileTreeProps) {
+function FileTree({ entries, dirContents, expandedDirs, selectedPath, previewTab, selectedDir, depth, parentPath, onDirClick, onFileClick, onFileDoubleClick, onContextMenu }: FileTreeProps) {
   return (
     <>
       {entries.map((entry) => {
@@ -1100,6 +1142,7 @@ function FileTree({ entries, dirContents, expandedDirs, selectedPath, selectedDi
           <div key={path}>
             <button
               onClick={() => isDir ? onDirClick(path) : onFileClick(path, entry)}
+              onDoubleClick={() => { if (!isDir) onFileDoubleClick(path, entry); }}
               onContextMenu={(e) => onContextMenu(e, path, isDir)}
               style={{
                 display: "flex",
@@ -1142,11 +1185,13 @@ function FileTree({ entries, dirContents, expandedDirs, selectedPath, selectedDi
                 dirContents={dirContents}
                 expandedDirs={expandedDirs}
                 selectedPath={selectedPath}
+                previewTab={previewTab}
                 selectedDir={selectedDir}
                 depth={depth + 1}
                 parentPath={path}
                 onDirClick={onDirClick}
                 onFileClick={onFileClick}
+                onFileDoubleClick={onFileDoubleClick}
                 onContextMenu={onContextMenu}
               />
             )}

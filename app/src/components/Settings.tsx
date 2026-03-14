@@ -13,7 +13,7 @@ interface SettingsProps {
 }
 
 export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, onOpenPalette, onClose, onDaemonRestarted }: SettingsProps) {
-  const [settings, setSettings] = useState<AppSettings>({ stopDaemonOnQuit: false, autoSaveOnBlur: true });
+  const [settings, setSettings] = useState<AppSettings>({ stopDaemonOnQuit: false, autoSaveOnBlur: true, previewTabs: true });
   const [daemonInfo, setDaemonInfo] = useState<DaemonInfo | null>(null);
   const [restarting, setRestarting] = useState(false);
   const [globalConfig, setGlobalConfig] = useState<ConfigInfo | null>(null);
@@ -303,6 +303,13 @@ export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, o
               description="Save open editor tabs when the window loses focus. Manual save with Cmd+S always works."
               checked={settings.autoSaveOnBlur}
               onChange={() => handleToggle("autoSaveOnBlur")}
+            />
+
+            <ToggleRow
+              label="Preview tabs"
+              description="Single-click opens files in a transient preview tab (italic title). Double-click or editing promotes to a permanent tab."
+              checked={settings.previewTabs ?? true}
+              onChange={() => handleToggle("previewTabs")}
             />
 
             {/* Global config */}
