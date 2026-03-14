@@ -148,6 +148,7 @@ jobs:
         run: gh release upload "${{ github.ref_name }}" app/release/*.AppImage app/release/*.deb --clobber
 
       - name: Save update manifest
+        if: hashFiles('app/release/latest-linux.yml') != ''
         uses: actions/upload-artifact@v4
         with:
           name: update-yml-linux-${{ matrix.arch }}
@@ -163,23 +164,40 @@ jobs:
           pattern: update-yml-*
           path: manifests
 
+      - name: List downloaded manifests
+        run: find manifests -type f
+
       - name: Merge macOS manifests
         run: |
-          yq eval-all '
-            select(fi == 0).files += select(fi == 1).files |
-            select(fi == 0)
-          ' manifests/update-yml-mac-arm64/latest-mac.yml \
-            manifests/update-yml-mac-x64/latest-mac.yml > latest-mac.yml
+          ARM="manifests/update-yml-mac-arm64/latest-mac.yml"
+          X64="manifests/update-yml-mac-x64/latest-mac.yml"
+          if [ -f "$ARM" ] && [ -f "$X64" ]; then
+            yq eval-all 'select(fi == 0).files += select(fi == 1).files | select(fi == 0)' "$ARM" "$X64" > latest-mac.yml
+          elif [ -f "$ARM" ]; then
+            cp "$ARM" latest-mac.yml
+          elif [ -f "$X64" ]; then
+            cp "$X64" latest-mac.yml
+          fi
 
       - name: Merge Linux manifests
         run: |
-          yq eval-all '
-            select(fi == 0).files += select(fi == 1).files |
-            select(fi == 0)
-          ' manifests/update-yml-linux-x64/latest-linux.yml \
-            manifests/update-yml-linux-arm64/latest-linux.yml > latest-linux.yml
+          X64="manifests/update-yml-linux-x64/latest-linux.yml"
+          ARM="manifests/update-yml-linux-arm64/latest-linux.yml"
+          if [ -f "$X64" ] && [ -f "$ARM" ]; then
+            yq eval-all 'select(fi == 0).files += select(fi == 1).files | select(fi == 0)' "$X64" "$ARM" > latest-linux.yml
+          elif [ -f "$X64" ]; then
+            cp "$X64" latest-linux.yml
+          elif [ -f "$ARM" ]; then
+            cp "$ARM" latest-linux.yml
+          fi
 
       - name: Upload manifests to release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh release upload "${{ github.ref_name }}" latest-mac.yml latest-linux.yml --clobber --repo "${{ github.repository }}"
+        run: |
+          FILES=""
+          [ -f latest-mac.yml ] && FILES="$FILES latest-mac.yml"
+          [ -f latest-linux.yml ] && FILES="$FILES latest-linux.yml"
+          if [ -n "$FILES" ]; then
+            gh release upload "${{ github.ref_name }}" $FILES --clobber --repo "${{ github.repository }}"
+          fi

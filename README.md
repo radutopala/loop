@@ -2,17 +2,19 @@
 
 [![Go](https://img.shields.io/badge/Go-1.26-blue)](https://go.dev/) [![CI](https://github.com/radutopala/loop/actions/workflows/ci.yaml/badge.svg)](https://github.com/radutopala/loop/actions/workflows/ci.yaml) [![release](https://img.shields.io/github/v/release/radutopala/loop)](https://github.com/radutopala/loop/releases/latest) [![license](https://img.shields.io/badge/license-GPL--3.0-orange)](LICENSE)
 
-A Slack/Discord bot powered by Claude that runs AI agents in Docker containers — with a native macOS desktop app for chat, terminal, and diff views.
+AI agents powered by Claude, running in Docker containers. Use the **desktop app** for a local-first experience, or connect to **Slack** / **Discord** for team collaboration — or run all three at once.
 
 ## Architecture
 
 ```
-              Slack / Discord
-                     │
-              @mention / reply / !loop / DM
-                     ▼
-                    Bot
-                     │
+     Desktop App          Slack / Discord
+     (Electron)                 │
+          │             @mention / reply / !loop / DM
+          │                     │
+          ▼                     ▼
+     Local Bot             Slack/Discord Bot
+          │                     │
+          └──────────┬──────────┘
                      ▼
                Orchestrator ◀──────────────── Scheduler (poll loop)
                      │                              │
@@ -57,31 +59,98 @@ A Slack/Discord bot powered by Claude that runs AI agents in Docker containers �
 
 ## Prerequisites
 
-- macOS (recommended) or Linux
+- macOS or Linux
 - [Docker Desktop](https://docs.docker.com/desktop/) (macOS) or [Docker Engine](https://docs.docker.com/engine/install/) (Linux)
-- A **Slack** bot token and app token, or a **Discord** bot token and application ID
-- An [Anthropic API key](https://console.anthropic.com/) (recommended) or Claude Code OAuth token (for agent containers)
+- An [Anthropic API key](https://console.anthropic.com/) (recommended) or Claude Code OAuth token
 
 > **Note:** `loop daemon:start/stop/status` use launchd on macOS and systemd user services on Linux (`~/.config/systemd/user/loop.service`).
 
 ## Getting Started
 
-### Step 1: Install
+Loop supports three platforms that can run independently or simultaneously:
 
+| Platform | Best for | Requires |
+|---|---|---|
+| **Desktop App** | Solo development, local-first workflow | Just the app — no bot setup needed |
+| **Discord** | Team collaboration with channels and threads | Discord bot token |
+| **Slack** | Team collaboration in your existing workspace | Slack bot + app tokens |
+
+Set `"platforms"` in your config to enable one or more: `["local"]`, `["discord"]`, `["local", "discord"]`, etc.
+
+---
+
+### Path A: Desktop App (quickest)
+
+The desktop app gives you a full IDE-like experience — chat, terminal, file editor, diff viewer — without needing Slack or Discord.
+
+**1. Download and install**
+
+Grab the latest `.dmg` (macOS) or `.AppImage` / `.deb` (Linux) from [Releases](https://github.com/radutopala/loop/releases/latest). The app auto-updates when new versions are available.
+
+Or build from source:
 ```sh
-# Homebrew
+# Homebrew (installs the CLI; app is a separate download)
 brew install radutopala/tap/loop
 
-# Or from source
+# From source
 go install github.com/radutopala/loop/cmd/loop@latest
+cd app && npm install && npm run dev   # run the app in dev mode
 ```
 
-### Step 2: Create a bot
+**2. Initialize config**
 
-Choose **Slack** or **Discord**:
+```sh
+loop onboard:global
+```
+
+This creates `~/.loop/config.json` and supporting files. Set the platform to local:
+
+```jsonc
+{
+  "platforms": ["local"]
+}
+```
+
+**3. Add Claude Code credentials**
+
+Add one of these to `~/.loop/config.json`:
+
+```jsonc
+// Option A: API key (recommended — pay-per-token, fully compliant)
+{ "anthropic_api_key": "sk-ant-..." }
+
+// Option B: OAuth token (uses your Pro/Max subscription)
+// Generate with: claude setup-token
+{ "claude_code_oauth_token": "sk-ant-..." }
+```
+
+See [Authenticating Claude Code](#authenticating-claude-code) below for details on each option.
+
+**4. Start the daemon**
+
+```sh
+loop daemon:start
+```
+
+**5. Add a project**
+
+Open the app and click **"+ new"** → **"Open directory..."** to add a project folder. Or from the CLI:
+
+```sh
+cd /path/to/your/project
+loop onboard:local --platform local
+```
+
+That's it — start chatting with the agent in the app.
+
+---
+
+### Path B: Slack
 
 <details>
-<summary><strong>Slack</strong></summary>
+<summary><strong>Setup instructions</strong></summary>
+
+**1. Create a Slack app**
 
 1. Go to https://api.slack.com/apps → **Create New App** → **From a manifest**
 2. Select your workspace, choose **JSON**, and paste the contents of [`slack.manifest.json`](https://github.com/radutopala/loop/blob/main/internal/config/slack.manifest.json)
@@ -89,10 +158,37 @@ Choose **Slack** or **Discord**:
 4. Go to **Socket Mode** → generate an app-level token with `connections:write` scope → copy the token (starts with `xapp-`)
 5. Go to **Install App** → install to workspace → copy the **Bot User OAuth Token** (starts with `xoxb-`)
 
+**2. Initialize and configure**
+
+```sh
+loop onboard:global
+# optionally: loop onboard:global --owner-id U12345678
+```
+
+Edit `~/.loop/config.json`:
+
+```jsonc
+{
+  "platforms": ["slack"],
+  "slack_bot_token": "xoxb-your-bot-token",
+  "slack_app_token": "xapp-your-app-token"
+}
+```
+
+Add your [Claude Code credentials](#authenticating-claude-code), then:
+
+```sh
+loop daemon:start
+```
+
 </details>
 
+### Path C: Discord
+
 <details>
-<summary><strong>Discord</strong></summary>
+<summary><strong>Setup instructions</strong></summary>
+
+**1. Create a Discord bot**
 
 1. Go to https://discord.com/developers/applications and create a new application
 2. Under **Bot**, copy the **Bot Token**
@@ -106,56 +202,51 @@ Choose **Slack** or **Discord**:
 
    This grants: View Channels, Send Messages, Read Message History, Manage Channels, Manage Threads, Send Messages in Threads, Create Public Threads, Create Private Threads.
 
-</details>
-
-### Step 3: Initialize global config
+**2. Initialize and configure**
 
 ```sh
 loop onboard:global
 # optionally: loop onboard:global --owner-id U12345678
 ```
 
-The `--owner-id` flag sets your user ID as an RBAC owner in the config, exiting bootstrap mode so only you have owner access from the start. See [Finding your user ID](#finding-your-user-id) below.
-
-This creates:
-- `~/.loop/config.json` — main configuration file
-- `~/.loop/slack-manifest.json` — Slack app manifest (for creating a Slack app)
-- `~/.loop/.bashrc` — shell aliases sourced inside containers
-- `~/.loop/templates/` — directory for prompt template files (used by `prompt_path`)
-- `~/.loop/container/Dockerfile` — agent container image definition
-- `~/.loop/container/entrypoint.sh` — container entrypoint script
-- `~/.loop/container/setup.sh` — custom build-time setup script (runs once during `docker build`)
-
-### Step 4: Add your credentials
-
-Edit `~/.loop/config.json` and fill in the required fields for your platform:
+Edit `~/.loop/config.json`:
 
 ```jsonc
-// Slack:
 {
-  "platform": "slack",
-  "slack_bot_token": "xoxb-your-bot-token",
-  "slack_app_token": "xapp-your-app-token"
-}
-
-// Discord:
-{
-  "platform": "discord",
-  "discord_token": "your-bot-token-from-step-2",
-  "discord_app_id": "your-app-id-from-step-2",
-  "discord_guild_id": "your-discord-guild-id" // optional, enables auto-channel creation
+  "platforms": ["discord"],
+  "discord_token": "your-bot-token",
+  "discord_app_id": "your-app-id",
+  "discord_guild_id": "your-guild-id"   // optional, enables auto-channel creation
 }
 ```
 
-The config file uses HJSON (comments and trailing commas are allowed). See `config.global.example.json` for all available options and their defaults.
+Add your [Claude Code credentials](#authenticating-claude-code), then:
 
-### Step 5: Authenticate Claude Code
+```sh
+loop daemon:start
+```
 
-Agents inside containers need Claude Code credentials to run. Loop supports two authentication methods:
+</details>
+
+### Running multiple platforms
+
+You can run the desktop app alongside Slack or Discord — all platforms share the same daemon, database, and project directories:
+
+```jsonc
+{
+  "platforms": ["local", "discord"]
+}
+```
+
+---
+
+### Authenticating Claude Code
+
+Agents inside containers need Claude Code credentials. Loop supports two methods:
 
 #### Option A: Anthropic API key (recommended)
 
-Uses the Anthropic API with pay-per-token pricing. This is the recommended approach — it routes through the [Commercial Terms of Service](https://www.anthropic.com/legal/commercial-terms) and is fully compliant with Anthropic's terms for automated/programmatic usage.
+Uses the Anthropic API with pay-per-token pricing. Routes through the [Commercial Terms of Service](https://www.anthropic.com/legal/commercial-terms) — fully compliant with Anthropic's terms for automated usage.
 
 Get an API key from [console.anthropic.com](https://console.anthropic.com/):
 
@@ -165,11 +256,9 @@ Get an API key from [console.anthropic.com](https://console.anthropic.com/):
 }
 ```
 
-This is passed as the `ANTHROPIC_API_KEY` environment variable to each agent container.
-
 #### Option B: OAuth token (subscription)
 
-Uses your Claude Pro/Max subscription. Generate a long-lived token with `claude setup-token`:
+Uses your Claude Pro/Max subscription. Generate a long-lived token:
 
 ```sh
 claude setup-token
@@ -181,36 +270,22 @@ claude setup-token
 }
 ```
 
-This is passed as the `CLAUDE_CODE_OAUTH_TOKEN` environment variable to each agent container.
+> **Note:** `claude login` stores credentials in the macOS keychain, which containers cannot access. Use `claude setup-token` instead.
 
-> **Note:** `claude login` stores credentials in the macOS keychain, which containers cannot access. Use `claude setup-token` instead to get a token you can pass explicitly.
-
-> **Terms of Service:** Anthropic's [Consumer Terms](https://www.anthropic.com/legal/consumer-terms) (Section 3.7) restrict accessing the Services "through automated or non-human means, whether through a bot, script, or otherwise" unless using an Anthropic API Key or where otherwise explicitly permitted. Loop orchestrates Claude Code programmatically — spawning CLI sessions in containers via bot commands — which may fall under this restriction when using a subscription OAuth token. Note that Loop runs the real Claude Code binary (it does not spoof client identity or proxy API calls), but the ToS restriction on automated access applies regardless of how the CLI is invoked.
+> **Terms of Service:** Anthropic's [Consumer Terms](https://www.anthropic.com/legal/consumer-terms) (Section 3.7) restrict accessing the Services "through automated or non-human means, whether through a bot, script, or otherwise" unless using an Anthropic API Key or where otherwise explicitly permitted. Loop runs the real Claude Code binary but invokes it programmatically, which may fall under this restriction when using a subscription OAuth token.
 >
 > **If compliance matters to you, use an API key (Option A).** It routes through the [Commercial Terms](https://www.anthropic.com/legal/commercial-terms), which explicitly permit programmatic access.
 
 > If both are set, `claude_code_oauth_token` takes precedence.
 
-### Step 6: Start Loop
+### Setting up a project
 
-```sh
-# Run directly (auto-builds the agent Docker image on first run)
-loop serve
-
-# Or run as a background daemon (macOS: launchd, Linux: systemd user service)
-loop daemon:start
-loop daemon:status   # check status
-loop daemon:restart  # restart
-loop daemon:stop     # stop
-```
-
-### Step 7: Set up a project (optional)
-
-To use Loop with a specific project directory:
+To register a project directory with Loop:
 
 ```sh
 cd /path/to/your/project
 loop onboard:local
+# optionally: loop onboard:local --platform local   # local-only channel
 # optionally: loop onboard:local --api-url http://custom:9999
 # optionally: loop onboard:local --owner-id U12345678
 ```
@@ -221,7 +296,18 @@ This does four things:
 1. Writes `.mcp.json` — registers the Loop MCP server so Claude Code can schedule tasks from your IDE
 2. Creates `.loop/config.json` — project-specific overrides (mounts, MCP servers, model, task templates)
 3. Creates `.loop/templates/` — directory for project-specific prompt template files
-4. Registers a channel for this directory (requires `loop serve` to be running)
+4. Registers a channel for this directory (requires the daemon to be running)
+
+### Global onboard details
+
+`loop onboard:global` creates:
+- `~/.loop/config.json` — main configuration file
+- `~/.loop/slack-manifest.json` — Slack app manifest
+- `~/.loop/.bashrc` — shell aliases sourced inside containers
+- `~/.loop/templates/` — directory for prompt template files
+- `~/.loop/container/Dockerfile` — agent container image definition
+- `~/.loop/container/entrypoint.sh` — container entrypoint script
+- `~/.loop/container/setup.sh` — custom build-time setup script
 
 ### Finding your user ID
 
@@ -235,7 +321,7 @@ This does four things:
 
 | Field | Default | Description |
 |---|---|---|
-| `platform` | **(required)** | Chat platform: `"slack"` or `"discord"` |
+| `platforms` | **(required)** | Platforms to enable: `["local"]`, `["discord"]`, `["slack"]`, or any combination |
 | `slack_bot_token` | | Slack bot token (required for Slack) |
 | `slack_app_token` | | Slack app-level token (required for Slack) |
 | `discord_token` | | Discord bot token (required for Discord) |
@@ -747,22 +833,37 @@ Project configs (`.loop/config.json`) can define their own `task_templates` that
 }
 ```
 
-## Desktop App (Electron)
+## Desktop App
 
-Loop includes a native macOS desktop app built with Electron + React.
+Loop includes a desktop app for macOS and Linux, built with Electron + React. Download from [Releases](https://github.com/radutopala/loop/releases/latest) or build from source.
 
 ### Features
 
-- **Chat view** — send messages and stream agent responses in real-time
-- **Terminal view** — interactive xterm.js terminal with attach/detach support for agent containers
-- **Diff panel** — view git changes with file-level additions/deletions stats; supports maximize to full width
-- **Multi-window** — open multiple windows (Cmd+N); each navigates independently
-- **Sidebar** — browse channels and threads, create new ones, see running status (green dot)
+- **Chat** — send messages, stream agent responses in real-time, search messages (Cmd+K)
+- **Terminal** — interactive xterm.js terminals for agent containers and host shells, with horizontal/vertical splits
+- **File editor** — CodeMirror-powered editor with syntax highlighting, markdown preview, in-file search, context menus, and auto-save
+- **Diff panel** — git changes with per-file addition/deletion stats, maximizable to full width
+- **Memory panel** — browse and search semantic memory files
+- **Custom layouts** — named split-pane workspaces with drag-to-resize, saved per channel. Create, rename, delete, and restore default layouts from the tab bar
+- **Multi-window** — open multiple windows (Cmd+N), each navigating independently
+- **Sidebar** — browse channels and threads, create new ones, batch-delete, see running status (green dot), and open directories directly from the sidebar
+- **Auto-update** — checks for new releases every 30 minutes, download and install with one click
 - **Deep links** — `loop://channel/<id>` opens the app directly to a channel
-- **Mode toggle** — switch between Chat and Terminal views per channel
-- **Dynamic title** — window title reflects the selected channel/thread name
+- **Plan mode** — run agents in read-only preview mode (`--permission-mode plan`)
+- **Agent activity** — see model info, tool use, and completion summaries in the chat view
 
-### Build & Install
+### Platforms
+
+| Platform | Format | Auto-update |
+|---|---|---|
+| macOS (Apple Silicon) | `.dmg` (arm64) | Yes |
+| macOS (Intel) | `.dmg` (x64) | Yes |
+| Linux (x64) | `.AppImage`, `.deb` | AppImage only |
+| Linux (ARM64) | `.AppImage`, `.deb` | AppImage only |
+
+Release builds for macOS are signed with a Developer ID Application certificate and notarized by Apple.
+
+### Build from source
 
 Requires [Node.js 22+](https://nodejs.org/).
 
@@ -770,13 +871,9 @@ Requires [Node.js 22+](https://nodejs.org/).
 # Development
 cd app && npm install && npm run dev
 
-# Build and install to /Applications
+# Build and install to /Applications (macOS)
 make app-install
 ```
-
-### Release Builds
-
-Release builds are signed with a Developer ID Application certificate and notarized by Apple. DMGs for both arm64 and x64 are built automatically on GitHub Actions (macOS 26 runners) and attached to each release.
 
 ## REST API
 
