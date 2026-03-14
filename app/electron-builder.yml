@@ -1,6 +1,6 @@
 appId: com.loop.app
 productName: Loop
-copyright: Copyright © 2026 Loop
+copyright: Copyright © 2026 Radu Topala
 
 directories:
   buildResources: build
@@ -58,6 +58,10 @@ extraResources:
     to: bin
     filter:
       - "**/*"
+  - from: ../LICENSE
+    to: .
+  - from: ../NOTICE
+    to: .
 
 publish:
   provider: github
