@@ -1,7 +1,7 @@
 import "@fontsource/jetbrains-mono/400.css";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from "@codemirror/view";
-import { EditorState } from "@codemirror/state";
+import { EditorState, Compartment } from "@codemirror/state";
 import { defaultKeymap, indentWithTab, history, historyKeymap } from "@codemirror/commands";
 import { search, searchKeymap, openSearchPanel } from "@codemirror/search";
 import { syntaxHighlighting, HighlightStyle, bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
@@ -15,7 +15,7 @@ import { css } from "@codemirror/lang-css";
 import { html } from "@codemirror/lang-html";
 import { yaml } from "@codemirror/lang-yaml";
 import { marked } from "marked";
-import { colors as staticColors, fonts } from "../theme";
+import { type ColorPalette, fonts } from "../theme";
 import { useTheme } from "../ThemeContext";
 import { fetchFiles, fetchFileContent, saveFileContent, deleteFile, type FileEntry } from "../api/loopApi";
 import { FilePanel, buildMarkdownStyles } from "./FilePanel";
@@ -73,173 +73,220 @@ function formatSize(bytes: number): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-// GoLand Darcula theme
-const darculaTheme = EditorView.theme({
-  "&": {
-    backgroundColor: staticColors.sidebar,
-    color: "#a9b7c6",
-    fontSize: "13px",
-    fontFamily: "'JetBrains Mono', " + fonts.mono,
-  },
-  ".cm-content": {
-    caretColor: "#bbbbbb",
-    padding: "4px 0",
-  },
-  ".cm-cursor, .cm-dropCursor": {
-    borderLeftColor: "#bbbbbb",
-  },
-  "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
-    backgroundColor: "#214283 !important",
-  },
-  ".cm-gutters": {
-    backgroundColor: staticColors.sidebar,
-    color: "#606366",
-    borderRight: `1px solid ${staticColors.border}`,
-  },
-  ".cm-activeLineGutter": {
-    backgroundColor: staticColors.selectedBg,
-    color: "#a4a3a3",
-  },
-  ".cm-activeLine": {
-    backgroundColor: "rgba(255,255,255,0.04)",
-  },
-  ".cm-matchingBracket": {
-    backgroundColor: "#3b514d",
-    color: "#ffef28 !important",
-    outline: "none",
-  },
-  ".cm-selectionMatch": {
-    backgroundColor: "rgba(33, 66, 131, 0.4)",
-  },
-  ".cm-foldPlaceholder": {
-    backgroundColor: "#3c3f41",
-    color: "#a9b7c6",
-    border: "none",
-  },
-  ".cm-tooltip": {
-    backgroundColor: "#3c3f41",
-    border: "1px solid #555",
-    color: "#a9b7c6",
-  },
-  ".cm-panels": {
-    backgroundColor: staticColors.surface,
-    color: "#a9b7c6",
-    borderBottom: `1px solid ${staticColors.border}`,
-    padding: "6px 8px",
-    fontSize: "13px",
-    gap: "4px",
-  },
-  ".cm-panels button": {
-    backgroundImage: "none",
-    backgroundColor: staticColors.hoverBg,
-    color: "#ddd",
-    border: "1px solid rgba(255,255,255,0.5)",
-    borderRadius: "12px",
-    cursor: "pointer",
-    padding: "3px 10px",
-    fontSize: "12px",
-    lineHeight: "1.3",
-  },
-  ".cm-panels button:hover": {
-    backgroundColor: "rgba(255,255,255,0.15)",
-    borderColor: "#fff",
-    color: "#fff",
-  },
-  ".cm-panels button[name=close]": {
-    padding: "3px 6px",
-  },
-  ".cm-textfield": {
-    backgroundColor: staticColors.bg,
-    color: "#a9b7c6",
-    border: `1px solid ${staticColors.border}`,
-    borderRadius: "4px",
-    outline: "none",
-    padding: "3px 6px",
-    fontSize: "13px",
-  },
-  ".cm-textfield:focus": {
-    borderColor: "rgba(255,255,255,0.5)",
-  },
-  ".cm-panels label": {
-    color: "#999",
-    fontSize: "11px",
-    display: "inline-flex",
-    alignItems: "center",
-    cursor: "pointer",
-    borderRadius: "12px",
-    padding: "2px 8px",
-    border: "1px solid rgba(255,255,255,0.25)",
-    gap: "0",
-  },
-  ".cm-panels label:hover": {
-    borderColor: "rgba(255,255,255,0.5)",
-    color: "#ccc",
-  },
-  ".cm-panels label:has(input:checked)": {
-    backgroundColor: staticColors.active,
-    borderColor: staticColors.active,
-    color: "#fff",
-  },
-  ".cm-panels input[type=checkbox]": {
-    appearance: "none",
-    width: "0",
-    height: "0",
-    margin: "0",
-    padding: "0",
-    border: "none",
-    position: "absolute",
-    opacity: "0",
-  },
-  ".cm-search": {
-    gap: "4px",
-  },
-}, { dark: true });
+// Build CodeMirror editor theme + syntax highlighting from the active palette.
+// Dark values match GoLand Darcula; light values match JetBrains IntelliJ Light.
+function buildEditorTheme(palette: ColorPalette) {
+  const isDark = palette.isDark;
 
-const darculaHighlightStyle = HighlightStyle.define([
-  { tag: tags.keyword, color: "#cc7832" },
-  { tag: tags.controlKeyword, color: "#cc7832" },
-  { tag: tags.operatorKeyword, color: "#cc7832" },
-  { tag: tags.definitionKeyword, color: "#cc7832" },
-  { tag: tags.moduleKeyword, color: "#cc7832" },
-  { tag: tags.operator, color: "#a9b7c6" },
-  { tag: tags.separator, color: "#cc7832" },
-  { tag: tags.punctuation, color: "#a9b7c6" },
-  { tag: tags.bracket, color: "#a9b7c6" },
-  { tag: tags.number, color: "#6897bb" },
-  { tag: tags.bool, color: "#cc7832" },
-  { tag: tags.null, color: "#cc7832" },
-  { tag: tags.self, color: "#cc7832" },
-  { tag: tags.atom, color: "#cc7832" },
-  { tag: tags.string, color: "#6a8759" },
-  { tag: tags.special(tags.string), color: "#6a8759" },
-  { tag: tags.regexp, color: "#6a8759" },
-  { tag: tags.escape, color: "#cc7832" },
-  { tag: tags.comment, color: "#808080", fontStyle: "italic" },
-  { tag: tags.lineComment, color: "#808080", fontStyle: "italic" },
-  { tag: tags.blockComment, color: "#808080", fontStyle: "italic" },
-  { tag: tags.docComment, color: "#629755", fontStyle: "italic" },
-  { tag: tags.variableName, color: "#a9b7c6" },
-  { tag: tags.definition(tags.variableName), color: "#ffc66d" },
-  { tag: tags.function(tags.variableName), color: "#ffc66d" },
-  { tag: tags.typeName, color: "#ffc66d" },
-  { tag: tags.className, color: "#ffc66d" },
-  { tag: tags.definition(tags.typeName), color: "#ffc66d" },
-  { tag: tags.definition(tags.propertyName), color: "#ffc66d" },
-  { tag: tags.propertyName, color: "#9876aa" },
-  { tag: tags.special(tags.variableName), color: "#9876aa" },
-  { tag: tags.attributeName, color: "#bababa" },
-  { tag: tags.attributeValue, color: "#6a8759" },
-  { tag: tags.tagName, color: "#e8bf6a" },
-  { tag: tags.angleBracket, color: "#a9b7c6" },
-  { tag: tags.meta, color: "#bbb529" },
-  { tag: tags.annotation, color: "#bbb529" },
-  { tag: tags.processingInstruction, color: "#bbb529" },
-  { tag: tags.link, color: "#287bde", textDecoration: "underline" },
-  { tag: tags.heading, color: "#ffc66d", fontWeight: "bold" },
-  { tag: tags.emphasis, fontStyle: "italic" },
-  { tag: tags.strong, fontWeight: "bold" },
-  { tag: tags.strikethrough, textDecoration: "line-through" },
-]);
+  // --- chrome / UI colors ---
+  const textColor = isDark ? "#a9b7c6" : "#080808";
+  const caretColor = isDark ? "#bbbbbb" : "#000000";
+  const selectionBg = isDark ? "#214283" : "#a6d2ff";
+  const gutterText = isDark ? "#606366" : "#999999";
+  const activeGutterText = isDark ? "#a4a3a3" : "#444444";
+  const activeLineBg = isDark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)";
+  const matchBracketBg = isDark ? "#3b514d" : "#b4eeb4";
+  const matchBracketText = isDark ? "#ffef28" : "#000000";
+  const selectionMatchBg = isDark ? "rgba(33,66,131,0.4)" : "rgba(166,210,255,0.5)";
+  const foldBg = isDark ? "#3c3f41" : "#e8e8e8";
+  const tooltipBg = isDark ? "#3c3f41" : "#f7f7f7";
+  const tooltipBorder = isDark ? "#555" : "#c0c0c0";
+  const panelBtnColor = isDark ? "#ddd" : "#333";
+  const panelBtnBorder = isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.3)";
+  const panelBtnHoverBg = isDark ? "rgba(255,255,255,0.15)" : "rgba(0,0,0,0.08)";
+  const panelBtnHoverBorderColor = isDark ? "#fff" : "#666";
+  const panelBtnHoverColor = isDark ? "#fff" : "#000";
+  const textfieldFocusBorder = isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.4)";
+  const labelColor = isDark ? "#999" : "#666";
+  const labelBorder = isDark ? "rgba(255,255,255,0.25)" : "rgba(0,0,0,0.2)";
+  const labelHoverBorder = isDark ? "rgba(255,255,255,0.5)" : "rgba(0,0,0,0.4)";
+  const labelHoverColor = isDark ? "#ccc" : "#333";
+
+  const theme = EditorView.theme({
+    "&": {
+      backgroundColor: palette.sidebar,
+      color: textColor,
+      fontSize: "13px",
+      fontFamily: "'JetBrains Mono', " + fonts.mono,
+    },
+    ".cm-content": {
+      caretColor,
+      padding: "4px 0",
+    },
+    ".cm-cursor, .cm-dropCursor": {
+      borderLeftColor: caretColor,
+    },
+    "&.cm-focused .cm-selectionBackground, .cm-selectionBackground": {
+      backgroundColor: selectionBg + " !important",
+    },
+    ".cm-gutters": {
+      backgroundColor: palette.sidebar,
+      color: gutterText,
+      borderRight: `1px solid ${palette.border}`,
+    },
+    ".cm-activeLineGutter": {
+      backgroundColor: palette.selectedBg,
+      color: activeGutterText,
+    },
+    ".cm-activeLine": {
+      backgroundColor: activeLineBg,
+    },
+    ".cm-matchingBracket": {
+      backgroundColor: matchBracketBg,
+      color: matchBracketText + " !important",
+      outline: "none",
+    },
+    ".cm-selectionMatch": {
+      backgroundColor: selectionMatchBg,
+    },
+    ".cm-foldPlaceholder": {
+      backgroundColor: foldBg,
+      color: textColor,
+      border: "none",
+    },
+    ".cm-tooltip": {
+      backgroundColor: tooltipBg,
+      border: `1px solid ${tooltipBorder}`,
+      color: textColor,
+    },
+    ".cm-panels": {
+      backgroundColor: palette.surface,
+      color: textColor,
+      borderBottom: `1px solid ${palette.border}`,
+      padding: "6px 8px",
+      fontSize: "13px",
+      gap: "4px",
+    },
+    ".cm-panels button": {
+      backgroundImage: "none",
+      backgroundColor: palette.hoverBg,
+      color: panelBtnColor,
+      border: `1px solid ${panelBtnBorder}`,
+      borderRadius: "12px",
+      cursor: "pointer",
+      padding: "3px 10px",
+      fontSize: "12px",
+      lineHeight: "1.3",
+    },
+    ".cm-panels button:hover": {
+      backgroundColor: panelBtnHoverBg,
+      borderColor: panelBtnHoverBorderColor,
+      color: panelBtnHoverColor,
+    },
+    ".cm-panels button[name=close]": {
+      padding: "3px 6px",
+    },
+    ".cm-textfield": {
+      backgroundColor: palette.bg,
+      color: textColor,
+      border: `1px solid ${palette.border}`,
+      borderRadius: "4px",
+      outline: "none",
+      padding: "3px 6px",
+      fontSize: "13px",
+    },
+    ".cm-textfield:focus": {
+      borderColor: textfieldFocusBorder,
+    },
+    ".cm-panels label": {
+      color: labelColor,
+      fontSize: "11px",
+      display: "inline-flex",
+      alignItems: "center",
+      cursor: "pointer",
+      borderRadius: "12px",
+      padding: "2px 8px",
+      border: `1px solid ${labelBorder}`,
+      gap: "0",
+    },
+    ".cm-panels label:hover": {
+      borderColor: labelHoverBorder,
+      color: labelHoverColor,
+    },
+    ".cm-panels label:has(input:checked)": {
+      backgroundColor: palette.active,
+      borderColor: palette.active,
+      color: "#fff",
+    },
+    ".cm-panels input[type=checkbox]": {
+      appearance: "none",
+      width: "0",
+      height: "0",
+      margin: "0",
+      padding: "0",
+      border: "none",
+      position: "absolute",
+      opacity: "0",
+    },
+    ".cm-search": {
+      gap: "4px",
+    },
+  }, { dark: isDark });
+
+  // --- syntax highlighting ---
+  const kw = isDark ? "#cc7832" : "#0033b3";
+  const num = isDark ? "#6897bb" : "#1750eb";
+  const str = isDark ? "#6a8759" : "#067d17";
+  const cmt = isDark ? "#808080" : "#8c8c8c";
+  const docCmt = isDark ? "#629755" : "#8c8c8c";
+  const fn = isDark ? "#ffc66d" : "#00627a";
+  const prop = isDark ? "#9876aa" : "#871094";
+  const varColor = isDark ? "#a9b7c6" : "#000000";
+  const op = isDark ? "#a9b7c6" : "#000000";
+  const tag = isDark ? "#e8bf6a" : "#0033b3";
+  const attr = isDark ? "#bababa" : "#174ad4";
+  const meta = isDark ? "#bbb529" : "#808000";
+  const link = isDark ? "#287bde" : "#006dcc";
+  const heading = isDark ? "#ffc66d" : "#0033b3";
+
+  const highlight = syntaxHighlighting(HighlightStyle.define([
+    { tag: tags.keyword, color: kw },
+    { tag: tags.controlKeyword, color: kw },
+    { tag: tags.operatorKeyword, color: kw },
+    { tag: tags.definitionKeyword, color: kw },
+    { tag: tags.moduleKeyword, color: kw },
+    { tag: tags.operator, color: op },
+    { tag: tags.separator, color: kw },
+    { tag: tags.punctuation, color: op },
+    { tag: tags.bracket, color: op },
+    { tag: tags.number, color: num },
+    { tag: tags.bool, color: kw },
+    { tag: tags.null, color: kw },
+    { tag: tags.self, color: kw },
+    { tag: tags.atom, color: kw },
+    { tag: tags.string, color: str },
+    { tag: tags.special(tags.string), color: str },
+    { tag: tags.regexp, color: str },
+    { tag: tags.escape, color: kw },
+    { tag: tags.comment, color: cmt, fontStyle: "italic" },
+    { tag: tags.lineComment, color: cmt, fontStyle: "italic" },
+    { tag: tags.blockComment, color: cmt, fontStyle: "italic" },
+    { tag: tags.docComment, color: docCmt, fontStyle: "italic" },
+    { tag: tags.variableName, color: varColor },
+    { tag: tags.definition(tags.variableName), color: fn },
+    { tag: tags.function(tags.variableName), color: fn },
+    { tag: tags.typeName, color: fn },
+    { tag: tags.className, color: fn },
+    { tag: tags.definition(tags.typeName), color: fn },
+    { tag: tags.definition(tags.propertyName), color: fn },
+    { tag: tags.propertyName, color: prop },
+    { tag: tags.special(tags.variableName), color: prop },
+    { tag: tags.attributeName, color: attr },
+    { tag: tags.attributeValue, color: str },
+    { tag: tags.tagName, color: tag },
+    { tag: tags.angleBracket, color: op },
+    { tag: tags.meta, color: meta },
+    { tag: tags.annotation, color: meta },
+    { tag: tags.processingInstruction, color: meta },
+    { tag: tags.link, color: link, textDecoration: "underline" },
+    { tag: tags.heading, color: heading, fontWeight: "bold" },
+    { tag: tags.emphasis, fontStyle: "italic" },
+    { tag: tags.strong, fontWeight: "bold" },
+    { tag: tags.strikethrough, textDecoration: "line-through" },
+  ]));
+
+  return [theme, highlight];
+}
 
 const TREE_MIN_WIDTH = 120;
 const TREE_MAX_WIDTH = 500;
@@ -315,6 +362,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
 
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const themeCompartment = useRef(new Compartment());
   const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const selectedPathRef = useRef(selectedPath);
   selectedPathRef.current = selectedPath;
@@ -689,8 +737,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
       foldGutter(),
       history(),
       search({ top: true }),
-      darculaTheme,
-      syntaxHighlighting(darculaHighlightStyle),
+      themeCompartment.current.of(buildEditorTheme(colors)),
       keymap.of([
         ...defaultKeymap,
         ...historyKeymap,
@@ -736,6 +783,15 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fileContent, isBinary, selectedPath]);
+
+  // Reconfigure CodeMirror theme when the palette changes.
+  useEffect(() => {
+    if (viewRef.current) {
+      viewRef.current.dispatch({
+        effects: themeCompartment.current.reconfigure(buildEditorTheme(colors)),
+      });
+    }
+  }, [colors]);
 
   // Cmd+S keyboard shortcut — immediate save.
   useEffect(() => {

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SessionStatus, TerminalTarget } from "../types";
-import { colors } from "../theme";
+import { useTheme } from "../ThemeContext";
 import { useTerminalWs } from "../hooks/useTerminalWs";
 import { useElapsedTimer } from "../hooks/useElapsedTimer";
 import { useXTerminal } from "../hooks/useXTerminal";
@@ -28,6 +28,7 @@ interface TerminalProps {
 }
 
 export function Terminal({ channelId, target = "agent", instanceId, hideActions, killSignal, onStatusChange, onPaneStatus, onSessionEnd }: TerminalProps) {
+  const { colors } = useTheme();
   const terminalRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<SessionStatus>("connecting");
   const { elapsed, start, stop, reset } = useElapsedTimer();
@@ -107,6 +108,7 @@ export function Terminal({ channelId, target = "agent", instanceId, hideActions,
 
   const { write, xtermRef } = useXTerminal({
     containerRef: terminalRef,
+    colors,
     onInput: sendInput,
     onResize: sendResize,
   });

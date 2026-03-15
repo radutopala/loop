@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { RefObject } from "react";
 import "@xterm/xterm/css/xterm.css";
-import { colors, fonts } from "../theme";
+import { type ColorPalette, fonts } from "../theme";
 
 // Inject a one-time style to hide the xterm scrollbar so the FitAddon
 // uses the full container width (macOS overlay scrollbars report 0 width
@@ -16,8 +16,20 @@ function injectScrollbarStyle() {
   document.head.appendChild(style);
 }
 
+function buildXTermTheme(colors: ColorPalette) {
+  return {
+    background: colors.sidebar,
+    foreground: colors.text,
+    cursor: colors.cursor,
+    cursorAccent: colors.isDark ? "#000000" : "#ffffff",
+    selectionBackground: colors.isDark ? "#214283" : "#a6d2ff",
+    selectionForeground: colors.isDark ? undefined : "#000000",
+  };
+}
+
 interface UseXTerminalOptions {
   containerRef: RefObject<HTMLDivElement | null>;
+  colors: ColorPalette;
   onInput: (data: string) => void;
   onResize: (cols: number, rows: number) => void;
 }
@@ -29,6 +41,7 @@ interface UseXTerminalOptions {
  */
 export function useXTerminal({
   containerRef,
+  colors,
   onInput,
   onResize,
 }: UseXTerminalOptions) {
@@ -59,11 +72,7 @@ export function useXTerminal({
         cursorBlink: true,
         fontSize: 13,
         fontFamily: fonts.mono,
-        theme: {
-          background: colors.sidebar,
-          foreground: colors.text,
-          cursor: colors.cursor,
-        },
+        theme: buildXTermTheme(colors),
       });
 
       const fitAddon = new FitAddon();
@@ -132,7 +141,14 @@ export function useXTerminal({
       xtermRef.current?.dispose();
       xtermRef.current = null;
     };
-  }, [containerRef, onInput, onResize]);
+  }, [containerRef, onInput, onResize]); // colors excluded — handled by effect below
+
+  // Update xterm theme at runtime when palette changes (no terminal re-creation).
+  useEffect(() => {
+    if (xtermRef.current) {
+      xtermRef.current.options.theme = buildXTermTheme(colors);
+    }
+  }, [colors]);
 
   return { write, clear, xtermRef };
 }
