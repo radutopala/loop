@@ -1,5 +1,5 @@
 import type { PanelType } from "./types";
-import { colors } from "../theme";
+import { useTheme } from "../ThemeContext";
 
 const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "chat", label: "Chat" },
@@ -60,6 +60,8 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
 
 /** Centered picker for when layout is empty (no tree). */
 export function EmptyLayoutPicker({ onAdd }: { onAdd: (panel: PanelType) => void }) {
+  const { colors } = useTheme();
+
   const pickerBtnStyle: React.CSSProperties = {
     padding: "12px 24px",
     borderRadius: 6,

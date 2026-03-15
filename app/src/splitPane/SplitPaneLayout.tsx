@@ -3,7 +3,7 @@ import type { PaneNode, LeafNode, PanelType, SplitDirection, DropPosition } from
 import { collectPanelTypes } from "./treeOps";
 import { PaneLeafHeader } from "./PaneLeafHeader";
 import { DropZoneOverlay } from "./DropZoneOverlay";
-import { colors } from "../theme";
+import { useTheme } from "../ThemeContext";
 
 const HEADER_HEIGHT = 22;
 
@@ -44,6 +44,7 @@ interface PaneTreeProps {
 }
 
 function PaneTree({ node, path, usedSingletons, renderLeaf, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf }: PaneTreeProps) {
+  const { colors } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
 
   const handleDivider = useCallback(

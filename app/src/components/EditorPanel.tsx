@@ -914,7 +914,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
                 minWidth: "100%",
                 padding: "3px 8px",
                 border: "none",
-                background: selectedDir === "" ? "rgba(78, 154, 106, 0.15)" : "none",
+                background: selectedDir === "" ? colors.dirSelectedBg : "none",
                 color: colors.textLight,
                 cursor: "pointer",
                 fontSize: 12,
@@ -1011,7 +1011,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
                         style={{ marginLeft: 2, width: 8, height: 8, display: "flex", alignItems: "center", justifyContent: "center" }}
                       >
                         {isDirty ? (
-                          <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: "#e5c07b", display: "block" }} />
+                          <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: colors.warning, display: "block" }} />
                         ) : (
                           <span
                             style={{ opacity: 0.5, fontSize: 14, lineHeight: 1 }}
@@ -1214,7 +1214,7 @@ function FileTree({ entries, dirContents, expandedDirs, selectedPath, previewTab
                 minWidth: "100%",
                 padding: `3px 8px 3px ${8 + depth * 16}px`,
                 border: "none",
-                background: isSelected ? colors.selectedBg : isDirSelected ? "rgba(78, 154, 106, 0.15)" : "none",
+                background: isSelected ? colors.selectedBg : isDirSelected ? colors.dirSelectedBg : "none",
                 color: isSelected || isDirSelected ? colors.textLight : colors.text,
                 cursor: "pointer",
                 fontSize: 12,

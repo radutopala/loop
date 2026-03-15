@@ -1,18 +1,22 @@
 import type { SessionStatus } from "../types";
-import { colors } from "../theme";
+import type { ColorPalette } from "../theme";
+import { useTheme } from "../ThemeContext";
 
-const statusColors: Record<SessionStatus, string> = {
-  connecting: colors.warning,
-  running: colors.active,
-  completed: colors.textDim,
-  failed: colors.error,
-};
+function statusColor(status: SessionStatus, colors: ColorPalette): string {
+  switch (status) {
+    case "connecting": return colors.warning;
+    case "running": return colors.active;
+    case "completed": return colors.textDim;
+    case "failed": return colors.error;
+  }
+}
 
 interface StatusBadgeProps {
   status: SessionStatus;
 }
 
 export function StatusBadge({ status }: StatusBadgeProps) {
+  const { colors } = useTheme();
   return (
     <span
       style={{
@@ -24,7 +28,7 @@ export function StatusBadge({ status }: StatusBadgeProps) {
         fontSize: 12,
         fontWeight: 600,
         color: colors.white,
-        backgroundColor: statusColors[status],
+        backgroundColor: statusColor(status, colors),
         textTransform: "capitalize",
       }}
     >

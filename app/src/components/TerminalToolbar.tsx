@@ -1,5 +1,5 @@
 import type { SessionStatus } from "../types";
-import { colors } from "../theme";
+import { useTheme } from "../ThemeContext";
 import { StatusBadge } from "./StatusBadge";
 import { ElapsedTimer } from "./ElapsedTimer";
 
@@ -13,6 +13,7 @@ interface TerminalToolbarProps {
 }
 
 export function TerminalToolbar({ status, elapsed, onKill, onRestart, killLabel = "Kill", killTitle = "Kill session and remove container" }: TerminalToolbarProps) {
+  const { colors } = useTheme();
   const isRunning = status === "running";
   const isDead = status === "completed" || status === "failed";
 

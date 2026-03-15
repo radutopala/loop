@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Channel } from "../types";
-import { colors } from "../theme";
+import { useTheme } from "../ThemeContext";
 import { ThreadItem } from "./ThreadItem";
 import { NewThreadInput } from "./NewThreadInput";
 
@@ -43,6 +43,7 @@ export function ChannelItem({
   checkedIds,
   onToggleCheck,
 }: ChannelItemProps) {
+  const { colors } = useTheme();
   const [creating, setCreating] = useState(false);
   const [collapsed, setCollapsed] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -99,7 +100,7 @@ export function ChannelItem({
               transition: "all 0.15s",
             }}>
               {checkedIds?.has(channel.id) && (
-                <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke={colors.white} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="20 6 9 17 4 12" />
                 </svg>
               )}

@@ -23,13 +23,28 @@ export function ThemeProvider({ children, initialTheme, customThemes }: {
   const allThemes = { ...builtinThemes, ...customThemes };
   const availableThemes = Object.keys(allThemes);
 
-  const [themeName, setThemeName] = useState<string>(
+  const [themeName, setThemeNameState] = useState<string>(
     initialTheme && allThemes[initialTheme] ? initialTheme : "dark"
   );
   const colors = allThemes[themeName] ?? darkColors;
 
-  // Update scrollbar & body background via injected <style>
+  // Wrap setThemeName to also persist to localStorage
+  const setThemeName = (name: string) => {
+    setThemeNameState(name);
+    try { localStorage.setItem("loop-theme", name); } catch { /* ignore */ }
+  };
+
+  // On initial mount, persist the initial theme to localStorage
   useEffect(() => {
+    try { localStorage.setItem("loop-theme", themeName); } catch { /* ignore */ }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Update scrollbar & body background via injected <style>, update meta theme-color
+  useEffect(() => {
+    // Remove the initial scrollbar style injected by index.html (one-time cleanup)
+    const initialStyle = document.getElementById("loop-initial-scrollbar");
+    if (initialStyle) initialStyle.remove();
+
     const id = "loop-theme-globals";
     let el = document.getElementById(id) as HTMLStyleElement | null;
     if (!el) {
@@ -42,6 +57,14 @@ export function ThemeProvider({ children, initialTheme, customThemes }: {
       ::-webkit-scrollbar-thumb:hover { background: ${colors.scrollThumbHover} !important; }
       body { background-color: ${colors.bg}; }
     `;
+
+    // Update color-scheme on <html>
+    document.documentElement.style.colorScheme = colors.isDark ? "dark" : "light";
+    document.documentElement.style.backgroundColor = colors.bg;
+
+    // Update <meta name="theme-color"> for browser/OS chrome
+    const meta = document.querySelector('meta[name="theme-color"]');
+    if (meta) meta.setAttribute("content", colors.bg);
   }, [themeName, colors]);
 
   return (

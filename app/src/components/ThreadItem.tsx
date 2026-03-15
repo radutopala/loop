@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Channel } from "../types";
-import { colors } from "../theme";
+import { useTheme } from "../ThemeContext";
 
 interface ThreadItemProps {
   thread: Channel;
@@ -14,6 +14,7 @@ interface ThreadItemProps {
 }
 
 export function ThreadItem({ thread, selected, isLast, onSelect, onContextMenu, selectMode, checked, onToggleCheck }: ThreadItemProps) {
+  const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
 
   return (
@@ -76,7 +77,7 @@ export function ThreadItem({ thread, selected, isLast, onSelect, onContextMenu, 
             transition: "all 0.15s",
           }}>
             {checked && (
-              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="#fff" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+              <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke={colors.white} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
                 <polyline points="20 6 9 17 4 12" />
               </svg>
             )}

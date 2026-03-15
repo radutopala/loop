@@ -100,7 +100,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
                 padding: "4px 8px",
                 border: "none",
                 background: "transparent",
-                color: item.danger ? "#f47067" : colors.textLight,
+                color: item.danger ? colors.dangerText : colors.textLight,
                 fontSize: 11,
                 textAlign: "left",
                 cursor: "pointer",
@@ -109,7 +109,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
                 whiteSpace: "nowrap",
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = item.danger ? "rgba(218, 55, 60, 0.2)" : colors.hoverBg;
+                e.currentTarget.style.backgroundColor = item.danger ? colors.dangerBg : colors.hoverBg;
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.backgroundColor = "transparent";

@@ -594,8 +594,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           role="alert"
           style={{
             padding: "8px 12px",
-            backgroundColor: "#3b1616",
-            color: "#fca5a5",
+            backgroundColor: colors.errorBannerBg,
+            color: colors.errorBannerText,
             fontSize: "13px",
             display: "flex",
             justifyContent: "space-between",
@@ -608,7 +608,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             style={{
               background: "none",
               border: "none",
-              color: "#fca5a5",
+              color: colors.errorBannerText,
               cursor: "pointer",
               fontSize: "16px",
             }}
@@ -915,7 +915,7 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
             height: 22,
             boxSizing: "border-box",
             zIndex: 1000,
-            boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+            boxShadow: `0 4px 12px ${colors.shadow}`,
             display: "flex",
             alignItems: "center",
             gap: 6,
@@ -933,9 +933,9 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
           <button
             onClick={(e) => { e.stopPropagation(); setConfirming(false); onDelete(); }}
             style={{
-              background: "rgba(218, 55, 60, 0.2)",
-              border: "1px solid #f47067",
-              color: "#f47067",
+              background: colors.dangerBg,
+              border: `1px solid ${colors.dangerText}`,
+              color: colors.dangerText,
               cursor: "pointer",
               padding: "1px 6px",
               fontSize: 9,
@@ -943,8 +943,8 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
               borderRadius: 4,
               lineHeight: 1.4,
             }}
-            onMouseEnter={(e) => { e.currentTarget.style.background = "#f47067"; e.currentTarget.style.color = "#fff"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.background = "rgba(218, 55, 60, 0.2)"; e.currentTarget.style.color = "#f47067"; }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = colors.dangerHoverBg; e.currentTarget.style.color = colors.white; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = colors.dangerBg; e.currentTarget.style.color = colors.dangerText; }}
           >
             Yes
           </button>

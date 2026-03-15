@@ -26,6 +26,31 @@ export interface ColorPalette {
   scrollThumbHover: string;
   overlay: string;
   shadow: string;
+  // Error banner
+  errorBannerBg: string;
+  errorBannerText: string;
+  // Danger action (delete confirm, context menu)
+  dangerText: string;
+  dangerBg: string;
+  dangerHoverBg: string;
+  // Pill / segmented control active state & send button
+  pillActiveBg: string;
+  pillActiveText: string;
+  // Hover alpha for interactive surfaces
+  hoverAlpha: string;
+  // Pane header label background
+  panelLabelBg: string;
+  // Editor directory selected highlight
+  dirSelectedBg: string;
+  // Diff line colors
+  diffAddText: string;
+  diffDelText: string;
+  diffAddBg: string;
+  diffAddNumBg: string;
+  diffDelBg: string;
+  diffDelNumBg: string;
+  // Hunk header bg
+  diffHunkBg: string;
   isDark: boolean;
 }
 
@@ -54,6 +79,23 @@ export const darkColors: ColorPalette = {
   scrollThumbHover: "rgba(255,255,255,0.25)",
   overlay: "rgba(0, 0, 0, 0.5)",
   shadow: "rgba(0, 0, 0, 0.4)",
+  errorBannerBg: "#3b1616",
+  errorBannerText: "#fca5a5",
+  dangerText: "#f47067",
+  dangerBg: "rgba(218, 55, 60, 0.2)",
+  dangerHoverBg: "#f47067",
+  pillActiveBg: "#fff",
+  pillActiveText: "#000",
+  hoverAlpha: "rgba(255,255,255,0.08)",
+  panelLabelBg: "rgba(255,255,255,0.05)",
+  dirSelectedBg: "rgba(78, 154, 106, 0.15)",
+  diffAddText: "#86efac",
+  diffDelText: "#fca5a5",
+  diffAddBg: "rgba(34, 197, 94, 0.12)",
+  diffAddNumBg: "rgba(34, 197, 94, 0.2)",
+  diffDelBg: "rgba(239, 68, 68, 0.12)",
+  diffDelNumBg: "rgba(239, 68, 68, 0.2)",
+  diffHunkBg: "rgba(100, 100, 100, 0.1)",
   isDark: true,
 };
 
@@ -82,6 +124,23 @@ export const lightColors: ColorPalette = {
   scrollThumbHover: "rgba(0,0,0,0.25)",
   overlay: "rgba(0, 0, 0, 0.3)",
   shadow: "rgba(0, 0, 0, 0.15)",
+  errorBannerBg: "#fef2f2",
+  errorBannerText: "#b91c1c",
+  dangerText: "#dc2626",
+  dangerBg: "rgba(220, 38, 38, 0.1)",
+  dangerHoverBg: "#dc2626",
+  pillActiveBg: "#1e1e1e",
+  pillActiveText: "#fff",
+  hoverAlpha: "rgba(0,0,0,0.06)",
+  panelLabelBg: "rgba(0,0,0,0.04)",
+  dirSelectedBg: "rgba(22, 163, 74, 0.1)",
+  diffAddText: "#166534",
+  diffDelText: "#991b1b",
+  diffAddBg: "rgba(34, 197, 94, 0.08)",
+  diffAddNumBg: "rgba(34, 197, 94, 0.15)",
+  diffDelBg: "rgba(239, 68, 68, 0.08)",
+  diffDelNumBg: "rgba(239, 68, 68, 0.15)",
+  diffHunkBg: "rgba(0, 0, 0, 0.04)",
   isDark: false,
 };
 

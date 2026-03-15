@@ -123,8 +123,12 @@ function parseUnifiedDiff(raw: string): ParsedFile[] {
   return files;
 }
 
-const LINE_COLORS_ADD = { bg: "rgba(34, 197, 94, 0.12)", numBg: "rgba(34, 197, 94, 0.2)", text: "#86efac" };
-const LINE_COLORS_DEL = { bg: "rgba(239, 68, 68, 0.12)", numBg: "rgba(239, 68, 68, 0.2)", text: "#fca5a5" };
+function buildLineColors(colors: ColorPalette) {
+  return {
+    add: { bg: colors.diffAddBg, numBg: colors.diffAddNumBg, text: colors.diffAddText },
+    del: { bg: colors.diffDelBg, numBg: colors.diffDelNumBg, text: colors.diffDelText },
+  };
+}
 
 function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   return {
@@ -161,9 +165,10 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
     e.currentTarget.style.color = colors.textDim;
   };
 
+  const builtLineColors = buildLineColors(colors);
   const lineColors = {
-    add: LINE_COLORS_ADD,
-    del: LINE_COLORS_DEL,
+    add: builtLineColors.add,
+    del: builtLineColors.del,
     ctx: { bg: "transparent", numBg: "transparent", text: colors.textMuted },
   };
 
@@ -272,8 +277,8 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
         {totalFiles > 0 && <span style={{ fontSize: 10, color: colors.textDim }}>{totalFiles}</span>}
         {(totalAdd > 0 || totalDel > 0) && (
           <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
-            <span style={{ color: "#86efac" }}>+{totalAdd}</span>{" "}
-            <span style={{ color: "#fca5a5" }}>-{totalDel}</span>
+            <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>{" "}
+            <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
           </span>
         )}
       </span>
@@ -331,7 +336,7 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
                 {file.binary ? (
                   <span style={{ color: colors.textDim }}>binary</span>
                 ) : (
-                  <><span style={{ color: "#86efac" }}>+{file.additions}</span>{" "}<span style={{ color: "#fca5a5" }}>-{file.deletions}</span></>
+                  <><span style={{ color: colors.diffAddText }}>+{file.additions}</span>{" "}<span style={{ color: colors.diffDelText }}>-{file.deletions}</span></>
                 )}
               </span>
             </button>
@@ -339,7 +344,7 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
               <div style={{ borderBottom: `1px solid ${colors.border}`, overflow: "hidden" }}>
                 {parsed.hunks.map((hunk, hi) => (
                   <div key={hi}>
-                    <div style={{ padding: "2px 12px", fontSize: 11, fontFamily: fonts.mono, color: colors.textDim, backgroundColor: "rgba(100, 100, 100, 0.1)", whiteSpace: "pre", overflow: "hidden", textOverflow: "ellipsis" }}>
+                    <div style={{ padding: "2px 12px", fontSize: 11, fontFamily: fonts.mono, color: colors.textDim, backgroundColor: colors.diffHunkBg, whiteSpace: "pre", overflow: "hidden", textOverflow: "ellipsis" }}>
                       {hunk.header}
                     </div>
                     <div style={{ display: "flex" }}>
@@ -350,7 +355,7 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
                             <div key={li} style={{ display: "flex", lineHeight: "20px", fontFamily: fonts.mono, backgroundColor: lc.bg }}>
                               <span style={{ width: 40, textAlign: "right", paddingRight: 4, color: colors.textDim, backgroundColor: lc.numBg, userSelect: "none", fontSize: 11 }}>{line.oldNum ?? ""}</span>
                               <span style={{ width: 40, textAlign: "right", paddingRight: 8, color: colors.textDim, backgroundColor: lc.numBg, userSelect: "none", fontSize: 11 }}>{line.newNum ?? ""}</span>
-                              <span style={{ width: 14, textAlign: "center", color: line.type === "add" ? "#86efac" : line.type === "del" ? "#fca5a5" : "transparent", userSelect: "none" }}>
+                              <span style={{ width: 14, textAlign: "center", color: line.type === "add" ? colors.diffAddText : line.type === "del" ? colors.diffDelText : "transparent", userSelect: "none" }}>
                                 {line.type === "add" ? "+" : line.type === "del" ? "\u2212" : " "}
                               </span>
                             </div>
@@ -580,9 +585,9 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
               )}
               {(totalAdd > 0 || totalDel > 0) && (
                 <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
-                  <span style={{ color: "#86efac" }}>+{totalAdd}</span>
+                  <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>
                   {" "}
-                  <span style={{ color: "#fca5a5" }}>-{totalDel}</span>
+                  <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
                 </span>
               )}
             </>
@@ -609,9 +614,9 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
               )}
               {(totalAdd > 0 || totalDel > 0) && (
                 <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
-                  <span style={{ color: "#86efac" }}>+{totalAdd}</span>
+                  <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>
                   {" "}
-                  <span style={{ color: "#fca5a5" }}>-{totalDel}</span>
+                  <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
                 </span>
               )}
             </span>

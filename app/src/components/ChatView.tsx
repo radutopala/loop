@@ -147,10 +147,10 @@ function buildStyles(colors: ColorPalette): Record<string, React.CSSProperties> 
       display: "flex",
       alignItems: "center",
       justifyContent: "center",
-      background: "#fff",
+      background: colors.pillActiveBg,
       border: "none",
       borderRadius: 8,
-      color: "#000",
+      color: colors.pillActiveText,
       cursor: "pointer",
       flexShrink: 0,
     },
@@ -403,7 +403,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
         <ChatInput channelId={channelId} isRunning={isRunning} onSent={scrollToBottom} />
       </div>
       <div style={styles.isolationLabel}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isRunning ? "#48bb78" : colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isRunning ? colors.active : colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
           <polyline points="17 2 12 7 7 2" />
         </svg>
@@ -928,8 +928,8 @@ function ChatInput({ channelId, isRunning, onSent }: { channelId: string; isRunn
         <button
           style={{
             ...modeStyles.segment,
-            backgroundColor: mode === "agent" ? "#fff" : "transparent",
-            color: mode === "agent" ? "#000" : colors.textDim,
+            backgroundColor: mode === "agent" ? colors.pillActiveBg : "transparent",
+            color: mode === "agent" ? colors.pillActiveText : colors.textDim,
           }}
           onClick={() => setMode("agent")}
         >
@@ -938,8 +938,8 @@ function ChatInput({ channelId, isRunning, onSent }: { channelId: string; isRunn
         <button
           style={{
             ...modeStyles.segment,
-            backgroundColor: mode === "plan" ? "#fff" : "transparent",
-            color: mode === "plan" ? "#000" : colors.textDim,
+            backgroundColor: mode === "plan" ? colors.pillActiveBg : "transparent",
+            color: mode === "plan" ? colors.pillActiveText : colors.textDim,
           }}
           onClick={() => setMode("plan")}
         >

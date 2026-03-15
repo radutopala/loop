@@ -3,7 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="theme-color" content="#1a1a2e" />
+    <meta name="theme-color" content="#212121" />
     <link rel="manifest" href="/manifest.json" />
     <link rel="icon" type="image/png" href="/loop.png" />
     <title>Loop</title>
@@ -15,6 +15,27 @@
       ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.15); border-radius: 4px; }
       ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.25); }
     </style>
+    <script>
+      // Sync theme read before React mounts to prevent flash of wrong background.
+      (function() {
+        var theme = 'dark';
+        try { theme = localStorage.getItem('loop-theme') || 'dark'; } catch(e) {}
+        var isDark = theme !== 'light';
+        var bg = isDark ? '#212121' : '#ffffff';
+        document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
+        document.documentElement.style.backgroundColor = bg;
+        // Update meta theme-color to match
+        var meta = document.querySelector('meta[name="theme-color"]');
+        if (meta) meta.setAttribute('content', bg);
+        // Update scrollbar colors for the initial theme
+        if (!isDark) {
+          var s = document.createElement('style');
+          s.id = 'loop-initial-scrollbar';
+          s.textContent = '::-webkit-scrollbar-thumb{background:rgba(0,0,0,0.15)!important}::-webkit-scrollbar-thumb:hover{background:rgba(0,0,0,0.25)!important}';
+          document.head.appendChild(s);
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>

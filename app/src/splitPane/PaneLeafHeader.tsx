@@ -2,7 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { PanelType, SplitDirection, DropPosition } from "./types";
 import { SINGLETON_PANELS } from "./types";
 import { emitLayoutDragStart, emitLayoutDragEnd, DRAG_MIME } from "./DropZoneOverlay";
-import { colors } from "../theme";
+import type { ColorPalette } from "../theme";
+import { useTheme } from "../ThemeContext";
 
 const PANEL_LABELS: Record<PanelType, string> = {
   chat: "Chat",
@@ -22,6 +23,37 @@ const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "shell", label: "Shell" },
 ];
 
+function buildBtnStyle(colors: ColorPalette): React.CSSProperties {
+  return {
+    background: "none",
+    border: "none",
+    color: colors.textDim,
+    cursor: "pointer",
+    padding: "0 2px",
+    lineHeight: 1,
+    fontSize: 12,
+    display: "flex",
+    alignItems: "center",
+    borderRadius: 2,
+  };
+}
+
+function buildMenuItemStyle(colors: ColorPalette): React.CSSProperties {
+  return {
+    background: "none",
+    border: "none",
+    color: colors.textLight,
+    cursor: "pointer",
+    padding: "4px 8px",
+    fontSize: 11,
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    borderRadius: 4,
+    whiteSpace: "nowrap",
+  };
+}
+
 interface PaneLeafHeaderProps {
   leafId: string;
   panel: PanelType;
@@ -32,8 +64,20 @@ interface PaneLeafHeaderProps {
 }
 
 export function PaneLeafHeader({ leafId, panel, usedSingletons, onRemove, onDrop, onSplitLeaf }: PaneLeafHeaderProps) {
+  const { colors } = useTheme();
   const label = PANEL_LABELS[panel];
   const isAgent = panel === "agent";
+
+  const btnStyle = buildBtnStyle(colors);
+
+  const hoverIn = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.style.backgroundColor = colors.hoverBg;
+    e.currentTarget.style.color = colors.textLight;
+  };
+  const hoverOut = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.style.backgroundColor = "transparent";
+    e.currentTarget.style.color = colors.textDim;
+  };
 
   const handleDragStart = useCallback((e: React.DragEvent<HTMLDivElement>) => {
     e.dataTransfer.setData(DRAG_MIME, leafId);
@@ -85,7 +129,7 @@ export function PaneLeafHeader({ leafId, panel, usedSingletons, onRemove, onDrop
           fontSize: 10,
           fontWeight: 500,
           color: isAgent ? colors.active : panel === "shell" ? colors.textDim : colors.textLight,
-          backgroundColor: isAgent ? "rgba(96, 165, 250, 0.1)" : "rgba(255,255,255,0.05)",
+          backgroundColor: isAgent ? colors.dirSelectedBg : colors.panelLabelBg,
         }}
       >
         {label}
@@ -110,8 +154,27 @@ export function PaneLeafHeader({ leafId, panel, usedSingletons, onRemove, onDrop
 }
 
 function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf }: { leafId: string; usedSingletons: Set<PanelType>; onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void }) {
+  const { colors } = useTheme();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+
+  const btnStyle = buildBtnStyle(colors);
+  const menuItemStyle = buildMenuItemStyle(colors);
+
+  const hoverIn = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.style.backgroundColor = colors.hoverBg;
+    e.currentTarget.style.color = colors.textLight;
+  };
+  const hoverOut = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.style.backgroundColor = "transparent";
+    e.currentTarget.style.color = colors.textDim;
+  };
+  const menuHoverIn = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.style.backgroundColor = colors.hoverAlpha;
+  };
+  const menuHoverOut = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.style.backgroundColor = "transparent";
+  };
 
   useEffect(() => {
     if (!open) return;
@@ -146,7 +209,7 @@ function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf }: { leafId: string
           border: `1px solid ${colors.border}`,
           borderRadius: 6,
           padding: 4,
-          boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+          boxShadow: `0 4px 12px ${colors.shadow}`,
           marginTop: 2,
           display: "grid",
           gridTemplateColumns: "auto auto",
@@ -185,49 +248,4 @@ function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf }: { leafId: string
       )}
     </div>
   );
-}
-
-const btnStyle: React.CSSProperties = {
-  background: "none",
-  border: "none",
-  color: colors.textDim,
-  cursor: "pointer",
-  padding: "0 2px",
-  lineHeight: 1,
-  fontSize: 12,
-  display: "flex",
-  alignItems: "center",
-  borderRadius: 2,
-};
-
-function hoverIn(e: React.MouseEvent<HTMLButtonElement>) {
-  e.currentTarget.style.backgroundColor = colors.hoverBg;
-  e.currentTarget.style.color = colors.textLight;
-}
-
-function hoverOut(e: React.MouseEvent<HTMLButtonElement>) {
-  e.currentTarget.style.backgroundColor = "transparent";
-  e.currentTarget.style.color = colors.textDim;
-}
-
-const menuItemStyle: React.CSSProperties = {
-  background: "none",
-  border: "none",
-  color: colors.textLight,
-  cursor: "pointer",
-  padding: "4px 8px",
-  fontSize: 11,
-  display: "flex",
-  alignItems: "center",
-  gap: 6,
-  borderRadius: 4,
-  whiteSpace: "nowrap",
-};
-
-function menuHoverIn(e: React.MouseEvent<HTMLButtonElement>) {
-  e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)";
-}
-
-function menuHoverOut(e: React.MouseEvent<HTMLButtonElement>) {
-  e.currentTarget.style.backgroundColor = "transparent";
 }

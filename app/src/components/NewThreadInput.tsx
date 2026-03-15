@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { colors } from "../theme";
+import { useTheme } from "../ThemeContext";
 
 interface NewThreadInputProps {
   onSubmit: (name: string) => void;
@@ -7,6 +7,7 @@ interface NewThreadInputProps {
 }
 
 export function NewThreadInput({ onSubmit, onCancel }: NewThreadInputProps) {
+  const { colors } = useTheme();
   const [name, setName] = useState("");
 
   return (
