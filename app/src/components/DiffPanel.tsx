@@ -2,7 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { DiffResponse } from "../api/loopApi";
 import { fetchDiff } from "../api/loopApi";
 import { useEventStream } from "../hooks/useEventStream";
-import { colors, fonts } from "../theme";
+import { fonts } from "../theme";
+import type { ColorPalette } from "../theme";
+import { useTheme } from "../ThemeContext";
 import { ContextMenu } from "./ContextMenu";
 
 const MIN_WIDTH = 280;
@@ -121,13 +123,25 @@ function parseUnifiedDiff(raw: string): ParsedFile[] {
   return files;
 }
 
-const lineColors = {
-  add: { bg: "rgba(34, 197, 94, 0.12)", numBg: "rgba(34, 197, 94, 0.2)", text: "#86efac" },
-  del: { bg: "rgba(239, 68, 68, 0.12)", numBg: "rgba(239, 68, 68, 0.2)", text: "#fca5a5" },
-  ctx: { bg: "transparent", numBg: "transparent", text: colors.textMuted },
-};
+const LINE_COLORS_ADD = { bg: "rgba(34, 197, 94, 0.12)", numBg: "rgba(34, 197, 94, 0.2)", text: "#86efac" };
+const LINE_COLORS_DEL = { bg: "rgba(239, 68, 68, 0.12)", numBg: "rgba(239, 68, 68, 0.2)", text: "#fca5a5" };
+
+function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
+  return {
+    background: "none",
+    border: "none",
+    color: colors.textDim,
+    cursor: "pointer",
+    padding: 4,
+    lineHeight: 1,
+    borderRadius: 4,
+    display: "flex",
+    alignItems: "center",
+  };
+}
 
 export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, tabBar, embedded, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose }: DiffPanelProps) {
+  const { colors } = useTheme();
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
   const [data, setData] = useState<DiffResponse | null>(null);
@@ -136,6 +150,22 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
   const [loading, setLoading] = useState(false);
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
   const panelRef = useRef<HTMLDivElement>(null);
+
+  const headerBtnStyle = buildHeaderBtnStyle(colors);
+  const hoverIn = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.style.backgroundColor = colors.hoverBg;
+    e.currentTarget.style.color = colors.textLight;
+  };
+  const hoverOut = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.style.backgroundColor = "transparent";
+    e.currentTarget.style.color = colors.textDim;
+  };
+
+  const lineColors = {
+    add: LINE_COLORS_ADD,
+    del: LINE_COLORS_DEL,
+    ctx: { bg: "transparent", numBg: "transparent", text: colors.textMuted },
+  };
 
   const load = useCallback(async () => {
     if (!channelId) return;
@@ -321,7 +351,7 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
                               <span style={{ width: 40, textAlign: "right", paddingRight: 4, color: colors.textDim, backgroundColor: lc.numBg, userSelect: "none", fontSize: 11 }}>{line.oldNum ?? ""}</span>
                               <span style={{ width: 40, textAlign: "right", paddingRight: 8, color: colors.textDim, backgroundColor: lc.numBg, userSelect: "none", fontSize: 11 }}>{line.newNum ?? ""}</span>
                               <span style={{ width: 14, textAlign: "center", color: line.type === "add" ? "#86efac" : line.type === "del" ? "#fca5a5" : "transparent", userSelect: "none" }}>
-                                {line.type === "add" ? "+" : line.type === "del" ? "−" : " "}
+                                {line.type === "add" ? "+" : line.type === "del" ? "\u2212" : " "}
                               </span>
                             </div>
                           );
@@ -588,25 +618,13 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
           )}
           {totalFiles > 0 && (
             <>
-              <button
-                onClick={expandAll}
-                title="Expand all"
-                style={headerBtnStyle}
-                onMouseEnter={hoverIn}
-                onMouseLeave={hoverOut}
-              >
+              <button onClick={expandAll} title="Expand all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="7,8 12,13 17,8" />
                   <polyline points="7,14 12,19 17,14" />
                 </svg>
               </button>
-              <button
-                onClick={collapseAll}
-                title="Collapse all"
-                style={headerBtnStyle}
-                onMouseEnter={hoverIn}
-                onMouseLeave={hoverOut}
-              >
+              <button onClick={collapseAll} title="Collapse all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="7,14 12,9 17,14" />
                   <polyline points="7,20 12,15 17,20" />
@@ -614,26 +632,14 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
               </button>
             </>
           )}
-          <button
-            onClick={load}
-            title="Refresh"
-            style={headerBtnStyle}
-            onMouseEnter={hoverIn}
-            onMouseLeave={hoverOut}
-          >
+          <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <path d="M21 12a9 9 0 1 1-3-6.7" />
               <polyline points="21,3 21,9 15,9" />
             </svg>
           </button>
           {onToggleMaximize && (
-            <button
-              onClick={onToggleMaximize}
-              title={maximized ? "Restore panel" : "Maximize panel"}
-              style={headerBtnStyle}
-              onMouseEnter={hoverIn}
-              onMouseLeave={hoverOut}
-            >
+            <button onClick={onToggleMaximize} title={maximized ? "Restore panel" : "Maximize panel"} style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
               {maximized ? (
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                   <polyline points="4,14 10,14 10,20" />
@@ -651,13 +657,7 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
               )}
             </button>
           )}
-          <button
-            onClick={onClose}
-            title="Close panel"
-            style={headerBtnStyle}
-            onMouseEnter={hoverIn}
-            onMouseLeave={hoverOut}
-          >
+          <button onClick={onClose} title="Close panel" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <line x1="18" y1="6" x2="6" y2="18" />
               <line x1="6" y1="6" x2="18" y2="18" />
@@ -681,26 +681,4 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
       )}
     </div>
   );
-}
-
-const headerBtnStyle: React.CSSProperties = {
-  background: "none",
-  border: "none",
-  color: colors.textDim,
-  cursor: "pointer",
-  padding: 4,
-  lineHeight: 1,
-  borderRadius: 4,
-  display: "flex",
-  alignItems: "center",
-};
-
-function hoverIn(e: React.MouseEvent<HTMLButtonElement>) {
-  e.currentTarget.style.backgroundColor = colors.hoverBg;
-  e.currentTarget.style.color = colors.textLight;
-}
-
-function hoverOut(e: React.MouseEvent<HTMLButtonElement>) {
-  e.currentTarget.style.backgroundColor = "transparent";
-  e.currentTarget.style.color = colors.textDim;
 }

@@ -130,6 +130,7 @@ export interface AppSettings {
   stopDaemonOnQuit: boolean;
   autoSaveOnBlur: boolean;
   previewTabs: boolean;
+  theme?: string;
 }
 
 export interface DaemonInfo {

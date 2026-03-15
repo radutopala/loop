@@ -15,9 +15,10 @@ import { css } from "@codemirror/lang-css";
 import { html } from "@codemirror/lang-html";
 import { yaml } from "@codemirror/lang-yaml";
 import { marked } from "marked";
-import { colors, fonts } from "../theme";
+import { colors as staticColors, fonts } from "../theme";
+import { useTheme } from "../ThemeContext";
 import { fetchFiles, fetchFileContent, saveFileContent, deleteFile, type FileEntry } from "../api/loopApi";
-import { FilePanel, markdownStyles } from "./FilePanel";
+import { FilePanel, buildMarkdownStyles } from "./FilePanel";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 
 interface EditorPanelProps {
@@ -75,7 +76,7 @@ function formatSize(bytes: number): string {
 // GoLand Darcula theme
 const darculaTheme = EditorView.theme({
   "&": {
-    backgroundColor: colors.sidebar,
+    backgroundColor: staticColors.sidebar,
     color: "#a9b7c6",
     fontSize: "13px",
     fontFamily: "'JetBrains Mono', " + fonts.mono,
@@ -91,12 +92,12 @@ const darculaTheme = EditorView.theme({
     backgroundColor: "#214283 !important",
   },
   ".cm-gutters": {
-    backgroundColor: colors.sidebar,
+    backgroundColor: staticColors.sidebar,
     color: "#606366",
-    borderRight: `1px solid ${colors.border}`,
+    borderRight: `1px solid ${staticColors.border}`,
   },
   ".cm-activeLineGutter": {
-    backgroundColor: colors.selectedBg,
+    backgroundColor: staticColors.selectedBg,
     color: "#a4a3a3",
   },
   ".cm-activeLine": {
@@ -121,16 +122,16 @@ const darculaTheme = EditorView.theme({
     color: "#a9b7c6",
   },
   ".cm-panels": {
-    backgroundColor: colors.surface,
+    backgroundColor: staticColors.surface,
     color: "#a9b7c6",
-    borderBottom: `1px solid ${colors.border}`,
+    borderBottom: `1px solid ${staticColors.border}`,
     padding: "6px 8px",
     fontSize: "13px",
     gap: "4px",
   },
   ".cm-panels button": {
     backgroundImage: "none",
-    backgroundColor: colors.hoverBg,
+    backgroundColor: staticColors.hoverBg,
     color: "#ddd",
     border: "1px solid rgba(255,255,255,0.5)",
     borderRadius: "12px",
@@ -148,9 +149,9 @@ const darculaTheme = EditorView.theme({
     padding: "3px 6px",
   },
   ".cm-textfield": {
-    backgroundColor: colors.bg,
+    backgroundColor: staticColors.bg,
     color: "#a9b7c6",
-    border: `1px solid ${colors.border}`,
+    border: `1px solid ${staticColors.border}`,
     borderRadius: "4px",
     outline: "none",
     padding: "3px 6px",
@@ -175,8 +176,8 @@ const darculaTheme = EditorView.theme({
     color: "#ccc",
   },
   ".cm-panels label:has(input:checked)": {
-    backgroundColor: colors.active,
-    borderColor: colors.active,
+    backgroundColor: staticColors.active,
+    borderColor: staticColors.active,
     color: "#fff",
   },
   ".cm-panels input[type=checkbox]": {
@@ -287,6 +288,7 @@ function saveEditorTabs(channelId: string, state: EditorTabsState, key = EDITOR_
 }
 
 export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageKey, ...panelProps }: EditorPanelProps) {
+  const { colors } = useTheme();
   const tabsKey = tabsStorageKey ?? EDITOR_TABS_KEY;
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set([""]));
   const [dirContents, setDirContents] = useState<Map<string, FileEntry[]>>(new Map());
@@ -1036,7 +1038,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
                     backgroundColor: colors.sidebar,
                   }}
                 />
-                <style>{markdownStyles}</style>
+                <style>{buildMarkdownStyles(colors)}</style>
               </>
             )}
           </div>
@@ -1095,11 +1097,14 @@ function fileIcon(name: string): { color: string; label: string } {
   if (lower === "license") return { color: "#d4930d", label: "L" };
   if (lower.startsWith(".git")) return { color: "#f14e32", label: "G" };
   if (lower.startsWith(".env")) return { color: "#ecd53f", label: "E" };
-  return { color: colors.textDim, label: "" };
+  return { color: "", label: "" };
 }
 
 function FileIcon({ name }: { name: string }) {
-  const { color, label } = fileIcon(name);
+  const { colors } = useTheme();
+  const info = fileIcon(name);
+  const color = info.color || colors.textDim;
+  const label = info.label;
   return (
     <svg width="12" height="12" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
       <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
@@ -1129,6 +1134,7 @@ interface FileTreeProps {
 }
 
 function FileTree({ entries, dirContents, expandedDirs, selectedPath, previewTab, selectedDir, depth, parentPath, onDirClick, onFileClick, onFileDoubleClick, onContextMenu }: FileTreeProps) {
+  const { colors } = useTheme();
   return (
     <>
       {entries.map((entry) => {

@@ -1,5 +1,6 @@
 import { useEffect, useRef } from "react";
-import { colors, fonts } from "../theme";
+import { fonts } from "../theme";
+import { useTheme } from "../ThemeContext";
 
 export interface MenuItem {
   label: string;
@@ -16,6 +17,7 @@ interface ContextMenuProps {
 }
 
 export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
+  const { colors } = useTheme();
   const menuRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -70,7 +72,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
           padding: 4,
           minWidth: 150,
           zIndex: 1000,
-          boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+          boxShadow: `0 4px 12px ${colors.shadow}`,
           fontFamily: fonts.sans,
         }}
       >
@@ -107,7 +109,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
                 whiteSpace: "nowrap",
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = item.danger ? "rgba(218, 55, 60, 0.2)" : "rgba(255,255,255,0.08)";
+                e.currentTarget.style.backgroundColor = item.danger ? "rgba(218, 55, 60, 0.2)" : colors.hoverBg;
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.backgroundColor = "transparent";

@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { marked } from "marked";
-import { colors, fonts } from "../theme";
+import { fonts } from "../theme";
+import { useTheme } from "../ThemeContext";
 import { fetchMemoryFiles, fetchMemoryFileContent, type MemoryFileInfo } from "../api/loopApi";
-import { FilePanel, markdownStyles } from "./FilePanel";
+import { FilePanel, buildMarkdownStyles } from "./FilePanel";
 
 const TREE_MIN_WIDTH = 120;
 const TREE_MAX_WIDTH = 400;
@@ -35,6 +36,7 @@ interface MemoryPanelProps {
 }
 
 export function MemoryPanel({ channelId, dirPath, branch, embedded, ...panelProps }: MemoryPanelProps) {
+  const { colors } = useTheme();
   const [files, setFiles] = useState<MemoryFileInfo[]>([]);
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
   const [content, setContent] = useState<string | null>(null);
@@ -250,7 +252,7 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, ...panelProp
                 }}
               />
             )}
-            <style>{markdownStyles}</style>
+            <style>{buildMarkdownStyles(colors)}</style>
           </div>
         </div>
       )}

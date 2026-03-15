@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Channel } from "../types";
-import { colors, fonts } from "../theme";
+import { fonts } from "../theme";
+import { useTheme } from "../ThemeContext";
 import { searchMessages, type SearchMessageResult } from "../api/loopApi";
 
 interface CommandPaletteProps {
@@ -36,6 +37,7 @@ function truncate(text: string, max: number): string {
 }
 
 export function CommandPalette({ channels, open, onClose, onSelect, onSelectMessage }: CommandPaletteProps) {
+  const { colors } = useTheme();
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [messageResults, setMessageResults] = useState<SearchMessageResult[]>([]);
@@ -215,7 +217,7 @@ export function CommandPalette({ channels, open, onClose, onSelect, onSelectMess
         display: "flex",
         justifyContent: "center",
         paddingTop: 80,
-        backgroundColor: "rgba(0, 0, 0, 0.5)",
+        backgroundColor: colors.overlay,
       }}
       onClick={onClose}
     >
@@ -226,7 +228,7 @@ export function CommandPalette({ channels, open, onClose, onSelect, onSelectMess
           backgroundColor: colors.surface,
           borderRadius: 8,
           border: `1px solid ${colors.border}`,
-          boxShadow: "0 16px 48px rgba(0, 0, 0, 0.4)",
+          boxShadow: `0 16px 48px ${colors.shadow}`,
           display: "flex",
           flexDirection: "column",
           overflow: "hidden",

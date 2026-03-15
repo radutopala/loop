@@ -13,7 +13,9 @@ import { MemoryPanel } from "./MemoryPanel";
 import { DiffPanel } from "./DiffPanel";
 import { killAgentContainer } from "../api/loopApi";
 import { useChatState } from "../hooks/useChatState";
-import { colors, fonts } from "../theme";
+import { fonts } from "../theme";
+import type { ColorPalette } from "../theme";
+import { useTheme } from "../ThemeContext";
 
 type AgentState = "running" | "stopped" | "none";
 
@@ -47,24 +49,26 @@ function leafIdForPanel(channelId: string, panel: PanelType): string {
   return nextId(channelId, panel);
 }
 
-const layoutMenuItemStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 6,
-  width: "100%",
-  padding: "4px 8px",
-  border: "none",
-  background: "transparent",
-  color: colors.textLight,
-  fontSize: 11,
-  textAlign: "left",
-  cursor: "pointer",
-  borderRadius: 4,
-  fontFamily: fonts.sans,
-  whiteSpace: "nowrap",
-};
+function buildLayoutMenuItemStyle(colors: ColorPalette): React.CSSProperties {
+  return {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    width: "100%",
+    padding: "4px 8px",
+    border: "none",
+    background: "transparent",
+    color: colors.textLight,
+    fontSize: 11,
+    textAlign: "left",
+    cursor: "pointer",
+    borderRadius: 4,
+    fontFamily: fonts.sans,
+    whiteSpace: "nowrap",
+  };
+}
 
-function tabButtonStyle(active: boolean): React.CSSProperties {
+function buildTabButtonStyle(colors: ColorPalette, active: boolean): React.CSSProperties {
   return {
     background: active ? colors.surface : "transparent",
     border: active ? `1px solid ${colors.textLight}` : "1px solid transparent",
@@ -116,6 +120,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   diffStats: _diffStats,
   style,
 }, ref) {
+  const { colors } = useTheme();
+
   // --- Named layouts state ---
   const [layoutNames, setLayoutNames] = useState<string[]>(() => {
     return ensureDefaultLayouts(channelId).order;
@@ -734,7 +740,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                 padding: 4,
                 zIndex: 1000,
                 minWidth: 150,
-                boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+                boxShadow: `0 4px 12px ${colors.shadow}`,
                 fontFamily: fonts.sans,
               }}
               onMouseDown={(e) => e.stopPropagation()}
@@ -742,8 +748,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               {hasMissingDefaults && (
                 <button
                   onClick={() => { restoreDefaults(); setShowLayoutMenu(false); }}
-                  style={layoutMenuItemStyle}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; }}
+                  style={buildLayoutMenuItemStyle(colors)}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; }}
                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
                 >
                   Restore defaults
@@ -752,8 +758,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               {isDefaultLayout && (
                 <button
                   onClick={() => { handleResetLayout(); setShowLayoutMenu(false); }}
-                  style={layoutMenuItemStyle}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; }}
+                  style={buildLayoutMenuItemStyle(colors)}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; }}
                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
                 >
                   Reset current
@@ -793,6 +799,7 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
   onRename: (newName: string) => void;
   onDelete: () => void;
 }) {
+  const { colors } = useTheme();
   const [editing, setEditing] = useState(false);
   const [editValue, setEditValue] = useState(name);
   const [confirming, setConfirming] = useState(false);
@@ -826,7 +833,7 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
     <div
       onClick={onSelect}
       style={{
-        ...tabButtonStyle(active),
+        ...buildTabButtonStyle(colors, active),
         flexShrink: 0,
         position: "relative",
         paddingLeft: canDelete && !editing ? 4 : 10,

@@ -1,6 +1,22 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppSettings, ConfigInfo, DaemonInfo } from "../types";
-import { colors, fonts } from "../theme";
+import { fonts } from "../theme";
+import type { ColorPalette } from "../theme";
+import { useTheme } from "../ThemeContext";
+
+function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
+  return {
+    background: "none",
+    border: "none",
+    color: colors.textDim,
+    cursor: "pointer",
+    padding: 4,
+    lineHeight: 1,
+    borderRadius: 4,
+    display: "flex",
+    alignItems: "center",
+  };
+}
 
 interface SettingsProps {
   open: boolean;
@@ -13,12 +29,23 @@ interface SettingsProps {
 }
 
 export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, onOpenPalette, onClose, onDaemonRestarted }: SettingsProps) {
+  const { colors, themeName, setThemeName, availableThemes } = useTheme();
   const [settings, setSettings] = useState<AppSettings>({ stopDaemonOnQuit: false, autoSaveOnBlur: true, previewTabs: true });
   const [daemonInfo, setDaemonInfo] = useState<DaemonInfo | null>(null);
   const [restarting, setRestarting] = useState(false);
   const [globalConfig, setGlobalConfig] = useState<ConfigInfo | null>(null);
   const [projectConfig, setProjectConfig] = useState<ConfigInfo | null>(null);
   const [loaded, setLoaded] = useState(false);
+
+  const headerBtnStyle = buildHeaderBtnStyle(colors);
+  const hoverIn = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.style.backgroundColor = colors.hoverBg;
+    e.currentTarget.style.color = colors.textLight;
+  };
+  const hoverOut = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.style.backgroundColor = "transparent";
+    e.currentTarget.style.color = colors.textDim;
+  };
 
   const loadAll = useCallback(() => {
     const api = window.loopAPI;
@@ -312,6 +339,54 @@ export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, o
               onChange={() => handleToggle("previewTabs")}
             />
 
+            {/* Appearance section */}
+            <SectionHeader>Appearance</SectionHeader>
+
+            {availableThemes.length <= 2 ? (
+              <ToggleRow
+                label="Light theme"
+                description="Switch to a light color scheme."
+                checked={themeName === "light"}
+                onChange={() => {
+                  const next = themeName === "light" ? "dark" : "light";
+                  const updated = { ...settings, theme: next };
+                  setSettings(updated);
+                  setThemeName(next);
+                  window.loopAPI?.saveSettings?.(updated);
+                }}
+              />
+            ) : (
+              <div style={{
+                padding: "10px 12px",
+                backgroundColor: colors.bg,
+                borderRadius: 8,
+              }}>
+                <div style={{ fontSize: 13, color: colors.text, marginBottom: 6 }}>Theme</div>
+                <select
+                  value={themeName}
+                  onChange={(e) => {
+                    const next = e.target.value;
+                    const updated = { ...settings, theme: next };
+                    setSettings(updated);
+                    setThemeName(next);
+                    window.loopAPI?.saveSettings?.(updated);
+                  }}
+                  style={{
+                    background: colors.surface,
+                    border: `1px solid ${colors.border}`,
+                    borderRadius: 4,
+                    color: colors.text,
+                    fontSize: 12,
+                    padding: "4px 8px",
+                  }}
+                >
+                  {availableThemes.map((t) => (
+                    <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {/* Global config */}
             {globalConfig && (
               <EditableConfigSection
@@ -341,6 +416,7 @@ export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, o
 }
 
 function SectionHeader({ children }: { children: React.ReactNode }) {
+  const { colors } = useTheme();
   return (
     <div style={{
       fontSize: 11,
@@ -362,6 +438,7 @@ function EditableConfigSection({ title, config, emptyText, onSave }: {
   emptyText?: string;
   onSave: (filePath: string, content: string) => Promise<string | null>;
 }) {
+  const { colors } = useTheme();
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState("");
   const [saving, setSaving] = useState(false);
@@ -549,6 +626,7 @@ function ToggleRow({ label, description, checked, onChange }: {
   checked: boolean;
   onChange: () => void;
 }) {
+  const { colors } = useTheme();
   return (
     <div
       style={{
@@ -595,26 +673,4 @@ function ToggleRow({ label, description, checked, onChange }: {
       </div>
     </div>
   );
-}
-
-const headerBtnStyle: React.CSSProperties = {
-  background: "none",
-  border: "none",
-  color: colors.textDim,
-  cursor: "pointer",
-  padding: 4,
-  lineHeight: 1,
-  borderRadius: 4,
-  display: "flex",
-  alignItems: "center",
-};
-
-function hoverIn(e: React.MouseEvent<HTMLButtonElement>) {
-  e.currentTarget.style.backgroundColor = colors.hoverBg;
-  e.currentTarget.style.color = colors.textLight;
-}
-
-function hoverOut(e: React.MouseEvent<HTMLButtonElement>) {
-  e.currentTarget.style.backgroundColor = "transparent";
-  e.currentTarget.style.color = colors.textDim;
 }

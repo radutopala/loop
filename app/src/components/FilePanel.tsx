@@ -1,6 +1,8 @@
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { marked } from "marked";
-import { colors, fonts } from "../theme";
+import { fonts } from "../theme";
+import type { ColorPalette } from "../theme";
+import { useTheme } from "../ThemeContext";
 import { fetchReadme } from "../api/loopApi";
 
 const MIN_WIDTH = 280;
@@ -24,6 +26,20 @@ function saveWidth(w: number) {
   } catch { /* ignore */ }
 }
 
+function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
+  return {
+    background: "none",
+    border: "none",
+    color: colors.textDim,
+    cursor: "pointer",
+    padding: 4,
+    lineHeight: 1,
+    borderRadius: 4,
+    display: "flex",
+    alignItems: "center",
+  };
+}
+
 // ── Base FilePanel ──
 
 interface FilePanelProps {
@@ -43,8 +59,19 @@ interface FilePanelProps {
 }
 
 export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPadding, embedded, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose, children }: FilePanelProps) {
+  const { colors } = useTheme();
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
+
+  const headerBtnStyle = buildHeaderBtnStyle(colors);
+  const hoverIn = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.style.backgroundColor = colors.hoverBg;
+    e.currentTarget.style.color = colors.textLight;
+  };
+  const hoverOut = (e: React.MouseEvent<HTMLButtonElement>) => {
+    e.currentTarget.style.backgroundColor = "transparent";
+    e.currentTarget.style.color = colors.textDim;
+  };
 
   if (embedded) {
     return (
@@ -314,6 +341,7 @@ interface MarkdownFilePanelProps {
 }
 
 export function MarkdownFilePanel({ dirPath, branch, ...props }: MarkdownFilePanelProps) {
+  const { colors } = useTheme();
   const [content, setContent] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -348,36 +376,15 @@ export function MarkdownFilePanel({ dirPath, branch, ...props }: MarkdownFilePan
           }}
         />
       )}
-      <style>{markdownStyles}</style>
+      <style>{buildMarkdownStyles(colors)}</style>
     </FilePanel>
   );
 }
 
 // ── Styles ──
 
-const headerBtnStyle: React.CSSProperties = {
-  background: "none",
-  border: "none",
-  color: colors.textDim,
-  cursor: "pointer",
-  padding: 4,
-  lineHeight: 1,
-  borderRadius: 4,
-  display: "flex",
-  alignItems: "center",
-};
-
-function hoverIn(e: React.MouseEvent<HTMLButtonElement>) {
-  e.currentTarget.style.backgroundColor = colors.hoverBg;
-  e.currentTarget.style.color = colors.textLight;
-}
-
-function hoverOut(e: React.MouseEvent<HTMLButtonElement>) {
-  e.currentTarget.style.backgroundColor = "transparent";
-  e.currentTarget.style.color = colors.textDim;
-}
-
-export const markdownStyles = `
+export function buildMarkdownStyles(colors: ColorPalette): string {
+  return `
 .readme-content h1, .readme-content h2, .readme-content h3,
 .readme-content h4, .readme-content h5, .readme-content h6 {
   color: ${colors.textLight};
@@ -393,12 +400,12 @@ export const markdownStyles = `
 .readme-content code {
   font-family: ${fonts.mono};
   font-size: 0.9em;
-  background: rgba(255,255,255,0.06);
+  background: ${colors.codeBg};
   padding: 2px 5px;
   border-radius: 3px;
 }
 .readme-content pre {
-  background: rgba(0,0,0,0.3);
+  background: ${colors.codeBlockBg};
   border: 1px solid ${colors.border};
   border-radius: 6px;
   padding: 12px;
@@ -426,7 +433,8 @@ export const markdownStyles = `
   text-align: left;
   font-size: 12px;
 }
-.readme-content th { background: rgba(255,255,255,0.04); font-weight: 600; }
+.readme-content th { background: ${colors.codeBg}; font-weight: 600; }
 .readme-content hr { border: none; border-top: 1px solid ${colors.border}; margin: 1.2em 0; }
 .readme-content img { max-width: 100%; }
 `;
+}

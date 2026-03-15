@@ -2,8 +2,275 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentActivityData, Message } from "../types";
 import type { ChatState } from "../hooks/useChatState";
 import { sendCommand, sendMessage } from "../api/loopApi";
-import { colors, fonts } from "../theme";
+import { fonts } from "../theme";
+import type { ColorPalette } from "../theme";
+import { useTheme } from "../ThemeContext";
 import { LoopLogo } from "./LoopLogo";
+
+function buildStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
+  return {
+    container: {
+      display: "flex",
+      flexDirection: "column",
+      flex: 1,
+      overflow: "hidden",
+    },
+    welcome: {
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      justifyContent: "center",
+      flex: 1,
+      gap: 24,
+      padding: 24,
+    },
+    welcomeContent: {
+      display: "flex",
+      flexDirection: "column",
+      alignItems: "center",
+      gap: 16,
+    },
+    welcomeTitle: {
+      fontSize: 22,
+      fontWeight: 500,
+      color: colors.textLight,
+    },
+    messages: {
+      flex: 1,
+      overflowY: "auto",
+      padding: "16px 24px",
+    },
+    messageColumn: {
+      maxWidth: 768,
+      margin: "0 auto",
+    },
+    inputBar: {
+      display: "flex",
+      justifyContent: "center",
+      padding: "12px 24px 8px",
+    },
+    isolationLabel: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 6,
+      padding: "0 0 12px",
+      fontSize: 11,
+      color: colors.textDim,
+      fontFamily: fonts.mono,
+    },
+    loadMore: {
+      display: "block",
+      margin: "0 auto 16px",
+      padding: "4px 12px",
+      background: "none",
+      border: `1px solid ${colors.border}`,
+      borderRadius: 4,
+      color: colors.textMuted,
+      cursor: "pointer",
+      fontFamily: fonts.sans,
+      fontSize: 12,
+    },
+    bubble: {},
+    header: {
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      marginBottom: 4,
+    },
+    author: {
+      fontWeight: 600,
+      fontSize: 13,
+    },
+    time: {
+      fontSize: 11,
+      color: colors.textDim,
+    },
+    content: {
+      fontSize: 14,
+      lineHeight: 1.6,
+      color: colors.text,
+      wordBreak: "break-word" as const,
+    },
+    paragraph: {
+      margin: "2px 0",
+    },
+    codeBlock: {
+      backgroundColor: colors.surface,
+      borderRadius: 8,
+      padding: "10px 14px",
+      margin: "8px 0",
+      overflow: "auto",
+      fontFamily: fonts.mono,
+      fontSize: 13,
+      lineHeight: 1.4,
+      color: colors.textLight,
+    },
+    codeLang: {
+      fontSize: 11,
+      color: colors.textDim,
+      marginBottom: 4,
+    },
+    inlineCode: {
+      backgroundColor: colors.surface,
+      borderRadius: 3,
+      padding: "1px 5px",
+      fontFamily: fonts.mono,
+      fontSize: 13,
+    },
+    inputWrapper: {
+      display: "flex",
+      alignItems: "flex-end",
+      gap: 8,
+      width: "100%",
+      maxWidth: 768,
+      backgroundColor: colors.surface,
+      border: `1px solid ${colors.border}`,
+      borderRadius: 16,
+      padding: "14px 14px 14px 18px",
+    },
+    textarea: {
+      flex: 1,
+      background: "transparent",
+      border: "none",
+      padding: "2px 0",
+      color: colors.text,
+      fontFamily: fonts.sans,
+      fontSize: 14,
+      lineHeight: 1.4,
+      resize: "none" as const,
+      outline: "none",
+    },
+    sendButton: {
+      width: 28,
+      height: 28,
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      background: "#fff",
+      border: "none",
+      borderRadius: 8,
+      color: "#000",
+      cursor: "pointer",
+      flexShrink: 0,
+    },
+  };
+}
+
+function buildActivityStyle(colors: ColorPalette): React.CSSProperties {
+  return {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    marginBottom: 8,
+    padding: "4px 0",
+    fontSize: 12,
+    color: colors.textDim,
+    fontFamily: fonts.mono,
+  };
+}
+
+function buildModeStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
+  return {
+    pill: {
+      display: "flex",
+      height: 28,
+      borderRadius: 8,
+      border: `1px solid ${colors.border}`,
+      overflow: "hidden",
+      flexShrink: 0,
+    },
+    segment: {
+      padding: "0 10px",
+      fontSize: 11,
+      fontFamily: fonts.mono,
+      cursor: "pointer",
+      border: "none",
+      outline: "none",
+      transition: "background-color 0.2s",
+      lineHeight: "28px",
+    },
+  };
+}
+
+function buildCommandStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
+  return {
+    dropdown: {
+      position: "absolute",
+      bottom: "100%",
+      left: 0,
+      right: 0,
+      marginBottom: 4,
+      backgroundColor: colors.sidebar,
+      border: `1px solid ${colors.border}`,
+      borderRadius: 8,
+      padding: "6px 0",
+      zIndex: 10,
+      maxHeight: 280,
+      overflow: "hidden",
+      boxShadow: `0 4px 12px ${colors.shadow}`,
+    },
+    scrollArea: {
+      maxHeight: 268,
+      overflowY: "auto",
+      padding: "0 4px",
+    },
+    item: {
+      padding: "8px 12px",
+      borderRadius: 6,
+      cursor: "pointer",
+      display: "flex",
+      flexDirection: "column" as const,
+      gap: 2,
+    },
+    name: {
+      color: colors.textLight,
+      fontWeight: 600,
+      fontSize: 13,
+      fontFamily: fonts.mono,
+    },
+    desc: {
+      color: colors.textMuted,
+      fontSize: 12,
+      fontFamily: fonts.sans,
+    },
+    usage: {
+      color: colors.textDim,
+      fontSize: 11,
+      fontFamily: fonts.mono,
+    },
+  };
+}
+
+function buildMentionStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
+  return {
+    dropdown: {
+      position: "absolute",
+      bottom: "100%",
+      left: 14,
+      marginBottom: 4,
+      backgroundColor: colors.sidebar,
+      border: `1px solid ${colors.border}`,
+      borderRadius: 8,
+      padding: 4,
+      zIndex: 10,
+      minWidth: 140,
+      boxShadow: `0 4px 12px ${colors.shadow}`,
+    },
+    item: {
+      padding: "8px 12px",
+      borderRadius: 6,
+      cursor: "pointer",
+      backgroundColor: colors.selectedBg,
+    },
+    name: {
+      color: colors.textLight,
+      fontWeight: 600,
+      fontSize: 13,
+      fontFamily: fonts.sans,
+    },
+  };
+}
 
 interface ChatViewProps {
   channelId: string | null;
@@ -13,6 +280,8 @@ interface ChatViewProps {
 }
 
 export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComplete }: ChatViewProps) {
+  const { colors } = useTheme();
+  const styles = buildStyles(colors);
   const { messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, completionInfo } = chatState;
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -58,7 +327,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
     }
   }, [hasMore, loading, loadMore]);
 
-  // Find the last user message ID for the 👀 indicator.
+  // Find the last user message ID for the eyes indicator.
   const lastUserMsgId = (() => {
     for (let i = messages.length - 1; i >= 0; i--) {
       const m = messages[i];
@@ -146,13 +415,15 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
 
 function WelcomeScreen() {
   return (
-    <div style={styles.welcomeContent}>
+    <div style={{ display: "flex", flexDirection: "column" as const, alignItems: "center", gap: 16 }}>
       <LoopLogo />
     </div>
   );
 }
 
 function MessageBubble({ message, showEyes, highlighted }: { message: Message; showEyes?: boolean; highlighted?: boolean }) {
+  const { colors } = useTheme();
+  const styles = buildStyles(colors);
   const isUser = !message.is_bot;
   const time = new Date(message.created_at).toLocaleTimeString([], {
     hour: "2-digit",
@@ -176,7 +447,7 @@ function MessageBubble({ message, showEyes, highlighted }: { message: Message; s
       <div
         style={{
           ...styles.bubble,
-          backgroundColor: isUser ? "#2f2f2f" : "transparent",
+          backgroundColor: isUser ? colors.userBubble : "transparent",
           borderRadius: isUser ? "18px 18px 4px 18px" : "18px 18px 18px 4px",
           maxWidth: "85%",
           padding: isUser ? "10px 16px" : "4px 0",
@@ -212,6 +483,8 @@ function MessageBubble({ message, showEyes, highlighted }: { message: Message; s
 }
 
 function StreamingBubble({ content }: { content: string }) {
+  const { colors } = useTheme();
+  const styles = buildStyles(colors);
   return (
     <div
       style={{
@@ -250,6 +523,8 @@ function StreamingBubble({ content }: { content: string }) {
 }
 
 function AgentActivityIndicator({ activity }: { activity: AgentActivityData }) {
+  const { colors } = useTheme();
+  const activityStyle = buildActivityStyle(colors);
   let icon = "&#9881;";
   let label = "";
   if (activity.activity === "model") {
@@ -273,6 +548,8 @@ function AgentActivityIndicator({ activity }: { activity: AgentActivityData }) {
 }
 
 function CompletionSummary({ info }: { info: { duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } }) {
+  const { colors } = useTheme();
+  const activityStyle = buildActivityStyle(colors);
   const parts: string[] = [];
   if (info.model) parts.push(info.model);
   if (info.duration_ms) {
@@ -291,6 +568,8 @@ function CompletionSummary({ info }: { info: { duration_ms?: number; num_turns?:
 }
 
 function ToolActivityIndicator({ toolName, input }: { toolName: string; input: string }) {
+  const { colors } = useTheme();
+  const activityStyle = buildActivityStyle(colors);
   const summary = input.length > 80 ? input.slice(0, 80) + "..." : input;
   return (
     <div style={activityStyle}>
@@ -301,23 +580,14 @@ function ToolActivityIndicator({ toolName, input }: { toolName: string; input: s
   );
 }
 
-const activityStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  marginBottom: 8,
-  padding: "4px 0",
-  fontSize: 12,
-  color: colors.textDim,
-  fontFamily: fonts.mono,
-};
-
 function MarkdownContent({ content }: { content: string }) {
-  const parts = parseMarkdown(content);
+  const { colors } = useTheme();
+  const s = buildStyles(colors);
+  const parts = parseMarkdown(content, s);
   return <>{parts}</>;
 }
 
-function parseMarkdown(text: string): React.ReactNode[] {
+function parseMarkdown(text: string, s: Record<string, React.CSSProperties>): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   const lines = text.split("\n");
   let i = 0;
@@ -336,8 +606,8 @@ function parseMarkdown(text: string): React.ReactNode[] {
       }
       i++; // skip closing ```
       nodes.push(
-        <pre key={nodes.length} style={styles.codeBlock}>
-          {lang && <div style={styles.codeLang}>{lang}</div>}
+        <pre key={nodes.length} style={s.codeBlock}>
+          {lang && <div style={s.codeLang}>{lang}</div>}
           <code>{codeLines.join("\n")}</code>
         </pre>,
       );
@@ -349,8 +619,8 @@ function parseMarkdown(text: string): React.ReactNode[] {
       nodes.push(<br key={nodes.length} />);
     } else {
       nodes.push(
-        <p key={nodes.length} style={styles.paragraph}>
-          {formatInline(line)}
+        <p key={nodes.length} style={s.paragraph}>
+          {formatInline(line, s)}
         </p>,
       );
     }
@@ -360,7 +630,7 @@ function parseMarkdown(text: string): React.ReactNode[] {
   return nodes;
 }
 
-function formatInline(text: string): React.ReactNode[] {
+function formatInline(text: string, s: Record<string, React.CSSProperties>): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   // Match inline code, bold, italic.
   const regex = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g;
@@ -377,7 +647,7 @@ function formatInline(text: string): React.ReactNode[] {
     const token = match[0];
     if (token.startsWith("`")) {
       nodes.push(
-        <code key={nodes.length} style={styles.inlineCode}>
+        <code key={nodes.length} style={s.inlineCode}>
           {token.slice(1, -1)}
         </code>,
       );
@@ -423,6 +693,11 @@ const LOOP_COMMANDS: CommandDef[] = [
 ];
 
 function ChatInput({ channelId, isRunning, onSent }: { channelId: string; isRunning?: boolean; onSent?: () => void }) {
+  const { colors } = useTheme();
+  const styles = buildStyles(colors);
+  const modeStyles = buildModeStyles(colors);
+  const commandStyles = buildCommandStyles(colors);
+  const mentionStyles = buildMentionStyles(colors);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
   const [mode, setMode] = useState<"agent" | "plan">("agent");
@@ -698,247 +973,3 @@ function ChatInput({ channelId, isRunning, onSent }: { channelId: string; isRunn
     </div>
   );
 }
-
-const modeStyles: Record<string, React.CSSProperties> = {
-  pill: {
-    display: "flex",
-    height: 28,
-    borderRadius: 8,
-    border: `1px solid ${colors.border}`,
-    overflow: "hidden",
-    flexShrink: 0,
-  },
-  segment: {
-    padding: "0 10px",
-    fontSize: 11,
-    fontFamily: fonts.mono,
-    cursor: "pointer",
-    border: "none",
-    outline: "none",
-    transition: "background-color 0.2s",
-    lineHeight: "28px",
-  },
-};
-
-const commandStyles: Record<string, React.CSSProperties> = {
-  dropdown: {
-    position: "absolute",
-    bottom: "100%",
-    left: 0,
-    right: 0,
-    marginBottom: 4,
-    backgroundColor: colors.sidebar,
-    border: `1px solid ${colors.border}`,
-    borderRadius: 8,
-    padding: "6px 0",
-    zIndex: 10,
-    maxHeight: 280,
-    overflow: "hidden",
-    boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
-  },
-  scrollArea: {
-    maxHeight: 268,
-    overflowY: "auto",
-    padding: "0 4px",
-  },
-  item: {
-    padding: "8px 12px",
-    borderRadius: 6,
-    cursor: "pointer",
-    display: "flex",
-    flexDirection: "column" as const,
-    gap: 2,
-  },
-  name: {
-    color: colors.textLight,
-    fontWeight: 600,
-    fontSize: 13,
-    fontFamily: fonts.mono,
-  },
-  desc: {
-    color: colors.textMuted,
-    fontSize: 12,
-    fontFamily: fonts.sans,
-  },
-  usage: {
-    color: colors.textDim,
-    fontSize: 11,
-    fontFamily: fonts.mono,
-  },
-};
-
-const mentionStyles: Record<string, React.CSSProperties> = {
-  dropdown: {
-    position: "absolute",
-    bottom: "100%",
-    left: 14,
-    marginBottom: 4,
-    backgroundColor: colors.sidebar,
-    border: `1px solid ${colors.border}`,
-    borderRadius: 8,
-    padding: 4,
-    zIndex: 10,
-    minWidth: 140,
-    boxShadow: "0 4px 12px rgba(0,0,0,0.4)",
-  },
-  item: {
-    padding: "8px 12px",
-    borderRadius: 6,
-    cursor: "pointer",
-    backgroundColor: colors.selectedBg,
-  },
-  name: {
-    color: colors.textLight,
-    fontWeight: 600,
-    fontSize: 13,
-    fontFamily: fonts.sans,
-  },
-};
-
-const styles: Record<string, React.CSSProperties> = {
-  container: {
-    display: "flex",
-    flexDirection: "column",
-    flex: 1,
-    overflow: "hidden",
-  },
-  welcome: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    justifyContent: "center",
-    flex: 1,
-    gap: 24,
-    padding: 24,
-  },
-  welcomeContent: {
-    display: "flex",
-    flexDirection: "column",
-    alignItems: "center",
-    gap: 16,
-  },
-  welcomeTitle: {
-    fontSize: 22,
-    fontWeight: 500,
-    color: colors.textLight,
-  },
-  messages: {
-    flex: 1,
-    overflowY: "auto",
-    padding: "16px 24px",
-  },
-  messageColumn: {
-    maxWidth: 768,
-    margin: "0 auto",
-  },
-  inputBar: {
-    display: "flex",
-    justifyContent: "center",
-    padding: "12px 24px 8px",
-  },
-  isolationLabel: {
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    gap: 6,
-    padding: "0 0 12px",
-    fontSize: 11,
-    color: colors.textDim,
-    fontFamily: fonts.mono,
-  },
-  loadMore: {
-    display: "block",
-    margin: "0 auto 16px",
-    padding: "4px 12px",
-    background: "none",
-    border: `1px solid ${colors.border}`,
-    borderRadius: 4,
-    color: colors.textMuted,
-    cursor: "pointer",
-    fontFamily: fonts.sans,
-    fontSize: 12,
-  },
-  bubble: {},
-  header: {
-    display: "flex",
-    alignItems: "center",
-    gap: 8,
-    marginBottom: 4,
-  },
-  author: {
-    fontWeight: 600,
-    fontSize: 13,
-  },
-  time: {
-    fontSize: 11,
-    color: colors.textDim,
-  },
-  content: {
-    fontSize: 14,
-    lineHeight: 1.6,
-    color: colors.text,
-    wordBreak: "break-word" as const,
-  },
-  paragraph: {
-    margin: "2px 0",
-  },
-  codeBlock: {
-    backgroundColor: colors.surface,
-    borderRadius: 8,
-    padding: "10px 14px",
-    margin: "8px 0",
-    overflow: "auto",
-    fontFamily: fonts.mono,
-    fontSize: 13,
-    lineHeight: 1.4,
-    color: colors.textLight,
-  },
-  codeLang: {
-    fontSize: 11,
-    color: colors.textDim,
-    marginBottom: 4,
-  },
-  inlineCode: {
-    backgroundColor: colors.surface,
-    borderRadius: 3,
-    padding: "1px 5px",
-    fontFamily: fonts.mono,
-    fontSize: 13,
-  },
-  inputWrapper: {
-    display: "flex",
-    alignItems: "flex-end",
-    gap: 8,
-    width: "100%",
-    maxWidth: 768,
-    backgroundColor: colors.surface,
-    border: `1px solid ${colors.border}`,
-    borderRadius: 16,
-    padding: "14px 14px 14px 18px",
-  },
-  textarea: {
-    flex: 1,
-    background: "transparent",
-    border: "none",
-    padding: "2px 0",
-    color: colors.text,
-    fontFamily: fonts.sans,
-    fontSize: 14,
-    lineHeight: 1.4,
-    resize: "none" as const,
-    outline: "none",
-  },
-  sendButton: {
-    width: 28,
-    height: 28,
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    background: "#fff",
-    border: "none",
-    borderRadius: 8,
-    color: "#000",
-    cursor: "pointer",
-    flexShrink: 0,
-  },
-};

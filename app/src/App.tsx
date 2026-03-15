@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Channel, UpdateStatus, WSEvent } from "./types";
-import { colors, fonts } from "./theme";
+import type { AppSettings, Channel, UpdateStatus, WSEvent } from "./types";
+import { fonts } from "./theme";
+import { ThemeProvider, useTheme } from "./ThemeContext";
 import { createChannel, createThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, initApiUrl } from "./api/loopApi";
 import { Sidebar } from "./components/Sidebar";
 import { MarkdownFilePanel } from "./components/FilePanel";
@@ -17,6 +18,26 @@ function getHashChannelId(): string | null {
 }
 
 export default function App() {
+  const [settings, setSettings] = useState<AppSettings | null>(null);
+
+  useEffect(() => {
+    window.loopAPI?.getSettings?.()
+      .then((s) => setSettings(s))
+      .catch(() => setSettings({ stopDaemonOnQuit: false, autoSaveOnBlur: true, previewTabs: true }));
+  }, []);
+
+  // Wait for settings to load before rendering so we don't flash wrong theme.
+  if (!settings) return null;
+
+  return (
+    <ThemeProvider initialTheme={settings.theme}>
+      <AppInner />
+    </ThemeProvider>
+  );
+}
+
+function AppInner() {
+  const { colors } = useTheme();
   const [channels, setChannels] = useState<Channel[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(getHashChannelId);
   const [ready, setReady] = useState(false);

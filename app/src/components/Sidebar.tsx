@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Channel, UpdateStatus } from "../types";
-import { colors, fonts } from "../theme";
+import { fonts } from "../theme";
+import { useTheme } from "../ThemeContext";
 import { ChannelItem } from "./ChannelItem";
 import { ContextMenu } from "./ContextMenu";
 import type { MenuItem } from "./ContextMenu";
@@ -39,7 +40,25 @@ function NewMenu({ onNewProject, onOpenDirectory, onClose }: {
   onOpenDirectory?: () => void;
   onClose: () => void;
 }) {
+  const { colors } = useTheme();
   const ref = useRef<HTMLDivElement>(null);
+
+  const dropdownItemStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: 6,
+    width: "100%",
+    padding: "4px 8px",
+    border: "none",
+    background: "transparent",
+    color: colors.textLight,
+    fontSize: 11,
+    textAlign: "left",
+    cursor: "pointer",
+    borderRadius: 4,
+    fontFamily: fonts.sans,
+    whiteSpace: "nowrap",
+  };
 
   useEffect(() => {
     const handleClick = (e: MouseEvent) => {
@@ -65,14 +84,14 @@ function NewMenu({ onNewProject, onOpenDirectory, onClose }: {
         padding: 4,
         zIndex: 100,
         minWidth: 150,
-        boxShadow: "0 4px 12px rgba(0,0,0,0.3)",
+        boxShadow: `0 4px 12px ${colors.shadow}`,
         fontFamily: fonts.sans,
       }}
     >
       <button
         onClick={onNewProject}
         style={dropdownItemStyle}
-        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; }}
+        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; }}
         onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
       >
         New project
@@ -81,7 +100,7 @@ function NewMenu({ onNewProject, onOpenDirectory, onClose }: {
         <button
           onClick={onOpenDirectory}
           style={dropdownItemStyle}
-          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; }}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; }}
           onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
         >
           Open directory...
@@ -132,6 +151,7 @@ export function Sidebar({
   onDownloadUpdate,
   onInstallUpdate,
 }: SidebarProps) {
+  const { colors } = useTheme();
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const [resizing, setResizing] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -146,6 +166,32 @@ export function Sidebar({
   const newChannelInputRef = useRef<HTMLInputElement>(null);
   const draggedIdRef = useRef<string | null>(null);
   const sidebarRef = useRef<HTMLDivElement>(null);
+
+  const sidebarBtnStyle: React.CSSProperties = {
+    background: "none",
+    border: "none",
+    color: colors.textDim,
+    cursor: "pointer",
+    padding: "3px 8px",
+    fontSize: 12,
+    lineHeight: 1,
+    borderRadius: 4,
+  };
+
+  const footerBtnStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: 8,
+    width: "100%",
+    background: "none",
+    border: "none",
+    color: colors.textDim,
+    cursor: "pointer",
+    padding: "6px 8px",
+    fontSize: 12,
+    borderRadius: 6,
+    fontFamily: "inherit",
+  };
 
   const toggleSelected = useCallback((id: string) => {
     setSelected((prev) => {
@@ -611,46 +657,3 @@ export function Sidebar({
     </div>
   );
 }
-
-const sidebarBtnStyle: React.CSSProperties = {
-  background: "none",
-  border: "none",
-  color: colors.textDim,
-  cursor: "pointer",
-  padding: "3px 8px",
-  fontSize: 12,
-  lineHeight: 1,
-  borderRadius: 4,
-};
-
-const dropdownItemStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 6,
-  width: "100%",
-  padding: "4px 8px",
-  border: "none",
-  background: "transparent",
-  color: colors.textLight,
-  fontSize: 11,
-  textAlign: "left",
-  cursor: "pointer",
-  borderRadius: 4,
-  fontFamily: fonts.sans,
-  whiteSpace: "nowrap",
-};
-
-const footerBtnStyle: React.CSSProperties = {
-  display: "flex",
-  alignItems: "center",
-  gap: 8,
-  width: "100%",
-  background: "none",
-  border: "none",
-  color: colors.textDim,
-  cursor: "pointer",
-  padding: "6px 8px",
-  fontSize: 12,
-  borderRadius: 6,
-  fontFamily: "inherit",
-};
