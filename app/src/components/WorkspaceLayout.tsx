@@ -2,15 +2,17 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import type { Channel } from "../types";
 import type { SessionStatus } from "../types";
 import type { PaneNode, LeafNode, PanelType, SplitDirection, DropPosition } from "../splitPane/types";
-import { makeLeaf, findLeafById, splitLeaf, removeLeaf, updateFlex, swapLeavesInTree, moveLeaf, leafCount, collectLeaves, canAddPanel, hasAgentLeaf } from "../splitPane/treeOps";
+import { makeLeaf, findLeafById, splitLeaf, removeLeaf, updateFlex, swapLeavesInTree, moveLeaf, leafCount, collectLeaves, canAddPanel, hasAgentLeaf, collectPanelTypes } from "../splitPane/treeOps";
 import { saveLayout, clearLayout, saveActiveLayout, deleteLayout, renameLayout, loadChannelLayouts, ensureDefaultLayouts, createDefaultLayouts, restoreDefaultLayouts, DEFAULT_LAYOUT_NAMES } from "../splitPane/persistence";
 import { SplitPaneLayout } from "../splitPane/SplitPaneLayout";
+import { PaneLeafHeader } from "../splitPane/PaneLeafHeader";
 import { EmptyLayoutPicker } from "../splitPane/AddPanelButton";
 import { Terminal, getCloseForInstance } from "./Terminal";
 import { ChatView } from "./ChatView";
 import { EditorPanel } from "./EditorPanel";
 import { MemoryPanel } from "./MemoryPanel";
 import { DiffPanel } from "./DiffPanel";
+import { BrowserPanel } from "./BrowserPanel";
 import { killAgentContainer } from "../api/loopApi";
 import { useChatState } from "../hooks/useChatState";
 import { fonts } from "../theme";
@@ -145,6 +147,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   const statusMapRef = useRef(new Map<string, SessionStatus>());
   const [agentState, setAgentState] = useState<AgentState>("none");
   const [showLayoutMenu, setShowLayoutMenu] = useState(false);
+  const [maximizedLeafId, setMaximizedLeafId] = useState<string | null>(null);
 
   // Close layout menu on outside click.
   useEffect(() => {
@@ -188,6 +191,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       if (t) initIdCounter(channelId, t);
       setTree(t);
       setAgentState("none");
+      setMaximizedLeafId(null);
     }
   }, [channelId]);
 
@@ -207,6 +211,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     setActiveName(name);
     setTree(t);
     setAgentState("none");
+    setMaximizedLeafId(null);
     saveActiveLayout(channelId, name);
   }, [channelId]);
 
@@ -298,6 +303,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         getCloseForInstance(closeKey)?.();
       }
       statusMapRef.current.delete(id);
+      setMaximizedLeafId((prev) => prev === id ? null : prev);
       setTree((prev) => {
         if (!prev) return prev;
         if (leafCount(prev) <= 1) {
@@ -469,6 +475,13 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                 onPaneStatus={(status) => handlePaneStatus(leaf.id, status)}
               />
             </div>
+          );
+        case "browser":
+          return (
+            <BrowserPanel
+              key={`layout-browser-${channelId}`}
+              channelId={channelId}
+            />
           );
         default:
           return null;
@@ -676,7 +689,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           </svg>
         </button>
         <div style={{ flex: 1 }} />
-        {agentState === "running" && (
+        {(agentState === "running" || channel.container_running) && (
           <button
             onClick={handleKillAgents}
             title="Kill agent containers"
@@ -700,7 +713,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             Kill
           </button>
         )}
-        <div style={{ position: "relative" }}>
+        {(hasMissingDefaults || isDefaultLayout) && <div style={{ position: "relative" }}>
           <button
             onClick={() => setShowLayoutMenu((v) => !v)}
             title="Layout options"
@@ -767,13 +780,35 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               )}
             </div>
           )}
-        </div>
+        </div>}
       </div>
 
       {/* Layout content */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
         {!tree ? (
           <EmptyLayoutPicker onAdd={handleEmptyAdd} />
+        ) : maximizedLeafId && findLeafById(tree, maximizedLeafId) ? (
+          (() => {
+            const leaf = findLeafById(tree, maximizedLeafId)!;
+            const usedSingletons = collectPanelTypes(tree);
+            return (
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, minWidth: 0 }}>
+                <PaneLeafHeader
+                  leafId={leaf.id}
+                  panel={leaf.panel}
+                  usedSingletons={usedSingletons}
+                  isMaximized
+                  onRemove={() => { setMaximizedLeafId(null); handleRemoveLeaf(leaf.id); }}
+                  onDrop={handleDrop}
+                  onSplitLeaf={handleSplitLeaf}
+                  onToggleMaximize={() => setMaximizedLeafId(null)}
+                />
+                <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+                  {renderLeaf(leaf)}
+                </div>
+              </div>
+            );
+          })()
         ) : (
           <SplitPaneLayout
             tree={tree}
@@ -782,6 +817,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             onDrop={handleDrop}
             onRemoveLeaf={handleRemoveLeaf}
             onSplitLeaf={handleSplitLeaf}
+            onMaximize={(leafId) => setMaximizedLeafId(leafId)}
           />
         )}
       </div>

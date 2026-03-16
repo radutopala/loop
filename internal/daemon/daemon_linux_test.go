@@ -16,9 +16,11 @@ import (
 func (s *DaemonSuite) TestStartSuccess() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", "/home/test/.config/systemd/user", os.FileMode(0o755)).Return(nil)
 	sys.On("MkdirAll", "/home/test/.loop", os.FileMode(0o755)).Return(nil)
+	sys.On("Getenv", mock.Anything).Return("")
 	sys.On("WriteFile", "/home/test/.config/systemd/user/loop.service", mock.Anything, os.FileMode(0o644)).Return(nil)
 	sys.On("RunCommand", "systemctl", []string{"--user", "daemon-reload"}).Return([]byte(""), nil)
 	sys.On("RunCommand", "systemctl", []string{"--user", "enable", "--now", "loop"}).Return([]byte(""), nil)
@@ -30,21 +32,14 @@ func (s *DaemonSuite) TestStartSuccess() {
 }
 
 func (s *DaemonSuite) TestStartWithProxyEnv() {
-	osGetenv = func(key string) string {
-		switch key {
-		case "HTTP_PROXY":
-			return "http://127.0.0.1:3128"
-		case "HTTPS_PROXY":
-			return "http://127.0.0.1:3128"
-		default:
-			return ""
-		}
-	}
-
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("Getenv", "HTTP_PROXY").Return("http://127.0.0.1:3128")
+	sys.On("Getenv", "HTTPS_PROXY").Return("http://127.0.0.1:3128")
+	sys.On("Getenv", mock.Anything).Return("")
 	sys.On("WriteFile", "/home/test/.config/systemd/user/loop.service", mock.MatchedBy(func(data []byte) bool {
 		s := string(data)
 		return strings.Contains(s, "Environment=HTTP_PROXY=http://127.0.0.1:3128") &&
@@ -68,10 +63,9 @@ func (s *DaemonSuite) TestStartExecutableError() {
 }
 
 func (s *DaemonSuite) TestStartEvalSymlinksError() {
-	evalSymlinks = func(_ string) (string, error) { return "", errors.New("symlink fail") }
-
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("", errors.New("symlink fail"))
 
 	err := Start(sys, "/home/test/.loop/loop.log")
 	require.Error(s.T(), err)
@@ -81,6 +75,7 @@ func (s *DaemonSuite) TestStartEvalSymlinksError() {
 func (s *DaemonSuite) TestStartHomeDirError() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("", errors.New("home fail"))
 
 	err := Start(sys, "/home/test/.loop/loop.log")
@@ -91,6 +86,7 @@ func (s *DaemonSuite) TestStartHomeDirError() {
 func (s *DaemonSuite) TestStartMkdirUnitDirError() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", "/home/test/.config/systemd/user", os.FileMode(0o755)).Return(errors.New("mkdir fail"))
 
@@ -102,6 +98,7 @@ func (s *DaemonSuite) TestStartMkdirUnitDirError() {
 func (s *DaemonSuite) TestStartMkdirLogDirError() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", "/home/test/.config/systemd/user", os.FileMode(0o755)).Return(nil)
 	sys.On("MkdirAll", "/home/test/.loop", os.FileMode(0o755)).Return(errors.New("logdir fail"))
@@ -114,8 +111,10 @@ func (s *DaemonSuite) TestStartMkdirLogDirError() {
 func (s *DaemonSuite) TestStartWriteError() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("Getenv", mock.Anything).Return("")
 	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("write fail"))
 
 	err := Start(sys, "/home/test/.loop/loop.log")
@@ -126,8 +125,10 @@ func (s *DaemonSuite) TestStartWriteError() {
 func (s *DaemonSuite) TestStartDaemonReloadError() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("Getenv", mock.Anything).Return("")
 	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	sys.On("RunCommand", "systemctl", []string{"--user", "daemon-reload"}).
 		Return([]byte("Failed to connect to bus"), errors.New("exit 1"))
@@ -140,8 +141,10 @@ func (s *DaemonSuite) TestStartDaemonReloadError() {
 func (s *DaemonSuite) TestStartEnableError() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("Getenv", mock.Anything).Return("")
 	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	sys.On("RunCommand", "systemctl", []string{"--user", "daemon-reload"}).Return([]byte(""), nil)
 	sys.On("RunCommand", "systemctl", []string{"--user", "enable", "--now", "loop"}).

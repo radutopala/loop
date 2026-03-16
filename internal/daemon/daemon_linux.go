@@ -22,7 +22,7 @@ func Start(sys System, logFile string) error {
 	if err != nil {
 		return fmt.Errorf("resolving executable: %w", err)
 	}
-	binPath, err := evalSymlinks(exe)
+	binPath, err := sys.EvalSymlinks(exe)
 	if err != nil {
 		return fmt.Errorf("resolving symlinks: %w", err)
 	}
@@ -45,7 +45,7 @@ func Start(sys System, logFile string) error {
 
 	extraEnv := make(map[string]string)
 	for _, key := range proxyKeys {
-		if v := osGetenv(key); v != "" {
+		if v := sys.Getenv(key); v != "" {
 			extraEnv[key] = v
 		}
 	}

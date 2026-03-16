@@ -9,12 +9,6 @@ import (
 	"github.com/radutopala/loop/internal/db"
 )
 
-// osReadFile is a package-level var for testing.
-var osReadFile = os.ReadFile
-
-// osStat is a package-level var for testing.
-var osStat = os.Stat
-
 type memoryFilesResponse struct {
 	Files []db.MemoryFileInfo `json:"files"`
 }
@@ -41,7 +35,7 @@ func (s *Server) handleListMemoryFiles(w http.ResponseWriter, r *http.Request) {
 
 	existing := make([]db.MemoryFileInfo, 0, len(files))
 	for _, f := range files {
-		if _, err := osStat(f.FilePath); err == nil {
+		if _, err := s.sys.Stat(f.FilePath); err == nil {
 			existing = append(existing, f)
 		}
 	}
@@ -66,7 +60,7 @@ func (s *Server) handleReadMemoryFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := osReadFile(path)
+	data, err := s.sys.ReadFile(path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			http.Error(w, "file not found", http.StatusNotFound)

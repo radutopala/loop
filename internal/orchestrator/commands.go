@@ -3,6 +3,7 @@ package orchestrator
 import (
 	"context"
 	"fmt"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -322,7 +323,7 @@ func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *
 		return
 	}
 
-	prompt, err := tmpl.ResolvePrompt(o.cfg.LoopDir)
+	prompt, err := tmpl.ResolvePrompt(o.cfg.LoopDir, os.ReadFile)
 	if err != nil {
 		o.logger.Error("resolving template prompt", "error", err, "template", name)
 		o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Failed to resolve template prompt: %v", err))

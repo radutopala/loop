@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,14 +17,24 @@ import (
 	"github.com/slack-go/slack/socketmode"
 	"github.com/spf13/cobra"
 
+	dockerclient "github.com/docker/docker/client"
+
+	"github.com/radutopala/loop/internal/api"
+	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/daemon"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/discord"
+	"github.com/radutopala/loop/internal/embeddings"
 	"github.com/radutopala/loop/internal/local"
+	"github.com/radutopala/loop/internal/mcpserver"
 	"github.com/radutopala/loop/internal/orchestrator"
+	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/readme"
+	"github.com/radutopala/loop/internal/scheduler"
 	slackbot "github.com/radutopala/loop/internal/slack"
+	"github.com/radutopala/loop/internal/terminal"
 )
 
 func init() {
@@ -31,12 +42,13 @@ func init() {
 	version = resolveVersion(version)
 }
 
-// readBuildInfo is a shim for debug.ReadBuildInfo, overridable in tests.
-var readBuildInfo = debug.ReadBuildInfo
-
 // resolveVersion uses debug.ReadBuildInfo to replace "dev" with the actual
 // module version when installed via `go install`.
-var resolveVersion = func(v string) string {
+func resolveVersion(v string) string {
+	return doResolveVersion(v, debug.ReadBuildInfo)
+}
+
+func doResolveVersion(v string, readBuildInfo func() (*debug.BuildInfo, bool)) string {
 	if v != "dev" {
 		return v
 	}
@@ -52,30 +64,171 @@ var (
 	date    = "unknown"
 )
 
-var osExit = os.Exit
-
-func main() {
-	if err := newRootCmd().Execute(); err != nil {
-		osExit(1)
-	}
+// appSystem abstracts OS operations needed by the CLI app.
+type appSystem interface {
+	UserHomeDir() (string, error)
+	Stat(name string) (os.FileInfo, error)
+	MkdirAll(path string, perm os.FileMode) error
+	WriteFile(name string, data []byte, perm os.FileMode) error
+	Getwd() (string, error)
+	ReadFile(name string) ([]byte, error)
+	Remove(name string) error
+	Executable() (string, error)
+	EvalSymlinks(path string) (string, error)
+	Chmod(name string, mode os.FileMode) error
+	Rename(oldpath, newpath string) error
+	CreateTemp(dir, pattern string) (*os.File, error)
 }
 
-func newRootCmd() *cobra.Command {
+// app holds all injectable dependencies for the CLI, replacing package-level
+// var mocks with struct-field injection.
+type app struct {
+	sys         appSystem
+	templatesFS fs.ReadFileFS
+
+	// Build info (set from package-level ldflags vars)
+	version string
+	commit  string
+	date    string
+
+	// Config & DB
+	configLoad     func() (*config.Config, error)
+	newSQLiteStore func(string) (db.Store, error)
+
+	// Bots
+	discordgoNew  func(string) (*discordgo.Session, error)
+	newDiscordBot func(string, string, string, *slog.Logger) (orchestrator.Bot, error)
+	newSlackBot   func(string, string, *slog.Logger) (orchestrator.Bot, error)
+	newLocalBot   func(db.Store, *slog.Logger) orchestrator.Bot
+
+	// Daemon
+	daemonStart  func(daemon.System, string) error
+	daemonStop   func(daemon.System) error
+	daemonStatus func(daemon.System) (string, error)
+	newSystem    func() daemon.System
+
+	// Channel helpers
+	ensureChannelFn     func(string, string, string) (string, error)
+	ensureAllChannelsFn func(string, string) ([]ensureResult, error)
+
+	// Serve dependencies
+	newAPIServer           func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, api.ChannelLister, api.MessageSender, *slog.Logger) *api.Server
+	newMCPServer           func(string, string, string, mcpserver.HTTPClient, *slog.Logger, ...mcpserver.MemoryOption) *mcpserver.Server
+	newDockerClient        func() (container.DockerClient, error)
+	ensureImage            func(context.Context, container.DockerClient, *config.Config) error
+	newEmbedder            func(*config.Config) (embeddings.Embedder, error)
+	loadProjectMemoryPaths func(string) []string
+	newDockerExecClient    func() (terminal.ExecClient, error)
+	newHostExecClient      func() terminal.ExecClient
+	newBrowserManager      func(string, *slog.Logger) (api.BrowserManager, error)
+
+	// Update dependencies
+	httpGet            func(string) (*http.Response, error)
+	getLatestVersionFn func() (string, error)
+}
+
+func newApp() *app {
+	a := &app{
+		sys:         osutil.RealSystem{},
+		templatesFS: config.Templates,
+		version:     version,
+		commit:      commit,
+		date:        date,
+
+		// Config & DB
+		configLoad: config.Load,
+		newSQLiteStore: func(path string) (db.Store, error) {
+			return db.NewSQLiteStore(path)
+		},
+
+		// Bots
+		discordgoNew: discordgo.New,
+		newSlackBot: func(botToken, appToken string, logger *slog.Logger) (orchestrator.Bot, error) {
+			sapi := goslack.New(botToken, goslack.OptionAppLevelToken(appToken))
+			smClient := socketmode.New(sapi)
+			return slackbot.NewBot(sapi, slackbot.NewSocketModeAdapter(smClient), logger), nil
+		},
+		newLocalBot: func(store db.Store, logger *slog.Logger) orchestrator.Bot {
+			return local.NewBot(store, logger)
+		},
+
+		// Daemon
+		daemonStart:  daemon.Start,
+		daemonStop:   daemon.Stop,
+		daemonStatus: daemon.Status,
+		newSystem:    func() daemon.System { return daemon.RealSystem{} },
+
+		// Serve dependencies
+		newAPIServer: api.NewServer,
+		newMCPServer: mcpserver.New,
+		newDockerClient: func() (container.DockerClient, error) {
+			return container.NewClient()
+		},
+		newDockerExecClient: func() (terminal.ExecClient, error) {
+			return terminal.NewDockerExecClient()
+		},
+		newHostExecClient: func() terminal.ExecClient {
+			return terminal.NewHostExecClient()
+		},
+		newBrowserManager: func(chromeImage string, logger *slog.Logger) (api.BrowserManager, error) {
+			dockerClient, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
+			if err != nil {
+				return nil, err
+			}
+			return browser.NewManager(dockerClient, chromeImage, "1920,1080", logger), nil
+		},
+
+		// Update dependencies
+		httpGet: http.Get,
+	}
+	// Wire up functions that reference methods on a.
+	a.newDiscordBot = func(token, appID, guildID string, logger *slog.Logger) (orchestrator.Bot, error) {
+		session, err := a.discordgoNew("Bot " + token)
+		if err != nil {
+			return nil, err
+		}
+		session.Identify.Intents |= discordgo.IntentMessageContent
+		return discord.NewBot(session, appID, guildID, logger), nil
+	}
+	a.ensureChannelFn = a.ensureChannel
+	a.ensureAllChannelsFn = a.ensureAllChannels
+	a.ensureImage = a.defaultEnsureImage
+	a.newEmbedder = a.defaultNewEmbedder
+	a.loadProjectMemoryPaths = a.defaultLoadProjectMemoryPaths
+	a.getLatestVersionFn = func() (string, error) {
+		return getLatestVersion(fmt.Sprintf("https://github.com/%s/%s/releases/latest", repoOwner, repoName))
+	}
+	return a
+}
+
+func main() {
+	os.Exit(newApp().run())
+}
+
+func (a *app) run() int {
+	if err := a.newRootCmd().Execute(); err != nil {
+		return 1
+	}
+	return 0
+}
+
+func (a *app) newRootCmd() *cobra.Command {
 	root := &cobra.Command{
 		Use:   "loop",
 		Short: "Loop bot powered by Claude",
 	}
-	root.AddCommand(newServeCmd())
-	root.AddCommand(newMCPCmd())
-	root.AddCommand(newDaemonStartCmd())
-	root.AddCommand(newDaemonStopCmd())
-	root.AddCommand(newDaemonRestartCmd())
-	root.AddCommand(newDaemonStatusCmd())
-	root.AddCommand(newOnboardGlobalCmd())
-	root.AddCommand(newOnboardLocalCmd())
-	root.AddCommand(newVersionCmd())
-	root.AddCommand(newReadmeCmd())
-	root.AddCommand(newUpdateCmd())
+	root.AddCommand(a.newServeCmd())
+	root.AddCommand(a.newMCPCmd())
+	root.AddCommand(a.newDaemonStartCmd())
+	root.AddCommand(a.newDaemonStopCmd())
+	root.AddCommand(a.newDaemonRestartCmd())
+	root.AddCommand(a.newDaemonStatusCmd())
+	root.AddCommand(a.newOnboardGlobalCmd())
+	root.AddCommand(a.newOnboardLocalCmd())
+	root.AddCommand(a.newVersionCmd())
+	root.AddCommand(a.newReadmeCmd())
+	root.AddCommand(a.newUpdateCmd())
+	root.AddCommand(a.newMCPBrowserCmd())
 	root.SetHelpTemplate(helpTemplate)
 	return root
 }
@@ -109,24 +262,24 @@ Available Commands:
 Use "loop [command] --help" for more information about a command.
 `
 
-func newVersionCmd() *cobra.Command {
+func (a *app) newVersionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "version",
 		Aliases: []string{"v"},
 		Short:   "Print version information",
 		Run: func(_ *cobra.Command, _ []string) {
-			fmt.Printf("loop %s\n", version)
-			if commit != "none" {
-				fmt.Printf("  commit: %s\n", commit)
+			fmt.Printf("loop %s\n", a.version)
+			if a.commit != "none" {
+				fmt.Printf("  commit: %s\n", a.commit)
 			}
-			if date != "unknown" {
-				fmt.Printf("  built:  %s\n", date)
+			if a.date != "unknown" {
+				fmt.Printf("  built:  %s\n", a.date)
 			}
 		},
 	}
 }
 
-func newReadmeCmd() *cobra.Command {
+func (a *app) newReadmeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "readme",
 		Aliases: []string{"r"},
@@ -137,28 +290,13 @@ func newReadmeCmd() *cobra.Command {
 	}
 }
 
-// --- Shared testable vars ---
+type ensureResult struct {
+	Platform  string `json:"platform"`
+	ChannelID string `json:"channel_id"`
+	Created   bool   `json:"created"`
+}
 
-var (
-	userHomeDir               = os.UserHomeDir
-	osStat                    = os.Stat
-	osMkdirAll                = os.MkdirAll
-	osWriteFile               = os.WriteFile
-	osGetwd                   = os.Getwd
-	osReadFile                = os.ReadFile
-	templatesFS fs.ReadFileFS = config.Templates
-)
-
-var (
-	configLoad     = config.Load
-	newSQLiteStore = func(path string) (db.Store, error) {
-		return db.NewSQLiteStore(path)
-	}
-)
-
-var ensureChannelFunc = ensureChannel
-
-func ensureChannel(apiURL, dirPath, platform string) (string, error) {
+func (a *app) ensureChannel(apiURL, dirPath, platform string) (string, error) {
 	body := fmt.Sprintf(`{"dir_path":%q,"platform":%q}`, dirPath, platform)
 	resp, err := http.Post(apiURL+"/api/channels", "application/json", strings.NewReader(body))
 	if err != nil {
@@ -180,15 +318,7 @@ func ensureChannel(apiURL, dirPath, platform string) (string, error) {
 	return result.ChannelID, nil
 }
 
-type ensureResult struct {
-	Platform  string `json:"platform"`
-	ChannelID string `json:"channel_id"`
-	Created   bool   `json:"created"`
-}
-
-var ensureAllChannelsFunc = ensureAllChannels
-
-func ensureAllChannels(apiURL, dirPath string) ([]ensureResult, error) {
+func (a *app) ensureAllChannels(apiURL, dirPath string) ([]ensureResult, error) {
 	body := fmt.Sprintf(`{"dir_path":%q}`, dirPath)
 	resp, err := http.Post(apiURL+"/api/channels/ensure-all", "application/json", strings.NewReader(body))
 	if err != nil {
@@ -210,24 +340,17 @@ func ensureAllChannels(apiURL, dirPath string) ([]ensureResult, error) {
 
 // --- Daemon commands ---
 
-var (
-	daemonStart  = daemon.Start
-	daemonStop   = daemon.Stop
-	daemonStatus = daemon.Status
-	newSystem    = func() daemon.System { return daemon.RealSystem{} }
-)
-
-func newDaemonStartCmd() *cobra.Command {
+func (a *app) newDaemonStartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "daemon:start",
 		Aliases: []string{"d:start", "up"},
 		Short:   "Install and start the daemon",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			cfg, err := configLoad()
+			cfg, err := a.configLoad()
 			if err != nil {
 				return err
 			}
-			if err := daemonStart(newSystem(), cfg.LogFile); err != nil {
+			if err := a.daemonStart(a.newSystem(), cfg.LogFile); err != nil {
 				return err
 			}
 			fmt.Println("Daemon started.")
@@ -236,13 +359,13 @@ func newDaemonStartCmd() *cobra.Command {
 	}
 }
 
-func newDaemonStopCmd() *cobra.Command {
+func (a *app) newDaemonStopCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "daemon:stop",
 		Aliases: []string{"d:stop", "down"},
 		Short:   "Stop and uninstall the daemon",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			if err := daemonStop(newSystem()); err != nil {
+			if err := a.daemonStop(a.newSystem()); err != nil {
 				return err
 			}
 			fmt.Println("Daemon stopped.")
@@ -251,18 +374,18 @@ func newDaemonStopCmd() *cobra.Command {
 	}
 }
 
-func newDaemonRestartCmd() *cobra.Command {
+func (a *app) newDaemonRestartCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "daemon:restart",
 		Aliases: []string{"d:restart", "restart"},
 		Short:   "Restart the daemon",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			cfg, err := configLoad()
+			cfg, err := a.configLoad()
 			if err != nil {
 				return err
 			}
-			_ = daemonStop(newSystem()) // ignore error — may not be running
-			if err := daemonStart(newSystem(), cfg.LogFile); err != nil {
+			_ = a.daemonStop(a.newSystem()) // ignore error — may not be running
+			if err := a.daemonStart(a.newSystem(), cfg.LogFile); err != nil {
 				return err
 			}
 			fmt.Println("Daemon restarted.")
@@ -271,13 +394,13 @@ func newDaemonRestartCmd() *cobra.Command {
 	}
 }
 
-func newDaemonStatusCmd() *cobra.Command {
+func (a *app) newDaemonStatusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "daemon:status",
 		Aliases: []string{"d:status"},
 		Short:   "Show daemon status",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			status, err := daemonStatus(newSystem())
+			status, err := a.daemonStatus(a.newSystem())
 			if err != nil {
 				return err
 			}
@@ -286,27 +409,3 @@ func newDaemonStatusCmd() *cobra.Command {
 		},
 	}
 }
-
-// --- Bot constructors (kept in main.go to isolate discordgo/slack-go imports) ---
-
-// discordgoNew is a shim for discordgo.New, overridable in tests.
-var discordgoNew = discordgo.New
-
-var (
-	newDiscordBot = func(token, appID, guildID string, logger *slog.Logger) (orchestrator.Bot, error) {
-		session, err := discordgoNew("Bot " + token)
-		if err != nil {
-			return nil, err
-		}
-		session.Identify.Intents |= discordgo.IntentMessageContent
-		return discord.NewBot(session, appID, guildID, logger), nil
-	}
-	newSlackBot = func(botToken, appToken string, logger *slog.Logger) (orchestrator.Bot, error) {
-		api := goslack.New(botToken, goslack.OptionAppLevelToken(appToken))
-		smClient := socketmode.New(api)
-		return slackbot.NewBot(api, slackbot.NewSocketModeAdapter(smClient), logger), nil
-	}
-	newLocalBot = func(store db.Store, logger *slog.Logger) orchestrator.Bot {
-		return local.NewBot(store, logger)
-	}
-)

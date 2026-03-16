@@ -1817,6 +1817,36 @@ func (s *TerminalHandlerSuite) TestKillRemovesContainer() {
 	stopper.AssertCalled(s.T(), "ContainerRemove", mock.Anything, "ctr-kill")
 }
 
+func (s *TerminalHandlerSuite) TestKillAlsoStopsBrowser() {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-kill-br").
+		Return(&db.Channel{ChannelID: "ch-kill-br", DirPath: "/projects/app"}, nil)
+	s.srv.store = store
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-kill-br", "/projects/app").Return("ctr-kill", nil)
+	s.srv.SetContainerFinder(finder)
+
+	stopper := new(MockContainerStopper)
+	stopper.On("ContainerRemove", mock.Anything, "ctr-kill").Return(nil)
+	s.srv.SetContainerStopper(stopper)
+
+	browserMgr := new(MockBrowserManager)
+	browserMgr.On("StopBrowser", mock.Anything, "ch-kill-br").Return(nil)
+	s.srv.SetBrowserManager(browserMgr)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "kill", ChannelID: "ch-kill-br"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "stopped", msg.Type)
+
+	browserMgr.AssertCalled(s.T(), "StopBrowser", mock.Anything, "ch-kill-br")
+}
+
 func (s *TerminalHandlerSuite) TestKillNoContainerFound() {
 	finder := new(MockContainerFinder)
 	finder.On("FindContainerByChannel", mock.Anything, "ch-gone", "").
@@ -2080,4 +2110,14 @@ func (s *TerminalHandlerSuite) TestKillContainerRemoveError() {
 	require.Equal(s.T(), "stopped", msg.Type)
 
 	stopper.AssertCalled(s.T(), "ContainerRemove", mock.Anything, "ctr-rm")
+}
+
+func (s *TerminalHandlerSuite) TestWriteMessageError() {
+	// Deterministic test: inject a connWriteMessage that always returns an error.
+	t := &terminalWSConn{
+		connWriteMessage: func(int, []byte) error { return errors.New("write error") },
+		logger:           s.srv.logger,
+		stopCh:           make(chan struct{}),
+	}
+	t.writeMessage(websocket.TextMessage, []byte("test"))
 }

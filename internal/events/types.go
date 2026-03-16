@@ -42,7 +42,7 @@ type ToolUseEventData struct {
 }
 
 // AgentActivityEventData is the payload for agent.activity events.
-// Activity can be "model" (model detected), "subagent_started", "subagent_progress".
+// Activity can be "model", "subagent_started", "subagent_progress", "compacting".
 type AgentActivityEventData struct {
 	Activity    string `json:"activity"`
 	Model       string `json:"model,omitempty"`

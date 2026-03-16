@@ -48,7 +48,14 @@ export function useXTerminal({
   const xtermRef = useRef<import("@xterm/xterm").Terminal | null>(null);
 
   const write = useCallback((data: Uint8Array | string) => {
-    xtermRef.current?.write(data);
+    const term = xtermRef.current;
+    if (!term) return;
+    term.write(data, () => {
+      // Always scroll to bottom after write. Claude CLI uses cursor
+      // positioning for its status line which can leave the viewport
+      // scrolled up.
+      term.scrollToBottom();
+    });
   }, []);
 
   const clear = useCallback(() => {

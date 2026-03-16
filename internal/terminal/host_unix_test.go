@@ -4,6 +4,7 @@ package terminal
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -20,12 +21,7 @@ import (
 
 type HostSuite struct {
 	suite.Suite
-	origDefaultShell     func() string
-	origDefaultShellArgs func() []string
-	origPtyStart         func(cmd *exec.Cmd) (*os.File, error)
-	origPtySetsize       func(f *os.File, sz *pty.Winsize) error
-	origLookPath         func(file string) (string, error)
-	origCleanupTimeout   time.Duration
+	client *HostExecClient
 }
 
 func TestHostSuite(t *testing.T) {
@@ -33,61 +29,42 @@ func TestHostSuite(t *testing.T) {
 }
 
 func (s *HostSuite) SetupTest() {
-	s.origDefaultShell = defaultShell
-	s.origDefaultShellArgs = defaultShellArgs
-	s.origPtyStart = ptyStart
-	s.origPtySetsize = ptySetsize
-	s.origLookPath = lookPath
-	s.origCleanupTimeout = processCleanupTimeout
-}
-
-func (s *HostSuite) TearDownTest() {
-	defaultShell = s.origDefaultShell
-	defaultShellArgs = s.origDefaultShellArgs
-	ptyStart = s.origPtyStart
-	ptySetsize = s.origPtySetsize
-	lookPath = s.origLookPath
-	processCleanupTimeout = s.origCleanupTimeout
+	s.client = NewHostExecClient()
 }
 
 func (s *HostSuite) TestNewHostExecClient() {
-	c := NewHostExecClient()
-	require.NotNil(s.T(), c)
-	require.Empty(s.T(), c.execs)
+	require.NotNil(s.T(), s.client)
+	require.Empty(s.T(), s.client.execs)
 }
 
 func (s *HostSuite) TestExecCreate() {
-	c := NewHostExecClient()
-
-	id, err := c.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo", "hello"}, true)
+	id, err := s.client.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo", "hello"}, true)
 	require.NoError(s.T(), err)
 	require.NotEmpty(s.T(), id)
 
-	c.mu.Lock()
-	he, ok := c.execs[id]
-	c.mu.Unlock()
+	s.client.mu.Lock()
+	he, ok := s.client.execs[id]
+	s.client.mu.Unlock()
 	require.True(s.T(), ok)
 	require.Equal(s.T(), "/tmp", he.cmd.Dir)
 	require.Equal(s.T(), []string{"/bin/echo", "hello"}, he.cmd.Args)
 }
 
 func (s *HostSuite) TestExecCreateDefaultShell() {
-	defaultShell = func() string { return "/bin/test-shell" }
-	lookPath = func(file string) (string, error) { return file, nil }
+	s.client.defaultShell = func() string { return "/bin/test-shell" }
+	s.client.lookPath = func(file string) (string, error) { return file, nil }
 
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), "/tmp", nil, true)
+	id, err := s.client.ExecCreate(context.Background(), "/tmp", nil, true)
 	require.NoError(s.T(), err)
 
-	c.mu.Lock()
-	he := c.execs[id]
-	c.mu.Unlock()
+	s.client.mu.Lock()
+	he := s.client.execs[id]
+	s.client.mu.Unlock()
 	require.Equal(s.T(), []string{"/bin/test-shell", "-l"}, he.cmd.Args)
 }
 
 func (s *HostSuite) TestExecCreateCommandNotFound() {
-	c := NewHostExecClient()
-	_, err := c.ExecCreate(context.Background(), "/tmp", []string{"nonexistent-binary-xyz"}, true)
+	_, err := s.client.ExecCreate(context.Background(), "/tmp", []string{"nonexistent-binary-xyz"}, true)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "command not found")
 }
@@ -97,17 +74,16 @@ func (s *HostSuite) TestExecAttach() {
 	r, w, err := os.Pipe()
 	require.NoError(s.T(), err)
 
-	ptyStart = func(cmd *exec.Cmd) (*os.File, error) {
+	s.client.ptyStart = func(cmd *exec.Cmd) (*os.File, error) {
 		// Simulate process start by setting Process.
 		cmd.Process = &os.Process{Pid: os.Getpid()}
 		return w, nil
 	}
 
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
+	id, err := s.client.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
 	require.NoError(s.T(), err)
 
-	rwc, err := c.ExecAttach(context.Background(), id)
+	rwc, err := s.client.ExecAttach(context.Background(), id)
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), rwc)
 
@@ -124,24 +100,21 @@ func (s *HostSuite) TestExecAttach() {
 }
 
 func (s *HostSuite) TestExecAttachNotFound() {
-	c := NewHostExecClient()
-
-	rwc, err := c.ExecAttach(context.Background(), "nonexistent")
+	rwc, err := s.client.ExecAttach(context.Background(), "nonexistent")
 	require.Error(s.T(), err)
 	require.Nil(s.T(), rwc)
 	require.Contains(s.T(), err.Error(), "exec nonexistent not found")
 }
 
 func (s *HostSuite) TestExecAttachStartError() {
-	ptyStart = func(_ *exec.Cmd) (*os.File, error) {
+	s.client.ptyStart = func(_ *exec.Cmd) (*os.File, error) {
 		return nil, errors.New("pty start failed")
 	}
 
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
+	id, err := s.client.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
 	require.NoError(s.T(), err)
 
-	rwc, err := c.ExecAttach(context.Background(), id)
+	rwc, err := s.client.ExecAttach(context.Background(), id)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), rwc)
 	require.Contains(s.T(), err.Error(), "starting pty")
@@ -149,21 +122,20 @@ func (s *HostSuite) TestExecAttachStartError() {
 
 func (s *HostSuite) TestExecResize() {
 	var receivedSize *pty.Winsize
-	ptySetsize = func(_ *os.File, sz *pty.Winsize) error {
+	s.client.ptySetsize = func(_ *os.File, sz *pty.Winsize) error {
 		receivedSize = sz
 		return nil
 	}
 
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
+	id, err := s.client.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
 	require.NoError(s.T(), err)
 
 	// Set pty to simulate attachment.
-	c.mu.Lock()
-	c.execs[id].pty = os.Stdout // any file will do
-	c.mu.Unlock()
+	s.client.mu.Lock()
+	s.client.execs[id].pty = os.Stdout // any file will do
+	s.client.mu.Unlock()
 
-	err = c.ExecResize(context.Background(), id, 24, 80)
+	err = s.client.ExecResize(context.Background(), id, 24, 80)
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), receivedSize)
 	require.Equal(s.T(), uint16(24), receivedSize.Rows)
@@ -171,36 +143,33 @@ func (s *HostSuite) TestExecResize() {
 }
 
 func (s *HostSuite) TestExecResizeNotFound() {
-	c := NewHostExecClient()
-	err := c.ExecResize(context.Background(), "nonexistent", 24, 80)
+	err := s.client.ExecResize(context.Background(), "nonexistent", 24, 80)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "exec nonexistent not found")
 }
 
 func (s *HostSuite) TestExecResizeNotAttached() {
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
+	id, err := s.client.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
 	require.NoError(s.T(), err)
 
-	err = c.ExecResize(context.Background(), id, 24, 80)
+	err = s.client.ExecResize(context.Background(), id, 24, 80)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "not attached")
 }
 
 func (s *HostSuite) TestExecResizeError() {
-	ptySetsize = func(_ *os.File, _ *pty.Winsize) error {
+	s.client.ptySetsize = func(_ *os.File, _ *pty.Winsize) error {
 		return errors.New("setsize failed")
 	}
 
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
+	id, err := s.client.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
 	require.NoError(s.T(), err)
 
-	c.mu.Lock()
-	c.execs[id].pty = os.Stdout
-	c.mu.Unlock()
+	s.client.mu.Lock()
+	s.client.execs[id].pty = os.Stdout
+	s.client.mu.Unlock()
 
-	err = c.ExecResize(context.Background(), id, 24, 80)
+	err = s.client.ExecResize(context.Background(), id, 24, 80)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "setsize failed")
 }
@@ -297,47 +266,62 @@ func (s *HostSuite) TestHostPTYConnCloseNilProcess() {
 }
 
 func (s *HostSuite) TestDefaultShellEnv() {
-	// Exercise the original defaultShell function.
-	shell := s.origDefaultShell()
+	// Exercise the default defaultShell function.
+	shell := s.client.defaultShell()
 	require.NotEmpty(s.T(), shell)
 }
 
-func (s *HostSuite) TestDefaultShellFallback() {
+func (s *HostSuite) TestDefaultShellFallbackZsh() {
 	orig := os.Getenv("SHELL")
 	os.Setenv("SHELL", "")
 	defer os.Setenv("SHELL", orig)
 
-	shell := s.origDefaultShell()
-	require.NotEmpty(s.T(), shell)
-	// Should be /bin/zsh or /bin/sh depending on what's available.
-	require.Contains(s.T(), []string{"/bin/zsh", "/bin/sh"}, shell)
+	// Mock lookPath to find zsh.
+	s.client.lookPath = func(file string) (string, error) { return file, nil }
+	// Re-apply platformDefaults to get a fresh closure that uses the mocked lookPath.
+	platformDefaults(s.client)
+
+	shell := s.client.defaultShell()
+	require.Equal(s.T(), "/bin/zsh", shell)
+}
+
+func (s *HostSuite) TestDefaultShellFallbackSh() {
+	orig := os.Getenv("SHELL")
+	os.Setenv("SHELL", "")
+	defer os.Setenv("SHELL", orig)
+
+	// Mock lookPath to NOT find zsh.
+	s.client.lookPath = func(file string) (string, error) { return "", errors.New("not found") }
+	// Re-apply platformDefaults to get a fresh closure that uses the mocked lookPath.
+	platformDefaults(s.client)
+
+	shell := s.client.defaultShell()
+	require.Equal(s.T(), "/bin/sh", shell)
 }
 
 func (s *HostSuite) TestDefaultShellArgs() {
-	args := s.origDefaultShellArgs()
+	args := s.client.defaultShellArgs()
 	require.Equal(s.T(), []string{"-l"}, args)
 }
 
 func (s *HostSuite) TestExecCreateEmptyCmd() {
-	defaultShell = func() string { return "/bin/sh" }
+	s.client.defaultShell = func() string { return "/bin/sh" }
 
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), "/tmp", []string{}, true)
+	id, err := s.client.ExecCreate(context.Background(), "/tmp", []string{}, true)
 	require.NoError(s.T(), err)
 
-	c.mu.Lock()
-	he := c.execs[id]
-	c.mu.Unlock()
+	s.client.mu.Lock()
+	he := s.client.execs[id]
+	s.client.mu.Unlock()
 	require.Equal(s.T(), []string{"/bin/sh", "-l"}, he.cmd.Args)
 }
 
 func (s *HostSuite) TestIntegrationCreateAttachResize() {
 	// Integration test: create, attach, resize a real process.
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), os.TempDir(), []string{"/bin/sh"}, true)
+	id, err := s.client.ExecCreate(context.Background(), os.TempDir(), []string{"/bin/sh"}, true)
 	require.NoError(s.T(), err)
 
-	rwc, err := c.ExecAttach(context.Background(), id)
+	rwc, err := s.client.ExecAttach(context.Background(), id)
 	require.NoError(s.T(), err)
 
 	// Write a command.
@@ -362,44 +346,42 @@ func (s *HostSuite) TestIntegrationCreateAttachResize() {
 	}
 
 	// Resize should succeed.
-	err = c.ExecResize(context.Background(), id, 30, 100)
+	err = s.client.ExecResize(context.Background(), id, 30, 100)
 	require.NoError(s.T(), err)
 
 	require.NoError(s.T(), rwc.Close())
 }
 
 func (s *HostSuite) TestPtyOriginalFunctions() {
-	// Exercise the original ptySetsize function to cover its default body.
+	// Exercise the default ptySetsize function to cover its default body.
 	// We can't call it on a real PTY easily, but we can verify it's callable.
-	err := s.origPtySetsize(nil, &pty.Winsize{Rows: 24, Cols: 80})
+	err := s.client.ptySetsize(nil, &pty.Winsize{Rows: 24, Cols: 80})
 	// Will fail because nil file, but we're just covering the function wrapper.
 	require.Error(s.T(), err)
 }
 
 func (s *HostSuite) TestProcessCleanupTimeout() {
 	// Verify the default is reasonable.
-	require.Equal(s.T(), 3*time.Second, s.origCleanupTimeout)
+	require.Equal(s.T(), 3*time.Second, s.client.processCleanupTimeout)
 }
 
 func (s *HostSuite) TestExecCreateSetsEnv() {
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
+	id, err := s.client.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
 	require.NoError(s.T(), err)
 
-	c.mu.Lock()
-	he := c.execs[id]
-	c.mu.Unlock()
+	s.client.mu.Lock()
+	he := s.client.execs[id]
+	s.client.mu.Unlock()
 	require.NotEmpty(s.T(), he.cmd.Env)
 }
 
 func (s *HostSuite) TestExecCreateSetsSetsid() {
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
+	id, err := s.client.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
 	require.NoError(s.T(), err)
 
-	c.mu.Lock()
-	he := c.execs[id]
-	c.mu.Unlock()
+	s.client.mu.Lock()
+	he := s.client.execs[id]
+	s.client.mu.Unlock()
 	require.True(s.T(), he.cmd.SysProcAttr.Setsid)
 }
 
@@ -408,22 +390,21 @@ func (s *HostSuite) TestExecAttachSetsPTY() {
 	require.NoError(s.T(), err)
 	defer r.Close()
 
-	ptyStart = func(cmd *exec.Cmd) (*os.File, error) {
+	s.client.ptyStart = func(cmd *exec.Cmd) (*os.File, error) {
 		cmd.Process = &os.Process{Pid: os.Getpid()}
 		return w, nil
 	}
 
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
+	id, err := s.client.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
 	require.NoError(s.T(), err)
 
-	_, err = c.ExecAttach(context.Background(), id)
+	_, err = s.client.ExecAttach(context.Background(), id)
 	require.NoError(s.T(), err)
 
 	// Verify the pty field was set.
-	c.mu.Lock()
-	he := c.execs[id]
-	c.mu.Unlock()
+	s.client.mu.Lock()
+	he := s.client.execs[id]
+	s.client.mu.Unlock()
 	require.NotNil(s.T(), he.pty)
 	require.Equal(s.T(), w, he.pty)
 }
@@ -431,7 +412,6 @@ func (s *HostSuite) TestExecAttachSetsPTY() {
 func (s *HostSuite) TestHostPTYConnCloseTimeout() {
 	// Test the SIGKILL path when the process ignores SIGHUP and doesn't exit
 	// within processCleanupTimeout.
-	processCleanupTimeout = 100 * time.Millisecond
 
 	// Start a process that traps SIGHUP for both the shell and its children.
 	// Use exec to replace the shell with a process that blocks on read,
@@ -445,8 +425,9 @@ func (s *HostSuite) TestHostPTYConnCloseTimeout() {
 	time.Sleep(50 * time.Millisecond)
 
 	conn := &hostPTYConn{
-		pty: ptmx,
-		cmd: cmd,
+		pty:            ptmx,
+		cmd:            cmd,
+		cleanupTimeout: 100 * time.Millisecond,
 	}
 
 	err = conn.Close()
@@ -461,7 +442,7 @@ func (s *HostSuite) TestGenerateIDUnique() {
 	// Verify generateID produces unique IDs.
 	ids := make(map[string]struct{})
 	for range 100 {
-		id := generateID()
+		id := generateID(rand.Read)
 		require.NotContains(s.T(), ids, id, fmt.Sprintf("duplicate ID: %s", id))
 		ids[id] = struct{}{}
 	}

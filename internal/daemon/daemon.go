@@ -16,6 +16,9 @@ type System interface {
 	RemoveFile(name string) error
 	RunCommand(name string, args ...string) ([]byte, error)
 	Stat(name string) (os.FileInfo, error)
+	GetUID() int
+	EvalSymlinks(path string) (string, error)
+	Getenv(key string) string
 }
 
 // RealSystem implements System with real OS calls.
@@ -31,16 +34,10 @@ func (RealSystem) RemoveFile(name string) error { return os.Remove(name) }
 func (RealSystem) RunCommand(name string, args ...string) ([]byte, error) {
 	return exec.Command(name, args...).CombinedOutput()
 }
-func (RealSystem) Stat(name string) (os.FileInfo, error) { return os.Stat(name) }
-
-// getUID is a package-level variable to allow overriding in tests.
-var getUID = os.Getuid
-
-// evalSymlinks is a package-level variable to allow overriding in tests.
-var evalSymlinks = filepath.EvalSymlinks
-
-// osGetenv is a package-level variable to allow overriding in tests.
-var osGetenv = os.Getenv
+func (RealSystem) Stat(name string) (os.FileInfo, error)    { return os.Stat(name) }
+func (RealSystem) GetUID() int                              { return os.Getuid() }
+func (RealSystem) EvalSymlinks(path string) (string, error) { return filepath.EvalSymlinks(path) }
+func (RealSystem) Getenv(key string) string                 { return os.Getenv(key) }
 
 // proxyKeys lists the environment variable names forwarded to the service unit.
 var proxyKeys = []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"}

@@ -30,50 +30,73 @@ import (
 	"github.com/radutopala/loop/internal/types"
 )
 
-func newServeCmd() *cobra.Command {
+func (a *app) newServeCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "serve",
 		Aliases: []string{"s"},
 		Short:   "Start the bot",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return serve()
+			return a.serve()
 		},
 	}
 }
 
-var ensureImage = func(ctx context.Context, client container.DockerClient, cfg *config.Config) error {
+func (a *app) defaultEnsureImage(ctx context.Context, client container.DockerClient, cfg *config.Config) error {
 	containerDir := filepath.Join(cfg.LoopDir, "container")
 
-	// Write embedded files if they don't exist (first-run fallback)
 	dockerfilePath := filepath.Join(containerDir, "Dockerfile")
-	if _, err := osStat(dockerfilePath); os.IsNotExist(err) {
-		if err := osMkdirAll(containerDir, 0755); err != nil {
+	if _, err := a.sys.Stat(dockerfilePath); os.IsNotExist(err) {
+		if err := a.sys.MkdirAll(containerDir, 0755); err != nil {
 			return fmt.Errorf("creating container directory: %w", err)
 		}
-		if err := osWriteFile(dockerfilePath, containerimage.Dockerfile, 0644); err != nil {
+		if err := a.sys.WriteFile(dockerfilePath, containerimage.Dockerfile, 0644); err != nil {
 			return fmt.Errorf("writing Dockerfile: %w", err)
 		}
-		if err := osWriteFile(filepath.Join(containerDir, "entrypoint.sh"), containerimage.Entrypoint, 0644); err != nil {
+		if err := a.sys.WriteFile(filepath.Join(containerDir, "entrypoint.sh"), containerimage.Entrypoint, 0644); err != nil {
 			return fmt.Errorf("writing entrypoint: %w", err)
 		}
-		if err := osWriteFile(filepath.Join(containerDir, "setup.sh"), containerimage.Setup, 0644); err != nil {
+		if err := a.sys.WriteFile(filepath.Join(containerDir, "setup.sh"), containerimage.Setup, 0644); err != nil {
 			return fmt.Errorf("writing setup script: %w", err)
 		}
 	}
 
-	// Skip build if image already exists
+	// Ensure chrome.Dockerfile and chrome-entrypoint.sh exist
+	chromeDockerfilePath := filepath.Join(containerDir, "chrome.Dockerfile")
+	if _, err := a.sys.Stat(chromeDockerfilePath); os.IsNotExist(err) {
+		if err := a.sys.WriteFile(chromeDockerfilePath, containerimage.ChromeDockerfile, 0644); err != nil {
+			return fmt.Errorf("writing chrome Dockerfile: %w", err)
+		}
+		if err := a.sys.WriteFile(filepath.Join(containerDir, "chrome-entrypoint.sh"), containerimage.ChromeEntrypoint, 0644); err != nil {
+			return fmt.Errorf("writing chrome entrypoint: %w", err)
+		}
+	}
+
+	// Build agent image if missing
 	ids, err := client.ImageList(ctx, cfg.ContainerImage)
 	if err != nil {
 		return fmt.Errorf("listing images: %w", err)
 	}
-	if len(ids) > 0 {
-		return nil
+	if len(ids) == 0 {
+		if err := client.ImageBuild(ctx, containerDir, cfg.ContainerImage); err != nil {
+			return err
+		}
 	}
 
-	return client.ImageBuild(ctx, containerDir, cfg.ContainerImage)
+	// Build chrome image if missing
+	chromeIDs, err := client.ImageList(ctx, cfg.ChromeImage)
+	if err != nil {
+		return fmt.Errorf("listing chrome images: %w", err)
+	}
+	if len(chromeIDs) == 0 {
+		if err := client.ImageBuildFile(ctx, containerDir, "chrome.Dockerfile", cfg.ChromeImage); err != nil {
+			return err
+		}
+	}
+
+	return nil
 }
 
-var newEmbedder = func(cfg *config.Config) (embeddings.Embedder, error) {
+func (a *app) defaultNewEmbedder(cfg *config.Config) (embeddings.Embedder, error) {
 	switch cfg.Memory.Embeddings.Provider {
 	case "ollama":
 		opts := []embeddings.OllamaOption{
@@ -89,44 +112,24 @@ var newEmbedder = func(cfg *config.Config) (embeddings.Embedder, error) {
 	}
 }
 
-var newDockerClient = func() (container.DockerClient, error) {
-	return container.NewClient()
-}
-
-var newDockerExecClient = func() (terminal.ExecClient, error) {
-	return terminal.NewDockerExecClient()
-}
-
-var newHostExecClient = func() terminal.ExecClient {
-	return terminal.NewHostExecClient()
-}
-
-var newAPIServer = api.NewServer
-
-// memIndexer is the subset of *memory.Indexer used by multiDirIndexer.
 type memIndexer interface {
 	Index(ctx context.Context, memoryPath, dirPath string, excludePaths []string) (int, error)
 	Search(ctx context.Context, dirPath, query string, topK int) ([]memory.SearchResult, error)
 }
 
-// memoryPathEntry holds a resolved memory path with its scope.
-// global == true means the config path was absolute (dir_path = "").
 type memoryPathEntry struct {
 	path   string
 	global bool
 }
 
-// multiDirIndexer wraps memory.Indexer to search across multiple memory paths
-// resolved from a project dir_path: Claude auto-memory dir, project-level memory/ dir,
-// global memory_paths from config, and project-level memory_paths.
 type multiDirIndexer struct {
 	indexer           memIndexer
 	logger            *slog.Logger
 	globalMemoryPaths []string
+	app               *app
 }
 
 func (m *multiDirIndexer) Search(ctx context.Context, dirPath, query string, topK int) ([]memory.SearchResult, error) {
-	// Index all paths for freshness first.
 	entries, excludePaths := m.resolveMemoryPaths(dirPath)
 	for _, e := range entries {
 		scope := dirPath
@@ -158,12 +161,10 @@ func (m *multiDirIndexer) Index(ctx context.Context, dirPath string) (int, error
 	return total, nil
 }
 
-// channelLister is the subset of db.Store needed for startup re-indexing.
 type channelLister interface {
 	ListChannels(ctx context.Context) ([]*db.Channel, error)
 }
 
-// defaultReindexInterval is the default periodic re-index interval (5 minutes).
 const defaultReindexInterval = 5 * time.Minute
 
 func (m *multiDirIndexer) reindexAll(ctx context.Context, store channelLister) {
@@ -186,8 +187,6 @@ func (m *multiDirIndexer) reindexAll(ctx context.Context, store channelLister) {
 	}
 }
 
-// reindexLoop runs reindexAll at startup then periodically at the configured interval.
-// intervalSec <= 0 uses the default (5 minutes). Blocks until ctx is cancelled.
 func (m *multiDirIndexer) reindexLoop(ctx context.Context, store channelLister, intervalSec int) {
 	m.reindexAll(ctx, store)
 	m.logger.Info("startup re-index complete")
@@ -213,7 +212,6 @@ func (m *multiDirIndexer) resolveMemoryPaths(dirPath string) ([]memoryPathEntry,
 	var entries []memoryPathEntry
 	var excludePaths []string
 
-	// Helper: classify a path as inclusion or exclusion.
 	addPath := func(p string, global bool) {
 		if strings.HasPrefix(p, "!") {
 			resolved := resolveRelativePath(dirPath, p[1:])
@@ -226,20 +224,16 @@ func (m *multiDirIndexer) resolveMemoryPaths(dirPath string) ([]memoryPathEntry,
 		})
 	}
 
-	// 1. Claude auto-memory dir (~/.claude/projects/-encoded-path/memory/).
-	if memDir, err := memoryDir(dirPath); err == nil {
+	if memDir, err := m.app.memoryDir(dirPath); err == nil {
 		entries = append(entries, memoryPathEntry{path: memDir, global: false})
 	}
-	// 2. Global memory paths (from config).
 	for _, p := range m.globalMemoryPaths {
 		addPath(p, filepath.IsAbs(strings.TrimPrefix(p, "!")))
 	}
-	// 3. Project memory paths (from project config).
-	for _, p := range loadProjectMemoryPaths(dirPath) {
+	for _, p := range m.app.loadProjectMemoryPaths(dirPath) {
 		addPath(p, filepath.IsAbs(strings.TrimPrefix(p, "!")))
 	}
 
-	// Deduplicate by path.
 	seen := make(map[string]struct{}, len(entries))
 	deduped := entries[:0]
 	for _, e := range entries {
@@ -251,7 +245,6 @@ func (m *multiDirIndexer) resolveMemoryPaths(dirPath string) ([]memoryPathEntry,
 	return deduped, excludePaths
 }
 
-// resolveRelativePath resolves a path relative to dirPath if it's not absolute.
 func resolveRelativePath(dirPath, p string) string {
 	if filepath.IsAbs(p) {
 		return p
@@ -259,10 +252,8 @@ func resolveRelativePath(dirPath, p string) string {
 	return filepath.Join(dirPath, p)
 }
 
-var loadProjectMemoryPaths = defaultLoadProjectMemoryPaths
-
-func defaultLoadProjectMemoryPaths(dirPath string) []string {
-	data, err := osReadFile(filepath.Join(dirPath, ".loop", "config.json"))
+func (a *app) defaultLoadProjectMemoryPaths(dirPath string) []string {
+	data, err := a.sys.ReadFile(filepath.Join(dirPath, ".loop", "config.json"))
 	if err != nil {
 		return nil
 	}
@@ -282,10 +273,8 @@ func defaultLoadProjectMemoryPaths(dirPath string) []string {
 	return nil
 }
 
-// memoryDir returns the Claude Code auto memory directory for a project path.
-// Claude encodes project paths by replacing "/" with "-".
-func memoryDir(dirPath string) (string, error) {
-	home, err := userHomeDir()
+func (a *app) memoryDir(dirPath string) (string, error) {
+	home, err := a.sys.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("getting home directory: %w", err)
 	}
@@ -293,8 +282,8 @@ func memoryDir(dirPath string) (string, error) {
 	return filepath.Join(home, ".claude", "projects", encoded, "memory"), nil
 }
 
-func serve() error {
-	cfg, err := configLoad()
+func (a *app) serve() error {
+	cfg, err := a.configLoad()
 	if err != nil {
 		return err
 	}
@@ -302,13 +291,13 @@ func serve() error {
 	logger := logging.NewLogger(cfg.LogLevel, cfg.LogFormat)
 	logger.Info("starting loop", "db_path", cfg.DBPath)
 
-	store, err := newSQLiteStore(cfg.DBPath)
+	store, err := a.newSQLiteStore(cfg.DBPath)
 	if err != nil {
 		return fmt.Errorf("opening database: %w", err)
 	}
 	defer store.Close()
 
-	localBot := newLocalBot(store, logger)
+	localBot := a.newLocalBot(store, logger)
 
 	bots := make(map[types.Platform]orchestrator.Bot)
 	for _, p := range cfg.Platforms {
@@ -316,13 +305,13 @@ func serve() error {
 		case types.PlatformLocal:
 			bots[p] = localBot
 		case types.PlatformSlack:
-			slackBot, slackErr := newSlackBot(cfg.SlackBotToken, cfg.SlackAppToken, logger)
+			slackBot, slackErr := a.newSlackBot(cfg.SlackBotToken, cfg.SlackAppToken, logger)
 			if slackErr != nil {
 				return fmt.Errorf("creating slack bot: %w", slackErr)
 			}
 			bots[p] = slackBot
 		case types.PlatformDiscord:
-			discordBot, discordErr := newDiscordBot(cfg.DiscordToken, cfg.DiscordAppID, cfg.DiscordGuildID, logger)
+			discordBot, discordErr := a.newDiscordBot(cfg.DiscordToken, cfg.DiscordAppID, cfg.DiscordGuildID, logger)
 			if discordErr != nil {
 				return fmt.Errorf("creating discord bot: %w", discordErr)
 			}
@@ -332,7 +321,7 @@ func serve() error {
 
 	chatBot := orchestrator.NewBotRouter(bots, store, logger)
 
-	dockerClient, err := newDockerClient()
+	dockerClient, err := a.newDockerClient()
 	if err != nil {
 		return fmt.Errorf("creating docker client: %w", err)
 	}
@@ -344,7 +333,7 @@ func serve() error {
 	defer cancel()
 
 	logger.Info("ensuring agent image", "image", cfg.ContainerImage)
-	if err := ensureImage(ctx, dockerClient, cfg); err != nil {
+	if err := a.ensureImage(ctx, dockerClient, cfg); err != nil {
 		return fmt.Errorf("ensuring agent image: %w", err)
 	}
 
@@ -353,7 +342,6 @@ func serve() error {
 	executor := orchestrator.NewTaskExecutor(runner, chatBot, store, logger, cfg.ContainerTimeout, cfg.StreamingEnabled)
 	sched := scheduler.NewTaskScheduler(store, executor, cfg.PollInterval, logger)
 
-	// Channel service: build creators map from bots for platform-aware routing.
 	channelCreators := make(map[types.Platform]api.ChannelCreator, len(bots))
 	for p, b := range bots {
 		if cc, ok := b.(api.ChannelCreator); ok {
@@ -361,15 +349,13 @@ func serve() error {
 		}
 	}
 	channelSvc := api.NewChannelService(store, channelCreators)
-	// Thread service: BotRouter routes to correct platform bot.
 	threadSvc := api.NewThreadService(store, chatBot, logger)
 
-	apiSrv := newAPIServer(sched, channelSvc, threadSvc, store, chatBot, logger)
+	apiSrv := a.newAPIServer(sched, channelSvc, threadSvc, store, chatBot, logger)
 	apiSrv.SetLoopDir(cfg.LoopDir)
 	apiSrv.SetRunningChannelLister(dockerClient)
 
-	// Configure terminal manager for WebSocket terminal sessions.
-	execClient, err := newDockerExecClient()
+	execClient, err := a.newDockerExecClient()
 	if err != nil {
 		logger.Warn("terminal manager unavailable", "error", err)
 	} else {
@@ -380,25 +366,32 @@ func serve() error {
 		apiSrv.SetInteractiveCmdBuilder(container.NewClaudeCmdBuilder(cfg))
 	}
 
-	// Configure host terminal manager (no Docker needed).
-	hostExecClient := newHostExecClient()
+	hostExecClient := a.newHostExecClient()
 	hostTermMgr := terminal.NewManager(hostExecClient, logger)
 	apiSrv.SetHostTerminalManager(terminal.NewManagerAdapter(hostTermMgr))
 
-	// Configure embeddings and memory indexer at the daemon level.
+	if cfg.BrowserEnabled {
+		browserMgr, browserErr := a.newBrowserManager(cfg.ChromeImage, logger)
+		if browserErr != nil {
+			logger.Warn("browser manager unavailable", "error", browserErr)
+		} else {
+			apiSrv.SetBrowserManager(browserMgr)
+			runner.BrowserTargetIDFunc = browserMgr.GetTargetID
+			go browserMgr.RunIdleMonitor(ctx, 5*time.Minute)
+		}
+	}
+
 	if cfg.Memory.Enabled {
-		emb, embErr := newEmbedder(cfg)
+		emb, embErr := a.newEmbedder(cfg)
 		if embErr != nil {
 			logger.Warn("skipping embeddings", "error", embErr)
 		} else {
 			indexer := memory.NewIndexer(emb, store, logger, cfg.Memory.MaxChunkChars)
-			mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: cfg.Memory.Paths}
+			mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: cfg.Memory.Paths, app: a}
 			apiSrv.SetMemoryIndexer(mdi)
-			// Start idle monitor for Ollama container.
 			if ollamaEmb, ok := emb.(*embeddings.OllamaEmbedder); ok {
 				go ollamaEmb.RunIdleMonitor(ctx)
 			}
-			// Re-index all channels at startup, then periodically.
 			go mdi.reindexLoop(ctx, store, cfg.Memory.ReindexIntervalSec)
 		}
 	}

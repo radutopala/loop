@@ -13,7 +13,7 @@ import (
 	"github.com/radutopala/loop/internal/mcpserver"
 )
 
-func newMCPCmd() *cobra.Command {
+func (a *app) newMCPCmd() *cobra.Command {
 	var channelID, apiURL, logPath, dirPath, authorID, platform string
 	var memoryEnabled bool
 
@@ -22,7 +22,7 @@ func newMCPCmd() *cobra.Command {
 		Aliases: []string{"m"},
 		Short:   "Run as an MCP server over stdio",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, memoryEnabled)
+			return a.runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, memoryEnabled)
 		},
 	}
 
@@ -40,11 +40,9 @@ func newMCPCmd() *cobra.Command {
 	return cmd
 }
 
-var newMCPServer = mcpserver.New
-
-func runMCP(channelID, apiURL, dirPath, logPath, authorID, platform string, memoryEnabled bool) error {
+func (a *app) runMCP(channelID, apiURL, dirPath, logPath, authorID, platform string, memoryEnabled bool) error {
 	if dirPath != "" {
-		resolved, err := ensureChannelFunc(apiURL, dirPath, platform)
+		resolved, err := a.ensureChannelFn(apiURL, dirPath, platform)
 		if err != nil {
 			return fmt.Errorf("ensuring channel for dir %s: %w", dirPath, err)
 		}
@@ -58,7 +56,7 @@ func runMCP(channelID, apiURL, dirPath, logPath, authorID, platform string, memo
 	defer f.Close()
 
 	logLevel, logFormat := "info", "text"
-	cfg, cfgErr := configLoad()
+	cfg, cfgErr := a.configLoad()
 	if cfgErr == nil {
 		logLevel = cfg.LogLevel
 		logFormat = cfg.LogFormat
@@ -67,12 +65,10 @@ func runMCP(channelID, apiURL, dirPath, logPath, authorID, platform string, memo
 	logger := logging.NewLoggerWithWriter(logLevel, logFormat, f)
 
 	var memOpts []mcpserver.MemoryOption
-	// Memory is enabled via --memory flag (set by the daemon when embeddings are configured)
-	// or auto-detected from config when running via `loop mcp --dir`.
 	if memoryEnabled || (cfgErr == nil && cfg.Memory.Enabled) {
 		memOpts = append(memOpts, mcpserver.WithMemoryAPI(dirPath))
 	}
 
-	srv := newMCPServer(channelID, apiURL, authorID, http.DefaultClient, logger, memOpts...)
+	srv := a.newMCPServer(channelID, apiURL, authorID, http.DefaultClient, logger, memOpts...)
 	return srv.Run(context.Background(), &mcp.StdioTransport{})
 }

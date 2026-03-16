@@ -19,10 +19,6 @@ func (s *ServerSuite) TestListMemoryFiles_Success() {
 	require.NoError(s.T(), os.WriteFile(aPath, []byte("a"), 0644))
 	require.NoError(s.T(), os.WriteFile(bPath, []byte("b"), 0644))
 
-	origStat := osStat
-	s.T().Cleanup(func() { osStat = origStat })
-	osStat = os.Stat
-
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: tmpDir}, nil)
 	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{
 		{FilePath: aPath, DirPath: tmpDir},
@@ -40,10 +36,6 @@ func (s *ServerSuite) TestListMemoryFiles_FiltersNonExisting() {
 	existPath := filepath.Join(tmpDir, "exists.md")
 	require.NoError(s.T(), os.WriteFile(existPath, []byte("ok"), 0644))
 	gonePath := filepath.Join(tmpDir, "gone.md")
-
-	origStat := osStat
-	s.T().Cleanup(func() { osStat = origStat })
-	osStat = os.Stat
 
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: tmpDir}, nil)
 	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{
@@ -87,10 +79,6 @@ func (s *ServerSuite) TestReadMemoryFile_Success() {
 	fpath := filepath.Join(tmpDir, "test.md")
 	require.NoError(s.T(), os.WriteFile(fpath, []byte("# Hello\nWorld"), 0644))
 
-	orig := osReadFile
-	s.T().Cleanup(func() { osReadFile = orig })
-	osReadFile = os.ReadFile
-
 	rec := s.testRequest("GET", "/api/memory/file?path="+fpath, "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.Equal(s.T(), "# Hello\nWorld", rec.Body.String())
@@ -126,11 +114,8 @@ func (s *ServerSuite) TestListMemoryFiles_StoreError() {
 }
 
 func (s *ServerSuite) TestReadMemoryFile_ReadError() {
-	orig := osReadFile
-	s.T().Cleanup(func() { osReadFile = orig })
-	osReadFile = func(_ string) ([]byte, error) {
-		return nil, os.ErrPermission
-	}
+	s.sys.Override("ReadFile", mock.Anything).Return(nil, os.ErrPermission)
+	s.srv.sys = s.sys
 
 	rec := s.testRequest("GET", "/api/memory/file?path=/tmp/test.md", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)

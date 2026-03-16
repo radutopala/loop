@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -17,6 +18,8 @@ import (
 	"github.com/docker/docker/client"
 	"github.com/docker/docker/pkg/stdcopy"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 // dockerAPI abstracts the Docker SDK methods used by Client, enabling unit testing.
@@ -26,17 +29,26 @@ type dockerAPI interface {
 	ContainerLogs(ctx context.Context, container string, options containertypes.LogsOptions) (io.ReadCloser, error)
 	ContainerWait(ctx context.Context, container string, condition containertypes.WaitCondition) (<-chan containertypes.WaitResponse, <-chan error)
 	ContainerRemove(ctx context.Context, container string, options containertypes.RemoveOptions) error
+	ContainerStop(ctx context.Context, containerID string, options containertypes.StopOptions) error
 	ContainerList(ctx context.Context, options containertypes.ListOptions) ([]containertypes.Summary, error)
 	ImageList(ctx context.Context, options image.ListOptions) ([]image.Summary, error)
 	ImagePull(ctx context.Context, refStr string, options image.PullOptions) (io.ReadCloser, error)
+	ContainerInspect(ctx context.Context, containerID string) (containertypes.InspectResponse, error)
 	CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options containertypes.CopyToContainerOptions) error
+	NetworkCreate(ctx context.Context, name string, options network.CreateOptions) (network.CreateResponse, error)
+	NetworkRemove(ctx context.Context, networkID string) error
 	Close() error
 }
 
-// newDockerClientFunc is the constructor used to create the underlying Docker API client.
-// It can be overridden in tests.
-var newDockerClientFunc = func() (dockerAPI, error) {
+// defaultDockerAPIFactory is the real constructor for creating the underlying Docker API client.
+func defaultDockerAPIFactory() (dockerAPI, error) {
 	return client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+}
+
+// clientSystem abstracts OS operations needed by Client.
+type clientSystem interface {
+	UserHomeDir() (string, error)
+	Stat(name string) (os.FileInfo, error)
 }
 
 // Client implements DockerClient by delegating to the Docker SDK.
@@ -44,16 +56,35 @@ var newDockerClientFunc = func() (dockerAPI, error) {
 // For exec-ing into running containers (interactive PTY sessions), see
 // terminal.DockerExecClient instead.
 type Client struct {
-	api dockerAPI
+	api                 dockerAPI
+	sys                 clientSystem
+	dockerBuildCmd      func(ctx context.Context, contextDir, tag string) ([]byte, error)
+	dockerBuildFileCmd  func(ctx context.Context, contextDir, dockerfile, tag string) ([]byte, error)
+	claudeVersionURL    string
+	latestClaudeVersion func() string
 }
 
 // NewClient creates a new Client backed by the Docker SDK.
 func NewClient() (*Client, error) {
-	api, err := newDockerClientFunc()
+	return NewClientWith(defaultDockerAPIFactory)
+}
+
+// NewClientWith creates a new Client using the provided API factory function.
+// This allows tests to inject a mock Docker API without global variable overrides.
+func NewClientWith(apiFactory func() (dockerAPI, error)) (*Client, error) {
+	api, err := apiFactory()
 	if err != nil {
 		return nil, fmt.Errorf("creating docker client: %w", err)
 	}
-	return &Client{api: api}, nil
+	c := &Client{
+		api:              api,
+		sys:              osutil.RealSystem{},
+		claudeVersionURL: "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest",
+	}
+	c.latestClaudeVersion = c.defaultLatestClaudeVersion
+	c.dockerBuildCmd = c.defaultDockerBuildCmd
+	c.dockerBuildFileCmd = c.defaultDockerBuildFileCmd
+	return c, nil
 }
 
 // Close releases the underlying Docker client resources.
@@ -89,11 +120,44 @@ func (c *Client) ContainerCreate(ctx context.Context, cfg *ContainerConfig, name
 		ExtraHosts: []string{"host.docker.internal:host-gateway"},
 	}
 
-	resp, err := c.api.ContainerCreate(ctx, containerCfg, hostCfg, nil, nil, name)
+	var netCfg *network.NetworkingConfig
+	if cfg.NetworkName != "" {
+		containerCfg.Hostname = cfg.Hostname
+		netCfg = &network.NetworkingConfig{
+			EndpointsConfig: map[string]*network.EndpointSettings{
+				cfg.NetworkName: {
+					Aliases: []string{cfg.Hostname},
+				},
+			},
+		}
+	}
+
+	resp, err := c.api.ContainerCreate(ctx, containerCfg, hostCfg, netCfg, nil, name)
 	if err != nil {
 		return "", err
 	}
 	return resp.ID, nil
+}
+
+// ContainerInspect returns detailed container information.
+func (c *Client) ContainerInspect(ctx context.Context, containerID string) (containertypes.InspectResponse, error) {
+	return c.api.ContainerInspect(ctx, containerID)
+}
+
+// NetworkEnsure creates a Docker bridge network if it doesn't already exist.
+func (c *Client) NetworkEnsure(ctx context.Context, name string) error {
+	_, err := c.api.NetworkCreate(ctx, name, network.CreateOptions{
+		Driver: "bridge",
+	})
+	if err != nil && !strings.Contains(err.Error(), "already exists") {
+		return err
+	}
+	return nil
+}
+
+// NetworkRemove removes a Docker network by name.
+func (c *Client) NetworkRemove(ctx context.Context, name string) error {
+	return c.api.NetworkRemove(ctx, name)
 }
 
 // ContainerLogs retrieves the container's stdout/stderr logs after it exits.
@@ -184,6 +248,13 @@ func (c *Client) ContainerRemove(ctx context.Context, containerID string) error 
 	return c.api.ContainerRemove(ctx, containerID, containertypes.RemoveOptions{Force: true})
 }
 
+// ContainerStop stops the specified container with a 10-second grace period
+// (SIGTERM → wait → SIGKILL).
+func (c *Client) ContainerStop(ctx context.Context, containerID string) error {
+	timeout := 10
+	return c.api.ContainerStop(ctx, containerID, containertypes.StopOptions{Timeout: &timeout})
+}
+
 // ImageList returns the IDs of images matching the given reference.
 func (c *Client) ImageList(ctx context.Context, imageName string) ([]string, error) {
 	f := filters.NewArgs()
@@ -213,15 +284,13 @@ func (c *Client) ImagePull(ctx context.Context, imageName string) error {
 	return err
 }
 
-var claudeVersionURL = "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest"
-
-// latestClaudeVersion fetches the latest Claude CLI version string.
+// defaultLatestClaudeVersion fetches the latest Claude CLI version string.
 // Falls back to a timestamp if the lookup fails, which busts the cache.
-var latestClaudeVersion = func() string {
+func (c *Client) defaultLatestClaudeVersion() string {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, claudeVersionURL, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.claudeVersionURL, nil)
 	if err != nil {
 		return fmt.Sprintf("unknown-%d", time.Now().Unix())
 	}
@@ -238,13 +307,13 @@ var latestClaudeVersion = func() string {
 	return strings.TrimSpace(string(body))
 }
 
-// dockerBuildCmd executes `docker build` via the CLI. Using the CLI instead of
-// the Docker SDK avoids "configured logging driver does not support reading"
-// errors because the CLI uses BuildKit by default.
-var dockerBuildCmd = func(ctx context.Context, contextDir, tag string) ([]byte, error) {
-	claudeVersion := "CLAUDE_VERSION=" + latestClaudeVersion()
+// defaultDockerBuildCmd executes `docker build` via the CLI. Using the CLI
+// instead of the Docker SDK avoids "configured logging driver does not support
+// reading" errors because the CLI uses BuildKit by default.
+func (c *Client) defaultDockerBuildCmd(ctx context.Context, contextDir, tag string) ([]byte, error) {
+	claudeVersion := "CLAUDE_VERSION=" + c.latestClaudeVersion()
 	args := []string{"build", "--build-arg", claudeVersion}
-	if gitconfigPath := gitconfigSecretPath(); gitconfigPath != "" {
+	if gitconfigPath := c.gitconfigSecretPath(); gitconfigPath != "" {
 		args = append(args, "--secret", "id=gitconfig,src="+gitconfigPath)
 	}
 	args = append(args, "-t", tag, contextDir)
@@ -252,13 +321,13 @@ var dockerBuildCmd = func(ctx context.Context, contextDir, tag string) ([]byte, 
 }
 
 // gitconfigSecretPath returns the path to ~/.gitconfig if it exists, or "" otherwise.
-func gitconfigSecretPath() string {
-	home, err := osUserHomeDir()
+func (c *Client) gitconfigSecretPath() string {
+	home, err := c.sys.UserHomeDir()
 	if err != nil {
 		return ""
 	}
 	p := filepath.Join(home, ".gitconfig")
-	if _, err := osStat(p); err != nil {
+	if _, err := c.sys.Stat(p); err != nil {
 		return ""
 	}
 	return p
@@ -266,11 +335,25 @@ func gitconfigSecretPath() string {
 
 // ImageBuild builds a Docker image from the given context directory.
 func (c *Client) ImageBuild(ctx context.Context, contextDir, tag string) error {
-	output, err := dockerBuildCmd(ctx, contextDir, tag)
+	output, err := c.dockerBuildCmd(ctx, contextDir, tag)
 	if err != nil {
 		return fmt.Errorf("building image: %s: %w", strings.TrimSpace(string(output)), err)
 	}
 	return nil
+}
+
+// ImageBuildFile builds a Docker image from a specific Dockerfile in the context directory.
+func (c *Client) ImageBuildFile(ctx context.Context, contextDir, dockerfile, tag string) error {
+	output, err := c.dockerBuildFileCmd(ctx, contextDir, dockerfile, tag)
+	if err != nil {
+		return fmt.Errorf("building image: %s: %w", strings.TrimSpace(string(output)), err)
+	}
+	return nil
+}
+
+func (c *Client) defaultDockerBuildFileCmd(ctx context.Context, contextDir, dockerfile, tag string) ([]byte, error) {
+	args := []string{"build", "-f", filepath.Join(contextDir, dockerfile), "-t", tag, contextDir}
+	return exec.CommandContext(ctx, "docker", args...).CombinedOutput()
 }
 
 // ContainerList returns the IDs of running containers matching the given label.

@@ -36,7 +36,7 @@ type TaskTemplate struct {
 // If Prompt is set, it is returned directly.
 // If PromptPath is set, the file is read from {loopDir}/templates/{prompt_path}.
 // Exactly one of Prompt or PromptPath must be set.
-func (t *TaskTemplate) ResolvePrompt(loopDir string) (string, error) {
+func (t *TaskTemplate) ResolvePrompt(loopDir string, readFile func(string) ([]byte, error)) (string, error) {
 	if t.Prompt != "" && t.PromptPath != "" {
 		return "", fmt.Errorf("template %q: prompt and prompt_path are mutually exclusive", t.Name)
 	}
@@ -83,6 +83,7 @@ type Config struct {
 	LogLevel             string
 	LogFormat            string
 	ContainerImage       string
+	ChromeImage          string
 	ContainerTimeout     time.Duration
 	ContainerMemoryMB    int64
 	ContainerCPUs        float64
@@ -100,6 +101,7 @@ type Config struct {
 	Envs                 map[string]string
 	ClaudeModel          string
 	StreamingEnabled     bool
+	BrowserEnabled       bool
 	Memory               MemoryConfig
 	Permissions          types.Permissions
 }
@@ -130,6 +132,7 @@ type jsonConfig struct {
 	LogFormat             string                 `json:"log_format"`
 	DBPath                string                 `json:"db_path"`
 	ContainerImage        string                 `json:"container_image"`
+	ChromeImage           string                 `json:"chrome_image"`
 	ContainerTimeoutSec   *int                   `json:"container_timeout_sec"`
 	ContainerMemoryMB     *int64                 `json:"container_memory_mb"`
 	ContainerCPUs         *float64               `json:"container_cpus"`
@@ -144,6 +147,7 @@ type jsonConfig struct {
 	ClaudeModel           string                 `json:"claude_model"`
 	ClaudeBinPath         string                 `json:"claude_bin_path"`
 	StreamingEnabled      *bool                  `json:"streaming_enabled"`
+	BrowserEnabled        *bool                  `json:"browser_enabled"`
 	Memory                *jsonMemoryConfig      `json:"memory"`
 	Permissions           *jsonPermissionsConfig `json:"permissions"`
 }
@@ -173,30 +177,33 @@ type jsonPermissionsConfig struct {
 	} `json:"members"`
 }
 
-// userHomeDir is a package-level variable to allow overriding in tests.
-var userHomeDir = os.UserHomeDir
+// Loader holds injectable dependencies for loading config files.
+type Loader struct {
+	userHomeDir func() (string, error)
+	readFile    func(string) ([]byte, error)
+}
 
-// readFile is a package-level variable to allow overriding in tests.
-var readFile = os.ReadFile
-
-// TestSetReadFile is a test helper to override the readFile function.
-// Returns the original function so it can be restored.
-func TestSetReadFile(fn func(string) ([]byte, error)) func(string) ([]byte, error) {
-	orig := readFile
-	readFile = fn
-	return orig
+func newLoader() *Loader {
+	return &Loader{
+		userHomeDir: os.UserHomeDir,
+		readFile:    os.ReadFile,
+	}
 }
 
 // Load reads configuration from ~/.loop/config.json and returns a Config.
 func Load() (*Config, error) {
-	home, err := userHomeDir()
+	return newLoader().load()
+}
+
+func (l *Loader) load() (*Config, error) {
+	home, err := l.userHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("getting home directory: %w", err)
 	}
 	loopDir := filepath.Join(home, ".loop")
 	configPath := filepath.Join(loopDir, "config.json")
 
-	data, err := readFile(configPath)
+	data, err := l.readFile(configPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading config file: %w", err)
 	}
@@ -225,7 +232,8 @@ func Load() (*Config, error) {
 		LogFormat:            stringDefault(jc.LogFormat, "text"),
 		DBPath:               stringDefault(jc.DBPath, filepath.Join(loopDir, "loop.db")),
 		ContainerImage:       stringDefault(jc.ContainerImage, "loop-agent:latest"),
-		ContainerTimeout:     time.Duration(ptrDefault(jc.ContainerTimeoutSec, 3600)) * time.Second,
+		ChromeImage:          stringDefault(jc.ChromeImage, "loop-chrome:latest"),
+		ContainerTimeout:     time.Duration(ptrDefault(jc.ContainerTimeoutSec, 43200)) * time.Second,
 		ContainerMemoryMB:    ptrDefault(jc.ContainerMemoryMB, 1024),
 		ContainerCPUs:        ptrDefault(jc.ContainerCPUs, 1.0),
 		ContainerKeepAlive:   time.Duration(ptrDefault(jc.ContainerKeepAliveSec, 300)) * time.Second,
@@ -234,6 +242,7 @@ func Load() (*Config, error) {
 		LoopDir:              loopDir,
 		ClaudeModel:          jc.ClaudeModel,
 		StreamingEnabled:     ptrDefault(jc.StreamingEnabled, true),
+		BrowserEnabled:       ptrDefault(jc.BrowserEnabled, true),
 	}
 
 	if jc.MCP != nil && len(jc.MCP.Servers) > 0 {
@@ -358,8 +367,10 @@ type projectConfig struct {
 	ClaudeCodeOAuthToken string                 `json:"claude_code_oauth_token"`
 	AnthropicAPIKey      string                 `json:"anthropic_api_key"`
 	ContainerImage       string                 `json:"container_image"`
+	ChromeImage          string                 `json:"chrome_image"`
 	ContainerMemoryMB    *int64                 `json:"container_memory_mb"`
 	ContainerCPUs        *float64               `json:"container_cpus"`
+	BrowserEnabled       *bool                  `json:"browser_enabled"`
 	TaskTemplates        []TaskTemplate         `json:"task_templates"`
 	Memory               *jsonMemoryConfig      `json:"memory"`
 	Permissions          *jsonPermissionsConfig `json:"permissions"`
@@ -376,9 +387,13 @@ type projectConfig struct {
 // Relative paths in project mounts are resolved relative to workDir.
 // If the project config file doesn't exist, returns the main config unchanged.
 func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
+	return newLoader().loadProjectConfig(workDir, mainConfig)
+}
+
+func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 	projectConfigPath := filepath.Join(workDir, ".loop", "config.json")
 
-	data, err := readFile(projectConfigPath)
+	data, err := l.readFile(projectConfigPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			// No project config, use main config as-is
@@ -463,11 +478,17 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 	if pc.ContainerImage != "" {
 		merged.ContainerImage = pc.ContainerImage
 	}
+	if pc.ChromeImage != "" {
+		merged.ChromeImage = pc.ChromeImage
+	}
 	if pc.ContainerMemoryMB != nil {
 		merged.ContainerMemoryMB = *pc.ContainerMemoryMB
 	}
 	if pc.ContainerCPUs != nil {
 		merged.ContainerCPUs = *pc.ContainerCPUs
+	}
+	if pc.BrowserEnabled != nil {
+		merged.BrowserEnabled = *pc.BrowserEnabled
 	}
 
 	// Merge memory config: project paths appended, project embeddings override

@@ -209,6 +209,44 @@ func (s *ServerSuite) TestListFiles_DirNotExists() {
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
 
+func (s *ServerSuite) TestListFiles_ReadDirError() {
+	tmpDir := s.T().TempDir()
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	s.sys.Override("ReadDir", mock.Anything).Return(nil, fmt.Errorf("injected readdir error"))
+	s.srv.sys = s.sys
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/files?path=.", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+func (s *ServerSuite) TestListFiles_MockReadDir() {
+	tmpDir := s.T().TempDir()
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	s.sys.Override("ReadDir", mock.Anything).Return([]fs.DirEntry{fakeDirEntry{name: "mock.go"}}, nil)
+	s.srv.sys = s.sys
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/files?path=.", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), `"name":"mock.go"`)
+}
+
+// fakeDirEntry implements fs.DirEntry for testing.
+type fakeDirEntry struct {
+	name  string
+	isDir bool
+}
+
+func (f fakeDirEntry) Name() string               { return f.name }
+func (f fakeDirEntry) IsDir() bool                { return f.isDir }
+func (f fakeDirEntry) Type() fs.FileMode          { return 0 }
+func (f fakeDirEntry) Info() (fs.FileInfo, error) { return nil, fmt.Errorf("no info") }
+
 // ── handleReadFile ──
 
 func (s *ServerSuite) TestReadFile_Success() {
@@ -348,16 +386,17 @@ func (s *ServerSuite) TestReadFile_StatError() {
 
 func (s *ServerSuite) TestReadFile_ReadError() {
 	tmpDir := s.T().TempDir()
-	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("ok"), 0644))
+	filePath := filepath.Join(tmpDir, "test.txt")
+	require.NoError(s.T(), os.WriteFile(filePath, []byte("ok"), 0644))
 
 	s.store.On("GetChannel", mock.Anything, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
 
-	origReadFile := osReadFile
-	osReadFile = func(name string) ([]byte, error) {
-		return nil, fmt.Errorf("injected read error")
-	}
-	defer func() { osReadFile = origReadFile }()
+	info, err := os.Stat(filePath)
+	require.NoError(s.T(), err)
+	s.sys.Override("Stat", mock.Anything).Return(info, nil)
+	s.sys.Override("ReadFile", mock.Anything).Return(nil, fmt.Errorf("injected read error"))
+	s.srv.sys = s.sys
 
 	rec := s.testRequest("GET", "/api/channels/ch-1/file?path=test.txt", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
@@ -481,11 +520,8 @@ func (s *ServerSuite) TestWriteFile_WriteFileVarError() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
 
-	origWriteFile := osWriteFile
-	osWriteFile = func(name string, data []byte, perm os.FileMode) error {
-		return fmt.Errorf("injected write error")
-	}
-	defer func() { osWriteFile = origWriteFile }()
+	s.sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(fmt.Errorf("injected write error"))
+	s.srv.sys = s.sys
 
 	rec := s.testRequest("PUT", "/api/channels/ch-1/file?path=new.txt", "content")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
@@ -593,16 +629,17 @@ func (s *ServerSuite) TestDeleteFile_ChannelNotFound() {
 
 func (s *ServerSuite) TestDeleteFile_RemoveError() {
 	tmpDir := s.T().TempDir()
-	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("ok"), 0644))
+	filePath := filepath.Join(tmpDir, "test.txt")
+	require.NoError(s.T(), os.WriteFile(filePath, []byte("ok"), 0644))
 
 	s.store.On("GetChannel", mock.Anything, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
 
-	origRemove := osRemove
-	osRemove = func(name string) error {
-		return fmt.Errorf("injected remove error")
-	}
-	defer func() { osRemove = origRemove }()
+	info, err := os.Stat(filePath)
+	require.NoError(s.T(), err)
+	s.sys.Override("Stat", mock.Anything).Return(info, nil)
+	s.sys.Override("Remove", mock.Anything).Return(fmt.Errorf("injected remove error"))
+	s.srv.sys = s.sys
 
 	rec := s.testRequest("DELETE", "/api/channels/ch-1/file?path=test.txt", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
@@ -631,7 +668,7 @@ func (s *ServerSuite) TestListDir_Success() {
 	require.NoError(s.T(), os.MkdirAll(filepath.Join(tmpDir, "subdir"), 0755))
 	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "file.txt"), []byte("hello"), 0644))
 
-	entries, err := listDir(tmpDir)
+	entries, err := listDir(os.ReadDir, tmpDir)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), entries, 2)
 	require.Equal(s.T(), "subdir", entries[0].Name)
@@ -645,7 +682,7 @@ func (s *ServerSuite) TestListDir_SortsCaseInsensitive() {
 	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "Zebra.txt"), []byte("z"), 0644))
 	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "apple.txt"), []byte("a"), 0644))
 
-	entries, err := listDir(tmpDir)
+	entries, err := listDir(os.ReadDir, tmpDir)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), entries, 2)
 	require.Equal(s.T(), "apple.txt", entries[0].Name)
@@ -653,7 +690,7 @@ func (s *ServerSuite) TestListDir_SortsCaseInsensitive() {
 }
 
 func (s *ServerSuite) TestListDir_Error() {
-	_, err := listDir("/nonexistent-dir-12345")
+	_, err := listDir(os.ReadDir, "/nonexistent-dir-12345")
 	require.Error(s.T(), err)
 }
 

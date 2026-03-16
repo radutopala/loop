@@ -4,6 +4,7 @@ package terminal
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -18,11 +19,7 @@ import (
 
 type HostSuite struct {
 	suite.Suite
-	origDefaultShell     func() string
-	origDefaultShellArgs func() []string
-	origLookPath         func(file string) (string, error)
-	origConptyStart      func(commandLine string, opts ...conpty.ConPtyOption) (*conpty.ConPty, error)
-	origConptyAvailable  func() bool
+	client *HostExecClient
 }
 
 func TestHostSuite(t *testing.T) {
@@ -30,155 +27,132 @@ func TestHostSuite(t *testing.T) {
 }
 
 func (s *HostSuite) SetupTest() {
-	s.origDefaultShell = defaultShell
-	s.origDefaultShellArgs = defaultShellArgs
-	s.origLookPath = lookPath
-	s.origConptyStart = conptyStart
-	s.origConptyAvailable = conptyAvailable
-}
-
-func (s *HostSuite) TearDownTest() {
-	defaultShell = s.origDefaultShell
-	defaultShellArgs = s.origDefaultShellArgs
-	lookPath = s.origLookPath
-	conptyStart = s.origConptyStart
-	conptyAvailable = s.origConptyAvailable
+	s.client = NewHostExecClient()
 }
 
 func (s *HostSuite) TestNewHostExecClient() {
-	c := NewHostExecClient()
-	require.NotNil(s.T(), c)
-	require.Empty(s.T(), c.execs)
+	require.NotNil(s.T(), s.client)
+	require.Empty(s.T(), s.client.execs)
 }
 
 func (s *HostSuite) TestExecCreate() {
-	lookPath = func(file string) (string, error) { return file, nil }
+	s.client.lookPath = func(file string) (string, error) { return file, nil }
 
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), `C:\Users\test`, []string{"cmd.exe", "/c", "echo hello"}, true)
+	id, err := s.client.ExecCreate(context.Background(), `C:\Users\test`, []string{"cmd.exe", "/c", "echo hello"}, true)
 	require.NoError(s.T(), err)
 	require.NotEmpty(s.T(), id)
 
-	c.mu.Lock()
-	he, ok := c.execs[id]
-	c.mu.Unlock()
+	s.client.mu.Lock()
+	he, ok := s.client.execs[id]
+	s.client.mu.Unlock()
 	require.True(s.T(), ok)
 	require.Equal(s.T(), `C:\Users\test`, he.dir)
 	require.Equal(s.T(), `cmd.exe /c "echo hello"`, he.cmdLine)
 }
 
 func (s *HostSuite) TestExecCreateDefaultShell() {
-	defaultShell = func() string { return `C:\Windows\System32\cmd.exe` }
-	defaultShellArgs = func() []string { return nil }
-	lookPath = func(file string) (string, error) { return file, nil }
+	s.client.defaultShell = func() string { return `C:\Windows\System32\cmd.exe` }
+	s.client.defaultShellArgs = func() []string { return nil }
+	s.client.lookPath = func(file string) (string, error) { return file, nil }
 
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), `C:\Users\test`, nil, true)
+	id, err := s.client.ExecCreate(context.Background(), `C:\Users\test`, nil, true)
 	require.NoError(s.T(), err)
 
-	c.mu.Lock()
-	he := c.execs[id]
-	c.mu.Unlock()
+	s.client.mu.Lock()
+	he := s.client.execs[id]
+	s.client.mu.Unlock()
 	require.Equal(s.T(), `C:\Windows\System32\cmd.exe`, he.cmdLine)
 }
 
 func (s *HostSuite) TestExecCreateCommandNotFound() {
-	c := NewHostExecClient()
-	_, err := c.ExecCreate(context.Background(), `C:\Users\test`, []string{"nonexistent-binary-xyz"}, true)
+	_, err := s.client.ExecCreate(context.Background(), `C:\Users\test`, []string{"nonexistent-binary-xyz"}, true)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "command not found")
 }
 
 func (s *HostSuite) TestExecCreateEmptyCmd() {
-	defaultShell = func() string { return "powershell.exe" }
-	defaultShellArgs = func() []string { return nil }
-	lookPath = func(file string) (string, error) { return file, nil }
+	s.client.defaultShell = func() string { return "powershell.exe" }
+	s.client.defaultShellArgs = func() []string { return nil }
+	s.client.lookPath = func(file string) (string, error) { return file, nil }
 
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), `C:\Users\test`, []string{}, true)
+	id, err := s.client.ExecCreate(context.Background(), `C:\Users\test`, []string{}, true)
 	require.NoError(s.T(), err)
 
-	c.mu.Lock()
-	he := c.execs[id]
-	c.mu.Unlock()
+	s.client.mu.Lock()
+	he := s.client.execs[id]
+	s.client.mu.Unlock()
 	require.Equal(s.T(), "powershell.exe", he.cmdLine)
 }
 
 func (s *HostSuite) TestExecCreateSetsEnv() {
-	lookPath = func(file string) (string, error) { return file, nil }
+	s.client.lookPath = func(file string) (string, error) { return file, nil }
 
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), `C:\Users\test`, []string{"cmd.exe"}, true)
+	id, err := s.client.ExecCreate(context.Background(), `C:\Users\test`, []string{"cmd.exe"}, true)
 	require.NoError(s.T(), err)
 
-	c.mu.Lock()
-	he := c.execs[id]
-	c.mu.Unlock()
+	s.client.mu.Lock()
+	he := s.client.execs[id]
+	s.client.mu.Unlock()
 	require.NotEmpty(s.T(), he.env)
 }
 
 func (s *HostSuite) TestExecAttachNotFound() {
-	conptyAvailable = func() bool { return true }
+	s.client.conptyAvailable = func() bool { return true }
 
-	c := NewHostExecClient()
-	rwc, err := c.ExecAttach(context.Background(), "nonexistent")
+	rwc, err := s.client.ExecAttach(context.Background(), "nonexistent")
 	require.Error(s.T(), err)
 	require.Nil(s.T(), rwc)
 	require.Contains(s.T(), err.Error(), "exec nonexistent not found")
 }
 
 func (s *HostSuite) TestExecAttachConptyUnavailable() {
-	conptyAvailable = func() bool { return false }
-	lookPath = func(file string) (string, error) { return file, nil }
+	s.client.conptyAvailable = func() bool { return false }
+	s.client.lookPath = func(file string) (string, error) { return file, nil }
 
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), `C:\Users\test`, []string{"cmd.exe"}, true)
+	id, err := s.client.ExecCreate(context.Background(), `C:\Users\test`, []string{"cmd.exe"}, true)
 	require.NoError(s.T(), err)
 
-	rwc, err := c.ExecAttach(context.Background(), id)
+	rwc, err := s.client.ExecAttach(context.Background(), id)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), rwc)
 	require.Contains(s.T(), err.Error(), "ConPTY is not available")
 }
 
 func (s *HostSuite) TestExecAttachStartError() {
-	conptyAvailable = func() bool { return true }
-	conptyStart = func(_ string, _ ...conpty.ConPtyOption) (*conpty.ConPty, error) {
+	s.client.conptyAvailable = func() bool { return true }
+	s.client.conptyStart = func(_ string, _ ...conpty.ConPtyOption) (*conpty.ConPty, error) {
 		return nil, errors.New("conpty start failed")
 	}
-	lookPath = func(file string) (string, error) { return file, nil }
+	s.client.lookPath = func(file string) (string, error) { return file, nil }
 
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), `C:\Users\test`, []string{"cmd.exe"}, true)
+	id, err := s.client.ExecCreate(context.Background(), `C:\Users\test`, []string{"cmd.exe"}, true)
 	require.NoError(s.T(), err)
 
-	rwc, err := c.ExecAttach(context.Background(), id)
+	rwc, err := s.client.ExecAttach(context.Background(), id)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), rwc)
 	require.Contains(s.T(), err.Error(), "starting conpty")
 }
 
 func (s *HostSuite) TestExecResizeNotFound() {
-	c := NewHostExecClient()
-	err := c.ExecResize(context.Background(), "nonexistent", 24, 80)
+	err := s.client.ExecResize(context.Background(), "nonexistent", 24, 80)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "exec nonexistent not found")
 }
 
 func (s *HostSuite) TestExecResizeNotAttached() {
-	lookPath = func(file string) (string, error) { return file, nil }
+	s.client.lookPath = func(file string) (string, error) { return file, nil }
 
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), `C:\Users\test`, []string{"cmd.exe"}, true)
+	id, err := s.client.ExecCreate(context.Background(), `C:\Users\test`, []string{"cmd.exe"}, true)
 	require.NoError(s.T(), err)
 
-	err = c.ExecResize(context.Background(), id, 24, 80)
+	err = s.client.ExecResize(context.Background(), id, 24, 80)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "not attached")
 }
 
 func (s *HostSuite) TestDefaultShellEnv() {
-	shell := s.origDefaultShell()
+	shell := s.client.defaultShell()
 	require.NotEmpty(s.T(), shell)
 }
 
@@ -187,12 +161,14 @@ func (s *HostSuite) TestDefaultShellComspec() {
 	os.Setenv("COMSPEC", `C:\Windows\System32\cmd.exe`)
 	defer os.Setenv("COMSPEC", orig)
 
-	shell := s.origDefaultShell()
+	// Create a fresh client so defaultShell picks up the new env.
+	c := NewHostExecClient()
+	shell := c.defaultShell()
 	require.Equal(s.T(), `C:\Windows\System32\cmd.exe`, shell)
 }
 
 func (s *HostSuite) TestDefaultShellArgs() {
-	args := s.origDefaultShellArgs()
+	args := s.client.defaultShellArgs()
 	require.Nil(s.T(), args)
 }
 
@@ -235,24 +211,23 @@ func (s *HostSuite) TestBuildCommandLineQuotesEscaping() {
 func (s *HostSuite) TestGenerateIDUnique() {
 	ids := make(map[string]struct{})
 	for range 100 {
-		id := generateID()
+		id := generateID(rand.Read)
 		require.NotContains(s.T(), ids, id, fmt.Sprintf("duplicate ID: %s", id))
 		ids[id] = struct{}{}
 	}
 }
 
 func (s *HostSuite) TestConptyOriginalFunctions() {
-	// Exercise the original conptyAvailable to cover its default body.
-	_ = s.origConptyAvailable()
+	// Exercise the default conptyAvailable to cover its default body.
+	_ = s.client.conptyAvailable()
 }
 
 func (s *HostSuite) TestIntegrationCreateAttachResize() {
 	// Integration test: create, attach, resize a real cmd.exe process.
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), os.TempDir(), []string{"cmd.exe"}, true)
+	id, err := s.client.ExecCreate(context.Background(), os.TempDir(), []string{"cmd.exe"}, true)
 	require.NoError(s.T(), err)
 
-	rwc, err := c.ExecAttach(context.Background(), id)
+	rwc, err := s.client.ExecAttach(context.Background(), id)
 	require.NoError(s.T(), err)
 
 	// Write a command.
@@ -277,18 +252,17 @@ func (s *HostSuite) TestIntegrationCreateAttachResize() {
 	}
 
 	// Resize should succeed.
-	err = c.ExecResize(context.Background(), id, 30, 100)
+	err = s.client.ExecResize(context.Background(), id, 30, 100)
 	require.NoError(s.T(), err)
 
 	require.NoError(s.T(), rwc.Close())
 }
 
 func (s *HostSuite) TestIntegrationCloseIdempotent() {
-	c := NewHostExecClient()
-	id, err := c.ExecCreate(context.Background(), os.TempDir(), []string{"cmd.exe"}, true)
+	id, err := s.client.ExecCreate(context.Background(), os.TempDir(), []string{"cmd.exe"}, true)
 	require.NoError(s.T(), err)
 
-	rwc, err := c.ExecAttach(context.Background(), id)
+	rwc, err := s.client.ExecAttach(context.Background(), id)
 	require.NoError(s.T(), err)
 
 	err = rwc.Close()

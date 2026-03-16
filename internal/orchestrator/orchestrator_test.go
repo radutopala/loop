@@ -2196,7 +2196,7 @@ func (s *OrchestratorSuite) TestHandleChannelDelete() {
 		{
 			name: "thread MCP config error logs warning", channelID: "thread-1", isThread: true,
 			setupFunc: func() {
-				bot.RemoveMCPConfig = func(string, string) error { return errors.New("rm error") }
+				s.orch.removeMCPConfig = func(string, string) error { return errors.New("rm error") }
 			},
 			setupMock: func() {
 				s.store.On("GetChannel", s.ctx, "thread-1").
@@ -2232,7 +2232,7 @@ func (s *OrchestratorSuite) TestHandleChannelDelete() {
 		{
 			name: "channel MCP config error logs warning", channelID: "ch-1", isThread: false,
 			setupFunc: func() {
-				bot.RemoveMCPConfig = func(string, string) error { return errors.New("rm error") }
+				s.orch.removeMCPConfig = func(string, string) error { return errors.New("rm error") }
 			},
 			setupMock: func() {
 				s.store.On("GetChannel", s.ctx, "ch-1").
@@ -2288,8 +2288,6 @@ func (s *OrchestratorSuite) TestHandleChannelDelete() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			s.SetupTest()
-			origRemoveMCP := bot.RemoveMCPConfig
-			s.T().Cleanup(func() { bot.RemoveMCPConfig = origRemoveMCP })
 			if tc.setupFunc != nil {
 				tc.setupFunc()
 			}
@@ -2319,10 +2317,9 @@ func (s *OrchestratorSuite) TestConfigPermissionsForGlobalNoProjectConfig() {
 }
 
 func (s *OrchestratorSuite) TestConfigPermissionsForWithDirPath() {
-	orig := config.TestSetReadFile(func(path string) ([]byte, error) {
-		return nil, os.ErrNotExist
-	})
-	defer config.TestSetReadFile(orig)
+	s.orch.loadProjectConfig = func(_ string, mainCfg *config.Config) (*config.Config, error) {
+		return mainCfg, nil
+	}
 
 	s.orch.cfg = config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}},
@@ -2333,10 +2330,9 @@ func (s *OrchestratorSuite) TestConfigPermissionsForWithDirPath() {
 }
 
 func (s *OrchestratorSuite) TestConfigPermissionsForLoadError() {
-	orig := config.TestSetReadFile(func(path string) ([]byte, error) {
+	s.orch.loadProjectConfig = func(_ string, _ *config.Config) (*config.Config, error) {
 		return nil, errors.New("permission denied")
-	})
-	defer config.TestSetReadFile(orig)
+	}
 
 	s.orch.cfg = config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}},
@@ -2347,13 +2343,12 @@ func (s *OrchestratorSuite) TestConfigPermissionsForLoadError() {
 }
 
 func (s *OrchestratorSuite) TestConfigPermissionsForProjectOverridesGlobal() {
-	orig := config.TestSetReadFile(func(path string) ([]byte, error) {
-		if path == "/project/.loop/config.json" {
-			return []byte(`{"permissions":{"owners":{"users":["U2"]}}}`), nil
+	s.orch.loadProjectConfig = func(_ string, _ *config.Config) (*config.Config, error) {
+		merged := config.Config{
+			Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"U2"}}},
 		}
-		return nil, os.ErrNotExist
-	})
-	defer config.TestSetReadFile(orig)
+		return &merged, nil
+	}
 
 	s.orch.cfg = config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}},

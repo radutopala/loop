@@ -14,9 +14,6 @@ import (
 	"github.com/radutopala/loop/internal/types"
 )
 
-// timeAfterFunc is a package-level variable for testability of time.AfterFunc.
-var timeAfterFunc = time.AfterFunc
-
 // TaskExecutor implements scheduler.TaskExecutor by running an agent and
 // delivering the response to the chat platform.
 type TaskExecutor struct {
@@ -27,11 +24,12 @@ type TaskExecutor struct {
 	containerTimeout time.Duration
 	streamingEnabled bool
 	events           events.Broadcaster
+	timeAfterFunc    func(time.Duration, func()) *time.Timer
 }
 
 // NewTaskExecutor creates a new TaskExecutor.
 func NewTaskExecutor(runner Runner, bot Bot, store db.Store, logger *slog.Logger, containerTimeout time.Duration, streamingEnabled bool) *TaskExecutor {
-	return &TaskExecutor{runner: runner, bot: bot, store: store, logger: logger, containerTimeout: containerTimeout, streamingEnabled: streamingEnabled}
+	return &TaskExecutor{runner: runner, bot: bot, store: store, logger: logger, containerTimeout: containerTimeout, streamingEnabled: streamingEnabled, timeAfterFunc: time.AfterFunc}
 }
 
 // SetEventBroadcaster sets the event broadcaster for real-time updates.
@@ -221,7 +219,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			}
 		}
 		delay := time.Duration(task.AutoDeleteSec) * time.Second
-		timeAfterFunc(delay, func() {
+		e.timeAfterFunc(delay, func() {
 			if err := e.bot.DeleteThread(context.Background(), threadID); err != nil {
 				e.logger.Error("auto-deleting task thread", "error", err, "thread_id", threadID, "task_id", task.ID)
 			}

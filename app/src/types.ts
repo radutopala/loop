@@ -55,7 +55,7 @@ export interface ToolUseData {
 }
 
 export interface AgentActivityData {
-  activity: "model" | "subagent_started" | "subagent_progress";
+  activity: "model" | "subagent_started" | "subagent_progress" | "compacting";
   model?: string;
   description?: string;
 }

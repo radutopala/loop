@@ -10,9 +10,6 @@ import (
 	"github.com/docker/docker/client"
 )
 
-// osGetenv is a shim for os.Getenv, overridable in tests.
-var osGetenv = os.Getenv
-
 // dockerExecAPI abstracts the Docker SDK exec methods for testing.
 type dockerExecAPI interface {
 	ContainerExecCreate(ctx context.Context, container string, options containertypes.ExecOptions) (containertypes.ExecCreateResponse, error)
@@ -25,22 +22,23 @@ type dockerExecAPI interface {
 // inside running containers. This is separate from container.Client which
 // handles container lifecycle (docker create/start/stop/rm).
 type DockerExecClient struct {
-	api dockerExecAPI
-}
-
-// newDockerExecClientFunc creates the underlying Docker API client.
-// It can be overridden in tests.
-var newDockerExecClientFunc = func() (dockerExecAPI, error) {
-	return client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	api      dockerExecAPI
+	osGetenv func(string) string
 }
 
 // NewDockerExecClient creates a new DockerExecClient backed by the Docker SDK.
 func NewDockerExecClient() (*DockerExecClient, error) {
-	api, err := newDockerExecClientFunc()
+	return newDockerExecClientWith(func() (dockerExecAPI, error) {
+		return client.NewClientWithOpts(client.FromEnv, client.WithAPIVersionNegotiation())
+	})
+}
+
+func newDockerExecClientWith(apiFactory func() (dockerExecAPI, error)) (*DockerExecClient, error) {
+	api, err := apiFactory()
 	if err != nil {
 		return nil, err
 	}
-	return &DockerExecClient{api: api}, nil
+	return &DockerExecClient{api: api, osGetenv: os.Getenv}, nil
 }
 
 // ExecCreate creates a new exec process in the container with the
@@ -52,7 +50,7 @@ func (c *DockerExecClient) ExecCreate(ctx context.Context, containerID string, c
 		cmd = []string{"/bin/sh"}
 	}
 	resp, err := c.api.ContainerExecCreate(ctx, containerID, containertypes.ExecOptions{
-		User:         osGetenv("USER"),
+		User:         c.osGetenv("USER"),
 		Cmd:          cmd,
 		Tty:          tty,
 		AttachStdin:  true,

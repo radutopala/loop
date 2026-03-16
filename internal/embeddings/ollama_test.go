@@ -284,11 +284,9 @@ func (s *OllamaSuite) TestEmbedInvalidJSON() {
 
 func (s *OllamaSuite) TestWaitForReadyTimeout() {
 	ctx := context.Background()
-	origSleep := sleepFunc
-	sleepFunc = func(_ time.Duration) {} // no-op to avoid slow tests
-	defer func() { sleepFunc = origSleep }()
 
 	e := s.newEmbedder()
+	e.sleepFunc = func(_ time.Duration) {} // no-op to avoid slow tests
 
 	s.cmd.On("Run", ctx, "docker", "inspect", "--format", "{{.State.Running}}", "loop-ollama").
 		Return([]byte(""), errors.New("not found"))
@@ -340,9 +338,6 @@ func (s *OllamaSuite) TestEmbedInvalidURL() {
 
 func (s *OllamaSuite) TestWaitForReadyInvalidURL() {
 	ctx := context.Background()
-	origSleep := sleepFunc
-	sleepFunc = func(_ time.Duration) {}
-	defer func() { sleepFunc = origSleep }()
 
 	e := NewOllamaEmbedder(
 		WithOllamaCommander(s.cmd),
@@ -351,6 +346,7 @@ func (s *OllamaSuite) TestWaitForReadyInvalidURL() {
 		WithOllamaModel("nomic-embed-text"),
 		WithOllamaStartupWait(10*time.Millisecond),
 	)
+	e.sleepFunc = func(_ time.Duration) {}
 
 	s.cmd.On("Run", ctx, "docker", "inspect", "--format", "{{.State.Running}}", "loop-ollama").
 		Return([]byte(""), errors.New("not found"))

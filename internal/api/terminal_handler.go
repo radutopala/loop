@@ -93,10 +93,12 @@ type InteractiveCmdBuilder interface {
 // terminalWSConn manages a single WebSocket terminal connection.
 type terminalWSConn struct {
 	conn             *websocket.Conn
+	connWriteMessage func(messageType int, data []byte) error
 	manager          TerminalManager
 	hostManager      TerminalManager // may be nil
 	containerFinder  ContainerFinder
 	containerStopper ContainerStopper
+	browserManager   BrowserManager // may be nil
 	cmdBuilder       InteractiveCmdBuilder
 	store            ChannelLister
 	loopDir          string // fallback work dir root (e.g. ~/.loop)
@@ -121,6 +123,7 @@ func (t *terminalWSConn) activeManager() TerminalManager {
 func newTerminalWSConn(conn *websocket.Conn, manager TerminalManager, hostManager TerminalManager, finder ContainerFinder, stopper ContainerStopper, cmdBuilder InteractiveCmdBuilder, store ChannelLister, loopDir string, logger *slog.Logger) *terminalWSConn {
 	return &terminalWSConn{
 		conn:             conn,
+		connWriteMessage: conn.WriteMessage,
 		manager:          manager,
 		hostManager:      hostManager,
 		containerFinder:  finder,
@@ -137,7 +140,7 @@ func newTerminalWSConn(conn *websocket.Conn, manager TerminalManager, hostManage
 func (t *terminalWSConn) writeMessage(msgType int, data []byte) {
 	t.writeMu.Lock()
 	defer t.writeMu.Unlock()
-	if err := t.conn.WriteMessage(msgType, data); err != nil {
+	if err := t.connWriteMessage(msgType, data); err != nil {
 		t.logger.Error("terminal ws: write failed", "error", err, "msg_type", msgType, "len", len(data))
 	}
 }
@@ -497,6 +500,10 @@ func (t *terminalWSConn) handleKill(ctx context.Context, msg wsControlMessage) {
 			t.logger.Warn("terminal ws: kill container remove failed", "container_id", containerID, "error", err)
 		}
 	}
+	// Also stop the Chrome sidecar container for this channel.
+	if t.browserManager != nil {
+		_ = t.browserManager.StopBrowser(ctx, msg.ChannelID)
+	}
 	t.writeJSON(wsStatusMessage{Type: wsStatusStopped})
 }
 
@@ -514,6 +521,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	tc := newTerminalWSConn(conn, s.termManager, s.hostTermManager, s.containerFinder, s.containerStopper, s.cmdBuilder, s.store, s.loopDir, s.logger)
+	tc.browserManager = s.browserManager
 	defer tc.close()
 
 	for {

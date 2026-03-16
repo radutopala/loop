@@ -8,20 +8,18 @@ import (
 	"strings"
 )
 
-// osRemove is a package-level variable to allow testing os.Remove.
-var osRemove = os.Remove
-
 // RemoveMCPConfig removes the per-channel MCP config file for the given channel.
 // It silently ignores os.ErrNotExist (the file may not exist if the agent never ran).
-// This is a variable so external packages can override it in tests.
-var RemoveMCPConfig = removeMCPConfig
+func RemoveMCPConfig(dirPath, channelID string) error {
+	return removeMCPConfigWith(os.Remove, dirPath, channelID)
+}
 
-func removeMCPConfig(dirPath, channelID string) error {
+func removeMCPConfigWith(removeFn func(string) error, dirPath, channelID string) error {
 	if dirPath == "" {
 		return nil
 	}
 	p := filepath.Join(dirPath, ".loop", "mcp-"+channelID+".json")
-	if err := osRemove(p); err != nil && !errors.Is(err, os.ErrNotExist) {
+	if err := removeFn(p); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return fmt.Errorf("removing MCP config %s: %w", p, err)
 	}
 	return nil

@@ -22,42 +22,44 @@ type hostExec struct {
 	cpty    *conpty.ConPty
 }
 
-// defaultShell returns the user's preferred shell on Windows.
-var defaultShell = func() string {
-	if s := os.Getenv("COMSPEC"); s != "" {
-		return s
+// hostPlatform holds Windows-specific fields for HostExecClient.
+type hostPlatform struct {
+	conptyStart     func(commandLine string, opts ...conpty.ConPtyOption) (*conpty.ConPty, error)
+	conptyAvailable func() bool
+}
+
+// platformDefaults sets the Windows-specific defaults on HostExecClient.
+func platformDefaults(c *HostExecClient) {
+	c.defaultShell = func() string {
+		if s := os.Getenv("COMSPEC"); s != "" {
+			return s
+		}
+		if p, err := exec.LookPath("powershell.exe"); err == nil {
+			return p
+		}
+		return "cmd.exe"
 	}
-	if p, err := exec.LookPath("powershell.exe"); err == nil {
-		return p
+	c.defaultShellArgs = func() []string {
+		return nil
 	}
-	return "cmd.exe"
+	c.conptyStart = func(commandLine string, opts ...conpty.ConPtyOption) (*conpty.ConPty, error) {
+		return conpty.Start(commandLine, opts...)
+	}
+	c.conptyAvailable = conpty.IsConPtyAvailable
 }
-
-// defaultShellArgs returns the default arguments for the Windows shell.
-var defaultShellArgs = func() []string {
-	return nil
-}
-
-// conptyStart wraps conpty.Start for testing.
-var conptyStart = func(commandLine string, opts ...conpty.ConPtyOption) (*conpty.ConPty, error) {
-	return conpty.Start(commandLine, opts...)
-}
-
-// conptyAvailable wraps conpty.IsConPtyAvailable for testing.
-var conptyAvailable = conpty.IsConPtyAvailable
 
 // ExecCreate creates a new exec process on Windows. The dirPath parameter
 // is used as the working directory. The process is not started until
 // ExecAttach is called.
 func (c *HostExecClient) ExecCreate(_ context.Context, dirPath string, cmd []string, _ bool) (string, error) {
 	if len(cmd) == 0 {
-		shell := defaultShell()
-		args := defaultShellArgs()
+		shell := c.defaultShell()
+		args := c.defaultShellArgs()
 		cmd = append([]string{shell}, args...)
 	}
 
 	// Validate the command resolves to an actual executable on PATH.
-	resolvedPath, err := lookPath(cmd[0])
+	resolvedPath, err := c.lookPath(cmd[0])
 	if err != nil {
 		return "", fmt.Errorf("command not found: %s", cmd[0])
 	}
@@ -65,7 +67,7 @@ func (c *HostExecClient) ExecCreate(_ context.Context, dirPath string, cmd []str
 	cmd[0] = resolvedPath
 	cmdLine := buildCommandLine(cmd)
 
-	id := generateID()
+	id := generateID(c.randRead)
 	c.mu.Lock()
 	c.execs[id] = &hostExec{
 		cmdLine: cmdLine,
@@ -80,7 +82,7 @@ func (c *HostExecClient) ExecCreate(_ context.Context, dirPath string, cmd []str
 // ExecAttach starts the exec process with a ConPTY and returns
 // a ReadWriteCloser. Close terminates the process and releases handles.
 func (c *HostExecClient) ExecAttach(_ context.Context, execID string) (io.ReadWriteCloser, error) {
-	if !conptyAvailable() {
+	if !c.conptyAvailable() {
 		return nil, fmt.Errorf("Windows ConPTY is not available (requires Windows 10 1809+)")
 	}
 
@@ -91,7 +93,7 @@ func (c *HostExecClient) ExecAttach(_ context.Context, execID string) (io.ReadWr
 		return nil, fmt.Errorf("exec %s not found", execID)
 	}
 
-	cpty, err := conptyStart(
+	cpty, err := c.conptyStart(
 		he.cmdLine,
 		conpty.ConPtyWorkDir(he.dir),
 		conpty.ConPtyEnv(he.env),

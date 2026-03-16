@@ -21,9 +21,13 @@ export default function App() {
   const [settings, setSettings] = useState<AppSettings | null>(null);
 
   useEffect(() => {
-    window.loopAPI?.getSettings?.()
-      .then((s) => setSettings(s))
-      .catch(() => setSettings({ stopDaemonOnQuit: false, autoSaveOnBlur: true, previewTabs: true }));
+    const defaults: AppSettings = { stopDaemonOnQuit: false, autoSaveOnBlur: true, previewTabs: true };
+    const p = window.loopAPI?.getSettings?.();
+    if (p) {
+      p.then((s) => setSettings(s)).catch(() => setSettings(defaults));
+    } else {
+      setSettings(defaults);
+    }
   }, []);
 
   // Wait for settings to load before rendering so we don't flash wrong theme.

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -21,6 +20,7 @@ import (
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/testutil"
 )
 
 // MockDockerClient implements DockerClient for testing.
@@ -66,6 +66,11 @@ func (m *MockDockerClient) ContainerRemove(ctx context.Context, containerID stri
 	return args.Error(0)
 }
 
+func (m *MockDockerClient) ContainerStop(ctx context.Context, containerID string) error {
+	args := m.Called(ctx, containerID)
+	return args.Error(0)
+}
+
 func (m *MockDockerClient) ImageList(ctx context.Context, image string) ([]string, error) {
 	args := m.Called(ctx, image)
 	return args.Get(0).([]string), args.Error(1)
@@ -78,6 +83,11 @@ func (m *MockDockerClient) ImagePull(ctx context.Context, image string) error {
 
 func (m *MockDockerClient) ImageBuild(ctx context.Context, contextDir, tag string) error {
 	args := m.Called(ctx, contextDir, tag)
+	return args.Error(0)
+}
+
+func (m *MockDockerClient) ImageBuildFile(ctx context.Context, contextDir, dockerfile, tag string) error {
+	args := m.Called(ctx, contextDir, dockerfile, tag)
 	return args.Error(0)
 }
 
@@ -99,23 +109,17 @@ func (m *MockDockerClient) CopyToContainer(ctx context.Context, containerID, dst
 	return args.Error(0)
 }
 
+func (m *MockDockerClient) NetworkEnsure(ctx context.Context, name string) error {
+	args := m.Called(ctx, name)
+	return args.Error(0)
+}
+
 type RunnerSuite struct {
 	suite.Suite
-	client            *MockDockerClient
-	runner            *DockerRunner
-	cfg               *config.Config
-	origMkdirAll      func(string, os.FileMode) error
-	origGetenv        func(string) string
-	origWriteFile     func(string, []byte, os.FileMode) error
-	origUserHomeDir   func() (string, error)
-	origOsStat        func(string) (os.FileInfo, error)
-	origExecCommand   func(string, ...string) *exec.Cmd
-	origTimeAfterFunc func(time.Duration, func()) *time.Timer
-	origRandRead      func([]byte) (int, error)
-	origReadlink      func(string) (string, error)
-	origReadFile      func(string) ([]byte, error)
-	origTimeLocalName func() string
-	origRemove        func(string) error
+	client *MockDockerClient
+	sys    *testutil.MockSystem
+	runner *DockerRunner
+	cfg    *config.Config
 }
 
 const (
@@ -133,40 +137,30 @@ func (s *RunnerSuite) TestLocalTimezone() {
 		{
 			name: "from TZ env",
 			setup: func() {
-				osGetenv = func(key string) string {
-					if key == "TZ" {
-						return "America/New_York"
-					}
-					return ""
-				}
+				s.sys.Override("Getenv", "TZ").Return("America/New_York")
+				s.sys.On("Getenv", mock.Anything).Return("")
 			},
 			expected: "America/New_York",
 		},
 		{
 			name: "from osReadlink",
 			setup: func() {
-				osReadlink = func(string) (string, error) {
-					return "/var/db/timezone/zoneinfo/Europe/Bucharest", nil
-				}
+				s.sys.Override("Readlink", mock.Anything).Return("/var/db/timezone/zoneinfo/Europe/Bucharest", nil)
 			},
 			expected: "Europe/Bucharest",
 		},
 		{
 			name: "from /etc/timezone",
 			setup: func() {
-				osReadFile = func(path string) ([]byte, error) {
-					if path == "/etc/timezone" {
-						return []byte("Asia/Tokyo\n"), nil
-					}
-					return nil, os.ErrNotExist
-				}
+				s.sys.Override("ReadFile", "/etc/timezone").Return([]byte("Asia/Tokyo\n"), nil)
+				s.sys.On("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
 			},
 			expected: "Asia/Tokyo",
 		},
 		{
 			name: "from time.Local name",
 			setup: func() {
-				osTimeLocalName = func() string { return "Europe/Berlin" }
+				s.runner.osTimeLocalName = func() string { return "Europe/Berlin" }
 			},
 			expected: "Europe/Berlin",
 		},
@@ -178,13 +172,12 @@ func (s *RunnerSuite) TestLocalTimezone() {
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			// Reset to defaults: no TZ, no osReadFile, no osReadlink
-			osGetenv = func(string) string { return "" }
-			osReadFile = func(string) ([]byte, error) { return nil, os.ErrNotExist }
-			osReadlink = func(string) (string, error) { return "", os.ErrNotExist }
-			osTimeLocalName = func() string { return "Local" }
+			// Reset to defaults: no TZ, no ReadFile, no Readlink
+			s.sys = newDefaultMockSystem()
+			s.runner.sys = s.sys
+			s.runner.osTimeLocalName = func() string { return "Local" }
 			tt.setup()
-			require.Equal(s.T(), tt.expected, localTimezone())
+			require.Equal(s.T(), tt.expected, s.runner.localTimezone())
 		})
 	}
 }
@@ -194,44 +187,9 @@ func TestRunnerSuite(t *testing.T) {
 }
 
 func (s *RunnerSuite) SetupTest() {
-	s.origMkdirAll = osMkdirAll
-	osMkdirAll = func(_ string, _ os.FileMode) error { return nil }
-	s.origGetenv = osGetenv
-	osGetenv = func(key string) string {
-		if key == "USER" {
-			return "testuser"
-		}
-		return ""
-	}
-	s.origWriteFile = osWriteFile
-	osWriteFile = func(_ string, _ []byte, _ os.FileMode) error { return nil }
-	s.origUserHomeDir = osUserHomeDir
-	osUserHomeDir = func() (string, error) { return "/home/testuser", nil }
-	s.origOsStat = osStat
-	osStat = func(_ string) (os.FileInfo, error) { return nil, os.ErrNotExist }
-	s.origExecCommand = osExecCommand
-	osExecCommand = func(_ string, _ ...string) *exec.Cmd {
-		return exec.Command("echo", "")
-	}
-	s.origTimeAfterFunc = osTimeAfterFunc
-	osTimeAfterFunc = func(d time.Duration, f func()) *time.Timer {
-		f() // execute immediately in tests
-		return time.NewTimer(0)
-	}
-	s.origRandRead = osRandRead
-	osRandRead = func(b []byte) (int, error) {
-		copy(b, []byte{0xaa, 0xbb, 0xcc})
-		return len(b), nil
-	}
-	s.origReadlink = osReadlink
-	osReadlink = func(string) (string, error) { return "", os.ErrNotExist }
-	s.origReadFile = osReadFile
-	osReadFile = func(string) ([]byte, error) { return nil, os.ErrNotExist }
-	s.origTimeLocalName = osTimeLocalName
-	osTimeLocalName = func() string { return "Local" }
-	s.origRemove = osRemove
-	osRemove = func(string) error { return nil }
 	s.client = new(MockDockerClient)
+	s.client.On("NetworkEnsure", mock.Anything, mock.Anything).Maybe().Return(nil)
+	s.sys = newDefaultMockSystem()
 	s.cfg = &config.Config{
 		ClaudeBinPath:      "claude",
 		ContainerImage:     "loop-agent:latest",
@@ -242,22 +200,51 @@ func (s *RunnerSuite) SetupTest() {
 		APIAddr:            ":8222",
 		LoopDir:            "/home/testuser/.loop",
 	}
+	s.cfg.BrowserEnabled = true
 	s.runner = NewDockerRunner(s.client, s.cfg)
+	s.runner.sys = s.sys
+	s.runner.osTimeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+		f() // execute immediately in tests
+		return time.NewTimer(0)
+	}
+	s.runner.osRandRead = func(b []byte) (int, error) {
+		copy(b, []byte{0xaa, 0xbb, 0xcc})
+		return len(b), nil
+	}
+	s.runner.osTimeLocalName = func() string { return "Local" }
 }
 
-func (s *RunnerSuite) TearDownTest() {
-	osMkdirAll = s.origMkdirAll
-	osGetenv = s.origGetenv
-	osWriteFile = s.origWriteFile
-	osUserHomeDir = s.origUserHomeDir
-	osStat = s.origOsStat
-	osExecCommand = s.origExecCommand
-	osTimeAfterFunc = s.origTimeAfterFunc
-	osRandRead = s.origRandRead
-	osReadlink = s.origReadlink
-	osReadFile = s.origReadFile
-	osTimeLocalName = s.origTimeLocalName
-	osRemove = s.origRemove
+// newDefaultMockSystem creates a MockSystem with default expectations for runner tests.
+func newDefaultMockSystem() *testutil.MockSystem {
+	sys := new(testutil.MockSystem)
+	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("Getenv", "USER").Return("testuser")
+	sys.On("Getenv", mock.Anything).Return("")
+	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	sys.On("UserHomeDir").Return("/home/testuser", nil)
+	sys.On("Stat", mock.Anything).Return(nil, os.ErrNotExist)
+	sys.On("ExecCommandOutput", mock.Anything, mock.Anything).Return([]byte{}, nil)
+	sys.On("Readlink", mock.Anything).Return("", os.ErrNotExist)
+	sys.On("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
+	sys.On("Remove", mock.Anything).Return(nil)
+	return sys
+}
+
+// applyMockDefaults sets mock fields on s.runner to match SetupTest defaults.
+// Call this after creating a new runner via NewDockerRunner in subtests.
+func (s *RunnerSuite) applyMockDefaults() {
+	s.client.On("NetworkEnsure", mock.Anything, mock.Anything).Maybe().Return(nil)
+	s.sys = newDefaultMockSystem()
+	s.runner.sys = s.sys
+	s.runner.osTimeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+		f()
+		return time.NewTimer(0)
+	}
+	s.runner.osRandRead = func(b []byte) (int, error) {
+		copy(b, []byte{0xaa, 0xbb, 0xcc})
+		return len(b), nil
+	}
+	s.runner.osTimeLocalName = func() string { return "Local" }
 }
 
 // setupMockRun sets up mocks for a successful non-streaming container Run cycle.
@@ -267,6 +254,7 @@ func (s *RunnerSuite) setupMockRun(ctx context.Context, createMatcher any, conta
 	waitCh <- WaitResponse{StatusCode: 0}
 	errCh := make(chan error, 1)
 
+	s.client.On("NetworkEnsure", ctx, mock.Anything).Maybe().Return(nil)
 	s.client.On("ContainerCreate", ctx, createMatcher, containerName).Return(testContainerID, nil)
 	s.client.On("ContainerLogs", ctx, testContainerID).Return(reader, nil)
 	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
@@ -592,6 +580,7 @@ func (s *RunnerSuite) TestRunTimeout() {
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerStop", mock.Anything, "container-123").Return(nil)
 	// scheduleRemove uses context.Background(), not the cancelled ctx
 	s.client.On("ContainerRemove", mock.Anything, "container-123").Return(nil)
 
@@ -711,6 +700,7 @@ func (s *RunnerSuite) TestRunOutputErrors() {
 		s.Run(tt.name, func() {
 			s.client = new(MockDockerClient)
 			s.runner = NewDockerRunner(s.client, s.cfg)
+			s.applyMockDefaults()
 
 			ctx := context.Background()
 			req := &agent.AgentRequest{ChannelID: "ch-1"}
@@ -782,6 +772,7 @@ func (s *RunnerSuite) TestRunAuthConfig() {
 			s.cfg.ClaudeCodeOAuthToken = tt.oauthToken
 			s.cfg.AnthropicAPIKey = tt.apiKey
 			s.runner = NewDockerRunner(s.client, s.cfg)
+			s.applyMockDefaults()
 
 			ctx := context.Background()
 			req := &agent.AgentRequest{
@@ -837,12 +828,13 @@ func (s *RunnerSuite) TestRunProxyEnv() {
 		s.Run(tt.name, func() {
 			s.client = new(MockDockerClient)
 			s.runner = NewDockerRunner(s.client, s.cfg)
-			osGetenv = func(key string) string {
-				if key == "USER" {
-					return "testuser"
-				}
-				return tt.envs[key]
+			s.applyMockDefaults()
+			// Re-register Getenv expectations with specific env vars first, catch-all last.
+			s.sys.Override("Getenv", "USER").Return("testuser")
+			for k, v := range tt.envs {
+				s.sys.On("Getenv", k).Return(v)
 			}
+			s.sys.On("Getenv", mock.Anything).Return("")
 
 			ctx := context.Background()
 			req := &agent.AgentRequest{
@@ -889,14 +881,8 @@ func (s *RunnerSuite) TestRunConfigEnvsExpandError() {
 	s.cfg.Envs = map[string]string{
 		"BAD_VAR": "~/some/path",
 	}
-	callCount := 0
-	osUserHomeDir = func() (string, error) {
-		callCount++
-		if callCount == 1 {
-			return "/home/testuser", nil // hostHome succeeds
-		}
-		return "", errors.New("home error") // env expansion fails
-	}
+	s.sys.Override("UserHomeDir").Return("/home/testuser", nil).Once()
+	s.sys.On("UserHomeDir").Return("", errors.New("home error"))
 
 	ctx := context.Background()
 	req := &agent.AgentRequest{
@@ -1050,7 +1036,7 @@ func (s *RunnerSuite) TestRunRetryAlsoFails() {
 }
 
 func (s *RunnerSuite) TestRunHomeDirError() {
-	osUserHomeDir = func() (string, error) { return "", errors.New("home dir error") }
+	s.sys.Override("UserHomeDir").Return("", errors.New("home dir error"))
 
 	ctx := context.Background()
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
@@ -1062,7 +1048,7 @@ func (s *RunnerSuite) TestRunHomeDirError() {
 }
 
 func (s *RunnerSuite) TestRunMkdirAllError() {
-	osMkdirAll = func(_ string, _ os.FileMode) error { return errors.New("mkdir fail") }
+	s.sys.Override("MkdirAll", mock.Anything, mock.Anything).Return(errors.New("mkdir fail"))
 
 	ctx := context.Background()
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
@@ -1075,14 +1061,8 @@ func (s *RunnerSuite) TestRunMkdirAllError() {
 
 func (s *RunnerSuite) TestRunMkdirAllMCPSubdirError() {
 	// workDir mkdir succeeds, but .loop subdir fails inside writeMCPConfig.
-	callCount := 0
-	osMkdirAll = func(_ string, _ os.FileMode) error {
-		callCount++
-		if callCount > 1 {
-			return errors.New("mkdir subdir fail")
-		}
-		return nil
-	}
+	s.sys.Override("MkdirAll", mock.Anything, mock.Anything).Return(nil).Once()
+	s.sys.On("MkdirAll", mock.Anything, mock.Anything).Return(errors.New("mkdir subdir fail"))
 
 	ctx := context.Background()
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
@@ -1093,22 +1073,8 @@ func (s *RunnerSuite) TestRunMkdirAllMCPSubdirError() {
 	require.Contains(s.T(), err.Error(), "creating host directory")
 }
 
-func (s *RunnerSuite) TestDefaultMkdirAll() {
-	tmpDir := s.T().TempDir()
-	err := s.origMkdirAll(tmpDir+"/a/b", 0o755)
-	require.NoError(s.T(), err)
-}
-
-func (s *RunnerSuite) TestDefaultGetenv() {
-	result := s.origGetenv("PATH")
-	require.NotEmpty(s.T(), result)
-}
-
-func (s *RunnerSuite) TestDefaultUserHomeDir() {
-	home, err := s.origUserHomeDir()
-	require.NoError(s.T(), err)
-	require.NotEmpty(s.T(), home)
-}
+// Default implementations for MkdirAll, Getenv, and UserHomeDir are now
+// provided by osutil.RealSystem (tested in osutil package).
 
 func (s *RunnerSuite) TestAddAuthEnv() {
 	tests := []struct {
@@ -1174,12 +1140,17 @@ func (s *RunnerSuite) TestAddProxyEnv() {
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
-			origGetenv := osGetenv
-			defer func() { osGetenv = origGetenv }()
-			osGetenv = func(key string) string { return tc.envs[key] }
+			sys := new(testutil.MockSystem)
+			for k, v := range tc.envs {
+				sys.On("Getenv", k).Return(v)
+			}
+			sys.On("Getenv", mock.Anything).Return("")
+			s.runner.sys = sys
 
-			result := addProxyEnv([]string{"BASE=1"})
+			result := s.runner.addProxyEnv([]string{"BASE=1"})
 			require.Equal(s.T(), tc.want, result)
+
+			s.runner.sys = s.sys // restore
 		})
 	}
 }
@@ -1248,17 +1219,30 @@ func (s *RunnerSuite) TestEnsureNoProxy() {
 }
 
 func (s *RunnerSuite) TestBuildMCPConfig() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", false, nil)
-	require.Len(s.T(), cfg.MCPServers, 1)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, true, nil)
+	require.Len(s.T(), cfg.MCPServers, 2)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
 	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222", "--log", "/home/user/project/.loop/mcp.log"}, ls.Args)
 	require.Nil(s.T(), ls.Env)
+
+	bs := cfg.MCPServers["loop-browser"]
+	require.Equal(s.T(), "/usr/local/bin/loop", bs.Command)
+	require.Equal(s.T(), []string{"mcp-browser", "--host", "loop-chrome-ch-1", "--log", "/home/user/project/.loop/mcp-browser.log", "--api-url", "http://host.docker.internal:8222", "--channel-id", "ch-1"}, bs.Args)
+}
+
+func (s *RunnerSuite) TestBuildMCPConfigBrowserDisabled() {
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, false, nil)
+	require.Len(s.T(), cfg.MCPServers, 1)
+	_, hasBrowser := cfg.MCPServers["loop-browser"]
+	require.False(s.T(), hasBrowser)
+	_, hasLoop := cfg.MCPServers["loop"]
+	require.True(s.T(), hasLoop)
 }
 
 func (s *RunnerSuite) TestBuildMCPConfigWithAuthorID() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "user-42", false, nil)
-	require.Len(s.T(), cfg.MCPServers, 1)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "user-42", "", false, true, nil)
+	require.Len(s.T(), cfg.MCPServers, 2)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
 	require.Equal(s.T(), []string{"mcp", "--channel-id", "ch-1", "--api-url", "http://host.docker.internal:8222", "--log", "/home/user/project/.loop/mcp.log", "--author-id", "user-42"}, ls.Args)
@@ -1272,8 +1256,8 @@ func (s *RunnerSuite) TestBuildMCPConfigWithUserServers() {
 			Env:     map[string]string{"API_KEY": "secret"},
 		},
 	}
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", false, userServers)
-	require.Len(s.T(), cfg.MCPServers, 2)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, true, userServers)
+	require.Len(s.T(), cfg.MCPServers, 3)
 
 	custom := cfg.MCPServers["custom-tool"]
 	require.Equal(s.T(), "/path/to/binary", custom.Command)
@@ -1291,18 +1275,89 @@ func (s *RunnerSuite) TestBuildMCPConfigUserLoopPreserved() {
 			Args:    []string{"--custom-flag"},
 		},
 	}
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", false, userServers)
-	require.Len(s.T(), cfg.MCPServers, 1)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, true, userServers)
+	require.Len(s.T(), cfg.MCPServers, 2)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/user/custom/loop", ls.Command)
 	require.Equal(s.T(), []string{"--custom-flag"}, ls.Args)
 }
 
+func (s *RunnerSuite) TestBuildMCPConfigUserBrowserPreserved() {
+	userServers := map[string]config.MCPServerConfig{
+		"loop-browser": {
+			Command: "/user/custom/browser",
+			Args:    []string{"--port", "9999"},
+		},
+	}
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, true, userServers)
+	require.Len(s.T(), cfg.MCPServers, 2)
+	bs := cfg.MCPServers["loop-browser"]
+	require.Equal(s.T(), "/user/custom/browser", bs.Command)
+	require.Equal(s.T(), []string{"--port", "9999"}, bs.Args)
+}
+
 func (s *RunnerSuite) TestBuildMCPConfigWithMemory() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", true, nil)
-	require.Len(s.T(), cfg.MCPServers, 1)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", true, true, nil)
+	require.Len(s.T(), cfg.MCPServers, 2)
 	ls := cfg.MCPServers["loop"]
 	require.Contains(s.T(), ls.Args, "--memory")
+}
+
+func (s *RunnerSuite) TestBuildMCPConfigWithBrowserTargetID() {
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "page-target-42", false, true, nil)
+	require.Len(s.T(), cfg.MCPServers, 2)
+	bs := cfg.MCPServers["loop-browser"]
+	require.Equal(s.T(), "/usr/local/bin/loop", bs.Command)
+	require.Contains(s.T(), bs.Args, "--target")
+	require.Contains(s.T(), bs.Args, "page-target-42")
+}
+
+func (s *RunnerSuite) TestRunBrowserDisabledNoNetwork() {
+	s.cfg.BrowserEnabled = false
+	s.runner = NewDockerRunner(s.client, s.cfg)
+	s.applyMockDefaults()
+	ctx := context.Background()
+
+	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return cfg.NetworkName == "" && cfg.Hostname == ""
+	}), testContainerName, testJSONOK)
+
+	resp, err := s.runner.Run(ctx, &agent.AgentRequest{
+		ChannelID: "ch-1",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hi"}},
+	})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp.Response)
+}
+
+func (s *RunnerSuite) TestWriteMCPConfigWithBrowserTargetIDFunc() {
+	s.runner.BrowserTargetIDFunc = func(channelID string) string {
+		if channelID == "ch-1" {
+			return "active-target-99"
+		}
+		return ""
+	}
+
+	// Capture the data passed to WriteFile.
+	var writtenData []byte
+	s.sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			writtenData = args.Get(1).([]byte)
+		}).Return(nil)
+
+	workDir := "/tmp/test-work"
+	mcpPath, err := s.runner.writeMCPConfig(workDir, "ch-1", "http://host.docker.internal:8222", "", s.cfg)
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), mcpPath)
+
+	// Parse the captured data to verify --target was included.
+	require.NotEmpty(s.T(), writtenData)
+	var cfg mcpConfig
+	require.NoError(s.T(), json.Unmarshal(writtenData, &cfg))
+
+	bs := cfg.MCPServers["loop-browser"]
+	require.Contains(s.T(), bs.Args, "--target")
+	require.Contains(s.T(), bs.Args, "active-target-99")
 }
 
 func (s *RunnerSuite) TestRunWithDirPath() {
@@ -1326,9 +1381,7 @@ func (s *RunnerSuite) TestRunWithDirPath() {
 }
 
 func (s *RunnerSuite) TestRunMCPConfigWriteError() {
-	osWriteFile = func(_ string, _ []byte, _ os.FileMode) error {
-		return errors.New("write failed")
-	}
+	s.sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("write failed"))
 
 	ctx := context.Background()
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
@@ -1342,11 +1395,11 @@ func (s *RunnerSuite) TestRunMCPConfigWriteError() {
 func (s *RunnerSuite) TestRunMCPConfigWritten() {
 	var writtenPath string
 	var writtenData []byte
-	osWriteFile = func(path string, data []byte, _ os.FileMode) error {
-		writtenPath = path
-		writtenData = data
-		return nil
-	}
+	s.sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			writtenPath = args.String(0)
+			writtenData = args.Get(1).([]byte)
+		}).Return(nil)
 
 	ctx := context.Background()
 	req := &agent.AgentRequest{
@@ -1373,10 +1426,10 @@ func (s *RunnerSuite) TestRunMCPConfigWritten() {
 
 func (s *RunnerSuite) TestRunMCPConfigRemovedAfterRun() {
 	var removedPath string
-	osRemove = func(path string) error {
-		removedPath = path
-		return nil
-	}
+	s.sys.Override("Remove", mock.Anything).
+		Run(func(args mock.Arguments) {
+			removedPath = args.String(0)
+		}).Return(nil)
 
 	ctx := context.Background()
 	req := &agent.AgentRequest{
@@ -1393,11 +1446,8 @@ func (s *RunnerSuite) TestRunMCPConfigRemovedAfterRun() {
 	s.client.AssertExpectations(s.T())
 }
 
-func (s *RunnerSuite) TestDefaultWriteFile() {
-	tmpDir := s.T().TempDir()
-	err := s.origWriteFile(tmpDir+"/test.txt", []byte("hello"), 0o644)
-	require.NoError(s.T(), err)
-}
+// Default implementation for WriteFile is now provided by osutil.RealSystem
+// (tested in osutil package).
 
 // errReader always returns an error on Read.
 type errReader struct {
@@ -1491,13 +1541,8 @@ func TestParseStreamJSONReaderError(t *testing.T) {
 
 // --- Tests for new mount processing functions ---
 
-func TestExpandPath(t *testing.T) {
-	origUserHomeDir := osUserHomeDir
-	defer func() { osUserHomeDir = origUserHomeDir }()
-
-	osUserHomeDir = func() (string, error) {
-		return "/home/testuser", nil
-	}
+func (s *RunnerSuite) TestExpandPath() {
+	// Default UserHomeDir from newDefaultMockSystem returns "/home/testuser"
 
 	tests := []struct {
 		name     string
@@ -1526,29 +1571,24 @@ func TestExpandPath(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := expandPath(tt.input)
+		s.Run(tt.name, func() {
+			result, err := s.runner.expandPath(tt.input)
 			if tt.wantErr {
-				require.Error(t, err)
+				require.Error(s.T(), err)
 			} else {
-				require.NoError(t, err)
-				require.Equal(t, tt.expected, result)
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), tt.expected, result)
 			}
 		})
 	}
 }
 
-func TestExpandPathHomeDirError(t *testing.T) {
-	origUserHomeDir := osUserHomeDir
-	defer func() { osUserHomeDir = origUserHomeDir }()
+func (s *RunnerSuite) TestExpandPathHomeDirError() {
+	s.sys.Override("UserHomeDir").Return("", errors.New("home dir error"))
 
-	osUserHomeDir = func() (string, error) {
-		return "", errors.New("home dir error")
-	}
-
-	_, err := expandPath("~/.claude")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "home dir error")
+	_, err := s.runner.expandPath("~/.claude")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "home dir error")
 }
 
 func TestParseMountSpec(t *testing.T) {
@@ -1584,24 +1624,11 @@ func TestParseMountSpec(t *testing.T) {
 	}
 }
 
-func TestProcessMount(t *testing.T) {
-	origUserHomeDir := osUserHomeDir
-	origOsStat := osStat
-	defer func() {
-		osUserHomeDir = origUserHomeDir
-		osStat = origOsStat
-	}()
-
-	osUserHomeDir = func() (string, error) {
-		return "/home/testuser", nil
-	}
-
-	osStat = func(name string) (os.FileInfo, error) {
-		if name == "/home/testuser/.claude" || name == "/home/testuser/.gitconfig" {
-			return nil, nil // Path exists
-		}
-		return nil, os.ErrNotExist
-	}
+func (s *RunnerSuite) TestProcessMount() {
+	// Default UserHomeDir from newDefaultMockSystem returns "/home/testuser"
+	s.sys.Override("Stat", "/home/testuser/.claude").Return(nil, nil)
+	s.sys.On("Stat", "/home/testuser/.gitconfig").Return(nil, nil)
+	s.sys.On("Stat", mock.Anything).Return(nil, os.ErrNotExist)
 
 	tests := []struct {
 		name     string
@@ -1654,13 +1681,13 @@ func TestProcessMount(t *testing.T) {
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			result, err := processMount(tt.input)
+		s.Run(tt.name, func() {
+			result, err := s.runner.processMount(tt.input)
 			if tt.wantErr {
-				require.Error(t, err)
+				require.Error(s.T(), err)
 			} else {
-				require.NoError(t, err)
-				require.Equal(t, tt.expected, result)
+				require.NoError(s.T(), err)
+				require.Equal(s.T(), tt.expected, result)
 			}
 		})
 	}
@@ -1686,60 +1713,35 @@ func TestIsNamedVolume(t *testing.T) {
 	}
 }
 
-func TestProcessMountExpandPathError(t *testing.T) {
-	origUserHomeDir := osUserHomeDir
-	defer func() { osUserHomeDir = origUserHomeDir }()
+func (s *RunnerSuite) TestProcessMountExpandPathError() {
+	s.sys.Override("UserHomeDir").Return("", errors.New("home dir error"))
 
-	osUserHomeDir = func() (string, error) {
-		return "", errors.New("home dir error")
-	}
-
-	result, err := processMount("~/.claude:~/.claude")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "expanding path")
-	require.Empty(t, result)
+	result, err := s.runner.processMount("~/.claude:~/.claude")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "expanding path")
+	require.Empty(s.T(), result)
 }
 
-func TestProcessMountContainerPathExpandError(t *testing.T) {
-	origUserHomeDir := osUserHomeDir
-	origOsStat := osStat
-	defer func() {
-		osUserHomeDir = origUserHomeDir
-		osStat = origOsStat
-	}()
+func (s *RunnerSuite) TestProcessMountContainerPathExpandError() {
+	s.sys.Override("UserHomeDir").Return("/home/testuser", nil).Once()
+	s.sys.On("UserHomeDir").Return("", errors.New("home dir error"))
 
-	callCount := 0
-	osUserHomeDir = func() (string, error) {
-		callCount++
-		if callCount == 1 {
-			return "/home/testuser", nil // host tilde expansion succeeds
-		}
-		return "", errors.New("home dir error") // container tilde expansion fails
-	}
-
-	osStat = func(_ string) (os.FileInfo, error) {
-		return nil, nil // path exists
-	}
+	s.sys.Override("Stat", mock.Anything).Return(nil, nil)
 
 	// Host uses ~ (triggers first osUserHomeDir call), container uses ~ (triggers second call that fails)
-	result, err := processMount("~/.claude:~/.claude")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "expanding container path")
-	require.Empty(t, result)
+	result, err := s.runner.processMount("~/.claude:~/.claude")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "expanding container path")
+	require.Empty(s.T(), result)
 }
 
-func TestProcessMountNamedVolumeContainerPathExpandError(t *testing.T) {
-	origUserHomeDir := osUserHomeDir
-	defer func() { osUserHomeDir = origUserHomeDir }()
+func (s *RunnerSuite) TestProcessMountNamedVolumeContainerPathExpandError() {
+	s.sys.Override("UserHomeDir").Return("", errors.New("home dir error"))
 
-	osUserHomeDir = func() (string, error) {
-		return "", errors.New("home dir error")
-	}
-
-	result, err := processMount("myvolume:~/.cache")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "expanding container path")
-	require.Empty(t, result)
+	result, err := s.runner.processMount("myvolume:~/.cache")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "expanding container path")
+	require.Empty(s.T(), result)
 }
 
 func (s *RunnerSuite) TestRunWithInvalidMount() {
@@ -1764,23 +1766,10 @@ func (s *RunnerSuite) TestRunWithInvalidMount() {
 }
 
 func (s *RunnerSuite) TestRunWithCustomMounts() {
-	origUserHomeDir := osUserHomeDir
-	origOsStat := osStat
-	defer func() {
-		osUserHomeDir = origUserHomeDir
-		osStat = origOsStat
-	}()
-
-	osUserHomeDir = func() (string, error) {
-		return "/home/testuser", nil
-	}
-
-	osStat = func(name string) (os.FileInfo, error) {
-		if name == "/home/testuser/.claude" || name == "/home/testuser/.gitconfig" {
-			return nil, nil // Path exists
-		}
-		return nil, os.ErrNotExist
-	}
+	// Default UserHomeDir from newDefaultMockSystem returns "/home/testuser"
+	s.sys.Override("Stat", "/home/testuser/.claude").Return(nil, nil)
+	s.sys.On("Stat", "/home/testuser/.gitconfig").Return(nil, nil)
+	s.sys.On("Stat", mock.Anything).Return(nil, os.ErrNotExist)
 
 	s.cfg.Mounts = []string{
 		"~/.claude:~/.claude",
@@ -1814,19 +1803,7 @@ func (s *RunnerSuite) TestRunWithCustomMounts() {
 }
 
 func (s *RunnerSuite) TestRunNamedVolumesChownDirs() {
-	origUserHomeDir := osUserHomeDir
-	origOsStat := osStat
-	defer func() {
-		osUserHomeDir = origUserHomeDir
-		osStat = origOsStat
-	}()
-
-	osUserHomeDir = func() (string, error) {
-		return "/home/testuser", nil
-	}
-	osStat = func(_ string) (os.FileInfo, error) {
-		return nil, os.ErrNotExist
-	}
+	// Default UserHomeDir and Stat from newDefaultMockSystem are sufficient
 
 	s.cfg.Mounts = []string{
 		"loop-gomodcache:/go/pkg/mod",
@@ -1859,16 +1836,7 @@ func (s *RunnerSuite) TestRunNamedVolumesChownDirs() {
 	s.client.AssertExpectations(s.T())
 }
 
-func TestGitExcludesMount(t *testing.T) {
-	origExecCommand := osExecCommand
-	origUserHomeDir := osUserHomeDir
-	origOsStat := osStat
-	defer func() {
-		osExecCommand = origExecCommand
-		osUserHomeDir = origUserHomeDir
-		osStat = origOsStat
-	}()
-
+func (s *RunnerSuite) TestGitExcludesMount() {
 	tests := []struct {
 		name       string
 		gitOutput  string
@@ -1918,36 +1886,27 @@ func TestGitExcludesMount(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
+		s.Run(tc.name, func() {
 			if tc.gitErr {
-				osExecCommand = func(_ string, _ ...string) *exec.Cmd {
-					return exec.Command("false")
-				}
+				s.sys.Override("ExecCommandOutput", mock.Anything, mock.Anything).Return(nil, errors.New("exit status 1"))
 			} else {
-				osExecCommand = func(_ string, _ ...string) *exec.Cmd {
-					return exec.Command("echo", "-n", tc.gitOutput)
-				}
+				s.sys.Override("ExecCommandOutput", mock.Anything, mock.Anything).Return([]byte(tc.gitOutput), nil)
 			}
 
 			if tc.homeDirErr {
-				osUserHomeDir = func() (string, error) {
-					return "", errors.New("home dir error")
-				}
+				s.sys.Override("UserHomeDir").Return("", errors.New("home dir error"))
 			} else {
-				osUserHomeDir = func() (string, error) {
-					return tc.homeDir, nil
-				}
+				s.sys.Override("UserHomeDir").Return(tc.homeDir, nil)
 			}
 
-			osStat = func(_ string) (os.FileInfo, error) {
-				if tc.fileExists {
-					return nil, nil
-				}
-				return nil, os.ErrNotExist
+			if tc.fileExists {
+				s.sys.Override("Stat", mock.Anything).Return(nil, nil)
+			} else {
+				s.sys.Override("Stat", mock.Anything).Return(nil, os.ErrNotExist)
 			}
 
-			result := gitExcludesMount()
-			require.Equal(t, tc.expected, result)
+			result := s.runner.gitExcludesMount()
+			require.Equal(s.T(), tc.expected, result)
 		})
 	}
 }
@@ -1978,6 +1937,7 @@ func (s *RunnerSuite) TestRunClaudeModelConfig() {
 			s.client = new(MockDockerClient)
 			s.cfg.ClaudeModel = tt.model
 			s.runner = NewDockerRunner(s.client, s.cfg)
+			s.applyMockDefaults()
 
 			ctx := context.Background()
 			req := &agent.AgentRequest{
@@ -1997,27 +1957,10 @@ func (s *RunnerSuite) TestRunClaudeModelConfig() {
 }
 
 func (s *RunnerSuite) TestRunWithGitExcludesMount() {
-	origUserHomeDir := osUserHomeDir
-	origOsStat := osStat
-	defer func() {
-		osUserHomeDir = origUserHomeDir
-		osStat = origOsStat
-	}()
-
-	osUserHomeDir = func() (string, error) {
-		return "/home/testuser", nil
-	}
-
-	osExecCommand = func(_ string, _ ...string) *exec.Cmd {
-		return exec.Command("echo", "-n", "~/.gitignore_global\n")
-	}
-
-	osStat = func(name string) (os.FileInfo, error) {
-		if name == "/home/testuser/.gitignore_global" {
-			return nil, nil
-		}
-		return nil, os.ErrNotExist
-	}
+	// Default UserHomeDir from newDefaultMockSystem returns "/home/testuser"
+	s.sys.Override("ExecCommandOutput", mock.Anything, mock.Anything).Return([]byte("~/.gitignore_global\n"), nil)
+	s.sys.Override("Stat", "/home/testuser/.gitignore_global").Return(nil, nil)
+	s.sys.On("Stat", mock.Anything).Return(nil, os.ErrNotExist)
 
 	ctx := context.Background()
 	req := &agent.AgentRequest{
@@ -2036,14 +1979,12 @@ func (s *RunnerSuite) TestRunWithGitExcludesMount() {
 	s.client.AssertExpectations(s.T())
 }
 
-func (s *RunnerSuite) TestDefaultExecCommand() {
-	cmd := s.origExecCommand("echo", "hello")
-	require.NotNil(s.T(), cmd)
-}
+// Default implementation for ExecCommand is now provided by osutil.RealSystem
+// (tested in osutil package).
 
 func (s *RunnerSuite) TestScheduleRemove() {
 	var capturedDuration time.Duration
-	osTimeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+	s.runner.osTimeAfterFunc = func(d time.Duration, f func()) *time.Timer {
 		capturedDuration = d
 		f()
 		return time.NewTimer(0)
@@ -2058,7 +1999,7 @@ func (s *RunnerSuite) TestScheduleRemove() {
 }
 
 func (s *RunnerSuite) TestScheduleRemoveIgnoresError() {
-	osTimeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+	s.runner.osTimeAfterFunc = func(d time.Duration, f func()) *time.Timer {
 		f()
 		return time.NewTimer(0)
 	}
@@ -2071,8 +2012,9 @@ func (s *RunnerSuite) TestScheduleRemoveIgnoresError() {
 }
 
 func (s *RunnerSuite) TestDefaultTimeAfterFunc() {
+	r := NewDockerRunner(s.client, s.cfg)
 	done := make(chan struct{})
-	timer := s.origTimeAfterFunc(time.Millisecond, func() {
+	timer := r.osTimeAfterFunc(time.Millisecond, func() {
 		close(done)
 	})
 	require.NotNil(s.T(), timer)
@@ -2094,14 +2036,9 @@ func (s *RunnerSuite) TestRunProjectConfigError() {
 		DirPath:      "/project/path",
 	}
 
-	// Mock osReadFile to simulate project config error
-	origReadFile := config.TestSetReadFile(func(path string) ([]byte, error) {
-		if strings.Contains(path, ".loop/config.json") {
-			return nil, errors.New("permission denied")
-		}
-		return nil, os.ErrNotExist
-	})
-	defer config.TestSetReadFile(origReadFile)
+	s.runner.loadProjectConfig = func(_ string, _ *config.Config) (*config.Config, error) {
+		return nil, errors.New("permission denied")
+	}
 
 	resp, err := s.runner.Run(ctx, req)
 	require.Error(s.T(), err)
@@ -2110,8 +2047,9 @@ func (s *RunnerSuite) TestRunProjectConfigError() {
 }
 
 func (s *RunnerSuite) TestDefaultRandRead() {
+	r := NewDockerRunner(s.client, s.cfg)
 	b := make([]byte, 3)
-	n, err := s.origRandRead(b)
+	n, err := r.osRandRead(b)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 3, n)
 }
@@ -2145,11 +2083,8 @@ func TestSanitizeName(t *testing.T) {
 
 // --- Tests for containerName ---
 
-func TestContainerName(t *testing.T) {
-	origRandRead := osRandRead
-	defer func() { osRandRead = origRandRead }()
-
-	osRandRead = func(b []byte) (int, error) {
+func (s *RunnerSuite) TestContainerName() {
+	s.runner.osRandRead = func(b []byte) (int, error) {
 		copy(b, []byte{0xde, 0xad, 0x42})
 		return len(b), nil
 	}
@@ -2166,9 +2101,9 @@ func TestContainerName(t *testing.T) {
 		{"long dirPath base truncated", "ch-1", "/home/user/" + strings.Repeat("x", 50), "loop-" + strings.Repeat("x", 40) + "-dead42"},
 	}
 	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			result := containerName(tc.channelID, tc.dirPath)
-			require.Equal(t, tc.expected, result)
+		s.Run(tc.name, func() {
+			result := s.runner.containerName(tc.channelID, tc.dirPath)
+			require.Equal(s.T(), tc.expected, result)
 		})
 	}
 }
@@ -2383,6 +2318,7 @@ func TestScanStreamJSONOnActivity(t *testing.T) {
 		input := `{"type":"system","subtype":"init","cwd":"/work"}
 {"type":"system","subtype":"task_started","description":"Deep analysis"}
 {"type":"system","subtype":"task_progress","description":"Reading files"}
+{"type":"system","subtype":"status","status":"compacting"}
 {"type":"assistant","message":{"model":"claude-opus-4-6","content":[{"type":"text","text":"Done"}]}}
 {"type":"result","result":"OK","session_id":"s1","is_error":false}
 `
@@ -2398,6 +2334,7 @@ func TestScanStreamJSONOnActivity(t *testing.T) {
 		require.Equal(t, []string{
 			"subagent_started:Deep analysis",
 			"subagent_progress:Reading files",
+			"compacting:",
 			"model:claude-opus-4-6",
 		}, activities)
 	})
@@ -2650,6 +2587,7 @@ func (s *RunnerSuite) TestRunWithOnTurnErrors() {
 		s.Run(tt.name, func() {
 			s.client = new(MockDockerClient)
 			s.runner = NewDockerRunner(s.client, s.cfg)
+			s.applyMockDefaults()
 
 			ctx := context.Background()
 			req := &agent.AgentRequest{
@@ -2706,6 +2644,7 @@ func (s *RunnerSuite) TestRunWithOnTurnTimeout() {
 	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
 	s.client.On("ContainerLogsFollow", ctx, testContainerID).Return(pr, nil)
 	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerStop", mock.Anything, testContainerID).Return(nil)
 	s.client.On("ContainerRemove", mock.Anything, testContainerID).Return(nil)
 
 	// Cancel immediately to simulate timeout
@@ -2726,12 +2665,8 @@ func (s *RunnerSuite) TestCopyFilesSingleFile() {
 	containerID := "cid-copy"
 	fileContent := []byte(`{"oauth_token":"tok-123"}`)
 
-	osReadFile = func(path string) ([]byte, error) {
-		if path == "/home/testuser/.claude.json" {
-			return fileContent, nil
-		}
-		return nil, os.ErrNotExist
-	}
+	s.sys.Override("ReadFile", "/home/testuser/.claude.json").Return(fileContent, nil)
+	s.sys.On("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
 
 	s.client.On("CopyToContainer", ctx, containerID, "/home/testuser", mock.MatchedBy(func(r io.Reader) bool {
 		// Read the tar archive and verify contents.
@@ -2759,15 +2694,9 @@ func (s *RunnerSuite) TestCopyFilesMultiple() {
 	ctx := context.Background()
 	containerID := "cid-multi"
 
-	osReadFile = func(path string) ([]byte, error) {
-		switch path {
-		case "/home/testuser/.claude.json":
-			return []byte(`{"token":"t"}`), nil
-		case "/home/testuser/.npmrc":
-			return []byte("registry=https://npm.pkg.github.com"), nil
-		}
-		return nil, os.ErrNotExist
-	}
+	s.sys.Override("ReadFile", "/home/testuser/.claude.json").Return([]byte(`{"token":"t"}`), nil)
+	s.sys.On("ReadFile", "/home/testuser/.npmrc").Return([]byte("registry=https://npm.pkg.github.com"), nil)
+	s.sys.On("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
 
 	var tarNames []string
 	s.client.On("CopyToContainer", ctx, containerID, "/home/testuser", mock.Anything).
@@ -2799,12 +2728,8 @@ func (s *RunnerSuite) TestCopyFilesCopyError() {
 	ctx := context.Background()
 	containerID := "cid-copyerr"
 
-	osReadFile = func(path string) ([]byte, error) {
-		if path == "/home/testuser/.claude.json" {
-			return []byte(`{}`), nil
-		}
-		return nil, os.ErrNotExist
-	}
+	s.sys.Override("ReadFile", "/home/testuser/.claude.json").Return([]byte(`{}`), nil)
+	s.sys.On("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
 
 	s.client.On("CopyToContainer", ctx, containerID, "/home/testuser", mock.Anything).Return(errors.New("copy failed"))
 
@@ -2817,7 +2742,7 @@ func (s *RunnerSuite) TestCopyFilesCopyError() {
 func (s *RunnerSuite) TestCopyFilesExpandError() {
 	ctx := context.Background()
 
-	osUserHomeDir = func() (string, error) { return "", errors.New("no home") }
+	s.sys.Override("UserHomeDir").Return("", errors.New("no home"))
 
 	err := s.runner.copyFiles(ctx, "cid-nohome", []string{"~/.claude.json"})
 	require.Error(s.T(), err)
@@ -2829,12 +2754,8 @@ func (s *RunnerSuite) TestRunCopyFilesFails() {
 	s.cfg.CopyFiles = []string{"~/.claude.json"}
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
 
-	osReadFile = func(path string) ([]byte, error) {
-		if path == "/home/testuser/.claude.json" {
-			return nil, errors.New("permission denied")
-		}
-		return nil, os.ErrNotExist
-	}
+	s.sys.Override("ReadFile", "/home/testuser/.claude.json").Return(nil, errors.New("permission denied"))
+	s.sys.On("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
 
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
@@ -2850,12 +2771,8 @@ func (s *RunnerSuite) TestRunCopyFilesFails() {
 func (s *RunnerSuite) TestCopyFilesReadError() {
 	ctx := context.Background()
 
-	osReadFile = func(path string) ([]byte, error) {
-		if path == "/home/testuser/.claude.json" {
-			return nil, errors.New("permission denied")
-		}
-		return nil, os.ErrNotExist
-	}
+	s.sys.Override("ReadFile", "/home/testuser/.claude.json").Return(nil, errors.New("permission denied"))
+	s.sys.On("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
 
 	err := s.runner.copyFiles(ctx, "cid-readerr", []string{"~/.claude.json"})
 	require.Error(s.T(), err)
@@ -2866,12 +2783,8 @@ func (s *RunnerSuite) TestCopyFilesAbsolutePath() {
 	ctx := context.Background()
 	containerID := "cid-abs"
 
-	osReadFile = func(path string) ([]byte, error) {
-		if path == "/etc/some.conf" {
-			return []byte("config"), nil
-		}
-		return nil, os.ErrNotExist
-	}
+	s.sys.Override("ReadFile", "/etc/some.conf").Return([]byte("config"), nil)
+	s.sys.On("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
 
 	s.client.On("CopyToContainer", ctx, containerID, "/etc", mock.MatchedBy(func(r io.Reader) bool {
 		tr := tar.NewReader(r)
@@ -2886,7 +2799,7 @@ func (s *RunnerSuite) TestCopyFilesAbsolutePath() {
 
 func (s *RunnerSuite) TestFilterMountedCopyFiles() {
 	home := "/home/testuser"
-	osUserHomeDir = func() (string, error) { return home, nil }
+	// Default UserHomeDir from newDefaultMockSystem returns "/home/testuser"
 
 	tests := []struct {
 		name      string
@@ -2934,16 +2847,16 @@ func (s *RunnerSuite) TestFilterMountedCopyFiles() {
 
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
-			result := filterMountedCopyFiles(tt.copyFiles, tt.binds)
+			result := s.runner.filterMountedCopyFiles(tt.copyFiles, tt.binds)
 			require.Equal(s.T(), tt.expected, result)
 		})
 	}
 }
 
 func (s *RunnerSuite) TestFilterMountedCopyFilesExpandError() {
-	osUserHomeDir = func() (string, error) { return "", errors.New("no home") }
+	s.sys.Override("UserHomeDir").Return("", errors.New("no home"))
 
-	result := filterMountedCopyFiles(
+	result := s.runner.filterMountedCopyFiles(
 		[]string{"~/.claude.json", "/etc/some.conf"},
 		[]string{"/etc/some.conf:/etc/some.conf:ro"},
 	)
@@ -2953,11 +2866,8 @@ func (s *RunnerSuite) TestFilterMountedCopyFilesExpandError() {
 
 func (s *RunnerSuite) TestOsTimeLocalNameDefault() {
 	// Call the real osTimeLocalName to cover the default function literal.
-	origFn := osTimeLocalName
-	osTimeLocalName = s.origTimeLocalName
-	defer func() { osTimeLocalName = origFn }()
-
-	loc := osTimeLocalName()
+	r := NewDockerRunner(s.client, s.cfg)
+	loc := r.osTimeLocalName()
 	require.NotEmpty(s.T(), loc)
 }
 
@@ -2980,7 +2890,7 @@ func (s *RunnerSuite) TestCreateShellContainerHappyPath() {
 
 func (s *RunnerSuite) TestCreateShellContainerMkdirError() {
 	ctx := context.Background()
-	osMkdirAll = func(_ string, _ os.FileMode) error { return errors.New("mkdir failed") }
+	s.sys.Override("MkdirAll", mock.Anything, mock.Anything).Return(errors.New("mkdir failed"))
 
 	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
 	require.Error(s.T(), err)
@@ -2999,7 +2909,7 @@ func (s *RunnerSuite) TestCreateShellContainerCreateError() {
 
 func (s *RunnerSuite) TestCreateShellContainerEnvError() {
 	ctx := context.Background()
-	osUserHomeDir = func() (string, error) { return "", errors.New("no home") }
+	s.sys.Override("UserHomeDir").Return("", errors.New("no home"))
 
 	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
 	require.Error(s.T(), err)
@@ -3021,13 +2931,9 @@ func (s *RunnerSuite) TestCreateShellContainerStartError() {
 func (s *RunnerSuite) TestCreateShellContainerProjectConfigError() {
 	ctx := context.Background()
 
-	origReadFile := config.TestSetReadFile(func(path string) ([]byte, error) {
-		if strings.Contains(path, ".loop/config.json") {
-			return nil, errors.New("permission denied")
-		}
-		return nil, os.ErrNotExist
-	})
-	defer config.TestSetReadFile(origReadFile)
+	s.runner.loadProjectConfig = func(_ string, _ *config.Config) (*config.Config, error) {
+		return nil, errors.New("permission denied")
+	}
 
 	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
 	require.Error(s.T(), err)
@@ -3212,8 +3118,7 @@ func (s *RunnerSuite) TestClaudeCmdBuilderProjectConfigModel() {
 func (s *RunnerSuite) TestCreateShellContainerWithCopyFiles() {
 	ctx := context.Background()
 	s.cfg.CopyFiles = []string{"~/.claude.json"}
-	// Make expandPath work for copyFiles
-	osStat = func(string) (os.FileInfo, error) { return nil, os.ErrNotExist }
+	// Default Stat from newDefaultMockSystem returns os.ErrNotExist
 
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return slices.Equal(cfg.Cmd, []string{"sleep", "infinity"})

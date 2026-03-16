@@ -3,6 +3,7 @@ package terminal
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"errors"
 	"io"
 	"log/slog"
@@ -58,23 +59,14 @@ func (c *mockConn) Close() error {
 
 type TerminalSuite struct {
 	suite.Suite
-	origRandRead func([]byte) (int, error)
 }
 
 func TestTerminalSuite(t *testing.T) {
 	suite.Run(t, new(TerminalSuite))
 }
 
-func (s *TerminalSuite) SetupTest() {
-	s.origRandRead = randRead
-}
-
-func (s *TerminalSuite) TearDownTest() {
-	randRead = s.origRandRead
-}
-
 func (s *TerminalSuite) TestGenerateID() {
-	id := generateID()
+	id := generateID(rand.Read)
 	require.Len(s.T(), id, 8)
 }
 

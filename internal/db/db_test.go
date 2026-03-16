@@ -90,7 +90,7 @@ func (s *StoreSuite) TestUpsertChannel() {
 			dbConn, sqlMock, err := sqlmock.New()
 			require.NoError(s.T(), err)
 			defer dbConn.Close()
-			store := &SQLiteStore{db: dbConn}
+			store := NewSQLiteStoreFromDB(dbConn)
 
 			sqlMock.ExpectExec(`INSERT INTO channels`).
 				WithArgs(tc.args...).
@@ -994,27 +994,21 @@ func (s *StoreSuite) TestMigrateTimestampsToUTCErrors() {
 // --- NewSQLiteStore tests ---
 
 func (s *StoreSuite) TestNewSQLiteStoreOpenError() {
-	original := sqlOpenFunc
-	defer func() { sqlOpenFunc = original }()
-
-	sqlOpenFunc = func(driver, dsn string) (*sql.DB, error) {
+	openFunc := func(driver, dsn string) (*sql.DB, error) {
 		return nil, fmt.Errorf("open failed")
 	}
 
-	store, err := NewSQLiteStore("test.db")
+	store, err := newSQLiteStoreWith(openFunc, "test.db")
 	require.Error(s.T(), err)
 	require.Nil(s.T(), store)
 	require.Contains(s.T(), err.Error(), "opening database")
 }
 
 func (s *StoreSuite) TestNewSQLiteStoreInitDBError() {
-	original := sqlOpenFunc
-	defer func() { sqlOpenFunc = original }()
-
 	db, mock, err := sqlmock.New()
 	require.NoError(s.T(), err)
 
-	sqlOpenFunc = func(driver, dsn string) (*sql.DB, error) {
+	openFunc := func(driver, dsn string) (*sql.DB, error) {
 		return db, nil
 	}
 
@@ -1022,9 +1016,19 @@ func (s *StoreSuite) TestNewSQLiteStoreInitDBError() {
 	mock.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnError(sql.ErrConnDone)
 	mock.ExpectClose()
 
-	store, err := NewSQLiteStore("test.db")
+	store, err := newSQLiteStoreWith(openFunc, "test.db")
 	require.Error(s.T(), err)
 	require.Nil(s.T(), store)
+}
+
+func (s *StoreSuite) TestNewSQLiteStoreWithNowFunc() {
+	// Exercises the nowFunc lambda set in newSQLiteStoreWith's success path.
+	store, err := NewSQLiteStore(":memory:")
+	require.NoError(s.T(), err)
+	defer store.Close()
+
+	now := store.nowFunc()
+	require.False(s.T(), now.IsZero())
 }
 
 // --- Helper tests ---
@@ -1233,9 +1237,7 @@ func (s *StoreSuite) TestListDistinctMemoryFilePathsScanError() {
 
 func (s *StoreSuite) TestNowFuncUsedInUpsertChannel() {
 	fixedTime := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
-	orig := nowFunc
-	nowFunc = func() time.Time { return fixedTime }
-	defer func() { nowFunc = orig }()
+	s.store.nowFunc = func() time.Time { return fixedTime }
 
 	ch := &Channel{ChannelID: "ch1", GuildID: "g1", Name: "test", Active: true}
 	s.mock.ExpectExec(`INSERT INTO channels`).
@@ -1249,9 +1251,7 @@ func (s *StoreSuite) TestNowFuncUsedInUpsertChannel() {
 
 func (s *StoreSuite) TestNowFuncUsedInCreateScheduledTask() {
 	fixedTime := time.Date(2099, 6, 15, 12, 0, 0, 0, time.UTC)
-	orig := nowFunc
-	nowFunc = func() time.Time { return fixedTime }
-	defer func() { nowFunc = orig }()
+	s.store.nowFunc = func() time.Time { return fixedTime }
 
 	task := &ScheduledTask{
 		ChannelID: "ch1", Schedule: "0 9 * * *", Type: TaskTypeCron,

@@ -3,7 +3,7 @@ import type { PaneNode } from "./types";
 const LAYOUT_KEY = "loop-workspace-layout";
 
 /** Default layout names — these are the "fixed" buttons in the header. */
-export const DEFAULT_LAYOUT_NAMES = ["Chat", "Editor", "Memory", "Terminal", "Diff"] as const;
+export const DEFAULT_LAYOUT_NAMES = ["Chat", "Editor", "Memory", "Terminal", "Diff", "Browser"] as const;
 
 export interface ChannelLayouts {
   active: string;
@@ -127,12 +127,13 @@ export function getLayoutNames(channelId: string): string[] {
 export function createDefaultLayouts(): ChannelLayouts {
   return {
     active: "Chat",
-    order: ["Chat", "Editor", "Memory", "Terminal", "Diff"],
+    order: ["Chat", "Editor", "Memory", "Terminal", "Diff", "Browser"],
     layouts: {
       Chat: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "leaf", id: "diff", panel: "diff", flex: 50 }] },
       Editor: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "editor", panel: "editor", flex: 65 }, { type: "leaf", id: "diff-1", panel: "diff", flex: 35 }] },
       Memory: { type: "leaf", id: "memory", panel: "memory", flex: 1 },
       Diff: { type: "leaf", id: "diff", panel: "diff", flex: 1 },
+      Browser: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 40 }, { type: "leaf", id: "browser", panel: "browser", flex: 60 }] },
     },
   };
 }

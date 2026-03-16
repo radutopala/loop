@@ -10,11 +10,6 @@ import (
 	"github.com/radutopala/loop/internal/randutil"
 )
 
-// generateThreadID creates a random hex ID for platforms without native thread IDs.
-var generateThreadID = func() string {
-	return randutil.HexID(6)
-}
-
 // ThreadCreator can create and delete threads on the chat platform.
 type ThreadCreator interface {
 	CreateThread(ctx context.Context, channelID, name, mentionUserID, message string) (string, error)
@@ -28,17 +23,21 @@ type ThreadEnsurer interface {
 }
 
 type threadService struct {
-	store   db.Store
-	creator ThreadCreator
-	logger  *slog.Logger
+	store            db.Store
+	creator          ThreadCreator
+	logger           *slog.Logger
+	generateThreadID func() string
+	removeMCPConfig  func(string, string) error
 }
 
 // NewThreadService creates a new ThreadEnsurer.
 func NewThreadService(store db.Store, creator ThreadCreator, logger *slog.Logger) ThreadEnsurer {
 	return &threadService{
-		store:   store,
-		creator: creator,
-		logger:  logger,
+		store:            store,
+		creator:          creator,
+		logger:           logger,
+		generateThreadID: func() string { return randutil.HexID(6) },
+		removeMCPConfig:  bot.RemoveMCPConfig,
 	}
 }
 
@@ -54,7 +53,7 @@ func (s *threadService) DeleteThread(ctx context.Context, threadID string) error
 		return fmt.Errorf("channel %s is not a thread", threadID)
 	}
 
-	if err := bot.RemoveMCPConfig(ch.DirPath, threadID); err != nil {
+	if err := s.removeMCPConfig(ch.DirPath, threadID); err != nil {
 		s.logger.Warn("removing MCP config for thread", "error", err, "thread_id", threadID)
 	}
 
@@ -101,7 +100,7 @@ func (s *threadService) CreateThread(ctx context.Context, channelID, name, autho
 	}
 	if threadID == "" {
 		// No-op creator (e.g. local platform) — generate ID locally.
-		threadID = generateThreadID()
+		threadID = s.generateThreadID()
 	}
 
 	if err := s.store.UpsertChannel(ctx, &db.Channel{

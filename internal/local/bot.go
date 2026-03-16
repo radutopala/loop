@@ -23,11 +23,6 @@ const (
 	DefaultAuthorID = "local-user"
 )
 
-// generateThreadID creates a random 12-char hex ID. Package-level var for testability.
-var generateThreadID = func() string {
-	return randutil.HexID(6)
-}
-
 // LocalStore is the subset of db.Store needed by Bot.
 type LocalStore interface {
 	GetChannel(ctx context.Context, channelID string) (*db.Channel, error)
@@ -40,8 +35,9 @@ type LocalStore interface {
 // DB-backed thread/channel operations, and api.IncomingMessageHandler
 // for routing API messages through the orchestrator.
 type Bot struct {
-	store  LocalStore
-	logger *slog.Logger
+	store            LocalStore
+	logger           *slog.Logger
+	generateThreadID func() string
 
 	messageHandler       bot.MessageHandler
 	interactionHandler   bot.InteractionHandler
@@ -52,8 +48,9 @@ type Bot struct {
 // NewBot creates a new local platform Bot.
 func NewBot(store LocalStore, logger *slog.Logger) *Bot {
 	return &Bot{
-		store:  store,
-		logger: logger,
+		store:            store,
+		logger:           logger,
+		generateThreadID: func() string { return randutil.HexID(6) },
 	}
 }
 
@@ -116,7 +113,7 @@ func (b *Bot) CreateSimpleThread(ctx context.Context, channelID, name, initialMe
 		return "", fmt.Errorf("parent channel %s not found", channelID)
 	}
 
-	threadID := generateThreadID()
+	threadID := b.generateThreadID()
 
 	if err := b.store.UpsertChannel(ctx, &db.Channel{
 		ChannelID:   threadID,
@@ -139,7 +136,7 @@ func (b *Bot) CreateSimpleThread(ctx context.Context, channelID, name, initialMe
 			_ = b.store.InsertMessage(ctx, &db.Message{
 				ChatID:     ch.ID,
 				ChannelID:  threadID,
-				MsgID:      generateThreadID(), // reuse for unique msg ID
+				MsgID:      b.generateThreadID(), // reuse for unique msg ID
 				AuthorName: "agent",
 				Content:    initialMessage,
 				IsBot:      true,
@@ -187,7 +184,7 @@ func (b *Bot) SetChannelTopic(_ context.Context, _, _ string) error     { return
 // --- ChannelCreator methods (satisfy api.ChannelCreator) ---
 
 func (b *Bot) CreateChannel(_ context.Context, _ string) (string, error) {
-	return generateThreadID() + generateThreadID(), nil
+	return b.generateThreadID() + b.generateThreadID(), nil
 }
 
 func (b *Bot) GetOwnerUserID(_ context.Context) (string, error) {

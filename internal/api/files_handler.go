@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"io"
+	"io/fs"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -69,12 +70,6 @@ type listFilesResponse struct {
 	Entries []fileEntry `json:"entries"`
 }
 
-// Package-level vars for testability (osReadFile and osStat are in memory_files_handler.go).
-var (
-	osReadDir   = os.ReadDir
-	osWriteFile = os.WriteFile
-)
-
 func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.store, "channel listing not configured") {
 		return
@@ -98,7 +93,7 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	entries, err := listDir(absPath)
+	entries, err := listDir(s.sys.ReadDir, absPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -107,8 +102,8 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 	writeHTTPJSON(w, http.StatusOK, listFilesResponse{Entries: entries}, s.logger)
 }
 
-func listDir(absPath string) ([]fileEntry, error) {
-	dirEntries, err := osReadDir(absPath)
+func listDir(readDir func(string) ([]fs.DirEntry, error), absPath string) ([]fileEntry, error) {
+	dirEntries, err := readDir(absPath)
 	if err != nil {
 		return nil, fmt.Errorf("reading directory: %w", err)
 	}
@@ -159,7 +154,7 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := osStat(absPath)
+	info, err := s.sys.Stat(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			http.Error(w, "file not found", http.StatusNotFound)
@@ -179,7 +174,7 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	data, err := osReadFile(absPath)
+	data, err := s.sys.ReadFile(absPath)
 	if err != nil {
 		http.Error(w, "failed to read file", http.StatusInternalServerError)
 		return
@@ -238,19 +233,17 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 
 	// Preserve original file permissions if the file exists.
 	perm := os.FileMode(0644)
-	if info, err := osStat(absPath); err == nil {
+	if info, err := s.sys.Stat(absPath); err == nil {
 		perm = info.Mode().Perm()
 	}
 
-	if err := osWriteFile(absPath, body, perm); err != nil {
+	if err := s.sys.WriteFile(absPath, body, perm); err != nil {
 		http.Error(w, "failed to write file", http.StatusInternalServerError)
 		return
 	}
 
 	writeHTTPJSON(w, http.StatusOK, writeFileResponse{OK: true}, s.logger)
 }
-
-var osRemove = os.Remove
 
 func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.store, "channel listing not configured") {
@@ -271,7 +264,7 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	info, err := osStat(absPath)
+	info, err := s.sys.Stat(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			http.Error(w, "file not found", http.StatusNotFound)
@@ -286,7 +279,7 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if err := osRemove(absPath); err != nil {
+	if err := s.sys.Remove(absPath); err != nil {
 		http.Error(w, "failed to delete file", http.StatusInternalServerError)
 		return
 	}

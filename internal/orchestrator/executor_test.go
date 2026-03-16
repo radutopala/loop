@@ -545,9 +545,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 
 	var capturedDelay time.Duration
 	var callbackCalled bool
-	origTimeAfterFunc := timeAfterFunc
-	defer func() { timeAfterFunc = origTimeAfterFunc }()
-	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+	s.executor.timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
 		capturedDelay = d
 		callbackCalled = true
 		f() // immediately invoke the callback
@@ -616,9 +614,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteEphemeralVariants() {
 			s.bot.On("DeleteThread", mock.Anything, tc.threadID).Return(tc.deleteErr).Once()
 
 			var capturedDelay time.Duration
-			origTimeAfterFunc := timeAfterFunc
-			defer func() { timeAfterFunc = origTimeAfterFunc }()
-			timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+			s.executor.timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
 				capturedDelay = d
 				f()
 				return time.NewTimer(0)
@@ -660,9 +656,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteNonEphemeralNoRename() {
 	}, nil)
 
 	var capturedDelay time.Duration
-	origTimeAfterFunc := timeAfterFunc
-	defer func() { timeAfterFunc = origTimeAfterFunc }()
-	timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+	s.executor.timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
 		capturedDelay = d
 		f()
 		return time.NewTimer(0)
@@ -735,9 +729,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteSkipped() {
 			}, nil)
 
 			var timerCalled bool
-			origTimeAfterFunc := timeAfterFunc
-			defer func() { timeAfterFunc = origTimeAfterFunc }()
-			timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
+			s.executor.timeAfterFunc = func(d time.Duration, f func()) *time.Timer {
 				timerCalled = true
 				return time.NewTimer(0)
 			}

@@ -12,11 +12,6 @@ import (
 	"github.com/radutopala/loop/internal/types"
 )
 
-// randSuffix generates a short random hex suffix for channel names.
-var randSuffix = func() string {
-	return randutil.HexID(2)
-}
-
 var invalidChannelChars = regexp.MustCompile(`[^a-z0-9_-]+`)
 
 // sanitizeChannelName normalises a directory base name into a valid
@@ -55,15 +50,17 @@ type ChannelEnsurer interface {
 }
 
 type channelService struct {
-	store    db.Store
-	creators map[types.Platform]ChannelCreator
+	store      db.Store
+	creators   map[types.Platform]ChannelCreator
+	randSuffix func() string
 }
 
 // NewChannelService creates a new ChannelEnsurer.
 func NewChannelService(store db.Store, creators map[types.Platform]ChannelCreator) ChannelEnsurer {
 	return &channelService{
-		store:    store,
-		creators: creators,
+		store:      store,
+		creators:   creators,
+		randSuffix: func() string { return randutil.HexID(2) },
 	}
 }
 
@@ -94,7 +91,7 @@ func (s *channelService) CreateChannel(ctx context.Context, name, authorID, sour
 		}
 	}
 	if channelID == "" {
-		channelID = randSuffix() + randSuffix() + randSuffix()
+		channelID = s.randSuffix() + s.randSuffix() + s.randSuffix()
 	}
 
 	if err := s.store.UpsertChannel(ctx, &db.Channel{
@@ -122,7 +119,7 @@ func (s *channelService) EnsureChannel(ctx context.Context, dirPath, platform st
 
 	creator := s.creators[p]
 
-	name := sanitizeChannelName(filepath.Base(dirPath)) + "-" + randSuffix()
+	name := sanitizeChannelName(filepath.Base(dirPath)) + "-" + s.randSuffix()
 	var channelID string
 	if creator != nil {
 		var err error
@@ -140,7 +137,7 @@ func (s *channelService) EnsureChannel(ctx context.Context, dirPath, platform st
 		}
 	}
 	if channelID == "" {
-		channelID = randSuffix() + randSuffix() + randSuffix()
+		channelID = s.randSuffix() + s.randSuffix() + s.randSuffix()
 	}
 
 	if err := s.store.UpsertChannel(ctx, &db.Channel{

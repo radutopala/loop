@@ -36,14 +36,15 @@ coverage: ## Generate HTML coverage report
 
 coverage-check: ## Run tests and enforce 100% coverage
 	go generate ./internal/readme/
-	go test -race -count=1 -coverpkg=./... -coverprofile=coverage.out ./...
+	go test -race -count=1 -timeout 30s -coverpkg=./... -coverprofile=coverage.out ./...
 	@go tool cover -func=coverage.out | grep total | awk '{print $$3}' | sed 's/%//' | \
 		awk '{if ($$1 < 100.0) {print "Coverage is " $$1 "%, required 100%"; exit 1} else {print "Coverage: " $$1 "%"}}'
 
 CLAUDE_VERSION := $(shell curl -sf https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest 2>/dev/null || echo latest)
 
-docker-build: ## Build the Docker container image
+docker-build: ## Build the Docker container images (agent + chrome)
 	docker build --build-arg CLAUDE_VERSION=$(CLAUDE_VERSION) --secret id=gitconfig,src=$(HOME)/.gitconfig -t loop-agent -f container/Dockerfile .
+	docker build -t loop-chrome -f container/chrome.Dockerfile container/
 
 run: build ## Build and run the bot
 	./bin/loop serve

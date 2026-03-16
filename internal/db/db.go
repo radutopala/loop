@@ -51,18 +51,17 @@ type Store interface {
 
 // SQLiteStore implements Store using SQLite.
 type SQLiteStore struct {
-	db *sql.DB
+	db      *sql.DB
+	nowFunc func() time.Time
 }
-
-// nowFunc returns the current time in UTC. Override in tests to control time.
-var nowFunc = func() time.Time { return time.Now().UTC() }
-
-// sqlOpenFunc is a package-level variable to allow testing sql.Open failures.
-var sqlOpenFunc = sql.Open
 
 // NewSQLiteStore opens a SQLite database and returns a new SQLiteStore.
 func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
-	sqlDB, err := sqlOpenFunc("sqlite", dsn)
+	return newSQLiteStoreWith(sql.Open, dsn)
+}
+
+func newSQLiteStoreWith(openFunc func(string, string) (*sql.DB, error), dsn string) (*SQLiteStore, error) {
+	sqlDB, err := openFunc("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
@@ -72,7 +71,7 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 		return nil, err
 	}
 
-	return &SQLiteStore{db: sqlDB}, nil
+	return &SQLiteStore{db: sqlDB, nowFunc: func() time.Time { return time.Now().UTC() }}, nil
 }
 
 // initDB configures pragmas and runs migrations on an open database connection.
@@ -94,7 +93,7 @@ func initDB(sqlDB *sql.DB) error {
 
 // NewSQLiteStoreFromDB creates a SQLiteStore from an existing *sql.DB connection.
 func NewSQLiteStoreFromDB(sqlDB *sql.DB) *SQLiteStore {
-	return &SQLiteStore{db: sqlDB}
+	return &SQLiteStore{db: sqlDB, nowFunc: func() time.Time { return time.Now().UTC() }}
 }
 
 func (s *SQLiteStore) Close() error {
@@ -120,7 +119,7 @@ func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
 		   permissions = CASE WHEN excluded.permissions != '' THEN excluded.permissions ELSE channels.permissions END,
 		   active = excluded.active,
 		   updated_at = excluded.updated_at`,
-		ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, ch.ParentID, ch.Platform, ch.SessionID, permStr, boolToInt(ch.Active), nowFunc(),
+		ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, ch.ParentID, ch.Platform, ch.SessionID, permStr, boolToInt(ch.Active), s.nowFunc(),
 	)
 	return err
 }
@@ -178,7 +177,7 @@ func (s *SQLiteStore) IsChannelActive(ctx context.Context, channelID string) (bo
 func (s *SQLiteStore) UpdateSessionID(ctx context.Context, channelID string, sessionID string) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE channels SET session_id = ?, updated_at = ? WHERE channel_id = ?`,
-		sessionID, nowFunc(), channelID,
+		sessionID, s.nowFunc(), channelID,
 	)
 	return err
 }
@@ -186,7 +185,7 @@ func (s *SQLiteStore) UpdateSessionID(ctx context.Context, channelID string, ses
 func (s *SQLiteStore) UpdateChannelPermissions(ctx context.Context, channelID string, perms types.Permissions) error {
 	data, _ := json.Marshal(perms) // Permissions is always serializable
 	permStr := string(data)
-	now := nowFunc()
+	now := s.nowFunc()
 	// Update the channel and propagate to all child threads
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE channels SET permissions = ?, updated_at = ? WHERE channel_id = ? OR parent_id = ?`,
@@ -334,7 +333,7 @@ func (s *SQLiteStore) GetMessagesAround(ctx context.Context, channelID string, m
 }
 
 func (s *SQLiteStore) CreateScheduledTask(ctx context.Context, task *ScheduledTask) (int64, error) {
-	now := nowFunc()
+	now := s.nowFunc()
 	result, err := s.db.ExecContext(ctx,
 		`INSERT INTO scheduled_tasks (channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec)
 		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -366,7 +365,7 @@ func (s *SQLiteStore) GetDueTasks(ctx context.Context, now time.Time) ([]*Schedu
 func (s *SQLiteStore) UpdateScheduledTask(ctx context.Context, task *ScheduledTask) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE scheduled_tasks SET schedule = ?, type = ?, prompt = ?, enabled = ?, next_run_at = ?, updated_at = ?, auto_delete_sec = ? WHERE id = ?`,
-		task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, nowFunc(), task.AutoDeleteSec, task.ID,
+		task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, s.nowFunc(), task.AutoDeleteSec, task.ID,
 	)
 	return err
 }
@@ -382,7 +381,7 @@ func (s *SQLiteStore) DeleteScheduledTask(ctx context.Context, id int64) error {
 func (s *SQLiteStore) ListScheduledTasks(ctx context.Context, channelID string) ([]*ScheduledTask, error) {
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+taskColumns+` FROM scheduled_tasks WHERE channel_id = ? AND (type != 'once' OR next_run_at > ?) ORDER BY next_run_at ASC`,
-		channelID, nowFunc(),
+		channelID, s.nowFunc(),
 	)
 	if err != nil {
 		return nil, err
@@ -394,7 +393,7 @@ func (s *SQLiteStore) ListScheduledTasks(ctx context.Context, channelID string) 
 func (s *SQLiteStore) UpdateScheduledTaskEnabled(ctx context.Context, id int64, enabled bool) error {
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE scheduled_tasks SET enabled = ?, updated_at = ? WHERE id = ?`,
-		boolToInt(enabled), nowFunc(), id,
+		boolToInt(enabled), s.nowFunc(), id,
 	)
 	return err
 }
@@ -476,7 +475,7 @@ func (s *SQLiteStore) UpsertMemoryFile(ctx context.Context, file *MemoryFile) er
 		   embedding = excluded.embedding,
 		   dimensions = excluded.dimensions,
 		   updated_at = excluded.updated_at`,
-		file.FilePath, file.ChunkIndex, file.Content, file.ContentHash, file.Embedding, file.Dimensions, file.DirPath, nowFunc(),
+		file.FilePath, file.ChunkIndex, file.Content, file.ContentHash, file.Embedding, file.Dimensions, file.DirPath, s.nowFunc(),
 	)
 	return err
 }

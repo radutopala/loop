@@ -57,12 +57,7 @@ func (s *BotSuite) SetupTest() {
 	s.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	s.bot = NewBot(s.store, s.logger)
 	// Use deterministic ID generation.
-	generateThreadID = func() string { return "test-thread-id" }
-}
-
-func (s *BotSuite) TearDownTest() {
-	// Restore default.
-	generateThreadID = defaultGenerateThreadID
+	s.bot.generateThreadID = func() string { return "test-thread-id" }
 }
 
 // --- Lifecycle ---
@@ -508,10 +503,9 @@ func (s *BotSuite) TestHandleThreadCreatedDefaultAuthor() {
 	require.Equal(s.T(), DefaultAuthorID, received.AuthorID)
 }
 
-// keep a reference to the real generateThreadID for TearDownTest
-var defaultGenerateThreadID = generateThreadID
-
 func TestGenerateThreadIDDefault(t *testing.T) {
-	got := defaultGenerateThreadID()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	b := NewBot(nil, logger)
+	got := b.generateThreadID()
 	require.Len(t, got, 12) // 6 bytes = 12 hex chars
 }

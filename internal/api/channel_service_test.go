@@ -54,8 +54,9 @@ func (s *ChannelServiceSuite) SetupTest() {
 	s.store = new(testutil.MockStore)
 	s.creator = new(MockCreator)
 	s.ctx = context.Background()
-	s.svc = NewChannelService(s.store, map[types.Platform]ChannelCreator{types.PlatformLocal: s.creator})
-	randSuffix = func() string { return "ab12" }
+	svc := NewChannelService(s.store, map[types.Platform]ChannelCreator{types.PlatformLocal: s.creator})
+	svc.(*channelService).randSuffix = func() string { return "ab12" }
+	s.svc = svc
 }
 
 func (s *ChannelServiceSuite) TestEnsureChannelExisting() {
@@ -295,6 +296,7 @@ func (s *ChannelServiceSuite) TestCreateChannelLocalPlatformNilCreator() {
 
 func (s *ChannelServiceSuite) TestEnsureChannelLocalPlatformNilCreator() {
 	svc := NewChannelService(s.store, map[types.Platform]ChannelCreator{})
+	svc.(*channelService).randSuffix = func() string { return "ab12" }
 
 	s.store.On("GetChannelByDirPath", s.ctx, "/home/user/dev/loop", types.PlatformLocal).
 		Return(nil, nil)
@@ -362,6 +364,7 @@ func (s *ChannelServiceSuite) TestEnsureChannelAllPlatformsCreatesNew() {
 		types.PlatformLocal:   s.creator,
 		types.PlatformDiscord: discordCreator,
 	})
+	svc.(*channelService).randSuffix = func() string { return "ab12" }
 
 	// No existing channels.
 	s.store.On("GetChannelsByDirPath", s.ctx, "/home/user/dev/loop").Return([]*db.Channel{}, nil)
@@ -445,6 +448,7 @@ func (s *ChannelServiceSuite) TestEnsureChannelWithExplicitPlatform() {
 		types.PlatformLocal:   s.creator,
 		types.PlatformDiscord: discordCreator,
 	})
+	svc.(*channelService).randSuffix = func() string { return "ab12" }
 
 	s.store.On("GetChannelByDirPath", s.ctx, "/path", types.PlatformDiscord).Return(nil, nil)
 	discordCreator.On("CreateChannel", s.ctx, "path-ab12").Return("discord-ch", nil)
@@ -461,10 +465,9 @@ func (s *ChannelServiceSuite) TestEnsureChannelWithExplicitPlatform() {
 	s.creator.AssertNotCalled(s.T(), "CreateChannel", mock.Anything, mock.Anything)
 }
 
-// origRandSuffix captures the default randSuffix before any test overrides it.
-var origRandSuffix = randSuffix
-
 func TestRandSuffixDefault(t *testing.T) {
-	got := origRandSuffix()
+	store := new(testutil.MockStore)
+	svc := NewChannelService(store, nil)
+	got := svc.(*channelService).randSuffix()
 	require.Len(t, got, 4) // 2 bytes = 4 hex chars
 }

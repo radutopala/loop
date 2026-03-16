@@ -1,7 +1,7 @@
 // Panel types: chat/editor/memory/diff are singletons (max 1 each).
 // agent/shell are multi-instance (multiple allowed, distinguished by id).
-export type PanelType = "chat" | "editor" | "memory" | "diff" | "agent" | "shell";
-export const SINGLETON_PANELS: PanelType[] = ["chat", "editor", "memory", "diff"];
+export type PanelType = "chat" | "editor" | "memory" | "diff" | "agent" | "shell" | "browser";
+export const SINGLETON_PANELS: PanelType[] = ["chat", "editor", "memory", "diff", "browser"];
 
 export type SplitDirection = "vertical" | "horizontal";
 export type DropPosition = "top" | "bottom" | "left" | "right" | "center";

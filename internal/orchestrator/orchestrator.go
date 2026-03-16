@@ -55,29 +55,39 @@ type Runner interface {
 
 // Orchestrator coordinates all components of the loop bot.
 type Orchestrator struct {
-	store          db.Store
-	bot            Bot
-	runner         Runner
-	scheduler      scheduler.Scheduler
-	events         events.Broadcaster
-	queue          *ChannelQueue
-	activeRuns     sync.Map // map[channelID]context.CancelFunc
-	logger         *slog.Logger
-	typingInterval time.Duration
-	cfg            config.Config
+	store             db.Store
+	bot               Bot
+	runner            Runner
+	scheduler         scheduler.Scheduler
+	events            events.Broadcaster
+	queue             *ChannelQueue
+	activeRuns        sync.Map // map[channelID]context.CancelFunc
+	logger            *slog.Logger
+	typingInterval    time.Duration
+	cfg               config.Config
+	loadProjectConfig func(string, *config.Config) (*config.Config, error)
+	removeMCPConfig   func(string, string) error
+}
+
+// defaultRemoveMCPConfig delegates to bot.RemoveMCPConfig.
+// Defined at package level to avoid parameter shadowing in New().
+func defaultRemoveMCPConfig(dirPath, channelID string) error {
+	return bot.RemoveMCPConfig(dirPath, channelID)
 }
 
 // New creates a new Orchestrator.
 func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logger *slog.Logger, cfg config.Config) *Orchestrator {
 	return &Orchestrator{
-		store:          store,
-		bot:            bot,
-		runner:         runner,
-		scheduler:      sched,
-		queue:          NewChannelQueue(),
-		logger:         logger,
-		typingInterval: TypingInterval,
-		cfg:            cfg,
+		store:             store,
+		bot:               bot,
+		runner:            runner,
+		scheduler:         sched,
+		queue:             NewChannelQueue(),
+		logger:            logger,
+		typingInterval:    TypingInterval,
+		cfg:               cfg,
+		loadProjectConfig: config.LoadProjectConfig,
+		removeMCPConfig:   defaultRemoveMCPConfig,
 	}
 }
 
@@ -170,7 +180,7 @@ func (o *Orchestrator) configPermissionsFor(dirPath string) types.Permissions {
 	if dirPath == "" {
 		return o.cfg.Permissions
 	}
-	cfg, err := config.LoadProjectConfig(dirPath, &o.cfg)
+	cfg, err := o.loadProjectConfig(dirPath, &o.cfg)
 	if err != nil {
 		return o.cfg.Permissions
 	}
@@ -239,7 +249,7 @@ func (o *Orchestrator) HandleChannelDelete(ctx context.Context, channelID string
 			o.logger.Error("looking up thread for MCP cleanup", "error", err, "thread_id", channelID)
 		}
 		if ch != nil {
-			if err := bot.RemoveMCPConfig(ch.DirPath, channelID); err != nil {
+			if err := o.removeMCPConfig(ch.DirPath, channelID); err != nil {
 				o.logger.Warn("removing MCP config for thread", "error", err, "thread_id", channelID)
 			}
 		}
@@ -263,12 +273,12 @@ func (o *Orchestrator) HandleChannelDelete(ctx context.Context, channelID string
 			o.logger.Warn("listing child threads for MCP cleanup", "error", err, "channel_id", channelID)
 		}
 		for _, childID := range childIDs {
-			if err := bot.RemoveMCPConfig(ch.DirPath, childID); err != nil {
+			if err := o.removeMCPConfig(ch.DirPath, childID); err != nil {
 				o.logger.Warn("removing MCP config for child thread", "error", err, "thread_id", childID)
 			}
 		}
 		// Clean up MCP config for the channel itself.
-		if err := bot.RemoveMCPConfig(ch.DirPath, channelID); err != nil {
+		if err := o.removeMCPConfig(ch.DirPath, channelID); err != nil {
 			o.logger.Warn("removing MCP config for channel", "error", err, "channel_id", channelID)
 		}
 	}

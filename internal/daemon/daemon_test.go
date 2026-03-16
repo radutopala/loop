@@ -54,32 +54,27 @@ func (m *mockSystem) Stat(name string) (os.FileInfo, error) {
 	return args.Get(0).(os.FileInfo), args.Error(1)
 }
 
+func (m *mockSystem) GetUID() int {
+	return m.Called().Int(0)
+}
+
+func (m *mockSystem) EvalSymlinks(path string) (string, error) {
+	args := m.Called(path)
+	return args.String(0), args.Error(1)
+}
+
+func (m *mockSystem) Getenv(key string) string {
+	return m.Called(key).String(0)
+}
+
 // --- Test Suite ---
 
 type DaemonSuite struct {
 	suite.Suite
-	origGetUID       func() int
-	origEvalSymlinks func(string) (string, error)
-	origOsGetenv     func(string) string
 }
 
 func TestDaemonSuite(t *testing.T) {
 	suite.Run(t, new(DaemonSuite))
-}
-
-func (s *DaemonSuite) SetupTest() {
-	s.origGetUID = getUID
-	s.origEvalSymlinks = evalSymlinks
-	s.origOsGetenv = osGetenv
-	getUID = func() int { return 501 }
-	evalSymlinks = func(path string) (string, error) { return path, nil }
-	osGetenv = func(string) string { return "" }
-}
-
-func (s *DaemonSuite) TearDownTest() {
-	getUID = s.origGetUID
-	evalSymlinks = s.origEvalSymlinks
-	osGetenv = s.origOsGetenv
 }
 
 // --- removeIfExists tests ---
@@ -164,6 +159,29 @@ func (s *DaemonSuite) TestRealSystemStat() {
 	info, err := rs.Stat(path)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "test.txt", info.Name())
+}
+
+func (s *DaemonSuite) TestRealSystemGetUID() {
+	rs := RealSystem{}
+	uid := rs.GetUID()
+	require.GreaterOrEqual(s.T(), uid, 0)
+}
+
+func (s *DaemonSuite) TestRealSystemEvalSymlinks() {
+	rs := RealSystem{}
+	tmp := s.T().TempDir()
+	path := filepath.Join(tmp, "test.txt")
+	require.NoError(s.T(), os.WriteFile(path, []byte("hello"), 0o644))
+	resolved, err := rs.EvalSymlinks(path)
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), resolved)
+}
+
+func (s *DaemonSuite) TestRealSystemGetenv() {
+	rs := RealSystem{}
+	// PATH is always set
+	val := rs.Getenv("PATH")
+	require.NotEmpty(s.T(), val)
 }
 
 // --- helpers ---

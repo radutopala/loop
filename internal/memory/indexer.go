@@ -13,6 +13,7 @@ import (
 
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/embeddings"
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 // defaultMaxChunkChars is the default maximum content length sent to the embedding model.
@@ -35,12 +36,21 @@ type SearchResult struct {
 	ChunkIndex int     `json:"chunk_index"`
 }
 
+// indexerSystem abstracts OS operations needed by Indexer.
+type indexerSystem interface {
+	Stat(name string) (os.FileInfo, error)
+	ReadFile(name string) ([]byte, error)
+	EvalSymlinks(path string) (string, error)
+	WalkDir(root string, fn fs.WalkDirFunc) error
+}
+
 // Indexer handles indexing and searching memory files.
 type Indexer struct {
 	embedder      embeddings.Embedder
 	store         Store
 	logger        *slog.Logger
 	maxChunkChars int
+	sys           indexerSystem
 }
 
 // NewIndexer creates a new memory indexer.
@@ -54,27 +64,16 @@ func NewIndexer(embedder embeddings.Embedder, store Store, logger *slog.Logger, 
 		store:         store,
 		logger:        logger,
 		maxChunkChars: maxChunkChars,
+		sys:           osutil.RealSystem{},
 	}
 }
-
-// readFile is a package-level variable for testing.
-var readFile = os.ReadFile
-
-// walkDir is a package-level variable for testing.
-var walkDir = filepath.WalkDir
-
-// osStat is a package-level variable for testing.
-var osStat = os.Stat
-
-// evalSymlinks is a package-level variable for testing.
-var evalSymlinks = filepath.EvalSymlinks
 
 // Index scans the memory path (directory tree or single .md file), embeds whole files,
 // and stores any stale or new entries. Returns the number of files indexed.
 // dirPath scopes the indexed files; empty string means global scope.
 // excludePaths are absolute paths to skip during indexing (prefix match with separator check).
 func (idx *Indexer) Index(ctx context.Context, memoryPath, dirPath string, excludePaths []string) (int, error) {
-	info, err := osStat(memoryPath)
+	info, err := idx.sys.Stat(memoryPath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return 0, nil
@@ -83,14 +82,14 @@ func (idx *Indexer) Index(ctx context.Context, memoryPath, dirPath string, exclu
 	}
 
 	// Resolve symlinks so filepath.WalkDir can descend into symlinked directories.
-	resolved, err := evalSymlinks(memoryPath)
+	resolved, err := idx.sys.EvalSymlinks(memoryPath)
 	if err != nil {
 		return 0, fmt.Errorf("resolving symlinks: %w", err)
 	}
 	memoryPath = resolved
 
 	// Resolve symlinks on exclude paths so they match the resolved walk paths.
-	excludePaths = resolveExcludeSymlinks(excludePaths)
+	excludePaths = idx.resolveExcludeSymlinks(excludePaths)
 
 	if !info.IsDir() {
 		if isExcluded(memoryPath, excludePaths) {
@@ -103,7 +102,7 @@ func (idx *Indexer) Index(ctx context.Context, memoryPath, dirPath string, exclu
 	}
 
 	indexed := 0
-	err = walkDir(memoryPath, func(path string, d fs.DirEntry, err error) error {
+	err = idx.sys.WalkDir(memoryPath, func(path string, d fs.DirEntry, err error) error {
 		if err != nil {
 			idx.logger.Warn("walking memory dir", "path", path, "error", err)
 			return nil
@@ -145,13 +144,13 @@ func isExcluded(path string, excludePaths []string) bool {
 
 // resolveExcludeSymlinks resolves symlinks in exclude paths so they match
 // the symlink-resolved paths from walkDir. Non-existent paths are kept as-is.
-func resolveExcludeSymlinks(paths []string) []string {
+func (idx *Indexer) resolveExcludeSymlinks(paths []string) []string {
 	if len(paths) == 0 {
 		return paths
 	}
 	resolved := make([]string, len(paths))
 	for i, p := range paths {
-		if r, err := evalSymlinks(p); err == nil {
+		if r, err := idx.sys.EvalSymlinks(p); err == nil {
 			resolved[i] = r
 		} else {
 			resolved[i] = p
@@ -163,7 +162,7 @@ func resolveExcludeSymlinks(paths []string) []string {
 // indexFile indexes a single .md file. Small files get a single row;
 // large files are split into fixed-size chunks with a header row for the hash.
 func (idx *Indexer) indexFile(ctx context.Context, filePath, dirPath string) (int, error) {
-	data, err := readFile(filePath)
+	data, err := idx.sys.ReadFile(filePath)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return 0, nil

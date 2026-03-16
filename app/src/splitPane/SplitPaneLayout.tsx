@@ -14,9 +14,10 @@ interface SplitPaneLayoutProps {
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
   onRemoveLeaf: (id: string) => void;
   onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void;
+  onMaximize?: (leafId: string) => void;
 }
 
-export function SplitPaneLayout({ tree, renderLeaf, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf }: SplitPaneLayoutProps) {
+export function SplitPaneLayout({ tree, renderLeaf, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf, onMaximize }: SplitPaneLayoutProps) {
   const usedSingletons = collectPanelTypes(tree);
   return (
     <PaneTree
@@ -28,6 +29,7 @@ export function SplitPaneLayout({ tree, renderLeaf, onUpdateFlex, onDrop, onRemo
       onDrop={onDrop}
       onRemoveLeaf={onRemoveLeaf}
       onSplitLeaf={onSplitLeaf}
+      onMaximize={onMaximize}
     />
   );
 }
@@ -41,9 +43,10 @@ interface PaneTreeProps {
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
   onRemoveLeaf: (id: string) => void;
   onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void;
+  onMaximize?: (leafId: string) => void;
 }
 
-function PaneTree({ node, path, usedSingletons, renderLeaf, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf }: PaneTreeProps) {
+function PaneTree({ node, path, usedSingletons, renderLeaf, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf, onMaximize }: PaneTreeProps) {
   const { colors } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -99,6 +102,7 @@ function PaneTree({ node, path, usedSingletons, renderLeaf, onUpdateFlex, onDrop
           onRemove={() => onRemoveLeaf(node.id)}
           onDrop={onDrop}
           onSplitLeaf={onSplitLeaf}
+          onToggleMaximize={onMaximize ? () => onMaximize(node.id) : undefined}
         />
         <DropZoneOverlay leafId={node.id} headerHeight={HEADER_HEIGHT} onDrop={onDrop} />
         <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
@@ -159,6 +163,7 @@ function PaneTree({ node, path, usedSingletons, renderLeaf, onUpdateFlex, onDrop
             onDrop={onDrop}
             onRemoveLeaf={onRemoveLeaf}
             onSplitLeaf={onSplitLeaf}
+            onMaximize={onMaximize}
           />
         </Fragment>
       ))}

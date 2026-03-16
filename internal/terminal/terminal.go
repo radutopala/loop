@@ -37,10 +37,9 @@ type ExecClient interface {
 	ExecResize(ctx context.Context, execID string, height, width uint) error
 }
 
-var randRead = rand.Read
-
 // generateID returns a short random hex string for session IDs.
-func generateID() string {
+// The randRead parameter is the source of randomness (typically crypto/rand.Read).
+func generateID(randRead func([]byte) (int, error)) string {
 	b := make([]byte, 4)
 	_, _ = randRead(b)
 	return hex.EncodeToString(b)
@@ -183,6 +182,7 @@ type Manager struct {
 	logger      *slog.Logger
 	ringBufSize int
 	idleTimeout time.Duration
+	randRead    func([]byte) (int, error)
 }
 
 // NewManager creates a new terminal session manager.
@@ -192,6 +192,7 @@ func NewManager(client ExecClient, logger *slog.Logger) *Manager {
 		client:      client,
 		logger:      logger,
 		ringBufSize: defaultRingBufSize,
+		randRead:    rand.Read,
 	}
 }
 
@@ -222,7 +223,7 @@ func (m *Manager) CreateSession(ctx context.Context, containerID string, cmd []s
 	}
 
 	s := &Session{
-		id:          generateID(),
+		id:          generateID(m.randRead),
 		containerID: containerID,
 		execID:      execID,
 		conn:        conn,

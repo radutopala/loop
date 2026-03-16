@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
+	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -31,6 +32,7 @@ import (
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/embeddings"
 	"github.com/radutopala/loop/internal/local"
+	"github.com/radutopala/loop/internal/mcpbrowser"
 	"github.com/radutopala/loop/internal/mcpserver"
 	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/orchestrator"
@@ -82,6 +84,10 @@ func (m *mockDockerClient) ContainerRemove(ctx context.Context, containerID stri
 	return m.Called(ctx, containerID).Error(0)
 }
 
+func (m *mockDockerClient) ContainerStop(ctx context.Context, containerID string) error {
+	return m.Called(ctx, containerID).Error(0)
+}
+
 func (m *mockDockerClient) ImageList(ctx context.Context, image string) ([]string, error) {
 	args := m.Called(ctx, image)
 	if args.Get(0) == nil {
@@ -96,6 +102,10 @@ func (m *mockDockerClient) ImagePull(ctx context.Context, image string) error {
 
 func (m *mockDockerClient) ImageBuild(ctx context.Context, contextDir, tag string) error {
 	return m.Called(ctx, contextDir, tag).Error(0)
+}
+
+func (m *mockDockerClient) ImageBuildFile(ctx context.Context, contextDir, dockerfile, tag string) error {
+	return m.Called(ctx, contextDir, dockerfile, tag).Error(0)
 }
 
 func (m *mockDockerClient) ContainerList(ctx context.Context, labelKey, labelValue string) ([]string, error) {
@@ -116,6 +126,10 @@ func (m *mockDockerClient) RunningChannelIDs(ctx context.Context) (map[string]st
 
 func (m *mockDockerClient) CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader) error {
 	return m.Called(ctx, containerID, dstPath, content).Error(0)
+}
+
+func (m *mockDockerClient) NetworkEnsure(ctx context.Context, name string) error {
+	return m.Called(ctx, name).Error(0)
 }
 
 type mockBot struct {
@@ -237,36 +251,104 @@ func (c *closableDockerClient) Close() error {
 	return c.closeFn()
 }
 
+// newPassthroughMock returns a *testutil.MockSystem where every method
+// delegates to the real OS implementation by default.  Individual methods
+// can then be overridden with sys.Override(...).Return(...).
+func newPassthroughMock() *testutil.MockSystem {
+	sys := new(testutil.MockSystem)
+
+	// UserHomeDir
+	userHomeDirCall := sys.On("UserHomeDir").Maybe().Return("", nil)
+	userHomeDirCall.RunFn = func(_ mock.Arguments) {
+		dir, err := os.UserHomeDir()
+		userHomeDirCall.ReturnArguments = mock.Arguments{dir, err}
+	}
+
+	// Stat
+	statCall := sys.On("Stat", mock.Anything).Maybe().Return(nil, nil)
+	statCall.RunFn = func(args mock.Arguments) {
+		info, err := os.Stat(args.String(0))
+		statCall.ReturnArguments = mock.Arguments{info, err}
+	}
+
+	// MkdirAll
+	mkdirAllCall := sys.On("MkdirAll", mock.Anything, mock.Anything).Maybe().Return(nil)
+	mkdirAllCall.RunFn = func(args mock.Arguments) {
+		err := os.MkdirAll(args.String(0), args.Get(1).(os.FileMode))
+		mkdirAllCall.ReturnArguments = mock.Arguments{err}
+	}
+
+	// WriteFile
+	writeFileCall := sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
+	writeFileCall.RunFn = func(args mock.Arguments) {
+		err := os.WriteFile(args.String(0), args.Get(1).([]byte), args.Get(2).(os.FileMode))
+		writeFileCall.ReturnArguments = mock.Arguments{err}
+	}
+
+	// ReadFile
+	readFileCall := sys.On("ReadFile", mock.Anything).Maybe().Return(nil, nil)
+	readFileCall.RunFn = func(args mock.Arguments) {
+		data, err := os.ReadFile(args.String(0))
+		readFileCall.ReturnArguments = mock.Arguments{data, err}
+	}
+
+	// Getwd
+	getwdCall := sys.On("Getwd").Maybe().Return("", nil)
+	getwdCall.RunFn = func(_ mock.Arguments) {
+		dir, err := os.Getwd()
+		getwdCall.ReturnArguments = mock.Arguments{dir, err}
+	}
+
+	// Remove
+	removeCall := sys.On("Remove", mock.Anything).Maybe().Return(nil)
+	removeCall.RunFn = func(args mock.Arguments) {
+		err := os.Remove(args.String(0))
+		removeCall.ReturnArguments = mock.Arguments{err}
+	}
+
+	// Executable
+	executableCall := sys.On("Executable").Maybe().Return("", nil)
+	executableCall.RunFn = func(_ mock.Arguments) {
+		path, err := os.Executable()
+		executableCall.ReturnArguments = mock.Arguments{path, err}
+	}
+
+	// EvalSymlinks
+	evalSymlinksCall := sys.On("EvalSymlinks", mock.Anything).Maybe().Return("", nil)
+	evalSymlinksCall.RunFn = func(args mock.Arguments) {
+		resolved, err := filepath.EvalSymlinks(args.String(0))
+		evalSymlinksCall.ReturnArguments = mock.Arguments{resolved, err}
+	}
+
+	// Chmod
+	chmodCall := sys.On("Chmod", mock.Anything, mock.Anything).Maybe().Return(nil)
+	chmodCall.RunFn = func(args mock.Arguments) {
+		err := os.Chmod(args.String(0), args.Get(1).(os.FileMode))
+		chmodCall.ReturnArguments = mock.Arguments{err}
+	}
+
+	// Rename
+	renameCall := sys.On("Rename", mock.Anything, mock.Anything).Maybe().Return(nil)
+	renameCall.RunFn = func(args mock.Arguments) {
+		err := os.Rename(args.String(0), args.String(1))
+		renameCall.ReturnArguments = mock.Arguments{err}
+	}
+
+	// CreateTemp
+	createTempCall := sys.On("CreateTemp", mock.Anything, mock.Anything).Maybe().Return(nil, nil)
+	createTempCall.RunFn = func(args mock.Arguments) {
+		f, err := os.CreateTemp(args.String(0), args.String(1))
+		createTempCall.ReturnArguments = mock.Arguments{f, err}
+	}
+
+	return sys
+}
+
 // --- Test Suite ---
 
 type MainSuite struct {
 	suite.Suite
-	origConfigLoad             func() (*config.Config, error)
-	origNewDiscordBot          func(string, string, string, *slog.Logger) (orchestrator.Bot, error)
-	origNewSlackBot            func(string, string, *slog.Logger) (orchestrator.Bot, error)
-	origNewDockerClient        func() (container.DockerClient, error)
-	origNewSQLiteStore         func(string) (db.Store, error)
-	origOsExit                 func(int)
-	origNewAPIServer           func(scheduler.Scheduler, api.ChannelEnsurer, api.ThreadEnsurer, api.ChannelLister, api.MessageSender, *slog.Logger) *api.Server
-	origNewMCPServer           func(string, string, string, mcpserver.HTTPClient, *slog.Logger, ...mcpserver.MemoryOption) *mcpserver.Server
-	origDaemonStart            func(daemon.System, string) error
-	origDaemonStop             func(daemon.System) error
-	origDaemonStatus           func(daemon.System) (string, error)
-	origNewSystem              func() daemon.System
-	origEnsureChannelFunc      func(string, string, string) (string, error)
-	origEnsureAllChannelsFunc  func(string, string) ([]ensureResult, error)
-	origNewLocalBot            func(db.Store, *slog.Logger) orchestrator.Bot
-	origEnsureImage            func(context.Context, container.DockerClient, *config.Config) error
-	origUserHomeDir            func() (string, error)
-	origOsStat                 func(string) (os.FileInfo, error)
-	origOsMkdirAll             func(string, os.FileMode) error
-	origOsWriteFile            func(string, []byte, os.FileMode) error
-	origOsGetwd                func() (string, error)
-	origOsReadFile             func(string) ([]byte, error)
-	origNewEmbedder            func(*config.Config) (embeddings.Embedder, error)
-	origLoadProjectMemoryPaths func(string) []string
-	origNewDockerExecClient    func() (terminal.ExecClient, error)
-	origNewHostExecClient      func() terminal.ExecClient
+	app *app
 }
 
 func TestMainSuite(t *testing.T) {
@@ -274,62 +356,8 @@ func TestMainSuite(t *testing.T) {
 }
 
 func (s *MainSuite) SetupTest() {
-	s.origConfigLoad = configLoad
-	s.origNewDiscordBot = newDiscordBot
-	s.origNewSlackBot = newSlackBot
-	s.origNewDockerClient = newDockerClient
-	s.origNewSQLiteStore = newSQLiteStore
-	s.origOsExit = osExit
-	s.origNewAPIServer = newAPIServer
-	s.origNewMCPServer = newMCPServer
-	s.origDaemonStart = daemonStart
-	s.origDaemonStop = daemonStop
-	s.origDaemonStatus = daemonStatus
-	s.origNewSystem = newSystem
-	s.origEnsureChannelFunc = ensureChannelFunc
-	s.origEnsureAllChannelsFunc = ensureAllChannelsFunc
-	s.origNewLocalBot = newLocalBot
-	s.origEnsureImage = ensureImage
-	s.origUserHomeDir = userHomeDir
-	s.origOsStat = osStat
-	s.origOsMkdirAll = osMkdirAll
-	s.origOsWriteFile = osWriteFile
-	s.origOsGetwd = osGetwd
-	s.origOsReadFile = osReadFile
-	s.origNewEmbedder = newEmbedder
-	s.origLoadProjectMemoryPaths = loadProjectMemoryPaths
-	s.origNewDockerExecClient = newDockerExecClient
-	s.origNewHostExecClient = newHostExecClient
-	loadProjectMemoryPaths = func(_ string) []string { return nil }
-}
-
-func (s *MainSuite) TearDownTest() {
-	configLoad = s.origConfigLoad
-	newDiscordBot = s.origNewDiscordBot
-	newSlackBot = s.origNewSlackBot
-	newDockerClient = s.origNewDockerClient
-	newSQLiteStore = s.origNewSQLiteStore
-	osExit = s.origOsExit
-	newAPIServer = s.origNewAPIServer
-	newMCPServer = s.origNewMCPServer
-	daemonStart = s.origDaemonStart
-	daemonStop = s.origDaemonStop
-	daemonStatus = s.origDaemonStatus
-	newSystem = s.origNewSystem
-	ensureChannelFunc = s.origEnsureChannelFunc
-	ensureAllChannelsFunc = s.origEnsureAllChannelsFunc
-	newLocalBot = s.origNewLocalBot
-	ensureImage = s.origEnsureImage
-	userHomeDir = s.origUserHomeDir
-	osStat = s.origOsStat
-	osMkdirAll = s.origOsMkdirAll
-	osWriteFile = s.origOsWriteFile
-	osGetwd = s.origOsGetwd
-	osReadFile = s.origOsReadFile
-	newEmbedder = s.origNewEmbedder
-	loadProjectMemoryPaths = s.origLoadProjectMemoryPaths
-	newDockerExecClient = s.origNewDockerExecClient
-	newHostExecClient = s.origNewHostExecClient
+	s.app = newApp()
+	s.app.loadProjectMemoryPaths = func(_ string) []string { return nil }
 }
 
 func testConfig() *config.Config {
@@ -373,7 +401,7 @@ type serveMocks struct {
 	cfg          *config.Config
 }
 
-func setupServeMocks() *serveMocks {
+func (s *MainSuite) setupServeMocks() *serveMocks {
 	m := &serveMocks{
 		store:        new(testutil.MockStore),
 		bot:          new(mockBot),
@@ -381,15 +409,16 @@ func setupServeMocks() *serveMocks {
 		cfg:          testConfig(),
 	}
 	m.store.On("Close").Return(nil)
-	configLoad = func() (*config.Config, error) { return m.cfg, nil }
-	newSQLiteStore = func(_ string) (db.Store, error) { return m.store, nil }
-	newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) { return m.bot, nil }
-	newLocalBot = func(_ db.Store, _ *slog.Logger) orchestrator.Bot { return m.bot }
-	newDockerClient = func() (container.DockerClient, error) { return m.dockerClient, nil }
-	ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error { return nil }
-	newDockerExecClient = func() (terminal.ExecClient, error) { return nil, errors.New("no docker") }
-	newHostExecClient = func() terminal.ExecClient { return &noopExecClient{} }
-	newAPIServer = fakeAPIServer()
+	s.app.configLoad = func() (*config.Config, error) { return m.cfg, nil }
+	s.app.newSQLiteStore = func(_ string) (db.Store, error) { return m.store, nil }
+	s.app.newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) { return m.bot, nil }
+	s.app.newLocalBot = func(_ db.Store, _ *slog.Logger) orchestrator.Bot { return m.bot }
+	s.app.newDockerClient = func() (container.DockerClient, error) { return m.dockerClient, nil }
+	s.app.ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error { return nil }
+	s.app.newDockerExecClient = func() (terminal.ExecClient, error) { return nil, errors.New("no docker") }
+	s.app.newHostExecClient = func() terminal.ExecClient { return &noopExecClient{} }
+	s.app.newBrowserManager = func(_ string, _ *slog.Logger) (api.BrowserManager, error) { return nil, errors.New("no browser") }
+	s.app.newAPIServer = fakeAPIServer()
 	return m
 }
 
@@ -418,7 +447,7 @@ func filterExpected(calls []*mock.Call, method string) []*mock.Call {
 // --- newRootCmd ---
 
 func (s *MainSuite) TestNewRootCmd() {
-	cmd := newRootCmd()
+	cmd := s.app.newRootCmd()
 	require.Equal(s.T(), "loop", cmd.Use)
 	require.True(s.T(), cmd.HasSubCommands())
 
@@ -427,11 +456,14 @@ func (s *MainSuite) TestNewRootCmd() {
 		"mcp":            false,
 		"daemon:start":   false,
 		"daemon:stop":    false,
+		"daemon:restart": false,
 		"daemon:status":  false,
 		"onboard:global": false,
 		"onboard:local":  false,
 		"version":        false,
 		"readme":         false,
+		"update":         false,
+		"mcp-browser":    false,
 	}
 	for _, sub := range cmd.Commands() {
 		if _, ok := want[sub.Use]; ok {
@@ -446,13 +478,13 @@ func (s *MainSuite) TestNewRootCmd() {
 // --- newServeCmd ---
 
 func (s *MainSuite) TestNewServeCmd() {
-	cmd := newServeCmd()
+	cmd := s.app.newServeCmd()
 	require.Equal(s.T(), "serve", cmd.Use)
 	require.Equal(s.T(), []string{"s"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.RunE)
 
 	// Exercise the RunE closure to cover it.
-	configLoad = func() (*config.Config, error) {
+	s.app.configLoad = func() (*config.Config, error) {
 		return nil, errors.New("test")
 	}
 	err := cmd.RunE(nil, nil)
@@ -462,7 +494,7 @@ func (s *MainSuite) TestNewServeCmd() {
 // --- newMCPCmd ---
 
 func (s *MainSuite) TestNewMCPCmd() {
-	cmd := newMCPCmd()
+	cmd := s.app.newMCPCmd()
 	require.Equal(s.T(), "mcp", cmd.Use)
 	require.Equal(s.T(), []string{"m"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.RunE)
@@ -476,14 +508,14 @@ func (s *MainSuite) TestNewMCPCmd() {
 }
 
 func (s *MainSuite) TestNewMCPCmdMissingFlags() {
-	cmd := newMCPCmd()
+	cmd := s.app.newMCPCmd()
 	cmd.SetArgs([]string{})
 	err := cmd.Execute()
 	require.Error(s.T(), err)
 }
 
 func (s *MainSuite) TestNewMCPCmdMutuallyExclusive() {
-	cmd := newMCPCmd()
+	cmd := s.app.newMCPCmd()
 	cmd.SetArgs([]string{"--channel-id", "ch1", "--dir", "/path", "--api-url", "http://localhost:8222"})
 	err := cmd.Execute()
 	require.Error(s.T(), err)
@@ -493,7 +525,7 @@ func (s *MainSuite) TestNewMCPCmdMutuallyExclusive() {
 func (s *MainSuite) TestRunMCP() {
 	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
 	called := false
-	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
+	s.app.newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
 		require.Equal(s.T(), "ch1", channelID)
 		require.Equal(s.T(), "http://localhost:8222", apiURL)
 		called = true
@@ -502,12 +534,12 @@ func (s *MainSuite) TestRunMCP() {
 
 	// runMCP will try to use StdioTransport which will fail/close immediately in test.
 	// We just verify the function is wired correctly.
-	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", false)
+	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", false)
 	require.True(s.T(), called)
 }
 
 func (s *MainSuite) TestRunMCPLogOpenError() {
-	err := runMCP("ch1", "http://localhost:8222", "", "/nonexistent/dir/mcp.log", "", "local", false)
+	err := s.app.runMCP("ch1", "http://localhost:8222", "", "/nonexistent/dir/mcp.log", "", "local", false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "opening mcp log")
 }
@@ -517,18 +549,16 @@ func (s *MainSuite) TestRunMCPWithConfigLoad() {
 	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
 
 	// Mock configLoad to return a config
-	origConfigLoad := configLoad
-	configLoad = func() (*config.Config, error) {
+	s.app.configLoad = func() (*config.Config, error) {
 		return &config.Config{
 			LogLevel:  "debug",
 			LogFormat: "json",
 		}, nil
 	}
-	defer func() { configLoad = origConfigLoad }()
 
 	// Mock newMCPServer to avoid actually running the server
 	called := false
-	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
+	s.app.newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
 		called = true
 		// Verify logger was created (we can't easily inspect its level, but at least it was called)
 		require.NotNil(s.T(), logger)
@@ -537,7 +567,7 @@ func (s *MainSuite) TestRunMCPWithConfigLoad() {
 	}
 
 	// This will fail to run the server (no stdio), but that's OK - we just want to test config loading
-	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", false)
+	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", false)
 	require.True(s.T(), called)
 }
 
@@ -578,7 +608,7 @@ func (s *MainSuite) TestEnsureChannelSuccess() {
 	}))
 	defer ts.Close()
 
-	channelID, err := ensureChannel(ts.URL, "/home/user/dev/loop", "local")
+	channelID, err := s.app.ensureChannel(ts.URL, "/home/user/dev/loop", "local")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "ch-resolved", channelID)
 }
@@ -589,13 +619,13 @@ func (s *MainSuite) TestEnsureChannelServerError() {
 	}))
 	defer ts.Close()
 
-	_, err := ensureChannel(ts.URL, "/path", "local")
+	_, err := s.app.ensureChannel(ts.URL, "/path", "local")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "ensure channel API returned 500")
 }
 
 func (s *MainSuite) TestEnsureChannelConnectionError() {
-	_, err := ensureChannel("http://127.0.0.1:1", "/path", "local")
+	_, err := s.app.ensureChannel("http://127.0.0.1:1", "/path", "local")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "calling ensure channel API")
 }
@@ -607,7 +637,7 @@ func (s *MainSuite) TestEnsureChannelInvalidJSON() {
 	}))
 	defer ts.Close()
 
-	_, err := ensureChannel(ts.URL, "/path", "local")
+	_, err := s.app.ensureChannel(ts.URL, "/path", "local")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "decoding ensure channel response")
 }
@@ -631,7 +661,7 @@ func (s *MainSuite) TestEnsureAllChannelsSuccess() {
 	}))
 	defer ts.Close()
 
-	results, err := ensureAllChannels(ts.URL, "/home/user/dev/loop")
+	results, err := s.app.ensureAllChannels(ts.URL, "/home/user/dev/loop")
 	require.NoError(s.T(), err)
 	require.Len(s.T(), results, 2)
 	require.Equal(s.T(), "ch-1", results[0].ChannelID)
@@ -646,13 +676,13 @@ func (s *MainSuite) TestEnsureAllChannelsServerError() {
 	}))
 	defer ts.Close()
 
-	_, err := ensureAllChannels(ts.URL, "/path")
+	_, err := s.app.ensureAllChannels(ts.URL, "/path")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "ensure-all channels API returned 500")
 }
 
 func (s *MainSuite) TestEnsureAllChannelsConnectionError() {
-	_, err := ensureAllChannels("http://127.0.0.1:1", "/path")
+	_, err := s.app.ensureAllChannels("http://127.0.0.1:1", "/path")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "calling ensure-all channels API")
 }
@@ -664,7 +694,7 @@ func (s *MainSuite) TestEnsureAllChannelsInvalidJSON() {
 	}))
 	defer ts.Close()
 
-	_, err := ensureAllChannels(ts.URL, "/path")
+	_, err := s.app.ensureAllChannels(ts.URL, "/path")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "decoding ensure-all channels response")
 }
@@ -672,28 +702,28 @@ func (s *MainSuite) TestEnsureAllChannelsInvalidJSON() {
 func (s *MainSuite) TestRunMCPWithDir() {
 	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
 	called := false
-	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
+	s.app.newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
 		require.Equal(s.T(), "resolved-ch", channelID)
 		called = true
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger)
 	}
-	ensureChannelFunc = func(apiURL, dirPath, platform string) (string, error) {
+	s.app.ensureChannelFn = func(apiURL, dirPath, platform string) (string, error) {
 		require.Equal(s.T(), "http://localhost:8222", apiURL)
 		require.Equal(s.T(), "/home/user/dev/loop", dirPath)
 		require.Equal(s.T(), "local", platform)
 		return "resolved-ch", nil
 	}
 
-	_ = runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "", "local", false)
+	_ = s.app.runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "", "local", false)
 	require.True(s.T(), called)
 }
 
 func (s *MainSuite) TestRunMCPWithDirEnsureError() {
-	ensureChannelFunc = func(_, _, _ string) (string, error) {
+	s.app.ensureChannelFn = func(_, _, _ string) (string, error) {
 		return "", errors.New("ensure failed")
 	}
 
-	err := runMCP("", "http://localhost:8222", "/path", "/tmp/mcp.log", "", "local", false)
+	err := s.app.runMCP("", "http://localhost:8222", "/path", "/tmp/mcp.log", "", "local", false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "ensuring channel for dir")
 }
@@ -701,16 +731,16 @@ func (s *MainSuite) TestRunMCPWithDirEnsureError() {
 func (s *MainSuite) TestNewMCPCmdWithDirFlag() {
 	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
 	called := false
-	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
+	s.app.newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
 		require.Equal(s.T(), "resolved-ch", channelID)
 		called = true
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger)
 	}
-	ensureChannelFunc = func(_, _, _ string) (string, error) {
+	s.app.ensureChannelFn = func(_, _, _ string) (string, error) {
 		return "resolved-ch", nil
 	}
 
-	cmd := newMCPCmd()
+	cmd := s.app.newMCPCmd()
 	cmd.SetArgs([]string{"--dir", "/home/user/dev/loop", "--api-url", "http://test:8222", "--log", logPath})
 	_ = cmd.Execute()
 	require.True(s.T(), called)
@@ -719,19 +749,19 @@ func (s *MainSuite) TestNewMCPCmdWithDirFlag() {
 // --- memoryDir ---
 
 func (s *MainSuite) TestMemoryDir() {
-	userHomeDir = func() (string, error) {
-		return "/home/testuser", nil
-	}
-	dir, err := memoryDir("/Users/dev/loop")
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/home/testuser", nil)
+	dir, err := s.app.memoryDir("/Users/dev/loop")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/home/testuser/.claude/projects/-Users-dev-loop/memory", dir)
 }
 
 func (s *MainSuite) TestMemoryDirHomeDirError() {
-	userHomeDir = func() (string, error) {
-		return "", errors.New("no home")
-	}
-	_, err := memoryDir("/path")
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("", errors.New("no home"))
+	_, err := s.app.memoryDir("/path")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "getting home directory")
 }
@@ -765,14 +795,14 @@ func (f *fakeEmbedder) Embed(_ context.Context, texts []string) ([][]float32, er
 func (f *fakeEmbedder) Dimensions() int { return 3 }
 
 func (s *MainSuite) TestMultiDirIndexerResolveMemoryPaths() {
-	userHomeDir = func() (string, error) {
-		return "/home/test", nil
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/home/test", nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := new(testutil.MockStore)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
-	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}, app: s.app}
 
 	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
 	require.Len(s.T(), entries, 2)
@@ -784,14 +814,14 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPaths() {
 }
 
 func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsHomeDirError() {
-	userHomeDir = func() (string, error) {
-		return "", errors.New("no home")
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("", errors.New("no home"))
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := new(testutil.MockStore)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
-	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}, app: s.app}
 
 	entries, excludePaths := mdi.resolveMemoryPaths("/path")
 	require.Len(s.T(), entries, 1)
@@ -801,10 +831,10 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsHomeDirError() {
 }
 
 func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsWithGlobalAndProject() {
-	userHomeDir = func() (string, error) {
-		return "/home/test", nil
-	}
-	loadProjectMemoryPaths = func(_ string) []string { return []string{"./docs/arch.md"} }
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/home/test", nil)
+	s.app.loadProjectMemoryPaths = func(_ string) []string { return []string{"./docs/arch.md"} }
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := new(testutil.MockStore)
@@ -813,6 +843,7 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsWithGlobalAndProject() 
 		indexer:           indexer,
 		logger:            logger,
 		globalMemoryPaths: []string{"/shared/knowledge"},
+		app:               s.app,
 	}
 
 	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
@@ -827,11 +858,11 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsWithGlobalAndProject() 
 }
 
 func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsDedup() {
-	userHomeDir = func() (string, error) {
-		return "/home/test", nil
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/home/test", nil)
 	// Project config returns paths that duplicate a global path.
-	loadProjectMemoryPaths = func(_ string) []string {
+	s.app.loadProjectMemoryPaths = func(_ string) []string {
 		return []string{"./memory", "/shared/knowledge"}
 	}
 
@@ -842,6 +873,7 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsDedup() {
 		indexer:           indexer,
 		logger:            logger,
 		globalMemoryPaths: []string{"./memory", "/shared/knowledge"},
+		app:               s.app,
 	}
 
 	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
@@ -855,9 +887,9 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsDedup() {
 }
 
 func (s *MainSuite) TestResolveMemoryPathsWithExclusions() {
-	userHomeDir = func() (string, error) {
-		return "/home/test", nil
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/home/test", nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := new(testutil.MockStore)
@@ -866,6 +898,7 @@ func (s *MainSuite) TestResolveMemoryPathsWithExclusions() {
 		indexer:           indexer,
 		logger:            logger,
 		globalMemoryPaths: []string{"./memory", "!./memory/drafts"},
+		app:               s.app,
 	}
 
 	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
@@ -875,9 +908,9 @@ func (s *MainSuite) TestResolveMemoryPathsWithExclusions() {
 }
 
 func (s *MainSuite) TestResolveMemoryPathsAbsoluteExclusion() {
-	userHomeDir = func() (string, error) {
-		return "/home/test", nil
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/home/test", nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := new(testutil.MockStore)
@@ -886,6 +919,7 @@ func (s *MainSuite) TestResolveMemoryPathsAbsoluteExclusion() {
 		indexer:           indexer,
 		logger:            logger,
 		globalMemoryPaths: []string{"./memory", "!/shared/secret"},
+		app:               s.app,
 	}
 
 	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
@@ -895,17 +929,17 @@ func (s *MainSuite) TestResolveMemoryPathsAbsoluteExclusion() {
 }
 
 func (s *MainSuite) TestResolveMemoryPathsProjectExclusion() {
-	userHomeDir = func() (string, error) {
-		return "/home/test", nil
-	}
-	loadProjectMemoryPaths = func(_ string) []string {
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/home/test", nil)
+	s.app.loadProjectMemoryPaths = func(_ string) []string {
 		return []string{"./docs", "!./docs/wip"}
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := new(testutil.MockStore)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
-	mdi := &multiDirIndexer{indexer: indexer, logger: logger}
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, app: s.app}
 
 	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
 	require.Len(s.T(), entries, 2) // auto-memory + ./docs
@@ -930,7 +964,7 @@ func (s *MainSuite) TestLoadProjectMemoryPathsDefault() {
 		0644,
 	))
 
-	paths := defaultLoadProjectMemoryPaths(tmpDir)
+	paths := s.app.defaultLoadProjectMemoryPaths(tmpDir)
 	require.Equal(s.T(), []string{"/extra/docs", "./notes.md"}, paths)
 }
 
@@ -947,12 +981,12 @@ func (s *MainSuite) TestLoadProjectMemoryPathsHJSON() {
 		0644,
 	))
 
-	paths := defaultLoadProjectMemoryPaths(tmpDir)
+	paths := s.app.defaultLoadProjectMemoryPaths(tmpDir)
 	require.Equal(s.T(), []string{"/docs"}, paths)
 }
 
 func (s *MainSuite) TestLoadProjectMemoryPathsMissingFile() {
-	paths := defaultLoadProjectMemoryPaths("/nonexistent")
+	paths := s.app.defaultLoadProjectMemoryPaths("/nonexistent")
 	require.Nil(s.T(), paths)
 }
 
@@ -966,7 +1000,7 @@ func (s *MainSuite) TestLoadProjectMemoryPathsInvalidJSON() {
 		0644,
 	))
 
-	paths := defaultLoadProjectMemoryPaths(tmpDir)
+	paths := s.app.defaultLoadProjectMemoryPaths(tmpDir)
 	require.Nil(s.T(), paths)
 }
 
@@ -980,20 +1014,20 @@ func (s *MainSuite) TestLoadProjectMemoryPathsNoMemoryPaths() {
 		0644,
 	))
 
-	paths := defaultLoadProjectMemoryPaths(tmpDir)
+	paths := s.app.defaultLoadProjectMemoryPaths(tmpDir)
 	require.Nil(s.T(), paths)
 }
 
 func (s *MainSuite) TestMultiDirIndexerSearch() {
-	userHomeDir = func() (string, error) {
-		return s.T().TempDir(), nil
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return(s.T().TempDir(), nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := new(testutil.MockStore)
 	store.On("GetMemoryFilesByDirPath", mock.Anything, mock.Anything).Return([]*db.MemoryFile{}, nil)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
-	mdi := &multiDirIndexer{indexer: indexer, logger: logger}
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, app: s.app}
 
 	ctx := context.Background()
 	results, err := mdi.Search(ctx, "/nonexistent/project", "test", 5)
@@ -1002,16 +1036,16 @@ func (s *MainSuite) TestMultiDirIndexerSearch() {
 }
 
 func (s *MainSuite) TestMultiDirIndexerSearchWithError() {
-	userHomeDir = func() (string, error) {
-		return s.T().TempDir(), nil
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return(s.T().TempDir(), nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := new(testutil.MockStore)
 	// GetMemoryFilesByDirPath returning an error triggers the error path
 	store.On("GetMemoryFilesByDirPath", mock.Anything, mock.Anything).Return(nil, errors.New("db error"))
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
-	mdi := &multiDirIndexer{indexer: indexer, logger: logger}
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, app: s.app}
 
 	ctx := context.Background()
 	results, err := mdi.Search(ctx, "/nonexistent/project", "test", 5)
@@ -1020,14 +1054,14 @@ func (s *MainSuite) TestMultiDirIndexerSearchWithError() {
 }
 
 func (s *MainSuite) TestMultiDirIndexerIndex() {
-	userHomeDir = func() (string, error) {
-		return s.T().TempDir(), nil
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return(s.T().TempDir(), nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := new(testutil.MockStore)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
-	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}, app: s.app}
 
 	ctx := context.Background()
 	count, err := mdi.Index(ctx, "/nonexistent/project")
@@ -1036,15 +1070,15 @@ func (s *MainSuite) TestMultiDirIndexerIndex() {
 }
 
 func (s *MainSuite) TestMultiDirIndexerIndexWithError() {
-	userHomeDir = func() (string, error) {
-		return "/nonexistent-home", nil
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/nonexistent-home", nil)
 
 	mi := new(mockMemIndexer)
 	mi.On("Index", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(0, errors.New("stat error"))
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	mdi := &multiDirIndexer{indexer: mi, logger: logger, globalMemoryPaths: []string{"./memory"}}
+	mdi := &multiDirIndexer{indexer: mi, logger: logger, globalMemoryPaths: []string{"./memory"}, app: s.app}
 
 	ctx := context.Background()
 	count, err := mdi.Index(ctx, "/some/project")
@@ -1059,16 +1093,16 @@ func (s *MainSuite) TestMultiDirIndexerIndexWithCount() {
 	require.NoError(s.T(), os.MkdirAll(memDir, 0755))
 	require.NoError(s.T(), os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("## Topic\nSome content\n"), 0644))
 
-	userHomeDir = func() (string, error) {
-		return "/nonexistent-home", nil
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/nonexistent-home", nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := new(testutil.MockStore)
 	store.On("GetMemoryFileHash", mock.Anything, mock.Anything, mock.Anything).Return("", nil)
 	store.On("UpsertMemoryFile", mock.Anything, mock.Anything).Return(nil)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
-	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}, app: s.app}
 
 	ctx := context.Background()
 	count, err := mdi.Index(ctx, tmpDir)
@@ -1083,9 +1117,9 @@ func (s *MainSuite) TestMultiDirIndexerSearchWithSortAndTopK() {
 	require.NoError(s.T(), os.WriteFile(filepath.Join(memDir, "a.md"), []byte("content a"), 0644))
 	require.NoError(s.T(), os.WriteFile(filepath.Join(memDir, "b.md"), []byte("content b"), 0644))
 
-	userHomeDir = func() (string, error) {
-		return "/nonexistent-home", nil
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/nonexistent-home", nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := new(testutil.MockStore)
@@ -1098,7 +1132,7 @@ func (s *MainSuite) TestMultiDirIndexerSearchWithSortAndTopK() {
 		{FilePath: "b.md", Content: "content b", Embedding: emb2, Dimensions: 3},
 	}, nil)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
-	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}, app: s.app}
 
 	ctx := context.Background()
 	results, err := mdi.Search(ctx, tmpDir, "test query", 1)
@@ -1107,9 +1141,9 @@ func (s *MainSuite) TestMultiDirIndexerSearchWithSortAndTopK() {
 }
 
 func (s *MainSuite) TestMultiDirIndexerSearchWithGlobalPath() {
-	userHomeDir = func() (string, error) {
-		return "/nonexistent-home", nil
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/nonexistent-home", nil)
 
 	mi := new(mockMemIndexer)
 	// Auto-memory path (project-scoped)
@@ -1119,7 +1153,7 @@ func (s *MainSuite) TestMultiDirIndexerSearchWithGlobalPath() {
 	mi.On("Search", mock.Anything, "/some/project", "test", 5).Return([]memory.SearchResult{}, nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	mdi := &multiDirIndexer{indexer: mi, logger: logger, globalMemoryPaths: []string{"/shared/knowledge"}}
+	mdi := &multiDirIndexer{indexer: mi, logger: logger, globalMemoryPaths: []string{"/shared/knowledge"}, app: s.app}
 
 	ctx := context.Background()
 	results, err := mdi.Search(ctx, "/some/project", "test", 5)
@@ -1129,9 +1163,9 @@ func (s *MainSuite) TestMultiDirIndexerSearchWithGlobalPath() {
 }
 
 func (s *MainSuite) TestMultiDirIndexerSearchWithIndexError() {
-	userHomeDir = func() (string, error) {
-		return "/nonexistent-home", nil
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/nonexistent-home", nil)
 
 	mi := new(mockMemIndexer)
 	// Auto-memory path fails
@@ -1139,7 +1173,7 @@ func (s *MainSuite) TestMultiDirIndexerSearchWithIndexError() {
 	mi.On("Search", mock.Anything, "/some/project", "test", 5).Return([]memory.SearchResult{}, nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	mdi := &multiDirIndexer{indexer: mi, logger: logger}
+	mdi := &multiDirIndexer{indexer: mi, logger: logger, app: s.app}
 
 	ctx := context.Background()
 	results, err := mdi.Search(ctx, "/some/project", "test", 5)
@@ -1148,9 +1182,9 @@ func (s *MainSuite) TestMultiDirIndexerSearchWithIndexError() {
 }
 
 func (s *MainSuite) TestMultiDirIndexerIndexWithGlobalPath() {
-	userHomeDir = func() (string, error) {
-		return "/nonexistent-home", nil
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/nonexistent-home", nil)
 
 	mi := new(mockMemIndexer)
 	// Auto-memory path (project-scoped)
@@ -1159,7 +1193,7 @@ func (s *MainSuite) TestMultiDirIndexerIndexWithGlobalPath() {
 	mi.On("Index", mock.Anything, "/shared/knowledge", "", mock.Anything).Return(2, nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	mdi := &multiDirIndexer{indexer: mi, logger: logger, globalMemoryPaths: []string{"/shared/knowledge"}}
+	mdi := &multiDirIndexer{indexer: mi, logger: logger, globalMemoryPaths: []string{"/shared/knowledge"}, app: s.app}
 
 	ctx := context.Background()
 	count, err := mdi.Index(ctx, "/some/project")
@@ -1188,9 +1222,9 @@ func (s *MainSuite) TestReindexAll() {
 	require.NoError(s.T(), os.MkdirAll(memDir, 0755))
 	require.NoError(s.T(), os.WriteFile(filepath.Join(memDir, "notes.md"), []byte("## Topic\nSome content\n"), 0644))
 
-	userHomeDir = func() (string, error) {
-		return "/nonexistent-home", nil
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/nonexistent-home", nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := new(testutil.MockStore)
@@ -1202,7 +1236,7 @@ func (s *MainSuite) TestReindexAll() {
 		{ChannelID: "ch3", DirPath: "/nonexistent"}, // no files — 0 indexed
 	}, nil)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
-	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}}
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}, app: s.app}
 
 	mdi.reindexAll(context.Background(), store)
 	store.AssertExpectations(s.T())
@@ -1212,7 +1246,7 @@ func (s *MainSuite) TestReindexAllListError() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := new(testutil.MockStore)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
-	mdi := &multiDirIndexer{indexer: indexer, logger: logger}
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, app: s.app}
 
 	store.On("ListChannels", mock.Anything).Return(nil, errors.New("db error"))
 
@@ -1221,14 +1255,14 @@ func (s *MainSuite) TestReindexAllListError() {
 }
 
 func (s *MainSuite) TestReindexAllCancelledContext() {
-	userHomeDir = func() (string, error) {
-		return "/nonexistent-home", nil
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/nonexistent-home", nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	store := new(testutil.MockStore)
 	indexer := memory.NewIndexer(&fakeEmbedder{}, store, logger, 0)
-	mdi := &multiDirIndexer{indexer: indexer, logger: logger}
+	mdi := &multiDirIndexer{indexer: indexer, logger: logger, app: s.app}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // Cancel immediately.
@@ -1246,15 +1280,15 @@ func (s *MainSuite) TestReindexAllCancelledContext() {
 // --- reindexLoop ---
 
 func (s *MainSuite) TestReindexLoop() {
-	userHomeDir = func() (string, error) {
-		return "/nonexistent-home", nil
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/nonexistent-home", nil)
 
 	mi := new(mockMemIndexer)
 	mi.On("Index", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(0, nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	mdi := &multiDirIndexer{indexer: mi, logger: logger}
+	mdi := &multiDirIndexer{indexer: mi, logger: logger, app: s.app}
 
 	var callCount atomic.Int32
 	cl := new(mockChannelLister)
@@ -1282,15 +1316,15 @@ func (s *MainSuite) TestReindexLoop() {
 }
 
 func (s *MainSuite) TestReindexLoopDefaultInterval() {
-	userHomeDir = func() (string, error) {
-		return "/nonexistent-home", nil
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/nonexistent-home", nil)
 
 	mi := new(mockMemIndexer)
 	mi.On("Index", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(0, nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	mdi := &multiDirIndexer{indexer: mi, logger: logger}
+	mdi := &multiDirIndexer{indexer: mi, logger: logger, app: s.app}
 
 	var callCount atomic.Int32
 	cl := new(mockChannelLister)
@@ -1325,7 +1359,7 @@ func (s *MainSuite) TestNewEmbedderOllama() {
 			OllamaURL: "http://localhost:11434",
 		}},
 	}
-	embedder, err := newEmbedder(cfg)
+	embedder, err := s.app.defaultNewEmbedder(cfg)
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), embedder)
 }
@@ -1337,7 +1371,7 @@ func (s *MainSuite) TestNewEmbedderOllamaDefaultModel() {
 			OllamaURL: "http://localhost:11434",
 		}},
 	}
-	embedder, err := newEmbedder(cfg)
+	embedder, err := s.app.defaultNewEmbedder(cfg)
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), embedder)
 }
@@ -1348,7 +1382,7 @@ func (s *MainSuite) TestNewEmbedderUnsupportedProvider() {
 			Provider: "unknown",
 		}},
 	}
-	_, err := newEmbedder(cfg)
+	_, err := s.app.defaultNewEmbedder(cfg)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "unsupported embeddings provider")
 }
@@ -1358,7 +1392,7 @@ func (s *MainSuite) TestNewEmbedderUnsupportedProvider() {
 func (s *MainSuite) TestRunMCPWithMemoryEnabled() {
 	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
 
-	configLoad = func() (*config.Config, error) {
+	s.app.configLoad = func() (*config.Config, error) {
 		return &config.Config{
 			LogLevel:  "info",
 			LogFormat: "text",
@@ -1372,12 +1406,12 @@ func (s *MainSuite) TestRunMCPWithMemoryEnabled() {
 		}, nil
 	}
 
-	ensureChannelFunc = func(_, _, _ string) (string, error) {
+	s.app.ensureChannelFn = func(_, _, _ string) (string, error) {
 		return "resolved-ch", nil
 	}
 
 	memoryOptReceived := false
-	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
+	s.app.newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
 		require.Equal(s.T(), "resolved-ch", channelID)
 		if len(opts) > 0 {
 			memoryOptReceived = true
@@ -1385,7 +1419,7 @@ func (s *MainSuite) TestRunMCPWithMemoryEnabled() {
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
 	}
 
-	_ = runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "", "local", false)
+	_ = s.app.runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "", "local", false)
 	require.True(s.T(), memoryOptReceived)
 }
 
@@ -1393,7 +1427,7 @@ func (s *MainSuite) TestRunMCPWithMemoryEnabledChannelIDMode() {
 	// When dirPath is empty (channel-id mode), memory should still be enabled via channel_id
 	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
 
-	configLoad = func() (*config.Config, error) {
+	s.app.configLoad = func() (*config.Config, error) {
 		return &config.Config{
 			LogLevel:  "info",
 			LogFormat: "text",
@@ -1407,14 +1441,14 @@ func (s *MainSuite) TestRunMCPWithMemoryEnabledChannelIDMode() {
 	}
 
 	memoryOptReceived := false
-	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
+	s.app.newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
 		if len(opts) > 0 {
 			memoryOptReceived = true
 		}
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
 	}
 
-	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", false)
+	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", false)
 	require.True(s.T(), memoryOptReceived)
 }
 
@@ -1422,7 +1456,7 @@ func (s *MainSuite) TestRunMCPWithMemoryNotEnabled() {
 	// When memory is not enabled, memory tools should NOT be wired
 	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
 
-	configLoad = func() (*config.Config, error) {
+	s.app.configLoad = func() (*config.Config, error) {
 		return &config.Config{
 			LogLevel:  "info",
 			LogFormat: "text",
@@ -1430,18 +1464,18 @@ func (s *MainSuite) TestRunMCPWithMemoryNotEnabled() {
 	}
 
 	memoryOptReceived := false
-	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
+	s.app.newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
 		if len(opts) > 0 {
 			memoryOptReceived = true
 		}
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger)
 	}
 
-	ensureChannelFunc = func(_, _, _ string) (string, error) {
+	s.app.ensureChannelFn = func(_, _, _ string) (string, error) {
 		return "ch1", nil
 	}
 
-	_ = runMCP("", "http://localhost:8222", "/path", logPath, "", "local", false)
+	_ = s.app.runMCP("", "http://localhost:8222", "/path", logPath, "", "local", false)
 	require.False(s.T(), memoryOptReceived)
 }
 
@@ -1449,7 +1483,7 @@ func (s *MainSuite) TestRunMCPWithMemoryFlag() {
 	// When --memory flag is true, memory tools should be enabled regardless of config.
 	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
 
-	configLoad = func() (*config.Config, error) {
+	s.app.configLoad = func() (*config.Config, error) {
 		return &config.Config{
 			LogLevel:  "info",
 			LogFormat: "text",
@@ -1457,14 +1491,14 @@ func (s *MainSuite) TestRunMCPWithMemoryFlag() {
 	}
 
 	memoryOptReceived := false
-	newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
+	s.app.newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
 		if len(opts) > 0 {
 			memoryOptReceived = true
 		}
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
 	}
 
-	_ = runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", true)
+	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", true)
 	require.True(s.T(), memoryOptReceived)
 }
 
@@ -1479,7 +1513,7 @@ func (s *MainSuite) TestServeEarlyErrors() {
 		{
 			name: "config load error",
 			setup: func(_ *testutil.MockStore) {
-				configLoad = func() (*config.Config, error) {
+				s.app.configLoad = func() (*config.Config, error) {
 					return nil, errors.New("config error")
 				}
 			},
@@ -1488,8 +1522,8 @@ func (s *MainSuite) TestServeEarlyErrors() {
 		{
 			name: "sqlite store error",
 			setup: func(_ *testutil.MockStore) {
-				configLoad = func() (*config.Config, error) { return testConfig(), nil }
-				newSQLiteStore = func(_ string) (db.Store, error) {
+				s.app.configLoad = func() (*config.Config, error) { return testConfig(), nil }
+				s.app.newSQLiteStore = func(_ string) (db.Store, error) {
 					return nil, errors.New("db error")
 				}
 			},
@@ -1499,9 +1533,9 @@ func (s *MainSuite) TestServeEarlyErrors() {
 			name: "discord bot error",
 			setup: func(store *testutil.MockStore) {
 				store.On("Close").Return(nil)
-				configLoad = func() (*config.Config, error) { return testConfig(), nil }
-				newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
-				newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
+				s.app.configLoad = func() (*config.Config, error) { return testConfig(), nil }
+				s.app.newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
+				s.app.newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
 					return nil, errors.New("discord error")
 				}
 			},
@@ -1511,9 +1545,9 @@ func (s *MainSuite) TestServeEarlyErrors() {
 			name: "slack bot error",
 			setup: func(store *testutil.MockStore) {
 				store.On("Close").Return(nil)
-				configLoad = func() (*config.Config, error) { return testSlackConfig(), nil }
-				newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
-				newSlackBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
+				s.app.configLoad = func() (*config.Config, error) { return testSlackConfig(), nil }
+				s.app.newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
+				s.app.newSlackBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
 					return nil, errors.New("slack error")
 				}
 			},
@@ -1523,12 +1557,12 @@ func (s *MainSuite) TestServeEarlyErrors() {
 			name: "docker client error",
 			setup: func(store *testutil.MockStore) {
 				store.On("Close").Return(nil)
-				configLoad = func() (*config.Config, error) { return testConfig(), nil }
-				newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
-				newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
+				s.app.configLoad = func() (*config.Config, error) { return testConfig(), nil }
+				s.app.newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
+				s.app.newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
 					return new(mockBot), nil
 				}
-				newDockerClient = func() (container.DockerClient, error) {
+				s.app.newDockerClient = func() (container.DockerClient, error) {
 					return nil, errors.New("docker error")
 				}
 			},
@@ -1538,15 +1572,15 @@ func (s *MainSuite) TestServeEarlyErrors() {
 			name: "ensure image error",
 			setup: func(store *testutil.MockStore) {
 				store.On("Close").Return(nil)
-				configLoad = func() (*config.Config, error) { return testConfig(), nil }
-				newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
-				newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
+				s.app.configLoad = func() (*config.Config, error) { return testConfig(), nil }
+				s.app.newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
+				s.app.newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
 					return new(mockBot), nil
 				}
-				newDockerClient = func() (container.DockerClient, error) {
+				s.app.newDockerClient = func() (container.DockerClient, error) {
 					return new(mockDockerClient), nil
 				}
-				ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
+				s.app.ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
 					return errors.New("image build failed")
 				}
 			},
@@ -1557,7 +1591,7 @@ func (s *MainSuite) TestServeEarlyErrors() {
 		s.Run(tt.name, func() {
 			store := new(testutil.MockStore)
 			tt.setup(store)
-			err := serve()
+			err := s.app.serve()
 			require.Error(s.T(), err)
 			require.Contains(s.T(), err.Error(), tt.wantErr)
 			store.AssertExpectations(s.T())
@@ -1566,22 +1600,22 @@ func (s *MainSuite) TestServeEarlyErrors() {
 }
 
 func (s *MainSuite) TestServeSlackHappyPathShutdown() {
-	m := setupServeMocks()
+	m := s.setupServeMocks()
 	m.cfg = testSlackConfig()
-	configLoad = func() (*config.Config, error) { return m.cfg, nil }
-	newSlackBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) { return m.bot, nil }
+	s.app.configLoad = func() (*config.Config, error) { return m.cfg, nil }
+	s.app.newSlackBot = func(_, _ string, _ *slog.Logger) (orchestrator.Bot, error) { return m.bot, nil }
 	m.setupHappyBot()
 
 	channelsCh := make(chan api.ChannelEnsurer, 1)
 	threadsCh := make(chan api.ThreadEnsurer, 1)
-	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) *api.Server {
+	s.app.newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) *api.Server {
 		channelsCh <- channels
 		threadsCh <- threads
 		return api.NewServer(sched, channels, threads, store, messages, logger)
 	}
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- serve() }()
+	go func() { errCh <- s.app.serve() }()
 
 	gotChannels := <-channelsCh
 	gotThreads := <-threadsCh
@@ -1605,24 +1639,24 @@ func (s *MainSuite) TestServeSlackHappyPathShutdown() {
 }
 
 func (s *MainSuite) TestServeAPIServerStartError() {
-	m := setupServeMocks()
+	m := s.setupServeMocks()
 	m.cfg.APIAddr = "invalid-addr-no-port"
 
-	err := serve()
+	err := s.app.serve()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "starting api server")
 	m.store.AssertExpectations(s.T())
 }
 
 func (s *MainSuite) TestServeOrchestratorStartError() {
-	m := setupServeMocks()
+	m := s.setupServeMocks()
 	m.bot.On("OnMessage", mock.Anything).Return()
 	m.bot.On("OnInteraction", mock.Anything).Return()
 	m.bot.On("OnChannelDelete", mock.Anything).Return()
 	m.bot.On("OnChannelJoin", mock.Anything).Return()
 	m.bot.On("RegisterCommands", mock.Anything).Return(errors.New("register failed"))
 
-	err := serve()
+	err := s.app.serve()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "starting orchestrator")
 	m.store.AssertExpectations(s.T())
@@ -1630,11 +1664,11 @@ func (s *MainSuite) TestServeOrchestratorStartError() {
 }
 
 func (s *MainSuite) TestServeHappyPathShutdown() {
-	m := setupServeMocks()
+	m := s.setupServeMocks()
 	m.setupHappyBot()
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- serve() }()
+	go func() { errCh <- s.app.serve() }()
 
 	time.Sleep(100 * time.Millisecond)
 	p, err := os.FindProcess(os.Getpid())
@@ -1653,17 +1687,17 @@ func (s *MainSuite) TestServeHappyPathShutdown() {
 }
 
 func (s *MainSuite) TestServeHappyPathWithChannelService() {
-	m := setupServeMocks()
+	m := s.setupServeMocks()
 	m.setupHappyBot()
 
 	channelsCh := make(chan api.ChannelEnsurer, 1)
-	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) *api.Server {
+	s.app.newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) *api.Server {
 		channelsCh <- channels
 		return api.NewServer(sched, channels, threads, store, messages, logger)
 	}
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- serve() }()
+	go func() { errCh <- s.app.serve() }()
 
 	gotChannels := <-channelsCh
 	require.NotNil(s.T(), gotChannels)
@@ -1685,14 +1719,14 @@ func (s *MainSuite) TestServeHappyPathWithChannelService() {
 }
 
 func (s *MainSuite) TestServeHappyPathShutdownWithStopError() {
-	m := setupServeMocks()
+	m := s.setupServeMocks()
 	m.setupHappyBot()
 	// Override Stop to return an error
 	m.bot.ExpectedCalls = filterExpected(m.bot.ExpectedCalls, "Stop")
 	m.bot.On("Stop").Return(errors.New("bot stop error"))
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- serve() }()
+	go func() { errCh <- s.app.serve() }()
 
 	time.Sleep(100 * time.Millisecond)
 	p, err := os.FindProcess(os.Getpid())
@@ -1713,17 +1747,17 @@ func (s *MainSuite) TestServeHappyPathShutdownWithStopError() {
 func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 	// Verify serve() returns nil even when the API server's Stop() returns an
 	// error. We inject a stop error via SetStopError.
-	m := setupServeMocks()
+	m := s.setupServeMocks()
 	m.setupHappyBot()
 
-	newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) *api.Server {
+	s.app.newAPIServer = func(sched scheduler.Scheduler, channels api.ChannelEnsurer, threads api.ThreadEnsurer, store api.ChannelLister, messages api.MessageSender, logger *slog.Logger) *api.Server {
 		srv := api.NewServer(sched, channels, threads, store, messages, logger)
 		srv.SetStopError(errors.New("injected stop error"))
 		return srv
 	}
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- serve() }()
+	go func() { errCh <- s.app.serve() }()
 
 	time.Sleep(100 * time.Millisecond)
 	p, err := os.FindProcess(os.Getpid())
@@ -1742,7 +1776,7 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 }
 
 func (s *MainSuite) TestServeWithMemoryEnabled() {
-	m := setupServeMocks()
+	m := s.setupServeMocks()
 	m.store.On("ListChannels", mock.Anything).Maybe().Return(nil, nil)
 	m.bot.On("OnMessage", mock.Anything).Return()
 	m.bot.On("OnInteraction", mock.Anything).Return()
@@ -1761,19 +1795,19 @@ func (s *MainSuite) TestServeWithMemoryEnabled() {
 	m.cfg.LoopDir = s.T().TempDir()
 
 	memoryIndexerSet := false
-	origNewEmbedder := newEmbedder
-	newEmbedder = func(cfg *config.Config) (embeddings.Embedder, error) {
+	defaultNewEmbedder := s.app.newEmbedder
+	s.app.newEmbedder = func(cfg *config.Config) (embeddings.Embedder, error) {
 		memoryIndexerSet = true
-		return origNewEmbedder(cfg)
+		return defaultNewEmbedder(cfg)
 	}
 
-	err := serve()
+	err := s.app.serve()
 	require.Error(s.T(), err)
 	require.True(s.T(), memoryIndexerSet, "embedder should be created when memory is enabled")
 }
 
 func (s *MainSuite) TestServeWithMemoryEmbedderError() {
-	m := setupServeMocks()
+	m := s.setupServeMocks()
 	m.bot.On("OnMessage", mock.Anything).Return()
 	m.bot.On("OnInteraction", mock.Anything).Return()
 	m.bot.On("OnChannelDelete", mock.Anything).Return()
@@ -1788,13 +1822,13 @@ func (s *MainSuite) TestServeWithMemoryEmbedderError() {
 	}
 
 	// serve() continues even when embeddings fail (logs a warning)
-	err := serve()
+	err := s.app.serve()
 	require.Error(s.T(), err) // Fails at orchestrator, not at embeddings
 	require.Contains(s.T(), err.Error(), "starting orchestrator")
 }
 
 func (s *MainSuite) TestServeDockerClientCloserCalled() {
-	m := setupServeMocks()
+	m := s.setupServeMocks()
 	m.bot.On("OnMessage", mock.Anything).Return()
 	m.bot.On("OnInteraction", mock.Anything).Return()
 	m.bot.On("OnChannelDelete", mock.Anything).Return()
@@ -1802,77 +1836,69 @@ func (s *MainSuite) TestServeDockerClientCloserCalled() {
 	m.bot.On("RegisterCommands", mock.Anything).Return(errors.New("fail"))
 
 	closeCalled := false
-	newDockerClient = func() (container.DockerClient, error) {
+	s.app.newDockerClient = func() (container.DockerClient, error) {
 		return &closableDockerClient{
 			mockDockerClient: new(mockDockerClient),
 			closeFn:          func() error { closeCalled = true; return nil },
 		}, nil
 	}
 
-	err := serve()
+	err := s.app.serve()
 	require.Error(s.T(), err)
 	require.True(s.T(), closeCalled, "docker client Close() should be called via io.Closer")
 }
 
 // --- main() ---
 
-func (s *MainSuite) TestMainSuccess() {
-	origArgs := os.Args
-	defer func() { os.Args = origArgs }()
-	os.Args = []string{"loop", "--help"}
+func (s *MainSuite) TestRunSuccess() {
+	oldArgs := os.Args
+	os.Args = []string{"loop", "version"}
+	defer func() { os.Args = oldArgs }()
 
-	exitCalled := false
-	osExit = func(code int) {
-		exitCalled = true
-	}
-
-	main()
-	require.False(s.T(), exitCalled, "os.Exit should not be called on success")
+	code := s.app.run()
+	require.Equal(s.T(), 0, code)
 }
 
-func (s *MainSuite) TestMainError() {
-	origArgs := os.Args
-	defer func() { os.Args = origArgs }()
-	os.Args = []string{"loop", "serve"}
-
-	configLoad = func() (*config.Config, error) {
+func (s *MainSuite) TestRunError() {
+	s.app.configLoad = func() (*config.Config, error) {
 		return nil, errors.New("fail")
 	}
 
-	var exitCode int
-	osExit = func(code int) {
-		exitCode = code
-	}
+	// run() creates its own root cmd, so set os.Args to trigger the error path.
+	oldArgs := os.Args
+	os.Args = []string{"loop", "serve"}
+	defer func() { os.Args = oldArgs }()
 
-	main()
-	require.Equal(s.T(), 1, exitCode)
+	code := s.app.run()
+	require.Equal(s.T(), 1, code)
 }
 
 // --- Verify the default var functions have correct signatures ---
 
 func (s *MainSuite) TestDefaultVarSignatures() {
-	require.NotNil(s.T(), configLoad)
-	require.NotNil(s.T(), newDiscordBot)
-	require.NotNil(s.T(), newSlackBot)
-	require.NotNil(s.T(), newDockerClient)
-	require.NotNil(s.T(), newSQLiteStore)
-	require.NotNil(s.T(), newAPIServer)
-	require.NotNil(s.T(), newMCPServer)
+	a := newApp()
+	require.NotNil(s.T(), a.configLoad)
+	require.NotNil(s.T(), a.newDiscordBot)
+	require.NotNil(s.T(), a.newSlackBot)
+	require.NotNil(s.T(), a.newDockerClient)
+	require.NotNil(s.T(), a.newSQLiteStore)
+	require.NotNil(s.T(), a.newAPIServer)
+	require.NotNil(s.T(), a.newMCPServer)
 
 	// Verify newAPIServer produces a non-nil *api.Server
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	apiSrv := newAPIServer(nil, nil, nil, nil, nil, logger)
+	apiSrv := a.newAPIServer(nil, nil, nil, nil, nil, logger)
 	require.NotNil(s.T(), apiSrv)
 
 	// Verify newMCPServer produces a non-nil server
-	mcpSrv := newMCPServer("ch1", "http://localhost:8222", "", http.DefaultClient, nil)
+	mcpSrv := a.newMCPServer("ch1", "http://localhost:8222", "", http.DefaultClient, nil)
 	require.NotNil(s.T(), mcpSrv)
 }
 
 func (s *MainSuite) TestDefaultNewSQLiteStore() {
 	// Exercise the default newSQLiteStore with a temp file.
 	tmpDir := s.T().TempDir()
-	store, err := s.origNewSQLiteStore(tmpDir + "/test.db")
+	store, err := newApp().newSQLiteStore(tmpDir + "/test.db")
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), store)
 	require.NoError(s.T(), store.Close())
@@ -1881,21 +1907,18 @@ func (s *MainSuite) TestDefaultNewSQLiteStore() {
 func (s *MainSuite) TestDefaultNewDiscordBot() {
 	// Exercise the default newDiscordBot — discordgo.New succeeds without a server.
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	bot, err := s.origNewDiscordBot("fake-token", "fake-app-id", "fake-guild-id", logger)
+	bot, err := newApp().newDiscordBot("fake-token", "fake-app-id", "fake-guild-id", logger)
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), bot)
 }
 
 func (s *MainSuite) TestDefaultNewDiscordBotSessionError() {
-	orig := discordgoNew
-	s.T().Cleanup(func() { discordgoNew = orig })
-
-	discordgoNew = func(string) (*discordgo.Session, error) {
+	s.app.discordgoNew = func(string) (*discordgo.Session, error) {
 		return nil, errors.New("session error")
 	}
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	_, err := newDiscordBot("fake-token", "fake-app-id", "fake-guild-id", logger)
+	_, err := s.app.newDiscordBot("fake-token", "fake-app-id", "fake-guild-id", logger)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "session error")
 }
@@ -1903,14 +1926,14 @@ func (s *MainSuite) TestDefaultNewDiscordBotSessionError() {
 func (s *MainSuite) TestDefaultNewSlackBot() {
 	// Exercise the default newSlackBot — creates a bot without needing a server.
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	bot, err := s.origNewSlackBot("xoxb-fake", "xapp-fake", logger)
+	bot, err := newApp().newSlackBot("xoxb-fake", "xapp-fake", logger)
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), bot)
 }
 
 func (s *MainSuite) TestDefaultNewDockerClient() {
 	// Exercise the default newDockerClient — Docker client creation succeeds without a running daemon.
-	dc, err := s.origNewDockerClient()
+	dc, err := newApp().newDockerClient()
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), dc)
 	if closer, ok := dc.(io.Closer); ok {
@@ -1920,170 +1943,197 @@ func (s *MainSuite) TestDefaultNewDockerClient() {
 
 func (s *MainSuite) TestDefaultNewDockerExecClient() {
 	// Exercise the default newDockerExecClient to cover serve.go var body.
-	_, _ = s.origNewDockerExecClient()
+	_, _ = newApp().newDockerExecClient()
 }
 
 func (s *MainSuite) TestDefaultNewHostExecClient() {
 	// Exercise the default newHostExecClient to cover serve.go var body.
-	c := s.origNewHostExecClient()
+	c := newApp().newHostExecClient()
 	require.NotNil(s.T(), c)
+}
+
+func (s *MainSuite) TestDefaultNewBrowserManager() {
+	// Exercise the default newBrowserManager to cover main.go factory body.
+	_, _ = newApp().newBrowserManager("loop-chrome:latest", slog.Default())
+}
+
+func (s *MainSuite) TestDefaultNewBrowserManagerDockerError() {
+	// Force browser.NewDockerExecAPI() to fail by requesting TLS
+	// verification with a non-existent cert path.
+	s.T().Setenv("DOCKER_TLS_VERIFY", "1")
+	s.T().Setenv("DOCKER_CERT_PATH", "/nonexistent/certs")
+	_, err := newApp().newBrowserManager("loop-chrome:latest", slog.Default())
+	require.Error(s.T(), err)
+}
+
+func (s *MainSuite) TestDefaultNewLocalBot() {
+	store := &testutil.MockStore{}
+	b := newApp().newLocalBot(store, slog.Default())
+	require.NotNil(s.T(), b)
+}
+
+func (s *MainSuite) TestDefaultGetLatestVersionFn() {
+	// Exercise the default getLatestVersionFn to cover main.go factory body.
+	// It will fail (no network) but that's fine — we just cover the code path.
+	_, _ = newApp().getLatestVersionFn()
 }
 
 // --- daemon commands ---
 
 func (s *MainSuite) TestNewDaemonStartCmd() {
-	cmd := newDaemonStartCmd()
+	cmd := s.app.newDaemonStartCmd()
 	require.Equal(s.T(), "daemon:start", cmd.Use)
 	require.Equal(s.T(), []string{"d:start", "up"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.RunE)
 }
 
 func (s *MainSuite) TestNewDaemonStopCmd() {
-	cmd := newDaemonStopCmd()
+	cmd := s.app.newDaemonStopCmd()
 	require.Equal(s.T(), "daemon:stop", cmd.Use)
 	require.Equal(s.T(), []string{"d:stop", "down"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.RunE)
 }
 
 func (s *MainSuite) TestNewDaemonStatusCmd() {
-	cmd := newDaemonStatusCmd()
+	cmd := s.app.newDaemonStatusCmd()
 	require.Equal(s.T(), "daemon:status", cmd.Use)
 	require.Equal(s.T(), []string{"d:status"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.RunE)
 }
 
 func (s *MainSuite) TestDaemonStartSuccess() {
-	configLoad = func() (*config.Config, error) { return testConfig(), nil }
-	daemonStart = func(_ daemon.System, _ string) error { return nil }
-	newSystem = func() daemon.System { return daemon.RealSystem{} }
+	s.app.configLoad = func() (*config.Config, error) { return testConfig(), nil }
+	s.app.daemonStart = func(_ daemon.System, _ string) error { return nil }
+	s.app.newSystem = func() daemon.System { return daemon.RealSystem{} }
 
-	cmd := newDaemonStartCmd()
+	cmd := s.app.newDaemonStartCmd()
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
 }
 
 func (s *MainSuite) TestDaemonStartError() {
-	configLoad = func() (*config.Config, error) { return testConfig(), nil }
-	daemonStart = func(_ daemon.System, _ string) error { return errors.New("start fail") }
-	newSystem = func() daemon.System { return daemon.RealSystem{} }
+	s.app.configLoad = func() (*config.Config, error) { return testConfig(), nil }
+	s.app.daemonStart = func(_ daemon.System, _ string) error { return errors.New("start fail") }
+	s.app.newSystem = func() daemon.System { return daemon.RealSystem{} }
 
-	cmd := newDaemonStartCmd()
+	cmd := s.app.newDaemonStartCmd()
 	err := cmd.Execute()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "start fail")
 }
 
 func (s *MainSuite) TestDaemonStartConfigError() {
-	configLoad = func() (*config.Config, error) { return nil, errors.New("config fail") }
+	s.app.configLoad = func() (*config.Config, error) { return nil, errors.New("config fail") }
 
-	cmd := newDaemonStartCmd()
+	cmd := s.app.newDaemonStartCmd()
 	err := cmd.Execute()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "config fail")
 }
 
 func (s *MainSuite) TestDaemonStopSuccess() {
-	daemonStop = func(_ daemon.System) error { return nil }
-	newSystem = func() daemon.System { return daemon.RealSystem{} }
+	s.app.daemonStop = func(_ daemon.System) error { return nil }
+	s.app.newSystem = func() daemon.System { return daemon.RealSystem{} }
 
-	cmd := newDaemonStopCmd()
+	cmd := s.app.newDaemonStopCmd()
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
 }
 
 func (s *MainSuite) TestDaemonStopError() {
-	daemonStop = func(_ daemon.System) error { return errors.New("stop fail") }
-	newSystem = func() daemon.System { return daemon.RealSystem{} }
+	s.app.daemonStop = func(_ daemon.System) error { return errors.New("stop fail") }
+	s.app.newSystem = func() daemon.System { return daemon.RealSystem{} }
 
-	cmd := newDaemonStopCmd()
+	cmd := s.app.newDaemonStopCmd()
 	err := cmd.Execute()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "stop fail")
 }
 
 func (s *MainSuite) TestNewDaemonRestartCmd() {
-	cmd := newDaemonRestartCmd()
+	cmd := s.app.newDaemonRestartCmd()
 	require.Equal(s.T(), "daemon:restart", cmd.Use)
 	require.Equal(s.T(), []string{"d:restart", "restart"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.RunE)
 }
 
 func (s *MainSuite) TestDaemonRestartSuccess() {
-	configLoad = func() (*config.Config, error) { return testConfig(), nil }
-	daemonStop = func(_ daemon.System) error { return nil }
-	daemonStart = func(_ daemon.System, _ string) error { return nil }
-	newSystem = func() daemon.System { return daemon.RealSystem{} }
+	s.app.configLoad = func() (*config.Config, error) { return testConfig(), nil }
+	s.app.daemonStop = func(_ daemon.System) error { return nil }
+	s.app.daemonStart = func(_ daemon.System, _ string) error { return nil }
+	s.app.newSystem = func() daemon.System { return daemon.RealSystem{} }
 
-	cmd := newDaemonRestartCmd()
+	cmd := s.app.newDaemonRestartCmd()
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
 }
 
 func (s *MainSuite) TestDaemonRestartSuccessWhenNotRunning() {
-	configLoad = func() (*config.Config, error) { return testConfig(), nil }
-	daemonStop = func(_ daemon.System) error { return errors.New("not running") }
-	daemonStart = func(_ daemon.System, _ string) error { return nil }
-	newSystem = func() daemon.System { return daemon.RealSystem{} }
+	s.app.configLoad = func() (*config.Config, error) { return testConfig(), nil }
+	s.app.daemonStop = func(_ daemon.System) error { return errors.New("not running") }
+	s.app.daemonStart = func(_ daemon.System, _ string) error { return nil }
+	s.app.newSystem = func() daemon.System { return daemon.RealSystem{} }
 
-	cmd := newDaemonRestartCmd()
+	cmd := s.app.newDaemonRestartCmd()
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
 }
 
 func (s *MainSuite) TestDaemonRestartStartError() {
-	configLoad = func() (*config.Config, error) { return testConfig(), nil }
-	daemonStop = func(_ daemon.System) error { return nil }
-	daemonStart = func(_ daemon.System, _ string) error { return errors.New("start fail") }
-	newSystem = func() daemon.System { return daemon.RealSystem{} }
+	s.app.configLoad = func() (*config.Config, error) { return testConfig(), nil }
+	s.app.daemonStop = func(_ daemon.System) error { return nil }
+	s.app.daemonStart = func(_ daemon.System, _ string) error { return errors.New("start fail") }
+	s.app.newSystem = func() daemon.System { return daemon.RealSystem{} }
 
-	cmd := newDaemonRestartCmd()
+	cmd := s.app.newDaemonRestartCmd()
 	err := cmd.Execute()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "start fail")
 }
 
 func (s *MainSuite) TestDaemonRestartConfigError() {
-	configLoad = func() (*config.Config, error) { return nil, errors.New("config fail") }
+	s.app.configLoad = func() (*config.Config, error) { return nil, errors.New("config fail") }
 
-	cmd := newDaemonRestartCmd()
+	cmd := s.app.newDaemonRestartCmd()
 	err := cmd.Execute()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "config fail")
 }
 
 func (s *MainSuite) TestDaemonStatusSuccess() {
-	daemonStatus = func(_ daemon.System) (string, error) { return "running", nil }
-	newSystem = func() daemon.System { return daemon.RealSystem{} }
+	s.app.daemonStatus = func(_ daemon.System) (string, error) { return "running", nil }
+	s.app.newSystem = func() daemon.System { return daemon.RealSystem{} }
 
-	cmd := newDaemonStatusCmd()
+	cmd := s.app.newDaemonStatusCmd()
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
 }
 
 func (s *MainSuite) TestDaemonStatusError() {
-	daemonStatus = func(_ daemon.System) (string, error) { return "", errors.New("status fail") }
-	newSystem = func() daemon.System { return daemon.RealSystem{} }
+	s.app.daemonStatus = func(_ daemon.System) (string, error) { return "", errors.New("status fail") }
+	s.app.newSystem = func() daemon.System { return daemon.RealSystem{} }
 
-	cmd := newDaemonStatusCmd()
+	cmd := s.app.newDaemonStatusCmd()
 	err := cmd.Execute()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "status fail")
 }
 
 func (s *MainSuite) TestDefaultDaemonVars() {
-	require.NotNil(s.T(), s.origDaemonStart)
-	require.NotNil(s.T(), s.origDaemonStop)
-	require.NotNil(s.T(), s.origDaemonStatus)
-	require.NotNil(s.T(), s.origNewSystem)
+	a := newApp()
+	require.NotNil(s.T(), a.daemonStart)
+	require.NotNil(s.T(), a.daemonStop)
+	require.NotNil(s.T(), a.daemonStatus)
+	require.NotNil(s.T(), a.newSystem)
 
-	sys := s.origNewSystem()
+	sys := a.newSystem()
 	require.IsType(s.T(), daemon.RealSystem{}, sys)
 }
 
 // --- onboard:global ---
 
 func (s *MainSuite) TestNewOnboardGlobalCmd() {
-	cmd := newOnboardGlobalCmd()
+	cmd := s.app.newOnboardGlobalCmd()
 	require.Equal(s.T(), "onboard:global", cmd.Use)
 	require.Equal(s.T(), []string{"o:global", "setup"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.RunE)
@@ -2094,7 +2144,7 @@ func (s *MainSuite) TestNewOnboardGlobalCmd() {
 }
 
 func (s *MainSuite) TestNewOnboardLocalCmd() {
-	cmd := newOnboardLocalCmd()
+	cmd := s.app.newOnboardLocalCmd()
 	require.Equal(s.T(), "onboard:local", cmd.Use)
 	require.Equal(s.T(), []string{"o:local", "init"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.RunE)
@@ -2108,14 +2158,11 @@ func (s *MainSuite) TestNewOnboardLocalCmd() {
 
 func (s *MainSuite) TestOnboardGlobalSuccess() {
 	tmpDir := s.T().TempDir()
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
-	}
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	osWriteFile = os.WriteFile
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return(tmpDir, nil)
 
-	err := onboardGlobal(false, "")
+	err := s.app.onboardGlobal(false, "")
 	require.NoError(s.T(), err)
 
 	configPath := filepath.Join(tmpDir, ".loop", "config.json")
@@ -2178,14 +2225,11 @@ func (s *MainSuite) TestOnboardGlobalConfigAlreadyExists() {
 	require.NoError(s.T(), os.MkdirAll(loopDir, 0755))
 	require.NoError(s.T(), os.WriteFile(configPath, []byte("existing"), 0600))
 
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
-	}
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	osWriteFile = os.WriteFile
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return(tmpDir, nil)
 
-	err := onboardGlobal(false, "")
+	err := s.app.onboardGlobal(false, "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "config already exists")
 	require.Contains(s.T(), err.Error(), "--force")
@@ -2204,14 +2248,11 @@ func (s *MainSuite) TestOnboardGlobalForceOverwrite() {
 	require.NoError(s.T(), os.MkdirAll(loopDir, 0755))
 	require.NoError(s.T(), os.WriteFile(configPath, []byte("old config"), 0600))
 
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
-	}
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	osWriteFile = os.WriteFile
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return(tmpDir, nil)
 
-	err := onboardGlobal(true, "")
+	err := s.app.onboardGlobal(true, "")
 	require.NoError(s.T(), err)
 
 	// Verify config was overwritten
@@ -2223,11 +2264,11 @@ func (s *MainSuite) TestOnboardGlobalForceOverwrite() {
 }
 
 func (s *MainSuite) TestOnboardGlobalHomeDirError() {
-	userHomeDir = func() (string, error) {
-		return "", errors.New("home dir error")
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("", errors.New("home dir error"))
 
-	err := onboardGlobal(false, "")
+	err := s.app.onboardGlobal(false, "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "getting home directory")
 }
@@ -2245,21 +2286,21 @@ func (s *MainSuite) TestOnboardGlobalMkdirErrors() {
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
 			tmpDir := s.T().TempDir()
-			userHomeDir = func() (string, error) {
-				return tmpDir, nil
-			}
-			osStat = os.Stat
+			sys := newPassthroughMock()
+			s.app.sys = sys
+			sys.Override("UserHomeDir").Return(tmpDir, nil)
+			mkdirCall := sys.Override("MkdirAll", mock.Anything, mock.Anything).Maybe().Return(nil)
 			calls := 0
-			osMkdirAll = func(path string, perm os.FileMode) error {
+			mkdirCall.RunFn = func(args mock.Arguments) {
 				calls++
 				if calls == tt.failCallN {
-					return errors.New("mkdir error")
+					mkdirCall.ReturnArguments = mock.Arguments{errors.New("mkdir error")}
+					return
 				}
-				return os.MkdirAll(path, perm)
+				mkdirCall.ReturnArguments = mock.Arguments{os.MkdirAll(args.String(0), args.Get(1).(os.FileMode))}
 			}
-			osWriteFile = os.WriteFile
 
-			err := onboardGlobal(false, "")
+			err := s.app.onboardGlobal(false, "")
 			require.Error(s.T(), err)
 			require.Contains(s.T(), err.Error(), tt.wantErr)
 		})
@@ -2274,14 +2315,11 @@ func (s *MainSuite) TestOnboardGlobalCmdWithForceFlag() {
 	require.NoError(s.T(), os.MkdirAll(loopDir, 0755))
 	require.NoError(s.T(), os.WriteFile(configPath, []byte("old"), 0600))
 
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
-	}
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	osWriteFile = os.WriteFile
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return(tmpDir, nil)
 
-	cmd := newOnboardGlobalCmd()
+	cmd := s.app.newOnboardGlobalCmd()
 	cmd.SetArgs([]string{"--force"})
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
@@ -2298,14 +2336,11 @@ func (s *MainSuite) TestOnboardGlobalBashrcSkipsIfExists() {
 	bashrcPath := filepath.Join(loopDir, ".bashrc")
 	require.NoError(s.T(), os.WriteFile(bashrcPath, []byte("existing aliases"), 0644))
 
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
-	}
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	osWriteFile = os.WriteFile
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return(tmpDir, nil)
 
-	err := onboardGlobal(true, "") // force overwrites config but not .bashrc
+	err := s.app.onboardGlobal(true, "") // force overwrites config but not .bashrc
 	require.NoError(s.T(), err)
 
 	data, err := os.ReadFile(bashrcPath)
@@ -2320,14 +2355,11 @@ func (s *MainSuite) TestOnboardGlobalSetupSkipsIfExists() {
 	setupPath := filepath.Join(containerDir, "setup.sh")
 	require.NoError(s.T(), os.WriteFile(setupPath, []byte("existing setup"), 0644))
 
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
-	}
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	osWriteFile = os.WriteFile
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return(tmpDir, nil)
 
-	err := onboardGlobal(true, "") // force overwrites config but not setup.sh
+	err := s.app.onboardGlobal(true, "") // force overwrites config but not setup.sh
 	require.NoError(s.T(), err)
 
 	data, err := os.ReadFile(setupPath)
@@ -2344,29 +2376,31 @@ func (s *MainSuite) TestOnboardGlobalWriteErrors() {
 		{"config file", 1, "writing config file"},
 		{".bashrc", 2, "writing .bashrc"},
 		{"Dockerfile", 3, "writing container Dockerfile"},
-		{"entrypoint", 4, "writing container entrypoint"},
-		{"setup script", 5, "writing container setup script"},
-		{"Slack manifest", 6, "writing Slack manifest"},
-		{"template", 7, "writing template"},
+		{"chrome Dockerfile", 4, "writing chrome Dockerfile"},
+		{"chrome entrypoint", 5, "writing chrome entrypoint"},
+		{"entrypoint", 6, "writing container entrypoint"},
+		{"setup script", 7, "writing container setup script"},
+		{"Slack manifest", 8, "writing Slack manifest"},
+		{"template", 9, "writing template"},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
 			tmpDir := s.T().TempDir()
-			userHomeDir = func() (string, error) {
-				return tmpDir, nil
-			}
-			osStat = os.Stat
-			osMkdirAll = os.MkdirAll
+			sys := newPassthroughMock()
+			s.app.sys = sys
+			sys.Override("UserHomeDir").Return(tmpDir, nil)
+			writeCall := sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
 			calls := 0
-			osWriteFile = func(path string, data []byte, perm os.FileMode) error {
+			writeCall.RunFn = func(args mock.Arguments) {
 				calls++
 				if calls == tt.failCallN {
-					return errors.New("write error")
+					writeCall.ReturnArguments = mock.Arguments{errors.New("write error")}
+					return
 				}
-				return os.WriteFile(path, data, perm)
+				writeCall.ReturnArguments = mock.Arguments{os.WriteFile(args.String(0), args.Get(1).([]byte), args.Get(2).(os.FileMode))}
 			}
 
-			err := onboardGlobal(false, "")
+			err := s.app.onboardGlobal(false, "")
 			require.Error(s.T(), err)
 			require.Contains(s.T(), err.Error(), tt.wantErr)
 		})
@@ -2382,14 +2416,11 @@ func (s *MainSuite) TestOnboardGlobalTemplatesSkipIfExist() {
 	require.NoError(s.T(), os.WriteFile(filepath.Join(templatesDir, "heartbeat.md"), []byte("custom heartbeat"), 0644))
 	require.NoError(s.T(), os.WriteFile(filepath.Join(templatesDir, "tk-auto-worker.md"), []byte("custom worker"), 0644))
 
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
-	}
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	osWriteFile = os.WriteFile
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return(tmpDir, nil)
 
-	err := onboardGlobal(true, "") // force overwrites config but not templates
+	err := s.app.onboardGlobal(true, "") // force overwrites config but not templates
 	require.NoError(s.T(), err)
 
 	data, err := os.ReadFile(filepath.Join(templatesDir, "heartbeat.md"))
@@ -2442,35 +2473,28 @@ func (e *fakeEntry) Type() fs.FileMode          { return 0 }
 func (e *fakeEntry) Info() (fs.FileInfo, error) { return nil, nil }
 
 func (s *MainSuite) TestDumpTemplatesReadDirError() {
-	origFS := templatesFS
-	defer func() { templatesFS = origFS }()
-	templatesFS = brokenReadDirFS{}
+	s.app.templatesFS = brokenReadDirFS{}
 
-	err := dumpTemplates(s.T().TempDir())
+	err := s.app.dumpTemplates(s.T().TempDir())
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "reading embedded templates")
 }
 
 func (s *MainSuite) TestDumpTemplatesReadFileError() {
-	origFS := templatesFS
-	defer func() { templatesFS = origFS }()
-	templatesFS = brokenReadFileFS{}
+	s.app.templatesFS = brokenReadFileFS{}
 
-	err := dumpTemplates(s.T().TempDir())
+	err := s.app.dumpTemplates(s.T().TempDir())
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "reading embedded template test.md")
 }
 
 func (s *MainSuite) TestOnboardGlobalWithOwnerID() {
 	tmpDir := s.T().TempDir()
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
-	}
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	osWriteFile = os.WriteFile
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return(tmpDir, nil)
 
-	err := onboardGlobal(false, "U99887766")
+	err := s.app.onboardGlobal(false, "U99887766")
 	require.NoError(s.T(), err)
 
 	configPath := filepath.Join(tmpDir, ".loop", "config.json")
@@ -2487,14 +2511,11 @@ func (s *MainSuite) TestOnboardGlobalWithOwnerID() {
 
 func (s *MainSuite) TestOnboardGlobalCmdWithOwnerIDFlag() {
 	tmpDir := s.T().TempDir()
-	userHomeDir = func() (string, error) {
-		return tmpDir, nil
-	}
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	osWriteFile = os.WriteFile
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return(tmpDir, nil)
 
-	cmd := newOnboardGlobalCmd()
+	cmd := s.app.newOnboardGlobalCmd()
 	cmd.SetArgs([]string{"--owner-id", "UTEST12345"})
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
@@ -2512,16 +2533,14 @@ func (s *MainSuite) TestOnboardGlobalCmdWithOwnerIDFlag() {
 
 func (s *MainSuite) TestOnboardLocalSuccess() {
 	tmpDir := s.T().TempDir()
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = os.WriteFile
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "", "")
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 
 	mcpPath := filepath.Join(tmpDir, ".mcp.json")
@@ -2549,20 +2568,17 @@ func (s *MainSuite) TestOnboardLocalSuccess() {
 
 func (s *MainSuite) TestOnboardLocalWithMemoryEnabled() {
 	tmpDir := s.T().TempDir()
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = os.WriteFile
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
-	configLoad = func() (*config.Config, error) {
+	s.app.configLoad = func() (*config.Config, error) {
 		return &config.Config{Memory: config.MemoryConfig{Enabled: true}}, nil
 	}
-	defer func() { configLoad = config.Load }()
 
-	err := onboardLocal("http://localhost:8222", "", "")
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 
 	data, err := os.ReadFile(filepath.Join(tmpDir, ".mcp.json"))
@@ -2582,14 +2598,14 @@ func (s *MainSuite) TestOnboardLocalMergesExisting() {
 	existing := `{"mcpServers":{"other":{"command":"other-cmd"}}}`
 	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, ".mcp.json"), []byte(existing), 0644))
 
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = os.WriteFile
-	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "", "")
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 
 	data, err := os.ReadFile(filepath.Join(tmpDir, ".mcp.json"))
@@ -2608,16 +2624,14 @@ func (s *MainSuite) TestOnboardLocalAlreadyRegisteredUpdatesArgs() {
 	existing := `{"mcpServers":{"loop":{"command":"loop","args":["mcp"]}}}`
 	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, ".mcp.json"), []byte(existing), 0644))
 
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = os.WriteFile
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "", "")
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 
 	// Verify file was updated with rebuilt args
@@ -2636,45 +2650,47 @@ func (s *MainSuite) TestOnboardLocalInvalidExistingJSON() {
 	tmpDir := s.T().TempDir()
 	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, ".mcp.json"), []byte("not json"), 0644))
 
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
 
-	err := onboardLocal("http://localhost:8222", "", "")
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "parsing existing .mcp.json")
 }
 
 func (s *MainSuite) TestOnboardLocalGetwdError() {
-	osGetwd = func() (string, error) { return "", errors.New("getwd error") }
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return("", errors.New("getwd error"))
 
-	err := onboardLocal("http://localhost:8222", "", "")
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "getting working directory")
 }
 
 func (s *MainSuite) TestOnboardLocalWriteError() {
 	tmpDir := s.T().TempDir()
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = func(_ string, _ []byte, _ os.FileMode) error {
-		return errors.New("write error")
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("write error"))
 
-	err := onboardLocal("http://localhost:8222", "", "")
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing .mcp.json")
 }
 
 func (s *MainSuite) TestOnboardLocalCmdRunE() {
 	tmpDir := s.T().TempDir()
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = os.WriteFile
-	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	cmd := newOnboardLocalCmd()
+	cmd := s.app.newOnboardLocalCmd()
 	cmd.SetArgs([]string{"--api-url", "http://custom:9999"})
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
@@ -2697,18 +2713,18 @@ func (s *MainSuite) TestOnboardLocalCmdRunE() {
 
 func (s *MainSuite) TestOnboardLocalEnsuresChannels() {
 	tmpDir := s.T().TempDir()
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = os.WriteFile
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
 
 	var calledAPIURL, calledDir string
-	ensureAllChannelsFunc = func(apiURL, dir string) ([]ensureResult, error) {
+	s.app.ensureAllChannelsFn = func(apiURL, dir string) ([]ensureResult, error) {
 		calledAPIURL = apiURL
 		calledDir = dir
 		return []ensureResult{{Platform: "local", ChannelID: "ch-123", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "", "")
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "http://localhost:8222", calledAPIURL)
 	require.Equal(s.T(), tmpDir, calledDir)
@@ -2716,39 +2732,37 @@ func (s *MainSuite) TestOnboardLocalEnsuresChannels() {
 
 func (s *MainSuite) TestOnboardLocalEnsureChannelsFailsGracefully() {
 	tmpDir := s.T().TempDir()
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = os.WriteFile
-	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
 		return nil, errors.New("server not running")
 	}
 
-	err := onboardLocal("http://localhost:8222", "", "")
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err, "onboardLocal should succeed even when ensureAllChannels fails")
 }
 
 func (s *MainSuite) TestOnboardLocalWithPlatformFlag() {
 	tmpDir := s.T().TempDir()
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = os.WriteFile
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
 
 	var calledAPIURL, calledDir, calledPlatform string
-	ensureChannelFunc = func(apiURL, dir, platform string) (string, error) {
+	s.app.ensureChannelFn = func(apiURL, dir, platform string) (string, error) {
 		calledAPIURL = apiURL
 		calledDir = dir
 		calledPlatform = platform
 		return "ch-local-123", nil
 	}
 	ensureAllCalled := false
-	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
 		ensureAllCalled = true
 		return nil, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "", "local")
+	err := s.app.onboardLocal("http://localhost:8222", "", "local")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "http://localhost:8222", calledAPIURL)
 	require.Equal(s.T(), tmpDir, calledDir)
@@ -2758,17 +2772,15 @@ func (s *MainSuite) TestOnboardLocalWithPlatformFlag() {
 
 func (s *MainSuite) TestOnboardLocalWithPlatformFlagEnsureError() {
 	tmpDir := s.T().TempDir()
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = os.WriteFile
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
 
-	ensureChannelFunc = func(_, _, _ string) (string, error) {
+	s.app.ensureChannelFn = func(_, _, _ string) (string, error) {
 		return "", errors.New("server not running")
 	}
 
-	err := onboardLocal("http://localhost:8222", "", "local")
+	err := s.app.onboardLocal("http://localhost:8222", "", "local")
 	require.NoError(s.T(), err, "onboardLocal should succeed even when ensureChannel fails")
 }
 
@@ -2777,35 +2789,31 @@ func (s *MainSuite) TestOnboardLocalAlreadyRegisteredStillEnsuresChannels() {
 	existing := `{"mcpServers":{"loop":{"command":"loop","args":["mcp","--dir","` + tmpDir + `","--api-url","http://localhost:8222"]}}}`
 	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, ".mcp.json"), []byte(existing), 0644))
 
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = os.WriteFile
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
 
 	called := false
-	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
 		called = true
 		return []ensureResult{{Platform: "local", ChannelID: "ch-456", Created: false}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "", "")
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 	require.True(s.T(), called, "ensureAllChannelsFunc should be called even when loop is already registered")
 }
 
 func (s *MainSuite) TestOnboardLocalProjectConfigWritten() {
 	tmpDir := s.T().TempDir()
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = os.WriteFile
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "", "")
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 
 	projectConfigPath := filepath.Join(tmpDir, ".loop", "config.json")
@@ -2820,16 +2828,14 @@ func (s *MainSuite) TestOnboardLocalProjectConfigAlreadyExists() {
 	require.NoError(s.T(), os.MkdirAll(loopDir, 0755))
 	require.NoError(s.T(), os.WriteFile(filepath.Join(loopDir, "config.json"), []byte(`{"claude_model":"custom"}`), 0644))
 
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = os.WriteFile
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "", "")
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 
 	// Verify existing config was NOT overwritten
@@ -2840,84 +2846,77 @@ func (s *MainSuite) TestOnboardLocalProjectConfigAlreadyExists() {
 
 func (s *MainSuite) TestOnboardLocalProjectConfigMkdirError() {
 	tmpDir := s.T().TempDir()
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osStat = os.Stat
-
-	writeCount := 0
-	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
-		writeCount++
-		return os.WriteFile(path, data, perm)
-	}
-	osMkdirAll = func(_ string, _ os.FileMode) error { return errors.New("mkdir error") }
-	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	sys.Override("MkdirAll", mock.Anything, mock.Anything).Return(errors.New("mkdir error"))
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "", "")
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating .loop directory")
 }
 
 func (s *MainSuite) TestOnboardLocalProjectConfigWriteError() {
 	tmpDir := s.T().TempDir()
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	writeCall := sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
 	writeCount := 0
-	osWriteFile = func(path string, data []byte, perm os.FileMode) error {
+	writeCall.RunFn = func(args mock.Arguments) {
 		writeCount++
 		if writeCount == 2 {
-			return errors.New("write config error")
+			writeCall.ReturnArguments = mock.Arguments{errors.New("write config error")}
+			return
 		}
-		return os.WriteFile(path, data, perm)
+		writeCall.ReturnArguments = mock.Arguments{os.WriteFile(args.String(0), args.Get(1).([]byte), args.Get(2).(os.FileMode))}
 	}
-	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "", "")
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing project config")
 }
 
 func (s *MainSuite) TestOnboardLocalTemplatesDirError() {
 	tmpDir := s.T().TempDir()
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = os.WriteFile
-	osStat = os.Stat
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	mkdirCall := sys.Override("MkdirAll", mock.Anything, mock.Anything).Maybe().Return(nil)
 	mkdirCalls := 0
-	osMkdirAll = func(path string, perm os.FileMode) error {
+	mkdirCall.RunFn = func(args mock.Arguments) {
 		mkdirCalls++
 		if mkdirCalls == 2 { // Second mkdir is templates dir (after .loop dir)
-			return errors.New("templates mkdir error")
+			mkdirCall.ReturnArguments = mock.Arguments{errors.New("templates mkdir error")}
+			return
 		}
-		return os.MkdirAll(path, perm)
+		mkdirCall.ReturnArguments = mock.Arguments{os.MkdirAll(args.String(0), args.Get(1).(os.FileMode))}
 	}
-	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "", "")
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating templates directory")
 }
 
 func (s *MainSuite) TestOnboardLocalTemplatesDirCreated() {
 	tmpDir := s.T().TempDir()
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = os.WriteFile
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "", "")
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
 	require.NoError(s.T(), err)
 
 	// Verify templates directory was created
@@ -2929,16 +2928,14 @@ func (s *MainSuite) TestOnboardLocalTemplatesDirCreated() {
 
 func (s *MainSuite) TestOnboardLocalWithOwnerID() {
 	tmpDir := s.T().TempDir()
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = os.WriteFile
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	err := onboardLocal("http://localhost:8222", "U99887766", "")
+	err := s.app.onboardLocal("http://localhost:8222", "U99887766", "")
 	require.NoError(s.T(), err)
 
 	projectConfigPath := filepath.Join(tmpDir, ".loop", "config.json")
@@ -2953,16 +2950,14 @@ func (s *MainSuite) TestOnboardLocalWithOwnerID() {
 
 func (s *MainSuite) TestOnboardLocalCmdWithOwnerIDFlag() {
 	tmpDir := s.T().TempDir()
-	osGetwd = func() (string, error) { return tmpDir, nil }
-	osReadFile = os.ReadFile
-	osWriteFile = os.WriteFile
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	ensureAllChannelsFunc = func(_, _ string) ([]ensureResult, error) {
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
 		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
 	}
 
-	cmd := newOnboardLocalCmd()
+	cmd := s.app.newOnboardLocalCmd()
 	cmd.SetArgs([]string{"--owner-id", "ULOCAL123"})
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
@@ -2981,18 +2976,21 @@ func (s *MainSuite) TestOnboardLocalCmdWithOwnerIDFlag() {
 func (s *MainSuite) TestEnsureImageSkipsWhenExists() {
 	dockerClient := new(mockDockerClient)
 	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:abc"}, nil)
+	dockerClient.On("ImageList", mock.Anything, "loop-chrome:latest").Return([]string{"sha256:def"}, nil)
 
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
 		ContainerImage: "loop-agent:latest",
+		ChromeImage:    "loop-chrome:latest",
 	}
 	// Create container dir with Dockerfile so it doesn't try to write
 	containerDir := filepath.Join(cfg.LoopDir, "container")
 	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
 	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "chrome.Dockerfile"), []byte("FROM alpine"), 0644))
 
-	osStat = os.Stat
-	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
+	s.app.sys = newPassthroughMock()
+	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
 	require.NoError(s.T(), err)
 	dockerClient.AssertExpectations(s.T())
 }
@@ -3001,18 +2999,22 @@ func (s *MainSuite) TestEnsureImageBuildsWhenMissing() {
 	dockerClient := new(mockDockerClient)
 	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{}, nil)
 	dockerClient.On("ImageBuild", mock.Anything, mock.Anything, "loop-agent:latest").Return(nil)
+	dockerClient.On("ImageList", mock.Anything, "loop-chrome:latest").Return([]string{}, nil)
+	dockerClient.On("ImageBuildFile", mock.Anything, mock.Anything, "chrome.Dockerfile", "loop-chrome:latest").Return(nil)
 
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
 		ContainerImage: "loop-agent:latest",
+		ChromeImage:    "loop-chrome:latest",
 	}
 	// Create container dir with Dockerfile
 	containerDir := filepath.Join(cfg.LoopDir, "container")
 	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
 	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "chrome.Dockerfile"), []byte("FROM alpine"), 0644))
 
-	osStat = os.Stat
-	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
+	s.app.sys = newPassthroughMock()
+	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
 	require.NoError(s.T(), err)
 	dockerClient.AssertExpectations(s.T())
 }
@@ -3020,17 +3022,17 @@ func (s *MainSuite) TestEnsureImageBuildsWhenMissing() {
 func (s *MainSuite) TestEnsureImageWritesEmbeddedFiles() {
 	dockerClient := new(mockDockerClient)
 	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:abc"}, nil)
+	dockerClient.On("ImageList", mock.Anything, "loop-chrome:latest").Return([]string{"sha256:def"}, nil)
 
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
 		ContainerImage: "loop-agent:latest",
+		ChromeImage:    "loop-chrome:latest",
 	}
 
-	osStat = os.Stat
-	osMkdirAll = os.MkdirAll
-	osWriteFile = os.WriteFile
+	s.app.sys = newPassthroughMock()
 
-	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
+	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
 	require.NoError(s.T(), err)
 
 	// Verify embedded files were written
@@ -3038,6 +3040,10 @@ func (s *MainSuite) TestEnsureImageWritesEmbeddedFiles() {
 	dockerfileData, err := os.ReadFile(filepath.Join(containerDir, "Dockerfile"))
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), string(dockerfileData), "FROM golang:")
+
+	chromeData, err := os.ReadFile(filepath.Join(containerDir, "chrome.Dockerfile"))
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(chromeData), "chromium")
 
 	entrypointData, err := os.ReadFile(filepath.Join(containerDir, "entrypoint.sh"))
 	require.NoError(s.T(), err)
@@ -3057,13 +3063,15 @@ func (s *MainSuite) TestEnsureImageListError() {
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
 		ContainerImage: "loop-agent:latest",
+		ChromeImage:    "loop-chrome:latest",
 	}
 	containerDir := filepath.Join(cfg.LoopDir, "container")
 	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
 	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "chrome.Dockerfile"), []byte("FROM alpine"), 0644))
 
-	osStat = os.Stat
-	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
+	s.app.sys = newPassthroughMock()
+	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "listing images")
 	dockerClient.AssertExpectations(s.T())
@@ -3075,14 +3083,14 @@ func (s *MainSuite) TestEnsureImageMkdirError() {
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
 		ContainerImage: "loop-agent:latest",
+		ChromeImage:    "loop-chrome:latest",
 	}
 
-	osStat = os.Stat
-	osMkdirAll = func(_ string, _ os.FileMode) error {
-		return errors.New("mkdir error")
-	}
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("MkdirAll", mock.Anything, mock.Anything).Return(errors.New("mkdir error"))
 
-	err := s.origEnsureImage(context.Background(), dockerClient, cfg)
+	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating container directory")
 }
@@ -3103,40 +3111,178 @@ func (s *MainSuite) TestEnsureImageWriteErrors() {
 			cfg := &config.Config{
 				LoopDir:        s.T().TempDir(),
 				ContainerImage: "loop-agent:latest",
+				ChromeImage:    "loop-chrome:latest",
 			}
-			osStat = os.Stat
-			osMkdirAll = os.MkdirAll
+			sys := newPassthroughMock()
+			s.app.sys = sys
+			writeCall := sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
 			calls := 0
-			osWriteFile = func(path string, data []byte, perm os.FileMode) error {
+			writeCall.RunFn = func(args mock.Arguments) {
 				calls++
 				if calls == tt.failCallN {
-					return errors.New("write error")
+					writeCall.ReturnArguments = mock.Arguments{errors.New("write error")}
+					return
 				}
-				return os.WriteFile(path, data, perm)
+				writeCall.ReturnArguments = mock.Arguments{os.WriteFile(args.String(0), args.Get(1).([]byte), args.Get(2).(os.FileMode))}
 			}
 
-			err := s.origEnsureImage(context.Background(), dockerClient, cfg)
+			err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
 			require.Error(s.T(), err)
 			require.Contains(s.T(), err.Error(), tt.wantErr)
 		})
 	}
 }
 
-// --- resolveVersion ---
+func (s *MainSuite) TestEnsureImageAgentBuildError() {
+	dockerClient := new(mockDockerClient)
+	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{}, nil)
+	dockerClient.On("ImageBuild", mock.Anything, mock.Anything, "loop-agent:latest").Return(errors.New("agent build failed"))
 
-func (s *MainSuite) TestResolveVersionFromBuildInfo() {
-	orig := resolveVersion
-	defer func() { resolveVersion = orig }()
+	cfg := &config.Config{
+		LoopDir:        s.T().TempDir(),
+		ContainerImage: "loop-agent:latest",
+		ChromeImage:    "loop-chrome:latest",
+	}
+	containerDir := filepath.Join(cfg.LoopDir, "container")
+	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "chrome.Dockerfile"), []byte("FROM alpine"), 0644))
 
-	resolveVersion = func(v string) string {
-		if v == "dev" {
-			return "v1.0.0"
+	s.app.sys = newPassthroughMock()
+	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "agent build failed")
+}
+
+func (s *MainSuite) TestEnsureImageChromeListError() {
+	dockerClient := new(mockDockerClient)
+	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:abc"}, nil)
+	dockerClient.On("ImageList", mock.Anything, "loop-chrome:latest").Return(nil, errors.New("chrome list error"))
+
+	cfg := &config.Config{
+		LoopDir:        s.T().TempDir(),
+		ContainerImage: "loop-agent:latest",
+		ChromeImage:    "loop-chrome:latest",
+	}
+	containerDir := filepath.Join(cfg.LoopDir, "container")
+	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "chrome.Dockerfile"), []byte("FROM alpine"), 0644))
+
+	s.app.sys = newPassthroughMock()
+	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "listing chrome images")
+}
+
+func (s *MainSuite) TestEnsureImageChromeBuildError() {
+	dockerClient := new(mockDockerClient)
+	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:abc"}, nil)
+	dockerClient.On("ImageList", mock.Anything, "loop-chrome:latest").Return([]string{}, nil)
+	dockerClient.On("ImageBuildFile", mock.Anything, mock.Anything, "chrome.Dockerfile", "loop-chrome:latest").Return(errors.New("chrome build failed"))
+
+	cfg := &config.Config{
+		LoopDir:        s.T().TempDir(),
+		ContainerImage: "loop-agent:latest",
+		ChromeImage:    "loop-chrome:latest",
+	}
+	containerDir := filepath.Join(cfg.LoopDir, "container")
+	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "chrome.Dockerfile"), []byte("FROM alpine"), 0644))
+
+	s.app.sys = newPassthroughMock()
+	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "chrome build failed")
+}
+
+func (s *MainSuite) TestEnsureImageChromeDockerfileWriteError() {
+	dockerClient := new(mockDockerClient)
+
+	cfg := &config.Config{
+		LoopDir:        s.T().TempDir(),
+		ContainerImage: "loop-agent:latest",
+		ChromeImage:    "loop-chrome:latest",
+	}
+	// Create container dir with Dockerfile only (no chrome.Dockerfile triggers write)
+	containerDir := filepath.Join(cfg.LoopDir, "container")
+	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
+
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	// First WriteFile call (chrome.Dockerfile) should fail
+	writeCall := sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
+	writeCall.RunFn = func(args mock.Arguments) {
+		path := args.String(0)
+		if strings.Contains(path, "chrome.Dockerfile") {
+			writeCall.ReturnArguments = mock.Arguments{errors.New("write error")}
+			return
 		}
-		return v
+		writeCall.ReturnArguments = mock.Arguments{os.WriteFile(path, args.Get(1).([]byte), args.Get(2).(os.FileMode))}
 	}
 
-	require.Equal(s.T(), "v1.0.0", resolveVersion("dev"))
+	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing chrome Dockerfile")
 }
+
+func (s *MainSuite) TestEnsureImageChromeEntrypointWriteError() {
+	dockerClient := new(mockDockerClient)
+
+	cfg := &config.Config{
+		LoopDir:        s.T().TempDir(),
+		ContainerImage: "loop-agent:latest",
+		ChromeImage:    "loop-chrome:latest",
+	}
+	containerDir := filepath.Join(cfg.LoopDir, "container")
+	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
+
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	writeCall := sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
+	writeCall.RunFn = func(args mock.Arguments) {
+		path := args.String(0)
+		if strings.Contains(path, "chrome-entrypoint") {
+			writeCall.ReturnArguments = mock.Arguments{errors.New("write error")}
+			return
+		}
+		writeCall.ReturnArguments = mock.Arguments{os.WriteFile(path, args.Get(1).([]byte), args.Get(2).(os.FileMode))}
+	}
+
+	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing chrome entrypoint")
+}
+
+func (s *MainSuite) TestEnsureImageChromeDockerfileWrite() {
+	dockerClient := new(mockDockerClient)
+	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:abc"}, nil)
+	dockerClient.On("ImageList", mock.Anything, "loop-chrome:latest").Return([]string{"sha256:def"}, nil)
+
+	cfg := &config.Config{
+		LoopDir:        s.T().TempDir(),
+		ContainerImage: "loop-agent:latest",
+		ChromeImage:    "loop-chrome:latest",
+	}
+	// Create container dir with Dockerfile but NOT chrome.Dockerfile — triggers write
+	containerDir := filepath.Join(cfg.LoopDir, "container")
+	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
+
+	s.app.sys = newPassthroughMock()
+	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
+	require.NoError(s.T(), err)
+
+	// Verify chrome.Dockerfile was written
+	data, err := os.ReadFile(filepath.Join(containerDir, "chrome.Dockerfile"))
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(data), "chromium")
+}
+
+// --- resolveVersion ---
 
 func (s *MainSuite) TestResolveVersionKeepsNonDev() {
 	require.Equal(s.T(), "1.2.3", resolveVersion("1.2.3"))
@@ -3147,26 +3293,33 @@ func (s *MainSuite) TestResolveVersionDevFallback() {
 	require.Equal(s.T(), "dev", resolveVersion("dev"))
 }
 
-func (s *MainSuite) TestResolveVersionFromRealBuildInfo() {
-	orig := readBuildInfo
-	s.T().Cleanup(func() { readBuildInfo = orig })
+func (s *MainSuite) TestDoResolveVersionFromBuildInfo() {
+	got := doResolveVersion("dev", func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Version: "v1.5.0"}}, true
+	})
+	require.Equal(s.T(), "v1.5.0", got)
+}
 
-	readBuildInfo = func() (*debug.BuildInfo, bool) {
-		return &debug.BuildInfo{Main: debug.Module{Version: "v2.3.4"}}, true
-	}
+func (s *MainSuite) TestDoResolveVersionEmpty() {
+	got := doResolveVersion("dev", func() (*debug.BuildInfo, bool) {
+		return &debug.BuildInfo{Main: debug.Module{Version: ""}}, true
+	})
+	require.Equal(s.T(), "dev", got)
+}
 
-	require.Equal(s.T(), "v2.3.4", resolveVersion("dev"))
+func (s *MainSuite) TestDoResolveVersionNotOK() {
+	got := doResolveVersion("dev", func() (*debug.BuildInfo, bool) {
+		return nil, false
+	})
+	require.Equal(s.T(), "dev", got)
 }
 
 // --- dumpTemplates ---
 
 func (s *MainSuite) TestDumpTemplatesSkipsDirectories() {
-	origFS := templatesFS
-	defer func() { templatesFS = origFS }()
+	s.app.templatesFS = &dirEntryFS{}
 
-	templatesFS = &dirEntryFS{}
-
-	err := dumpTemplates(s.T().TempDir())
+	err := s.app.dumpTemplates(s.T().TempDir())
 	require.NoError(s.T(), err)
 }
 
@@ -3192,35 +3345,29 @@ func (e *fakeDirEntry) Info() (fs.FileInfo, error) { return nil, nil }
 // --- version ---
 
 func (s *MainSuite) TestNewVersionCmd() {
-	cmd := newVersionCmd()
+	cmd := s.app.newVersionCmd()
 	require.Equal(s.T(), "version", cmd.Use)
 	require.Equal(s.T(), []string{"v"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.Run)
 }
 
 func (s *MainSuite) TestVersionOutput() {
-	origVersion, origCommit, origDate := version, commit, date
-	defer func() { version, commit, date = origVersion, origCommit, origDate }()
+	s.app.version = "1.2.3"
+	s.app.commit = "abc1234"
+	s.app.date = "2026-01-01T00:00:00Z"
 
-	version = "1.2.3"
-	commit = "abc1234"
-	date = "2026-01-01T00:00:00Z"
-
-	cmd := newVersionCmd()
+	cmd := s.app.newVersionCmd()
 	cmd.SetArgs([]string{})
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
 }
 
 func (s *MainSuite) TestVersionOutputDefaults() {
-	origVersion, origCommit, origDate := version, commit, date
-	defer func() { version, commit, date = origVersion, origCommit, origDate }()
+	s.app.version = "dev"
+	s.app.commit = "none"
+	s.app.date = "unknown"
 
-	version = "dev"
-	commit = "none"
-	date = "unknown"
-
-	cmd := newVersionCmd()
+	cmd := s.app.newVersionCmd()
 	cmd.SetArgs([]string{})
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
@@ -3229,34 +3376,34 @@ func (s *MainSuite) TestVersionOutputDefaults() {
 // --- newReadmeCmd ---
 
 func (s *MainSuite) TestNewReadmeCmd() {
-	cmd := newReadmeCmd()
+	cmd := s.app.newReadmeCmd()
 	require.Equal(s.T(), "readme", cmd.Use)
 	require.Equal(s.T(), []string{"r"}, cmd.Aliases)
 	require.NotNil(s.T(), cmd.Run)
 }
 
 func (s *MainSuite) TestReadmeOutput() {
-	cmd := newReadmeCmd()
+	cmd := s.app.newReadmeCmd()
 	cmd.SetArgs([]string{})
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
 }
 
 func (s *MainSuite) TestServeLocalPlatformHappyPath() {
-	m := setupServeMocks()
+	m := s.setupServeMocks()
 	m.cfg.Platforms = []types.Platform{types.PlatformLocal}
 	// No bot tokens needed for local platform.
 	m.cfg.DiscordToken = ""
 	m.cfg.DiscordAppID = ""
 
 	// Local platform creates a LocalBot (not the mock), so no mock bot expectations needed.
-	newLocalBot = func(store db.Store, logger *slog.Logger) orchestrator.Bot {
+	s.app.newLocalBot = func(store db.Store, logger *slog.Logger) orchestrator.Bot {
 		return local.NewBot(store, logger)
 	}
 	m.dockerClient.On("ContainerList", mock.Anything, "app", "loop-agent").Return([]string{}, nil)
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- serve() }()
+	go func() { errCh <- s.app.serve() }()
 
 	time.Sleep(100 * time.Millisecond)
 	p, err := os.FindProcess(os.Getpid())
@@ -3274,16 +3421,66 @@ func (s *MainSuite) TestServeLocalPlatformHappyPath() {
 }
 
 func (s *MainSuite) TestServeWithTerminalManager() {
-	m := setupServeMocks()
+	m := s.setupServeMocks()
 	m.setupHappyBot()
 
 	// Provide a successful exec client to cover the terminal manager wiring path.
-	newDockerExecClient = func() (terminal.ExecClient, error) {
+	s.app.newDockerExecClient = func() (terminal.ExecClient, error) {
 		return &noopExecClient{}, nil
 	}
 
 	errCh := make(chan error, 1)
-	go func() { errCh <- serve() }()
+	go func() { errCh <- s.app.serve() }()
+
+	time.Sleep(100 * time.Millisecond)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+}
+
+func (s *MainSuite) TestServeWithBrowserManager() {
+	m := s.setupServeMocks()
+	m.setupHappyBot()
+	m.cfg.BrowserEnabled = true
+
+	s.app.newBrowserManager = func(_ string, _ *slog.Logger) (api.BrowserManager, error) {
+		return &noopBrowserManager{}, nil
+	}
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.app.serve() }()
+
+	time.Sleep(100 * time.Millisecond)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+}
+
+func (s *MainSuite) TestServeWithBrowserManagerError() {
+	m := s.setupServeMocks()
+	m.setupHappyBot()
+	m.cfg.BrowserEnabled = true
+
+	s.app.newBrowserManager = func(_ string, _ *slog.Logger) (api.BrowserManager, error) {
+		return nil, errors.New("no docker")
+	}
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.app.serve() }()
 
 	time.Sleep(100 * time.Millisecond)
 	p, err := os.FindProcess(os.Getpid())
@@ -3396,6 +3593,84 @@ func (s *MainSuite) TestLocalBotPlainMessageTriggers() {
 	store.AssertExpectations(s.T())
 }
 
+// --- newMCPBrowserCmd ---
+
+func (s *MainSuite) TestNewMCPBrowserCmd() {
+	cmd := s.app.newMCPBrowserCmd()
+	require.Equal(s.T(), "mcp-browser", cmd.Use)
+	require.NotNil(s.T(), cmd.RunE)
+
+	f := cmd.Flags()
+	require.NotNil(s.T(), f.Lookup("host"))
+	require.NotNil(s.T(), f.Lookup("port"))
+	require.NotNil(s.T(), f.Lookup("log"))
+	require.NotNil(s.T(), f.Lookup("api-url"))
+	require.NotNil(s.T(), f.Lookup("channel-id"))
+}
+
+func (s *MainSuite) TestRunMCPBrowserLogOpenError() {
+	err := s.app.runMCPBrowser("127.0.0.1", 9222, "", "", "", "/nonexistent/dir/mcp-browser.log", mcpbrowser.New)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "opening mcp-browser log")
+}
+
+func (s *MainSuite) TestRunMCPBrowserSuccess() {
+	logPath := filepath.Join(s.T().TempDir(), "mcp-browser.log")
+
+	called := false
+	newServer := func(cdpEndpoint string, logger *slog.Logger) *mcpbrowser.Server {
+		require.Equal(s.T(), "ws://127.0.0.1:9333", cdpEndpoint)
+		require.NotNil(s.T(), logger)
+		called = true
+		return mcpbrowser.New(cdpEndpoint, logger)
+	}
+
+	// runMCPBrowser will try to use StdioTransport which will fail/close immediately in test.
+	_ = s.app.runMCPBrowser("127.0.0.1", 9333, "", "", "", logPath, newServer)
+	require.True(s.T(), called)
+}
+
+func (s *MainSuite) TestRunMCPBrowserWithTargetID() {
+	logPath := filepath.Join(s.T().TempDir(), "mcp-browser.log")
+	_ = s.app.runMCPBrowser("127.0.0.1", 9333, "target-xyz", "", "", logPath, mcpbrowser.New)
+}
+
+func (s *MainSuite) TestRunMCPBrowserWithAPICallback() {
+	logPath := filepath.Join(s.T().TempDir(), "mcp-browser.log")
+	_ = s.app.runMCPBrowser("127.0.0.1", 9333, "", "http://host.docker.internal:8222", "ch-1", logPath, mcpbrowser.New)
+}
+
+func (s *MainSuite) TestRunMCPBrowserWithConfig() {
+	logPath := filepath.Join(s.T().TempDir(), "mcp-browser.log")
+
+	s.app.configLoad = func() (*config.Config, error) {
+		return &config.Config{
+			LogLevel:  "debug",
+			LogFormat: "json",
+		}, nil
+	}
+
+	called := false
+	newServer := func(cdpEndpoint string, logger *slog.Logger) *mcpbrowser.Server {
+		require.NotNil(s.T(), logger)
+		called = true
+		return mcpbrowser.New(cdpEndpoint, logger)
+	}
+
+	_ = s.app.runMCPBrowser("127.0.0.1", 9222, "", "", "", logPath, newServer)
+	require.True(s.T(), called)
+}
+
+func (s *MainSuite) TestNewMCPBrowserCmdRunE() {
+	logPath := filepath.Join(s.T().TempDir(), "mcp-browser.log")
+	cmd := s.app.newMCPBrowserCmd()
+	require.NoError(s.T(), cmd.Flags().Set("log", logPath))
+
+	// RunE wraps runMCPBrowser — the stdio transport will close immediately.
+	err := cmd.RunE(cmd, nil)
+	_ = err
+}
+
 // noopExecClient satisfies terminal.ExecClient for testing.
 type noopExecClient struct{}
 
@@ -3410,3 +3685,19 @@ func (n *noopExecClient) ExecAttach(_ context.Context, _ string) (io.ReadWriteCl
 func (n *noopExecClient) ExecResize(_ context.Context, _ string, _, _ uint) error {
 	return nil
 }
+
+type noopBrowserManager struct{}
+
+func (n *noopBrowserManager) EnsureBrowser(_ context.Context, _, _ string) error { return nil }
+func (n *noopBrowserManager) StopBrowser(_ context.Context, _ string) error      { return nil }
+func (n *noopBrowserManager) IsRunning(_ context.Context, _ string) bool         { return false }
+func (n *noopBrowserManager) GetCDPEndpoint(_ string) string                     { return "" }
+func (n *noopBrowserManager) GetContainerID(_ string) (string, bool)             { return "", false }
+func (n *noopBrowserManager) SetTargetID(_, _ string)                            {}
+func (n *noopBrowserManager) GetTargetID(_ string) string                        { return "" }
+func (n *noopBrowserManager) SetCDP(_ string, _ any)                             {}
+func (n *noopBrowserManager) GetCDP(_ string) any                                { return nil }
+func (n *noopBrowserManager) TouchBrowser(_ string)                              {}
+func (n *noopBrowserManager) PaneConnected(_ string)                             {}
+func (n *noopBrowserManager) PaneDisconnected(_ string)                          {}
+func (n *noopBrowserManager) RunIdleMonitor(_ context.Context, _ time.Duration)  {}

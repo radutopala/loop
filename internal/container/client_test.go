@@ -16,6 +16,7 @@ import (
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/docker/pkg/stdcopy"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+	"github.com/radutopala/loop/internal/testutil"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
@@ -79,6 +80,26 @@ func (m *mockDockerAPI) CopyToContainer(ctx context.Context, containerID, dstPat
 	return args.Error(0)
 }
 
+func (m *mockDockerAPI) ContainerStop(ctx context.Context, containerID string, options containertypes.StopOptions) error {
+	args := m.Called(ctx, containerID, options)
+	return args.Error(0)
+}
+
+func (m *mockDockerAPI) ContainerInspect(ctx context.Context, containerID string) (containertypes.InspectResponse, error) {
+	args := m.Called(ctx, containerID)
+	return args.Get(0).(containertypes.InspectResponse), args.Error(1)
+}
+
+func (m *mockDockerAPI) NetworkCreate(ctx context.Context, name string, options network.CreateOptions) (network.CreateResponse, error) {
+	args := m.Called(ctx, name, options)
+	return args.Get(0).(network.CreateResponse), args.Error(1)
+}
+
+func (m *mockDockerAPI) NetworkRemove(ctx context.Context, networkID string) error {
+	args := m.Called(ctx, networkID)
+	return args.Error(0)
+}
+
 func (m *mockDockerAPI) Close() error {
 	args := m.Called()
 	return args.Error(0)
@@ -87,6 +108,7 @@ func (m *mockDockerAPI) Close() error {
 type ClientSuite struct {
 	suite.Suite
 	api    *mockDockerAPI
+	sys    *testutil.MockSystem
 	client *Client
 }
 
@@ -96,42 +118,42 @@ func TestClientSuite(t *testing.T) {
 
 func (s *ClientSuite) SetupTest() {
 	s.api = new(mockDockerAPI)
-	s.client = &Client{api: s.api}
+	s.sys = new(testutil.MockSystem)
+	s.sys.On("UserHomeDir").Return("/home/testuser", nil)
+	s.sys.On("Stat", mock.Anything).Return(nil, os.ErrNotExist)
+	s.client = &Client{
+		api:              s.api,
+		sys:              s.sys,
+		claudeVersionURL: "https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest",
+	}
+	s.client.latestClaudeVersion = s.client.defaultLatestClaudeVersion
+	s.client.dockerBuildCmd = s.client.defaultDockerBuildCmd
 }
 
 func (s *ClientSuite) TestNewDockerClientFuncDefault() {
-	// Exercise the default newDockerClientFunc to cover the production code path.
+	// Exercise the default factory to cover the production code path.
 	// client.NewClientWithOpts succeeds without a running Docker daemon.
-	api, err := newDockerClientFunc()
+	c, err := NewClientWith(defaultDockerAPIFactory)
 	require.NoError(s.T(), err)
-	require.NotNil(s.T(), api)
-	_ = api.Close()
+	require.NotNil(s.T(), c)
+	_ = c.Close()
 }
 
 func (s *ClientSuite) TestNewClient() {
-	original := newDockerClientFunc
-	defer func() { newDockerClientFunc = original }()
-
 	mockAPI := new(mockDockerAPI)
-	newDockerClientFunc = func() (dockerAPI, error) {
-		return mockAPI, nil
-	}
 
-	c, err := NewClient()
+	c, err := NewClientWith(func() (dockerAPI, error) {
+		return mockAPI, nil
+	})
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), c)
 	require.Equal(s.T(), mockAPI, c.api)
 }
 
 func (s *ClientSuite) TestNewClientError() {
-	original := newDockerClientFunc
-	defer func() { newDockerClientFunc = original }()
-
-	newDockerClientFunc = func() (dockerAPI, error) {
+	c, err := NewClientWith(func() (dockerAPI, error) {
 		return nil, errors.New("connection refused")
-	}
-
-	c, err := NewClient()
+	})
 	require.Nil(s.T(), c)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating docker client")
@@ -221,6 +243,39 @@ func (s *ClientSuite) TestContainerCreateWithLabels() {
 	id, err := s.client.ContainerCreate(ctx, cfg, "test")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "labeled-123", id)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerCreateWithNetwork() {
+	ctx := context.Background()
+	cfg := &ContainerConfig{
+		Image:       "my-image:latest",
+		MemoryMB:    512,
+		CPUs:        1.0,
+		NetworkName: "loop-net",
+		Hostname:    "agent-1",
+		Env:         []string{"FOO=bar"},
+	}
+
+	s.api.On("ContainerCreate", ctx,
+		mock.MatchedBy(func(c *containertypes.Config) bool {
+			return c.Image == "my-image:latest" && c.Hostname == "agent-1"
+		}),
+		mock.AnythingOfType("*container.HostConfig"),
+		mock.MatchedBy(func(nc *network.NetworkingConfig) bool {
+			if nc == nil {
+				return false
+			}
+			ep, ok := nc.EndpointsConfig["loop-net"]
+			return ok && len(ep.Aliases) == 1 && ep.Aliases[0] == "agent-1"
+		}),
+		(*ocispec.Platform)(nil),
+		"net-container",
+	).Return(containertypes.CreateResponse{ID: "net-123"}, nil)
+
+	id, err := s.client.ContainerCreate(ctx, cfg, "net-container")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "net-123", id)
 	s.api.AssertExpectations(s.T())
 }
 
@@ -458,6 +513,29 @@ func (s *ClientSuite) TestContainerWaitDockerErrChClosed() {
 	s.api.AssertExpectations(s.T())
 }
 
+func (s *ClientSuite) TestContainerStop() {
+	ctx := context.Background()
+	timeout := 10
+
+	s.api.On("ContainerStop", ctx, "cid-1", containertypes.StopOptions{Timeout: &timeout}).Return(nil)
+
+	err := s.client.ContainerStop(ctx, "cid-1")
+	require.NoError(s.T(), err)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerStopError() {
+	ctx := context.Background()
+	timeout := 10
+
+	s.api.On("ContainerStop", ctx, "cid-1", containertypes.StopOptions{Timeout: &timeout}).Return(errors.New("stop failed"))
+
+	err := s.client.ContainerStop(ctx, "cid-1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "stop failed")
+	s.api.AssertExpectations(s.T())
+}
+
 func (s *ClientSuite) TestContainerRemove() {
 	ctx := context.Background()
 
@@ -625,10 +703,7 @@ func (s *ClientSuite) TestRunningChannelIDsError() {
 }
 
 func (s *ClientSuite) TestImageBuild() {
-	orig := dockerBuildCmd
-	defer func() { dockerBuildCmd = orig }()
-
-	dockerBuildCmd = func(_ context.Context, contextDir, tag string) ([]byte, error) {
+	s.client.dockerBuildCmd = func(_ context.Context, contextDir, tag string) ([]byte, error) {
 		require.Equal(s.T(), "/tmp/ctx", contextDir)
 		require.Equal(s.T(), "test:latest", tag)
 		return []byte("Successfully built abc123"), nil
@@ -639,10 +714,7 @@ func (s *ClientSuite) TestImageBuild() {
 }
 
 func (s *ClientSuite) TestImageBuildError() {
-	orig := dockerBuildCmd
-	defer func() { dockerBuildCmd = orig }()
-
-	dockerBuildCmd = func(_ context.Context, _, _ string) ([]byte, error) {
+	s.client.dockerBuildCmd = func(_ context.Context, _, _ string) ([]byte, error) {
 		return []byte("error: build failed"), errors.New("exit status 1")
 	}
 
@@ -652,53 +724,58 @@ func (s *ClientSuite) TestImageBuildError() {
 	require.Contains(s.T(), err.Error(), "error: build failed")
 }
 
+func (s *ClientSuite) TestImageBuildFile() {
+	s.client.dockerBuildFileCmd = func(_ context.Context, contextDir, dockerfile, tag string) ([]byte, error) {
+		require.Equal(s.T(), "/tmp/ctx", contextDir)
+		require.Equal(s.T(), "chrome.Dockerfile", dockerfile)
+		require.Equal(s.T(), "loop-chrome:latest", tag)
+		return []byte("Successfully built"), nil
+	}
+
+	err := s.client.ImageBuildFile(context.Background(), "/tmp/ctx", "chrome.Dockerfile", "loop-chrome:latest")
+	require.NoError(s.T(), err)
+}
+
+func (s *ClientSuite) TestImageBuildFileError() {
+	s.client.dockerBuildFileCmd = func(_ context.Context, _, _, _ string) ([]byte, error) {
+		return []byte("error: build failed"), errors.New("exit status 1")
+	}
+
+	err := s.client.ImageBuildFile(context.Background(), "/tmp/ctx", "chrome.Dockerfile", "loop-chrome:latest")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "building image")
+}
+
+func (s *ClientSuite) TestDefaultDockerBuildFileCmd() {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _ = s.client.defaultDockerBuildFileCmd(ctx, "/nonexistent", "chrome.Dockerfile", "test:latest")
+}
+
 func (s *ClientSuite) TestDefaultDockerBuildCmd() {
+	// Ensure gitconfigSecretPath returns a path so the --secret branch is covered.
+	s.sys.Override("Stat", mock.Anything).Return(nil, nil)
 	// Exercise the default function with a cancelled context so it fails fast.
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	_, _ = dockerBuildCmd(ctx, "/nonexistent", "test:latest")
+	_, _ = s.client.defaultDockerBuildCmd(ctx, "/nonexistent", "test:latest")
 }
 
 func (s *ClientSuite) TestGitconfigSecretPath() {
-	origHome := osUserHomeDir
-	origStat := osStat
-	defer func() {
-		osUserHomeDir = origHome
-		osStat = origStat
-	}()
+	s.sys.Override("Stat", "/home/testuser/.gitconfig").Return(nil, nil)
 
-	osUserHomeDir = func() (string, error) { return "/home/testuser", nil }
-	osStat = func(name string) (os.FileInfo, error) {
-		if name == "/home/testuser/.gitconfig" {
-			return nil, nil
-		}
-		return nil, os.ErrNotExist
-	}
-
-	require.Equal(s.T(), "/home/testuser/.gitconfig", gitconfigSecretPath())
+	require.Equal(s.T(), "/home/testuser/.gitconfig", s.client.gitconfigSecretPath())
 }
 
 func (s *ClientSuite) TestGitconfigSecretPathNotExists() {
-	origHome := osUserHomeDir
-	origStat := osStat
-	defer func() {
-		osUserHomeDir = origHome
-		osStat = origStat
-	}()
-
-	osUserHomeDir = func() (string, error) { return "/home/testuser", nil }
-	osStat = func(_ string) (os.FileInfo, error) { return nil, os.ErrNotExist }
-
-	require.Empty(s.T(), gitconfigSecretPath())
+	// Default Stat returns os.ErrNotExist, no override needed.
+	require.Empty(s.T(), s.client.gitconfigSecretPath())
 }
 
 func (s *ClientSuite) TestGitconfigSecretPathHomeDirError() {
-	origHome := osUserHomeDir
-	defer func() { osUserHomeDir = origHome }()
+	s.sys.Override("UserHomeDir").Return("", errors.New("no home"))
 
-	osUserHomeDir = func() (string, error) { return "", errors.New("no home") }
-
-	require.Empty(s.T(), gitconfigSecretPath())
+	require.Empty(s.T(), s.client.gitconfigSecretPath())
 }
 
 func (s *ClientSuite) TestCopyToContainer() {
@@ -732,20 +809,16 @@ func (s *ClientSuite) TestLatestClaudeVersionSuccess() {
 	}))
 	defer ts.Close()
 
-	orig := claudeVersionURL
-	s.T().Cleanup(func() { claudeVersionURL = orig })
-	claudeVersionURL = ts.URL
+	s.client.claudeVersionURL = ts.URL
 
-	got := latestClaudeVersion()
+	got := s.client.defaultLatestClaudeVersion()
 	require.Equal(s.T(), "1.2.3", got)
 }
 
 func (s *ClientSuite) TestLatestClaudeVersionHTTPError() {
-	orig := claudeVersionURL
-	s.T().Cleanup(func() { claudeVersionURL = orig })
-	claudeVersionURL = "http://127.0.0.1:0" // connection refused
+	s.client.claudeVersionURL = "http://127.0.0.1:0" // connection refused
 
-	got := latestClaudeVersion()
+	got := s.client.defaultLatestClaudeVersion()
 	require.True(s.T(), strings.HasPrefix(got, "unknown-"))
 }
 
@@ -755,19 +828,109 @@ func (s *ClientSuite) TestLatestClaudeVersionNon200() {
 	}))
 	defer ts.Close()
 
-	orig := claudeVersionURL
-	s.T().Cleanup(func() { claudeVersionURL = orig })
-	claudeVersionURL = ts.URL
+	s.client.claudeVersionURL = ts.URL
 
-	got := latestClaudeVersion()
+	got := s.client.defaultLatestClaudeVersion()
 	require.True(s.T(), strings.HasPrefix(got, "unknown-"))
 }
 
 func (s *ClientSuite) TestLatestClaudeVersionInvalidURL() {
-	orig := claudeVersionURL
-	s.T().Cleanup(func() { claudeVersionURL = orig })
-	claudeVersionURL = "://bad-url"
+	s.client.claudeVersionURL = "://bad-url"
 
-	got := latestClaudeVersion()
+	got := s.client.defaultLatestClaudeVersion()
 	require.True(s.T(), strings.HasPrefix(got, "unknown-"))
+}
+
+// --- ContainerInspect tests ---
+
+func (s *ClientSuite) TestContainerInspect() {
+	ctx := context.Background()
+
+	expected := containertypes.InspectResponse{
+		ContainerJSONBase: &containertypes.ContainerJSONBase{
+			ID:   "cid-1",
+			Name: "/my-container",
+		},
+	}
+	s.api.On("ContainerInspect", ctx, "cid-1").Return(expected, nil)
+
+	resp, err := s.client.ContainerInspect(ctx, "cid-1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "cid-1", resp.ID)
+	require.Equal(s.T(), "/my-container", resp.Name)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestContainerInspectError() {
+	ctx := context.Background()
+
+	s.api.On("ContainerInspect", ctx, "cid-missing").
+		Return(containertypes.InspectResponse{}, errors.New("no such container"))
+
+	_, err := s.client.ContainerInspect(ctx, "cid-missing")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "no such container")
+	s.api.AssertExpectations(s.T())
+}
+
+// --- NetworkEnsure tests ---
+
+func (s *ClientSuite) TestNetworkEnsure() {
+	ctx := context.Background()
+
+	s.api.On("NetworkCreate", ctx, "loop-net", network.CreateOptions{
+		Driver: "bridge",
+	}).Return(network.CreateResponse{ID: "net-abc"}, nil)
+
+	err := s.client.NetworkEnsure(ctx, "loop-net")
+	require.NoError(s.T(), err)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestNetworkEnsureAlreadyExists() {
+	ctx := context.Background()
+
+	s.api.On("NetworkCreate", ctx, "loop-net", network.CreateOptions{
+		Driver: "bridge",
+	}).Return(network.CreateResponse{}, errors.New("network loop-net already exists"))
+
+	err := s.client.NetworkEnsure(ctx, "loop-net")
+	require.NoError(s.T(), err)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestNetworkEnsureError() {
+	ctx := context.Background()
+
+	s.api.On("NetworkCreate", ctx, "loop-net", network.CreateOptions{
+		Driver: "bridge",
+	}).Return(network.CreateResponse{}, errors.New("permission denied"))
+
+	err := s.client.NetworkEnsure(ctx, "loop-net")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "permission denied")
+	s.api.AssertExpectations(s.T())
+}
+
+// --- NetworkRemove tests ---
+
+func (s *ClientSuite) TestNetworkRemove() {
+	ctx := context.Background()
+
+	s.api.On("NetworkRemove", ctx, "loop-net").Return(nil)
+
+	err := s.client.NetworkRemove(ctx, "loop-net")
+	require.NoError(s.T(), err)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestNetworkRemoveError() {
+	ctx := context.Background()
+
+	s.api.On("NetworkRemove", ctx, "loop-net").Return(errors.New("network not found"))
+
+	err := s.client.NetworkRemove(ctx, "loop-net")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "network not found")
+	s.api.AssertExpectations(s.T())
 }

@@ -16,10 +16,13 @@ import (
 func (s *DaemonSuite) TestStartSuccess() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", "/home/test/Library/LaunchAgents", os.FileMode(0o755)).Return(nil)
 	sys.On("MkdirAll", "/home/test/.loop", os.FileMode(0o755)).Return(nil)
+	sys.On("Getenv", mock.Anything).Return("")
 	sys.On("WriteFile", "/home/test/Library/LaunchAgents/com.loop.agent.plist", mock.Anything, os.FileMode(0o644)).Return(nil)
+	sys.On("GetUID").Return(501)
 	sys.On("RunCommand", "launchctl", []string{"bootout", "gui/501", "/home/test/Library/LaunchAgents/com.loop.agent.plist"}).
 		Return([]byte(""), nil)
 	sys.On("RunCommand", "launchctl", []string{"bootstrap", "gui/501", "/home/test/Library/LaunchAgents/com.loop.agent.plist"}).
@@ -31,27 +34,21 @@ func (s *DaemonSuite) TestStartSuccess() {
 }
 
 func (s *DaemonSuite) TestStartWithProxyEnv() {
-	osGetenv = func(key string) string {
-		switch key {
-		case "HTTP_PROXY":
-			return "http://127.0.0.1:3128"
-		case "HTTPS_PROXY":
-			return "http://127.0.0.1:3128"
-		default:
-			return ""
-		}
-	}
-
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("Getenv", "HTTP_PROXY").Return("http://127.0.0.1:3128")
+	sys.On("Getenv", "HTTPS_PROXY").Return("http://127.0.0.1:3128")
+	sys.On("Getenv", mock.Anything).Return("")
 	sys.On("WriteFile", "/home/test/Library/LaunchAgents/com.loop.agent.plist", mock.MatchedBy(func(data []byte) bool {
 		s := string(data)
 		return strings.Contains(s, "<key>HTTP_PROXY</key>") &&
 			strings.Contains(s, "<key>HTTPS_PROXY</key>") &&
 			strings.Contains(s, "http://127.0.0.1:3128")
 	}), os.FileMode(0o644)).Return(nil)
+	sys.On("GetUID").Return(501)
 	sys.On("RunCommand", "launchctl", mock.Anything).Return([]byte(""), nil)
 
 	err := Start(sys, "/home/test/.loop/loop.log")
@@ -69,10 +66,9 @@ func (s *DaemonSuite) TestStartExecutableError() {
 }
 
 func (s *DaemonSuite) TestStartEvalSymlinksError() {
-	evalSymlinks = func(_ string) (string, error) { return "", errors.New("symlink fail") }
-
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("", errors.New("symlink fail"))
 
 	err := Start(sys, "/home/test/.loop/loop.log")
 	require.Error(s.T(), err)
@@ -82,6 +78,7 @@ func (s *DaemonSuite) TestStartEvalSymlinksError() {
 func (s *DaemonSuite) TestStartHomeDirError() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("", errors.New("home fail"))
 
 	err := Start(sys, "/home/test/.loop/loop.log")
@@ -92,6 +89,7 @@ func (s *DaemonSuite) TestStartHomeDirError() {
 func (s *DaemonSuite) TestStartMkdirLaunchAgentsError() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", "/home/test/Library/LaunchAgents", os.FileMode(0o755)).Return(errors.New("mkdir fail"))
 
@@ -103,6 +101,7 @@ func (s *DaemonSuite) TestStartMkdirLaunchAgentsError() {
 func (s *DaemonSuite) TestStartMkdirLogDirError() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", "/home/test/Library/LaunchAgents", os.FileMode(0o755)).Return(nil)
 	sys.On("MkdirAll", "/home/test/.loop", os.FileMode(0o755)).Return(errors.New("logdir fail"))
@@ -115,8 +114,10 @@ func (s *DaemonSuite) TestStartMkdirLogDirError() {
 func (s *DaemonSuite) TestStartWriteError() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("Getenv", mock.Anything).Return("")
 	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("write fail"))
 
 	err := Start(sys, "/home/test/.loop/loop.log")
@@ -127,9 +128,12 @@ func (s *DaemonSuite) TestStartWriteError() {
 func (s *DaemonSuite) TestStartLaunchctlError() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("Getenv", mock.Anything).Return("")
 	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	sys.On("GetUID").Return(501)
 	sys.On("RunCommand", "launchctl", mock.Anything).
 		Return([]byte("Bootstrap failed: 5: Input/output error"), errors.New("exit 5"))
 
@@ -141,9 +145,12 @@ func (s *DaemonSuite) TestStartLaunchctlError() {
 func (s *DaemonSuite) TestStartAlreadyBootstrapped() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("Getenv", mock.Anything).Return("")
 	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	sys.On("GetUID").Return(501)
 	sys.On("RunCommand", "launchctl", mock.Anything).
 		Return([]byte("Bootstrap failed: already bootstrapped"), errors.New("exit 5"))
 
@@ -156,6 +163,7 @@ func (s *DaemonSuite) TestStartAlreadyBootstrapped() {
 func (s *DaemonSuite) TestStopSuccess() {
 	sys := new(mockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
+	sys.On("GetUID").Return(501)
 	sys.On("RunCommand", "launchctl", []string{"bootout", "gui/501", "/home/test/Library/LaunchAgents/com.loop.agent.plist"}).
 		Return([]byte(""), nil)
 	sys.On("RemoveFile", "/home/test/Library/LaunchAgents/com.loop.agent.plist").Return(nil)
@@ -177,6 +185,7 @@ func (s *DaemonSuite) TestStopHomeDirError() {
 func (s *DaemonSuite) TestStopLaunchctlError() {
 	sys := new(mockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
+	sys.On("GetUID").Return(501)
 	sys.On("RunCommand", "launchctl", mock.Anything).
 		Return([]byte("Bootout failed: something"), errors.New("exit 5"))
 
@@ -188,6 +197,7 @@ func (s *DaemonSuite) TestStopLaunchctlError() {
 func (s *DaemonSuite) TestStopAlreadyStopped() {
 	sys := new(mockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
+	sys.On("GetUID").Return(501)
 	sys.On("RunCommand", "launchctl", mock.Anything).
 		Return([]byte("Could not find service"), errors.New("exit 3"))
 	sys.On("RemoveFile", mock.Anything).Return(os.ErrNotExist)
@@ -199,6 +209,7 @@ func (s *DaemonSuite) TestStopAlreadyStopped() {
 func (s *DaemonSuite) TestStopNoSuchFile() {
 	sys := new(mockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
+	sys.On("GetUID").Return(501)
 	sys.On("RunCommand", "launchctl", mock.Anything).
 		Return([]byte("No such file or directory"), errors.New("exit 3"))
 	sys.On("RemoveFile", mock.Anything).Return(os.ErrNotExist)
@@ -210,6 +221,7 @@ func (s *DaemonSuite) TestStopNoSuchFile() {
 func (s *DaemonSuite) TestStopNotFound() {
 	sys := new(mockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
+	sys.On("GetUID").Return(501)
 	sys.On("RunCommand", "launchctl", mock.Anything).
 		Return([]byte("service not found"), errors.New("exit 3"))
 	sys.On("RemoveFile", mock.Anything).Return(os.ErrNotExist)
@@ -221,6 +233,7 @@ func (s *DaemonSuite) TestStopNotFound() {
 func (s *DaemonSuite) TestStopInputOutputError() {
 	sys := new(mockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
+	sys.On("GetUID").Return(501)
 	sys.On("RunCommand", "launchctl", mock.Anything).
 		Return([]byte("Boot-out failed: 5: Input/output error"), errors.New("exit 5"))
 	sys.On("RemoveFile", mock.Anything).Return(os.ErrNotExist)
@@ -232,6 +245,7 @@ func (s *DaemonSuite) TestStopInputOutputError() {
 func (s *DaemonSuite) TestStopRemoveFileError() {
 	sys := new(mockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
+	sys.On("GetUID").Return(501)
 	sys.On("RunCommand", "launchctl", mock.Anything).Return([]byte(""), nil)
 	sys.On("RemoveFile", mock.Anything).Return(errors.New("permission denied"))
 
@@ -246,6 +260,7 @@ func (s *DaemonSuite) TestStatusRunning() {
 	sys := new(mockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("Stat", "/home/test/Library/LaunchAgents/com.loop.agent.plist").Return(fakeFileInfo{}, nil)
+	sys.On("GetUID").Return(501)
 	sys.On("RunCommand", "launchctl", []string{"print", "gui/501/com.loop.agent"}).
 		Return([]byte("state = running"), nil)
 
@@ -258,6 +273,7 @@ func (s *DaemonSuite) TestStatusStopped() {
 	sys := new(mockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("Stat", "/home/test/Library/LaunchAgents/com.loop.agent.plist").Return(fakeFileInfo{}, nil)
+	sys.On("GetUID").Return(501)
 	sys.On("RunCommand", "launchctl", []string{"print", "gui/501/com.loop.agent"}).
 		Return([]byte("state = not running"), nil)
 
@@ -270,6 +286,7 @@ func (s *DaemonSuite) TestStatusStoppedLaunchctlError() {
 	sys := new(mockSystem)
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("Stat", "/home/test/Library/LaunchAgents/com.loop.agent.plist").Return(fakeFileInfo{}, nil)
+	sys.On("GetUID").Return(501)
 	sys.On("RunCommand", "launchctl", mock.Anything).
 		Return([]byte(""), errors.New("exit 3"))
 

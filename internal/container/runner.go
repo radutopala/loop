@@ -11,14 +11,15 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
 	"time"
 
 	"github.com/radutopala/loop/internal/agent"
+	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/config"
+	"github.com/radutopala/loop/internal/osutil"
 )
 
 // mcpConfig represents the MCP config structure written to .loop/mcp.json.
@@ -66,6 +67,7 @@ type systemEvent struct {
 	Type        string `json:"type"`
 	Subtype     string `json:"subtype"`
 	Description string `json:"description"`
+	Status      string `json:"status"`
 }
 
 // extractText joins all text content blocks from an assistant message.
@@ -153,15 +155,17 @@ func summarizeToolInput(name string, raw json.RawMessage) string {
 
 // ContainerConfig holds settings for creating a container.
 type ContainerConfig struct {
-	Image      string
-	MemoryMB   int64
-	CPUs       float64
-	Env        []string
-	Cmd        []string
-	Binds      []string
-	WorkingDir string
-	GroupAdd   []string
-	Labels     map[string]string
+	Image       string
+	MemoryMB    int64
+	CPUs        float64
+	Env         []string
+	Cmd         []string
+	Binds       []string
+	WorkingDir  string
+	GroupAdd    []string
+	Labels      map[string]string
+	NetworkName string // Docker network to attach to
+	Hostname    string // container hostname on the network
 }
 
 // WaitResponse represents the result of waiting for a container to finish.
@@ -182,12 +186,15 @@ type DockerClient interface {
 	ContainerLogsFollow(ctx context.Context, containerID string) (io.ReadCloser, error)
 	ContainerWait(ctx context.Context, containerID string) (<-chan WaitResponse, <-chan error)
 	ContainerRemove(ctx context.Context, containerID string) error
+	ContainerStop(ctx context.Context, containerID string) error
 	ImageList(ctx context.Context, image string) ([]string, error)
 	ImagePull(ctx context.Context, image string) error
 	ImageBuild(ctx context.Context, contextDir, tag string) error
+	ImageBuildFile(ctx context.Context, contextDir, dockerfile, tag string) error
 	ContainerList(ctx context.Context, labelKey, labelValue string) ([]string, error)
 	CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader) error
 	RunningChannelIDs(ctx context.Context) (map[string]struct{}, error)
+	NetworkEnsure(ctx context.Context, name string) error
 }
 
 // Runner executes agent requests inside containers.
@@ -197,16 +204,40 @@ type Runner interface {
 }
 
 // DockerRunner implements Runner using Docker containers.
+// runnerSystem abstracts OS operations needed by DockerRunner.
+type runnerSystem interface {
+	Stat(name string) (os.FileInfo, error)
+	ReadFile(name string) ([]byte, error)
+	WriteFile(name string, data []byte, perm os.FileMode) error
+	Remove(name string) error
+	MkdirAll(path string, perm os.FileMode) error
+	Readlink(name string) (string, error)
+	UserHomeDir() (string, error)
+	Getenv(key string) string
+	ExecCommandOutput(name string, args ...string) ([]byte, error)
+}
+
 type DockerRunner struct {
-	client DockerClient
-	cfg    *config.Config
+	client              DockerClient
+	cfg                 *config.Config
+	sys                 runnerSystem
+	loadProjectConfig   func(string, *config.Config) (*config.Config, error)
+	osTimeAfterFunc     func(time.Duration, func()) *time.Timer
+	osRandRead          func([]byte) (int, error)
+	osTimeLocalName     func() string
+	BrowserTargetIDFunc BrowserTargetIDFunc
 }
 
 // NewDockerRunner creates a new DockerRunner with the given Docker client and config.
 func NewDockerRunner(client DockerClient, cfg *config.Config) *DockerRunner {
 	return &DockerRunner{
-		client: client,
-		cfg:    cfg,
+		client:            client,
+		cfg:               cfg,
+		sys:               osutil.RealSystem{},
+		loadProjectConfig: config.LoadProjectConfig,
+		osTimeAfterFunc:   time.AfterFunc,
+		osRandRead:        rand.Read,
+		osTimeLocalName:   func() string { return time.Now().Location().String() },
 	}
 }
 
@@ -216,37 +247,24 @@ const (
 	scannerBufMaxLine = 1024 * 1024 // max line size (1 MB)
 )
 
-var osRemove = os.Remove
-var osMkdirAll = os.MkdirAll
-var osGetenv = os.Getenv
-var osWriteFile = os.WriteFile
-var osUserHomeDir = os.UserHomeDir
-var osStat = os.Stat
-var osExecCommand = exec.Command
-var osTimeAfterFunc = time.AfterFunc
-var osRandRead = rand.Read
-var osReadlink = os.Readlink
-var osReadFile = os.ReadFile
-var osTimeLocalName = func() string { return time.Now().Location().String() }
-
 var nonAlphanumRegexp = regexp.MustCompile(`[^a-z0-9]+`)
 
 // localTimezone returns the IANA timezone name (e.g. "Europe/Bucharest").
-func localTimezone() string {
-	if tz := osGetenv("TZ"); tz != "" && tz != "Local" {
+func (r *DockerRunner) localTimezone() string {
+	if tz := r.sys.Getenv("TZ"); tz != "" && tz != "Local" {
 		return tz
 	}
-	if loc := osTimeLocalName(); loc != "Local" {
+	if loc := r.osTimeLocalName(); loc != "Local" {
 		return loc
 	}
 	// Linux: /etc/timezone contains the IANA name directly.
-	if data, err := osReadFile("/etc/timezone"); err == nil {
+	if data, err := r.sys.ReadFile("/etc/timezone"); err == nil {
 		if tz := strings.TrimSpace(string(data)); tz != "" {
 			return tz
 		}
 	}
 	// macOS/Linux: /etc/localtime is a symlink into the zoneinfo directory.
-	if target, err := osReadlink("/etc/localtime"); err == nil {
+	if target, err := r.sys.Readlink("/etc/localtime"); err == nil {
 		if _, after, ok := strings.Cut(target, "zoneinfo/"); ok {
 			return after
 		}
@@ -271,14 +289,14 @@ func sanitizeName(name string) string {
 // containerName generates a Docker container name in the format
 // "loop-{base}-{6-hex-chars}". When dirPath is set, the base is derived
 // from filepath.Base(dirPath); otherwise channelID is used.
-func containerName(channelID, dirPath string) string {
+func (r *DockerRunner) containerName(channelID, dirPath string) string {
 	base := channelID
 	if dirPath != "" {
 		base = filepath.Base(dirPath)
 	}
 	sanitized := sanitizeName(base)
 	b := make([]byte, 3)
-	_, _ = osRandRead(b)
+	_, _ = r.osRandRead(b)
 	return "loop-" + sanitized + "-" + hex.EncodeToString(b)
 }
 
@@ -326,7 +344,7 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 // buildMCPConfig creates the merged MCP config with the built-in loop
 // and any user-defined servers from the config. The built-in loop always
 // takes precedence over a user-defined server with the same name.
-func buildMCPConfig(channelID, apiURL, workDir, authorID string, memoryEnabled bool, userServers map[string]config.MCPServerConfig) mcpConfig {
+func buildMCPConfig(channelID, apiURL, workDir, authorID, browserTargetID string, memoryEnabled, browserEnabled bool, userServers map[string]config.MCPServerConfig) mcpConfig {
 	servers := make(map[string]mcpServerEntry, len(userServers)+1)
 	for name, srv := range userServers {
 		servers[name] = mcpServerEntry{
@@ -349,15 +367,31 @@ func buildMCPConfig(channelID, apiURL, workDir, authorID string, memoryEnabled b
 			Args:    args,
 		}
 	}
+	// Add built-in browser MCP server for CDP automation.
+	// Chrome runs in a sidecar container named loop-chrome-<channelID> on a shared Docker network.
+	if browserEnabled {
+		if _, exists := userServers["loop-browser"]; !exists {
+			chromeHost := browser.ChromeHostname(channelID)
+			browserArgs := []string{"mcp-browser", "--host", chromeHost, "--log", filepath.Join(workDir, ".loop", "mcp-browser.log")}
+			if browserTargetID != "" {
+				browserArgs = append(browserArgs, "--target", browserTargetID)
+			}
+			browserArgs = append(browserArgs, "--api-url", apiURL, "--channel-id", channelID)
+			servers["loop-browser"] = mcpServerEntry{
+				Command: "/usr/local/bin/loop",
+				Args:    browserArgs,
+			}
+		}
+	}
 	return mcpConfig{MCPServers: servers}
 }
 
 // expandPath expands ~ in paths to the user's home directory.
-func expandPath(path string) (string, error) {
+func (r *DockerRunner) expandPath(path string) (string, error) {
 	if !strings.HasPrefix(path, "~/") {
 		return path, nil
 	}
-	home, err := osUserHomeDir()
+	home, err := r.sys.UserHomeDir()
 	if err != nil {
 		return "", err
 	}
@@ -395,7 +429,7 @@ func (m mountSpec) String() string {
 
 // processMount processes a single mount specification and returns the expanded bind string.
 // Returns empty string if the mount should be skipped.
-func processMount(mount string) (string, error) {
+func (r *DockerRunner) processMount(mount string) (string, error) {
 	ms, err := parseMountSpec(mount)
 	if err != nil {
 		return "", err
@@ -405,7 +439,7 @@ func processMount(mount string) (string, error) {
 	// without host path expansion or existence checks — Docker manages them.
 	// The container path still needs ~ expansion since Docker requires absolute paths.
 	if config.IsNamedVolume(ms.Host) {
-		containerPath, err := expandPath(ms.Container)
+		containerPath, err := r.expandPath(ms.Container)
 		if err != nil {
 			return "", fmt.Errorf("expanding container path %s: %w", ms.Container, err)
 		}
@@ -413,19 +447,19 @@ func processMount(mount string) (string, error) {
 		return ms.String(), nil
 	}
 
-	expanded, err := expandPath(ms.Host)
+	expanded, err := r.expandPath(ms.Host)
 	if err != nil {
 		return "", fmt.Errorf("expanding path %s: %w", ms.Host, err)
 	}
 
 	// Check if path exists
-	if _, err := osStat(expanded); os.IsNotExist(err) {
+	if _, err := r.sys.Stat(expanded); os.IsNotExist(err) {
 		// Skip non-existent paths silently
 		return "", nil
 	}
 
 	// Expand ~ in the container path too — container HOME matches host HOME.
-	containerPath, err := expandPath(ms.Container)
+	containerPath, err := r.expandPath(ms.Container)
 	if err != nil {
 		return "", fmt.Errorf("expanding container path %s: %w", ms.Container, err)
 	}
@@ -437,8 +471,8 @@ func processMount(mount string) (string, error) {
 // gitExcludesMount detects the host git core.excludesFile and returns a bind
 // mount string so the file is available inside the container at the path git
 // will look for it. Returns "" if unconfigured or the file doesn't exist.
-func gitExcludesMount() string {
-	out, err := osExecCommand("git", "config", "--global", "--get", "core.excludesFile").Output()
+func (r *DockerRunner) gitExcludesMount() string {
+	out, err := r.sys.ExecCommandOutput("git", "config", "--global", "--get", "core.excludesFile")
 	if err != nil {
 		return ""
 	}
@@ -450,7 +484,7 @@ func gitExcludesMount() string {
 	// Expand ~ for the host path (source)
 	hostPath := raw
 	if strings.HasPrefix(hostPath, "~/") {
-		home, err := osUserHomeDir()
+		home, err := r.sys.UserHomeDir()
 		if err != nil {
 			return ""
 		}
@@ -458,7 +492,7 @@ func gitExcludesMount() string {
 	}
 
 	// Check if the file exists on the host
-	if _, err := osStat(hostPath); err != nil {
+	if _, err := r.sys.Stat(hostPath); err != nil {
 		return ""
 	}
 
@@ -474,7 +508,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		},
 	)
 	if mcpConfigPath != "" {
-		defer func() { _ = osRemove(mcpConfigPath) }()
+		defer func() { _ = r.sys.Remove(mcpConfigPath) }()
 	}
 	if containerID != "" {
 		defer r.scheduleRemove(containerID)
@@ -512,7 +546,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 // buildContainerEnv assembles environment variables for the container,
 // including auth credentials, proxy settings, timezone, and custom envs.
 func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL string) ([]string, error) {
-	hostHome, err := osUserHomeDir()
+	hostHome, err := r.sys.UserHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("getting home directory: %w", err)
 	}
@@ -521,15 +555,15 @@ func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL s
 		"CHANNEL_ID=" + channelID,
 		"API_URL=" + apiURL,
 		"HOME=" + hostHome,
-		"HOST_USER=" + osGetenv("USER"),
-		"TZ=" + localTimezone(),
+		"HOST_USER=" + r.sys.Getenv("USER"),
+		"TZ=" + r.localTimezone(),
 		"PATH=" + hostHome + "/.local/bin:" + hostHome + "/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 	}
 	env = addAuthEnv(env, cfg)
-	env = addProxyEnv(env)
+	env = r.addProxyEnv(env)
 
 	for k, v := range cfg.Envs {
-		expanded, err := expandPath(v)
+		expanded, err := r.expandPath(v)
 		if err != nil {
 			return nil, fmt.Errorf("expanding env %s value: %w", k, err)
 		}
@@ -553,10 +587,10 @@ func addAuthEnv(env []string, cfg *config.Config) []string {
 
 // addProxyEnv forwards host proxy environment variables into env,
 // rewriting localhost addresses to host.docker.internal.
-func addProxyEnv(env []string) []string {
+func (r *DockerRunner) addProxyEnv(env []string) []string {
 	hasProxy := false
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
-		if v := osGetenv(key); v != "" {
+		if v := r.sys.Getenv(key); v != "" {
 			env = append(env, key+"="+localhostToDockerHost(v))
 			if key != "NO_PROXY" && key != "no_proxy" {
 				hasProxy = true
@@ -571,17 +605,24 @@ func addProxyEnv(env []string) []string {
 
 // writeMCPConfig creates host directories and writes the per-channel MCP
 // config file. Returns the config file path.
+// BrowserTargetIDFunc returns the active browser page target ID for a channel, if known.
+type BrowserTargetIDFunc func(channelID string) string
+
 func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID string, cfg *config.Config) (string, error) {
 	for _, dir := range []string{workDir, filepath.Join(workDir, ".loop")} {
-		if err := osMkdirAll(dir, 0o755); err != nil {
+		if err := r.sys.MkdirAll(dir, 0o755); err != nil {
 			return "", fmt.Errorf("creating host directory %s: %w", dir, err)
 		}
 	}
 
 	mcpConfigPath := filepath.Join(workDir, ".loop", "mcp-"+channelID+".json")
-	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, authorID, cfg.Memory.Enabled, cfg.MCPServers)
+	var browserTargetID string
+	if r.BrowserTargetIDFunc != nil {
+		browserTargetID = r.BrowserTargetIDFunc(channelID)
+	}
+	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, authorID, browserTargetID, cfg.Memory.Enabled, cfg.BrowserEnabled, cfg.MCPServers)
 	mcpJSON, _ := json.MarshalIndent(mcpCfg, "", "  ")
-	if err := osWriteFile(mcpConfigPath, mcpJSON, 0o644); err != nil {
+	if err := r.sys.WriteFile(mcpConfigPath, mcpJSON, 0o644); err != nil {
 		return "", fmt.Errorf("writing mcp config: %w", err)
 	}
 	return mcpConfigPath, nil
@@ -592,12 +633,12 @@ func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID strin
 func (r *DockerRunner) buildContainerMounts(mounts []string, workDir string) (binds, chownPaths []string) {
 	for _, mount := range mounts {
 		if ms, err := parseMountSpec(mount); err == nil && config.IsNamedVolume(ms.Host) {
-			expanded, _ := expandPath(ms.Container)
+			expanded, _ := r.expandPath(ms.Container)
 			if expanded != "" {
 				chownPaths = append(chownPaths, expanded)
 			}
 		}
-		bind, err := processMount(mount)
+		bind, err := r.processMount(mount)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: skipping mount %s: %v\n", mount, err)
 			continue
@@ -607,7 +648,7 @@ func (r *DockerRunner) buildContainerMounts(mounts []string, workDir string) (bi
 		}
 	}
 
-	if excludesBind := gitExcludesMount(); excludesBind != "" {
+	if excludesBind := r.gitExcludesMount(); excludesBind != "" {
 		binds = append(binds, excludesBind)
 	}
 
@@ -656,12 +697,13 @@ func BuildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID
 // ClaudeCmdBuilder builds the interactive Claude command for terminal sessions.
 // It implements api.InteractiveCmdBuilder.
 type ClaudeCmdBuilder struct {
-	cfg *config.Config
+	cfg               *config.Config
+	loadProjectConfig func(string, *config.Config) (*config.Config, error)
 }
 
 // NewClaudeCmdBuilder creates a builder that uses the given config.
 func NewClaudeCmdBuilder(cfg *config.Config) *ClaudeCmdBuilder {
-	return &ClaudeCmdBuilder{cfg: cfg}
+	return &ClaudeCmdBuilder{cfg: cfg, loadProjectConfig: config.LoadProjectConfig}
 }
 
 // BuildInteractiveCmd returns the interactive Claude shell command for the given channel.
@@ -673,7 +715,7 @@ func (b *ClaudeCmdBuilder) BuildInteractiveCmd(channelID, dirPath, sessionID str
 		workDir = filepath.Join(b.cfg.LoopDir, channelID, "work")
 	}
 	cfg := b.cfg
-	if merged, err := config.LoadProjectConfig(workDir, b.cfg); err == nil {
+	if merged, err := b.loadProjectConfig(workDir, b.cfg); err == nil {
 		cfg = merged
 	}
 	return BuildInteractiveClaudeCmd(cfg, channelID, workDir, sessionID, forkSession)
@@ -682,7 +724,7 @@ func (b *ClaudeCmdBuilder) BuildInteractiveCmd(channelID, dirPath, sessionID str
 // filterMountedCopyFiles removes entries from copyFiles whose expanded paths
 // are already bind-mounted into the container, avoiding "device or resource busy"
 // errors from CopyToContainer.
-func filterMountedCopyFiles(copyFiles, binds []string) []string {
+func (r *DockerRunner) filterMountedCopyFiles(copyFiles, binds []string) []string {
 	// Build set of bind-mounted container paths.
 	mounted := make(map[string]struct{}, len(binds))
 	for _, b := range binds {
@@ -693,7 +735,7 @@ func filterMountedCopyFiles(copyFiles, binds []string) []string {
 
 	var filtered []string
 	for _, f := range copyFiles {
-		expanded, err := expandPath(f)
+		expanded, err := r.expandPath(f)
 		if err != nil {
 			filtered = append(filtered, f) // keep on error; copyFiles handles it
 			continue
@@ -711,12 +753,12 @@ func filterMountedCopyFiles(copyFiles, binds []string) []string {
 // Files that don't exist are silently skipped.
 func (r *DockerRunner) copyFiles(ctx context.Context, containerID string, files []string) error {
 	for _, f := range files {
-		expanded, err := expandPath(f)
+		expanded, err := r.expandPath(f)
 		if err != nil {
 			return fmt.Errorf("expanding path %s: %w", f, err)
 		}
 
-		data, err := osReadFile(expanded)
+		data, err := r.sys.ReadFile(expanded)
 		if os.IsNotExist(err) {
 			continue
 		}
@@ -758,7 +800,7 @@ func (r *DockerRunner) createAndStartContainer(
 		workDir = dirPath
 	}
 
-	cfg, err := config.LoadProjectConfig(workDir, r.cfg)
+	cfg, err := r.loadProjectConfig(workDir, r.cfg)
 	if err != nil {
 		return "", "", fmt.Errorf("loading project config: %w", err)
 	}
@@ -771,8 +813,8 @@ func (r *DockerRunner) createAndStartContainer(
 	}
 
 	binds, chownPaths := r.buildContainerMounts(cfg.Mounts, workDir)
-	for _, f := range filterMountedCopyFiles(cfg.CopyFiles, binds) {
-		if expanded, err := expandPath(f); err == nil {
+	for _, f := range r.filterMountedCopyFiles(cfg.CopyFiles, binds) {
+		if expanded, err := r.expandPath(f); err == nil {
 			chownPaths = append(chownPaths, expanded)
 		}
 	}
@@ -781,8 +823,13 @@ func (r *DockerRunner) createAndStartContainer(
 	}
 
 	// Ensure workDir exists on host (it's bind-mounted into the container).
-	if err := osMkdirAll(workDir, 0o755); err != nil {
+	if err := r.sys.MkdirAll(workDir, 0o755); err != nil {
 		return "", "", fmt.Errorf("creating work dir: %w", err)
+	}
+
+	// Initialize git in auto-created work directories so the agent can use version control.
+	if dirPath == "" {
+		_, _ = r.sys.ExecCommandOutput("git", "init", workDir)
 	}
 
 	mcpConfigPath, err = r.writeMCPConfig(workDir, channelID, apiURL, authorID, cfg)
@@ -803,13 +850,22 @@ func (r *DockerRunner) createAndStartContainer(
 		Labels:     map[string]string{channelLabelKey: channelID},
 	}
 
-	name := containerName(channelID, dirPath)
+	// Connect agent container to the channel's Docker network so mcp-browser
+	// can reach the Chrome sidecar container by hostname.
+	if cfg.BrowserEnabled {
+		netName := browser.NetworkName(channelID)
+		_ = r.client.NetworkEnsure(ctx, netName)
+		containerCfg.NetworkName = netName
+		containerCfg.Hostname = "loop-agent-" + channelID
+	}
+
+	name := r.containerName(channelID, dirPath)
 	containerID, err = r.client.ContainerCreate(ctx, containerCfg, name)
 	if err != nil {
 		return "", mcpConfigPath, fmt.Errorf("creating container: %w", err)
 	}
 
-	if err := r.copyFiles(ctx, containerID, filterMountedCopyFiles(cfg.CopyFiles, binds)); err != nil {
+	if err := r.copyFiles(ctx, containerID, r.filterMountedCopyFiles(cfg.CopyFiles, binds)); err != nil {
 		return containerID, mcpConfigPath, fmt.Errorf("copying files: %w", err)
 	}
 
@@ -880,6 +936,9 @@ func (r *DockerRunner) waitForExit(ctx context.Context, containerID string) (int
 	waitCh, errCh := r.client.ContainerWait(ctx, containerID)
 	select {
 	case <-ctx.Done():
+		stopCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
+		_ = r.client.ContainerStop(stopCtx, containerID)
 		return 0, fmt.Errorf("container execution timed out: %w", ctx.Err())
 	case err := <-errCh:
 		if err != nil {
@@ -1006,6 +1065,8 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 					cb.onActivity("subagent_started", evt.Description)
 				case "task_progress":
 					cb.onActivity("subagent_progress", evt.Description)
+				case "status":
+					cb.onActivity(evt.Status, evt.Description)
 				}
 			}
 		case "result":
@@ -1057,7 +1118,7 @@ func (r *DockerRunner) Cleanup(ctx context.Context) error {
 // scheduleRemove removes a container after a delay so that `docker logs`
 // remains available for debugging shortly after the run completes.
 func (r *DockerRunner) scheduleRemove(containerID string) {
-	osTimeAfterFunc(r.cfg.ContainerKeepAlive, func() {
+	r.osTimeAfterFunc(r.cfg.ContainerKeepAlive, func() {
 		_ = r.client.ContainerRemove(context.Background(), containerID)
 	})
 }

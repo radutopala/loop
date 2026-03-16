@@ -37,6 +37,11 @@
   //"claude_bin_path": "claude",
   //"streaming_enabled": true, // stream intermediate Claude turns to chat as they happen
 
+  // Browser automation: Chrome sidecar container for CDP-based browser tools.
+  // When enabled, Chrome starts lazily on first use and auto-stops after 5 min idle.
+  //"browser_enabled": true, // set to false to disable browser tools entirely
+  //"chrome_image": "loop-chrome:latest",
+
   // RBAC permissions: owners can do everything (including allow/deny); members can trigger and manage tasks.
   // If all config and DB permissions are empty, everyone is treated as owner (bootstrap mode).
   //"permissions": {

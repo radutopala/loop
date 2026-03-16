@@ -11,7 +11,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
-	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/testutil"
 	"github.com/radutopala/loop/internal/types"
@@ -32,10 +31,11 @@ func (m *MockThreadCreator) DeleteThread(ctx context.Context, threadID string) e
 
 type ThreadServiceSuite struct {
 	suite.Suite
-	store   *testutil.MockStore
-	creator *MockThreadCreator
-	svc     ThreadEnsurer
-	ctx     context.Context
+	store     *testutil.MockStore
+	creator   *MockThreadCreator
+	svc       ThreadEnsurer
+	threadSvc *threadService
+	ctx       context.Context
 }
 
 func TestThreadServiceSuite(t *testing.T) {
@@ -47,7 +47,9 @@ func (s *ThreadServiceSuite) SetupTest() {
 	s.creator = new(MockThreadCreator)
 	s.ctx = context.Background()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.svc = NewThreadService(s.store, s.creator, logger)
+	svc := NewThreadService(s.store, s.creator, logger)
+	s.threadSvc = svc.(*threadService)
+	s.svc = svc
 }
 
 func (s *ThreadServiceSuite) TestCreateThreadSuccess() {
@@ -246,9 +248,7 @@ func (s *ThreadServiceSuite) TestDeleteThreadDBError() {
 }
 
 func (s *ThreadServiceSuite) TestCreateThreadCreatorReturnsEmptyID() {
-	origGen := generateThreadID
-	generateThreadID = func() string { return "fallback-id" }
-	s.T().Cleanup(func() { generateThreadID = origGen })
+	s.threadSvc.generateThreadID = func() string { return "fallback-id" }
 
 	s.store.On("GetChannel", s.ctx, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", GuildID: "guild-1", DirPath: "/work", Platform: types.PlatformLocal}, nil)
@@ -269,10 +269,7 @@ func (s *ThreadServiceSuite) TestCreateThreadCreatorReturnsEmptyID() {
 func (s *ThreadServiceSuite) TestCreateThreadLocalPlatformNilCreator() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	svc := NewThreadService(s.store, nil, logger)
-
-	origGen := generateThreadID
-	generateThreadID = func() string { return "local-thread-abc" }
-	s.T().Cleanup(func() { generateThreadID = origGen })
+	svc.(*threadService).generateThreadID = func() string { return "local-thread-abc" }
 
 	s.store.On("GetChannel", s.ctx, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", GuildID: "", DirPath: "/work", Platform: types.PlatformLocal}, nil)
@@ -300,9 +297,7 @@ func (s *ThreadServiceSuite) TestDeleteThreadLocalPlatformNilCreator() {
 }
 
 func (s *ThreadServiceSuite) TestDeleteThreadMCPConfigErrorLogsWarning() {
-	orig := bot.RemoveMCPConfig
-	s.T().Cleanup(func() { bot.RemoveMCPConfig = orig })
-	bot.RemoveMCPConfig = func(string, string) error { return errors.New("rm error") }
+	s.threadSvc.removeMCPConfig = func(string, string) error { return errors.New("rm error") }
 
 	s.store.On("GetChannel", s.ctx, "thread-1").
 		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1", DirPath: "/work"}, nil)
@@ -314,10 +309,10 @@ func (s *ThreadServiceSuite) TestDeleteThreadMCPConfigErrorLogsWarning() {
 	s.store.AssertExpectations(s.T())
 }
 
-// origGenerateThreadID captures the default generateThreadID before any test overrides it.
-var origGenerateThreadID = generateThreadID
-
 func TestGenerateThreadIDDefault(t *testing.T) {
-	got := origGenerateThreadID()
+	store := new(testutil.MockStore)
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	svc := NewThreadService(store, nil, logger)
+	got := svc.(*threadService).generateThreadID()
 	require.Len(t, got, 12) // 6 bytes = 12 hex chars
 }

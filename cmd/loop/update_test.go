@@ -11,22 +11,17 @@ import (
 	"os"
 	"testing"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/testutil"
 )
 
 type UpdateSuite struct {
 	suite.Suite
-	origVersion              string
-	origGetLatestVersionFunc func() (string, error)
-	origOsExecutable         func() (string, error)
-	origFilepathSymlinks     func(string) (string, error)
-	origHttpGet              func(string) (*http.Response, error)
-	origOsChmod              func(string, os.FileMode) error
-	origOsRename             func(string, string) error
-	origOsRemove             func(string) error
-	origOsCreateTemp         func(string, string) (*os.File, error)
-	origReleasesURL          string
+	app *app
+	sys *testutil.MockSystem
 }
 
 func TestUpdateSuite(t *testing.T) {
@@ -34,59 +29,42 @@ func TestUpdateSuite(t *testing.T) {
 }
 
 func (s *UpdateSuite) SetupTest() {
-	s.origVersion = version
-	s.origGetLatestVersionFunc = getLatestVersionFunc
-	s.origOsExecutable = osExecutable
-	s.origFilepathSymlinks = filepathSymlinks
-	s.origHttpGet = httpGet
-	s.origOsChmod = osChmod
-	s.origOsRename = osRename
-	s.origOsRemove = osRemove
-	s.origOsCreateTemp = osCreateTemp
-	s.origReleasesURL = releasesURL
-}
-
-func (s *UpdateSuite) TearDownTest() {
-	version = s.origVersion
-	getLatestVersionFunc = s.origGetLatestVersionFunc
-	osExecutable = s.origOsExecutable
-	filepathSymlinks = s.origFilepathSymlinks
-	httpGet = s.origHttpGet
-	osChmod = s.origOsChmod
-	osRename = s.origOsRename
-	osRemove = s.origOsRemove
-	osCreateTemp = s.origOsCreateTemp
-	releasesURL = s.origReleasesURL
+	s.app = newApp()
+	s.sys = newPassthroughMock()
+	s.app.sys = s.sys
 }
 
 func (s *UpdateSuite) TestDoUpdateAlreadyUpToDate() {
-	version = "1.0.0"
-	getLatestVersionFunc = func() (string, error) { return "1.0.0", nil }
+	s.app.version = "1.0.0"
+	s.app.getLatestVersionFn = func() (string, error) { return "1.0.0", nil }
 
-	err := doUpdate()
+	err := s.app.doUpdate()
 	require.NoError(s.T(), err)
 }
 
 func (s *UpdateSuite) TestDoUpdateDevVersion() {
-	version = "dev"
+	s.app.version = "dev"
 	tmpDir := s.T().TempDir()
 
 	exePath := tmpDir + "/loop"
 	require.NoError(s.T(), os.WriteFile(exePath, []byte("old"), 0755))
 
-	getLatestVersionFunc = func() (string, error) { return "1.0.0", nil }
-	osExecutable = func() (string, error) { return exePath, nil }
-	filepathSymlinks = func(p string) (string, error) { return p, nil }
+	s.app.getLatestVersionFn = func() (string, error) { return "1.0.0", nil }
+	s.sys.Override("Executable").Return(exePath, nil)
+	evalCall := s.sys.Override("EvalSymlinks", mock.Anything).Return("", nil)
+	evalCall.RunFn = func(args mock.Arguments) {
+		evalCall.ReturnArguments = mock.Arguments{args.String(0), nil}
+	}
 
 	archive := createTestTarGz(s.T(), "loop", "new binary content")
-	httpGet = func(_ string) (*http.Response, error) {
+	s.app.httpGet = func(_ string) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(bytes.NewReader(archive)),
 		}, nil
 	}
 
-	err := doUpdate()
+	err := s.app.doUpdate()
 	require.NoError(s.T(), err)
 
 	content, err := os.ReadFile(exePath)
@@ -95,25 +73,28 @@ func (s *UpdateSuite) TestDoUpdateDevVersion() {
 }
 
 func (s *UpdateSuite) TestDoUpdateNewVersionAvailable() {
-	version = "0.9.0"
+	s.app.version = "0.9.0"
 	tmpDir := s.T().TempDir()
 
 	exePath := tmpDir + "/loop"
 	require.NoError(s.T(), os.WriteFile(exePath, []byte("old"), 0755))
 
-	getLatestVersionFunc = func() (string, error) { return "1.0.0", nil }
-	osExecutable = func() (string, error) { return exePath, nil }
-	filepathSymlinks = func(p string) (string, error) { return p, nil }
+	s.app.getLatestVersionFn = func() (string, error) { return "1.0.0", nil }
+	s.sys.Override("Executable").Return(exePath, nil)
+	evalCall := s.sys.Override("EvalSymlinks", mock.Anything).Return("", nil)
+	evalCall.RunFn = func(args mock.Arguments) {
+		evalCall.ReturnArguments = mock.Arguments{args.String(0), nil}
+	}
 
 	archive := createTestTarGz(s.T(), "loop", "updated binary")
-	httpGet = func(_ string) (*http.Response, error) {
+	s.app.httpGet = func(_ string) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(bytes.NewReader(archive)),
 		}, nil
 	}
 
-	err := doUpdate()
+	err := s.app.doUpdate()
 	require.NoError(s.T(), err)
 
 	content, err := os.ReadFile(exePath)
@@ -122,88 +103,91 @@ func (s *UpdateSuite) TestDoUpdateNewVersionAvailable() {
 }
 
 func (s *UpdateSuite) TestDoUpdateGetLatestVersionError() {
-	version = "1.0.0"
-	getLatestVersionFunc = func() (string, error) { return "", errors.New("network error") }
+	s.app.version = "1.0.0"
+	s.app.getLatestVersionFn = func() (string, error) { return "", errors.New("network error") }
 
-	err := doUpdate()
+	err := s.app.doUpdate()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "failed to get latest version")
 }
 
 func (s *UpdateSuite) TestDoUpdateBadCurrentVersion() {
-	version = "not-semver"
-	getLatestVersionFunc = func() (string, error) { return "1.0.0", nil }
+	s.app.version = "not-semver"
+	s.app.getLatestVersionFn = func() (string, error) { return "1.0.0", nil }
 
-	err := doUpdate()
+	err := s.app.doUpdate()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "failed to parse current version")
 }
 
 func (s *UpdateSuite) TestDoUpdateBadLatestVersion() {
-	version = "1.0.0"
-	getLatestVersionFunc = func() (string, error) { return "not-semver", nil }
+	s.app.version = "1.0.0"
+	s.app.getLatestVersionFn = func() (string, error) { return "not-semver", nil }
 
-	err := doUpdate()
+	err := s.app.doUpdate()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "failed to parse latest version")
 }
 
 func (s *UpdateSuite) TestDoUpdateExecutableError() {
-	version = "0.9.0"
-	getLatestVersionFunc = func() (string, error) { return "1.0.0", nil }
-	osExecutable = func() (string, error) { return "", errors.New("exe error") }
+	s.app.version = "0.9.0"
+	s.app.getLatestVersionFn = func() (string, error) { return "1.0.0", nil }
+	s.sys.Override("Executable").Return("", errors.New("exe error"))
 
-	err := doUpdate()
+	err := s.app.doUpdate()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "failed to get executable path")
 }
 
 func (s *UpdateSuite) TestDoUpdateSymlinksError() {
-	version = "0.9.0"
-	getLatestVersionFunc = func() (string, error) { return "1.0.0", nil }
-	osExecutable = func() (string, error) { return "/tmp/loop", nil }
-	filepathSymlinks = func(_ string) (string, error) { return "", errors.New("symlink error") }
+	s.app.version = "0.9.0"
+	s.app.getLatestVersionFn = func() (string, error) { return "1.0.0", nil }
+	s.sys.Override("Executable").Return("/tmp/loop", nil)
+	s.sys.Override("EvalSymlinks", mock.Anything).Return("", errors.New("symlink error"))
 
-	err := doUpdate()
+	err := s.app.doUpdate()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "failed to resolve symlinks")
 }
 
 func (s *UpdateSuite) TestDoUpdateDownloadError() {
-	version = "0.9.0"
+	s.app.version = "0.9.0"
 	tmpDir := s.T().TempDir()
 	exePath := tmpDir + "/loop"
 	require.NoError(s.T(), os.WriteFile(exePath, []byte("old"), 0755))
 
-	getLatestVersionFunc = func() (string, error) { return "1.0.0", nil }
-	osExecutable = func() (string, error) { return exePath, nil }
-	filepathSymlinks = func(p string) (string, error) { return p, nil }
-	httpGet = func(_ string) (*http.Response, error) { return nil, errors.New("download error") }
+	s.app.getLatestVersionFn = func() (string, error) { return "1.0.0", nil }
+	s.sys.Override("Executable").Return(exePath, nil)
+	evalCall := s.sys.Override("EvalSymlinks", mock.Anything).Return("", nil)
+	evalCall.RunFn = func(args mock.Arguments) {
+		evalCall.ReturnArguments = mock.Arguments{args.String(0), nil}
+	}
+	s.app.httpGet = func(_ string) (*http.Response, error) { return nil, errors.New("download error") }
 
-	err := doUpdate()
+	err := s.app.doUpdate()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "failed to update")
 }
 
 func (s *UpdateSuite) TestNewUpdateCmdRunE() {
-	version = "1.0.0"
-	getLatestVersionFunc = func() (string, error) { return "1.0.0", nil }
+	s.app.version = "1.0.0"
+	s.app.getLatestVersionFn = func() (string, error) { return "1.0.0", nil }
 
-	cmd := newUpdateCmd()
+	cmd := s.app.newUpdateCmd()
 	err := cmd.RunE(cmd, nil)
 	require.NoError(s.T(), err)
 }
 
 func (s *UpdateSuite) TestDownloadAndReplaceHTTPError() {
-	httpGet = func(_ string) (*http.Response, error) { return nil, errors.New("connection refused") }
+	s.app.httpGet = func(_ string) (*http.Response, error) { return nil, errors.New("connection refused") }
 
-	err := downloadAndReplace("1.0.0", "/tmp/loop")
+	err := s.app.downloadAndReplace("1.0.0", "/tmp/loop")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "connection refused")
 }
 
 func (s *UpdateSuite) TestDownloadAndReplaceNon200() {
-	httpGet = func(_ string) (*http.Response, error) {
+	s.app.httpGet = func(_ string) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusNotFound,
 			Status:     "404 Not Found",
@@ -211,22 +195,22 @@ func (s *UpdateSuite) TestDownloadAndReplaceNon200() {
 		}, nil
 	}
 
-	err := downloadAndReplace("1.0.0", "/tmp/loop")
+	err := s.app.downloadAndReplace("1.0.0", "/tmp/loop")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "download failed")
 }
 
 func (s *UpdateSuite) TestDownloadAndReplaceTempFileError() {
-	httpGet = func(_ string) (*http.Response, error) {
+	s.app.httpGet = func(_ string) (*http.Response, error) {
 		archive := createTestTarGz(s.T(), "loop", "binary")
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(bytes.NewReader(archive)),
 		}, nil
 	}
-	osCreateTemp = func(_, _ string) (*os.File, error) { return nil, errors.New("temp error") }
+	s.sys.Override("CreateTemp", mock.Anything, mock.Anything).Return(nil, errors.New("temp error"))
 
-	err := downloadAndReplace("1.0.0", "/tmp/loop")
+	err := s.app.downloadAndReplace("1.0.0", "/tmp/loop")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "temp error")
 }
@@ -237,15 +221,15 @@ func (s *UpdateSuite) TestDownloadAndReplaceChmodError() {
 	require.NoError(s.T(), os.WriteFile(exePath, []byte("old"), 0755))
 
 	archive := createTestTarGz(s.T(), "loop", "new")
-	httpGet = func(_ string) (*http.Response, error) {
+	s.app.httpGet = func(_ string) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(bytes.NewReader(archive)),
 		}, nil
 	}
-	osChmod = func(_ string, _ os.FileMode) error { return errors.New("chmod error") }
+	s.sys.Override("Chmod", mock.Anything, mock.Anything).Return(errors.New("chmod error"))
 
-	err := downloadAndReplace("1.0.0", exePath)
+	err := s.app.downloadAndReplace("1.0.0", exePath)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "chmod error")
 }
@@ -255,14 +239,14 @@ func (s *UpdateSuite) TestDownloadAndReplaceRenameOldError() {
 	exePath := tmpDir + "/nonexistent"
 
 	archive := createTestTarGz(s.T(), "loop", "new")
-	httpGet = func(_ string) (*http.Response, error) {
+	s.app.httpGet = func(_ string) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(bytes.NewReader(archive)),
 		}, nil
 	}
 
-	err := downloadAndReplace("1.0.0", exePath)
+	err := s.app.downloadAndReplace("1.0.0", exePath)
 	require.Error(s.T(), err)
 }
 
@@ -272,25 +256,25 @@ func (s *UpdateSuite) TestDownloadAndReplaceRenameNewErrorRestoresOld() {
 	require.NoError(s.T(), os.WriteFile(exePath, []byte("original"), 0755))
 
 	archive := createTestTarGz(s.T(), "loop", "new")
-	httpGet = func(_ string) (*http.Response, error) {
+	s.app.httpGet = func(_ string) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(bytes.NewReader(archive)),
 		}, nil
 	}
 
-	// First rename (old) succeeds, second rename (new->exe) fails
-	callCount := 0
-	origRename := s.origOsRename
-	osRename = func(src, dst string) error {
-		callCount++
-		if callCount == 2 {
-			return errors.New("rename new error")
-		}
-		return origRename(src, dst)
-	}
+	// First rename (old→old.old) succeeds with real OS rename
+	s.sys.Override("Rename", mock.Anything, mock.Anything).Return(nil).Once().Run(func(args mock.Arguments) {
+		_ = os.Rename(args.String(0), args.String(1))
+	})
+	// Second rename (tmp→exe) fails
+	s.sys.On("Rename", mock.Anything, mock.Anything).Return(errors.New("rename new error")).Once()
+	// Third rename (rollback: old.old→exe) succeeds with real OS rename
+	s.sys.On("Rename", mock.Anything, mock.Anything).Return(nil).Once().Run(func(args mock.Arguments) {
+		_ = os.Rename(args.String(0), args.String(1))
+	})
 
-	err := downloadAndReplace("1.0.0", exePath)
+	err := s.app.downloadAndReplace("1.0.0", exePath)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "rename new error")
 
@@ -301,7 +285,7 @@ func (s *UpdateSuite) TestDownloadAndReplaceRenameNewErrorRestoresOld() {
 }
 
 func (s *UpdateSuite) TestNewUpdateCmd() {
-	cmd := newUpdateCmd()
+	cmd := s.app.newUpdateCmd()
 	require.Equal(s.T(), "update", cmd.Use)
 	require.Contains(s.T(), cmd.Aliases, "u")
 }
@@ -442,14 +426,14 @@ func createTestTarGzWithPath(t *testing.T, path, content string) []byte {
 }
 
 func (s *UpdateSuite) TestDownloadAndReplaceExtractError() {
-	httpGet = func(_ string) (*http.Response, error) {
+	s.app.httpGet = func(_ string) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusOK,
 			Body:       io.NopCloser(bytes.NewReader([]byte("not a tarball"))),
 		}, nil
 	}
 
-	err := downloadAndReplace("1.0.0", "/tmp/loop")
+	err := s.app.downloadAndReplace("1.0.0", "/tmp/loop")
 	require.Error(s.T(), err)
 }
 
@@ -462,23 +446,19 @@ func (s *UpdateSuite) TestGetLatestVersionRedirect() {
 	}))
 	defer srv.Close()
 
-	releasesURL = srv.URL
-
-	v, err := getLatestVersion()
+	v, err := getLatestVersion(srv.URL)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "1.2.3", v)
 }
 
-func (s *UpdateSuite) TestGetLatestVersionMovedPermanently() {
+func (s *UpdateSuite) TestGetLatestVersionNoVPrefix() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Location", "https://github.com/radutopala/loop/releases/tag/v2.0.0")
+		w.Header().Set("Location", "https://github.com/radutopala/loop/releases/tag/2.0.0")
 		w.WriteHeader(http.StatusMovedPermanently)
 	}))
 	defer srv.Close()
 
-	releasesURL = srv.URL
-
-	v, err := getLatestVersion()
+	v, err := getLatestVersion(srv.URL)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "2.0.0", v)
 }
@@ -489,31 +469,25 @@ func (s *UpdateSuite) TestGetLatestVersionUnexpectedStatus() {
 	}))
 	defer srv.Close()
 
-	releasesURL = srv.URL
-
-	_, err := getLatestVersion()
+	_, err := getLatestVersion(srv.URL)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "unexpected status")
 }
 
-func (s *UpdateSuite) TestGetLatestVersionBadRedirectLocation() {
+func (s *UpdateSuite) TestGetLatestVersionBadLocation() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Location", "https://github.com/radutopala/loop/releases")
+		w.Header().Set("Location", "https://example.com/no-tag-here")
 		w.WriteHeader(http.StatusFound)
 	}))
 	defer srv.Close()
 
-	releasesURL = srv.URL
-
-	_, err := getLatestVersion()
+	_, err := getLatestVersion(srv.URL)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "unexpected redirect location")
 }
 
 func (s *UpdateSuite) TestGetLatestVersionNetworkError() {
-	releasesURL = "http://127.0.0.1:0/nonexistent"
-
-	_, err := getLatestVersion()
+	_, err := getLatestVersion("http://127.0.0.1:0/nonexistent")
 	require.Error(s.T(), err)
 }
 

@@ -14,8 +14,7 @@ import (
 
 type ConfigSuite struct {
 	suite.Suite
-	origHomeDir  func() (string, error)
-	origReadFile func(string) ([]byte, error)
+	loader Loader
 }
 
 func TestConfigSuite(t *testing.T) {
@@ -23,16 +22,12 @@ func TestConfigSuite(t *testing.T) {
 }
 
 func (s *ConfigSuite) SetupTest() {
-	s.origHomeDir = userHomeDir
-	s.origReadFile = readFile
-	userHomeDir = func() (string, error) {
-		return "/home/testuser", nil
+	s.loader = Loader{
+		userHomeDir: func() (string, error) {
+			return "/home/testuser", nil
+		},
+		readFile: os.ReadFile,
 	}
-}
-
-func (s *ConfigSuite) TearDownTest() {
-	userHomeDir = s.origHomeDir
-	readFile = s.origReadFile
 }
 
 func (s *ConfigSuite) minimalJSON() []byte {
@@ -40,7 +35,7 @@ func (s *ConfigSuite) minimalJSON() []byte {
 }
 
 func (s *ConfigSuite) setupProjectReadFile(projectJSON string) {
-	readFile = func(path string) ([]byte, error) {
+	s.loader.readFile = func(path string) ([]byte, error) {
 		if path == "/project/.loop/config.json" {
 			return []byte(projectJSON), nil
 		}
@@ -49,11 +44,11 @@ func (s *ConfigSuite) setupProjectReadFile(projectJSON string) {
 }
 
 func (s *ConfigSuite) TestLoadDefaults() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return s.minimalJSON(), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "test-token", cfg.DiscordToken)
 	require.Equal(s.T(), "test-app-id", cfg.DiscordAppID)
@@ -63,7 +58,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Equal(s.T(), "info", cfg.LogLevel)
 	require.Equal(s.T(), "text", cfg.LogFormat)
 	require.Equal(s.T(), "loop-agent:latest", cfg.ContainerImage)
-	require.Equal(s.T(), 3600*time.Second, cfg.ContainerTimeout)
+	require.Equal(s.T(), 43200*time.Second, cfg.ContainerTimeout)
 	require.Equal(s.T(), int64(1024), cfg.ContainerMemoryMB)
 	require.Equal(s.T(), 1.0, cfg.ContainerCPUs)
 	require.Equal(s.T(), 300*time.Second, cfg.ContainerKeepAlive)
@@ -74,11 +69,12 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Empty(s.T(), cfg.DiscordGuildID)
 	require.Nil(s.T(), cfg.MCPServers)
 	require.True(s.T(), cfg.StreamingEnabled)
+	require.True(s.T(), cfg.BrowserEnabled)
 	require.Equal(s.T(), []string{"~/.claude.json"}, cfg.CopyFiles)
 }
 
 func (s *ConfigSuite) TestLoadCustomValues() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord"],
 			"discord_token": "custom-token",
@@ -100,7 +96,7 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "custom-token", cfg.DiscordToken)
 	require.Equal(s.T(), "custom-app-id", cfg.DiscordAppID)
@@ -121,7 +117,7 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 }
 
 func (s *ConfigSuite) TestLoadStreamingEnabledExplicitFalse() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord"],
 			"discord_token": "t",
@@ -130,9 +126,24 @@ func (s *ConfigSuite) TestLoadStreamingEnabledExplicitFalse() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.False(s.T(), cfg.StreamingEnabled)
+}
+
+func (s *ConfigSuite) TestLoadBrowserEnabledExplicitFalse() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"browser_enabled": false
+		}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.False(s.T(), cfg.BrowserEnabled)
 }
 
 func (s *ConfigSuite) TestMissingRequired() {
@@ -175,10 +186,10 @@ func (s *ConfigSuite) TestMissingRequired() {
 
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
-			readFile = func(_ string) ([]byte, error) {
+			s.loader.readFile = func(_ string) ([]byte, error) {
 				return []byte(tc.json), nil
 			}
-			_, err := Load()
+			_, err := s.loader.load()
 			require.Error(s.T(), err)
 			require.Contains(s.T(), err.Error(), tc.errText)
 		})
@@ -186,20 +197,20 @@ func (s *ConfigSuite) TestMissingRequired() {
 }
 
 func (s *ConfigSuite) TestPlatformCaseInsensitive() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["Discord"],
 			"discord_token": "tok",
 			"discord_app_id": "app"
 		}`), nil
 	}
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []types.Platform{types.PlatformDiscord}, cfg.Platforms)
 }
 
 func (s *ConfigSuite) TestSlackConfigLoads() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["slack"],
 			"slack_bot_token": "xoxb-test-token",
@@ -207,7 +218,7 @@ func (s *ConfigSuite) TestSlackConfigLoads() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "xoxb-test-token", cfg.SlackBotToken)
 	require.Equal(s.T(), "xapp-test-token", cfg.SlackAppToken)
@@ -217,72 +228,72 @@ func (s *ConfigSuite) TestSlackConfigLoads() {
 }
 
 func (s *ConfigSuite) TestPlatformDiscord() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return s.minimalJSON(), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []types.Platform{types.PlatformDiscord}, cfg.Platforms)
 }
 
 func (s *ConfigSuite) TestPlatformSlack() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{"platforms":["slack"],"slack_bot_token":"xoxb-tok","slack_app_token":"xapp-tok"}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []types.Platform{types.PlatformSlack}, cfg.Platforms)
 }
 
 func (s *ConfigSuite) TestFileNotFound() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return nil, os.ErrNotExist
 	}
-	_, err := Load()
+	_, err := s.loader.load()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "reading config file")
 }
 
 func (s *ConfigSuite) TestReadError() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return nil, errors.New("permission denied")
 	}
-	_, err := Load()
+	_, err := s.loader.load()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "reading config file")
 }
 
 func (s *ConfigSuite) TestInvalidJSON() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{not valid json`), nil
 	}
-	_, err := Load()
+	_, err := s.loader.load()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "parsing config file")
 }
 
 func (s *ConfigSuite) TestInvalidJSONTypes() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{"discord_token": 123}`), nil
 	}
-	_, err := Load()
+	_, err := s.loader.load()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "parsing config file")
 }
 
 func (s *ConfigSuite) TestHomeDirError() {
-	userHomeDir = func() (string, error) {
+	s.loader.userHomeDir = func() (string, error) {
 		return "", os.ErrNotExist
 	}
-	_, err := Load()
+	_, err := s.loader.load()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "getting home directory")
 }
 
 func (s *ConfigSuite) TestMCPServersLoaded() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord"],
 			"discord_token": "tok",
@@ -299,7 +310,7 @@ func (s *ConfigSuite) TestMCPServersLoaded() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Len(s.T(), cfg.MCPServers, 1)
 	srv := cfg.MCPServers["custom-tool"]
@@ -309,7 +320,7 @@ func (s *ConfigSuite) TestMCPServersLoaded() {
 }
 
 func (s *ConfigSuite) TestMCPServersEmptyBlock() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord"],
 			"discord_token": "tok",
@@ -318,13 +329,13 @@ func (s *ConfigSuite) TestMCPServersEmptyBlock() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Nil(s.T(), cfg.MCPServers)
 }
 
 func (s *ConfigSuite) TestZeroNumericValues() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord"],
 			"discord_token": "tok",
@@ -337,7 +348,7 @@ func (s *ConfigSuite) TestZeroNumericValues() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), time.Duration(0), cfg.ContainerTimeout)
 	require.Equal(s.T(), int64(0), cfg.ContainerMemoryMB)
@@ -347,7 +358,7 @@ func (s *ConfigSuite) TestZeroNumericValues() {
 }
 
 func (s *ConfigSuite) TestJSONWithComments() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			// Required credentials
 			"platforms": ["discord"],
@@ -360,7 +371,7 @@ func (s *ConfigSuite) TestJSONWithComments() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "tok", cfg.DiscordToken)
 	require.Equal(s.T(), "debug", cfg.LogLevel)
@@ -382,12 +393,12 @@ func (s *ConfigSuite) TestDefaultHelpers() {
 }
 
 func (s *ConfigSuite) TestDefaultReadFile() {
-	_, err := s.origReadFile("/nonexistent/path/config.json")
+	_, err := os.ReadFile("/nonexistent/path/config.json")
 	require.Error(s.T(), err)
 }
 
 func (s *ConfigSuite) TestTaskTemplatesLoaded() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord"],
 			"discord_token": "tok",
@@ -411,7 +422,7 @@ func (s *ConfigSuite) TestTaskTemplatesLoaded() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Len(s.T(), cfg.TaskTemplates, 2)
 
@@ -431,17 +442,17 @@ func (s *ConfigSuite) TestTaskTemplatesLoaded() {
 }
 
 func (s *ConfigSuite) TestTaskTemplatesAbsent() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return s.minimalJSON(), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), cfg.TaskTemplates)
 }
 
 func (s *ConfigSuite) TestTaskTemplatesEmpty() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord"],
 			"discord_token": "tok",
@@ -450,7 +461,7 @@ func (s *ConfigSuite) TestTaskTemplatesEmpty() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), cfg.TaskTemplates)
 }
@@ -480,7 +491,7 @@ func (s *ConfigSuite) TestTemplatesEmbedded() {
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigNoFile() {
-	readFile = func(path string) ([]byte, error) {
+	s.loader.readFile = func(path string) ([]byte, error) {
 		if path == "/project/.loop/config.json" {
 			return nil, os.ErrNotExist
 		}
@@ -492,13 +503,13 @@ func (s *ConfigSuite) TestLoadProjectConfigNoFile() {
 		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
 	}
 
-	merged, err := LoadProjectConfig("/project", mainCfg)
+	merged, err := s.loader.loadProjectConfig("/project", mainCfg)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), mainCfg, merged) // Should return same config
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigReadError() {
-	readFile = func(path string) ([]byte, error) {
+	s.loader.readFile = func(path string) ([]byte, error) {
 		if path == "/project/.loop/config.json" {
 			return nil, errors.New("permission denied")
 		}
@@ -506,13 +517,13 @@ func (s *ConfigSuite) TestLoadProjectConfigReadError() {
 	}
 
 	mainCfg := &Config{}
-	_, err := LoadProjectConfig("/project", mainCfg)
+	_, err := s.loader.loadProjectConfig("/project", mainCfg)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "reading project config file")
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigInvalidJSON() {
-	readFile = func(path string) ([]byte, error) {
+	s.loader.readFile = func(path string) ([]byte, error) {
 		if path == "/project/.loop/config.json" {
 			return []byte(`{invalid json`), nil
 		}
@@ -520,13 +531,13 @@ func (s *ConfigSuite) TestLoadProjectConfigInvalidJSON() {
 	}
 
 	mainCfg := &Config{}
-	_, err := LoadProjectConfig("/project", mainCfg)
+	_, err := s.loader.loadProjectConfig("/project", mainCfg)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "parsing project config file")
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigInvalidJSONTypes() {
-	readFile = func(path string) ([]byte, error) {
+	s.loader.readFile = func(path string) ([]byte, error) {
 		if path == "/project/.loop/config.json" {
 			return []byte(`{"mounts": "not-an-array"}`), nil
 		}
@@ -534,13 +545,13 @@ func (s *ConfigSuite) TestLoadProjectConfigInvalidJSONTypes() {
 	}
 
 	mainCfg := &Config{}
-	_, err := LoadProjectConfig("/project", mainCfg)
+	_, err := s.loader.loadProjectConfig("/project", mainCfg)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "parsing project config file")
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigMountsOnly() {
-	readFile = func(path string) ([]byte, error) {
+	s.loader.readFile = func(path string) ([]byte, error) {
 		if path == "/project/.loop/config.json" {
 			return []byte(`{
 				"mounts": [
@@ -557,7 +568,7 @@ func (s *ConfigSuite) TestLoadProjectConfigMountsOnly() {
 		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
 	}
 
-	merged, err := LoadProjectConfig("/project", mainCfg)
+	merged, err := s.loader.loadProjectConfig("/project", mainCfg)
 	require.NoError(s.T(), err)
 
 	// Check mounts: project replaces global mounts
@@ -571,7 +582,7 @@ func (s *ConfigSuite) TestLoadProjectConfigMountsOnly() {
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigMCPServersOnly() {
-	readFile = func(path string) ([]byte, error) {
+	s.loader.readFile = func(path string) ([]byte, error) {
 		if path == "/project/.loop/config.json" {
 			return []byte(`{
 				"mcp": {
@@ -593,7 +604,7 @@ func (s *ConfigSuite) TestLoadProjectConfigMCPServersOnly() {
 		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
 	}
 
-	merged, err := LoadProjectConfig("/project", mainCfg)
+	merged, err := s.loader.loadProjectConfig("/project", mainCfg)
 	require.NoError(s.T(), err)
 
 	// Mounts unchanged
@@ -609,7 +620,7 @@ func (s *ConfigSuite) TestLoadProjectConfigMCPServersOnly() {
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigBothMountsAndMCP() {
-	readFile = func(path string) ([]byte, error) {
+	s.loader.readFile = func(path string) ([]byte, error) {
 		if path == "/project/.loop/config.json" {
 			return []byte(`{
 				"mounts": ["./data:/app/data"],
@@ -628,7 +639,7 @@ func (s *ConfigSuite) TestLoadProjectConfigBothMountsAndMCP() {
 		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
 	}
 
-	merged, err := LoadProjectConfig("/project", mainCfg)
+	merged, err := s.loader.loadProjectConfig("/project", mainCfg)
 	require.NoError(s.T(), err)
 
 	// Check mounts: project replaces global
@@ -642,7 +653,7 @@ func (s *ConfigSuite) TestLoadProjectConfigBothMountsAndMCP() {
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigMCPOverride() {
-	readFile = func(path string) ([]byte, error) {
+	s.loader.readFile = func(path string) ([]byte, error) {
 		if path == "/project/.loop/config.json" {
 			return []byte(`{
 				"mcp": {
@@ -659,7 +670,7 @@ func (s *ConfigSuite) TestLoadProjectConfigMCPOverride() {
 		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
 	}
 
-	merged, err := LoadProjectConfig("/project", mainCfg)
+	merged, err := s.loader.loadProjectConfig("/project", mainCfg)
 	require.NoError(s.T(), err)
 
 	// Project MCP server should override main
@@ -668,7 +679,7 @@ func (s *ConfigSuite) TestLoadProjectConfigMCPOverride() {
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigAbsolutePath() {
-	readFile = func(path string) ([]byte, error) {
+	s.loader.readFile = func(path string) ([]byte, error) {
 		if path == "/project/.loop/config.json" {
 			return []byte(`{
 				"mounts": [
@@ -682,7 +693,7 @@ func (s *ConfigSuite) TestLoadProjectConfigAbsolutePath() {
 
 	mainCfg := &Config{}
 
-	merged, err := LoadProjectConfig("/project", mainCfg)
+	merged, err := s.loader.loadProjectConfig("/project", mainCfg)
 	require.NoError(s.T(), err)
 
 	// Absolute and tilde paths should not be modified
@@ -692,7 +703,7 @@ func (s *ConfigSuite) TestLoadProjectConfigAbsolutePath() {
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigInvalidMountFormat() {
-	readFile = func(path string) ([]byte, error) {
+	s.loader.readFile = func(path string) ([]byte, error) {
 		if path == "/project/.loop/config.json" {
 			return []byte(`{
 				"mounts": ["invalid-mount-format"]
@@ -703,13 +714,13 @@ func (s *ConfigSuite) TestLoadProjectConfigInvalidMountFormat() {
 
 	mainCfg := &Config{}
 
-	_, err := LoadProjectConfig("/project", mainCfg)
+	_, err := s.loader.loadProjectConfig("/project", mainCfg)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "invalid mount format")
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigEmptyConfig() {
-	readFile = func(path string) ([]byte, error) {
+	s.loader.readFile = func(path string) ([]byte, error) {
 		if path == "/project/.loop/config.json" {
 			return []byte(`{}`), nil
 		}
@@ -721,7 +732,7 @@ func (s *ConfigSuite) TestLoadProjectConfigEmptyConfig() {
 		MCPServers: map[string]MCPServerConfig{"main-srv": {Command: "/bin/main"}},
 	}
 
-	merged, err := LoadProjectConfig("/project", mainCfg)
+	merged, err := s.loader.loadProjectConfig("/project", mainCfg)
 	require.NoError(s.T(), err)
 
 	// Main config should be unchanged
@@ -731,30 +742,8 @@ func (s *ConfigSuite) TestLoadProjectConfigEmptyConfig() {
 	require.Equal(s.T(), "/bin/main", merged.MCPServers["main-srv"].Command)
 }
 
-func (s *ConfigSuite) TestSetReadFile() {
-	// Test the test helper function
-	mockCalled := false
-	mockFn := func(_ string) ([]byte, error) {
-		mockCalled = true
-		return []byte("test"), nil
-	}
-
-	// Set mock
-	orig := TestSetReadFile(mockFn)
-	require.NotNil(s.T(), orig)
-
-	// Call to verify it's set
-	data, err := readFile("test")
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), []byte("test"), data)
-	require.True(s.T(), mockCalled)
-
-	// Restore
-	TestSetReadFile(orig)
-}
-
 func (s *ConfigSuite) TestAnthropicAPIKeyLoaded() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord"],
 			"discord_token": "tok",
@@ -763,24 +752,24 @@ func (s *ConfigSuite) TestAnthropicAPIKeyLoaded() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "sk-ant-api-key-123", cfg.AnthropicAPIKey)
 	require.Empty(s.T(), cfg.ClaudeCodeOAuthToken)
 }
 
 func (s *ConfigSuite) TestAnthropicAPIKeyAbsent() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return s.minimalJSON(), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), cfg.AnthropicAPIKey)
 }
 
 func (s *ConfigSuite) TestClaudeModelLoaded() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord"],
 			"discord_token": "tok",
@@ -789,17 +778,17 @@ func (s *ConfigSuite) TestClaudeModelLoaded() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "claude-sonnet-4-5-20250929", cfg.ClaudeModel)
 }
 
 func (s *ConfigSuite) TestClaudeModelAbsent() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return s.minimalJSON(), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), cfg.ClaudeModel)
 }
@@ -879,19 +868,23 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			name: "Container/Override",
 			projectJSON: `{
 				"container_image": "custom-agent:v3",
+				"chrome_image": "custom-chrome:v2",
 				"container_memory_mb": 2048,
 				"container_cpus": 4.0
 			}`,
 			mainCfg: &Config{
 				ContainerImage:    "loop-agent:latest",
+				ChromeImage:       "loop-chrome:latest",
 				ContainerMemoryMB: 512,
 				ContainerCPUs:     1.0,
 			},
 			assert: func(merged, main *Config) {
 				require.Equal(s.T(), "custom-agent:v3", merged.ContainerImage)
+				require.Equal(s.T(), "custom-chrome:v2", merged.ChromeImage)
 				require.Equal(s.T(), int64(2048), merged.ContainerMemoryMB)
 				require.Equal(s.T(), 4.0, merged.ContainerCPUs)
 				require.Equal(s.T(), "loop-agent:latest", main.ContainerImage)
+				require.Equal(s.T(), "loop-chrome:latest", main.ChromeImage)
 				require.Equal(s.T(), int64(512), main.ContainerMemoryMB)
 			},
 		},
@@ -1111,12 +1104,28 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 				require.Equal(s.T(), []string{"U1"}, merged.Permissions.Owners.Users)
 			},
 		},
+		{
+			name:        "BrowserEnabled/Override",
+			projectJSON: `{"browser_enabled": false}`,
+			mainCfg:     &Config{BrowserEnabled: true},
+			assert: func(merged, _ *Config) {
+				require.False(s.T(), merged.BrowserEnabled)
+			},
+		},
+		{
+			name:        "BrowserEnabled/NoOverride",
+			projectJSON: `{}`,
+			mainCfg:     &Config{BrowserEnabled: true},
+			assert: func(merged, _ *Config) {
+				require.True(s.T(), merged.BrowserEnabled)
+			},
+		},
 	}
 
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
 			s.setupProjectReadFile(tt.projectJSON)
-			merged, err := LoadProjectConfig("/project", tt.mainCfg)
+			merged, err := s.loader.loadProjectConfig("/project", tt.mainCfg)
 			require.NoError(s.T(), err)
 			tt.assert(merged, tt.mainCfg)
 		})
@@ -1155,7 +1164,7 @@ func (s *ConfigSuite) TestLoadProjectConfigNamedVolumes() {
 
 	mainCfg := &Config{}
 
-	merged, err := LoadProjectConfig("/project", mainCfg)
+	merged, err := s.loader.loadProjectConfig("/project", mainCfg)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), merged.Mounts, 4)
 	require.Equal(s.T(), "/project/data:/app/data", merged.Mounts[0])
@@ -1165,7 +1174,7 @@ func (s *ConfigSuite) TestLoadProjectConfigNamedVolumes() {
 }
 
 func (s *ConfigSuite) TestLoadEnvsFromGlobal() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord"],
 			"discord_token": "tok",
@@ -1174,7 +1183,7 @@ func (s *ConfigSuite) TestLoadEnvsFromGlobal() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "my-value", cfg.Envs["MY_VAR"])
 	require.Equal(s.T(), "0", cfg.Envs["NUM_VAR"])
@@ -1183,13 +1192,13 @@ func (s *ConfigSuite) TestLoadEnvsFromGlobal() {
 
 func (s *ConfigSuite) TestResolvePromptWithPrompt() {
 	tmpl := &TaskTemplate{Name: "test", Prompt: "do stuff"}
-	prompt, err := tmpl.ResolvePrompt("/loop")
+	prompt, err := tmpl.ResolvePrompt("/loop", s.loader.readFile)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "do stuff", prompt)
 }
 
 func (s *ConfigSuite) TestResolvePromptWithPromptPath() {
-	readFile = func(path string) ([]byte, error) {
+	s.loader.readFile = func(path string) ([]byte, error) {
 		if path == "/loop/templates/daily.md" {
 			return []byte("daily prompt content"), nil
 		}
@@ -1197,32 +1206,32 @@ func (s *ConfigSuite) TestResolvePromptWithPromptPath() {
 	}
 
 	tmpl := &TaskTemplate{Name: "test", PromptPath: "daily.md"}
-	prompt, err := tmpl.ResolvePrompt("/loop")
+	prompt, err := tmpl.ResolvePrompt("/loop", s.loader.readFile)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "daily prompt content", prompt)
 }
 
 func (s *ConfigSuite) TestResolvePromptWithBothSet() {
 	tmpl := &TaskTemplate{Name: "test", Prompt: "inline", PromptPath: "file.md"}
-	_, err := tmpl.ResolvePrompt("/loop")
+	_, err := tmpl.ResolvePrompt("/loop", s.loader.readFile)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "mutually exclusive")
 }
 
 func (s *ConfigSuite) TestResolvePromptWithNeitherSet() {
 	tmpl := &TaskTemplate{Name: "test"}
-	_, err := tmpl.ResolvePrompt("/loop")
+	_, err := tmpl.ResolvePrompt("/loop", s.loader.readFile)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "one of prompt or prompt_path is required")
 }
 
 func (s *ConfigSuite) TestResolvePromptFileReadError() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return nil, errors.New("file not found")
 	}
 
 	tmpl := &TaskTemplate{Name: "test", PromptPath: "missing.md"}
-	_, err := tmpl.ResolvePrompt("/loop")
+	_, err := tmpl.ResolvePrompt("/loop", s.loader.readFile)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "reading prompt file")
 }
@@ -1242,7 +1251,7 @@ func (s *ConfigSuite) TestLoadProjectConfigTemplatesWithPromptPath() {
 
 	mainCfg := &Config{}
 
-	merged, err := LoadProjectConfig("/project", mainCfg)
+	merged, err := s.loader.loadProjectConfig("/project", mainCfg)
 	require.NoError(s.T(), err)
 
 	require.Len(s.T(), merged.TaskTemplates, 1)
@@ -1252,7 +1261,7 @@ func (s *ConfigSuite) TestLoadProjectConfigTemplatesWithPromptPath() {
 }
 
 func (s *ConfigSuite) TestMemoryConfigOllama() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord"],
 			"discord_token": "t",
@@ -1268,7 +1277,7 @@ func (s *ConfigSuite) TestMemoryConfigOllama() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.True(s.T(), cfg.Memory.Enabled)
 	require.Equal(s.T(), "ollama", cfg.Memory.Embeddings.Provider)
@@ -1277,18 +1286,18 @@ func (s *ConfigSuite) TestMemoryConfigOllama() {
 }
 
 func (s *ConfigSuite) TestMemoryConfigAbsent() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return s.minimalJSON(), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.False(s.T(), cfg.Memory.Enabled)
 	require.Empty(s.T(), cfg.Memory.Embeddings.Provider)
 }
 
 func (s *ConfigSuite) TestMemoryConfigNotExplicitlyEnabled() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord"],
 			"discord_token": "t",
@@ -1302,13 +1311,13 @@ func (s *ConfigSuite) TestMemoryConfigNotExplicitlyEnabled() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.False(s.T(), cfg.Memory.Enabled)
 }
 
 func (s *ConfigSuite) TestMemoryPathsLoaded() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord"],
 			"discord_token": "t",
@@ -1320,23 +1329,23 @@ func (s *ConfigSuite) TestMemoryPathsLoaded() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{"/shared/knowledge", "/path/to/notes.md"}, cfg.Memory.Paths)
 }
 
 func (s *ConfigSuite) TestMemoryPathsDefault() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return s.minimalJSON(), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{"./memory"}, cfg.Memory.Paths)
 }
 
 func (s *ConfigSuite) TestMemoryMaxChunkCharsLoaded() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord"],
 			"discord_token": "t",
@@ -1348,17 +1357,17 @@ func (s *ConfigSuite) TestMemoryMaxChunkCharsLoaded() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 8000, cfg.Memory.MaxChunkChars)
 }
 
 func (s *ConfigSuite) TestMemoryMaxChunkCharsDefault() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return s.minimalJSON(), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 0, cfg.Memory.MaxChunkChars)
 }
@@ -1411,7 +1420,7 @@ func (s *ConfigSuite) TestPermissionsGetRole() {
 }
 
 func (s *ConfigSuite) TestLoadWithPermissions() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord"],
 			"discord_token": "t",
@@ -1423,7 +1432,7 @@ func (s *ConfigSuite) TestLoadWithPermissions() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{"U1", "U2"}, cfg.Permissions.Owners.Users)
 	require.Equal(s.T(), []string{"R1"}, cfg.Permissions.Owners.Roles)
@@ -1431,22 +1440,22 @@ func (s *ConfigSuite) TestLoadWithPermissions() {
 }
 
 func (s *ConfigSuite) TestCopyFilesDefault() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return s.minimalJSON(), nil
 	}
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{"~/.claude.json"}, cfg.CopyFiles)
 }
 
 func (s *ConfigSuite) TestCopyFilesExplicit() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms":["discord"],"discord_token":"t","discord_app_id":"a",
 			"copy_files": ["~/.claude.json", "~/.npmrc"]
 		}`), nil
 	}
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{"~/.claude.json", "~/.npmrc"}, cfg.CopyFiles)
 }
@@ -1454,7 +1463,7 @@ func (s *ConfigSuite) TestCopyFilesExplicit() {
 func (s *ConfigSuite) TestCopyFilesProjectOverride() {
 	s.setupProjectReadFile(`{"copy_files": ["~/.npmrc"]}`)
 	mainCfg := &Config{CopyFiles: []string{"~/.claude.json"}}
-	merged, err := LoadProjectConfig("/project", mainCfg)
+	merged, err := s.loader.loadProjectConfig("/project", mainCfg)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{"~/.npmrc"}, merged.CopyFiles)
 	require.Equal(s.T(), []string{"~/.claude.json"}, mainCfg.CopyFiles)
@@ -1463,13 +1472,13 @@ func (s *ConfigSuite) TestCopyFilesProjectOverride() {
 func (s *ConfigSuite) TestCopyFilesProjectNoOverride() {
 	s.setupProjectReadFile(`{}`)
 	mainCfg := &Config{CopyFiles: []string{"~/.claude.json"}}
-	merged, err := LoadProjectConfig("/project", mainCfg)
+	merged, err := s.loader.loadProjectConfig("/project", mainCfg)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []string{"~/.claude.json"}, merged.CopyFiles)
 }
 
 func (s *ConfigSuite) TestLoadPlatformsArray() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord", "local"],
 			"discord_token": "tok",
@@ -1477,31 +1486,31 @@ func (s *ConfigSuite) TestLoadPlatformsArray() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []types.Platform{types.PlatformDiscord, types.PlatformLocal}, cfg.Platforms)
 }
 
 func (s *ConfigSuite) TestLoadPlatformsLocalOnly() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["local"]
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), []types.Platform{types.PlatformLocal}, cfg.Platforms)
 }
 
 func (s *ConfigSuite) TestLoadPlatformsValidation() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord"]
 		}`), nil
 	}
 
-	_, err := Load()
+	_, err := s.loader.load()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "discord_token")
 }
@@ -1517,7 +1526,7 @@ func (s *ConfigSuite) TestHasPlatform() {
 }
 
 func (s *ConfigSuite) TestMemoryConfigOllamaCustomURL() {
-	readFile = func(_ string) ([]byte, error) {
+	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
 			"platforms": ["discord"],
 			"discord_token": "t",
@@ -1533,7 +1542,7 @@ func (s *ConfigSuite) TestMemoryConfigOllamaCustomURL() {
 		}`), nil
 	}
 
-	cfg, err := Load()
+	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "http://gpu-server:11434", cfg.Memory.Embeddings.OllamaURL)
 }

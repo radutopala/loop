@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"path/filepath"
 	"runtime"
 
@@ -19,37 +18,24 @@ const (
 	repoName  = "loop"
 )
 
-var (
-	httpGet          = http.Get
-	osExecutable     = os.Executable
-	filepathSymlinks = filepath.EvalSymlinks
-	osChmod          = os.Chmod
-	osRename         = os.Rename
-	osRemove         = os.Remove
-	osCreateTemp     = os.CreateTemp
-	releasesURL      = fmt.Sprintf("https://github.com/%s/%s/releases/latest", repoOwner, repoName)
-
-	getLatestVersionFunc = getLatestVersion
-)
-
-func newUpdateCmd() *cobra.Command {
+func (a *app) newUpdateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "update",
 		Aliases: []string{"u"},
 		Short:   "Update loop to the latest version",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return doUpdate()
+			return a.doUpdate()
 		},
 	}
 }
 
-func doUpdate() error {
-	latestVersion, err := getLatestVersionFunc()
+func (a *app) doUpdate() error {
+	latestVersion, err := a.getLatestVersionFn()
 	if err != nil {
 		return fmt.Errorf("failed to get latest version: %w", err)
 	}
 
-	currentVersion := version
+	currentVersion := a.version
 	if currentVersion == "dev" {
 		currentVersion = "0.0.0"
 	}
@@ -65,22 +51,22 @@ func doUpdate() error {
 	}
 
 	if !latest.GreaterThan(current) {
-		fmt.Printf("Current version %s is up to date\n", version)
+		fmt.Printf("Current version %s is up to date\n", a.version)
 		return nil
 	}
 
-	fmt.Printf("Updating from %s to %s...\n", version, latestVersion)
+	fmt.Printf("Updating from %s to %s...\n", a.version, latestVersion)
 
-	exe, err := osExecutable()
+	exe, err := a.sys.Executable()
 	if err != nil {
 		return fmt.Errorf("failed to get executable path: %w", err)
 	}
-	exe, err = filepathSymlinks(exe)
+	exe, err = a.sys.EvalSymlinks(exe)
 	if err != nil {
 		return fmt.Errorf("failed to resolve symlinks: %w", err)
 	}
 
-	if err := downloadAndReplace(latestVersion, exe); err != nil {
+	if err := a.downloadAndReplace(latestVersion, exe); err != nil {
 		return fmt.Errorf("failed to update: %w", err)
 	}
 
@@ -91,7 +77,7 @@ func doUpdate() error {
 	return nil
 }
 
-func getLatestVersion() (string, error) {
+func getLatestVersion(releasesURL string) (string, error) {
 	client := &http.Client{
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -131,13 +117,13 @@ func splitTag(location string) []string {
 	return []string{location}
 }
 
-func downloadAndReplace(ver, exePath string) error {
+func (a *app) downloadAndReplace(ver, exePath string) error {
 	url := fmt.Sprintf(
 		"https://github.com/%s/%s/releases/download/v%s/loop_%s_%s_%s.tar.gz",
 		repoOwner, repoName, ver, ver, runtime.GOOS, runtime.GOARCH,
 	)
 
-	resp, err := httpGet(url)
+	resp, err := a.httpGet(url)
 	if err != nil {
 		return err
 	}
@@ -147,12 +133,12 @@ func downloadAndReplace(ver, exePath string) error {
 		return fmt.Errorf("download failed: %s", resp.Status)
 	}
 
-	tmpFile, err := osCreateTemp("", "loop-update-*")
+	tmpFile, err := a.sys.CreateTemp("", "loop-update-*")
 	if err != nil {
 		return err
 	}
 	tmpPath := tmpFile.Name()
-	defer func() { _ = osRemove(tmpPath) }()
+	defer func() { _ = a.sys.Remove(tmpPath) }()
 
 	if err := extractTarGz(resp.Body, tmpFile); err != nil {
 		tmpFile.Close()
@@ -160,21 +146,21 @@ func downloadAndReplace(ver, exePath string) error {
 	}
 	tmpFile.Close()
 
-	if err := osChmod(tmpPath, 0755); err != nil {
+	if err := a.sys.Chmod(tmpPath, 0755); err != nil {
 		return err
 	}
 
 	oldPath := exePath + ".old"
-	if err := osRename(exePath, oldPath); err != nil {
+	if err := a.sys.Rename(exePath, oldPath); err != nil {
 		return err
 	}
 
-	if err := osRename(tmpPath, exePath); err != nil {
-		_ = osRename(oldPath, exePath)
+	if err := a.sys.Rename(tmpPath, exePath); err != nil {
+		_ = a.sys.Rename(oldPath, exePath)
 		return err
 	}
 
-	_ = osRemove(oldPath)
+	_ = a.sys.Remove(oldPath)
 
 	return nil
 }

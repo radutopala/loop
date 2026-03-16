@@ -12,6 +12,7 @@ const PANEL_LABELS: Record<PanelType, string> = {
   diff: "Diff",
   agent: "Agent",
   shell: "Shell",
+  browser: "Browser",
 };
 
 const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
@@ -21,6 +22,7 @@ const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "diff", label: "Diff" },
   { panel: "agent", label: "Agent" },
   { panel: "shell", label: "Shell" },
+  { panel: "browser", label: "Browser" },
 ];
 
 function buildBtnStyle(colors: ColorPalette): React.CSSProperties {
@@ -58,12 +60,14 @@ interface PaneLeafHeaderProps {
   leafId: string;
   panel: PanelType;
   usedSingletons: Set<PanelType>;
+  isMaximized?: boolean;
   onRemove: () => void;
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
   onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void;
+  onToggleMaximize?: () => void;
 }
 
-export function PaneLeafHeader({ leafId, panel, usedSingletons, onRemove, onDrop, onSplitLeaf }: PaneLeafHeaderProps) {
+export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, onRemove, onDrop, onSplitLeaf, onToggleMaximize }: PaneLeafHeaderProps) {
   const { colors } = useTheme();
   const label = PANEL_LABELS[panel];
   const isAgent = panel === "agent";
@@ -136,6 +140,31 @@ export function PaneLeafHeader({ leafId, panel, usedSingletons, onRemove, onDrop
       </span>
       <span style={{ width: 1, height: 10, backgroundColor: colors.border, flexShrink: 0, marginLeft: 2, marginRight: 2 }} />
       <PaneSplitMenu leafId={leafId} usedSingletons={usedSingletons} onSplitLeaf={onSplitLeaf} />
+      {onToggleMaximize && (
+        <button
+          onClick={onToggleMaximize}
+          title={isMaximized ? "Restore pane" : "Expand pane"}
+          style={btnStyle}
+          onMouseEnter={hoverIn}
+          onMouseLeave={hoverOut}
+        >
+          {isMaximized ? (
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="4 14 10 14 10 20" />
+              <polyline points="20 10 14 10 14 4" />
+              <line x1="14" y1="10" x2="21" y2="3" />
+              <line x1="3" y1="21" x2="10" y2="14" />
+            </svg>
+          ) : (
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 3 21 3 21 9" />
+              <polyline points="9 21 3 21 3 15" />
+              <line x1="21" y1="3" x2="14" y2="10" />
+              <line x1="3" y1="21" x2="10" y2="14" />
+            </svg>
+          )}
+        </button>
+      )}
       <button
         onClick={onRemove}
         title="Close pane"

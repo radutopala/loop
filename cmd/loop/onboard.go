@@ -14,7 +14,7 @@ import (
 	containerimage "github.com/radutopala/loop/internal/container/image"
 )
 
-func newOnboardGlobalCmd() *cobra.Command {
+func (a *app) newOnboardGlobalCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "onboard:global",
 		Aliases: []string{"o:global", "setup"},
@@ -23,7 +23,7 @@ func newOnboardGlobalCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			force, _ := cmd.Flags().GetBool("force")
 			ownerID, _ := cmd.Flags().GetString("owner-id")
-			return onboardGlobal(force, ownerID)
+			return a.onboardGlobal(force, ownerID)
 		},
 	}
 	cmd.Flags().Bool("force", false, "Overwrite existing config")
@@ -31,7 +31,7 @@ func newOnboardGlobalCmd() *cobra.Command {
 	return cmd
 }
 
-func newOnboardLocalCmd() *cobra.Command {
+func (a *app) newOnboardLocalCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:     "onboard:local",
 		Aliases: []string{"o:local", "init"},
@@ -41,7 +41,7 @@ func newOnboardLocalCmd() *cobra.Command {
 			apiURL, _ := cmd.Flags().GetString("api-url")
 			ownerID, _ := cmd.Flags().GetString("owner-id")
 			platform, _ := cmd.Flags().GetString("platform")
-			return onboardLocal(apiURL, ownerID, platform)
+			return a.onboardLocal(apiURL, ownerID, platform)
 		},
 	}
 	cmd.Flags().String("api-url", "http://localhost:8222", "Loop API base URL")
@@ -50,8 +50,8 @@ func newOnboardLocalCmd() *cobra.Command {
 	return cmd
 }
 
-func onboardGlobal(force bool, ownerID string) error {
-	home, err := userHomeDir()
+func (a *app) onboardGlobal(force bool, ownerID string) error {
+	home, err := a.sys.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("getting home directory: %w", err)
 	}
@@ -60,14 +60,14 @@ func onboardGlobal(force bool, ownerID string) error {
 	configPath := filepath.Join(loopDir, "config.json")
 
 	// Check if config already exists
-	if _, err := osStat(configPath); err == nil {
+	if _, err := a.sys.Stat(configPath); err == nil {
 		if !force {
 			return fmt.Errorf("config already exists at %s (use --force to overwrite)", configPath)
 		}
 	}
 
 	// Create ~/.loop directory if it doesn't exist
-	if err := osMkdirAll(loopDir, 0755); err != nil {
+	if err := a.sys.MkdirAll(loopDir, 0755); err != nil {
 		return fmt.Errorf("creating loop directory: %w", err)
 	}
 
@@ -88,48 +88,54 @@ func onboardGlobal(force bool, ownerID string) error {
 	}
 
 	// Write embedded example config
-	if err := osWriteFile(configPath, configData, 0600); err != nil {
+	if err := a.sys.WriteFile(configPath, configData, 0600); err != nil {
 		return fmt.Errorf("writing config file: %w", err)
 	}
 
 	// Create default .bashrc for container shell aliases
 	bashrcPath := filepath.Join(loopDir, ".bashrc")
-	if _, err := osStat(bashrcPath); err != nil {
+	if _, err := a.sys.Stat(bashrcPath); err != nil {
 		bashrcContent := []byte("# Shell aliases and config sourced inside Loop containers.\n# Add your aliases here — this file is bind-mounted as ~/.bashrc.\n")
-		if err := osWriteFile(bashrcPath, bashrcContent, 0644); err != nil {
+		if err := a.sys.WriteFile(bashrcPath, bashrcContent, 0644); err != nil {
 			return fmt.Errorf("writing .bashrc: %w", err)
 		}
 	}
 
 	// Flush embedded container files
 	containerDir := filepath.Join(loopDir, "container")
-	if err := osMkdirAll(containerDir, 0755); err != nil {
+	if err := a.sys.MkdirAll(containerDir, 0755); err != nil {
 		return fmt.Errorf("creating container directory: %w", err)
 	}
-	if err := osWriteFile(filepath.Join(containerDir, "Dockerfile"), containerimage.Dockerfile, 0644); err != nil {
+	if err := a.sys.WriteFile(filepath.Join(containerDir, "Dockerfile"), containerimage.Dockerfile, 0644); err != nil {
 		return fmt.Errorf("writing container Dockerfile: %w", err)
 	}
-	if err := osWriteFile(filepath.Join(containerDir, "entrypoint.sh"), containerimage.Entrypoint, 0644); err != nil {
+	if err := a.sys.WriteFile(filepath.Join(containerDir, "chrome.Dockerfile"), containerimage.ChromeDockerfile, 0644); err != nil {
+		return fmt.Errorf("writing chrome Dockerfile: %w", err)
+	}
+	if err := a.sys.WriteFile(filepath.Join(containerDir, "chrome-entrypoint.sh"), containerimage.ChromeEntrypoint, 0644); err != nil {
+		return fmt.Errorf("writing chrome entrypoint: %w", err)
+	}
+	if err := a.sys.WriteFile(filepath.Join(containerDir, "entrypoint.sh"), containerimage.Entrypoint, 0644); err != nil {
 		return fmt.Errorf("writing container entrypoint: %w", err)
 	}
 	setupPath := filepath.Join(containerDir, "setup.sh")
-	if _, err := osStat(setupPath); err != nil {
-		if err := osWriteFile(setupPath, containerimage.Setup, 0644); err != nil {
+	if _, err := a.sys.Stat(setupPath); err != nil {
+		if err := a.sys.WriteFile(setupPath, containerimage.Setup, 0644); err != nil {
 			return fmt.Errorf("writing container setup script: %w", err)
 		}
 	}
 
 	// Write Slack app manifest
-	if err := osWriteFile(filepath.Join(loopDir, "slack-manifest.json"), config.SlackManifest, 0644); err != nil {
+	if err := a.sys.WriteFile(filepath.Join(loopDir, "slack-manifest.json"), config.SlackManifest, 0644); err != nil {
 		return fmt.Errorf("writing Slack manifest: %w", err)
 	}
 
 	// Dump embedded templates directory
 	templatesDir := filepath.Join(loopDir, "templates")
-	if err := osMkdirAll(templatesDir, 0755); err != nil {
+	if err := a.sys.MkdirAll(templatesDir, 0755); err != nil {
 		return fmt.Errorf("creating templates directory: %w", err)
 	}
-	if err := dumpTemplates(templatesDir); err != nil {
+	if err := a.dumpTemplates(templatesDir); err != nil {
 		return err
 	}
 
@@ -145,8 +151,8 @@ func onboardGlobal(force bool, ownerID string) error {
 
 // dumpTemplates writes all embedded template files to the target directory,
 // skipping files that already exist (so user edits are preserved).
-func dumpTemplates(dir string) error {
-	entries, err := fs.ReadDir(templatesFS, "templates")
+func (a *app) dumpTemplates(dir string) error {
+	entries, err := fs.ReadDir(a.templatesFS, "templates")
 	if err != nil {
 		return fmt.Errorf("reading embedded templates: %w", err)
 	}
@@ -155,22 +161,22 @@ func dumpTemplates(dir string) error {
 			continue
 		}
 		dst := filepath.Join(dir, e.Name())
-		if _, err := osStat(dst); err == nil {
+		if _, err := a.sys.Stat(dst); err == nil {
 			continue // don't overwrite existing
 		}
-		data, err := templatesFS.ReadFile("templates/" + e.Name())
+		data, err := a.templatesFS.ReadFile("templates/" + e.Name())
 		if err != nil {
 			return fmt.Errorf("reading embedded template %s: %w", e.Name(), err)
 		}
-		if err := osWriteFile(dst, data, 0644); err != nil {
+		if err := a.sys.WriteFile(dst, data, 0644); err != nil {
 			return fmt.Errorf("writing template %s: %w", e.Name(), err)
 		}
 	}
 	return nil
 }
 
-func onboardLocal(apiURL, ownerID, platform string) error {
-	dir, err := osGetwd()
+func (a *app) onboardLocal(apiURL, ownerID, platform string) error {
+	dir, err := a.sys.Getwd()
 	if err != nil {
 		return fmt.Errorf("getting working directory: %w", err)
 	}
@@ -179,7 +185,7 @@ func onboardLocal(apiURL, ownerID, platform string) error {
 
 	// Read existing .mcp.json if it exists, merge into it
 	existing := make(map[string]any)
-	if data, err := osReadFile(mcpPath); err == nil {
+	if data, err := a.sys.ReadFile(mcpPath); err == nil {
 		if err := json.Unmarshal(data, &existing); err != nil {
 			return fmt.Errorf("parsing existing .mcp.json: %w", err)
 		}
@@ -194,7 +200,7 @@ func onboardLocal(apiURL, ownerID, platform string) error {
 	// Build loop server entry (always rebuild to pick up config changes).
 	_, alreadyRegistered := servers["loop"]
 	args := []string{"mcp", "--dir", dir, "--api-url", apiURL, "--platform", "local", "--log", filepath.Join(dir, ".loop", "mcp.log")}
-	if cfg, err := configLoad(); err == nil && cfg.Memory.Enabled {
+	if cfg, err := a.configLoad(); err == nil && cfg.Memory.Enabled {
 		args = append(args, "--memory")
 	}
 	servers["loop"] = map[string]any{
@@ -204,7 +210,7 @@ func onboardLocal(apiURL, ownerID, platform string) error {
 	existing["mcpServers"] = servers
 
 	mcpJSON, _ := json.MarshalIndent(existing, "", "  ")
-	if err := osWriteFile(mcpPath, append(mcpJSON, '\n'), 0644); err != nil {
+	if err := a.sys.WriteFile(mcpPath, append(mcpJSON, '\n'), 0644); err != nil {
 		return fmt.Errorf("writing .mcp.json: %w", err)
 	}
 
@@ -218,8 +224,8 @@ func onboardLocal(apiURL, ownerID, platform string) error {
 	// Write project config example if .loop/config.json doesn't exist
 	loopDir := filepath.Join(dir, ".loop")
 	projectConfigPath := filepath.Join(loopDir, "config.json")
-	if _, err := osStat(projectConfigPath); os.IsNotExist(err) {
-		if err := osMkdirAll(loopDir, 0755); err != nil {
+	if _, err := a.sys.Stat(projectConfigPath); os.IsNotExist(err) {
+		if err := a.sys.MkdirAll(loopDir, 0755); err != nil {
 			return fmt.Errorf("creating .loop directory: %w", err)
 		}
 		projectData := config.ProjectExampleConfig
@@ -235,7 +241,7 @@ func onboardLocal(apiURL, ownerID, platform string) error {
   },`, ownerID))
 			projectData = bytes.Replace(projectData, commented, uncommented, 1)
 		}
-		if err := osWriteFile(projectConfigPath, projectData, 0644); err != nil {
+		if err := a.sys.WriteFile(projectConfigPath, projectData, 0644); err != nil {
 			return fmt.Errorf("writing project config: %w", err)
 		}
 		fmt.Printf("Created project config at %s\n", projectConfigPath)
@@ -243,20 +249,20 @@ func onboardLocal(apiURL, ownerID, platform string) error {
 
 	// Create templates directory for project-level prompt_path templates
 	templatesDir := filepath.Join(loopDir, "templates")
-	if err := osMkdirAll(templatesDir, 0755); err != nil {
+	if err := a.sys.MkdirAll(templatesDir, 0755); err != nil {
 		return fmt.Errorf("creating templates directory: %w", err)
 	}
 
 	// Register channels — single platform or all configured platforms
 	if platform != "" {
-		channelID, err := ensureChannelFunc(apiURL, dir, platform)
+		channelID, err := a.ensureChannelFn(apiURL, dir, platform)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not register channel (is 'loop serve' running?): %v\n", err)
 		} else {
 			fmt.Printf("Channel ready (%s): %s\n", platform, channelID)
 		}
 	} else {
-		results, err := ensureAllChannelsFunc(apiURL, dir)
+		results, err := a.ensureAllChannelsFn(apiURL, dir)
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: could not register channels (is 'loop serve' running?): %v\n", err)
 		} else {

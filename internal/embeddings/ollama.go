@@ -59,6 +59,7 @@ type OllamaEmbedder struct {
 	startupWait       time.Duration
 	loopDir           string
 	idleCheckInterval time.Duration
+	sleepFunc         func(time.Duration)
 }
 
 // OllamaOption configures an OllamaEmbedder.
@@ -115,6 +116,7 @@ func NewOllamaEmbedder(opts ...OllamaOption) *OllamaEmbedder {
 		logger:            slog.New(slog.NewTextHandler(io.Discard, nil)),
 		startupWait:       ollamaStartupWait,
 		idleCheckInterval: ollamaIdleCheckInterval,
+		sleepFunc:         time.Sleep,
 	}
 	for _, opt := range opts {
 		opt(e)
@@ -253,13 +255,10 @@ func (e *OllamaEmbedder) waitForReady(ctx context.Context) error {
 			resp.Body.Close()
 			return nil
 		}
-		sleepFunc(ollamaStartupPollDelay)
+		e.sleepFunc(ollamaStartupPollDelay)
 	}
 	return fmt.Errorf("ollama did not become ready within %s", ollamaStartupWait)
 }
-
-// sleepFunc is injectable for testing.
-var sleepFunc = time.Sleep
 
 // ensureModel pulls the configured model if not already present.
 func (e *OllamaEmbedder) ensureModel(ctx context.Context) error {

@@ -21,39 +21,43 @@ type hostExec struct {
 	pty *os.File
 }
 
-// defaultShell returns the user's preferred shell.
-var defaultShell = func() string {
-	if s := os.Getenv("SHELL"); s != "" {
-		return s
-	}
-	if _, err := exec.LookPath("/bin/zsh"); err == nil {
-		return "/bin/zsh"
-	}
-	return "/bin/sh"
+// hostPlatform holds Unix-specific fields for HostExecClient.
+type hostPlatform struct {
+	ptyStart              func(cmd *exec.Cmd) (*os.File, error)
+	ptySetsize            func(f *os.File, sz *pty.Winsize) error
+	processCleanupTimeout time.Duration
 }
 
-// defaultShellArgs returns the default arguments for the shell.
-var defaultShellArgs = func() []string {
-	return []string{"-l"}
+// platformDefaults sets the Unix-specific defaults on HostExecClient.
+func platformDefaults(c *HostExecClient) {
+	c.defaultShell = func() string {
+		if s := os.Getenv("SHELL"); s != "" {
+			return s
+		}
+		if _, err := c.lookPath("/bin/zsh"); err == nil {
+			return "/bin/zsh"
+		}
+		return "/bin/sh"
+	}
+	c.defaultShellArgs = func() []string {
+		return []string{"-l"}
+	}
+	c.ptyStart = pty.Start
+	c.ptySetsize = pty.Setsize
+	c.processCleanupTimeout = 3 * time.Second
 }
-
-// ptyStart wraps pty.Start for testing.
-var ptyStart = pty.Start
-
-// ptySetsize wraps pty.Setsize for testing.
-var ptySetsize = pty.Setsize
 
 // ExecCreate creates a new exec process. The dirPath parameter
 // is used as the working directory. The process is not started until
 // ExecAttach is called.
 func (c *HostExecClient) ExecCreate(_ context.Context, dirPath string, cmd []string, _ bool) (string, error) {
 	if len(cmd) == 0 {
-		shell := defaultShell()
-		cmd = append([]string{shell}, defaultShellArgs()...)
+		shell := c.defaultShell()
+		cmd = append([]string{shell}, c.defaultShellArgs()...)
 	}
 
 	// Validate the command resolves to an actual executable on PATH.
-	resolvedPath, err := lookPath(cmd[0])
+	resolvedPath, err := c.lookPath(cmd[0])
 	if err != nil {
 		return "", fmt.Errorf("command not found: %s", cmd[0])
 	}
@@ -63,17 +67,13 @@ func (c *HostExecClient) ExecCreate(_ context.Context, dirPath string, cmd []str
 	command.Env = os.Environ()
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
-	id := generateID()
+	id := generateID(c.randRead)
 	c.mu.Lock()
 	c.execs[id] = &hostExec{cmd: command}
 	c.mu.Unlock()
 
 	return id, nil
 }
-
-// processCleanupTimeout is the maximum time to wait for a process to exit
-// after SIGHUP before sending SIGKILL.
-var processCleanupTimeout = 3 * time.Second
 
 // ExecAttach starts the exec process with a PTY and returns
 // a ReadWriteCloser wrapping the PTY file descriptor. Close sends
@@ -86,7 +86,7 @@ func (c *HostExecClient) ExecAttach(_ context.Context, execID string) (io.ReadWr
 		return nil, fmt.Errorf("exec %s not found", execID)
 	}
 
-	ptmx, err := ptyStart(he.cmd)
+	ptmx, err := c.ptyStart(he.cmd)
 	if err != nil {
 		return nil, fmt.Errorf("starting pty: %w", err)
 	}
@@ -96,8 +96,9 @@ func (c *HostExecClient) ExecAttach(_ context.Context, execID string) (io.ReadWr
 	c.mu.Unlock()
 
 	return &hostPTYConn{
-		pty: ptmx,
-		cmd: he.cmd,
+		pty:            ptmx,
+		cmd:            he.cmd,
+		cleanupTimeout: c.processCleanupTimeout,
 	}, nil
 }
 
@@ -112,7 +113,7 @@ func (c *HostExecClient) ExecResize(_ context.Context, execID string, height, wi
 	if he.pty == nil {
 		return fmt.Errorf("exec %s not attached", execID)
 	}
-	return ptySetsize(he.pty, &pty.Winsize{
+	return c.ptySetsize(he.pty, &pty.Winsize{
 		Rows: uint16(height),
 		Cols: uint16(width),
 	})
@@ -121,9 +122,10 @@ func (c *HostExecClient) ExecResize(_ context.Context, execID string, height, wi
 // hostPTYConn wraps a PTY file descriptor and its associated command
 // as an io.ReadWriteCloser. Close cleans up the process group.
 type hostPTYConn struct {
-	pty       *os.File
-	cmd       *exec.Cmd
-	closeOnce sync.Once
+	pty            *os.File
+	cmd            *exec.Cmd
+	closeOnce      sync.Once
+	cleanupTimeout time.Duration
 }
 
 func (h *hostPTYConn) Read(p []byte) (int, error) {
@@ -149,7 +151,7 @@ func (h *hostPTYConn) Close() error {
 			}()
 			select {
 			case <-done:
-			case <-time.After(processCleanupTimeout):
+			case <-time.After(h.cleanupTimeout):
 				_ = syscall.Kill(-h.cmd.Process.Pid, syscall.SIGKILL)
 				<-done
 			}

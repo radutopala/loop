@@ -149,6 +149,7 @@ type ServerSuite struct {
 	threads   *MockThreadEnsurer
 	store     *MockChannelLister
 	messages  *MockMessageSender
+	sys       *testutil.MockSystem
 	srv       *Server
 	mux       *http.ServeMux
 }
@@ -165,6 +166,13 @@ func (s *ServerSuite) SetupTest() {
 	s.messages = new(MockMessageSender)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s.srv = NewServer(s.scheduler, s.channels, s.threads, s.store, s.messages, logger)
+
+	s.sys = new(testutil.MockSystem)
+	s.sys.On("ReadDir", mock.Anything).Return(nil, nil)
+	s.sys.On("ReadFile", mock.Anything).Return(nil, nil)
+	s.sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.sys.On("Stat", mock.Anything).Return(nil, os.ErrNotExist)
+	s.sys.On("Remove", mock.Anything).Return(nil)
 
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("GET /api/channels", s.srv.handleSearchChannels)

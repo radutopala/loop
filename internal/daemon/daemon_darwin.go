@@ -22,7 +22,7 @@ func Start(sys System, logFile string) error {
 	if err != nil {
 		return fmt.Errorf("resolving executable: %w", err)
 	}
-	binPath, err := evalSymlinks(exe)
+	binPath, err := sys.EvalSymlinks(exe)
 	if err != nil {
 		return fmt.Errorf("resolving symlinks: %w", err)
 	}
@@ -44,7 +44,7 @@ func Start(sys System, logFile string) error {
 
 	extraEnv := make(map[string]string)
 	for _, key := range proxyKeys {
-		if v := osGetenv(key); v != "" {
+		if v := sys.Getenv(key); v != "" {
 			extraEnv[key] = v
 		}
 	}
@@ -54,7 +54,7 @@ func Start(sys System, logFile string) error {
 		return fmt.Errorf("writing plist: %w", err)
 	}
 
-	uid := getUID()
+	uid := sys.GetUID()
 	domain := fmt.Sprintf("gui/%d", uid)
 
 	// Bootout any existing service first (ignore errors — it may not be loaded).
@@ -79,7 +79,7 @@ func Stop(sys System) error {
 	}
 
 	plistPath := filepath.Join(home, "Library", "LaunchAgents", plistName)
-	uid := getUID()
+	uid := sys.GetUID()
 
 	out, err := sys.RunCommand("launchctl", "bootout", fmt.Sprintf("gui/%d", uid), plistPath)
 	if err != nil {
@@ -111,7 +111,7 @@ func Status(sys System) (string, error) {
 		return "", fmt.Errorf("checking plist: %w", err)
 	}
 
-	uid := getUID()
+	uid := sys.GetUID()
 	out, err := sys.RunCommand("launchctl", "print", fmt.Sprintf("gui/%d/%s", uid, serviceLabel))
 	if err != nil {
 		return "stopped", nil

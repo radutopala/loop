@@ -536,6 +536,9 @@ function AgentActivityIndicator({ activity }: { activity: AgentActivityData }) {
   } else if (activity.activity === "subagent_progress") {
     icon = "&#128269;"; // magnifying glass
     label = activity.description ?? "";
+  } else if (activity.activity === "compacting") {
+    icon = "&#128220;"; // scroll
+    label = "Compacting context...";
   }
   if (!label) return null;
   if (label.length > 100) label = label.slice(0, 100) + "...";

@@ -4,10 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io/fs"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"time"
 
+	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/scheduler"
 )
 
@@ -28,6 +32,15 @@ type IncomingMessageHandler interface {
 	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }
 
+// serverSystem abstracts OS operations needed by Server.
+type serverSystem interface {
+	Stat(name string) (os.FileInfo, error)
+	ReadFile(name string) ([]byte, error)
+	WriteFile(name string, data []byte, perm os.FileMode) error
+	ReadDir(name string) ([]fs.DirEntry, error)
+	Remove(name string) error
+}
+
 // Server exposes a lightweight HTTP API for task CRUD operations.
 type Server struct {
 	scheduler          scheduler.Scheduler
@@ -40,6 +53,10 @@ type Server struct {
 	hostTermManager    TerminalManager
 	containerFinder    ContainerFinder
 	containerStopper   ContainerStopper
+	browserManager     BrowserManager
+	browserCDPFactory  func(ctx context.Context, wsURL string, logger *slog.Logger) (browserCDPClient, error)
+	browserCDPRetries  int
+	browserCDPDelay    time.Duration
 	cmdBuilder         InteractiveCmdBuilder
 	runningChLister    RunningChannelLister
 	activeChatLister   ActiveChatLister
@@ -51,6 +68,7 @@ type Server struct {
 	server             *http.Server
 	listener           net.Listener
 	stopErr            error // if set, Stop returns this error (for testing)
+	sys                serverSystem
 }
 
 // SetEventsHub configures the events hub for the /api/ws endpoint.
@@ -103,6 +121,7 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 		store:     store,
 		messages:  messages,
 		logger:    logger,
+		sys:       osutil.RealSystem{},
 	}
 }
 
@@ -135,8 +154,11 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("PUT /api/channels/{id}/file", s.handleWriteFile)
 	mux.HandleFunc("DELETE /api/channels/{id}/file", s.handleDeleteFile)
 	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
+	mux.HandleFunc("POST /api/browser/ensure", s.handleEnsureBrowser)
+	mux.HandleFunc("POST /api/browser/touch", s.handleTouchBrowser)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
+	mux.HandleFunc("GET /api/ws/browser", s.handleBrowserWS)
 	mux.HandleFunc("GET /api/ws", s.handleEventsWS)
 
 	s.server = &http.Server{
