@@ -63,6 +63,13 @@ Exactly one of these should be set. OAuth takes precedence if both are provided.
 | `container_cpus` | `float` | `1.0` | CPU limit per container (fractional cores). |
 | `container_keep_alive_sec` | `int` | `300` | Seconds to keep a finished container before removal (for `docker logs` debugging). |
 
+#### Browser Automation
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `browser_enabled` | `bool` | `true` | Enable Chrome sidecar for browser automation tools. When disabled, no Chrome container is started and the `loop-browser` MCP server is not registered. |
+| `chrome_image` | `string` | `"loop-chrome:latest"` | Docker image for Chrome sidecar containers. |
+
 #### Networking & Scheduling
 
 | Field | Type | Default | Description |
@@ -249,6 +256,8 @@ Not all global fields are available in project configs. The following fields can
 | `memory.embeddings` | **Overrides** global embeddings config entirely when set. |
 | `permissions` | **Replaces** global permissions entirely when set. |
 | `task_templates` | **Merged** by name. Project templates override global templates with the same name; new names are appended. |
+| `browser_enabled` | **Overrides** global value when set. |
+| `chrome_image` | **Overrides** global value when set. |
 
 ### Project Config Merge Rules
 
@@ -303,6 +312,10 @@ The merge follows these principles:
   //"claude_model": "",
   //"claude_bin_path": "claude",
   //"streaming_enabled": true,
+
+  // Browser automation
+  //"browser_enabled": true,
+  //"chrome_image": "loop-chrome:latest",
 
   // RBAC permissions
   //"permissions": {
@@ -399,6 +412,10 @@ The merge follows these principles:
   //"container_image": "loop-agent:latest",
   //"container_memory_mb": 2048,
   //"container_cpus": 2.0,
+
+  // Browser automation override
+  //"browser_enabled": false,
+  //"chrome_image": "loop-chrome:latest",
 
   // Memory config (paths appended to global; embeddings override global)
   //"memory": {

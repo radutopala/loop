@@ -200,6 +200,49 @@ The removal uses `ContainerRemove` with `Force: true`.
 
 ---
 
+## Chrome Sidecar Container
+
+When `browser_enabled` is `true` (default), a Chrome container is started lazily on first browser tool use. Chrome runs in a dedicated Docker container on a shared network so both the agent's `loop-browser` MCP server and the desktop browser panel can access it via CDP (Chrome DevTools Protocol).
+
+### Container Naming
+
+Chrome containers follow the pattern `loop-chrome-{sanitized-channel-id}`. The same sanitization rules apply as for agent containers.
+
+### Network
+
+A per-channel Docker bridge network (`loop-net-{channelID}`) connects the agent container and Chrome container. The agent references Chrome by its hostname (`loop-chrome-{channelID}`).
+
+### Built-in "loop-browser" MCP Server
+
+When browser is enabled, a `loop-browser` MCP server is registered in the container's MCP config:
+
+```json
+{
+  "loop-browser": {
+    "command": "/usr/local/bin/loop",
+    "args": ["mcp-browser", "--host", "loop-chrome-<channelID>", "--log", "<workDir>/.loop/mcp-browser.log", "--api-url", "<apiURL>", "--channel-id", "<channelID>"]
+  }
+}
+```
+
+The `--api-url` and `--channel-id` flags enable lazy Chrome startup: the MCP server calls `POST /api/browser/ensure` on the host API when the first browser tool is invoked.
+
+### Idle Timeout
+
+Chrome containers auto-stop after **5 minutes** of inactivity. Activity is tracked via:
+- **MCP tools**: Each tool invocation sends a debounced (1-minute interval) `POST /api/browser/touch` to the host API.
+- **Browser pane**: The desktop app's browser panel signals `PaneConnected`/`PaneDisconnected` -- while a pane is connected, Chrome is never idle-stopped.
+
+The idle monitor runs every minute and stops Chrome for sessions where `paneCount == 0` and the last activity exceeds the timeout.
+
+### Resource Limits
+
+Chrome sidecar containers run with:
+- **Memory:** 512 MB
+- **CPU:** 0.5 cores (50% of one core)
+
+---
+
 ## Shell Containers
 
 `CreateShellContainer` creates a long-lived container for terminal access. Instead of running the Claude CLI, these containers execute `sleep infinity` and persist until explicitly stopped.

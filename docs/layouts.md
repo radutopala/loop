@@ -48,6 +48,7 @@ interface SplitNode {
 | Editor | `editor` | `"editor"` | Yes | File browser and code editor (see [editor.md](editor.md)) |
 | Memory | `memory` | `"memory"` | Yes | Agent memory explorer |
 | Diff | `diff` | `"diff"` | Yes | Git diff viewer |
+| Browser | `browser` | `"browser"` | Yes | Docker Chrome browser with live screencast |
 | Agent | `agent` | `"agent-N"` | No | Docker-isolated terminal session |
 | Shell | `shell` | `"shell-N"` | No | Local machine shell session |
 
@@ -71,6 +72,7 @@ Five default layouts are created for every new channel:
 | **Editor** | Horizontal split: Editor (65%) + Diff (35%) |
 | **Memory** | Single leaf: Memory |
 | **Terminal** | Empty (user picks a panel on first use) |
+| **Browser** | Horizontal split: Chat (50%) + Browser (50%) |
 | **Diff** | Single leaf: Diff |
 
 The "Chat" layout is the initial active layout.
@@ -185,7 +187,7 @@ Singleton panels always use their panel type as the ID (e.g., `"chat"`, `"editor
 The `canAddPanel()` function prevents adding duplicate singleton panels:
 
 ```typescript
-const SINGLETON_PANELS: PanelType[] = ["chat", "editor", "memory", "diff"];
+const SINGLETON_PANELS: PanelType[] = ["chat", "editor", "memory", "diff", "browser"];
 
 function canAddPanel(tree: PaneNode | null, panel: PanelType): boolean {
   if (!tree) return true;

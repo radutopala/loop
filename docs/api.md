@@ -782,3 +782,52 @@ Real-time events WebSocket. See [Events System](events.md) for the full protocol
 Interactive terminal WebSocket. See [Terminal WebSocket](terminal.md) for the full protocol.
 
 **Errors:** `501` if terminal manager is not configured.
+
+---
+
+## Browser
+
+### `POST /api/browser/ensure`
+
+Start Chrome sidecar for a channel. Called by the `loop-browser` MCP server to lazily start Chrome on first tool use.
+
+**Request:**
+```json
+{"channel_id": "ch-abc123"}
+```
+
+**Responses:**
+
+| Code | Description |
+|------|-------------|
+| 200 | Chrome started or already running |
+| 400 | Missing `channel_id` |
+| 500 | Chrome start failed |
+| 503 | Browser not configured (`browser_enabled: false`) |
+
+---
+
+### `POST /api/browser/touch`
+
+Signal that a browser is still in use, preventing idle shutdown.
+
+**Request:**
+```json
+{"channel_id": "ch-abc123"}
+```
+
+**Responses:**
+
+| Code | Description |
+|------|-------------|
+| 200 | Touch recorded |
+| 400 | Missing `channel_id` |
+| 503 | Browser not configured |
+
+---
+
+### `GET /api/ws/browser`
+
+WebSocket endpoint for browser screencast and control.
+
+Returns 503 if browser is not configured. Once connected, supports JSON messages for start/stop/navigate/screencast/input/page_info/reload/back/forward. Binary messages carry JPEG screencast frames.
