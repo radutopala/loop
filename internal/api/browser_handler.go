@@ -301,6 +301,7 @@ func (bc *browserWSConn) handleStart(ctx context.Context, msg browserWSMessage) 
 }
 
 func (bc *browserWSConn) handleStop(ctx context.Context, msg browserWSMessage) {
+	bc.logger.Info("browser ws: stopping", "channel_id", msg.ChannelID)
 	bc.cleanup()
 
 	if msg.ChannelID != "" {
@@ -525,6 +526,7 @@ func (bc *browserWSConn) cleanup() {
 	}
 
 	if bc.cdp != nil {
+		bc.logger.Info("browser ws: CDP disconnected", "channel_id", bc.channelID)
 		// Stop the screencast but don't close the CDP client — it's cached
 		// in the browser manager and will be reused on WS reconnect.
 		bc.cdp.StopScreencast()

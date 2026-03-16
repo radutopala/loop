@@ -37,7 +37,8 @@ AI agents powered by Claude, running in Docker containers. Use the **desktop app
           │ claude --print      │
           │   workDir (project) │
           │   mcpDir  (logs)    │
-          │   MCP: loop
+          │   MCP: loop         │
+          │   MCP: loop-browser │──▶ Chrome sidecar (CDP)
           └─────────┬───────────┘
                     │
          MCP tool calls (schedule, list, cancel…)
@@ -338,6 +339,8 @@ This does four things:
 | `container_memory_mb` | `512` | Memory limit per container (MB) |
 | `container_cpus` | `1.0` | CPU limit per container |
 | `container_keep_alive_sec` | `300` | Keep-alive duration for idle containers |
+| `browser_enabled` | `true` | Enable Chrome sidecar for browser automation tools |
+| `chrome_image` | `"loop-chrome:latest"` | Docker image for Chrome sidecar containers |
 | `poll_interval_sec` | `30` | Task scheduler poll interval |
 | `claude_model` | `""` | Override Claude model (e.g. `"claude-sonnet-4-6"`) |
 | `claude_bin_path` | `"claude"` | Path to Claude Code binary |
@@ -476,6 +479,8 @@ Project config overrides specific global settings. Only these fields are allowed
 | `container_memory_mb` | **Overrides** global memory limit |
 | `container_cpus` | **Overrides** global CPU limit |
 | `memory` | **Merged** — paths appended, embeddings override |
+| `browser_enabled` | **Overrides** global value when set |
+| `chrome_image` | **Overrides** global value when set |
 
 Relative paths in project mounts (e.g., `./data`) are resolved relative to the project directory.
 
@@ -849,6 +854,7 @@ Loop includes a desktop app for macOS and Linux, built with Electron + React. Do
 - **Sidebar** — browse channels and threads, create new ones, batch-delete, see running status (green dot), and open directories directly from the sidebar
 - **Auto-update** — checks for new releases every 30 minutes, download and install with one click
 - **Deep links** — `loop://channel/<id>` opens the app directly to a channel
+- **Browser** — live Chrome screencast via WebSocket, click/type/navigate directly in the browser pane
 - **Plan mode** — run agents in read-only preview mode (`--permission-mode plan`)
 - **Agent activity** — see model info, tool use, and completion summaries in the chat view
 
@@ -898,8 +904,11 @@ make app-install
 | `POST` | `/api/memory/search` | Semantic search across memory files |
 | `POST` | `/api/memory/index` | Re-index memory files |
 | `GET` | `/api/readme` | Get the Loop README documentation |
+| `POST` | `/api/browser/ensure` | Start Chrome sidecar for a channel (lazy) |
+| `POST` | `/api/browser/touch` | Signal browser usage (prevents idle shutdown) |
 | `GET` | `/api/ws` | WebSocket for real-time event streaming |
 | `GET` | `/api/ws/terminal` | WebSocket for interactive terminal sessions |
+| `GET` | `/api/ws/browser` | WebSocket for browser screencast and control |
 
 ## MCP Tools
 
@@ -919,6 +928,22 @@ make app-install
 | `search_memory` | Semantic search across memory files (ranked by similarity) |
 | `index_memory` | Force re-index all memory files |
 | `get_readme` | Get the full Loop README documentation |
+| | **Browser Automation** |
+| `navigate` | Navigate the browser to a URL |
+| `read_page` | Get the accessibility tree of interactive elements |
+| `computer` | Perform click, type, key, scroll, move, screenshot, drag actions |
+| `screenshot` | Take a screenshot of the current page |
+| `find` | Find interactive elements by natural language query |
+| `form_input` | Fill in a form field (click, clear, type) |
+| `evaluate` | Evaluate JavaScript in the page context |
+| `get_page_text` | Get all text content from the page |
+| `read_console_messages` | Read captured browser console messages |
+| `read_network_requests` | Read captured network requests |
+| `list_tabs` | List all open browser tabs |
+| `new_tab` | Open a new browser tab |
+| `switch_tab` | Switch to a browser tab by target ID |
+| `close_tab` | Close a browser tab |
+| `resize_window` | Resize the browser viewport |
 
 ## Development
 
