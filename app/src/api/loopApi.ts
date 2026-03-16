@@ -216,6 +216,22 @@ export async function fetchMemoryFileContent(filePath: string): Promise<string> 
   return res.text();
 }
 
+export async function searchMemoryFiles(channelId: string, query: string): Promise<MemoryFileInfo[]> {
+  const params = new URLSearchParams({ channel_id: channelId, q: query });
+  const res = await fetch(`${apiUrl}/api/memory/files/search?${params}`);
+  if (!res.ok) throw new Error(`Failed to search memory files: ${res.statusText}`);
+  const data: { files: MemoryFileInfo[] } = await res.json();
+  return data.files;
+}
+
+export async function saveMemoryFileContent(filePath: string, content: string): Promise<void> {
+  const res = await fetch(`${apiUrl}/api/memory/file?path=${encodeURIComponent(filePath)}`, {
+    method: "PUT",
+    body: content,
+  });
+  if (!res.ok) throw new Error(`Failed to save memory file: ${res.statusText}`);
+}
+
 // ── File operations ──
 
 export interface FileEntry {

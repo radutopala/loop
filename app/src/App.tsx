@@ -54,6 +54,7 @@ function AppInner() {
   const [settingsDirPath, setSettingsDirPath] = useState<string | null>(null);
   const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(null);
   const [readmeOpen, setReadmeOpen] = useState(false);
+  const [openMemoryFile, setOpenMemoryFile] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
 
   const layoutRef = useRef<WorkspaceLayoutRef>(null);
@@ -251,6 +252,12 @@ function AppInner() {
     });
   }, []);
 
+  const handleSelectMemoryFile = useCallback((filePath: string) => {
+    setOpenMemoryFile(filePath);
+    // Switch to a layout that has a memory pane.
+    layoutRef.current?.switchToLayout("Memory");
+  }, []);
+
   const handleOpenDirectory = useCallback(async (dirPath: string) => {
     setError(null);
     try {
@@ -406,6 +413,8 @@ function AppInner() {
             onOpenPalette={() => setPaletteOpen(true)}
             scrollToMessageId={scrollToMessageId}
             onScrollComplete={() => setScrollToMessageId(null)}
+            openMemoryFile={openMemoryFile}
+            onOpenMemoryFileComplete={() => setOpenMemoryFile(null)}
             onStatusChange={loadChannels}
             error={error}
             onDismissError={() => setError(null)}
@@ -455,10 +464,12 @@ function AppInner() {
       )}
       <CommandPalette
         channels={channels}
+        selectedChannelId={selectedId}
         open={paletteOpen}
         onClose={() => setPaletteOpen(false)}
         onSelect={handleSelect}
         onSelectMessage={handleSelectMessage}
+        onSelectMemoryFile={handleSelectMemoryFile}
       />
     </div>
   );

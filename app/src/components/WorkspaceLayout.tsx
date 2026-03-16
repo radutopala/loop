@@ -101,6 +101,8 @@ interface WorkspaceLayoutProps {
   onOpenPalette: () => void;
   scrollToMessageId?: number | null;
   onScrollComplete?: () => void;
+  openMemoryFile?: string | null;
+  onOpenMemoryFileComplete?: () => void;
   onStatusChange?: () => void;
   error?: string | null;
   onDismissError?: () => void;
@@ -116,6 +118,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   onOpenPalette,
   scrollToMessageId,
   onScrollComplete,
+  openMemoryFile,
+  onOpenMemoryFileComplete,
   onStatusChange,
   error,
   onDismissError,
@@ -233,6 +237,26 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       }
     }
   }, [scrollToMessageId, tree, channelId, switchLayout]);
+
+  // Auto-switch to a layout with a memory pane when openMemoryFile is set.
+  useEffect(() => {
+    if (!openMemoryFile || !tree) return;
+    if (collectLeaves(tree).some((l) => l.panel === "memory")) {
+      // Memory pane exists, clear the prop after MemoryPanel consumes it.
+      setTimeout(() => onOpenMemoryFileComplete?.(), 0);
+      return;
+    }
+    const saved = loadChannelLayouts(channelId);
+    if (!saved) return;
+    for (const name of saved.order) {
+      const savedTree = saved.layouts[name];
+      if (savedTree && collectLeaves(savedTree).some((l) => l.panel === "memory")) {
+        switchLayout(name);
+        setTimeout(() => onOpenMemoryFileComplete?.(), 0);
+        return;
+      }
+    }
+  }, [openMemoryFile, tree, channelId, switchLayout, onOpenMemoryFileComplete]);
 
   const addLayout = useCallback(() => {
     let n = 1;
@@ -451,6 +475,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               dirPath={dirPath}
               branch={branch}
               embedded
+              openMemoryFile={openMemoryFile}
               onClose={() => handleRemoveLeaf(leaf.id)}
             />
           );
@@ -502,7 +527,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           return null;
       }
     },
-    [channelId, chatState, dirPath, branch, scrollToMessageId, onScrollComplete, onStatusChange, handlePaneStatus, handleRemoveLeaf],
+    [channelId, chatState, dirPath, branch, scrollToMessageId, onScrollComplete, openMemoryFile, onStatusChange, handlePaneStatus, handleRemoveLeaf],
   );
 
   return (

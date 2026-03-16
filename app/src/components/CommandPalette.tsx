@@ -2,23 +2,26 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Channel } from "../types";
 import { fonts } from "../theme";
 import { useTheme } from "../ThemeContext";
-import { searchMessages, type SearchMessageResult } from "../api/loopApi";
+import { searchMessages, searchMemoryFiles, type SearchMessageResult, type MemoryFileInfo } from "../api/loopApi";
 
 interface CommandPaletteProps {
   channels: Channel[];
+  selectedChannelId?: string | null;
   open: boolean;
   onClose: () => void;
   onSelect: (id: string) => void;
   onSelectMessage?: (channelId: string, messageId: number) => void;
+  onSelectMemoryFile?: (filePath: string) => void;
 }
 
 interface PaletteItem {
   id: string;
   label: string;
   detail: string;
-  kind: "channel" | "thread" | "message";
+  kind: "channel" | "thread" | "message" | "memory";
   channelId?: string;
   messageId?: number;
+  filePath?: string;
 }
 
 function fuzzyMatch(query: string, text: string): boolean {
@@ -36,11 +39,12 @@ function truncate(text: string, max: number): string {
   return oneLine.length > max ? oneLine.slice(0, max) + "…" : oneLine;
 }
 
-export function CommandPalette({ channels, open, onClose, onSelect, onSelectMessage }: CommandPaletteProps) {
+export function CommandPalette({ channels, selectedChannelId, open, onClose, onSelect, onSelectMessage, onSelectMemoryFile }: CommandPaletteProps) {
   const { colors } = useTheme();
   const [query, setQuery] = useState("");
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [messageResults, setMessageResults] = useState<SearchMessageResult[]>([]);
+  const [memoryFiles, setMemoryFiles] = useState<MemoryFileInfo[]>([]);
   const [searching, setSearching] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
@@ -105,32 +109,48 @@ export function CommandPalette({ channels, open, onClose, onSelect, onSelectMess
     }));
   }, [messageResults, channelNameMap]);
 
+  // Convert memory file results to palette items.
+  const memoryItems = useMemo((): PaletteItem[] => {
+    return memoryFiles.map((f) => ({
+      id: `mem-${f.file_path}`,
+      label: f.file_path.split("/").pop() || f.file_path,
+      detail: f.dir_path,
+      kind: "memory" as const,
+      filePath: f.file_path,
+    }));
+  }, [memoryFiles]);
+
   // Combined list for keyboard navigation.
   const combined = useMemo(() => {
-    return [...filteredChannels, ...messageItems];
-  }, [filteredChannels, messageItems]);
+    return [...filteredChannels, ...memoryItems, ...messageItems];
+  }, [filteredChannels, memoryItems, messageItems]);
 
-  // Debounced message search.
+  // Debounced message + memory search.
   useEffect(() => {
     if (debounceRef.current) clearTimeout(debounceRef.current);
     const q = query.trim();
     if (q.length < 2) {
       setMessageResults([]);
+      setMemoryFiles([]);
       setSearching(false);
       return;
     }
     setSearching(true);
     debounceRef.current = setTimeout(async () => {
-      try {
-        const results = await searchMessages(q, 10);
-        setMessageResults(results);
-      } catch {
-        setMessageResults([]);
+      const promises: Promise<void>[] = [];
+      promises.push(
+        searchMessages(q, 10).then(setMessageResults).catch(() => setMessageResults([])),
+      );
+      if (selectedChannelId) {
+        promises.push(
+          searchMemoryFiles(selectedChannelId, q).then(setMemoryFiles).catch(() => setMemoryFiles([])),
+        );
       }
+      await Promise.all(promises);
       setSearching(false);
     }, 300);
     return () => { if (debounceRef.current) clearTimeout(debounceRef.current); };
-  }, [query]);
+  }, [query, selectedChannelId]);
 
   // Reset state when opened.
   useEffect(() => {
@@ -138,6 +158,7 @@ export function CommandPalette({ channels, open, onClose, onSelect, onSelectMess
       setQuery("");
       setSelectedIndex(0);
       setMessageResults([]);
+      setMemoryFiles([]);
       setSearching(false);
       setTimeout(() => inputRef.current?.focus(), 0);
     }
@@ -158,7 +179,11 @@ export function CommandPalette({ channels, open, onClose, onSelect, onSelectMess
 
   const handleItemSelect = useCallback(
     (item: PaletteItem) => {
-      if (item.kind === "message" && item.channelId && item.messageId) {
+      if (item.kind === "memory" && item.filePath) {
+        if (onSelectMemoryFile) {
+          onSelectMemoryFile(item.filePath);
+        }
+      } else if (item.kind === "message" && item.channelId && item.messageId) {
         if (onSelectMessage) {
           onSelectMessage(item.channelId, item.messageId);
         } else {
@@ -169,7 +194,7 @@ export function CommandPalette({ channels, open, onClose, onSelect, onSelectMess
       }
       onClose();
     },
-    [onSelect, onSelectMessage, onClose],
+    [onSelect, onSelectMessage, onSelectMemoryFile, onClose],
   );
 
   const handleKeyDown = useCallback(
@@ -204,7 +229,8 @@ export function CommandPalette({ channels, open, onClose, onSelect, onSelectMess
     switch (kind) {
       case "channel": return "#";
       case "thread": return "┗";
-      case "message": return "💬";
+      case "message": return "\uD83D\uDCAC";
+      case "memory": return "\uD83E\uDDE0";
     }
   };
 
@@ -242,7 +268,7 @@ export function CommandPalette({ channels, open, onClose, onSelect, onSelectMess
             value={query}
             onChange={(e) => { setQuery(e.target.value); setSelectedIndex(0); }}
             onKeyDown={handleKeyDown}
-            placeholder="Search channels, threads, and messages..."
+            placeholder="Search channels, threads, messages, and memory..."
             style={{
               width: "100%",
               background: colors.bg,
@@ -306,7 +332,7 @@ export function CommandPalette({ channels, open, onClose, onSelect, onSelectMess
               </div>
             </div>
           ))}
-          {messageItems.length > 0 && (
+          {memoryItems.length > 0 && (
             <div
               style={{
                 padding: "8px 16px 4px",
@@ -319,11 +345,74 @@ export function CommandPalette({ channels, open, onClose, onSelect, onSelectMess
                 marginTop: filteredChannels.length > 0 ? 4 : 0,
               }}
             >
+              Memory
+            </div>
+          )}
+          {memoryItems.map((item, i) => {
+            const globalIndex = filteredChannels.length + i;
+            return (
+              <div
+                key={item.id}
+                onClick={() => handleItemSelect(item)}
+                onMouseEnter={() => setSelectedIndex(globalIndex)}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "6px 16px",
+                  cursor: "pointer",
+                  backgroundColor: globalIndex === selectedIndex ? colors.selectedBg : "transparent",
+                }}
+              >
+                <span style={{ color: colors.textDim, fontSize: 12, flexShrink: 0 }}>
+                  {kindIcon(item.kind)}
+                </span>
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div
+                    style={{
+                      fontSize: 13,
+                      color: colors.textLight,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                      fontFamily: fonts.mono,
+                    }}
+                  >
+                    {item.label}
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      color: colors.textDim,
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    {item.detail}
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+          {messageItems.length > 0 && (
+            <div
+              style={{
+                padding: "8px 16px 4px",
+                fontSize: 11,
+                fontWeight: 700,
+                color: colors.textDim,
+                textTransform: "uppercase",
+                letterSpacing: 1,
+                borderTop: (filteredChannels.length > 0 || memoryItems.length > 0) ? `1px solid ${colors.border}` : undefined,
+                marginTop: (filteredChannels.length > 0 || memoryItems.length > 0) ? 4 : 0,
+              }}
+            >
               Messages
             </div>
           )}
           {messageItems.map((item, i) => {
-            const globalIndex = filteredChannels.length + i;
+            const globalIndex = filteredChannels.length + memoryItems.length + i;
             return (
               <div
                 key={item.id}

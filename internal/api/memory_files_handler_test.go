@@ -120,3 +120,125 @@ func (s *ServerSuite) TestReadMemoryFile_ReadError() {
 	rec := s.testRequest("GET", "/api/memory/file?path=/tmp/test.md", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
+
+func (s *ServerSuite) TestWriteMemoryFile_Success() {
+	tmpDir := s.T().TempDir()
+	fpath := filepath.Join(tmpDir, "test.md")
+	require.NoError(s.T(), os.WriteFile(fpath, []byte("old"), 0644))
+
+	rec := s.testRequest("PUT", "/api/memory/file?path="+fpath, "# Updated\nContent")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), `"ok":true`)
+
+	data, err := os.ReadFile(fpath)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "# Updated\nContent", string(data))
+}
+
+func (s *ServerSuite) TestWriteMemoryFile_CreatesNew() {
+	tmpDir := s.T().TempDir()
+	fpath := filepath.Join(tmpDir, "new.md")
+
+	rec := s.testRequest("PUT", "/api/memory/file?path="+fpath, "# New file")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	data, err := os.ReadFile(fpath)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "# New file", string(data))
+}
+
+func (s *ServerSuite) TestWriteMemoryFile_MissingPath() {
+	rec := s.testRequest("PUT", "/api/memory/file", "content")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestWriteMemoryFile_RelativePath() {
+	rec := s.testRequest("PUT", "/api/memory/file?path=relative/file.md", "content")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestWriteMemoryFile_NonMdExtension() {
+	rec := s.testRequest("PUT", "/api/memory/file?path=/tmp/file.txt", "content")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestWriteMemoryFile_WriteError() {
+	s.sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(os.ErrPermission)
+	s.srv.sys = s.sys
+
+	rec := s.testRequest("PUT", "/api/memory/file?path=/tmp/test.md", "content")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+func (s *ServerSuite) TestSearchMemoryFiles_Success() {
+	tmpDir := s.T().TempDir()
+	aPath := filepath.Join(tmpDir, "alpha.md")
+	bPath := filepath.Join(tmpDir, "beta.md")
+	require.NoError(s.T(), os.WriteFile(aPath, []byte("a"), 0644))
+	require.NoError(s.T(), os.WriteFile(bPath, []byte("b"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: tmpDir}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{
+		{FilePath: aPath, DirPath: tmpDir},
+		{FilePath: bPath, DirPath: tmpDir},
+	}, nil)
+
+	rec := s.testRequest("GET", "/api/memory/files/search?channel_id=ch1&q=alpha", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "alpha.md")
+	require.NotContains(s.T(), rec.Body.String(), "beta.md")
+}
+
+func (s *ServerSuite) TestSearchMemoryFiles_EmptyQuery() {
+	tmpDir := s.T().TempDir()
+	aPath := filepath.Join(tmpDir, "alpha.md")
+	require.NoError(s.T(), os.WriteFile(aPath, []byte("a"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: tmpDir}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{
+		{FilePath: aPath, DirPath: tmpDir},
+	}, nil)
+
+	rec := s.testRequest("GET", "/api/memory/files/search?channel_id=ch1", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "alpha.md")
+}
+
+func (s *ServerSuite) TestSearchMemoryFiles_NoMatch() {
+	tmpDir := s.T().TempDir()
+	aPath := filepath.Join(tmpDir, "alpha.md")
+	require.NoError(s.T(), os.WriteFile(aPath, []byte("a"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: tmpDir}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{
+		{FilePath: aPath, DirPath: tmpDir},
+	}, nil)
+
+	rec := s.testRequest("GET", "/api/memory/files/search?channel_id=ch1&q=zzz", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), `"files":[]`)
+}
+
+func (s *ServerSuite) TestSearchMemoryFiles_StoreNotConfigured() {
+	srv := nilServer()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/memory/files/search", srv.handleSearchMemoryFiles)
+
+	req := httptest.NewRequest("GET", "/api/memory/files/search?channel_id=ch1&q=test", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+func (s *ServerSuite) TestWriteMemoryFile_PreservesPermissions() {
+	tmpDir := s.T().TempDir()
+	fpath := filepath.Join(tmpDir, "perms.md")
+	require.NoError(s.T(), os.WriteFile(fpath, []byte("old"), 0755))
+
+	rec := s.testRequest("PUT", "/api/memory/file?path="+fpath, "new content")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	info, err := os.Stat(fpath)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), os.FileMode(0755), info.Mode().Perm())
+}
