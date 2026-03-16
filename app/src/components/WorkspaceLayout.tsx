@@ -219,6 +219,21 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     switchToLayout: switchLayout,
   }), [switchLayout]);
 
+  // Auto-switch to a layout with a chat pane when scrollToMessageId is set.
+  useEffect(() => {
+    if (!scrollToMessageId || !tree) return;
+    if (collectLeaves(tree).some((l) => l.panel === "chat")) return;
+    const saved = loadChannelLayouts(channelId);
+    if (!saved) return;
+    for (const name of saved.order) {
+      const savedTree = saved.layouts[name];
+      if (savedTree && collectLeaves(savedTree).some((l) => l.panel === "chat")) {
+        switchLayout(name);
+        return;
+      }
+    }
+  }, [scrollToMessageId, tree, channelId, switchLayout]);
+
   const addLayout = useCallback(() => {
     let n = 1;
     let name = `Layout ${n}`;
