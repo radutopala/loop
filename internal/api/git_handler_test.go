@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"net/http"
 	"os"
 	"os/exec"
@@ -59,6 +60,43 @@ func (s *ServerSuite) TestListBranches_Success() {
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), "feature/test")
 	require.Contains(s.T(), rec.Body.String(), `"worktrees":`)
+}
+
+func (s *ServerSuite) TestListBranches_ExcludesWorktreeBranches() {
+	dir := initGitRepo(s.T())
+	// Create two branches: one stays local, one goes into a worktree.
+	for _, b := range []string{"feature/local-only", "feature/in-worktree"} {
+		cmd := exec.Command("git", "branch", b)
+		cmd.Dir = dir
+		require.NoError(s.T(), cmd.Run())
+	}
+	cmd := exec.Command("git", "worktree", "add", filepath.Join(dir, ".worktrees", "wt1"), "feature/in-worktree")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: dir}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch1/branches", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp branchListResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+
+	// Local-only branch should be in branches list.
+	require.Contains(s.T(), resp.Branches, "feature/local-only")
+	// Worktree branch should NOT be in branches list.
+	for _, b := range resp.Branches {
+		require.NotEqual(s.T(), "feature/in-worktree", b)
+	}
+	// Worktree should appear in worktrees list.
+	require.NotEmpty(s.T(), resp.Worktrees)
+	found := false
+	for _, wt := range resp.Worktrees {
+		if wt.Branch == "feature/in-worktree" {
+			found = true
+		}
+	}
+	require.True(s.T(), found, "worktree branch should appear in worktrees list")
 }
 
 func (s *ServerSuite) TestListBranches_NotConfigured() {
