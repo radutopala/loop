@@ -117,8 +117,8 @@ type MockIncomingMessageHandler struct {
 	mock.Mock
 }
 
-func (m *MockIncomingMessageHandler) HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string) {
-	m.Called(ctx, channelID, authorID, content, mode)
+func (m *MockIncomingMessageHandler) HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string, worktree bool) {
+	m.Called(ctx, channelID, authorID, content, mode, worktree)
 }
 
 func (m *MockIncomingMessageHandler) HandleThreadCreated(ctx context.Context, threadID, authorID, message string) {
@@ -202,6 +202,9 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("PUT /api/channels/{id}/file", s.srv.handleWriteFile)
 	s.mux.HandleFunc("DELETE /api/channels/{id}/file", s.srv.handleDeleteFile)
 	s.mux.HandleFunc("GET /api/readme", s.srv.handleGetReadme)
+	s.mux.HandleFunc("GET /api/channels/{id}/branches", s.srv.handleListBranches)
+	s.mux.HandleFunc("POST /api/channels/{id}/branches/switch", s.srv.handleSwitchBranch)
+	s.mux.HandleFunc("POST /api/channels/{id}/branches/create", s.srv.handleCreateBranch)
 	s.mux.HandleFunc("GET /api/health", handleHealth)
 	s.mux.HandleFunc("GET /api/ws/terminal", s.srv.handleTerminalWS)
 	s.mux.HandleFunc("GET /api/ws", s.srv.handleEventsWS)
@@ -1278,7 +1281,7 @@ func (s *ServerSuite) TestSendMessageViaHandler() {
 	s.srv.SetIncomingMessageHandler(handler)
 
 	called := make(chan struct{}, 1)
-	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "hello world", "").
+	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "hello world", "", false).
 		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
 
 	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"hello world"}`)
@@ -1302,7 +1305,7 @@ func (s *ServerSuite) TestSendMessageViaHandlerPlanMode() {
 	s.srv.SetIncomingMessageHandler(handler)
 
 	called := make(chan struct{}, 1)
-	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "plan this", "plan").
+	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "plan this", "plan", false).
 		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
 
 	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"plan this","mode":"plan"}`)

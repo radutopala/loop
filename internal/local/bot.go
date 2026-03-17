@@ -213,7 +213,7 @@ func (b *Bot) OnChannelJoin(handler func(ctx context.Context, channelID string, 
 
 // HandleIncomingMessage implements api.IncomingMessageHandler. It parses mentions
 // and command prefixes, then routes the message through the orchestrator.
-func (b *Bot) HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string) {
+func (b *Bot) HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string, worktree bool) {
 	if authorID == "" {
 		authorID = DefaultAuthorID
 	}
@@ -240,6 +240,7 @@ func (b *Bot) HandleIncomingMessage(ctx context.Context, channelID, authorID, co
 			IsDM:         true,
 			Timestamp:    time.Now().UTC(),
 			Mode:         mode,
+			Worktree:     worktree,
 		})
 	}
 }
@@ -250,5 +251,5 @@ func (b *Bot) HandleThreadCreated(ctx context.Context, threadID, authorID, messa
 	if message == "" {
 		return
 	}
-	b.HandleIncomingMessage(ctx, threadID, authorID, "@"+BotUsername+" "+message, "")
+	b.HandleIncomingMessage(ctx, threadID, authorID, "@"+BotUsername+" "+message, "", false)
 }

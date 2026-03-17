@@ -120,8 +120,8 @@ func (m *MockBot) CreateSimpleThread(ctx context.Context, channelID, name, initi
 	return args.String(0), args.Error(1)
 }
 
-func (m *MockBot) HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string) {
-	m.Called(ctx, channelID, authorID, content, mode)
+func (m *MockBot) HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string, worktree bool) {
+	m.Called(ctx, channelID, authorID, content, mode, worktree)
 }
 
 func (m *MockBot) HandleThreadCreated(ctx context.Context, threadID, authorID, message string) {

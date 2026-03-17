@@ -480,17 +480,17 @@ func (s *BotRouterSuite) TestHandleIncomingMessageRoutesToCorrectBot() {
 	s.store.On("GetChannel", mock.Anything, "ch-local").Return(
 		&db.Channel{ChannelID: "ch-local", Platform: types.PlatformLocal}, nil,
 	)
-	s.localBot.On("HandleIncomingMessage", mock.Anything, "ch-local", "user-1", "hello", "").Return()
+	s.localBot.On("HandleIncomingMessage", mock.Anything, "ch-local", "user-1", "hello", "", false).Return()
 
-	s.router.HandleIncomingMessage(context.Background(), "ch-local", "user-1", "hello", "")
-	s.localBot.AssertCalled(s.T(), "HandleIncomingMessage", mock.Anything, "ch-local", "user-1", "hello", "")
+	s.router.HandleIncomingMessage(context.Background(), "ch-local", "user-1", "hello", "", false)
+	s.localBot.AssertCalled(s.T(), "HandleIncomingMessage", mock.Anything, "ch-local", "user-1", "hello", "", false)
 }
 
 func (s *BotRouterSuite) TestHandleIncomingMessageNilBotNoPanic() {
 	router := NewBotRouter(map[types.Platform]Bot{}, s.store, s.logger)
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(nil, nil)
 
-	router.HandleIncomingMessage(context.Background(), "ch-1", "", "test", "")
+	router.HandleIncomingMessage(context.Background(), "ch-1", "", "test", "", false)
 }
 
 func (s *BotRouterSuite) TestHandleThreadCreatedRoutesToCorrectBot() {

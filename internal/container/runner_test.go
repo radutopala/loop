@@ -3001,16 +3001,21 @@ func (s *RunnerSuite) TestBuildBaseClaudeCmdPlanMode() {
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 
 	// Without plan mode: should contain --dangerously-skip-permissions but not --permission-mode.
-	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", false, false)
+	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", false, false, false)
 	got := strings.Join(cmd, " ")
 	require.Contains(s.T(), got, "--dangerously-skip-permissions")
 	require.NotContains(s.T(), got, "--permission-mode")
 
 	// With plan mode: should contain --permission-mode plan but not --dangerously-skip-permissions.
-	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", false, true)
+	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", false, true, false)
 	got = strings.Join(cmd, " ")
 	require.NotContains(s.T(), got, "--dangerously-skip-permissions")
 	require.Contains(s.T(), got, "--permission-mode plan")
+
+	// With worktree: should contain -w flag.
+	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", false, false, true)
+	got = strings.Join(cmd, " ")
+	require.Contains(s.T(), got, " -w")
 }
 
 func (s *RunnerSuite) TestBuildClaudeCmdPlanMode() {

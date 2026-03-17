@@ -43,7 +43,7 @@ type Bot interface {
 	GetChannelParentID(ctx context.Context, channelID string) (string, error)
 	GetChannelName(ctx context.Context, channelID string) (string, error)
 	CreateSimpleThread(ctx context.Context, channelID, name, initialMessage string) (string, error)
-	HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string)
+	HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string, worktree bool)
 	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }
 

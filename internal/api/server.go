@@ -28,7 +28,7 @@ type ActiveChatLister interface {
 // IncomingMessageHandler processes a user message from the API, routing it
 // through the orchestrator so Claude can respond.
 type IncomingMessageHandler interface {
-	HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string)
+	HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string, worktree bool)
 	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }
 
@@ -156,6 +156,9 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("PUT /api/channels/{id}/file", s.handleWriteFile)
 	mux.HandleFunc("DELETE /api/channels/{id}/file", s.handleDeleteFile)
 	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
+	mux.HandleFunc("GET /api/channels/{id}/branches", s.handleListBranches)
+	mux.HandleFunc("POST /api/channels/{id}/branches/switch", s.handleSwitchBranch)
+	mux.HandleFunc("POST /api/channels/{id}/branches/create", s.handleCreateBranch)
 	mux.HandleFunc("POST /api/browser/ensure", s.handleEnsureBrowser)
 	mux.HandleFunc("POST /api/browser/touch", s.handleTouchBrowser)
 	mux.HandleFunc("GET /api/health", handleHealth)
