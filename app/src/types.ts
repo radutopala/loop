@@ -7,6 +7,7 @@ export interface Channel {
   container_running: boolean;
   agent_running: boolean;
   branch: string;
+  commit: string;
   worktree: boolean;
 }
 

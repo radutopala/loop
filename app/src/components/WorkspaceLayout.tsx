@@ -182,8 +182,7 @@ function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreateWorktr
             padding: 0,
             zIndex: 1000,
             minWidth: 340,
-            height: 400,
-            maxHeight: "60vh",
+            maxHeight: "min(300px, 60vh)",
             display: "flex",
             flexDirection: "column",
             boxShadow: `0 4px 12px ${colors.shadow}`,
@@ -214,7 +213,7 @@ function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreateWorktr
             </div>
           </div>
           {/* Branch list */}
-          <div style={{ overflow: "auto", padding: "4px 0", flex: "1 1 0", minHeight: 0 }}>
+          <div style={{ overflow: "auto", padding: "4px 0" }}>
             <div style={{ padding: "4px 12px 2px", fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>
               Branches
             </div>
@@ -258,29 +257,44 @@ function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreateWorktr
                     <span style={{ flex: 1 }}>{b}</span>
                     {isCurrent && <span style={{ color: colors.active, flexShrink: 0 }}>&#10003;</span>}
                   </button>
+                  <button
+                    onClick={(e) => { e.stopPropagation(); navigator.clipboard.writeText(b); }}
+                    title="Copy branch name"
+                    style={{
+                      padding: "2px 6px",
+                      border: "none",
+                      background: "transparent",
+                      color: colors.textDim,
+                      cursor: "pointer",
+                      borderRadius: 4,
+                      flexShrink: 0,
+                      fontSize: 10,
+                      fontFamily: fonts.mono,
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+                  >
+                    cp
+                  </button>
                   {onCreateWorktree && (
                     <button
                       onClick={(e) => { e.stopPropagation(); setOpen(false); onCreateWorktree(channelId, b); }}
                       title={`New worktree thread from ${b}`}
                       style={{
-                        display: "flex",
-                        alignItems: "center",
-                        padding: "4px 8px",
+                        padding: "2px 6px",
                         border: "none",
                         background: "transparent",
                         color: colors.textDim,
                         cursor: "pointer",
                         borderRadius: 4,
                         flexShrink: 0,
+                        fontSize: 10,
+                        fontFamily: fonts.mono,
                       }}
                       onMouseEnter={(e) => { e.currentTarget.style.color = colors.active; }}
                       onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
                     >
-                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                        <circle cx="18" cy="18" r="3" />
-                        <circle cx="6" cy="6" r="3" />
-                        <path d="M6 21V9a9 9 0 0 0 9 9" />
-                      </svg>
+                      +wt
                     </button>
                   )}
                 </div>
@@ -651,6 +665,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
   const dirPath = channel.dir_path || "";
   const branch = channel.branch || "";
+  const commit = channel.commit || "";
 
   const renderLeaf = useCallback(
     (leaf: LeafNode): React.ReactNode => {
@@ -819,6 +834,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         {dirPath && (
           <>
             <span
+              onDoubleClick={(e) => { navigator.clipboard.writeText(dirPath); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
+              title="Double-click to copy path"
               style={{
                 fontSize: 12,
                 color: colors.textDim,
@@ -827,15 +844,40 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                 whiteSpace: "nowrap",
                 minWidth: 0,
                 marginLeft: 12,
+                cursor: "default",
+                // @ts-expect-error: WebKit-specific CSS property
+                WebkitAppRegion: "no-drag",
               }}
             >
               {dirPath}
             </span>
-            {branch && (
+            {commit && (
               <>
                 <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px 0 12px" }}>|</span>
+                <span
+                  onDoubleClick={(e) => { navigator.clipboard.writeText(commit); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
+                  title="Double-click to copy commit hash"
+                  style={{
+                    fontSize: 11,
+                    color: colors.textDim,
+                    fontFamily: fonts.mono,
+                    flexShrink: 0,
+                    cursor: "default",
+                    // @ts-expect-error: WebKit-specific CSS property
+                    WebkitAppRegion: "no-drag",
+                  }}
+                >
+                  {commit}
+                </span>
+              </>
+            )}
+            {branch && (
+              <>
+                <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px" }}>|</span>
                 {channel.parent_id ? (
-                  <span style={{ fontSize: 11, color: colors.active, fontFamily: fonts.mono, flexShrink: 0 }}>
+                  <span
+                    style={{ fontSize: 11, color: colors.active, fontFamily: fonts.mono, flexShrink: 0, cursor: "default" }}
+                  >
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 2, verticalAlign: -1 }}>
                       <line x1="6" y1="3" x2="6" y2="15" />
                       <circle cx="18" cy="6" r="3" />

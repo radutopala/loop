@@ -39,6 +39,7 @@ type channelResponse struct {
 	ContainerRunning bool   `json:"container_running"`
 	AgentRunning     bool   `json:"agent_running"`
 	Branch           string `json:"branch,omitempty"`
+	Commit           string `json:"commit,omitempty"`
 	Worktree         bool   `json:"worktree"`
 }
 
@@ -142,6 +143,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			ContainerRunning: running,
 			AgentRunning:     runningBot,
 			Branch:           gitBranch(r.Context(), dirPath),
+			Commit:           gitCommit(r.Context(), dirPath),
 			Worktree:         ch.Worktree,
 		})
 	}
@@ -155,6 +157,20 @@ func gitBranch(ctx context.Context, dir string) string {
 		return ""
 	}
 	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+// gitCommit returns the short commit hash for the given directory, or "".
+func gitCommit(ctx context.Context, dir string) string {
+	if dir == "" {
+		return ""
+	}
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--short", "HEAD")
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {

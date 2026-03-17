@@ -39,6 +39,7 @@ interface ChannelAPIResponse {
   container_running: boolean;
   agent_running: boolean;
   branch?: string;
+  commit?: string;
   worktree?: boolean;
 }
 
@@ -55,6 +56,7 @@ export async function fetchChannels(): Promise<Channel[]> {
     container_running: c.container_running,
     agent_running: c.agent_running,
     branch: c.branch || "",
+    commit: c.commit || "",
     worktree: c.worktree ?? false,
   }));
 }
@@ -108,6 +110,7 @@ export async function ensureChannel(dirPath: string): Promise<Channel> {
     container_running: data.container_running,
     agent_running: data.agent_running,
     branch: data.branch || "",
+    commit: data.commit || "",
     worktree: data.worktree ?? false,
   };
 }
