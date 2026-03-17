@@ -60,21 +60,8 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 
 	worktrees := parseWorktrees(string(wtOut), dirPath)
 
-	// Exclude branches checked out in other worktrees — git won't allow
-	// checking them out and they'd cause confusing errors.
-	wtBranches := make(map[string]struct{}, len(worktrees))
-	for _, wt := range worktrees {
-		wtBranches[wt.Branch] = struct{}{}
-	}
-	filtered := branches[:0]
-	for _, b := range branches {
-		if _, inWT := wtBranches[b]; !inWT {
-			filtered = append(filtered, b)
-		}
-	}
-
 	writeHTTPJSON(w, http.StatusOK, branchListResponse{
-		Branches:  filtered,
+		Branches:  branches,
 		Current:   current,
 		Worktrees: worktrees,
 	}, s.logger)
