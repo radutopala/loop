@@ -224,6 +224,10 @@ function BranchPicker({ channelId, env, currentBranch, selectedBranch, setSelect
     !search || b.toLowerCase().includes(search.toLowerCase()),
   ) ?? [];
 
+  const filteredWorktrees = branchInfo?.worktrees.filter((wt) =>
+    !search || wt.branch.toLowerCase().includes(search.toLowerCase()) || wt.path.toLowerCase().includes(search.toLowerCase()),
+  ) ?? [];
+
   const label = env === "worktree" ? `From ${displayBranch}` : displayBranch;
 
   return (
@@ -348,12 +352,12 @@ function BranchPicker({ channelId, env, currentBranch, selectedBranch, setSelect
             )}
           </div>
           {/* Worktrees */}
-          {branchInfo && branchInfo.worktrees.length > 0 && env === "local" && (
+          {filteredWorktrees.length > 0 && env === "local" && (
             <div style={{ borderTop: `1px solid ${colors.border}`, padding: "4px 0", overflow: "auto", flex: "1 1 0", minHeight: 0 }}>
               <div style={{ padding: "4px 12px 2px", fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>
                 Worktrees
               </div>
-              {branchInfo.worktrees.map((wt) => (
+              {filteredWorktrees.map((wt) => (
                 <button
                   key={wt.path}
                   onClick={() => { /* TODO: select existing worktree */ setOpen(false); }}
