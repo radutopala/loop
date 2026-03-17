@@ -71,10 +71,8 @@ function NewWorktreeButton({ channelId, onCreateWorktree }: {
     onCreateWorktree(channelId, branch);
   }, [channelId, onCreateWorktree]);
 
-  // Exclude the current branch — git won't allow creating a worktree for it.
-  const current = branchInfo?.current ?? "";
   const filtered = branchInfo?.branches.filter((b) =>
-    b !== current && (!search || b.toLowerCase().includes(search.toLowerCase())),
+    !search || b.toLowerCase().includes(search.toLowerCase()),
   ) ?? [];
 
   return (

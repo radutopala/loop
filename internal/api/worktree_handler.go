@@ -67,8 +67,11 @@ func (s *Server) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {
 
 	worktreePath := filepath.Join(dirPath, ".worktrees", name)
 
-	// Create git worktree.
-	cmd := exec.CommandContext(r.Context(), "git", "worktree", "add", worktreePath, req.Branch)
+	// Create git worktree with a new branch based on the selected one.
+	// Using -b creates a dedicated branch for the worktree, which avoids
+	// "already checked out" errors when the base branch is in use.
+	wtBranch := "worktree/" + name
+	cmd := exec.CommandContext(r.Context(), "git", "worktree", "add", "-b", wtBranch, worktreePath, req.Branch)
 	cmd.Dir = dirPath
 	if out, err := cmd.CombinedOutput(); err != nil {
 		http.Error(w, fmt.Sprintf("git worktree add failed: %s", strings.TrimSpace(string(out))), http.StatusInternalServerError)
