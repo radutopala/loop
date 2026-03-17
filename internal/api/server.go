@@ -39,6 +39,8 @@ type serverSystem interface {
 	WriteFile(name string, data []byte, perm os.FileMode) error
 	ReadDir(name string) ([]fs.DirEntry, error)
 	Remove(name string) error
+	MkdirAll(path string, perm os.FileMode) error
+	UserHomeDir() (string, error)
 }
 
 // Server exposes a lightweight HTTP API for task CRUD operations.
@@ -159,6 +161,7 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("GET /api/channels/{id}/branches", s.handleListBranches)
 	mux.HandleFunc("POST /api/channels/{id}/branches/switch", s.handleSwitchBranch)
 	mux.HandleFunc("POST /api/channels/{id}/branches/create", s.handleCreateBranch)
+	mux.HandleFunc("POST /api/worktrees", s.handleCreateWorktree)
 	mux.HandleFunc("POST /api/browser/ensure", s.handleEnsureBrowser)
 	mux.HandleFunc("POST /api/browser/touch", s.handleTouchBrowser)
 	mux.HandleFunc("GET /api/health", handleHealth)

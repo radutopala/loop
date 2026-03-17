@@ -8,9 +8,10 @@ interface ChatToolbarProps {
   channelId: string;
   chatState: ChatState;
   currentBranch: string;
+  onCreateWorktree?: (channelId: string, branch: string) => Promise<void>;
 }
 
-export function ChatToolbar({ channelId, chatState, currentBranch }: ChatToolbarProps) {
+export function ChatToolbar({ channelId, chatState, currentBranch, onCreateWorktree }: ChatToolbarProps) {
   return (
     <div
       style={{
@@ -40,6 +41,7 @@ export function ChatToolbar({ channelId, chatState, currentBranch }: ChatToolbar
         setSelectedBranch={chatState.setSelectedBranch}
         setWorktreePath={chatState.setWorktreePath}
         setEnv={chatState.setEnv}
+        onCreateWorktree={onCreateWorktree}
       />
     </div>
     </div>
@@ -170,7 +172,7 @@ function EnvironmentSelector({ env, setEnv }: { env: "local" | "worktree"; setEn
 
 // ── Branch Picker ──
 
-function BranchPicker({ channelId, env, currentBranch, selectedBranch, setSelectedBranch, setWorktreePath, setEnv }: {
+function BranchPicker({ channelId, env, currentBranch, selectedBranch, setSelectedBranch, setWorktreePath, setEnv, onCreateWorktree }: {
   channelId: string;
   env: "local" | "worktree";
   currentBranch: string;
@@ -178,6 +180,7 @@ function BranchPicker({ channelId, env, currentBranch, selectedBranch, setSelect
   setSelectedBranch: (branch: string | null) => void;
   setWorktreePath: (path: string | null) => void;
   setEnv: (env: "local" | "worktree") => void;
+  onCreateWorktree?: (channelId: string, branch: string) => Promise<void>;
 }) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
@@ -208,9 +211,14 @@ function BranchPicker({ channelId, env, currentBranch, selectedBranch, setSelect
   }, [channelId]);
 
   const handleSelect = useCallback((branch: string) => {
+    if (env === "worktree" && onCreateWorktree) {
+      setOpen(false);
+      onCreateWorktree(channelId, branch);
+      return;
+    }
     setSelectedBranch(branch);
     setOpen(false);
-  }, [setSelectedBranch]);
+  }, [env, channelId, onCreateWorktree, setSelectedBranch]);
 
   const handleCreate = useCallback(async () => {
     const trimmed = newName.trim();

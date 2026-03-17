@@ -39,6 +39,7 @@ interface ChannelAPIResponse {
   container_running: boolean;
   agent_running: boolean;
   branch?: string;
+  worktree?: boolean;
 }
 
 export async function fetchChannels(): Promise<Channel[]> {
@@ -54,6 +55,7 @@ export async function fetchChannels(): Promise<Channel[]> {
     container_running: c.container_running,
     agent_running: c.agent_running,
     branch: c.branch || "",
+    worktree: c.worktree ?? false,
   }));
 }
 
@@ -106,6 +108,7 @@ export async function ensureChannel(dirPath: string): Promise<Channel> {
     container_running: data.container_running,
     agent_running: data.agent_running,
     branch: data.branch || "",
+    worktree: data.worktree ?? false,
   };
 }
 
@@ -165,6 +168,23 @@ export async function switchBranch(channelId: string, branch: string): Promise<v
     body: JSON.stringify({ branch }),
   });
   if (!res.ok) throw new Error(`Failed to switch branch: ${res.statusText}`);
+}
+
+export async function createWorktreeThread(
+  channelId: string,
+  branch: string,
+  name?: string,
+): Promise<{ threadId: string; worktreePath: string }> {
+  const body: Record<string, string> = { channel_id: channelId, branch };
+  if (name) body.name = name;
+  const res = await fetch(`${apiUrl}/api/worktrees`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Failed to create worktree: ${res.statusText}`);
+  const data: { thread_id: string; worktree_path: string } = await res.json();
+  return { threadId: data.thread_id, worktreePath: data.worktree_path };
 }
 
 export async function createBranch(channelId: string, name: string, from?: string): Promise<void> {

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppSettings, Channel, UpdateStatus, WSEvent } from "./types";
 import { fonts } from "./theme";
 import { ThemeProvider, useTheme } from "./ThemeContext";
-import { createChannel, createThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, initApiUrl } from "./api/loopApi";
+import { createChannel, createThread, createWorktreeThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, initApiUrl } from "./api/loopApi";
 import { Sidebar } from "./components/Sidebar";
 import { MarkdownFilePanel } from "./components/FilePanel";
 import { WorkspaceLayout, type WorkspaceLayoutRef } from "./components/WorkspaceLayout";
@@ -305,6 +305,22 @@ function AppInner() {
     [loadChannels, handleSelect],
   );
 
+  const handleCreateWorktree = useCallback(
+    async (channelId: string, branch: string) => {
+      setError(null);
+      try {
+        const { threadId } = await createWorktreeThread(channelId, branch);
+        await loadChannels();
+        handleSelect(threadId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to create worktree";
+        setError(message);
+        console.error("create worktree failed:", err);
+      }
+    },
+    [loadChannels, handleSelect],
+  );
+
   const handleDelete = useCallback(
     async (id: string) => {
       setError(null);
@@ -419,6 +435,7 @@ function AppInner() {
             error={error}
             onDismissError={() => setError(null)}
             diffStats={diffStats}
+            onCreateWorktree={handleCreateWorktree}
           />
           {readmeOpen && (
             <MarkdownFilePanel

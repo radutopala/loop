@@ -241,8 +241,8 @@ func (b *Bot) HandleIncomingMessage(ctx context.Context, channelID, authorID, co
 			Timestamp:    time.Now().UTC(),
 			Mode:         mode,
 			Worktree:     worktree,
-		Branch:       branch,
-		WorktreePath: worktreePath,
+			Branch:       branch,
+			WorktreePath: worktreePath,
 		})
 	}
 }

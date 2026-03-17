@@ -517,6 +517,57 @@ func (s *RunnerSuite) TestRunUsesExplicitPromptOverLastMessage() {
 	s.client.AssertExpectations(s.T())
 }
 
+func (s *RunnerSuite) TestRunBranchCheckout() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID: "sess-1",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+		DirPath:   "/projects/myapp",
+		Branch:    "feature/test",
+	}
+
+	// When DirPath is set, container name derives from dir base: "loop-myapp-aabbcc".
+	s.setupMockRun(ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-myapp-aabbcc",
+		`{"type":"result","result":"ok","session_id":"s1","is_error":false}`)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp.Response)
+
+	// Verify ExecCommandOutput was called with git checkout args.
+	s.sys.AssertCalled(s.T(), "ExecCommandOutput", "git", []string{"-C", "/projects/myapp", "checkout", "feature/test"})
+}
+
+func (s *RunnerSuite) TestRunBranchCheckoutFails() {
+	ctx := context.Background()
+	// Override the default ExecCommandOutput mock to fail for git checkout.
+	sys := new(testutil.MockSystem)
+	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("Getenv", "USER").Return("testuser")
+	sys.On("Getenv", mock.Anything).Return("")
+	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	sys.On("UserHomeDir").Return("/home/testuser", nil)
+	sys.On("Stat", mock.Anything).Return(nil, os.ErrNotExist)
+	sys.On("ExecCommandOutput", "git", []string{"-C", "/projects/myapp", "checkout", "bad-branch"}).Return(nil, errors.New("checkout failed"))
+	sys.On("ExecCommandOutput", mock.Anything, mock.Anything).Return([]byte{}, nil)
+	sys.On("Readlink", mock.Anything).Return("", os.ErrNotExist)
+	sys.On("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
+	sys.On("Remove", mock.Anything).Return(nil)
+	s.runner.sys = sys
+
+	req := &agent.AgentRequest{
+		ChannelID: "ch-1",
+		DirPath:   "/projects/myapp",
+		Branch:    "bad-branch",
+	}
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Nil(s.T(), resp)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "git checkout bad-branch")
+}
+
 func (s *RunnerSuite) TestRunCreateFails() {
 	ctx := context.Background()
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
@@ -3001,21 +3052,16 @@ func (s *RunnerSuite) TestBuildBaseClaudeCmdPlanMode() {
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 
 	// Without plan mode: should contain --dangerously-skip-permissions but not --permission-mode.
-	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", false, false, false)
+	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", false, false)
 	got := strings.Join(cmd, " ")
 	require.Contains(s.T(), got, "--dangerously-skip-permissions")
 	require.NotContains(s.T(), got, "--permission-mode")
 
 	// With plan mode: should contain --permission-mode plan but not --dangerously-skip-permissions.
-	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", false, true, false)
+	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", false, true)
 	got = strings.Join(cmd, " ")
 	require.NotContains(s.T(), got, "--dangerously-skip-permissions")
 	require.Contains(s.T(), got, "--permission-mode plan")
-
-	// With worktree: should contain -w flag.
-	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", false, false, true)
-	got = strings.Join(cmd, " ")
-	require.Contains(s.T(), got, " -w")
 }
 
 func (s *RunnerSuite) TestBuildClaudeCmdPlanMode() {

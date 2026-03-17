@@ -279,9 +279,10 @@ interface ChatViewProps {
   currentBranch?: string;
   scrollToMessageId?: number | null;
   onScrollComplete?: () => void;
+  onCreateWorktree?: (channelId: string, branch: string) => Promise<void>;
 }
 
-export function ChatView({ channelId, chatState, currentBranch, scrollToMessageId, onScrollComplete }: ChatViewProps) {
+export function ChatView({ channelId, chatState, currentBranch, scrollToMessageId, onScrollComplete, onCreateWorktree }: ChatViewProps) {
   const { colors } = useTheme();
   const styles = buildStyles(colors);
   const { messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, completionInfo } = chatState;
@@ -359,7 +360,7 @@ export function ChatView({ channelId, chatState, currentBranch, scrollToMessageI
         <div style={styles.inputBar}>
           <ChatInput channelId={channelId} mode={chatState.mode} setMode={chatState.setMode} env={chatState.env} selectedBranch={chatState.selectedBranch} worktreePath={chatState.worktreePath} onDismissCards={dismissCards} onSent={scrollToBottom} />
         </div>
-        {channelId && <ChatToolbar channelId={channelId} chatState={chatState} currentBranch={currentBranch || ""} />}
+        {channelId && <ChatToolbar channelId={channelId} chatState={chatState} currentBranch={currentBranch || ""} onCreateWorktree={onCreateWorktree} />}
         <div style={styles.isolationLabel}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
@@ -412,7 +413,7 @@ export function ChatView({ channelId, chatState, currentBranch, scrollToMessageI
       <div style={styles.inputBar}>
         <ChatInput channelId={channelId} isRunning={isRunning} mode={chatState.mode} setMode={chatState.setMode} env={chatState.env} selectedBranch={chatState.selectedBranch} worktreePath={chatState.worktreePath} onDismissCards={dismissCards} onSent={scrollToBottom} />
       </div>
-      {channelId && <ChatToolbar channelId={channelId} chatState={chatState} currentBranch={currentBranch || ""} />}
+      {channelId && <ChatToolbar channelId={channelId} chatState={chatState} currentBranch={currentBranch || ""} onCreateWorktree={onCreateWorktree} />}
       <div style={styles.isolationLabel}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isRunning ? colors.active : colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />

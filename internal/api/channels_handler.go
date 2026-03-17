@@ -39,6 +39,7 @@ type channelResponse struct {
 	ContainerRunning bool   `json:"container_running"`
 	AgentRunning     bool   `json:"agent_running"`
 	Branch           string `json:"branch,omitempty"`
+	Worktree         bool   `json:"worktree"`
 }
 
 func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
@@ -141,6 +142,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			ContainerRunning: running,
 			AgentRunning:     runningBot,
 			Branch:           gitBranch(r.Context(), dirPath),
+			Worktree:         ch.Worktree,
 		})
 	}
 

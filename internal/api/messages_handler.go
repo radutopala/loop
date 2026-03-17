@@ -10,9 +10,9 @@ import (
 )
 
 type sendMessageRequest struct {
-	ChannelID string `json:"channel_id"`
-	Content   string `json:"content"`
-	Mode      string `json:"mode,omitempty"`
+	ChannelID    string `json:"channel_id"`
+	Content      string `json:"content"`
+	Mode         string `json:"mode,omitempty"`
 	Worktree     bool   `json:"worktree,omitempty"`
 	Branch       string `json:"branch,omitempty"`
 	WorktreePath string `json:"worktree_path,omitempty"`

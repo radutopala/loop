@@ -173,6 +173,8 @@ func (s *ServerSuite) SetupTest() {
 	s.sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.sys.On("Stat", mock.Anything).Return(nil, os.ErrNotExist)
 	s.sys.On("Remove", mock.Anything).Return(nil)
+	s.sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	s.sys.On("UserHomeDir").Return("/home/testuser", nil)
 
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("GET /api/channels", s.srv.handleSearchChannels)
@@ -205,6 +207,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("GET /api/channels/{id}/branches", s.srv.handleListBranches)
 	s.mux.HandleFunc("POST /api/channels/{id}/branches/switch", s.srv.handleSwitchBranch)
 	s.mux.HandleFunc("POST /api/channels/{id}/branches/create", s.srv.handleCreateBranch)
+	s.mux.HandleFunc("POST /api/worktrees", s.srv.handleCreateWorktree)
 	s.mux.HandleFunc("GET /api/health", handleHealth)
 	s.mux.HandleFunc("GET /api/ws/terminal", s.srv.handleTerminalWS)
 	s.mux.HandleFunc("GET /api/ws", s.srv.handleEventsWS)

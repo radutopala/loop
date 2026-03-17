@@ -15,6 +15,7 @@ type MessageSender interface {
 type ChannelLister interface {
 	ListChannels(ctx context.Context) ([]*db.Channel, error)
 	GetChannel(ctx context.Context, channelID string) (*db.Channel, error)
+	UpsertChannel(ctx context.Context, ch *db.Channel) error
 	GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*db.Message, error)
 	SearchMessages(ctx context.Context, query string, limit int) ([]*db.Message, error)
 	GetMessagesAround(ctx context.Context, channelID string, messageID int64, limit int) ([]*db.Message, error)

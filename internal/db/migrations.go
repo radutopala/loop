@@ -145,6 +145,7 @@ var migrations = []migration{
 	sqlMigration(`ALTER TABLE channels ADD COLUMN permissions TEXT NOT NULL DEFAULT ''`),
 	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN auto_delete_sec INTEGER NOT NULL DEFAULT 0`),
 	sqlMigration(`UPDATE messages SET author_name = 'agent' WHERE author_name = 'assistant' AND is_bot = 1`),
+	sqlMigration(`ALTER TABLE channels ADD COLUMN worktree INTEGER NOT NULL DEFAULT 0`),
 }
 
 // RunMigrations executes all pending schema migrations.

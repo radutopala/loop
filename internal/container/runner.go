@@ -504,6 +504,13 @@ func (r *DockerRunner) gitExcludesMount() string {
 
 // runOnce executes a single container run.
 func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
+	// Checkout the requested branch before starting the container.
+	if req.Branch != "" && req.DirPath != "" {
+		if _, err := r.sys.ExecCommandOutput("git", "-C", req.DirPath, "checkout", req.Branch); err != nil {
+			return nil, fmt.Errorf("git checkout %s: %w", req.Branch, err)
+		}
+	}
+
 	containerID, mcpConfigPath, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID,
 		func(cfg *config.Config, mcpConfigPath string) []string {
 			return buildClaudeCmd(cfg, mcpConfigPath, req)
@@ -660,7 +667,7 @@ func (r *DockerRunner) buildContainerMounts(mounts []string, workDir string) (bi
 
 // buildBaseClaudeCmd returns the common Claude CLI flags shared by both
 // batch and interactive modes.
-func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID string, forkSession, planMode, worktree bool) []string {
+func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID string, forkSession, planMode bool) []string {
 	cmd := []string{cfg.ClaudeBinPath, "--mcp-config", mcpConfigPath}
 	if cfg.ClaudeModel != "" {
 		cmd = append(cmd, "--model", cfg.ClaudeModel)
@@ -669,9 +676,6 @@ func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID string, for
 		cmd = append(cmd, "--permission-mode", "plan")
 	} else {
 		cmd = append(cmd, "--dangerously-skip-permissions")
-	}
-	if worktree {
-		cmd = append(cmd, "-w")
 	}
 	if sessionID != "" {
 		cmd = append(cmd, "--resume", sessionID)
@@ -684,7 +688,7 @@ func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID string, for
 
 // buildClaudeCmd assembles the Claude CLI command with all flags for batch mode.
 func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest) []string {
-	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.ForkSession, req.PlanMode, req.Worktree)
+	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.ForkSession, req.PlanMode)
 	cmd = append(cmd, "--print", "--verbose", "--output-format", "stream-json")
 	if req.SystemPrompt != "" {
 		cmd = append(cmd, "--append-system-prompt", req.SystemPrompt)
@@ -696,7 +700,7 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 // terminal sessions (no --print, --verbose, --output-format flags).
 func BuildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID string, forkSession bool) string {
 	mcpConfigPath := filepath.Join(workDir, ".loop", "mcp-"+channelID+".json")
-	return strings.Join(buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, forkSession, false, false), " ")
+	return strings.Join(buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, forkSession, false), " ")
 }
 
 // ClaudeCmdBuilder builds the interactive Claude command for terminal sessions.

@@ -108,6 +108,7 @@ interface WorkspaceLayoutProps {
   onDismissError?: () => void;
   diffStats?: { add: number; del: number };
   style?: React.CSSProperties;
+  onCreateWorktree?: (channelId: string, branch: string) => Promise<void>;
 }
 
 export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutProps>(function WorkspaceLayout({
@@ -125,6 +126,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   onDismissError,
   diffStats: _diffStats,
   style,
+  onCreateWorktree,
 }, ref) {
   const { colors } = useTheme();
 
@@ -454,6 +456,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               currentBranch={branch}
               scrollToMessageId={scrollToMessageId}
               onScrollComplete={onScrollComplete}
+              onCreateWorktree={onCreateWorktree}
             />
           );
         case "editor":

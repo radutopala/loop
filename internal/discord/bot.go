@@ -415,7 +415,8 @@ func (b *DiscordBot) CreateSimpleThread(ctx context.Context, channelID, name, in
 	return ch.ID, nil
 }
 
-func (b *DiscordBot) HandleIncomingMessage(_ context.Context, _, _, _, _ string, _ bool, _, _ string) {}
+func (b *DiscordBot) HandleIncomingMessage(_ context.Context, _, _, _, _ string, _ bool, _, _ string) {
+}
 
 // HandleThreadCreated posts the initial message (with a bot mention) to the
 // thread so that the normal message event handler picks it up and triggers a
