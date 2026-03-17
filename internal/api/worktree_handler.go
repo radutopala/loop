@@ -117,9 +117,11 @@ func (s *Server) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {
 }
 
 // encodeClaudeProjectPath encodes a directory path the same way Claude Code does:
-// replace each "/" with "-". E.g. "/Users/me/project" → "-Users-me-project".
+// replace "/" and "." with "-".
+// E.g. "/Users/me/.worktrees/wt" → "-Users-me--worktrees-wt".
 func encodeClaudeProjectPath(dirPath string) string {
-	return strings.ReplaceAll(dirPath, "/", "-")
+	r := strings.NewReplacer("/", "-", ".", "-")
+	return r.Replace(dirPath)
 }
 
 // copySessionFile copies a Claude session file from the parent project dir
