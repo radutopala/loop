@@ -124,11 +124,12 @@ export async function sendMessage(
   channelId: string,
   content: string,
   mode?: "agent" | "plan",
-  worktree?: boolean,
+  opts?: { worktree?: boolean; branch?: string },
 ): Promise<void> {
   const body: Record<string, unknown> = { channel_id: channelId, content };
   if (mode && mode !== "agent") body.mode = mode;
-  if (worktree) body.worktree = true;
+  if (opts?.worktree) body.worktree = true;
+  if (opts?.branch) body.branch = opts.branch;
   const res = await fetch(`${apiUrl}/api/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

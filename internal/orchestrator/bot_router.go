@@ -231,9 +231,9 @@ func (r *BotRouter) noBotErr(method, channelID string) error {
 
 // --- API message routing: route to channel's platform bot ---
 
-func (r *BotRouter) HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string, worktree bool) {
+func (r *BotRouter) HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string, worktree bool, branch string) {
 	if b := r.botForChannel(ctx, channelID); b != nil {
-		b.HandleIncomingMessage(ctx, channelID, authorID, content, mode, worktree)
+		b.HandleIncomingMessage(ctx, channelID, authorID, content, mode, worktree, branch)
 	}
 }
 

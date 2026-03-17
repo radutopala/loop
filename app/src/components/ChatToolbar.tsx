@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { fonts } from "../theme";
 import { useTheme } from "../ThemeContext";
 import type { ChatState } from "../hooks/useChatState";
-import { fetchBranches, switchBranch, createBranch, type BranchInfo } from "../api/loopApi";
+import { fetchBranches, createBranch, type BranchInfo } from "../api/loopApi";
 
 interface ChatToolbarProps {
   channelId: string;
@@ -203,15 +203,10 @@ function BranchPicker({ channelId, env, currentBranch, selectedBranch, setSelect
     setTimeout(() => searchRef.current?.focus(), 0);
   }, [channelId]);
 
-  const handleSelect = useCallback(async (branch: string) => {
-    if (env === "local") {
-      try {
-        await switchBranch(channelId, branch);
-      } catch { /* ignore — will show stale branch */ }
-    }
+  const handleSelect = useCallback((branch: string) => {
     setSelectedBranch(branch);
     setOpen(false);
-  }, [channelId, env, setSelectedBranch]);
+  }, [setSelectedBranch]);
 
   const handleCreate = useCallback(async () => {
     const trimmed = newName.trim();
@@ -274,8 +269,9 @@ function BranchPicker({ channelId, env, currentBranch, selectedBranch, setSelect
             borderRadius: 8,
             padding: 0,
             zIndex: 1000,
-            minWidth: 260,
-            maxHeight: 320,
+            minWidth: 340,
+            height: 400,
+            maxHeight: "60vh",
             display: "flex",
             flexDirection: "column",
             boxShadow: `0 4px 12px ${colors.shadow}`,
@@ -306,7 +302,7 @@ function BranchPicker({ channelId, env, currentBranch, selectedBranch, setSelect
             </div>
           </div>
           {/* Branch list */}
-          <div style={{ overflow: "auto", padding: "4px 0", flex: 1 }}>
+          <div style={{ overflow: "auto", padding: "4px 0", flex: "1 1 0", minHeight: 0 }}>
             <div style={{ padding: "4px 12px 2px", fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>
               Branches
             </div>
@@ -331,6 +327,7 @@ function BranchPicker({ channelId, env, currentBranch, selectedBranch, setSelect
                     fontFamily: fonts.mono,
                     textAlign: "left",
                     borderRadius: 4,
+                    whiteSpace: "nowrap",
                   }}
                   onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; e.currentTarget.style.color = colors.textLight; }}
                   onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = isCurrent ? colors.textLight : colors.text; }}
@@ -352,46 +349,45 @@ function BranchPicker({ channelId, env, currentBranch, selectedBranch, setSelect
           </div>
           {/* Worktrees */}
           {branchInfo && branchInfo.worktrees.length > 0 && env === "local" && (
-            <>
-              <div style={{ borderTop: `1px solid ${colors.border}`, padding: "4px 0" }}>
-                <div style={{ padding: "4px 12px 2px", fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>
-                  Worktrees
-                </div>
-                {branchInfo.worktrees.map((wt) => (
-                  <button
-                    key={wt.path}
-                    onClick={() => { /* TODO: select existing worktree */ setOpen(false); }}
-                    title={wt.path}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      width: "100%",
-                      padding: "5px 12px",
-                      border: "none",
-                      background: "transparent",
-                      color: colors.text,
-                      cursor: "pointer",
-                      fontSize: 12,
-                      fontFamily: fonts.mono,
-                      textAlign: "left",
-                      borderRadius: 4,
-                    }}
-                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; e.currentTarget.style.color = colors.textLight; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.text; }}
-                  >
-                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.5 }}>
-                      <line x1="6" y1="3" x2="6" y2="15" />
-                      <circle cx="18" cy="6" r="3" />
-                      <circle cx="6" cy="18" r="3" />
-                      <path d="M18 9a9 9 0 0 1-9 9" />
-                    </svg>
-                    <span style={{ flex: 1 }}>{wt.branch}</span>
-                    <span style={{ fontSize: 10, color: colors.textDim }}>{wt.path.split("/").pop()}</span>
-                  </button>
-                ))}
+            <div style={{ borderTop: `1px solid ${colors.border}`, padding: "4px 0", overflow: "auto", flex: "1 1 0", minHeight: 0 }}>
+              <div style={{ padding: "4px 12px 2px", fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>
+                Worktrees
               </div>
-            </>
+              {branchInfo.worktrees.map((wt) => (
+                <button
+                  key={wt.path}
+                  onClick={() => { /* TODO: select existing worktree */ setOpen(false); }}
+                  title={wt.path}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 6,
+                    width: "100%",
+                    padding: "5px 12px",
+                    border: "none",
+                    background: "transparent",
+                    color: colors.text,
+                    cursor: "pointer",
+                    fontSize: 12,
+                    fontFamily: fonts.mono,
+                    textAlign: "left",
+                    borderRadius: 4,
+                    whiteSpace: "nowrap",
+                  }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; e.currentTarget.style.color = colors.textLight; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.text; }}
+                >
+                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.5 }}>
+                    <line x1="6" y1="3" x2="6" y2="15" />
+                    <circle cx="18" cy="6" r="3" />
+                    <circle cx="6" cy="18" r="3" />
+                    <path d="M18 9a9 9 0 0 1-9 9" />
+                  </svg>
+                  <span style={{ flex: 1 }}>{wt.branch}</span>
+                  <span style={{ fontSize: 10, color: colors.textDim }}>{wt.path.split("/").pop()}</span>
+                </button>
+              ))}
+            </div>
           )}
           {/* Create new branch */}
           <div style={{ borderTop: `1px solid ${colors.border}`, padding: 4 }}>

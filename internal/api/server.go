@@ -28,7 +28,7 @@ type ActiveChatLister interface {
 // IncomingMessageHandler processes a user message from the API, routing it
 // through the orchestrator so Claude can respond.
 type IncomingMessageHandler interface {
-	HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string, worktree bool)
+	HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string, worktree bool, branch string)
 	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }
 

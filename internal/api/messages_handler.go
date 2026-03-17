@@ -14,6 +14,7 @@ type sendMessageRequest struct {
 	Content   string `json:"content"`
 	Mode      string `json:"mode,omitempty"`
 	Worktree  bool   `json:"worktree,omitempty"`
+	Branch    string `json:"branch,omitempty"`
 }
 
 func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +35,7 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 	// Route through the orchestrator when available.
 	if s.msgHandler != nil {
 		// Use a detached context — r.Context() is cancelled when the HTTP response is sent.
-		go s.msgHandler.HandleIncomingMessage(context.Background(), req.ChannelID, "", req.Content, req.Mode, req.Worktree)
+		go s.msgHandler.HandleIncomingMessage(context.Background(), req.ChannelID, "", req.Content, req.Mode, req.Worktree, req.Branch)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}
