@@ -539,6 +539,30 @@ func (s *RunnerSuite) TestRunBranchCheckout() {
 	s.sys.AssertCalled(s.T(), "ExecCommandOutput", "git", []string{"-C", "/projects/myapp", "checkout", "feature/test"})
 }
 
+func (s *RunnerSuite) TestRunWorktreeParentDirMount() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID:     "sess-1",
+		Messages:      []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID:     "ch-1",
+		DirPath:       "/projects/myapp/.worktrees/wt1",
+		ParentDirPath: "/projects/myapp",
+	}
+
+	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		// Parent dir mounted (includes the worktree subdir), workDir not separately mounted.
+		hasParent := slices.Contains(cfg.Binds, "/projects/myapp:/projects/myapp")
+		noSeparateWorkDir := !slices.Contains(cfg.Binds, "/projects/myapp/.worktrees/wt1:/projects/myapp/.worktrees/wt1")
+		return hasParent && noSeparateWorkDir && cfg.WorkingDir == "/projects/myapp/.worktrees/wt1"
+	}), "loop-wt1-aabbcc",
+		`{"type":"result","result":"ok","session_id":"s1","is_error":false}`)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp.Response)
+	s.client.AssertExpectations(s.T())
+}
+
 func (s *RunnerSuite) TestRunBranchCheckoutFails() {
 	ctx := context.Background()
 	// Override the default ExecCommandOutput mock to fail for git checkout.

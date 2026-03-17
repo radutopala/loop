@@ -511,7 +511,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		}
 	}
 
-	containerID, mcpConfigPath, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID,
+	containerID, mcpConfigPath, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID, req.ParentDirPath,
 		func(cfg *config.Config, mcpConfigPath string) []string {
 			return buildClaudeCmd(cfg, mcpConfigPath, req)
 		},
@@ -638,8 +638,10 @@ func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID strin
 }
 
 // buildContainerMounts processes config mounts and adds the workDir bind.
+// If parentDirPath is set and workDir is inside it (worktree), also mounts
+// the parent so the container sees the main .git directory.
 // Returns the bind strings and any named-volume container paths that need chown.
-func (r *DockerRunner) buildContainerMounts(mounts []string, workDir string) (binds, chownPaths []string) {
+func (r *DockerRunner) buildContainerMounts(mounts []string, workDir, parentDirPath string) (binds, chownPaths []string) {
 	for _, mount := range mounts {
 		if ms, err := parseMountSpec(mount); err == nil && config.IsNamedVolume(ms.Host) {
 			expanded, _ := r.expandPath(ms.Container)
@@ -661,7 +663,15 @@ func (r *DockerRunner) buildContainerMounts(mounts []string, workDir string) (bi
 		binds = append(binds, excludesBind)
 	}
 
-	binds = append(binds, workDir+":"+workDir)
+	// Worktree threads: mount the parent project dir (which includes the
+	// worktree subdir) so the container sees the main .git directory.
+	// Otherwise mount just the workDir.
+	if parentDirPath != "" && strings.HasPrefix(workDir, parentDirPath+"/") {
+		binds = append(binds, parentDirPath+":"+parentDirPath)
+	} else {
+		binds = append(binds, workDir+":"+workDir)
+	}
+
 	return binds, chownPaths
 }
 
@@ -801,7 +811,7 @@ func (r *DockerRunner) copyFiles(ctx context.Context, containerID string, files 
 // The mcpConfigPath is returned so the caller can clean it up if needed.
 func (r *DockerRunner) createAndStartContainer(
 	ctx context.Context,
-	channelID, dirPath, authorID string,
+	channelID, dirPath, authorID, parentDirPath string,
 	buildCmd func(cfg *config.Config, mcpConfigPath string) []string,
 ) (containerID, mcpConfigPath string, err error) {
 	workDir := filepath.Join(r.cfg.LoopDir, channelID, "work")
@@ -821,7 +831,7 @@ func (r *DockerRunner) createAndStartContainer(
 		return "", "", err
 	}
 
-	binds, chownPaths := r.buildContainerMounts(cfg.Mounts, workDir)
+	binds, chownPaths := r.buildContainerMounts(cfg.Mounts, workDir, parentDirPath)
 	for _, f := range r.filterMountedCopyFiles(cfg.CopyFiles, binds) {
 		if expanded, err := r.expandPath(f); err == nil {
 			chownPaths = append(chownPaths, expanded)
@@ -1102,7 +1112,7 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 // Unlike Run, the container runs "sleep infinity" instead of Claude CLI and is
 // not auto-removed — it persists until explicitly stopped.
 func (r *DockerRunner) CreateShellContainer(ctx context.Context, channelID, dirPath string) (string, error) {
-	containerID, _, err := r.createAndStartContainer(ctx, channelID, dirPath, "", func(*config.Config, string) []string {
+	containerID, _, err := r.createAndStartContainer(ctx, channelID, dirPath, "", "", func(*config.Config, string) []string {
 		return []string{"sleep", "infinity"}
 	})
 	return containerID, err

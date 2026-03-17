@@ -389,6 +389,41 @@ func (s *OrchestratorSuite) TestHandleMessageThreadResolved() {
 	s.bot.AssertExpectations(s.T())
 }
 
+func (s *OrchestratorSuite) TestHandleMessageWorktreeThread() {
+	// Worktree thread — should set ParentDirPath on the agent request.
+	s.store.On("IsChannelActive", s.ctx, "wt1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "wt1").Return(&db.Channel{
+		ID: 3, ChannelID: "wt1", GuildID: "g1", DirPath: "/project/.worktrees/wt1",
+		ParentID: "ch1", SessionID: "sess-new", Worktree: true, Active: true,
+	}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "wt1").Return(nil).Maybe()
+	s.bot.On("SendStopButton", mock.Anything, "wt1", "wt1").Return("", nil).Maybe()
+	s.bot.On("RemoveStopButton", mock.Anything, "wt1", "").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "wt1", 50).Return([]*db.Message{}, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ID: 1, ChannelID: "ch1", DirPath: "/project", SessionID: "sess-parent",
+	}, nil)
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.ParentDirPath == "/project" && req.DirPath == "/project/.worktrees/wt1"
+	})).Return(&agent.AgentResponse{
+		Response: "worktree response", SessionID: "sess-wt",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "wt1", "sess-wt").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	s.orch.HandleMessage(s.ctx, &bot.IncomingMessage{
+		ChannelID:    "wt1",
+		GuildID:      "g1",
+		AuthorName:   "user",
+		Content:      "hello worktree",
+		IsBotMention: true,
+	})
+
+	s.runner.AssertExpectations(s.T())
+}
+
 func (s *OrchestratorSuite) TestHandleMessageThreadAlreadyUpserted() {
 	// Second message in a thread — thread is already in DB with dir_path
 	s.store.On("IsChannelActive", s.ctx, "thread1").Return(true, nil)

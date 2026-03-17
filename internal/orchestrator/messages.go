@@ -208,10 +208,16 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 
 	// Fork the session on the first thread message so the thread gets its
 	// own session while inheriting the parent's context.
-	if channel.ParentID != "" && req.SessionID != "" {
+	if channel.ParentID != "" {
 		parent, err := o.store.GetChannel(ctx, channel.ParentID)
-		if err == nil && parent != nil && channel.SessionID == parent.SessionID {
-			req.ForkSession = true
+		if err == nil && parent != nil {
+			if req.SessionID != "" && channel.SessionID == parent.SessionID {
+				req.ForkSession = true
+			}
+			// Pass parent's DirPath so the runner can mount it for worktree containers.
+			if channel.Worktree && parent.DirPath != "" {
+				req.ParentDirPath = parent.DirPath
+			}
 		}
 	}
 

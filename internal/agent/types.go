@@ -12,8 +12,9 @@ type AgentRequest struct {
 	SystemPrompt string         `json:"system_prompt"`
 	ChannelID    string         `json:"channel_id"`
 	AuthorID     string         `json:"author_id,omitempty"`
-	DirPath      string         `json:"dir_path,omitempty"`
-	PlanMode     bool           `json:"plan_mode,omitempty"`
+	DirPath       string         `json:"dir_path,omitempty"`
+	ParentDirPath string         `json:"parent_dir_path,omitempty"`
+	PlanMode      bool           `json:"plan_mode,omitempty"`
 	Worktree     bool           `json:"worktree,omitempty"`
 	Branch       string         `json:"branch,omitempty"`
 	WorktreePath string         `json:"worktree_path,omitempty"`
