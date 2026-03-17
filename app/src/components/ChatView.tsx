@@ -6,6 +6,7 @@ import { fonts } from "../theme";
 import type { ColorPalette } from "../theme";
 import { useTheme } from "../ThemeContext";
 import { LoopLogo } from "./LoopLogo";
+import { ChatToolbar } from "./ChatToolbar";
 
 function buildStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
   return {
@@ -275,11 +276,12 @@ function buildMentionStyles(colors: ColorPalette): Record<string, React.CSSPrope
 interface ChatViewProps {
   channelId: string | null;
   chatState: ChatState;
+  currentBranch?: string;
   scrollToMessageId?: number | null;
   onScrollComplete?: () => void;
 }
 
-export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComplete }: ChatViewProps) {
+export function ChatView({ channelId, chatState, currentBranch, scrollToMessageId, onScrollComplete }: ChatViewProps) {
   const { colors } = useTheme();
   const styles = buildStyles(colors);
   const { messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, completionInfo } = chatState;
@@ -355,8 +357,9 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
           <WelcomeScreen />
         </div>
         <div style={styles.inputBar}>
-          <ChatInput channelId={channelId} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} />
+          <ChatInput channelId={channelId} mode={chatState.mode} setMode={chatState.setMode} env={chatState.env} onDismissCards={dismissCards} onSent={scrollToBottom} />
         </div>
+        {channelId && <ChatToolbar channelId={channelId} chatState={chatState} currentBranch={currentBranch || ""} />}
         <div style={styles.isolationLabel}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
@@ -407,8 +410,9 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
         </div>
       </div>
       <div style={styles.inputBar}>
-        <ChatInput channelId={channelId} isRunning={isRunning} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} />
+        <ChatInput channelId={channelId} isRunning={isRunning} mode={chatState.mode} setMode={chatState.setMode} env={chatState.env} onDismissCards={dismissCards} onSent={scrollToBottom} />
       </div>
+      {channelId && <ChatToolbar channelId={channelId} chatState={chatState} currentBranch={currentBranch || ""} />}
       <div style={styles.isolationLabel}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isRunning ? colors.active : colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
@@ -702,7 +706,7 @@ const LOOP_COMMANDS: CommandDef[] = [
   { name: "iamtheowner", description: "Claim channel ownership" },
 ];
 
-function ChatInput({ channelId, isRunning, mode, setMode, onDismissCards, onSent }: { channelId: string; isRunning?: boolean; mode: "agent" | "plan"; setMode: (m: "agent" | "plan") => void; onDismissCards?: () => void; onSent?: () => void }) {
+function ChatInput({ channelId, isRunning, mode, setMode, env, onDismissCards, onSent }: { channelId: string; isRunning?: boolean; mode: "agent" | "plan"; setMode: (m: "agent" | "plan") => void; env?: "local" | "worktree"; onDismissCards?: () => void; onSent?: () => void }) {
   const { colors } = useTheme();
   const styles = buildStyles(colors);
   const modeStyles = buildModeStyles(colors);
@@ -748,7 +752,7 @@ function ChatInput({ channelId, isRunning, mode, setMode, onDismissCards, onSent
           await sendCommand(channelId, cmdText);
         }
       } else {
-        await sendMessage(channelId, trimmed, mode);
+        await sendMessage(channelId, trimmed, mode, env === "worktree");
       }
       setText("");
       onDismissCards?.();
@@ -758,7 +762,7 @@ function ChatInput({ channelId, isRunning, mode, setMode, onDismissCards, onSent
       // Re-focus after React re-enables the textarea on the next render.
       requestAnimationFrame(() => inputRef.current?.focus());
     }
-  }, [channelId, text, sending, mode, isLoopCommand, onDismissCards]);
+  }, [channelId, text, sending, mode, env, isLoopCommand, onDismissCards]);
 
   const updateCommandDropdown = useCallback((val: string) => {
     const trimmed = val.trimStart();

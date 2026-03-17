@@ -109,7 +109,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
                 whiteSpace: "nowrap",
               }}
               onMouseEnter={(e) => {
-                e.currentTarget.style.backgroundColor = item.danger ? colors.dangerBg : colors.hoverBg;
+                e.currentTarget.style.backgroundColor = item.danger ? colors.dangerBg : "rgba(255,255,255,0.08)";
               }}
               onMouseLeave={(e) => {
                 e.currentTarget.style.backgroundColor = "transparent";

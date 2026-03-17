@@ -124,15 +124,56 @@ export async function sendMessage(
   channelId: string,
   content: string,
   mode?: "agent" | "plan",
+  worktree?: boolean,
 ): Promise<void> {
-  const body: Record<string, string> = { channel_id: channelId, content };
+  const body: Record<string, unknown> = { channel_id: channelId, content };
   if (mode && mode !== "agent") body.mode = mode;
+  if (worktree) body.worktree = true;
   const res = await fetch(`${apiUrl}/api/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Failed to send message: ${res.statusText}`);
+}
+
+// ── Branch operations ──
+
+export interface WorktreeInfo {
+  path: string;
+  branch: string;
+}
+
+export interface BranchInfo {
+  branches: string[];
+  current: string;
+  worktrees: WorktreeInfo[];
+}
+
+export async function fetchBranches(channelId: string): Promise<BranchInfo> {
+  const res = await fetch(`${apiUrl}/api/channels/${channelId}/branches`);
+  if (!res.ok) throw new Error(`Failed to fetch branches: ${res.statusText}`);
+  return res.json();
+}
+
+export async function switchBranch(channelId: string, branch: string): Promise<void> {
+  const res = await fetch(`${apiUrl}/api/channels/${channelId}/branches/switch`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ branch }),
+  });
+  if (!res.ok) throw new Error(`Failed to switch branch: ${res.statusText}`);
+}
+
+export async function createBranch(channelId: string, name: string, from?: string): Promise<void> {
+  const body: Record<string, string> = { name };
+  if (from) body.from = from;
+  const res = await fetch(`${apiUrl}/api/channels/${channelId}/branches/create`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Failed to create branch: ${res.statusText}`);
 }
 
 interface MessagesResponse {
