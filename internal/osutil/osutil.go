@@ -11,14 +11,18 @@ import (
 // narrow interfaces that RealSystem satisfies via structural typing.
 type RealSystem struct{}
 
-func (RealSystem) Stat(name string) (os.FileInfo, error) { return os.Stat(name) }
-func (RealSystem) ReadFile(name string) ([]byte, error)  { return os.ReadFile(name) }
+func (RealSystem) Stat(name string) (os.FileInfo, error) { return os.Stat(filepath.Clean(name)) }
+func (RealSystem) ReadFile(name string) ([]byte, error)  { return os.ReadFile(filepath.Clean(name)) }
 func (RealSystem) WriteFile(name string, data []byte, perm os.FileMode) error {
-	return os.WriteFile(name, data, perm)
+	return os.WriteFile(filepath.Clean(name), data, perm)
 }
-func (RealSystem) ReadDir(name string) ([]fs.DirEntry, error)   { return os.ReadDir(name) }
-func (RealSystem) Remove(name string) error                     { return os.Remove(name) }
-func (RealSystem) MkdirAll(path string, perm os.FileMode) error { return os.MkdirAll(path, perm) }
+func (RealSystem) ReadDir(name string) ([]fs.DirEntry, error) {
+	return os.ReadDir(filepath.Clean(name))
+}
+func (RealSystem) Remove(name string) error { return os.Remove(filepath.Clean(name)) }
+func (RealSystem) MkdirAll(path string, perm os.FileMode) error {
+	return os.MkdirAll(filepath.Clean(path), perm)
+}
 func (RealSystem) Readlink(name string) (string, error)         { return os.Readlink(name) }
 func (RealSystem) UserHomeDir() (string, error)                 { return os.UserHomeDir() }
 func (RealSystem) Getenv(key string) string                     { return os.Getenv(key) }
