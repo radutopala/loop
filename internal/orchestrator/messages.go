@@ -204,6 +204,7 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 	req.PlanMode = msg.Mode == "plan"
 	req.Worktree = msg.Worktree
 	req.Branch = msg.Branch
+	req.WorktreePath = msg.WorktreePath
 
 	// Fork the session on the first thread message so the thread gets its
 	// own session while inheriting the parent's context.

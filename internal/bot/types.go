@@ -25,6 +25,7 @@ type IncomingMessage struct {
 	Mode         string   // "plan" or "" (default = agent)
 	Worktree     bool     // create a new git worktree for this run
 	Branch       string   // checkout this branch before running
+	WorktreePath string   // use this existing worktree path as workDir
 }
 
 // OutgoingMessage to the chat platform.

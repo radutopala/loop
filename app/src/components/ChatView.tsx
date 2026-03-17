@@ -357,7 +357,7 @@ export function ChatView({ channelId, chatState, currentBranch, scrollToMessageI
           <WelcomeScreen />
         </div>
         <div style={styles.inputBar}>
-          <ChatInput channelId={channelId} mode={chatState.mode} setMode={chatState.setMode} env={chatState.env} selectedBranch={chatState.selectedBranch} onDismissCards={dismissCards} onSent={scrollToBottom} />
+          <ChatInput channelId={channelId} mode={chatState.mode} setMode={chatState.setMode} env={chatState.env} selectedBranch={chatState.selectedBranch} worktreePath={chatState.worktreePath} onDismissCards={dismissCards} onSent={scrollToBottom} />
         </div>
         {channelId && <ChatToolbar channelId={channelId} chatState={chatState} currentBranch={currentBranch || ""} />}
         <div style={styles.isolationLabel}>
@@ -410,7 +410,7 @@ export function ChatView({ channelId, chatState, currentBranch, scrollToMessageI
         </div>
       </div>
       <div style={styles.inputBar}>
-        <ChatInput channelId={channelId} isRunning={isRunning} mode={chatState.mode} setMode={chatState.setMode} env={chatState.env} selectedBranch={chatState.selectedBranch} onDismissCards={dismissCards} onSent={scrollToBottom} />
+        <ChatInput channelId={channelId} isRunning={isRunning} mode={chatState.mode} setMode={chatState.setMode} env={chatState.env} selectedBranch={chatState.selectedBranch} worktreePath={chatState.worktreePath} onDismissCards={dismissCards} onSent={scrollToBottom} />
       </div>
       {channelId && <ChatToolbar channelId={channelId} chatState={chatState} currentBranch={currentBranch || ""} />}
       <div style={styles.isolationLabel}>
@@ -706,7 +706,7 @@ const LOOP_COMMANDS: CommandDef[] = [
   { name: "iamtheowner", description: "Claim channel ownership" },
 ];
 
-function ChatInput({ channelId, isRunning, mode, setMode, env, selectedBranch, onDismissCards, onSent }: { channelId: string; isRunning?: boolean; mode: "agent" | "plan"; setMode: (m: "agent" | "plan") => void; env?: "local" | "worktree"; selectedBranch?: string | null; onDismissCards?: () => void; onSent?: () => void }) {
+function ChatInput({ channelId, isRunning, mode, setMode, env, selectedBranch, worktreePath, onDismissCards, onSent }: { channelId: string; isRunning?: boolean; mode: "agent" | "plan"; setMode: (m: "agent" | "plan") => void; env?: "local" | "worktree"; selectedBranch?: string | null; worktreePath?: string | null; onDismissCards?: () => void; onSent?: () => void }) {
   const { colors } = useTheme();
   const styles = buildStyles(colors);
   const modeStyles = buildModeStyles(colors);
@@ -753,8 +753,9 @@ function ChatInput({ channelId, isRunning, mode, setMode, env, selectedBranch, o
         }
       } else {
         await sendMessage(channelId, trimmed, mode, {
-          worktree: env === "worktree",
+          worktree: env === "worktree" && !worktreePath,
           branch: selectedBranch || undefined,
+          worktreePath: worktreePath || undefined,
         });
       }
       setText("");
@@ -765,7 +766,7 @@ function ChatInput({ channelId, isRunning, mode, setMode, env, selectedBranch, o
       // Re-focus after React re-enables the textarea on the next render.
       requestAnimationFrame(() => inputRef.current?.focus());
     }
-  }, [channelId, text, sending, mode, env, selectedBranch, isLoopCommand, onDismissCards]);
+  }, [channelId, text, sending, mode, env, selectedBranch, worktreePath, isLoopCommand, onDismissCards]);
 
   const updateCommandDropdown = useCallback((val: string) => {
     const trimmed = val.trimStart();

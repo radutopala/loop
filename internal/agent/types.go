@@ -16,6 +16,7 @@ type AgentRequest struct {
 	PlanMode     bool           `json:"plan_mode,omitempty"`
 	Worktree     bool           `json:"worktree,omitempty"`
 	Branch       string         `json:"branch,omitempty"`
+	WorktreePath string         `json:"worktree_path,omitempty"`
 	Prompt       string         `json:"prompt,omitempty"`
 	// OnTurn is called for each assistant turn's text content during streaming.
 	// When set, the runner follows container logs in real-time instead of waiting

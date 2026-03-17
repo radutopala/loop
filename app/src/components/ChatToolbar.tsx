@@ -38,6 +38,8 @@ export function ChatToolbar({ channelId, chatState, currentBranch }: ChatToolbar
         currentBranch={currentBranch}
         selectedBranch={chatState.selectedBranch}
         setSelectedBranch={chatState.setSelectedBranch}
+        setWorktreePath={chatState.setWorktreePath}
+        setEnv={chatState.setEnv}
       />
     </div>
     </div>
@@ -168,12 +170,14 @@ function EnvironmentSelector({ env, setEnv }: { env: "local" | "worktree"; setEn
 
 // ── Branch Picker ──
 
-function BranchPicker({ channelId, env, currentBranch, selectedBranch, setSelectedBranch }: {
+function BranchPicker({ channelId, env, currentBranch, selectedBranch, setSelectedBranch, setWorktreePath, setEnv }: {
   channelId: string;
   env: "local" | "worktree";
   currentBranch: string;
   selectedBranch: string | null;
   setSelectedBranch: (branch: string | null) => void;
+  setWorktreePath: (path: string | null) => void;
+  setEnv: (env: "local" | "worktree") => void;
 }) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
@@ -360,7 +364,7 @@ function BranchPicker({ channelId, env, currentBranch, selectedBranch, setSelect
               {filteredWorktrees.map((wt) => (
                 <button
                   key={wt.path}
-                  onClick={() => { /* TODO: select existing worktree */ setOpen(false); }}
+                  onClick={() => { setWorktreePath(wt.path); setSelectedBranch(wt.branch); setEnv("worktree"); setOpen(false); }}
                   title={wt.path}
                   style={{
                     display: "flex",
