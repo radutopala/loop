@@ -95,6 +95,30 @@ func (s *ServerSuite) TestValidateFilePath_NewFileParentMissing() {
 	require.Contains(s.T(), err.Error(), "path not found")
 }
 
+func (s *ServerSuite) TestValidateFilePath_NullByte() {
+	tmpDir := s.T().TempDir()
+	_, err := validateFilePath(tmpDir, "file\x00.txt")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "invalid characters")
+}
+
+func (s *ServerSuite) TestValidateFilePath_SiblingDirPrefixBypass() {
+	// Ensure /projects/foo doesn't match /projects/foobar via prefix.
+	parent := s.T().TempDir()
+	root := filepath.Join(parent, "foo")
+	sibling := filepath.Join(parent, "foobar")
+	require.NoError(s.T(), os.MkdirAll(root, 0755))
+	require.NoError(s.T(), os.MkdirAll(sibling, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(sibling, "secret.txt"), []byte("secret"), 0644))
+
+	// Create a symlink inside root that points to the sibling.
+	require.NoError(s.T(), os.Symlink(sibling, filepath.Join(root, "link")))
+
+	_, err := validateFilePath(root, "link/secret.txt")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "path traversal not allowed")
+}
+
 func (s *ServerSuite) TestValidateFilePath_NewFileParentSymlinkOutside() {
 	tmpDir := s.T().TempDir()
 	outside := s.T().TempDir()

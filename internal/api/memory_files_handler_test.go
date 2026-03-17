@@ -74,19 +74,42 @@ func (s *ServerSuite) TestListMemoryFiles_MissingParams() {
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
+func (s *ServerSuite) TestListMemoryFiles_StoreError() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/projects/foo"}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, "/projects/foo").Return(nil, os.ErrPermission)
+
+	rec := s.testRequest("GET", "/api/memory/files?channel_id=ch1", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+// --- Read memory file tests ---
+
 func (s *ServerSuite) TestReadMemoryFile_Success() {
 	tmpDir := s.T().TempDir()
 	fpath := filepath.Join(tmpDir, "test.md")
 	require.NoError(s.T(), os.WriteFile(fpath, []byte("# Hello\nWorld"), 0644))
 
-	rec := s.testRequest("GET", "/api/memory/file?path="+fpath, "")
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: tmpDir}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{
+		{FilePath: fpath, DirPath: tmpDir},
+	}, nil)
+
+	rec := s.testRequest("GET", "/api/memory/file?channel_id=ch1&path="+fpath, "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.Equal(s.T(), "# Hello\nWorld", rec.Body.String())
 	require.Contains(s.T(), rec.Result().Header.Get("Content-Type"), "text/plain")
 }
 
 func (s *ServerSuite) TestReadMemoryFile_NotFound() {
-	rec := s.testRequest("GET", "/api/memory/file?path=/nonexistent/file.md", "")
+	tmpDir := s.T().TempDir()
+	fpath := filepath.Join(tmpDir, "missing.md")
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: tmpDir}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{
+		{FilePath: fpath, DirPath: tmpDir},
+	}, nil)
+
+	rec := s.testRequest("GET", "/api/memory/file?channel_id=ch1&path="+fpath, "")
 	require.Equal(s.T(), http.StatusNotFound, rec.Code)
 }
 
@@ -105,46 +128,101 @@ func (s *ServerSuite) TestReadMemoryFile_MissingPath() {
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
-func (s *ServerSuite) TestListMemoryFiles_StoreError() {
-	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/projects/foo"}, nil)
-	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, "/projects/foo").Return(nil, os.ErrPermission)
+func (s *ServerSuite) TestReadMemoryFile_NotIndexed() {
+	tmpDir := s.T().TempDir()
+	fpath := filepath.Join(tmpDir, "secret.md")
+	require.NoError(s.T(), os.WriteFile(fpath, []byte("secret"), 0644))
 
-	rec := s.testRequest("GET", "/api/memory/files?channel_id=ch1", "")
-	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: tmpDir}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{
+		{FilePath: filepath.Join(tmpDir, "other.md"), DirPath: tmpDir},
+	}, nil)
+
+	rec := s.testRequest("GET", "/api/memory/file?channel_id=ch1&path="+fpath, "")
+	require.Equal(s.T(), http.StatusForbidden, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "not an indexed memory file")
+}
+
+func (s *ServerSuite) TestReadMemoryFile_NullByte() {
+	// Null bytes are rejected by Go's HTTP server at the URL level, so we
+	// construct a request with the null byte injected into the query params
+	// directly to test the handler's defense-in-depth check.
+	req := httptest.NewRequest("GET", "/api/memory/file?channel_id=ch1&path=/tmp/test.md", nil)
+	req.URL.RawQuery = "channel_id=ch1&path=/tmp/file%00.md"
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "invalid characters")
+}
+
+func (s *ServerSuite) TestWriteMemoryFile_NullByte() {
+	req := httptest.NewRequest("PUT", "/api/memory/file?channel_id=ch1&path=/tmp/test.md", nil)
+	req.URL.RawQuery = "channel_id=ch1&path=/tmp/file%00.md"
+	rec := httptest.NewRecorder()
+	s.mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "invalid characters")
+}
+
+func (s *ServerSuite) TestReadMemoryFile_MissingChannelID() {
+	rec := s.testRequest("GET", "/api/memory/file?path=/tmp/test.md", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestReadMemoryFile_StoreNotConfigured() {
+	srv := nilServer()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/memory/file", srv.handleReadMemoryFile)
+
+	req := httptest.NewRequest("GET", "/api/memory/file?channel_id=ch1&path=/tmp/test.md", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
 func (s *ServerSuite) TestReadMemoryFile_ReadError() {
+	tmpDir := s.T().TempDir()
+	fpath := filepath.Join(tmpDir, "test.md")
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: tmpDir}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{
+		{FilePath: fpath, DirPath: tmpDir},
+	}, nil)
+
 	s.sys.Override("ReadFile", mock.Anything).Return(nil, os.ErrPermission)
 	s.srv.sys = s.sys
 
-	rec := s.testRequest("GET", "/api/memory/file?path=/tmp/test.md", "")
+	rec := s.testRequest("GET", "/api/memory/file?channel_id=ch1&path="+fpath, "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
+
+func (s *ServerSuite) TestReadMemoryFile_IndexStoreError() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/projects/foo"}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, "/projects/foo").Return(nil, os.ErrPermission)
+
+	rec := s.testRequest("GET", "/api/memory/file?channel_id=ch1&path=/projects/foo/test.md", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+// --- Write memory file tests ---
 
 func (s *ServerSuite) TestWriteMemoryFile_Success() {
 	tmpDir := s.T().TempDir()
 	fpath := filepath.Join(tmpDir, "test.md")
 	require.NoError(s.T(), os.WriteFile(fpath, []byte("old"), 0644))
 
-	rec := s.testRequest("PUT", "/api/memory/file?path="+fpath, "# Updated\nContent")
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: tmpDir}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{
+		{FilePath: fpath, DirPath: tmpDir},
+	}, nil)
+
+	rec := s.testRequest("PUT", "/api/memory/file?channel_id=ch1&path="+fpath, "# Updated\nContent")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), `"ok":true`)
 
 	data, err := os.ReadFile(fpath)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "# Updated\nContent", string(data))
-}
-
-func (s *ServerSuite) TestWriteMemoryFile_CreatesNew() {
-	tmpDir := s.T().TempDir()
-	fpath := filepath.Join(tmpDir, "new.md")
-
-	rec := s.testRequest("PUT", "/api/memory/file?path="+fpath, "# New file")
-	require.Equal(s.T(), http.StatusOK, rec.Code)
-
-	data, err := os.ReadFile(fpath)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), "# New file", string(data))
 }
 
 func (s *ServerSuite) TestWriteMemoryFile_MissingPath() {
@@ -162,13 +240,90 @@ func (s *ServerSuite) TestWriteMemoryFile_NonMdExtension() {
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
+func (s *ServerSuite) TestWriteMemoryFile_NotIndexed() {
+	tmpDir := s.T().TempDir()
+	fpath := filepath.Join(tmpDir, "evil.md")
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: tmpDir}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{
+		{FilePath: filepath.Join(tmpDir, "legit.md"), DirPath: tmpDir},
+	}, nil)
+
+	rec := s.testRequest("PUT", "/api/memory/file?channel_id=ch1&path="+fpath, "malicious content")
+	require.Equal(s.T(), http.StatusForbidden, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "not an indexed memory file")
+
+	// Verify file was NOT created.
+	_, err := os.Stat(fpath)
+	require.True(s.T(), os.IsNotExist(err))
+}
+
 func (s *ServerSuite) TestWriteMemoryFile_WriteError() {
+	tmpDir := s.T().TempDir()
+	fpath := filepath.Join(tmpDir, "test.md")
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: tmpDir}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{
+		{FilePath: fpath, DirPath: tmpDir},
+	}, nil)
+
 	s.sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(os.ErrPermission)
 	s.srv.sys = s.sys
 
-	rec := s.testRequest("PUT", "/api/memory/file?path=/tmp/test.md", "content")
+	rec := s.testRequest("PUT", "/api/memory/file?channel_id=ch1&path="+fpath, "content")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
+
+func (s *ServerSuite) TestWriteMemoryFile_BodyReadError() {
+	tmpDir := s.T().TempDir()
+	fpath := filepath.Join(tmpDir, "test.md")
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: tmpDir}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{
+		{FilePath: fpath, DirPath: tmpDir},
+	}, nil)
+
+	req, _ := http.NewRequest("PUT", "/api/memory/file?channel_id=ch1&path="+fpath, &errReader{})
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+	require.Contains(s.T(), w.Body.String(), "failed to read request body")
+}
+
+func (s *ServerSuite) TestWriteMemoryFile_TooLarge() {
+	tmpDir := s.T().TempDir()
+	fpath := filepath.Join(tmpDir, "test.md")
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: tmpDir}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{
+		{FilePath: fpath, DirPath: tmpDir},
+	}, nil)
+
+	bigBody := string(make([]byte, maxFileSize+1))
+	rec := s.testRequest("PUT", "/api/memory/file?channel_id=ch1&path="+fpath, bigBody)
+	require.Equal(s.T(), http.StatusRequestEntityTooLarge, rec.Code)
+}
+
+func (s *ServerSuite) TestWriteMemoryFile_PreservesPermissions() {
+	tmpDir := s.T().TempDir()
+	fpath := filepath.Join(tmpDir, "perms.md")
+	require.NoError(s.T(), os.WriteFile(fpath, []byte("old"), 0755))
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: tmpDir}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{
+		{FilePath: fpath, DirPath: tmpDir},
+	}, nil)
+
+	rec := s.testRequest("PUT", "/api/memory/file?channel_id=ch1&path="+fpath, "new content")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	info, err := os.Stat(fpath)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), os.FileMode(0755), info.Mode().Perm())
+}
+
+// --- Search memory files tests ---
 
 func (s *ServerSuite) TestSearchMemoryFiles_Success() {
 	tmpDir := s.T().TempDir()
@@ -259,32 +414,4 @@ func (s *ServerSuite) TestSearchMemoryFiles_FiltersNonExisting() {
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), "exists.md")
 	require.NotContains(s.T(), rec.Body.String(), "gone.md")
-}
-
-func (s *ServerSuite) TestWriteMemoryFile_BodyReadError() {
-	req, _ := http.NewRequest("PUT", "/api/memory/file?path=/tmp/test.md", &errReader{})
-	w := httptest.NewRecorder()
-	s.mux.ServeHTTP(w, req)
-
-	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
-	require.Contains(s.T(), w.Body.String(), "failed to read request body")
-}
-
-func (s *ServerSuite) TestWriteMemoryFile_TooLarge() {
-	bigBody := string(make([]byte, maxFileSize+1))
-	rec := s.testRequest("PUT", "/api/memory/file?path=/tmp/test.md", bigBody)
-	require.Equal(s.T(), http.StatusRequestEntityTooLarge, rec.Code)
-}
-
-func (s *ServerSuite) TestWriteMemoryFile_PreservesPermissions() {
-	tmpDir := s.T().TempDir()
-	fpath := filepath.Join(tmpDir, "perms.md")
-	require.NoError(s.T(), os.WriteFile(fpath, []byte("old"), 0755))
-
-	rec := s.testRequest("PUT", "/api/memory/file?path="+fpath, "new content")
-	require.Equal(s.T(), http.StatusOK, rec.Code)
-
-	info, err := os.Stat(fpath)
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), os.FileMode(0755), info.Mode().Perm())
 }

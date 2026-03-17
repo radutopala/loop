@@ -23,6 +23,11 @@ func validateFilePath(rootDir, relativePath string) (string, error) {
 		return "", fmt.Errorf("absolute paths are not allowed")
 	}
 
+	// Reject null bytes which can truncate paths on some systems.
+	if strings.ContainsRune(relativePath, 0) {
+		return "", fmt.Errorf("path contains invalid characters")
+	}
+
 	// Clean and join.
 	cleaned := filepath.Clean(relativePath)
 
@@ -39,6 +44,10 @@ func validateFilePath(rootDir, relativePath string) (string, error) {
 		return "", fmt.Errorf("invalid root directory: %w", err)
 	}
 
+	// Ensure realRoot has a trailing separator so "/projects/foo" doesn't
+	// match "/projects/foobar".
+	rootPrefix := realRoot + string(filepath.Separator)
+
 	realPath, err := filepath.EvalSymlinks(absPath)
 	if err != nil {
 		// File might not exist yet (for write). Check the parent.
@@ -47,13 +56,13 @@ func validateFilePath(rootDir, relativePath string) (string, error) {
 		if err2 != nil {
 			return "", fmt.Errorf("path not found")
 		}
-		if !strings.HasPrefix(realParent, realRoot) {
+		if realParent != realRoot && !strings.HasPrefix(realParent, rootPrefix) {
 			return "", fmt.Errorf("path traversal not allowed")
 		}
 		return absPath, nil
 	}
 
-	if !strings.HasPrefix(realPath, realRoot) {
+	if realPath != realRoot && !strings.HasPrefix(realPath, rootPrefix) {
 		return "", fmt.Errorf("path traversal not allowed")
 	}
 

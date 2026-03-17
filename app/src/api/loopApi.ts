@@ -210,8 +210,9 @@ export async function fetchMemoryFiles(channelId: string): Promise<MemoryFileInf
   return data.files;
 }
 
-export async function fetchMemoryFileContent(filePath: string): Promise<string> {
-  const res = await fetch(`${apiUrl}/api/memory/file?path=${encodeURIComponent(filePath)}`);
+export async function fetchMemoryFileContent(channelId: string, filePath: string): Promise<string> {
+  const params = new URLSearchParams({ channel_id: channelId, path: filePath });
+  const res = await fetch(`${apiUrl}/api/memory/file?${params}`);
   if (!res.ok) throw new Error(`Failed to fetch memory file: ${res.statusText}`);
   return res.text();
 }
@@ -224,8 +225,9 @@ export async function searchMemoryFiles(channelId: string, query: string): Promi
   return data.files;
 }
 
-export async function saveMemoryFileContent(filePath: string, content: string): Promise<void> {
-  const res = await fetch(`${apiUrl}/api/memory/file?path=${encodeURIComponent(filePath)}`, {
+export async function saveMemoryFileContent(channelId: string, filePath: string, content: string): Promise<void> {
+  const params = new URLSearchParams({ channel_id: channelId, path: filePath });
+  const res = await fetch(`${apiUrl}/api/memory/file?${params}`, {
     method: "PUT",
     body: content,
   });

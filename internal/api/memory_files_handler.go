@@ -78,20 +78,62 @@ func (s *Server) handleSearchMemoryFiles(w http.ResponseWriter, r *http.Request)
 	writeHTTPJSON(w, http.StatusOK, memoryFilesResponse{Files: matched}, s.logger)
 }
 
-func (s *Server) handleReadMemoryFile(w http.ResponseWriter, r *http.Request) {
-	path := r.URL.Query().Get("path")
+// validateMemoryFilePath validates that path is absolute, ends with .md, and
+// belongs to an indexed memory directory for the given channel. Returns an HTTP
+// error and false if validation fails.
+func (s *Server) validateMemoryFilePath(w http.ResponseWriter, r *http.Request, path string) bool {
 	if path == "" {
 		http.Error(w, "path is required", http.StatusBadRequest)
-		return
+		return false
 	}
 
 	if !filepath.IsAbs(path) {
 		http.Error(w, "path must be absolute", http.StatusBadRequest)
-		return
+		return false
+	}
+
+	if strings.ContainsRune(path, 0) {
+		http.Error(w, "path contains invalid characters", http.StatusBadRequest)
+		return false
 	}
 
 	if !strings.HasSuffix(strings.ToLower(path), ".md") {
 		http.Error(w, "only .md files are supported", http.StatusBadRequest)
+		return false
+	}
+
+	if !requireConfigured(w, s.store, "store not configured") {
+		return false
+	}
+
+	channelID := r.URL.Query().Get("channel_id")
+	dirPathParam := r.URL.Query().Get("dir_path")
+	dirPath, err := s.resolveDirPath(r.Context(), dirPathParam, channelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return false
+	}
+
+	files, err := s.store.ListDistinctMemoryFilePaths(r.Context(), dirPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return false
+	}
+
+	cleanPath := filepath.Clean(path)
+	for _, f := range files {
+		if filepath.Clean(f.FilePath) == cleanPath {
+			return true
+		}
+	}
+
+	http.Error(w, "path is not an indexed memory file", http.StatusForbidden)
+	return false
+}
+
+func (s *Server) handleReadMemoryFile(w http.ResponseWriter, r *http.Request) {
+	path := r.URL.Query().Get("path")
+	if !s.validateMemoryFilePath(w, r, path) {
 		return
 	}
 
@@ -111,18 +153,7 @@ func (s *Server) handleReadMemoryFile(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleWriteMemoryFile(w http.ResponseWriter, r *http.Request) {
 	path := r.URL.Query().Get("path")
-	if path == "" {
-		http.Error(w, "path is required", http.StatusBadRequest)
-		return
-	}
-
-	if !filepath.IsAbs(path) {
-		http.Error(w, "path must be absolute", http.StatusBadRequest)
-		return
-	}
-
-	if !strings.HasSuffix(strings.ToLower(path), ".md") {
-		http.Error(w, "only .md files are supported", http.StatusBadRequest)
+	if !s.validateMemoryFilePath(w, r, path) {
 		return
 	}
 
