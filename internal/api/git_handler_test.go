@@ -62,13 +62,15 @@ func (s *ServerSuite) TestListBranches_Success() {
 	require.Contains(s.T(), rec.Body.String(), `"worktrees":`)
 }
 
-func (s *ServerSuite) TestListBranches_IncludesWorktreeBranches() {
+func (s *ServerSuite) TestListBranches_ExcludesOtherWorktreeBranches() {
 	dir := initGitRepo(s.T())
-	// Create a branch and check it out in a worktree.
-	cmd := exec.Command("git", "branch", "feature/in-worktree")
-	cmd.Dir = dir
-	require.NoError(s.T(), cmd.Run())
-	cmd = exec.Command("git", "worktree", "add", filepath.Join(dir, ".worktrees", "wt1"), "feature/in-worktree")
+	// Create two branches: one local, one checked out in another worktree.
+	for _, b := range []string{"feature/local-only", "feature/in-worktree"} {
+		cmd := exec.Command("git", "branch", b)
+		cmd.Dir = dir
+		require.NoError(s.T(), cmd.Run())
+	}
+	cmd := exec.Command("git", "worktree", "add", filepath.Join(dir, ".worktrees", "wt1"), "feature/in-worktree")
 	cmd.Dir = dir
 	require.NoError(s.T(), cmd.Run())
 
@@ -80,17 +82,19 @@ func (s *ServerSuite) TestListBranches_IncludesWorktreeBranches() {
 	var resp branchListResponse
 	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
 
-	// All branches returned unfiltered — including those in worktrees.
-	require.Contains(s.T(), resp.Branches, "feature/in-worktree")
-	// Worktree also appears in worktrees list.
-	require.NotEmpty(s.T(), resp.Worktrees)
+	// Local branch present, worktree-locked branch excluded.
+	require.Contains(s.T(), resp.Branches, "feature/local-only")
+	for _, b := range resp.Branches {
+		require.NotEqual(s.T(), "feature/in-worktree", b)
+	}
+	// Worktree entry still present in worktrees list.
 	found := false
 	for _, wt := range resp.Worktrees {
 		if wt.Branch == "feature/in-worktree" {
 			found = true
 		}
 	}
-	require.True(s.T(), found, "worktree branch should appear in worktrees list")
+	require.True(s.T(), found)
 }
 
 func (s *ServerSuite) TestListBranches_NotConfigured() {
