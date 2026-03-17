@@ -230,6 +230,62 @@ Agent activity indicator for UI status displays. Covers model detection, subagen
 
 ---
 
+### `agent.ask_user`
+
+Claude used the `AskUserQuestion` tool to ask structured questions. The desktop app renders these as interactive cards with clickable option buttons.
+
+**Payload schema:**
+
+```json
+{
+  "questions": [
+    {
+      "question": "Where should the file be created?",
+      "header": "Location",
+      "options": [
+        { "label": "Root directory", "description": "Create in the project root" },
+        { "label": "src/ folder", "description": "Create inside the src directory" }
+      ],
+      "multi_select": false
+    }
+  ]
+}
+```
+
+| Field              | Type     | Description |
+|--------------------|----------|-------------|
+| `questions`        | array    | List of questions to present |
+| `questions[].question` | string | The question text |
+| `questions[].header`   | string | Short header/label for the question |
+| `questions[].options`  | array  | Selectable options (label + description) |
+| `questions[].multi_select` | bool | Whether multiple options can be selected |
+
+The user's answers are sent as a regular message in the next turn (via `--resume`). An implicit "Other" free-text option is always available.
+
+---
+
+### `agent.exit_plan`
+
+Claude used the `ExitPlanMode` tool to signal that a plan is ready for review. The desktop app renders this as a plan preview card with "Accept & Execute" and "Request Changes" buttons.
+
+**Payload schema:**
+
+```json
+{
+  "plan": "# My Plan\n\n## Steps\n1. Do this\n2. Do that",
+  "planFilePath": "/path/to/plan.md"
+}
+```
+
+| Field          | Type   | Description |
+|----------------|--------|-------------|
+| `plan`         | string | The full plan content (markdown) |
+| `planFilePath` | string | Path where the plan file was written |
+
+Clicking "Accept & Execute" switches mode from plan to agent and sends an approval message. Clicking "Request Changes" keeps plan mode and sends a revision request.
+
+---
+
 ### `channel.created`
 
 A new channel or thread was created. Sent to the **parent** channel so subscribers can update their channel/thread list.

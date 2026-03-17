@@ -856,6 +856,8 @@ Loop includes a desktop app for macOS and Linux, built with Electron + React. Do
 - **Deep links** — `loop://channel/<id>` opens the app directly to a channel
 - **Browser** — live Chrome screencast via WebSocket, click/type/navigate directly in the browser pane
 - **Plan mode** — run agents in read-only preview mode (`--permission-mode plan`)
+- **Interactive questions** — when Claude uses `AskUserQuestion`, structured question cards appear in the chat with clickable options; answers are sent in the next turn
+- **Plan review** — when Claude exits plan mode, a plan preview card with "Accept & Execute" / "Request Changes" buttons appears in the chat
 - **Agent activity** — see model info, tool use, and completion summaries in the chat view
 
 ### Platforms
