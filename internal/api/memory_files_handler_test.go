@@ -230,6 +230,52 @@ func (s *ServerSuite) TestSearchMemoryFiles_StoreNotConfigured() {
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
+func (s *ServerSuite) TestSearchMemoryFiles_MissingParams() {
+	rec := s.testRequest("GET", "/api/memory/files/search", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestSearchMemoryFiles_StoreError() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/projects/foo"}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, "/projects/foo").Return(nil, os.ErrPermission)
+
+	rec := s.testRequest("GET", "/api/memory/files/search?channel_id=ch1&q=test", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+func (s *ServerSuite) TestSearchMemoryFiles_FiltersNonExisting() {
+	tmpDir := s.T().TempDir()
+	existPath := filepath.Join(tmpDir, "exists.md")
+	require.NoError(s.T(), os.WriteFile(existPath, []byte("ok"), 0644))
+	gonePath := filepath.Join(tmpDir, "gone.md")
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: tmpDir}, nil)
+	s.store.On("ListDistinctMemoryFilePaths", mock.Anything, tmpDir).Return([]db.MemoryFileInfo{
+		{FilePath: existPath, DirPath: tmpDir},
+		{FilePath: gonePath, DirPath: tmpDir},
+	}, nil)
+
+	rec := s.testRequest("GET", "/api/memory/files/search?channel_id=ch1", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "exists.md")
+	require.NotContains(s.T(), rec.Body.String(), "gone.md")
+}
+
+func (s *ServerSuite) TestWriteMemoryFile_BodyReadError() {
+	req, _ := http.NewRequest("PUT", "/api/memory/file?path=/tmp/test.md", &errReader{})
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+	require.Contains(s.T(), w.Body.String(), "failed to read request body")
+}
+
+func (s *ServerSuite) TestWriteMemoryFile_TooLarge() {
+	bigBody := string(make([]byte, maxFileSize+1))
+	rec := s.testRequest("PUT", "/api/memory/file?path=/tmp/test.md", bigBody)
+	require.Equal(s.T(), http.StatusRequestEntityTooLarge, rec.Code)
+}
+
 func (s *ServerSuite) TestWriteMemoryFile_PreservesPermissions() {
 	tmpDir := s.T().TempDir()
 	fpath := filepath.Join(tmpDir, "perms.md")
