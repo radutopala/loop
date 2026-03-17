@@ -283,6 +283,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
   const { colors } = useTheme();
   const styles = buildStyles(colors);
   const { messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, completionInfo } = chatState;
+  const dismissCards = useCallback(() => { chatState.clearAskUser(); chatState.clearExitPlan(); }, [chatState]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -354,7 +355,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
           <WelcomeScreen />
         </div>
         <div style={styles.inputBar}>
-          <ChatInput channelId={channelId} mode={chatState.mode} setMode={chatState.setMode} onSent={scrollToBottom} />
+          <ChatInput channelId={channelId} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} />
         </div>
         <div style={styles.isolationLabel}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -406,7 +407,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
         </div>
       </div>
       <div style={styles.inputBar}>
-        <ChatInput channelId={channelId} isRunning={isRunning} mode={chatState.mode} setMode={chatState.setMode} onSent={scrollToBottom} />
+        <ChatInput channelId={channelId} isRunning={isRunning} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} />
       </div>
       <div style={styles.isolationLabel}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isRunning ? colors.active : colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -701,7 +702,7 @@ const LOOP_COMMANDS: CommandDef[] = [
   { name: "iamtheowner", description: "Claim channel ownership" },
 ];
 
-function ChatInput({ channelId, isRunning, mode, setMode, onSent }: { channelId: string; isRunning?: boolean; mode: "agent" | "plan"; setMode: (m: "agent" | "plan") => void; onSent?: () => void }) {
+function ChatInput({ channelId, isRunning, mode, setMode, onDismissCards, onSent }: { channelId: string; isRunning?: boolean; mode: "agent" | "plan"; setMode: (m: "agent" | "plan") => void; onDismissCards?: () => void; onSent?: () => void }) {
   const { colors } = useTheme();
   const styles = buildStyles(colors);
   const modeStyles = buildModeStyles(colors);
@@ -750,13 +751,14 @@ function ChatInput({ channelId, isRunning, mode, setMode, onSent }: { channelId:
         await sendMessage(channelId, trimmed, mode);
       }
       setText("");
+      onDismissCards?.();
       onSent?.();
     } finally {
       setSending(false);
       // Re-focus after React re-enables the textarea on the next render.
       requestAnimationFrame(() => inputRef.current?.focus());
     }
-  }, [channelId, text, sending, mode, isLoopCommand]);
+  }, [channelId, text, sending, mode, isLoopCommand, onDismissCards]);
 
   const updateCommandDropdown = useCallback((val: string) => {
     const trimmed = val.trimStart();
