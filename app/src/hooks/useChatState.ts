@@ -17,6 +17,8 @@ export interface ChatState {
   exitPlanRequest: ExitPlanModeData | null;
   clearAskUser: () => void;
   clearExitPlan: () => void;
+  mode: "agent" | "plan";
+  setMode: (mode: "agent" | "plan") => void;
   completionInfo: { duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null;
 }
 
@@ -33,6 +35,7 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
   const [agentActivity, setAgentActivity] = useState<AgentActivityData | null>(null);
   const [askUserQuestions, setAskUserQuestions] = useState<AskUserQuestionData | null>(null);
   const [exitPlanRequest, setExitPlanRequest] = useState<ExitPlanModeData | null>(null);
+  const [mode, setMode] = useState<"agent" | "plan">("agent");
   const [completionInfo, setCompletionInfo] = useState<{ duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null>(null);
 
   const handleEvent = useCallback(
@@ -123,6 +126,8 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
     exitPlanRequest,
     clearAskUser: useCallback(() => setAskUserQuestions(null), []),
     clearExitPlan: useCallback(() => setExitPlanRequest(null), []),
+    mode,
+    setMode,
     completionInfo,
   };
 }

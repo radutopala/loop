@@ -354,7 +354,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
           <WelcomeScreen />
         </div>
         <div style={styles.inputBar}>
-          <ChatInput channelId={channelId} onSent={scrollToBottom} />
+          <ChatInput channelId={channelId} mode={chatState.mode} setMode={chatState.setMode} onSent={scrollToBottom} />
         </div>
         <div style={styles.isolationLabel}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -394,7 +394,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
             <AskUserQuestionCard questions={askUserQuestions.questions} channelId={channelId} onSent={() => { chatState.clearAskUser(); scrollToBottom(); }} />
           )}
           {exitPlanRequest && !isRunning && channelId && (
-            <ExitPlanCard plan={exitPlanRequest} channelId={channelId} onSent={() => { chatState.clearExitPlan(); scrollToBottom(); }} />
+            <ExitPlanCard plan={exitPlanRequest} channelId={channelId} setMode={chatState.setMode} onSent={() => { chatState.clearExitPlan(); scrollToBottom(); }} />
           )}
           {streamingContent && (
             <StreamingBubble content={streamingContent} />
@@ -406,7 +406,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
         </div>
       </div>
       <div style={styles.inputBar}>
-        <ChatInput channelId={channelId} isRunning={isRunning} onSent={scrollToBottom} />
+        <ChatInput channelId={channelId} isRunning={isRunning} mode={chatState.mode} setMode={chatState.setMode} onSent={scrollToBottom} />
       </div>
       <div style={styles.isolationLabel}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isRunning ? colors.active : colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -701,7 +701,7 @@ const LOOP_COMMANDS: CommandDef[] = [
   { name: "iamtheowner", description: "Claim channel ownership" },
 ];
 
-function ChatInput({ channelId, isRunning, onSent }: { channelId: string; isRunning?: boolean; onSent?: () => void }) {
+function ChatInput({ channelId, isRunning, mode, setMode, onSent }: { channelId: string; isRunning?: boolean; mode: "agent" | "plan"; setMode: (m: "agent" | "plan") => void; onSent?: () => void }) {
   const { colors } = useTheme();
   const styles = buildStyles(colors);
   const modeStyles = buildModeStyles(colors);
@@ -709,7 +709,6 @@ function ChatInput({ channelId, isRunning, onSent }: { channelId: string; isRunn
   const mentionStyles = buildMentionStyles(colors);
   const [text, setText] = useState("");
   const [sending, setSending] = useState(false);
-  const [mode, setMode] = useState<"agent" | "plan">("agent");
   const [showMention, setShowMention] = useState(false);
   const [mentionIdx, setMentionIdx] = useState(-1);
   const [showCommands, setShowCommands] = useState(false);
@@ -1126,7 +1125,7 @@ function AskUserQuestionCard({ questions, channelId, onSent }: { questions: AskU
 
 // ── ExitPlanMode Card ──
 
-function ExitPlanCard({ plan, channelId, onSent }: { plan: ExitPlanModeData; channelId: string; onSent?: () => void }) {
+function ExitPlanCard({ plan, channelId, setMode, onSent }: { plan: ExitPlanModeData; channelId: string; setMode: (m: "agent" | "plan") => void; onSent?: () => void }) {
   const { colors } = useTheme();
   const [sending, setSending] = useState(false);
   const [expanded, setExpanded] = useState(false);
@@ -1134,6 +1133,7 @@ function ExitPlanCard({ plan, channelId, onSent }: { plan: ExitPlanModeData; cha
   const handleAccept = async () => {
     setSending(true);
     try {
+      setMode("agent");
       await sendMessage(channelId, "I approve the plan. Please proceed with the implementation.");
       onSent?.();
     } catch { /* ignore */ }
