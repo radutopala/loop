@@ -103,6 +103,8 @@
     "~/.gitconfig:~/.gitconfig:ro",
     // Mount SSH keys read-only to allow agents to perform Git operations with authentication (e.g. cloning private repos, pushing commits)
     "~/.ssh:~/.ssh:ro",
+    // Mount GitHub CLI auth read-only to allow agents to use gh for PRs, issues, etc.
+    "~/.config/gh:~/.config/gh:ro",
     // Mount AWS credentials read-only to allow agents to interact with AWS services
     "~/.aws:~/.aws",
     // Mount Docker socket to allow agents to run Docker commands (e.g. for testing or deployment)
