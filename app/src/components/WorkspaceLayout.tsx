@@ -624,7 +624,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               key={`layout-chat-${channelId}`}
               channelId={channelId}
               chatState={chatState}
-              currentBranch={branch}
               scrollToMessageId={scrollToMessageId}
               onScrollComplete={onScrollComplete}
               onCreateWorktree={onCreateWorktree}
@@ -798,7 +797,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             </span>
             {branch && (
               <>
-                <span style={{ color: colors.border, flexShrink: 0, marginLeft: 6 }}>|</span>
+                <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px 0 12px" }}>|</span>
                 <HeaderBranchPicker channelId={channelId} branch={branch} onBranchChanged={onStatusChange} />
               </>
             )}

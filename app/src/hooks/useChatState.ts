@@ -19,12 +19,6 @@ export interface ChatState {
   clearExitPlan: () => void;
   mode: "agent" | "plan";
   setMode: (mode: "agent" | "plan") => void;
-  env: "local" | "worktree";
-  setEnv: (env: "local" | "worktree") => void;
-  selectedBranch: string | null;
-  setSelectedBranch: (branch: string | null) => void;
-  worktreePath: string | null;
-  setWorktreePath: (path: string | null) => void;
   completionInfo: { duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null;
 }
 
@@ -42,9 +36,6 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
   const [askUserQuestions, setAskUserQuestions] = useState<AskUserQuestionData | null>(null);
   const [exitPlanRequest, setExitPlanRequest] = useState<ExitPlanModeData | null>(null);
   const [mode, setMode] = useState<"agent" | "plan">("agent");
-  const [env, setEnv] = useState<"local" | "worktree">("local");
-  const [selectedBranch, setSelectedBranch] = useState<string | null>(null);
-  const [worktreePath, setWorktreePath] = useState<string | null>(null);
   const [completionInfo, setCompletionInfo] = useState<{ duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null>(null);
 
   const handleEvent = useCallback(
@@ -137,12 +128,6 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
     clearExitPlan: useCallback(() => setExitPlanRequest(null), []),
     mode,
     setMode,
-    env,
-    setEnv,
-    selectedBranch,
-    setSelectedBranch,
-    worktreePath,
-    setWorktreePath,
     completionInfo,
   };
 }
