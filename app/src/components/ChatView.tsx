@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentActivityData, Message } from "../types";
+import type { AgentActivityData, AskUserQuestion, ExitPlanModeData, Message } from "../types";
 import type { ChatState } from "../hooks/useChatState";
 import { sendCommand, sendMessage } from "../api/loopApi";
 import { fonts } from "../theme";
@@ -282,7 +282,7 @@ interface ChatViewProps {
 export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComplete }: ChatViewProps) {
   const { colors } = useTheme();
   const styles = buildStyles(colors);
-  const { messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, completionInfo } = chatState;
+  const { messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, completionInfo } = chatState;
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -293,7 +293,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
     if (autoScrollRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages, streamingContent, toolActivity, agentActivity]);
+  }, [messages, streamingContent, toolActivity, agentActivity, askUserQuestions, exitPlanRequest]);
 
   // Scroll to a specific message (from search) and highlight it.
   useEffect(() => {
@@ -389,6 +389,12 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
           )}
           {toolActivity && !streamingContent && isRunning && (
             <ToolActivityIndicator toolName={toolActivity.tool_name} input={toolActivity.input} />
+          )}
+          {askUserQuestions && !isRunning && channelId && (
+            <AskUserQuestionCard questions={askUserQuestions.questions} channelId={channelId} onSent={() => { chatState.clearAskUser(); scrollToBottom(); }} />
+          )}
+          {exitPlanRequest && !isRunning && channelId && (
+            <ExitPlanCard plan={exitPlanRequest} channelId={channelId} onSent={() => { chatState.clearExitPlan(); scrollToBottom(); }} />
           )}
           {streamingContent && (
             <StreamingBubble content={streamingContent} />
@@ -751,7 +757,7 @@ function ChatInput({ channelId, isRunning, onSent }: { channelId: string; isRunn
       // Re-focus after React re-enables the textarea on the next render.
       requestAnimationFrame(() => inputRef.current?.focus());
     }
-  }, [channelId, text, sending, isLoopCommand]);
+  }, [channelId, text, sending, mode, isLoopCommand]);
 
   const updateCommandDropdown = useCallback((val: string) => {
     const trimmed = val.trimStart();
@@ -973,6 +979,256 @@ function ChatInput({ channelId, isRunning, onSent }: { channelId: string; isRunn
           </svg>
         </button>
       )}
+    </div>
+  );
+}
+
+// ── AskUserQuestion Card ──
+
+function AskUserQuestionCard({ questions, channelId, onSent }: { questions: AskUserQuestion[]; channelId: string; onSent?: () => void }) {
+  const { colors } = useTheme();
+  const [answers, setAnswers] = useState<Map<number, string>>(new Map());
+  const [otherTexts, setOtherTexts] = useState<Map<number, string>>(new Map());
+  const [sending, setSending] = useState(false);
+
+  const setAnswer = (idx: number, value: string) => {
+    setAnswers((prev) => { const next = new Map(prev); next.set(idx, value); return next; });
+  };
+
+  const setOtherText = (idx: number, value: string) => {
+    setOtherTexts((prev) => { const next = new Map(prev); next.set(idx, value); return next; });
+  };
+
+  const handleSend = async () => {
+    setSending(true);
+    const parts: string[] = [];
+    for (let i = 0; i < questions.length; i++) {
+      const q = questions[i]!;
+      const answer = answers.get(i);
+      if (!answer) continue;
+      const label = q.header || q.question;
+      if (answer === "__other__") {
+        parts.push(`${label}: ${otherTexts.get(i) || "(no answer)"}`);
+      } else {
+        parts.push(`${label}: ${answer}`);
+      }
+    }
+    const content = parts.length > 0
+      ? "Here are my answers:\n" + parts.map((p) => `- ${p}`).join("\n")
+      : "No specific answers provided.";
+    try {
+      await sendMessage(channelId, content);
+      onSent?.();
+    } catch { /* ignore */ }
+    setSending(false);
+  };
+
+  const allAnswered = questions.every((_, i) => answers.has(i));
+
+  return (
+    <div style={{
+      margin: "8px 16px",
+      padding: "12px 16px",
+      borderRadius: 8,
+      border: `1px solid ${colors.active}`,
+      backgroundColor: colors.surface,
+    }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: colors.active, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+        Claude has questions
+      </div>
+      {questions.map((q, qi) => (
+        <div key={qi} style={{ marginBottom: qi < questions.length - 1 ? 12 : 0 }}>
+          {q.header && <div style={{ fontSize: 12, fontWeight: 600, color: colors.textLight, marginBottom: 4 }}>{q.header}</div>}
+          <div style={{ fontSize: 13, color: colors.text, marginBottom: 6 }}>{q.question}</div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {q.options?.map((opt) => {
+              const isSelected = answers.get(qi) === opt.label;
+              return (
+                <button
+                  key={opt.label}
+                  onClick={() => setAnswer(qi, opt.label)}
+                  title={opt.description}
+                  style={{
+                    padding: "4px 10px",
+                    fontSize: 12,
+                    fontFamily: fonts.mono,
+                    border: `1px solid ${isSelected ? colors.active : colors.border}`,
+                    borderRadius: 12,
+                    backgroundColor: isSelected ? colors.active : "transparent",
+                    color: isSelected ? "#fff" : colors.text,
+                    cursor: "pointer",
+                  }}
+                >
+                  {opt.label}
+                </button>
+              );
+            })}
+            <button
+              onClick={() => setAnswer(qi, "__other__")}
+              style={{
+                padding: "4px 10px",
+                fontSize: 12,
+                fontFamily: fonts.mono,
+                border: `1px solid ${answers.get(qi) === "__other__" ? colors.active : colors.border}`,
+                borderRadius: 12,
+                backgroundColor: answers.get(qi) === "__other__" ? colors.active : "transparent",
+                color: answers.get(qi) === "__other__" ? "#fff" : colors.textDim,
+                cursor: "pointer",
+              }}
+            >
+              Other...
+            </button>
+          </div>
+          {answers.get(qi) === "__other__" && (
+            <input
+              autoFocus
+              placeholder="Type your answer..."
+              value={otherTexts.get(qi) || ""}
+              onChange={(e) => setOtherText(qi, e.target.value)}
+              style={{
+                marginTop: 6,
+                width: "100%",
+                boxSizing: "border-box",
+                padding: "4px 8px",
+                fontSize: 12,
+                fontFamily: fonts.mono,
+                backgroundColor: colors.bg,
+                border: `1px solid ${colors.border}`,
+                borderRadius: 4,
+                color: colors.textLight,
+                outline: "none",
+              }}
+            />
+          )}
+        </div>
+      ))}
+      <button
+        onClick={handleSend}
+        disabled={!allAnswered || sending}
+        style={{
+          marginTop: 10,
+          padding: "5px 16px",
+          fontSize: 12,
+          fontFamily: fonts.mono,
+          border: `1px solid ${colors.active}`,
+          borderRadius: 12,
+          backgroundColor: allAnswered ? colors.active : "transparent",
+          color: allAnswered ? "#fff" : colors.textDim,
+          cursor: allAnswered ? "pointer" : "default",
+          opacity: sending ? 0.5 : 1,
+        }}
+      >
+        {sending ? "Sending..." : "Send Answers"}
+      </button>
+    </div>
+  );
+}
+
+// ── ExitPlanMode Card ──
+
+function ExitPlanCard({ plan, channelId, onSent }: { plan: ExitPlanModeData; channelId: string; onSent?: () => void }) {
+  const { colors } = useTheme();
+  const [sending, setSending] = useState(false);
+  const [expanded, setExpanded] = useState(false);
+
+  const handleAccept = async () => {
+    setSending(true);
+    try {
+      await sendMessage(channelId, "I approve the plan. Please proceed with the implementation.");
+      onSent?.();
+    } catch { /* ignore */ }
+    setSending(false);
+  };
+
+  const handleReject = async () => {
+    setSending(true);
+    try {
+      await sendMessage(channelId, "I'd like changes to the plan. Let's discuss.", "plan");
+      onSent?.();
+    } catch { /* ignore */ }
+    setSending(false);
+  };
+
+  const lines = plan.plan.split("\n");
+  const preview = lines.slice(0, 5).join("\n");
+  const hasMore = lines.length > 5;
+
+  return (
+    <div style={{
+      margin: "8px 16px",
+      padding: "12px 16px",
+      borderRadius: 8,
+      border: `1px solid ${colors.warning}`,
+      backgroundColor: colors.surface,
+    }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: colors.warning, textTransform: "uppercase", letterSpacing: 1, marginBottom: 8 }}>
+        Plan ready for review
+      </div>
+      <div
+        style={{
+          fontSize: 12,
+          fontFamily: fonts.mono,
+          color: colors.text,
+          whiteSpace: "pre-wrap",
+          lineHeight: 1.5,
+          maxHeight: expanded ? undefined : 120,
+          overflow: expanded ? undefined : "hidden",
+        }}
+      >
+        {expanded ? plan.plan : preview}
+      </div>
+      {hasMore && (
+        <button
+          onClick={() => setExpanded((v) => !v)}
+          style={{
+            background: "none",
+            border: "none",
+            color: colors.active,
+            cursor: "pointer",
+            fontSize: 11,
+            padding: "4px 0",
+            fontFamily: fonts.mono,
+          }}
+        >
+          {expanded ? "Show less" : `Show all (${lines.length} lines)`}
+        </button>
+      )}
+      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+        <button
+          onClick={handleAccept}
+          disabled={sending}
+          style={{
+            padding: "5px 16px",
+            fontSize: 12,
+            fontFamily: fonts.mono,
+            border: `1px solid ${colors.active}`,
+            borderRadius: 12,
+            backgroundColor: colors.active,
+            color: "#fff",
+            cursor: "pointer",
+            opacity: sending ? 0.5 : 1,
+          }}
+        >
+          Accept & Execute
+        </button>
+        <button
+          onClick={handleReject}
+          disabled={sending}
+          style={{
+            padding: "5px 16px",
+            fontSize: 12,
+            fontFamily: fonts.mono,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 12,
+            backgroundColor: "transparent",
+            color: colors.text,
+            cursor: "pointer",
+            opacity: sending ? 0.5 : 1,
+          }}
+        >
+          Request Changes
+        </button>
+      </div>
     </div>
   );
 }

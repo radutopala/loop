@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
@@ -243,6 +244,18 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 					ToolName: name,
 					Input:    input,
 				})
+				if name == "AskUserQuestion" {
+					var data events.AskUserQuestionEventData
+					if err := json.Unmarshal([]byte(input), &data); err == nil && len(data.Questions) > 0 {
+						o.events.BroadcastAskUser(msg.ChannelID, data)
+					}
+				}
+				if name == "ExitPlanMode" {
+					var data events.ExitPlanModeEventData
+					if err := json.Unmarshal([]byte(input), &data); err == nil && data.Plan != "" {
+						o.events.BroadcastExitPlan(msg.ChannelID, data)
+					}
+				}
 			}
 			req.OnActivity = func(activity, detail string) {
 				data := events.AgentActivityEventData{Activity: activity}

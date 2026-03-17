@@ -924,6 +924,82 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcasts() {
 	eb.AssertExpectations(s.T())
 }
 
+func (s *TaskExecutorSuite) TestStreamingOnToolUseAskUserQuestion() {
+	s.executor.streamingEnabled = true
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+
+	task := &db.ScheduledTask{
+		ID: 27, ChannelID: "ch27", Prompt: "ask questions",
+		Type: db.TaskTypeCron, Schedule: "0 * * * *",
+	}
+
+	s.store.On("GetChannel", mock.Anything, "ch27").Return(nil, nil)
+	s.bot.On("CreateSimpleThread", s.ctx, "ch27", mock.Anything, mock.Anything).Return("thread-27", nil).Once()
+
+	askInput := `{"questions":[{"question":"What next?","header":"Task","options":[{"label":"A"}]}]}`
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnToolUse == nil {
+			return false
+		}
+		req.OnTurn("Turn 1")
+		req.OnToolUse("AskUserQuestion", askInput)
+		return true
+	})).Return(&agent.AgentResponse{Response: "Turn 1", SessionID: "sess-ask"}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch27", "sess-ask").Return(nil)
+
+	eb.On("BroadcastChannelCreated", "ch27", "thread-27").Once()
+	eb.On("BroadcastMessageCreated", "thread-27", mock.Anything).Maybe()
+	eb.On("BroadcastToolUse", "thread-27", mock.Anything).Once()
+	eb.On("BroadcastAskUser", "thread-27", mock.MatchedBy(func(d events.AskUserQuestionEventData) bool {
+		return len(d.Questions) == 1 && d.Questions[0].Question == "What next?"
+	})).Once()
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	eb.AssertCalled(s.T(), "BroadcastAskUser", "thread-27", mock.Anything)
+	eb.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestStreamingOnToolUseExitPlanMode() {
+	s.executor.streamingEnabled = true
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+
+	task := &db.ScheduledTask{
+		ID: 28, ChannelID: "ch28", Prompt: "plan something",
+		Type: db.TaskTypeCron, Schedule: "0 * * * *",
+	}
+
+	s.store.On("GetChannel", mock.Anything, "ch28").Return(nil, nil)
+	s.bot.On("CreateSimpleThread", s.ctx, "ch28", mock.Anything, mock.Anything).Return("thread-28", nil).Once()
+
+	exitInput := `{"plan":"# My Plan\nDo stuff","planFilePath":"/tmp/plan.md"}`
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnToolUse == nil {
+			return false
+		}
+		req.OnTurn("Turn 1")
+		req.OnToolUse("ExitPlanMode", exitInput)
+		return true
+	})).Return(&agent.AgentResponse{Response: "Turn 1", SessionID: "sess-exit"}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch28", "sess-exit").Return(nil)
+
+	eb.On("BroadcastChannelCreated", "ch28", "thread-28").Once()
+	eb.On("BroadcastMessageCreated", "thread-28", mock.Anything).Maybe()
+	eb.On("BroadcastToolUse", "thread-28", mock.Anything).Once()
+	eb.On("BroadcastExitPlan", "thread-28", mock.MatchedBy(func(d events.ExitPlanModeEventData) bool {
+		return d.Plan == "# My Plan\nDo stuff" && d.PlanFilePath == "/tmp/plan.md"
+	})).Once()
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	eb.AssertCalled(s.T(), "BroadcastExitPlan", "thread-28", mock.Anything)
+	eb.AssertExpectations(s.T())
+}
+
 func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcastsBeforeThread() {
 	s.executor.streamingEnabled = true
 	eb := new(MockEventBroadcaster)

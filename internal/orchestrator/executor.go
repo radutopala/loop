@@ -2,6 +2,7 @@ package orchestrator
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -152,6 +153,18 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 					ToolName: name,
 					Input:    input,
 				})
+				if name == "AskUserQuestion" {
+					var data events.AskUserQuestionEventData
+					if err := json.Unmarshal([]byte(input), &data); err == nil && len(data.Questions) > 0 {
+						e.events.BroadcastAskUser(targetID, data)
+					}
+				}
+				if name == "ExitPlanMode" {
+					var data events.ExitPlanModeEventData
+					if err := json.Unmarshal([]byte(input), &data); err == nil && data.Plan != "" {
+						e.events.BroadcastExitPlan(targetID, data)
+					}
+				}
 			}
 			req.OnActivity = func(activity, detail string) {
 				targetID := threadID

@@ -166,6 +166,14 @@ func (m *MockEventBroadcaster) BroadcastAgentActivity(channelID string, data eve
 	m.Called(channelID, data)
 }
 
+func (m *MockEventBroadcaster) BroadcastAskUser(channelID string, data events.AskUserQuestionEventData) {
+	m.Called(channelID, data)
+}
+
+func (m *MockEventBroadcaster) BroadcastExitPlan(channelID string, data events.ExitPlanModeEventData) {
+	m.Called(channelID, data)
+}
+
 func (m *MockEventBroadcaster) BroadcastChannelCreated(parentChannelID, channelID string) {
 	m.Called(parentChannelID, channelID)
 }
@@ -3346,6 +3354,92 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnToolUseBroadcasts() {
 	s.orch.HandleMessage(s.ctx, msg)
 
 	eb.AssertCalled(s.T(), "BroadcastToolUse", "ch1", mock.Anything)
+	eb.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleMessageStreamingAskUserQuestion() {
+	s.orch.cfg.StreamingEnabled = true
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+
+	msg := &bot.IncomingMessage{
+		ChannelID: "ch1", GuildID: "g1", AuthorID: "user1", AuthorName: "Alice",
+		Content: "ask me", MessageID: "msg-ask", IsBotMention: true, Timestamp: time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+
+	askInput := `{"questions":[{"question":"Pick one","header":"Choice","options":[{"label":"X"}]}]}`
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnToolUse == nil {
+			return false
+		}
+		req.OnToolUse("AskUserQuestion", askInput)
+		req.OnTurn("done")
+		return true
+	})).Return(&agent.AgentResponse{Response: "done", SessionID: "sess-ask"}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-ask").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.Anything).Return()
+	eb.On("BroadcastToolUse", "ch1", mock.Anything).Once()
+	eb.On("BroadcastAskUser", "ch1", mock.MatchedBy(func(d events.AskUserQuestionEventData) bool {
+		return len(d.Questions) == 1 && d.Questions[0].Header == "Choice"
+	})).Once()
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	eb.AssertCalled(s.T(), "BroadcastAskUser", "ch1", mock.Anything)
+	eb.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
+	s.orch.cfg.StreamingEnabled = true
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+
+	msg := &bot.IncomingMessage{
+		ChannelID: "ch1", GuildID: "g1", AuthorID: "user1", AuthorName: "Alice",
+		Content: "plan it", MessageID: "msg-plan", IsBotMention: true, Timestamp: time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+
+	exitInput := `{"plan":"# Plan\nStep 1","planFilePath":"/tmp/p.md"}`
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnToolUse == nil {
+			return false
+		}
+		req.OnToolUse("ExitPlanMode", exitInput)
+		req.OnTurn("done")
+		return true
+	})).Return(&agent.AgentResponse{Response: "done", SessionID: "sess-plan"}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-plan").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.Anything).Return()
+	eb.On("BroadcastToolUse", "ch1", mock.Anything).Once()
+	eb.On("BroadcastExitPlan", "ch1", mock.MatchedBy(func(d events.ExitPlanModeEventData) bool {
+		return d.Plan == "# Plan\nStep 1"
+	})).Once()
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	eb.AssertCalled(s.T(), "BroadcastExitPlan", "ch1", mock.Anything)
 	eb.AssertExpectations(s.T())
 }
 

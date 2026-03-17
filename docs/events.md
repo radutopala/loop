@@ -281,6 +281,8 @@ The `channel_id` in the event envelope identifies which channel was deleted.
 | `BroadcastAgentStatus` | `agent.status` | `AgentStatusEventData` |
 | `BroadcastToolUse` | `tool.use` | `ToolUseEventData` |
 | `BroadcastAgentActivity` | `agent.activity` | `AgentActivityEventData` |
+| `BroadcastAskUser` | `agent.ask_user` | `AskUserQuestionEventData` |
+| `BroadcastExitPlan` | `agent.exit_plan` | `ExitPlanModeEventData` |
 | `BroadcastChannelCreated` | `channel.created` | `map[string]string{"channel_id": id}` |
 | `BroadcastChannelDeleted` | `channel.deleted` | `nil` |
 

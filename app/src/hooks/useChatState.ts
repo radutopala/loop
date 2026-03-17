@@ -1,5 +1,5 @@
 import { useCallback, useState } from "react";
-import type { AgentActivityData, AgentStatusData, Message, MessageCreatedData, MessageStreamingData, ToolUseData, WSEvent } from "../types";
+import type { AgentActivityData, AgentStatusData, AskUserQuestionData, ExitPlanModeData, Message, MessageCreatedData, MessageStreamingData, ToolUseData, WSEvent } from "../types";
 import { useMessages } from "./useMessages";
 import { useEventStream } from "./useEventStream";
 
@@ -13,6 +13,10 @@ export interface ChatState {
   isRunning: boolean;
   toolActivity: { tool_name: string; input: string } | null;
   agentActivity: AgentActivityData | null;
+  askUserQuestions: AskUserQuestionData | null;
+  exitPlanRequest: ExitPlanModeData | null;
+  clearAskUser: () => void;
+  clearExitPlan: () => void;
   completionInfo: { duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null;
 }
 
@@ -27,6 +31,8 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
   const [isRunning, setIsRunning] = useState(initialRunningBot ?? false);
   const [toolActivity, setToolActivity] = useState<{ tool_name: string; input: string } | null>(null);
   const [agentActivity, setAgentActivity] = useState<AgentActivityData | null>(null);
+  const [askUserQuestions, setAskUserQuestions] = useState<AskUserQuestionData | null>(null);
+  const [exitPlanRequest, setExitPlanRequest] = useState<ExitPlanModeData | null>(null);
   const [completionInfo, setCompletionInfo] = useState<{ duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null>(null);
 
   const handleEvent = useCallback(
@@ -63,15 +69,29 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
         setAgentActivity(data);
         return;
       }
+      if (event.type === "agent.ask_user") {
+        const data = event.data as AskUserQuestionData;
+        setAskUserQuestions(data);
+        return;
+      }
+      if (event.type === "agent.exit_plan") {
+        const data = event.data as ExitPlanModeData;
+        setExitPlanRequest(data);
+        return;
+      }
       if (event.type === "agent.status") {
         const data = event.data as AgentStatusData;
         if (data.status === "running") {
           setIsRunning(true);
           setCompletionInfo(null);
+          setAskUserQuestions(null);
+          setExitPlanRequest(null);
         } else {
           setIsRunning(false);
           setToolActivity(null);
           setAgentActivity(null);
+          // Don't clear askUserQuestions/exitPlanRequest on stop — they persist
+          // until the user submits answers or approves the plan.
           if (data.status === "completed" && (data.duration_ms || data.stop_reason)) {
             setCompletionInfo({
               duration_ms: data.duration_ms,
@@ -99,6 +119,10 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
     isRunning,
     toolActivity,
     agentActivity,
+    askUserQuestions,
+    exitPlanRequest,
+    clearAskUser: useCallback(() => setAskUserQuestions(null), []),
+    clearExitPlan: useCallback(() => setExitPlanRequest(null), []),
     completionInfo,
   };
 }

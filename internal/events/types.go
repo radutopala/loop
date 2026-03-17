@@ -7,6 +7,8 @@ type Broadcaster interface {
 	BroadcastAgentStatus(channelID string, data AgentStatusEventData)
 	BroadcastToolUse(channelID string, data ToolUseEventData)
 	BroadcastAgentActivity(channelID string, data AgentActivityEventData)
+	BroadcastAskUser(channelID string, data AskUserQuestionEventData)
+	BroadcastExitPlan(channelID string, data ExitPlanModeEventData)
 	BroadcastChannelCreated(parentChannelID, channelID string)
 	BroadcastChannelDeleted(channelID string)
 }
@@ -46,5 +48,30 @@ type ToolUseEventData struct {
 type AgentActivityEventData struct {
 	Activity    string `json:"activity"`
 	Model       string `json:"model,omitempty"`
+	Description string `json:"description,omitempty"`
+}
+
+// AskUserQuestionEventData is the payload for agent.ask_user events.
+type AskUserQuestionEventData struct {
+	Questions []AskUserQuestion `json:"questions"`
+}
+
+// ExitPlanModeEventData is the payload for agent.exit_plan events.
+type ExitPlanModeEventData struct {
+	Plan         string `json:"plan"`
+	PlanFilePath string `json:"planFilePath,omitempty"`
+}
+
+// AskUserQuestion represents a single question from Claude's AskUserQuestion tool.
+type AskUserQuestion struct {
+	Question    string          `json:"question"`
+	Header      string          `json:"header,omitempty"`
+	Options     []AskUserOption `json:"options,omitempty"`
+	MultiSelect bool            `json:"multi_select,omitempty"`
+}
+
+// AskUserOption represents a selectable option in a question.
+type AskUserOption struct {
+	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
 }

@@ -2248,6 +2248,8 @@ func TestSummarizeToolInput(t *testing.T) {
 		{"empty raw", "Bash", ``, ""},
 		{"long command truncated", "Bash", `{"command":"` + strings.Repeat("x", 200) + `"}`, strings.Repeat("x", 120) + "..."},
 		{"long fallback truncated", "WebSearch", `{"query":"` + strings.Repeat("y", 200) + `"}`, strings.Repeat("y", 120) + "..."},
+		{"AskUserQuestion raw", "AskUserQuestion", `{"questions":[{"question":"What?"}]}`, `{"questions":[{"question":"What?"}]}`},
+		{"ExitPlanMode raw", "ExitPlanMode", `{"plan":"# My Plan","planFilePath":"/tmp/p.md"}`, `{"plan":"# My Plan","planFilePath":"/tmp/p.md"}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

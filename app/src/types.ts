@@ -60,6 +60,27 @@ export interface AgentActivityData {
   description?: string;
 }
 
+export interface AskUserOption {
+  label: string;
+  description?: string;
+}
+
+export interface AskUserQuestion {
+  question: string;
+  header?: string;
+  options?: AskUserOption[];
+  multi_select?: boolean;
+}
+
+export interface AskUserQuestionData {
+  questions: AskUserQuestion[];
+}
+
+export interface ExitPlanModeData {
+  plan: string;
+  planFilePath?: string;
+}
+
 // UI-level session status (mapped from server message types).
 export type SessionStatus = "connecting" | "running" | "completed" | "failed";
 

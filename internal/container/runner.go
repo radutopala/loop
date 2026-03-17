@@ -140,6 +140,8 @@ func summarizeToolInput(name string, raw json.RawMessage) string {
 		if desc, ok := m["description"].(string); ok {
 			return desc
 		}
+	case "AskUserQuestion", "ExitPlanMode":
+		return string(raw)
 	}
 	// For other tools, try common keys.
 	for _, key := range []string{"description", "query", "prompt", "path", "url"} {

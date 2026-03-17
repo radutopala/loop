@@ -17,6 +17,8 @@ const (
 	EventAgentStatus      = "agent.status"
 	EventToolUse          = "tool.use"
 	EventAgentActivity    = "agent.activity"
+	EventAskUser          = "agent.ask_user"
+	EventExitPlan         = "agent.exit_plan"
 	EventChannelCreated   = "channel.created"
 	EventChannelDeleted   = "channel.deleted"
 )
@@ -171,6 +173,24 @@ func (h *EventsHub) BroadcastToolUse(channelID string, data events.ToolUseEventD
 func (h *EventsHub) BroadcastAgentActivity(channelID string, data events.AgentActivityEventData) {
 	h.Broadcast(Event{
 		Type:      EventAgentActivity,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastAskUser sends an agent.ask_user event with structured questions.
+func (h *EventsHub) BroadcastAskUser(channelID string, data events.AskUserQuestionEventData) {
+	h.Broadcast(Event{
+		Type:      EventAskUser,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastExitPlan sends an agent.exit_plan event when Claude wants to exit plan mode.
+func (h *EventsHub) BroadcastExitPlan(channelID string, data events.ExitPlanModeEventData) {
+	h.Broadcast(Event{
+		Type:      EventExitPlan,
 		ChannelID: channelID,
 		Data:      data,
 	})
