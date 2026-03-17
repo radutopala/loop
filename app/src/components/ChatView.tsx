@@ -6,7 +6,6 @@ import { fonts } from "../theme";
 import type { ColorPalette } from "../theme";
 import { useTheme } from "../ThemeContext";
 import { LoopLogo } from "./LoopLogo";
-import { ChatToolbar } from "./ChatToolbar";
 
 function buildStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
   return {
@@ -278,10 +277,9 @@ interface ChatViewProps {
   chatState: ChatState;
   scrollToMessageId?: number | null;
   onScrollComplete?: () => void;
-  onCreateWorktree?: (channelId: string, branch: string) => Promise<void>;
 }
 
-export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComplete, onCreateWorktree }: ChatViewProps) {
+export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComplete }: ChatViewProps) {
   const { colors } = useTheme();
   const styles = buildStyles(colors);
   const { messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, completionInfo } = chatState;
@@ -359,7 +357,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
         <div style={styles.inputBar}>
           <ChatInput channelId={channelId} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} />
         </div>
-        {channelId && <ChatToolbar channelId={channelId} onCreateWorktree={onCreateWorktree} />}
+
         <div style={styles.isolationLabel}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />
@@ -412,7 +410,6 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
       <div style={styles.inputBar}>
         <ChatInput channelId={channelId} isRunning={isRunning} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} />
       </div>
-      {channelId && <ChatToolbar channelId={channelId} onCreateWorktree={onCreateWorktree} />}
       <div style={styles.isolationLabel}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isRunning ? colors.active : colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <rect x="2" y="7" width="20" height="14" rx="2" ry="2" />

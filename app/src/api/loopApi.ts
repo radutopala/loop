@@ -163,7 +163,7 @@ export async function switchBranch(channelId: string, branch: string): Promise<v
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ branch }),
   });
-  if (!res.ok) throw new Error(`Failed to switch branch: ${res.statusText}`);
+  if (!res.ok) throw new Error(await res.text());
 }
 
 export async function createWorktreeThread(

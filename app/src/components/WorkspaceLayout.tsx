@@ -91,10 +91,12 @@ function buildTabButtonStyle(colors: ColorPalette, active: boolean): React.CSSPr
 
 // ── Header Branch Picker ──
 
-function HeaderBranchPicker({ channelId, branch, onBranchChanged }: {
+function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreateWorktree, onError }: {
   channelId: string;
   branch: string;
   onBranchChanged?: () => void;
+  onCreateWorktree?: (channelId: string, branch: string) => Promise<void>;
+  onError?: (msg: string) => void;
 }) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
@@ -125,8 +127,10 @@ function HeaderBranchPicker({ channelId, branch, onBranchChanged }: {
     try {
       await switchBranch(channelId, b);
       onBranchChanged?.();
-    } catch { /* ignore */ }
-  }, [channelId, branch, onBranchChanged]);
+    } catch (e) {
+      onError?.(e instanceof Error ? e.message : "Failed to switch branch");
+    }
+  }, [channelId, branch, onBranchChanged, onError]);
 
   const filtered = branchInfo?.branches.filter((b) =>
     !search || b.toLowerCase().includes(search.toLowerCase()),
@@ -217,37 +221,69 @@ function HeaderBranchPicker({ channelId, branch, onBranchChanged }: {
             {filtered.map((b) => {
               const isCurrent = b === (branchInfo?.current ?? branch);
               return (
-                <button
+                <div
                   key={b}
-                  onClick={() => handleSelect(b)}
                   style={{
                     display: "flex",
                     alignItems: "center",
-                    gap: 6,
-                    width: "100%",
-                    padding: "5px 12px",
-                    border: "none",
-                    background: "transparent",
-                    color: isCurrent ? colors.textLight : colors.text,
-                    cursor: "pointer",
-                    fontSize: 12,
-                    fontFamily: fonts.mono,
-                    textAlign: "left",
                     borderRadius: 4,
-                    whiteSpace: "nowrap",
                   }}
-                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; e.currentTarget.style.color = colors.textLight; }}
-                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = isCurrent ? colors.textLight : colors.text; }}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
                 >
-                  <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.5 }}>
-                    <line x1="6" y1="3" x2="6" y2="15" />
-                    <circle cx="18" cy="6" r="3" />
-                    <circle cx="6" cy="18" r="3" />
-                    <path d="M18 9a9 9 0 0 1-9 9" />
-                  </svg>
-                  <span style={{ flex: 1 }}>{b}</span>
-                  {isCurrent && <span style={{ color: colors.active, flexShrink: 0 }}>&#10003;</span>}
-                </button>
+                  <button
+                    onClick={() => handleSelect(b)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      flex: 1,
+                      padding: "5px 0 5px 12px",
+                      border: "none",
+                      background: "transparent",
+                      color: isCurrent ? colors.textLight : colors.text,
+                      cursor: "pointer",
+                      fontSize: 12,
+                      fontFamily: fonts.mono,
+                      textAlign: "left",
+                      whiteSpace: "nowrap",
+                    }}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.5 }}>
+                      <line x1="6" y1="3" x2="6" y2="15" />
+                      <circle cx="18" cy="6" r="3" />
+                      <circle cx="6" cy="18" r="3" />
+                      <path d="M18 9a9 9 0 0 1-9 9" />
+                    </svg>
+                    <span style={{ flex: 1 }}>{b}</span>
+                    {isCurrent && <span style={{ color: colors.active, flexShrink: 0 }}>&#10003;</span>}
+                  </button>
+                  {onCreateWorktree && (
+                    <button
+                      onClick={(e) => { e.stopPropagation(); setOpen(false); onCreateWorktree(channelId, b); }}
+                      title={`New worktree thread from ${b}`}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        padding: "4px 8px",
+                        border: "none",
+                        background: "transparent",
+                        color: colors.textDim,
+                        cursor: "pointer",
+                        borderRadius: 4,
+                        flexShrink: 0,
+                      }}
+                      onMouseEnter={(e) => { e.currentTarget.style.color = colors.active; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+                    >
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <circle cx="18" cy="18" r="3" />
+                        <circle cx="6" cy="6" r="3" />
+                        <path d="M6 21V9a9 9 0 0 0 9 9" />
+                      </svg>
+                    </button>
+                  )}
+                </div>
               );
             })}
             {filtered.length === 0 && (
@@ -300,6 +336,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   onCreateWorktree,
 }, ref) {
   const { colors } = useTheme();
+  const [branchError, setBranchError] = useState<string | null>(null);
 
   // --- Named layouts state ---
   const [layoutNames, setLayoutNames] = useState<string[]>(() => {
@@ -626,7 +663,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               chatState={chatState}
               scrollToMessageId={scrollToMessageId}
               onScrollComplete={onScrollComplete}
-              onCreateWorktree={onCreateWorktree}
             />
           );
         case "editor":
@@ -798,7 +834,19 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             {branch && (
               <>
                 <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px 0 12px" }}>|</span>
-                <HeaderBranchPicker channelId={channelId} branch={branch} onBranchChanged={onStatusChange} />
+                {channel.parent_id ? (
+                  <span style={{ fontSize: 11, color: colors.active, fontFamily: fonts.mono, flexShrink: 0 }}>
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 2, verticalAlign: -1 }}>
+                      <line x1="6" y1="3" x2="6" y2="15" />
+                      <circle cx="18" cy="6" r="3" />
+                      <circle cx="6" cy="18" r="3" />
+                      <path d="M18 9a9 9 0 0 1-9 9" />
+                    </svg>
+                    {branch}
+                  </span>
+                ) : (
+                  <HeaderBranchPicker channelId={channelId} branch={branch} onBranchChanged={onStatusChange} onCreateWorktree={onCreateWorktree} onError={setBranchError} />
+                )}
               </>
             )}
           </>
@@ -807,7 +855,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       </div>
 
       {/* Error bar */}
-      {error && (
+      {(error || branchError) && (
         <div
           role="alert"
           style={{
@@ -820,9 +868,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             alignItems: "center",
           }}
         >
-          <span>{error}</span>
+          <span>{branchError || error}</span>
           <button
-            onClick={onDismissError}
+            onClick={() => { setBranchError(null); onDismissError?.(); }}
             style={{
               background: "none",
               border: "none",
