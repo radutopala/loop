@@ -101,6 +101,8 @@ Mounts are specified in the config as `host_path:container_path[:mode]` strings.
 
 4. **Work directory** -- the resolved work directory is always appended as a bind mount (`workDir:workDir`), ensuring the project is available inside the container.
 
+5. **Worktree parent mount** -- when `ParentDirPath` is set and the work directory is inside it (e.g. `/project/.worktrees/wt1` inside `/project`), the parent directory is mounted instead of the work directory. This ensures the container sees the main `.git` directory that git worktrees reference.
+
 ### Named Volume Examples
 
 ```jsonc

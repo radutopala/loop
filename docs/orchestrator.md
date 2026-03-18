@@ -120,7 +120,9 @@ This prevents race conditions where multiple messages in rapid succession could 
 
 4. **Session fork** -- If the channel is a thread (`ParentID != ""`) and the thread's `SessionID` matches the parent's `SessionID` (meaning this is the first message in the thread), set `ForkSession: true`. This creates an independent session for the thread while inheriting the parent's conversation context.
 
-5. **Plan mode** -- If the incoming message has `Mode: "plan"`, set `PlanMode: true` on the request, which passes `--permission-mode plan` to Claude CLI instead of `--dangerously-skip-permissions`.
+5. **Worktree parent** -- If the channel is a worktree thread (`Worktree: true`), look up the parent channel's `DirPath` and set `ParentDirPath` on the request. The runner uses this to mount the parent project directory so the container sees the main `.git` directory.
+
+6. **Plan mode** -- If the incoming message has `Mode: "plan"`, set `PlanMode: true` on the request, which passes `--permission-mode plan` to Claude CLI instead of `--dangerously-skip-permissions`.
 
 ## Agent Execution
 

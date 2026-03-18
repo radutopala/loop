@@ -60,7 +60,9 @@ List all channels with optional filtering. Enriches each channel with container 
     "active": true,
     "container_running": true,
     "agent_running": false,
-    "branch": "main"
+    "branch": "main",
+    "commit": "abc1234",
+    "worktree": false
   }
 ]
 ```
@@ -70,6 +72,8 @@ List all channels with optional filtering. Enriches each channel with container 
 - `container_running` is determined by querying the Docker daemon for running containers.
 - `agent_running` indicates whether an active Claude agent run exists for the channel.
 - `branch` is resolved by running `git rev-parse --abbrev-ref HEAD` in the channel's directory.
+- `commit` is the short commit hash from `git rev-parse --short HEAD`.
+- `worktree` is true for threads created via `POST /api/worktrees`.
 
 **Errors:** `501` if channel listing is not configured.
 
@@ -639,6 +643,74 @@ Get git diff information for a channel's working directory. Includes both tracke
 - Files are sorted alphabetically by path.
 
 **Errors:** `404` if channel not found.
+
+---
+
+## Branches & Worktrees
+
+### `GET /api/channels/{id}/branches`
+
+List local git branches and worktrees for a channel's directory.
+
+**Response (200):**
+```json
+{
+  "branches": ["main", "feature/foo"],
+  "current": "main",
+  "worktrees": [
+    {"path": "/project/.worktrees/wt1", "branch": "feature/bar"}
+  ]
+}
+```
+
+**Behavior notes:**
+- Branches checked out in other worktrees are excluded from the `branches` list (git won't allow switching to them).
+- The main worktree is excluded from the `worktrees` list.
+
+### `POST /api/channels/{id}/branches/switch`
+
+Switch the git branch in a channel's working directory.
+
+**Request:** `{"branch": "feature/foo"}`
+
+**Response (200):** `{"ok": true}`
+
+**Errors:** `400` if branch name is invalid or missing. `500` if git checkout fails (e.g. uncommitted changes).
+
+### `POST /api/channels/{id}/branches/create`
+
+Create and checkout a new branch.
+
+**Request:** `{"name": "feature/new", "from": "main"}` (`from` is optional)
+
+**Response (200):** `{"ok": true}`
+
+### `POST /api/worktrees`
+
+Create a git worktree as a new thread. The worktree gets its own branch (`worktree/<name>`) based on the selected branch, inherits the parent's session for `--fork-session`, and appears in the sidebar as a thread.
+
+**Request:**
+```json
+{
+  "channel_id": "parent-channel-id",
+  "branch": "main",
+  "name": "optional-name"
+}
+```
+
+**Response (201):**
+```json
+{
+  "thread_id": "new-thread-id",
+  "worktree_path": "/project/.worktrees/wt-abc123"
+}
+```
+
+**Behavior notes:**
+- Creates `git worktree add -b worktree/<name> <path> <branch>` so any branch can be used as base, including the currently checked out one.
+- Copies the parent's Claude session file to the worktree's project dir (`~/.claude/projects/<encoded-path>/`) so `--resume --fork-session` works on the first message.
+- The thread's `DirPath` points to the worktree directory; `Worktree` flag is set to true.
+- Container mounts include the parent project directory so git worktree references resolve correctly.
 
 ---
 

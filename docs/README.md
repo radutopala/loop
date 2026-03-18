@@ -17,7 +17,7 @@ Comprehensive documentation for every feature of the Loop platform.
 
 ## API & Data
 
-- [**API**](api.md) — HTTP API reference (27 endpoints), request/response schemas, error codes
+- [**API**](api.md) — HTTP API reference, request/response schemas, branches, worktrees, error codes
 - [**Events**](events.md) — Real-time WebSocket events, subscription model, event payloads
 - [**Terminal**](terminal.md) — Terminal WebSocket protocol, Docker exec, host PTY, ring buffer
 - [**Memory**](memory.md) — Semantic search, Ollama embeddings, chunking, re-indexing
