@@ -84,6 +84,13 @@ export function ThreadItem({ thread, selected, isLast, onSelect, onContextMenu, 
           </span>
         </span>
       )}
+      {thread.worktree && (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.active} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          <circle cx="18" cy="18" r="3" />
+          <circle cx="6" cy="6" r="3" />
+          <path d="M6 21V9a9 9 0 0 0 9 9" />
+        </svg>
+      )}
       <span
         style={{
           overflow: "hidden",

@@ -86,7 +86,7 @@ func (s *Server) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Create thread with worktree flag.
-	threadName := fmt.Sprintf("\U0001F500 %s (%s)", name, req.Branch)
+	threadName := fmt.Sprintf("%s (%s)", name, req.Branch)
 	threadID, err := s.threads.CreateThread(r.Context(), req.ChannelID, threadName, "", "")
 	if err != nil {
 		http.Error(w, fmt.Sprintf("creating thread: %s", err), http.StatusInternalServerError)
