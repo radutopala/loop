@@ -245,19 +245,20 @@ export function Sidebar({
     (e: React.MouseEvent, channel: Channel) => {
       e.preventDefault();
       const isDm = channel.name === "dm" && !channel.parent_id;
+      const isThread = !!channel.parent_id;
       const items: MenuItem[] = [
         {
           label: "Copy Link",
           onClick: () => navigator.clipboard.writeText(`loop://channel/${channel.id}`),
         },
         {
-          label: "Copy Channel ID",
+          label: isThread ? "Copy Thread ID" : "Copy Channel ID",
           onClick: () => navigator.clipboard.writeText(channel.id),
         },
       ];
       if (!isDm) {
         items.push({
-          label: "Delete Channel",
+          label: isThread ? "Delete Thread" : "Delete Channel",
           danger: true,
           separator: true,
           onClick: () => onDeleteThread(channel.id),
