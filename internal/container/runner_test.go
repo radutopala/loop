@@ -541,7 +541,6 @@ func (s *RunnerSuite) TestRunWorktreeParentDirMount() {
 	s.client.AssertExpectations(s.T())
 }
 
-
 func (s *RunnerSuite) TestRunCreateFails() {
 	ctx := context.Background()
 	req := &agent.AgentRequest{ChannelID: "ch-1"}

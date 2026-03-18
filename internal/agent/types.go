@@ -6,16 +6,16 @@ import (
 
 // AgentRequest is the input sent to the agent runner.
 type AgentRequest struct {
-	SessionID    string         `json:"session_id"`
-	ForkSession  bool           `json:"fork_session,omitempty"`
-	Messages     []AgentMessage `json:"messages"`
-	SystemPrompt string         `json:"system_prompt"`
-	ChannelID    string         `json:"channel_id"`
-	AuthorID     string         `json:"author_id,omitempty"`
+	SessionID     string         `json:"session_id"`
+	ForkSession   bool           `json:"fork_session,omitempty"`
+	Messages      []AgentMessage `json:"messages"`
+	SystemPrompt  string         `json:"system_prompt"`
+	ChannelID     string         `json:"channel_id"`
+	AuthorID      string         `json:"author_id,omitempty"`
 	DirPath       string         `json:"dir_path,omitempty"`
 	ParentDirPath string         `json:"parent_dir_path,omitempty"`
 	PlanMode      bool           `json:"plan_mode,omitempty"`
-	Prompt       string         `json:"prompt,omitempty"`
+	Prompt        string         `json:"prompt,omitempty"`
 	// OnTurn is called for each assistant turn's text content during streaming.
 	// When set, the runner follows container logs in real-time instead of waiting
 	// for the container to exit. When nil, the runner uses the existing

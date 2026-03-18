@@ -182,12 +182,13 @@ func (s *Server) handleCreateBranch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	args := []string{"checkout", "-b", req.Name}
+	// Names are validated above by validBranchName regex (alphanumeric + /_.-).
+	args := []string{"checkout", "-b", req.Name} // #nosec G204 -- validated by validBranchName
 	if req.From != "" {
 		args = append(args, req.From)
 	}
 
-	cmd := exec.CommandContext(r.Context(), "git", args...)
+	cmd := exec.CommandContext(r.Context(), "git", args...) //nolint:gosec // branch names validated above
 	cmd.Dir = dirPath
 	if out, err := cmd.CombinedOutput(); err != nil {
 		http.Error(w, "git checkout -b failed: "+strings.TrimSpace(string(out)), http.StatusInternalServerError)
