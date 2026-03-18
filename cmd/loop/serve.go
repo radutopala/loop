@@ -227,6 +227,21 @@ func (m *multiDirIndexer) resolveMemoryPaths(dirPath string) ([]memoryPathEntry,
 	if memDir, err := m.app.memoryDir(dirPath); err == nil {
 		entries = append(entries, memoryPathEntry{path: memDir, global: false})
 	}
+
+	// Index Claude Code CLAUDE.md files so agents can search project context.
+	if home, err := m.app.sys.UserHomeDir(); err == nil {
+		// Global user instructions.
+		entries = append(entries, memoryPathEntry{
+			path:   filepath.Join(home, ".claude", "CLAUDE.md"),
+			global: true,
+		})
+	}
+	// Project-level CLAUDE.md (root and .claude/).
+	entries = append(entries,
+		memoryPathEntry{path: filepath.Join(dirPath, "CLAUDE.md"), global: false},
+		memoryPathEntry{path: filepath.Join(dirPath, ".claude", "CLAUDE.md"), global: false},
+	)
+
 	for _, p := range m.globalMemoryPaths {
 		addPath(p, filepath.IsAbs(strings.TrimPrefix(p, "!")))
 	}

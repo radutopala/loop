@@ -833,7 +833,7 @@ func (s *RunnerSuite) TestRunProxyEnv() {
 			checkEnv: func(cfg *ContainerConfig) bool {
 				return slices.Contains(cfg.Env, "HTTP_PROXY=http://proxy:8080") &&
 					slices.Contains(cfg.Env, "HTTPS_PROXY=http://proxy:8443") &&
-					slices.Contains(cfg.Env, "NO_PROXY=localhost,127.0.0.1,host.docker.internal")
+					slices.Contains(cfg.Env, "NO_PROXY=localhost,127.0.0.1,host.docker.internal,loop-chrome-ch-1")
 			},
 		},
 		{
@@ -843,8 +843,8 @@ func (s *RunnerSuite) TestRunProxyEnv() {
 			},
 			checkEnv: func(cfg *ContainerConfig) bool {
 				return slices.Contains(cfg.Env, "HTTP_PROXY=http://proxy:8080") &&
-					slices.Contains(cfg.Env, "NO_PROXY=host.docker.internal") &&
-					slices.Contains(cfg.Env, "no_proxy=host.docker.internal")
+					slices.Contains(cfg.Env, "NO_PROXY=host.docker.internal,loop-chrome-ch-1") &&
+					slices.Contains(cfg.Env, "no_proxy=host.docker.internal,loop-chrome-ch-1")
 			},
 		},
 	}
@@ -1154,12 +1154,12 @@ func (s *RunnerSuite) TestAddProxyEnv() {
 		{
 			name: "HTTP_PROXY forwarded with NO_PROXY added",
 			envs: map[string]string{"HTTP_PROXY": "http://proxy:8080"},
-			want: []string{"BASE=1", "HTTP_PROXY=http://proxy:8080", "NO_PROXY=host.docker.internal", "no_proxy=host.docker.internal"},
+			want: []string{"BASE=1", "HTTP_PROXY=http://proxy:8080", "NO_PROXY=host.docker.internal,loop-chrome-test-ch", "no_proxy=host.docker.internal,loop-chrome-test-ch"},
 		},
 		{
 			name: "localhost rewritten to docker host",
 			envs: map[string]string{"HTTP_PROXY": "http://localhost:3128"},
-			want: []string{"BASE=1", "HTTP_PROXY=http://host.docker.internal:3128", "NO_PROXY=host.docker.internal", "no_proxy=host.docker.internal"},
+			want: []string{"BASE=1", "HTTP_PROXY=http://host.docker.internal:3128", "NO_PROXY=host.docker.internal,loop-chrome-test-ch", "no_proxy=host.docker.internal,loop-chrome-test-ch"},
 		},
 	}
 	for _, tc := range tests {
@@ -1171,7 +1171,7 @@ func (s *RunnerSuite) TestAddProxyEnv() {
 			sys.On("Getenv", mock.Anything).Return("")
 			s.runner.sys = sys
 
-			result := s.runner.addProxyEnv([]string{"BASE=1"})
+			result := s.runner.addProxyEnv([]string{"BASE=1"}, "loop-chrome-test-ch")
 			require.Equal(s.T(), tc.want, result)
 
 			s.runner.sys = s.sys // restore
@@ -1204,39 +1204,57 @@ func (s *RunnerSuite) TestLocalhostToDockerHost() {
 
 func (s *RunnerSuite) TestEnsureNoProxy() {
 	tests := []struct {
-		name string
-		env  []string
-		want []string
+		name       string
+		env        []string
+		extraHosts []string
+		want       []string
 	}{
 		{
 			"appends to existing NO_PROXY",
 			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=localhost,127.0.0.1"},
+			nil,
 			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=localhost,127.0.0.1,host.docker.internal"},
 		},
 		{
 			"appends to existing no_proxy",
 			[]string{"http_proxy=http://proxy:8080", "no_proxy=localhost"},
+			nil,
 			[]string{"http_proxy=http://proxy:8080", "no_proxy=localhost,host.docker.internal"},
 		},
 		{
 			"adds both NO_PROXY and no_proxy when missing",
 			[]string{"HTTP_PROXY=http://proxy:8080"},
+			nil,
 			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=host.docker.internal", "no_proxy=host.docker.internal"},
 		},
 		{
 			"no-op when already present",
 			[]string{"NO_PROXY=host.docker.internal,other"},
+			nil,
 			[]string{"NO_PROXY=host.docker.internal,other"},
 		},
 		{
 			"empty NO_PROXY value",
 			[]string{"NO_PROXY="},
+			nil,
 			[]string{"NO_PROXY=host.docker.internal"},
+		},
+		{
+			"extra hosts added to NO_PROXY",
+			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=localhost"},
+			[]string{"loop-chrome-ch1"},
+			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=localhost,host.docker.internal,loop-chrome-ch1"},
+		},
+		{
+			"extra hosts added when NO_PROXY missing",
+			[]string{"HTTP_PROXY=http://proxy:8080"},
+			[]string{"loop-chrome-ch1"},
+			[]string{"HTTP_PROXY=http://proxy:8080", "NO_PROXY=host.docker.internal,loop-chrome-ch1", "no_proxy=host.docker.internal,loop-chrome-ch1"},
 		},
 	}
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
-			result := ensureNoProxy(tc.env)
+			result := ensureNoProxy(tc.env, tc.extraHosts...)
 			require.Equal(s.T(), tc.want, result)
 		})
 	}

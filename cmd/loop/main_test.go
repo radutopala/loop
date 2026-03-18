@@ -805,12 +805,19 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPaths() {
 	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}, app: s.app}
 
 	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
-	require.Len(s.T(), entries, 2)
+	require.Len(s.T(), entries, 5)
 	require.Empty(s.T(), excludePaths)
 	require.Contains(s.T(), entries[0].path, ".claude/projects")
 	require.False(s.T(), entries[0].global)
-	require.Equal(s.T(), "/home/user/project/memory", entries[1].path)
-	require.False(s.T(), entries[1].global) // relative config path
+	// CLAUDE.md entries: global, project root, project .claude/
+	require.Equal(s.T(), "/home/test/.claude/CLAUDE.md", entries[1].path)
+	require.True(s.T(), entries[1].global)
+	require.Equal(s.T(), "/home/user/project/CLAUDE.md", entries[2].path)
+	require.False(s.T(), entries[2].global)
+	require.Equal(s.T(), "/home/user/project/.claude/CLAUDE.md", entries[3].path)
+	require.False(s.T(), entries[3].global)
+	require.Equal(s.T(), "/home/user/project/memory", entries[4].path)
+	require.False(s.T(), entries[4].global) // relative config path
 }
 
 func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsHomeDirError() {
@@ -824,10 +831,15 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsHomeDirError() {
 	mdi := &multiDirIndexer{indexer: indexer, logger: logger, globalMemoryPaths: []string{"./memory"}, app: s.app}
 
 	entries, excludePaths := mdi.resolveMemoryPaths("/path")
-	require.Len(s.T(), entries, 1)
+	require.Len(s.T(), entries, 3)
 	require.Empty(s.T(), excludePaths)
-	require.Equal(s.T(), "/path/memory", entries[0].path)
+	// No auto-memory or global CLAUDE.md when home dir fails.
+	require.Equal(s.T(), "/path/CLAUDE.md", entries[0].path)
 	require.False(s.T(), entries[0].global)
+	require.Equal(s.T(), "/path/.claude/CLAUDE.md", entries[1].path)
+	require.False(s.T(), entries[1].global)
+	require.Equal(s.T(), "/path/memory", entries[2].path)
+	require.False(s.T(), entries[2].global)
 }
 
 func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsWithGlobalAndProject() {
@@ -847,14 +859,21 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsWithGlobalAndProject() 
 	}
 
 	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
-	require.Len(s.T(), entries, 3)
+	require.Len(s.T(), entries, 6)
 	require.Empty(s.T(), excludePaths)
 	require.Contains(s.T(), entries[0].path, ".claude/projects")
 	require.False(s.T(), entries[0].global)
-	require.Equal(s.T(), "/shared/knowledge", entries[1].path)
-	require.True(s.T(), entries[1].global) // absolute config path
-	require.Equal(s.T(), "/home/user/project/docs/arch.md", entries[2].path)
-	require.False(s.T(), entries[2].global) // relative project path
+	// CLAUDE.md entries
+	require.Equal(s.T(), "/home/test/.claude/CLAUDE.md", entries[1].path)
+	require.True(s.T(), entries[1].global)
+	require.Equal(s.T(), "/home/user/project/CLAUDE.md", entries[2].path)
+	require.False(s.T(), entries[2].global)
+	require.Equal(s.T(), "/home/user/project/.claude/CLAUDE.md", entries[3].path)
+	require.False(s.T(), entries[3].global)
+	require.Equal(s.T(), "/shared/knowledge", entries[4].path)
+	require.True(s.T(), entries[4].global) // absolute config path
+	require.Equal(s.T(), "/home/user/project/docs/arch.md", entries[5].path)
+	require.False(s.T(), entries[5].global) // relative project path
 }
 
 func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsDedup() {
@@ -877,13 +896,16 @@ func (s *MainSuite) TestMultiDirIndexerResolveMemoryPathsDedup() {
 	}
 
 	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
-	// Should be deduplicated: auto-memory, project/memory, /shared/knowledge — no duplicates.
-	require.Len(s.T(), entries, 3)
+	// Should be deduplicated: auto-memory, CLAUDE.md x3, project/memory, /shared/knowledge — no duplicates.
+	require.Len(s.T(), entries, 6)
 	require.Empty(s.T(), excludePaths)
 	require.Contains(s.T(), entries[0].path, ".claude/projects")
-	require.Equal(s.T(), "/home/user/project/memory", entries[1].path)
-	require.Equal(s.T(), "/shared/knowledge", entries[2].path)
-	require.True(s.T(), entries[2].global)
+	require.Equal(s.T(), "/home/test/.claude/CLAUDE.md", entries[1].path)
+	require.Equal(s.T(), "/home/user/project/CLAUDE.md", entries[2].path)
+	require.Equal(s.T(), "/home/user/project/.claude/CLAUDE.md", entries[3].path)
+	require.Equal(s.T(), "/home/user/project/memory", entries[4].path)
+	require.Equal(s.T(), "/shared/knowledge", entries[5].path)
+	require.True(s.T(), entries[5].global)
 }
 
 func (s *MainSuite) TestResolveMemoryPathsWithExclusions() {
@@ -902,7 +924,7 @@ func (s *MainSuite) TestResolveMemoryPathsWithExclusions() {
 	}
 
 	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
-	require.Len(s.T(), entries, 2) // auto-memory + ./memory
+	require.Len(s.T(), entries, 5) // auto-memory + CLAUDE.md x3 + ./memory
 	require.Len(s.T(), excludePaths, 1)
 	require.Equal(s.T(), "/home/user/project/memory/drafts", excludePaths[0])
 }
@@ -923,7 +945,7 @@ func (s *MainSuite) TestResolveMemoryPathsAbsoluteExclusion() {
 	}
 
 	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
-	require.Len(s.T(), entries, 2) // auto-memory + ./memory
+	require.Len(s.T(), entries, 5) // auto-memory + CLAUDE.md x3 + ./memory
 	require.Len(s.T(), excludePaths, 1)
 	require.Equal(s.T(), "/shared/secret", excludePaths[0])
 }
@@ -942,7 +964,7 @@ func (s *MainSuite) TestResolveMemoryPathsProjectExclusion() {
 	mdi := &multiDirIndexer{indexer: indexer, logger: logger, app: s.app}
 
 	entries, excludePaths := mdi.resolveMemoryPaths("/home/user/project")
-	require.Len(s.T(), entries, 2) // auto-memory + ./docs
+	require.Len(s.T(), entries, 5) // auto-memory + CLAUDE.md x3 + ./docs
 	require.Len(s.T(), excludePaths, 1)
 	require.Equal(s.T(), "/home/user/project/docs/wip", excludePaths[0])
 }
@@ -1146,10 +1168,10 @@ func (s *MainSuite) TestMultiDirIndexerSearchWithGlobalPath() {
 	sys.Override("UserHomeDir").Return("/nonexistent-home", nil)
 
 	mi := new(mockMemIndexer)
-	// Auto-memory path (project-scoped)
+	// Auto-memory + project CLAUDE.md paths (project-scoped)
 	mi.On("Index", mock.Anything, mock.Anything, "/some/project", mock.Anything).Return(0, nil)
-	// Global path (absolute config path, scope = "")
-	mi.On("Index", mock.Anything, "/shared/knowledge", "", mock.Anything).Return(0, nil)
+	// Global paths (global CLAUDE.md + absolute config path, scope = "")
+	mi.On("Index", mock.Anything, mock.Anything, "", mock.Anything).Return(0, nil)
 	mi.On("Search", mock.Anything, "/some/project", "test", 5).Return([]memory.SearchResult{}, nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
@@ -1187,10 +1209,10 @@ func (s *MainSuite) TestMultiDirIndexerIndexWithGlobalPath() {
 	sys.Override("UserHomeDir").Return("/nonexistent-home", nil)
 
 	mi := new(mockMemIndexer)
-	// Auto-memory path (project-scoped)
+	// Auto-memory + project CLAUDE.md paths (project-scoped)
 	mi.On("Index", mock.Anything, mock.Anything, "/some/project", mock.Anything).Return(1, nil)
-	// Global path (absolute config path, scope = "")
-	mi.On("Index", mock.Anything, "/shared/knowledge", "", mock.Anything).Return(2, nil)
+	// Global paths (global CLAUDE.md + absolute config path, scope = "")
+	mi.On("Index", mock.Anything, mock.Anything, "", mock.Anything).Return(2, nil)
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	mdi := &multiDirIndexer{indexer: mi, logger: logger, globalMemoryPaths: []string{"/shared/knowledge"}, app: s.app}
@@ -1198,7 +1220,7 @@ func (s *MainSuite) TestMultiDirIndexerIndexWithGlobalPath() {
 	ctx := context.Background()
 	count, err := mdi.Index(ctx, "/some/project")
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), 3, count) // 1 + 2
+	require.Equal(s.T(), 7, count) // 3 project-scoped (1 each) + 2 global-scoped (2 each)
 	mi.AssertExpectations(s.T())
 }
 

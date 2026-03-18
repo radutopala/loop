@@ -562,7 +562,9 @@ func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL s
 		"PATH=" + hostHome + "/.local/bin:" + hostHome + "/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 	}
 	env = addAuthEnv(env, cfg)
-	env = r.addProxyEnv(env)
+	// Add Chrome container hostname to NO_PROXY so the MCP browser server
+	// inside the agent can connect to Chrome without going through the proxy.
+	env = r.addProxyEnv(env, browser.ChromeHostname(channelID))
 
 	for k, v := range cfg.Envs {
 		expanded, err := r.expandPath(v)
@@ -589,7 +591,8 @@ func addAuthEnv(env []string, cfg *config.Config) []string {
 
 // addProxyEnv forwards host proxy environment variables into env,
 // rewriting localhost addresses to host.docker.internal.
-func (r *DockerRunner) addProxyEnv(env []string) []string {
+// extraNoProxyHosts are added to NO_PROXY (e.g. Chrome container hostname).
+func (r *DockerRunner) addProxyEnv(env []string, extraNoProxyHosts ...string) []string {
 	hasProxy := false
 	for _, key := range []string{"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "http_proxy", "https_proxy", "no_proxy"} {
 		if v := r.sys.Getenv(key); v != "" {
@@ -600,7 +603,7 @@ func (r *DockerRunner) addProxyEnv(env []string) []string {
 		}
 	}
 	if hasProxy {
-		env = ensureNoProxy(env)
+		env = ensureNoProxy(env, extraNoProxyHosts...)
 	}
 	return env
 }
@@ -965,28 +968,31 @@ func (r *DockerRunner) waitForExit(ctx context.Context, containerID string) (int
 	}
 }
 
-// ensureNoProxy ensures host.docker.internal is in NO_PROXY and no_proxy
-// so the container's API calls bypass the proxy.
-func ensureNoProxy(env []string) []string {
-	const host = "host.docker.internal"
+// ensureNoProxy ensures host.docker.internal (and any extra hosts) are in
+// NO_PROXY and no_proxy so the container's API calls bypass the proxy.
+func ensureNoProxy(env []string, extraHosts ...string) []string {
+	hosts := append([]string{"host.docker.internal"}, extraHosts...)
 	found := false
 	for i, e := range env {
 		for _, key := range []string{"NO_PROXY=", "no_proxy="} {
 			if strings.HasPrefix(e, key) {
 				found = true
 				val := strings.TrimPrefix(e, key)
-				if !strings.Contains(val, host) {
-					if val != "" {
-						val += ","
+				for _, host := range hosts {
+					if !strings.Contains(val, host) {
+						if val != "" {
+							val += ","
+						}
+						val += host
 					}
-					val += host
-					env[i] = key + val
 				}
+				env[i] = key + val
 			}
 		}
 	}
 	if !found {
-		env = append(env, "NO_PROXY="+host, "no_proxy="+host)
+		all := strings.Join(hosts, ",")
+		env = append(env, "NO_PROXY="+all, "no_proxy="+all)
 	}
 	return env
 }
