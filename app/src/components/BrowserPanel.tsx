@@ -63,13 +63,16 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
     }
   }, [connected, started, startBrowser]);
 
-  // Start streaming once browser is started. Use Chrome's viewport size (1280x900)
-  // so frames match the actual page layout without distortion.
+  // Start streaming once browser is started, and re-request when the panel
+  // becomes visible again (e.g. after a layout switch) to ensure frames flow.
   useEffect(() => {
-    if (started) {
-      startStreaming(1920, 1080);
-    }
-  }, [started, startStreaming]);
+    if (!started) return;
+    startStreaming(1920, 1080);
+    // Force Chrome to send a new frame by reloading the page.
+    // Screencast only sends frames on page changes, so a static about:blank
+    // won't produce frames after a reconnect without this.
+    reload();
+  }, [started, startStreaming, reload]);
 
   const handleNavigate = useCallback(
     (e: React.FormEvent) => {
@@ -283,6 +286,7 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
           display: "flex",
           alignItems: "center",
           justifyContent: "center",
+          backgroundColor: colors.bg,
         }}
       >
         {started ? (
@@ -295,13 +299,13 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
               outline: "none",
               cursor: "default",
             }}
-            onClick={(e) => { handleCanvasMouseEvent(e); canvasRef.current?.focus(); }}
-            onDoubleClick={handleCanvasMouseEvent}
-            onContextMenu={handleCanvasMouseEvent}
-            onMouseMove={handleCanvasMouseEvent}
-            onWheel={handleCanvasWheel}
-            onKeyDown={handleCanvasKeyDown}
-          />
+          onClick={(e) => { handleCanvasMouseEvent(e); canvasRef.current?.focus(); }}
+          onDoubleClick={handleCanvasMouseEvent}
+          onContextMenu={handleCanvasMouseEvent}
+          onMouseMove={handleCanvasMouseEvent}
+          onWheel={handleCanvasWheel}
+          onKeyDown={handleCanvasKeyDown}
+        />
         ) : (
           <div
             style={{
