@@ -377,7 +377,7 @@ func (s *BotSuite) TestHandleIncomingMessagePlain() {
 		received = msg
 	})
 
-	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello", "", false, "", "")
+	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello", "")
 
 	require.NotNil(s.T(), received)
 	require.Equal(s.T(), "ch-1", received.ChannelID)
@@ -395,7 +395,7 @@ func (s *BotSuite) TestHandleIncomingMessageMention() {
 		received = msg
 	})
 
-	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "@LoopBot do this", "", false, "", "")
+	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "@LoopBot do this", "")
 
 	require.NotNil(s.T(), received)
 	require.Equal(s.T(), "do this", received.Content)
@@ -408,7 +408,7 @@ func (s *BotSuite) TestHandleIncomingMessagePrefix() {
 		received = msg
 	})
 
-	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "!loop check status", "", false, "", "")
+	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "!loop check status", "")
 
 	require.NotNil(s.T(), received)
 	require.Equal(s.T(), "check status", received.Content)
@@ -421,7 +421,7 @@ func (s *BotSuite) TestHandleIncomingMessageDefaultAuthor() {
 		received = msg
 	})
 
-	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "", "hello", "", false, "", "")
+	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "", "hello", "")
 
 	require.NotNil(s.T(), received)
 	require.Equal(s.T(), DefaultAuthorID, received.AuthorID)
@@ -431,7 +431,7 @@ func (s *BotSuite) TestHandleIncomingMessageDefaultAuthor() {
 func (s *BotSuite) TestHandleIncomingMessageNoHandler() {
 	// Should not panic when no handler is set.
 	require.NotPanics(s.T(), func() {
-		s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello", "", false, "", "")
+		s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello", "")
 	})
 }
 
@@ -442,7 +442,7 @@ func (s *BotSuite) TestHandleIncomingMessageTimestamp() {
 	})
 
 	before := time.Now().UTC()
-	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello", "", false, "", "")
+	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello", "")
 	after := time.Now().UTC()
 
 	require.NotNil(s.T(), received)
@@ -456,7 +456,7 @@ func (s *BotSuite) TestHandleIncomingMessagePlanMode() {
 		received = msg
 	})
 
-	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "plan this", "plan", false, "", "")
+	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "plan this", "plan")
 
 	require.NotNil(s.T(), received)
 	require.Equal(s.T(), "plan", received.Mode)

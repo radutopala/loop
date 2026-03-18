@@ -117,8 +117,8 @@ type MockIncomingMessageHandler struct {
 	mock.Mock
 }
 
-func (m *MockIncomingMessageHandler) HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string, worktree bool, branch, worktreePath string) {
-	m.Called(ctx, channelID, authorID, content, mode, worktree, branch, worktreePath)
+func (m *MockIncomingMessageHandler) HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string) {
+	m.Called(ctx, channelID, authorID, content, mode)
 }
 
 func (m *MockIncomingMessageHandler) HandleThreadCreated(ctx context.Context, threadID, authorID, message string) {
@@ -1284,7 +1284,7 @@ func (s *ServerSuite) TestSendMessageViaHandler() {
 	s.srv.SetIncomingMessageHandler(handler)
 
 	called := make(chan struct{}, 1)
-	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "hello world", "", false, "", "").
+	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "hello world", "").
 		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
 
 	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"hello world"}`)
@@ -1308,7 +1308,7 @@ func (s *ServerSuite) TestSendMessageViaHandlerPlanMode() {
 	s.srv.SetIncomingMessageHandler(handler)
 
 	called := make(chan struct{}, 1)
-	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "plan this", "plan", false, "", "").
+	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "plan this", "plan").
 		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
 
 	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"plan this","mode":"plan"}`)

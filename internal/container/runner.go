@@ -504,13 +504,6 @@ func (r *DockerRunner) gitExcludesMount() string {
 
 // runOnce executes a single container run.
 func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
-	// Checkout the requested branch before starting the container.
-	if req.Branch != "" && req.DirPath != "" {
-		if _, err := r.sys.ExecCommandOutput("git", "-C", req.DirPath, "checkout", req.Branch); err != nil {
-			return nil, fmt.Errorf("git checkout %s: %w", req.Branch, err)
-		}
-	}
-
 	containerID, mcpConfigPath, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID, req.ParentDirPath,
 		func(cfg *config.Config, mcpConfigPath string) []string {
 			return buildClaudeCmd(cfg, mcpConfigPath, req)

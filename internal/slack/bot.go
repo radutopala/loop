@@ -373,7 +373,7 @@ func (b *SlackBot) CreateSimpleThread(ctx context.Context, channelID, name, init
 	return threadID, nil
 }
 
-func (b *SlackBot) HandleIncomingMessage(_ context.Context, _, _, _, _ string, _ bool, _, _ string) {}
+func (b *SlackBot) HandleIncomingMessage(_ context.Context, _, _, _, _ string) {}
 
 // HandleThreadCreated posts the initial message (with a bot mention) to the
 // thread so that the normal message event handler picks it up and triggers a

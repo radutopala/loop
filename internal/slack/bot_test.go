@@ -610,7 +610,7 @@ func (s *BotSuite) TestGetOwnerUserIDSkipsBot() {
 // --- HandleIncomingMessage / HandleThreadCreated (no-ops) ---
 
 func (s *BotSuite) TestHandleIncomingMessageNoOp() {
-	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello", "", false, "", "")
+	s.bot.HandleIncomingMessage(context.Background(), "ch-1", "user-1", "hello", "")
 }
 
 func (s *BotSuite) TestHandleThreadCreatedPostsMessage() {

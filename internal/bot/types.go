@@ -23,9 +23,6 @@ type IncomingMessage struct {
 	Timestamp    time.Time
 	AuthorRoles  []string // role IDs for permission checking (Discord only)
 	Mode         string   // "plan" or "" (default = agent)
-	Worktree     bool     // create a new git worktree for this run
-	Branch       string   // checkout this branch before running
-	WorktreePath string   // use this existing worktree path as workDir
 }
 
 // OutgoingMessage to the chat platform.
