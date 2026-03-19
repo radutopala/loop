@@ -86,7 +86,7 @@ app-build-binary: ## Cross-compile loop binary for app bundling (GOOS=, GOARCH=)
 	echo "Built app/resources/$$EB_OS/$$EB_ARCH/"
 
 app-dev: ## Start the Electron app frontend dev server
-	cd app && npm install && npm run dev
+	cd app && npm install && npx vite --host
 
 app-install: build ## Build the Electron app and copy to /Applications
 	@mkdir -p app/resources/mac/arm64

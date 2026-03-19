@@ -133,7 +133,7 @@ export function createDefaultLayouts(): ChannelLayouts {
       Editor: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "editor", panel: "editor", flex: 65 }, { type: "leaf", id: "diff-1", panel: "diff", flex: 35 }] },
       Memory: { type: "leaf", id: "memory", panel: "memory", flex: 1 },
       Diff: { type: "leaf", id: "diff", panel: "diff", flex: 1 },
-      "Browser Chat": { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 60 }, { type: "split", direction: "vertical", flex: 40, children: [{ type: "leaf", id: "browser", panel: "browser", flex: 70 }, { type: "leaf", id: "diff", panel: "diff", flex: 30 }] }] },
+      "Browser Chat": { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "split", direction: "vertical", flex: 50, children: [{ type: "leaf", id: "browser", panel: "browser", flex: 70 }, { type: "leaf", id: "diff", panel: "diff", flex: 30 }] }] },
     },
   };
 }

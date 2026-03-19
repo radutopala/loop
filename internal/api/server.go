@@ -173,6 +173,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/channels/{id}/branches/switch", s.handleSwitchBranch)
 	mux.HandleFunc("POST /api/channels/{id}/branches/create", s.handleCreateBranch)
 	mux.HandleFunc("POST /api/worktrees", s.handleCreateWorktree)
+	mux.HandleFunc("POST /api/worktrees/import", s.handleImportWorktree)
 	mux.HandleFunc("POST /api/browser/action", s.handleBrowserAction)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)

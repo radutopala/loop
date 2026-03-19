@@ -2,6 +2,12 @@ import type { Channel, Message } from "../types";
 
 let apiUrl = "http://localhost:8222";
 
+// If accessed via host.docker.internal (e.g. from a Docker container's browser),
+// use the same hostname for the API so requests don't cross origins.
+if (typeof window !== "undefined" && window.location.hostname === "host.docker.internal") {
+  apiUrl = `http://host.docker.internal:8222`;
+}
+
 export async function initApiUrl(): Promise<void> {
   if (window.loopAPI) {
     apiUrl = await window.loopAPI.getApiUrl();
@@ -165,6 +171,7 @@ export async function sendMessage(
 export interface WorktreeInfo {
   path: string;
   branch: string;
+  thread_id?: string;
 }
 
 export interface BranchInfo {
@@ -201,6 +208,20 @@ export async function createWorktreeThread(
     body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Failed to create worktree: ${res.statusText}`);
+  const data: { thread_id: string; worktree_path: string } = await res.json();
+  return { threadId: data.thread_id, worktreePath: data.worktree_path };
+}
+
+export async function importWorktree(
+  channelId: string,
+  worktreePath: string,
+): Promise<{ threadId: string; worktreePath: string }> {
+  const res = await fetch(`${apiUrl}/api/worktrees/import`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel_id: channelId, worktree_path: worktreePath }),
+  });
+  if (!res.ok) throw new Error(`Failed to import worktree: ${res.statusText}`);
   const data: { thread_id: string; worktree_path: string } = await res.json();
   return { threadId: data.thread_id, worktreePath: data.worktree_path };
 }

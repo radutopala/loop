@@ -208,6 +208,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("POST /api/channels/{id}/branches/switch", s.srv.handleSwitchBranch)
 	s.mux.HandleFunc("POST /api/channels/{id}/branches/create", s.srv.handleCreateBranch)
 	s.mux.HandleFunc("POST /api/worktrees", s.srv.handleCreateWorktree)
+	s.mux.HandleFunc("POST /api/worktrees/import", s.srv.handleImportWorktree)
 	s.mux.HandleFunc("GET /api/health", handleHealth)
 	s.mux.HandleFunc("GET /api/ws/terminal", s.srv.handleTerminalWS)
 	s.mux.HandleFunc("GET /api/ws", s.srv.handleEventsWS)

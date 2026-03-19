@@ -38,7 +38,7 @@ AI agents powered by Claude, running in Docker containers. Use the **desktop app
           │   workDir (project) │
           │   mcpDir  (logs)    │
           │   MCP: loop         │
-          │   MCP: loop-browser │──▶ Chrome sidecar (CDP)
+          │   MCP: loop-browser │──▶ Host API ──▶ Chrome sidecar
           └─────────┬───────────┘
                     │
          MCP tool calls (schedule, list, cancel…)
@@ -854,6 +854,7 @@ Loop includes a desktop app for macOS and Linux, built with Electron + React. Do
 - **Sidebar** — browse channels and threads, create new ones, batch-delete, see running status (green dot), and open directories directly from the sidebar
 - **Auto-update** — checks for new releases every 30 minutes, download and install with one click
 - **Deep links** — `loop://channel/<id>` opens the app directly to a channel
+- **Branch picker** — switch branches from the header bar, create worktree threads, import existing worktrees. Threads show branches only; parent channels show branches + worktrees in a 50/50 split
 - **Browser** — live Chrome screencast via WebSocket, click/type/navigate directly in the browser pane
 - **Plan mode** — run agents in read-only preview mode (`--permission-mode plan`)
 - **Agent activity** — see model info, tool use, and completion summaries in the chat view
@@ -898,17 +899,21 @@ make app-install
 | `POST` | `/api/messages` | Send a message to a channel or thread |
 | `POST` | `/api/threads` | Create a thread in an existing channel |
 | `DELETE` | `/api/threads/{id}` | Delete a thread |
+| `GET` | `/api/channels/{id}/branches` | List branches and worktrees for a channel |
+| `POST` | `/api/channels/{id}/branches/switch` | Switch git branch |
+| `POST` | `/api/channels/{id}/branches/create` | Create and checkout a new branch |
+| `POST` | `/api/worktrees` | Create a git worktree as a new thread |
+| `POST` | `/api/worktrees/import` | Import an existing worktree as a thread |
 | `GET` | `/api/channels/{id}/diff` | Get git diff for a channel's working directory |
 | `GET` | `/api/channels/{id}/messages` | List messages with cursor-based pagination |
 | `POST` | `/api/commands` | Send a slash command to a channel |
 | `POST` | `/api/memory/search` | Semantic search across memory files |
 | `POST` | `/api/memory/index` | Re-index memory files |
 | `GET` | `/api/readme` | Get the Loop README documentation |
-| `POST` | `/api/browser/ensure` | Start Chrome sidecar for a channel (lazy) |
-| `POST` | `/api/browser/touch` | Signal browser usage (prevents idle shutdown) |
+| `POST` | `/api/browser/action` | Browser automation (navigate, tabs, screenshot, input, etc.) |
 | `GET` | `/api/ws` | WebSocket for real-time event streaming |
 | `GET` | `/api/ws/terminal` | WebSocket for interactive terminal sessions |
-| `GET` | `/api/ws/browser` | WebSocket for browser screencast and control |
+| `GET` | `/api/ws/browser` | WebSocket for browser screencast frames and input |
 
 ## MCP Tools
 

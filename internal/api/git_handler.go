@@ -18,8 +18,9 @@ type branchListResponse struct {
 }
 
 type worktreeEntry struct {
-	Path   string `json:"path"`
-	Branch string `json:"branch"`
+	Path     string `json:"path"`
+	Branch   string `json:"branch"`
+	ThreadID string `json:"thread_id,omitempty"`
 }
 
 // validBranchName matches safe git branch names (alphanumeric, slashes, hyphens, dots, underscores).
@@ -74,6 +75,21 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 	wtOut, _ := wtCmd.Output() // ignore error — worktrees may not exist
 
 	worktrees := parseWorktrees(string(wtOut), dirPath)
+
+	// Enrich worktrees with thread IDs for worktrees already imported as threads.
+	if allChannels, err := s.store.ListChannels(r.Context()); err == nil {
+		wtPathToThread := make(map[string]string)
+		for _, ch := range allChannels {
+			if ch.ParentID == channelID && ch.Worktree && ch.DirPath != "" {
+				wtPathToThread[filepath.Clean(ch.DirPath)] = ch.ChannelID
+			}
+		}
+		for i := range worktrees {
+			if tid, ok := wtPathToThread[filepath.Clean(worktrees[i].Path)]; ok {
+				worktrees[i].ThreadID = tid
+			}
+		}
+	}
 
 	// Exclude branches checked out in other worktrees — git checkout
 	// in the main working directory would fail for these.
@@ -318,6 +334,120 @@ func (s *Server) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {
 	writeHTTPJSON(w, http.StatusCreated, createWorktreeResponse{
 		ThreadID:     threadID,
 		WorktreePath: worktreePath,
+	}, s.logger)
+}
+
+// ── Import Worktree ──
+
+type importWorktreeRequest struct {
+	ChannelID    string `json:"channel_id"`
+	WorktreePath string `json:"worktree_path"`
+}
+
+func (s *Server) handleImportWorktree(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel listing not configured") {
+		return
+	}
+	if !requireConfigured(w, s.threads, "thread creation not configured") {
+		return
+	}
+
+	var req importWorktreeRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	if req.ChannelID == "" {
+		http.Error(w, "channel_id is required", http.StatusBadRequest)
+		return
+	}
+	if req.WorktreePath == "" {
+		http.Error(w, "worktree_path is required", http.StatusBadRequest)
+		return
+	}
+
+	parent, err := s.store.GetChannel(r.Context(), req.ChannelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if parent == nil || parent.DirPath == "" {
+		http.Error(w, "channel not found or has no dir_path", http.StatusBadRequest)
+		return
+	}
+
+	// Validate that the path is an actual git worktree by checking git worktree list.
+	wtCmd := exec.CommandContext(r.Context(), "git", "worktree", "list", "--porcelain")
+	wtCmd.Dir = parent.DirPath
+	wtOut, err := wtCmd.Output()
+	if err != nil {
+		http.Error(w, "failed to list worktrees", http.StatusInternalServerError)
+		return
+	}
+
+	worktrees := parseWorktrees(string(wtOut), parent.DirPath)
+	var matched *worktreeEntry
+	cleanPath := filepath.Clean(req.WorktreePath)
+	for i := range worktrees {
+		if filepath.Clean(worktrees[i].Path) == cleanPath {
+			matched = &worktrees[i]
+			break
+		}
+	}
+	if matched == nil {
+		http.Error(w, "path is not a known git worktree", http.StatusBadRequest)
+		return
+	}
+
+	// Check if a thread already exists for this worktree path.
+	if allChannels, err := s.store.ListChannels(r.Context()); err == nil {
+		for _, ch := range allChannels {
+			if ch.ParentID == req.ChannelID && ch.Worktree && filepath.Clean(ch.DirPath) == cleanPath {
+				writeHTTPJSON(w, http.StatusOK, createWorktreeResponse{
+					ThreadID:     ch.ChannelID,
+					WorktreePath: req.WorktreePath,
+				}, s.logger)
+				return
+			}
+		}
+	}
+
+	// Derive thread name from worktree directory name and branch.
+	name := filepath.Base(cleanPath)
+	threadName := fmt.Sprintf("%s (%s)", name, matched.Branch)
+
+	threadID, err := s.threads.CreateThread(r.Context(), req.ChannelID, threadName, "", "")
+	if err != nil {
+		http.Error(w, fmt.Sprintf("creating thread: %s", err), http.StatusInternalServerError)
+		return
+	}
+
+	ch, err := s.store.GetChannel(r.Context(), threadID)
+	if err != nil || ch == nil {
+		http.Error(w, "failed to get created thread", http.StatusInternalServerError)
+		return
+	}
+	ch.DirPath = req.WorktreePath
+	ch.Worktree = true
+	if err := s.store.UpsertChannel(r.Context(), ch); err != nil {
+		http.Error(w, fmt.Sprintf("updating thread: %s", err), http.StatusInternalServerError)
+		return
+	}
+
+	// Copy session file so --resume --fork-session works in the worktree dir.
+	if parent.SessionID != "" {
+		if err := s.copySessionFile(parent.DirPath, req.WorktreePath, parent.SessionID); err != nil {
+			s.logger.Warn("copying session file for imported worktree", "error", err)
+		}
+	}
+
+	if s.eventsHub != nil {
+		s.eventsHub.BroadcastChannelCreated(req.ChannelID, threadID)
+	}
+
+	writeHTTPJSON(w, http.StatusCreated, createWorktreeResponse{
+		ThreadID:     threadID,
+		WorktreePath: req.WorktreePath,
 	}, s.logger)
 }
 

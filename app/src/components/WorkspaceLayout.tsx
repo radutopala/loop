@@ -91,11 +91,13 @@ function buildTabButtonStyle(colors: ColorPalette, active: boolean): React.CSSPr
 
 // ── Header Branch Picker ──
 
-function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreateWorktree, onError }: {
+function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreateWorktree, onImportWorktree, onSelectThread, onError }: {
   channelId: string;
   branch: string;
   onBranchChanged?: () => void;
   onCreateWorktree?: (channelId: string, branch: string) => Promise<void>;
+  onImportWorktree?: (channelId: string, worktreePath: string) => Promise<void>;
+  onSelectThread?: (threadId: string) => void;
   onError?: (msg: string) => void;
 }) {
   const { colors } = useTheme();
@@ -135,6 +137,13 @@ function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreateWorktr
   const filtered = branchInfo?.branches.filter((b) =>
     !search || b.toLowerCase().includes(search.toLowerCase()),
   ) ?? [];
+
+  const lowerSearch = search.toLowerCase();
+  const filteredWorktrees = branchInfo?.worktrees.filter((wt) =>
+    !search || wt.branch.toLowerCase().includes(lowerSearch) || wt.path.split("/").pop()?.toLowerCase().includes(lowerSearch),
+  ) ?? [];
+
+  const hasWorktrees = (branchInfo?.worktrees.length ?? 0) > 0 && (!!onImportWorktree || !!onSelectThread);
 
   return (
     <div ref={ref} style={{ position: "relative", display: "flex", alignItems: "center" }}>
@@ -182,7 +191,8 @@ function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreateWorktr
             padding: 0,
             zIndex: 1000,
             minWidth: 340,
-            maxHeight: "min(300px, 60vh)",
+            maxHeight: hasWorktrees ? undefined : "min(400px, 70vh)",
+            height: hasWorktrees ? "min(400px, 70vh)" : undefined,
             display: "flex",
             flexDirection: "column",
             boxShadow: `0 4px 12px ${colors.shadow}`,
@@ -199,7 +209,7 @@ function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreateWorktr
                 ref={searchRef}
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
-                placeholder="Search branches"
+                placeholder={hasWorktrees ? "Search branches & worktrees" : "Search branches"}
                 style={{
                   flex: 1,
                   background: "none",
@@ -212,8 +222,8 @@ function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreateWorktr
               />
             </div>
           </div>
-          {/* Branch list */}
-          <div style={{ overflow: "auto", padding: "4px 0" }}>
+          {/* Branches section */}
+          <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "4px 0" }}>
             <div style={{ padding: "4px 12px 2px", fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>
               Branches
             </div>
@@ -304,6 +314,96 @@ function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreateWorktr
               <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>No branches found</div>
             )}
           </div>
+          {/* Worktrees section */}
+          {hasWorktrees && (
+            <div style={{ flex: 1, minHeight: 0, overflow: "auto", padding: "4px 0", borderTop: `1px solid ${colors.border}` }}>
+              <div style={{ padding: "4px 12px 2px", fontSize: 10, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>
+                Worktrees
+              </div>
+              {filteredWorktrees.map((wt) => {
+                const dirName = wt.path.split("/").pop() || wt.path;
+                const hasThread = !!wt.thread_id;
+                return (
+                  <div
+                    key={wt.path}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      borderRadius: 4,
+                    }}
+                    onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; }}
+                    onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        flex: 1,
+                        padding: "5px 0 5px 12px",
+                        fontSize: 12,
+                        fontFamily: fonts.mono,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        minWidth: 0,
+                      }}
+                    >
+                      {/* Folder icon */}
+                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.5 }}>
+                        <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                      </svg>
+                      <span style={{ color: colors.text, overflow: "hidden", textOverflow: "ellipsis" }}>{wt.branch}</span>
+                      <span style={{ color: colors.textDim, fontSize: 10, flexShrink: 0 }}>{dirName}</span>
+                    </div>
+                    {hasThread && onSelectThread ? (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setOpen(false); onSelectThread(wt.thread_id!); }}
+                        title="Go to thread"
+                        style={{
+                          padding: "2px 6px",
+                          border: "none",
+                          background: "transparent",
+                          color: colors.active,
+                          cursor: "pointer",
+                          borderRadius: 4,
+                          flexShrink: 0,
+                          fontSize: 10,
+                          fontFamily: fonts.mono,
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.7"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.opacity = "1"; }}
+                      >
+                        go
+                      </button>
+                    ) : onImportWorktree ? (
+                      <button
+                        onClick={(e) => { e.stopPropagation(); setOpen(false); onImportWorktree(channelId, wt.path); }}
+                        title="Import worktree as thread"
+                        style={{
+                          padding: "2px 6px",
+                          border: "none",
+                          background: "transparent",
+                          color: colors.textDim,
+                          cursor: "pointer",
+                          borderRadius: 4,
+                          flexShrink: 0,
+                          fontSize: 10,
+                          fontFamily: fonts.mono,
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.color = colors.active; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+                      >
+                        imp
+                      </button>
+                    ) : null}
+                  </div>
+                );
+              })}
+              {filteredWorktrees.length === 0 && (
+                <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>No worktrees found</div>
+              )}
+            </div>
+          )}
         </div>
       )}
     </div>
@@ -330,6 +430,8 @@ interface WorkspaceLayoutProps {
   diffStats?: { add: number; del: number };
   style?: React.CSSProperties;
   onCreateWorktree?: (channelId: string, branch: string) => Promise<void>;
+  onImportWorktree?: (channelId: string, worktreePath: string) => Promise<void>;
+  onSelectThread?: (threadId: string) => void;
 }
 
 export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutProps>(function WorkspaceLayout({
@@ -348,6 +450,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   diffStats: _diffStats,
   style,
   onCreateWorktree,
+  onImportWorktree,
+  onSelectThread,
 }, ref) {
   const { colors } = useTheme();
   const [branchError, setBranchError] = useState<string | null>(null);
@@ -874,7 +978,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             {branch && (
               <>
                 <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px" }}>|</span>
-                {channel.parent_id ? (
+                {channel.worktree ? (
                   <span
                     style={{ fontSize: 11, color: colors.active, fontFamily: fonts.mono, flexShrink: 0, cursor: "default" }}
                   >
@@ -887,7 +991,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                     {branch}
                   </span>
                 ) : (
-                  <HeaderBranchPicker channelId={channelId} branch={branch} onBranchChanged={onStatusChange} onCreateWorktree={onCreateWorktree} onError={setBranchError} />
+                  <HeaderBranchPicker channelId={channelId} branch={branch} onBranchChanged={onStatusChange} onCreateWorktree={channel.parent_id ? undefined : onCreateWorktree} onImportWorktree={channel.parent_id ? undefined : onImportWorktree} onSelectThread={channel.parent_id ? undefined : onSelectThread} onError={setBranchError} />
                 )}
               </>
             )}

@@ -43,6 +43,7 @@ func initGitRepo(t *testing.T) string {
 
 func (s *ServerSuite) TestListBranches_Success() {
 	dir := initGitRepo(s.T())
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
 	// Create a second branch.
 	cmd := exec.Command("git", "checkout", "-b", "feature/test")
 	cmd.Dir = dir
@@ -77,6 +78,7 @@ func (s *ServerSuite) TestListBranches_ExcludesOtherWorktreeBranches() {
 	require.NoError(s.T(), cmd.Run())
 
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: dir}, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
 
 	rec := s.testRequest("GET", "/api/channels/ch1/branches", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
@@ -599,4 +601,275 @@ func (s *ServerSuite) TestCreateWorktree_UpsertFails() {
 	rec := s.testRequest("POST", "/api/worktrees", `{"channel_id":"ch1","branch":"feature/up-fail","name":"up-fail"}`)
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), "updating thread")
+}
+
+// ── ListBranches: Worktree Thread IDs ──
+
+func (s *ServerSuite) TestListBranches_WorktreeThreadIDs() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/wt-linked")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	wtPath := filepath.Join(dir, ".worktrees", "linked-wt")
+	cmd = exec.Command("git", "worktree", "add", wtPath, "feature/wt-linked")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: dir}, nil)
+	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{
+		{ChannelID: "thread-42", ParentID: "ch1", DirPath: wtPath, Worktree: true},
+	}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch1/branches", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp branchListResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+
+	require.Len(s.T(), resp.Worktrees, 1)
+	require.Equal(s.T(), "thread-42", resp.Worktrees[0].ThreadID)
+	require.Equal(s.T(), "feature/wt-linked", resp.Worktrees[0].Branch)
+}
+
+// ── Import Worktree ──
+
+func (s *ServerSuite) TestImportWorktree_Success() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/import-test")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	wtPath := filepath.Join(dir, ".worktrees", "imp-wt")
+	cmd = exec.Command("git", "worktree", "add", wtPath, "feature/import-test")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	s.srv.sys = s.sys
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: dir, SessionID: "sess-imp",
+	}, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
+	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("imp-thread-1", nil)
+	s.store.On("GetChannel", mock.Anything, "imp-thread-1").Return(&db.Channel{
+		ChannelID: "imp-thread-1", DirPath: dir, ParentID: "ch1", Active: true,
+	}, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+
+	s.srv.eventsHub = NewEventsHub(testLogger())
+
+	body := `{"channel_id":"ch1","worktree_path":"` + wtPath + `"}`
+	rec := s.testRequest("POST", "/api/worktrees/import", body)
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), `"thread_id":"imp-thread-1"`)
+	require.Contains(s.T(), rec.Body.String(), `"worktree_path"`)
+
+	// Verify UpsertChannel was called with worktree=true.
+	upsertCall := s.store.Calls[len(s.store.Calls)-1]
+	require.Equal(s.T(), "UpsertChannel", upsertCall.Method)
+	ch := upsertCall.Arguments[1].(*db.Channel)
+	require.True(s.T(), ch.Worktree)
+	require.Equal(s.T(), wtPath, ch.DirPath)
+}
+
+func (s *ServerSuite) TestImportWorktree_AlreadyImported() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/already")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	wtPath := filepath.Join(dir, ".worktrees", "already-wt")
+	cmd = exec.Command("git", "worktree", "add", wtPath, "feature/already")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: dir,
+	}, nil)
+	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{
+		{ChannelID: "existing-thread", ParentID: "ch1", DirPath: wtPath, Worktree: true},
+	}, nil)
+
+	body := `{"channel_id":"ch1","worktree_path":"` + wtPath + `"}`
+	rec := s.testRequest("POST", "/api/worktrees/import", body)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), `"thread_id":"existing-thread"`)
+}
+
+func (s *ServerSuite) TestImportWorktree_InvalidPath() {
+	dir := initGitRepo(s.T())
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: dir,
+	}, nil)
+
+	body := `{"channel_id":"ch1","worktree_path":"/nonexistent/path"}`
+	rec := s.testRequest("POST", "/api/worktrees/import", body)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "not a known git worktree")
+}
+
+func (s *ServerSuite) TestImportWorktree_MissingChannelID() {
+	rec := s.testRequest("POST", "/api/worktrees/import", `{"worktree_path":"/some/path"}`)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "channel_id is required")
+}
+
+func (s *ServerSuite) TestImportWorktree_MissingPath() {
+	rec := s.testRequest("POST", "/api/worktrees/import", `{"channel_id":"ch1"}`)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "worktree_path is required")
+}
+
+func (s *ServerSuite) TestImportWorktree_BadChannel() {
+	s.store.On("GetChannel", mock.Anything, "missing").Return(nil, nil)
+	body := `{"channel_id":"missing","worktree_path":"/some/path"}`
+	rec := s.testRequest("POST", "/api/worktrees/import", body)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestImportWorktree_GetChannelError() {
+	s.store.On("GetChannel", mock.Anything, "err-ch").Return(nil, errors.New("db error"))
+	body := `{"channel_id":"err-ch","worktree_path":"/some/path"}`
+	rec := s.testRequest("POST", "/api/worktrees/import", body)
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+func (s *ServerSuite) TestImportWorktree_NotConfigured() {
+	srv := nilServer()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/worktrees/import", srv.handleImportWorktree)
+
+	req, _ := http.NewRequest("POST", "/api/worktrees/import", nil)
+	rec := newRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+func (s *ServerSuite) TestImportWorktree_ThreadsNotConfigured() {
+	srv := NewServer(nil, nil, nil, s.store, nil, testLogger())
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/worktrees/import", srv.handleImportWorktree)
+
+	req, _ := http.NewRequest("POST", "/api/worktrees/import", nil)
+	rec := newRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+func (s *ServerSuite) TestImportWorktree_CreateThreadFails() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/imp-ct-fail")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	wtPath := filepath.Join(dir, ".worktrees", "ct-fail-wt")
+	cmd = exec.Command("git", "worktree", "add", wtPath, "feature/imp-ct-fail")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: dir}, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
+	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("", errors.New("thread err"))
+
+	body := `{"channel_id":"ch1","worktree_path":"` + wtPath + `"}`
+	rec := s.testRequest("POST", "/api/worktrees/import", body)
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "creating thread")
+}
+
+func (s *ServerSuite) TestImportWorktree_GetThreadFails() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/imp-gt-fail")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	wtPath := filepath.Join(dir, ".worktrees", "gt-fail-wt")
+	cmd = exec.Command("git", "worktree", "add", wtPath, "feature/imp-gt-fail")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: dir}, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
+	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("gt-fail-t", nil)
+	s.store.On("GetChannel", mock.Anything, "gt-fail-t").Return(nil, nil)
+
+	body := `{"channel_id":"ch1","worktree_path":"` + wtPath + `"}`
+	rec := s.testRequest("POST", "/api/worktrees/import", body)
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "failed to get created thread")
+}
+
+func (s *ServerSuite) TestImportWorktree_UpsertFails() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/imp-up-fail")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	wtPath := filepath.Join(dir, ".worktrees", "up-fail-wt")
+	cmd = exec.Command("git", "worktree", "add", wtPath, "feature/imp-up-fail")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: dir}, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
+	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("up-fail-t", nil)
+	s.store.On("GetChannel", mock.Anything, "up-fail-t").Return(&db.Channel{
+		ChannelID: "up-fail-t", DirPath: dir, ParentID: "ch1", Active: true,
+	}, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(errors.New("upsert error"))
+
+	body := `{"channel_id":"ch1","worktree_path":"` + wtPath + `"}`
+	rec := s.testRequest("POST", "/api/worktrees/import", body)
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "updating thread")
+}
+
+func (s *ServerSuite) TestImportWorktree_BadJSON() {
+	rec := s.testRequest("POST", "/api/worktrees/import", `{bad json}`)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestImportWorktree_GitWorktreeListFails() {
+	// Channel with non-git DirPath → git worktree list fails.
+	dir := s.T().TempDir() // not a git repo
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: dir}, nil)
+
+	body := `{"channel_id":"ch1","worktree_path":"/some/path"}`
+	rec := s.testRequest("POST", "/api/worktrees/import", body)
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "failed to list worktrees")
+}
+
+func (s *ServerSuite) TestImportWorktree_SessionCopyError() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/sess-err")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	wtPath := filepath.Join(dir, ".worktrees", "sess-err-wt")
+	cmd = exec.Command("git", "worktree", "add", wtPath, "feature/sess-err")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	// Override sys so ReadFile fails (session copy error path).
+	s.sys = new(testutil.MockSystem)
+	s.sys.On("UserHomeDir").Return("/home/testuser", nil)
+	s.sys.On("ReadFile", mock.Anything).Return(nil, errors.New("session read error"))
+	s.srv.sys = s.sys
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: dir, SessionID: "sess-fail",
+	}, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
+	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("imp-sess-err", nil)
+	s.store.On("GetChannel", mock.Anything, "imp-sess-err").Return(&db.Channel{
+		ChannelID: "imp-sess-err", DirPath: dir, ParentID: "ch1", Active: true,
+	}, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+
+	body := `{"channel_id":"ch1","worktree_path":"` + wtPath + `"}`
+	rec := s.testRequest("POST", "/api/worktrees/import", body)
+	// Session copy error is logged but doesn't fail the request.
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), `"thread_id":"imp-sess-err"`)
 }

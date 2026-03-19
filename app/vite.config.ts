@@ -29,6 +29,9 @@ export default defineConfig({
     renderer(),
   ],
   base: "./",
+  server: {
+    allowedHosts: ["host.docker.internal"],
+  },
   build: {
     outDir: "dist",
   },

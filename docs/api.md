@@ -658,7 +658,7 @@ List local git branches and worktrees for a channel's directory.
   "branches": ["main", "feature/foo"],
   "current": "main",
   "worktrees": [
-    {"path": "/project/.worktrees/wt1", "branch": "feature/bar"}
+    {"path": "/project/.worktrees/wt1", "branch": "feature/bar", "thread_id": "thread-id-if-imported"}
   ]
 }
 ```
@@ -666,6 +666,7 @@ List local git branches and worktrees for a channel's directory.
 **Behavior notes:**
 - Branches checked out in other worktrees are excluded from the `branches` list (git won't allow switching to them).
 - The main worktree is excluded from the `worktrees` list.
+- `thread_id` is populated when the worktree has been imported as a thread (via `POST /api/worktrees` or `POST /api/worktrees/import`).
 
 ### `POST /api/channels/{id}/branches/switch`
 
@@ -711,6 +712,32 @@ Create a git worktree as a new thread. The worktree gets its own branch (`worktr
 - Copies the parent's Claude session file to the worktree's project dir (`~/.claude/projects/<encoded-path>/`) so `--resume --fork-session` works on the first message.
 - The thread's `DirPath` points to the worktree directory; `Worktree` flag is set to true.
 - Container mounts include the parent project directory so git worktree references resolve correctly.
+
+### `POST /api/worktrees/import`
+
+Import an existing git worktree as a thread. Unlike `POST /api/worktrees` which creates a new worktree, this associates an already-existing worktree directory with a thread.
+
+**Request:**
+```json
+{
+  "channel_id": "parent-channel-id",
+  "worktree_path": "/project/.worktrees/existing-wt"
+}
+```
+
+**Response (201):**
+```json
+{
+  "thread_id": "new-thread-id",
+  "worktree_path": "/project/.worktrees/existing-wt"
+}
+```
+
+**Behavior notes:**
+- Validates that `worktree_path` is a real git worktree (checked against `git worktree list --porcelain`).
+- Idempotent: if a thread already exists for the worktree path, returns it with `200` instead of creating a duplicate.
+- Copies the parent's Claude session file to the worktree's project dir for `--fork-session` support.
+- Thread name is derived from the worktree directory name and branch: `<dirname> (<branch>)`.
 
 ---
 

@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppSettings, Channel, UpdateStatus, WSEvent } from "./types";
 import { fonts } from "./theme";
 import { ThemeProvider, useTheme } from "./ThemeContext";
-import { createChannel, createThread, createWorktreeThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, initApiUrl } from "./api/loopApi";
+import { createChannel, createThread, createWorktreeThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, importWorktree, initApiUrl } from "./api/loopApi";
 import { Sidebar } from "./components/Sidebar";
 import { MarkdownFilePanel } from "./components/FilePanel";
 import { WorkspaceLayout, type WorkspaceLayoutRef } from "./components/WorkspaceLayout";
@@ -321,6 +321,22 @@ function AppInner() {
     [loadChannels, handleSelect],
   );
 
+  const handleImportWorktree = useCallback(
+    async (channelId: string, worktreePath: string) => {
+      setError(null);
+      try {
+        const { threadId } = await importWorktree(channelId, worktreePath);
+        await loadChannels();
+        handleSelect(threadId);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to import worktree";
+        setError(message);
+        console.error("import worktree failed:", err);
+      }
+    },
+    [loadChannels, handleSelect],
+  );
+
   const handleDelete = useCallback(
     async (id: string) => {
       setError(null);
@@ -436,6 +452,8 @@ function AppInner() {
             onDismissError={() => setError(null)}
             diffStats={diffStats}
             onCreateWorktree={handleCreateWorktree}
+            onImportWorktree={handleImportWorktree}
+            onSelectThread={handleSelect}
           />
           {readmeOpen && (
             <MarkdownFilePanel
