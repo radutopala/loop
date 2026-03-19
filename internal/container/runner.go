@@ -242,9 +242,8 @@ func NewDockerRunner(client DockerClient, cfg *config.Config) *DockerRunner {
 }
 
 const (
-	containerLabel    = "loop-agent"
-	scannerBufInit    = 64 * 1024   // initial scanner buffer capacity
-	scannerBufMaxLine = 8 * 1024 * 1024 // max line size (8 MB — screenshots can be large)
+	containerLabel = "loop-agent"
+	scannerBufInit = 64 * 1024 // initial reader buffer capacity
 )
 
 var nonAlphanumRegexp = regexp.MustCompile(`[^a-z0-9]+`)
@@ -1008,31 +1007,67 @@ type streamCallbacks struct {
 	onActivity func(activity, detail string)
 }
 
+// readLineOrSkip reads a line from the buffered reader. If the line starts
+// with a "user" type JSON event (tool results, which can be several MB for
+// screenshots), it skips the rest of the line without buffering it.
+// Returns the full line for events we care about, or nil for skipped lines.
+func readLineOrSkip(br *bufio.Reader) ([]byte, error) {
+	// Peek at the first bytes to detect the event type without reading
+	// the entire line. Tool results (screenshots) can be several MB.
+	peek, peekErr := br.Peek(30)
+	if len(peek) == 0 && peekErr != nil {
+		return nil, peekErr // EOF or real error
+	}
+
+	// Check if this is a "user" event (tool results) — skip without reading fully.
+	if strings.Contains(string(peek), `"type":"user"`) {
+		// Discard the entire line without buffering it.
+		_, _ = br.ReadBytes('\n')
+		return nil, nil
+	}
+
+	// Read the full line for events we care about.
+	line, err := br.ReadBytes('\n')
+	if err != nil && len(line) == 0 {
+		return nil, err
+	}
+	// ReadBytes may return data with EOF (last line without \n).
+	return bytes.TrimSpace(line), nil
+}
+
 // scanStreamJSON scans newline-delimited JSON events from Claude's stream-json output.
 // It dispatches "assistant" text to onTurn, tool_use blocks to onToolUse,
 // model/system events to onActivity, and returns the final "result" event.
 func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(make([]byte, 0, scannerBufInit), scannerBufMaxLine)
+	br := bufio.NewReaderSize(r, scannerBufInit)
 	var result *claudeResponse
 	var lastModel string
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" {
+	for {
+		// Peek at the first bytes to detect the event type without reading
+		// the entire line. Tool results (screenshots) can be several MB —
+		// we only need to fully read "assistant", "system", and "result" events.
+		line, err := readLineOrSkip(br)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return result, fmt.Errorf("reading container output: %w", err)
+		}
+		if len(line) == 0 {
 			continue
 		}
 
 		var typeCheck struct {
 			Type string `json:"type"`
 		}
-		if err := json.Unmarshal([]byte(line), &typeCheck); err != nil {
+		if err := json.Unmarshal(line, &typeCheck); err != nil {
 			continue // skip non-JSON lines (e.g. ANSI noise)
 		}
 
 		switch typeCheck.Type {
 		case "assistant":
 			var msg assistantMessage
-			if err := json.Unmarshal([]byte(line), &msg); err != nil {
+			if err := json.Unmarshal(line, &msg); err != nil {
 				continue
 			}
 			if msg.Message.Model != "" && msg.Message.Model != lastModel {
@@ -1054,7 +1089,7 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 		case "system":
 			if cb.onActivity != nil {
 				var evt systemEvent
-				if err := json.Unmarshal([]byte(line), &evt); err != nil {
+				if err := json.Unmarshal(line, &evt); err != nil {
 					continue
 				}
 				switch evt.Subtype {
@@ -1068,14 +1103,11 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 			}
 		case "result":
 			var evt claudeResponse
-			if err := json.Unmarshal([]byte(line), &evt); err != nil {
+			if err := json.Unmarshal(line, &evt); err != nil {
 				continue
 			}
 			result = &evt
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("reading container output: %w", err)
 	}
 	if result == nil {
 		return nil, fmt.Errorf("parsing claude response: no result event found")

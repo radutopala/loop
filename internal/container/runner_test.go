@@ -2,6 +2,7 @@ package container
 
 import (
 	"archive/tar"
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -3168,4 +3169,75 @@ func (s *RunnerSuite) TestCreateShellContainerWithCopyFiles() {
 	id, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), testContainerID, id)
+}
+
+func TestScanStreamJSONSkipsUserEvents(t *testing.T) {
+	// "user" events (tool results) should be skipped — they can be very large (screenshots).
+	input := `{"type":"assistant","message":{"content":[{"type":"text","text":"Taking screenshot"}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","content":"` + strings.Repeat("x", 100000) + `"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Done"}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+	var turns []string
+	cb := streamCallbacks{
+		onTurn: func(text string) { turns = append(turns, text) },
+	}
+	resp, err := scanStreamJSON(strings.NewReader(input), cb)
+	require.NoError(t, err)
+	require.Equal(t, "OK", resp.Result)
+	require.Equal(t, []string{"Taking screenshot", "Done"}, turns)
+}
+
+func TestScanStreamJSONUserEventAtEOF(t *testing.T) {
+	// "user" event as the last line without trailing newline.
+	input := `{"type":"assistant","message":{"content":[{"type":"text","text":"Hi"}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+{"type":"user","message":{"content":[{"type":"tool_result","content":"big data"}]}}`
+	resp, err := scanStreamJSON(strings.NewReader(input), streamCallbacks{})
+	require.NoError(t, err)
+	require.Equal(t, "OK", resp.Result)
+}
+
+func TestReadLineOrSkipEmptyInput(t *testing.T) {
+	br := bufio.NewReaderSize(strings.NewReader(""), 64*1024)
+	line, err := readLineOrSkip(br)
+	require.ErrorIs(t, err, io.EOF)
+	require.Nil(t, line)
+}
+
+type errorReader struct{ err error }
+
+func (r *errorReader) Read([]byte) (int, error) { return 0, r.err }
+
+func TestReadLineOrSkipReadError(t *testing.T) {
+	// Reader that returns an error (not EOF) with no data.
+	r := &errorReader{err: errors.New("read broken")}
+	br := bufio.NewReaderSize(r, 64*1024)
+	_, err := readLineOrSkip(br)
+	require.Error(t, err)
+}
+
+func TestReadLineOrSkipUserEventOnly(t *testing.T) {
+	// Only a user event — should be skipped, return nil.
+	input := `{"type":"user","message":{"content":[{"type":"tool_result"}]}}` + "\n"
+	br := bufio.NewReaderSize(strings.NewReader(input), 64*1024)
+	line, err := readLineOrSkip(br)
+	require.NoError(t, err)
+	require.Nil(t, line)
+}
+
+func TestScanStreamJSONUserEventWithNewline(t *testing.T) {
+	// "user" event followed by newline — the normal case.
+	input := `{"type":"user","message":{"content":[{"type":"tool_result","content":"tool output"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"Got it"}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+	var turns []string
+	cb := streamCallbacks{
+		onTurn: func(text string) { turns = append(turns, text) },
+	}
+	resp, err := scanStreamJSON(strings.NewReader(input), cb)
+	require.NoError(t, err)
+	require.Equal(t, "OK", resp.Result)
+	require.Equal(t, []string{"Got it"}, turns)
 }

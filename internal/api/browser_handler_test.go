@@ -1278,6 +1278,28 @@ func (s *BrowserHandlerSuite) TestBrowserActionNavigateSuccess() {
 	require.Equal(s.T(), "https://example.com", resp.PageInfo.URL)
 }
 
+func (s *BrowserHandlerSuite) TestBrowserActionNavigateNotifiesTargetSwitch() {
+	mockCDP := new(MockCDPClient)
+	s.setupActionMocks(mockCDP)
+
+	// Override GetTargetID to return a non-empty target so NotifyTargetSwitch fires.
+	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "GetTargetID")
+	s.browserMgr.On("GetTargetID", "ch-1").Return("target-1")
+	s.browserMgr.On("NotifyTargetSwitch", "ch-1", "target-1").Return()
+
+	mockCDP.On("Navigate", mock.Anything, "https://example.com").Return(nil)
+	mockCDP.On("GetPageInfo", mock.Anything).Return(&browser.PageInfo{URL: "https://example.com", Title: "Example"}, nil)
+
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "navigate",
+		Params:    map[string]any{"url": "https://example.com"},
+	})
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	s.browserMgr.AssertCalled(s.T(), "NotifyTargetSwitch", "ch-1", "target-1")
+}
+
 func (s *BrowserHandlerSuite) TestBrowserActionNavigateError() {
 	mockCDP := new(MockCDPClient)
 	s.setupActionMocks(mockCDP)
