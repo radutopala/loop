@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "../ThemeContext";
-import { useBrowserWs } from "../hooks/useBrowserWs";
+import { useBrowserWs, type TabInfo } from "../hooks/useBrowserWs";
 
 interface BrowserPanelProps {
   channelId: string;
@@ -12,20 +12,24 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
   const canvasContainerRef = useRef<HTMLDivElement>(null);
   const urlInputRef = useRef<HTMLInputElement>(null);
   const [url, setUrl] = useState("");
-  const [title, setTitle] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [hoveredTab, setHoveredTab] = useState<string | null>(null);
 
   const {
     connected,
     started,
+    tabs,
+    activeTargetId,
     startBrowser,
-    stopBrowser,
     startStreaming,
     navigate,
     reload,
     goBack,
     goForward,
     sendInput,
+    switchTab,
+    newTab,
+    closeTab,
   } = useBrowserWs({
     channelId,
     onFrame: useCallback((data: ArrayBuffer) => {
@@ -44,15 +48,15 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
       };
       img.src = URL.createObjectURL(blob);
     }, []),
-    onPageInfo: useCallback((pageUrl: string, pageTitle: string) => {
+    onPageInfo: useCallback((pageUrl: string, _pageTitle: string) => {
       setUrl(pageUrl);
-      setTitle(pageTitle);
     }, []),
     onError: useCallback((msg: string) => {
       setError(msg);
     }, []),
     onStarted: useCallback(() => {
       setError(null);
+      setUrl("");
     }, []),
   });
 
@@ -68,11 +72,19 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
   useEffect(() => {
     if (!started) return;
     startStreaming(1920, 1080);
-    // Force Chrome to send a new frame by reloading the page.
-    // Screencast only sends frames on page changes, so a static about:blank
-    // won't produce frames after a reconnect without this.
     reload();
   }, [started, startStreaming, reload]);
+
+  // Update URL input when page info changes or active tab changes.
+  // Prefer activeTab URL (always matches active tab) over url state
+  // (which may be stale from a previous tab's page_info).
+  const activeTab = tabs.find((t) => t.target_id === activeTargetId);
+  const displayUrl = activeTab?.url || url || "";
+  useEffect(() => {
+    if (urlInputRef.current && document.activeElement !== urlInputRef.current) {
+      urlInputRef.current.value = displayUrl;
+    }
+  }, [displayUrl]);
 
   const handleNavigate = useCallback(
     (e: React.FormEvent) => {
@@ -81,18 +93,14 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
       if (!input) return;
       let targetUrl = input.value.trim();
       if (!targetUrl) return;
-
-      // Add protocol if missing.
       if (!/^https?:\/\//i.test(targetUrl)) {
         targetUrl = "https://" + targetUrl;
       }
-
       navigate(targetUrl);
     },
     [navigate],
   );
 
-  // Forward mouse/keyboard events to the browser.
   const handleCanvasMouseEvent = useCallback(
     (e: React.MouseEvent<HTMLCanvasElement>) => {
       const canvas = canvasRef.current;
@@ -102,7 +110,6 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
       const scaleY = canvas.height / rect.height;
       const x = (e.clientX - rect.left) * scaleX;
       const y = (e.clientY - rect.top) * scaleY;
-
       switch (e.type) {
         case "click":
           sendInput({ type: "click", x, y, button: "left", clickCount: 1 });
@@ -149,38 +156,6 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
     [sendInput],
   );
 
-  const toolbarStyle: React.CSSProperties = {
-    display: "flex",
-    alignItems: "center",
-    gap: 4,
-    padding: "4px 8px",
-    backgroundColor: colors.surface,
-    borderBottom: `1px solid ${colors.border}`,
-    flexShrink: 0,
-  };
-
-  const navBtnStyle: React.CSSProperties = {
-    background: "none",
-    border: "none",
-    color: colors.textDim,
-    cursor: "pointer",
-    padding: "4px 6px",
-    borderRadius: 4,
-    fontSize: 14,
-    lineHeight: 1,
-  };
-
-  const urlBarStyle: React.CSSProperties = {
-    flex: 1,
-    padding: "4px 8px",
-    backgroundColor: colors.sidebar,
-    border: `1px solid ${colors.border}`,
-    borderRadius: 4,
-    color: colors.textLight,
-    fontSize: 12,
-    outline: "none",
-  };
-
   return (
     <div
       style={{
@@ -191,83 +166,73 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
         overflow: "hidden",
       }}
     >
-      {/* Toolbar */}
-      <div style={toolbarStyle}>
-        <button
-          style={navBtnStyle}
-          onClick={goBack}
-          title="Back"
-        >
-          ←
-        </button>
-        <button
-          style={navBtnStyle}
-          onClick={goForward}
-          title="Forward"
-        >
-          →
-        </button>
-        <button
-          style={navBtnStyle}
-          onClick={reload}
-          title="Reload"
-        >
-          ↻
-        </button>
-        <form onSubmit={handleNavigate} style={{ flex: 1, display: "flex" }}>
+      {/* Tab strip — Chrome-style rounded tabs */}
+      <TabStrip
+        tabs={tabs}
+        activeTargetId={activeTargetId}
+        hoveredTab={hoveredTab}
+        colors={colors}
+        onTabClick={switchTab}
+        onTabClose={closeTab}
+        onNewTab={() => newTab()}
+        onHover={setHoveredTab}
+      />
+
+      {/* Toolbar — back/forward/reload + URL bar */}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 2,
+          padding: "4px 8px",
+          backgroundColor: colors.surface,
+          borderBottom: `1px solid ${colors.border}`,
+          flexShrink: 0,
+        }}
+      >
+        <NavButton onClick={goBack} title="Back" colors={colors}>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+            <path d="M10 3L5 8L10 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </NavButton>
+        <NavButton onClick={goForward} title="Forward" colors={colors}>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+            <path d="M6 3L11 8L6 13" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </NavButton>
+        <NavButton onClick={reload} title="Reload" colors={colors}>
+          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+            <path d="M13.5 8A5.5 5.5 0 1 1 8 2.5M13.5 2.5V6H10" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        </NavButton>
+
+        <form onSubmit={handleNavigate} style={{ flex: 1, display: "flex", marginLeft: 4 }}>
           <input
             ref={urlInputRef}
             type="text"
-            style={urlBarStyle}
             defaultValue={url}
-            placeholder="Enter URL..."
+            placeholder="Search or enter URL"
             onFocus={(e) => e.target.select()}
+            style={{
+              flex: 1,
+              padding: "5px 10px",
+              backgroundColor: colors.isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)",
+              border: "none",
+              borderRadius: 16,
+              color: colors.textLight,
+              fontSize: 12,
+              outline: "none",
+            }}
           />
         </form>
-        {started ? (
-          <button
-            style={{ ...navBtnStyle, color: colors.error }}
-            onClick={stopBrowser}
-            title="Stop browser"
-          >
-            ✕
-          </button>
-        ) : (
-          <button
-            style={navBtnStyle}
-            onClick={startBrowser}
-            title="Start browser"
-            disabled={!connected}
-          >
-            ▶
-          </button>
-        )}
       </div>
-
-      {/* Title bar */}
-      {title && (
-        <div
-          style={{
-            padding: "2px 8px",
-            fontSize: 11,
-            color: colors.textDim,
-            backgroundColor: colors.surface,
-            borderBottom: `1px solid ${colors.border}`,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-            whiteSpace: "nowrap",
-          }}
-        >
-          {title}
-        </div>
-      )}
 
       {/* Error bar */}
       {error && (
         <div
           style={{
-            padding: "4px 8px",
-            fontSize: 12,
+            padding: "4px 12px",
+            fontSize: 11,
             color: colors.error,
             backgroundColor: colors.errorBannerBg,
             borderBottom: `1px solid ${colors.border}`,
@@ -277,7 +242,7 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
         </div>
       )}
 
-      {/* Canvas */}
+      {/* Screencast canvas */}
       <div
         ref={canvasContainerRef}
         style={{
@@ -299,26 +264,196 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
               outline: "none",
               cursor: "default",
             }}
-          onClick={(e) => { handleCanvasMouseEvent(e); canvasRef.current?.focus(); }}
-          onDoubleClick={handleCanvasMouseEvent}
-          onContextMenu={handleCanvasMouseEvent}
-          onMouseMove={handleCanvasMouseEvent}
-          onWheel={handleCanvasWheel}
-          onKeyDown={handleCanvasKeyDown}
-        />
+            onClick={(e) => { handleCanvasMouseEvent(e); canvasRef.current?.focus(); }}
+            onDoubleClick={handleCanvasMouseEvent}
+            onContextMenu={handleCanvasMouseEvent}
+            onMouseMove={handleCanvasMouseEvent}
+            onWheel={handleCanvasWheel}
+            onKeyDown={handleCanvasKeyDown}
+          />
         ) : (
-          <div
-            style={{
-              color: colors.textDim,
-              fontSize: 14,
-            }}
-          >
-            {connected
-              ? "Starting browser..."
-              : "Connecting..."}
+          <div style={{ color: colors.textDim, fontSize: 13 }}>
+            {connected ? "Starting browser..." : "Connecting..."}
           </div>
         )}
       </div>
+    </div>
+  );
+}
+
+/* ---------- sub-components ---------- */
+
+function NavButton({
+  onClick, title, colors, children,
+}: {
+  onClick: () => void;
+  title: string;
+  colors: { textDim: string };
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={title}
+      style={{
+        background: "none",
+        border: "none",
+        color: colors.textDim,
+        cursor: "pointer",
+        padding: 4,
+        borderRadius: 4,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        lineHeight: 0,
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
+function TabStrip({
+  tabs, activeTargetId, hoveredTab, colors,
+  onTabClick, onTabClose, onNewTab, onHover,
+}: {
+  tabs: TabInfo[];
+  activeTargetId: string;
+  hoveredTab: string | null;
+  colors: {
+    sidebar: string; surface: string; border: string;
+    textLight: string; textDim: string; textMuted: string;
+    isDark: boolean;
+  };
+  onTabClick: (id: string) => void;
+  onTabClose: (id: string) => void;
+  onNewTab: () => void;
+  onHover: (id: string | null) => void;
+}) {
+  // Darker strip behind tabs, like Chrome's tab strip.
+  const stripBg = colors.isDark ? "#1a1a1a" : "#e0e0e0";
+  const activeBg = colors.surface;
+  const inactiveBg = "transparent";
+  const hoverBg = colors.isDark ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.04)";
+
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "flex-end",
+        backgroundColor: stripBg,
+        paddingLeft: 4,
+        paddingTop: 4,
+        flexShrink: 0,
+        overflow: "hidden",
+        gap: 1,
+      }}
+    >
+      {tabs.map((tab) => {
+        const isActive = tab.target_id === activeTargetId;
+        const isHovered = tab.target_id === hoveredTab;
+
+        return (
+          <div
+            key={tab.target_id}
+            onMouseEnter={() => onHover(tab.target_id)}
+            onMouseLeave={() => onHover(null)}
+            onClick={() => { if (!isActive) onTabClick(tab.target_id); }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "5px 10px",
+              paddingRight: 6,
+              fontSize: 11,
+              color: isActive ? colors.textLight : colors.textMuted,
+              backgroundColor: isActive ? activeBg : isHovered ? hoverBg : inactiveBg,
+              cursor: isActive ? "default" : "pointer",
+              borderTopLeftRadius: 8,
+              borderTopRightRadius: 8,
+              maxWidth: 200,
+              minWidth: 60,
+              whiteSpace: "nowrap",
+              overflow: "hidden",
+              flexShrink: 1,
+              position: "relative",
+              // Active tab blends into the toolbar below.
+              borderBottom: isActive ? `1px solid ${activeBg}` : `1px solid ${colors.border}`,
+              marginBottom: -1,
+              zIndex: isActive ? 1 : 0,
+            }}
+          >
+            {/* Favicon placeholder dot */}
+            <span
+              style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                backgroundColor: isActive ? colors.textLight : colors.textDim,
+                flexShrink: 0,
+                opacity: 0.5,
+              }}
+            />
+            <span
+              style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                flex: 1,
+                minWidth: 0,
+              }}
+            >
+              {tab.title || tab.url || "New Tab"}
+            </span>
+            {/* Close button */}
+            <span
+              onClick={(e) => { e.stopPropagation(); onTabClose(tab.target_id); }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                width: 16,
+                height: 16,
+                borderRadius: 4,
+                cursor: "pointer",
+                opacity: isHovered || isActive ? 0.6 : 0,
+                fontSize: 11,
+                flexShrink: 0,
+                lineHeight: 1,
+                transition: "opacity 0.1s",
+              }}
+              onMouseEnter={(e) => { (e.target as HTMLElement).style.opacity = "1"; (e.target as HTMLElement).style.backgroundColor = colors.isDark ? "rgba(255,255,255,0.1)" : "rgba(0,0,0,0.08)"; }}
+              onMouseLeave={(e) => { (e.target as HTMLElement).style.opacity = isActive ? "0.6" : "0"; (e.target as HTMLElement).style.backgroundColor = "transparent"; }}
+            >
+              ✕
+            </span>
+          </div>
+        );
+      })}
+
+      {/* New tab button */}
+      <button
+        onClick={onNewTab}
+        title="New tab"
+        style={{
+          background: "none",
+          border: "none",
+          color: colors.textDim,
+          cursor: "pointer",
+          padding: "4px 8px",
+          marginBottom: -1,
+          borderRadius: 4,
+          fontSize: 16,
+          lineHeight: 1,
+          flexShrink: 0,
+          display: "flex",
+          alignItems: "center",
+        }}
+      >
+        +
+      </button>
+
+      {/* Spacer — absorbs remaining width */}
+      <div style={{ flex: 1 }} />
     </div>
   );
 }

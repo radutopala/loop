@@ -17,7 +17,6 @@ import (
 	"time"
 
 	"github.com/radutopala/loop/internal/agent"
-	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/osutil"
 )
@@ -220,14 +219,13 @@ type runnerSystem interface {
 }
 
 type DockerRunner struct {
-	client              DockerClient
-	cfg                 *config.Config
-	sys                 runnerSystem
-	loadProjectConfig   func(string, *config.Config) (*config.Config, error)
-	osTimeAfterFunc     func(time.Duration, func()) *time.Timer
-	osRandRead          func([]byte) (int, error)
-	osTimeLocalName     func() string
-	BrowserTargetIDFunc BrowserTargetIDFunc
+	client            DockerClient
+	cfg               *config.Config
+	sys               runnerSystem
+	loadProjectConfig func(string, *config.Config) (*config.Config, error)
+	osTimeAfterFunc   func(time.Duration, func()) *time.Timer
+	osRandRead        func([]byte) (int, error)
+	osTimeLocalName   func() string
 }
 
 // NewDockerRunner creates a new DockerRunner with the given Docker client and config.
@@ -346,7 +344,7 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 // buildMCPConfig creates the merged MCP config with the built-in loop
 // and any user-defined servers from the config. The built-in loop always
 // takes precedence over a user-defined server with the same name.
-func buildMCPConfig(channelID, apiURL, workDir, authorID, browserTargetID string, memoryEnabled, browserEnabled bool, userServers map[string]config.MCPServerConfig) mcpConfig {
+func buildMCPConfig(channelID, apiURL, workDir, authorID string, memoryEnabled, browserEnabled bool, userServers map[string]config.MCPServerConfig) mcpConfig {
 	servers := make(map[string]mcpServerEntry, len(userServers)+1)
 	for name, srv := range userServers {
 		servers[name] = mcpServerEntry{
@@ -369,16 +367,10 @@ func buildMCPConfig(channelID, apiURL, workDir, authorID, browserTargetID string
 			Args:    args,
 		}
 	}
-	// Add built-in browser MCP server for CDP automation.
-	// Chrome runs in a sidecar container named loop-chrome-<channelID> on a shared Docker network.
+	// Add built-in browser MCP server that proxies actions through the host API.
 	if browserEnabled {
 		if _, exists := userServers["loop-browser"]; !exists {
-			chromeHost := browser.ChromeHostname(channelID)
-			browserArgs := []string{"mcp-browser", "--host", chromeHost, "--log", filepath.Join(workDir, ".loop", "mcp-browser.log")}
-			if browserTargetID != "" {
-				browserArgs = append(browserArgs, "--target", browserTargetID)
-			}
-			browserArgs = append(browserArgs, "--api-url", apiURL, "--channel-id", channelID)
+			browserArgs := []string{"mcp-browser", "--log", filepath.Join(workDir, ".loop", "mcp-browser.log"), "--api-url", apiURL, "--channel-id", channelID}
 			servers["loop-browser"] = mcpServerEntry{
 				Command: "/usr/local/bin/loop",
 				Args:    browserArgs,
@@ -562,9 +554,7 @@ func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL s
 		"PATH=" + hostHome + "/.local/bin:" + hostHome + "/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 	}
 	env = addAuthEnv(env, cfg)
-	// Add Chrome container hostname to NO_PROXY so the MCP browser server
-	// inside the agent can connect to Chrome without going through the proxy.
-	env = r.addProxyEnv(env, browser.ChromeHostname(channelID))
+	env = r.addProxyEnv(env)
 
 	for k, v := range cfg.Envs {
 		expanded, err := r.expandPath(v)
@@ -610,9 +600,6 @@ func (r *DockerRunner) addProxyEnv(env []string, extraNoProxyHosts ...string) []
 
 // writeMCPConfig creates host directories and writes the per-channel MCP
 // config file. Returns the config file path.
-// BrowserTargetIDFunc returns the active browser page target ID for a channel, if known.
-type BrowserTargetIDFunc func(channelID string) string
-
 func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID string, cfg *config.Config) (string, error) {
 	for _, dir := range []string{workDir, filepath.Join(workDir, ".loop")} {
 		if err := r.sys.MkdirAll(dir, 0o755); err != nil {
@@ -621,11 +608,7 @@ func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID strin
 	}
 
 	mcpConfigPath := filepath.Join(workDir, ".loop", "mcp-"+channelID+".json")
-	var browserTargetID string
-	if r.BrowserTargetIDFunc != nil {
-		browserTargetID = r.BrowserTargetIDFunc(channelID)
-	}
-	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, authorID, browserTargetID, cfg.Memory.Enabled, cfg.BrowserEnabled, cfg.MCPServers)
+	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, authorID, cfg.Memory.Enabled, cfg.BrowserEnabled, cfg.MCPServers)
 	mcpJSON, _ := json.MarshalIndent(mcpCfg, "", "  ")
 	if err := r.sys.WriteFile(mcpConfigPath, mcpJSON, 0o644); err != nil {
 		return "", fmt.Errorf("writing mcp config: %w", err)
@@ -833,6 +816,11 @@ func (r *DockerRunner) createAndStartContainer(
 			chownPaths = append(chownPaths, expanded)
 		}
 	}
+
+	// Bind-mount the screenshot directory so the MCP server can read files written by the host.
+	screenshotDir := filepath.Join(r.cfg.LoopDir, "screenshots")
+	binds = append(binds, screenshotDir+":"+screenshotDir+":ro")
+
 	if len(chownPaths) > 0 {
 		env = append(env, "CHOWN_PATHS="+strings.Join(chownPaths, ":"))
 	}
@@ -863,15 +851,6 @@ func (r *DockerRunner) createAndStartContainer(
 		Binds:      binds,
 		WorkingDir: workDir,
 		Labels:     map[string]string{channelLabelKey: channelID},
-	}
-
-	// Connect agent container to the channel's Docker network so mcp-browser
-	// can reach the Chrome sidecar container by hostname.
-	if cfg.BrowserEnabled {
-		netName := browser.NetworkName(channelID)
-		_ = r.client.NetworkEnsure(ctx, netName)
-		containerCfg.NetworkName = netName
-		containerCfg.Hostname = "loop-agent-" + channelID
 	}
 
 	name := r.containerName(channelID, dirPath)

@@ -387,6 +387,27 @@ func (s *CDPSuite) TestCloseTabError() {
 	require.Error(s.T(), s.client.CloseTab(context.Background(), "t1"))
 }
 
+func (s *CDPSuite) TestCloseTabHTTP() {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	s.client.wsURL = strings.Replace(srv.URL, "http://", "ws://", 1)
+
+	err := s.client.CloseTab(context.Background(), "target-123")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "/json/close/target-123", gotPath)
+}
+
+func (s *CDPSuite) TestCloseTabHTTPError() {
+	s.client.wsURL = "ws://127.0.0.1:1"
+	err := s.client.CloseTab(context.Background(), "t1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "closing tab t1")
+}
+
 // --- EvaluateJS ---
 
 func (s *CDPSuite) TestEvaluateJSSuccess() {
@@ -1047,35 +1068,6 @@ func (s *CDPSuite) TestWithNewTargetOption() {
 
 // --- GoBack / GoForward timeout path ---
 
-func (s *CDPSuite) TestGoBackTimeoutError() {
-	// Use a cancelled context so ctx2 (derived from c.ctx) is already expired.
-	cancelledCtx, cancel := context.WithCancel(context.Background())
-	cancel()
-	s.client.ctx = cancelledCtx
-
-	s.setRunFn(func(_ context.Context, _ ...chromedp.Action) error {
-		return errors.New("context deadline exceeded")
-	})
-
-	err := s.client.GoBack(context.Background())
-	require.Error(s.T(), err)
-	require.Equal(s.T(), "no history to go back", err.Error())
-}
-
-func (s *CDPSuite) TestGoForwardTimeoutError() {
-	cancelledCtx, cancel := context.WithCancel(context.Background())
-	cancel()
-	s.client.ctx = cancelledCtx
-
-	s.setRunFn(func(_ context.Context, _ ...chromedp.Action) error {
-		return errors.New("context deadline exceeded")
-	})
-
-	err := s.client.GoForward(context.Background())
-	require.Error(s.T(), err)
-	require.Equal(s.T(), "no history to go forward", err.Error())
-}
-
 // --- EnableConsoleCapture ---
 
 func (s *CDPSuite) TestEnableConsoleCaptureSuccess() {
@@ -1415,4 +1407,187 @@ func (s *CDPSuite) TestMouseUpDefaultButton() {
 func (s *CDPSuite) TestMouseUpError() {
 	s.setRunFn(func(_ context.Context, _ ...chromedp.Action) error { return errors.New("fail") })
 	require.Error(s.T(), s.client.MouseUp(context.Background(), 100, 200, "left"))
+}
+
+// --- SwitchTarget ---
+
+func (s *CDPSuite) TestSwitchTargetSuccess() {
+	// SwitchTarget uses Chrome's HTTP /json/activate endpoint.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Contains(s.T(), r.URL.Path, "/json/activate/new-target-id")
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	// Set wsURL to use the test server (convert http:// to ws:// for the URL format).
+	s.client.wsURL = strings.Replace(srv.URL, "http://", "ws://", 1)
+
+	err := s.client.SwitchTarget("new-target-id")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "new-target-id", s.client.TargetID())
+}
+
+func (s *CDPSuite) TestSwitchTargetHTTPError() {
+	// wsURL points to unreachable host.
+	s.client.wsURL = "ws://127.0.0.1:1"
+
+	err := s.client.SwitchTarget("bad-target")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "activating target bad-target")
+}
+
+// --- ListTabs via HTTP ---
+
+func (s *CDPSuite) TestListTabsHTTP() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(s.T(), "/json/list", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `[{"id":"t1","type":"page","url":"https://a.com","title":"A"},{"id":"t2","type":"page","url":"https://b.com","title":"B"},{"id":"bg1","type":"background_page","url":"","title":""}]`)
+	}))
+	defer srv.Close()
+
+	s.client.wsURL = strings.Replace(srv.URL, "http://", "ws://", 1)
+
+	tabs, err := s.client.ListTabs(context.Background())
+	require.NoError(s.T(), err)
+	require.Len(s.T(), tabs, 2) // background_page filtered out
+	// Ordering is now handled by the manager's OrderTabs, not by ListTabs.
+	require.Equal(s.T(), "t1", tabs[0].TargetID)
+	require.Equal(s.T(), "A", tabs[0].Title)
+	require.Equal(s.T(), "t2", tabs[1].TargetID)
+}
+
+func (s *CDPSuite) TestListTabsHTTPErrorFallback() {
+	// HTTP fails but CDP fallback succeeds with real targets.
+	s.client.wsURL = "ws://127.0.0.1:1"
+	s.client.targetsFunc = func(_ context.Context) ([]*target.Info, error) {
+		return []*target.Info{
+			{TargetID: "t1", Type: "page", URL: "https://a.com", Title: "A"},
+			{TargetID: "bg", Type: "background_page"},
+		}, nil
+	}
+	tabs, err := s.client.ListTabs(context.Background())
+	require.NoError(s.T(), err)
+	require.Len(s.T(), tabs, 1)
+	require.Equal(s.T(), "t1", tabs[0].TargetID)
+}
+
+func (s *CDPSuite) TestListTabsHTTPErrorBothFail() {
+	s.client.wsURL = "ws://127.0.0.1:1"
+	s.client.targetsFunc = func(_ context.Context) ([]*target.Info, error) {
+		return nil, errors.New("cdp also failed")
+	}
+	_, err := s.client.ListTabs(context.Background())
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "cdp also failed")
+}
+
+func (s *CDPSuite) TestListTabsHTTPBadJSONFallback() {
+	// HTTP returns invalid JSON but CDP fallback succeeds with real targets.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "not json")
+	}))
+	defer srv.Close()
+	s.client.wsURL = strings.Replace(srv.URL, "http://", "ws://", 1)
+	s.client.targetsFunc = func(_ context.Context) ([]*target.Info, error) {
+		return []*target.Info{
+			{TargetID: "t1", Type: "page", URL: "https://a.com", Title: "A"},
+		}, nil
+	}
+
+	tabs, err := s.client.ListTabs(context.Background())
+	require.NoError(s.T(), err)
+	require.Len(s.T(), tabs, 1)
+}
+
+func (s *CDPSuite) TestListTabsHTTPBadJSONBothFail() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, "not json")
+	}))
+	defer srv.Close()
+	s.client.wsURL = strings.Replace(srv.URL, "http://", "ws://", 1)
+	s.client.targetsFunc = func(_ context.Context) ([]*target.Info, error) {
+		return nil, errors.New("cdp also failed")
+	}
+
+	_, err := s.client.ListTabs(context.Background())
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "decoding targets")
+}
+
+// --- ResetScreencast ---
+
+func (s *CDPSuite) TestResetScreencast() {
+	s.client.screencasting = true
+	s.client.ResetScreencast()
+	require.False(s.T(), s.client.screencasting)
+}
+
+func (s *CDPSuite) TestResetScreencastWhenNotScreencasting() {
+	s.client.screencasting = false
+	s.client.ResetScreencast()
+	require.False(s.T(), s.client.screencasting)
+}
+
+func (s *CDPSuite) TestChromeHTTPBaseURL() {
+	require.Equal(s.T(), "http://127.0.0.1:9222", ChromeHTTPBaseURL("ws://127.0.0.1:9222"))
+	require.Equal(s.T(), "http://localhost:55008", ChromeHTTPBaseURL("ws://localhost:55008"))
+}
+
+func (s *CDPSuite) TestActivateTargetSuccess() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(s.T(), "/json/activate/target-123", r.URL.Path)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer ts.Close()
+	wsURL := strings.Replace(ts.URL, "http://", "ws://", 1)
+	require.NoError(s.T(), ActivateTarget(wsURL, "target-123"))
+}
+
+func (s *CDPSuite) TestActivateTargetError() {
+	err := ActivateTarget("ws://127.0.0.1:1", "target-x")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "activating target target-x")
+}
+
+func (s *CDPSuite) TestCreatePageTargetSuccess() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(s.T(), http.MethodPut, r.Method)
+		require.Equal(s.T(), "/json/new", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": "new-target-42"})
+	}))
+	defer ts.Close()
+	wsURL := strings.Replace(ts.URL, "http://", "ws://", 1)
+	id, err := CreatePageTarget(wsURL)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "new-target-42", id)
+}
+
+func (s *CDPSuite) TestCreatePageTargetNetworkError() {
+	_, err := CreatePageTarget("ws://127.0.0.1:1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating new page target")
+}
+
+func (s *CDPSuite) TestCreatePageTargetEmptyID() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"id": ""})
+	}))
+	defer ts.Close()
+	wsURL := strings.Replace(ts.URL, "http://", "ws://", 1)
+	_, err := CreatePageTarget(wsURL)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "empty target ID")
+}
+
+func (s *CDPSuite) TestCreatePageTargetBadJSON() {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte("not json"))
+	}))
+	defer ts.Close()
+	wsURL := strings.Replace(ts.URL, "http://", "ws://", 1)
+	_, err := CreatePageTarget(wsURL)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "decoding new target")
 }

@@ -19,7 +19,7 @@ import (
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
 )
 
-// DockerClient abstracts Docker container and network operations for testing.
+// DockerClient abstracts Docker container operations for testing.
 type DockerClient interface {
 	ContainerCreate(ctx context.Context, config *containertypes.Config, hostConfig *containertypes.HostConfig, networkingConfig *network.NetworkingConfig, platform *ocispec.Platform, containerName string) (containertypes.CreateResponse, error)
 	ContainerStart(ctx context.Context, container string, options containertypes.StartOptions) error
@@ -27,19 +27,20 @@ type DockerClient interface {
 	ContainerRemove(ctx context.Context, container string, options containertypes.RemoveOptions) error
 	ContainerInspect(ctx context.Context, containerID string) (containertypes.InspectResponse, error)
 	ContainerList(ctx context.Context, options containertypes.ListOptions) ([]containertypes.Summary, error)
-	NetworkCreate(ctx context.Context, name string, options network.CreateOptions) (network.CreateResponse, error)
-	NetworkRemove(ctx context.Context, networkID string) error
 }
 
 // browserSession tracks a running Chrome sidecar container.
 type browserSession struct {
 	chromeContainerID string
-	networkName       string
-	hostPort          string // mapped host port for CDP access from the host
-	targetID          string // active page target ID (shared between browser pane and MCP)
-	cdp               any    // cached *browser.CDPClient for the browser pane (avoids target destruction on WS reconnect)
+	hostPort          string         // mapped host port for CDP access from the host
+	activeTargetID    string         // currently active target for screencast
+	cdpTargets        map[string]any // targetID → CDPClient (one per tab)
 	lastUsedAt        time.Time
-	paneCount         int // number of connected browser panes
+	paneCount         int          // number of connected browser panes
+	targetSwitchCh    chan string  // signals MCP-initiated tab switches to the browser pane
+	tabAddedCh        chan TabInfo // signals MCP-initiated tab additions to the browser pane
+	tabRemovedCh      chan string  // signals MCP-initiated tab removals to the browser pane
+	tabOrder          []string     // ordered target IDs (insertion order, like a real browser tab bar)
 }
 
 // Manager manages Chrome sidecar containers (one per channel).
@@ -63,9 +64,6 @@ const (
 
 	// chromeLabel identifies Chrome sidecar containers.
 	chromeLabel = "loop-chrome"
-
-	// networkPrefix is the prefix for per-channel Docker networks.
-	networkPrefix = "loop-net-"
 
 	// containerPrefix is the prefix for Chrome container names.
 	containerPrefix = "loop-chrome-"
@@ -105,18 +103,14 @@ func sanitizeID(id string) string {
 	return s
 }
 
-// NetworkName returns the Docker network name for a channel.
-func NetworkName(channelID string) string {
-	return networkPrefix + sanitizeID(channelID)
-}
-
 // ChromeHostname returns the Chrome container hostname for a channel.
 func ChromeHostname(channelID string) string {
 	return containerPrefix + sanitizeID(channelID)
 }
 
 // EnsureBrowser ensures a Chrome sidecar container is running for the channel.
-// Creates the Docker network and Chrome container if they don't exist.
+// Creates the Chrome container if it doesn't exist; the host connects via the
+// mapped 127.0.0.1:hostPort (no Docker network required).
 func (m *Manager) EnsureBrowser(ctx context.Context, channelID, _ string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -131,7 +125,6 @@ func (m *Manager) EnsureBrowser(ctx context.Context, channelID, _ string) error 
 		delete(m.sessions, channelID)
 	}
 
-	netName := NetworkName(channelID)
 	containerName := ChromeHostname(channelID)
 
 	// Check if Chrome container already exists (e.g. from a previous daemon run).
@@ -144,9 +137,12 @@ func (m *Manager) EnsureBrowser(ctx context.Context, channelID, _ string) error 
 			)
 			m.sessions[channelID] = &browserSession{
 				chromeContainerID: id,
-				networkName:       netName,
 				hostPort:          port,
+				cdpTargets:        make(map[string]any),
 				lastUsedAt:        m.timeNow(),
+				targetSwitchCh:    make(chan string, 1),
+				tabAddedCh:        make(chan TabInfo, 1),
+				tabRemovedCh:      make(chan string, 1),
 			}
 			return nil
 		}
@@ -157,21 +153,11 @@ func (m *Manager) EnsureBrowser(ctx context.Context, channelID, _ string) error 
 
 	m.logger.Info("creating Chrome sidecar container",
 		"channel_id", channelID,
-		"network", netName,
 		"container", containerName,
 	)
 
-	// Ensure Docker network exists.
-	if _, err := m.api.NetworkCreate(ctx, netName, network.CreateOptions{
-		Driver: "bridge",
-	}); err != nil {
-		// Ignore "already exists" errors.
-		if !isAlreadyExists(err) {
-			return fmt.Errorf("creating network %s: %w", netName, err)
-		}
-	}
-
-	// Create Chrome container.
+	// Create Chrome container without a Docker network — the host connects via
+	// the mapped 127.0.0.1:hostPort, not through a Docker network.
 	resp, err := m.api.ContainerCreate(ctx,
 		&containertypes.Config{
 			Image:        m.image,
@@ -190,12 +176,7 @@ func (m *Manager) EnsureBrowser(ctx context.Context, channelID, _ string) error 
 				"9222/tcp": []nat.PortBinding{{HostIP: "127.0.0.1", HostPort: "0"}},
 			},
 		},
-		&network.NetworkingConfig{
-			EndpointsConfig: map[string]*network.EndpointSettings{
-				netName: {Aliases: []string{containerName}},
-			},
-		},
-		nil, containerName,
+		nil, nil, containerName,
 	)
 	if err != nil {
 		return fmt.Errorf("creating chrome container: %w", err)
@@ -214,9 +195,12 @@ func (m *Manager) EnsureBrowser(ctx context.Context, channelID, _ string) error 
 
 	m.sessions[channelID] = &browserSession{
 		chromeContainerID: resp.ID,
-		networkName:       netName,
 		hostPort:          hostPort,
+		cdpTargets:        make(map[string]any),
 		lastUsedAt:        m.timeNow(),
+		targetSwitchCh:    make(chan string, 1),
+		tabAddedCh:        make(chan TabInfo, 1),
+		tabRemovedCh:      make(chan string, 1),
 	}
 
 	m.logger.Info("Chrome sidecar started",
@@ -225,25 +209,6 @@ func (m *Manager) EnsureBrowser(ctx context.Context, channelID, _ string) error 
 		"host_port", hostPort,
 	)
 
-	return nil
-}
-
-// EnsureAgentNetwork connects an agent container to the channel's Docker network
-// so mcp-browser inside the agent can reach the Chrome container by hostname.
-func (m *Manager) EnsureAgentNetwork(ctx context.Context, channelID, agentContainerID string) error {
-	netName := NetworkName(channelID)
-
-	// Ensure network exists.
-	if _, err := m.api.NetworkCreate(ctx, netName, network.CreateOptions{
-		Driver: "bridge",
-	}); err != nil && !isAlreadyExists(err) {
-		return fmt.Errorf("creating network %s: %w", netName, err)
-	}
-
-	// The agent container was already created — we can't add it to the network
-	// via ContainerCreate. But since we set NetworkName in ContainerConfig,
-	// the container client already connected it at creation time.
-	// This method exists for cases where the agent is already running.
 	return nil
 }
 
@@ -263,7 +228,7 @@ func (m *Manager) SetTargetID(channelID, targetID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if sess, ok := m.sessions[channelID]; ok {
-		sess.targetID = targetID
+		sess.activeTargetID = targetID
 	}
 }
 
@@ -272,27 +237,218 @@ func (m *Manager) GetTargetID(channelID string) string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if sess, ok := m.sessions[channelID]; ok {
-		return sess.targetID
+		return sess.activeTargetID
 	}
 	return ""
 }
 
-// SetCDP caches a CDP client for the channel's browser pane.
-// This prevents the page target from being destroyed on WS reconnect.
-func (m *Manager) SetCDP(channelID string, cdp any) {
+// NotifyTargetSwitch signals the browser pane that the active target has changed.
+// Called by the MCP server when it switches tabs.
+func (m *Manager) NotifyTargetSwitch(channelID, targetID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if sess, ok := m.sessions[channelID]; ok {
-		sess.cdp = cdp
+	sess, ok := m.sessions[channelID]
+	if !ok {
+		return
+	}
+	sess.activeTargetID = targetID
+	// Non-blocking send; drop stale signal if channel is full.
+	select {
+	case sess.targetSwitchCh <- targetID:
+	default:
 	}
 }
 
-// GetCDP returns the cached CDP client for the channel, or nil.
-func (m *Manager) GetCDP(channelID string) any {
+// TargetSwitchCh returns a channel that receives the new target ID
+// whenever the MCP agent switches tabs.
+func (m *Manager) TargetSwitchCh(channelID string) <-chan string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if sess, ok := m.sessions[channelID]; ok {
-		return sess.cdp
+		return sess.targetSwitchCh
+	}
+	return nil
+}
+
+// NotifyTabAdded signals the browser pane that a tab was added.
+// Called by the HTTP handler when the MCP server opens a new tab.
+func (m *Manager) NotifyTabAdded(channelID string, tab TabInfo) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[channelID]
+	if !ok {
+		return
+	}
+	// Non-blocking send; drop stale signal if channel is full.
+	select {
+	case sess.tabAddedCh <- tab:
+	default:
+	}
+}
+
+// TabAddedCh returns a channel that receives TabInfo whenever the MCP agent
+// opens a new tab.
+func (m *Manager) TabAddedCh(channelID string) <-chan TabInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if sess, ok := m.sessions[channelID]; ok {
+		return sess.tabAddedCh
+	}
+	return nil
+}
+
+// NotifyTabRemoved signals the browser pane that a tab was removed.
+// Called by the HTTP handler when the MCP server closes a tab.
+func (m *Manager) NotifyTabRemoved(channelID, targetID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[channelID]
+	if !ok {
+		return
+	}
+	select {
+	case sess.tabRemovedCh <- targetID:
+	default:
+	}
+}
+
+// TabRemovedCh returns a channel that receives the target ID whenever the MCP agent
+// closes a tab.
+func (m *Manager) TabRemovedCh(channelID string) <-chan string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if sess, ok := m.sessions[channelID]; ok {
+		return sess.tabRemovedCh
+	}
+	return nil
+}
+
+// TrackTab appends a target ID to the tab order if not already present.
+func (m *Manager) TrackTab(channelID, targetID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[channelID]
+	if !ok {
+		return
+	}
+	for _, id := range sess.tabOrder {
+		if id == targetID {
+			return
+		}
+	}
+	sess.tabOrder = append(sess.tabOrder, targetID)
+}
+
+// UntrackTab removes a target ID from the tab order.
+func (m *Manager) UntrackTab(channelID, targetID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[channelID]
+	if !ok {
+		return
+	}
+	filtered := make([]string, 0, len(sess.tabOrder))
+	for _, id := range sess.tabOrder {
+		if id != targetID {
+			filtered = append(filtered, id)
+		}
+	}
+	sess.tabOrder = filtered
+}
+
+// NextTabID returns the tab to switch to after closing targetID.
+// Returns the tab before it in the order, or the tab after it, or "".
+func (m *Manager) NextTabID(channelID, closedTargetID string) string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[channelID]
+	if !ok {
+		return ""
+	}
+	for i, id := range sess.tabOrder {
+		if id == closedTargetID {
+			if i > 0 {
+				return sess.tabOrder[i-1] // tab before
+			}
+			if i+1 < len(sess.tabOrder) {
+				return sess.tabOrder[i+1] // tab after
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
+// OrderTabs reorders tabs to match the stored insertion order.
+// Tabs not in the stored order are appended at the end.
+func (m *Manager) OrderTabs(channelID string, tabs []TabInfo) []TabInfo {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	sess, ok := m.sessions[channelID]
+	if !ok || len(sess.tabOrder) == 0 {
+		return tabs
+	}
+
+	byID := make(map[string]TabInfo, len(tabs))
+	for _, t := range tabs {
+		byID[t.TargetID] = t
+	}
+
+	ordered := make([]TabInfo, 0, len(tabs))
+	for _, id := range sess.tabOrder {
+		if t, ok := byID[id]; ok {
+			ordered = append(ordered, t)
+			delete(byID, id)
+		}
+	}
+	// Append any tabs not tracked (e.g. created externally via MCP)
+	// and persist them into tabOrder so future calls maintain their position.
+	for _, t := range tabs {
+		if _, exists := byID[t.TargetID]; exists {
+			ordered = append(ordered, t)
+			sess.tabOrder = append(sess.tabOrder, t.TargetID)
+		}
+	}
+	return ordered
+}
+
+// SetCDPForTarget caches a CDP client for a specific target.
+func (m *Manager) SetCDPForTarget(channelID, targetID string, cdp any) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if sess, ok := m.sessions[channelID]; ok {
+		sess.cdpTargets[targetID] = cdp
+	}
+}
+
+// GetCDPForTarget returns the cached CDP client for a specific target, or nil.
+func (m *Manager) GetCDPForTarget(channelID, targetID string) any {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if sess, ok := m.sessions[channelID]; ok {
+		return sess.cdpTargets[targetID]
+	}
+	return nil
+}
+
+// RemoveCDPForTarget removes and returns the cached CDP client for a target.
+func (m *Manager) RemoveCDPForTarget(channelID, targetID string) any {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if sess, ok := m.sessions[channelID]; ok {
+		cdp := sess.cdpTargets[targetID]
+		delete(sess.cdpTargets, targetID)
+		return cdp
+	}
+	return nil
+}
+
+// GetActiveCDP returns the CDP client for the active target, or nil.
+func (m *Manager) GetActiveCDP(channelID string) any {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if sess, ok := m.sessions[channelID]; ok {
+		return sess.cdpTargets[sess.activeTargetID]
 	}
 	return nil
 }
@@ -348,7 +504,7 @@ func (m *Manager) IsRunning(ctx context.Context, channelID string) bool {
 	return m.isContainerRunning(ctx, sess.chromeContainerID)
 }
 
-// Cleanup stops all Chrome sidecar containers and removes their networks.
+// Cleanup stops all Chrome sidecar containers.
 func (m *Manager) Cleanup(ctx context.Context) {
 	m.mu.Lock()
 	channels := make([]string, 0, len(m.sessions))
@@ -359,7 +515,6 @@ func (m *Manager) Cleanup(ctx context.Context) {
 
 	for _, ch := range channels {
 		_ = m.StopBrowser(ctx, ch)
-		_ = m.api.NetworkRemove(ctx, NetworkName(ch))
 	}
 }
 
@@ -498,23 +653,6 @@ func (m *Manager) getHostPort(ctx context.Context, containerID string) (string, 
 		}
 	}
 	return "", fmt.Errorf("no host port mapping for 9222/tcp")
-}
-
-func isAlreadyExists(err error) bool {
-	return err != nil && (contains(err.Error(), "already exists") || contains(err.Error(), "Conflict"))
-}
-
-func contains(s, substr string) bool {
-	return len(s) >= len(substr) && searchString(s, substr)
-}
-
-func searchString(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
-		}
-	}
-	return false
 }
 
 // isChromeReachable checks if Chrome's CDP endpoint is already reachable via the host port.

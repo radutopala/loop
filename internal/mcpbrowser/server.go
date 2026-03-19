@@ -1,21 +1,22 @@
-// Package mcpbrowser provides an MCP server for browser automation via CDP.
+// Package mcpbrowser provides an MCP server for browser automation via the host API.
 // It runs as a separate subcommand (`loop mcp-browser`) inside agent containers.
 package mcpbrowser
 
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
-	"regexp"
+	"os"
 	"strings"
-	"sync"
 	"time"
 
-	"github.com/chromedp/cdproto/cdp"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/radutopala/loop/internal/browser"
 )
 
@@ -24,93 +25,28 @@ type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
-// cdpClient abstracts CDP operations for testing.
-type cdpClient interface {
-	Navigate(ctx context.Context, url string) error
-	Reload(ctx context.Context) error
-	GoBack(ctx context.Context) error
-	GoForward(ctx context.Context) error
-	GetPageInfo(ctx context.Context) (*browser.PageInfo, error)
-	GetElementRefs(ctx context.Context) ([]browser.ElementRef, error)
-	MouseClick(ctx context.Context, x, y float64, button string, clickCount int) error
-	MouseMove(ctx context.Context, x, y float64) error
-	MouseScroll(ctx context.Context, x, y, deltaX, deltaY float64) error
-	MouseDown(ctx context.Context, x, y float64, button string) error
-	MouseUp(ctx context.Context, x, y float64, button string) error
-	KeyPress(ctx context.Context, key string) error
-	TypeText(ctx context.Context, text string) error
-	ClickRef(ctx context.Context, refs []browser.ElementRef, refIndex int) error
-	Screenshot(ctx context.Context) ([]byte, error)
-	ListTabs(ctx context.Context) ([]browser.TabInfo, error)
-	NewTab(ctx context.Context, url string) (string, error)
-	SwitchTab(ctx context.Context, targetID string) error
-	CloseTab(ctx context.Context, targetID string) error
-	EvaluateJS(ctx context.Context, expression string) (string, error)
-	EnableConsoleCapture(ctx context.Context, ch chan<- browser.ConsoleMessage) error
-	EnableNetworkCapture(ctx context.Context, ch chan<- browser.NetworkRequest) error
-	ResizeWindow(ctx context.Context, width, height int) error
-	ScrollIntoView(ctx context.Context, backendNodeID cdp.BackendNodeID) error
-	Close()
-}
-
-// Server provides MCP tools for browser automation via CDP.
+// Server provides MCP tools for browser automation via the host API.
 type Server struct {
-	cdpEndpoint string
-	mcpServer   *mcp.Server
-	cdp         cdpClient
-	cdpFactory  CDPFactory
-	logger      *slog.Logger
-	refs        []browser.ElementRef // cached element refs
-	runCtx      context.Context
-	retryDelay  time.Duration // delay between CDP connection retries (default 500ms)
-	targetID    string        // if set, attach to this specific page target
-
-	// HTTP callback for lazy Chrome start and idle touch.
+	mcpServer  *mcp.Server
+	logger     *slog.Logger
+	refs       []browser.ElementRef // cached from host
 	apiURL     string
 	channelID  string
 	httpClient HTTPClient
-	lastTouch  time.Time // debounce touchBrowserViaAPI
-
-	consoleMu   sync.Mutex
-	consoleMsgs []browser.ConsoleMessage // captured console messages
-	consoleCh   chan browser.ConsoleMessage
-
-	networkMu   sync.Mutex
-	networkReqs []browser.NetworkRequest // captured network requests
-	networkCh   chan browser.NetworkRequest
 }
 
-// SetTargetID configures the server to attach to a specific Chrome page target.
-// This allows sharing the same tab with the browser pane's screencast.
-func (s *Server) SetTargetID(id string) {
-	s.targetID = id
-}
-
-// SetAPICallback configures the HTTP callback for lazy Chrome start.
-func (s *Server) SetAPICallback(apiURL, channelID string) {
-	s.apiURL = apiURL
-	s.channelID = channelID
-	s.httpClient = &http.Client{Timeout: 30 * time.Second}
-}
-
-// New creates a new MCP browser server.
-func New(cdpEndpoint string, logger *slog.Logger) *Server {
+// New creates a new MCP browser server that proxies actions through the host API.
+func New(apiURL, channelID string, logger *slog.Logger) *Server {
 	if logger == nil {
 		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 	}
 	s := &Server{
-		cdpEndpoint: cdpEndpoint,
-		logger:      logger,
-		retryDelay:  500 * time.Millisecond,
+		apiURL:    apiURL,
+		channelID: channelID,
+		logger:    logger,
 	}
-	s.cdpFactory = func(_ context.Context, wsURL string, logger *slog.Logger) (cdpClient, error) {
-		var opts []browser.CDPOption
-		if s.targetID != "" {
-			opts = append(opts, browser.WithTargetID(s.targetID))
-		}
-		// Use background context so the CDP client outlives individual tool calls.
-		return browser.NewCDPClient(context.Background(), wsURL, logger, opts...)
-	}
+
+	s.httpClient = &http.Client{Timeout: 2 * time.Minute}
 
 	s.mcpServer = mcp.NewServer(&mcp.Implementation{
 		Name:    "loop-browser",
@@ -121,104 +57,60 @@ func New(cdpEndpoint string, logger *slog.Logger) *Server {
 	return s
 }
 
-// CDPFactory creates a CDP client for a given WebSocket URL.
-type CDPFactory func(ctx context.Context, wsURL string, logger *slog.Logger) (cdpClient, error)
-
 // Run starts the MCP server over the given transport.
-// CDP connection is deferred to first tool use so the server can start
-// before Chrome is running (Chrome is started lazily by the API server).
 func (s *Server) Run(ctx context.Context, transport mcp.Transport) error {
-	s.runCtx = ctx
 	return s.mcpServer.Run(ctx, transport)
 }
 
-// ensureBrowserViaAPI calls the host API to lazily start the Chrome container.
-// Non-fatal: Chrome may already be running (e.g. started by the browser pane).
-func (s *Server) ensureBrowserViaAPI() {
-	if s.httpClient == nil || s.apiURL == "" || s.channelID == "" {
-		return
+// actionResponse mirrors the host API's browserActionResponse.
+type actionResponse struct {
+	Result         string               `json:"result,omitempty"`
+	Image          string               `json:"image,omitempty"`
+	ScreenshotPath string               `json:"screenshot_path,omitempty"`
+	Error          string               `json:"error,omitempty"`
+	ElementRefs    []browser.ElementRef `json:"element_refs,omitempty"`
+	Tabs           []browser.TabInfo    `json:"tabs,omitempty"`
+	PageInfo       *browser.PageInfo    `json:"page_info,omitempty"`
+}
+
+func (s *Server) callAction(ctx context.Context, action string, params map[string]any) (*actionResponse, error) {
+	body := map[string]any{
+		"channel_id": s.channelID,
+		"action":     action,
+		"params":     params,
 	}
-	url := s.apiURL + "/api/browser/ensure"
-	body := []byte(`{"channel_id":"` + s.channelID + `"}`)
-	req, err := http.NewRequestWithContext(s.runCtx, http.MethodPost, url, bytes.NewReader(body))
+	bodyJSON, err := json.Marshal(body)
 	if err != nil {
-		s.logger.Warn("ensure browser via API: request build failed", "error", err)
-		return
+		return nil, fmt.Errorf("marshaling request: %w", err)
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, s.apiURL+"/api/browser/action", bytes.NewReader(bodyJSON))
+	if err != nil {
+		return nil, fmt.Errorf("creating request: %w", err)
 	}
 	req.Header.Set("Content-Type", "application/json")
+
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		s.logger.Warn("ensure browser via API: request failed", "error", err)
-		return
+		return nil, fmt.Errorf("calling host API: %w", err)
 	}
-	resp.Body.Close()
+	defer resp.Body.Close()
+
 	if resp.StatusCode != http.StatusOK {
-		s.logger.Warn("ensure browser via API: non-200 response", "status", resp.StatusCode)
+		respBody, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("host API returned %d: %s", resp.StatusCode, string(respBody))
 	}
-}
 
-// ensureCDP connects to Chrome via CDP on first use.
-// Chrome runs in a separate sidecar container managed by the browser manager.
-// Retries for up to 15 seconds to allow for container startup.
-func (s *Server) ensureCDP() error {
-	if s.cdp != nil {
-		return nil
+	var result actionResponse
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return nil, fmt.Errorf("decoding response: %w", err)
 	}
-	// Trigger lazy Chrome start via host API before retrying CDP connection.
-	s.ensureBrowserViaAPI()
 
-	var lastErr error
-	for range 30 {
-		cdp, err := s.cdpFactory(s.runCtx, s.cdpEndpoint, s.logger)
-		if err == nil {
-			s.cdp = cdp
-			s.startConsoleCapture()
-			return nil
-		}
-		lastErr = err
-		select {
-		case <-s.runCtx.Done():
-			return fmt.Errorf("connecting to CDP at %s: %w", s.cdpEndpoint, lastErr)
-		case <-time.After(s.retryDelay):
-		}
+	if result.Error != "" {
+		return nil, fmt.Errorf("%s", result.Error)
 	}
-	return fmt.Errorf("connecting to CDP at %s: %w", s.cdpEndpoint, lastErr)
-}
 
-// startConsoleCapture enables console message capture from the browser.
-// Messages are buffered in s.consoleMsgs for the read_console_messages tool.
-func (s *Server) startConsoleCapture() {
-	s.consoleCh = make(chan browser.ConsoleMessage, 100)
-	if err := s.cdp.EnableConsoleCapture(s.runCtx, s.consoleCh); err != nil {
-		s.logger.Warn("failed to enable console capture", "error", err)
-		return
-	}
-	go func() {
-		for msg := range s.consoleCh {
-			s.consoleMu.Lock()
-			s.consoleMsgs = append(s.consoleMsgs, msg)
-			s.consoleMu.Unlock()
-		}
-	}()
-
-	s.startNetworkCapture()
-}
-
-// startNetworkCapture enables network request capture from the browser.
-// Requests are buffered in s.networkReqs for the read_network_requests tool.
-func (s *Server) startNetworkCapture() {
-	s.networkCh = make(chan browser.NetworkRequest, 100)
-	if err := s.cdp.EnableNetworkCapture(s.runCtx, s.networkCh); err != nil {
-		s.logger.Warn("failed to enable network capture", "error", err)
-		return
-	}
-	go func() {
-		for req := range s.networkCh {
-			s.networkMu.Lock()
-			s.networkReqs = append(s.networkReqs, req)
-			s.networkMu.Unlock()
-		}
-	}()
+	return &result, nil
 }
 
 type computerInput struct {
@@ -235,40 +127,6 @@ type computerInput struct {
 	StartY   float64 `json:"start_y,omitempty" jsonschema:"Start Y coordinate for left_click_drag"`
 }
 
-// touchBrowserViaAPI signals the host API that the browser is still in use.
-// Debounced: skips if the last touch was less than 1 minute ago.
-func (s *Server) touchBrowserViaAPI() {
-	if s.httpClient == nil || s.apiURL == "" || s.channelID == "" {
-		return
-	}
-	if time.Since(s.lastTouch) < time.Minute {
-		return
-	}
-	url := s.apiURL + "/api/browser/touch"
-	body := []byte(`{"channel_id":"` + s.channelID + `"}`)
-	req, err := http.NewRequestWithContext(s.runCtx, http.MethodPost, url, bytes.NewReader(body))
-	if err != nil {
-		return
-	}
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := s.httpClient.Do(req)
-	if err != nil {
-		s.logger.Warn("touch browser via API: request failed", "error", err)
-		return
-	}
-	resp.Body.Close()
-	s.lastTouch = time.Now()
-}
-
-// requireCDP ensures CDP is connected, returning an error result if not.
-func (s *Server) requireCDP() *mcp.CallToolResult {
-	if err := s.ensureCDP(); err != nil {
-		return errorResult(fmt.Sprintf("browser not ready: %v", err))
-	}
-	s.touchBrowserViaAPI()
-	return nil
-}
-
 func (s *Server) registerTools() {
 	type navigateInput struct {
 		URL string `json:"url" jsonschema:"The URL to navigate to"`
@@ -276,19 +134,16 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "navigate",
 		Description: "Navigate the browser to a URL.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input navigateInput) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
-		}
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input navigateInput) (*mcp.CallToolResult, any, error) {
 		if input.URL == "" {
 			return errorResult("url is required"), nil, nil
 		}
-		if err := s.cdp.Navigate(context.Background(), input.URL); err != nil {
+		resp, err := s.callAction(ctx, "navigate", map[string]any{"url": input.URL})
+		if err != nil {
 			return errorResult(fmt.Sprintf("navigate failed: %v", err)), nil, nil
 		}
-		info, _ := s.cdp.GetPageInfo(context.Background())
-		if info != nil {
-			return textResult(fmt.Sprintf("Navigated to %s — %s", info.URL, info.Title)), nil, nil
+		if resp.PageInfo != nil {
+			return textResult(fmt.Sprintf("Navigated to %s — %s", resp.PageInfo.URL, resp.PageInfo.Title)), nil, nil
 		}
 		return textResult("Navigated to " + input.URL), nil, nil
 	})
@@ -296,26 +151,23 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "read_page",
 		Description: "Get the accessibility tree of interactive elements on the current page. Returns element refs that can be used with the computer tool.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
-		}
-		refs, err := s.cdp.GetElementRefs(context.Background())
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		resp, err := s.callAction(ctx, "get_element_refs", nil)
 		if err != nil {
 			return errorResult(fmt.Sprintf("failed to get element refs: %v", err)), nil, nil
 		}
-		s.refs = refs
+		s.refs = resp.ElementRefs
 
-		info, _ := s.cdp.GetPageInfo(context.Background())
+		infoResp, _ := s.callAction(ctx, "get_page_info", nil)
 		result := ""
-		if info != nil {
-			result = fmt.Sprintf("Page: %s — %s\n\n", info.URL, info.Title)
+		if infoResp != nil && infoResp.PageInfo != nil {
+			result = fmt.Sprintf("Page: %s — %s\n\n", infoResp.PageInfo.URL, infoResp.PageInfo.Title)
 		}
 
-		if len(refs) == 0 {
+		if len(s.refs) == 0 {
 			result += "No interactive elements found."
 		} else {
-			for _, ref := range refs {
+			for _, ref := range s.refs {
 				line := fmt.Sprintf("[%s] %s: %s", ref.RefID, ref.Role, ref.Name)
 				if ref.Value != "" {
 					line += fmt.Sprintf(" (value: %s)", ref.Value)
@@ -329,11 +181,8 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "computer",
 		Description: "Perform computer actions: click, type, key, scroll, move, screenshot, wait, triple_click, double_click. Use ref from read_page for precise element targeting.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input computerInput) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
-		}
-		return s.handleComputer(input)
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input computerInput) (*mcp.CallToolResult, any, error) {
+		return s.handleComputer(ctx, input)
 	})
 
 	type formInputInput struct {
@@ -343,22 +192,17 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "form_input",
 		Description: "Fill in a form field by clicking it, clearing existing content, and typing the new value.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input formInputInput) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
-		}
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input formInputInput) (*mcp.CallToolResult, any, error) {
 		if input.Ref < 1 || input.Ref > len(s.refs) {
 			return errorResult(fmt.Sprintf("ref %d out of range (1-%d)", input.Ref, len(s.refs))), nil, nil
 		}
-
-		ctx := context.Background()
-		if err := s.cdp.ClickRef(ctx, s.refs, input.Ref); err != nil {
+		if _, err := s.callAction(ctx, "click_ref", map[string]any{"refs": s.refs, "ref_index": input.Ref}); err != nil {
 			return errorResult(fmt.Sprintf("click failed: %v", err)), nil, nil
 		}
-		if err := s.cdp.KeyPress(ctx, "Control+a"); err != nil {
+		if _, err := s.callAction(ctx, "key_press", map[string]any{"key": "Control+a"}); err != nil {
 			return errorResult(fmt.Sprintf("select all failed: %v", err)), nil, nil
 		}
-		if err := s.cdp.TypeText(ctx, input.Value); err != nil {
+		if _, err := s.callAction(ctx, "type_text", map[string]any{"text": input.Value}); err != nil {
 			return errorResult(fmt.Sprintf("type failed: %v", err)), nil, nil
 		}
 		return textResult(fmt.Sprintf("Entered %q in ref_%d", input.Value, input.Ref)), nil, nil
@@ -367,54 +211,53 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "screenshot",
 		Description: "Take a screenshot of the current page.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
-		}
-		data, err := s.cdp.Screenshot(context.Background())
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		resp, err := s.callAction(ctx, "screenshot", nil)
 		if err != nil {
 			return errorResult(fmt.Sprintf("screenshot failed: %v", err)), nil, nil
+		}
+		// If host returned a file path, read the file directly (avoids base64 over HTTP).
+		if resp.ScreenshotPath != "" {
+			data, readErr := os.ReadFile(resp.ScreenshotPath)
+			if readErr != nil {
+				return errorResult(fmt.Sprintf("reading screenshot file: %v", readErr)), nil, nil
+			}
+			os.Remove(resp.ScreenshotPath) //nolint:errcheck
+			return imageResult(data), nil, nil
+		}
+		// Fallback to base64 decode.
+		data, err := base64.StdEncoding.DecodeString(resp.Image)
+		if err != nil {
+			return errorResult(fmt.Sprintf("screenshot decode failed: %v", err)), nil, nil
 		}
 		return imageResult(data), nil, nil
 	})
 
-	type goBackInput struct{}
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "go_back",
 		Description: "Navigate back in browser history.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, _ goBackInput) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
-		}
-		if err := s.cdp.GoBack(context.Background()); err != nil {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		if _, err := s.callAction(ctx, "go_back", nil); err != nil {
 			return errorResult(fmt.Sprintf("back failed: %v", err)), nil, nil
 		}
 		return textResult("Navigated back"), nil, nil
 	})
 
-	type goForwardInput struct{}
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "go_forward",
 		Description: "Navigate forward in browser history.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, _ goForwardInput) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
-		}
-		if err := s.cdp.GoForward(context.Background()); err != nil {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		if _, err := s.callAction(ctx, "go_forward", nil); err != nil {
 			return errorResult(fmt.Sprintf("forward failed: %v", err)), nil, nil
 		}
 		return textResult("Navigated forward"), nil, nil
 	})
 
-	type reloadInput struct{}
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "reload",
 		Description: "Reload the current page.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, _ reloadInput) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
-		}
-		if err := s.cdp.Reload(context.Background()); err != nil {
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		if _, err := s.callAction(ctx, "reload", nil); err != nil {
 			return errorResult(fmt.Sprintf("reload failed: %v", err)), nil, nil
 		}
 		return textResult("Page reloaded"), nil, nil
@@ -426,37 +269,35 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "evaluate",
 		Description: "Evaluate a JavaScript expression in the page context.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input evaluateInput) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
-		}
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input evaluateInput) (*mcp.CallToolResult, any, error) {
 		if input.Expression == "" {
 			return errorResult("expression is required"), nil, nil
 		}
-		result, err := s.cdp.EvaluateJS(context.Background(), input.Expression)
+		resp, err := s.callAction(ctx, "evaluate_js", map[string]any{"expression": input.Expression})
 		if err != nil {
 			return errorResult(fmt.Sprintf("evaluate failed: %v", err)), nil, nil
 		}
-		return textResult(result), nil, nil
+		return textResult(resp.Result), nil, nil
 	})
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "list_tabs",
 		Description: "List all open browser tabs.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
-		}
-		tabs, err := s.cdp.ListTabs(context.Background())
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		resp, err := s.callAction(ctx, "list_tabs", nil)
 		if err != nil {
 			return errorResult(fmt.Sprintf("list tabs failed: %v", err)), nil, nil
 		}
-		if len(tabs) == 0 {
+		if len(resp.Tabs) == 0 {
 			return textResult("No tabs open"), nil, nil
 		}
 		result := ""
-		for i, tab := range tabs {
-			result += fmt.Sprintf("[%d] %s — %s (id: %s)\n", i+1, tab.Title, tab.URL, tab.TargetID)
+		for i, tab := range resp.Tabs {
+			marker := "  "
+			if tab.Active {
+				marker = "* "
+			}
+			result += fmt.Sprintf("%s[%d] %s — %s (id: %s)\n", marker, i+1, tab.Title, tab.URL, tab.TargetID)
 		}
 		return textResult(result), nil, nil
 	})
@@ -467,19 +308,16 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "new_tab",
 		Description: "Open a new browser tab with the given URL.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input newTabInput) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
-		}
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input newTabInput) (*mcp.CallToolResult, any, error) {
 		url := input.URL
 		if url == "" {
 			url = "about:blank"
 		}
-		targetID, err := s.cdp.NewTab(context.Background(), url)
+		resp, err := s.callAction(ctx, "new_tab", map[string]any{"url": url})
 		if err != nil {
 			return errorResult(fmt.Sprintf("new tab failed: %v", err)), nil, nil
 		}
-		return textResult(fmt.Sprintf("Opened new tab (id: %s) at %s", targetID, url)), nil, nil
+		return textResult(resp.Result), nil, nil
 	})
 
 	type switchTabInput struct {
@@ -488,14 +326,11 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "switch_tab",
 		Description: "Switch to a browser tab by target ID.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input switchTabInput) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
-		}
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input switchTabInput) (*mcp.CallToolResult, any, error) {
 		if input.TargetID == "" {
 			return errorResult("target_id is required"), nil, nil
 		}
-		if err := s.cdp.SwitchTab(context.Background(), input.TargetID); err != nil {
+		if _, err := s.callAction(ctx, "switch_tab", map[string]any{"target_id": input.TargetID}); err != nil {
 			return errorResult(fmt.Sprintf("switch tab failed: %v", err)), nil, nil
 		}
 		return textResult("Switched to tab " + input.TargetID), nil, nil
@@ -507,14 +342,11 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "close_tab",
 		Description: "Close a browser tab by target ID.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input closeTabInput) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
-		}
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input closeTabInput) (*mcp.CallToolResult, any, error) {
 		if input.TargetID == "" {
 			return errorResult("target_id is required"), nil, nil
 		}
-		if err := s.cdp.CloseTab(context.Background(), input.TargetID); err != nil {
+		if _, err := s.callAction(ctx, "close_tab", map[string]any{"target_id": input.TargetID}); err != nil {
 			return errorResult(fmt.Sprintf("close tab failed: %v", err)), nil, nil
 		}
 		return textResult("Closed tab " + input.TargetID), nil, nil
@@ -523,30 +355,27 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "page_info",
 		Description: "Get the current page URL and title.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
-		}
-		info, err := s.cdp.GetPageInfo(context.Background())
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		resp, err := s.callAction(ctx, "get_page_info", nil)
 		if err != nil {
 			return errorResult(fmt.Sprintf("page info failed: %v", err)), nil, nil
 		}
-		return textResult(fmt.Sprintf("URL: %s\nTitle: %s", info.URL, info.Title)), nil, nil
+		if resp.PageInfo == nil {
+			return errorResult("page info failed: no page info returned"), nil, nil
+		}
+		return textResult(fmt.Sprintf("URL: %s\nTitle: %s", resp.PageInfo.URL, resp.PageInfo.Title)), nil, nil
 	})
 
 	// get_page_text: extract all text content from the page.
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "get_page_text",
 		Description: "Get all text content from the current page (document.body.innerText).",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
-		}
-		text, err := s.cdp.EvaluateJS(context.Background(), "document.body.innerText")
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, _ struct{}) (*mcp.CallToolResult, any, error) {
+		resp, err := s.callAction(ctx, "evaluate_js", map[string]any{"expression": "document.body.innerText"})
 		if err != nil {
 			return errorResult(fmt.Sprintf("get page text failed: %v", err)), nil, nil
 		}
-		return textResult(text), nil, nil
+		return textResult(resp.Result), nil, nil
 	})
 
 	// find: fuzzy-find elements by natural language query.
@@ -556,14 +385,11 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "find",
 		Description: "Find interactive elements matching a natural language query. Returns up to 20 matching refs from the accessibility tree.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input findInput) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
-		}
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input findInput) (*mcp.CallToolResult, any, error) {
 		if input.Query == "" {
 			return errorResult("query is required"), nil, nil
 		}
-		return s.handleFind(input.Query)
+		return s.handleFind(ctx, input.Query)
 	})
 
 	// read_console_messages: read captured browser console messages.
@@ -576,11 +402,18 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "read_console_messages",
 		Description: "Read captured browser console messages. Supports filtering by regex pattern and error-only mode.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input consoleInput) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input consoleInput) (*mcp.CallToolResult, any, error) {
+		params := map[string]any{
+			"pattern":     input.Pattern,
+			"only_errors": input.OnlyErrors,
+			"clear":       input.Clear,
+			"limit":       input.Limit,
 		}
-		return s.handleReadConsoleMessages(input.Pattern, input.OnlyErrors, input.Clear, input.Limit)
+		resp, err := s.callAction(ctx, "read_console", params)
+		if err != nil {
+			return errorResult(fmt.Sprintf("read console failed: %v", err)), nil, nil
+		}
+		return textResult(resp.Result), nil, nil
 	})
 
 	// read_network_requests: read captured network requests.
@@ -592,11 +425,17 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "read_network_requests",
 		Description: "Read captured network requests. Supports filtering by URL regex pattern.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input networkInput) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input networkInput) (*mcp.CallToolResult, any, error) {
+		params := map[string]any{
+			"pattern": input.Pattern,
+			"clear":   input.Clear,
+			"limit":   input.Limit,
 		}
-		return s.handleReadNetworkRequests(input.Pattern, input.Clear, input.Limit)
+		resp, err := s.callAction(ctx, "read_network", params)
+		if err != nil {
+			return errorResult(fmt.Sprintf("read network failed: %v", err)), nil, nil
+		}
+		return textResult(resp.Result), nil, nil
 	})
 
 	// resize_window: resize the browser viewport.
@@ -607,23 +446,18 @@ func (s *Server) registerTools() {
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "resize_window",
 		Description: "Resize the browser viewport to the given dimensions.",
-	}, func(_ context.Context, _ *mcp.CallToolRequest, input resizeInput) (*mcp.CallToolResult, any, error) {
-		if r := s.requireCDP(); r != nil {
-			return r, nil, nil
-		}
+	}, func(ctx context.Context, _ *mcp.CallToolRequest, input resizeInput) (*mcp.CallToolResult, any, error) {
 		if input.Width <= 0 || input.Height <= 0 {
 			return errorResult("width and height must be positive"), nil, nil
 		}
-		if err := s.cdp.ResizeWindow(context.Background(), input.Width, input.Height); err != nil {
+		if _, err := s.callAction(ctx, "resize_window", map[string]any{"width": input.Width, "height": input.Height}); err != nil {
 			return errorResult(fmt.Sprintf("resize failed: %v", err)), nil, nil
 		}
 		return textResult(fmt.Sprintf("Resized viewport to %dx%d", input.Width, input.Height)), nil, nil
 	})
 }
 
-func (s *Server) handleComputer(input computerInput) (*mcp.CallToolResult, any, error) {
-	ctx := context.Background()
-
+func (s *Server) handleComputer(ctx context.Context, input computerInput) (*mcp.CallToolResult, any, error) {
 	// Resolve coordinates from ref if provided.
 	x, y := input.X, input.Y
 	if input.Ref > 0 {
@@ -642,19 +476,19 @@ func (s *Server) handleComputer(input computerInput) (*mcp.CallToolResult, any, 
 
 	switch input.Action {
 	case "click":
-		if err := s.cdp.MouseClick(ctx, x, y, btn, 1); err != nil {
+		if _, err := s.callAction(ctx, "mouse_click", map[string]any{"x": x, "y": y, "button": btn, "click_count": 1}); err != nil {
 			return errorResult(fmt.Sprintf("click failed: %v", err)), nil, nil
 		}
 		return textResult(fmt.Sprintf("Clicked at (%.0f, %.0f)", x, y)), nil, nil
 
 	case "double_click":
-		if err := s.cdp.MouseClick(ctx, x, y, btn, 2); err != nil {
+		if _, err := s.callAction(ctx, "mouse_click", map[string]any{"x": x, "y": y, "button": btn, "click_count": 2}); err != nil {
 			return errorResult(fmt.Sprintf("double click failed: %v", err)), nil, nil
 		}
 		return textResult(fmt.Sprintf("Double-clicked at (%.0f, %.0f)", x, y)), nil, nil
 
 	case "triple_click":
-		if err := s.cdp.MouseClick(ctx, x, y, btn, 3); err != nil {
+		if _, err := s.callAction(ctx, "mouse_click", map[string]any{"x": x, "y": y, "button": btn, "click_count": 3}); err != nil {
 			return errorResult(fmt.Sprintf("triple click failed: %v", err)), nil, nil
 		}
 		return textResult(fmt.Sprintf("Triple-clicked at (%.0f, %.0f)", x, y)), nil, nil
@@ -663,7 +497,7 @@ func (s *Server) handleComputer(input computerInput) (*mcp.CallToolResult, any, 
 		if input.Text == "" {
 			return errorResult("text is required for type action"), nil, nil
 		}
-		if err := s.cdp.TypeText(ctx, input.Text); err != nil {
+		if _, err := s.callAction(ctx, "type_text", map[string]any{"text": input.Text}); err != nil {
 			return errorResult(fmt.Sprintf("type failed: %v", err)), nil, nil
 		}
 		return textResult(fmt.Sprintf("Typed %q", input.Text)), nil, nil
@@ -672,7 +506,7 @@ func (s *Server) handleComputer(input computerInput) (*mcp.CallToolResult, any, 
 		if input.Text == "" {
 			return errorResult("text is required for key action (key name)"), nil, nil
 		}
-		if err := s.cdp.KeyPress(ctx, input.Text); err != nil {
+		if _, err := s.callAction(ctx, "key_press", map[string]any{"key": input.Text}); err != nil {
 			return errorResult(fmt.Sprintf("key failed: %v", err)), nil, nil
 		}
 		return textResult(fmt.Sprintf("Pressed key %q", input.Text)), nil, nil
@@ -682,38 +516,52 @@ func (s *Server) handleComputer(input computerInput) (*mcp.CallToolResult, any, 
 		if dy == 0 {
 			dy = -3 // Default scroll down.
 		}
-		if err := s.cdp.MouseScroll(ctx, x, y, input.DeltaX, dy); err != nil {
+		if _, err := s.callAction(ctx, "mouse_scroll", map[string]any{"x": x, "y": y, "delta_x": input.DeltaX, "delta_y": dy}); err != nil {
 			return errorResult(fmt.Sprintf("scroll failed: %v", err)), nil, nil
 		}
 		return textResult(fmt.Sprintf("Scrolled at (%.0f, %.0f)", x, y)), nil, nil
 
 	case "right_click":
-		if err := s.cdp.MouseClick(ctx, x, y, "right", 1); err != nil {
+		if _, err := s.callAction(ctx, "mouse_click", map[string]any{"x": x, "y": y, "button": "right", "click_count": 1}); err != nil {
 			return errorResult(fmt.Sprintf("right click failed: %v", err)), nil, nil
 		}
 		return textResult(fmt.Sprintf("Right-clicked at (%.0f, %.0f)", x, y)), nil, nil
 
 	case "move", "hover":
-		if err := s.cdp.MouseMove(ctx, x, y); err != nil {
+		if _, err := s.callAction(ctx, "mouse_move", map[string]any{"x": x, "y": y}); err != nil {
 			return errorResult(fmt.Sprintf("move failed: %v", err)), nil, nil
 		}
 		return textResult(fmt.Sprintf("Moved to (%.0f, %.0f)", x, y)), nil, nil
 
 	case "screenshot":
-		data, err := s.cdp.Screenshot(ctx)
+		resp, err := s.callAction(ctx, "screenshot", nil)
 		if err != nil {
 			return errorResult(fmt.Sprintf("screenshot failed: %v", err)), nil, nil
+		}
+		// If host returned a file path, read the file directly (avoids base64 over HTTP).
+		if resp.ScreenshotPath != "" {
+			data, readErr := os.ReadFile(resp.ScreenshotPath)
+			if readErr != nil {
+				return errorResult(fmt.Sprintf("reading screenshot file: %v", readErr)), nil, nil
+			}
+			os.Remove(resp.ScreenshotPath) //nolint:errcheck
+			return imageResult(data), nil, nil
+		}
+		// Fallback to base64 decode.
+		data, err := base64.StdEncoding.DecodeString(resp.Image)
+		if err != nil {
+			return errorResult(fmt.Sprintf("screenshot decode failed: %v", err)), nil, nil
 		}
 		return imageResult(data), nil, nil
 
 	case "left_click_drag":
-		if err := s.cdp.MouseDown(ctx, input.StartX, input.StartY, "left"); err != nil {
+		if _, err := s.callAction(ctx, "mouse_down", map[string]any{"x": input.StartX, "y": input.StartY, "button": "left"}); err != nil {
 			return errorResult(fmt.Sprintf("mouse down failed: %v", err)), nil, nil
 		}
-		if err := s.cdp.MouseMove(ctx, x, y); err != nil {
+		if _, err := s.callAction(ctx, "mouse_move", map[string]any{"x": x, "y": y}); err != nil {
 			return errorResult(fmt.Sprintf("drag move failed: %v", err)), nil, nil
 		}
-		if err := s.cdp.MouseUp(ctx, x, y, "left"); err != nil {
+		if _, err := s.callAction(ctx, "mouse_up", map[string]any{"x": x, "y": y, "button": "left"}); err != nil {
 			return errorResult(fmt.Sprintf("mouse up failed: %v", err)), nil, nil
 		}
 		return textResult(fmt.Sprintf("Dragged from (%.0f, %.0f) to (%.0f, %.0f)", input.StartX, input.StartY, x, y)), nil, nil
@@ -723,7 +571,7 @@ func (s *Server) handleComputer(input computerInput) (*mcp.CallToolResult, any, 
 			return errorResult(fmt.Sprintf("ref %d out of range (1-%d)", input.Ref, len(s.refs))), nil, nil
 		}
 		ref := s.refs[input.Ref-1]
-		if err := s.cdp.ScrollIntoView(ctx, ref.BackendDOMNodeID); err != nil {
+		if _, err := s.callAction(ctx, "scroll_into_view", map[string]any{"backend_node_id": ref.BackendDOMNodeID}); err != nil {
 			return errorResult(fmt.Sprintf("scroll_to failed: %v", err)), nil, nil
 		}
 		return textResult(fmt.Sprintf("Scrolled ref %d (%s: %s) into view", input.Ref, ref.Role, ref.Name)), nil, nil
@@ -736,18 +584,17 @@ func (s *Server) handleComputer(input computerInput) (*mcp.CallToolResult, any, 
 	}
 }
 
-// handleFind searches cached element refs for matches against a natural language query.
-func (s *Server) handleFind(query string) (*mcp.CallToolResult, any, error) {
-	// Refresh element refs from the page.
-	refs, err := s.cdp.GetElementRefs(context.Background())
+// handleFind searches element refs from the host for matches against a natural language query.
+func (s *Server) handleFind(ctx context.Context, query string) (*mcp.CallToolResult, any, error) {
+	resp, err := s.callAction(ctx, "get_element_refs", nil)
 	if err != nil {
 		return errorResult(fmt.Sprintf("failed to get element refs: %v", err)), nil, nil
 	}
-	s.refs = refs
+	s.refs = resp.ElementRefs
 
 	queryLower := strings.ToLower(query)
 	var matches []browser.ElementRef
-	for _, ref := range refs {
+	for _, ref := range s.refs {
 		roleLower := strings.ToLower(ref.Role)
 		nameLower := strings.ToLower(ref.Name)
 		descLower := strings.ToLower(ref.Description)
@@ -772,103 +619,6 @@ func (s *Server) handleFind(query string) (*mcp.CallToolResult, any, error) {
 			line += fmt.Sprintf(" (value: %s)", ref.Value)
 		}
 		result += line + "\n"
-	}
-	return textResult(result), nil, nil
-}
-
-// handleReadConsoleMessages returns captured console messages with optional filtering.
-func (s *Server) handleReadConsoleMessages(pattern string, onlyErrors bool, clear bool, limit int) (*mcp.CallToolResult, any, error) {
-	if limit <= 0 {
-		limit = 100
-	}
-
-	var re *regexp.Regexp
-	if pattern != "" {
-		var err error
-		re, err = regexp.Compile(pattern)
-		if err != nil {
-			return errorResult(fmt.Sprintf("invalid regex pattern: %v", err)), nil, nil
-		}
-	}
-
-	s.consoleMu.Lock()
-	msgs := make([]browser.ConsoleMessage, len(s.consoleMsgs))
-	copy(msgs, s.consoleMsgs)
-	if clear {
-		s.consoleMsgs = nil
-	}
-	s.consoleMu.Unlock()
-
-	var filtered []browser.ConsoleMessage
-	for _, msg := range msgs {
-		if onlyErrors && msg.Level != "error" {
-			continue
-		}
-		if re != nil && !re.MatchString(msg.Text) {
-			continue
-		}
-		filtered = append(filtered, msg)
-	}
-
-	// Apply limit from the end (most recent messages).
-	if len(filtered) > limit {
-		filtered = filtered[len(filtered)-limit:]
-	}
-
-	if len(filtered) == 0 {
-		return textResult("No console messages"), nil, nil
-	}
-
-	result := fmt.Sprintf("%d console message(s):\n", len(filtered))
-	for _, msg := range filtered {
-		result += fmt.Sprintf("[%s] %s: %s\n", msg.Time.Format("15:04:05"), msg.Level, msg.Text)
-	}
-	return textResult(result), nil, nil
-}
-
-// handleReadNetworkRequests returns captured network requests with optional filtering.
-func (s *Server) handleReadNetworkRequests(pattern string, clear bool, limit int) (*mcp.CallToolResult, any, error) {
-	if limit <= 0 {
-		limit = 50
-	}
-
-	var re *regexp.Regexp
-	if pattern != "" {
-		var err error
-		re, err = regexp.Compile(pattern)
-		if err != nil {
-			return errorResult(fmt.Sprintf("invalid regex pattern: %v", err)), nil, nil
-		}
-	}
-
-	s.networkMu.Lock()
-	reqs := make([]browser.NetworkRequest, len(s.networkReqs))
-	copy(reqs, s.networkReqs)
-	if clear {
-		s.networkReqs = nil
-	}
-	s.networkMu.Unlock()
-
-	var filtered []browser.NetworkRequest
-	for _, req := range reqs {
-		if re != nil && !re.MatchString(req.URL) {
-			continue
-		}
-		filtered = append(filtered, req)
-	}
-
-	// Apply limit from the end (most recent requests).
-	if len(filtered) > limit {
-		filtered = filtered[len(filtered)-limit:]
-	}
-
-	if len(filtered) == 0 {
-		return textResult("No network requests"), nil, nil
-	}
-
-	result := fmt.Sprintf("%d network request(s):\n", len(filtered))
-	for _, req := range filtered {
-		result += fmt.Sprintf("[%s] %s %s — %d %s\n", req.Time.Format("15:04:05"), req.Method, req.URL, req.Status, req.StatusText)
 	}
 	return textResult(result), nil, nil
 }

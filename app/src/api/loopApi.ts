@@ -16,6 +16,25 @@ export function getWsUrl(): string {
   return apiUrl.replace(/^http/, "ws");
 }
 
+/** Call the browser action API for control operations (navigate, tabs, etc). */
+export async function browserAction(
+  channelId: string,
+  action: string,
+  params?: Record<string, unknown>,
+): Promise<{
+  result?: string;
+  error?: string;
+  tabs?: { target_id: string; url: string; title: string; active?: boolean }[];
+  page_info?: { url: string; title: string };
+}> {
+  const res = await fetch(`${apiUrl}/api/browser/action`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel_id: channelId, action, params }),
+  });
+  return res.json();
+}
+
 /** Open a one-shot WebSocket to send a kill message for a channel's agent container. */
 export function killAgentContainer(channelId: string): void {
   const ws = new WebSocket(`${getWsUrl()}/api/ws/terminal`);

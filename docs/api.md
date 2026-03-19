@@ -859,47 +859,79 @@ Interactive terminal WebSocket. See [Terminal WebSocket](terminal.md) for the fu
 
 ## Browser
 
-### `POST /api/browser/ensure`
+### `POST /api/browser/action`
 
-Start Chrome sidecar for a channel. Called by the `loop-browser` MCP server to lazily start Chrome on first tool use.
+Unified endpoint for all browser operations. Used by both the `loop-browser` MCP server (inside agent containers) and the desktop browser panel frontend.
 
 **Request:**
 ```json
-{"channel_id": "ch-abc123"}
+{
+  "channel_id": "ch-abc123",
+  "action": "navigate",
+  "params": {"url": "https://example.com"}
+}
 ```
+
+**Actions:**
+
+| Action | Params | Description |
+|--------|--------|-------------|
+| `navigate` | `url` | Navigate to a URL |
+| `reload` | — | Reload the current page |
+| `go_back` | — | Navigate back in history |
+| `go_forward` | — | Navigate forward in history |
+| `get_page_info` | — | Get current URL and title |
+| `get_element_refs` | — | Get accessibility tree elements |
+| `mouse_click` | `x`, `y`, `button`, `click_count` | Click at coordinates |
+| `mouse_move` | `x`, `y` | Move mouse |
+| `mouse_scroll` | `x`, `y`, `delta_x`, `delta_y` | Scroll |
+| `mouse_down` | `x`, `y`, `button` | Mouse button down |
+| `mouse_up` | `x`, `y`, `button` | Mouse button up |
+| `key_press` | `key` | Press a key |
+| `type_text` | `text` | Type text |
+| `click_ref` | `refs`, `ref_index` | Click element by ref |
+| `screenshot` | — | Capture screenshot |
+| `evaluate_js` | `expression` | Evaluate JavaScript |
+| `list_tabs` | — | List all open tabs |
+| `new_tab` | `url` | Open a new tab |
+| `switch_tab` | `target_id` | Switch to a tab |
+| `close_tab` | `target_id` | Close a tab |
+| `resize_window` | `width`, `height` | Resize viewport |
+| `scroll_into_view` | `backend_node_id` | Scroll element into view |
+| `read_console` | `pattern`, `only_errors`, `clear`, `limit` | Read console messages |
+| `read_network` | `pattern`, `clear`, `limit` | Read network requests |
 
 **Responses:**
 
 | Code | Description |
 |------|-------------|
-| 200 | Chrome started or already running |
-| 400 | Missing `channel_id` |
-| 500 | Chrome start failed |
+| 200 | JSON response with `result`, `error`, `image`, `element_refs`, `tabs`, `page_info`, or `screenshot_path` |
+| 400 | Missing `channel_id` or invalid JSON |
 | 503 | Browser not configured (`browser_enabled: false`) |
 
----
-
-### `POST /api/browser/touch`
-
-Signal that a browser is still in use, preventing idle shutdown.
-
-**Request:**
-```json
-{"channel_id": "ch-abc123"}
-```
-
-**Responses:**
-
-| Code | Description |
-|------|-------------|
-| 200 | Touch recorded |
-| 400 | Missing `channel_id` |
-| 503 | Browser not configured |
+The endpoint handles Chrome lifecycle internally: lazily starts Chrome on first action, touches the idle timer on every action, and manages CDP connections.
 
 ---
 
 ### `GET /api/ws/browser`
 
-WebSocket endpoint for browser screencast and control.
+WebSocket endpoint for browser screencast streaming and input.
 
-Returns 503 if browser is not configured. Once connected, supports JSON messages for start/stop/navigate/screencast/input/page_info/reload/back/forward. Binary messages carry JPEG screencast frames.
+Returns 503 if browser is not configured. The WS handles four message types:
+
+| Message | Direction | Description |
+|---------|-----------|-------------|
+| `start` | Client → Server | Initialize CDP connection and screencast for a channel |
+| `stop` | Client → Server | Stop the browser session |
+| `screencast` | Client → Server | Start screencast frame streaming (with `width`/`height`) |
+| `input` | Client → Server | Mouse/keyboard input events |
+| Binary frames | Server → Client | JPEG screencast frames |
+| `started` | Server → Client | CDP connected, ready |
+| `stopped` | Server → Client | Session stopped |
+| `tabs` | Server → Client | Tab list update |
+| `tab_switched` | Server → Client | Active tab changed |
+| `tab_created` | Server → Client | New tab opened |
+| `tab_closed` | Server → Client | Tab closed |
+| `error` | Server → Client | Error message |
+
+Control operations (navigate, tabs, reload, etc.) go through `POST /api/browser/action`, not the WebSocket.

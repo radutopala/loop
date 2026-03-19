@@ -633,6 +633,16 @@ func (s *ServerSuite) TestStartServeError() {
 	time.Sleep(50 * time.Millisecond)
 }
 
+func (s *ServerSuite) TestBuildMux() {
+	mux := s.srv.buildMux()
+	require.NotNil(s.T(), mux)
+}
+
+func (s *ServerSuite) TestSetScreenshotDir() {
+	s.srv.SetScreenshotDir("/tmp/screenshots")
+	require.Equal(s.T(), "/tmp/screenshots", s.srv.screenshotDir)
+}
+
 // --- EnsureChannel tests ---
 
 func (s *ServerSuite) TestEnsureChannelSuccess() {

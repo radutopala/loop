@@ -391,7 +391,6 @@ func (a *app) serve() error {
 			logger.Warn("browser manager unavailable", "error", browserErr)
 		} else {
 			apiSrv.SetBrowserManager(browserMgr)
-			runner.BrowserTargetIDFunc = browserMgr.GetTargetID
 			go browserMgr.RunIdleMonitor(ctx, 5*time.Minute)
 		}
 	}
@@ -415,6 +414,10 @@ func (a *app) serve() error {
 	apiSrv.SetEventsHub(eventsHub)
 
 	executor.SetEventBroadcaster(eventsHub)
+
+	screenshotDir := filepath.Join(cfg.LoopDir, "screenshots")
+	_ = os.MkdirAll(screenshotDir, 0o755)
+	apiSrv.SetScreenshotDir(screenshotDir)
 
 	if err := apiSrv.Start(cfg.APIAddr); err != nil {
 		return fmt.Errorf("starting api server: %w", err)

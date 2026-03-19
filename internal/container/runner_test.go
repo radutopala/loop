@@ -280,8 +280,7 @@ func (s *RunnerSuite) TestRunHappyPath() {
 
 	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		hasResume := slices.Contains(cfg.Cmd, "--resume") && slices.Contains(cfg.Cmd, "sess-1")
-		hasBinds := len(cfg.Binds) == 1 &&
-			cfg.Binds[0] == "/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work"
+		hasBinds := slices.Contains(cfg.Binds, "/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work")
 		hasHome := slices.Contains(cfg.Env, "HOME=/home/testuser")
 		hasHostUser := slices.Contains(cfg.Env, "HOST_USER=testuser")
 		hasTZ := slices.ContainsFunc(cfg.Env, func(e string) bool {
@@ -833,7 +832,7 @@ func (s *RunnerSuite) TestRunProxyEnv() {
 			checkEnv: func(cfg *ContainerConfig) bool {
 				return slices.Contains(cfg.Env, "HTTP_PROXY=http://proxy:8080") &&
 					slices.Contains(cfg.Env, "HTTPS_PROXY=http://proxy:8443") &&
-					slices.Contains(cfg.Env, "NO_PROXY=localhost,127.0.0.1,host.docker.internal,loop-chrome-ch-1")
+					slices.Contains(cfg.Env, "NO_PROXY=localhost,127.0.0.1,host.docker.internal")
 			},
 		},
 		{
@@ -843,8 +842,8 @@ func (s *RunnerSuite) TestRunProxyEnv() {
 			},
 			checkEnv: func(cfg *ContainerConfig) bool {
 				return slices.Contains(cfg.Env, "HTTP_PROXY=http://proxy:8080") &&
-					slices.Contains(cfg.Env, "NO_PROXY=host.docker.internal,loop-chrome-ch-1") &&
-					slices.Contains(cfg.Env, "no_proxy=host.docker.internal,loop-chrome-ch-1")
+					slices.Contains(cfg.Env, "NO_PROXY=host.docker.internal") &&
+					slices.Contains(cfg.Env, "no_proxy=host.docker.internal")
 			},
 		},
 	}
@@ -1154,12 +1153,12 @@ func (s *RunnerSuite) TestAddProxyEnv() {
 		{
 			name: "HTTP_PROXY forwarded with NO_PROXY added",
 			envs: map[string]string{"HTTP_PROXY": "http://proxy:8080"},
-			want: []string{"BASE=1", "HTTP_PROXY=http://proxy:8080", "NO_PROXY=host.docker.internal,loop-chrome-test-ch", "no_proxy=host.docker.internal,loop-chrome-test-ch"},
+			want: []string{"BASE=1", "HTTP_PROXY=http://proxy:8080", "NO_PROXY=host.docker.internal", "no_proxy=host.docker.internal"},
 		},
 		{
 			name: "localhost rewritten to docker host",
 			envs: map[string]string{"HTTP_PROXY": "http://localhost:3128"},
-			want: []string{"BASE=1", "HTTP_PROXY=http://host.docker.internal:3128", "NO_PROXY=host.docker.internal,loop-chrome-test-ch", "no_proxy=host.docker.internal,loop-chrome-test-ch"},
+			want: []string{"BASE=1", "HTTP_PROXY=http://host.docker.internal:3128", "NO_PROXY=host.docker.internal", "no_proxy=host.docker.internal"},
 		},
 	}
 	for _, tc := range tests {
@@ -1171,7 +1170,7 @@ func (s *RunnerSuite) TestAddProxyEnv() {
 			sys.On("Getenv", mock.Anything).Return("")
 			s.runner.sys = sys
 
-			result := s.runner.addProxyEnv([]string{"BASE=1"}, "loop-chrome-test-ch")
+			result := s.runner.addProxyEnv([]string{"BASE=1"})
 			require.Equal(s.T(), tc.want, result)
 
 			s.runner.sys = s.sys // restore
@@ -1261,7 +1260,7 @@ func (s *RunnerSuite) TestEnsureNoProxy() {
 }
 
 func (s *RunnerSuite) TestBuildMCPConfig() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, true, nil)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", false, true, nil)
 	require.Len(s.T(), cfg.MCPServers, 2)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
@@ -1270,11 +1269,11 @@ func (s *RunnerSuite) TestBuildMCPConfig() {
 
 	bs := cfg.MCPServers["loop-browser"]
 	require.Equal(s.T(), "/usr/local/bin/loop", bs.Command)
-	require.Equal(s.T(), []string{"mcp-browser", "--host", "loop-chrome-ch-1", "--log", "/home/user/project/.loop/mcp-browser.log", "--api-url", "http://host.docker.internal:8222", "--channel-id", "ch-1"}, bs.Args)
+	require.Equal(s.T(), []string{"mcp-browser", "--log", "/home/user/project/.loop/mcp-browser.log", "--api-url", "http://host.docker.internal:8222", "--channel-id", "ch-1"}, bs.Args)
 }
 
 func (s *RunnerSuite) TestBuildMCPConfigBrowserDisabled() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, false, nil)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", false, false, nil)
 	require.Len(s.T(), cfg.MCPServers, 1)
 	_, hasBrowser := cfg.MCPServers["loop-browser"]
 	require.False(s.T(), hasBrowser)
@@ -1283,7 +1282,7 @@ func (s *RunnerSuite) TestBuildMCPConfigBrowserDisabled() {
 }
 
 func (s *RunnerSuite) TestBuildMCPConfigWithAuthorID() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "user-42", "", false, true, nil)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "user-42", false, true, nil)
 	require.Len(s.T(), cfg.MCPServers, 2)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
@@ -1298,7 +1297,7 @@ func (s *RunnerSuite) TestBuildMCPConfigWithUserServers() {
 			Env:     map[string]string{"API_KEY": "secret"},
 		},
 	}
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, true, userServers)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", false, true, userServers)
 	require.Len(s.T(), cfg.MCPServers, 3)
 
 	custom := cfg.MCPServers["custom-tool"]
@@ -1317,7 +1316,7 @@ func (s *RunnerSuite) TestBuildMCPConfigUserLoopPreserved() {
 			Args:    []string{"--custom-flag"},
 		},
 	}
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, true, userServers)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", false, true, userServers)
 	require.Len(s.T(), cfg.MCPServers, 2)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/user/custom/loop", ls.Command)
@@ -1331,7 +1330,7 @@ func (s *RunnerSuite) TestBuildMCPConfigUserBrowserPreserved() {
 			Args:    []string{"--port", "9999"},
 		},
 	}
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, true, userServers)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", false, true, userServers)
 	require.Len(s.T(), cfg.MCPServers, 2)
 	bs := cfg.MCPServers["loop-browser"]
 	require.Equal(s.T(), "/user/custom/browser", bs.Command)
@@ -1339,19 +1338,10 @@ func (s *RunnerSuite) TestBuildMCPConfigUserBrowserPreserved() {
 }
 
 func (s *RunnerSuite) TestBuildMCPConfigWithMemory() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", true, true, nil)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", true, true, nil)
 	require.Len(s.T(), cfg.MCPServers, 2)
 	ls := cfg.MCPServers["loop"]
 	require.Contains(s.T(), ls.Args, "--memory")
-}
-
-func (s *RunnerSuite) TestBuildMCPConfigWithBrowserTargetID() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "page-target-42", false, true, nil)
-	require.Len(s.T(), cfg.MCPServers, 2)
-	bs := cfg.MCPServers["loop-browser"]
-	require.Equal(s.T(), "/usr/local/bin/loop", bs.Command)
-	require.Contains(s.T(), bs.Args, "--target")
-	require.Contains(s.T(), bs.Args, "page-target-42")
 }
 
 func (s *RunnerSuite) TestRunBrowserDisabledNoNetwork() {
@@ -1372,34 +1362,43 @@ func (s *RunnerSuite) TestRunBrowserDisabledNoNetwork() {
 	require.Equal(s.T(), "ok", resp.Response)
 }
 
-func (s *RunnerSuite) TestWriteMCPConfigWithBrowserTargetIDFunc() {
-	s.runner.BrowserTargetIDFunc = func(channelID string) string {
-		if channelID == "ch-1" {
-			return "active-target-99"
-		}
-		return ""
-	}
+func (s *RunnerSuite) TestRunBrowserEnabledNoNetwork() {
+	// Even with browser enabled, the agent container no longer joins a Docker
+	// network — the mcp-browser server proxies actions through the host API instead.
+	s.cfg.BrowserEnabled = true
+	s.runner = NewDockerRunner(s.client, s.cfg)
+	s.applyMockDefaults()
+	ctx := context.Background()
 
-	// Capture the data passed to WriteFile.
-	var writtenData []byte
-	s.sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).
-		Run(func(args mock.Arguments) {
-			writtenData = args.Get(1).([]byte)
-		}).Return(nil)
+	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return cfg.NetworkName == "" && cfg.Hostname == ""
+	}), testContainerName, testJSONOK)
 
-	workDir := "/tmp/test-work"
-	mcpPath, err := s.runner.writeMCPConfig(workDir, "ch-1", "http://host.docker.internal:8222", "", s.cfg)
+	resp, err := s.runner.Run(ctx, &agent.AgentRequest{
+		ChannelID: "ch-1",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hi"}},
+	})
 	require.NoError(s.T(), err)
-	require.NotEmpty(s.T(), mcpPath)
+	require.Equal(s.T(), "ok", resp.Response)
+}
 
-	// Parse the captured data to verify --target was included.
-	require.NotEmpty(s.T(), writtenData)
-	var cfg mcpConfig
-	require.NoError(s.T(), json.Unmarshal(writtenData, &cfg))
+func (s *RunnerSuite) TestRunWithScreenshotDirBind() {
+	// Screenshot directory is always bind-mounted read-only.
+	ctx := context.Background()
 
-	bs := cfg.MCPServers["loop-browser"]
-	require.Contains(s.T(), bs.Args, "--target")
-	require.Contains(s.T(), bs.Args, "active-target-99")
+	screenshotDir := filepath.Join(s.cfg.LoopDir, "screenshots")
+
+	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		hasScreenshotBind := slices.Contains(cfg.Binds, screenshotDir+":"+screenshotDir+":ro")
+		return hasScreenshotBind
+	}), testContainerName, testJSONOK)
+
+	resp, err := s.runner.Run(ctx, &agent.AgentRequest{
+		ChannelID: "ch-1",
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hi"}},
+	})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp.Response)
 }
 
 func (s *RunnerSuite) TestRunWithDirPath() {
@@ -1411,8 +1410,7 @@ func (s *RunnerSuite) TestRunWithDirPath() {
 	}
 
 	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		return len(cfg.Binds) == 1 &&
-			cfg.Binds[0] == "/home/user/project:/home/user/project"
+		return slices.Contains(cfg.Binds, "/home/user/project:/home/user/project")
 	}), "loop-project-aabbcc", testJSONOK)
 
 	resp, err := s.runner.Run(ctx, req)
@@ -1796,8 +1794,8 @@ func (s *RunnerSuite) TestRunWithInvalidMount() {
 	}
 
 	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		// Invalid mount should be skipped, only workDir bind
-		return len(cfg.Binds) == 1
+		// Invalid mount should be skipped; workDir + screenshots
+		return len(cfg.Binds) == 2
 	}), testContainerName, testJSONOK)
 
 	resp, err := s.runner.Run(ctx, req)
@@ -1828,12 +1826,10 @@ func (s *RunnerSuite) TestRunWithCustomMounts() {
 	}
 
 	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
-		expectedBinds := []string{
-			"/home/testuser/.claude:/home/testuser/.claude",
-			"/home/testuser/.gitconfig:/home/testuser/.gitconfig:ro",
-			"/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work",
-		}
-		return slices.Equal(cfg.Binds, expectedBinds) &&
+		hasClaudeBind := slices.Contains(cfg.Binds, "/home/testuser/.claude:/home/testuser/.claude")
+		hasGitBind := slices.Contains(cfg.Binds, "/home/testuser/.gitconfig:/home/testuser/.gitconfig:ro")
+		hasWorkBind := slices.Contains(cfg.Binds, "/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work")
+		return hasClaudeBind && hasGitBind && hasWorkBind &&
 			cfg.WorkingDir == "/home/testuser/.loop/ch-1/work"
 	}), testContainerName, `{"type":"result","result":"Hello!","session_id":"sess-new-1","is_error":false}`)
 

@@ -204,15 +204,20 @@ The removal uses `ContainerRemove` with `Force: true`.
 
 ## Chrome Sidecar Container
 
-When `browser_enabled` is `true` (default), a Chrome container is started lazily on first browser tool use. Chrome runs in a dedicated Docker container on a shared network so both the agent's `loop-browser` MCP server and the desktop browser panel can access it via CDP (Chrome DevTools Protocol).
+When `browser_enabled` is `true` (default), a Chrome container is started lazily on first browser tool use. Chrome runs in a dedicated Docker container with a port mapping (`127.0.0.1:0 → 9222`) so the host API server can connect via CDP (Chrome DevTools Protocol).
+
+### Architecture
+
+```
+MCP (Docker) --HTTP POST--> Host API --CDPClient--> Chrome (:9222 → mapped port)
+Browser Pane --WebSocket--> Host API --CDPClient--> Chrome
+```
+
+The host API server manages all CDP connections centrally. The MCP server inside agent containers is a stateless HTTP proxy — it calls `POST /api/browser/action` on the host API for every browser operation. The browser pane connects via WebSocket for screencast frames and input events, with control operations also routed through the HTTP API.
 
 ### Container Naming
 
 Chrome containers follow the pattern `loop-chrome-{sanitized-channel-id}`. The same sanitization rules apply as for agent containers.
-
-### Network
-
-A per-channel Docker bridge network (`loop-net-{channelID}`) connects the agent container and Chrome container. The agent references Chrome by its hostname (`loop-chrome-{channelID}`).
 
 ### Built-in "loop-browser" MCP Server
 
@@ -222,18 +227,18 @@ When browser is enabled, a `loop-browser` MCP server is registered in the contai
 {
   "loop-browser": {
     "command": "/usr/local/bin/loop",
-    "args": ["mcp-browser", "--host", "loop-chrome-<channelID>", "--log", "<workDir>/.loop/mcp-browser.log", "--api-url", "<apiURL>", "--channel-id", "<channelID>"]
+    "args": ["mcp-browser", "--log", "<workDir>/.loop/mcp-browser.log", "--api-url", "<apiURL>", "--channel-id", "<channelID>"]
   }
 }
 ```
 
-The `--api-url` and `--channel-id` flags enable lazy Chrome startup: the MCP server calls `POST /api/browser/ensure` on the host API when the first browser tool is invoked.
+The MCP server proxies all 19 browser tools (navigate, screenshot, click, type, tabs, etc.) through `POST /api/browser/action` on the host API. Chrome is started lazily on first action. Screenshots can be returned as file paths (via a shared screenshots directory) instead of base64 for better performance.
 
 ### Idle Timeout
 
 Chrome containers auto-stop after **5 minutes** of inactivity. Activity is tracked via:
-- **MCP tools**: Each tool invocation sends a debounced (1-minute interval) `POST /api/browser/touch` to the host API.
-- **Browser pane**: The desktop app's browser panel signals `PaneConnected`/`PaneDisconnected` -- while a pane is connected, Chrome is never idle-stopped.
+- **MCP tools**: Each `POST /api/browser/action` call touches the idle timer.
+- **Browser pane**: The desktop app's browser panel signals `PaneConnected`/`PaneDisconnected` — while a pane is connected, Chrome is never idle-stopped.
 
 The idle monitor runs every minute and stops Chrome for sessions where `paneCount == 0` and the last activity exceeds the timeout.
 

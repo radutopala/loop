@@ -24,16 +24,54 @@ import (
 	"github.com/go-json-experiment/json/jsontext"
 )
 
-// findPageTarget queries Chrome's HTTP endpoint to find an existing page target.
-// If no page target exists, creates one via /json/new and returns its ID.
-// The wsURL is like "ws://127.0.0.1:55008" — we convert to "http://127.0.0.1:55008/json/...".
-func findOrCreatePageTarget(wsURL string, reuseExisting bool) (target.ID, error) {
-	baseURL := strings.Replace(wsURL, "ws://", "http://", 1)
+// ChromeHTTPBaseURL converts a CDP WebSocket URL to its HTTP base URL.
+// E.g. "ws://127.0.0.1:55008" → "http://127.0.0.1:55008".
+func ChromeHTTPBaseURL(wsURL string) string {
+	return strings.Replace(wsURL, "ws://", "http://", 1)
+}
 
+// ActivateTarget activates a page target in Chrome via its HTTP endpoint.
+func ActivateTarget(wsURL, targetID string) error {
+	activateURL := ChromeHTTPBaseURL(wsURL) + "/json/activate/" + targetID
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Get(activateURL) //nolint:gosec,noctx
+	if err != nil {
+		return fmt.Errorf("activating target %s: %w", targetID, err)
+	}
+	resp.Body.Close()
+	return nil
+}
+
+// CreatePageTarget creates a new about:blank page target via Chrome's HTTP endpoint.
+func CreatePageTarget(wsURL string) (string, error) {
+	newURL := ChromeHTTPBaseURL(wsURL) + "/json/new?about:blank"
+	req, err := http.NewRequest(http.MethodPut, newURL, nil) //nolint:noctx
+	if err != nil {
+		return "", fmt.Errorf("creating new target request: %w", err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("creating new page target: %w", err)
+	}
+	defer resp.Body.Close()
+	var newTarget struct {
+		ID string `json:"id"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&newTarget); err != nil {
+		return "", fmt.Errorf("decoding new target: %w", err)
+	}
+	if newTarget.ID == "" {
+		return "", fmt.Errorf("empty target ID from /json/new")
+	}
+	return newTarget.ID, nil
+}
+
+// findOrCreatePageTarget queries Chrome's HTTP endpoint to find an existing page target.
+// If no page target exists, creates one via /json/new and returns its ID.
+func findOrCreatePageTarget(wsURL string, reuseExisting bool) (target.ID, error) {
 	// Reuse an existing page target if requested.
-	// Chrome 144+ headless only allows one CDP session per target, so callers
-	// that might conflict with another CDP client should set reuseExisting=false.
 	if reuseExisting {
+		baseURL := ChromeHTTPBaseURL(wsURL)
 		resp, err := http.Get(baseURL + "/json/list") //nolint:gosec,noctx // internal call to local Chrome
 		if err == nil {
 			defer resp.Body.Close()
@@ -51,35 +89,18 @@ func findOrCreatePageTarget(wsURL string, reuseExisting bool) (target.ID, error)
 		}
 	}
 
-	// Create a new page target via the HTTP endpoint.
-	req, err := http.NewRequest(http.MethodPut, baseURL+"/json/new?about:blank", nil) //nolint:noctx
-	if err != nil {
-		return "", fmt.Errorf("creating new target request: %w", err)
-	}
-	putResp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("creating new page target: %w", err)
-	}
-	defer putResp.Body.Close()
-
-	var newTarget struct {
-		ID string `json:"id"`
-	}
-	if err := json.NewDecoder(putResp.Body).Decode(&newTarget); err != nil {
-		return "", fmt.Errorf("decoding new target: %w", err)
-	}
-	if newTarget.ID == "" {
-		return "", fmt.Errorf("empty target ID from /json/new")
-	}
-	return target.ID(newTarget.ID), nil
+	id, err := CreatePageTarget(wsURL)
+	return target.ID(id), err
 }
 
 // CDPClient wraps a chromedp browser context for CDP operations.
 // It handles screencast streaming, input dispatch, navigation, and accessibility.
 type CDPClient struct {
+	allocCtx    context.Context
 	allocCancel context.CancelFunc
 	ctxCancel   context.CancelFunc
 	ctx         context.Context
+	wsURL       string // Chrome CDP WebSocket URL for HTTP endpoint access
 	logger      *slog.Logger
 
 	// Function deps — set by constructor, overridable in tests via direct struct construction.
@@ -94,15 +115,38 @@ type CDPClient struct {
 	targetID target.ID   // the page target this client is attached to
 	exec     cdpExecutor // injectable cdp.Execute
 
-	mu            sync.Mutex
-	screencasting bool
-	frameCh       chan []byte // decoded JPEG frames
-	stopCh        chan struct{}
+	mu                 sync.Mutex
+	screencasting      bool
+	listenerRegistered bool        // true after first listenFunc registration
+	frameCh            chan []byte // decoded JPEG frames
+	stopCh             chan struct{}
 }
 
 // TargetID returns the Chrome page target ID this client is attached to.
 func (c *CDPClient) TargetID() string {
 	return string(c.targetID)
+}
+
+// SwitchTarget activates a different page target in Chrome.
+// It bypasses the CDP command queue (which can block due to pending
+// screencast frame acks) and uses Chrome's HTTP endpoint directly.
+func (c *CDPClient) SwitchTarget(targetID string) error {
+	c.StopScreencast()
+
+	if err := ActivateTarget(c.wsURL, targetID); err != nil {
+		c.logger.Error("SwitchTarget: activate failed", "error", err)
+		return err
+	}
+	c.logger.Info("SwitchTarget: activated", "target_id", targetID)
+
+	c.targetID = target.ID(targetID)
+
+	c.mu.Lock()
+	c.frameCh = make(chan []byte, 2)
+	c.stopCh = make(chan struct{})
+	c.mu.Unlock()
+
+	return nil
 }
 
 // cdpConfig holds constructor-level dependencies, overridable via CDPOption.
@@ -183,9 +227,11 @@ func NewCDPClient(ctx context.Context, wsURL string, logger *slog.Logger, opts .
 	}
 
 	return &CDPClient{
+		allocCtx:    allocCtx,
 		allocCancel: allocCancel,
 		ctxCancel:   cdpCancel,
 		ctx:         cdpCtx,
+		wsURL:       wsURL,
 		targetID:    resolvedTargetID,
 		exec:        cfg.exec,
 		logger:      logger,
@@ -248,30 +294,16 @@ func (c *CDPClient) Reload(ctx context.Context) error {
 	return c.runFn(c.ctx, chromedp.Reload())
 }
 
-// GoBack navigates back in history.
+// GoBack navigates back in history via window.history.back().
+// This is a no-op if there is no history to go back to.
 func (c *CDPClient) GoBack(ctx context.Context) error {
-	ctx2, cancel := context.WithTimeout(c.ctx, 5*time.Second)
-	defer cancel()
-	if err := c.runFn(ctx2, chromedp.NavigateBack()); err != nil {
-		if ctx2.Err() != nil {
-			return fmt.Errorf("no history to go back")
-		}
-		return err
-	}
-	return nil
+	return c.runFn(c.ctx, chromedp.Evaluate(`void(window.history.back())`, nil))
 }
 
-// GoForward navigates forward in history.
+// GoForward navigates forward in history via window.history.forward().
+// This is a no-op if there is no history to go forward to.
 func (c *CDPClient) GoForward(ctx context.Context) error {
-	ctx2, cancel := context.WithTimeout(c.ctx, 5*time.Second)
-	defer cancel()
-	if err := c.runFn(ctx2, chromedp.NavigateForward()); err != nil {
-		if ctx2.Err() != nil {
-			return fmt.Errorf("no history to go forward")
-		}
-		return err
-	}
-	return nil
+	return c.runFn(c.ctx, chromedp.Evaluate(`void(window.history.forward())`, nil))
 }
 
 // PageInfo holds the current page URL and title.
@@ -294,59 +326,76 @@ func (c *CDPClient) GetPageInfo(ctx context.Context) (*PageInfo, error) {
 
 // StartScreencast begins streaming JPEG frames from Chrome.
 // Frames are sent to the returned channel. Call StopScreencast to stop.
+// Each call returns a NEW channel — callers must not hold old references.
 func (c *CDPClient) StartScreencast(quality, maxWidth, maxHeight int) <-chan []byte {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	if c.screencasting {
-		return c.frameCh
-	}
-	c.screencasting = true
-	c.stopCh = make(chan struct{})
+	// Always create a fresh frameCh so old pipeFrames goroutines can't
+	// steal frames from the new one (two readers on one channel = race).
+	c.frameCh = make(chan []byte, 2)
+	c.logger.Info("StartScreencast", "already_screencasting", c.screencasting, "target_id", string(c.targetID))
 
-	// Listen for screencast frames.
-	c.listenFunc(c.ctx, func(ev any) {
-		e, ok := ev.(*cdppage.EventScreencastFrame)
-		if ok {
-			// Decode base64 frame data.
+	// Register the frame listener ONCE per CDP client lifetime.
+	// chromedp.ListenTarget adds listeners — never removes them.
+	// Multiple registrations cause duplicate acks that clog the queue.
+	if !c.listenerRegistered {
+		c.listenerRegistered = true
+		c.listenFunc(c.ctx, func(ev any) {
+			e, ok := ev.(*cdppage.EventScreencastFrame)
+			if !ok {
+				return
+			}
 			data, err := base64.StdEncoding.DecodeString(e.Data)
 			if err != nil {
 				c.logger.Error("failed to decode screencast frame", "error", err)
 				return
 			}
 
-			// Acknowledge the frame.
 			go func() {
 				if err := c.runFn(c.ctx, cdppage.ScreencastFrameAck(e.SessionID)); err != nil {
 					c.logger.Debug("screencast ack failed", "error", err)
 				}
 			}()
 
-			// Send frame, drop if channel is full.
+			c.mu.Lock()
+			ch := c.frameCh
+			c.mu.Unlock()
 			select {
-			case c.frameCh <- data:
+			case ch <- data:
 			default:
-				// Drop frame to avoid backpressure.
 			}
-		}
-	})
+		})
+	}
 
-	// Start the screencast.
-	go func() {
-		err := c.runFn(c.ctx,
-			cdppage.StartScreencast().
-				WithFormat(cdppage.ScreencastFormatJpeg).
-				WithQuality(int64(quality)).
-				WithMaxWidth(int64(maxWidth)).
-				WithMaxHeight(int64(maxHeight)).
-				WithEveryNthFrame(1),
-		)
-		if err != nil {
-			c.logger.Error("failed to start screencast", "error", err)
-		}
-	}()
+	if !c.screencasting {
+		c.screencasting = true
+		c.stopCh = make(chan struct{})
+
+		go func() {
+			err := c.runFn(c.ctx,
+				cdppage.StartScreencast().
+					WithFormat(cdppage.ScreencastFormatJpeg).
+					WithQuality(int64(quality)).
+					WithMaxWidth(int64(maxWidth)).
+					WithMaxHeight(int64(maxHeight)).
+					WithEveryNthFrame(1),
+			)
+			if err != nil {
+				c.logger.Error("failed to start screencast", "error", err)
+			}
+		}()
+	}
 
 	return c.frameCh
+}
+
+// ResetScreencast marks the screencast as stopped without sending a CDP command.
+// Use this when the WS connection was lost and the screencast state is stale.
+func (c *CDPClient) ResetScreencast() {
+	c.mu.Lock()
+	c.screencasting = false
+	c.mu.Unlock()
 }
 
 // StopScreencast stops the screencast stream.
@@ -358,7 +407,9 @@ func (c *CDPClient) StopScreencast() {
 
 	if wasScreencasting {
 		close(c.stopCh)
+		c.logger.Info("StopScreencast: sending CDP stop command")
 		_ = c.runFn(c.ctx, cdppage.StopScreencast())
+		c.logger.Info("StopScreencast: done")
 	}
 }
 
@@ -441,7 +492,7 @@ type ElementRef struct {
 	Y                float64           `json:"y"`
 	Width            float64           `json:"width"`
 	Height           float64           `json:"height"`
-	BackendDOMNodeID cdp.BackendNodeID `json:"-"` // internal, used for scroll_to
+	BackendDOMNodeID cdp.BackendNodeID `json:"backend_dom_node_id,omitempty"` // internal, used for scroll_to
 }
 
 // makeAxTreeFunc creates an accessibility tree function with lenient JSON parsing.
@@ -636,20 +687,86 @@ type TabInfo struct {
 	TargetID string `json:"target_id"`
 	URL      string `json:"url"`
 	Title    string `json:"title"`
+	Active   bool   `json:"active,omitempty"`
 }
 
 // ListTabs returns all open browser tabs.
-func (c *CDPClient) ListTabs(ctx context.Context) ([]TabInfo, error) {
-	targets, err := c.targetsFunc(c.ctx)
+// Uses Chrome's HTTP /json/list endpoint to avoid blocking the chromedp
+// command queue (which can be clogged by pending screencast frame acks).
+func (c *CDPClient) ListTabs(_ context.Context) ([]TabInfo, error) {
+	if c.wsURL == "" {
+		// Fallback to chromedp for tests without wsURL.
+		targets, err := c.targetsFunc(c.ctx)
+		if err != nil {
+			return nil, fmt.Errorf("listing targets: %w", err)
+		}
+		var tabs []TabInfo
+		for _, t := range targets {
+			if t.Type == "page" {
+				tabs = append(tabs, TabInfo{
+					TargetID: string(t.TargetID),
+					URL:      t.URL,
+					Title:    t.Title,
+				})
+			}
+		}
+		return tabs, nil
+	}
+
+	baseURL := ChromeHTTPBaseURL(c.wsURL)
+	client := &http.Client{Timeout: 5 * time.Second}
+	listURL := baseURL + "/json/list"
+	resp, err := client.Get(listURL) //nolint:gosec,noctx
 	if err != nil {
-		return nil, fmt.Errorf("listing targets: %w", err)
+		// Fallback to chromedp targets if HTTP fails (e.g. network issues).
+		targets, err2 := c.targetsFunc(c.ctx)
+		if err2 != nil {
+			return nil, fmt.Errorf("listing targets via HTTP (%s: %w) and CDP (%w)", listURL, err, err2)
+		}
+		var tabs []TabInfo
+		for _, t := range targets {
+			if t.Type == "page" {
+				tabs = append(tabs, TabInfo{
+					TargetID: string(t.TargetID),
+					URL:      t.URL,
+					Title:    t.Title,
+				})
+			}
+		}
+		return tabs, nil
+	}
+	defer resp.Body.Close()
+
+	var targets []struct {
+		ID    string `json:"id"`
+		Type  string `json:"type"`
+		URL   string `json:"url"`
+		Title string `json:"title"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&targets); err != nil {
+		// Response might be HTML (Chrome error page). Fallback to chromedp.
+		cdpTargets, err2 := c.targetsFunc(c.ctx)
+		if err2 != nil {
+			return nil, fmt.Errorf("decoding targets from %s: %w", listURL, err)
+		}
+		var tabs []TabInfo
+		for _, t := range cdpTargets {
+			if t.Type == "page" {
+				tabs = append(tabs, TabInfo{
+					TargetID: string(t.TargetID),
+					URL:      t.URL,
+					Title:    t.Title,
+				})
+			}
+		}
+		return tabs, nil
 	}
 
 	var tabs []TabInfo
 	for _, t := range targets {
 		if t.Type == "page" {
 			tabs = append(tabs, TabInfo{
-				TargetID: string(t.TargetID),
+				TargetID: t.ID,
 				URL:      t.URL,
 				Title:    t.Title,
 			})
@@ -673,7 +790,18 @@ func (c *CDPClient) SwitchTab(ctx context.Context, targetID string) error {
 }
 
 // CloseTab closes a tab by its target ID.
-func (c *CDPClient) CloseTab(ctx context.Context, targetID string) error {
+// Uses Chrome's HTTP /json/close endpoint to avoid chromedp context issues.
+func (c *CDPClient) CloseTab(_ context.Context, targetID string) error {
+	if c.wsURL != "" {
+		baseURL := ChromeHTTPBaseURL(c.wsURL)
+		client := &http.Client{Timeout: 5 * time.Second}
+		resp, err := client.Get(baseURL + "/json/close/" + targetID) //nolint:gosec,noctx
+		if err != nil {
+			return fmt.Errorf("closing tab %s: %w", targetID, err)
+		}
+		resp.Body.Close()
+		return nil
+	}
 	return c.runFn(c.ctx, target.CloseTarget(target.ID(targetID)))
 }
 

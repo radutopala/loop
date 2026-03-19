@@ -1,6 +1,8 @@
 package terminal
 
-import "sync"
+import (
+	"sync"
+)
 
 // RingBuffer is a fixed-size circular byte buffer that is safe for
 // concurrent use. When full, new writes overwrite the oldest data.

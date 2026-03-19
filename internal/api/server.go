@@ -9,8 +9,10 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"sync"
 	"time"
 
+	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/scheduler"
 )
@@ -56,9 +58,11 @@ type Server struct {
 	containerFinder    ContainerFinder
 	containerStopper   ContainerStopper
 	browserManager     BrowserManager
-	browserCDPFactory  func(ctx context.Context, wsURL string, logger *slog.Logger) (browserCDPClient, error)
+	browserCDPFactory  func(ctx context.Context, wsURL string, logger *slog.Logger, opts ...browser.CDPOption) (browserCDPClient, error)
 	browserCDPRetries  int
 	browserCDPDelay    time.Duration
+	browserCaptures    map[string]*browserCaptureState // channelID -> state
+	browserCapturesMu  sync.Mutex
 	cmdBuilder         InteractiveCmdBuilder
 	runningChLister    RunningChannelLister
 	activeChatLister   ActiveChatLister
@@ -66,6 +70,7 @@ type Server struct {
 	interactionHandler InteractionHandler
 	eventsHub          *EventsHub
 	loopDir            string
+	screenshotDir      string // if set, write screenshots to this dir instead of base64
 	logger             *slog.Logger
 	server             *http.Server
 	listener           net.Listener
@@ -91,6 +96,12 @@ func (s *Server) SetMemoryIndexer(idx MemoryIndexer) {
 // SetLoopDir sets the loop directory used for fallback work dir resolution.
 func (s *Server) SetLoopDir(dir string) {
 	s.loopDir = dir
+}
+
+// SetScreenshotDir sets the directory for file-based screenshots.
+// When set, screenshots are written as files instead of base64-encoded in JSON.
+func (s *Server) SetScreenshotDir(dir string) {
+	s.screenshotDir = dir
 }
 
 // SetRunningChannelLister configures the running channel lister for the channel list endpoint.
@@ -127,8 +138,8 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 	}
 }
 
-// Start starts the HTTP server on the given address.
-func (s *Server) Start(addr string) error {
+// buildMux creates the HTTP mux with all API route registrations.
+func (s *Server) buildMux() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/channels", s.handleSearchChannels)
 	mux.HandleFunc("POST /api/channels", s.handleEnsureChannel)
@@ -162,12 +173,17 @@ func (s *Server) Start(addr string) error {
 	mux.HandleFunc("POST /api/channels/{id}/branches/switch", s.handleSwitchBranch)
 	mux.HandleFunc("POST /api/channels/{id}/branches/create", s.handleCreateBranch)
 	mux.HandleFunc("POST /api/worktrees", s.handleCreateWorktree)
-	mux.HandleFunc("POST /api/browser/ensure", s.handleEnsureBrowser)
-	mux.HandleFunc("POST /api/browser/touch", s.handleTouchBrowser)
+	mux.HandleFunc("POST /api/browser/action", s.handleBrowserAction)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
 	mux.HandleFunc("GET /api/ws/browser", s.handleBrowserWS)
 	mux.HandleFunc("GET /api/ws", s.handleEventsWS)
+	return mux
+}
+
+// Start starts the HTTP server on the given address.
+func (s *Server) Start(addr string) error {
+	mux := s.buildMux()
 
 	s.server = &http.Server{
 		Addr:    addr,

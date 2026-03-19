@@ -13,11 +13,10 @@ import (
 	"strings"
 
 	"github.com/bwmarrin/discordgo"
+	dockerclient "github.com/docker/docker/client"
 	goslack "github.com/slack-go/slack"
 	"github.com/slack-go/slack/socketmode"
 	"github.com/spf13/cobra"
-
-	dockerclient "github.com/docker/docker/client"
 
 	"github.com/radutopala/loop/internal/api"
 	"github.com/radutopala/loop/internal/browser"

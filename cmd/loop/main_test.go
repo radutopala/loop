@@ -26,6 +26,7 @@ import (
 
 	"github.com/radutopala/loop/internal/api"
 	"github.com/radutopala/loop/internal/bot"
+	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/daemon"
@@ -3623,15 +3624,13 @@ func (s *MainSuite) TestNewMCPBrowserCmd() {
 	require.NotNil(s.T(), cmd.RunE)
 
 	f := cmd.Flags()
-	require.NotNil(s.T(), f.Lookup("host"))
-	require.NotNil(s.T(), f.Lookup("port"))
 	require.NotNil(s.T(), f.Lookup("log"))
 	require.NotNil(s.T(), f.Lookup("api-url"))
 	require.NotNil(s.T(), f.Lookup("channel-id"))
 }
 
 func (s *MainSuite) TestRunMCPBrowserLogOpenError() {
-	err := s.app.runMCPBrowser("127.0.0.1", 9222, "", "", "", "/nonexistent/dir/mcp-browser.log", mcpbrowser.New)
+	err := s.app.runMCPBrowser("", "", "/nonexistent/dir/mcp-browser.log", mcpbrowser.New)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "opening mcp-browser log")
 }
@@ -3640,26 +3639,22 @@ func (s *MainSuite) TestRunMCPBrowserSuccess() {
 	logPath := filepath.Join(s.T().TempDir(), "mcp-browser.log")
 
 	called := false
-	newServer := func(cdpEndpoint string, logger *slog.Logger) *mcpbrowser.Server {
-		require.Equal(s.T(), "ws://127.0.0.1:9333", cdpEndpoint)
+	newServer := func(apiURL, channelID string, logger *slog.Logger) *mcpbrowser.Server {
+		require.Equal(s.T(), "http://host:8222", apiURL)
+		require.Equal(s.T(), "ch-1", channelID)
 		require.NotNil(s.T(), logger)
 		called = true
-		return mcpbrowser.New(cdpEndpoint, logger)
+		return mcpbrowser.New(apiURL, channelID, logger)
 	}
 
 	// runMCPBrowser will try to use StdioTransport which will fail/close immediately in test.
-	_ = s.app.runMCPBrowser("127.0.0.1", 9333, "", "", "", logPath, newServer)
+	_ = s.app.runMCPBrowser("http://host:8222", "ch-1", logPath, newServer)
 	require.True(s.T(), called)
-}
-
-func (s *MainSuite) TestRunMCPBrowserWithTargetID() {
-	logPath := filepath.Join(s.T().TempDir(), "mcp-browser.log")
-	_ = s.app.runMCPBrowser("127.0.0.1", 9333, "target-xyz", "", "", logPath, mcpbrowser.New)
 }
 
 func (s *MainSuite) TestRunMCPBrowserWithAPICallback() {
 	logPath := filepath.Join(s.T().TempDir(), "mcp-browser.log")
-	_ = s.app.runMCPBrowser("127.0.0.1", 9333, "", "http://host.docker.internal:8222", "ch-1", logPath, mcpbrowser.New)
+	_ = s.app.runMCPBrowser("http://host.docker.internal:8222", "ch-1", logPath, mcpbrowser.New)
 }
 
 func (s *MainSuite) TestRunMCPBrowserWithConfig() {
@@ -3673,13 +3668,13 @@ func (s *MainSuite) TestRunMCPBrowserWithConfig() {
 	}
 
 	called := false
-	newServer := func(cdpEndpoint string, logger *slog.Logger) *mcpbrowser.Server {
+	newServer := func(apiURL, channelID string, logger *slog.Logger) *mcpbrowser.Server {
 		require.NotNil(s.T(), logger)
 		called = true
-		return mcpbrowser.New(cdpEndpoint, logger)
+		return mcpbrowser.New(apiURL, channelID, logger)
 	}
 
-	_ = s.app.runMCPBrowser("127.0.0.1", 9222, "", "", "", logPath, newServer)
+	_ = s.app.runMCPBrowser("", "", logPath, newServer)
 	require.True(s.T(), called)
 }
 
@@ -3717,9 +3712,23 @@ func (n *noopBrowserManager) GetCDPEndpoint(_ string) string                    
 func (n *noopBrowserManager) GetContainerID(_ string) (string, bool)             { return "", false }
 func (n *noopBrowserManager) SetTargetID(_, _ string)                            {}
 func (n *noopBrowserManager) GetTargetID(_ string) string                        { return "" }
-func (n *noopBrowserManager) SetCDP(_ string, _ any)                             {}
-func (n *noopBrowserManager) GetCDP(_ string) any                                { return nil }
+func (n *noopBrowserManager) SetCDPForTarget(_, _ string, _ any)                 {}
+func (n *noopBrowserManager) GetCDPForTarget(_, _ string) any                    { return nil }
+func (n *noopBrowserManager) RemoveCDPForTarget(_, _ string) any                 { return nil }
+func (n *noopBrowserManager) GetActiveCDP(_ string) any                          { return nil }
 func (n *noopBrowserManager) TouchBrowser(_ string)                              {}
 func (n *noopBrowserManager) PaneConnected(_ string)                             {}
 func (n *noopBrowserManager) PaneDisconnected(_ string)                          {}
 func (n *noopBrowserManager) RunIdleMonitor(_ context.Context, _ time.Duration)  {}
+func (n *noopBrowserManager) NotifyTargetSwitch(_, _ string)                     {}
+func (n *noopBrowserManager) TargetSwitchCh(_ string) <-chan string              { return nil }
+func (n *noopBrowserManager) NotifyTabAdded(_ string, _ browser.TabInfo)         {}
+func (n *noopBrowserManager) TabAddedCh(_ string) <-chan browser.TabInfo         { return nil }
+func (n *noopBrowserManager) NotifyTabRemoved(_, _ string)                       {}
+func (n *noopBrowserManager) TabRemovedCh(_ string) <-chan string                { return nil }
+func (n *noopBrowserManager) TrackTab(_, _ string)                               {}
+func (n *noopBrowserManager) UntrackTab(_, _ string)                             {}
+func (n *noopBrowserManager) NextTabID(_, _ string) string                       { return "" }
+func (n *noopBrowserManager) OrderTabs(_ string, tabs []browser.TabInfo) []browser.TabInfo {
+	return tabs
+}

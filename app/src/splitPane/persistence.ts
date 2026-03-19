@@ -3,7 +3,7 @@ import type { PaneNode } from "./types";
 const LAYOUT_KEY = "loop-workspace-layout";
 
 /** Default layout names — these are the "fixed" buttons in the header. */
-export const DEFAULT_LAYOUT_NAMES = ["Chat", "Editor", "Memory", "Terminal", "Diff", "Browser"] as const;
+export const DEFAULT_LAYOUT_NAMES = ["Chat", "Editor", "Memory", "Terminal", "Diff", "Browser Chat"] as const;
 
 export interface ChannelLayouts {
   active: string;
@@ -127,13 +127,13 @@ export function getLayoutNames(channelId: string): string[] {
 export function createDefaultLayouts(): ChannelLayouts {
   return {
     active: "Chat",
-    order: ["Chat", "Editor", "Memory", "Terminal", "Diff", "Browser"],
+    order: ["Chat", "Editor", "Memory", "Terminal", "Diff", "Browser Chat"],
     layouts: {
       Chat: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "leaf", id: "diff", panel: "diff", flex: 50 }] },
       Editor: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "editor", panel: "editor", flex: 65 }, { type: "leaf", id: "diff-1", panel: "diff", flex: 35 }] },
       Memory: { type: "leaf", id: "memory", panel: "memory", flex: 1 },
       Diff: { type: "leaf", id: "diff", panel: "diff", flex: 1 },
-      Browser: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 40 }, { type: "leaf", id: "browser", panel: "browser", flex: 60 }] },
+      "Browser Chat": { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "browser", panel: "browser", flex: 50 }, { type: "split", direction: "vertical", flex: 50, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "leaf", id: "diff", panel: "diff", flex: 50 }] }] },
     },
   };
 }
@@ -159,8 +159,27 @@ export function ensureDefaultLayouts(channelId: string): ChannelLayouts {
 
   // Add any missing default layouts (unless explicitly removed by user)
   const defaults = createDefaultLayouts();
-  const removed = ch.removed ?? [];
   let changed = false;
+
+  // Rename "Browser" → "Browser Chat"
+  if (ch.layouts["Browser"] || ch.order.includes("Browser")) {
+    if (ch.layouts["Browser"]) {
+      if (!ch.layouts["Browser Chat"]) {
+        ch.layouts["Browser Chat"] = ch.layouts["Browser"];
+      }
+      delete ch.layouts["Browser"];
+    }
+    ch.order = ch.order.map((n) => (n === "Browser" ? "Browser Chat" : n));
+    if (ch.active === "Browser") ch.active = "Browser Chat";
+    changed = true;
+  }
+  if (ch.removed) {
+    const hadBrowser = ch.removed.includes("Browser");
+    ch.removed = ch.removed.map((n: string) => (n === "Browser" ? "Browser Chat" : n));
+    if (hadBrowser) changed = true;
+  }
+
+  const removed = ch.removed ?? [];
   for (const name of DEFAULT_LAYOUT_NAMES) {
     if (removed.includes(name)) continue;
     if (!ch.layouts[name] && defaults.layouts[name]) {
