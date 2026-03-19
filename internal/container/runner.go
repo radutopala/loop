@@ -244,7 +244,7 @@ func NewDockerRunner(client DockerClient, cfg *config.Config) *DockerRunner {
 const (
 	containerLabel    = "loop-agent"
 	scannerBufInit    = 64 * 1024   // initial scanner buffer capacity
-	scannerBufMaxLine = 1024 * 1024 // max line size (1 MB)
+	scannerBufMaxLine = 8 * 1024 * 1024 // max line size (8 MB — screenshots can be large)
 )
 
 var nonAlphanumRegexp = regexp.MustCompile(`[^a-z0-9]+`)
