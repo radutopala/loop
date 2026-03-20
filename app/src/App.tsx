@@ -10,7 +10,7 @@ import { LoopLogo } from "./components/LoopLogo";
 import horizontalLogo from "./assets/logo-horizontal.svg";
 import { CommandPalette } from "./components/CommandPalette";
 import { Settings } from "./components/Settings";
-import { useEventStream } from "./hooks/useEventStream";
+import { useChatStateStore, type ActiveChatState } from "./hooks/useChatStateStore";
 
 function getHashChannelId(): string | null {
   const hash = window.location.hash.slice(1);
@@ -194,7 +194,20 @@ function AppInner() {
     debounceRef.current = setTimeout(loadDiffStats, 1_000);
   }, [loadDiffStats, selectedId, loadChannels]);
   useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
-  useEventStream({ channelId: selectedId, onEvent: onAppEvent });
+
+  // Single app-level WS that subscribes to the selected channel + all running
+  // channels. Replaces the previous dual-WS approach (one in App, one in
+  // WorkspaceLayout). Chat state is persisted in the store across switches.
+  const { getState, saveState, isRunningMapRef, subscribeChatEvents } = useChatStateStore({
+    channels,
+    selectedId,
+    onAppEvent,
+  });
+
+  const handleChatStateUnmount = useCallback(
+    (channelId: string, state: ActiveChatState) => saveState(channelId, state),
+    [saveState],
+  );
 
   // Update window title based on selected channel/thread.
   useEffect(() => {
@@ -431,6 +444,7 @@ function AppInner() {
         updateStatus={updateStatus}
         onDownloadUpdate={handleDownloadUpdate}
         onInstallUpdate={handleInstallUpdate}
+        isRunningMapRef={isRunningMapRef}
       />
       {selectedId && selectedChannel ? (
         <>
@@ -454,6 +468,9 @@ function AppInner() {
             onCreateWorktree={handleCreateWorktree}
             onImportWorktree={handleImportWorktree}
             onSelectThread={handleSelect}
+            initialChatState={selectedId ? getState(selectedId) : undefined}
+            onChatStateUnmount={handleChatStateUnmount}
+            subscribeChatEvents={subscribeChatEvents}
           />
           {readmeOpen && (
             <MarkdownFilePanel

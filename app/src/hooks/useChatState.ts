@@ -1,7 +1,7 @@
-import { useCallback, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AgentActivityData, AgentStatusData, AskUserQuestionData, ExitPlanModeData, Message, MessageCreatedData, MessageStreamingData, ToolUseData, WSEvent } from "../types";
+import type { ActiveChatState, ChatEventListener } from "./useChatStateStore";
 import { useMessages } from "./useMessages";
-import { useEventStream } from "./useEventStream";
 
 export interface ChatState {
   messages: Message[];
@@ -22,21 +22,82 @@ export interface ChatState {
   completionInfo: { duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null;
 }
 
+interface UseChatStateOptions {
+  /** Restored state from the app-level store — used to initialize instead of defaults. */
+  initialState?: ActiveChatState;
+  /** Called on unmount with the latest state snapshot so the store can persist it. */
+  onUnmount?: (state: ActiveChatState) => void;
+  /**
+   * Register to receive chat events from the app-level store's WebSocket.
+   * When provided, useChatState does NOT open its own WebSocket connection —
+   * events flow through the single store WS instead.
+   */
+  subscribeChatEvents?: (listener: ChatEventListener) => () => void;
+}
+
 /**
  * Manages chat state (messages, streaming, running status) and event stream.
  * Intended to be hoisted above layout switches so the WebSocket connection
  * and state persist when the user switches tabs.
+ *
+ * When `subscribeChatEvents` is provided (the normal case when used with the
+ * app-level store), events arrive via the store's single WebSocket. Otherwise,
+ * no events are received (the hook relies on initialState for restoration).
  */
-export function useChatState(channelId: string | null, initialRunningBot?: boolean): ChatState {
+export function useChatState(
+  channelId: string | null,
+  initialRunningBot?: boolean,
+  options?: UseChatStateOptions,
+): ChatState {
+  const { initialState, onUnmount, subscribeChatEvents } = options ?? {};
+
   const { messages, loading, loadMore, hasMore, addMessage } = useMessages(channelId);
-  const [streamingContent, setStreamingContent] = useState<string | null>(null);
-  const [isRunning, setIsRunning] = useState(initialRunningBot ?? false);
-  const [toolActivity, setToolActivity] = useState<{ tool_name: string; input: string } | null>(null);
-  const [agentActivity, setAgentActivity] = useState<AgentActivityData | null>(null);
-  const [askUserQuestions, setAskUserQuestions] = useState<AskUserQuestionData | null>(null);
-  const [exitPlanRequest, setExitPlanRequest] = useState<ExitPlanModeData | null>(null);
-  const [mode, setMode] = useState<"agent" | "plan">("agent");
-  const [completionInfo, setCompletionInfo] = useState<{ duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null>(null);
+  const [streamingContent, setStreamingContent] = useState<string | null>(initialState?.streamingContent ?? null);
+  const [isRunning, setIsRunning] = useState(initialState?.isRunning ?? initialRunningBot ?? false);
+  const [toolActivity, setToolActivity] = useState<{ tool_name: string; input: string } | null>(initialState?.toolActivity ?? null);
+  const [agentActivity, setAgentActivity] = useState<AgentActivityData | null>(initialState?.agentActivity ?? null);
+  const [askUserQuestions, setAskUserQuestions] = useState<AskUserQuestionData | null>(initialState?.askUserQuestions ?? null);
+  const [exitPlanRequest, setExitPlanRequest] = useState<ExitPlanModeData | null>(initialState?.exitPlanRequest ?? null);
+  const [mode, setMode] = useState<"agent" | "plan">(initialState?.mode ?? "agent");
+  const [completionInfo, setCompletionInfo] = useState<{ duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null>(initialState?.completionInfo ?? null);
+
+  // Refs tracking latest values for the onUnmount snapshot.
+  const streamingRef = useRef(streamingContent);
+  streamingRef.current = streamingContent;
+  const isRunningRef = useRef(isRunning);
+  isRunningRef.current = isRunning;
+  const toolRef = useRef(toolActivity);
+  toolRef.current = toolActivity;
+  const agentRef = useRef(agentActivity);
+  agentRef.current = agentActivity;
+  const askRef = useRef(askUserQuestions);
+  askRef.current = askUserQuestions;
+  const exitRef = useRef(exitPlanRequest);
+  exitRef.current = exitPlanRequest;
+  const modeRef = useRef(mode);
+  modeRef.current = mode;
+  const completionRef = useRef(completionInfo);
+  completionRef.current = completionInfo;
+
+  const onUnmountRef = useRef(onUnmount);
+  onUnmountRef.current = onUnmount;
+
+  // Call onUnmount on cleanup with the latest state snapshot.
+  useEffect(() => {
+    return () => {
+      const snapshot = {
+        streamingContent: streamingRef.current,
+        isRunning: isRunningRef.current,
+        toolActivity: toolRef.current,
+        agentActivity: agentRef.current,
+        askUserQuestions: askRef.current,
+        exitPlanRequest: exitRef.current,
+        mode: modeRef.current,
+        completionInfo: completionRef.current,
+      };
+      onUnmountRef.current?.(snapshot);
+    };
+  }, [channelId]);
 
   const handleEvent = useCallback(
     (event: WSEvent) => {
@@ -110,7 +171,15 @@ export function useChatState(channelId: string | null, initialRunningBot?: boole
     [addMessage],
   );
 
-  useEventStream({ channelId, onEvent: handleEvent });
+  // Subscribe to chat events from the app-level store (single WS).
+  const handleEventRef = useRef(handleEvent);
+  handleEventRef.current = handleEvent;
+
+  useEffect(() => {
+    if (!subscribeChatEvents) return;
+    const listener: ChatEventListener = (event) => handleEventRef.current(event);
+    return subscribeChatEvents(listener);
+  }, [subscribeChatEvents]);
 
   return {
     messages,

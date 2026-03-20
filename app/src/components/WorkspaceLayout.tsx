@@ -15,6 +15,7 @@ import { DiffPanel } from "./DiffPanel";
 import { BrowserPanel } from "./BrowserPanel";
 import { killAgentContainer, fetchBranches, switchBranch, type BranchInfo } from "../api/loopApi";
 import { useChatState } from "../hooks/useChatState";
+import type { ActiveChatState, ChatEventListener } from "../hooks/useChatStateStore";
 import { fonts } from "../theme";
 import type { ColorPalette } from "../theme";
 import { useTheme } from "../ThemeContext";
@@ -432,6 +433,12 @@ interface WorkspaceLayoutProps {
   onCreateWorktree?: (channelId: string, branch: string) => Promise<void>;
   onImportWorktree?: (channelId: string, worktreePath: string) => Promise<void>;
   onSelectThread?: (threadId: string) => void;
+  /** Restored chat state from the app-level store. */
+  initialChatState?: ActiveChatState;
+  /** Called on unmount with latest chat state for store persistence. */
+  onChatStateUnmount?: (channelId: string, state: ActiveChatState) => void;
+  /** Subscribe to chat events from the store's single WebSocket. */
+  subscribeChatEvents?: (listener: ChatEventListener) => () => void;
 }
 
 export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutProps>(function WorkspaceLayout({
@@ -452,6 +459,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   onCreateWorktree,
   onImportWorktree,
   onSelectThread,
+  initialChatState,
+  onChatStateUnmount,
+  subscribeChatEvents,
 }, ref) {
   const { colors } = useTheme();
   const [branchError, setBranchError] = useState<string | null>(null);
@@ -473,7 +483,17 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   treeRef.current = tree;
 
   // Chat state — hoisted here so the WebSocket + messages survive layout switches.
-  const chatState = useChatState(channelId, channel.agent_running);
+  // initialChatState restores state from the app-level store on mount;
+  // onChatStateUnmount saves state back to the store on unmount.
+  const chatStateUnmount = useCallback(
+    (state: ActiveChatState) => onChatStateUnmount?.(channelId, state),
+    [channelId, onChatStateUnmount],
+  );
+  const chatState = useChatState(channelId, channel.agent_running, {
+    initialState: initialChatState,
+    onUnmount: chatStateUnmount,
+    subscribeChatEvents,
+  });
 
   // Track per-pane session status for aggregate agent state.
   const statusMapRef = useRef(new Map<string, SessionStatus>());

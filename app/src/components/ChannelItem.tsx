@@ -22,6 +22,8 @@ interface ChannelItemProps {
   selectMode?: boolean;
   checkedIds?: Set<string>;
   onToggleCheck?: (id: string) => void;
+  /** Real-time running status from app-level chat state store. */
+  isRunningMapRef?: React.RefObject<Map<string, boolean>>;
 }
 
 export function ChannelItem({
@@ -42,6 +44,7 @@ export function ChannelItem({
   selectMode,
   checkedIds,
   onToggleCheck,
+  isRunningMapRef,
 }: ChannelItemProps) {
   const { colors } = useTheme();
   const [creating, setCreating] = useState(false);
@@ -169,7 +172,7 @@ export function ChannelItem({
           >
             {channel.name || channel.dir_path?.split("/").pop() || channel.id}
           </span>
-          {(channel.container_running || channel.agent_running) && (
+          {(channel.container_running || channel.agent_running || isRunningMapRef?.current?.get(channel.id)) && (
             <span
               style={{
                 width: 6,
@@ -256,6 +259,7 @@ export function ChannelItem({
             selectMode={selectMode}
             checked={checkedIds?.has(thread.id)}
             onToggleCheck={onToggleCheck}
+            isRunningMapRef={isRunningMapRef}
           />
         ))}
     </div>

@@ -11,9 +11,11 @@ interface ThreadItemProps {
   selectMode?: boolean;
   checked?: boolean;
   onToggleCheck?: (id: string) => void;
+  /** Real-time running status from app-level chat state store. */
+  isRunningMapRef?: React.RefObject<Map<string, boolean>>;
 }
 
-export function ThreadItem({ thread, selected, isLast, onSelect, onContextMenu, selectMode, checked, onToggleCheck }: ThreadItemProps) {
+export function ThreadItem({ thread, selected, isLast, onSelect, onContextMenu, selectMode, checked, onToggleCheck, isRunningMapRef }: ThreadItemProps) {
   const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
 
@@ -100,7 +102,7 @@ export function ThreadItem({ thread, selected, isLast, onSelect, onContextMenu, 
       >
         {thread.name || thread.id}
       </span>
-      {(thread.container_running || thread.agent_running) && (
+      {(thread.container_running || thread.agent_running || isRunningMapRef?.current?.get(thread.id)) && (
         <span
           style={{
             width: 6,

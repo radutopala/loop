@@ -132,6 +132,8 @@ interface SidebarProps {
   updateStatus?: UpdateStatus | null;
   onDownloadUpdate?: () => void;
   onInstallUpdate?: () => void;
+  /** Real-time running status from the app-level chat state store. */
+  isRunningMapRef?: React.RefObject<Map<string, boolean>>;
 }
 
 export function Sidebar({
@@ -150,6 +152,7 @@ export function Sidebar({
   updateStatus,
   onDownloadUpdate,
   onInstallUpdate,
+  isRunningMapRef,
 }: SidebarProps) {
   const { colors } = useTheme();
   const [width, setWidth] = useState(DEFAULT_WIDTH);
@@ -541,6 +544,7 @@ export function Sidebar({
           selectMode={selectMode}
           checkedIds={selected}
           onToggleCheck={toggleSelected}
+          isRunningMapRef={isRunningMapRef}
         />
       )}
       {topLevel.map((channel) => (
@@ -562,6 +566,7 @@ export function Sidebar({
           selectMode={selectMode}
           checkedIds={selected}
           onToggleCheck={toggleSelected}
+          isRunningMapRef={isRunningMapRef}
         />
       ))}
 
