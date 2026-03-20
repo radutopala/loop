@@ -409,7 +409,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
               highlighted={msg.id === highlightedMsgId}
             />
           ))}
-          {isRunning && triggerContent && (
+          {isRunning && triggerContent && hasQueuedMessages && (
             <TriggerQuote content={triggerContent} />
           )}
           {isRunning && agentActivity && (
