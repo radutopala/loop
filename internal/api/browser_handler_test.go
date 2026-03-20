@@ -1482,6 +1482,8 @@ func (s *BrowserHandlerSuite) TestBrowserActionGetBrowserCDPCached() {
 	mockCDP := new(MockCDPClient)
 	mockCDP.On("TargetID").Return("t-cached").Maybe()
 	mockCDP.On("GetPageInfo", mock.Anything).Return(&browser.PageInfo{URL: "https://example.com", Title: "X"}, nil)
+	mockCDP.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
+	mockCDP.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	// GetCDP returns a cached client — factory should NOT be called.
 	s.browserMgr.On("GetActiveCDP", "ch-1").Return(mockCDP)

@@ -691,6 +691,7 @@ func (s *Server) getBrowserCDP(ctx context.Context, channelID string) (browserCD
 	raw := s.browserManager.GetActiveCDP(channelID)
 	if cached, ok := raw.(browserCDPClient); ok && cached != nil {
 		s.logger.Info("getBrowserCDP: reusing cached CDP", "channel_id", channelID)
+		s.ensureBrowserCapture(ctx, channelID, cached)
 		return cached, nil
 	}
 	s.logger.Info("getBrowserCDP: no cached CDP, creating new", "channel_id", channelID, "raw_type", fmt.Sprintf("%T", raw))
