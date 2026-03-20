@@ -821,7 +821,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           );
         case "agent":
           return (
-            <div key={`layout-agent-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", backgroundColor: colors.sidebar }}>
+            <div key={`layout-agent-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", backgroundColor: colors.sidebar }}>
               <Terminal
                 channelId={channelId}
                 target="agent"
@@ -834,7 +834,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           );
         case "shell":
           return (
-            <div key={`layout-shell-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", backgroundColor: colors.sidebar }}>
+            <div key={`layout-shell-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", backgroundColor: colors.sidebar }}>
               <Terminal
                 channelId={channelId}
                 target="host"

@@ -145,7 +145,7 @@ export function Terminal({ channelId, target = "agent", instanceId, hideActions,
         killLabel={target === "host" ? "Close" : "Kill"}
         killTitle={target === "host" ? "Close shell session" : "Kill session and remove container"}
       />
-      <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+      <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0 }}>
         <div style={{ padding: "8px 12px", width: "100%", height: "100%", boxSizing: "border-box" }}>
           <div ref={terminalRef} style={{ width: "100%", height: "100%" }} />
         </div>
