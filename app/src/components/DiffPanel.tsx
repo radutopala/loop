@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DiffResponse } from "../api/loopApi";
-import { fetchDiff } from "../api/loopApi";
+import { fetchDiff, fetchFileContent } from "../api/loopApi";
 import { useEventStream } from "../hooks/useEventStream";
 import { fonts } from "../theme";
 import type { ColorPalette } from "../theme";
@@ -11,6 +11,8 @@ const MIN_WIDTH = 280;
 const MAX_WIDTH_PERCENT = 0.6;
 const POLL_INTERVAL = 5_000;
 const WIDTH_STORAGE_KEY = "loop-diff-panel-width";
+const EXPAND_STEP = 20;
+const SMALL_GAP_THRESHOLD = 40;
 
 function loadWidth(): number {
   try {
@@ -59,6 +61,99 @@ interface HunkLine {
 interface ParsedFile {
   path: string;
   hunks: ParsedHunk[];
+}
+
+interface ExpandableGap {
+  startLine: number;   // 1-based new-file line where gap starts
+  endLine: number;     // 1-based new-file line where gap ends (inclusive)
+  oldStart: number;    // corresponding old-file line number
+  totalLines: number;
+}
+
+type DiffSegment =
+  | { kind: "hunk"; hunk: ParsedHunk; hunkIndex: number }
+  | { kind: "gap"; gap: ExpandableGap; position: "top" | "middle" | "bottom" };
+
+/** Return the first and last new-file line number in a hunk. */
+function hunkNewRange(hunk: ParsedHunk): { first: number; last: number } {
+  let first = Infinity, last = 0;
+  for (const line of hunk.lines) {
+    if (line.newNum !== null) {
+      if (line.newNum < first) first = line.newNum;
+      if (line.newNum > last) last = line.newNum;
+    }
+  }
+  return { first, last };
+}
+
+/** Return the first and last old-file line number in a hunk. */
+function hunkOldRange(hunk: ParsedHunk): { first: number; last: number } {
+  let first = Infinity, last = 0;
+  for (const line of hunk.lines) {
+    if (line.oldNum !== null) {
+      if (line.oldNum < first) first = line.oldNum;
+      if (line.oldNum > last) last = line.oldNum;
+    }
+  }
+  return { first, last };
+}
+
+/** Check if a parsed file is new/untracked (all additions, no old content). */
+function isNewFile(parsed: ParsedFile): boolean {
+  if (parsed.hunks.length === 0) return false;
+  return parsed.hunks[0]!.header.includes("-0,0");
+}
+
+/** Compute renderable segments (hunks + expandable gaps) for a parsed file. */
+function computeSegments(parsed: ParsedFile, totalLineCount?: number): DiffSegment[] {
+  if (isNewFile(parsed) || parsed.hunks.length === 0) {
+    return parsed.hunks.map((hunk, i) => ({ kind: "hunk" as const, hunk, hunkIndex: i }));
+  }
+
+  const segments: DiffSegment[] = [];
+
+  for (let i = 0; i < parsed.hunks.length; i++) {
+    const hunk = parsed.hunks[i]!;
+    const nr = hunkNewRange(hunk);
+    const or = hunkOldRange(hunk);
+
+    if (i === 0) {
+      // Top gap: lines before first hunk
+      if (nr.first > 1) {
+        segments.push({
+          kind: "gap",
+          gap: { startLine: 1, endLine: nr.first - 1, oldStart: 1, totalLines: nr.first - 1 },
+          position: "top",
+        });
+      }
+    } else {
+      // Middle gap: between previous hunk and this one
+      const prevNr = hunkNewRange(parsed.hunks[i - 1]!);
+      const prevOr = hunkOldRange(parsed.hunks[i - 1]!);
+      const gapNewStart = prevNr.last + 1;
+      const gapNewEnd = nr.first - 1;
+      if (gapNewStart <= gapNewEnd) {
+        segments.push({
+          kind: "gap",
+          gap: { startLine: gapNewStart, endLine: gapNewEnd, oldStart: prevOr.last + 1, totalLines: gapNewEnd - gapNewStart + 1 },
+          position: "middle",
+        });
+      }
+    }
+
+    segments.push({ kind: "hunk", hunk, hunkIndex: i });
+
+    // Bottom gap: after last hunk
+    if (i === parsed.hunks.length - 1 && totalLineCount !== undefined && nr.last < totalLineCount) {
+      segments.push({
+        kind: "gap",
+        gap: { startLine: nr.last + 1, endLine: totalLineCount, oldStart: or.last + 1, totalLines: totalLineCount - nr.last },
+        position: "bottom",
+      });
+    }
+  }
+
+  return segments;
 }
 
 function parseUnifiedDiff(raw: string): ParsedFile[] {
@@ -153,6 +248,10 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  // Expand context state: file content cache and per-gap expansion tracking
+  const fileContentCache = useRef<Map<string, string[]>>(new Map());
+  const [expandedGaps, setExpandedGaps] = useState<Map<string, Map<string, { fromTop: number; fromBottom: number }>>>(new Map());
+  const prevDiffRef = useRef<string>("");
   const panelRef = useRef<HTMLDivElement>(null);
 
   const headerBtnStyle = buildHeaderBtnStyle(colors);
@@ -176,6 +275,12 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
     if (!channelId) return;
     try {
       const d = await fetchDiff(channelId);
+      // If diff changed, invalidate file content cache and expanded gaps
+      if (d.diff !== prevDiffRef.current) {
+        fileContentCache.current.clear();
+        setExpandedGaps(new Map());
+        prevDiffRef.current = d.diff;
+      }
       setData(d);
       setParsedFiles(parseUnifiedDiff(d.diff));
     } catch {
@@ -226,6 +331,42 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
   const collapseAll = useCallback(() => {
     setExpandedFiles(new Set());
   }, []);
+
+  // --- Expand context handlers ---
+  const ensureFileContent = useCallback(async (filePath: string): Promise<string[] | null> => {
+    const cached = fileContentCache.current.get(filePath);
+    if (cached) return cached;
+    if (!channelId) return null;
+    try {
+      const { content, binary } = await fetchFileContent(channelId, filePath);
+      if (binary) return null;
+      const lines = content.split("\n");
+      fileContentCache.current.set(filePath, lines);
+      return lines;
+    } catch {
+      return null;
+    }
+  }, [channelId]);
+
+  const gapKey = (gap: ExpandableGap) => `${gap.startLine}-${gap.endLine}`;
+
+  const handleExpand = useCallback(async (filePath: string, gap: ExpandableGap, direction: "up" | "down" | "all") => {
+    await ensureFileContent(filePath);
+    setExpandedGaps((prev) => {
+      const fileGaps = new Map(prev.get(filePath) ?? []);
+      const current = fileGaps.get(gapKey(gap)) ?? { fromTop: 0, fromBottom: 0 };
+      if (direction === "down") {
+        fileGaps.set(gapKey(gap), { ...current, fromTop: current.fromTop + EXPAND_STEP });
+      } else if (direction === "up") {
+        fileGaps.set(gapKey(gap), { ...current, fromBottom: current.fromBottom + EXPAND_STEP });
+      } else {
+        fileGaps.set(gapKey(gap), { fromTop: gap.totalLines, fromBottom: 0 });
+      }
+      const next = new Map(prev);
+      next.set(filePath, fileGaps);
+      return next;
+    });
+  }, [ensureFileContent]);
 
   const handleMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -299,6 +440,111 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
     </div>
   );
 
+  /** Render a block of HunkLine[] with the standard gutter + content layout. */
+  const renderLines = (lines: HunkLine[]) => (
+    <div style={{ display: "flex" }}>
+      <div style={{ flexShrink: 0 }}>
+        {lines.map((line, li) => {
+          const lc = lineColors[line.type];
+          return (
+            <div key={li} style={{ display: "flex", lineHeight: "20px", fontFamily: fonts.mono, backgroundColor: lc.bg }}>
+              <span style={{ width: 40, textAlign: "right", paddingRight: 4, color: colors.textDim, backgroundColor: lc.numBg, userSelect: "none", fontSize: 11 }}>{line.oldNum ?? ""}</span>
+              <span style={{ width: 40, textAlign: "right", paddingRight: 8, color: colors.textDim, backgroundColor: lc.numBg, userSelect: "none", fontSize: 11 }}>{line.newNum ?? ""}</span>
+              <span style={{ width: 14, textAlign: "center", color: line.type === "add" ? colors.diffAddText : line.type === "del" ? colors.diffDelText : "transparent", userSelect: "none" }}>
+                {line.type === "add" ? "+" : line.type === "del" ? "\u2212" : " "}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+      <div style={{ flex: 1, overflowX: "auto", minWidth: 0 }}>
+        <div style={{ display: "inline-block", minWidth: "100%" }}>
+          {lines.map((line, li) => {
+            const lc = lineColors[line.type];
+            return (
+              <div key={li} style={{ lineHeight: "20px", fontFamily: fonts.mono, fontSize: 12, whiteSpace: "pre", color: lc.text, backgroundColor: lc.bg, paddingRight: 8 }}>
+                {line.content || " "}
+              </div>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+
+  /** Build context HunkLine[] from cached file content for a gap region. */
+  const buildContextLines = (filePath: string, startLine: number, endLine: number, oldStart: number): HunkLine[] => {
+    const cached = fileContentCache.current.get(filePath);
+    if (!cached) return [];
+    const lines: HunkLine[] = [];
+    for (let i = startLine; i <= endLine && i <= cached.length; i++) {
+      lines.push({ type: "ctx", content: cached[i - 1] ?? "", oldNum: oldStart + (i - startLine), newNum: i });
+    }
+    return lines;
+  };
+
+  /** Render an expand row for a gap. */
+  const renderExpandRow = (filePath: string, gap: ExpandableGap, position: "top" | "middle" | "bottom", remaining: number) => {
+    const expandBtnStyle: React.CSSProperties = {
+      background: "none", border: "none", color: colors.active, cursor: "pointer",
+      fontSize: 11, fontFamily: fonts.mono, padding: "0 8px", lineHeight: "20px",
+    };
+    const showAll = remaining <= SMALL_GAP_THRESHOLD;
+    return (
+      <div style={{ display: "flex", lineHeight: "20px", fontFamily: fonts.mono, backgroundColor: colors.diffHunkBg, userSelect: "none" }}>
+        <span style={{ width: 40, textAlign: "right", paddingRight: 4, color: colors.textDim, fontSize: 11 }}>···</span>
+        <span style={{ width: 40, textAlign: "right", paddingRight: 8, color: colors.textDim, fontSize: 11 }}>···</span>
+        <span style={{ width: 14 }} />
+        <span style={{ flex: 1, display: "flex", alignItems: "center", gap: 4 }}>
+          {(position === "top" || position === "middle") && !showAll && (
+            <button style={expandBtnStyle} onClick={() => handleExpand(filePath, gap, "down")}
+              onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}>
+              ↓ {Math.min(EXPAND_STEP, remaining)} lines
+            </button>
+          )}
+          {showAll ? (
+            <button style={expandBtnStyle} onClick={() => handleExpand(filePath, gap, "all")}
+              onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}>
+              Load all {remaining} lines
+            </button>
+          ) : (
+            <button style={expandBtnStyle} onClick={() => handleExpand(filePath, gap, "all")}
+              onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}>
+              ↕ all {remaining}
+            </button>
+          )}
+          {(position === "bottom" || position === "middle") && !showAll && (
+            <button style={expandBtnStyle} onClick={() => handleExpand(filePath, gap, "up")}
+              onMouseEnter={(e) => { e.currentTarget.style.textDecoration = "underline"; }}
+              onMouseLeave={(e) => { e.currentTarget.style.textDecoration = "none"; }}>
+              ↑ {Math.min(EXPAND_STEP, remaining)} lines
+            </button>
+          )}
+        </span>
+      </div>
+    );
+  };
+
+  /** Render a gap segment: revealed context lines + remaining expand row. */
+  const renderGapSegment = (filePath: string, gap: ExpandableGap, position: "top" | "middle" | "bottom") => {
+    const fileGaps = expandedGaps.get(filePath);
+    const state = fileGaps?.get(gapKey(gap)) ?? { fromTop: 0, fromBottom: 0 };
+    const revealedTop = Math.min(state.fromTop, gap.totalLines);
+    const revealedBottom = Math.min(state.fromBottom, gap.totalLines - revealedTop);
+    const remaining = gap.totalLines - revealedTop - revealedBottom;
+
+    return (
+      <>
+        {revealedTop > 0 && renderLines(buildContextLines(filePath, gap.startLine, gap.startLine + revealedTop - 1, gap.oldStart))}
+        {remaining > 0 && renderExpandRow(filePath, gap, position, remaining)}
+        {revealedBottom > 0 && renderLines(buildContextLines(filePath, gap.endLine - revealedBottom + 1, gap.endLine, gap.oldStart + (gap.totalLines - revealedBottom)))}
+      </>
+    );
+  };
+
   const diffContent = (
     <div style={{ flex: 1, overflow: "auto" }}>
       {loading && !data && (
@@ -310,6 +556,8 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
       {data?.files.map((file) => {
         const expanded = expandedFiles.has(file.path);
         const parsed = parsedFiles.find((pf) => pf.path === file.path);
+        const cachedLines = fileContentCache.current.get(file.path);
+        const segments = parsed ? computeSegments(parsed, cachedLines?.length) : [];
         return (
           <div key={file.path}>
             <button
@@ -342,39 +590,18 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
             </button>
             {expanded && parsed && (
               <div style={{ borderBottom: `1px solid ${colors.border}`, overflow: "hidden" }}>
-                {parsed.hunks.map((hunk, hi) => (
-                  <div key={hi}>
-                    <div style={{ padding: "2px 12px", fontSize: 11, fontFamily: fonts.mono, color: colors.textDim, backgroundColor: colors.diffHunkBg, whiteSpace: "pre", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {hunk.header}
-                    </div>
-                    <div style={{ display: "flex" }}>
-                      <div style={{ flexShrink: 0 }}>
-                        {hunk.lines.map((line, li) => {
-                          const lc = lineColors[line.type];
-                          return (
-                            <div key={li} style={{ display: "flex", lineHeight: "20px", fontFamily: fonts.mono, backgroundColor: lc.bg }}>
-                              <span style={{ width: 40, textAlign: "right", paddingRight: 4, color: colors.textDim, backgroundColor: lc.numBg, userSelect: "none", fontSize: 11 }}>{line.oldNum ?? ""}</span>
-                              <span style={{ width: 40, textAlign: "right", paddingRight: 8, color: colors.textDim, backgroundColor: lc.numBg, userSelect: "none", fontSize: 11 }}>{line.newNum ?? ""}</span>
-                              <span style={{ width: 14, textAlign: "center", color: line.type === "add" ? colors.diffAddText : line.type === "del" ? colors.diffDelText : "transparent", userSelect: "none" }}>
-                                {line.type === "add" ? "+" : line.type === "del" ? "\u2212" : " "}
-                              </span>
-                            </div>
-                          );
-                        })}
-                      </div>
-                      <div style={{ flex: 1, overflowX: "auto", minWidth: 0 }}>
-                        <div style={{ display: "inline-block", minWidth: "100%" }}>
-                          {hunk.lines.map((line, li) => {
-                            const lc = lineColors[line.type];
-                            return (
-                              <div key={li} style={{ lineHeight: "20px", fontFamily: fonts.mono, fontSize: 12, whiteSpace: "pre", color: lc.text, backgroundColor: lc.bg, paddingRight: 8 }}>
-                                {line.content || " "}
-                              </div>
-                            );
-                          })}
+                {segments.map((seg, si) => (
+                  <div key={si}>
+                    {seg.kind === "hunk" ? (
+                      <>
+                        <div style={{ padding: "2px 12px", fontSize: 11, fontFamily: fonts.mono, color: colors.textDim, backgroundColor: colors.diffHunkBg, whiteSpace: "pre", overflow: "hidden", textOverflow: "ellipsis" }}>
+                          {seg.hunk.header}
                         </div>
-                      </div>
-                    </div>
+                        {renderLines(seg.hunk.lines)}
+                      </>
+                    ) : (
+                      renderGapSegment(file.path, seg.gap, seg.position)
+                    )}
                   </div>
                 ))}
                 {file.binary && (
