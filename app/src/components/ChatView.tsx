@@ -7,6 +7,31 @@ import type { ColorPalette } from "../theme";
 import { useTheme } from "../ThemeContext";
 import { LoopLogo } from "./LoopLogo";
 
+// Draft text per channel — persisted to localStorage across app restarts.
+const DRAFT_KEY = "loop-chat-drafts";
+const draftText = {
+  get(channelId: string): string | undefined {
+    try {
+      const drafts = JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}");
+      return drafts[channelId];
+    } catch { return undefined; }
+  },
+  set(channelId: string, text: string) {
+    try {
+      const drafts = JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}");
+      drafts[channelId] = text;
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(drafts));
+    } catch { /* ignore */ }
+  },
+  delete(channelId: string) {
+    try {
+      const drafts = JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}");
+      delete drafts[channelId];
+      localStorage.setItem(DRAFT_KEY, JSON.stringify(drafts));
+    } catch { /* ignore */ }
+  },
+};
+
 function buildStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
   return {
     container: {
@@ -709,7 +734,7 @@ function ChatInput({ channelId, isRunning, mode, setMode, onDismissCards, onSent
   const modeStyles = buildModeStyles(colors);
   const commandStyles = buildCommandStyles(colors);
   const mentionStyles = buildMentionStyles(colors);
-  const [text, setText] = useState("");
+  const [text, setText] = useState(() => draftText.get(channelId) ?? "");
   const [sending, setSending] = useState(false);
   const [showMention, setShowMention] = useState(false);
   const [mentionIdx, setMentionIdx] = useState(-1);
@@ -719,9 +744,13 @@ function ChatInput({ channelId, isRunning, mode, setMode, onDismissCards, onSent
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const cmdDropdownRef = useRef<HTMLDivElement>(null);
 
-  // Auto-focus textarea on mount.
+  // Auto-focus textarea on mount; move cursor to end if restoring a draft.
   useEffect(() => {
-    inputRef.current?.focus();
+    const el = inputRef.current;
+    if (el) {
+      el.focus();
+      el.setSelectionRange(el.value.length, el.value.length);
+    }
   }, []);
 
   // Scroll selected command item into view.
@@ -752,6 +781,7 @@ function ChatInput({ channelId, isRunning, mode, setMode, onDismissCards, onSent
         await sendMessage(channelId, trimmed, mode);
       }
       setText("");
+      draftText.delete(channelId);
       onDismissCards?.();
       onSent?.();
     } finally {
@@ -802,6 +832,8 @@ function ChatInput({ channelId, isRunning, mode, setMode, onDismissCards, onSent
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const val = e.target.value;
       setText(val);
+      if (val) draftText.set(channelId, val);
+      else draftText.delete(channelId);
 
       // Check for command autocomplete.
       updateCommandDropdown(val);
@@ -826,6 +858,7 @@ function ChatInput({ channelId, isRunning, mode, setMode, onDismissCards, onSent
   const acceptCommand = useCallback((cmd: CommandDef) => {
     const newText = `/loop ${cmd.name} `;
     setText(newText);
+    draftText.set(channelId, newText);
     setShowCommands(false);
     requestAnimationFrame(() => {
       const el = inputRef.current;
@@ -841,6 +874,7 @@ function ChatInput({ channelId, isRunning, mode, setMode, onDismissCards, onSent
     const pos = inputRef.current?.selectionStart ?? text.length;
     const newText = text.slice(0, mentionIdx) + "@LoopBot " + text.slice(pos);
     setText(newText);
+    draftText.set(channelId, newText);
     setShowMention(false);
     requestAnimationFrame(() => {
       const el = inputRef.current;
