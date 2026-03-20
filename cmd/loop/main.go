@@ -250,7 +250,7 @@ Available Commands:
   onboard:local            Register Loop MCP server in current project (aliases: o:local, init)
     --api-url              Loop API base URL [default: http://localhost:8222]
     --owner-id             Set RBAC owner user ID in project config
-  daemon:start             Install and start the daemon — launchd on macOS, systemd on Linux (aliases: d:start, up)
+  daemon:start             Install and start the daemon — launchd on macOS, Windows services on Windows, systemd on Linux (aliases: d:start, up)
   daemon:stop              Stop and uninstall the daemon (aliases: d:stop, down)
   daemon:restart           Restart the daemon (aliases: d:restart, restart)
   daemon:status            Show daemon status (alias: d:status)
