@@ -1,4 +1,4 @@
-.PHONY: help build install test test-integration lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot app-dev app-install app-build-binary app-dist-linux app-icons
+.PHONY: help build install test test-integration lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-install app-build-binary app-dist-linux app-icons
 .DEFAULT_GOAL := help
 
 help: ## Show available targets
@@ -87,6 +87,13 @@ app-build-binary: ## Cross-compile loop binary for app bundling (GOOS=, GOARCH=)
 
 app-dev: ## Start the Electron app frontend dev server
 	cd app && npm install && npx vite --host
+
+app-dev-docker: ## Start Vite frontend dev server in Docker (no Electron, browser-accessible)
+	docker run --rm -it --name loop-app-dev \
+		-v "$$(pwd)/app":/app -w /app \
+		-p 5173:5173 \
+		--add-host=host.docker.internal:host-gateway \
+		node:24-alpine sh -c "npm install && npx vite --host 0.0.0.0 --config vite.browser.config.ts"
 
 app-install: build ## Build the Electron app and copy to /Applications
 	@mkdir -p app/resources/mac/arm64
