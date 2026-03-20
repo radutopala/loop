@@ -61,7 +61,7 @@ export function useChatState(
   const [exitPlanRequest, setExitPlanRequest] = useState<ExitPlanModeData | null>(initialState?.exitPlanRequest ?? null);
   const [mode, setMode] = useState<"agent" | "plan">(initialState?.mode ?? "agent");
   const [completionInfo, setCompletionInfo] = useState<{ duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null>(initialState?.completionInfo ?? null);
-  const [triggerContent, setTriggerContent] = useState<string | null>(null);
+  const [triggerContent, setTriggerContent] = useState<string | null>(initialState?.triggerContent ?? null);
 
   // Refs tracking latest values for the onUnmount snapshot.
   const streamingRef = useRef(streamingContent);
@@ -80,6 +80,8 @@ export function useChatState(
   modeRef.current = mode;
   const completionRef = useRef(completionInfo);
   completionRef.current = completionInfo;
+  const triggerRef = useRef(triggerContent);
+  triggerRef.current = triggerContent;
 
   const onUnmountRef = useRef(onUnmount);
   onUnmountRef.current = onUnmount;
@@ -96,6 +98,7 @@ export function useChatState(
         exitPlanRequest: exitRef.current,
         mode: modeRef.current,
         completionInfo: completionRef.current,
+        triggerContent: triggerRef.current,
       };
       onUnmountRef.current?.(snapshot);
     };

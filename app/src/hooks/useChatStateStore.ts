@@ -26,6 +26,7 @@ export interface ActiveChatState {
     stop_reason?: string;
     model?: string;
   } | null;
+  triggerContent: string | null;
 }
 
 /** Callback type for chat event listeners registered by useChatState. */
@@ -243,6 +244,7 @@ function createEmptyState(): ActiveChatState {
     exitPlanRequest: null,
     mode: "agent",
     completionInfo: null,
+    triggerContent: null,
   };
 }
 
@@ -296,10 +298,12 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
         state.completionInfo = null;
         state.askUserQuestions = null;
         state.exitPlanRequest = null;
+        state.triggerContent = data.trigger_content ?? null;
       } else {
         state.isRunning = false;
         state.toolActivity = null;
         state.agentActivity = null;
+        state.triggerContent = null;
         if (
           data.status === "completed" &&
           (data.duration_ms || data.stop_reason)

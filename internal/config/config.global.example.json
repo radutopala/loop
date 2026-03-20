@@ -33,7 +33,7 @@
   //"container_cpus": 1.0,
   //"container_keep_alive_sec": 300,
   //"poll_interval_sec": 30,
-  //"claude_model": "", // defaults to sonnet; options: "claude-opus-4-6", "claude-sonnet-4-6"
+  //"claude_model": "", // defaults to sonnet; options: "claude-opus-4-6[1m]", "claude-opus-4-6", "claude-sonnet-4-6"
   //"claude_bin_path": "claude",
   //"streaming_enabled": true, // stream intermediate Claude turns to chat as they happen
 

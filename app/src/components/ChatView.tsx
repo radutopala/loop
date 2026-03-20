@@ -356,8 +356,15 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
   // Find the first unprocessed user message ID — the one currently being processed.
   // Later unprocessed messages are shown with a "queued" label.
   const unprocessedUserMsgs = messages.filter((m) => !m.is_bot && !m.is_processed);
-  const firstUnprocessedUserMsgId = unprocessedUserMsgs.length > 0 ? unprocessedUserMsgs[0].msg_id : null;
+  const firstUnprocessedUserMsgId = unprocessedUserMsgs[0]?.msg_id ?? null;
   const hasQueuedMessages = unprocessedUserMsgs.length > 1;
+
+  // Track whether we ever had queued messages in this batch, so the trigger
+  // quote persists even when processing the last message of a multi-message batch.
+  const hadQueuedRef = useRef(false);
+  if (hasQueuedMessages) hadQueuedRef.current = true;
+  if (unprocessedUserMsgs.length === 0) hadQueuedRef.current = false;
+  const showTriggerQuote = isRunning && !!triggerContent && (hasQueuedMessages || hadQueuedRef.current);
 
   const isEmpty = messages.length === 0 && !loading;
 
@@ -409,8 +416,8 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
               highlighted={msg.id === highlightedMsgId}
             />
           ))}
-          {isRunning && triggerContent && hasQueuedMessages && (
-            <TriggerQuote content={triggerContent} />
+          {showTriggerQuote && (
+            <TriggerQuote content={triggerContent} time={firstUnprocessedUserMsgId ? messages.find((m) => m.msg_id === firstUnprocessedUserMsgId)?.created_at : undefined} />
           )}
           {isRunning && agentActivity && (
             <AgentActivityIndicator activity={agentActivity} />
@@ -557,13 +564,27 @@ function StreamingBubble({ content }: { content: string }) {
   );
 }
 
-function TriggerQuote({ content }: { content: string }) {
+function TriggerQuote({ content, time }: { content: string; time?: string }) {
   const { colors } = useTheme();
-  const text = content.length > 120 ? content.slice(0, 120) + "..." : content;
+  const text = content.length > 120 ? content.slice(0, 120) + "\u2026" : content;
+  const timeStr = time ? new Date(time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 16px", fontSize: 13 }}>
-      <div style={{ width: 3, alignSelf: "stretch", borderRadius: 2, background: colors.textDim, flexShrink: 0 }} />
-      <span style={{ color: colors.textMuted, fontStyle: "italic" }}>{text}</span>
+    <div style={{
+      display: "flex",
+      alignItems: "center",
+      gap: 8,
+      padding: "6px 12px",
+      margin: "4px 0 8px",
+      borderRadius: 6,
+      backgroundColor: colors.surface,
+      border: `1px solid ${colors.border}`,
+    }}>
+      <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0, opacity: 0.5 }}>
+        <path d="M14 10l-3 3-3-3" stroke={colors.textDim} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+        <path d="M11 13V6a3 3 0 0 0-3-3H2" stroke={colors.textDim} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
+      </svg>
+      <span style={{ flex: 1, fontSize: 12, color: colors.textDim, fontFamily: fonts.mono, lineHeight: 1.4 }}>{text}</span>
+      {timeStr && <span style={{ fontSize: 11, color: colors.textDim, opacity: 0.7, flexShrink: 0 }}>{timeStr}</span>}
     </div>
   );
 }
