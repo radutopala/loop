@@ -219,25 +219,27 @@ type runnerSystem interface {
 }
 
 type DockerRunner struct {
-	client            DockerClient
-	cfg               *config.Config
-	sys               runnerSystem
-	loadProjectConfig func(string, *config.Config) (*config.Config, error)
-	osTimeAfterFunc   func(time.Duration, func()) *time.Timer
-	osRandRead        func([]byte) (int, error)
-	osTimeLocalName   func() string
+	client                    DockerClient
+	cfg                       *config.Config
+	sys                       runnerSystem
+	loadProjectConfig         func(string, *config.Config) (*config.Config, error)
+	loadWorktreeProjectConfig func(string, string, *config.Config) (*config.Config, error)
+	osTimeAfterFunc           func(time.Duration, func()) *time.Timer
+	osRandRead                func([]byte) (int, error)
+	osTimeLocalName           func() string
 }
 
 // NewDockerRunner creates a new DockerRunner with the given Docker client and config.
 func NewDockerRunner(client DockerClient, cfg *config.Config) *DockerRunner {
 	return &DockerRunner{
-		client:            client,
-		cfg:               cfg,
-		sys:               osutil.RealSystem{},
-		loadProjectConfig: config.LoadProjectConfig,
-		osTimeAfterFunc:   time.AfterFunc,
-		osRandRead:        rand.Read,
-		osTimeLocalName:   func() string { return time.Now().Location().String() },
+		client:                    client,
+		cfg:                       cfg,
+		sys:                       osutil.RealSystem{},
+		loadProjectConfig:         config.LoadProjectConfig,
+		loadWorktreeProjectConfig: config.LoadWorktreeProjectConfig,
+		osTimeAfterFunc:           time.AfterFunc,
+		osRandRead:                rand.Read,
+		osTimeLocalName:           func() string { return time.Now().Location().String() },
 	}
 }
 
@@ -797,7 +799,12 @@ func (r *DockerRunner) createAndStartContainer(
 		workDir = dirPath
 	}
 
-	cfg, err := r.loadProjectConfig(workDir, r.cfg)
+	var cfg *config.Config
+	if parentDirPath != "" {
+		cfg, err = r.loadWorktreeProjectConfig(workDir, parentDirPath, r.cfg)
+	} else {
+		cfg, err = r.loadProjectConfig(workDir, r.cfg)
+	}
 	if err != nil {
 		return "", "", fmt.Errorf("loading project config: %w", err)
 	}

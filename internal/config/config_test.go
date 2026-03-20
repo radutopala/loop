@@ -1173,6 +1173,59 @@ func (s *ConfigSuite) TestLoadProjectConfigNamedVolumes() {
 	require.Equal(s.T(), "~/.ssh:~/.ssh:ro", merged.Mounts[3])
 }
 
+func (s *ConfigSuite) TestLoadWorktreeProjectConfigFallsBackToParent() {
+	// Worktree dir has no .loop/config.json; parent dir does.
+	parentCfg := `{"mounts": ["/parent/data:/data"]}`
+	s.loader.readFile = func(path string) ([]byte, error) {
+		switch path {
+		case "/project/.worktrees/wt1/.loop/config.json":
+			return nil, os.ErrNotExist
+		case "/project/.loop/config.json":
+			return []byte(parentCfg), nil
+		default:
+			return nil, errors.New("unexpected path: " + path)
+		}
+	}
+
+	mainCfg := &Config{}
+	merged, err := s.loader.loadWorktreeProjectConfig("/project/.worktrees/wt1", "/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"/parent/data:/data"}, merged.Mounts)
+}
+
+func (s *ConfigSuite) TestLoadWorktreeProjectConfigUsesOwnConfigWhenPresent() {
+	// Worktree dir has its own .loop/config.json; should use it, not parent.
+	worktreeCfg := `{"mounts": ["./data:/data"]}`
+	s.loader.readFile = func(path string) ([]byte, error) {
+		switch path {
+		case "/project/.worktrees/wt1/.loop/config.json":
+			return []byte(worktreeCfg), nil
+		default:
+			return nil, errors.New("unexpected path: " + path)
+		}
+	}
+
+	mainCfg := &Config{}
+	merged, err := s.loader.loadWorktreeProjectConfig("/project/.worktrees/wt1", "/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"/project/.worktrees/wt1/data:/data"}, merged.Mounts)
+}
+
+func (s *ConfigSuite) TestLoadWorktreeProjectConfigNoParentDir() {
+	// No parentDir provided; falls back to regular loadProjectConfig for worktreeDir.
+	s.loader.readFile = func(path string) ([]byte, error) {
+		if path == "/project/.worktrees/wt1/.loop/config.json" {
+			return nil, os.ErrNotExist
+		}
+		return nil, errors.New("unexpected path: " + path)
+	}
+
+	mainCfg := &Config{Mounts: []string{"~/.gitconfig:~/.gitconfig:ro"}}
+	merged, err := s.loader.loadWorktreeProjectConfig("/project/.worktrees/wt1", "", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), mainCfg, merged)
+}
+
 func (s *ConfigSuite) TestLoadEnvsFromGlobal() {
 	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{

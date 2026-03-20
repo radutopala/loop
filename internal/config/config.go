@@ -390,6 +390,22 @@ func LoadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 	return newLoader().loadProjectConfig(workDir, mainConfig)
 }
 
+// LoadWorktreeProjectConfig loads project config for a worktree channel.
+// It first checks worktreeDir/.loop/config.json; if absent, falls back to parentDir.
+// This ensures worktree threads inherit the parent project's config unless the
+// worktree has its own overrides.
+func LoadWorktreeProjectConfig(worktreeDir, parentDir string, mainConfig *Config) (*Config, error) {
+	return newLoader().loadWorktreeProjectConfig(worktreeDir, parentDir, mainConfig)
+}
+
+func (l *Loader) loadWorktreeProjectConfig(worktreeDir, parentDir string, mainConfig *Config) (*Config, error) {
+	_, err := l.readFile(filepath.Join(worktreeDir, ".loop", "config.json"))
+	if os.IsNotExist(err) && parentDir != "" {
+		return l.loadProjectConfig(parentDir, mainConfig)
+	}
+	return l.loadProjectConfig(worktreeDir, mainConfig)
+}
+
 func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {
 	projectConfigPath := filepath.Join(workDir, ".loop", "config.json")
 

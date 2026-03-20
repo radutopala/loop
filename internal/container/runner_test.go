@@ -541,6 +541,51 @@ func (s *RunnerSuite) TestRunWorktreeParentDirMount() {
 	s.client.AssertExpectations(s.T())
 }
 
+func (s *RunnerSuite) TestRunWorktreeUsesWorktreeProjectConfig() {
+	// When ParentDirPath is set, loadWorktreeProjectConfig should be called instead of loadProjectConfig.
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		ChannelID:     "ch-1",
+		DirPath:       "/projects/myapp/.worktrees/wt1",
+		ParentDirPath: "/projects/myapp",
+	}
+
+	worktreeCfgCalled := false
+	s.runner.loadWorktreeProjectConfig = func(worktreeDir, parentDir string, cfg *config.Config) (*config.Config, error) {
+		require.Equal(s.T(), "/projects/myapp/.worktrees/wt1", worktreeDir)
+		require.Equal(s.T(), "/projects/myapp", parentDir)
+		worktreeCfgCalled = true
+		return cfg, nil
+	}
+
+	s.setupMockRun(ctx, mock.Anything, "loop-wt1-aabbcc",
+		`{"type":"result","result":"ok","session_id":"s1","is_error":false}`)
+
+	resp, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp.Response)
+	require.True(s.T(), worktreeCfgCalled, "loadWorktreeProjectConfig should have been called")
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunWorktreeProjectConfigError() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		ChannelID:     "ch-1",
+		DirPath:       "/projects/myapp/.worktrees/wt1",
+		ParentDirPath: "/projects/myapp",
+	}
+
+	s.runner.loadWorktreeProjectConfig = func(_, _ string, _ *config.Config) (*config.Config, error) {
+		return nil, errors.New("permission denied")
+	}
+
+	resp, err := s.runner.Run(ctx, req)
+	require.Error(s.T(), err)
+	require.Nil(s.T(), resp)
+	require.Contains(s.T(), err.Error(), "loading project config")
+}
+
 func (s *RunnerSuite) TestRunCreateFails() {
 	ctx := context.Background()
 	req := &agent.AgentRequest{ChannelID: "ch-1"}
