@@ -150,6 +150,10 @@ func (m *MockEventBroadcaster) BroadcastMessageCreated(channelID string, data ev
 	m.Called(channelID, data)
 }
 
+func (m *MockEventBroadcaster) BroadcastMessagesProcessed(channelID string, data events.MessagesProcessedData) {
+	m.Called(channelID, data)
+}
+
 func (m *MockEventBroadcaster) BroadcastMessageStreaming(channelID string, data events.MessageStreamingData) {
 	m.Called(channelID, data)
 }
@@ -893,24 +897,36 @@ func (s *OrchestratorSuite) TestHandleMessageWithEventBroadcaster() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
-	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+	// Recent messages ordered DESC: queued message (m-20) is newer than trigger (msg1).
+	// Only the trigger and older messages should be marked as processed.
+	recentMsgs := []*db.Message{
+		{ID: 20, MsgID: "m-20", AuthorName: "Bob", Content: "queued msg", ChannelID: "ch1"},
+		{ID: 10, MsgID: "msg1", AuthorName: "Alice", Content: "hi", ChannelID: "ch1"},
+		{ID: 5, MsgID: "m-5", AuthorName: "Alice", Content: "old", ChannelID: "ch1"},
+	}
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return(recentMsgs, nil)
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 		Response:  "Hello!",
 		SessionID: "sess1",
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess1").Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
-	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+	// Only trigger (ID:10) and older (ID:5) should be marked — not the queued message (ID:20).
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{10, 5}).Return(nil)
 
-	// Expect event broadcasts: user message, running status, completed status, bot message
+	// Expect event broadcasts: user message, running status, completed status, bot message, messages processed
 	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
 		return d.AuthorName == "Alice" && d.Content == "hi" && !d.IsBot
 	})).Return()
-	eb.On("BroadcastAgentStatus", "ch1", events.AgentStatusEventData{Status: "running"}).Return()
+	eb.On("BroadcastAgentStatus", "ch1", events.AgentStatusEventData{Status: "running", TriggerContent: "hi"}).Return()
 	eb.On("BroadcastAgentStatus", "ch1", events.AgentStatusEventData{Status: "completed"}).Return()
 	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
 		return d.AuthorName == "agent" && d.Content == "Hello!" && d.IsBot
 	})).Return()
+	// Only trigger and older message IDs should be broadcast as processed.
+	eb.On("BroadcastMessagesProcessed", "ch1", events.MessagesProcessedData{
+		MsgIDs: []string{"msg1", "m-5"},
+	}).Return()
 
 	s.orch.HandleMessage(s.ctx, msg)
 
@@ -940,7 +956,7 @@ func (s *OrchestratorSuite) TestHandleMessageWithEventBroadcasterRunError() {
 	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
 
 	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
-	eb.On("BroadcastAgentStatus", "ch1", events.AgentStatusEventData{Status: "running"}).Return()
+	eb.On("BroadcastAgentStatus", "ch1", events.AgentStatusEventData{Status: "running", TriggerContent: "hi"}).Return()
 	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
 		return d.Status == "error" && d.Error == "runner failed"
 	})).Return()
@@ -973,7 +989,7 @@ func (s *OrchestratorSuite) TestHandleMessageWithEventBroadcasterAgentError() {
 	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
 
 	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
-	eb.On("BroadcastAgentStatus", "ch1", events.AgentStatusEventData{Status: "running"}).Return()
+	eb.On("BroadcastAgentStatus", "ch1", events.AgentStatusEventData{Status: "running", TriggerContent: "hi"}).Return()
 	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
 		return d.Status == "error" && d.Error == "agent broke"
 	})).Return()

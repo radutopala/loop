@@ -9,17 +9,24 @@ type Broadcaster interface {
 	BroadcastAgentActivity(channelID string, data AgentActivityEventData)
 	BroadcastAskUser(channelID string, data AskUserQuestionEventData)
 	BroadcastExitPlan(channelID string, data ExitPlanModeEventData)
+	BroadcastMessagesProcessed(channelID string, data MessagesProcessedData)
 	BroadcastChannelCreated(parentChannelID, channelID string)
 	BroadcastChannelDeleted(channelID string)
 }
 
 // MessageEventData is the payload for message.created events.
 type MessageEventData struct {
-	MsgID      string `json:"msg_id"`
-	AuthorID   string `json:"author_id"`
-	AuthorName string `json:"author_name"`
-	Content    string `json:"content"`
-	IsBot      bool   `json:"is_bot"`
+	MsgID       string `json:"msg_id"`
+	AuthorID    string `json:"author_id"`
+	AuthorName  string `json:"author_name"`
+	Content     string `json:"content"`
+	IsBot       bool   `json:"is_bot"`
+	IsProcessed bool   `json:"is_processed"`
+}
+
+// MessagesProcessedData is the payload for messages.processed events.
+type MessagesProcessedData struct {
+	MsgIDs []string `json:"msg_ids"`
 }
 
 // MessageStreamingData is the payload for message.streaming events (partial bot response).
@@ -29,12 +36,13 @@ type MessageStreamingData struct {
 
 // AgentStatusEventData is the payload for agent.status events.
 type AgentStatusEventData struct {
-	Status     string `json:"status"`
-	Error      string `json:"error,omitempty"`
-	DurationMs int    `json:"duration_ms,omitempty"`
-	NumTurns   int    `json:"num_turns,omitempty"`
-	StopReason string `json:"stop_reason,omitempty"`
-	Model      string `json:"model,omitempty"`
+	Status         string `json:"status"`
+	Error          string `json:"error,omitempty"`
+	DurationMs     int    `json:"duration_ms,omitempty"`
+	NumTurns       int    `json:"num_turns,omitempty"`
+	StopReason     string `json:"stop_reason,omitempty"`
+	Model          string `json:"model,omitempty"`
+	TriggerContent string `json:"trigger_content,omitempty"`
 }
 
 // ToolUseEventData is the payload for tool.use events.

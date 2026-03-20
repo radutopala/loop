@@ -13,15 +13,16 @@ import (
 
 // Event type constants.
 const (
-	EventMessageCreated   = "message.created"
-	EventMessageStreaming = "message.streaming"
-	EventAgentStatus      = "agent.status"
-	EventToolUse          = "tool.use"
-	EventAgentActivity    = "agent.activity"
-	EventAskUser          = "agent.ask_user"
-	EventExitPlan         = "agent.exit_plan"
-	EventChannelCreated   = "channel.created"
-	EventChannelDeleted   = "channel.deleted"
+	EventMessageCreated    = "message.created"
+	EventMessageStreaming  = "message.streaming"
+	EventMessagesProcessed = "messages.processed"
+	EventAgentStatus       = "agent.status"
+	EventToolUse           = "tool.use"
+	EventAgentActivity     = "agent.activity"
+	EventAskUser           = "agent.ask_user"
+	EventExitPlan          = "agent.exit_plan"
+	EventChannelCreated    = "channel.created"
+	EventChannelDeleted    = "channel.deleted"
 )
 
 // Event represents a server-sent event to WebSocket clients.
@@ -121,6 +122,15 @@ func (h *EventsHub) Broadcast(evt Event) {
 func (h *EventsHub) BroadcastMessageCreated(channelID string, data events.MessageEventData) {
 	h.Broadcast(Event{
 		Type:      EventMessageCreated,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastMessagesProcessed sends a messages.processed event with the processed message IDs.
+func (h *EventsHub) BroadcastMessagesProcessed(channelID string, data events.MessagesProcessedData) {
+	h.Broadcast(Event{
+		Type:      EventMessagesProcessed,
 		ChannelID: channelID,
 		Data:      data,
 	})

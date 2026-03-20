@@ -10,6 +10,7 @@ interface UseMessagesResult {
   loadMore: () => void;
   hasMore: boolean;
   addMessage: (msg: Message) => void;
+  markProcessed: (msgIds: string[]) => void;
 }
 
 export function useMessages(channelId: string | null, aroundMessageId?: number | null): UseMessagesResult {
@@ -107,5 +108,14 @@ export function useMessages(channelId: string | null, aroundMessageId?: number |
     });
   }, []);
 
-  return { messages, loading, loadMore, hasMore, addMessage };
+  const markProcessed = useCallback((msgIds: string[]) => {
+    const idSet = new Set(msgIds);
+    setMessages((prev) => {
+      const needsUpdate = prev.some((m) => idSet.has(m.msg_id) && !m.is_processed);
+      if (!needsUpdate) return prev;
+      return prev.map((m) => (idSet.has(m.msg_id) ? { ...m, is_processed: true } : m));
+    });
+  }, []);
+
+  return { messages, loading, loadMore, hasMore, addMessage, markProcessed };
 }

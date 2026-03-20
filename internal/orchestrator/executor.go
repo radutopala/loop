@@ -117,10 +117,11 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				// already stored the message in the DB for the thread.
 				if e.events != nil {
 					e.events.BroadcastMessageCreated(threadID, events.MessageEventData{
-						MsgID:      generateMessageID(),
-						AuthorName: "agent",
-						Content:    prefix + text,
-						IsBot:      true,
+						MsgID:       generateMessageID(),
+						AuthorName:  "agent",
+						Content:     prefix + text,
+						IsBot:       true,
+						IsProcessed: true,
 					})
 				}
 			} else {

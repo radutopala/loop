@@ -17,22 +17,24 @@ func storeBotMessage(ctx context.Context, store db.Store, broadcaster events.Bro
 		ch, err := store.GetChannel(ctx, channelID)
 		if err == nil && ch != nil {
 			_ = store.InsertMessage(ctx, &db.Message{
-				ChatID:     ch.ID,
-				ChannelID:  channelID,
-				MsgID:      msgID,
-				AuthorName: "agent",
-				Content:    content,
-				IsBot:      true,
-				CreatedAt:  time.Now().UTC(),
+				ChatID:      ch.ID,
+				ChannelID:   channelID,
+				MsgID:       msgID,
+				AuthorName:  "agent",
+				Content:     content,
+				IsBot:       true,
+				IsProcessed: true,
+				CreatedAt:   time.Now().UTC(),
 			})
 		}
 	}
 	if broadcaster != nil {
 		broadcaster.BroadcastMessageCreated(channelID, events.MessageEventData{
-			MsgID:      msgID,
-			AuthorName: "agent",
-			Content:    content,
-			IsBot:      true,
+			MsgID:       msgID,
+			AuthorName:  "agent",
+			Content:     content,
+			IsBot:       true,
+			IsProcessed: true,
 		})
 	}
 }

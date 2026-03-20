@@ -26,7 +26,7 @@ test-integration: ## Run integration tests (requires tokens in ~/.loop/config.in
 	go test -v -tags integration -race -count=1 -timeout 10m ./internal/slack/ ./internal/discord/
 
 lint: ## Run golangci-lint (with auto-fix)
-	docker run --rm --name loop-lint -v "$$(pwd)":/app -w /app golangci/golangci-lint:v2.10.1 golangci-lint run -v --fix ./...
+	docker run --rm --name loop-lint -v "$$(pwd)":/app -v /app/app/node_modules -w /app golangci/golangci-lint:v2.10.1 golangci-lint run -v --fix ./...
 
 coverage: ## Generate HTML coverage report
 	go generate ./internal/readme/

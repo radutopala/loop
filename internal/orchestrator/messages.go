@@ -50,6 +50,7 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 	msgID := msg.MessageID
 	if msgID == "" {
 		msgID = generateMessageID()
+		msg.MessageID = msgID
 	}
 
 	if err := o.store.InsertMessage(ctx, &db.Message{
@@ -285,7 +286,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	}
 
 	if o.events != nil {
-		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "running"})
+		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "running", TriggerContent: msg.Content})
 	}
 
 	resp, err := o.runner.Run(runCtx, req)
@@ -333,15 +334,6 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 
 // deliverResponse sends the final response, records the bot message, and marks messages as processed.
 func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMessage, resp *agent.AgentResponse, recent []*db.Message, lastStreamedText string) {
-	if o.events != nil {
-		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{
-			Status:     "completed",
-			DurationMs: resp.DurationMs,
-			NumTurns:   resp.NumTurns,
-			StopReason: resp.StopReason,
-			Model:      resp.Model,
-		})
-	}
 	if err := o.store.UpdateSessionID(ctx, msg.ChannelID, resp.SessionID); err != nil {
 		o.logger.Error("updating session data", "error", err, "channel_id", msg.ChannelID)
 	}
@@ -366,12 +358,42 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 		storeBotMessage(ctx, o.store, o.events, msg.ChannelID, resp.Response)
 	}
 
-	ids := make([]int64, len(recent))
+	// Only mark messages up to (and including) the trigger message as processed.
+	// Messages queued after the trigger remain unprocessed so the frontend can
+	// still show them as "queued" or "processing".
+	toMark := recent
 	for i, m := range recent {
+		if m.MsgID == msg.MessageID {
+			toMark = recent[i:]
+			break
+		}
+	}
+	ids := make([]int64, len(toMark))
+	msgIDs := make([]string, 0, len(toMark))
+	for i, m := range toMark {
 		ids[i] = m.ID
+		if m.MsgID != "" {
+			msgIDs = append(msgIDs, m.MsgID)
+		}
 	}
 	if err := o.store.MarkMessagesProcessed(ctx, ids); err != nil {
 		o.logger.Error("marking messages processed", "error", err, "channel_id", msg.ChannelID)
+	}
+	// Broadcast messages.processed BEFORE agent completed status so the frontend
+	// clears labels before isRunning goes false (avoids a brief "queued" flash).
+	if o.events != nil && len(msgIDs) > 0 {
+		o.events.BroadcastMessagesProcessed(msg.ChannelID, events.MessagesProcessedData{
+			MsgIDs: msgIDs,
+		})
+	}
+	if o.events != nil {
+		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{
+			Status:     "completed",
+			DurationMs: resp.DurationMs,
+			NumTurns:   resp.NumTurns,
+			StopReason: resp.StopReason,
+			Model:      resp.Model,
+		})
 	}
 }
 

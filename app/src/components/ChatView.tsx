@@ -307,7 +307,7 @@ interface ChatViewProps {
 export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComplete }: ChatViewProps) {
   const { colors } = useTheme();
   const styles = buildStyles(colors);
-  const { messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, completionInfo } = chatState;
+  const { messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, completionInfo, triggerContent } = chatState;
   const dismissCards = useCallback(() => { chatState.clearAskUser(); chatState.clearExitPlan(); }, [chatState]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -353,14 +353,11 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
     }
   }, [hasMore, loading, loadMore]);
 
-  // Find the last user message ID for the eyes indicator.
-  const lastUserMsgId = (() => {
-    for (let i = messages.length - 1; i >= 0; i--) {
-      const m = messages[i];
-      if (m && !m.is_bot) return m.msg_id;
-    }
-    return null;
-  })();
+  // Find the first unprocessed user message ID — the one currently being processed.
+  // Later unprocessed messages are shown with a "queued" label.
+  const unprocessedUserMsgs = messages.filter((m) => !m.is_bot && !m.is_processed);
+  const firstUnprocessedUserMsgId = unprocessedUserMsgs.length > 0 ? unprocessedUserMsgs[0].msg_id : null;
+  const hasQueuedMessages = unprocessedUserMsgs.length > 1;
 
   const isEmpty = messages.length === 0 && !loading;
 
@@ -407,10 +404,14 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
             <MessageBubble
               key={msg.msg_id}
               message={msg}
-              showEyes={isRunning && !msg.is_bot && msg.msg_id === lastUserMsgId}
+              showProcessing={isRunning && !msg.is_bot && msg.msg_id === firstUnprocessedUserMsgId}
+              showQueued={!msg.is_bot && !msg.is_processed && !(isRunning && msg.msg_id === firstUnprocessedUserMsgId)}
               highlighted={msg.id === highlightedMsgId}
             />
           ))}
+          {isRunning && triggerContent && (
+            <TriggerQuote content={triggerContent} />
+          )}
           {isRunning && agentActivity && (
             <AgentActivityIndicator activity={agentActivity} />
           )}
@@ -454,7 +455,7 @@ function WelcomeScreen() {
   );
 }
 
-function MessageBubble({ message, showEyes, highlighted }: { message: Message; showEyes?: boolean; highlighted?: boolean }) {
+function MessageBubble({ message, showProcessing, showQueued, highlighted }: { message: Message; showProcessing?: boolean; showQueued?: boolean; highlighted?: boolean }) {
   const { colors } = useTheme();
   const styles = buildStyles(colors);
   const isUser = !message.is_bot;
@@ -506,7 +507,8 @@ function MessageBubble({ message, showEyes, highlighted }: { message: Message; s
         </div>
         {isUser && (
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginTop: 4 }}>
-            {showEyes && <span style={{ fontSize: 14 }} title="Processing...">&#128064;</span>}
+            {showQueued && <span style={{ fontSize: 10, color: colors.textDim, background: colors.surface, border: "1px solid rgba(255,255,255,0.2)", borderRadius: 4, padding: "2px 8px", fontWeight: 500, letterSpacing: 0.3 }}>queued</span>}
+            {showProcessing && <span style={{ fontSize: 10, color: colors.textMuted, background: colors.surface, border: "1px solid rgba(255,255,255,0.2)", borderRadius: 4, padding: "2px 8px", fontWeight: 500, letterSpacing: 0.3 }}>processing</span>}
             <span style={styles.time}>{time}</span>
           </div>
         )}
@@ -555,6 +557,17 @@ function StreamingBubble({ content }: { content: string }) {
   );
 }
 
+function TriggerQuote({ content }: { content: string }) {
+  const { colors } = useTheme();
+  const text = content.length > 120 ? content.slice(0, 120) + "..." : content;
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 16px", fontSize: 13 }}>
+      <div style={{ width: 3, alignSelf: "stretch", borderRadius: 2, background: colors.textDim, flexShrink: 0 }} />
+      <span style={{ color: colors.textMuted, fontStyle: "italic" }}>{text}</span>
+    </div>
+  );
+}
+
 function AgentActivityIndicator({ activity }: { activity: AgentActivityData }) {
   const { colors } = useTheme();
   const activityStyle = buildActivityStyle(colors);
@@ -597,7 +610,7 @@ function CompletionSummary({ info }: { info: { duration_ms?: number; num_turns?:
   if (parts.length === 0) return null;
   return (
     <div style={activityStyle}>
-      <span style={{ opacity: 0.5 }}>&#9203;</span>
+      <span style={{ opacity: 0.5 }}>&#9201;</span>
       <span style={{ color: colors.textDim }}>{parts.join(" · ")}</span>
     </div>
   );

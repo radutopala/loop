@@ -19,6 +19,7 @@ export interface Message {
   author_name: string;
   content: string;
   is_bot: boolean;
+  is_processed: boolean;
   created_at: string;
 }
 
@@ -36,6 +37,11 @@ export interface MessageCreatedData {
   author_name: string;
   content: string;
   is_bot: boolean;
+  is_processed: boolean;
+}
+
+export interface MessagesProcessedData {
+  msg_ids: string[];
 }
 
 export interface MessageStreamingData {
@@ -49,6 +55,7 @@ export interface AgentStatusData {
   num_turns?: number;
   stop_reason?: string;
   model?: string;
+  trigger_content?: string;
 }
 
 export interface ToolUseData {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentActivityData, AgentStatusData, AskUserQuestionData, ExitPlanModeData, Message, MessageCreatedData, MessageStreamingData, ToolUseData, WSEvent } from "../types";
+import type { AgentActivityData, AgentStatusData, AskUserQuestionData, ExitPlanModeData, Message, MessageCreatedData, MessagesProcessedData, MessageStreamingData, ToolUseData, WSEvent } from "../types";
 import type { ActiveChatState, ChatEventListener } from "./useChatStateStore";
 import { useMessages } from "./useMessages";
 
@@ -20,6 +20,7 @@ export interface ChatState {
   mode: "agent" | "plan";
   setMode: (mode: "agent" | "plan") => void;
   completionInfo: { duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null;
+  triggerContent: string | null;
 }
 
 interface UseChatStateOptions {
@@ -51,7 +52,7 @@ export function useChatState(
 ): ChatState {
   const { initialState, onUnmount, subscribeChatEvents } = options ?? {};
 
-  const { messages, loading, loadMore, hasMore, addMessage } = useMessages(channelId);
+  const { messages, loading, loadMore, hasMore, addMessage, markProcessed } = useMessages(channelId);
   const [streamingContent, setStreamingContent] = useState<string | null>(initialState?.streamingContent ?? null);
   const [isRunning, setIsRunning] = useState(initialState?.isRunning ?? initialRunningBot ?? false);
   const [toolActivity, setToolActivity] = useState<{ tool_name: string; input: string } | null>(initialState?.toolActivity ?? null);
@@ -60,6 +61,7 @@ export function useChatState(
   const [exitPlanRequest, setExitPlanRequest] = useState<ExitPlanModeData | null>(initialState?.exitPlanRequest ?? null);
   const [mode, setMode] = useState<"agent" | "plan">(initialState?.mode ?? "agent");
   const [completionInfo, setCompletionInfo] = useState<{ duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null>(initialState?.completionInfo ?? null);
+  const [triggerContent, setTriggerContent] = useState<string | null>(null);
 
   // Refs tracking latest values for the onUnmount snapshot.
   const streamingRef = useRef(streamingContent);
@@ -119,8 +121,14 @@ export function useChatState(
           author_name: data.author_name,
           content: data.content,
           is_bot: data.is_bot,
+          is_processed: data.is_processed,
           created_at: new Date(event.timestamp).toISOString(),
         });
+        return;
+      }
+      if (event.type === "messages.processed") {
+        const data = event.data as MessagesProcessedData;
+        markProcessed(data.msg_ids);
         return;
       }
       if (event.type === "tool.use") {
@@ -150,10 +158,12 @@ export function useChatState(
           setCompletionInfo(null);
           setAskUserQuestions(null);
           setExitPlanRequest(null);
+          setTriggerContent(data.trigger_content ?? null);
         } else {
           setIsRunning(false);
           setToolActivity(null);
           setAgentActivity(null);
+          setTriggerContent(null);
           // Don't clear askUserQuestions/exitPlanRequest on stop — they persist
           // until the user submits answers or approves the plan.
           if (data.status === "completed" && (data.duration_ms || data.stop_reason)) {
@@ -198,5 +208,6 @@ export function useChatState(
     mode,
     setMode,
     completionInfo,
+    triggerContent,
   };
 }
