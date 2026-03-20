@@ -980,7 +980,12 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                 <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px" }}>|</span>
                 {channel.worktree ? (
                   <span
-                    style={{ fontSize: 11, color: colors.active, fontFamily: fonts.mono, flexShrink: 0, cursor: "default" }}
+                    onDoubleClick={(e) => { navigator.clipboard.writeText(branch); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
+                    title="Double-click to copy branch name"
+                    style={{ fontSize: 11, color: colors.active, fontFamily: fonts.mono, flexShrink: 0, cursor: "default",
+                      // @ts-expect-error: WebKit-specific CSS property
+                      WebkitAppRegion: "no-drag",
+                    }}
                   >
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 2, verticalAlign: -1 }}>
                       <line x1="6" y1="3" x2="6" y2="15" />
