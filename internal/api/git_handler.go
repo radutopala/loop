@@ -81,11 +81,11 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 		wtPathToThread := make(map[string]string)
 		for _, ch := range allChannels {
 			if ch.ParentID == channelID && ch.Worktree && ch.DirPath != "" {
-				wtPathToThread[filepath.Clean(ch.DirPath)] = ch.ChannelID
+				wtPathToThread[realPath(ch.DirPath)] = ch.ChannelID
 			}
 		}
 		for i := range worktrees {
-			if tid, ok := wtPathToThread[filepath.Clean(worktrees[i].Path)]; ok {
+			if tid, ok := wtPathToThread[realPath(worktrees[i].Path)]; ok {
 				worktrees[i].ThreadID = tid
 			}
 		}
@@ -113,12 +113,18 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 
 // parseWorktrees parses `git worktree list --porcelain` output.
 // Skips the main worktree (whose path matches dirPath).
+// Paths are symlink-resolved so comparisons work on macOS where
+// /tmp → /private/var/folders/… causes mismatches.
 func parseWorktrees(output, mainDir string) []worktreeEntry {
+	realMain, err := filepath.EvalSymlinks(mainDir)
+	if err != nil {
+		realMain = mainDir
+	}
 	var worktrees []worktreeEntry
 	var current worktreeEntry
 	for _, line := range strings.Split(output, "\n") {
 		if strings.HasPrefix(line, "worktree ") {
-			if current.Path != "" && current.Path != mainDir {
+			if current.Path != "" && realPath(current.Path) != realMain {
 				worktrees = append(worktrees, current)
 			}
 			current = worktreeEntry{Path: strings.TrimPrefix(line, "worktree ")}
@@ -129,10 +135,19 @@ func parseWorktrees(output, mainDir string) []worktreeEntry {
 		}
 	}
 	// Flush last entry.
-	if current.Path != "" && current.Path != mainDir {
+	if current.Path != "" && realPath(current.Path) != realMain {
 		worktrees = append(worktrees, current)
 	}
 	return worktrees
+}
+
+// realPath resolves symlinks, falling back to the original path on error.
+func realPath(p string) string {
+	r, err := filepath.EvalSymlinks(p)
+	if err != nil {
+		return p
+	}
+	return r
 }
 
 type switchBranchRequest struct {
@@ -387,9 +402,9 @@ func (s *Server) handleImportWorktree(w http.ResponseWriter, r *http.Request) {
 
 	worktrees := parseWorktrees(string(wtOut), parent.DirPath)
 	var matched *worktreeEntry
-	cleanPath := filepath.Clean(req.WorktreePath)
+	resolvedPath := realPath(req.WorktreePath)
 	for i := range worktrees {
-		if filepath.Clean(worktrees[i].Path) == cleanPath {
+		if realPath(worktrees[i].Path) == resolvedPath {
 			matched = &worktrees[i]
 			break
 		}
@@ -402,7 +417,7 @@ func (s *Server) handleImportWorktree(w http.ResponseWriter, r *http.Request) {
 	// Check if a thread already exists for this worktree path.
 	if allChannels, err := s.store.ListChannels(r.Context()); err == nil {
 		for _, ch := range allChannels {
-			if ch.ParentID == req.ChannelID && ch.Worktree && filepath.Clean(ch.DirPath) == cleanPath {
+			if ch.ParentID == req.ChannelID && ch.Worktree && realPath(ch.DirPath) == resolvedPath {
 				writeHTTPJSON(w, http.StatusOK, createWorktreeResponse{
 					ThreadID:     ch.ChannelID,
 					WorktreePath: req.WorktreePath,
@@ -413,7 +428,7 @@ func (s *Server) handleImportWorktree(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Derive thread name from worktree directory name and branch.
-	name := filepath.Base(cleanPath)
+	name := filepath.Base(resolvedPath)
 	threadName := fmt.Sprintf("%s (%s)", name, matched.Branch)
 
 	threadID, err := s.threads.CreateThread(r.Context(), req.ChannelID, threadName, "", "")
