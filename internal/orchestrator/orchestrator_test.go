@@ -405,7 +405,8 @@ func (s *OrchestratorSuite) TestHandleMessageWorktreeThread() {
 		ID: 1, ChannelID: "ch1", DirPath: "/project", SessionID: "sess-parent",
 	}, nil)
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		return req.ParentDirPath == "/project" && req.DirPath == "/project/.worktrees/wt1"
+		return req.ParentDirPath == "/project" && req.DirPath == "/project/.worktrees/wt1" &&
+			strings.Contains(req.SystemPrompt, "/project/.worktrees/wt1")
 	})).Return(&agent.AgentResponse{
 		Response: "worktree response", SessionID: "sess-wt",
 	}, nil)

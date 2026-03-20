@@ -60,11 +60,11 @@ AI agents powered by Claude, running in Docker containers. Use the **desktop app
 
 ## Prerequisites
 
-- macOS or Linux
-- [Docker Desktop](https://docs.docker.com/desktop/) (macOS) or [Docker Engine](https://docs.docker.com/engine/install/) (Linux)
+- macOS, Windows, or Linux
+- [Docker Desktop](https://docs.docker.com/desktop/) (macOS / Windows) or [Docker Engine](https://docs.docker.com/engine/install/) (Linux)
 - An [Anthropic API key](https://console.anthropic.com/) (recommended) or Claude Code OAuth token
 
-> **Note:** `loop daemon:start/stop/status` use launchd on macOS and systemd user services on Linux (`~/.config/systemd/user/loop.service`).
+> **Note:** `loop daemon:start/stop/status` use launchd on macOS, Windows services on Windows, and systemd user services on Linux (`~/.config/systemd/user/loop.service`).
 
 ## Getting Started
 
@@ -86,7 +86,7 @@ The desktop app gives you a full IDE-like experience — chat, terminal, file ed
 
 **1. Download and install**
 
-Grab the latest `.dmg` (macOS) or `.AppImage` / `.deb` (Linux) from [Releases](https://github.com/radutopala/loop/releases/latest). The app auto-updates when new versions are available.
+Grab the latest `.dmg` (macOS), `.exe` installer (Windows), or `.AppImage` / `.deb` (Linux) from [Releases](https://github.com/radutopala/loop/releases/latest). The app auto-updates when new versions are available.
 
 Or build from source:
 ```sh
@@ -482,6 +482,8 @@ Project config overrides specific global settings. Only these fields are allowed
 | `browser_enabled` | **Overrides** global value when set |
 | `chrome_image` | **Overrides** global value when set |
 
+**Worktree threads** inherit their parent project's config unless the worktree directory has its own `.loop/config.json`. This means you only need to configure mounts, MCP servers, and model once in the parent project — all worktree threads will use the same settings automatically.
+
 Relative paths in project mounts (e.g., `./data`) are resolved relative to the project directory.
 
 ```jsonc
@@ -840,7 +842,7 @@ Project configs (`.loop/config.json`) can define their own `task_templates` that
 
 ## Desktop App
 
-Loop includes a desktop app for macOS and Linux, built with Electron + React. Download from [Releases](https://github.com/radutopala/loop/releases/latest) or build from source.
+Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built with Electron + React. Download from [Releases](https://github.com/radutopala/loop/releases/latest) or build from source.
 
 ### Features
 
@@ -865,6 +867,8 @@ Loop includes a desktop app for macOS and Linux, built with Electron + React. Do
 |---|---|---|
 | macOS (Apple Silicon) | `.dmg` (arm64) | Yes |
 | macOS (Intel) | `.dmg` (x64) | Yes |
+| Windows (x64) | `.exe` (NSIS installer) | Yes |
+| Windows (ARM64) | `.exe` (NSIS installer) | Yes |
 | Linux (x64) | `.AppImage`, `.deb` | AppImage only |
 | Linux (ARM64) | `.AppImage`, `.deb` | AppImage only |
 

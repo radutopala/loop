@@ -482,6 +482,8 @@ Project config overrides specific global settings. Only these fields are allowed
 | `browser_enabled` | **Overrides** global value when set |
 | `chrome_image` | **Overrides** global value when set |
 
+**Worktree threads** inherit their parent project's config unless the worktree directory has its own `.loop/config.json`. This means you only need to configure mounts, MCP servers, and model once in the parent project — all worktree threads will use the same settings automatically.
+
 Relative paths in project mounts (e.g., `./data`) are resolved relative to the project directory.
 
 ```jsonc

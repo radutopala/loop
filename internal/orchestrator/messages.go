@@ -218,6 +218,15 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 		}
 	}
 
+	// When running in a worktree, tell the agent its working directory so it
+	// uses the correct absolute paths instead of drifting to the main repo.
+	if channel != nil && channel.Worktree && channel.DirPath != "" {
+		req.SystemPrompt = fmt.Sprintf(
+			"IMPORTANT: Your working directory is %s. Always use absolute paths under this directory for all file operations.",
+			channel.DirPath,
+		)
+	}
+
 	return req, recent, nil
 }
 
