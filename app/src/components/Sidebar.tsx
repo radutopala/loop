@@ -136,6 +136,7 @@ interface SidebarProps {
   isRunningMapRef?: React.RefObject<Map<string, boolean>>;
   /** Channels with unread agent completions. */
   unreadIdsRef?: React.RefObject<Set<string>>;
+  unreadCount?: number;
   onMarkAllRead?: () => void;
 }
 
@@ -157,6 +158,7 @@ export function Sidebar({
   onInstallUpdate,
   isRunningMapRef,
   unreadIdsRef,
+  unreadCount,
   onMarkAllRead,
 }: SidebarProps) {
   const { colors } = useTheme();
@@ -428,9 +430,9 @@ export function Sidebar({
             </>
           ) : (
             <>
-              {unreadIdsRef && unreadIdsRef.current.size > 0 && (
+              {(unreadCount ?? 0) > 0 && (
                 <button
-                  onClick={() => { onMarkAllRead?.(); setSearchQuery((q) => q + ""); }}
+                  onClick={() => onMarkAllRead?.()}
                   title="Mark all as read"
                   style={sidebarBtnStyle}
                   onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}

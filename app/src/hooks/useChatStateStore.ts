@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type {
   AgentActivityData,
   AgentStatusData,
@@ -61,6 +61,7 @@ export function useChatStateStore({
   const storeRef = useRef(new Map<string, ActiveChatState>());
   const isRunningMapRef = useRef(new Map<string, boolean>());
   const unreadIdsRef = useRef(new Set<string>());
+  const [unreadCount, setUnreadCount] = useState(0);
 
   // Chat event listener registered by useChatState for the selected channel.
   const chatListenerRef = useRef<ChatEventListener | null>(null);
@@ -160,6 +161,7 @@ export function useChatStateStore({
           // Mark channel as unread and send system notification.
           if (channelId !== selectedIdRef.current || document.hidden) {
             unreadIdsRef.current.add(channelId);
+            setUnreadCount(unreadIdsRef.current.size);
           }
           if (document.hidden || channelId !== selectedIdRef.current) {
             const ch = channelsRef.current.find((c) => c.id === channelId);
@@ -256,13 +258,15 @@ export function useChatStateStore({
 
   const markRead = useCallback((channelId: string) => {
     unreadIdsRef.current.delete(channelId);
+    setUnreadCount(unreadIdsRef.current.size);
   }, []);
 
   const markAllRead = useCallback(() => {
     unreadIdsRef.current.clear();
+    setUnreadCount(0);
   }, []);
 
-  return { getState, saveState, removeState, isRunningMapRef, unreadIdsRef, markRead, markAllRead, subscribeChatEvents };
+  return { getState, saveState, removeState, isRunningMapRef, unreadIdsRef, unreadCount, markRead, markAllRead, subscribeChatEvents };
 }
 
 // ── Helpers ──
