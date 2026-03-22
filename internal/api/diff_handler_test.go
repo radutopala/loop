@@ -255,9 +255,10 @@ func (s *ServerSuite) TestGitDiffBranchToBranch() {
 	gitRun(s.T(), dir, "add", ".")
 	gitRun(s.T(), dir, "commit", "-m", "init")
 
-	// Create a feature branch with an extra file.
+	// Create a feature branch with two extra files so sort comparator is exercised.
 	gitRun(s.T(), dir, "checkout", "-b", "feature")
 	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "feature.txt"), []byte("new stuff\n"), 0o644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "another.txt"), []byte("more\n"), 0o644))
 	gitRun(s.T(), dir, "add", ".")
 	gitRun(s.T(), dir, "commit", "-m", "add feature")
 
@@ -277,7 +278,8 @@ func (s *ServerSuite) TestGitDiffBranchToBranch() {
 	require.Equal(s.T(), http.StatusOK, w.Code)
 	body := w.Body.String()
 	require.Contains(s.T(), body, `"feature.txt"`)
-	require.Contains(s.T(), body, `"total_additions":1`)
+	require.Contains(s.T(), body, `"another.txt"`)
+	require.Contains(s.T(), body, `"total_additions":2`)
 }
 
 func (s *ServerSuite) TestGitDiffBranchInvalidSource() {
