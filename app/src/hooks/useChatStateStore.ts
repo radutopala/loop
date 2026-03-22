@@ -34,7 +34,7 @@ export type ChatEventListener = (event: WSEvent) => void;
 
 interface UseChatStateStoreOptions {
   /** All known channels (used to seed isRunning from channel.agent_running). */
-  channels: { id: string; agent_running: boolean }[];
+  channels: { id: string; name: string; agent_running: boolean }[];
   /** Currently selected channel ID. */
   selectedId: string | null;
   /** Callback for app-level events on the selected channel (channel.created/deleted, diff refresh). */
@@ -70,6 +70,16 @@ export function useChatStateStore({
 
   const onAppEventRef = useRef(onAppEvent);
   onAppEventRef.current = onAppEvent;
+
+  const channelsRef = useRef(channels);
+  channelsRef.current = channels;
+
+  // Request notification permission on mount.
+  useEffect(() => {
+    if ("Notification" in window && Notification.permission === "default") {
+      Notification.requestPermission();
+    }
+  }, []);
 
   // Seed isRunningMap from channel.agent_running on each channels refresh.
   useEffect(() => {
@@ -145,6 +155,17 @@ export function useChatStateStore({
           runMap.delete(channelId);
           // Keep the store entry — it holds completionInfo, mode, askUser, etc.
           // that should be restored when the user switches back.
+
+          // System notification when an agent completes or errors.
+          if (document.hidden || channelId !== selectedIdRef.current) {
+            const ch = channelsRef.current.find((c) => c.id === channelId);
+            const name = ch?.name || channelId;
+            const body =
+              data.status === "completed"
+                ? `Completed in ${Math.round((data.duration_ms ?? 0) / 1000)}s`
+                : `Error: ${data.error ?? "unknown"}`;
+            new Notification(`Loop — ${name}`, { body });
+          }
         }
       }
 
