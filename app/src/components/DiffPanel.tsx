@@ -290,11 +290,13 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
         }
         const sorted = [...all].sort();
         setBranches(sorted);
-        // Default source to current branch if not yet set, target to first other branch
-        if (!sourceBranch && info.current) setSourceBranch(info.current);
-        if (!targetBranch) {
-          const other = sorted.find((b) => b !== info.current);
-          if (other) setTargetBranch(other);
+        // Default source to main branch, target to current branch
+        if (!sourceBranch) {
+          const main = sorted.find((b) => b === "main" || b === "master");
+          setSourceBranch(main ?? info.current ?? sorted[0] ?? "");
+        }
+        if (!targetBranch && info.current) {
+          setTargetBranch(info.current);
         }
       }).catch(() => {});
     }
