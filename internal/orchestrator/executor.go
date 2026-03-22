@@ -267,6 +267,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			DurationMs: resp.DurationMs,
 			NumTurns:   resp.NumTurns,
 			Model:      resp.Model,
+			ThreadID:   threadID,
 		}
 		if targetChannelID != task.ChannelID {
 			e.events.BroadcastAgentStatus(targetChannelID, done)

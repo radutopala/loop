@@ -43,6 +43,7 @@ type AgentStatusEventData struct {
 	StopReason     string `json:"stop_reason,omitempty"`
 	Model          string `json:"model,omitempty"`
 	TriggerContent string `json:"trigger_content,omitempty"`
+	ThreadID       string `json:"thread_id,omitempty"`
 }
 
 // ToolUseEventData is the payload for tool.use events.

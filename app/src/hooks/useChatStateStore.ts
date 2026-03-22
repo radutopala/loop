@@ -158,13 +158,14 @@ export function useChatStateStore({
           // Keep the store entry — it holds completionInfo, mode, askUser, etc.
           // that should be restored when the user switches back.
 
-          // Mark channel as unread and send system notification.
-          if (channelId !== selectedIdRef.current || document.hidden) {
-            unreadIdsRef.current.add(channelId);
+          // Mark the task thread (or channel) as unread.
+          const unreadTarget = data.thread_id || channelId;
+          if (unreadTarget !== selectedIdRef.current || document.hidden) {
+            unreadIdsRef.current.add(unreadTarget);
             setUnreadCount(unreadIdsRef.current.size);
           }
-          if (document.hidden || channelId !== selectedIdRef.current) {
-            const ch = channelsRef.current.find((c) => c.id === channelId);
+          if (document.hidden || unreadTarget !== selectedIdRef.current) {
+            const ch = channelsRef.current.find((c) => c.id === unreadTarget) ?? channelsRef.current.find((c) => c.id === channelId);
             const name = ch?.name || channelId;
             const body =
               data.status === "completed"

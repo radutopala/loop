@@ -56,6 +56,7 @@ export interface AgentStatusData {
   stop_reason?: string;
   model?: string;
   trigger_content?: string;
+  thread_id?: string;
 }
 
 export interface ToolUseData {
