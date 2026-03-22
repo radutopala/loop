@@ -54,7 +54,9 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
-        run: go build -o loop-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/loop
+        run: |
+          go generate ./internal/readme/
+          go build -o loop-${{ matrix.goos }}-${{ matrix.goarch }} ./cmd/loop
 
   test-windows:
     runs-on: windows-latest
