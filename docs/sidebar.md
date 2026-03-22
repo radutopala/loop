@@ -162,20 +162,24 @@ The "Delete Channel" item has `danger: true` styling (red text) and a separator 
 
 ## Thread Item
 
-Threads are listed below their parent channel, indented with a tree connector line.
+Threads are listed below their parent channel, indented with a tree connector line. Threads can contain sub-threads (e.g. scheduled task threads), forming a 3-level hierarchy.
 
 ### Visual Elements
 
 | Element | Description |
 |---------|-------------|
-| Tree connector | SVG with vertical line and horizontal branch at 50% height. Last thread's vertical line stops at 50%. Positioned at 26px left offset. |
-| Thread name | Truncated with ellipsis. Falls back to thread ID. |
+| Tree connector | SVG with vertical line and horizontal branch at 50% height. Last thread's vertical line stops at 50%. Positioned at 16px left offset. Z-index 1 to stay above hover backgrounds. |
+| Worktree icon | Git branch SVG icon (`colors.active`) for worktree threads. |
+| Task thread icon | Clock SVG icon (`colors.textDim`) for scheduled task threads (detected by `task #` name prefix). |
+| Ephemeral icon | Undo-arrow SVG icon (60% opacity) for ephemeral task threads (detected by `[ephemeral]` prefix). |
+| Thread name | Truncated with ellipsis. Task thread names have emoji prefixes (`🧵`, `⏱`) stripped for display. Falls back to thread ID. |
 | Status indicator | Green dot when `container_running` or `agent_running`, positioned at the right edge. |
 | Checkbox | Shown in selection mode instead of normal layout |
+| Sub-threads | Rendered recursively below the thread with the same connector style. |
 
 ### Indentation
 
-Threads are indented with `padding-left: 40px` (accounting for the tree connector). The connector line uses `colors.textDisabled` (`#555555`) at 1.5px stroke width.
+Threads are indented with `padding-left: 30px` (accounting for the tree connector). The connector line uses `colors.textDisabled` (`#555555`) at 1.5px stroke width.
 
 ### Interaction
 

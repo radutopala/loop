@@ -105,19 +105,30 @@ After execution, the next run is determined by task type:
 
 ## Thread Creation for Scheduled Tasks
 
-When streaming is enabled (default), each scheduled task execution creates a new thread for its output:
+When streaming is enabled (default), task execution creates a thread for its output.
+
+### Thread Reuse (Local Platform)
+
+On the local platform (Electron app), recurring tasks (`cron`/`interval`) reuse the same thread across executions:
+
+1. **First execution**: A new thread is created and its ID is stored in the task's `thread_id` column.
+2. **Subsequent executions**: Messages are posted to the existing thread instead of creating a new one.
+3. **Once tasks**: Always create a fresh thread (no reuse).
+
+On Discord/Slack, a new thread is created for each execution (platform threads are ephemeral notification threads).
 
 ### Thread Naming
 
-The thread is created with:
-```
-<thread_emoji> task #<taskID> (`<schedule>`) <prompt_truncated>
-```
+Thread names differ by platform:
+
+| Platform | Format | Example |
+|---|---|---|
+| **Discord/Slack** | `⏱ task #<ID> (<schedule>) <prompt>` | `⏱ task #42 (*/5 * * * *) Check for new deployments...` |
+| **Local** | `task #<ID> (<schedule>) <prompt>` | `task #42 (5m) Check for new deployments...` |
 
 - The schedule is wrapped in backticks to prevent Slack/Discord markdown from mangling cron asterisks.
 - The full string is truncated to 100 characters.
-
-Example: `task #42 (`*/5 * * * *`) Check for new deployments and report sta...`
+- The Electron sidebar shows a clock SVG icon for task threads (instead of the emoji).
 
 ### Thread Lifecycle
 
@@ -129,6 +140,10 @@ Example: `task #42 (`*/5 * * * *`) Check for new deployments and report sta...`
 6. **UI notification**: A `channel_created` event is broadcast so the Electron app sidebar refreshes.
 
 If thread creation fails, the executor falls back to sending messages directly to the parent channel.
+
+### Sub-Thread Resolution
+
+When an agent running inside a task thread (sub-thread) schedules or lists tasks, the API automatically resolves the channel up to the parent thread. This ensures tasks are always associated with the correct parent rather than being nested deeper.
 
 ---
 
@@ -147,7 +162,8 @@ The agent is instructed to prefix responses with `[EPHEMERAL]` when there is not
 When `auto_delete_sec > 0` and a thread was created:
 
 1. If the response contains `[EPHEMERAL]`:
-   - The thread is renamed, replacing the thread emoji with a puff emoji (to visually indicate ephemeral status).
+   - **Discord/Slack**: The thread is renamed, replacing `⏱` with `💨` (puff emoji) to visually indicate ephemeral status.
+   - **Local**: The thread name is prefixed with `[ephemeral]`. The Electron sidebar shows an undo-arrow SVG icon.
 2. A `time.AfterFunc` is scheduled with the configured delay.
 3. After the delay, the thread is deleted via `bot.DeleteThread` and a `channel_deleted` event is broadcast to the UI.
 
