@@ -343,6 +343,7 @@ func (s *ServerSuite) TestNilDependencyReturns501() {
 // --- CreateTask tests ---
 
 func (s *ServerSuite) TestCreateTaskSuccess() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
 	s.scheduler.On("AddTask", mock.Anything, mock.MatchedBy(func(task *db.ScheduledTask) bool {
 		return task.ChannelID == "ch1" && task.Schedule == "0 9 * * *" &&
 			task.Type == db.TaskTypeCron && task.Prompt == "check standup"
@@ -359,6 +360,7 @@ func (s *ServerSuite) TestCreateTaskSuccess() {
 }
 
 func (s *ServerSuite) TestCreateTaskWithTemplateName() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
 	s.scheduler.On("AddTask", mock.Anything, mock.MatchedBy(func(task *db.ScheduledTask) bool {
 		return task.ChannelID == "ch1" && task.Schedule == "* * * * *" &&
 			task.Type == db.TaskTypeCron && task.Prompt == "dispatch" &&
@@ -376,12 +378,42 @@ func (s *ServerSuite) TestCreateTaskWithTemplateName() {
 }
 
 func (s *ServerSuite) TestCreateTaskSchedulerError() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
 	s.scheduler.On("AddTask", mock.Anything, mock.Anything).Return(int64(0), errors.New("bad schedule"))
 
 	rec := s.testRequest("POST", "/api/tasks", `{"channel_id":"ch1","schedule":"bad","type":"cron","prompt":"test"}`)
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCreateTaskSubThreadResolvesToParent() {
+	// sub-thread: its parent is also a thread (has parent_id)
+	s.store.On("GetChannel", mock.Anything, "sub-thread").
+		Return(&db.Channel{ChannelID: "sub-thread", ParentID: "thread-1"}, nil)
+	s.store.On("GetChannel", mock.Anything, "thread-1").
+		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-root"}, nil)
+	s.scheduler.On("AddTask", mock.Anything, mock.MatchedBy(func(task *db.ScheduledTask) bool {
+		return task.ChannelID == "thread-1" // resolved to parent thread
+	})).Return(int64(60), nil)
+
+	rec := s.testRequest("POST", "/api/tasks", `{"channel_id":"sub-thread","schedule":"5m","type":"interval","prompt":"test"}`)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCreateTaskAllowsDirectThread() {
+	// direct thread: its parent is a top-level channel (no parent_id)
+	s.store.On("GetChannel", mock.Anything, "thread-ok").
+		Return(&db.Channel{ChannelID: "thread-ok", ParentID: "ch-root"}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch-root").
+		Return(&db.Channel{ChannelID: "ch-root", ParentID: ""}, nil)
+	s.scheduler.On("AddTask", mock.Anything, mock.Anything).Return(int64(50), nil)
+
+	rec := s.testRequest("POST", "/api/tasks", `{"channel_id":"thread-ok","schedule":"5m","type":"interval","prompt":"test"}`)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
 }
 
 // --- ListTasks tests ---

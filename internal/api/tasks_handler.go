@@ -46,8 +46,16 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// If scheduling from a sub-thread, resolve up to the parent thread.
+	channelID := req.ChannelID
+	if ch, err := s.store.GetChannel(r.Context(), channelID); err == nil && ch != nil && ch.ParentID != "" {
+		if parent, err := s.store.GetChannel(r.Context(), ch.ParentID); err == nil && parent != nil && parent.ParentID != "" {
+			channelID = ch.ParentID
+		}
+	}
+
 	task := &db.ScheduledTask{
-		ChannelID:     req.ChannelID,
+		ChannelID:     channelID,
 		Schedule:      req.Schedule,
 		Type:          db.TaskType(req.Type),
 		Prompt:        req.Prompt,
