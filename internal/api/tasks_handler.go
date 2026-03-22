@@ -1,11 +1,27 @@
 package api
 
 import (
+	"context"
 	"net/http"
 	"time"
 
 	"github.com/radutopala/loop/internal/db"
 )
+
+// resolveTaskChannelID walks up from a sub-thread to its parent thread.
+// If channelID is a thread whose parent is also a thread (sub-thread),
+// returns the parent's ID. Otherwise returns channelID unchanged.
+func (s *Server) resolveTaskChannelID(ctx context.Context, channelID string) string {
+	ch, err := s.store.GetChannel(ctx, channelID)
+	if err != nil || ch == nil || ch.ParentID == "" {
+		return channelID
+	}
+	parent, err := s.store.GetChannel(ctx, ch.ParentID)
+	if err != nil || parent == nil || parent.ParentID == "" {
+		return channelID
+	}
+	return ch.ParentID
+}
 
 type createTaskRequest struct {
 	ChannelID     string `json:"channel_id"`
@@ -46,16 +62,8 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// If scheduling from a sub-thread, resolve up to the parent thread.
-	channelID := req.ChannelID
-	if ch, err := s.store.GetChannel(r.Context(), channelID); err == nil && ch != nil && ch.ParentID != "" {
-		if parent, err := s.store.GetChannel(r.Context(), ch.ParentID); err == nil && parent != nil && parent.ParentID != "" {
-			channelID = ch.ParentID
-		}
-	}
-
 	task := &db.ScheduledTask{
-		ChannelID:     channelID,
+		ChannelID:     s.resolveTaskChannelID(r.Context(), req.ChannelID),
 		Schedule:      req.Schedule,
 		Type:          db.TaskType(req.Type),
 		Prompt:        req.Prompt,
@@ -80,7 +88,7 @@ func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tasks, err := s.scheduler.ListTasks(r.Context(), channelID)
+	tasks, err := s.scheduler.ListTasks(r.Context(), s.resolveTaskChannelID(r.Context(), channelID))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

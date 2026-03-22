@@ -419,6 +419,7 @@ func (s *ServerSuite) TestCreateTaskAllowsDirectThread() {
 // --- ListTasks tests ---
 
 func (s *ServerSuite) TestListTasksSuccess() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
 	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	tasks := []*db.ScheduledTask{
 		{ID: 1, ChannelID: "ch1", Schedule: "0 9 * * *", Type: db.TaskTypeCron, Prompt: "task1", Enabled: true, NextRunAt: now, TemplateName: "my-template"},
@@ -442,6 +443,7 @@ func (s *ServerSuite) TestListTasksSuccess() {
 }
 
 func (s *ServerSuite) TestListTasksEmpty() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
 	s.scheduler.On("ListTasks", mock.Anything, "ch1").Return([]*db.ScheduledTask{}, nil)
 
 	rec := s.testRequest("GET", "/api/tasks?channel_id=ch1", "")
@@ -460,6 +462,7 @@ func (s *ServerSuite) TestListTasksMissingChannelID() {
 }
 
 func (s *ServerSuite) TestListTasksSchedulerError() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
 	s.scheduler.On("ListTasks", mock.Anything, "ch1").Return(nil, errors.New("db error"))
 
 	rec := s.testRequest("GET", "/api/tasks?channel_id=ch1", "")
