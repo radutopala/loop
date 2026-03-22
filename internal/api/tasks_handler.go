@@ -8,19 +8,22 @@ import (
 	"github.com/radutopala/loop/internal/db"
 )
 
-// resolveTaskChannelID walks up from a sub-thread to its parent thread.
-// If channelID is a thread whose parent is also a thread (sub-thread),
-// returns the parent's ID. Otherwise returns channelID unchanged.
+// resolveTaskChannelID walks up from deeply nested threads to the nearest
+// channel that is either a top-level channel or a direct child of one.
+// This ensures tasks are always listed/created at the correct level.
 func (s *Server) resolveTaskChannelID(ctx context.Context, channelID string) string {
-	ch, err := s.store.GetChannel(ctx, channelID)
-	if err != nil || ch == nil || ch.ParentID == "" {
-		return channelID
+	for range 10 { // guard against infinite loops
+		ch, err := s.store.GetChannel(ctx, channelID)
+		if err != nil || ch == nil || ch.ParentID == "" {
+			break
+		}
+		parent, err := s.store.GetChannel(ctx, ch.ParentID)
+		if err != nil || parent == nil || parent.ParentID == "" {
+			break // ch is a direct child of a top-level channel
+		}
+		channelID = ch.ParentID
 	}
-	parent, err := s.store.GetChannel(ctx, ch.ParentID)
-	if err != nil || parent == nil || parent.ParentID == "" {
-		return channelID
-	}
-	return ch.ParentID
+	return channelID
 }
 
 type createTaskRequest struct {
