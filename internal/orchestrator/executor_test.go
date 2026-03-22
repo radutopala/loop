@@ -274,6 +274,117 @@ func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
 	s.bot.AssertExpectations(s.T())
 }
 
+func (s *TaskExecutorSuite) TestStreamingLocalPlatformPersistsThreadID() {
+	s.executor.streamingEnabled = true
+
+	task := &db.ScheduledTask{
+		ID:        30,
+		ChannelID: "ch-local",
+		Prompt:    "local task",
+		Type:      db.TaskTypeCron,
+		Schedule:  "0 * * * *",
+	}
+
+	localChannel := &db.Channel{ChannelID: "ch-local", Platform: types.PlatformLocal, DirPath: "/work"}
+	s.store.On("GetChannel", mock.Anything, "ch-local").Return(localChannel, nil)
+	s.bot.On("CreateSimpleThread", s.ctx, "ch-local", mock.Anything, mock.Anything).Return("local-thread-1", nil).Once()
+	s.store.On("UpsertChannel", mock.Anything, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "local-thread-1" && ch.ParentID == "ch-local"
+	})).Return(nil)
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(30), "local-thread-1").Return(nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Result")
+		return true
+	})).Return(&agent.AgentResponse{Response: "Result", SessionID: "s1"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch-local", "s1").Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Result", resp)
+	s.store.AssertCalled(s.T(), "UpdateScheduledTaskThreadID", s.ctx, int64(30), "local-thread-1")
+}
+
+func (s *TaskExecutorSuite) TestStreamingLocalPlatformReusesThreadID() {
+	s.executor.streamingEnabled = true
+
+	task := &db.ScheduledTask{
+		ID:        31,
+		ChannelID: "ch-local2",
+		Prompt:    "recurring task",
+		Type:      db.TaskTypeInterval,
+		Schedule:  "5m",
+		ThreadID:  "existing-thread",
+	}
+
+	localChannel := &db.Channel{ChannelID: "ch-local2", Platform: types.PlatformLocal, DirPath: "/work"}
+	s.store.On("GetChannel", mock.Anything, "ch-local2").Return(localChannel, nil)
+	threadChannel := &db.Channel{ChannelID: "existing-thread", ParentID: "ch-local2", Platform: types.PlatformLocal}
+	s.store.On("GetChannel", mock.Anything, "existing-thread").Return(threadChannel, nil)
+	s.allowBotInserts()
+
+	// Should NOT create a new thread — reuses existing-thread
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Update")
+		return true
+	})).Return(&agent.AgentResponse{Response: "Update", SessionID: "s2"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch-local2", "s2").Return(nil)
+
+	// Second OnTurn goes to the existing thread
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "existing-thread" && msg.Content == "Update"
+	})).Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Update", resp)
+	s.bot.AssertNotCalled(s.T(), "CreateSimpleThread", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (s *TaskExecutorSuite) TestStreamingDiscordDoesNotReuseThread() {
+	s.executor.streamingEnabled = true
+
+	task := &db.ScheduledTask{
+		ID:        32,
+		ChannelID: "ch-discord",
+		Prompt:    "discord task",
+		Type:      db.TaskTypeCron,
+		Schedule:  "0 * * * *",
+		ThreadID:  "old-discord-thread",
+	}
+
+	discordChannel := &db.Channel{ChannelID: "ch-discord", Platform: types.PlatformDiscord}
+	s.store.On("GetChannel", mock.Anything, "ch-discord").Return(discordChannel, nil)
+
+	// Should create a NEW thread despite having ThreadID, because it's Discord
+	s.bot.On("CreateSimpleThread", s.ctx, "ch-discord", mock.Anything, mock.Anything).Return("new-discord-thread", nil).Once()
+	s.store.On("UpsertChannel", mock.Anything, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "new-discord-thread"
+	})).Return(nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Discord result")
+		return true
+	})).Return(&agent.AgentResponse{Response: "Discord result", SessionID: "s3"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch-discord", "s3").Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Discord result", resp)
+	s.bot.AssertCalled(s.T(), "CreateSimpleThread", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	// Should NOT persist thread_id for Discord
+	s.store.AssertNotCalled(s.T(), "UpdateScheduledTaskThreadID", mock.Anything, mock.Anything, mock.Anything)
+}
+
 func (s *TaskExecutorSuite) TestStreamingDisabledNoOnTurn() {
 	// streamingEnabled is false by default
 	s.store.On("GetChannel", s.ctx, "ch10").Return(nil, nil)

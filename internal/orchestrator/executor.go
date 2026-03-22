@@ -71,6 +71,11 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	var threadID string
 	var threadName string
 	var threadFailed bool
+	// Reuse existing thread for recurring local-platform tasks.
+	isLocal := channel != nil && channel.Platform == types.PlatformLocal
+	if task.ThreadID != "" && task.Type != db.TaskTypeOnce && isLocal {
+		threadID = task.ThreadID
+	}
 	if e.streamingEnabled {
 		tracker = newStreamTracker(func(text string) {
 			if threadID == "" && !threadFailed {
@@ -105,6 +110,10 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 						Active:      true,
 					})
 					e.invitePermissionUsers(ctx, threadID, channel.Permissions)
+				}
+				// Persist thread ID so recurring local tasks reuse the same thread.
+				if task.Type != db.TaskTypeOnce && isLocal {
+					_ = e.store.UpdateScheduledTaskThreadID(ctx, task.ID, threadID)
 				}
 				// Notify the UI that a new thread was created so the
 				// sidebar refreshes immediately.

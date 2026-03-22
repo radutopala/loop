@@ -125,6 +125,10 @@ func (m *MockStore) UpdateScheduledTaskEnabled(ctx context.Context, id int64, en
 	return m.Called(ctx, id, enabled).Error(0)
 }
 
+func (m *MockStore) UpdateScheduledTaskThreadID(ctx context.Context, id int64, threadID string) error {
+	return m.Called(ctx, id, threadID).Error(0)
+}
+
 func (m *MockStore) GetScheduledTask(ctx context.Context, id int64) (*db.ScheduledTask, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {

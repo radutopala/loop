@@ -55,7 +55,13 @@ func (s *MigrationsSuite) TestRunMigrationsAllNew() {
 
 	// For each subsequent migration, expect a check + execute + record
 	fnIndices := funcMigrationIndices()
-	backfillIdx := len(migrations) - 1 // migrateBackfillDirPath is last
+	// Find the backfill func migration (second func migration).
+	backfillIdx := -1
+	for i, m := range migrations {
+		if m.fn != nil && i != funcMigrationIndex() {
+			backfillIdx = i
+		}
+	}
 	for i := 1; i < len(migrations); i++ {
 		mock.ExpectQuery(`SELECT COUNT`).
 			WithArgs(i).

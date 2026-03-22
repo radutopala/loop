@@ -149,6 +149,7 @@ var migrations = []migration{
 	sqlMigration(`UPDATE messages SET author_name = 'agent' WHERE author_name = 'assistant' AND is_bot = 1`),
 	sqlMigration(`ALTER TABLE channels ADD COLUMN worktree INTEGER NOT NULL DEFAULT 0`),
 	funcMigration(makeBackfillDirPath(os.UserHomeDir)),
+	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN thread_id TEXT NOT NULL DEFAULT ''`),
 }
 
 // RunMigrations executes all pending schema migrations.

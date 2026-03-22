@@ -51,6 +51,7 @@ type ScheduledTask struct {
 	UpdatedAt     time.Time `json:"updated_at"`
 	TemplateName  string    `json:"template_name"`
 	AutoDeleteSec int       `json:"auto_delete_sec"`
+	ThreadID      string    `json:"thread_id"`
 }
 
 // TaskType represents the type of scheduled task.

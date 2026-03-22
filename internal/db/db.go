@@ -36,6 +36,7 @@ type Store interface {
 	DeleteScheduledTask(ctx context.Context, id int64) error
 	ListScheduledTasks(ctx context.Context, channelID string) ([]*ScheduledTask, error)
 	UpdateScheduledTaskEnabled(ctx context.Context, id int64, enabled bool) error
+	UpdateScheduledTaskThreadID(ctx context.Context, id int64, threadID string) error
 	GetScheduledTask(ctx context.Context, id int64) (*ScheduledTask, error)
 	GetScheduledTaskByTemplateName(ctx context.Context, channelID, templateName string) (*ScheduledTask, error)
 	ListChannels(ctx context.Context) ([]*Channel, error)
@@ -365,8 +366,16 @@ func (s *SQLiteStore) GetDueTasks(ctx context.Context, now time.Time) ([]*Schedu
 
 func (s *SQLiteStore) UpdateScheduledTask(ctx context.Context, task *ScheduledTask) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE scheduled_tasks SET schedule = ?, type = ?, prompt = ?, enabled = ?, next_run_at = ?, updated_at = ?, auto_delete_sec = ? WHERE id = ?`,
-		task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, s.nowFunc(), task.AutoDeleteSec, task.ID,
+		`UPDATE scheduled_tasks SET schedule = ?, type = ?, prompt = ?, enabled = ?, next_run_at = ?, updated_at = ?, auto_delete_sec = ?, thread_id = ? WHERE id = ?`,
+		task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, s.nowFunc(), task.AutoDeleteSec, task.ThreadID, task.ID,
+	)
+	return err
+}
+
+func (s *SQLiteStore) UpdateScheduledTaskThreadID(ctx context.Context, id int64, threadID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE scheduled_tasks SET thread_id = ?, updated_at = ? WHERE id = ?`,
+		threadID, s.nowFunc(), id,
 	)
 	return err
 }
@@ -408,7 +417,7 @@ func (s *SQLiteStore) GetScheduledTask(ctx context.Context, id int64) (*Schedule
 		id,
 	).Scan(&task.ID, &task.ChannelID, &task.GuildID, &task.Schedule,
 		&taskType, &task.Prompt, &enabled, &task.NextRunAt,
-		&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec)
+		&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -429,7 +438,7 @@ func (s *SQLiteStore) GetScheduledTaskByTemplateName(ctx context.Context, channe
 		channelID, templateName,
 	).Scan(&task.ID, &task.ChannelID, &task.GuildID, &task.Schedule,
 		&taskType, &task.Prompt, &enabled, &task.NextRunAt,
-		&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec)
+		&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -544,7 +553,7 @@ func (s *SQLiteStore) ListDistinctMemoryFilePaths(ctx context.Context, dirPath s
 // Column lists for SELECT queries.
 const (
 	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at`
-	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec`
+	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id`
 )
 
 // helpers
@@ -621,7 +630,7 @@ func scanScheduledTasks(rows *sql.Rows) ([]*ScheduledTask, error) {
 		if err := rows.Scan(
 			&task.ID, &task.ChannelID, &task.GuildID, &task.Schedule,
 			&taskType, &task.Prompt, &enabled, &task.NextRunAt,
-			&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec,
+			&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID,
 		); err != nil {
 			return nil, err
 		}
