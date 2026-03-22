@@ -302,6 +302,51 @@ When there are no messages and loading is complete, the chat view shows:
 
 ---
 
+## Copy-on-Select
+
+Selecting text in the chat message area automatically copies it to the clipboard. The feature listens for `mouseup` events on the message container and calls `navigator.clipboard.writeText()` if the selection is non-empty and within the container.
+
+---
+
+## Chat Drafts
+
+Unsent text in the chat input is automatically persisted to `localStorage` under the key `loop-chat-drafts`, keyed by channel ID. Drafts survive channel switches and app restarts.
+
+| Event | Action |
+|-------|--------|
+| Typing | `draftText.set(channelId, text)` |
+| Clearing input | `draftText.delete(channelId)` |
+| Sending message | `draftText.delete(channelId)` |
+| Mounting ChatInput | Restore draft via `draftText.get(channelId)`, cursor moved to end |
+| Accepting command/mention | Draft updated to reflect accepted text |
+
+---
+
+## Message Queue Indicators
+
+When multiple messages are sent while the agent is running, unprocessed messages are tracked and annotated with status labels.
+
+### Processing State
+
+Each user message has an `is_processed` flag. The first unprocessed user message is considered "currently being processed"; subsequent unprocessed messages are "queued".
+
+| State | Label | Style |
+|-------|-------|-------|
+| Processing | `processing` | 10px dimmed text, pill badge below the message |
+| Queued | `queued` | 10px dimmed text, pill badge below the message |
+
+### Trigger Quote
+
+When the agent is processing a message and there are queued messages (or there were queued messages in this batch), a `TriggerQuote` component is shown between the messages list and the agent activity indicators. It displays:
+
+- A reply-arrow icon (SVG)
+- The triggering message content (truncated to 120 characters)
+- A timestamp (HH:MM format)
+
+The trigger quote persists across channel switches via the chat state store and remains visible until all messages in the batch are processed.
+
+---
+
 ## Docker Isolation Label
 
 Below the input area, a small label reads: "Running non-interactively in an isolated Docker container" with a monitor icon. The icon stroke color changes to green (`#48bb78`) when the agent is running.

@@ -227,7 +227,7 @@ Delete a thread.
 
 **Response:** `204 No Content`
 
-**Behavior notes:** Removes the thread's MCP config file, deletes from the chat platform (if a creator is configured), and removes from the database.
+**Behavior notes:** Removes the thread's MCP config file, deletes from the chat platform (if a creator is configured), and removes from the database. If the thread has an associated git worktree, the worktree and its branch are cleaned up automatically.
 
 **Errors:** `501` if thread deletion is not configured.
 
