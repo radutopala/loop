@@ -405,7 +405,6 @@ func (s *ServerSuite) TestCreateTaskSubThreadResolvesToParent() {
 	s.scheduler.AssertExpectations(s.T())
 }
 
-
 func (s *ServerSuite) TestCreateTaskAllowsDirectThread() {
 	// direct thread: its parent is a top-level channel (no parent_id)
 	s.store.On("GetChannel", mock.Anything, "thread-ok").

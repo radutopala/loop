@@ -87,10 +87,10 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			if threadID == "" && !threadFailed {
 				// First turn — create a thread for the task output
 				taskPrefix := ""
-			if !isLocal {
-				taskPrefix = "⏱ "
-			}
-			prefix := fmt.Sprintf("%stask #%d (`%s`) ", taskPrefix, task.ID, task.Schedule)
+				if !isLocal {
+					taskPrefix = "⏱ "
+				}
+				prefix := fmt.Sprintf("%stask #%d (`%s`) ", taskPrefix, task.ID, task.Schedule)
 				threadName = types.TruncateString(prefix+task.Prompt, 100)
 				id, err := e.bot.CreateSimpleThread(ctx, task.ChannelID, threadName, prefix+text)
 				if err != nil {

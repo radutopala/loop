@@ -274,21 +274,21 @@ func makeBackfillDirPath(userHomeDir func() (string, error)) func(context.Contex
 		}
 		loopDir := filepath.Join(home, ".loop")
 
-	// Backfill top-level channels.
-	if _, err := sqlDB.ExecContext(ctx,
-		`UPDATE channels SET dir_path = ? || '/' || channel_id || '/work' WHERE dir_path = '' AND parent_id = ''`,
-		loopDir,
-	); err != nil {
-		return fmt.Errorf("backfilling channel dir_path: %w", err)
-	}
+		// Backfill top-level channels.
+		if _, err := sqlDB.ExecContext(ctx,
+			`UPDATE channels SET dir_path = ? || '/' || channel_id || '/work' WHERE dir_path = '' AND parent_id = ''`,
+			loopDir,
+		); err != nil {
+			return fmt.Errorf("backfilling channel dir_path: %w", err)
+		}
 
-	// Backfill threads from their parent's dir_path.
-	if _, err := sqlDB.ExecContext(ctx,
-		`UPDATE channels SET dir_path = (SELECT p.dir_path FROM channels p WHERE p.channel_id = channels.parent_id) WHERE dir_path = '' AND parent_id != ''`,
-	); err != nil {
-		return fmt.Errorf("backfilling thread dir_path: %w", err)
-	}
+		// Backfill threads from their parent's dir_path.
+		if _, err := sqlDB.ExecContext(ctx,
+			`UPDATE channels SET dir_path = (SELECT p.dir_path FROM channels p WHERE p.channel_id = channels.parent_id) WHERE dir_path = '' AND parent_id != ''`,
+		); err != nil {
+			return fmt.Errorf("backfilling thread dir_path: %w", err)
+		}
 
-	return nil
+		return nil
 	}
 }

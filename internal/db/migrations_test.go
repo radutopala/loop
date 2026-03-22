@@ -67,19 +67,20 @@ func (s *MigrationsSuite) TestRunMigrationsAllNew() {
 			WithArgs(i).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 
-		if i == backfillIdx {
+		switch {
+		case i == backfillIdx:
 			// migrateBackfillDirPath: two UPDATE statements
 			mock.ExpectExec(`UPDATE channels SET dir_path`).
 				WillReturnResult(sqlmock.NewResult(0, 0))
 			mock.ExpectExec(`UPDATE channels SET dir_path`).
 				WillReturnResult(sqlmock.NewResult(0, 0))
-		} else if fnIndices[i] {
+		case fnIndices[i]:
 			// migrateTimestampsToUTC with empty tables
 			mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
 				WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}))
 			mock.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).
 				WillReturnRows(sqlmock.NewRows([]string{"id", "started_at", "finished_at"}))
-		} else {
+		default:
 			mock.ExpectExec(`.+`).
 				WillReturnResult(sqlmock.NewResult(0, 0))
 		}
