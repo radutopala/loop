@@ -21,6 +21,8 @@ interface ThreadItemProps {
 export function ThreadItem({ thread, subThreads, threadsByParent, selected, selectedId, isLast, onSelect, onContextMenu, selectMode, checked, onToggleCheck, isRunningMapRef }: ThreadItemProps) {
   const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
+  const isTaskThread = thread.name.startsWith("🧵 task #");
+  const displayName = isTaskThread ? thread.name.replace(/^🧵 /, "") : (thread.name || thread.id);
 
   return (
     <div style={{ position: "relative", margin: "0 8px" }}>
@@ -97,6 +99,12 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
           <path d="M6 21V9a9 9 0 0 0 9 9" />
         </svg>
       )}
+      {isTaskThread && (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+          <circle cx="12" cy="12" r="10" />
+          <polyline points="12 6 12 12 16 14" />
+        </svg>
+      )}
       <span
         style={{
           overflow: "hidden",
@@ -104,7 +112,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
           whiteSpace: "nowrap",
         }}
       >
-        {thread.name || thread.id}
+        {displayName}
       </span>
       {(thread.container_running || thread.agent_running || isRunningMapRef?.current?.get(thread.id)) && (
         <span
