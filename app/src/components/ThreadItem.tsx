@@ -22,6 +22,8 @@ interface ThreadItemProps {
 export function ThreadItem({ thread, subThreads, threadsByParent, selected, selectedId, isLast, onSelect, onContextMenu, selectMode, checked, onToggleCheck, isRunningMapRef, unreadIdsRef }: ThreadItemProps) {
   const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
+  const [collapsed, setCollapsed] = useState(false);
+  const hasChildren = (subThreads?.length ?? 0) > 0;
   const isUnread = unreadIdsRef?.current?.has(thread.id) ?? false;
   const isEphemeral = thread.name.startsWith("[ephemeral] ");
   const isTaskThread = /^(\[ephemeral] )?(🧵 |⏱ )?task #/.test(thread.name);
@@ -48,6 +50,30 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
         <line x1="1" y1="0" x2="1" y2={isLast ? "50%" : "100%"} stroke={colors.textDisabled} strokeWidth="1.5" />
         <line x1="1" y1="50%" x2="10" y2="50%" stroke={colors.textDisabled} strokeWidth="1.5" />
       </svg>
+      {hasChildren && (
+        <button
+          onClick={(e) => { e.stopPropagation(); setCollapsed((c) => !c); }}
+          style={{
+            position: "absolute",
+            left: 22,
+            top: "50%",
+            transform: "translateY(-50%)",
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: 0,
+            color: colors.textDim,
+            zIndex: 2,
+            display: "flex",
+            alignItems: "center",
+          }}
+        >
+          <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+            style={{ transition: "transform 0.15s ease", transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)" }}>
+            <path d="M2.5 3.5L5 6.5L7.5 3.5" />
+          </svg>
+        </button>
+      )}
       <button
         title={thread.dir_path || undefined}
         onClick={() => onSelect(thread.id)}
@@ -151,8 +177,8 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
         />
       )}
     </button>
-      {subThreads && subThreads.length > 0 &&
-        subThreads.map((sub, i) => (
+      {hasChildren && !collapsed &&
+        subThreads!.map((sub, i) => (
           <ThreadItem
             key={sub.id}
             thread={sub}
@@ -160,7 +186,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
             threadsByParent={threadsByParent}
             selected={selectedId === sub.id}
             selectedId={selectedId}
-            isLast={i === subThreads.length - 1}
+            isLast={i === subThreads!.length - 1}
             onSelect={onSelect}
             onContextMenu={onContextMenu}
             selectMode={selectMode}
