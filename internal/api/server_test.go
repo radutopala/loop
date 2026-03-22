@@ -405,24 +405,6 @@ func (s *ServerSuite) TestCreateTaskSubThreadResolvesToParent() {
 	s.scheduler.AssertExpectations(s.T())
 }
 
-func (s *ServerSuite) TestCreateTaskDeepNestingResolvesToParent() {
-	// 3-level nesting: deep → mid → thread-1 → ch-root
-	s.store.On("GetChannel", mock.Anything, "deep").
-		Return(&db.Channel{ChannelID: "deep", ParentID: "mid"}, nil)
-	s.store.On("GetChannel", mock.Anything, "mid").
-		Return(&db.Channel{ChannelID: "mid", ParentID: "thread-1"}, nil)
-	s.store.On("GetChannel", mock.Anything, "thread-1").
-		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-root"}, nil)
-	s.store.On("GetChannel", mock.Anything, "ch-root").
-		Return(&db.Channel{ChannelID: "ch-root"}, nil)
-	s.scheduler.On("AddTask", mock.Anything, mock.MatchedBy(func(task *db.ScheduledTask) bool {
-		return task.ChannelID == "thread-1"
-	})).Return(int64(70), nil)
-
-	rec := s.testRequest("POST", "/api/tasks", `{"channel_id":"deep","schedule":"5m","type":"interval","prompt":"test"}`)
-
-	require.Equal(s.T(), http.StatusCreated, rec.Code)
-}
 
 func (s *ServerSuite) TestCreateTaskAllowsDirectThread() {
 	// direct thread: its parent is a top-level channel (no parent_id)

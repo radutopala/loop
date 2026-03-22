@@ -96,9 +96,23 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, inter *bot.Interac
 	}
 }
 
+// resolveTaskChannelID walks up from nested threads to the nearest direct
+// child of a top-level channel, so tasks are listed/created at the right level.
+func (o *Orchestrator) resolveTaskChannelID(ctx context.Context, channelID string) string {
+	ch, err := o.store.GetChannel(ctx, channelID)
+	if err != nil || ch == nil || ch.ParentID == "" {
+		return channelID
+	}
+	parent, err := o.store.GetChannel(ctx, ch.ParentID)
+	if err != nil || parent == nil || parent.ParentID == "" {
+		return channelID
+	}
+	return ch.ParentID
+}
+
 func (o *Orchestrator) handleScheduleInteraction(ctx context.Context, inter *bot.Interaction) {
 	task := &db.ScheduledTask{
-		ChannelID: inter.ChannelID,
+		ChannelID: o.resolveTaskChannelID(ctx, inter.ChannelID),
 		GuildID:   inter.GuildID,
 		Schedule:  inter.Options["schedule"],
 		Prompt:    inter.Options["prompt"],
@@ -116,7 +130,7 @@ func (o *Orchestrator) handleScheduleInteraction(ctx context.Context, inter *bot
 }
 
 func (o *Orchestrator) handleTasksInteraction(ctx context.Context, inter *bot.Interaction) {
-	tasks, err := o.scheduler.ListTasks(ctx, inter.ChannelID)
+	tasks, err := o.scheduler.ListTasks(ctx, o.resolveTaskChannelID(ctx, inter.ChannelID))
 	if err != nil {
 		o.logger.Error("listing tasks", "error", err, "channel_id", inter.ChannelID)
 		o.sendReply(ctx, inter.ChannelID, "Failed to list tasks.")

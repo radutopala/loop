@@ -1336,6 +1336,47 @@ func (s *OrchestratorSuite) TestHandleInteractionTasksAutoDeleteNotShownWhenZero
 	s.scheduler.AssertExpectations(s.T())
 }
 
+func (s *OrchestratorSuite) TestHandleInteractionTasksFromDirectThread() {
+	// direct thread of a top-level channel — should NOT resolve up
+	s.store.On("GetChannel", s.ctx, "thread-direct").
+		Return(&db.Channel{ChannelID: "thread-direct", ParentID: "ch-top"}, nil)
+	s.store.On("GetChannel", s.ctx, "ch-top").
+		Return(&db.Channel{ChannelID: "ch-top"}, nil) // no parent_id
+	s.scheduler.On("ListTasks", s.ctx, "thread-direct").Return([]*db.ScheduledTask{}, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+		return out.Content == "No scheduled tasks."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
+		ChannelID:   "thread-direct",
+		CommandName: "tasks",
+	})
+
+	s.scheduler.AssertCalled(s.T(), "ListTasks", s.ctx, "thread-direct")
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTasksFromSubThread() {
+	// sub-thread → thread → top-level channel. Tasks are on thread.
+	s.store.On("GetChannel", s.ctx, "sub-thread").
+		Return(&db.Channel{ChannelID: "sub-thread", ParentID: "thread-1"}, nil)
+	s.store.On("GetChannel", s.ctx, "thread-1").
+		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-root"}, nil)
+	tasks := []*db.ScheduledTask{
+		{ID: 91, Prompt: "check docs", Schedule: "5m", Type: db.TaskTypeInterval, Enabled: true, NextRunAt: time.Now().Add(5 * time.Minute)},
+	}
+	s.scheduler.On("ListTasks", s.ctx, "thread-1").Return(tasks, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+		return out.ChannelID == "sub-thread" && strings.Contains(out.Content, "ID 91")
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
+		ChannelID:   "sub-thread",
+		CommandName: "tasks",
+	})
+
+	s.scheduler.AssertCalled(s.T(), "ListTasks", s.ctx, "thread-1")
+}
+
 func (s *OrchestratorSuite) TestHandleInteractionTasksEmpty() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("ListTasks", s.ctx, "ch1").Return([]*db.ScheduledTask{}, nil)
