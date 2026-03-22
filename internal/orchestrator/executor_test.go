@@ -239,7 +239,7 @@ func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
 	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil)
 
 	// First OnTurn creates a thread with the first turn text
-	s.bot.On("CreateSimpleThread", s.ctx, "ch9", "🧵 task #9 (`0 * * * *`) stream task", "🧵 task #9 (`0 * * * *`) Intermediate").Return("thread-1", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch9", "task #9 (`0 * * * *`) stream task", "task #9 (`0 * * * *`) Intermediate").Return("thread-1", nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -421,7 +421,7 @@ func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
 	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil)
 
 	// First OnTurn creates thread
-	s.bot.On("CreateSimpleThread", s.ctx, "ch11", "🧵 task #11 (`5m`) stream diff", "🧵 task #11 (`5m`) Intermediate").Return("thread-2", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch11", "task #11 (`5m`) stream diff", "task #11 (`5m`) Intermediate").Return("thread-2", nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -465,7 +465,7 @@ func (s *TaskExecutorSuite) TestStreamingThreadCreationFailsFallsBack() {
 	s.store.On("GetChannel", s.ctx, "ch12").Return(nil, nil)
 
 	// Thread creation fails
-	s.bot.On("CreateSimpleThread", s.ctx, "ch12", "🧵 task #12 (`0 * * * *`) fallback task", "🧵 task #12 (`0 * * * *`) Turn 1").Return("", errors.New("thread error")).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch12", "task #12 (`0 * * * *`) fallback task", "task #12 (`0 * * * *`) Turn 1").Return("", errors.New("thread error")).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -560,7 +560,7 @@ func (s *TaskExecutorSuite) TestStreamingSingleTurnNoFinalDuplicate() {
 	s.store.On("GetChannel", s.ctx, "ch13").Return(nil, nil)
 
 	// Thread created for single turn
-	s.bot.On("CreateSimpleThread", s.ctx, "ch13", "🧵 task #13 (`0 * * * *`) single turn task", "🧵 task #13 (`0 * * * *`) Only turn").Return("thread-3", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch13", "task #13 (`0 * * * *`) single turn task", "task #13 (`0 * * * *`) Only turn").Return("thread-3", nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -943,8 +943,8 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 
 	// Thread creation succeeds
 	s.bot.On("CreateSimpleThread", s.ctx, "ch20",
-		"🧵 task #20 (`0 * * * *`) check",
-		"🧵 task #20 (`0 * * * *`) Turn 1",
+		"task #20 (`0 * * * *`) check",
+		"task #20 (`0 * * * *`) Turn 1",
 	).Return("thread-20", nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
@@ -970,7 +970,7 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 	eb.On("BroadcastChannelCreated", "ch20", "thread-20").Once()
 	// First turn broadcast goes to THREAD, not parent channel
 	eb.On("BroadcastMessageCreated", "thread-20", mock.MatchedBy(func(d events.MessageEventData) bool {
-		return d.Content == "🧵 task #20 (`0 * * * *`) Turn 1" && d.IsBot
+		return d.Content == "task #20 (`0 * * * *`) Turn 1" && d.IsBot
 	})).Once()
 	// Final response broadcast goes to thread
 	eb.On("BroadcastMessageCreated", "thread-20", mock.MatchedBy(func(d events.MessageEventData) bool {

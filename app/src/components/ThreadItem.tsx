@@ -21,7 +21,7 @@ interface ThreadItemProps {
 export function ThreadItem({ thread, subThreads, threadsByParent, selected, selectedId, isLast, onSelect, onContextMenu, selectMode, checked, onToggleCheck, isRunningMapRef }: ThreadItemProps) {
   const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
-  const isTaskThread = thread.name.startsWith("🧵 task #");
+  const isTaskThread = /^(🧵 )?task #/.test(thread.name);
   const displayName = isTaskThread ? thread.name.replace(/^🧵 /, "") : (thread.name || thread.id);
 
   return (
