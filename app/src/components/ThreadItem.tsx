@@ -30,7 +30,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
         height="100%"
         style={{
           position: "absolute",
-          left: 26,
+          left: 16,
           top: 0,
           bottom: 0,
           height: "100%",
@@ -52,7 +52,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
           alignItems: "center",
           gap: 4,
           width: "100%",
-          padding: "4px 8px 4px 40px",
+          padding: "4px 8px 4px 30px",
           border: "none",
           background: selected
             ? colors.selectedBg
