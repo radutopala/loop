@@ -239,7 +239,7 @@ func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
 	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil)
 
 	// First OnTurn creates a thread with the first turn text
-	s.bot.On("CreateSimpleThread", s.ctx, "ch9", "task #9 (`0 * * * *`) stream task", "task #9 (`0 * * * *`) Intermediate").Return("thread-1", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch9", "⏱ task #9 (`0 * * * *`) stream task", "⏱ task #9 (`0 * * * *`) Intermediate").Return("thread-1", nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -421,7 +421,7 @@ func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
 	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil)
 
 	// First OnTurn creates thread
-	s.bot.On("CreateSimpleThread", s.ctx, "ch11", "task #11 (`5m`) stream diff", "task #11 (`5m`) Intermediate").Return("thread-2", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch11", "⏱ task #11 (`5m`) stream diff", "⏱ task #11 (`5m`) Intermediate").Return("thread-2", nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -465,7 +465,7 @@ func (s *TaskExecutorSuite) TestStreamingThreadCreationFailsFallsBack() {
 	s.store.On("GetChannel", s.ctx, "ch12").Return(nil, nil)
 
 	// Thread creation fails
-	s.bot.On("CreateSimpleThread", s.ctx, "ch12", "task #12 (`0 * * * *`) fallback task", "task #12 (`0 * * * *`) Turn 1").Return("", errors.New("thread error")).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch12", "⏱ task #12 (`0 * * * *`) fallback task", "⏱ task #12 (`0 * * * *`) Turn 1").Return("", errors.New("thread error")).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -560,7 +560,7 @@ func (s *TaskExecutorSuite) TestStreamingSingleTurnNoFinalDuplicate() {
 	s.store.On("GetChannel", s.ctx, "ch13").Return(nil, nil)
 
 	// Thread created for single turn
-	s.bot.On("CreateSimpleThread", s.ctx, "ch13", "task #13 (`0 * * * *`) single turn task", "task #13 (`0 * * * *`) Only turn").Return("thread-3", nil).Once()
+	s.bot.On("CreateSimpleThread", s.ctx, "ch13", "⏱ task #13 (`0 * * * *`) single turn task", "⏱ task #13 (`0 * * * *`) Only turn").Return("thread-3", nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -674,6 +674,54 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 	eb.AssertCalled(s.T(), "BroadcastChannelDeleted", "thread-auto-del")
 	s.bot.AssertExpectations(s.T())
 	eb.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestAutoDeleteEphemeralLocalPlatform() {
+	s.executor.streamingEnabled = true
+	eb := new(MockEventBroadcaster)
+	s.executor.events = eb
+	eb.On("BroadcastAgentStatus", mock.Anything, mock.Anything).Maybe()
+	eb.On("BroadcastToolUse", mock.Anything, mock.Anything).Maybe()
+	eb.On("BroadcastAgentActivity", mock.Anything, mock.Anything).Maybe()
+
+	task := &db.ScheduledTask{
+		ID: 40, ChannelID: "ch-local-eph", Prompt: "check stuff",
+		Type: db.TaskTypeCron, Schedule: "0 * * * *", AutoDeleteSec: 30,
+	}
+
+	localCh := &db.Channel{ChannelID: "ch-local-eph", Platform: types.PlatformLocal, DirPath: "/work"}
+	s.store.On("GetChannel", mock.Anything, "ch-local-eph").Return(localCh, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(40), "local-eph-thread").Return(nil)
+	s.allowBotInserts()
+
+	s.bot.On("CreateSimpleThread", s.ctx, "ch-local-eph", mock.Anything, mock.Anything).Return("local-eph-thread", nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("[EPHEMERAL] Nothing new")
+		return true
+	})).Return(&agent.AgentResponse{Response: "[EPHEMERAL] Nothing new", SessionID: "s-eph"}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch-local-eph", "s-eph").Return(nil)
+	eb.On("BroadcastChannelCreated", "ch-local-eph", "local-eph-thread").Once()
+	eb.On("BroadcastMessageCreated", "local-eph-thread", mock.Anything).Maybe()
+	// Local platform: ephemeral rename uses [ephemeral] prefix
+	s.bot.On("RenameThread", s.ctx, "local-eph-thread", "[ephemeral] task #40 (`0 * * * *`) check stuff").Return(nil).Once()
+	s.bot.On("DeleteThread", mock.Anything, "local-eph-thread").Return(nil).Once()
+	eb.On("BroadcastChannelDeleted", "local-eph-thread")
+
+	s.executor.timeAfterFunc = func(_ time.Duration, f func()) *time.Timer {
+		f()
+		return time.NewTimer(0)
+	}
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Nothing new", resp)
+	s.bot.AssertCalled(s.T(), "RenameThread", s.ctx, "local-eph-thread", "[ephemeral] task #40 (`0 * * * *`) check stuff")
 }
 
 func (s *TaskExecutorSuite) TestAutoDeleteEphemeralVariants() {
@@ -943,8 +991,8 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 
 	// Thread creation succeeds
 	s.bot.On("CreateSimpleThread", s.ctx, "ch20",
-		"task #20 (`0 * * * *`) check",
-		"task #20 (`0 * * * *`) Turn 1",
+		"⏱ task #20 (`0 * * * *`) check",
+		"⏱ task #20 (`0 * * * *`) Turn 1",
 	).Return("thread-20", nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
@@ -970,7 +1018,7 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 	eb.On("BroadcastChannelCreated", "ch20", "thread-20").Once()
 	// First turn broadcast goes to THREAD, not parent channel
 	eb.On("BroadcastMessageCreated", "thread-20", mock.MatchedBy(func(d events.MessageEventData) bool {
-		return d.Content == "task #20 (`0 * * * *`) Turn 1" && d.IsBot
+		return d.Content == "⏱ task #20 (`0 * * * *`) Turn 1" && d.IsBot
 	})).Once()
 	// Final response broadcast goes to thread
 	eb.On("BroadcastMessageCreated", "thread-20", mock.MatchedBy(func(d events.MessageEventData) bool {

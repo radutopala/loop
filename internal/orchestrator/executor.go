@@ -80,7 +80,11 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		tracker = newStreamTracker(func(text string) {
 			if threadID == "" && !threadFailed {
 				// First turn — create a thread for the task output
-				prefix := fmt.Sprintf("task #%d (`%s`) ", task.ID, task.Schedule)
+				taskPrefix := ""
+			if !isLocal {
+				taskPrefix = "⏱ "
+			}
+			prefix := fmt.Sprintf("%stask #%d (`%s`) ", taskPrefix, task.ID, task.Schedule)
 				threadName = types.TruncateString(prefix+task.Prompt, 100)
 				id, err := e.bot.CreateSimpleThread(ctx, task.ChannelID, threadName, prefix+text)
 				if err != nil {
@@ -235,8 +239,12 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	// Schedule auto-deletion of the thread when auto_delete_sec is configured
 	if task.AutoDeleteSec > 0 && threadID != "" {
 		if ephemeral {
-			// Rename thread with ephemeral emoji for "nothing to report" responses
-			newName := strings.Replace(threadName, "task #", "💨 task #", 1)
+			var newName string
+			if isLocal {
+				newName = "[ephemeral] " + threadName
+			} else {
+				newName = strings.Replace(threadName, "⏱ ", "💨 ", 1)
+			}
 			if err := e.bot.RenameThread(ctx, threadID, newName); err != nil {
 				e.logger.Error("renaming ephemeral thread", "error", err, "thread_id", threadID, "task_id", task.ID)
 			}

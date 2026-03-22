@@ -21,8 +21,11 @@ interface ThreadItemProps {
 export function ThreadItem({ thread, subThreads, threadsByParent, selected, selectedId, isLast, onSelect, onContextMenu, selectMode, checked, onToggleCheck, isRunningMapRef }: ThreadItemProps) {
   const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
-  const isTaskThread = /^(🧵 )?task #/.test(thread.name);
-  const displayName = isTaskThread ? thread.name.replace(/^🧵 /, "") : (thread.name || thread.id);
+  const isEphemeral = thread.name.startsWith("[ephemeral] ");
+  const isTaskThread = /^(\[ephemeral] )?(🧵 |⏱ )?task #/.test(thread.name);
+  const displayName = isTaskThread
+    ? thread.name.replace(/^(\[ephemeral] )?(🧵 |⏱ )?/, "")
+    : (thread.name || thread.id);
 
   return (
     <div style={{ position: "relative", margin: "0 8px" }}>
@@ -99,10 +102,16 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
           <path d="M6 21V9a9 9 0 0 0 9 9" />
         </svg>
       )}
-      {isTaskThread && (
+      {isTaskThread && !isEphemeral && (
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
           <circle cx="12" cy="12" r="10" />
           <polyline points="12 6 12 12 16 14" />
+        </svg>
+      )}
+      {isEphemeral && (
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.6 }}>
+          <path d="M17.7 7.7A7.5 7.5 0 1 0 5 16.6" />
+          <path d="M8 22l-4-4 4-4" />
         </svg>
       )}
       <span

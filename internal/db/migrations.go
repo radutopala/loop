@@ -150,7 +150,8 @@ var migrations = []migration{
 	sqlMigration(`ALTER TABLE channels ADD COLUMN worktree INTEGER NOT NULL DEFAULT 0`),
 	funcMigration(makeBackfillDirPath(os.UserHomeDir)),
 	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN thread_id TEXT NOT NULL DEFAULT ''`),
-	sqlMigration(`UPDATE channels SET name = REPLACE(name, '🧵 ', '') WHERE name LIKE '🧵 %'`),
+	sqlMigration(`UPDATE channels SET name = REPLACE(name, '🧵 ', '') WHERE name LIKE '🧵 %' AND platform = 'local'`),
+	sqlMigration(`UPDATE channels SET name = REPLACE(name, '🧵 ', '⏱ ') WHERE name LIKE '🧵 %'`),
 }
 
 // RunMigrations executes all pending schema migrations.
