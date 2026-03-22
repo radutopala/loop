@@ -35,6 +35,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
           bottom: 0,
           height: "100%",
           overflow: "visible",
+          zIndex: 1,
         }}
       >
         <line x1="1" y1="0" x2="1" y2={isLast ? "50%" : "100%"} stroke={colors.textDisabled} strokeWidth="1.5" />
