@@ -277,8 +277,12 @@ export interface DiffResponse {
   total_deletions: number;
 }
 
-export async function fetchDiff(channelId: string): Promise<DiffResponse> {
-  const res = await fetch(`${apiUrl}/api/channels/${channelId}/diff`);
+export async function fetchDiff(channelId: string, source?: string, target?: string): Promise<DiffResponse> {
+  let url = `${apiUrl}/api/channels/${channelId}/diff`;
+  if (source && target) {
+    url += `?source=${encodeURIComponent(source)}&target=${encodeURIComponent(target)}`;
+  }
+  const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch diff: ${res.statusText}`);
   return res.json();
 }

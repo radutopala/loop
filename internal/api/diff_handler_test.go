@@ -237,6 +237,123 @@ func (s *ServerSuite) TestGitDiffSortedTogether() {
 	require.Less(s.T(), aaIdx, zzIdx, "untracked file should sort before tracked file alphabetically")
 }
 
+func (s *ServerSuite) TestGitDiffBranchToBranch() {
+	// Create a temp git repo with two branches that differ.
+	dir := s.T().TempDir()
+	cmds := [][]string{
+		{"git", "init", "-b", "main"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+	}
+	for _, c := range cmds {
+		cmd := exec.Command(c[0], c[1:]...)
+		cmd.Dir = dir
+		require.NoError(s.T(), cmd.Run())
+	}
+	// Create initial commit on main.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base\n"), 0o644))
+	gitRun(s.T(), dir, "add", ".")
+	gitRun(s.T(), dir, "commit", "-m", "init")
+
+	// Create a feature branch with an extra file.
+	gitRun(s.T(), dir, "checkout", "-b", "feature")
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "feature.txt"), []byte("new stuff\n"), 0o644))
+	gitRun(s.T(), dir, "add", ".")
+	gitRun(s.T(), dir, "commit", "-m", "add feature")
+
+	// Go back to main.
+	gitRun(s.T(), dir, "checkout", "main")
+
+	s.store.On("GetChannel", mock.Anything, "ch-branch").
+		Return(&db.Channel{ChannelID: "ch-branch", DirPath: dir}, nil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/diff", s.srv.handleGitDiff)
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-branch/diff?source=main&target=feature", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	body := w.Body.String()
+	require.Contains(s.T(), body, `"feature.txt"`)
+	require.Contains(s.T(), body, `"total_additions":1`)
+}
+
+func (s *ServerSuite) TestGitDiffBranchInvalidSource() {
+	dir := s.T().TempDir()
+
+	s.store.On("GetChannel", mock.Anything, "ch-inv").
+		Return(&db.Channel{ChannelID: "ch-inv", DirPath: dir}, nil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/diff", s.srv.handleGitDiff)
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-inv/diff?source=..bad&target=main", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+	require.Contains(s.T(), w.Body.String(), "invalid source branch name")
+}
+
+func (s *ServerSuite) TestGitDiffBranchInvalidTarget() {
+	dir := s.T().TempDir()
+
+	s.store.On("GetChannel", mock.Anything, "ch-inv2").
+		Return(&db.Channel{ChannelID: "ch-inv2", DirPath: dir}, nil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/diff", s.srv.handleGitDiff)
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-inv2/diff?source=main&target=..evil", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+	require.Contains(s.T(), w.Body.String(), "invalid target branch name")
+}
+
+func (s *ServerSuite) TestGitDiffBranchNonexistentRef() {
+	// Create a git repo but reference a branch that doesn't exist.
+	dir := s.T().TempDir()
+	cmds := [][]string{
+		{"git", "init", "-b", "main"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+	}
+	for _, c := range cmds {
+		cmd := exec.Command(c[0], c[1:]...)
+		cmd.Dir = dir
+		require.NoError(s.T(), cmd.Run())
+	}
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "f.txt"), []byte("x\n"), 0o644))
+	gitRun(s.T(), dir, "add", ".")
+	gitRun(s.T(), dir, "commit", "-m", "init")
+
+	s.store.On("GetChannel", mock.Anything, "ch-noref").
+		Return(&db.Channel{ChannelID: "ch-noref", DirPath: dir}, nil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/diff", s.srv.handleGitDiff)
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-noref/diff?source=main&target=nonexistent", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+	require.Contains(s.T(), w.Body.String(), "git diff failed")
+}
+
+// gitRun is a test helper to run a git command in a directory.
+func gitRun(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "git %v failed: %s", args, string(out))
+}
+
 func TestSplitLines(t *testing.T) {
 	tests := []struct {
 		name   string

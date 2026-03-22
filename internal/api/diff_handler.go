@@ -1,6 +1,7 @@
 package api
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -47,6 +48,14 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 	}
 	if dirPath == "" {
 		writeHTTPJSON(w, http.StatusOK, diffResponse{Files: []diffFileEntry{}}, s.logger)
+		return
+	}
+
+	// Branch-to-branch diff mode: ?source=branchA&target=branchB
+	source := r.URL.Query().Get("source")
+	target := r.URL.Query().Get("target")
+	if source != "" && target != "" {
+		s.handleBranchDiff(w, r, dirPath, source, target)
 		return
 	}
 
@@ -151,6 +160,60 @@ func buildUntrackedEntry(dirPath, relPath string) (*diffFileEntry, string) {
 		fmt.Fprintf(&b, "+%s\n", line)
 	}
 	return &entry, b.String()
+}
+
+// handleBranchDiff computes a diff between two branch refs using the three-dot
+// merge-base syntax (source...target), showing what target has that source doesn't.
+func (s *Server) handleBranchDiff(w http.ResponseWriter, r *http.Request, dirPath, source, target string) {
+	source, ok := sanitizeBranch(source)
+	if !ok {
+		http.Error(w, "invalid source branch name", http.StatusBadRequest)
+		return
+	}
+	target, ok = sanitizeBranch(target)
+	if !ok {
+		http.Error(w, "invalid target branch name", http.StatusBadRequest)
+		return
+	}
+
+	rangeSpec := source + "..." + target
+
+	numstatCmd := exec.CommandContext(r.Context(), "git", "diff", "--numstat", rangeSpec)
+	numstatCmd.Dir = dirPath
+	numstatOut, err := numstatCmd.Output()
+	if err != nil {
+		msg := "git diff failed"
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			msg += ": " + strings.TrimSpace(string(exitErr.Stderr))
+		}
+		http.Error(w, msg, http.StatusInternalServerError)
+		return
+	}
+
+	files := parseNumstat(string(numstatOut))
+
+	diffCmd := exec.CommandContext(r.Context(), "git", "diff", rangeSpec)
+	diffCmd.Dir = dirPath
+	diffOut, _ := diffCmd.Output()
+	diffText := string(diffOut)
+
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Path < files[j].Path
+	})
+
+	var totalAdd, totalDel int
+	for _, f := range files {
+		totalAdd += f.Additions
+		totalDel += f.Deletions
+	}
+
+	writeHTTPJSON(w, http.StatusOK, diffResponse{
+		Files:          files,
+		Diff:           diffText,
+		TotalAdditions: totalAdd,
+		TotalDeletions: totalDel,
+	}, s.logger)
 }
 
 // parseNumstat parses `git diff --numstat` output into file entries.

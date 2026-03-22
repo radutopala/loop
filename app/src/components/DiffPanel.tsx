@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { DiffResponse } from "../api/loopApi";
-import { fetchDiff, fetchFileContent } from "../api/loopApi";
+import { fetchDiff, fetchFileContent, fetchBranches } from "../api/loopApi";
 import { useEventStream } from "../hooks/useEventStream";
 import { fonts } from "../theme";
 import type { ColorPalette } from "../theme";
@@ -248,6 +248,12 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+  // Branch diff mode state
+  type DiffMode = "changes" | "branches";
+  const [diffMode, setDiffMode] = useState<DiffMode>("changes");
+  const [branches, setBranches] = useState<string[]>([]);
+  const [sourceBranch, setSourceBranch] = useState<string>("");
+  const [targetBranch, setTargetBranch] = useState<string>("");
   // Expand context state: file content cache and per-gap expansion tracking
   const fileContentCache = useRef<Map<string, string[]>>(new Map());
   const [expandedGaps, setExpandedGaps] = useState<Map<string, Map<string, { fromTop: number; fromBottom: number }>>>(new Map());
@@ -271,10 +277,37 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
     ctx: { bg: "transparent", numBg: "transparent", text: colors.textMuted },
   };
 
+  // Fetch branch list when switching to branch mode
+  useEffect(() => {
+    if (diffMode === "branches" && channelId) {
+      fetchBranches(channelId).then((info) => {
+        // Combine regular branches + current branch (which may be filtered out of the list).
+        const all = new Set(info.branches);
+        if (info.current) all.add(info.current);
+        // Also include worktree branches.
+        for (const wt of info.worktrees) {
+          if (wt.branch) all.add(wt.branch);
+        }
+        const sorted = [...all].sort();
+        setBranches(sorted);
+        // Default source to current branch if not yet set, target to first other branch
+        if (!sourceBranch && info.current) setSourceBranch(info.current);
+        if (!targetBranch) {
+          const other = sorted.find((b) => b !== info.current);
+          if (other) setTargetBranch(other);
+        }
+      }).catch(() => {});
+    }
+  }, [diffMode, channelId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const load = useCallback(async () => {
     if (!channelId) return;
+    // In branch mode, both branches must be selected
+    if (diffMode === "branches" && (!sourceBranch || !targetBranch)) return;
     try {
-      const d = await fetchDiff(channelId);
+      const d = diffMode === "branches"
+        ? await fetchDiff(channelId, sourceBranch, targetBranch)
+        : await fetchDiff(channelId);
       // If diff changed, invalidate file content cache and expanded gaps
       if (d.diff !== prevDiffRef.current) {
         fileContentCache.current.clear();
@@ -288,7 +321,7 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
     } finally {
       setLoading(false);
     }
-  }, [channelId]);
+  }, [channelId, diffMode, sourceBranch, targetBranch]);
 
   // Initial load + background polling fallback
   useEffect(() => {
@@ -400,43 +433,101 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
   const totalAdd = data?.total_additions ?? 0;
   const totalDel = data?.total_deletions ?? 0;
 
+  const selectStyle: React.CSSProperties = {
+    background: colors.surface,
+    color: colors.textLight,
+    border: `1px solid ${colors.border}`,
+    borderRadius: 4,
+    fontSize: 11,
+    fontFamily: fonts.mono,
+    padding: "1px 4px",
+    outline: "none",
+    maxWidth: 120,
+    cursor: "pointer",
+  };
+
+  const modeTabStyle = (active: boolean): React.CSSProperties => ({
+    background: "none",
+    border: "none",
+    borderBottom: active ? `2px solid ${colors.active}` : "2px solid transparent",
+    color: active ? colors.textLight : colors.textDim,
+    cursor: "pointer",
+    fontSize: 10,
+    fontWeight: 700,
+    textTransform: "uppercase",
+    letterSpacing: 1,
+    padding: "0 4px 2px",
+    lineHeight: "20px",
+  });
+
   const diffToolbar = (
     <div
       style={{
         display: "flex",
-        alignItems: "center",
-        gap: 4,
-        padding: "3px 8px",
+        flexDirection: "column",
         borderBottom: `1px solid ${colors.border}`,
         flexShrink: 0,
-        height: 28,
-        boxSizing: "border-box",
       }}
     >
-      <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-        <span style={{ fontSize: 10, fontWeight: 700, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Changes</span>
-        {totalFiles > 0 && <span style={{ fontSize: 10, color: colors.textDim }}>{totalFiles}</span>}
-        {(totalAdd > 0 || totalDel > 0) && (
-          <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
-            <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>{" "}
-            <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
-          </span>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 4,
+          padding: "3px 8px",
+          height: 28,
+          boxSizing: "border-box",
+        }}
+      >
+        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <button style={modeTabStyle(diffMode === "changes")} onClick={() => setDiffMode("changes")}>Changes</button>
+          <button style={modeTabStyle(diffMode === "branches")} onClick={() => setDiffMode("branches")}>Branches</button>
+          {totalFiles > 0 && <span style={{ fontSize: 10, color: colors.textDim }}>{totalFiles}</span>}
+          {(totalAdd > 0 || totalDel > 0) && (
+            <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
+              <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>{" "}
+              <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
+            </span>
+          )}
+        </span>
+        <div style={{ flex: 1 }} />
+        {totalFiles > 0 && (
+          <>
+            <button onClick={expandAll} title="Expand all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,8 12,13 17,8" /><polyline points="7,14 12,19 17,14" /></svg>
+            </button>
+            <button onClick={collapseAll} title="Collapse all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,14 12,9 17,14" /><polyline points="7,20 12,15 17,20" /></svg>
+            </button>
+          </>
         )}
-      </span>
-      <div style={{ flex: 1 }} />
-      {totalFiles > 0 && (
-        <>
-          <button onClick={expandAll} title="Expand all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,8 12,13 17,8" /><polyline points="7,14 12,19 17,14" /></svg>
-          </button>
-          <button onClick={collapseAll} title="Collapse all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,14 12,9 17,14" /><polyline points="7,20 12,15 17,20" /></svg>
-          </button>
-        </>
+        <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7" /><polyline points="21,3 21,9 15,9" /></svg>
+        </button>
+      </div>
+      {diffMode === "branches" && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 8px", fontSize: 11, color: colors.textDim }}>
+          <select
+            value={sourceBranch}
+            onChange={(e) => setSourceBranch(e.target.value)}
+            style={selectStyle}
+            title="Source branch (base)"
+          >
+            {!sourceBranch && <option value="">source…</option>}
+            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+          <span style={{ color: colors.textDim, fontSize: 11, flexShrink: 0 }}>→</span>
+          <select
+            value={targetBranch}
+            onChange={(e) => setTargetBranch(e.target.value)}
+            style={selectStyle}
+            title="Target branch (compare)"
+          >
+            {!targetBranch && <option value="">target…</option>}
+            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+        </div>
       )}
-      <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7" /><polyline points="21,3 21,9 15,9" /></svg>
-      </button>
     </div>
   );
 
@@ -780,10 +871,17 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
       <div
         style={{
           display: "flex",
+          flexDirection: "column",
+          borderBottom: `1px solid ${colors.border}`,
+          flexShrink: 0,
+        }}
+      >
+      <div
+        style={{
+          display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
           padding: "3px 12px",
-          borderBottom: `1px solid ${colors.border}`,
           flexShrink: 0,
           boxSizing: "border-box",
           height: 35,
@@ -793,18 +891,8 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
           {maximized && tabBar}
           {!maximized && (
             <>
-              <span
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  color: colors.textDim,
-                  textTransform: "uppercase",
-                  letterSpacing: 1,
-                  flexShrink: 0,
-                }}
-              >
-                Changes
-              </span>
+              <button style={modeTabStyle(diffMode === "changes")} onClick={() => setDiffMode("changes")}>Changes</button>
+              <button style={modeTabStyle(diffMode === "branches")} onClick={() => setDiffMode("branches")}>Branches</button>
               {totalFiles > 0 && (
                 <span style={{ fontSize: 10, color: colors.textDim }}>
                   {totalFiles}
@@ -823,17 +911,8 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {maximized && (
             <span style={{ display: "flex", alignItems: "center", gap: 8, marginRight: 8 }}>
-              <span
-                style={{
-                  fontSize: 10,
-                  fontWeight: 700,
-                  color: colors.textDim,
-                  textTransform: "uppercase",
-                  letterSpacing: 1,
-                }}
-              >
-                Changes
-              </span>
+              <button style={modeTabStyle(diffMode === "changes")} onClick={() => setDiffMode("changes")}>Changes</button>
+              <button style={modeTabStyle(diffMode === "branches")} onClick={() => setDiffMode("branches")}>Branches</button>
               {totalFiles > 0 && (
                 <span style={{ fontSize: 10, color: colors.textDim }}>
                   {totalFiles}
@@ -896,6 +975,30 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
             </svg>
           </button>
         </div>
+      </div>
+      {diffMode === "branches" && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 12px", fontSize: 11, color: colors.textDim }}>
+          <select
+            value={sourceBranch}
+            onChange={(e) => setSourceBranch(e.target.value)}
+            style={selectStyle}
+            title="Source branch (base)"
+          >
+            {!sourceBranch && <option value="">source…</option>}
+            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+          <span style={{ color: colors.textDim, fontSize: 11, flexShrink: 0 }}>→</span>
+          <select
+            value={targetBranch}
+            onChange={(e) => setTargetBranch(e.target.value)}
+            style={selectStyle}
+            title="Target branch (compare)"
+          >
+            {!targetBranch && <option value="">target…</option>}
+            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+        </div>
+      )}
       </div>
 
       {/* File list + diffs */}
