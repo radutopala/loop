@@ -29,6 +29,9 @@ Thumbs.db
 .claude/
 .mcp.json
 
+# Generated (go:generate copies)
+internal/readme/README.md
+
 # SQLite databases
 *.db
 *.db-journal

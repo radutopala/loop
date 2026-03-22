@@ -849,7 +849,7 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 - **Chat** — send messages, stream agent responses in real-time, search messages (Cmd+K), copy-on-select, persistent drafts across channel switches
 - **Terminal** — interactive xterm.js terminals for agent containers and host shells, with horizontal/vertical splits
 - **File editor** — CodeMirror-powered editor with syntax highlighting, markdown preview, in-file search, context menus, and auto-save
-- **Diff panel** — git changes with per-file addition/deletion stats, maximizable to full width, expandable context rows between hunks (GitLab-style "load more")
+- **Diff panel** — git changes with per-file addition/deletion stats, maximizable to full width, expandable context rows between hunks (GitLab-style "load more"), branch-to-branch diff mode for comparing any two branches
 - **Memory panel** — browse and search semantic memory files
 - **Custom layouts** — named split-pane workspaces with drag-to-resize, saved per channel. Create, rename, delete, and restore default layouts from the tab bar
 - **Multi-window** — open multiple windows (Cmd+N), each navigating independently
@@ -909,7 +909,7 @@ make app-install
 | `POST` | `/api/channels/{id}/branches/create` | Create and checkout a new branch |
 | `POST` | `/api/worktrees` | Create a git worktree as a new thread |
 | `POST` | `/api/worktrees/import` | Import an existing worktree as a thread |
-| `GET` | `/api/channels/{id}/diff` | Get git diff for a channel's working directory |
+| `GET` | `/api/channels/{id}/diff` | Get git diff (working changes, or `?source=X&target=Y` for branch diff) |
 | `GET` | `/api/channels/{id}/messages` | List messages with cursor-based pagination |
 | `POST` | `/api/commands` | Send a slash command to a channel |
 | `POST` | `/api/memory/search` | Semantic search across memory files |
