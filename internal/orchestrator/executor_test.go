@@ -180,6 +180,7 @@ func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsToThreadAndParent() {
 	}
 	localCh := &db.Channel{ChannelID: "ch-parent", Platform: types.PlatformLocal}
 	s.store.On("GetChannel", mock.Anything, "ch-parent").Return(localCh, nil)
+	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 	// Running broadcast to both thread and parent
 	eb.On("BroadcastAgentStatus", "existing-thread", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "running" })).Once()
 	eb.On("BroadcastAgentStatus", "ch-parent", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "running" })).Once()
@@ -205,6 +206,7 @@ func (s *TaskExecutorSuite) TestAgentResponseErrorBroadcastsStatus() {
 	}
 	localCh := &db.Channel{ChannelID: "ch-err2", Platform: types.PlatformLocal}
 	s.store.On("GetChannel", mock.Anything, "ch-err2").Return(localCh, nil)
+	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 	// Running to both
 	eb.On("BroadcastAgentStatus", "err-thread", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "running" })).Once()
 	eb.On("BroadcastAgentStatus", "ch-err2", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "running" })).Once()
@@ -359,6 +361,7 @@ func (s *TaskExecutorSuite) TestStreamingLocalPlatformPersistsThreadID() {
 
 	localChannel := &db.Channel{ChannelID: "ch-local", Platform: types.PlatformLocal, DirPath: "/work"}
 	s.store.On("GetChannel", mock.Anything, "ch-local").Return(localChannel, nil)
+	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 	s.bot.On("CreateSimpleThread", s.ctx, "ch-local", mock.Anything, mock.Anything).Return("local-thread-1", nil).Once()
 	s.store.On("UpsertChannel", mock.Anything, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "local-thread-1" && ch.ParentID == "ch-local"
@@ -389,13 +392,15 @@ func (s *TaskExecutorSuite) TestStreamingLocalPlatformReusesThreadID() {
 		Prompt:    "recurring task",
 		Type:      db.TaskTypeInterval,
 		Schedule:  "5m",
-		ThreadID:  "existing-thread",
+		// ThreadID intentionally empty — re-fetch from DB finds it.
 	}
 
 	localChannel := &db.Channel{ChannelID: "ch-local2", Platform: types.PlatformLocal, DirPath: "/work"}
 	s.store.On("GetChannel", mock.Anything, "ch-local2").Return(localChannel, nil)
 	threadChannel := &db.Channel{ChannelID: "existing-thread", ParentID: "ch-local2", Platform: types.PlatformLocal}
 	s.store.On("GetChannel", mock.Anything, "existing-thread").Return(threadChannel, nil)
+	// Re-fetch finds the thread_id persisted by a prior execution.
+	s.store.On("GetScheduledTask", s.ctx, int64(31)).Return(&db.ScheduledTask{ID: 31, ThreadID: "existing-thread", Type: db.TaskTypeInterval}, nil)
 	s.allowBotInserts()
 
 	// Should NOT create a new thread — reuses existing-thread
@@ -764,6 +769,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteEphemeralLocalPlatform() {
 
 	localCh := &db.Channel{ChannelID: "ch-local-eph", Platform: types.PlatformLocal, DirPath: "/work"}
 	s.store.On("GetChannel", mock.Anything, "ch-local-eph").Return(localCh, nil)
+	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(40), "local-eph-thread").Return(nil)
 	s.allowBotInserts()

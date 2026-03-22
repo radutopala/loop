@@ -72,7 +72,13 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	var threadName string
 	var threadFailed bool
 	// Reuse existing thread for recurring local-platform tasks.
+	// Re-fetch from DB in case a concurrent execution persisted it since this task was loaded.
 	isLocal := channel != nil && channel.Platform == types.PlatformLocal
+	if task.Type != db.TaskTypeOnce && isLocal {
+		if fresh, err := e.store.GetScheduledTask(ctx, task.ID); err == nil && fresh != nil && fresh.ThreadID != "" {
+			task.ThreadID = fresh.ThreadID
+		}
+	}
 	if task.ThreadID != "" && task.Type != db.TaskTypeOnce && isLocal {
 		threadID = task.ThreadID
 	}
