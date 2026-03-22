@@ -31,6 +31,7 @@ type Event struct {
 	ChannelID string `json:"channel_id"`
 	Data      any    `json:"data"`
 	Timestamp int64  `json:"timestamp"`
+	Global    bool   `json:"-"` // when true, bypass channel filtering
 }
 
 // EventsHub manages WebSocket event subscribers and broadcasts events.
@@ -103,7 +104,7 @@ func (h *EventsHub) Broadcast(evt Event) {
 
 	for _, ec := range subs {
 		ec.writeMu.Lock()
-		if len(ec.channels) > 0 {
+		if len(ec.channels) > 0 && !evt.Global {
 			if _, ok := ec.channels[evt.ChannelID]; !ok {
 				ec.writeMu.Unlock()
 				continue
@@ -163,11 +164,14 @@ func (h *EventsHub) BroadcastChannelDeleted(channelID string) {
 }
 
 // BroadcastAgentStatus sends an agent.status event.
+// When the event carries a ThreadID (scheduled task), it broadcasts to all
+// subscribers so the frontend receives it even if not subscribed to the channel.
 func (h *EventsHub) BroadcastAgentStatus(channelID string, data events.AgentStatusEventData) {
 	h.Broadcast(Event{
 		Type:      EventAgentStatus,
 		ChannelID: channelID,
 		Data:      data,
+		Global:    data.ThreadID != "",
 	})
 }
 
