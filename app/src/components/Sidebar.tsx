@@ -134,6 +134,9 @@ interface SidebarProps {
   onInstallUpdate?: () => void;
   /** Real-time running status from the app-level chat state store. */
   isRunningMapRef?: React.RefObject<Map<string, boolean>>;
+  /** Channels with unread agent completions. */
+  unreadIdsRef?: React.RefObject<Set<string>>;
+  onMarkAllRead?: () => void;
 }
 
 export function Sidebar({
@@ -153,6 +156,8 @@ export function Sidebar({
   onDownloadUpdate,
   onInstallUpdate,
   isRunningMapRef,
+  unreadIdsRef,
+  onMarkAllRead,
 }: SidebarProps) {
   const { colors } = useTheme();
   const [width, setWidth] = useState(DEFAULT_WIDTH);
@@ -423,6 +428,17 @@ export function Sidebar({
             </>
           ) : (
             <>
+              {unreadIdsRef && unreadIdsRef.current.size > 0 && (
+                <button
+                  onClick={() => { onMarkAllRead?.(); setSearchQuery((q) => q + ""); }}
+                  title="Mark all as read"
+                  style={sidebarBtnStyle}
+                  onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+                >
+                  Mark read
+                </button>
+              )}
               <button
                 onClick={() => { setSelectMode(true); setSelected(new Set()); }}
                 title="Select channels to delete"
@@ -553,6 +569,7 @@ export function Sidebar({
           checkedIds={selected}
           onToggleCheck={toggleSelected}
           isRunningMapRef={isRunningMapRef}
+          unreadIdsRef={unreadIdsRef}
         />
       )}
       {topLevel.map((channel) => (
@@ -576,6 +593,7 @@ export function Sidebar({
           checkedIds={selected}
           onToggleCheck={toggleSelected}
           isRunningMapRef={isRunningMapRef}
+          unreadIdsRef={unreadIdsRef}
         />
       ))}
 

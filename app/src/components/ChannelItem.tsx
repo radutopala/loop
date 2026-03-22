@@ -25,6 +25,7 @@ interface ChannelItemProps {
   onToggleCheck?: (id: string) => void;
   /** Real-time running status from app-level chat state store. */
   isRunningMapRef?: React.RefObject<Map<string, boolean>>;
+  unreadIdsRef?: React.RefObject<Set<string>>;
 }
 
 export function ChannelItem({
@@ -47,6 +48,7 @@ export function ChannelItem({
   checkedIds,
   onToggleCheck,
   isRunningMapRef,
+  unreadIdsRef,
 }: ChannelItemProps) {
   const { colors } = useTheme();
   const [creating, setCreating] = useState(false);
@@ -265,6 +267,7 @@ export function ChannelItem({
             checked={checkedIds?.has(thread.id)}
             onToggleCheck={onToggleCheck}
             isRunningMapRef={isRunningMapRef}
+            unreadIdsRef={unreadIdsRef}
           />
         ))}
     </div>

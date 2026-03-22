@@ -198,7 +198,7 @@ function AppInner() {
   // Single app-level WS that subscribes to the selected channel + all running
   // channels. Replaces the previous dual-WS approach (one in App, one in
   // WorkspaceLayout). Chat state is persisted in the store across switches.
-  const { getState, saveState, isRunningMapRef, subscribeChatEvents } = useChatStateStore({
+  const { getState, saveState, isRunningMapRef, unreadIdsRef, markRead, markAllRead, subscribeChatEvents } = useChatStateStore({
     channels,
     selectedId,
     onAppEvent,
@@ -234,6 +234,7 @@ function AppInner() {
     setScrollToMessageId(null);
     setReadmeOpen(false);
     setSettingsOpen(false);
+    if (id) markRead(id);
     setSelectedId((prev) => {
       // Re-clicking the same channel increments mountKey to force re-mount.
       if (id !== null && id === prev) {
@@ -241,7 +242,7 @@ function AppInner() {
       }
       return id;
     });
-  }, []);
+  }, [markRead]);
 
   // Auto-select DM channel if nothing is selected on first load.
   const autoSelectedRef = useRef(false);
@@ -445,6 +446,8 @@ function AppInner() {
         onDownloadUpdate={handleDownloadUpdate}
         onInstallUpdate={handleInstallUpdate}
         isRunningMapRef={isRunningMapRef}
+        unreadIdsRef={unreadIdsRef}
+        onMarkAllRead={markAllRead}
       />
       {selectedId && selectedChannel ? (
         <>

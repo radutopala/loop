@@ -16,11 +16,13 @@ interface ThreadItemProps {
   onToggleCheck?: (id: string) => void;
   /** Real-time running status from app-level chat state store. */
   isRunningMapRef?: React.RefObject<Map<string, boolean>>;
+  unreadIdsRef?: React.RefObject<Set<string>>;
 }
 
-export function ThreadItem({ thread, subThreads, threadsByParent, selected, selectedId, isLast, onSelect, onContextMenu, selectMode, checked, onToggleCheck, isRunningMapRef }: ThreadItemProps) {
+export function ThreadItem({ thread, subThreads, threadsByParent, selected, selectedId, isLast, onSelect, onContextMenu, selectMode, checked, onToggleCheck, isRunningMapRef, unreadIdsRef }: ThreadItemProps) {
   const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
+  const isUnread = unreadIdsRef?.current?.has(thread.id) ?? false;
   const isEphemeral = thread.name.startsWith("[ephemeral] ");
   const isTaskThread = /^(\[ephemeral] )?(🧵 |⏱ )?task #/.test(thread.name);
   const displayName = isTaskThread
@@ -119,10 +121,23 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
           overflow: "hidden",
           textOverflow: "ellipsis",
           whiteSpace: "nowrap",
+          fontWeight: isUnread ? 600 : undefined,
         }}
       >
         {displayName}
       </span>
+      {isUnread && !selected && (
+        <span
+          style={{
+            width: 6,
+            height: 6,
+            borderRadius: "50%",
+            backgroundColor: "#5b9cf5",
+            flexShrink: 0,
+            marginLeft: "auto",
+          }}
+        />
+      )}
       {(thread.container_running || thread.agent_running || isRunningMapRef?.current?.get(thread.id)) && (
         <span
           style={{
@@ -131,7 +146,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
             borderRadius: "50%",
             backgroundColor: colors.active,
             flexShrink: 0,
-            marginLeft: "auto",
+            marginLeft: isUnread ? 4 : "auto",
           }}
         />
       )}
@@ -152,6 +167,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
             checked={checked}
             onToggleCheck={onToggleCheck}
             isRunningMapRef={isRunningMapRef}
+            unreadIdsRef={unreadIdsRef}
           />
         ))}
     </div>

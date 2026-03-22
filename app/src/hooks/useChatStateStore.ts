@@ -60,6 +60,7 @@ export function useChatStateStore({
 }: UseChatStateStoreOptions) {
   const storeRef = useRef(new Map<string, ActiveChatState>());
   const isRunningMapRef = useRef(new Map<string, boolean>());
+  const unreadIdsRef = useRef(new Set<string>());
 
   // Chat event listener registered by useChatState for the selected channel.
   const chatListenerRef = useRef<ChatEventListener | null>(null);
@@ -156,7 +157,10 @@ export function useChatStateStore({
           // Keep the store entry — it holds completionInfo, mode, askUser, etc.
           // that should be restored when the user switches back.
 
-          // System notification when an agent completes or errors.
+          // Mark channel as unread and send system notification.
+          if (channelId !== selectedIdRef.current || document.hidden) {
+            unreadIdsRef.current.add(channelId);
+          }
           if (document.hidden || channelId !== selectedIdRef.current) {
             const ch = channelsRef.current.find((c) => c.id === channelId);
             const name = ch?.name || channelId;
@@ -250,7 +254,15 @@ export function useChatStateStore({
     [],
   );
 
-  return { getState, saveState, removeState, isRunningMapRef, subscribeChatEvents };
+  const markRead = useCallback((channelId: string) => {
+    unreadIdsRef.current.delete(channelId);
+  }, []);
+
+  const markAllRead = useCallback(() => {
+    unreadIdsRef.current.clear();
+  }, []);
+
+  return { getState, saveState, removeState, isRunningMapRef, unreadIdsRef, markRead, markAllRead, subscribeChatEvents };
 }
 
 // ── Helpers ──
