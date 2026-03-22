@@ -363,7 +363,7 @@ func (a *app) serve() error {
 			channelCreators[p] = cc
 		}
 	}
-	channelSvc := api.NewChannelService(store, channelCreators)
+	channelSvc := api.NewChannelService(store, channelCreators, cfg.LoopDir)
 	threadSvc := api.NewThreadService(store, chatBot, logger)
 
 	apiSrv := a.newAPIServer(sched, channelSvc, threadSvc, store, chatBot, logger)

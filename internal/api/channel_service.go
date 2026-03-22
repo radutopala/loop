@@ -52,14 +52,16 @@ type ChannelEnsurer interface {
 type channelService struct {
 	store      db.Store
 	creators   map[types.Platform]ChannelCreator
+	loopDir    string
 	randSuffix func() string
 }
 
 // NewChannelService creates a new ChannelEnsurer.
-func NewChannelService(store db.Store, creators map[types.Platform]ChannelCreator) ChannelEnsurer {
+func NewChannelService(store db.Store, creators map[types.Platform]ChannelCreator, loopDir string) ChannelEnsurer {
 	return &channelService{
 		store:      store,
 		creators:   creators,
+		loopDir:    loopDir,
 		randSuffix: func() string { return randutil.HexID(2) },
 	}
 }
@@ -94,10 +96,12 @@ func (s *channelService) CreateChannel(ctx context.Context, name, authorID, sour
 		channelID = s.randSuffix() + s.randSuffix() + s.randSuffix()
 	}
 
+	dirPath := filepath.Join(s.loopDir, channelID, "work")
 	if err := s.store.UpsertChannel(ctx, &db.Channel{
 		ChannelID: channelID,
 		GuildID:   guildID,
 		Name:      name,
+		DirPath:   dirPath,
 		Platform:  p,
 		Active:    true,
 	}); err != nil {

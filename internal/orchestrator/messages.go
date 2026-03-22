@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -25,10 +26,12 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 		if !o.resolveThread(ctx, msg.ChannelID) {
 			if msg.IsDM || msg.IsBotMention || msg.HasPrefix || msg.IsReplyToBot {
 				name := o.resolveChannelName(ctx, msg.ChannelID, msg.IsDM)
+				dirPath := filepath.Join(o.cfg.LoopDir, msg.ChannelID, "work")
 				if err := o.store.UpsertChannel(ctx, &db.Channel{
 					ChannelID: msg.ChannelID,
 					GuildID:   msg.GuildID,
 					Name:      name,
+					DirPath:   dirPath,
 					Platform:  msg.Platform,
 					Active:    true,
 				}); err != nil {

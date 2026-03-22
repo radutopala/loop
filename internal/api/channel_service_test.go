@@ -54,7 +54,7 @@ func (s *ChannelServiceSuite) SetupTest() {
 	s.store = new(testutil.MockStore)
 	s.creator = new(MockCreator)
 	s.ctx = context.Background()
-	svc := NewChannelService(s.store, map[types.Platform]ChannelCreator{types.PlatformLocal: s.creator})
+	svc := NewChannelService(s.store, map[types.Platform]ChannelCreator{types.PlatformLocal: s.creator}, "/tmp/test-loop")
 	svc.(*channelService).randSuffix = func() string { return "ab12" }
 	s.svc = svc
 }
@@ -190,7 +190,7 @@ func (s *ChannelServiceSuite) TestCreateChannelSuccess() {
 		Return("new-ch-1", nil)
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "new-ch-1" &&
-			ch.Name == "trial" && ch.DirPath == "" &&
+			ch.Name == "trial" && ch.DirPath == "/tmp/test-loop/new-ch-1/work" &&
 			ch.Platform == types.PlatformLocal && ch.Active
 	})).Return(nil)
 
@@ -282,7 +282,7 @@ func (s *ChannelServiceSuite) TestEnsureChannelCreatorReturnsEmptyID() {
 }
 
 func (s *ChannelServiceSuite) TestCreateChannelLocalPlatformNilCreator() {
-	svc := NewChannelService(s.store, map[types.Platform]ChannelCreator{})
+	svc := NewChannelService(s.store, map[types.Platform]ChannelCreator{}, "/tmp/test-loop")
 
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.Name == "my-project" && ch.Platform == types.PlatformLocal && ch.Active && ch.ChannelID != ""
@@ -295,7 +295,7 @@ func (s *ChannelServiceSuite) TestCreateChannelLocalPlatformNilCreator() {
 }
 
 func (s *ChannelServiceSuite) TestEnsureChannelLocalPlatformNilCreator() {
-	svc := NewChannelService(s.store, map[types.Platform]ChannelCreator{})
+	svc := NewChannelService(s.store, map[types.Platform]ChannelCreator{}, "/tmp/test-loop")
 	svc.(*channelService).randSuffix = func() string { return "ab12" }
 
 	s.store.On("GetChannelByDirPath", s.ctx, "/home/user/dev/loop", types.PlatformLocal).
@@ -316,7 +316,7 @@ func (s *ChannelServiceSuite) TestCreateChannelRoutesToSourcePlatform() {
 	svc := NewChannelService(s.store, map[types.Platform]ChannelCreator{
 		types.PlatformLocal:   s.creator,
 		types.PlatformDiscord: discordCreator,
-	})
+	}, "/tmp/test-loop")
 
 	// Source channel is a Discord channel — platform is overridden from source.
 	s.store.On("GetChannel", s.ctx, "discord-ch-1").
@@ -339,7 +339,7 @@ func (s *ChannelServiceSuite) TestCreateChannelRoutesToSourcePlatform() {
 func (s *ChannelServiceSuite) TestCreateChannelFallsBackWhenSourceNotFound() {
 	svc := NewChannelService(s.store, map[types.Platform]ChannelCreator{
 		types.PlatformLocal: s.creator,
-	})
+	}, "/tmp/test-loop")
 
 	// Source channel not found — falls back to explicit platform.
 	s.store.On("GetChannel", s.ctx, "unknown-ch").Return(nil, nil)
@@ -363,7 +363,7 @@ func (s *ChannelServiceSuite) TestEnsureChannelAllPlatformsCreatesNew() {
 	svc := NewChannelService(s.store, map[types.Platform]ChannelCreator{
 		types.PlatformLocal:   s.creator,
 		types.PlatformDiscord: discordCreator,
-	})
+	}, "/tmp/test-loop")
 	svc.(*channelService).randSuffix = func() string { return "ab12" }
 
 	// No existing channels.
@@ -397,7 +397,7 @@ func (s *ChannelServiceSuite) TestEnsureChannelAllPlatformsCreatesNew() {
 func (s *ChannelServiceSuite) TestEnsureChannelAllPlatformsSkipsExisting() {
 	svc := NewChannelService(s.store, map[types.Platform]ChannelCreator{
 		types.PlatformLocal: s.creator,
-	})
+	}, "/tmp/test-loop")
 
 	// Channel already exists for local platform.
 	s.store.On("GetChannelsByDirPath", s.ctx, "/home/user/dev/loop").Return([]*db.Channel{
@@ -415,7 +415,7 @@ func (s *ChannelServiceSuite) TestEnsureChannelAllPlatformsSkipsExisting() {
 func (s *ChannelServiceSuite) TestEnsureChannelAllPlatformsLookupError() {
 	svc := NewChannelService(s.store, map[types.Platform]ChannelCreator{
 		types.PlatformLocal: s.creator,
-	})
+	}, "/tmp/test-loop")
 
 	s.store.On("GetChannelsByDirPath", s.ctx, "/path").Return(nil, errors.New("db error"))
 
@@ -428,7 +428,7 @@ func (s *ChannelServiceSuite) TestEnsureChannelAllPlatformsLookupError() {
 func (s *ChannelServiceSuite) TestEnsureChannelAllPlatformsCreateError() {
 	svc := NewChannelService(s.store, map[types.Platform]ChannelCreator{
 		types.PlatformLocal: s.creator,
-	})
+	}, "/tmp/test-loop")
 
 	// No existing channels.
 	s.store.On("GetChannelsByDirPath", s.ctx, "/path").Return([]*db.Channel{}, nil)
@@ -447,7 +447,7 @@ func (s *ChannelServiceSuite) TestEnsureChannelWithExplicitPlatform() {
 	svc := NewChannelService(s.store, map[types.Platform]ChannelCreator{
 		types.PlatformLocal:   s.creator,
 		types.PlatformDiscord: discordCreator,
-	})
+	}, "/tmp/test-loop")
 	svc.(*channelService).randSuffix = func() string { return "ab12" }
 
 	s.store.On("GetChannelByDirPath", s.ctx, "/path", types.PlatformDiscord).Return(nil, nil)
@@ -467,7 +467,7 @@ func (s *ChannelServiceSuite) TestEnsureChannelWithExplicitPlatform() {
 
 func TestRandSuffixDefault(t *testing.T) {
 	store := new(testutil.MockStore)
-	svc := NewChannelService(store, nil)
+	svc := NewChannelService(store, nil, "/tmp/test-loop")
 	got := svc.(*channelService).randSuffix()
 	require.Len(t, got, 4) // 2 bytes = 4 hex chars
 }
