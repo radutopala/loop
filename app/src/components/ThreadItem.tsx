@@ -50,30 +50,6 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
         <line x1="1" y1="0" x2="1" y2={isLast ? "50%" : "100%"} stroke={colors.textDisabled} strokeWidth="1.5" />
         <line x1="1" y1="50%" x2="10" y2="50%" stroke={colors.textDisabled} strokeWidth="1.5" />
       </svg>
-      {hasChildren && (
-        <button
-          onClick={(e) => { e.stopPropagation(); setCollapsed((c) => !c); }}
-          style={{
-            position: "absolute",
-            left: 22,
-            top: "50%",
-            transform: "translateY(-50%)",
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            padding: 0,
-            color: colors.textDim,
-            zIndex: 2,
-            display: "flex",
-            alignItems: "center",
-          }}
-        >
-          <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
-            style={{ transition: "transform 0.15s ease", transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)" }}>
-            <path d="M2.5 3.5L5 6.5L7.5 3.5" />
-          </svg>
-        </button>
-      )}
       <button
         title={thread.dir_path || undefined}
         onClick={() => onSelect(thread.id)}
@@ -99,6 +75,17 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
           borderRadius: 6,
         }}
       >
+      {hasChildren && (
+        <span
+          onClick={(e) => { e.stopPropagation(); setCollapsed((c) => !c); }}
+          style={{ display: "flex", alignItems: "center", flexShrink: 0, cursor: "pointer", marginRight: 2 }}
+        >
+          <svg width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+            style={{ transition: "transform 0.15s ease", transform: collapsed ? "rotate(-90deg)" : "rotate(0deg)" }}>
+            <path d="M2.5 3.5L5 6.5L7.5 3.5" />
+          </svg>
+        </span>
+      )}
       {selectMode && (
         <span
           onClick={(e) => { e.stopPropagation(); onToggleCheck?.(thread.id); }}
