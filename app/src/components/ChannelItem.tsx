@@ -7,6 +7,7 @@ import { NewThreadInput } from "./NewThreadInput";
 interface ChannelItemProps {
   channel: Channel;
   threads: Channel[];
+  threadsByParent: Record<string, Channel[]>;
   selected: boolean;
   selectedId: string | null;
   onSelect: (id: string) => void;
@@ -29,6 +30,7 @@ interface ChannelItemProps {
 export function ChannelItem({
   channel,
   threads,
+  threadsByParent,
   selected,
   selectedId,
   onSelect,
@@ -252,7 +254,10 @@ export function ChannelItem({
           <ThreadItem
             key={thread.id}
             thread={thread}
+            subThreads={threadsByParent[thread.id] ?? []}
+            threadsByParent={threadsByParent}
             selected={selectedId === thread.id}
+            selectedId={selectedId}
             isLast={i === threads.length - 1}
             onSelect={onSelect}
             onContextMenu={onContextMenu}

@@ -4,7 +4,10 @@ import { useTheme } from "../ThemeContext";
 
 interface ThreadItemProps {
   thread: Channel;
+  subThreads?: Channel[];
+  threadsByParent?: Record<string, Channel[]>;
   selected: boolean;
+  selectedId?: string | null;
   isLast?: boolean;
   onSelect: (id: string) => void;
   onContextMenu: (e: React.MouseEvent, channel: Channel) => void;
@@ -15,7 +18,7 @@ interface ThreadItemProps {
   isRunningMapRef?: React.RefObject<Map<string, boolean>>;
 }
 
-export function ThreadItem({ thread, selected, isLast, onSelect, onContextMenu, selectMode, checked, onToggleCheck, isRunningMapRef }: ThreadItemProps) {
+export function ThreadItem({ thread, subThreads, threadsByParent, selected, selectedId, isLast, onSelect, onContextMenu, selectMode, checked, onToggleCheck, isRunningMapRef }: ThreadItemProps) {
   const { colors } = useTheme();
   const [hovered, setHovered] = useState(false);
 
@@ -115,6 +118,24 @@ export function ThreadItem({ thread, selected, isLast, onSelect, onContextMenu, 
         />
       )}
     </button>
+      {subThreads && subThreads.length > 0 &&
+        subThreads.map((sub, i) => (
+          <ThreadItem
+            key={sub.id}
+            thread={sub}
+            subThreads={threadsByParent?.[sub.id] ?? []}
+            threadsByParent={threadsByParent}
+            selected={selectedId === sub.id}
+            selectedId={selectedId}
+            isLast={i === subThreads.length - 1}
+            onSelect={onSelect}
+            onContextMenu={onContextMenu}
+            selectMode={selectMode}
+            checked={checked}
+            onToggleCheck={onToggleCheck}
+            isRunningMapRef={isRunningMapRef}
+          />
+        ))}
     </div>
   );
 }

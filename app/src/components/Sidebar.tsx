@@ -319,12 +319,19 @@ export function Sidebar({
     channelOrder,
   );
 
-  // When searching, show channels that match or have matching threads.
+  // Check if a thread or any of its sub-threads match the search query.
+  const threadTreeMatches = (t: Channel): boolean => {
+    if (t.name.toLowerCase().includes(query)) return true;
+    const subs = threadsByParent[t.id] ?? [];
+    return subs.some(threadTreeMatches);
+  };
+
+  // When searching, show channels that match or have matching threads/sub-threads.
   const topLevel = query
     ? allTopLevel.filter((c) => {
         const nameMatch = c.name.toLowerCase().includes(query);
         const threads = threadsByParent[c.id] ?? [];
-        const threadMatch = threads.some((t) => t.name.toLowerCase().includes(query));
+        const threadMatch = threads.some(threadTreeMatches);
         return nameMatch || threadMatch;
       })
     : allTopLevel;
@@ -335,7 +342,7 @@ export function Sidebar({
     if (!query) return threads;
     const parentMatches = allTopLevel.find((c) => c.id === parentId)?.name.toLowerCase().includes(query);
     if (parentMatches) return threads;
-    return threads.filter((t) => t.name.toLowerCase().includes(query));
+    return threads.filter(threadTreeMatches);
   };
 
   if (collapsed) {
@@ -529,6 +536,7 @@ export function Sidebar({
           key={dmChannel.id}
           channel={dmChannel}
           threads={getFilteredThreads(dmChannel.id)}
+          threadsByParent={threadsByParent}
           selected={selectedId === dmChannel.id}
           selectedId={selectedId}
           onSelect={onSelect}
@@ -552,6 +560,7 @@ export function Sidebar({
           key={channel.id}
           channel={channel}
           threads={getFilteredThreads(channel.id)}
+          threadsByParent={threadsByParent}
           selected={selectedId === channel.id}
           selectedId={selectedId}
           onSelect={onSelect}
