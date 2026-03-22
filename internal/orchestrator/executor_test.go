@@ -44,6 +44,11 @@ func (s *TaskExecutorSuite) SetupTest() {
 	s.executor = NewTaskExecutor(s.runner, s.bot, s.store, logger, 5*time.Minute, false)
 }
 
+// allowStatusBroadcasts adds BroadcastAgentStatus expectations for task execution.
+func allowStatusBroadcasts(eb *MockEventBroadcaster) {
+	eb.On("BroadcastAgentStatus", mock.Anything, mock.Anything).Maybe()
+}
+
 // allowBotInserts adds an InsertMessage expectation for bot messages from storeBotMessage.
 func (s *TaskExecutorSuite) allowBotInserts() {
 	s.store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(msg *db.Message) bool {
@@ -145,6 +150,40 @@ func (s *TaskExecutorSuite) TestRunnerError() {
 	require.Empty(s.T(), resp)
 
 	s.bot.AssertNotCalled(s.T(), "SendMessage", mock.Anything, mock.Anything)
+}
+
+func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsStatus() {
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+	eb.On("BroadcastAgentStatus", "ch-err", events.AgentStatusEventData{Status: "running"}).Once()
+	eb.On("BroadcastAgentStatus", "ch-err", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "error" && strings.Contains(d.Error, "runner broke")
+	})).Once()
+
+	task := &db.ScheduledTask{ID: 50, ChannelID: "ch-err", Prompt: "fail", Type: db.TaskTypeCron, Schedule: "0 * * * *"}
+	s.store.On("GetChannel", s.ctx, "ch-err").Return(nil, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("runner broke"))
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.Error(s.T(), err)
+	eb.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestAgentResponseErrorBroadcastsStatus() {
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+	eb.On("BroadcastAgentStatus", "ch-err2", events.AgentStatusEventData{Status: "running"}).Once()
+	eb.On("BroadcastAgentStatus", "ch-err2", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "error" && d.Error == "agent broke"
+	})).Once()
+
+	task := &db.ScheduledTask{ID: 51, ChannelID: "ch-err2", Prompt: "fail", Type: db.TaskTypeCron, Schedule: "0 * * * *"}
+	s.store.On("GetChannel", s.ctx, "ch-err2").Return(nil, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Error: "agent broke"}, nil)
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.Error(s.T(), err)
+	eb.AssertExpectations(s.T())
 }
 
 func (s *TaskExecutorSuite) TestAgentResponseError() {
@@ -619,6 +658,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 	s.executor.streamingEnabled = true
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
+	allowStatusBroadcasts(eb)
 
 	task := &db.ScheduledTask{
 		ID:            15,
@@ -938,6 +978,7 @@ func (s *TaskExecutorSuite) TestSetEventBroadcaster() {
 
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
+	allowStatusBroadcasts(eb)
 
 	require.Same(s.T(), eb, s.executor.events)
 }
@@ -945,6 +986,7 @@ func (s *TaskExecutorSuite) TestSetEventBroadcaster() {
 func (s *TaskExecutorSuite) TestFinalResponseBroadcasts() {
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
+	allowStatusBroadcasts(eb)
 
 	task := &db.ScheduledTask{
 		ID: 1, ChannelID: "ch1", Prompt: "check", Type: db.TaskTypeCron, Schedule: "0 * * * *",
@@ -978,6 +1020,7 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 	s.executor.streamingEnabled = true
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
+	allowStatusBroadcasts(eb)
 
 	task := &db.ScheduledTask{
 		ID: 20, ChannelID: "ch20", Prompt: "check",
@@ -1045,6 +1088,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcasts() {
 	s.executor.streamingEnabled = true
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
+	allowStatusBroadcasts(eb)
 
 	task := &db.ScheduledTask{
 		ID: 25, ChannelID: "ch25", Prompt: "check tools",
@@ -1087,6 +1131,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseAskUserQuestion() {
 	s.executor.streamingEnabled = true
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
+	allowStatusBroadcasts(eb)
 
 	task := &db.ScheduledTask{
 		ID: 27, ChannelID: "ch27", Prompt: "ask questions",
@@ -1125,6 +1170,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseExitPlanMode() {
 	s.executor.streamingEnabled = true
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
+	allowStatusBroadcasts(eb)
 
 	task := &db.ScheduledTask{
 		ID: 28, ChannelID: "ch28", Prompt: "plan something",
@@ -1163,6 +1209,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcastsBeforeThread() {
 	s.executor.streamingEnabled = true
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
+	allowStatusBroadcasts(eb)
 
 	task := &db.ScheduledTask{
 		ID: 26, ChannelID: "ch26", Prompt: "tools before thread",
@@ -1206,6 +1253,7 @@ func (s *TaskExecutorSuite) TestStreamingOnActivityBroadcasts() {
 	s.executor.streamingEnabled = true
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
+	allowStatusBroadcasts(eb)
 
 	task := &db.ScheduledTask{
 		ID: 27, ChannelID: "ch27", Prompt: "check activity",

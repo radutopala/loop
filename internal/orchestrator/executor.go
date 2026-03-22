@@ -196,15 +196,30 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		}
 	}
 
+	// Broadcast running status to the task's thread (or channel).
+	statusTarget := threadID
+	if statusTarget == "" {
+		statusTarget = task.ChannelID
+	}
+	if e.events != nil {
+		e.events.BroadcastAgentStatus(statusTarget, events.AgentStatusEventData{Status: "running"})
+	}
+
 	runCtx, runCancel := context.WithTimeout(ctx, e.containerTimeout)
 	defer runCancel()
 
 	resp, err := e.runner.Run(runCtx, req)
 	if err != nil {
+		if e.events != nil {
+			e.events.BroadcastAgentStatus(statusTarget, events.AgentStatusEventData{Status: "error", Error: err.Error()})
+		}
 		return "", fmt.Errorf("running agent: %w", err)
 	}
 
 	if resp.Error != "" {
+		if e.events != nil {
+			e.events.BroadcastAgentStatus(statusTarget, events.AgentStatusEventData{Status: "error", Error: resp.Error})
+		}
 		return "", fmt.Errorf("agent error: %s", resp.Error)
 	}
 
@@ -234,6 +249,16 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			e.logger.Error("sending task response", "error", err, "channel_id", task.ChannelID)
 		}
 		storeBotMessage(ctx, e.store, e.events, targetChannelID, resp.Response)
+	}
+
+	// Broadcast completed status to the thread (or channel).
+	if e.events != nil {
+		e.events.BroadcastAgentStatus(targetChannelID, events.AgentStatusEventData{
+			Status:     "completed",
+			DurationMs: resp.DurationMs,
+			NumTurns:   resp.NumTurns,
+			Model:      resp.Model,
+		})
 	}
 
 	// Schedule auto-deletion of the thread when auto_delete_sec is configured
