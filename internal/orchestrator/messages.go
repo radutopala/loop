@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/radutopala/loop/internal/agent"
@@ -200,7 +201,7 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 	}
 
 	req := o.buildAgentRequest(msg.ChannelID, recent, channel)
-	req.Prompt = fmt.Sprintf("%s: %s", msg.AuthorName, msg.Content)
+	req.Prompt = formatMessageContent(msg.AuthorName, msg.Content)
 	req.AuthorID = msg.AuthorID
 	req.PlanMode = msg.Mode == "plan"
 
@@ -428,7 +429,7 @@ func (o *Orchestrator) buildAgentRequest(channelID string, recent []*db.Message,
 		}
 		messages = append(messages, agent.AgentMessage{
 			Role:    role,
-			Content: fmt.Sprintf("%s: %s", m.AuthorName, m.Content),
+			Content: formatMessageContent(m.AuthorName, m.Content),
 		})
 	}
 
@@ -448,4 +449,13 @@ func (o *Orchestrator) buildAgentRequest(channelID string, recent []*db.Message,
 		ChannelID: channelID,
 		DirPath:   dirPath,
 	}
+}
+
+// formatMessageContent formats a message for the agent prompt.
+// Slash-command messages are passed through without the author prefix.
+func formatMessageContent(authorName, content string) string {
+	if strings.HasPrefix(content, "/") {
+		return content
+	}
+	return fmt.Sprintf("%s: %s", authorName, content)
 }

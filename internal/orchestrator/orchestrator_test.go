@@ -1972,6 +1972,40 @@ func (s *OrchestratorSuite) TestBuildAgentRequestNilSession() {
 	require.Empty(s.T(), req.Messages)
 }
 
+func (s *OrchestratorSuite) TestFormatMessageContent() {
+	tests := []struct {
+		name       string
+		authorName string
+		content    string
+		expected   string
+	}{
+		{"normal message", "Alice", "hello bot", "Alice: hello bot"},
+		{"slash command", "Alice", "/loop 5m check status", "/loop 5m check status"},
+		{"slash with spaces", "Bob", "/commit -m fix", "/commit -m fix"},
+		{"empty author", "", "hello", ": hello"},
+		{"empty content", "Alice", "", "Alice: "},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			require.Equal(s.T(), tt.expected, formatMessageContent(tt.authorName, tt.content))
+		})
+	}
+}
+
+func (s *OrchestratorSuite) TestBuildAgentRequestSlashCommandNoPrefix() {
+	recent := []*db.Message{
+		{ID: 2, AuthorName: "Alice", Content: "/loop 5m check", IsBot: false},
+		{ID: 1, AuthorName: "Bot", Content: "old response", IsBot: true},
+	}
+	channel := &db.Channel{ChannelID: "ch1", SessionID: "sess-1"}
+
+	req := s.orch.buildAgentRequest("ch1", recent, channel)
+
+	require.Len(s.T(), req.Messages, 2)
+	require.Equal(s.T(), "Bot: old response", req.Messages[0].Content)
+	require.Equal(s.T(), "/loop 5m check", req.Messages[1].Content) // no author prefix
+}
+
 func (s *OrchestratorSuite) TestFormatDuration() {
 	tests := []struct {
 		name     string

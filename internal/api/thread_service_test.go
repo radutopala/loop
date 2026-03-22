@@ -5,6 +5,9 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os/exec"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
@@ -307,6 +310,131 @@ func (s *ThreadServiceSuite) TestDeleteThreadMCPConfigErrorLogsWarning() {
 	err := s.svc.DeleteThread(s.ctx, "thread-1")
 	require.NoError(s.T(), err)
 	s.store.AssertExpectations(s.T())
+}
+
+func (s *ThreadServiceSuite) TestDeleteWorktreeThreadRemovesWorktree() {
+	var calledMainDir, calledWtPath string
+	s.threadSvc.removeWorktree = func(_ context.Context, mainRepoDir, worktreePath string) error {
+		calledMainDir = mainRepoDir
+		calledWtPath = worktreePath
+		return nil
+	}
+
+	s.store.On("GetChannel", s.ctx, "thread-1").
+		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1", DirPath: "/work/.worktrees/wt-1", Worktree: true}, nil)
+	s.store.On("GetChannel", s.ctx, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: "/work"}, nil)
+	s.creator.On("DeleteThread", s.ctx, "thread-1").Return(nil)
+	s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
+
+	err := s.svc.DeleteThread(s.ctx, "thread-1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "/work", calledMainDir)
+	require.Equal(s.T(), "/work/.worktrees/wt-1", calledWtPath)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ThreadServiceSuite) TestDeleteWorktreeThreadRemoveErrorLogsWarning() {
+	s.threadSvc.removeWorktree = func(context.Context, string, string) error {
+		return errors.New("worktree remove failed")
+	}
+
+	s.store.On("GetChannel", s.ctx, "thread-1").
+		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1", DirPath: "/work/.worktrees/wt-1", Worktree: true}, nil)
+	s.store.On("GetChannel", s.ctx, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: "/work"}, nil)
+	s.creator.On("DeleteThread", s.ctx, "thread-1").Return(nil)
+	s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
+
+	err := s.svc.DeleteThread(s.ctx, "thread-1")
+	require.NoError(s.T(), err) // error is logged, not returned
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ThreadServiceSuite) TestDeleteWorktreeThreadParentLookupErrorLogsWarning() {
+	var worktreeCalled bool
+	s.threadSvc.removeWorktree = func(context.Context, string, string) error {
+		worktreeCalled = true
+		return nil
+	}
+
+	s.store.On("GetChannel", s.ctx, "thread-1").
+		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1", DirPath: "/work/.worktrees/wt-1", Worktree: true}, nil)
+	s.store.On("GetChannel", s.ctx, "ch-1").
+		Return(nil, errors.New("db error"))
+	s.creator.On("DeleteThread", s.ctx, "thread-1").Return(nil)
+	s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
+
+	err := s.svc.DeleteThread(s.ctx, "thread-1")
+	require.NoError(s.T(), err)
+	require.False(s.T(), worktreeCalled) // worktree removal skipped
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ThreadServiceSuite) TestDeleteNonWorktreeThreadSkipsWorktreeRemoval() {
+	var worktreeCalled bool
+	s.threadSvc.removeWorktree = func(context.Context, string, string) error {
+		worktreeCalled = true
+		return nil
+	}
+
+	s.store.On("GetChannel", s.ctx, "thread-1").
+		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1", DirPath: "/work"}, nil)
+	s.creator.On("DeleteThread", s.ctx, "thread-1").Return(nil)
+	s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
+
+	err := s.svc.DeleteThread(s.ctx, "thread-1")
+	require.NoError(s.T(), err)
+	require.False(s.T(), worktreeCalled)
+	s.store.AssertExpectations(s.T())
+}
+
+func TestRemoveWorktreeExec(t *testing.T) {
+	ctx := context.Background()
+	mainDir := t.TempDir()
+
+	for _, args := range [][]string{
+		{"init"},
+		{"config", "user.email", "test@test.com"},
+		{"config", "user.name", "Test"},
+		{"commit", "--allow-empty", "-m", "init"},
+	} {
+		cmd := exec.CommandContext(ctx, "git", args...)
+		cmd.Dir = mainDir
+		require.NoError(t, cmd.Run(), "git %v", args)
+	}
+
+	wtPath := filepath.Join(mainDir, ".worktrees", "test-wt")
+	cmd := exec.CommandContext(ctx, "git", "worktree", "add", "-b", "worktree/test-wt", wtPath, "HEAD")
+	cmd.Dir = mainDir
+	require.NoError(t, cmd.Run())
+
+	err := removeWorktreeExec(ctx, mainDir, wtPath)
+	require.NoError(t, err)
+
+	// Verify worktree is gone.
+	listCmd := exec.CommandContext(ctx, "git", "worktree", "list")
+	listCmd.Dir = mainDir
+	out, _ := listCmd.Output()
+	require.NotContains(t, string(out), "test-wt")
+
+	// Verify branch is gone.
+	branchCmd := exec.CommandContext(ctx, "git", "branch", "--list", "worktree/test-wt")
+	branchCmd.Dir = mainDir
+	branchOut, _ := branchCmd.Output()
+	require.Empty(t, strings.TrimSpace(string(branchOut)))
+}
+
+func TestRemoveWorktreeExecInvalidPath(t *testing.T) {
+	ctx := context.Background()
+	mainDir := t.TempDir()
+
+	cmd := exec.CommandContext(ctx, "git", "init")
+	cmd.Dir = mainDir
+	require.NoError(t, cmd.Run())
+
+	err := removeWorktreeExec(ctx, mainDir, "/nonexistent/worktree")
+	require.Error(t, err)
 }
 
 func TestGenerateThreadIDDefault(t *testing.T) {
