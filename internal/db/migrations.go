@@ -4,6 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"os"
+	"path/filepath"
 	"time"
 )
 
@@ -146,6 +148,7 @@ var migrations = []migration{
 	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN auto_delete_sec INTEGER NOT NULL DEFAULT 0`),
 	sqlMigration(`UPDATE messages SET author_name = 'agent' WHERE author_name = 'assistant' AND is_bot = 1`),
 	sqlMigration(`ALTER TABLE channels ADD COLUMN worktree INTEGER NOT NULL DEFAULT 0`),
+	funcMigration(makeBackfillDirPath(os.UserHomeDir)),
 }
 
 // RunMigrations executes all pending schema migrations.
@@ -255,4 +258,34 @@ func migrateTimestampsToUTC(ctx context.Context, sqlDB *sql.DB) error {
 	}
 
 	return nil
+}
+
+// makeBackfillDirPath returns a migration function that sets dir_path on
+// channels/threads created before dir_path was set at creation time.
+// Top-level channels get ~/.loop/{channelID}/work; threads inherit parent's dir_path.
+func makeBackfillDirPath(userHomeDir func() (string, error)) func(context.Context, *sql.DB) error {
+	return func(ctx context.Context, sqlDB *sql.DB) error {
+		home, err := userHomeDir()
+		if err != nil {
+			return fmt.Errorf("getting home dir: %w", err)
+		}
+		loopDir := filepath.Join(home, ".loop")
+
+	// Backfill top-level channels.
+	if _, err := sqlDB.ExecContext(ctx,
+		`UPDATE channels SET dir_path = ? || '/' || channel_id || '/work' WHERE dir_path = '' AND parent_id = ''`,
+		loopDir,
+	); err != nil {
+		return fmt.Errorf("backfilling channel dir_path: %w", err)
+	}
+
+	// Backfill threads from their parent's dir_path.
+	if _, err := sqlDB.ExecContext(ctx,
+		`UPDATE channels SET dir_path = (SELECT p.dir_path FROM channels p WHERE p.channel_id = channels.parent_id) WHERE dir_path = '' AND parent_id != ''`,
+	); err != nil {
+		return fmt.Errorf("backfilling thread dir_path: %w", err)
+	}
+
+	return nil
+	}
 }
