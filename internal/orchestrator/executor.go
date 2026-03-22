@@ -123,6 +123,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				}
 				// Persist thread ID so recurring local tasks reuse the same thread.
 				if task.Type != db.TaskTypeOnce && isLocal {
+					task.ThreadID = threadID
 					_ = e.store.UpdateScheduledTaskThreadID(ctx, task.ID, threadID)
 				}
 				// Notify the UI that a new thread was created so the
