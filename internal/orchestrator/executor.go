@@ -196,13 +196,14 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		}
 	}
 
-	// Broadcast running status to the task's thread (or channel).
-	statusTarget := threadID
-	if statusTarget == "" {
-		statusTarget = task.ChannelID
-	}
+	// Broadcast running status to both the task thread and parent channel
+	// so the frontend picks it up regardless of which channel is subscribed.
 	if e.events != nil {
-		e.events.BroadcastAgentStatus(statusTarget, events.AgentStatusEventData{Status: "running"})
+		status := events.AgentStatusEventData{Status: "running"}
+		if threadID != "" {
+			e.events.BroadcastAgentStatus(threadID, status)
+		}
+		e.events.BroadcastAgentStatus(task.ChannelID, status)
 	}
 
 	runCtx, runCancel := context.WithTimeout(ctx, e.containerTimeout)
@@ -211,14 +212,22 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	resp, err := e.runner.Run(runCtx, req)
 	if err != nil {
 		if e.events != nil {
-			e.events.BroadcastAgentStatus(statusTarget, events.AgentStatusEventData{Status: "error", Error: err.Error()})
+			errStatus := events.AgentStatusEventData{Status: "error", Error: err.Error()}
+			if threadID != "" {
+				e.events.BroadcastAgentStatus(threadID, errStatus)
+			}
+			e.events.BroadcastAgentStatus(task.ChannelID, errStatus)
 		}
 		return "", fmt.Errorf("running agent: %w", err)
 	}
 
 	if resp.Error != "" {
 		if e.events != nil {
-			e.events.BroadcastAgentStatus(statusTarget, events.AgentStatusEventData{Status: "error", Error: resp.Error})
+			errStatus := events.AgentStatusEventData{Status: "error", Error: resp.Error}
+			if threadID != "" {
+				e.events.BroadcastAgentStatus(threadID, errStatus)
+			}
+			e.events.BroadcastAgentStatus(task.ChannelID, errStatus)
 		}
 		return "", fmt.Errorf("agent error: %s", resp.Error)
 	}
@@ -251,14 +260,18 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		storeBotMessage(ctx, e.store, e.events, targetChannelID, resp.Response)
 	}
 
-	// Broadcast completed status to the thread (or channel).
+	// Broadcast completed status to both thread and parent channel.
 	if e.events != nil {
-		e.events.BroadcastAgentStatus(targetChannelID, events.AgentStatusEventData{
+		done := events.AgentStatusEventData{
 			Status:     "completed",
 			DurationMs: resp.DurationMs,
 			NumTurns:   resp.NumTurns,
 			Model:      resp.Model,
-		})
+		}
+		if targetChannelID != task.ChannelID {
+			e.events.BroadcastAgentStatus(targetChannelID, done)
+		}
+		e.events.BroadcastAgentStatus(task.ChannelID, done)
 	}
 
 	// Schedule auto-deletion of the thread when auto_delete_sec is configured

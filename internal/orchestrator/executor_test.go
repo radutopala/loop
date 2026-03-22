@@ -169,16 +169,49 @@ func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsStatus() {
 	eb.AssertExpectations(s.T())
 }
 
+func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsToThreadAndParent() {
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+	s.executor.streamingEnabled = true
+
+	task := &db.ScheduledTask{
+		ID: 52, ChannelID: "ch-parent", Prompt: "fail", Type: db.TaskTypeInterval, Schedule: "5m",
+		ThreadID: "existing-thread",
+	}
+	localCh := &db.Channel{ChannelID: "ch-parent", Platform: types.PlatformLocal}
+	s.store.On("GetChannel", mock.Anything, "ch-parent").Return(localCh, nil)
+	// Running broadcast to both thread and parent
+	eb.On("BroadcastAgentStatus", "existing-thread", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "running" })).Once()
+	eb.On("BroadcastAgentStatus", "ch-parent", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "running" })).Once()
+	// Error broadcast to both
+	eb.On("BroadcastAgentStatus", "existing-thread", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "error" })).Once()
+	eb.On("BroadcastAgentStatus", "ch-parent", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "error" })).Once()
+
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("boom"))
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.Error(s.T(), err)
+	eb.AssertExpectations(s.T())
+}
+
 func (s *TaskExecutorSuite) TestAgentResponseErrorBroadcastsStatus() {
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
-	eb.On("BroadcastAgentStatus", "ch-err2", events.AgentStatusEventData{Status: "running"}).Once()
-	eb.On("BroadcastAgentStatus", "ch-err2", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
-		return d.Status == "error" && d.Error == "agent broke"
-	})).Once()
+	s.executor.streamingEnabled = true
 
-	task := &db.ScheduledTask{ID: 51, ChannelID: "ch-err2", Prompt: "fail", Type: db.TaskTypeCron, Schedule: "0 * * * *"}
-	s.store.On("GetChannel", s.ctx, "ch-err2").Return(nil, nil)
+	task := &db.ScheduledTask{
+		ID: 51, ChannelID: "ch-err2", Prompt: "fail", Type: db.TaskTypeInterval, Schedule: "5m",
+		ThreadID: "err-thread",
+	}
+	localCh := &db.Channel{ChannelID: "ch-err2", Platform: types.PlatformLocal}
+	s.store.On("GetChannel", mock.Anything, "ch-err2").Return(localCh, nil)
+	// Running to both
+	eb.On("BroadcastAgentStatus", "err-thread", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "running" })).Once()
+	eb.On("BroadcastAgentStatus", "ch-err2", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "running" })).Once()
+	// Error to both (resp.Error path)
+	eb.On("BroadcastAgentStatus", "err-thread", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "error" })).Once()
+	eb.On("BroadcastAgentStatus", "ch-err2", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "error" })).Once()
+
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Error: "agent broke"}, nil)
 
 	_, err := s.executor.ExecuteTask(s.ctx, task)
