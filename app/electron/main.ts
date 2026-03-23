@@ -367,6 +367,23 @@ function buildMenu() {
             label: app.name,
             submenu: [
               { role: "about" as const },
+              {
+                label: "Check for Updates…",
+                click: async () => {
+                  if (VITE_DEV_SERVER_URL) {
+                    dialog.showMessageBox({ message: "Updates are not available in dev mode.", buttons: ["OK"] });
+                    return;
+                  }
+                  try {
+                    const result = await autoUpdater.checkForUpdates();
+                    if (!result || !result.updateInfo || result.updateInfo.version === app.getVersion()) {
+                      dialog.showMessageBox({ message: "You're up to date!", detail: `Loop ${app.getVersion()} is the latest version.`, buttons: ["OK"] });
+                    }
+                  } catch {
+                    dialog.showMessageBox({ message: "Unable to check for updates.", detail: "Please try again later.", buttons: ["OK"] });
+                  }
+                },
+              },
               { type: "separator" as const },
               {
                 label: "Settings…",

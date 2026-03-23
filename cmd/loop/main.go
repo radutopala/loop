@@ -244,12 +244,16 @@ Available Commands:
     --dir                  Project directory path (auto-creates channel)
     --api-url              Loop API base URL (required)
     --log                  Path to MCP log file [default: .loop/mcp.log]
+    --author-id            User ID of the message author
+    --platform             Platform for channel creation [default: local]
+    --memory               Enable memory search/index tools
   onboard:global           Initialize global config at ~/.loop/ (aliases: o:global, setup)
     --force                Overwrite existing config
     --owner-id             Set RBAC owner user ID (exits bootstrap mode)
   onboard:local            Register Loop MCP server in current project (aliases: o:local, init)
     --api-url              Loop API base URL [default: http://localhost:8222]
     --owner-id             Set RBAC owner user ID in project config
+    --platform             Only register channel for this platform (e.g. local)
   daemon:start             Install and start the daemon — launchd on macOS, Windows services on Windows, systemd on Linux (aliases: d:start, up)
   daemon:stop              Stop and uninstall the daemon (aliases: d:stop, down)
   daemon:restart           Restart the daemon (aliases: d:restart, restart)
