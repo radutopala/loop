@@ -140,11 +140,11 @@ function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreateWorktr
   ) ?? [];
 
   const lowerSearch = search.toLowerCase();
-  const filteredWorktrees = branchInfo?.worktrees.filter((wt) =>
+  const filteredWorktrees = (branchInfo?.worktrees ?? []).filter((wt) =>
     !search || wt.branch.toLowerCase().includes(lowerSearch) || wt.path.split("/").pop()?.toLowerCase().includes(lowerSearch),
-  ) ?? [];
+  );
 
-  const hasWorktrees = (branchInfo?.worktrees.length ?? 0) > 0 && (!!onImportWorktree || !!onSelectThread);
+  const hasWorktrees = (branchInfo?.worktrees ?? []).length > 0 && (!!onImportWorktree || !!onSelectThread);
 
   return (
     <div ref={ref} style={{ position: "relative", display: "flex", alignItems: "center" }}>
