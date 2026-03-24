@@ -25,6 +25,9 @@ type HTTPClient interface {
 	Do(req *http.Request) (*http.Response, error)
 }
 
+// actionDispatcher handles a browser action and returns the response.
+type actionDispatcher func(ctx context.Context, action string, params map[string]any) (*actionResponse, error)
+
 // Server provides MCP tools for browser automation via the host API.
 type Server struct {
 	mcpServer  *mcp.Server
@@ -33,6 +36,7 @@ type Server struct {
 	apiURL     string
 	channelID  string
 	httpClient HTTPClient
+	dispatch   actionDispatcher // pluggable action handler
 }
 
 // New creates a new MCP browser server that proxies actions through the host API.
@@ -47,9 +51,31 @@ func New(apiURL, channelID string, logger *slog.Logger) *Server {
 	}
 
 	s.httpClient = &http.Client{Timeout: 2 * time.Minute}
+	s.dispatch = s.callAPIAction
 
 	s.mcpServer = mcp.NewServer(&mcp.Implementation{
 		Name:    "loop-browser",
+		Version: "1.0.0",
+	}, &mcp.ServerOptions{Logger: logger})
+
+	s.registerTools()
+	return s
+}
+
+// NewDirect creates a standalone MCP browser server that connects directly to Chrome via CDP.
+// Used by `loop mcp-host-browser` for standalone operation without `loop serve`.
+func NewDirect(cdpEndpoint string, logger *slog.Logger) *Server {
+	if logger == nil {
+		logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+	}
+	s := &Server{
+		logger: logger,
+	}
+
+	s.dispatch = newCDPDispatcher(cdpEndpoint, logger)
+
+	s.mcpServer = mcp.NewServer(&mcp.Implementation{
+		Name:    "loop-host-browser",
 		Version: "1.0.0",
 	}, &mcp.ServerOptions{Logger: logger})
 
@@ -73,7 +99,13 @@ type actionResponse struct {
 	PageInfo       *browser.PageInfo    `json:"page_info,omitempty"`
 }
 
+// callAction dispatches a browser action via the configured dispatcher.
 func (s *Server) callAction(ctx context.Context, action string, params map[string]any) (*actionResponse, error) {
+	return s.dispatch(ctx, action, params)
+}
+
+// callAPIAction sends a browser action to the host API via HTTP.
+func (s *Server) callAPIAction(ctx context.Context, action string, params map[string]any) (*actionResponse, error) {
 	body := map[string]any{
 		"channel_id": s.channelID,
 		"action":     action,
@@ -555,10 +587,14 @@ func (s *Server) handleComputer(ctx context.Context, input computerInput) (*mcp.
 		return imageResult(data), nil, nil
 
 	case "left_click_drag":
+		// Move to start position first so Chrome knows cursor location before press.
+		if _, err := s.callAction(ctx, "mouse_move", map[string]any{"x": input.StartX, "y": input.StartY}); err != nil {
+			return errorResult(fmt.Sprintf("move to start failed: %v", err)), nil, nil
+		}
 		if _, err := s.callAction(ctx, "mouse_down", map[string]any{"x": input.StartX, "y": input.StartY, "button": "left"}); err != nil {
 			return errorResult(fmt.Sprintf("mouse down failed: %v", err)), nil, nil
 		}
-		if _, err := s.callAction(ctx, "mouse_move", map[string]any{"x": x, "y": y}); err != nil {
+		if _, err := s.callAction(ctx, "mouse_move", map[string]any{"x": x, "y": y, "buttons": 1.0}); err != nil {
 			return errorResult(fmt.Sprintf("drag move failed: %v", err)), nil, nil
 		}
 		if _, err := s.callAction(ctx, "mouse_up", map[string]any{"x": x, "y": y, "button": "left"}); err != nil {

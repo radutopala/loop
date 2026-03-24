@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "../ThemeContext";
+import { switchBrowserMode } from "../api/loopApi";
 import { useBrowserWs, type TabInfo } from "../hooks/useBrowserWs";
 
 interface BrowserPanelProps {
@@ -14,6 +15,10 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
   const [url, setUrl] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
+  const [browserMode, setBrowserMode] = useState<"docker" | "host">(() => {
+    const saved = localStorage.getItem(`browserMode:${channelId}`);
+    return saved === "host" ? "host" : "docker";
+  });
 
   const {
     connected,
@@ -21,6 +26,7 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
     tabs,
     activeTargetId,
     startBrowser,
+    stopBrowser,
     startStreaming,
     navigate,
     reload,
@@ -60,12 +66,13 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
     }, []),
   });
 
-  // Auto-start browser when connected.
+  // Auto-start browser when connected. Pass current mode so the server
+  // restores it after daemon restart (server loses in-memory mode state).
   useEffect(() => {
     if (connected && !started) {
-      startBrowser();
+      startBrowser(browserMode);
     }
-  }, [connected, started, startBrowser]);
+  }, [connected, started, startBrowser, browserMode]);
 
   // Start streaming once browser is started, and re-request when the panel
   // becomes visible again (e.g. after a layout switch) to ensure frames flow.
@@ -85,6 +92,21 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
       urlInputRef.current.value = displayUrl;
     }
   }, [displayUrl]);
+
+  const handleModeToggle = useCallback(() => {
+    const newMode = browserMode === "docker" ? "host" : "docker";
+    // Stop current session, switch mode on server, then restart.
+    stopBrowser();
+    switchBrowserMode(channelId, newMode).then((res) => {
+      if (res.mode) {
+        const mode = res.mode as "docker" | "host";
+        setBrowserMode(mode);
+        localStorage.setItem(`browserMode:${channelId}`, mode);
+        // Restart browser with new provider after a brief delay for cleanup.
+        setTimeout(() => startBrowser(newMode), 500);
+      }
+    });
+  }, [channelId, browserMode, stopBrowser, startBrowser]);
 
   const handleNavigate = useCallback(
     (e: React.FormEvent) => {
@@ -225,6 +247,9 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
             }}
           />
         </form>
+
+        {/* Docker / Host mode toggle pill */}
+        <ModePill mode={browserMode} onToggle={handleModeToggle} colors={colors} />
       </div>
 
       {/* Error bar */}
@@ -282,6 +307,42 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
 }
 
 /* ---------- sub-components ---------- */
+
+function ModePill({
+  mode, onToggle, colors,
+}: {
+  mode: "docker" | "host";
+  onToggle: () => void;
+  colors: { textDim: string; textLight: string; active: string };
+}) {
+  const activeStyle = { color: colors.active, fontWeight: 600 as const };
+  const inactiveStyle = { color: colors.textDim };
+  return (
+    <button
+      onClick={onToggle}
+      title={`Switch to ${mode === "docker" ? "host" : "docker"} browser`}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 2,
+        padding: "3px 8px",
+        marginLeft: 4,
+        background: "none",
+        border: `1px solid ${colors.textDim}33`,
+        borderRadius: 10,
+        cursor: "pointer",
+        fontSize: 10,
+        lineHeight: "14px",
+        whiteSpace: "nowrap",
+        flexShrink: 0,
+      }}
+    >
+      <span style={mode === "docker" ? activeStyle : inactiveStyle}>Docker</span>
+      <span style={{ color: colors.textDim, fontSize: 9 }}>|</span>
+      <span style={mode === "host" ? activeStyle : inactiveStyle}>Host</span>
+    </button>
+  );
+}
 
 function NavButton({
   onClick, title, colors, children,

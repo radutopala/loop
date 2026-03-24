@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"log/slog"
-	"net/http"
 	"strings"
 	"sync"
 	"time"
@@ -23,75 +22,6 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/go-json-experiment/json/jsontext"
 )
-
-// ChromeHTTPBaseURL converts a CDP WebSocket URL to its HTTP base URL.
-// E.g. "ws://127.0.0.1:55008" → "http://127.0.0.1:55008".
-func ChromeHTTPBaseURL(wsURL string) string {
-	return strings.Replace(wsURL, "ws://", "http://", 1)
-}
-
-// ActivateTarget activates a page target in Chrome via its HTTP endpoint.
-func ActivateTarget(wsURL, targetID string) error {
-	activateURL := ChromeHTTPBaseURL(wsURL) + "/json/activate/" + targetID
-	client := &http.Client{Timeout: 5 * time.Second}
-	resp, err := client.Get(activateURL) //nolint:gosec,noctx
-	if err != nil {
-		return fmt.Errorf("activating target %s: %w", targetID, err)
-	}
-	resp.Body.Close()
-	return nil
-}
-
-// CreatePageTarget creates a new about:blank page target via Chrome's HTTP endpoint.
-func CreatePageTarget(wsURL string) (string, error) {
-	newURL := ChromeHTTPBaseURL(wsURL) + "/json/new?about:blank"
-	req, err := http.NewRequest(http.MethodPut, newURL, nil) //nolint:noctx
-	if err != nil {
-		return "", fmt.Errorf("creating new target request: %w", err)
-	}
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("creating new page target: %w", err)
-	}
-	defer resp.Body.Close()
-	var newTarget struct {
-		ID string `json:"id"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&newTarget); err != nil {
-		return "", fmt.Errorf("decoding new target: %w", err)
-	}
-	if newTarget.ID == "" {
-		return "", fmt.Errorf("empty target ID from /json/new")
-	}
-	return newTarget.ID, nil
-}
-
-// findOrCreatePageTarget queries Chrome's HTTP endpoint to find an existing page target.
-// If no page target exists, creates one via /json/new and returns its ID.
-func findOrCreatePageTarget(wsURL string, reuseExisting bool) (target.ID, error) {
-	// Reuse an existing page target if requested.
-	if reuseExisting {
-		baseURL := ChromeHTTPBaseURL(wsURL)
-		resp, err := http.Get(baseURL + "/json/list") //nolint:gosec,noctx // internal call to local Chrome
-		if err == nil {
-			defer resp.Body.Close()
-			var targets []struct {
-				ID   string `json:"id"`
-				Type string `json:"type"`
-			}
-			if err := json.NewDecoder(resp.Body).Decode(&targets); err == nil {
-				for _, t := range targets {
-					if t.Type == "page" {
-						return target.ID(t.ID), nil
-					}
-				}
-			}
-		}
-	}
-
-	id, err := CreatePageTarget(wsURL)
-	return target.ID(id), err
-}
 
 // CDPClient wraps a chromedp browser context for CDP operations.
 // It handles screencast streaming, input dispatch, navigation, and accessibility.
@@ -111,6 +41,7 @@ type CDPClient struct {
 	boxModelFunc  func(context.Context, cdp.BackendNodeID) (*cdpdom.BoxModel, error)
 	createTabFunc func(context.Context, string) (target.ID, error)
 	activateFunc  func(context.Context, target.ID) error
+	closeTabFunc  func(context.Context, string) error // injectable for testing
 
 	targetID target.ID   // the page target this client is attached to
 	exec     cdpExecutor // injectable cdp.Execute
@@ -127,13 +58,11 @@ func (c *CDPClient) TargetID() string {
 	return string(c.targetID)
 }
 
-// SwitchTarget activates a different page target in Chrome.
-// It bypasses the CDP command queue (which can block due to pending
-// screencast frame acks) and uses Chrome's HTTP endpoint directly.
+// SwitchTarget activates a different page target in Chrome via CDP protocol.
 func (c *CDPClient) SwitchTarget(targetID string) error {
 	c.StopScreencast()
 
-	if err := ActivateTarget(c.wsURL, targetID); err != nil {
+	if err := c.activateFunc(c.ctx, target.ID(targetID)); err != nil {
 		c.logger.Error("SwitchTarget: activate failed", "error", err)
 		return err
 	}
@@ -149,13 +78,58 @@ func (c *CDPClient) SwitchTarget(targetID string) error {
 	return nil
 }
 
+// NewContextForTarget creates a new CDPClient attached to a different target,
+// reusing the existing browser WebSocket connection. Uses Target.attachToTarget
+// internally — no new WS dial, no Chrome permission prompt.
+func (c *CDPClient) NewContextForTarget(targetID string) (CDPSession, error) {
+	tid := target.ID(targetID)
+	// Use c.ctx (target context), NOT c.allocCtx (allocator context).
+	// NewContext(targetCtx) reuses the browser connection via attachToTarget.
+	// NewContext(allocCtx) would dial a new WebSocket.
+	cdpCtx, cdpCancel := chromedp.NewContext(c.ctx,
+		chromedp.WithTargetID(tid))
+
+	if err := c.runFn(cdpCtx); err != nil {
+		cdpCancel()
+		return nil, fmt.Errorf("attaching to target %s: %w", targetID, err)
+	}
+
+	return &CDPClient{
+		allocCtx:      c.allocCtx,
+		allocCancel:   func() {},
+		ctxCancel:     cdpCancel,
+		ctx:           cdpCtx,
+		wsURL:         c.wsURL,
+		targetID:      tid,
+		exec:          c.exec,
+		logger:        c.logger,
+		runFn:         c.runFn,
+		targetsFunc:   c.targetsFunc,
+		listenFunc:    c.listenFunc,
+		axTreeFunc:    makeAxTreeFuncWith(c.runFn, c.exec),
+		createTabFunc: c.createTabFunc,
+		activateFunc:  c.activateFunc,
+		closeTabFunc: func(_ context.Context, closeTID string) error {
+			tabCtx, tabCancel := chromedp.NewContext(cdpCtx, chromedp.WithTargetID(target.ID(closeTID)))
+			defer tabCancel()
+			return c.runFn(tabCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+				return c.exec(ctx, "Page.close", nil, nil)
+			}))
+		},
+		boxModelFunc: c.boxModelFunc,
+		frameCh:      make(chan []byte, 2),
+		stopCh:       make(chan struct{}),
+	}, nil
+}
+
 // cdpConfig holds constructor-level dependencies, overridable via CDPOption.
 type cdpConfig struct {
-	allocFunc   func(context.Context, string) (context.Context, context.CancelFunc)
-	runFunc     func(context.Context, ...chromedp.Action) error
-	exec        cdpExecutor // injectable cdp.Execute for testability
-	targetID    target.ID   // attach to existing target instead of creating new
-	reuseTarget bool        // if true, reuse existing page target; if false, always create new
+	allocFunc       func(context.Context, string) (context.Context, context.CancelFunc)
+	runFunc         func(context.Context, ...chromedp.Action) error
+	exec            cdpExecutor                             // injectable cdp.Execute for testability
+	targetID        target.ID                               // attach to existing target instead of creating new
+	reuseTarget     bool                                    // if true, reuse existing page target; if false, always create new
+	fromContextFunc func(context.Context) *chromedp.Context // extract target info from context
 }
 
 // CDPOption configures NewCDPClient.
@@ -193,37 +167,46 @@ func NewCDPClient(ctx context.Context, wsURL string, logger *slog.Logger, opts .
 		allocFunc: func(parent context.Context, ws string) (context.Context, context.CancelFunc) {
 			return chromedp.NewRemoteAllocator(parent, ws)
 		},
-		runFunc:     chromedp.Run,
-		exec:        cdp.Execute,
-		reuseTarget: true,
+		runFunc:         chromedp.Run,
+		exec:            cdp.Execute,
+		reuseTarget:     true,
+		fromContextFunc: chromedp.FromContext,
 	}
 	for _, o := range opts {
 		o(&cfg)
 	}
 
-	// Chrome 144+ headless rejects Target.createTarget with "no browser is open".
-	// Query the HTTP endpoint to find or create a page target and attach to it.
 	var contextOpts []chromedp.ContextOption
 	var resolvedTargetID target.ID
 	if cfg.targetID != "" {
 		resolvedTargetID = cfg.targetID
-	} else if tid, err := findOrCreatePageTarget(wsURL, cfg.reuseTarget); err == nil {
-		resolvedTargetID = tid
 	}
+
 	if resolvedTargetID != "" {
 		contextOpts = append(contextOpts, chromedp.WithTargetID(resolvedTargetID))
 	}
 
 	allocCtx, allocCancel := cfg.allocFunc(ctx, wsURL)
+
 	// Suppress chromedp's error logging for Chrome 136+ unknown enum values.
 	contextOpts = append(contextOpts, chromedp.WithErrorf(func(string, ...any) {}))
 	cdpCtx, cdpCancel := chromedp.NewContext(allocCtx, contextOpts...)
 
-	// Run a no-op action to establish the connection and verify it works.
+	// Run a no-op action to establish the connection.
+	// When wsURL is a browser-level URL (ws://host:port/devtools/browser/{id}),
+	// chromedp connects at the browser level and creates a new page target.
+	// When it's just ws://host:port, chromedp first queries /json/version internally.
 	if err := cfg.runFunc(cdpCtx); err != nil {
 		cdpCancel()
 		allocCancel()
 		return nil, fmt.Errorf("connecting to CDP at %s: %w", wsURL, err)
+	}
+
+	// If no target was pre-resolved, read the target ID that chromedp attached to.
+	if resolvedTargetID == "" {
+		if ci := cfg.fromContextFunc(cdpCtx); ci != nil && ci.Target != nil {
+			resolvedTargetID = ci.Target.TargetID
+		}
 	}
 
 	return &CDPClient{
@@ -263,6 +246,15 @@ func NewCDPClient(ctx context.Context, wsURL string, logger *slog.Logger, opts .
 					target.ActivateTarget(id), nil)
 			}))
 		},
+		closeTabFunc: func(cdpCtx context.Context) func(context.Context, string) error {
+			return func(_ context.Context, tid string) error {
+				tabCtx, tabCancel := chromedp.NewContext(cdpCtx, chromedp.WithTargetID(target.ID(tid)))
+				defer tabCancel()
+				return cfg.runFunc(tabCtx, chromedp.ActionFunc(func(ctx context.Context) error {
+					return cfg.exec(ctx, "Page.close", nil, nil)
+				}))
+			}
+		}(cdpCtx),
 		frameCh: make(chan []byte, 2),
 		stopCh:  make(chan struct{}),
 	}, nil
@@ -413,15 +405,34 @@ func (c *CDPClient) StopScreencast() {
 	}
 }
 
-// MouseClick dispatches a mouse click at the given coordinates.
-func (c *CDPClient) MouseClick(ctx context.Context, x, y float64, button string, clickCount int) error {
-	btn := input.Left
+// parseMouseButton converts a button name ("left", "right", "middle") to input.MouseButton.
+func parseMouseButton(button string) input.MouseButton {
 	switch button {
 	case "right":
-		btn = input.Right
+		return input.Right
 	case "middle":
-		btn = input.Middle
+		return input.Middle
+	default:
+		return input.Left
 	}
+}
+
+// mouseButtonBitmask returns the CDP buttons bitmask for a given button name.
+// See https://chromedevtools.github.io/devtools-protocol/tot/Input/#method-dispatchMouseEvent
+func mouseButtonBitmask(button string) int64 {
+	switch button {
+	case "right":
+		return 2
+	case "middle":
+		return 4
+	default:
+		return 1
+	}
+}
+
+// MouseClick dispatches a mouse click at the given coordinates.
+func (c *CDPClient) MouseClick(ctx context.Context, x, y float64, button string, clickCount int) error {
+	btn := parseMouseButton(button)
 
 	return c.runFn(c.ctx,
 		input.DispatchMouseEvent(input.MousePressed, x, y).
@@ -434,10 +445,13 @@ func (c *CDPClient) MouseClick(ctx context.Context, x, y float64, button string,
 }
 
 // MouseMove dispatches a mouse move event.
-func (c *CDPClient) MouseMove(ctx context.Context, x, y float64) error {
-	return c.runFn(c.ctx,
-		input.DispatchMouseEvent(input.MouseMoved, x, y),
-	)
+// buttons indicates which buttons are pressed (0=none, 1=left, 2=right, 4=middle).
+func (c *CDPClient) MouseMove(ctx context.Context, x, y float64, buttons int) error {
+	evt := input.DispatchMouseEvent(input.MouseMoved, x, y)
+	if buttons > 0 {
+		evt = evt.WithButtons(int64(buttons))
+	}
+	return c.runFn(c.ctx, evt)
 }
 
 // MouseScroll dispatches a mouse wheel event.
@@ -690,83 +704,17 @@ type TabInfo struct {
 	Active   bool   `json:"active,omitempty"`
 }
 
-// ListTabs returns all open browser tabs.
-// Uses Chrome's HTTP /json/list endpoint to avoid blocking the chromedp
-// command queue (which can be clogged by pending screencast frame acks).
+// ListTabs returns all open browser tabs via CDP protocol.
 func (c *CDPClient) ListTabs(_ context.Context) ([]TabInfo, error) {
-	if c.wsURL == "" {
-		// Fallback to chromedp for tests without wsURL.
-		targets, err := c.targetsFunc(c.ctx)
-		if err != nil {
-			return nil, fmt.Errorf("listing targets: %w", err)
-		}
-		var tabs []TabInfo
-		for _, t := range targets {
-			if t.Type == "page" {
-				tabs = append(tabs, TabInfo{
-					TargetID: string(t.TargetID),
-					URL:      t.URL,
-					Title:    t.Title,
-				})
-			}
-		}
-		return tabs, nil
-	}
-
-	baseURL := ChromeHTTPBaseURL(c.wsURL)
-	client := &http.Client{Timeout: 5 * time.Second}
-	listURL := baseURL + "/json/list"
-	resp, err := client.Get(listURL) //nolint:gosec,noctx
+	targets, err := c.targetsFunc(c.ctx)
 	if err != nil {
-		// Fallback to chromedp targets if HTTP fails (e.g. network issues).
-		targets, err2 := c.targetsFunc(c.ctx)
-		if err2 != nil {
-			return nil, fmt.Errorf("listing targets via HTTP (%s: %w) and CDP (%w)", listURL, err, err2)
-		}
-		var tabs []TabInfo
-		for _, t := range targets {
-			if t.Type == "page" {
-				tabs = append(tabs, TabInfo{
-					TargetID: string(t.TargetID),
-					URL:      t.URL,
-					Title:    t.Title,
-				})
-			}
-		}
-		return tabs, nil
+		return nil, fmt.Errorf("listing targets: %w", err)
 	}
-	defer resp.Body.Close()
-
-	var targets []struct {
-		ID    string `json:"id"`
-		Type  string `json:"type"`
-		URL   string `json:"url"`
-		Title string `json:"title"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&targets); err != nil {
-		// Response might be HTML (Chrome error page). Fallback to chromedp.
-		cdpTargets, err2 := c.targetsFunc(c.ctx)
-		if err2 != nil {
-			return nil, fmt.Errorf("decoding targets from %s: %w", listURL, err)
-		}
-		var tabs []TabInfo
-		for _, t := range cdpTargets {
-			if t.Type == "page" {
-				tabs = append(tabs, TabInfo{
-					TargetID: string(t.TargetID),
-					URL:      t.URL,
-					Title:    t.Title,
-				})
-			}
-		}
-		return tabs, nil
-	}
-
 	var tabs []TabInfo
 	for _, t := range targets {
 		if t.Type == "page" {
 			tabs = append(tabs, TabInfo{
-				TargetID: t.ID,
+				TargetID: string(t.TargetID),
 				URL:      t.URL,
 				Title:    t.Title,
 			})
@@ -789,20 +737,9 @@ func (c *CDPClient) SwitchTab(ctx context.Context, targetID string) error {
 	return c.activateFunc(c.ctx, target.ID(targetID))
 }
 
-// CloseTab closes a tab by its target ID.
-// Uses Chrome's HTTP /json/close endpoint to avoid chromedp context issues.
-func (c *CDPClient) CloseTab(_ context.Context, targetID string) error {
-	if c.wsURL != "" {
-		baseURL := ChromeHTTPBaseURL(c.wsURL)
-		client := &http.Client{Timeout: 5 * time.Second}
-		resp, err := client.Get(baseURL + "/json/close/" + targetID) //nolint:gosec,noctx
-		if err != nil {
-			return fmt.Errorf("closing tab %s: %w", targetID, err)
-		}
-		resp.Body.Close()
-		return nil
-	}
-	return c.runFn(c.ctx, target.CloseTarget(target.ID(targetID)))
+// CloseTab closes a tab by its target ID via CDP Page.close.
+func (c *CDPClient) CloseTab(ctx context.Context, targetID string) error {
+	return c.closeTabFunc(ctx, targetID)
 }
 
 // EvaluateJS evaluates a JavaScript expression and returns the result as a string.
@@ -923,26 +860,12 @@ func (c *CDPClient) ScrollIntoView(ctx context.Context, backendNodeID cdp.Backen
 
 // MouseDown dispatches a mouse pressed event at the given coordinates.
 func (c *CDPClient) MouseDown(ctx context.Context, x, y float64, button string) error {
-	btn := input.Left
-	switch button {
-	case "right":
-		btn = input.Right
-	case "middle":
-		btn = input.Middle
-	}
 	return c.runFn(c.ctx, input.DispatchMouseEvent(input.MousePressed, x, y).
-		WithButton(btn).WithClickCount(1))
+		WithButton(parseMouseButton(button)).WithButtons(mouseButtonBitmask(button)).WithClickCount(1))
 }
 
 // MouseUp dispatches a mouse released event at the given coordinates.
 func (c *CDPClient) MouseUp(ctx context.Context, x, y float64, button string) error {
-	btn := input.Left
-	switch button {
-	case "right":
-		btn = input.Right
-	case "middle":
-		btn = input.Middle
-	}
 	return c.runFn(c.ctx, input.DispatchMouseEvent(input.MouseReleased, x, y).
-		WithButton(btn).WithClickCount(1))
+		WithButton(parseMouseButton(button)).WithClickCount(1))
 }

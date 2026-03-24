@@ -14,9 +14,11 @@
   //"container_memory_mb": 512,
   //"container_cpus": 1.0,
 
-  // Browser automation: set to false to disable Chrome sidecar for this project
-  //"browser_enabled": false,
-  //"chrome_image": "loop-chrome:latest",
+  // Browser automation override for this project
+  //"browser": {
+  //  "enabled": false,
+  //  "chrome_image": "loop-chrome:latest"
+  //},
 
   // Memory config override for this project
   //"memory": {

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"io/fs"
 	"log/slog"
@@ -26,7 +27,7 @@ import (
 
 	"github.com/radutopala/loop/internal/api"
 	"github.com/radutopala/loop/internal/bot"
-	"github.com/radutopala/loop/internal/browser"
+
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/daemon"
@@ -418,7 +419,7 @@ func (s *MainSuite) setupServeMocks() *serveMocks {
 	s.app.ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error { return nil }
 	s.app.newDockerExecClient = func() (terminal.ExecClient, error) { return nil, errors.New("no docker") }
 	s.app.newHostExecClient = func() terminal.ExecClient { return &noopExecClient{} }
-	s.app.newBrowserManager = func(_ string, _ *slog.Logger) (api.BrowserManager, error) { return nil, errors.New("no browser") }
+	s.app.newBrowserProvider = func(_ string, _ *slog.Logger) (api.BrowserProvider, error) { return nil, errors.New("no browser") }
 	s.app.newAPIServer = fakeAPIServer()
 	return m
 }
@@ -1975,17 +1976,17 @@ func (s *MainSuite) TestDefaultNewHostExecClient() {
 	require.NotNil(s.T(), c)
 }
 
-func (s *MainSuite) TestDefaultNewBrowserManager() {
-	// Exercise the default newBrowserManager to cover main.go factory body.
-	_, _ = newApp().newBrowserManager("loop-chrome:latest", slog.Default())
+func (s *MainSuite) TestDefaultNewBrowserProvider() {
+	// Exercise the default newBrowserProvider to cover main.go factory body.
+	_, _ = newApp().newBrowserProvider("loop-chrome:latest", slog.Default())
 }
 
-func (s *MainSuite) TestDefaultNewBrowserManagerDockerError() {
+func (s *MainSuite) TestDefaultNewBrowserProviderDockerError() {
 	// Force browser.NewDockerExecAPI() to fail by requesting TLS
 	// verification with a non-existent cert path.
 	s.T().Setenv("DOCKER_TLS_VERIFY", "1")
 	s.T().Setenv("DOCKER_CERT_PATH", "/nonexistent/certs")
-	_, err := newApp().newBrowserManager("loop-chrome:latest", slog.Default())
+	_, err := newApp().newBrowserProvider("loop-chrome:latest", slog.Default())
 	require.Error(s.T(), err)
 }
 
@@ -3004,7 +3005,7 @@ func (s *MainSuite) TestEnsureImageSkipsWhenExists() {
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
 		ContainerImage: "loop-agent:latest",
-		ChromeImage:    "loop-chrome:latest",
+		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
 	}
 	// Create container dir with Dockerfile so it doesn't try to write
 	containerDir := filepath.Join(cfg.LoopDir, "container")
@@ -3028,7 +3029,7 @@ func (s *MainSuite) TestEnsureImageBuildsWhenMissing() {
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
 		ContainerImage: "loop-agent:latest",
-		ChromeImage:    "loop-chrome:latest",
+		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
 	}
 	// Create container dir with Dockerfile
 	containerDir := filepath.Join(cfg.LoopDir, "container")
@@ -3050,7 +3051,7 @@ func (s *MainSuite) TestEnsureImageWritesEmbeddedFiles() {
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
 		ContainerImage: "loop-agent:latest",
-		ChromeImage:    "loop-chrome:latest",
+		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
 	}
 
 	s.app.sys = newPassthroughMock()
@@ -3086,7 +3087,7 @@ func (s *MainSuite) TestEnsureImageListError() {
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
 		ContainerImage: "loop-agent:latest",
-		ChromeImage:    "loop-chrome:latest",
+		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
 	}
 	containerDir := filepath.Join(cfg.LoopDir, "container")
 	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
@@ -3106,7 +3107,7 @@ func (s *MainSuite) TestEnsureImageMkdirError() {
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
 		ContainerImage: "loop-agent:latest",
-		ChromeImage:    "loop-chrome:latest",
+		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
 	}
 
 	sys := newPassthroughMock()
@@ -3134,7 +3135,7 @@ func (s *MainSuite) TestEnsureImageWriteErrors() {
 			cfg := &config.Config{
 				LoopDir:        s.T().TempDir(),
 				ContainerImage: "loop-agent:latest",
-				ChromeImage:    "loop-chrome:latest",
+				Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
 			}
 			sys := newPassthroughMock()
 			s.app.sys = sys
@@ -3164,7 +3165,7 @@ func (s *MainSuite) TestEnsureImageAgentBuildError() {
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
 		ContainerImage: "loop-agent:latest",
-		ChromeImage:    "loop-chrome:latest",
+		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
 	}
 	containerDir := filepath.Join(cfg.LoopDir, "container")
 	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
@@ -3185,7 +3186,7 @@ func (s *MainSuite) TestEnsureImageChromeListError() {
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
 		ContainerImage: "loop-agent:latest",
-		ChromeImage:    "loop-chrome:latest",
+		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
 	}
 	containerDir := filepath.Join(cfg.LoopDir, "container")
 	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
@@ -3207,7 +3208,7 @@ func (s *MainSuite) TestEnsureImageChromeBuildError() {
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
 		ContainerImage: "loop-agent:latest",
-		ChromeImage:    "loop-chrome:latest",
+		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
 	}
 	containerDir := filepath.Join(cfg.LoopDir, "container")
 	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
@@ -3226,7 +3227,7 @@ func (s *MainSuite) TestEnsureImageChromeDockerfileWriteError() {
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
 		ContainerImage: "loop-agent:latest",
-		ChromeImage:    "loop-chrome:latest",
+		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
 	}
 	// Create container dir with Dockerfile only (no chrome.Dockerfile triggers write)
 	containerDir := filepath.Join(cfg.LoopDir, "container")
@@ -3257,7 +3258,7 @@ func (s *MainSuite) TestEnsureImageChromeEntrypointWriteError() {
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
 		ContainerImage: "loop-agent:latest",
-		ChromeImage:    "loop-chrome:latest",
+		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
 	}
 	containerDir := filepath.Join(cfg.LoopDir, "container")
 	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
@@ -3288,7 +3289,7 @@ func (s *MainSuite) TestEnsureImageChromeDockerfileWrite() {
 	cfg := &config.Config{
 		LoopDir:        s.T().TempDir(),
 		ContainerImage: "loop-agent:latest",
-		ChromeImage:    "loop-chrome:latest",
+		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
 	}
 	// Create container dir with Dockerfile but NOT chrome.Dockerfile — triggers write
 	containerDir := filepath.Join(cfg.LoopDir, "container")
@@ -3468,13 +3469,13 @@ func (s *MainSuite) TestServeWithTerminalManager() {
 	}
 }
 
-func (s *MainSuite) TestServeWithBrowserManager() {
+func (s *MainSuite) TestServeWithBrowserProvider() {
 	m := s.setupServeMocks()
 	m.setupHappyBot()
-	m.cfg.BrowserEnabled = true
+	m.cfg.Browser.Enabled = true
 
-	s.app.newBrowserManager = func(_ string, _ *slog.Logger) (api.BrowserManager, error) {
-		return &noopBrowserManager{}, nil
+	s.app.newBrowserProvider = func(_ string, _ *slog.Logger) (api.BrowserProvider, error) {
+		return &noopBrowserProvider{}, nil
 	}
 
 	errCh := make(chan error, 1)
@@ -3493,12 +3494,12 @@ func (s *MainSuite) TestServeWithBrowserManager() {
 	}
 }
 
-func (s *MainSuite) TestServeWithBrowserManagerError() {
+func (s *MainSuite) TestServeWithBrowserProviderError() {
 	m := s.setupServeMocks()
 	m.setupHappyBot()
-	m.cfg.BrowserEnabled = true
+	m.cfg.Browser.Enabled = true
 
-	s.app.newBrowserManager = func(_ string, _ *slog.Logger) (api.BrowserManager, error) {
+	s.app.newBrowserProvider = func(_ string, _ *slog.Logger) (api.BrowserProvider, error) {
 		return nil, errors.New("no docker")
 	}
 
@@ -3688,6 +3689,88 @@ func (s *MainSuite) TestNewMCPBrowserCmdRunE() {
 	_ = err
 }
 
+// --- newMCPHostBrowserCmd ---
+
+func (s *MainSuite) TestNewMCPHostBrowserCmd() {
+	cmd := s.app.newMCPHostBrowserCmd()
+	require.Equal(s.T(), "mcp-host-browser", cmd.Use)
+	require.NotNil(s.T(), cmd.RunE)
+
+	f := cmd.Flags()
+	require.Nil(s.T(), f.Lookup("host")) // removed — DevToolsActivePort discovery replaces it
+	require.Nil(s.T(), f.Lookup("port")) // removed — no fallback needed
+	require.NotNil(s.T(), f.Lookup("log"))
+}
+
+func (s *MainSuite) TestRunMCPHostBrowserLogOpenError() {
+	err := s.app.runMCPHostBrowser("/nonexistent/dir/mcp-host-browser.log", mcpbrowser.NewDirect)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "opening mcp-host-browser log")
+}
+
+func (s *MainSuite) TestRunMCPHostBrowserSuccess() {
+	logPath := filepath.Join(s.T().TempDir(), "mcp-host-browser.log")
+	s.app.discoverWSEndpoint = func() (string, error) {
+		return "ws://127.0.0.1:9333/devtools/browser/fake-guid", nil
+	}
+
+	called := false
+	newServer := func(cdpEndpoint string, logger *slog.Logger) *mcpbrowser.Server {
+		require.Equal(s.T(), "ws://127.0.0.1:9333/devtools/browser/fake-guid", cdpEndpoint)
+		require.NotNil(s.T(), logger)
+		called = true
+		return mcpbrowser.NewDirect(cdpEndpoint, logger)
+	}
+
+	_ = s.app.runMCPHostBrowser(logPath, newServer)
+	require.True(s.T(), called)
+}
+
+func (s *MainSuite) TestRunMCPHostBrowserDiscoveryError() {
+	logPath := filepath.Join(s.T().TempDir(), "mcp-host-browser.log")
+	s.app.discoverWSEndpoint = func() (string, error) {
+		return "", fmt.Errorf("no DevToolsActivePort")
+	}
+
+	err := s.app.runMCPHostBrowser(logPath, mcpbrowser.NewDirect)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "discovering Chrome CDP endpoint")
+}
+
+func (s *MainSuite) TestRunMCPHostBrowserWithConfig() {
+	logPath := filepath.Join(s.T().TempDir(), "mcp-host-browser.log")
+	s.app.configLoad = func() (*config.Config, error) {
+		return &config.Config{
+			LogLevel:  "debug",
+			LogFormat: "json",
+		}, nil
+	}
+	s.app.discoverWSEndpoint = func() (string, error) {
+		return "ws://127.0.0.1:9222/devtools/browser/fake-guid", nil
+	}
+
+	called := false
+	newServer := func(cdpEndpoint string, logger *slog.Logger) *mcpbrowser.Server {
+		require.NotNil(s.T(), logger)
+		called = true
+		return mcpbrowser.NewDirect(cdpEndpoint, logger)
+	}
+
+	_ = s.app.runMCPHostBrowser(logPath, newServer)
+	require.True(s.T(), called)
+}
+
+func (s *MainSuite) TestNewMCPHostBrowserCmdRunE() {
+	logPath := filepath.Join(s.T().TempDir(), "mcp-host-browser.log")
+	s.app.discoverWSEndpoint = func() (string, error) {
+		return "ws://127.0.0.1:9222/devtools/browser/fake-guid", nil
+	}
+	cmd := s.app.newMCPHostBrowserCmd()
+	require.NoError(s.T(), cmd.Flags().Set("log", logPath))
+	// RunE wraps runMCPHostBrowser — the stdio transport will close immediately.
+	_ = cmd.RunE(cmd, nil)
+}
+
 // noopExecClient satisfies terminal.ExecClient for testing.
 type noopExecClient struct{}
 
@@ -3703,32 +3786,11 @@ func (n *noopExecClient) ExecResize(_ context.Context, _ string, _, _ uint) erro
 	return nil
 }
 
-type noopBrowserManager struct{}
+type noopBrowserProvider struct{}
 
-func (n *noopBrowserManager) EnsureBrowser(_ context.Context, _, _ string) error { return nil }
-func (n *noopBrowserManager) StopBrowser(_ context.Context, _ string) error      { return nil }
-func (n *noopBrowserManager) IsRunning(_ context.Context, _ string) bool         { return false }
-func (n *noopBrowserManager) GetCDPEndpoint(_ string) string                     { return "" }
-func (n *noopBrowserManager) GetContainerID(_ string) (string, bool)             { return "", false }
-func (n *noopBrowserManager) SetTargetID(_, _ string)                            {}
-func (n *noopBrowserManager) GetTargetID(_ string) string                        { return "" }
-func (n *noopBrowserManager) SetCDPForTarget(_, _ string, _ any)                 {}
-func (n *noopBrowserManager) GetCDPForTarget(_, _ string) any                    { return nil }
-func (n *noopBrowserManager) RemoveCDPForTarget(_, _ string) any                 { return nil }
-func (n *noopBrowserManager) GetActiveCDP(_ string) any                          { return nil }
-func (n *noopBrowserManager) TouchBrowser(_ string)                              {}
-func (n *noopBrowserManager) PaneConnected(_ string)                             {}
-func (n *noopBrowserManager) PaneDisconnected(_ string)                          {}
-func (n *noopBrowserManager) RunIdleMonitor(_ context.Context, _ time.Duration)  {}
-func (n *noopBrowserManager) NotifyTargetSwitch(_, _ string)                     {}
-func (n *noopBrowserManager) TargetSwitchCh(_ string) <-chan string              { return nil }
-func (n *noopBrowserManager) NotifyTabAdded(_ string, _ browser.TabInfo)         {}
-func (n *noopBrowserManager) TabAddedCh(_ string) <-chan browser.TabInfo         { return nil }
-func (n *noopBrowserManager) NotifyTabRemoved(_, _ string)                       {}
-func (n *noopBrowserManager) TabRemovedCh(_ string) <-chan string                { return nil }
-func (n *noopBrowserManager) TrackTab(_, _ string)                               {}
-func (n *noopBrowserManager) UntrackTab(_, _ string)                             {}
-func (n *noopBrowserManager) NextTabID(_, _ string) string                       { return "" }
-func (n *noopBrowserManager) OrderTabs(_ string, tabs []browser.TabInfo) []browser.TabInfo {
-	return tabs
-}
+func (n *noopBrowserProvider) EnsureBrowser(_ context.Context, _, _ string) error { return nil }
+func (n *noopBrowserProvider) StopBrowser(_ context.Context, _ string) error      { return nil }
+func (n *noopBrowserProvider) IsRunning(_ context.Context, _ string) bool         { return false }
+func (n *noopBrowserProvider) GetCDPEndpoint(_ string) string                     { return "" }
+func (n *noopBrowserProvider) GetContainerID(_ string) (string, bool)             { return "", false }
+func (n *noopBrowserProvider) IsHostMode() bool                                   { return false }

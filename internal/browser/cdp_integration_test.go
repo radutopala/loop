@@ -281,7 +281,7 @@ func (s *CDPIntegrationSuite) TestMouseTripleClick() {
 
 func (s *CDPIntegrationSuite) TestMouseMove() {
 	s.nav()
-	err := s.client.MouseMove(context.Background(), 100, 100)
+	err := s.client.MouseMove(context.Background(), 100, 100, 0)
 	require.NoError(s.T(), err)
 }
 
@@ -508,51 +508,6 @@ collected:
 	require.True(s.T(), found, "should capture the /page3 navigation request")
 }
 
-// --- Chrome HTTP Helpers ---
-
-func (s *CDPIntegrationSuite) TestChromeHTTPBaseURL() {
-	wsURL := fmt.Sprintf("ws://127.0.0.1:%s", s.hostPort)
-	httpURL := ChromeHTTPBaseURL(wsURL)
-	require.Equal(s.T(), fmt.Sprintf("http://127.0.0.1:%s", s.hostPort), httpURL)
-}
-
-func (s *CDPIntegrationSuite) TestActivateTarget() {
-	ctx := context.Background()
-	wsURL := fmt.Sprintf("ws://127.0.0.1:%s", s.hostPort)
-
-	// Create a second tab to activate.
-	tid, err := s.client.NewTab(ctx, "about:blank")
-	require.NoError(s.T(), err)
-
-	err = ActivateTarget(wsURL, tid)
-	require.NoError(s.T(), err)
-
-	// Clean up.
-	_ = s.client.CloseTab(ctx, tid)
-}
-
-func (s *CDPIntegrationSuite) TestCreatePageTarget() {
-	wsURL := fmt.Sprintf("ws://127.0.0.1:%s", s.hostPort)
-
-	id, err := CreatePageTarget(wsURL)
-	require.NoError(s.T(), err)
-	require.NotEmpty(s.T(), id)
-
-	// Verify it shows up in tab list.
-	tabs, err := s.client.ListTabs(context.Background())
-	require.NoError(s.T(), err)
-	found := false
-	for _, t := range tabs {
-		if t.TargetID == id {
-			found = true
-			break
-		}
-	}
-	require.True(s.T(), found, "created target should appear in tab list")
-
-	// Clean up.
-	_ = s.client.CloseTab(context.Background(), id)
-}
 
 // --- ResetScreencast ---
 

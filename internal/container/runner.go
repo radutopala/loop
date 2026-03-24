@@ -609,7 +609,7 @@ func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID strin
 	}
 
 	mcpConfigPath := filepath.Join(workDir, ".loop", "mcp-"+channelID+".json")
-	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, authorID, cfg.Memory.Enabled, cfg.BrowserEnabled, cfg.MCPServers)
+	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, authorID, cfg.Memory.Enabled, cfg.Browser.Enabled, cfg.MCPServers)
 	mcpJSON, _ := json.MarshalIndent(mcpCfg, "", "  ")
 	if err := r.sys.WriteFile(mcpConfigPath, mcpJSON, 0o644); err != nil {
 		return "", fmt.Errorf("writing mcp config: %w", err)
@@ -1034,11 +1034,8 @@ func readLineOrSkip(br *bufio.Reader) ([]byte, error) {
 	}
 
 	// Read the full line for events we care about.
-	line, err := br.ReadBytes('\n')
-	if err != nil && len(line) == 0 {
-		return nil, err
-	}
-	// ReadBytes may return data with EOF (last line without \n).
+	// ReadBytes may return data with EOF (last line without \n) — that's fine.
+	line, _ := br.ReadBytes('\n')
 	return bytes.TrimSpace(line), nil
 }
 

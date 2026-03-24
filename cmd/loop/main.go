@@ -119,7 +119,8 @@ type app struct {
 	loadProjectMemoryPaths func(string) []string
 	newDockerExecClient    func() (terminal.ExecClient, error)
 	newHostExecClient      func() terminal.ExecClient
-	newBrowserManager      func(string, *slog.Logger) (api.BrowserManager, error)
+	newBrowserProvider     func(string, *slog.Logger) (api.BrowserProvider, error)
+	discoverWSEndpoint     func() (string, error)
 
 	// Update dependencies
 	httpGet            func(string) (*http.Response, error)
@@ -169,13 +170,16 @@ func newApp() *app {
 		newHostExecClient: func() terminal.ExecClient {
 			return terminal.NewHostExecClient()
 		},
-		newBrowserManager: func(chromeImage string, logger *slog.Logger) (api.BrowserManager, error) {
+		newBrowserProvider: func(chromeImage string, logger *slog.Logger) (api.BrowserProvider, error) {
 			dockerClient, err := dockerclient.NewClientWithOpts(dockerclient.FromEnv, dockerclient.WithAPIVersionNegotiation())
 			if err != nil {
 				return nil, err
 			}
-			return browser.NewManager(dockerClient, chromeImage, "1920,1080", logger), nil
+			return browser.NewDockerProvider(dockerClient, chromeImage, "1920,1080", logger), nil
 		},
+
+		// MCP host browser
+		discoverWSEndpoint: browser.DiscoverWSEndpoint,
 
 		// Update dependencies
 		httpGet: http.Get,
@@ -228,11 +232,12 @@ func (a *app) newRootCmd() *cobra.Command {
 	root.AddCommand(a.newReadmeCmd())
 	root.AddCommand(a.newUpdateCmd())
 	root.AddCommand(a.newMCPBrowserCmd())
+	root.AddCommand(a.newMCPHostBrowserCmd())
 	root.SetHelpTemplate(helpTemplate)
 	return root
 }
 
-const helpTemplate = `loop - Chat bot powered by Claude that runs AI agents in Docker containers
+const helpTemplate = `loop - AI-powered development platform with Claude agents, browser automation, and team collaboration
 
 Usage:
   loop [command]
@@ -258,6 +263,8 @@ Available Commands:
   daemon:stop              Stop and uninstall the daemon (aliases: d:stop, down)
   daemon:restart           Restart the daemon (aliases: d:restart, restart)
   daemon:status            Show daemon status (alias: d:status)
+  mcp-host-browser         Standalone MCP server for host Chrome automation (auto-discovers via DevToolsActivePort)
+    --log                  Path to MCP log file [default: .loop/mcp-host-browser.log]
   version                  Print version information (alias: v)
   readme                   Print the README documentation (alias: r)
   update                   Update loop to the latest version (alias: u)

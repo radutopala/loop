@@ -4,6 +4,7 @@ import { browserAction, getWsUrl } from "../api/loopApi";
 interface BrowserWSMessage {
   type: string;
   channel_id?: string;
+  mode?: string;
   url?: string;
   width?: number;
   height?: number;
@@ -206,9 +207,9 @@ export function useBrowserWs({
     }
   }, []);
 
-  const startBrowser = useCallback(() => {
+  const startBrowser = useCallback((mode?: "docker" | "host") => {
     if (!channelId) return;
-    send({ type: "start", channel_id: channelId });
+    send({ type: "start", channel_id: channelId, mode });
   }, [channelId, send]);
 
   const stopBrowser = useCallback(() => {

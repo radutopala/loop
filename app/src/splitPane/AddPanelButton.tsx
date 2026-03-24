@@ -64,7 +64,7 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   diff: "Git diff viewer",
   agent: "Docker isolated terminal",
   shell: "Local machine shell",
-  browser: "Docker browser viewer",
+  browser: "Browser viewer",
 };
 
 /** Centered picker for when layout is empty (no tree). */

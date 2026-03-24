@@ -1831,9 +1831,9 @@ func (s *TerminalHandlerSuite) TestKillAlsoStopsBrowser() {
 	stopper.On("ContainerRemove", mock.Anything, "ctr-kill").Return(nil)
 	s.srv.SetContainerStopper(stopper)
 
-	browserMgr := new(MockBrowserManager)
+	browserMgr := new(mockBrowserProvider)
 	browserMgr.On("StopBrowser", mock.Anything, "ch-kill-br").Return(nil)
-	s.srv.SetBrowserManager(browserMgr)
+	s.srv.SetBrowserProvider(browserMgr)
 
 	conn, ts := s.dialWS()
 	defer ts.Close()

@@ -50,6 +50,19 @@ export async function browserAction(
   return res.json();
 }
 
+/** Switch browser mode between docker and host Chrome. */
+export async function switchBrowserMode(
+  channelId: string,
+  mode: "docker" | "host",
+): Promise<{ mode: string }> {
+  const res = await fetch(`${apiUrl}/api/browser/mode`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ channel_id: channelId, mode }),
+  });
+  return res.json();
+}
+
 /** Open a one-shot WebSocket to send a kill message for a channel's agent container. */
 export function killAgentContainer(channelId: string): void {
   const ws = new WebSocket(`${getWsUrl()}/api/ws/terminal`);

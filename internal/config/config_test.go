@@ -69,7 +69,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.Empty(s.T(), cfg.DiscordGuildID)
 	require.Nil(s.T(), cfg.MCPServers)
 	require.True(s.T(), cfg.StreamingEnabled)
-	require.True(s.T(), cfg.BrowserEnabled)
+	require.True(s.T(), cfg.Browser.Enabled)
 	require.Equal(s.T(), []string{"~/.claude.json"}, cfg.CopyFiles)
 }
 
@@ -137,13 +137,36 @@ func (s *ConfigSuite) TestLoadBrowserEnabledExplicitFalse() {
 			"platforms": ["discord"],
 			"discord_token": "t",
 			"discord_app_id": "a",
-			"browser_enabled": false
+			"browser": { "enabled": false }
 		}`), nil
 	}
 
 	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
-	require.False(s.T(), cfg.BrowserEnabled)
+	require.False(s.T(), cfg.Browser.Enabled)
+}
+
+func (s *ConfigSuite) TestLoadBrowserFullConfig() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"browser": {
+				"enabled": true,
+				"chrome_image": "my-chrome:v2",
+				"mode": "host",
+				"host_cdp_port": 9333
+			}
+		}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.True(s.T(), cfg.Browser.Enabled)
+	require.Equal(s.T(), "my-chrome:v2", cfg.Browser.ChromeImage)
+	require.Equal(s.T(), "host", cfg.Browser.Mode)
+	require.Equal(s.T(), 9333, cfg.Browser.HostCDPPort)
 }
 
 func (s *ConfigSuite) TestMissingRequired() {
@@ -868,23 +891,23 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			name: "Container/Override",
 			projectJSON: `{
 				"container_image": "custom-agent:v3",
-				"chrome_image": "custom-chrome:v2",
+				"browser": { "chrome_image": "custom-chrome:v2" },
 				"container_memory_mb": 2048,
 				"container_cpus": 4.0
 			}`,
 			mainCfg: &Config{
 				ContainerImage:    "loop-agent:latest",
-				ChromeImage:       "loop-chrome:latest",
+				Browser:           BrowserConfig{ChromeImage: "loop-chrome:latest"},
 				ContainerMemoryMB: 512,
 				ContainerCPUs:     1.0,
 			},
 			assert: func(merged, main *Config) {
 				require.Equal(s.T(), "custom-agent:v3", merged.ContainerImage)
-				require.Equal(s.T(), "custom-chrome:v2", merged.ChromeImage)
+				require.Equal(s.T(), "custom-chrome:v2", merged.Browser.ChromeImage)
 				require.Equal(s.T(), int64(2048), merged.ContainerMemoryMB)
 				require.Equal(s.T(), 4.0, merged.ContainerCPUs)
 				require.Equal(s.T(), "loop-agent:latest", main.ContainerImage)
-				require.Equal(s.T(), "loop-chrome:latest", main.ChromeImage)
+				require.Equal(s.T(), "loop-chrome:latest", main.Browser.ChromeImage)
 				require.Equal(s.T(), int64(512), main.ContainerMemoryMB)
 			},
 		},
@@ -1105,19 +1128,23 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			},
 		},
 		{
-			name:        "BrowserEnabled/Override",
-			projectJSON: `{"browser_enabled": false}`,
-			mainCfg:     &Config{BrowserEnabled: true},
+			name:        "Browser/Override",
+			projectJSON: `{"browser": {"enabled": false, "mode": "host", "host_cdp_port": 9333}}`,
+			mainCfg:     &Config{Browser: BrowserConfig{Enabled: true, Mode: "docker", HostCDPPort: 9222}},
 			assert: func(merged, _ *Config) {
-				require.False(s.T(), merged.BrowserEnabled)
+				require.False(s.T(), merged.Browser.Enabled)
+				require.Equal(s.T(), "host", merged.Browser.Mode)
+				require.Equal(s.T(), 9333, merged.Browser.HostCDPPort)
 			},
 		},
 		{
-			name:        "BrowserEnabled/NoOverride",
+			name:        "Browser/NoOverride",
 			projectJSON: `{}`,
-			mainCfg:     &Config{BrowserEnabled: true},
+			mainCfg:     &Config{Browser: BrowserConfig{Enabled: true, Mode: "docker", HostCDPPort: 9222}},
 			assert: func(merged, _ *Config) {
-				require.True(s.T(), merged.BrowserEnabled)
+				require.True(s.T(), merged.Browser.Enabled)
+				require.Equal(s.T(), "docker", merged.Browser.Mode)
+				require.Equal(s.T(), 9222, merged.Browser.HostCDPPort)
 			},
 		},
 	}

@@ -38,7 +38,7 @@ AI agents powered by Claude, running in Docker containers. Use the **desktop app
           │   workDir (project) │
           │   mcpDir  (logs)    │
           │   MCP: loop         │
-          │   MCP: loop-browser │──▶ Host API ──▶ Chrome sidecar
+          │   MCP: loop-browser │──▶ Host API ──▶ Chrome (Docker or Host)
           └─────────┬───────────┘
                     │
          MCP tool calls (schedule, list, cancel…)
@@ -49,12 +49,16 @@ AI agents powered by Claude, running in Docker containers. Use the **desktop app
                     ▼
            Memory Indexer + Embedder
            (Ollama)
+
+  Standalone (no Docker):
+     Claude Code ──▶ loop mcp-host-browser ──▶ Host Chrome (CDP)
 ```
 
 - **Orchestrator** coordinates message handling, channel registration, session management, and scheduled tasks
 - **DockerRunner** mounts the channel's `dir_path` (falling back to `~/.loop/<channelID>/work`) at its original path inside the container, then runs `claude --print`
 - **Scheduler** polls for due tasks (cron, interval, once) and executes them via DockerRunner
 - **MCP Server** (inside the container) gives Claude tools to schedule/manage tasks — calls loop back through the API server
+- **Browser** supports Docker mode (headless Chrome container per channel) and Host mode (user's local Chrome via CDP). The desktop app toggles modes per channel; `loop mcp-host-browser` runs standalone without Docker
 - **API Server** exposes REST endpoints for task and channel management
 - **SQLite** stores channels, messages, scheduled tasks, run logs, and memory file embeddings
 
@@ -339,8 +343,9 @@ This does four things:
 | `container_memory_mb` | `512` | Memory limit per container (MB) |
 | `container_cpus` | `1.0` | CPU limit per container |
 | `container_keep_alive_sec` | `300` | Keep-alive duration for idle containers |
-| `browser_enabled` | `true` | Enable Chrome sidecar for browser automation tools |
-| `chrome_image` | `"loop-chrome:latest"` | Docker image for Chrome sidecar containers |
+| `browser.enabled` | `true` | Enable Chrome browser automation |
+| `browser.chrome_image` | `"loop-chrome:latest"` | Docker image for Chrome sidecar containers |
+| `browser.host_cdp_port` | `9222` | CDP port for Host mode (requires `chrome://inspect/#remote-debugging` in Chrome) |
 | `poll_interval_sec` | `30` | Task scheduler poll interval |
 | `claude_model` | `""` | Override Claude model (e.g. `"claude-sonnet-4-6"`) |
 | `claude_bin_path` | `"claude"` | Path to Claude Code binary |
@@ -479,8 +484,9 @@ Project config overrides specific global settings. Only these fields are allowed
 | `container_memory_mb` | **Overrides** global memory limit |
 | `container_cpus` | **Overrides** global CPU limit |
 | `memory` | **Merged** — paths appended, embeddings override |
-| `browser_enabled` | **Overrides** global value when set |
-| `chrome_image` | **Overrides** global value when set |
+| `browser.enabled` | **Overrides** global value when set |
+| `browser.chrome_image` | **Overrides** global value when set |
+| `browser.host_cdp_port` | **Overrides** global value when set |
 
 **Worktree threads** inherit their parent project's config unless the worktree directory has its own `.loop/config.json`. This means you only need to configure mounts, MCP servers, and model once in the parent project — all worktree threads will use the same settings automatically.
 
@@ -525,7 +531,29 @@ For development: `make docker-build` builds from `container/Dockerfile` in the r
 | `loop daemon:stop` | `d:stop`, `down` | Stop and uninstall the daemon |
 | `loop daemon:restart` | `d:restart`, `restart` | Restart the daemon |
 | `loop daemon:status` | `d:status` | Show daemon status |
+| `loop mcp-host-browser` | | Standalone MCP server for host Chrome browser automation |
 | `loop readme` | `r` | Print the README documentation |
+
+### MCP Host Browser (standalone)
+
+`loop mcp-host-browser` runs as a standalone MCP server that connects directly to your local Chrome via CDP — no Docker, no daemon, no agent container required. It auto-discovers Chrome's DevTools endpoint via the `DevToolsActivePort` file.
+
+**Prerequisites:** enable remote debugging in Chrome at `chrome://inspect/#remote-debugging`.
+
+Add it to your Claude Code MCP config (`.mcp.json` or `settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "browser": {
+      "command": "loop",
+      "args": ["mcp-host-browser"]
+    }
+  }
+}
+```
+
+This gives Claude Code full browser automation tools (navigate, screenshot, click, type, evaluate JS, tab management, console/network capture) on your host Chrome.
 
 ### MCP Server Options
 
@@ -857,7 +885,7 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 - **Auto-update** — checks for new releases every 30 minutes, download and install with one click
 - **Deep links** — `loop://channel/<id>` opens the app directly to a channel
 - **Branch picker** — switch branches from the header bar, create worktree threads, import existing worktrees. Threads show branches only; parent channels show branches + worktrees in a 50/50 split. Double-click a branch name to copy it
-- **Browser** — live Chrome screencast via WebSocket, click/type/navigate directly in the browser pane
+- **Browser** — live Chrome screencast via WebSocket, click/type/navigate directly in the browser pane. Supports Docker (headless container) and Host (local Chrome) modes with pill toggle
 - **Plan mode** — run agents in read-only preview mode (`--permission-mode plan`)
 - **Agent activity** — see model info, tool use, and completion summaries in the chat view
 - **Message queue** — processing indicators and trigger quote showing which message is being handled, with timestamp
@@ -916,6 +944,7 @@ make app-install
 | `POST` | `/api/memory/index` | Re-index memory files |
 | `GET` | `/api/readme` | Get the Loop README documentation |
 | `POST` | `/api/browser/action` | Browser automation (navigate, tabs, screenshot, input, etc.) |
+| `POST` | `/api/browser/mode` | Switch browser mode (docker/host) |
 | `GET` | `/api/ws` | WebSocket for real-time event streaming |
 | `GET` | `/api/ws/terminal` | WebSocket for interactive terminal sessions |
 | `GET` | `/api/ws/browser` | WebSocket for browser screencast frames and input |

@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -20,95 +19,53 @@ import (
 	"github.com/radutopala/loop/internal/browser"
 )
 
-// BrowserManager is the interface for managing browser lifecycle.
-type BrowserManager interface {
+// BrowserProvider is the interface for managing browser lifecycle.
+type BrowserProvider interface {
 	EnsureBrowser(ctx context.Context, channelID, containerID string) error
 	StopBrowser(ctx context.Context, channelID string) error
 	IsRunning(ctx context.Context, channelID string) bool
 	GetCDPEndpoint(channelID string) string
 	GetContainerID(channelID string) (string, bool)
-	SetTargetID(channelID, targetID string)
-	GetTargetID(channelID string) string
-	SetCDPForTarget(channelID, targetID string, cdp any)
-	GetCDPForTarget(channelID, targetID string) any
-	RemoveCDPForTarget(channelID, targetID string) any
-	GetActiveCDP(channelID string) any
-	TouchBrowser(channelID string)
-	PaneConnected(channelID string)
-	PaneDisconnected(channelID string)
-	RunIdleMonitor(ctx context.Context, timeout time.Duration)
-	NotifyTargetSwitch(channelID, targetID string)
-	TargetSwitchCh(channelID string) <-chan string
-	NotifyTabAdded(channelID string, tab browser.TabInfo)
-	TabAddedCh(channelID string) <-chan browser.TabInfo
-	NotifyTabRemoved(channelID, targetID string)
-	TabRemovedCh(channelID string) <-chan string
-	TrackTab(channelID, targetID string)
-	UntrackTab(channelID, targetID string)
-	NextTabID(channelID, closedTargetID string) string
-	OrderTabs(channelID string, tabs []browser.TabInfo) []browser.TabInfo
+	IsHostMode() bool
 }
 
-// SetBrowserManager configures the browser manager.
-func (s *Server) SetBrowserManager(mgr BrowserManager) {
-	s.browserManager = mgr
-	s.browserCDPFactory = func(ctx context.Context, wsURL string, logger *slog.Logger, opts ...browser.CDPOption) (browserCDPClient, error) {
-		return browser.NewCDPClient(ctx, wsURL, logger, opts...)
+// SetBrowserProvider configures the Docker browser provider.
+func (s *Server) SetBrowserProvider(mgr BrowserProvider) {
+	s.dockerBrowserProvider = mgr
+}
+
+// SetHostBrowserProvider configures the host Chrome browser provider.
+func (s *Server) SetHostBrowserProvider(mgr BrowserProvider) {
+	s.hostBrowserProvider = mgr
+}
+
+// activeBrowserProvider returns the BrowserProvider for the given channel based on active mode.
+func (s *Server) activeBrowserProvider(channelID string) BrowserProvider {
+	s.browserModeMu.Lock()
+	mode := s.activeBrowserMode[channelID]
+	s.browserModeMu.Unlock()
+
+	if mode == "host" && s.hostBrowserProvider != nil {
+		return s.hostBrowserProvider
 	}
-	s.browserCDPRetries = cdpMaxRetries
-	s.browserCDPDelay = cdpRetryDelay
-}
-
-// browserCDPClient abstracts CDP operations for testing.
-type browserCDPClient interface {
-	Navigate(ctx context.Context, url string) error
-	Reload(ctx context.Context) error
-	GoBack(ctx context.Context) error
-	GoForward(ctx context.Context) error
-	GetPageInfo(ctx context.Context) (*browser.PageInfo, error)
-	StartScreencast(quality, maxWidth, maxHeight int) <-chan []byte
-	StopScreencast()
-	ResetScreencast()
-	MouseClick(ctx context.Context, x, y float64, button string, clickCount int) error
-	MouseMove(ctx context.Context, x, y float64) error
-	MouseScroll(ctx context.Context, x, y, deltaX, deltaY float64) error
-	KeyPress(ctx context.Context, key string) error
-	TypeText(ctx context.Context, text string) error
-	TargetID() string
-	SwitchTarget(targetID string) error
-	ListTabs(ctx context.Context) ([]browser.TabInfo, error)
-	EvaluateJS(ctx context.Context, expression string) (string, error)
-	NewTab(ctx context.Context, url string) (string, error)
-	CloseTab(ctx context.Context, targetID string) error
-	Close()
-	GetElementRefs(ctx context.Context) ([]browser.ElementRef, error)
-	ClickRef(ctx context.Context, refs []browser.ElementRef, refIndex int) error
-	Screenshot(ctx context.Context) ([]byte, error)
-	EnableConsoleCapture(ctx context.Context, ch chan<- browser.ConsoleMessage) error
-	EnableNetworkCapture(ctx context.Context, ch chan<- browser.NetworkRequest) error
-	ResizeWindow(ctx context.Context, width, height int) error
-	ScrollIntoView(ctx context.Context, backendNodeID cdp.BackendNodeID) error
-	MouseDown(ctx context.Context, x, y float64, button string) error
-	MouseUp(ctx context.Context, x, y float64, button string) error
+	return s.dockerBrowserProvider
 }
 
 // browserWSConn manages a single browser WebSocket connection.
 type browserWSConn struct {
-	conn    *websocket.Conn
-	bMgr    BrowserManager
-	cFinder ContainerFinder
-	logger  *slog.Logger
-	writeMu sync.Mutex
+	conn            *websocket.Conn
+	browserProvider BrowserProvider
+	resolveProvider func(string) BrowserProvider // resolves active provider by channel ID
+	logger          *slog.Logger
+	writeMu         sync.Mutex
 
-	// Factory functions — set by handleBrowserWS, overridable in tests.
-	cdpFactory func(ctx context.Context, wsURL string, logger *slog.Logger, opts ...browser.CDPOption) (browserCDPClient, error)
-
-	// CDP connection retry — defaults set in handleBrowserWS, overridable in tests.
-	cdpRetries int
-	cdpDelay   time.Duration
+	// CDPManager resolvers — set by handleBrowserWS from Server.
+	resolveCDPMgr func(channelID, mode string, provider BrowserProvider) *browser.CDPManager
+	setMode       func(channelID, mode string) // sets active browser mode
 
 	mu               sync.Mutex
-	cdp              browserCDPClient
+	cdpMgr           *browser.CDPManager // active CDPManager
+	cdp              browser.CDPSession  // active tab's CDP client
 	stopCh           chan struct{}
 	screencastStopCh chan struct{} // per-screencast stop, separate from WS-level stopCh
 	channelID        string        // set by handleStart, used by cleanup for PaneDisconnected
@@ -118,6 +75,7 @@ type browserWSConn struct {
 type browserWSMessage struct {
 	Type      string `json:"type"` // "start", "stop", "screencast", "input"
 	ChannelID string `json:"channel_id,omitempty"`
+	Mode      string `json:"mode,omitempty"` // "docker" or "host" — optional, sets active mode on start
 	Width     int    `json:"width,omitempty"`
 	Height    int    `json:"height,omitempty"`
 	// Input fields
@@ -168,13 +126,54 @@ const (
 	cdpRetryDelay = 500 * time.Millisecond
 )
 
-// Legacy HTTP endpoints (ensure, touch, switch-target, tab-added, tab-removed)
-// removed — all browser operations now go through POST /api/browser/action
-// which handles ensure, touch, switch, tab add/remove internally.
+// getOrCreateCDPManager returns or creates a CDPManager for the given channel+mode.
+func (s *Server) getOrCreateCDPManager(channelID, mode string, provider BrowserProvider) *browser.CDPManager {
+	s.cdpManagersMu.Lock()
+	defer s.cdpManagersMu.Unlock()
+	key := channelID + "|" + mode
+	if mgr, ok := s.cdpManagers[key]; ok {
+		return mgr
+	}
+	if s.cdpManagers == nil {
+		s.cdpManagers = make(map[string]*browser.CDPManager)
+	}
+	isHost := provider.IsHostMode()
+	cfg := browser.CDPManagerConfig{
+		DiscoverExisting: !isHost,
+		MaxRetries:       cdpMaxRetries,
+		RetryDelay:       cdpRetryDelay,
+	}
+	if isHost {
+		cfg.MaxRetries = 1
+	}
+	wsEndpoint := provider.GetCDPEndpoint(channelID)
+	mgr := browser.NewCDPManager(wsEndpoint, cfg, s.logger)
+	s.cdpManagers[key] = mgr
+	return mgr
+}
+
+// getActiveCDPManager returns the CDPManager for the given channel's active mode.
+func (s *Server) getActiveCDPManager(channelID string) *browser.CDPManager {
+	mode := s.activeMode(channelID)
+	s.cdpManagersMu.Lock()
+	defer s.cdpManagersMu.Unlock()
+	return s.cdpManagers[channelID+"|"+mode]
+}
+
+// activeMode returns the active browser mode for a channel ("docker" or "host").
+func (s *Server) activeMode(channelID string) string {
+	s.browserModeMu.Lock()
+	mode := s.activeBrowserMode[channelID]
+	s.browserModeMu.Unlock()
+	if mode == "" {
+		return "docker"
+	}
+	return mode
+}
 
 // handleBrowserWS handles the /api/ws/browser WebSocket endpoint.
 func (s *Server) handleBrowserWS(w http.ResponseWriter, r *http.Request) {
-	if s.browserManager == nil {
+	if s.dockerBrowserProvider == nil && s.hostBrowserProvider == nil {
 		http.Error(w, "browser not configured", http.StatusServiceUnavailable)
 		return
 	}
@@ -187,16 +186,20 @@ func (s *Server) handleBrowserWS(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	bc := &browserWSConn{
-		conn:    conn,
-		bMgr:    s.browserManager,
-		cFinder: s.containerFinder,
-		logger:  s.logger,
-		cdpFactory: func(ctx context.Context, wsURL string, logger *slog.Logger, opts ...browser.CDPOption) (browserCDPClient, error) {
-			return s.browserCDPFactory(ctx, wsURL, logger, opts...)
+		conn:            conn,
+		browserProvider: s.dockerBrowserProvider,
+		resolveProvider: s.activeBrowserProvider,
+		logger:          s.logger,
+		resolveCDPMgr:   s.getOrCreateCDPManager,
+		setMode: func(channelID, mode string) {
+			s.browserModeMu.Lock()
+			if s.activeBrowserMode == nil {
+				s.activeBrowserMode = make(map[string]string)
+			}
+			s.activeBrowserMode[channelID] = mode
+			s.browserModeMu.Unlock()
 		},
-		cdpRetries: s.browserCDPRetries,
-		cdpDelay:   s.browserCDPDelay,
-		stopCh:     make(chan struct{}),
+		stopCh: make(chan struct{}),
 	}
 	defer bc.cleanup()
 
@@ -212,9 +215,6 @@ func (s *Server) handleBrowserWS(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 
-		// The WS handles: start/stop (lifecycle), screencast (frame streaming),
-		// and input (mouse/keyboard). All control operations (navigate, tabs,
-		// reload, back/forward) go through POST /api/browser/action.
 		switch msg.Type {
 		case bwsMsgStart:
 			bc.handleStart(r.Context(), msg)
@@ -236,81 +236,86 @@ func (bc *browserWSConn) handleStart(ctx context.Context, msg browserWSMessage) 
 		return
 	}
 
-	bc.logger.Info("browser ws: starting", "channel_id", msg.ChannelID)
+	bc.logger.Info("browser ws: starting", "channel_id", msg.ChannelID, "mode", msg.Mode)
 	bc.channelID = msg.ChannelID
 
-	// Ensure Chrome sidecar container is running for this channel.
-	if err := bc.bMgr.EnsureBrowser(ctx, msg.ChannelID, ""); err != nil {
+	// If the client specifies a mode, set it before resolving the provider.
+	// This handles reconnects after daemon restart where the frontend
+	// remembers the mode but the server lost its in-memory state.
+	if msg.Mode == "host" || msg.Mode == "docker" {
+		if bc.setMode != nil {
+			bc.setMode(msg.ChannelID, msg.Mode)
+		}
+	}
+
+	// Resolve the active browser provider for this channel.
+	if bc.resolveProvider != nil {
+		bc.browserProvider = bc.resolveProvider(msg.ChannelID)
+	}
+	isHost := bc.browserProvider.IsHostMode()
+	bc.logger.Info("browser ws: resolved provider", "channel_id", msg.ChannelID, "host_mode", isHost)
+
+	// Ensure browser is running for this channel.
+	if err := bc.browserProvider.EnsureBrowser(ctx, msg.ChannelID, ""); err != nil {
 		bc.sendError("failed to start browser: " + err.Error())
 		return
 	}
 
-	bc.bMgr.PaneConnected(msg.ChannelID)
+	// Determine active mode.
+	mode := "docker"
+	if isHost {
+		mode = "host"
+	}
+
+	// Get or create CDPManager for this channel+mode.
+	cdpMgr := bc.resolveCDPMgr(msg.ChannelID, mode, bc.browserProvider)
 
 	// Reuse cached CDP client if available (survives WS reconnections).
-	// Reset screencast state — the old WS cleanup left screencasting=true
-	// but the actual screencast is dead (no frame consumer).
-	if cached, ok := bc.bMgr.GetActiveCDP(msg.ChannelID).(browserCDPClient); ok && cached != nil {
-		bc.logger.Info("browser ws: reusing cached CDP")
-		cached.ResetScreencast()
-		bc.mu.Lock()
-		bc.cdp = cached
-		bc.mu.Unlock()
-		bc.sendJSON(browserWSResponse{Type: bwsRespStarted})
-		go bc.watchMCPTabChanges(msg.ChannelID)
+	if cdpMgr.IsConnected() {
+		if activeClient := cdpMgr.ActiveClient(); activeClient != nil {
+			bc.logger.Info("browser ws: reusing cached CDP")
+			activeClient.ResetScreencast()
+			cdpMgr.PaneConnected()
+			bc.mu.Lock()
+			bc.cdpMgr = cdpMgr
+			bc.cdp = activeClient
+			bc.mu.Unlock()
+			bc.sendJSON(browserWSResponse{Type: bwsRespStarted})
+			go bc.watchMCPTabChanges()
+			return
+		}
+	}
+
+	// Mark pane connected BEFORE Connect so the idle monitor doesn't kill
+	// the container while we're still connecting (Connect retries take ~10s).
+	cdpMgr.PaneConnected()
+
+	// Connect CDP — CDPManager handles retries internally.
+	bc.logger.Info("browser ws: connecting CDP", "endpoint", bc.browserProvider.GetCDPEndpoint(msg.ChannelID))
+	if err := cdpMgr.Connect(ctx); err != nil {
+		cdpMgr.PaneDisconnected()
+		bc.sendError("failed to connect CDP: " + err.Error())
 		return
 	}
 
-	// Connect CDP client — Chrome needs time to start, so retry with backoff.
-	cdpEndpoint := bc.bMgr.GetCDPEndpoint(msg.ChannelID)
-	bc.logger.Info("browser ws: connecting CDP", "endpoint", cdpEndpoint)
-	var (
-		cdpClient browserCDPClient
-		err       error
-	)
-	// Use background context so the CDP client survives WS reconnections.
-	cdpCtx := context.Background()
-	for attempt := range bc.cdpRetries {
-		cdpClient, err = bc.cdpFactory(cdpCtx, cdpEndpoint, bc.logger)
-		if err == nil {
-			break
-		}
-		if attempt == bc.cdpRetries-1 {
-			bc.sendError("failed to connect CDP: " + err.Error())
-			return
-		}
-		bc.logger.Debug("CDP not ready, retrying", "attempt", attempt+1, "error", err)
-		select {
-		case <-ctx.Done():
-			bc.sendError("context cancelled waiting for CDP")
-			return
-		case <-time.After(bc.cdpDelay):
-		}
-	}
+	cdpClient := cdpMgr.ActiveClient()
 
 	bc.mu.Lock()
+	bc.cdpMgr = cdpMgr
 	bc.cdp = cdpClient
 	bc.mu.Unlock()
 
-	// Cache the CDP client and track all existing tabs.
-	if tid := cdpClient.TargetID(); tid != "" {
-		bc.bMgr.SetCDPForTarget(msg.ChannelID, tid, cdpClient)
-		bc.bMgr.SetTargetID(msg.ChannelID, tid)
-		bc.bMgr.TrackTab(msg.ChannelID, tid)
+	if cdpClient != nil && cdpClient.TargetID() != "" {
+		tid := cdpClient.TargetID()
 		bc.logger.Info("browser ws: CDP connected", "target_id", tid)
-	}
-	// Track all existing tabs from Chrome (e.g. from a reused container).
-	// CDPs are created on-demand when switching to each tab.
-	if tabs, err := cdpClient.ListTabs(ctx); err == nil {
-		for _, tab := range tabs {
-			bc.bMgr.TrackTab(msg.ChannelID, tab.TargetID)
-		}
+		// Activate the tab so Chrome brings it to foreground (screencast needs this).
+		_ = cdpClient.SwitchTarget(tid)
 	}
 
 	bc.sendJSON(browserWSResponse{Type: bwsRespStarted})
 
 	// Watch for MCP-initiated target switches and tab changes.
-	go bc.watchMCPTabChanges(msg.ChannelID)
+	go bc.watchMCPTabChanges()
 }
 
 func (bc *browserWSConn) handleStop(ctx context.Context, msg browserWSMessage) {
@@ -318,7 +323,7 @@ func (bc *browserWSConn) handleStop(ctx context.Context, msg browserWSMessage) {
 	bc.cleanup()
 
 	if msg.ChannelID != "" {
-		_ = bc.bMgr.StopBrowser(ctx, msg.ChannelID)
+		_ = bc.browserProvider.StopBrowser(ctx, msg.ChannelID)
 	}
 
 	bc.sendJSON(browserWSResponse{Type: bwsRespStopped})
@@ -363,7 +368,7 @@ func (bc *browserWSConn) dispatchInput(ev browser.InputEvent) {
 		}
 		err = cdp.MouseClick(ctx, ev.X, ev.Y, btn, count)
 	case "mousemove":
-		err = cdp.MouseMove(ctx, ev.X, ev.Y)
+		err = cdp.MouseMove(ctx, ev.X, ev.Y, 0)
 	case "scroll":
 		err = cdp.MouseScroll(ctx, ev.X, ev.Y, ev.DeltaX, ev.DeltaY)
 	case "keypress":
@@ -383,9 +388,7 @@ type frameSender interface {
 	StopCh() <-chan struct{}
 }
 
-// handleScreencast starts screencast and pipes JPEG frames over the WebSocket
-// as binary messages. This is a simpler alternative to WebRTC that works
-// reliably on localhost (where WebRTC ICE often fails).
+// handleScreencast starts screencast and pipes JPEG frames over the WebSocket.
 func (bc *browserWSConn) handleScreencast(msg browserWSMessage) {
 	bc.mu.Lock()
 	cdp := bc.cdp
@@ -415,7 +418,6 @@ func (bc *browserWSConn) handleScreencast(msg browserWSMessage) {
 }
 
 // wsFrameSender sends screencast frames as binary WebSocket messages.
-// Uses the browserWSConn's writeMu to avoid concurrent writes with sendJSON.
 type wsFrameSender struct {
 	bc     *browserWSConn
 	stopCh <-chan struct{}
@@ -461,58 +463,50 @@ func (bc *browserWSConn) pipeFrames(frameCh <-chan []byte, stream frameSender, t
 }
 
 // restartScreencastForTarget switches the screencast to a different tab.
-// Reuses a cached CDP client for the target if available, or creates a new one.
-// The old target's CDP is kept alive in the manager for later reuse.
-func (bc *browserWSConn) restartScreencastForTarget(ctx context.Context, _ browserCDPClient, targetID string) {
+func (bc *browserWSConn) restartScreencastForTarget(ctx context.Context, _ browser.CDPSession, targetID string) {
 	bc.logger.Info("browser ws: switching target", "target_id", targetID)
 
-	// Stop the old pipeFrames goroutine so frames from the previous tab
-	// don't leak into the WebSocket.
+	// Stop the old pipeFrames goroutine.
 	bc.mu.Lock()
 	if bc.screencastStopCh != nil {
 		close(bc.screencastStopCh)
 	}
 	newStopCh := make(chan struct{})
 	bc.screencastStopCh = newStopCh
+	cdpMgr := bc.cdpMgr
 	bc.mu.Unlock()
 
-	// Don't call StopScreencast — it sends a CDP command through chromedp's
-	// serial queue which can block the WS read loop for seconds. Just closing
-	// screencastStopCh stops the frame piping. The old CDP's screencast will
-	// be stopped naturally when we call ResetScreencast + StartScreencast.
+	if cdpMgr == nil {
+		bc.logger.Error("browser ws: no CDPManager for target switch")
+		return
+	}
 
-	// Create a fresh CDP for the target. Chrome only sends screencast
-	// frames to the first CDP session that attaches. Don't Close() old
-	// CDPs — Close() destroys the page target in Chrome.
-	bc.bMgr.RemoveCDPForTarget(bc.channelID, targetID)
-	// Activate the target in Chrome first — Chrome won't screencast
-	// background tabs. Then create a fresh CDP attached to it.
-	cdpEndpoint := bc.bMgr.GetCDPEndpoint(bc.channelID)
-	_ = browser.ActivateTarget(cdpEndpoint, targetID)
-	newCDP, err := bc.cdpFactory(context.Background(), cdpEndpoint, bc.logger,
-		browser.WithTargetID(targetID))
+	// Get or create a CDP client for the target.
+	client, err := cdpMgr.GetOrCreate(targetID)
 	if err != nil {
 		bc.logger.Error("browser ws: switch target failed", "error", err)
 		bc.sendError("switch target failed: " + err.Error())
 		return
 	}
-	bc.bMgr.SetCDPForTarget(bc.channelID, targetID, newCDP)
+
+	activeCDP := client
+
+	_ = activeCDP.SwitchTarget(targetID)
+	cdpMgr.SwitchActive(targetID)
 
 	bc.mu.Lock()
-	bc.cdp = newCDP
+	bc.cdp = activeCDP
 	bc.mu.Unlock()
 
-	bc.bMgr.SetTargetID(bc.channelID, targetID)
-
-	newCDP.ResetScreencast()
-	frameCh := newCDP.StartScreencast(60, 1920, 1080)
+	activeCDP.ResetScreencast()
+	frameCh := activeCDP.StartScreencast(60, 1920, 1080)
 	ws := &wsFrameSender{bc: bc, stopCh: newStopCh}
 	go bc.pipeFrames(frameCh, ws, targetID)
-	_, _ = newCDP.EvaluateJS(ctx, "window.scrollBy(0,1);window.scrollBy(0,-1)")
+	_, _ = activeCDP.EvaluateJS(ctx, "window.scrollBy(0,1);window.scrollBy(0,-1)")
 
 	bc.sendJSON(browserWSResponse{Type: bwsRespTabSwitched, TargetID: targetID})
 
-	tabs, err := newCDP.ListTabs(ctx)
+	tabs, err := activeCDP.ListTabs(ctx)
 	if err == nil {
 		bc.sendTabsResponse(tabs, targetID)
 	}
@@ -520,7 +514,24 @@ func (bc *browserWSConn) restartScreencastForTarget(ctx context.Context, _ brows
 
 // sendTabsResponse sends a tabs response with the current tab list and active target.
 func (bc *browserWSConn) sendTabsResponse(tabs []browser.TabInfo, activeTargetID string) {
-	tabs = bc.bMgr.OrderTabs(bc.channelID, tabs)
+	bc.mu.Lock()
+	cdpMgr := bc.cdpMgr
+	bc.mu.Unlock()
+
+	// Filter to agent-tracked tabs only (hides Chrome's startup tabs
+	// and other untracked targets like extensions).
+	if cdpMgr != nil {
+		var filtered []browser.TabInfo
+		for _, t := range tabs {
+			if cdpMgr.IsTrackedTab(t.TargetID) {
+				filtered = append(filtered, t)
+			}
+		}
+		tabs = filtered
+	}
+	if cdpMgr != nil {
+		tabs = cdpMgr.OrderTabs(tabs)
+	}
 	tabInfos := make([]browserTabInfo, len(tabs))
 	for i, t := range tabs {
 		tabInfos[i] = browserTabInfo{
@@ -538,38 +549,44 @@ func (bc *browserWSConn) sendTabsResponse(tabs []browser.TabInfo, activeTargetID
 
 // watchMCPTabChanges watches for MCP-initiated target switches, tab additions,
 // and tab removals, forwarding them to the frontend via WebSocket.
-func (bc *browserWSConn) watchMCPTabChanges(channelID string) {
-	switchCh := bc.bMgr.TargetSwitchCh(channelID)
-	tabAddedCh := bc.bMgr.TabAddedCh(channelID)
-	tabRemovedCh := bc.bMgr.TabRemovedCh(channelID)
+func (bc *browserWSConn) watchMCPTabChanges() {
+	bc.mu.Lock()
+	cdpMgr := bc.cdpMgr
+	bc.mu.Unlock()
+
+	var switchCh <-chan string
+	var tabAddedCh <-chan browser.TabInfo
+	var tabRemovedCh <-chan string
+
+	if cdpMgr != nil {
+		switchCh = cdpMgr.TargetSwitchCh()
+		tabAddedCh = cdpMgr.TabAddedCh()
+		tabRemovedCh = cdpMgr.TabRemovedCh()
+	}
 
 	for {
 		select {
-		case targetID, ok := <-switchCh:
-			if !ok {
-				return
-			}
+		case targetID := <-switchCh:
 			bc.mu.Lock()
 			cdp := bc.cdp
 			bc.mu.Unlock()
 			if cdp == nil {
 				return
 			}
-			bc.restartScreencastForTarget(context.Background(), cdp, targetID)
-		case tab, ok := <-tabAddedCh:
-			if !ok {
-				return
+			// Skip if already on this target.
+			if cdp.TargetID() == targetID {
+				bc.logger.Debug("watchMCPTabChanges: skipping switch to same target", "target_id", targetID)
+				continue
 			}
+			bc.restartScreencastForTarget(context.Background(), cdp, targetID)
+		case tab := <-tabAddedCh:
 			bc.sendJSON(browserWSResponse{
 				Type:     bwsRespTabCreated,
 				TargetID: tab.TargetID,
 				URL:      tab.URL,
 				Title:    tab.Title,
 			})
-		case targetID, ok := <-tabRemovedCh:
-			if !ok {
-				return
-			}
+		case targetID := <-tabRemovedCh:
 			bc.sendJSON(browserWSResponse{
 				Type:     bwsRespTabClosed,
 				TargetID: targetID,
@@ -584,16 +601,12 @@ func (bc *browserWSConn) cleanup() {
 	bc.mu.Lock()
 	defer bc.mu.Unlock()
 
-	if bc.channelID != "" {
-		bc.bMgr.PaneDisconnected(bc.channelID)
+	if bc.cdpMgr != nil {
+		bc.cdpMgr.PaneDisconnected()
 	}
 
 	if bc.cdp != nil {
 		bc.logger.Info("browser ws: CDP disconnected", "channel_id", bc.channelID)
-		// Don't call StopScreencast — it blocks on the chromedp queue and
-		// corrupts the CDP state for reuse. Just stop piping frames by
-		// closing screencastStopCh (pipeFrames exits). The CDP stays alive
-		// in the browser manager cache for WS reconnect.
 		if bc.screencastStopCh != nil {
 			close(bc.screencastStopCh)
 			bc.screencastStopCh = nil
@@ -606,10 +619,7 @@ func (bc *browserWSConn) sendJSON(resp browserWSResponse) {
 	bc.writeMu.Lock()
 	defer bc.writeMu.Unlock()
 	if err := bc.conn.WriteJSON(resp); err != nil {
-		// Suppress broken pipe — client disconnected, nothing to do.
-		if !strings.Contains(err.Error(), "broken pipe") && !strings.Contains(err.Error(), "use of closed") {
-			bc.logger.Error("browser ws: write failed", "error", err)
-		}
+		bc.logger.Debug("browser ws: write failed", "error", err)
 	}
 }
 
@@ -617,17 +627,61 @@ func (bc *browserWSConn) sendError(msg string) {
 	bc.sendJSON(browserWSResponse{Type: bwsRespError, Message: msg})
 }
 
-// browserCaptureState tracks per-channel console and network capture state.
-type browserCaptureState struct {
-	consoleMu   sync.Mutex
-	consoleMsgs []browser.ConsoleMessage
-	consoleCh   chan browser.ConsoleMessage
+// handleBrowserMode handles POST /api/browser/mode — switches between docker and host Chrome.
+func (s *Server) handleBrowserMode(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ChannelID string `json:"channel_id"`
+		Mode      string `json:"mode"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+		http.Error(w, "invalid JSON", http.StatusBadRequest)
+		return
+	}
+	if body.ChannelID == "" {
+		http.Error(w, "channel_id required", http.StatusBadRequest)
+		return
+	}
+	if body.Mode != "docker" && body.Mode != "host" {
+		http.Error(w, `mode must be "docker" or "host"`, http.StatusBadRequest)
+		return
+	}
+	if body.Mode == "host" && s.hostBrowserProvider == nil {
+		http.Error(w, "host browser not configured", http.StatusServiceUnavailable)
+		return
+	}
 
-	networkMu   sync.Mutex
-	networkReqs []browser.NetworkRequest
-	networkCh   chan browser.NetworkRequest
+	s.browserModeMu.Lock()
+	oldMode := s.activeBrowserMode[body.ChannelID]
+	s.browserModeMu.Unlock()
 
-	started bool
+	s.logger.Info("browser mode: switching",
+		"channel_id", body.ChannelID,
+		"from", oldMode,
+		"to", body.Mode,
+	)
+
+	// Clear capture state.
+	s.browserCapturesMu.Lock()
+	delete(s.browserCaptures, body.ChannelID)
+	s.browserCapturesMu.Unlock()
+
+	// Set new mode.
+	s.browserModeMu.Lock()
+	if s.activeBrowserMode == nil {
+		s.activeBrowserMode = make(map[string]string)
+	}
+	s.activeBrowserMode[body.ChannelID] = body.Mode
+	s.browserModeMu.Unlock()
+
+	s.logger.Info("browser mode: switched",
+		"channel_id", body.ChannelID,
+		"mode", body.Mode,
+	)
+
+	w.Header().Set("Content-Type", "application/json")
+	json.NewEncoder(w).Encode(struct { //nolint:errcheck
+		Mode string `json:"mode"`
+	}{Mode: body.Mode})
 }
 
 // browserActionRequest is the request body for POST /api/browser/action.
@@ -687,47 +741,41 @@ func paramBool(params map[string]any, key string) bool {
 }
 
 // getBrowserCDP returns the CDPClient for a channel, creating one if needed.
-func (s *Server) getBrowserCDP(ctx context.Context, channelID string) (browserCDPClient, error) {
-	raw := s.browserManager.GetActiveCDP(channelID)
-	if cached, ok := raw.(browserCDPClient); ok && cached != nil {
-		s.logger.Info("getBrowserCDP: reusing cached CDP", "channel_id", channelID)
-		s.ensureBrowserCapture(ctx, channelID, cached)
-		return cached, nil
+func (s *Server) getBrowserCDP(ctx context.Context, channelID string) (browser.CDPSession, error) {
+	// Check if there's an existing CDPManager with an active client.
+	cdpMgr := s.getActiveCDPManager(channelID)
+	if cdpMgr != nil {
+		if activeClient := cdpMgr.ActiveClient(); activeClient != nil {
+			s.logger.Info("getBrowserCDP: reusing cached CDP", "channel_id", channelID)
+			s.ensureBrowserCapture(ctx, channelID, activeClient)
+			return activeClient, nil
+		}
 	}
-	s.logger.Info("getBrowserCDP: no cached CDP, creating new", "channel_id", channelID, "raw_type", fmt.Sprintf("%T", raw))
 
-	if err := s.browserManager.EnsureBrowser(ctx, channelID, ""); err != nil {
+	// No cached client — ensure browser and create CDPManager.
+	provider := s.activeBrowserProvider(channelID)
+	isHost := provider.IsHostMode()
+	s.logger.Info("getBrowserCDP: no cached CDP, creating new", "channel_id", channelID, "host_mode", isHost)
+
+	if err := provider.EnsureBrowser(ctx, channelID, ""); err != nil {
 		return nil, fmt.Errorf("ensuring browser: %w", err)
 	}
 	s.logger.Info("getBrowserCDP: browser ensured", "channel_id", channelID)
 
-	cdpEndpoint := s.browserManager.GetCDPEndpoint(channelID)
+	cdpEndpoint := provider.GetCDPEndpoint(channelID)
 	if cdpEndpoint == "" {
 		return nil, fmt.Errorf("no CDP endpoint for channel %s", channelID)
 	}
 
-	var cdpClient browserCDPClient
-	var lastErr error
-	for attempt := range s.browserCDPRetries {
-		cdpClient, lastErr = s.browserCDPFactory(context.Background(), cdpEndpoint, s.logger)
-		if lastErr == nil {
-			break
-		}
-		if attempt == s.browserCDPRetries-1 {
-			return nil, fmt.Errorf("connecting CDP after %d attempts: %w", s.browserCDPRetries, lastErr)
-		}
-		select {
-		case <-ctx.Done():
-			return nil, ctx.Err()
-		case <-time.After(s.browserCDPDelay):
-		}
+	mode := s.activeMode(channelID)
+	cdpMgr = s.getOrCreateCDPManager(channelID, mode, provider)
+
+	if err := cdpMgr.Connect(ctx); err != nil {
+		return nil, err
 	}
 
-	if tid := cdpClient.TargetID(); tid != "" {
-		s.browserManager.SetCDPForTarget(channelID, tid, cdpClient)
-		s.browserManager.SetTargetID(channelID, tid)
-		s.browserManager.TrackTab(channelID, tid)
-	}
+	// Connect always sets activeClient on success, so this is safe.
+	cdpClient := cdpMgr.ActiveClient()
 
 	// Start capture if needed.
 	s.ensureBrowserCapture(ctx, channelID, cdpClient)
@@ -736,52 +784,31 @@ func (s *Server) getBrowserCDP(ctx context.Context, channelID string) (browserCD
 }
 
 // ensureBrowserCapture initializes console/network capture for a channel if not already started.
-func (s *Server) ensureBrowserCapture(ctx context.Context, channelID string, cdpCl browserCDPClient) {
+// If capture is already active, rewires to the current client (e.g. after a tab switch).
+func (s *Server) ensureBrowserCapture(ctx context.Context, channelID string, cdpCl browser.CDPSession) {
 	s.browserCapturesMu.Lock()
 	defer s.browserCapturesMu.Unlock()
 
 	if s.browserCaptures == nil {
-		s.browserCaptures = make(map[string]*browserCaptureState)
+		s.browserCaptures = make(map[string]*browser.CaptureState)
 	}
 
 	cs, exists := s.browserCaptures[channelID]
-	if exists && cs.started {
+	if exists && cs.Started {
+		// Rewire capture if the active client has changed (e.g. tab switch).
+		// No-op if client is the same.
+		cs.Rewire(ctx, cdpCl)
 		return
 	}
 
-	cs = &browserCaptureState{started: true}
+	cs = &browser.CaptureState{}
 	s.browserCaptures[channelID] = cs
-
-	cs.consoleCh = make(chan browser.ConsoleMessage, 100)
-	if err := cdpCl.EnableConsoleCapture(ctx, cs.consoleCh); err != nil {
-		s.logger.Warn("failed to enable console capture", "channel_id", channelID, "error", err)
-	} else {
-		go func() {
-			for msg := range cs.consoleCh {
-				cs.consoleMu.Lock()
-				cs.consoleMsgs = append(cs.consoleMsgs, msg)
-				cs.consoleMu.Unlock()
-			}
-		}()
-	}
-
-	cs.networkCh = make(chan browser.NetworkRequest, 100)
-	if err := cdpCl.EnableNetworkCapture(ctx, cs.networkCh); err != nil {
-		s.logger.Warn("failed to enable network capture", "channel_id", channelID, "error", err)
-	} else {
-		go func() {
-			for req := range cs.networkCh {
-				cs.networkMu.Lock()
-				cs.networkReqs = append(cs.networkReqs, req)
-				cs.networkMu.Unlock()
-			}
-		}()
-	}
+	cs.Enable(ctx, cdpCl)
 }
 
 // handleBrowserAction handles POST /api/browser/action.
 func (s *Server) handleBrowserAction(w http.ResponseWriter, r *http.Request) {
-	if s.browserManager == nil {
+	if s.dockerBrowserProvider == nil && s.hostBrowserProvider == nil {
 		http.Error(w, "browser not configured", http.StatusServiceUnavailable)
 		return
 	}
@@ -802,14 +829,17 @@ func (s *Server) handleBrowserAction(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	s.browserManager.TouchBrowser(req.ChannelID)
+	// Touch the CDPManager to update lastUsedAt.
+	if cdpMgr := s.getActiveCDPManager(req.ChannelID); cdpMgr != nil {
+		cdpMgr.Touch()
+	}
 
 	resp := s.dispatchBrowserAction(r.Context(), req, cdpCl)
 	writeJSON(w, resp)
 }
 
 // dispatchBrowserAction dispatches a browser action to the CDP client.
-func (s *Server) dispatchBrowserAction(ctx context.Context, req browserActionRequest, cdpCl browserCDPClient) browserActionResponse {
+func (s *Server) dispatchBrowserAction(ctx context.Context, req browserActionRequest, cdpCl browser.CDPSession) browserActionResponse {
 	bg := context.Background()
 	params := req.Params
 
@@ -824,9 +854,11 @@ func (s *Server) dispatchBrowserAction(ctx context.Context, req browserActionReq
 			return browserActionResponse{Error: fmt.Sprintf("get page info failed: %v", err)}
 		}
 		// Notify the pane so it updates the tab bar URL/title.
-		activeTarget := s.browserManager.GetTargetID(req.ChannelID)
-		if activeTarget != "" {
-			s.browserManager.NotifyTargetSwitch(req.ChannelID, activeTarget)
+		if cdpMgr := s.getActiveCDPManager(req.ChannelID); cdpMgr != nil {
+			activeTarget := cdpMgr.ActiveTargetID()
+			if activeTarget != "" {
+				cdpMgr.NotifyTargetSwitch(activeTarget)
+			}
 		}
 		return browserActionResponse{Result: fmt.Sprintf("Navigated to %s", info.URL), PageInfo: info}
 
@@ -881,7 +913,7 @@ func (s *Server) dispatchBrowserAction(ctx context.Context, req browserActionReq
 	case "mouse_move":
 		x := paramFloat(params, "x")
 		y := paramFloat(params, "y")
-		if err := cdpCl.MouseMove(bg, x, y); err != nil {
+		if err := cdpCl.MouseMove(bg, x, y, 0); err != nil {
 			return browserActionResponse{Error: fmt.Sprintf("mouse move failed: %v", err)}
 		}
 		return browserActionResponse{Result: fmt.Sprintf("Moved mouse to (%.0f, %.0f)", x, y)}
@@ -977,12 +1009,28 @@ func (s *Server) dispatchBrowserAction(ctx context.Context, req browserActionReq
 		return browserActionResponse{Result: result}
 
 	case "list_tabs":
+		cdpMgr := s.getActiveCDPManager(req.ChannelID)
 		tabs, err := cdpCl.ListTabs(bg)
 		if err != nil {
 			return browserActionResponse{Error: fmt.Sprintf("list tabs failed: %v", err)}
 		}
-		tabs = s.browserManager.OrderTabs(req.ChannelID, tabs)
-		activeTarget := s.browserManager.GetTargetID(req.ChannelID)
+		// Filter to agent-tracked tabs only.
+		if cdpMgr != nil {
+			var filtered []browser.TabInfo
+			for _, t := range tabs {
+				if cdpMgr.IsTrackedTab(t.TargetID) {
+					filtered = append(filtered, t)
+				}
+			}
+			tabs = filtered
+		}
+		if cdpMgr != nil {
+			tabs = cdpMgr.OrderTabs(tabs)
+		}
+		activeTarget := ""
+		if cdpMgr != nil {
+			activeTarget = cdpMgr.ActiveTargetID()
+		}
 		for i := range tabs {
 			if tabs[i].TargetID == activeTarget {
 				tabs[i].Active = true
@@ -999,9 +1047,11 @@ func (s *Server) dispatchBrowserAction(ctx context.Context, req browserActionReq
 		if err != nil {
 			return browserActionResponse{Error: fmt.Sprintf("new tab failed: %v", err)}
 		}
-		s.browserManager.TrackTab(req.ChannelID, targetID)
-		s.browserManager.NotifyTabAdded(req.ChannelID, browser.TabInfo{TargetID: targetID, URL: url})
-		s.browserManager.NotifyTargetSwitch(req.ChannelID, targetID)
+		if cdpMgr := s.getActiveCDPManager(req.ChannelID); cdpMgr != nil {
+			cdpMgr.TrackTab(targetID)
+			cdpMgr.NotifyTabAdded(browser.TabInfo{TargetID: targetID, URL: url})
+			cdpMgr.NotifyTargetSwitch(targetID)
+		}
 		return browserActionResponse{Result: fmt.Sprintf("Created new tab with target ID %s", targetID)}
 
 	case "switch_tab":
@@ -1009,10 +1059,10 @@ func (s *Server) dispatchBrowserAction(ctx context.Context, req browserActionReq
 		if targetID == "" {
 			return browserActionResponse{Error: "target_id required"}
 		}
-		if err := cdpCl.SwitchTarget(targetID); err != nil {
-			return browserActionResponse{Error: fmt.Sprintf("switch tab failed: %v", err)}
+		if cdpMgr := s.getActiveCDPManager(req.ChannelID); cdpMgr != nil {
+			cdpMgr.SwitchActive(targetID)
+			cdpMgr.NotifyTargetSwitch(targetID)
 		}
-		s.browserManager.NotifyTargetSwitch(req.ChannelID, targetID)
 		return browserActionResponse{Result: fmt.Sprintf("Switched to tab %s", targetID)}
 
 	case "close_tab":
@@ -1021,24 +1071,33 @@ func (s *Server) dispatchBrowserAction(ctx context.Context, req browserActionReq
 			return browserActionResponse{Error: "target_id required"}
 		}
 		s.logger.Info("dispatchBrowserAction: close_tab", "target_id", targetID, "channel_id", req.ChannelID)
-		// Find the next tab BEFORE untracking (need position info).
-		nextTab := s.browserManager.NextTabID(req.ChannelID, targetID)
+		cdpMgr := s.getActiveCDPManager(req.ChannelID)
+		nextTab := ""
+		if cdpMgr != nil {
+			nextTab = cdpMgr.NextTabID(targetID)
+		}
+		// When closing the last tab, create a replacement about:blank BEFORE
+		// closing — the active CDP client's context dies with the closed tab,
+		// so NewTab would fail after CloseTab.
+		isLastTab := cdpMgr != nil && nextTab == ""
+		if isLastTab {
+			if newID, err := cdpCl.NewTab(bg, "about:blank"); err == nil {
+				cdpMgr.TrackTab(newID)
+				nextTab = newID
+				s.logger.Info("dispatchBrowserAction: created replacement tab", "new_target_id", newID)
+			}
+		}
 		if err := cdpCl.CloseTab(bg, targetID); err != nil {
 			return browserActionResponse{Error: fmt.Sprintf("close tab failed: %v", err)}
 		}
-		s.browserManager.UntrackTab(req.ChannelID, targetID)
-		s.browserManager.NotifyTabRemoved(req.ChannelID, targetID)
-		if nextTab != "" {
-			// Switch to the adjacent tab so the pane updates screencast.
-			s.browserManager.NotifyTargetSwitch(req.ChannelID, nextTab)
-		} else {
-			// Last tab closed — the CDP's context is dead (target destroyed).
-			// Use Chrome's HTTP endpoint to create a new about:blank tab.
-			cdpEndpoint := s.browserManager.GetCDPEndpoint(req.ChannelID)
-			if newID, err := browser.CreatePageTarget(cdpEndpoint); err == nil {
-				s.browserManager.TrackTab(req.ChannelID, newID)
-				s.browserManager.NotifyTabAdded(req.ChannelID, browser.TabInfo{TargetID: newID, URL: "about:blank"})
-				s.browserManager.NotifyTargetSwitch(req.ChannelID, newID)
+		if cdpMgr != nil {
+			cdpMgr.UntrackTab(targetID)
+			cdpMgr.NotifyTabRemoved(targetID)
+			if isLastTab && nextTab != "" {
+				cdpMgr.NotifyTabAdded(browser.TabInfo{TargetID: nextTab, URL: "about:blank"})
+			}
+			if nextTab != "" {
+				cdpMgr.NotifyTargetSwitch(nextTab)
 			}
 		}
 		return browserActionResponse{Result: fmt.Sprintf("Closed tab %s", targetID)}
@@ -1079,53 +1138,9 @@ func (s *Server) readConsoleMessages(channelID string, params map[string]any) br
 		return browserActionResponse{Result: "No console messages"}
 	}
 
-	pattern := paramStr(params, "pattern")
-	onlyErrors := paramBool(params, "only_errors")
-	clear := paramBool(params, "clear")
-	limit := paramInt(params, "limit")
-	if limit <= 0 {
-		limit = 100
-	}
-
-	var re *regexp.Regexp
-	if pattern != "" {
-		var err error
-		re, err = regexp.Compile(pattern)
-		if err != nil {
-			return browserActionResponse{Error: fmt.Sprintf("invalid regex pattern: %v", err)}
-		}
-	}
-
-	cs.consoleMu.Lock()
-	msgs := make([]browser.ConsoleMessage, len(cs.consoleMsgs))
-	copy(msgs, cs.consoleMsgs)
-	if clear {
-		cs.consoleMsgs = nil
-	}
-	cs.consoleMu.Unlock()
-
-	var filtered []browser.ConsoleMessage
-	for _, msg := range msgs {
-		if onlyErrors && msg.Level != "error" {
-			continue
-		}
-		if re != nil && !re.MatchString(msg.Text) {
-			continue
-		}
-		filtered = append(filtered, msg)
-	}
-
-	if len(filtered) > limit {
-		filtered = filtered[len(filtered)-limit:]
-	}
-
-	if len(filtered) == 0 {
-		return browserActionResponse{Result: "No console messages"}
-	}
-
-	result := fmt.Sprintf("%d console message(s):\n", len(filtered))
-	for _, msg := range filtered {
-		result += fmt.Sprintf("[%s] %s: %s\n", msg.Time.Format("15:04:05"), msg.Level, msg.Text)
+	result, err := cs.ReadConsole(paramStr(params, "pattern"), paramBool(params, "only_errors"), paramInt(params, "limit"), paramBool(params, "clear"))
+	if err != nil {
+		return browserActionResponse{Error: err.Error()}
 	}
 	return browserActionResponse{Result: result}
 }
@@ -1140,49 +1155,57 @@ func (s *Server) readNetworkRequests(channelID string, params map[string]any) br
 		return browserActionResponse{Result: "No network requests"}
 	}
 
-	pattern := paramStr(params, "pattern")
-	clear := paramBool(params, "clear")
-	limit := paramInt(params, "limit")
-	if limit <= 0 {
-		limit = 50
-	}
-
-	var re *regexp.Regexp
-	if pattern != "" {
-		var err error
-		re, err = regexp.Compile(pattern)
-		if err != nil {
-			return browserActionResponse{Error: fmt.Sprintf("invalid regex pattern: %v", err)}
-		}
-	}
-
-	cs.networkMu.Lock()
-	reqs := make([]browser.NetworkRequest, len(cs.networkReqs))
-	copy(reqs, cs.networkReqs)
-	if clear {
-		cs.networkReqs = nil
-	}
-	cs.networkMu.Unlock()
-
-	var filtered []browser.NetworkRequest
-	for _, req := range reqs {
-		if re != nil && !re.MatchString(req.URL) {
-			continue
-		}
-		filtered = append(filtered, req)
-	}
-
-	if len(filtered) > limit {
-		filtered = filtered[len(filtered)-limit:]
-	}
-
-	if len(filtered) == 0 {
-		return browserActionResponse{Result: "No network requests"}
-	}
-
-	result := fmt.Sprintf("%d network request(s):\n", len(filtered))
-	for _, req := range filtered {
-		result += fmt.Sprintf("[%s] %s %s — %d %s\n", req.Time.Format("15:04:05"), req.Method, req.URL, req.Status, req.StatusText)
+	result, err := cs.ReadNetwork(paramStr(params, "pattern"), paramInt(params, "limit"), paramBool(params, "clear"))
+	if err != nil {
+		return browserActionResponse{Error: err.Error()}
 	}
 	return browserActionResponse{Result: result}
+}
+
+// RunBrowserIdleMonitor periodically checks for idle browser sessions and stops them.
+func (s *Server) RunBrowserIdleMonitor(ctx context.Context, timeout time.Duration) {
+	s.runBrowserIdleMonitorWithInterval(ctx, timeout, time.Minute)
+}
+
+func (s *Server) runBrowserIdleMonitorWithInterval(ctx context.Context, timeout, interval time.Duration) {
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			s.cleanIdleBrowserSessions(ctx, timeout)
+		}
+	}
+}
+
+// cleanIdleBrowserSessions collects idle CDPManagers and cleans them up.
+func (s *Server) cleanIdleBrowserSessions(ctx context.Context, timeout time.Duration) {
+	s.cdpManagersMu.Lock()
+	now := time.Now()
+	var idle []string
+	for key, mgr := range s.cdpManagers {
+		if mgr.PaneCount() == 0 && now.Sub(mgr.LastUsedAt()) > timeout {
+			idle = append(idle, key)
+		}
+	}
+	s.cdpManagersMu.Unlock()
+
+	for _, key := range idle {
+		parts := strings.SplitN(key, "|", 2)
+		channelID, mode := parts[0], parts[1]
+
+		s.cdpManagersMu.Lock()
+		mgr := s.cdpManagers[key]
+		delete(s.cdpManagers, key)
+		s.cdpManagersMu.Unlock()
+
+		if mgr != nil {
+			mgr.Close()
+		}
+		if mode == "docker" && s.dockerBrowserProvider != nil {
+			_ = s.dockerBrowserProvider.StopBrowser(ctx, channelID)
+		}
+	}
 }

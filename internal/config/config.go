@@ -61,6 +61,14 @@ type EmbeddingsConfig struct {
 	OllamaURL string `json:"ollama_url"` // default "http://localhost:11434"
 }
 
+// BrowserConfig groups all browser-related settings.
+type BrowserConfig struct {
+	Enabled     bool
+	ChromeImage string
+	Mode        string // "docker" (default) or "host"
+	HostCDPPort int    // default 9222
+}
+
 // MemoryConfig groups all memory-related settings: enable flag, paths, and embeddings.
 type MemoryConfig struct {
 	Enabled            bool
@@ -83,7 +91,6 @@ type Config struct {
 	LogLevel             string
 	LogFormat            string
 	ContainerImage       string
-	ChromeImage          string
 	ContainerTimeout     time.Duration
 	ContainerMemoryMB    int64
 	ContainerCPUs        float64
@@ -101,7 +108,7 @@ type Config struct {
 	Envs                 map[string]string
 	ClaudeModel          string
 	StreamingEnabled     bool
-	BrowserEnabled       bool
+	Browser              BrowserConfig
 	Memory               MemoryConfig
 	Permissions          types.Permissions
 }
@@ -132,7 +139,6 @@ type jsonConfig struct {
 	LogFormat             string                 `json:"log_format"`
 	DBPath                string                 `json:"db_path"`
 	ContainerImage        string                 `json:"container_image"`
-	ChromeImage           string                 `json:"chrome_image"`
 	ContainerTimeoutSec   *int                   `json:"container_timeout_sec"`
 	ContainerMemoryMB     *int64                 `json:"container_memory_mb"`
 	ContainerCPUs         *float64               `json:"container_cpus"`
@@ -147,7 +153,7 @@ type jsonConfig struct {
 	ClaudeModel           string                 `json:"claude_model"`
 	ClaudeBinPath         string                 `json:"claude_bin_path"`
 	StreamingEnabled      *bool                  `json:"streaming_enabled"`
-	BrowserEnabled        *bool                  `json:"browser_enabled"`
+	Browser               *jsonBrowserConfig     `json:"browser"`
 	Memory                *jsonMemoryConfig      `json:"memory"`
 	Permissions           *jsonPermissionsConfig `json:"permissions"`
 }
@@ -159,6 +165,14 @@ type jsonMemoryConfig struct {
 	MaxChunkChars      int               `json:"max_chunk_chars"`
 	ReindexIntervalSec int               `json:"reindex_interval_sec"`
 	Embeddings         *EmbeddingsConfig `json:"embeddings"`
+}
+
+// jsonBrowserConfig is the JSON representation of the browser block.
+type jsonBrowserConfig struct {
+	Enabled     *bool  `json:"enabled"`
+	ChromeImage string `json:"chrome_image"`
+	Mode        string `json:"mode"`
+	HostCDPPort *int   `json:"host_cdp_port"`
 }
 
 type jsonMCPConfig struct {
@@ -232,7 +246,6 @@ func (l *Loader) load() (*Config, error) {
 		LogFormat:            stringDefault(jc.LogFormat, "text"),
 		DBPath:               stringDefault(jc.DBPath, filepath.Join(loopDir, "loop.db")),
 		ContainerImage:       stringDefault(jc.ContainerImage, "loop-agent:latest"),
-		ChromeImage:          stringDefault(jc.ChromeImage, "loop-chrome:latest"),
 		ContainerTimeout:     time.Duration(ptrDefault(jc.ContainerTimeoutSec, 43200)) * time.Second,
 		ContainerMemoryMB:    ptrDefault(jc.ContainerMemoryMB, 1024),
 		ContainerCPUs:        ptrDefault(jc.ContainerCPUs, 1.0),
@@ -242,7 +255,24 @@ func (l *Loader) load() (*Config, error) {
 		LoopDir:              loopDir,
 		ClaudeModel:          jc.ClaudeModel,
 		StreamingEnabled:     ptrDefault(jc.StreamingEnabled, true),
-		BrowserEnabled:       ptrDefault(jc.BrowserEnabled, true),
+	}
+
+	// Browser config: nested struct with defaults.
+	cfg.Browser = BrowserConfig{
+		Enabled:     true,
+		ChromeImage: "loop-chrome:latest",
+		Mode:        "docker",
+		HostCDPPort: 9222,
+	}
+	if jc.Browser != nil {
+		cfg.Browser.Enabled = ptrDefault(jc.Browser.Enabled, true)
+		if jc.Browser.ChromeImage != "" {
+			cfg.Browser.ChromeImage = jc.Browser.ChromeImage
+		}
+		if jc.Browser.Mode != "" {
+			cfg.Browser.Mode = jc.Browser.Mode
+		}
+		cfg.Browser.HostCDPPort = ptrDefault(jc.Browser.HostCDPPort, 9222)
 	}
 
 	if jc.MCP != nil && len(jc.MCP.Servers) > 0 {
@@ -367,10 +397,9 @@ type projectConfig struct {
 	ClaudeCodeOAuthToken string                 `json:"claude_code_oauth_token"`
 	AnthropicAPIKey      string                 `json:"anthropic_api_key"`
 	ContainerImage       string                 `json:"container_image"`
-	ChromeImage          string                 `json:"chrome_image"`
 	ContainerMemoryMB    *int64                 `json:"container_memory_mb"`
 	ContainerCPUs        *float64               `json:"container_cpus"`
-	BrowserEnabled       *bool                  `json:"browser_enabled"`
+	Browser              *jsonBrowserConfig     `json:"browser"`
 	TaskTemplates        []TaskTemplate         `json:"task_templates"`
 	Memory               *jsonMemoryConfig      `json:"memory"`
 	Permissions          *jsonPermissionsConfig `json:"permissions"`
@@ -494,17 +523,25 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 	if pc.ContainerImage != "" {
 		merged.ContainerImage = pc.ContainerImage
 	}
-	if pc.ChromeImage != "" {
-		merged.ChromeImage = pc.ChromeImage
-	}
 	if pc.ContainerMemoryMB != nil {
 		merged.ContainerMemoryMB = *pc.ContainerMemoryMB
 	}
 	if pc.ContainerCPUs != nil {
 		merged.ContainerCPUs = *pc.ContainerCPUs
 	}
-	if pc.BrowserEnabled != nil {
-		merged.BrowserEnabled = *pc.BrowserEnabled
+	if pc.Browser != nil {
+		if pc.Browser.Enabled != nil {
+			merged.Browser.Enabled = *pc.Browser.Enabled
+		}
+		if pc.Browser.ChromeImage != "" {
+			merged.Browser.ChromeImage = pc.Browser.ChromeImage
+		}
+		if pc.Browser.Mode != "" {
+			merged.Browser.Mode = pc.Browser.Mode
+		}
+		if pc.Browser.HostCDPPort != nil {
+			merged.Browser.HostCDPPort = *pc.Browser.HostCDPPort
+		}
 	}
 
 	// Merge memory config: project paths appended, project embeddings override

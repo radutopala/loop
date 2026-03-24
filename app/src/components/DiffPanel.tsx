@@ -290,7 +290,7 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
         }
         const sorted = [...all].sort();
         setBranches(sorted);
-        // Default source to main branch, target to current branch
+        // Default source to main branch (base), target to current branch (changes from)
         if (!sourceBranch) {
           const main = sorted.find((b) => b === "main" || b === "master");
           setSourceBranch(main ?? info.current ?? sorted[0] ?? "");
@@ -510,22 +510,22 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
       {diffMode === "branches" && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 8px", fontSize: 11, color: colors.textDim }}>
           <select
-            value={sourceBranch}
-            onChange={(e) => setSourceBranch(e.target.value)}
+            value={targetBranch}
+            onChange={(e) => setTargetBranch(e.target.value)}
             style={selectStyle}
-            title="Source branch (base)"
+            title="Changes from"
           >
-            {!sourceBranch && <option value="">source…</option>}
+            {!targetBranch && <option value="">from…</option>}
             {branches.map((b) => <option key={b} value={b}>{b}</option>)}
           </select>
           <span style={{ color: colors.textDim, fontSize: 11, flexShrink: 0 }}>→</span>
           <select
-            value={targetBranch}
-            onChange={(e) => setTargetBranch(e.target.value)}
+            value={sourceBranch}
+            onChange={(e) => setSourceBranch(e.target.value)}
             style={selectStyle}
-            title="Target branch (compare)"
+            title="Land into"
           >
-            {!targetBranch && <option value="">target…</option>}
+            {!sourceBranch && <option value="">into…</option>}
             {branches.map((b) => <option key={b} value={b}>{b}</option>)}
           </select>
         </div>
@@ -981,22 +981,22 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
       {diffMode === "branches" && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 12px", fontSize: 11, color: colors.textDim }}>
           <select
-            value={sourceBranch}
-            onChange={(e) => setSourceBranch(e.target.value)}
+            value={targetBranch}
+            onChange={(e) => setTargetBranch(e.target.value)}
             style={selectStyle}
-            title="Source branch (base)"
+            title="Changes from"
           >
-            {!sourceBranch && <option value="">source…</option>}
+            {!targetBranch && <option value="">from…</option>}
             {branches.map((b) => <option key={b} value={b}>{b}</option>)}
           </select>
           <span style={{ color: colors.textDim, fontSize: 11, flexShrink: 0 }}>→</span>
           <select
-            value={targetBranch}
-            onChange={(e) => setTargetBranch(e.target.value)}
+            value={sourceBranch}
+            onChange={(e) => setSourceBranch(e.target.value)}
             style={selectStyle}
-            title="Target branch (compare)"
+            title="Land into"
           >
-            {!targetBranch && <option value="">target…</option>}
+            {!sourceBranch && <option value="">into…</option>}
             {branches.map((b) => <option key={b} value={b}>{b}</option>)}
           </select>
         </div>

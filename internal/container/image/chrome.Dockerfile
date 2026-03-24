@@ -1,4 +1,4 @@
-FROM alpine:3.21
+FROM alpine:edge
 RUN apk add --no-cache chromium nss freetype harfbuzz font-noto-emoji ttf-freefont socat
 EXPOSE 9222
 COPY chrome-entrypoint.sh /usr/local/bin/chrome-entrypoint.sh

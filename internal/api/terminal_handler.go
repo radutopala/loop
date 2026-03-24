@@ -98,7 +98,7 @@ type terminalWSConn struct {
 	hostManager      TerminalManager // may be nil
 	containerFinder  ContainerFinder
 	containerStopper ContainerStopper
-	browserManager   BrowserManager // may be nil
+	browserProvider  BrowserProvider // may be nil
 	cmdBuilder       InteractiveCmdBuilder
 	store            ChannelLister
 	loopDir          string // fallback work dir root (e.g. ~/.loop)
@@ -501,8 +501,8 @@ func (t *terminalWSConn) handleKill(ctx context.Context, msg wsControlMessage) {
 		}
 	}
 	// Also stop the Chrome sidecar container for this channel.
-	if t.browserManager != nil {
-		_ = t.browserManager.StopBrowser(ctx, msg.ChannelID)
+	if t.browserProvider != nil {
+		_ = t.browserProvider.StopBrowser(ctx, msg.ChannelID)
 	}
 	t.writeJSON(wsStatusMessage{Type: wsStatusStopped})
 }
@@ -521,7 +521,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	defer conn.Close()
 
 	tc := newTerminalWSConn(conn, s.termManager, s.hostTermManager, s.containerFinder, s.containerStopper, s.cmdBuilder, s.store, s.loopDir, s.logger)
-	tc.browserManager = s.browserManager
+	tc.browserProvider = s.dockerBrowserProvider
 	defer tc.close()
 
 	for {

@@ -17,6 +17,7 @@ import (
 	"github.com/tailscale/hujson"
 
 	"github.com/radutopala/loop/internal/api"
+	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	containerimage "github.com/radutopala/loop/internal/container/image"
@@ -83,12 +84,12 @@ func (a *app) defaultEnsureImage(ctx context.Context, client container.DockerCli
 	}
 
 	// Build chrome image if missing
-	chromeIDs, err := client.ImageList(ctx, cfg.ChromeImage)
+	chromeIDs, err := client.ImageList(ctx, cfg.Browser.ChromeImage)
 	if err != nil {
 		return fmt.Errorf("listing chrome images: %w", err)
 	}
 	if len(chromeIDs) == 0 {
-		if err := client.ImageBuildFile(ctx, containerDir, "chrome.Dockerfile", cfg.ChromeImage); err != nil {
+		if err := client.ImageBuildFile(ctx, containerDir, "chrome.Dockerfile", cfg.Browser.ChromeImage); err != nil {
 			return err
 		}
 	}
@@ -385,14 +386,20 @@ func (a *app) serve() error {
 	hostTermMgr := terminal.NewManager(hostExecClient, logger)
 	apiSrv.SetHostTerminalManager(terminal.NewManagerAdapter(hostTermMgr))
 
-	if cfg.BrowserEnabled {
-		browserMgr, browserErr := a.newBrowserManager(cfg.ChromeImage, logger)
+	if cfg.Browser.Enabled {
+		dockerProvider, browserErr := a.newBrowserProvider(cfg.Browser.ChromeImage, logger)
 		if browserErr != nil {
-			logger.Warn("browser manager unavailable", "error", browserErr)
+			logger.Warn("browser docker provider unavailable", "error", browserErr)
 		} else {
-			apiSrv.SetBrowserManager(browserMgr)
-			go browserMgr.RunIdleMonitor(ctx, 5*time.Minute)
+			apiSrv.SetBrowserProvider(dockerProvider)
 		}
+
+		// Always initialize host browser provider so the UI pill can switch to it.
+		hostProvider := browser.NewHostProvider(cfg.Browser.HostCDPPort, logger)
+		apiSrv.SetHostBrowserProvider(hostProvider)
+
+		// Idle monitoring for browser sessions (CDPManagers + containers).
+		go apiSrv.RunBrowserIdleMonitor(ctx, 5*time.Minute)
 	}
 
 	if cfg.Memory.Enabled {

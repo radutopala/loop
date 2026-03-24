@@ -4,11 +4,17 @@ linters:
     - gocritic
     - misspell
     - revive
+    - dupl
+    - copyloopvar
+    - unconvert
   settings:
+    dupl:
+      threshold: 120
     revive:
       rules:
         - name: exported
           disabled: true
+        - name: var-naming
   exclusions:
     generated: lax
     presets:
@@ -16,6 +22,9 @@ linters:
       - common-false-positives
       - legacy
       - std-error-handling
+    rules:
+      - linters: [dupl]
+        path: _test\.go
     paths:
       - bin
       - vendor

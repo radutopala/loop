@@ -67,8 +67,13 @@ Exactly one of these should be set. OAuth takes precedence if both are provided.
 
 | Field | Type | Default | Description |
 |---|---|---|---|
-| `browser_enabled` | `bool` | `true` | Enable Chrome sidecar for browser automation tools. When disabled, no Chrome container is started and the `loop-browser` MCP server is not registered. |
-| `chrome_image` | `string` | `"loop-chrome:latest"` | Docker image for Chrome sidecar containers. |
+Browser settings are grouped under `"browser"`:
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `browser.enabled` | `bool` | `true` | Enable Chrome browser automation. When disabled, no Chrome container is started and the `loop-browser` MCP server is not registered. |
+| `browser.chrome_image` | `string` | `"loop-chrome:latest"` | Docker image for Chrome sidecar containers. |
+| `browser.host_cdp_port` | `int` | `9222` | CDP port for Host mode. Requires `chrome://inspect/#remote-debugging` enabled in Chrome. |
 
 #### Networking & Scheduling
 
@@ -256,8 +261,9 @@ Not all global fields are available in project configs. The following fields can
 | `memory.embeddings` | **Overrides** global embeddings config entirely when set. |
 | `permissions` | **Replaces** global permissions entirely when set. |
 | `task_templates` | **Merged** by name. Project templates override global templates with the same name; new names are appended. |
-| `browser_enabled` | **Overrides** global value when set. |
-| `chrome_image` | **Overrides** global value when set. |
+| `browser.enabled` | **Overrides** global value when set. |
+| `browser.chrome_image` | **Overrides** global value when set. |
+| `browser.host_cdp_port` | **Overrides** global value when set. |
 
 ### Project Config Merge Rules
 
@@ -314,8 +320,11 @@ The merge follows these principles:
   //"streaming_enabled": true,
 
   // Browser automation
-  //"browser_enabled": true,
-  //"chrome_image": "loop-chrome:latest",
+  //"browser": {
+  //  "enabled": true,
+  //  "chrome_image": "loop-chrome:latest",
+  //  "host_cdp_port": 9222
+  //},
 
   // RBAC permissions
   //"permissions": {
@@ -414,8 +423,10 @@ The merge follows these principles:
   //"container_cpus": 2.0,
 
   // Browser automation override
-  //"browser_enabled": false,
-  //"chrome_image": "loop-chrome:latest",
+  //"browser": {
+  //  "enabled": false,
+  //  "chrome_image": "loop-chrome:latest"
+  //},
 
   // Memory config (paths appended to global; embeddings override global)
   //"memory": {

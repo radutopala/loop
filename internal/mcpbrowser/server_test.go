@@ -717,13 +717,28 @@ func (s *ServerSuite) TestComputerLeftClickDrag() {
 	})
 	require.False(s.T(), res.IsError)
 	require.Contains(s.T(), getText(s.T(), res), "Dragged from (10, 20) to (100, 200)")
-	require.Equal(s.T(), 3, callCount)
-	require.Equal(s.T(), []string{"mouse_down", "mouse_move", "mouse_up"}, actions)
+	require.Equal(s.T(), 4, callCount)
+	require.Equal(s.T(), []string{"mouse_move", "mouse_down", "mouse_move", "mouse_up"}, actions)
+}
+
+func (s *ServerSuite) TestComputerLeftClickDragMoveToStartError() {
+	_, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
+		writeJSON(w, actionResponse{Error: "start err"})
+	})
+	res := callTool(s.T(), session, "computer", map[string]any{"action": "left_click_drag", "start_x": 10.0, "start_y": 20.0, "x": 100.0, "y": 200.0})
+	require.True(s.T(), res.IsError)
+	require.Contains(s.T(), getText(s.T(), res), "move to start failed: start err")
 }
 
 func (s *ServerSuite) TestComputerLeftClickDragMouseDownError() {
+	callCount := 0
 	_, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
-		writeJSON(w, actionResponse{Error: "down err"})
+		callCount++
+		if callCount == 1 {
+			writeJSON(w, actionResponse{Result: "ok"}) // move to start ok
+		} else {
+			writeJSON(w, actionResponse{Error: "down err"}) // mouse_down fails
+		}
 	})
 	res := callTool(s.T(), session, "computer", map[string]any{"action": "left_click_drag", "start_x": 10.0, "start_y": 20.0, "x": 100.0, "y": 200.0})
 	require.True(s.T(), res.IsError)
@@ -734,10 +749,10 @@ func (s *ServerSuite) TestComputerLeftClickDragMoveError() {
 	callCount := 0
 	_, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
 		callCount++
-		if callCount == 1 {
-			writeJSON(w, actionResponse{Result: "ok"}) // mouse_down ok
+		if callCount <= 2 {
+			writeJSON(w, actionResponse{Result: "ok"}) // move to start + mouse_down ok
 		} else {
-			writeJSON(w, actionResponse{Error: "move err"}) // mouse_move fails
+			writeJSON(w, actionResponse{Error: "move err"}) // drag move fails
 		}
 	})
 	res := callTool(s.T(), session, "computer", map[string]any{"action": "left_click_drag", "start_x": 10.0, "start_y": 20.0, "x": 100.0, "y": 200.0})
@@ -749,7 +764,7 @@ func (s *ServerSuite) TestComputerLeftClickDragMouseUpError() {
 	callCount := 0
 	_, session := setupTest(s.T(), func(w http.ResponseWriter, _ *http.Request) {
 		callCount++
-		if callCount < 3 {
+		if callCount < 4 {
 			writeJSON(w, actionResponse{Result: "ok"})
 		} else {
 			writeJSON(w, actionResponse{Error: "up err"})
@@ -1562,4 +1577,138 @@ func (s *ServerSuite) TestListTabsActiveTab() {
 	text := getText(s.T(), res)
 	require.Contains(s.T(), text, "* [2] B")
 	require.Contains(s.T(), text, "  [1] A")
+}
+
+// ==================== NewDirect ====================
+
+func (s *ServerSuite) TestNewDirect() {
+	srv := NewDirect("ws://127.0.0.1:9222", nil)
+	require.NotNil(s.T(), srv)
+	require.NotNil(s.T(), srv.mcpServer)
+	require.NotNil(s.T(), srv.dispatch)
+}
+
+func (s *ServerSuite) TestNewDirectNilLogger() {
+	srv := NewDirect("ws://x", nil)
+	require.NotNil(s.T(), srv.logger)
+}
+
+// ==================== cdpDispatcher ====================
+
+func (s *ServerSuite) TestCDPDispatcherEnsureCDPError() {
+	d := &cdpDispatcher{
+		cdpEndpoint: "ws://127.0.0.1:1",
+		logger:      slog.Default(),
+		factory: func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (*browser.CDPClient, error) {
+			return nil, fmt.Errorf("connection refused")
+		},
+	}
+	_, err := d.dispatch(context.Background(), "navigate", map[string]any{"url": "https://example.com"})
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "connecting to Chrome")
+}
+
+func (s *ServerSuite) TestCDPDispatcherUnknownAction() {
+	// Use a mock dispatcher that pretends CDP is connected.
+	called := false
+	srv := NewDirect("ws://x", nil)
+	srv.dispatch = func(_ context.Context, action string, _ map[string]any) (*actionResponse, error) {
+		called = true
+		if action == "nonexistent" {
+			return nil, fmt.Errorf("unknown action: nonexistent")
+		}
+		return &actionResponse{Result: "ok"}, nil
+	}
+	session := connectClient(s.T(), srv)
+	// "evaluate" calls action "evaluate_js" which our mock handles.
+	res := callTool(s.T(), session, "evaluate", map[string]any{"expression": "1+1"})
+	require.True(s.T(), called)
+	require.False(s.T(), res.IsError)
+}
+
+func (s *ServerSuite) TestNewCDPDispatcher() {
+	d := newCDPDispatcher("ws://127.0.0.1:9222", slog.Default())
+	require.NotNil(s.T(), d)
+}
+
+func (s *ServerSuite) TestCDPDispatcherDispatchUnknownAction() {
+	d := &cdpDispatcher{
+		cdpEndpoint: "ws://x",
+		logger:      slog.Default(),
+		factory: func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (*browser.CDPClient, error) {
+			return nil, fmt.Errorf("no chrome")
+		},
+	}
+	_, err := d.dispatch(context.Background(), "nonexistent", nil)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "connecting to Chrome")
+}
+
+func (s *ServerSuite) TestCDPDispatcherEnsureCDPCachesClient() {
+	d := &cdpDispatcher{
+		cdpEndpoint: "ws://x",
+		logger:      slog.Default(),
+	}
+	callCount := 0
+	d.factory = func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (*browser.CDPClient, error) {
+		callCount++
+		return nil, fmt.Errorf("mock error")
+	}
+	_, _ = d.ensureCDP()
+	_, _ = d.ensureCDP()
+	require.Equal(s.T(), 2, callCount)
+}
+
+func (s *ServerSuite) TestCDPDispatcherEnsureCDPReusesClient() {
+	d := &cdpDispatcher{
+		cdpEndpoint: "ws://x",
+		logger:      slog.Default(),
+	}
+	// Pre-set a mock CDP client.
+	m := new(mockDirectCDP)
+	d.cdp = m
+	client, err := d.ensureCDP()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), m, client)
+}
+
+func (s *ServerSuite) TestCDPDispatcherEnsureCDPFactorySuccess() {
+	d := &cdpDispatcher{
+		cdpEndpoint: "ws://x",
+		logger:      slog.Default(),
+	}
+	callCount := 0
+	d.factory = func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (*browser.CDPClient, error) {
+		callCount++
+		// Return nil *CDPClient — stored as typed nil in directCDP interface (non-nil).
+		return nil, nil
+	}
+	_, err := d.ensureCDP()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, callCount)
+	// Verify capture and newContextFn were initialized.
+	require.NotNil(s.T(), d.capture)
+	require.NotNil(s.T(), d.newContextFn)
+
+	// Second call should reuse the cached client (typed nil != nil interface).
+	_, err = d.ensureCDP()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 1, callCount)
+}
+
+func (s *ServerSuite) TestCDPDispatcherEnsureCDPNewContextFnPanicsOnNilClient() {
+	d := &cdpDispatcher{
+		cdpEndpoint: "ws://x",
+		logger:      slog.Default(),
+	}
+	d.factory = func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (*browser.CDPClient, error) {
+		return nil, nil
+	}
+	_, err := d.ensureCDP()
+	require.NoError(s.T(), err)
+
+	// The newContextFn wraps NewContextForTarget on a nil *CDPClient, which panics.
+	require.Panics(s.T(), func() {
+		_, _ = d.newContextFn("some-target")
+	})
 }

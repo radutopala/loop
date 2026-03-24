@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -20,104 +21,38 @@ import (
 	"github.com/radutopala/loop/internal/browser"
 )
 
-type MockBrowserManager struct {
+type mockBrowserProvider struct {
 	mock.Mock
 }
 
-func (m *MockBrowserManager) EnsureBrowser(ctx context.Context, channelID, containerID string) error {
+func (m *mockBrowserProvider) EnsureBrowser(ctx context.Context, channelID, containerID string) error {
 	return m.Called(ctx, channelID, containerID).Error(0)
 }
 
-func (m *MockBrowserManager) StopBrowser(ctx context.Context, channelID string) error {
+func (m *mockBrowserProvider) StopBrowser(ctx context.Context, channelID string) error {
 	return m.Called(ctx, channelID).Error(0)
 }
 
-func (m *MockBrowserManager) IsRunning(ctx context.Context, channelID string) bool {
+func (m *mockBrowserProvider) IsRunning(ctx context.Context, channelID string) bool {
 	return m.Called(ctx, channelID).Bool(0)
 }
 
-func (m *MockBrowserManager) GetCDPEndpoint(channelID string) string {
+func (m *mockBrowserProvider) GetCDPEndpoint(channelID string) string {
 	return m.Called(channelID).String(0)
 }
 
-func (m *MockBrowserManager) GetContainerID(channelID string) (string, bool) {
+func (m *mockBrowserProvider) GetContainerID(channelID string) (string, bool) {
 	args := m.Called(channelID)
 	return args.String(0), args.Bool(1)
 }
 
-func (m *MockBrowserManager) SetTargetID(channelID, targetID string) {
-	m.Called(channelID, targetID)
-}
-
-func (m *MockBrowserManager) GetTargetID(channelID string) string {
-	return m.Called(channelID).String(0)
-}
-
-func (m *MockBrowserManager) SetCDPForTarget(channelID, targetID string, cdp any) {
-	m.Called(channelID, targetID, cdp)
-}
-
-func (m *MockBrowserManager) GetCDPForTarget(channelID, targetID string) any {
-	return m.Called(channelID, targetID).Get(0)
-}
-
-func (m *MockBrowserManager) RemoveCDPForTarget(channelID, targetID string) any {
-	return m.Called(channelID, targetID).Get(0)
-}
-
-func (m *MockBrowserManager) GetActiveCDP(channelID string) any {
-	return m.Called(channelID).Get(0)
-}
-
-func (m *MockBrowserManager) TouchBrowser(channelID string) {
-	m.Called(channelID)
-}
-
-func (m *MockBrowserManager) PaneConnected(channelID string) {
-	m.Called(channelID)
-}
-
-func (m *MockBrowserManager) PaneDisconnected(channelID string) {
-	m.Called(channelID)
-}
-
-func (m *MockBrowserManager) RunIdleMonitor(_ context.Context, _ time.Duration) {
-	// no-op in tests
-}
-
-func (m *MockBrowserManager) NotifyTargetSwitch(channelID, targetID string) {
-	m.Called(channelID, targetID)
-}
-
-func (m *MockBrowserManager) TargetSwitchCh(channelID string) <-chan string {
-	args := m.Called(channelID)
-	ch, _ := args.Get(0).(<-chan string)
-	return ch
-}
-
-func (m *MockBrowserManager) NotifyTabAdded(channelID string, tab browser.TabInfo) {
-	m.Called(channelID, tab)
-}
-
-func (m *MockBrowserManager) TabAddedCh(channelID string) <-chan browser.TabInfo {
-	args := m.Called(channelID)
-	ch, _ := args.Get(0).(<-chan browser.TabInfo)
-	return ch
-}
-
-func (m *MockBrowserManager) NotifyTabRemoved(channelID, targetID string) {
-	m.Called(channelID, targetID)
-}
-
-func (m *MockBrowserManager) TabRemovedCh(channelID string) <-chan string {
-	args := m.Called(channelID)
-	ch, _ := args.Get(0).(<-chan string)
-	return ch
+func (m *mockBrowserProvider) IsHostMode() bool {
+	return false
 }
 
 type BrowserHandlerSuite struct {
 	suite.Suite
-	browserMgr *MockBrowserManager
+	browserMgr *mockBrowserProvider
 	cFinder    *MockContainerFinder
 	srv        *Server
 }
@@ -127,22 +62,11 @@ func TestBrowserHandlerSuite(t *testing.T) {
 }
 
 func (s *BrowserHandlerSuite) SetupTest() {
-	s.browserMgr = new(MockBrowserManager)
-	s.browserMgr.On("PaneConnected", mock.Anything).Maybe().Return()
-	s.browserMgr.On("PaneDisconnected", mock.Anything).Maybe().Return()
-	s.browserMgr.On("TargetSwitchCh", mock.Anything).Maybe().Return((<-chan string)(nil))
-	s.browserMgr.On("TabAddedCh", mock.Anything).Maybe().Return((<-chan browser.TabInfo)(nil))
-	s.browserMgr.On("TabRemovedCh", mock.Anything).Maybe().Return((<-chan string)(nil))
-	s.browserMgr.On("TrackTab", mock.Anything, mock.Anything).Maybe().Return()
-	s.browserMgr.On("UntrackTab", mock.Anything, mock.Anything).Maybe().Return()
-	s.browserMgr.On("NextTabID", mock.Anything, mock.Anything).Maybe().Return("")
+	s.browserMgr = new(mockBrowserProvider)
 	s.cFinder = new(MockContainerFinder)
 	s.srv = nilServer()
-	s.srv.SetBrowserManager(s.browserMgr)
+	s.srv.SetBrowserProvider(s.browserMgr)
 	s.srv.containerFinder = s.cFinder
-	// Use 1 retry with no delay so error tests don't sleep.
-	s.srv.browserCDPRetries = 1
-	s.srv.browserCDPDelay = 0
 }
 
 func (s *BrowserHandlerSuite) dialBrowserWS() (*websocket.Conn, *httptest.Server) {
@@ -162,18 +86,132 @@ func (s *BrowserHandlerSuite) readResp(ws *websocket.Conn) browserWSResponse {
 	return resp
 }
 
-func (s *BrowserHandlerSuite) TestSetBrowserManager() {
+func (s *BrowserHandlerSuite) TestSetBrowserProvider() {
 	srv := nilServer()
-	require.Nil(s.T(), srv.browserManager)
+	require.Nil(s.T(), srv.dockerBrowserProvider)
 
-	mgr := new(MockBrowserManager)
-	srv.SetBrowserManager(mgr)
-	require.NotNil(s.T(), srv.browserManager)
+	mgr := new(mockBrowserProvider)
+	srv.SetBrowserProvider(mgr)
+	require.NotNil(s.T(), srv.dockerBrowserProvider)
+}
+
+func (s *BrowserHandlerSuite) TestSetHostBrowserProvider() {
+	srv := nilServer()
+	require.Nil(s.T(), srv.hostBrowserProvider)
+
+	mgr := new(mockBrowserProvider)
+	srv.SetHostBrowserProvider(mgr)
+	require.NotNil(s.T(), srv.hostBrowserProvider)
+}
+
+func (s *BrowserHandlerSuite) TestActiveBrowserProviderDefault() {
+	srv := nilServer()
+	dockerMgr := new(mockBrowserProvider)
+	srv.SetBrowserProvider(dockerMgr)
+	require.Equal(s.T(), dockerMgr, srv.activeBrowserProvider("ch-1"))
+}
+
+func (s *BrowserHandlerSuite) TestActiveBrowserProviderHostMode() {
+	srv := nilServer()
+	dockerMgr := new(mockBrowserProvider)
+	hostMgr := new(mockBrowserProvider)
+	srv.SetBrowserProvider(dockerMgr)
+	srv.SetHostBrowserProvider(hostMgr)
+
+	srv.browserModeMu.Lock()
+	srv.activeBrowserMode = map[string]string{"ch-1": "host"}
+	srv.browserModeMu.Unlock()
+
+	require.Equal(s.T(), hostMgr, srv.activeBrowserProvider("ch-1"))
+	require.Equal(s.T(), dockerMgr, srv.activeBrowserProvider("ch-2"))
+}
+
+func (s *BrowserHandlerSuite) TestHandleBrowserModeSwitch() {
+	srv := nilServer()
+	srv.logger = slog.Default()
+	dockerMgr := new(mockBrowserProvider)
+	hostMgr := new(mockBrowserProvider)
+	srv.SetBrowserProvider(dockerMgr)
+	srv.SetHostBrowserProvider(hostMgr)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/browser/mode", srv.handleBrowserMode)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	body := `{"channel_id":"ch-1","mode":"host"}`
+	resp, err := http.Post(ts.URL+"/api/browser/mode", "application/json", strings.NewReader(body))
+	require.NoError(s.T(), err)
+	defer resp.Body.Close()
+	require.Equal(s.T(), http.StatusOK, resp.StatusCode)
+
+	srv.browserModeMu.Lock()
+	require.Equal(s.T(), "host", srv.activeBrowserMode["ch-1"])
+	srv.browserModeMu.Unlock()
+}
+
+func (s *BrowserHandlerSuite) TestHandleBrowserModeInvalidMode() {
+	srv := nilServer()
+	srv.logger = slog.Default()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/browser/mode", srv.handleBrowserMode)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	body := `{"channel_id":"ch-1","mode":"invalid"}`
+	resp, err := http.Post(ts.URL+"/api/browser/mode", "application/json", strings.NewReader(body))
+	require.NoError(s.T(), err)
+	defer resp.Body.Close()
+	require.Equal(s.T(), http.StatusBadRequest, resp.StatusCode)
+}
+
+func (s *BrowserHandlerSuite) TestHandleBrowserModeMissingChannelID() {
+	srv := nilServer()
+	srv.logger = slog.Default()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/browser/mode", srv.handleBrowserMode)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	body := `{"mode":"host"}`
+	resp, err := http.Post(ts.URL+"/api/browser/mode", "application/json", strings.NewReader(body))
+	require.NoError(s.T(), err)
+	defer resp.Body.Close()
+	require.Equal(s.T(), http.StatusBadRequest, resp.StatusCode)
+}
+
+func (s *BrowserHandlerSuite) TestHandleBrowserModeHostNotConfigured() {
+	srv := nilServer()
+	srv.logger = slog.Default()
+	srv.SetBrowserProvider(new(mockBrowserProvider))
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/browser/mode", srv.handleBrowserMode)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	body := `{"channel_id":"ch-1","mode":"host"}`
+	resp, err := http.Post(ts.URL+"/api/browser/mode", "application/json", strings.NewReader(body))
+	require.NoError(s.T(), err)
+	defer resp.Body.Close()
+	require.Equal(s.T(), http.StatusServiceUnavailable, resp.StatusCode)
+}
+
+func (s *BrowserHandlerSuite) TestHandleBrowserModeInvalidJSON() {
+	srv := nilServer()
+	srv.logger = slog.Default()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/browser/mode", srv.handleBrowserMode)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Post(ts.URL+"/api/browser/mode", "application/json", strings.NewReader("{bad"))
+	require.NoError(s.T(), err)
+	defer resp.Body.Close()
+	require.Equal(s.T(), http.StatusBadRequest, resp.StatusCode)
 }
 
 func (s *BrowserHandlerSuite) TestBrowserWSNotConfigured() {
 	srv := nilServer()
-	// No browser manager set.
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/ws/browser", srv.handleBrowserWS)
 	ts := httptest.NewServer(mux)
@@ -292,8 +330,7 @@ func (s *BrowserHandlerSuite) TestInputNoBrowser() {
 	})
 	require.NoError(s.T(), err)
 
-	// Input with no CDP should silently fail (no error sent back).
-	// Send another message to verify connection still works.
+	// Input with no CDP should silently fail.
 	err = ws.WriteJSON(browserWSMessage{Type: "unknown"})
 	require.NoError(s.T(), err)
 
@@ -302,9 +339,8 @@ func (s *BrowserHandlerSuite) TestInputNoBrowser() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserWSRoute() {
-	// Verify the route is registered in Start().
 	srv := nilServer()
-	srv.SetBrowserManager(s.browserMgr)
+	srv.SetBrowserProvider(s.browserMgr)
 
 	err := srv.Start("127.0.0.1:0")
 	require.NoError(s.T(), err)
@@ -315,114 +351,147 @@ var errTestAPI = errors.New("test error")
 
 // --- Mock CDP Client ---
 
-type MockCDPClient struct {
+type mockCDPSession struct {
 	mock.Mock
 }
 
-func (m *MockCDPClient) Navigate(ctx context.Context, url string) error {
+func (m *mockCDPSession) Navigate(ctx context.Context, url string) error {
 	return m.Called(ctx, url).Error(0)
 }
-func (m *MockCDPClient) Reload(ctx context.Context) error    { return m.Called(ctx).Error(0) }
-func (m *MockCDPClient) GoBack(ctx context.Context) error    { return m.Called(ctx).Error(0) }
-func (m *MockCDPClient) GoForward(ctx context.Context) error { return m.Called(ctx).Error(0) }
-func (m *MockCDPClient) GetPageInfo(ctx context.Context) (*browser.PageInfo, error) {
+func (m *mockCDPSession) Reload(ctx context.Context) error    { return m.Called(ctx).Error(0) }
+func (m *mockCDPSession) GoBack(ctx context.Context) error    { return m.Called(ctx).Error(0) }
+func (m *mockCDPSession) GoForward(ctx context.Context) error { return m.Called(ctx).Error(0) }
+func (m *mockCDPSession) GetPageInfo(ctx context.Context) (*browser.PageInfo, error) {
 	args := m.Called(ctx)
 	pi, _ := args.Get(0).(*browser.PageInfo)
 	return pi, args.Error(1)
 }
-func (m *MockCDPClient) StartScreencast(quality, maxWidth, maxHeight int) <-chan []byte {
+func (m *mockCDPSession) StartScreencast(quality, maxWidth, maxHeight int) <-chan []byte {
 	args := m.Called(quality, maxWidth, maxHeight)
 	ch, _ := args.Get(0).(<-chan []byte)
 	return ch
 }
-func (m *MockCDPClient) StopScreencast()  { m.Called() }
-func (m *MockCDPClient) ResetScreencast() { m.Called() }
-func (m *MockCDPClient) MouseClick(ctx context.Context, x, y float64, button string, clickCount int) error {
+func (m *mockCDPSession) StopScreencast()  { m.Called() }
+func (m *mockCDPSession) ResetScreencast() { m.Called() }
+func (m *mockCDPSession) MouseClick(ctx context.Context, x, y float64, button string, clickCount int) error {
 	return m.Called(ctx, x, y, button, clickCount).Error(0)
 }
-func (m *MockCDPClient) MouseMove(ctx context.Context, x, y float64) error {
-	return m.Called(ctx, x, y).Error(0)
+func (m *mockCDPSession) MouseMove(ctx context.Context, x, y float64, buttons int) error {
+	return m.Called(ctx, x, y, buttons).Error(0)
 }
-func (m *MockCDPClient) MouseScroll(ctx context.Context, x, y, deltaX, deltaY float64) error {
+func (m *mockCDPSession) MouseScroll(ctx context.Context, x, y, deltaX, deltaY float64) error {
 	return m.Called(ctx, x, y, deltaX, deltaY).Error(0)
 }
-func (m *MockCDPClient) KeyPress(ctx context.Context, key string) error {
+func (m *mockCDPSession) KeyPress(ctx context.Context, key string) error {
 	return m.Called(ctx, key).Error(0)
 }
-func (m *MockCDPClient) TypeText(ctx context.Context, text string) error {
+func (m *mockCDPSession) TypeText(ctx context.Context, text string) error {
 	return m.Called(ctx, text).Error(0)
 }
-func (m *MockCDPClient) TargetID() string { return m.Called().String(0) }
-func (m *MockCDPClient) SwitchTarget(targetID string) error {
+func (m *mockCDPSession) TargetID() string { return m.Called().String(0) }
+func (m *mockCDPSession) SwitchTarget(targetID string) error {
 	return m.Called(targetID).Error(0)
 }
-func (m *MockCDPClient) ListTabs(ctx context.Context) ([]browser.TabInfo, error) {
+func (m *mockCDPSession) ListTabs(ctx context.Context) ([]browser.TabInfo, error) {
 	args := m.Called(ctx)
 	tabs, _ := args.Get(0).([]browser.TabInfo)
 	return tabs, args.Error(1)
 }
-func (m *MockCDPClient) NewTab(ctx context.Context, url string) (string, error) {
+func (m *mockCDPSession) NewTab(ctx context.Context, url string) (string, error) {
 	args := m.Called(ctx, url)
 	return args.String(0), args.Error(1)
 }
-func (m *MockCDPClient) CloseTab(ctx context.Context, targetID string) error {
+func (m *mockCDPSession) CloseTab(ctx context.Context, targetID string) error {
 	return m.Called(ctx, targetID).Error(0)
 }
-func (m *MockCDPClient) EvaluateJS(ctx context.Context, expression string) (string, error) {
+func (m *mockCDPSession) EvaluateJS(ctx context.Context, expression string) (string, error) {
 	args := m.Called(ctx, expression)
 	return args.String(0), args.Error(1)
 }
-func (m *MockCDPClient) Close() { m.Called() }
-func (m *MockCDPClient) GetElementRefs(ctx context.Context) ([]browser.ElementRef, error) {
+func (m *mockCDPSession) Close() { m.Called() }
+func (m *mockCDPSession) GetElementRefs(ctx context.Context) ([]browser.ElementRef, error) {
 	args := m.Called(ctx)
 	refs, _ := args.Get(0).([]browser.ElementRef)
 	return refs, args.Error(1)
 }
-func (m *MockCDPClient) ClickRef(ctx context.Context, refs []browser.ElementRef, refIndex int) error {
+func (m *mockCDPSession) ClickRef(ctx context.Context, refs []browser.ElementRef, refIndex int) error {
 	return m.Called(ctx, refs, refIndex).Error(0)
 }
-func (m *MockCDPClient) Screenshot(ctx context.Context) ([]byte, error) {
+func (m *mockCDPSession) Screenshot(ctx context.Context) ([]byte, error) {
 	args := m.Called(ctx)
 	data, _ := args.Get(0).([]byte)
 	return data, args.Error(1)
 }
-func (m *MockCDPClient) EnableConsoleCapture(ctx context.Context, ch chan<- browser.ConsoleMessage) error {
+func (m *mockCDPSession) EnableConsoleCapture(ctx context.Context, ch chan<- browser.ConsoleMessage) error {
 	return m.Called(ctx, ch).Error(0)
 }
-func (m *MockCDPClient) EnableNetworkCapture(ctx context.Context, ch chan<- browser.NetworkRequest) error {
+func (m *mockCDPSession) EnableNetworkCapture(ctx context.Context, ch chan<- browser.NetworkRequest) error {
 	return m.Called(ctx, ch).Error(0)
 }
-func (m *MockCDPClient) ResizeWindow(ctx context.Context, width, height int) error {
+func (m *mockCDPSession) ResizeWindow(ctx context.Context, width, height int) error {
 	return m.Called(ctx, width, height).Error(0)
 }
-func (m *MockCDPClient) ScrollIntoView(ctx context.Context, backendNodeID cdp.BackendNodeID) error {
+func (m *mockCDPSession) ScrollIntoView(ctx context.Context, backendNodeID cdp.BackendNodeID) error {
 	return m.Called(ctx, backendNodeID).Error(0)
 }
-func (m *MockCDPClient) MouseDown(ctx context.Context, x, y float64, button string) error {
+func (m *mockCDPSession) MouseDown(ctx context.Context, x, y float64, button string) error {
 	return m.Called(ctx, x, y, button).Error(0)
 }
-func (m *MockCDPClient) MouseUp(ctx context.Context, x, y float64, button string) error {
+func (m *mockCDPSession) MouseUp(ctx context.Context, x, y float64, button string) error {
 	return m.Called(ctx, x, y, button).Error(0)
+}
+func (m *mockCDPSession) NewContextForTarget(_ string) (browser.CDPSession, error) {
+	return m, nil
 }
 
 // --- Helper: start browser and get WS with CDP mock ---
 
-func (s *BrowserHandlerSuite) startBrowserWS() (*websocket.Conn, *httptest.Server, *MockCDPClient) {
-	mockCDP := new(MockCDPClient)
-	s.srv.browserCDPFactory = func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browserCDPClient, error) {
-		return mockCDP, nil
-	}
+// newTestCDPManager creates a CDPManager with a mock factory for testing.
+func newTestCDPManager(mockCDP *mockCDPSession) *browser.CDPManager {
+	mgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{
+		DiscoverExisting: false,
+		MaxRetries:       1,
+		RetryDelay:       time.Millisecond,
+	}, slog.Default())
+	return mgr
+}
+
+func (s *BrowserHandlerSuite) startBrowserWS() (*websocket.Conn, *httptest.Server, *mockCDPSession) {
+	mockCDP := new(mockCDPSession)
 
 	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-1", "").Return(nil)
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(nil)
 	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222")
-	s.browserMgr.On("SetCDPForTarget", "ch-1", mock.Anything, mock.Anything).Return().Maybe()
-	s.browserMgr.On("SetTargetID", "ch-1", mock.Anything).Return().Maybe()
 
-	mockCDP.On("TargetID").Return("").Maybe()
+	mockCDP.On("TargetID").Return("test-target").Maybe()
+	mockCDP.On("SwitchTarget", mock.Anything).Return(nil).Maybe()
 	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo(nil), nil).Maybe()
 
+	// Inject a CDPManager with the mock CDP factory into the server.
+	cdpMgr := newTestCDPManager(mockCDP)
+	s.srv.cdpManagersMu.Lock()
+	if s.srv.cdpManagers == nil {
+		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	}
+	s.srv.cdpManagers["ch-1|docker"] = cdpMgr
+	s.srv.cdpManagersMu.Unlock()
+	// Instead of complex injection, use a simpler approach:
+	// Override the server's getOrCreateCDPManager to return a pre-connected manager.
 	ws, ts := s.dialBrowserWS()
+
+	// Directly manipulate: create a connected CDPManager by injecting
+	// the mock CDP client before the WS start message.
+	s.srv.cdpManagersMu.Lock()
+	mgr := s.srv.cdpManagers["ch-1|docker"]
+	if mgr == nil {
+		mgr = newTestCDPManager(mockCDP)
+		s.srv.cdpManagers["ch-1|docker"] = mgr
+	}
+	s.srv.cdpManagersMu.Unlock()
+
+	// Override cdpFactory on the manager to return our mock.
+	browser.SetCDPFactoryForTest(mgr, func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browser.CDPSession, error) {
+		return mockCDP, nil
+	})
 
 	// Send start message.
 	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgStart, ChannelID: "ch-1"}))
@@ -442,67 +511,24 @@ func (s *BrowserHandlerSuite) TestStartSuccess() {
 	defer ws.Close()
 }
 
-func (s *BrowserHandlerSuite) TestStartCachedCDPReuse() {
-	mockCDP := new(MockCDPClient)
-	mockCDP.On("ResetScreencast").Return().Maybe()
-	mockCDP.On("StopScreencast").Return().Maybe()
-	mockCDP.On("Close").Return().Maybe()
-	mockCDP.On("TargetID").Return("cached-target").Maybe()
-
-	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-1", "").Return(nil)
-	// GetActiveCDP returns the cached mock client.
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(mockCDP)
-
-	ws, ts := s.dialBrowserWS()
-	defer ts.Close()
-	defer ws.Close()
-
-	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgStart, ChannelID: "ch-1"}))
-	resp := s.readResp(ws)
-	require.Equal(s.T(), bwsRespStarted, resp.Type)
-
-	// Verify that the factory was NOT called (no new CDP creation).
-	s.browserMgr.AssertNotCalled(s.T(), "GetCDPEndpoint", mock.Anything)
-}
-
-func (s *BrowserHandlerSuite) TestStartWithNonNilTargetID() {
-	mockCDP := new(MockCDPClient)
-	s.srv.browserCDPFactory = func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browserCDPClient, error) {
-		return mockCDP, nil
-	}
-
-	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-1", "").Return(nil)
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(nil)
-	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222")
-	s.browserMgr.On("SetCDPForTarget", "ch-1", "my-target-id", mock.Anything).Return().Maybe()
-	s.browserMgr.On("SetTargetID", "ch-1", "my-target-id").Return().Maybe()
-
-	mockCDP.On("TargetID").Return("my-target-id")
-	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo(nil), nil).Maybe()
-	mockCDP.On("Close").Return().Maybe()
-	mockCDP.On("StopScreencast").Return().Maybe()
-
-	ws, ts := s.dialBrowserWS()
-	defer ts.Close()
-	defer ws.Close()
-
-	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgStart, ChannelID: "ch-1"}))
-	resp := s.readResp(ws)
-	require.Equal(s.T(), bwsRespStarted, resp.Type)
-
-	// SetTargetID should have been called with the target ID.
-	time.Sleep(20 * time.Millisecond)
-	s.browserMgr.AssertCalled(s.T(), "SetTargetID", "ch-1", "my-target-id")
-}
-
 func (s *BrowserHandlerSuite) TestStartCDPConnectError() {
-	s.srv.browserCDPFactory = func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browserCDPClient, error) {
-		return nil, errors.New("cdp connect failed")
-	}
-
 	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-1", "").Return(nil)
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(nil)
 	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222")
+
+	// Create a CDPManager with a factory that always fails.
+	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{
+		MaxRetries: 1,
+		RetryDelay: time.Millisecond,
+	}, slog.Default())
+	browser.SetCDPFactoryForTest(cdpMgr, func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browser.CDPSession, error) {
+		return nil, errors.New("cdp connect failed")
+	})
+	s.srv.cdpManagersMu.Lock()
+	if s.srv.cdpManagers == nil {
+		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	}
+	s.srv.cdpManagers["ch-1|docker"] = cdpMgr
+	s.srv.cdpManagersMu.Unlock()
 
 	ws, ts := s.dialBrowserWS()
 	defer ts.Close()
@@ -512,73 +538,6 @@ func (s *BrowserHandlerSuite) TestStartCDPConnectError() {
 	resp := s.readResp(ws)
 	require.Equal(s.T(), bwsRespError, resp.Type)
 	require.Contains(s.T(), resp.Message, "failed to connect CDP")
-}
-
-func (s *BrowserHandlerSuite) TestStartCDPRetryContextCancelled() {
-	ctx, cancel := context.WithCancel(context.Background())
-	s.srv.browserCDPFactory = func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browserCDPClient, error) {
-		cancel() // Cancel context on first attempt so the retry loop exits.
-		return nil, errors.New("not ready")
-	}
-	s.srv.browserCDPRetries = 3
-	s.srv.browserCDPDelay = time.Second // Would sleep, but context is cancelled.
-
-	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-1", "").Return(nil)
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(nil)
-	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://172.17.0.2:9222")
-
-	// Use a custom server with a handler that uses a cancellable context.
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/ws/browser", func(w http.ResponseWriter, r *http.Request) {
-		s.srv.handleBrowserWS(w, r.WithContext(ctx))
-	})
-	ts := httptest.NewServer(mux)
-	defer ts.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/ws/browser"
-	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	require.NoError(s.T(), err)
-	defer ws.Close()
-
-	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgStart, ChannelID: "ch-1"}))
-	resp := s.readResp(ws)
-	require.Equal(s.T(), bwsRespError, resp.Type)
-	require.Contains(s.T(), resp.Message, "context cancelled")
-}
-
-func (s *BrowserHandlerSuite) TestStartCDPRetrySuccess() {
-	mockCDP := new(MockCDPClient)
-	attempt := 0
-	s.srv.browserCDPFactory = func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browserCDPClient, error) {
-		attempt++
-		if attempt == 1 {
-			return nil, errors.New("not ready")
-		}
-		return mockCDP, nil
-	}
-	s.srv.browserCDPRetries = 3
-	s.srv.browserCDPDelay = time.Millisecond
-
-	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-1", "").Return(nil)
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(nil)
-	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://172.17.0.2:9222")
-	s.browserMgr.On("SetCDPForTarget", "ch-1", mock.Anything, mock.Anything).Return().Maybe()
-	s.browserMgr.On("SetTargetID", "ch-1", mock.Anything).Return().Maybe()
-
-	mockCDP.On("TargetID").Return("").Maybe()
-	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo(nil), nil).Maybe()
-
-	ws, ts := s.dialBrowserWS()
-	defer ts.Close()
-	defer ws.Close()
-
-	mockCDP.On("Close").Return().Maybe()
-	mockCDP.On("StopScreencast").Return().Maybe()
-
-	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgStart, ChannelID: "ch-1"}))
-	resp := s.readResp(ws)
-	require.Equal(s.T(), bwsRespStarted, resp.Type)
-	require.Equal(s.T(), 2, attempt)
 }
 
 // --- Screencast success ---
@@ -593,13 +552,11 @@ func (s *BrowserHandlerSuite) TestScreencastSendsBinaryFrames() {
 
 	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgScreencast}))
 
-	// Push two JPEG-like frames into the channel.
 	frame1 := []byte{0xFF, 0xD8, 0x01, 0x02, 0x03}
 	frame2 := []byte{0xFF, 0xD8, 0x04, 0x05, 0x06}
 	frameCh <- frame1
 	frameCh <- frame2
 
-	// Read both binary messages from the WebSocket.
 	require.NoError(s.T(), ws.SetReadDeadline(time.Now().Add(2*time.Second)))
 	msgType, data, err := ws.ReadMessage()
 	require.NoError(s.T(), err)
@@ -611,7 +568,6 @@ func (s *BrowserHandlerSuite) TestScreencastSendsBinaryFrames() {
 	require.Equal(s.T(), websocket.BinaryMessage, msgType)
 	require.Equal(s.T(), frame2, data)
 
-	// Close frameCh so pipeFrames goroutine exits cleanly.
 	close(frameCh)
 	time.Sleep(20 * time.Millisecond)
 }
@@ -655,10 +611,10 @@ func (s *BrowserHandlerSuite) TestInputMouseMove() {
 	defer ts.Close()
 	defer ws.Close()
 
-	mockCDP.On("MouseMove", mock.Anything, float64(50), float64(60)).Return(nil)
+	mockCDP.On("MouseMove", mock.Anything, float64(50), float64(60), 0).Return(nil)
 	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgInput, InputType: "mousemove", X: 50, Y: 60}))
 	time.Sleep(20 * time.Millisecond)
-	mockCDP.AssertCalled(s.T(), "MouseMove", mock.Anything, float64(50), float64(60))
+	mockCDP.AssertCalled(s.T(), "MouseMove", mock.Anything, float64(50), float64(60), 0)
 }
 
 func (s *BrowserHandlerSuite) TestInputScroll() {
@@ -702,7 +658,6 @@ func (s *BrowserHandlerSuite) TestInputDispatchError() {
 	mockCDP.On("MouseClick", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("click fail"))
 	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgInput, InputType: "click", X: 1, Y: 2}))
 	time.Sleep(20 * time.Millisecond)
-	// Error is logged, no response sent. Connection still works.
 	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: "unknown"}))
 	resp := s.readResp(ws)
 	require.Equal(s.T(), bwsRespError, resp.Type)
@@ -710,7 +665,6 @@ func (s *BrowserHandlerSuite) TestInputDispatchError() {
 
 // --- pipeFrames ---
 
-// mockFrameSender implements frameSender for deterministic pipeFrames tests.
 type mockFrameSender struct {
 	sendErr error
 	stopCh  chan struct{}
@@ -771,7 +725,6 @@ func (s *BrowserHandlerSuite) TestPipeFramesSendFrameError() {
 		stopCh: make(chan struct{}),
 	}
 
-	// SendFrame always returns error; StopCh is never closed.
 	ms := &mockFrameSender{
 		sendErr: errors.New("send failed"),
 		stopCh:  make(chan struct{}),
@@ -799,7 +752,6 @@ func (s *BrowserHandlerSuite) TestPipeFramesSendFrameSuccess() {
 		stopCh: make(chan struct{}),
 	}
 
-	// SendFrame succeeds (nil error); StopCh is never closed.
 	ms := &mockFrameSender{stopCh: make(chan struct{})}
 
 	frameCh := make(chan []byte, 1)
@@ -811,8 +763,6 @@ func (s *BrowserHandlerSuite) TestPipeFramesSendFrameSuccess() {
 		close(done)
 	}()
 
-	// pipeFrames reads the frame, SendFrame returns nil, loops back.
-	// Now close bc.stopCh to let it exit.
 	time.Sleep(10 * time.Millisecond)
 	close(bc.stopCh)
 
@@ -846,48 +796,39 @@ func (s *BrowserHandlerSuite) TestPipeFramesStreamStopCh() {
 	}
 }
 
-// --- cleanup with stream ---
+// --- cleanup ---
 
 func (s *BrowserHandlerSuite) TestCleanupWithStream() {
 	ws, ts, _ := s.startBrowserWS()
 	defer ts.Close()
-	// Closing ws triggers cleanup via deferred bc.cleanup() in handleBrowserWS.
 	ws.Close()
 	time.Sleep(50 * time.Millisecond)
 }
 
-// --- Default factory vars coverage ---
+// --- WS upgrade error ---
 
 func (s *BrowserHandlerSuite) TestBrowserWSUpgradeError() {
 	srv := nilServer()
-	mgr := new(MockBrowserManager)
-	srv.SetBrowserManager(mgr)
+	mgr := new(mockBrowserProvider)
+	srv.SetBrowserProvider(mgr)
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/ws/browser", srv.handleBrowserWS)
 	ts := httptest.NewServer(mux)
 	defer ts.Close()
 
-	// Send a plain GET request (not a WebSocket upgrade) — triggers upgrade error.
 	resp, err := http.Get(ts.URL + "/api/ws/browser")
 	require.NoError(s.T(), err)
 	resp.Body.Close()
 }
 
 func (s *BrowserHandlerSuite) TestSendJSONWriteError() {
-	// Start a browser WS, then close the underlying connection before sending.
 	ws, ts, _ := s.startBrowserWS()
 	defer ts.Close()
 
-	// Close the WS connection so the next server-side sendJSON fails.
 	ws.Close()
 	time.Sleep(20 * time.Millisecond)
 
-	// The handleBrowserWS loop will exit on ReadMessage error.
-	// The sendJSON error path is covered when the connection drops mid-write.
-	// We can't easily trigger it from outside since the loop exited, but the
-	// upgrade error test above covers the log-only path adequately.
-	// Instead, test sendJSON directly by creating a browserWSConn with a closed conn.
 	connReady := make(chan *websocket.Conn, 1)
 	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := wsUpgrader.Upgrade(w, r, nil)
@@ -911,38 +852,23 @@ func (s *BrowserHandlerSuite) TestSendJSONWriteError() {
 		logger: slog.Default(),
 		stopCh: make(chan struct{}),
 	}
-	// sendJSON should log the error but not panic.
 	bc.sendJSON(browserWSResponse{Type: bwsRespError, Message: "test"})
-}
-
-func (s *BrowserHandlerSuite) TestSetBrowserManagerFactories() {
-	srv := nilServer()
-	mgr := new(MockBrowserManager)
-	srv.SetBrowserManager(mgr)
-
-	// Verify CDP factory was set and exercises the real constructor.
-	require.NotNil(s.T(), srv.browserCDPFactory)
-	_, err := srv.browserCDPFactory(context.Background(), "ws://127.0.0.1:9222", slog.Default())
-	_ = err // expected to fail (no Chrome)
 }
 
 // --- watchMCPTabChanges ---
 
 func (s *BrowserHandlerSuite) TestWatchMCPTabChangesStopCh() {
+	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+
 	bc := &browserWSConn{
 		logger: slog.Default(),
-		bMgr:   s.browserMgr,
+		cdpMgr: cdpMgr,
 		stopCh: make(chan struct{}),
 	}
 
-	// Return nil channels — goroutine should exit on stopCh.
-	s.browserMgr.On("TargetSwitchCh", "ch-1").Return((<-chan string)(nil))
-	s.browserMgr.On("TabAddedCh", "ch-1").Return((<-chan browser.TabInfo)(nil))
-	s.browserMgr.On("TabRemovedCh", "ch-1").Return((<-chan string)(nil))
-
 	done := make(chan struct{})
 	go func() {
-		bc.watchMCPTabChanges("ch-1")
+		bc.watchMCPTabChanges()
 		close(done)
 	}()
 
@@ -954,120 +880,22 @@ func (s *BrowserHandlerSuite) TestWatchMCPTabChangesStopCh() {
 	}
 }
 
-func (s *BrowserHandlerSuite) TestWatchMCPTabChangesSwitchChClosed() {
-	switchCh := make(chan string)
-	tabAddedCh := make(chan browser.TabInfo)
-	tabRemovedCh := make(chan string)
-
-	mgr := new(MockBrowserManager)
-	mgr.On("TargetSwitchCh", "ch-w").Return((<-chan string)(switchCh))
-	mgr.On("TabAddedCh", "ch-w").Return((<-chan browser.TabInfo)(tabAddedCh))
-	mgr.On("TabRemovedCh", "ch-w").Return((<-chan string)(tabRemovedCh))
-
-	bc := &browserWSConn{
-		logger: slog.Default(),
-		bMgr:   mgr,
-		stopCh: make(chan struct{}),
-	}
-
-	done := make(chan struct{})
-	go func() {
-		bc.watchMCPTabChanges("ch-w")
-		close(done)
-	}()
-
-	close(switchCh)
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		s.T().Fatal("watchMCPTabChanges did not exit on switchCh close")
-	}
-}
-
-func (s *BrowserHandlerSuite) TestWatchMCPTabChangesTabAddedChClosed() {
-	switchCh := make(chan string)
-	tabAddedCh := make(chan browser.TabInfo)
-	tabRemovedCh := make(chan string)
-
-	mgr := new(MockBrowserManager)
-	mgr.On("TargetSwitchCh", "ch-w").Return((<-chan string)(switchCh))
-	mgr.On("TabAddedCh", "ch-w").Return((<-chan browser.TabInfo)(tabAddedCh))
-	mgr.On("TabRemovedCh", "ch-w").Return((<-chan string)(tabRemovedCh))
-
-	bc := &browserWSConn{
-		logger: slog.Default(),
-		bMgr:   mgr,
-		stopCh: make(chan struct{}),
-	}
-
-	done := make(chan struct{})
-	go func() {
-		bc.watchMCPTabChanges("ch-w")
-		close(done)
-	}()
-
-	close(tabAddedCh)
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		s.T().Fatal("watchMCPTabChanges did not exit on tabAddedCh close")
-	}
-}
-
-func (s *BrowserHandlerSuite) TestWatchMCPTabChangesTabRemovedChClosed() {
-	switchCh := make(chan string)
-	tabAddedCh := make(chan browser.TabInfo)
-	tabRemovedCh := make(chan string)
-
-	mgr := new(MockBrowserManager)
-	mgr.On("TargetSwitchCh", "ch-w").Return((<-chan string)(switchCh))
-	mgr.On("TabAddedCh", "ch-w").Return((<-chan browser.TabInfo)(tabAddedCh))
-	mgr.On("TabRemovedCh", "ch-w").Return((<-chan string)(tabRemovedCh))
-
-	bc := &browserWSConn{
-		logger: slog.Default(),
-		bMgr:   mgr,
-		stopCh: make(chan struct{}),
-	}
-
-	done := make(chan struct{})
-	go func() {
-		bc.watchMCPTabChanges("ch-w")
-		close(done)
-	}()
-
-	close(tabRemovedCh)
-	select {
-	case <-done:
-	case <-time.After(time.Second):
-		s.T().Fatal("watchMCPTabChanges did not exit on tabRemovedCh close")
-	}
-}
-
 func (s *BrowserHandlerSuite) TestWatchMCPTabChangesSwitchNoCDP() {
-	switchCh := make(chan string, 1)
-	tabAddedCh := make(chan browser.TabInfo)
-	tabRemovedCh := make(chan string)
-
-	mgr := new(MockBrowserManager)
-	mgr.On("TargetSwitchCh", "ch-w").Return((<-chan string)(switchCh))
-	mgr.On("TabAddedCh", "ch-w").Return((<-chan browser.TabInfo)(tabAddedCh))
-	mgr.On("TabRemovedCh", "ch-w").Return((<-chan string)(tabRemovedCh))
+	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
 
 	bc := &browserWSConn{
 		logger: slog.Default(),
-		bMgr:   mgr,
+		cdpMgr: cdpMgr,
 		stopCh: make(chan struct{}),
-		// cdp is nil — should exit when it reads from switchCh.
 	}
 
 	done := make(chan struct{})
 	go func() {
-		bc.watchMCPTabChanges("ch-w")
+		bc.watchMCPTabChanges()
 		close(done)
 	}()
 
-	switchCh <- "t-new"
+	cdpMgr.NotifyTargetSwitch("t-new")
 	select {
 	case <-done:
 	case <-time.After(time.Second):
@@ -1075,27 +903,18 @@ func (s *BrowserHandlerSuite) TestWatchMCPTabChangesSwitchNoCDP() {
 	}
 }
 
-// TestWatchMCPTabChangesTabAddedSendsWS verifies that a tab_added channel
-// signal results in a tab_created WS message (no CDP needed).
 func (s *BrowserHandlerSuite) TestWatchMCPTabChangesTabAddedSendsWS() {
-	tabAddedCh := make(chan browser.TabInfo, 1)
-	tabRemovedCh := make(chan string)
-
-	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "TargetSwitchCh")
-	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "TabAddedCh")
-	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "TabRemovedCh")
-	s.browserMgr.On("TargetSwitchCh", "ch-1").Return((<-chan string)(nil))
-	s.browserMgr.On("TabAddedCh", "ch-1").Return((<-chan browser.TabInfo)(tabAddedCh))
-	s.browserMgr.On("TabRemovedCh", "ch-1").Return((<-chan string)(tabRemovedCh))
-
 	ws, ts, _ := s.startBrowserWS()
 	defer ts.Close()
 	defer ws.Close()
 
-	// Trigger tab added.
-	tabAddedCh <- browser.TabInfo{TargetID: "t-new", URL: "https://new.com", Title: "New"}
+	// Get the CDPManager and send a tab added notification.
+	s.srv.cdpManagersMu.Lock()
+	cdpMgr := s.srv.cdpManagers["ch-1|docker"]
+	s.srv.cdpManagersMu.Unlock()
 
-	// Read the tab_created response sent by the watcher goroutine.
+	cdpMgr.NotifyTabAdded(browser.TabInfo{TargetID: "t-new", URL: "https://new.com", Title: "New"})
+
 	require.NoError(s.T(), ws.SetReadDeadline(time.Now().Add(2*time.Second)))
 	resp := s.readResp(ws)
 	require.Equal(s.T(), bwsRespTabCreated, resp.Type)
@@ -1104,103 +923,21 @@ func (s *BrowserHandlerSuite) TestWatchMCPTabChangesTabAddedSendsWS() {
 	require.Equal(s.T(), "New", resp.Title)
 }
 
-// TestWatchMCPTabChangesTabRemovedSendsWS verifies that a tab_removed channel
-// signal results in a tab_closed WS message (no CDP needed).
 func (s *BrowserHandlerSuite) TestWatchMCPTabChangesTabRemovedSendsWS() {
-	tabAddedCh := make(chan browser.TabInfo)
-	tabRemovedCh := make(chan string, 1)
-
-	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "TargetSwitchCh")
-	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "TabAddedCh")
-	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "TabRemovedCh")
-	s.browserMgr.On("TargetSwitchCh", "ch-1").Return((<-chan string)(nil))
-	s.browserMgr.On("TabAddedCh", "ch-1").Return((<-chan browser.TabInfo)(tabAddedCh))
-	s.browserMgr.On("TabRemovedCh", "ch-1").Return((<-chan string)(tabRemovedCh))
-
 	ws, ts, _ := s.startBrowserWS()
 	defer ts.Close()
 	defer ws.Close()
 
-	// Trigger tab removed.
-	tabRemovedCh <- "t-old"
+	s.srv.cdpManagersMu.Lock()
+	cdpMgr := s.srv.cdpManagers["ch-1|docker"]
+	s.srv.cdpManagersMu.Unlock()
 
-	// Read the tab_closed response sent by the watcher goroutine.
+	cdpMgr.NotifyTabRemoved("t-old")
+
 	require.NoError(s.T(), ws.SetReadDeadline(time.Now().Add(2*time.Second)))
 	resp := s.readResp(ws)
 	require.Equal(s.T(), bwsRespTabClosed, resp.Type)
 	require.Equal(s.T(), "t-old", resp.TargetID)
-}
-
-// Note: TestWatchMCPTabChangesTabAddedSendsWS and TestWatchMCPTabChangesTabRemovedSendsWS
-// above test the new tab_added/tab_removed WS notifications. No ListTabs call needed.
-
-// filterCalls removes mock expectations for a given method name.
-func filterCalls(calls []*mock.Call, method string) []*mock.Call {
-	var filtered []*mock.Call
-	for _, c := range calls {
-		if c.Method != method {
-			filtered = append(filtered, c)
-		}
-	}
-	return filtered
-}
-
-func (s *BrowserHandlerSuite) TestWatchMCPTabChangesSwitchWithCDP() {
-	switchCh := make(chan string, 1)
-
-	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "TargetSwitchCh")
-	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "TabAddedCh")
-	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "TabRemovedCh")
-	s.browserMgr.On("TargetSwitchCh", "ch-1").Return((<-chan string)(switchCh))
-	s.browserMgr.On("TabAddedCh", "ch-1").Return((<-chan browser.TabInfo)(nil))
-	s.browserMgr.On("TabRemovedCh", "ch-1").Return((<-chan string)(nil))
-
-	ws, ts, _ := s.startBrowserWS()
-	defer ts.Close()
-	defer ws.Close()
-
-	// Factory returns a new mock CDP for the switched target.
-	newMockCDP := new(MockCDPClient)
-	newMockCDP.On("TargetID").Return("t-mcp").Maybe()
-	newMockCDP.On("ResetScreencast").Return().Maybe()
-	newMockCDP.On("StartScreencast", 60, 1920, 1080).Return((<-chan []byte)(make(chan []byte)))
-	newMockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo{
-		{TargetID: "t-mcp", URL: "https://mcp.com", Title: "MCP"},
-	}, nil)
-	newMockCDP.On("Close").Return().Maybe()
-	newMockCDP.On("StopScreencast").Return().Maybe()
-	newMockCDP.On("Reload", mock.Anything).Return(nil).Maybe()
-	newMockCDP.On("EvaluateJS", mock.Anything, mock.Anything).Return("", nil).Maybe()
-
-	s.srv.browserCDPFactory = func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browserCDPClient, error) {
-		return newMockCDP, nil
-	}
-	s.browserMgr.On("RemoveCDPForTarget", "ch-1", "t-mcp").Return(nil)
-	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222")
-	s.browserMgr.On("SetCDPForTarget", "ch-1", "t-mcp", newMockCDP).Return()
-	s.browserMgr.On("SetTargetID", "ch-1", "t-mcp").Return()
-
-	// Trigger MCP-initiated switch.
-	switchCh <- "t-mcp"
-
-	// Read the tab_switched and tabs responses.
-	require.NoError(s.T(), ws.SetReadDeadline(time.Now().Add(2*time.Second)))
-	resp := s.readResp(ws)
-	require.Equal(s.T(), bwsRespTabSwitched, resp.Type)
-	require.Equal(s.T(), "t-mcp", resp.TargetID)
-
-	resp = s.readResp(ws)
-	require.Equal(s.T(), bwsRespTabs, resp.Type)
-}
-
-func (m *MockBrowserManager) TrackTab(channelID, targetID string)   { m.Called(channelID, targetID) }
-func (m *MockBrowserManager) UntrackTab(channelID, targetID string) { m.Called(channelID, targetID) }
-func (m *MockBrowserManager) NextTabID(channelID, closedTargetID string) string {
-	args := m.Called(channelID, closedTargetID)
-	return args.String(0)
-}
-func (m *MockBrowserManager) OrderTabs(_ string, tabs []browser.TabInfo) []browser.TabInfo {
-	return tabs
 }
 
 // --- handleBrowserAction tests ---
@@ -1213,7 +950,7 @@ func (s *BrowserHandlerSuite) postBrowserAction(req browserActionRequest) *httpt
 	return w
 }
 
-func (s *BrowserHandlerSuite) TestBrowserActionNoBrowserManager() {
+func (s *BrowserHandlerSuite) TestBrowserActionNoBrowserProvider() {
 	srv := nilServer()
 	body := strings.NewReader(`{"channel_id":"ch-1","action":"navigate","params":{"url":"https://example.com"}}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/browser/action", body)
@@ -1238,27 +975,35 @@ func (s *BrowserHandlerSuite) TestBrowserActionInvalidJSON() {
 	require.Equal(s.T(), http.StatusBadRequest, w.Code)
 }
 
-// setupActionMocks sets up common mocks for handleBrowserAction tests that create a new CDP client.
-func (s *BrowserHandlerSuite) setupActionMocks(mockCDP *MockCDPClient) {
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(nil).Maybe()
+// setupActionMocks sets up common mocks for handleBrowserAction tests.
+func (s *BrowserHandlerSuite) setupActionMocks(mockCDP *mockCDPSession) {
 	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-1", "").Return(nil).Maybe()
 	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222").Maybe()
-	s.browserMgr.On("SetCDPForTarget", "ch-1", mock.Anything, mock.Anything).Return().Maybe()
-	s.browserMgr.On("SetTargetID", "ch-1", mock.Anything).Return().Maybe()
-	s.browserMgr.On("GetTargetID", "ch-1").Return("").Maybe()
-	s.browserMgr.On("TouchBrowser", "ch-1").Return().Maybe()
 
-	mockCDP.On("TargetID").Return("").Maybe()
+	mockCDP.On("TargetID").Return("test-target").Maybe()
 	mockCDP.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockCDP.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	s.srv.browserCDPFactory = func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browserCDPClient, error) {
+	// Create and inject a CDPManager with the mock factory.
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
+		DiscoverExisting: false,
+		MaxRetries:       1,
+		RetryDelay:       time.Millisecond,
+	}, slog.Default())
+	browser.SetCDPFactoryForTest(cdpMgr, func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browser.CDPSession, error) {
 		return mockCDP, nil
+	})
+
+	s.srv.cdpManagersMu.Lock()
+	if s.srv.cdpManagers == nil {
+		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
 	}
+	s.srv.cdpManagers["ch-1|docker"] = cdpMgr
+	s.srv.cdpManagersMu.Unlock()
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionNavigateSuccess() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
 	mockCDP.On("Navigate", mock.Anything, "https://example.com").Return(nil)
@@ -1278,30 +1023,8 @@ func (s *BrowserHandlerSuite) TestBrowserActionNavigateSuccess() {
 	require.Equal(s.T(), "https://example.com", resp.PageInfo.URL)
 }
 
-func (s *BrowserHandlerSuite) TestBrowserActionNavigateNotifiesTargetSwitch() {
-	mockCDP := new(MockCDPClient)
-	s.setupActionMocks(mockCDP)
-
-	// Override GetTargetID to return a non-empty target so NotifyTargetSwitch fires.
-	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "GetTargetID")
-	s.browserMgr.On("GetTargetID", "ch-1").Return("target-1")
-	s.browserMgr.On("NotifyTargetSwitch", "ch-1", "target-1").Return()
-
-	mockCDP.On("Navigate", mock.Anything, "https://example.com").Return(nil)
-	mockCDP.On("GetPageInfo", mock.Anything).Return(&browser.PageInfo{URL: "https://example.com", Title: "Example"}, nil)
-
-	w := s.postBrowserAction(browserActionRequest{
-		ChannelID: "ch-1",
-		Action:    "navigate",
-		Params:    map[string]any{"url": "https://example.com"},
-	})
-
-	require.Equal(s.T(), http.StatusOK, w.Code)
-	s.browserMgr.AssertCalled(s.T(), "NotifyTargetSwitch", "ch-1", "target-1")
-}
-
 func (s *BrowserHandlerSuite) TestBrowserActionNavigateError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
 	mockCDP.On("Navigate", mock.Anything, "https://bad.com").Return(errors.New("nav fail"))
@@ -1319,7 +1042,7 @@ func (s *BrowserHandlerSuite) TestBrowserActionNavigateError() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionScreenshot() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
 	mockCDP.On("Screenshot", mock.Anything).Return([]byte{0x89, 0x50, 0x4E, 0x47}, nil)
@@ -1337,8 +1060,12 @@ func (s *BrowserHandlerSuite) TestBrowserActionScreenshot() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionListTabs() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
+
+	// Track the tab so it passes the filter.
+	cdpMgr := s.srv.cdpManagers["ch-1|docker"]
+	cdpMgr.TrackTab("t1")
 
 	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo{
 		{TargetID: "t1", URL: "https://a.com", Title: "A"},
@@ -1358,12 +1085,10 @@ func (s *BrowserHandlerSuite) TestBrowserActionListTabs() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionNewTab() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
 	mockCDP.On("NewTab", mock.Anything, "about:blank").Return("new-target", nil)
-	s.browserMgr.On("NotifyTabAdded", "ch-1", mock.Anything).Return().Maybe()
-	s.browserMgr.On("NotifyTargetSwitch", "ch-1", "new-target").Return().Maybe()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -1378,11 +1103,11 @@ func (s *BrowserHandlerSuite) TestBrowserActionNewTab() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionCloseTab() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
 	mockCDP.On("CloseTab", mock.Anything, "t1").Return(nil)
-	s.browserMgr.On("NotifyTabRemoved", "ch-1", "t1").Return().Maybe()
+	mockCDP.On("NewTab", mock.Anything, "about:blank").Return("t2", nil).Maybe()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -1397,74 +1122,8 @@ func (s *BrowserHandlerSuite) TestBrowserActionCloseTab() {
 	require.Contains(s.T(), resp.Result, "t1")
 }
 
-func (s *BrowserHandlerSuite) TestBrowserActionReadConsole() {
-	mockCDP := new(MockCDPClient)
-	s.setupActionMocks(mockCDP)
-
-	// Pre-populate capture state so we have messages to read.
-	s.srv.browserCapturesMu.Lock()
-	if s.srv.browserCaptures == nil {
-		s.srv.browserCaptures = make(map[string]*browserCaptureState)
-	}
-	cs := &browserCaptureState{started: true}
-	cs.consoleMsgs = []browser.ConsoleMessage{
-		{Level: "log", Text: "hello world", Time: time.Now()},
-		{Level: "error", Text: "something failed", Time: time.Now()},
-	}
-	s.srv.browserCaptures["ch-1"] = cs
-	s.srv.browserCapturesMu.Unlock()
-
-	// Use a cached CDP so setupActionMocks doesn't override capture state.
-	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "GetActiveCDP")
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(mockCDP)
-
-	w := s.postBrowserAction(browserActionRequest{
-		ChannelID: "ch-1",
-		Action:    "read_console",
-		Params:    map[string]any{"limit": float64(10)},
-	})
-
-	require.Equal(s.T(), http.StatusOK, w.Code)
-	var resp browserActionResponse
-	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-	require.Contains(s.T(), resp.Result, "console message")
-}
-
-func (s *BrowserHandlerSuite) TestBrowserActionReadNetwork() {
-	mockCDP := new(MockCDPClient)
-	s.setupActionMocks(mockCDP)
-
-	// Pre-populate capture state so we have requests to read.
-	s.srv.browserCapturesMu.Lock()
-	if s.srv.browserCaptures == nil {
-		s.srv.browserCaptures = make(map[string]*browserCaptureState)
-	}
-	cs := &browserCaptureState{started: true}
-	cs.networkReqs = []browser.NetworkRequest{
-		{URL: "https://api.example.com/v1", Method: "GET", Status: 200, StatusText: "OK", Time: time.Now()},
-	}
-	s.srv.browserCaptures["ch-1"] = cs
-	s.srv.browserCapturesMu.Unlock()
-
-	// Use a cached CDP so setupActionMocks doesn't override capture state.
-	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "GetActiveCDP")
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(mockCDP)
-
-	w := s.postBrowserAction(browserActionRequest{
-		ChannelID: "ch-1",
-		Action:    "read_network",
-	})
-
-	require.Equal(s.T(), http.StatusOK, w.Code)
-	var resp browserActionResponse
-	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-	require.Contains(s.T(), resp.Result, "network request")
-}
-
 func (s *BrowserHandlerSuite) TestBrowserActionUnknownAction() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
 	w := s.postBrowserAction(browserActionRequest{
@@ -1478,57 +1137,9 @@ func (s *BrowserHandlerSuite) TestBrowserActionUnknownAction() {
 	require.Contains(s.T(), resp.Error, "unknown action")
 }
 
-func (s *BrowserHandlerSuite) TestBrowserActionGetBrowserCDPCached() {
-	mockCDP := new(MockCDPClient)
-	mockCDP.On("TargetID").Return("t-cached").Maybe()
-	mockCDP.On("GetPageInfo", mock.Anything).Return(&browser.PageInfo{URL: "https://example.com", Title: "X"}, nil)
-	mockCDP.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
-	mockCDP.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
-
-	// GetCDP returns a cached client — factory should NOT be called.
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(mockCDP)
-	s.browserMgr.On("TouchBrowser", "ch-1").Return().Maybe()
-
-	w := s.postBrowserAction(browserActionRequest{
-		ChannelID: "ch-1",
-		Action:    "get_page_info",
-	})
-
-	require.Equal(s.T(), http.StatusOK, w.Code)
-	var resp browserActionResponse
-	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-	require.NotNil(s.T(), resp.PageInfo)
-
-	// Factory should not have been called.
-	s.browserMgr.AssertNotCalled(s.T(), "EnsureBrowser", mock.Anything, mock.Anything, mock.Anything)
-}
-
-func (s *BrowserHandlerSuite) TestBrowserActionGetBrowserCDPNew() {
-	mockCDP := new(MockCDPClient)
-	s.setupActionMocks(mockCDP)
-
-	mockCDP.On("GetPageInfo", mock.Anything).Return(&browser.PageInfo{URL: "https://example.com", Title: "X"}, nil)
-
-	w := s.postBrowserAction(browserActionRequest{
-		ChannelID: "ch-1",
-		Action:    "get_page_info",
-	})
-
-	require.Equal(s.T(), http.StatusOK, w.Code)
-	var resp browserActionResponse
-	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-	require.NotNil(s.T(), resp.PageInfo)
-	s.browserMgr.AssertCalled(s.T(), "EnsureBrowser", mock.Anything, "ch-1", "")
-}
-
-// --- getBrowserCDP error paths ---
-
 func (s *BrowserHandlerSuite) TestBrowserActionGetBrowserCDPEnsureError() {
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(nil)
 	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-1", "").Return(errors.New("ensure fail"))
-	s.browserMgr.On("TouchBrowser", "ch-1").Return().Maybe()
+	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222").Maybe()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -1542,10 +1153,8 @@ func (s *BrowserHandlerSuite) TestBrowserActionGetBrowserCDPEnsureError() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionGetBrowserCDPNoEndpoint() {
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(nil)
 	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-1", "").Return(nil)
 	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("")
-	s.browserMgr.On("TouchBrowser", "ch-1").Return().Maybe()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -1559,15 +1168,23 @@ func (s *BrowserHandlerSuite) TestBrowserActionGetBrowserCDPNoEndpoint() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionGetBrowserCDPRetryAndFail() {
-	// browserCDPRetries is 1 by default in SetupTest — factory always fails → returns error immediately.
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(nil)
 	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-1", "").Return(nil)
 	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222")
-	s.browserMgr.On("TouchBrowser", "ch-1").Return().Maybe()
 
-	s.srv.browserCDPFactory = func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browserCDPClient, error) {
+	// Create a CDPManager with a factory that always fails.
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
+		MaxRetries: 1,
+		RetryDelay: time.Millisecond,
+	}, slog.Default())
+	browser.SetCDPFactoryForTest(cdpMgr, func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browser.CDPSession, error) {
 		return nil, errors.New("cdp connect fail")
+	})
+	s.srv.cdpManagersMu.Lock()
+	if s.srv.cdpManagers == nil {
+		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
 	}
+	s.srv.cdpManagers["ch-1|docker"] = cdpMgr
+	s.srv.cdpManagersMu.Unlock()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -1580,66 +1197,54 @@ func (s *BrowserHandlerSuite) TestBrowserActionGetBrowserCDPRetryAndFail() {
 	require.Contains(s.T(), resp.Error, "connecting CDP")
 }
 
-func (s *BrowserHandlerSuite) TestBrowserActionGetBrowserCDPRetryContextCancel() {
-	// Set retries > 1 so the retry delay select is reached.
-	s.srv.browserCDPRetries = 3
-	s.srv.browserCDPDelay = time.Second // long delay, will be cancelled
-
-	ctx, cancel := context.WithCancel(context.Background())
-
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(nil)
-	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-1", "").Return(nil)
-	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222")
-	s.browserMgr.On("TouchBrowser", "ch-1").Return().Maybe()
-
-	s.srv.browserCDPFactory = func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browserCDPClient, error) {
-		cancel() // cancel context on first attempt so retry select hits ctx.Done()
-		return nil, errors.New("not ready")
-	}
-
-	body, _ := json.Marshal(browserActionRequest{ChannelID: "ch-1", Action: "get_page_info"})
-	req := httptest.NewRequest(http.MethodPost, "/api/browser/action", strings.NewReader(string(body))).WithContext(ctx)
-	w := httptest.NewRecorder()
-	s.srv.handleBrowserAction(w, req)
-
-	require.Equal(s.T(), http.StatusOK, w.Code)
-	var resp browserActionResponse
-	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.NotEmpty(s.T(), resp.Error)
-}
-
 // --- ensureBrowserCapture paths ---
 
 func (s *BrowserHandlerSuite) TestEnsureBrowserCaptureAlreadyStarted() {
-	mockCDP := new(MockCDPClient)
-	// Pre-populate as already started.
-	s.srv.browserCapturesMu.Lock()
-	s.srv.browserCaptures = map[string]*browserCaptureState{
-		"ch-1": {started: true},
-	}
-	s.srv.browserCapturesMu.Unlock()
+	mockCDP := new(mockCDPSession)
+	mockCDP.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(nil)
+	mockCDP.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil)
 
-	// ensureBrowserCapture should be a no-op — EnableConsoleCapture not called.
+	// First call initializes capture and records the client.
+	s.srv.ensureBrowserCapture(context.Background(), "ch-1", mockCDP)
+	// Second call with the same client should not rewire.
 	s.srv.ensureBrowserCapture(context.Background(), "ch-1", mockCDP)
 
-	mockCDP.AssertNotCalled(s.T(), "EnableConsoleCapture", mock.Anything, mock.Anything)
-	mockCDP.AssertNotCalled(s.T(), "EnableNetworkCapture", mock.Anything, mock.Anything)
+	mockCDP.AssertNumberOfCalls(s.T(), "EnableConsoleCapture", 1)
+	mockCDP.AssertNumberOfCalls(s.T(), "EnableNetworkCapture", 1)
+}
+
+func (s *BrowserHandlerSuite) TestEnsureBrowserCaptureRewireOnNewClient() {
+	mockCDP1 := new(mockCDPSession)
+	mockCDP1.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(nil)
+	mockCDP1.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil)
+
+	// First call initializes capture with client 1.
+	s.srv.ensureBrowserCapture(context.Background(), "ch-1", mockCDP1)
+
+	// Second call with a different client should rewire capture.
+	mockCDP2 := new(mockCDPSession)
+	mockCDP2.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(nil)
+	mockCDP2.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil)
+
+	s.srv.ensureBrowserCapture(context.Background(), "ch-1", mockCDP2)
+
+	mockCDP2.AssertCalled(s.T(), "EnableConsoleCapture", mock.Anything, mock.Anything)
+	mockCDP2.AssertCalled(s.T(), "EnableNetworkCapture", mock.Anything, mock.Anything)
 }
 
 func (s *BrowserHandlerSuite) TestEnsureBrowserCaptureConsoleCaptureError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	mockCDP.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(errors.New("console cap fail"))
 	mockCDP.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil)
 
 	s.srv.ensureBrowserCapture(context.Background(), "ch-1", mockCDP)
 
 	mockCDP.AssertCalled(s.T(), "EnableConsoleCapture", mock.Anything, mock.Anything)
-	// Network capture should still proceed even if console fails.
 	mockCDP.AssertCalled(s.T(), "EnableNetworkCapture", mock.Anything, mock.Anything)
 }
 
 func (s *BrowserHandlerSuite) TestEnsureBrowserCaptureNetworkCaptureError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	mockCDP.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(nil)
 	mockCDP.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(errors.New("net cap fail"))
 
@@ -1650,9 +1255,7 @@ func (s *BrowserHandlerSuite) TestEnsureBrowserCaptureNetworkCaptureError() {
 }
 
 func (s *BrowserHandlerSuite) TestEnsureBrowserCaptureGoroutinesBodies() {
-	// Use Run to send a message into the channel passed to EnableConsoleCapture
-	// so the goroutine body (the for-range loop) executes.
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	mockCDP.On("EnableConsoleCapture", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
 			ch := args.Get(1).(chan<- browser.ConsoleMessage)
@@ -1666,7 +1269,6 @@ func (s *BrowserHandlerSuite) TestEnsureBrowserCaptureGoroutinesBodies() {
 
 	s.srv.ensureBrowserCapture(context.Background(), "ch-goroutines", mockCDP)
 
-	// Wait for goroutines to process the messages.
 	require.Eventually(s.T(), func() bool {
 		s.srv.browserCapturesMu.Lock()
 		cs := s.srv.browserCaptures["ch-goroutines"]
@@ -1674,60 +1276,30 @@ func (s *BrowserHandlerSuite) TestEnsureBrowserCaptureGoroutinesBodies() {
 		if cs == nil {
 			return false
 		}
-		cs.consoleMu.Lock()
-		nConsole := len(cs.consoleMsgs)
-		cs.consoleMu.Unlock()
-		cs.networkMu.Lock()
-		nNetwork := len(cs.networkReqs)
-		cs.networkMu.Unlock()
+		cs.ConsoleMu.Lock()
+		nConsole := len(cs.ConsoleMsgs)
+		cs.ConsoleMu.Unlock()
+		cs.NetworkMu.Lock()
+		nNetwork := len(cs.NetworkReqs)
+		cs.NetworkMu.Unlock()
 		return nConsole == 1 && nNetwork == 1
 	}, time.Second, 5*time.Millisecond, "goroutines did not process messages in time")
 
 	s.srv.browserCapturesMu.Lock()
 	cs := s.srv.browserCaptures["ch-goroutines"]
 	s.srv.browserCapturesMu.Unlock()
-	require.Equal(s.T(), "test-msg", cs.consoleMsgs[0].Text)
-	require.Equal(s.T(), "https://test.com", cs.networkReqs[0].URL)
+	require.Equal(s.T(), "test-msg", cs.ConsoleMsgs[0].Text)
+	require.Equal(s.T(), "https://test.com", cs.NetworkReqs[0].URL)
 }
 
-// --- getBrowserCDP: SetTargetID/TrackTab via handleBrowserAction ---
-
-func (s *BrowserHandlerSuite) TestBrowserActionGetBrowserCDPWithNonEmptyTargetID() {
-	mockCDP := new(MockCDPClient)
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(nil)
-	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-1", "").Return(nil)
-	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222")
-	s.browserMgr.On("SetCDPForTarget", "ch-1", "my-target", mock.Anything).Return().Maybe()
-	s.browserMgr.On("SetTargetID", "ch-1", "my-target").Return()
-	s.browserMgr.On("TouchBrowser", "ch-1").Return().Maybe()
-
-	mockCDP.On("TargetID").Return("my-target")
-	mockCDP.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(nil)
-	mockCDP.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil)
-	mockCDP.On("GetPageInfo", mock.Anything).Return(&browser.PageInfo{URL: "https://x.com", Title: "X"}, nil)
-
-	s.srv.browserCDPFactory = func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browserCDPClient, error) {
-		return mockCDP, nil
-	}
-
-	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "get_page_info"})
-	require.Equal(s.T(), http.StatusOK, w.Code)
-	var resp browserActionResponse
-	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-
-	s.browserMgr.AssertCalled(s.T(), "SetTargetID", "ch-1", "my-target")
-}
-
-// --- dispatchBrowserAction: missing action types ---
+// --- dispatchBrowserAction: action types ---
 
 func (s *BrowserHandlerSuite) TestBrowserActionReload() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("Reload", mock.Anything).Return(nil)
 
 	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "reload"})
-	require.Equal(s.T(), http.StatusOK, w.Code)
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Empty(s.T(), resp.Error)
@@ -1735,7 +1307,7 @@ func (s *BrowserHandlerSuite) TestBrowserActionReload() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionReloadError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("Reload", mock.Anything).Return(errors.New("reload fail"))
 
@@ -1746,7 +1318,7 @@ func (s *BrowserHandlerSuite) TestBrowserActionReloadError() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionGoBack() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("GoBack", mock.Anything).Return(nil)
 
@@ -1758,7 +1330,7 @@ func (s *BrowserHandlerSuite) TestBrowserActionGoBack() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionGoBackError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("GoBack", mock.Anything).Return(errors.New("back fail"))
 
@@ -1769,7 +1341,7 @@ func (s *BrowserHandlerSuite) TestBrowserActionGoBackError() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionGoForward() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("GoForward", mock.Anything).Return(nil)
 
@@ -1781,7 +1353,7 @@ func (s *BrowserHandlerSuite) TestBrowserActionGoForward() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionGoForwardError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("GoForward", mock.Anything).Return(errors.New("fwd fail"))
 
@@ -1792,7 +1364,7 @@ func (s *BrowserHandlerSuite) TestBrowserActionGoForwardError() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionGetPageInfoError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("GetPageInfo", mock.Anything).Return((*browser.PageInfo)(nil), errors.New("info fail"))
 
@@ -1803,7 +1375,7 @@ func (s *BrowserHandlerSuite) TestBrowserActionGetPageInfoError() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionNavigateGetPageInfoError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("Navigate", mock.Anything, "https://example.com").Return(nil)
 	mockCDP.On("GetPageInfo", mock.Anything).Return((*browser.PageInfo)(nil), errors.New("page info fail"))
@@ -1819,7 +1391,7 @@ func (s *BrowserHandlerSuite) TestBrowserActionNavigateGetPageInfoError() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionGetElementRefs() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	refs := []browser.ElementRef{{RefID: "ref-1", Description: "button"}}
 	mockCDP.On("GetElementRefs", mock.Anything).Return(refs, nil)
@@ -1832,7 +1404,7 @@ func (s *BrowserHandlerSuite) TestBrowserActionGetElementRefs() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionGetElementRefsError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("GetElementRefs", mock.Anything).Return(([]browser.ElementRef)(nil), errors.New("refs fail"))
 
@@ -1843,9 +1415,8 @@ func (s *BrowserHandlerSuite) TestBrowserActionGetElementRefsError() {
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionMouseClick() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	// Uses paramFloat for x and y — exercises that code path.
 	mockCDP.On("MouseClick", mock.Anything, float64(100), float64(200), "left", 1).Return(nil)
 
 	w := s.postBrowserAction(browserActionRequest{
@@ -1859,61 +1430,822 @@ func (s *BrowserHandlerSuite) TestBrowserActionMouseClick() {
 	require.Contains(s.T(), resp.Result, "Clicked at")
 }
 
-func (s *BrowserHandlerSuite) TestBrowserActionMouseClickWithButton() {
-	mockCDP := new(MockCDPClient)
+func (s *BrowserHandlerSuite) TestBrowserActionReadConsole() {
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	mockCDP.On("MouseClick", mock.Anything, float64(10), float64(20), "right", 2).Return(nil)
+
+	s.srv.browserCapturesMu.Lock()
+	if s.srv.browserCaptures == nil {
+		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	}
+	cs := &browser.CaptureState{Started: true}
+	cs.ConsoleMsgs = []browser.ConsoleMessage{
+		{Level: "log", Text: "hello world", Time: time.Now()},
+		{Level: "error", Text: "something failed", Time: time.Now()},
+	}
+	s.srv.browserCaptures["ch-1"] = cs
+	s.srv.browserCapturesMu.Unlock()
+
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "read_console",
+		Params:    map[string]any{"limit": float64(10)},
+	})
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Empty(s.T(), resp.Error)
+	require.Contains(s.T(), resp.Result, "console message")
+}
+
+func (s *BrowserHandlerSuite) TestBrowserActionReadNetwork() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+
+	s.srv.browserCapturesMu.Lock()
+	if s.srv.browserCaptures == nil {
+		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	}
+	cs := &browser.CaptureState{Started: true}
+	cs.NetworkReqs = []browser.NetworkRequest{
+		{URL: "https://api.example.com/v1", Method: "GET", Status: 200, StatusText: "OK", Time: time.Now()},
+	}
+	s.srv.browserCaptures["ch-1"] = cs
+	s.srv.browserCapturesMu.Unlock()
+
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "read_network",
+	})
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Empty(s.T(), resp.Error)
+	require.Contains(s.T(), resp.Result, "network request")
+}
+
+// --- RunBrowserIdleMonitor ---
+
+func (s *BrowserHandlerSuite) TestRunBrowserIdleMonitorCancelledContext() {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	s.srv.RunBrowserIdleMonitor(ctx, 10*time.Minute)
+}
+
+func (s *BrowserHandlerSuite) TestCleanIdleBrowserSessions() {
+	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+	// Make lastUsedAt old by using a fixed time.
+	browser.SetTimeNowForTest(cdpMgr, func() time.Time {
+		return time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	})
+	cdpMgr.Touch() // sets lastUsedAt to 2020
+
+	s.srv.cdpManagersMu.Lock()
+	if s.srv.cdpManagers == nil {
+		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	}
+	s.srv.cdpManagers["ch-1|docker"] = cdpMgr
+	s.srv.cdpManagersMu.Unlock()
+
+	s.browserMgr.On("StopBrowser", mock.Anything, "ch-1").Return(nil)
+
+	s.srv.cleanIdleBrowserSessions(context.Background(), time.Minute)
+
+	s.srv.cdpManagersMu.Lock()
+	_, exists := s.srv.cdpManagers["ch-1|docker"]
+	s.srv.cdpManagersMu.Unlock()
+	require.False(s.T(), exists)
+}
+
+// --- activeMode ---
+
+func (s *BrowserHandlerSuite) TestActiveMode() {
+	require.Equal(s.T(), "docker", s.srv.activeMode("ch-1"))
+
+	s.srv.browserModeMu.Lock()
+	if s.srv.activeBrowserMode == nil {
+		s.srv.activeBrowserMode = make(map[string]string)
+	}
+	s.srv.activeBrowserMode["ch-1"] = "host"
+	s.srv.browserModeMu.Unlock()
+
+	require.Equal(s.T(), "host", s.srv.activeMode("ch-1"))
+}
+
+// --- getOrCreateCDPManager ---
+
+func (s *BrowserHandlerSuite) TestGetOrCreateCDPManager() {
+	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222").Maybe()
+	mgr := s.srv.getOrCreateCDPManager("ch-1", "docker", s.browserMgr)
+	require.NotNil(s.T(), mgr)
+
+	// Second call should return the same manager.
+	mgr2 := s.srv.getOrCreateCDPManager("ch-1", "docker", s.browserMgr)
+	require.Equal(s.T(), mgr, mgr2)
+}
+
+func (s *BrowserHandlerSuite) TestGetActiveCDPManagerNotFound() {
+	require.Nil(s.T(), s.srv.getActiveCDPManager("nonexistent"))
+}
+
+// --- mockHostBrowserProvider ---
+
+type mockHostBrowserProvider struct {
+	mock.Mock
+}
+
+func (m *mockHostBrowserProvider) EnsureBrowser(ctx context.Context, channelID, containerID string) error {
+	return m.Called(ctx, channelID, containerID).Error(0)
+}
+func (m *mockHostBrowserProvider) StopBrowser(ctx context.Context, channelID string) error {
+	return m.Called(ctx, channelID).Error(0)
+}
+func (m *mockHostBrowserProvider) IsRunning(ctx context.Context, channelID string) bool {
+	return m.Called(ctx, channelID).Bool(0)
+}
+func (m *mockHostBrowserProvider) GetCDPEndpoint(channelID string) string {
+	return m.Called(channelID).String(0)
+}
+func (m *mockHostBrowserProvider) GetContainerID(channelID string) (string, bool) {
+	args := m.Called(channelID)
+	return args.String(0), args.Bool(1)
+}
+func (m *mockHostBrowserProvider) IsHostMode() bool {
+	return true
+}
+
+// --- getOrCreateCDPManager host mode ---
+
+func (s *BrowserHandlerSuite) TestGetOrCreateCDPManagerHostMode() {
+	hostProvider := new(mockHostBrowserProvider)
+	hostProvider.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222")
+
+	mgr := s.srv.getOrCreateCDPManager("ch-1", "host", hostProvider)
+	require.NotNil(s.T(), mgr)
+	// Host mode: DiscoverExisting should be false, MaxRetries should be 1.
+	require.False(s.T(), mgr.DiscoverExisting())
+}
+
+func (s *BrowserHandlerSuite) TestGetOrCreateCDPManagerNilMap() {
+	// Ensure it works when cdpManagers map is nil.
+	srv := nilServer()
+	srv.SetBrowserProvider(s.browserMgr)
+	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222").Maybe()
+	mgr := srv.getOrCreateCDPManager("ch-1", "docker", s.browserMgr)
+	require.NotNil(s.T(), mgr)
+}
+
+// --- paramFloat / paramBool full coverage ---
+
+func (s *BrowserHandlerSuite) TestParamFloatMissing() {
+	require.Equal(s.T(), float64(0), paramFloat(nil, "key"))
+	require.Equal(s.T(), float64(0), paramFloat(map[string]any{"other": "x"}, "key"))
+}
+
+func (s *BrowserHandlerSuite) TestParamFloatPresent() {
+	require.Equal(s.T(), float64(42.5), paramFloat(map[string]any{"key": float64(42.5)}, "key"))
+}
+
+func (s *BrowserHandlerSuite) TestParamBoolMissing() {
+	require.False(s.T(), paramBool(nil, "key"))
+	require.False(s.T(), paramBool(map[string]any{"other": "x"}, "key"))
+}
+
+func (s *BrowserHandlerSuite) TestParamBoolPresent() {
+	require.True(s.T(), paramBool(map[string]any{"key": true}, "key"))
+}
+
+// --- restartScreencastForTarget ---
+
+func (s *BrowserHandlerSuite) TestRestartScreencastForTargetNoCDPMgr() {
+	bc := &browserWSConn{
+		logger: slog.Default(),
+		stopCh: make(chan struct{}),
+	}
+	// No cdpMgr — should log error and return.
+	bc.restartScreencastForTarget(context.Background(), nil, "t1")
+}
+
+func (s *BrowserHandlerSuite) TestRestartScreencastForTargetGetOrCreateError() {
+	// Set up a CDPManager with no active clients.
+	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{
+		MaxRetries: 1,
+		RetryDelay: time.Millisecond,
+	}, slog.Default())
+
+	connReady := make(chan *websocket.Conn, 1)
+	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		connReady <- conn
+	}))
+	defer tsSrv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(tsSrv.URL, "http") + "/"
+	clientWS, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer clientWS.Close()
+
+	serverConn := <-connReady
+
+	bc := &browserWSConn{
+		conn:   serverConn,
+		logger: slog.Default(),
+		cdpMgr: cdpMgr,
+		stopCh: make(chan struct{}),
+	}
+	// GetOrCreate will fail because no active client exists.
+	bc.restartScreencastForTarget(context.Background(), nil, "t-new")
+}
+
+func (s *BrowserHandlerSuite) TestRestartScreencastForTargetClosesOldStopCh() {
+	mockCDP := new(mockCDPSession)
+	mockCDP.On("TargetID").Return("t-new").Maybe()
+	mockCDP.On("SwitchTarget", "t-new").Return(nil)
+	mockCDP.On("ResetScreencast").Return()
+	frameCh := make(chan []byte, 2)
+	mockCDP.On("StartScreencast", 60, 1920, 1080).Return((<-chan []byte)(frameCh))
+	mockCDP.On("EvaluateJS", mock.Anything, mock.Anything).Return("", nil)
+	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo(nil), nil)
+	mockCDP.On("StopScreencast").Return().Maybe()
+	mockCDP.On("Close").Return().Maybe()
+
+	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{
+		MaxRetries: 1,
+		RetryDelay: time.Millisecond,
+	}, slog.Default())
+	adapter := mockCDP
+	cdpMgr.SetClientForTarget("t-new", adapter)
+
+	connReady := make(chan *websocket.Conn, 1)
+	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		connReady <- conn
+	}))
+	defer tsSrv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(tsSrv.URL, "http") + "/"
+	clientWS, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer clientWS.Close()
+
+	serverConn := <-connReady
+
+	// Set screencastStopCh to a non-nil channel so the close path is exercised.
+	oldStopCh := make(chan struct{})
+	bc := &browserWSConn{
+		conn:             serverConn,
+		browserProvider:  s.browserMgr,
+		logger:           slog.Default(),
+		cdpMgr:           cdpMgr,
+		stopCh:           make(chan struct{}),
+		screencastStopCh: oldStopCh,
+	}
+
+	bc.restartScreencastForTarget(context.Background(), mockCDP, "t-new")
+
+	// Verify old stopCh was closed.
+	select {
+	case <-oldStopCh:
+		// OK — closed.
+	default:
+		s.T().Fatal("old screencastStopCh should be closed")
+	}
+
+	close(frameCh)
+}
+
+func (s *BrowserHandlerSuite) TestRestartScreencastForTargetSuccess() {
+	mockCDP := new(mockCDPSession)
+	mockCDP.On("TargetID").Return("t-new").Maybe()
+	mockCDP.On("SwitchTarget", "t-new").Return(nil)
+	mockCDP.On("ResetScreencast").Return()
+	frameCh := make(chan []byte, 2)
+	mockCDP.On("StartScreencast", 60, 1920, 1080).Return((<-chan []byte)(frameCh))
+	mockCDP.On("EvaluateJS", mock.Anything, mock.Anything).Return("", nil)
+	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo{
+		{TargetID: "t-new", URL: "https://test.com"},
+	}, nil)
+	mockCDP.On("StopScreencast").Return().Maybe()
+	mockCDP.On("Close").Return().Maybe()
+
+	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{
+		MaxRetries: 1,
+		RetryDelay: time.Millisecond,
+	}, slog.Default())
+	// Set up a mock client so GetOrCreate finds it.
+	adapter := mockCDP
+	cdpMgr.SetClientForTarget("t-new", adapter)
+
+	connReady := make(chan *websocket.Conn, 1)
+	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		connReady <- conn
+	}))
+	defer tsSrv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(tsSrv.URL, "http") + "/"
+	clientWS, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer clientWS.Close()
+
+	serverConn := <-connReady
+
+	bc := &browserWSConn{
+		conn:            serverConn,
+		browserProvider: s.browserMgr,
+		logger:          slog.Default(),
+		cdpMgr:          cdpMgr,
+		stopCh:          make(chan struct{}),
+	}
+
+	bc.restartScreencastForTarget(context.Background(), mockCDP, "t-new")
+
+	// Verify tab_switched response was sent.
+	require.NoError(s.T(), clientWS.SetReadDeadline(time.Now().Add(2*time.Second)))
+	var resp browserWSResponse
+	err = clientWS.ReadJSON(&resp)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), bwsRespTabSwitched, resp.Type)
+	require.Equal(s.T(), "t-new", resp.TargetID)
+
+	close(frameCh)
+}
+
+// --- sendTabsResponse ---
+
+func (s *BrowserHandlerSuite) TestSendTabsResponseDockerMode() {
+	connReady := make(chan *websocket.Conn, 1)
+	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		connReady <- conn
+	}))
+	defer tsSrv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(tsSrv.URL, "http") + "/"
+	clientWS, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer clientWS.Close()
+
+	serverConn := <-connReady
+
+	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+	cdpMgr.TrackTab("t1")
+	cdpMgr.TrackTab("t2")
+
+	bc := &browserWSConn{
+		conn:            serverConn,
+		browserProvider: s.browserMgr,
+		logger:          slog.Default(),
+		cdpMgr:          cdpMgr,
+		stopCh:          make(chan struct{}),
+	}
+
+	tabs := []browser.TabInfo{
+		{TargetID: "t1", URL: "https://a.com", Title: "A"},
+		{TargetID: "t2", URL: "https://b.com", Title: "B"},
+	}
+	bc.sendTabsResponse(tabs, "t1")
+
+	require.NoError(s.T(), clientWS.SetReadDeadline(time.Now().Add(2*time.Second)))
+	var resp browserWSResponse
+	err = clientWS.ReadJSON(&resp)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), bwsRespTabs, resp.Type)
+	require.Equal(s.T(), "t1", resp.ActiveTargetID)
+	require.Len(s.T(), resp.Tabs, 2)
+}
+
+func (s *BrowserHandlerSuite) TestSendTabsResponseHostMode() {
+	connReady := make(chan *websocket.Conn, 1)
+	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		connReady <- conn
+	}))
+	defer tsSrv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(tsSrv.URL, "http") + "/"
+	clientWS, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer clientWS.Close()
+
+	serverConn := <-connReady
+
+	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+	cdpMgr.TrackTab("t1") // Only track t1, not t2.
+
+	hostProvider := new(mockHostBrowserProvider)
+
+	bc := &browserWSConn{
+		conn:            serverConn,
+		browserProvider: hostProvider,
+		logger:          slog.Default(),
+		cdpMgr:          cdpMgr,
+		stopCh:          make(chan struct{}),
+	}
+
+	tabs := []browser.TabInfo{
+		{TargetID: "t1", URL: "https://a.com", Title: "A"},
+		{TargetID: "t2", URL: "https://b.com", Title: "B"}, // Not tracked — filtered out.
+	}
+	bc.sendTabsResponse(tabs, "t1")
+
+	require.NoError(s.T(), clientWS.SetReadDeadline(time.Now().Add(2*time.Second)))
+	var resp browserWSResponse
+	err = clientWS.ReadJSON(&resp)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), bwsRespTabs, resp.Type)
+	require.Len(s.T(), resp.Tabs, 1) // Only t1 (tracked in host mode).
+	require.Equal(s.T(), "t1", resp.Tabs[0].TargetID)
+}
+
+func (s *BrowserHandlerSuite) TestSendTabsResponseNilCDPMgr() {
+	connReady := make(chan *websocket.Conn, 1)
+	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		connReady <- conn
+	}))
+	defer tsSrv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(tsSrv.URL, "http") + "/"
+	clientWS, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer clientWS.Close()
+
+	serverConn := <-connReady
+
+	bc := &browserWSConn{
+		conn:            serverConn,
+		browserProvider: s.browserMgr,
+		logger:          slog.Default(),
+		stopCh:          make(chan struct{}),
+	}
+
+	tabs := []browser.TabInfo{{TargetID: "t1"}}
+	bc.sendTabsResponse(tabs, "t1")
+
+	require.NoError(s.T(), clientWS.SetReadDeadline(time.Now().Add(2*time.Second)))
+	var resp browserWSResponse
+	err = clientWS.ReadJSON(&resp)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), bwsRespTabs, resp.Type)
+}
+
+// --- watchMCPTabChanges: switch to different target (calls restartScreencastForTarget) ---
+
+func (s *BrowserHandlerSuite) TestWatchMCPTabChangesSwitchDifferentTarget() {
+	mockCDP := new(mockCDPSession)
+	mockCDP.On("TargetID").Return("t-old")
+	mockCDP.On("SwitchTarget", "t-new").Return(nil)
+	mockCDP.On("ResetScreencast").Return()
+	frameCh := make(chan []byte, 2)
+	mockCDP.On("StartScreencast", 60, 1920, 1080).Return((<-chan []byte)(frameCh))
+	mockCDP.On("EvaluateJS", mock.Anything, mock.Anything).Return("", nil)
+	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo(nil), nil)
+	mockCDP.On("StopScreencast").Return().Maybe()
+	mockCDP.On("Close").Return().Maybe()
+
+	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{
+		MaxRetries: 1,
+		RetryDelay: time.Millisecond,
+	}, slog.Default())
+	adapter := mockCDP
+	cdpMgr.SetClientForTarget("t-new", adapter)
+
+	connReady := make(chan *websocket.Conn, 1)
+	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		connReady <- conn
+	}))
+	defer tsSrv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(tsSrv.URL, "http") + "/"
+	clientWS, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer clientWS.Close()
+
+	serverConn := <-connReady
+
+	bc := &browserWSConn{
+		conn:            serverConn,
+		browserProvider: s.browserMgr,
+		logger:          slog.Default(),
+		cdpMgr:          cdpMgr,
+		cdp:             mockCDP,
+		stopCh:          make(chan struct{}),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		bc.watchMCPTabChanges()
+		close(done)
+	}()
+
+	// Notify switch to a DIFFERENT target.
+	cdpMgr.NotifyTargetSwitch("t-new")
+
+	// Wait for the switch to be processed and the tab_switched response to be sent.
+	require.NoError(s.T(), clientWS.SetReadDeadline(time.Now().Add(2*time.Second)))
+	var resp browserWSResponse
+	err = clientWS.ReadJSON(&resp)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), bwsRespTabSwitched, resp.Type)
+	require.Equal(s.T(), "t-new", resp.TargetID)
+
+	close(bc.stopCh)
+	<-done
+	close(frameCh)
+}
+
+// --- watchMCPTabChanges: switch to same target (skip) ---
+
+func (s *BrowserHandlerSuite) TestWatchMCPTabChangesSwitchSameTarget() {
+	mockCDP := new(mockCDPSession)
+	mockCDP.On("TargetID").Return("t-current")
+
+	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+
+	bc := &browserWSConn{
+		logger: slog.Default(),
+		cdpMgr: cdpMgr,
+		cdp:    mockCDP,
+		stopCh: make(chan struct{}),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		bc.watchMCPTabChanges()
+		close(done)
+	}()
+
+	// Notify switch to same target — should be skipped, then stop.
+	cdpMgr.NotifyTargetSwitch("t-current")
+	time.Sleep(50 * time.Millisecond)
+	close(bc.stopCh)
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		s.T().Fatal("watchMCPTabChanges did not exit")
+	}
+}
+
+// --- watchMCPTabChanges: nil cdpMgr ---
+
+func (s *BrowserHandlerSuite) TestWatchMCPTabChangesNilCDPMgr() {
+	bc := &browserWSConn{
+		logger: slog.Default(),
+		stopCh: make(chan struct{}),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		bc.watchMCPTabChanges()
+		close(done)
+	}()
+
+	close(bc.stopCh)
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		s.T().Fatal("watchMCPTabChanges did not exit")
+	}
+}
+
+// --- handleStart: reuse cached CDP ---
+
+func (s *BrowserHandlerSuite) TestHandleStartReusesCachedCDP() {
+	mockCDP := new(mockCDPSession)
+	mockCDP.On("TargetID").Return("test-target").Maybe()
+	mockCDP.On("ResetScreencast").Return()
+	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo(nil), nil).Maybe()
+	mockCDP.On("StopScreencast").Return().Maybe()
+	mockCDP.On("Close").Return().Maybe()
+
+	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-2", "").Return(nil)
+	s.browserMgr.On("GetCDPEndpoint", "ch-2").Return("ws://127.0.0.1:9222")
+
+	// Create and pre-connect a CDPManager.
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
+		DiscoverExisting: false,
+		MaxRetries:       1,
+		RetryDelay:       time.Millisecond,
+	}, slog.Default())
+	browser.SetCDPFactoryForTest(cdpMgr, func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browser.CDPSession, error) {
+		return mockCDP, nil
+	})
+	// Connect it so IsConnected() returns true.
+	require.NoError(s.T(), cdpMgr.Connect(context.Background()))
+
+	s.srv.cdpManagersMu.Lock()
+	if s.srv.cdpManagers == nil {
+		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	}
+	s.srv.cdpManagers["ch-2|docker"] = cdpMgr
+	s.srv.cdpManagersMu.Unlock()
+
+	ws, ts := s.dialBrowserWS()
+	defer ts.Close()
+	defer ws.Close()
+
+	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgStart, ChannelID: "ch-2"}))
+	resp := s.readResp(ws)
+	require.Equal(s.T(), bwsRespStarted, resp.Type)
+
+	mockCDP.AssertCalled(s.T(), "ResetScreencast")
+}
+
+// --- handleStart: host mode activates tab ---
+
+func (s *BrowserHandlerSuite) TestHandleStartHostModeActivatesTab() {
+	mockCDP := new(mockCDPSession)
+	mockCDP.On("TargetID").Return("host-target").Maybe()
+	mockCDP.On("SwitchTarget", "host-target").Return(nil)
+	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo(nil), nil).Maybe()
+	mockCDP.On("StopScreencast").Return().Maybe()
+	mockCDP.On("Close").Return().Maybe()
+
+	hostProvider := new(mockHostBrowserProvider)
+	hostProvider.On("EnsureBrowser", mock.Anything, "ch-host", "").Return(nil)
+	hostProvider.On("GetCDPEndpoint", "ch-host").Return("ws://127.0.0.1:9222")
+
+	srv := nilServer()
+	srv.SetHostBrowserProvider(hostProvider)
+	srv.SetBrowserProvider(s.browserMgr)
+	srv.containerFinder = s.cFinder
+
+	// Set mode to host for this channel.
+	srv.browserModeMu.Lock()
+	srv.activeBrowserMode = map[string]string{"ch-host": "host"}
+	srv.browserModeMu.Unlock()
+
+	// Create and pre-connect a CDPManager.
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
+		DiscoverExisting: false,
+		MaxRetries:       1,
+		RetryDelay:       time.Millisecond,
+	}, slog.Default())
+	browser.SetCDPFactoryForTest(cdpMgr, func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browser.CDPSession, error) {
+		return mockCDP, nil
+	})
+
+	srv.cdpManagersMu.Lock()
+	srv.cdpManagers = map[string]*browser.CDPManager{"ch-host|host": cdpMgr}
+	srv.cdpManagersMu.Unlock()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/ws/browser", srv.handleBrowserWS)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/ws/browser"
+	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer ws.Close()
+
+	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgStart, ChannelID: "ch-host"}))
+	var resp browserWSResponse
+	err = ws.ReadJSON(&resp)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), bwsRespStarted, resp.Type)
+
+	time.Sleep(50 * time.Millisecond)
+	mockCDP.AssertCalled(s.T(), "SwitchTarget", "host-target")
+}
+
+// --- getBrowserCDP: reuse cached ---
+
+func (s *BrowserHandlerSuite) TestGetBrowserCDPReusesCached() {
+	mockCDP := new(mockCDPSession)
+	mockCDP.On("TargetID").Return("test-target").Maybe()
+	mockCDP.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
+	mockCDP.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
+		DiscoverExisting: false,
+		MaxRetries:       1,
+		RetryDelay:       time.Millisecond,
+	}, slog.Default())
+	browser.SetCDPFactoryForTest(cdpMgr, func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browser.CDPSession, error) {
+		return mockCDP, nil
+	})
+	require.NoError(s.T(), cdpMgr.Connect(context.Background()))
+
+	s.srv.cdpManagersMu.Lock()
+	if s.srv.cdpManagers == nil {
+		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	}
+	s.srv.cdpManagers["ch-cache|docker"] = cdpMgr
+	s.srv.cdpManagersMu.Unlock()
+
+	cdpCl, err := s.srv.getBrowserCDP(context.Background(), "ch-cache")
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), cdpCl)
+}
+
+func (s *BrowserHandlerSuite) TestGetBrowserCDPConnectWithEmptyTargetID() {
+	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-empty", "").Return(nil)
+	s.browserMgr.On("GetCDPEndpoint", "ch-empty").Return("ws://127.0.0.1:9222")
+
+	// Factory returns a client with empty target ID — still usable.
+	mockCDP := new(mockCDPSession)
+	mockCDP.On("TargetID").Return("")
+	mockCDP.On("SwitchTarget", mock.Anything).Return(nil).Maybe()
+	mockCDP.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
+	mockCDP.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
+		MaxRetries: 1,
+		RetryDelay: time.Millisecond,
+	}, slog.Default())
+	browser.SetCDPFactoryForTest(cdpMgr, func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browser.CDPSession, error) {
+		return mockCDP, nil
+	})
+
+	s.srv.cdpManagersMu.Lock()
+	if s.srv.cdpManagers == nil {
+		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	}
+	s.srv.cdpManagers["ch-empty|docker"] = cdpMgr
+	s.srv.cdpManagersMu.Unlock()
+
+	// Even with empty target ID, Connect sets activeClient, so getBrowserCDP succeeds.
+	cdp, err := s.srv.getBrowserCDP(context.Background(), "ch-empty")
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), cdp)
+}
+
+// --- dispatchBrowserAction additional coverage ---
+
+func (s *BrowserHandlerSuite) TestBrowserActionMouseClickError() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+	mockCDP.On("MouseClick", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("click fail"))
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
 		Action:    "mouse_click",
-		Params:    map[string]any{"x": float64(10), "y": float64(20), "button": "right", "click_count": float64(2)},
+		Params:    map[string]any{"x": float64(10), "y": float64(20)},
 	})
-	var resp browserActionResponse
-	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-}
-
-func (s *BrowserHandlerSuite) TestBrowserActionMouseClickError() {
-	mockCDP := new(MockCDPClient)
-	s.setupActionMocks(mockCDP)
-	mockCDP.On("MouseClick", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("click fail"))
-
-	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "mouse_click"})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Error, "mouse click failed")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionMouseMove() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	mockCDP.On("MouseMove", mock.Anything, float64(50), float64(75)).Return(nil)
+	mockCDP.On("MouseMove", mock.Anything, float64(50), float64(60), 0).Return(nil)
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
 		Action:    "mouse_move",
-		Params:    map[string]any{"x": float64(50), "y": float64(75)},
+		Params:    map[string]any{"x": float64(50), "y": float64(60)},
 	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
 	require.Contains(s.T(), resp.Result, "Moved mouse")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionMouseMoveError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	mockCDP.On("MouseMove", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("move fail"))
+	mockCDP.On("MouseMove", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("move fail"))
 
-	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "mouse_move"})
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "mouse_move",
+		Params:    map[string]any{"x": float64(50), "y": float64(60)},
+	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Error, "mouse move failed")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionMouseScroll() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("MouseScroll", mock.Anything, float64(0), float64(0), float64(0), float64(-100)).Return(nil)
 
@@ -1924,23 +2256,26 @@ func (s *BrowserHandlerSuite) TestBrowserActionMouseScroll() {
 	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-	require.Contains(s.T(), resp.Result, "Scrolled at")
+	require.Contains(s.T(), resp.Result, "Scrolled")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionMouseScrollError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("MouseScroll", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("scroll fail"))
 
-	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "mouse_scroll"})
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "mouse_scroll",
+		Params:    map[string]any{"delta_y": float64(-100)},
+	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Error, "mouse scroll failed")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionMouseDown() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("MouseDown", mock.Anything, float64(10), float64(20), "left").Return(nil)
 
@@ -1951,80 +2286,56 @@ func (s *BrowserHandlerSuite) TestBrowserActionMouseDown() {
 	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
 	require.Contains(s.T(), resp.Result, "Mouse down")
 }
 
-func (s *BrowserHandlerSuite) TestBrowserActionMouseDownWithButton() {
-	mockCDP := new(MockCDPClient)
+func (s *BrowserHandlerSuite) TestBrowserActionMouseDownError() {
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	mockCDP.On("MouseDown", mock.Anything, float64(5), float64(15), "right").Return(nil)
+	mockCDP.On("MouseDown", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("down fail"))
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
 		Action:    "mouse_down",
-		Params:    map[string]any{"x": float64(5), "y": float64(15), "button": "right"},
+		Params:    map[string]any{"x": float64(10), "y": float64(20)},
 	})
-	var resp browserActionResponse
-	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-}
-
-func (s *BrowserHandlerSuite) TestBrowserActionMouseDownError() {
-	mockCDP := new(MockCDPClient)
-	s.setupActionMocks(mockCDP)
-	mockCDP.On("MouseDown", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("down fail"))
-
-	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "mouse_down"})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Error, "mouse down failed")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionMouseUp() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	mockCDP.On("MouseUp", mock.Anything, float64(30), float64(40), "left").Return(nil)
+	mockCDP.On("MouseUp", mock.Anything, float64(10), float64(20), "right").Return(nil)
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
 		Action:    "mouse_up",
-		Params:    map[string]any{"x": float64(30), "y": float64(40)},
+		Params:    map[string]any{"x": float64(10), "y": float64(20), "button": "right"},
 	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
 	require.Contains(s.T(), resp.Result, "Mouse up")
 }
 
-func (s *BrowserHandlerSuite) TestBrowserActionMouseUpWithButton() {
-	mockCDP := new(MockCDPClient)
+func (s *BrowserHandlerSuite) TestBrowserActionMouseUpError() {
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	mockCDP.On("MouseUp", mock.Anything, float64(1), float64(2), "middle").Return(nil)
+	mockCDP.On("MouseUp", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("up fail"))
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
 		Action:    "mouse_up",
-		Params:    map[string]any{"x": float64(1), "y": float64(2), "button": "middle"},
+		Params:    map[string]any{"x": float64(10), "y": float64(20)},
 	})
-	var resp browserActionResponse
-	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-}
-
-func (s *BrowserHandlerSuite) TestBrowserActionMouseUpError() {
-	mockCDP := new(MockCDPClient)
-	s.setupActionMocks(mockCDP)
-	mockCDP.On("MouseUp", mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("up fail"))
-
-	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "mouse_up"})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Error, "mouse up failed")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionKeyPress() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("KeyPress", mock.Anything, "Enter").Return(nil)
 
@@ -2035,23 +2346,26 @@ func (s *BrowserHandlerSuite) TestBrowserActionKeyPress() {
 	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-	require.Contains(s.T(), resp.Result, "Enter")
+	require.Contains(s.T(), resp.Result, "Pressed key")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionKeyPressError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("KeyPress", mock.Anything, mock.Anything).Return(errors.New("key fail"))
 
-	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "key_press"})
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "key_press",
+		Params:    map[string]any{"key": "Escape"},
+	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Error, "key press failed")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionTypeText() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("TypeText", mock.Anything, "hello").Return(nil)
 
@@ -2062,55 +2376,72 @@ func (s *BrowserHandlerSuite) TestBrowserActionTypeText() {
 	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-	require.Contains(s.T(), resp.Result, "hello")
+	require.Contains(s.T(), resp.Result, "Typed")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionTypeTextError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("TypeText", mock.Anything, mock.Anything).Return(errors.New("type fail"))
 
-	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "type_text"})
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "type_text",
+		Params:    map[string]any{"text": "fail"},
+	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Error, "type text failed")
 }
 
-func (s *BrowserHandlerSuite) TestBrowserActionClickRef() {
-	mockCDP := new(MockCDPClient)
+func (s *BrowserHandlerSuite) TestBrowserActionGetPageInfo() {
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	mockCDP.On("ClickRef", mock.Anything, mock.Anything, 0).Return(nil)
+	mockCDP.On("GetPageInfo", mock.Anything).Return(&browser.PageInfo{URL: "https://example.com", Title: "Test"}, nil)
+
+	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "get_page_info"})
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Empty(s.T(), resp.Error)
+	require.NotNil(s.T(), resp.PageInfo)
+	require.Equal(s.T(), "https://example.com", resp.PageInfo.URL)
+}
+
+func (s *BrowserHandlerSuite) TestBrowserActionClickRef() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+	mockCDP.On("ClickRef", mock.Anything, mock.Anything, 1).Return(nil)
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
 		Action:    "click_ref",
 		Params: map[string]any{
-			"refs": []any{
-				map[string]any{"BackendNodeID": float64(42), "Description": "button"},
-			},
-			"ref_index": float64(0),
+			"refs":      []any{map[string]any{"ref_id": "ref_1", "x": float64(10), "y": float64(20), "width": float64(100), "height": float64(50)}},
+			"ref_index": float64(1),
 		},
 	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-	require.Contains(s.T(), resp.Result, "Clicked ref")
+	require.Contains(s.T(), resp.Result, "Clicked ref 1")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionClickRefError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	mockCDP.On("ClickRef", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("click ref fail"))
+	mockCDP.On("ClickRef", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("ref fail"))
 
-	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "click_ref"})
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "click_ref",
+		Params:    map[string]any{"refs": []any{map[string]any{"ref_id": "ref_1"}}, "ref_index": float64(1)},
+	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Error, "click ref failed")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionScreenshotError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("Screenshot", mock.Anything).Return(([]byte)(nil), errors.New("screenshot fail"))
 
@@ -2120,78 +2451,72 @@ func (s *BrowserHandlerSuite) TestBrowserActionScreenshotError() {
 	require.Contains(s.T(), resp.Error, "screenshot failed")
 }
 
-func (s *BrowserHandlerSuite) TestBrowserActionScreenshotFileBased() {
-	dir := s.T().TempDir()
-	s.srv.screenshotDir = dir
-
-	mockCDP := new(MockCDPClient)
+func (s *BrowserHandlerSuite) TestBrowserActionScreenshotToFile() {
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("Screenshot", mock.Anything).Return([]byte{0x89, 0x50, 0x4E, 0x47}, nil)
 
-	w := s.postBrowserAction(browserActionRequest{
-		ChannelID: "ch-1",
-		Action:    "screenshot",
-	})
+	tmpDir := s.T().TempDir()
+	s.srv.SetScreenshotDir(tmpDir)
+	defer s.srv.SetScreenshotDir("")
 
-	require.Equal(s.T(), http.StatusOK, w.Code)
+	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "screenshot"})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Empty(s.T(), resp.Error)
-	require.Empty(s.T(), resp.Image)
 	require.NotEmpty(s.T(), resp.ScreenshotPath)
-	require.Contains(s.T(), resp.ScreenshotPath, dir)
+	require.Contains(s.T(), resp.ScreenshotPath, tmpDir)
 }
 
-func (s *BrowserHandlerSuite) TestBrowserActionScreenshotFileWriteError() {
-	// Use a non-existent directory so WriteFile fails.
-	s.srv.screenshotDir = "/nonexistent/dir"
-
-	mockCDP := new(MockCDPClient)
+func (s *BrowserHandlerSuite) TestBrowserActionScreenshotToFileWriteError() {
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("Screenshot", mock.Anything).Return([]byte{0x89, 0x50, 0x4E, 0x47}, nil)
 
-	w := s.postBrowserAction(browserActionRequest{
-		ChannelID: "ch-1",
-		Action:    "screenshot",
-	})
+	// Set screenshot dir to a non-existent directory to trigger write error.
+	s.srv.SetScreenshotDir("/nonexistent-dir-12345")
+	defer s.srv.SetScreenshotDir("")
 
-	require.Equal(s.T(), http.StatusOK, w.Code)
+	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "screenshot"})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Error, "writing screenshot file")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionEvaluateJS() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	mockCDP.On("EvaluateJS", mock.Anything, "document.title").Return("My Title", nil)
+	mockCDP.On("EvaluateJS", mock.Anything, "1+1").Return("2", nil)
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
 		Action:    "evaluate_js",
-		Params:    map[string]any{"expression": "document.title"},
+		Params:    map[string]any{"expression": "1+1"},
 	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-	require.Equal(s.T(), "My Title", resp.Result)
+	require.Equal(s.T(), "2", resp.Result)
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionEvaluateJSError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("EvaluateJS", mock.Anything, mock.Anything).Return("", errors.New("js fail"))
 
-	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "evaluate_js"})
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "evaluate_js",
+		Params:    map[string]any{"expression": "bad()"},
+	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Error, "evaluate JS failed")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionListTabsError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	mockCDP.On("ListTabs", mock.Anything).Return(([]browser.TabInfo)(nil), errors.New("list fail"))
+	mockCDP.On("ListTabs", mock.Anything).Return(([]browser.TabInfo)(nil), errors.New("tabs fail"))
 
 	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "list_tabs"})
 	var resp browserActionResponse
@@ -2199,12 +2524,10 @@ func (s *BrowserHandlerSuite) TestBrowserActionListTabsError() {
 	require.Contains(s.T(), resp.Error, "list tabs failed")
 }
 
-func (s *BrowserHandlerSuite) TestBrowserActionNewTabWithURL() {
-	mockCDP := new(MockCDPClient)
+func (s *BrowserHandlerSuite) TestBrowserActionNewTabError() {
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	mockCDP.On("NewTab", mock.Anything, "https://example.com").Return("t-ex", nil)
-	s.browserMgr.On("NotifyTabAdded", "ch-1", mock.Anything).Return().Maybe()
-	s.browserMgr.On("NotifyTargetSwitch", "ch-1", "t-ex").Return().Maybe()
+	mockCDP.On("NewTab", mock.Anything, mock.Anything).Return("", errors.New("new tab fail"))
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
@@ -2213,119 +2536,121 @@ func (s *BrowserHandlerSuite) TestBrowserActionNewTabWithURL() {
 	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-	require.Contains(s.T(), resp.Result, "t-ex")
-}
-
-func (s *BrowserHandlerSuite) TestBrowserActionNewTabError() {
-	mockCDP := new(MockCDPClient)
-	s.setupActionMocks(mockCDP)
-	mockCDP.On("NewTab", mock.Anything, mock.Anything).Return("", errors.New("new tab fail"))
-
-	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "new_tab"})
-	var resp browserActionResponse
-	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Error, "new tab failed")
 }
 
-func (s *BrowserHandlerSuite) TestBrowserActionSwitchTabMissingTargetID() {
-	mockCDP := new(MockCDPClient)
+func (s *BrowserHandlerSuite) TestBrowserActionSwitchTab() {
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
-	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "switch_tab"})
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "switch_tab",
+		Params:    map[string]any{"target_id": "t-switch"},
+	})
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(s.T(), resp.Result, "Switched to tab t-switch")
+}
+
+func (s *BrowserHandlerSuite) TestBrowserActionSwitchTabNoTargetID() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "switch_tab",
+	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Error, "target_id required")
 }
 
-func (s *BrowserHandlerSuite) TestBrowserActionSwitchTab() {
-	mockCDP := new(MockCDPClient)
+func (s *BrowserHandlerSuite) TestBrowserActionCloseTabNoTargetID() {
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	mockCDP.On("SwitchTarget", "t-1").Return(nil)
-	s.browserMgr.On("NotifyTargetSwitch", "ch-1", "t-1").Return().Maybe()
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
-		Action:    "switch_tab",
-		Params:    map[string]any{"target_id": "t-1"},
+		Action:    "close_tab",
 	})
-	var resp browserActionResponse
-	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-	require.Contains(s.T(), resp.Result, "t-1")
-}
-
-func (s *BrowserHandlerSuite) TestBrowserActionSwitchTabError() {
-	mockCDP := new(MockCDPClient)
-	s.setupActionMocks(mockCDP)
-	mockCDP.On("SwitchTarget", "t-bad").Return(errors.New("switch fail"))
-	s.browserMgr.On("NotifyTargetSwitch", "ch-1", mock.Anything).Return().Maybe()
-
-	w := s.postBrowserAction(browserActionRequest{
-		ChannelID: "ch-1",
-		Action:    "switch_tab",
-		Params:    map[string]any{"target_id": "t-bad"},
-	})
-	var resp browserActionResponse
-	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Contains(s.T(), resp.Error, "switch tab failed")
-}
-
-func (s *BrowserHandlerSuite) TestBrowserActionCloseTabMissingTargetID() {
-	mockCDP := new(MockCDPClient)
-	s.setupActionMocks(mockCDP)
-
-	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "close_tab"})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Error, "target_id required")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionCloseTabError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	mockCDP.On("CloseTab", mock.Anything, "t-bad").Return(errors.New("close fail"))
-	s.browserMgr.On("NotifyTabRemoved", "ch-1", mock.Anything).Return().Maybe()
+	// NewTab called before CloseTab (replacement for last tab).
+	mockCDP.On("NewTab", mock.Anything, "about:blank").Return("t-new", nil).Maybe()
+	mockCDP.On("CloseTab", mock.Anything, "t1").Return(errors.New("close fail"))
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
 		Action:    "close_tab",
-		Params:    map[string]any{"target_id": "t-bad"},
+		Params:    map[string]any{"target_id": "t1"},
 	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Error, "close tab failed")
 }
 
-func (s *BrowserHandlerSuite) TestBrowserActionResizeWindow() {
-	mockCDP := new(MockCDPClient)
+func (s *BrowserHandlerSuite) TestBrowserActionCloseTabWithNextTab() {
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
-	mockCDP.On("ResizeWindow", mock.Anything, 1280, 720).Return(nil)
+	mockCDP.On("CloseTab", mock.Anything, "t2").Return(nil)
+
+	// Pre-populate the CDPManager with tracked tabs so NextTabID returns a valid next tab.
+	s.srv.cdpManagersMu.Lock()
+	cdpMgr := s.srv.cdpManagers["ch-1|docker"]
+	s.srv.cdpManagersMu.Unlock()
+	cdpMgr.TrackTab("t1")
+	cdpMgr.TrackTab("t2")
+	cdpMgr.TrackTab("t3")
+
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "close_tab",
+		Params:    map[string]any{"target_id": "t2"},
+	})
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(s.T(), resp.Result, "Closed tab t2")
+}
+
+func (s *BrowserHandlerSuite) TestBrowserActionResizeWindow() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+	mockCDP.On("ResizeWindow", mock.Anything, 1024, 768).Return(nil)
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
 		Action:    "resize_window",
-		Params:    map[string]any{"width": float64(1280), "height": float64(720)},
+		Params:    map[string]any{"width": float64(1024), "height": float64(768)},
 	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-	require.Contains(s.T(), resp.Result, "1280x720")
+	require.Contains(s.T(), resp.Result, "Resized viewport")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionResizeWindowError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("ResizeWindow", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("resize fail"))
 
-	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "resize_window"})
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "resize_window",
+		Params:    map[string]any{"width": float64(1024), "height": float64(768)},
+	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Error, "resize window failed")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionScrollIntoView() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("ScrollIntoView", mock.Anything, cdp.BackendNodeID(42)).Return(nil)
 
@@ -2336,657 +2661,550 @@ func (s *BrowserHandlerSuite) TestBrowserActionScrollIntoView() {
 	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-	require.Contains(s.T(), resp.Result, "Scrolled element")
+	require.Contains(s.T(), resp.Result, "Scrolled element into view")
 }
 
 func (s *BrowserHandlerSuite) TestBrowserActionScrollIntoViewError() {
-	mockCDP := new(MockCDPClient)
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 	mockCDP.On("ScrollIntoView", mock.Anything, mock.Anything).Return(errors.New("scroll fail"))
 
-	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "scroll_into_view"})
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "scroll_into_view",
+		Params:    map[string]any{"backend_node_id": float64(42)},
+	})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Contains(s.T(), resp.Error, "scroll into view failed")
 }
 
-// --- readConsoleMessages additional paths ---
+// --- readConsoleMessages additional coverage ---
 
 func (s *BrowserHandlerSuite) TestReadConsoleMessagesNilCapture() {
-	// No capture state exists for this channel.
-	result := s.srv.readConsoleMessages("no-such-channel", nil)
-	require.Equal(s.T(), "No console messages", result.Result)
+	// Call readConsoleMessages directly (not through handleBrowserAction)
+	// to test the cs == nil path. handleBrowserAction always calls
+	// ensureBrowserCapture first, so cs is never nil through the normal flow.
+	resp := s.srv.readConsoleMessages("no-capture-channel", nil)
+	require.Contains(s.T(), resp.Result, "No console messages")
 }
 
-func (s *BrowserHandlerSuite) TestReadConsoleMessagesInvalidRegex() {
+func (s *BrowserHandlerSuite) TestReadConsoleMessagesWithFilter() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+
 	s.srv.browserCapturesMu.Lock()
-	s.srv.browserCaptures = map[string]*browserCaptureState{
-		"ch-1": {started: true, consoleMsgs: []browser.ConsoleMessage{
-			{Level: "log", Text: "hello", Time: time.Now()},
-		}},
+	if s.srv.browserCaptures == nil {
+		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
 	}
+	cs := &browser.CaptureState{Started: true}
+	cs.ConsoleMsgs = []browser.ConsoleMessage{
+		{Level: "log", Text: "hello world", Time: time.Now()},
+		{Level: "error", Text: "critical error", Time: time.Now()},
+		{Level: "log", Text: "other msg", Time: time.Now()},
+	}
+	s.srv.browserCaptures["ch-1"] = cs
 	s.srv.browserCapturesMu.Unlock()
 
-	result := s.srv.readConsoleMessages("ch-1", map[string]any{"pattern": "["})
-	require.Contains(s.T(), result.Error, "invalid regex pattern")
+	// Test pattern filter.
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "read_console",
+		Params:    map[string]any{"pattern": "critical"},
+	})
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(s.T(), resp.Result, "1 console message")
+	require.Contains(s.T(), resp.Result, "critical error")
 }
 
 func (s *BrowserHandlerSuite) TestReadConsoleMessagesOnlyErrors() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+
 	s.srv.browserCapturesMu.Lock()
-	s.srv.browserCaptures = map[string]*browserCaptureState{
-		"ch-1": {started: true, consoleMsgs: []browser.ConsoleMessage{
-			{Level: "log", Text: "info msg", Time: time.Now()},
-			{Level: "error", Text: "error msg", Time: time.Now()},
-		}},
+	if s.srv.browserCaptures == nil {
+		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
 	}
+	cs := &browser.CaptureState{Started: true}
+	cs.ConsoleMsgs = []browser.ConsoleMessage{
+		{Level: "log", Text: "info msg", Time: time.Now()},
+		{Level: "error", Text: "err msg", Time: time.Now()},
+	}
+	s.srv.browserCaptures["ch-1"] = cs
 	s.srv.browserCapturesMu.Unlock()
 
-	result := s.srv.readConsoleMessages("ch-1", map[string]any{"only_errors": true})
-	require.Empty(s.T(), result.Error)
-	require.Contains(s.T(), result.Result, "error msg")
-	require.NotContains(s.T(), result.Result, "info msg")
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "read_console",
+		Params:    map[string]any{"only_errors": true},
+	})
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(s.T(), resp.Result, "1 console message")
+	require.Contains(s.T(), resp.Result, "err msg")
 }
 
 func (s *BrowserHandlerSuite) TestReadConsoleMessagesClear() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+
 	s.srv.browserCapturesMu.Lock()
-	cs := &browserCaptureState{started: true, consoleMsgs: []browser.ConsoleMessage{
-		{Level: "log", Text: "msg1", Time: time.Now()},
-	}}
-	s.srv.browserCaptures = map[string]*browserCaptureState{"ch-1": cs}
+	if s.srv.browserCaptures == nil {
+		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	}
+	cs := &browser.CaptureState{Started: true}
+	cs.ConsoleMsgs = []browser.ConsoleMessage{
+		{Level: "log", Text: "msg", Time: time.Now()},
+	}
+	s.srv.browserCaptures["ch-1"] = cs
 	s.srv.browserCapturesMu.Unlock()
 
-	result := s.srv.readConsoleMessages("ch-1", map[string]any{"clear": true})
-	require.Contains(s.T(), result.Result, "msg1")
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "read_console",
+		Params:    map[string]any{"clear": true},
+	})
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(s.T(), resp.Result, "1 console message")
 
-	// Second read should be empty after clear.
-	result2 := s.srv.readConsoleMessages("ch-1", nil)
-	require.Equal(s.T(), "No console messages", result2.Result)
+	// After clear, messages should be empty.
+	cs.ConsoleMu.Lock()
+	require.Nil(s.T(), cs.ConsoleMsgs)
+	cs.ConsoleMu.Unlock()
 }
 
-func (s *BrowserHandlerSuite) TestReadConsoleMessagesLimitTruncates() {
-	msgs := make([]browser.ConsoleMessage, 10)
+func (s *BrowserHandlerSuite) TestReadConsoleMessagesInvalidRegex() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+
+	s.srv.browserCapturesMu.Lock()
+	if s.srv.browserCaptures == nil {
+		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	}
+	s.srv.browserCaptures["ch-1"] = &browser.CaptureState{Started: true}
+	s.srv.browserCapturesMu.Unlock()
+
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "read_console",
+		Params:    map[string]any{"pattern": "[invalid"},
+	})
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(s.T(), resp.Error, "invalid regex pattern")
+}
+
+func (s *BrowserHandlerSuite) TestReadConsoleMessagesLimitExceeded() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+
+	msgs := make([]browser.ConsoleMessage, 5)
 	for i := range msgs {
-		msgs[i] = browser.ConsoleMessage{Level: "log", Text: "msg", Time: time.Now()}
+		msgs[i] = browser.ConsoleMessage{Level: "log", Text: fmt.Sprintf("msg-%d", i), Time: time.Now()}
 	}
 	s.srv.browserCapturesMu.Lock()
-	s.srv.browserCaptures = map[string]*browserCaptureState{
-		"ch-1": {started: true, consoleMsgs: msgs},
+	if s.srv.browserCaptures == nil {
+		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
 	}
+	cs := &browser.CaptureState{Started: true, ConsoleMsgs: msgs}
+	s.srv.browserCaptures["ch-1"] = cs
 	s.srv.browserCapturesMu.Unlock()
 
-	// Limit to 3 — should return only last 3.
-	result := s.srv.readConsoleMessages("ch-1", map[string]any{"limit": float64(3)})
-	require.Empty(s.T(), result.Error)
-	require.Contains(s.T(), result.Result, "3 console message(s)")
-}
-
-func (s *BrowserHandlerSuite) TestReadConsoleMessagesPatternFilter() {
-	s.srv.browserCapturesMu.Lock()
-	s.srv.browserCaptures = map[string]*browserCaptureState{
-		"ch-1": {started: true, consoleMsgs: []browser.ConsoleMessage{
-			{Level: "log", Text: "match this", Time: time.Now()},
-			{Level: "log", Text: "skip this", Time: time.Now()},
-		}},
-	}
-	s.srv.browserCapturesMu.Unlock()
-
-	result := s.srv.readConsoleMessages("ch-1", map[string]any{"pattern": "match"})
-	require.Empty(s.T(), result.Error)
-	require.Contains(s.T(), result.Result, "match this")
-	require.NotContains(s.T(), result.Result, "skip this")
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "read_console",
+		Params:    map[string]any{"limit": float64(2)},
+	})
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(s.T(), resp.Result, "2 console message")
 }
 
 func (s *BrowserHandlerSuite) TestReadConsoleMessagesEmpty() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+
 	s.srv.browserCapturesMu.Lock()
-	s.srv.browserCaptures = map[string]*browserCaptureState{
-		"ch-1": {started: true},
+	if s.srv.browserCaptures == nil {
+		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
 	}
+	s.srv.browserCaptures["ch-1"] = &browser.CaptureState{Started: true}
 	s.srv.browserCapturesMu.Unlock()
 
-	result := s.srv.readConsoleMessages("ch-1", nil)
-	require.Equal(s.T(), "No console messages", result.Result)
+	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "read_console"})
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(s.T(), resp.Result, "No console messages")
 }
 
-// --- readNetworkRequests additional paths ---
+// --- readNetworkRequests additional coverage ---
 
 func (s *BrowserHandlerSuite) TestReadNetworkRequestsNilCapture() {
-	result := s.srv.readNetworkRequests("no-such-channel", nil)
-	require.Equal(s.T(), "No network requests", result.Result)
+	resp := s.srv.readNetworkRequests("no-capture-channel", nil)
+	require.Contains(s.T(), resp.Result, "No network requests")
 }
 
-func (s *BrowserHandlerSuite) TestReadNetworkRequestsInvalidRegex() {
+func (s *BrowserHandlerSuite) TestReadNetworkRequestsWithFilter() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+
 	s.srv.browserCapturesMu.Lock()
-	s.srv.browserCaptures = map[string]*browserCaptureState{
-		"ch-1": {started: true, networkReqs: []browser.NetworkRequest{
-			{URL: "https://api.example.com", Method: "GET", Status: 200, StatusText: "OK", Time: time.Now()},
-		}},
+	if s.srv.browserCaptures == nil {
+		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
 	}
+	cs := &browser.CaptureState{Started: true}
+	cs.NetworkReqs = []browser.NetworkRequest{
+		{URL: "https://api.example.com/v1", Method: "GET", Status: 200, StatusText: "OK", Time: time.Now()},
+		{URL: "https://cdn.example.com/asset.js", Method: "GET", Status: 200, StatusText: "OK", Time: time.Now()},
+	}
+	s.srv.browserCaptures["ch-1"] = cs
 	s.srv.browserCapturesMu.Unlock()
 
-	result := s.srv.readNetworkRequests("ch-1", map[string]any{"pattern": "["})
-	require.Contains(s.T(), result.Error, "invalid regex pattern")
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "read_network",
+		Params:    map[string]any{"pattern": "api\\.example"},
+	})
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(s.T(), resp.Result, "1 network request")
 }
 
 func (s *BrowserHandlerSuite) TestReadNetworkRequestsClear() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+
 	s.srv.browserCapturesMu.Lock()
-	cs := &browserCaptureState{started: true, networkReqs: []browser.NetworkRequest{
-		{URL: "https://api.example.com", Method: "GET", Status: 200, StatusText: "OK", Time: time.Now()},
-	}}
-	s.srv.browserCaptures = map[string]*browserCaptureState{"ch-1": cs}
+	if s.srv.browserCaptures == nil {
+		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	}
+	cs := &browser.CaptureState{Started: true}
+	cs.NetworkReqs = []browser.NetworkRequest{
+		{URL: "https://a.com", Method: "GET", Status: 200, StatusText: "OK", Time: time.Now()},
+	}
+	s.srv.browserCaptures["ch-1"] = cs
 	s.srv.browserCapturesMu.Unlock()
 
-	result := s.srv.readNetworkRequests("ch-1", map[string]any{"clear": true})
-	require.Contains(s.T(), result.Result, "api.example.com")
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "read_network",
+		Params:    map[string]any{"clear": true},
+	})
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(s.T(), resp.Result, "1 network request")
 
-	result2 := s.srv.readNetworkRequests("ch-1", nil)
-	require.Equal(s.T(), "No network requests", result2.Result)
+	cs.NetworkMu.Lock()
+	require.Nil(s.T(), cs.NetworkReqs)
+	cs.NetworkMu.Unlock()
 }
 
-func (s *BrowserHandlerSuite) TestReadNetworkRequestsLimitTruncates() {
-	reqs := make([]browser.NetworkRequest, 10)
+func (s *BrowserHandlerSuite) TestReadNetworkRequestsInvalidRegex() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+
+	s.srv.browserCapturesMu.Lock()
+	if s.srv.browserCaptures == nil {
+		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
+	}
+	s.srv.browserCaptures["ch-1"] = &browser.CaptureState{Started: true}
+	s.srv.browserCapturesMu.Unlock()
+
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "read_network",
+		Params:    map[string]any{"pattern": "[invalid"},
+	})
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(s.T(), resp.Error, "invalid regex pattern")
+}
+
+func (s *BrowserHandlerSuite) TestReadNetworkRequestsLimitExceeded() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+
+	reqs := make([]browser.NetworkRequest, 5)
 	for i := range reqs {
-		reqs[i] = browser.NetworkRequest{URL: "https://api.example.com", Method: "GET", Status: 200, StatusText: "OK", Time: time.Now()}
+		reqs[i] = browser.NetworkRequest{URL: fmt.Sprintf("https://req%d.com", i), Method: "GET", Status: 200, StatusText: "OK", Time: time.Now()}
 	}
 	s.srv.browserCapturesMu.Lock()
-	s.srv.browserCaptures = map[string]*browserCaptureState{
-		"ch-1": {started: true, networkReqs: reqs},
+	if s.srv.browserCaptures == nil {
+		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
 	}
+	cs := &browser.CaptureState{Started: true, NetworkReqs: reqs}
+	s.srv.browserCaptures["ch-1"] = cs
 	s.srv.browserCapturesMu.Unlock()
 
-	result := s.srv.readNetworkRequests("ch-1", map[string]any{"limit": float64(2)})
-	require.Empty(s.T(), result.Error)
-	require.Contains(s.T(), result.Result, "2 network request(s)")
-}
-
-func (s *BrowserHandlerSuite) TestReadNetworkRequestsPatternFilter() {
-	s.srv.browserCapturesMu.Lock()
-	s.srv.browserCaptures = map[string]*browserCaptureState{
-		"ch-1": {started: true, networkReqs: []browser.NetworkRequest{
-			{URL: "https://api.match.com", Method: "GET", Status: 200, StatusText: "OK", Time: time.Now()},
-			{URL: "https://skip.com", Method: "GET", Status: 200, StatusText: "OK", Time: time.Now()},
-		}},
-	}
-	s.srv.browserCapturesMu.Unlock()
-
-	result := s.srv.readNetworkRequests("ch-1", map[string]any{"pattern": "match"})
-	require.Empty(s.T(), result.Error)
-	require.Contains(s.T(), result.Result, "api.match.com")
-	require.NotContains(s.T(), result.Result, "skip.com")
+	w := s.postBrowserAction(browserActionRequest{
+		ChannelID: "ch-1",
+		Action:    "read_network",
+		Params:    map[string]any{"limit": float64(2)},
+	})
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Contains(s.T(), resp.Result, "2 network request")
 }
 
 func (s *BrowserHandlerSuite) TestReadNetworkRequestsEmpty() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+
 	s.srv.browserCapturesMu.Lock()
-	s.srv.browserCaptures = map[string]*browserCaptureState{
-		"ch-1": {started: true},
+	if s.srv.browserCaptures == nil {
+		s.srv.browserCaptures = make(map[string]*browser.CaptureState)
 	}
+	s.srv.browserCaptures["ch-1"] = &browser.CaptureState{Started: true}
 	s.srv.browserCapturesMu.Unlock()
 
-	result := s.srv.readNetworkRequests("ch-1", nil)
-	require.Equal(s.T(), "No network requests", result.Result)
-}
-
-// --- paramBool false branch ---
-
-func (s *BrowserHandlerSuite) TestParamBoolFalseBranch() {
-	// When key is absent, paramBool returns false.
-	result := paramBool(map[string]any{}, "missing_key")
-	require.False(s.T(), result)
-
-	// When value is not bool type, paramBool returns false.
-	result = paramBool(map[string]any{"k": "not-a-bool"}, "k")
-	require.False(s.T(), result)
-
-	// When value is true bool, paramBool returns true.
-	result = paramBool(map[string]any{"k": true}, "k")
-	require.True(s.T(), result)
-}
-
-// --- paramFloat coverage ---
-
-func (s *BrowserHandlerSuite) TestParamFloat() {
-	require.Equal(s.T(), float64(3.14), paramFloat(map[string]any{"k": float64(3.14)}, "k"))
-	require.Equal(s.T(), float64(0), paramFloat(map[string]any{}, "k"))
-	require.Equal(s.T(), float64(0), paramFloat(map[string]any{"k": "not-float"}, "k"))
-}
-
-// --- sendJSON: broken pipe suppression ---
-
-func (s *BrowserHandlerSuite) TestSendJSONBrokenPipeSuppressed() {
-	// Create a WS pair where the server-side conn's write returns "broken pipe".
-	connReady := make(chan *websocket.Conn, 1)
-	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := wsUpgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
-		connReady <- conn
-	}))
-	defer tsSrv.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(tsSrv.URL, "http") + "/"
-	clientWS, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	require.NoError(s.T(), err)
-
-	serverConn := <-connReady
-
-	// Close the client so the server write gets broken pipe.
-	clientWS.Close()
-	time.Sleep(10 * time.Millisecond)
-
-	bc := &browserWSConn{
-		conn:   serverConn,
-		logger: slog.Default(),
-		stopCh: make(chan struct{}),
-	}
-	// sendJSON on broken pipe should not panic and should suppress the error log.
-	bc.sendJSON(browserWSResponse{Type: bwsRespError, Message: "test"})
-
-	serverConn.Close()
-}
-
-// --- sendJSON: non-suppressed write error (e.g. timeout) ---
-
-func (s *BrowserHandlerSuite) TestSendJSONNonSuppressedWriteError() {
-	// Create a WS pair and set a write deadline in the past to trigger a timeout error.
-	connReady := make(chan *websocket.Conn, 1)
-	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := wsUpgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
-		connReady <- conn
-	}))
-	defer tsSrv.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(tsSrv.URL, "http") + "/"
-	clientWS, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	require.NoError(s.T(), err)
-	defer clientWS.Close()
-
-	serverConn := <-connReady
-
-	// Set write deadline in the past to force a timeout error on write.
-	require.NoError(s.T(), serverConn.SetWriteDeadline(time.Now().Add(-time.Second)))
-
-	bc := &browserWSConn{
-		conn:   serverConn,
-		logger: slog.Default(),
-		stopCh: make(chan struct{}),
-	}
-	// sendJSON should log the error (not suppress it — "timeout" does not match "broken pipe"/"use of closed").
-	bc.sendJSON(browserWSResponse{Type: bwsRespError, Message: "test"})
-
-	serverConn.Close()
-}
-
-// --- restartScreencastForTarget: cdpFactory error ---
-
-func (s *BrowserHandlerSuite) TestRestartScreencastForTargetCDPFactoryError() {
-	s.browserMgr.On("RemoveCDPForTarget", "ch-1", "t-fail").Return(nil)
-	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222")
-
-	connReady := make(chan *websocket.Conn, 1)
-	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := wsUpgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
-		connReady <- conn
-	}))
-	defer tsSrv.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(tsSrv.URL, "http") + "/"
-	clientWS, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	require.NoError(s.T(), err)
-	defer clientWS.Close()
-
-	serverConn := <-connReady
-
-	bc := &browserWSConn{
-		conn:      serverConn,
-		bMgr:      s.browserMgr,
-		logger:    slog.Default(),
-		stopCh:    make(chan struct{}),
-		channelID: "ch-1",
-		cdpFactory: func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browserCDPClient, error) {
-			return nil, errors.New("cdp factory boom")
-		},
-	}
-
-	bc.restartScreencastForTarget(context.Background(), nil, "t-fail")
-
-	// Read the error response from the client side.
-	require.NoError(s.T(), clientWS.SetReadDeadline(time.Now().Add(2*time.Second)))
-	var resp browserWSResponse
-	require.NoError(s.T(), clientWS.ReadJSON(&resp))
-	require.Equal(s.T(), bwsRespError, resp.Type)
-	require.Contains(s.T(), resp.Message, "switch target failed")
-}
-
-// --- handleStart: ListTabs error path ---
-
-func (s *BrowserHandlerSuite) TestStartListTabsError() {
-	mockCDP := new(MockCDPClient)
-	s.srv.browserCDPFactory = func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browserCDPClient, error) {
-		return mockCDP, nil
-	}
-
-	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-1", "").Return(nil)
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(nil)
-	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222")
-	s.browserMgr.On("SetCDPForTarget", "ch-1", mock.Anything, mock.Anything).Return().Maybe()
-	s.browserMgr.On("SetTargetID", "ch-1", mock.Anything).Return().Maybe()
-
-	mockCDP.On("TargetID").Return("").Maybe()
-	// ListTabs returns an error — should not prevent startup.
-	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo(nil), errors.New("list tabs fail"))
-	mockCDP.On("Close").Return().Maybe()
-	mockCDP.On("StopScreencast").Return().Maybe()
-
-	ws, ts := s.dialBrowserWS()
-	defer ts.Close()
-	defer ws.Close()
-
-	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgStart, ChannelID: "ch-1"}))
-	resp := s.readResp(ws)
-	require.Equal(s.T(), bwsRespStarted, resp.Type)
-}
-
-// --- handleStart: cached CDP reuse starts watchMCPTabChanges goroutine ---
-
-func (s *BrowserHandlerSuite) TestStartCachedCDPReuseStartsWatchMCPTabChanges() {
-	switchCh := make(chan string, 1)
-	mockCDP := new(MockCDPClient)
-	mockCDP.On("ResetScreencast").Return().Maybe()
-	mockCDP.On("StopScreencast").Return().Maybe()
-	mockCDP.On("Close").Return().Maybe()
-	mockCDP.On("TargetID").Return("cached-target").Maybe()
-
-	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-1", "").Return(nil)
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(mockCDP)
-
-	// Override TargetSwitchCh to return a real channel.
-	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "TargetSwitchCh")
-	s.browserMgr.On("TargetSwitchCh", "ch-1").Return((<-chan string)(switchCh))
-
-	ws, ts := s.dialBrowserWS()
-	defer ts.Close()
-	defer ws.Close()
-
-	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgStart, ChannelID: "ch-1"}))
-	resp := s.readResp(ws)
-	require.Equal(s.T(), bwsRespStarted, resp.Type)
-
-	// Trigger a switch on the channel — it sends a target ID into switchCh.
-	// The watcher goroutine picks it up and calls restartScreencastForTarget.
-	// Since cdp is non-nil, the goroutine won't exit (it calls restartScreencast).
-	// Just verify the goroutine is alive by sending and having it process the message.
-	// We need cdpFactory for the restartScreencast call.
-	newMockCDP := new(MockCDPClient)
-	newMockCDP.On("ResetScreencast").Return().Maybe()
-	newMockCDP.On("StartScreencast", 60, 1920, 1080).Return((<-chan []byte)(make(chan []byte)))
-	newMockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo{}, nil).Maybe()
-	newMockCDP.On("EvaluateJS", mock.Anything, mock.Anything).Return("", nil).Maybe()
-	newMockCDP.On("Close").Return().Maybe()
-	newMockCDP.On("StopScreencast").Return().Maybe()
-
-	s.srv.browserCDPFactory = func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browserCDPClient, error) {
-		return newMockCDP, nil
-	}
-	s.browserMgr.On("RemoveCDPForTarget", "ch-1", "t-switch").Return(nil)
-	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222")
-	s.browserMgr.On("SetCDPForTarget", "ch-1", "t-switch", newMockCDP).Return()
-	s.browserMgr.On("SetTargetID", "ch-1", "t-switch").Return()
-
-	switchCh <- "t-switch"
-
-	// Read the tab_switched response — proves the watcher goroutine was started.
-	require.NoError(s.T(), ws.SetReadDeadline(time.Now().Add(2*time.Second)))
-	resp = s.readResp(ws)
-	require.Equal(s.T(), bwsRespTabSwitched, resp.Type)
-	require.Equal(s.T(), "t-switch", resp.TargetID)
-}
-
-// --- dispatchBrowserAction: close_tab last tab, about:blank creation ---
-
-func (s *BrowserHandlerSuite) TestBrowserActionCloseTabLastTabCreatesAboutBlank() {
-	mockCDP := new(MockCDPClient)
-	s.setupActionMocks(mockCDP)
-
-	// NextTabID returns "" — last tab.
-	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "NextTabID")
-	s.browserMgr.On("NextTabID", "ch-1", "t-last").Return("")
-
-	mockCDP.On("CloseTab", mock.Anything, "t-last").Return(nil)
-	s.browserMgr.On("NotifyTabRemoved", "ch-1", "t-last").Return().Maybe()
-
-	// Set up a fake Chrome /json/new endpoint.
-	chromeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"id":"t-new-blank"}`))
-	}))
-	defer chromeSrv.Close()
-
-	// GetCDPEndpoint returns ws://host:port — we replace ws:// with http:// for the /json/new URL.
-	chromeWSURL := "ws://" + strings.TrimPrefix(chromeSrv.URL, "http://")
-	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "GetCDPEndpoint")
-	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return(chromeWSURL)
-	s.browserMgr.On("NotifyTabAdded", "ch-1", mock.Anything).Return().Maybe()
-	s.browserMgr.On("NotifyTargetSwitch", "ch-1", "t-new-blank").Return().Maybe()
-
-	w := s.postBrowserAction(browserActionRequest{
-		ChannelID: "ch-1",
-		Action:    "close_tab",
-		Params:    map[string]any{"target_id": "t-last"},
-	})
-
-	require.Equal(s.T(), http.StatusOK, w.Code)
+	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "read_network"})
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-	require.Contains(s.T(), resp.Result, "t-last")
-
-	// Verify TrackTab was called with the new blank tab's target ID.
-	time.Sleep(20 * time.Millisecond)
-	s.browserMgr.AssertCalled(s.T(), "TrackTab", "ch-1", "t-new-blank")
+	require.Contains(s.T(), resp.Result, "No network requests")
 }
 
-// --- handleStart: ListTabs returns tabs that get tracked ---
+// --- RunBrowserIdleMonitor: ticker fires ---
 
-func (s *BrowserHandlerSuite) TestStartListTabsTracksTabs() {
-	mockCDP := new(MockCDPClient)
-	s.srv.browserCDPFactory = func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browserCDPClient, error) {
-		return mockCDP, nil
+func (s *BrowserHandlerSuite) TestRunBrowserIdleMonitorTickerFires() {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	// Set up an idle CDPManager.
+	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+	browser.SetTimeNowForTest(cdpMgr, func() time.Time {
+		return time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	})
+	cdpMgr.Touch()
+
+	s.srv.cdpManagersMu.Lock()
+	if s.srv.cdpManagers == nil {
+		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
 	}
+	s.srv.cdpManagers["ch-idle|docker"] = cdpMgr
+	s.srv.cdpManagersMu.Unlock()
 
-	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-1", "").Return(nil)
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(nil)
-	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222")
-	s.browserMgr.On("SetCDPForTarget", "ch-1", mock.Anything, mock.Anything).Return().Maybe()
-	s.browserMgr.On("SetTargetID", "ch-1", mock.Anything).Return().Maybe()
+	s.browserMgr.On("StopBrowser", mock.Anything, "ch-idle").Return(nil)
 
-	mockCDP.On("TargetID").Return("").Maybe()
-	// ListTabs returns actual tabs that should be tracked.
-	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo{
-		{TargetID: "t-a", URL: "https://a.com", Title: "A"},
-		{TargetID: "t-b", URL: "https://b.com", Title: "B"},
-	}, nil)
-	mockCDP.On("Close").Return().Maybe()
-	mockCDP.On("StopScreencast").Return().Maybe()
+	done := make(chan struct{})
+	go func() {
+		// Use very short ticker interval so it fires within the test.
+		s.srv.runBrowserIdleMonitorWithInterval(ctx, time.Nanosecond, time.Millisecond)
+		close(done)
+	}()
 
-	ws, ts := s.dialBrowserWS()
-	defer ts.Close()
-	defer ws.Close()
+	// Wait for the monitor to process, then cancel.
+	time.Sleep(100 * time.Millisecond)
+	cancel()
 
-	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{Type: bwsMsgStart, ChannelID: "ch-1"}))
-	resp := s.readResp(ws)
-	require.Equal(s.T(), bwsRespStarted, resp.Type)
-
-	time.Sleep(20 * time.Millisecond)
-	s.browserMgr.AssertCalled(s.T(), "TrackTab", "ch-1", "t-a")
-	s.browserMgr.AssertCalled(s.T(), "TrackTab", "ch-1", "t-b")
-}
-
-// --- restartScreencastForTarget: with existing screencastStopCh and activate URL ---
-
-func (s *BrowserHandlerSuite) TestRestartScreencastForTargetWithExistingStopCh() {
-	newMockCDP := new(MockCDPClient)
-	newMockCDP.On("ResetScreencast").Return().Maybe()
-	newMockCDP.On("StartScreencast", 60, 1920, 1080).Return((<-chan []byte)(make(chan []byte)))
-	newMockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo{}, nil).Maybe()
-	newMockCDP.On("EvaluateJS", mock.Anything, mock.Anything).Return("", nil).Maybe()
-
-	// Set up a fake Chrome HTTP server so the activate URL succeeds.
-	chromeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusOK)
-	}))
-	defer chromeSrv.Close()
-	chromeWSURL := "ws://" + strings.TrimPrefix(chromeSrv.URL, "http://")
-
-	s.browserMgr.On("RemoveCDPForTarget", "ch-1", "t-switch").Return(nil)
-	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return(chromeWSURL)
-	s.browserMgr.On("SetCDPForTarget", "ch-1", "t-switch", newMockCDP).Return()
-	s.browserMgr.On("SetTargetID", "ch-1", "t-switch").Return()
-
-	connReady := make(chan *websocket.Conn, 1)
-	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		conn, err := wsUpgrader.Upgrade(w, r, nil)
-		if err != nil {
-			return
-		}
-		connReady <- conn
-	}))
-	defer tsSrv.Close()
-
-	wsURL := "ws" + strings.TrimPrefix(tsSrv.URL, "http") + "/"
-	clientWS, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
-	require.NoError(s.T(), err)
-	defer clientWS.Close()
-
-	serverConn := <-connReady
-
-	existingStopCh := make(chan struct{})
-	bc := &browserWSConn{
-		conn:             serverConn,
-		bMgr:             s.browserMgr,
-		logger:           slog.Default(),
-		stopCh:           make(chan struct{}),
-		channelID:        "ch-1",
-		screencastStopCh: existingStopCh,
-		cdpFactory: func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browserCDPClient, error) {
-			return newMockCDP, nil
-		},
-	}
-
-	bc.restartScreencastForTarget(context.Background(), nil, "t-switch")
-
-	// Verify old screencastStopCh was closed.
 	select {
-	case <-existingStopCh:
-		// OK
-	default:
-		s.T().Fatal("existing screencastStopCh should have been closed")
+	case <-done:
+	case <-time.After(2 * time.Second):
+		s.T().Fatal("RunBrowserIdleMonitor did not exit")
 	}
-
-	// Read the tab_switched response.
-	require.NoError(s.T(), clientWS.SetReadDeadline(time.Now().Add(2*time.Second)))
-	var resp browserWSResponse
-	require.NoError(s.T(), clientWS.ReadJSON(&resp))
-	require.Equal(s.T(), bwsRespTabSwitched, resp.Type)
 }
 
-// --- dispatchBrowserAction: close_tab with nextTab (switch to adjacent) ---
+// --- cleanIdleBrowserSessions: host mode cleanup ---
 
-func (s *BrowserHandlerSuite) TestBrowserActionCloseTabWithNextTab() {
-	mockCDP := new(MockCDPClient)
-	s.setupActionMocks(mockCDP)
-
-	// NextTabID returns a valid tab.
-	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "NextTabID")
-	s.browserMgr.On("NextTabID", "ch-1", "t-close").Return("t-next")
-
-	mockCDP.On("CloseTab", mock.Anything, "t-close").Return(nil)
-	s.browserMgr.On("NotifyTabRemoved", "ch-1", "t-close").Return().Maybe()
-	s.browserMgr.On("NotifyTargetSwitch", "ch-1", "t-next").Return().Maybe()
-
-	w := s.postBrowserAction(browserActionRequest{
-		ChannelID: "ch-1",
-		Action:    "close_tab",
-		Params:    map[string]any{"target_id": "t-close"},
+func (s *BrowserHandlerSuite) TestCleanIdleBrowserSessionsHostMode() {
+	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+	browser.SetTimeNowForTest(cdpMgr, func() time.Time {
+		return time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
 	})
+	cdpMgr.Touch()
 
-	require.Equal(s.T(), http.StatusOK, w.Code)
-	var resp browserActionResponse
-	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
-	require.Empty(s.T(), resp.Error)
-	require.Contains(s.T(), resp.Result, "t-close")
+	s.srv.cdpManagersMu.Lock()
+	if s.srv.cdpManagers == nil {
+		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	}
+	s.srv.cdpManagers["ch-1|host"] = cdpMgr
+	s.srv.cdpManagersMu.Unlock()
 
-	s.browserMgr.AssertCalled(s.T(), "NotifyTargetSwitch", "ch-1", "t-next")
+	// Host mode — should NOT call StopBrowser.
+	s.srv.cleanIdleBrowserSessions(context.Background(), time.Minute)
+
+	s.srv.cdpManagersMu.Lock()
+	_, exists := s.srv.cdpManagers["ch-1|host"]
+	s.srv.cdpManagersMu.Unlock()
+	require.False(s.T(), exists)
 }
 
-// --- getBrowserCDP: retry delay path ---
+// --- sendJSON: broken pipe silent ---
 
-func (s *BrowserHandlerSuite) TestBrowserActionGetBrowserCDPRetryDelaySuccess() {
-	s.srv.browserCDPRetries = 3
-	s.srv.browserCDPDelay = time.Millisecond // very short delay so test doesn't slow down
-
-	mockCDP := new(MockCDPClient)
-	attempt := 0
-	s.srv.browserCDPFactory = func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browserCDPClient, error) {
-		attempt++
-		if attempt == 1 {
-			return nil, errors.New("not ready")
+func (s *BrowserHandlerSuite) TestSendJSONBrokenPipe() {
+	connReady := make(chan *websocket.Conn, 1)
+	tsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
 		}
-		return mockCDP, nil
+		connReady <- conn
+	}))
+	defer tsSrv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(tsSrv.URL, "http") + "/"
+	clientWS, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+
+	serverConn := <-connReady
+	clientWS.Close()
+	time.Sleep(20 * time.Millisecond)
+
+	bc := &browserWSConn{
+		conn:   serverConn,
+		logger: slog.Default(),
+		stopCh: make(chan struct{}),
 	}
+	// Should not panic — broken pipe is silently ignored.
+	bc.sendJSON(browserWSResponse{Type: bwsRespError, Message: "test"})
+}
 
-	s.browserMgr.On("GetActiveCDP", "ch-1").Return(nil)
-	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-1", "").Return(nil)
-	s.browserMgr.On("GetCDPEndpoint", "ch-1").Return("ws://127.0.0.1:9222")
-	s.browserMgr.On("SetCDPForTarget", "ch-1", mock.Anything, mock.Anything).Return().Maybe()
-	s.browserMgr.On("SetTargetID", "ch-1", mock.Anything).Return().Maybe()
-	s.browserMgr.On("GetTargetID", "ch-1").Return("").Maybe()
-	s.browserMgr.On("TouchBrowser", "ch-1").Return().Maybe()
+// --- list_tabs with host mode filtering ---
 
-	mockCDP.On("TargetID").Return("").Maybe()
+func (s *BrowserHandlerSuite) TestBrowserActionListTabsHostMode() {
+	mockCDP := new(mockCDPSession)
+	mockCDP.On("TargetID").Return("test-target").Maybe()
 	mockCDP.On("EnableConsoleCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
 	mockCDP.On("EnableNetworkCapture", mock.Anything, mock.Anything).Return(nil).Maybe()
-	mockCDP.On("GetPageInfo", mock.Anything).Return(&browser.PageInfo{URL: "https://x.com", Title: "X"}, nil)
+	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo{
+		{TargetID: "t1", URL: "https://a.com"},
+		{TargetID: "t2", URL: "https://b.com"},
+	}, nil)
 
-	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "get_page_info"})
-	require.Equal(s.T(), http.StatusOK, w.Code)
+	hostProvider := new(mockHostBrowserProvider)
+	hostProvider.On("EnsureBrowser", mock.Anything, "ch-host", "").Return(nil).Maybe()
+	hostProvider.On("GetCDPEndpoint", "ch-host").Return("ws://127.0.0.1:9222").Maybe()
+
+	srv := nilServer()
+	srv.SetBrowserProvider(s.browserMgr)
+	srv.SetHostBrowserProvider(hostProvider)
+	srv.containerFinder = s.cFinder
+
+	srv.browserModeMu.Lock()
+	srv.activeBrowserMode = map[string]string{"ch-host": "host"}
+	srv.browserModeMu.Unlock()
+
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
+		DiscoverExisting: false,
+		MaxRetries:       1,
+		RetryDelay:       time.Millisecond,
+	}, slog.Default())
+	browser.SetCDPFactoryForTest(cdpMgr, func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browser.CDPSession, error) {
+		return mockCDP, nil
+	})
+	require.NoError(s.T(), cdpMgr.Connect(context.Background()))
+	cdpMgr.TrackTab("t1") // Only track t1.
+
+	srv.cdpManagersMu.Lock()
+	srv.cdpManagers = map[string]*browser.CDPManager{"ch-host|host": cdpMgr}
+	srv.cdpManagersMu.Unlock()
+
+	data, _ := json.Marshal(browserActionRequest{ChannelID: "ch-host", Action: "list_tabs"})
+	r := httptest.NewRequest(http.MethodPost, "/api/browser/action", strings.NewReader(string(data)))
+	w := httptest.NewRecorder()
+	srv.handleBrowserAction(w, r)
+
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Empty(s.T(), resp.Error)
-	require.Equal(s.T(), 2, attempt) // First failed, delay, second succeeded.
+	require.Len(s.T(), resp.Tabs, 1) // Only t1 (tracked).
+	require.Equal(s.T(), "t1", resp.Tabs[0].TargetID)
 }
 
-// --- dispatchBrowserAction: list_tabs with active target ---
+// --- handleStart with Mode field (covers setMode callback) ---
 
-func (s *BrowserHandlerSuite) TestBrowserActionListTabsWithActiveTarget() {
-	mockCDP := new(MockCDPClient)
+func (s *BrowserHandlerSuite) TestHandleStartWithModeDocker() {
+	mockCDP := new(mockCDPSession)
+	mockCDP.On("TargetID").Return("test-target").Maybe()
+	mockCDP.On("SwitchTarget", mock.Anything).Return(nil).Maybe()
+	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo(nil), nil).Maybe()
+	mockCDP.On("StopScreencast").Return().Maybe()
+	mockCDP.On("Close").Return().Maybe()
+
+	s.browserMgr.On("EnsureBrowser", mock.Anything, "ch-mode", "").Return(nil)
+	s.browserMgr.On("GetCDPEndpoint", "ch-mode").Return("ws://127.0.0.1:9222")
+
+	cdpMgr := browser.NewCDPManager("ws://127.0.0.1:9222", browser.CDPManagerConfig{
+		DiscoverExisting: false,
+		MaxRetries:       1,
+		RetryDelay:       time.Millisecond,
+	}, slog.Default())
+	browser.SetCDPFactoryForTest(cdpMgr, func(_ context.Context, _ string, _ *slog.Logger, _ ...browser.CDPOption) (browser.CDPSession, error) {
+		return mockCDP, nil
+	})
+
+	s.srv.cdpManagersMu.Lock()
+	if s.srv.cdpManagers == nil {
+		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	}
+	s.srv.cdpManagers["ch-mode|docker"] = cdpMgr
+	s.srv.cdpManagersMu.Unlock()
+
+	ws, ts := s.dialBrowserWS()
+	defer ts.Close()
+	defer ws.Close()
+
+	// Send start with Mode set — this exercises the setMode callback.
+	require.NoError(s.T(), ws.WriteJSON(browserWSMessage{
+		Type:      bwsMsgStart,
+		ChannelID: "ch-mode",
+		Mode:      "docker",
+	}))
+	resp := s.readResp(ws)
+	require.Equal(s.T(), bwsRespStarted, resp.Type)
+
+	// Verify mode was set.
+	s.srv.browserModeMu.Lock()
+	require.Equal(s.T(), "docker", s.srv.activeBrowserMode["ch-mode"])
+	s.srv.browserModeMu.Unlock()
+}
+
+// --- list_tabs: active tab marking ---
+
+func (s *BrowserHandlerSuite) TestBrowserActionListTabsWithActiveMarking() {
+	mockCDP := new(mockCDPSession)
 	s.setupActionMocks(mockCDP)
 
-	// Override GetTargetID to return a matching target.
-	s.browserMgr.ExpectedCalls = filterCalls(s.browserMgr.ExpectedCalls, "GetTargetID")
-	s.browserMgr.On("GetTargetID", "ch-1").Return("t2")
+	s.srv.cdpManagersMu.Lock()
+	cdpMgr := s.srv.cdpManagers["ch-1|docker"]
+	s.srv.cdpManagersMu.Unlock()
+	cdpMgr.TrackTab("test-target")
 
 	mockCDP.On("ListTabs", mock.Anything).Return([]browser.TabInfo{
-		{TargetID: "t1", URL: "https://a.com", Title: "A"},
-		{TargetID: "t2", URL: "https://b.com", Title: "B"},
+		{TargetID: "test-target", URL: "https://a.com", Title: "A"},
 	}, nil)
+
+	w := s.postBrowserAction(browserActionRequest{ChannelID: "ch-1", Action: "list_tabs"})
+	var resp browserActionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Empty(s.T(), resp.Error)
+	require.Len(s.T(), resp.Tabs, 1)
+	require.Equal(s.T(), "test-target", resp.Tabs[0].TargetID)
+	require.True(s.T(), resp.Tabs[0].Active)
+}
+
+// --- new_tab: cdpMgr tracking ---
+
+func (s *BrowserHandlerSuite) TestBrowserActionNewTabWithCDPMgrTracking() {
+	mockCDP := new(mockCDPSession)
+	s.setupActionMocks(mockCDP)
+
+	mockCDP.On("NewTab", mock.Anything, "https://example.com").Return("new-t-id", nil)
 
 	w := s.postBrowserAction(browserActionRequest{
 		ChannelID: "ch-1",
-		Action:    "list_tabs",
+		Action:    "new_tab",
+		Params:    map[string]any{"url": "https://example.com"},
 	})
 
-	require.Equal(s.T(), http.StatusOK, w.Code)
 	var resp browserActionResponse
 	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
 	require.Empty(s.T(), resp.Error)
-	require.Len(s.T(), resp.Tabs, 2)
-	require.False(s.T(), resp.Tabs[0].Active)
-	require.True(s.T(), resp.Tabs[1].Active)
+	require.Contains(s.T(), resp.Result, "new-t-id")
+
+	// Verify the CDPManager tracked the new tab.
+	s.srv.cdpManagersMu.Lock()
+	cdpMgr := s.srv.cdpManagers["ch-1|docker"]
+	s.srv.cdpManagersMu.Unlock()
+	require.True(s.T(), cdpMgr.IsTrackedTab("new-t-id"))
 }

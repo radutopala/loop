@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"sync"
-	"time"
 
 	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/osutil"
@@ -47,35 +46,37 @@ type serverSystem interface {
 
 // Server exposes a lightweight HTTP API for task CRUD operations.
 type Server struct {
-	scheduler          scheduler.Scheduler
-	channels           ChannelEnsurer
-	threads            ThreadEnsurer
-	store              ChannelLister
-	messages           MessageSender
-	memoryIndexer      MemoryIndexer
-	termManager        TerminalManager
-	hostTermManager    TerminalManager
-	containerFinder    ContainerFinder
-	containerStopper   ContainerStopper
-	browserManager     BrowserManager
-	browserCDPFactory  func(ctx context.Context, wsURL string, logger *slog.Logger, opts ...browser.CDPOption) (browserCDPClient, error)
-	browserCDPRetries  int
-	browserCDPDelay    time.Duration
-	browserCaptures    map[string]*browserCaptureState // channelID -> state
-	browserCapturesMu  sync.Mutex
-	cmdBuilder         InteractiveCmdBuilder
-	runningChLister    RunningChannelLister
-	activeChatLister   ActiveChatLister
-	msgHandler         IncomingMessageHandler
-	interactionHandler InteractionHandler
-	eventsHub          *EventsHub
-	loopDir            string
-	screenshotDir      string // if set, write screenshots to this dir instead of base64
-	logger             *slog.Logger
-	server             *http.Server
-	listener           net.Listener
-	stopErr            error // if set, Stop returns this error (for testing)
-	sys                serverSystem
+	scheduler             scheduler.Scheduler
+	channels              ChannelEnsurer
+	threads               ThreadEnsurer
+	store                 ChannelLister
+	messages              MessageSender
+	memoryIndexer         MemoryIndexer
+	termManager           TerminalManager
+	hostTermManager       TerminalManager
+	containerFinder       ContainerFinder
+	containerStopper      ContainerStopper
+	dockerBrowserProvider BrowserProvider
+	hostBrowserProvider   BrowserProvider                // for host Chrome mode
+	activeBrowserMode     map[string]string              // channelID -> "docker"|"host"; nil defaults to docker
+	browserModeMu         sync.Mutex                     // protects activeBrowserMode
+	cdpManagers           map[string]*browser.CDPManager // "channelID|mode" -> CDPManager
+	cdpManagersMu         sync.Mutex
+	browserCaptures       map[string]*browser.CaptureState // channelID -> state
+	browserCapturesMu     sync.Mutex
+	cmdBuilder            InteractiveCmdBuilder
+	runningChLister       RunningChannelLister
+	activeChatLister      ActiveChatLister
+	msgHandler            IncomingMessageHandler
+	interactionHandler    InteractionHandler
+	eventsHub             *EventsHub
+	loopDir               string
+	screenshotDir         string // if set, write screenshots to this dir instead of base64
+	logger                *slog.Logger
+	server                *http.Server
+	listener              net.Listener
+	stopErr               error // if set, Stop returns this error (for testing)
+	sys                   serverSystem
 }
 
 // SetEventsHub configures the events hub for the /api/ws endpoint.
@@ -175,6 +176,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/worktrees", s.handleCreateWorktree)
 	mux.HandleFunc("POST /api/worktrees/import", s.handleImportWorktree)
 	mux.HandleFunc("POST /api/browser/action", s.handleBrowserAction)
+	mux.HandleFunc("POST /api/browser/mode", s.handleBrowserMode)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
 	mux.HandleFunc("GET /api/ws/browser", s.handleBrowserWS)
