@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 )
 
 // RealSystem delegates to real OS calls. Consumer packages define their own
@@ -37,4 +38,11 @@ func (RealSystem) Chmod(name string, mode os.FileMode) error { return os.Chmod(n
 func (RealSystem) Rename(oldpath, newpath string) error      { return os.Rename(oldpath, newpath) }
 func (RealSystem) CreateTemp(dir, pattern string) (*os.File, error) {
 	return os.CreateTemp(dir, pattern)
+}
+
+// EncodeClaudeProjectPath encodes a directory path the same way Claude Code does:
+// replace "/" and "." with "-".
+func EncodeClaudeProjectPath(dirPath string) string {
+	r := strings.NewReplacer("/", "-", ".", "-")
+	return r.Replace(dirPath)
 }

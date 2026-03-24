@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/testutil"
 )
 
@@ -427,10 +428,10 @@ func (s *ServerSuite) TestCopySessionFile_Errors() {
 }
 
 func (s *ServerSuite) TestEncodeClaudeProjectPath() {
-	require.Equal(s.T(), "-Users-me-project", encodeClaudeProjectPath("/Users/me/project"))
-	require.Equal(s.T(), "-Users-me--worktrees-wt1", encodeClaudeProjectPath("/Users/me/.worktrees/wt1"))
-	require.Equal(s.T(), "-Users-me--claude", encodeClaudeProjectPath("/Users/me/.claude"))
-	require.Equal(s.T(), "", encodeClaudeProjectPath(""))
+	require.Equal(s.T(), "-Users-me-project", osutil.EncodeClaudeProjectPath("/Users/me/project"))
+	require.Equal(s.T(), "-Users-me--worktrees-wt1", osutil.EncodeClaudeProjectPath("/Users/me/.worktrees/wt1"))
+	require.Equal(s.T(), "-Users-me--claude", osutil.EncodeClaudeProjectPath("/Users/me/.claude"))
+	require.Equal(s.T(), "", osutil.EncodeClaudeProjectPath(""))
 }
 
 func (s *ServerSuite) TestCreateWorktree_MissingChannelID() {

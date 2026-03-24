@@ -8,6 +8,7 @@ import (
 	"regexp"
 	"strings"
 
+	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/randutil"
 )
 
@@ -468,13 +469,6 @@ func (s *Server) handleImportWorktree(w http.ResponseWriter, r *http.Request) {
 
 // ── Session Copy ──
 
-// encodeClaudeProjectPath encodes a directory path the same way Claude Code does:
-// replace "/" and "." with "-".
-func encodeClaudeProjectPath(dirPath string) string {
-	r := strings.NewReplacer("/", "-", ".", "-")
-	return r.Replace(dirPath)
-}
-
 // copySessionFile copies a Claude session file from the parent project dir
 // to the worktree project dir so that --resume --fork-session can find it.
 func (s *Server) copySessionFile(parentDirPath, worktreeDirPath, sessionID string) error {
@@ -482,9 +476,9 @@ func (s *Server) copySessionFile(parentDirPath, worktreeDirPath, sessionID strin
 	if err != nil {
 		return fmt.Errorf("getting home dir: %w", err)
 	}
-	srcDir := filepath.Join(home, ".claude", "projects", encodeClaudeProjectPath(parentDirPath))
+	srcDir := filepath.Join(home, ".claude", "projects", osutil.EncodeClaudeProjectPath(parentDirPath))
 	src := filepath.Join(srcDir, sessionID+".jsonl")
-	dstDir := filepath.Join(home, ".claude", "projects", encodeClaudeProjectPath(worktreeDirPath))
+	dstDir := filepath.Join(home, ".claude", "projects", osutil.EncodeClaudeProjectPath(worktreeDirPath))
 	dst := filepath.Join(dstDir, sessionID+".jsonl")
 
 	data, err := s.sys.ReadFile(src)

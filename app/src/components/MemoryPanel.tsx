@@ -431,68 +431,36 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
     document.addEventListener("mouseup", onMouseUp);
   }, [treeWidth]);
 
-  // Build virtual tree: two roots — project memory and auto-memory (Claude Code).
-  // Project files: file_path starts with dir_path. Auto-memory: everything else.
+  // Build a unified tree from all file paths, collapsing common prefixes.
   const tree = useMemo((): TreeNode[] => {
-    const projectFiles: MemoryFileInfo[] = [];
-    const autoFiles: MemoryFileInfo[] = [];
+    const root: TreeNode = { name: "", children: [], isDir: true, key: "root" };
 
     for (const f of files) {
-      if (f.file_path.startsWith(f.dir_path + "/")) {
-        projectFiles.push(f);
-      } else {
-        autoFiles.push(f);
+      const parts = f.file_path.split("/").filter(Boolean);
+      let node = root;
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i]!;
+        const isFile = i === parts.length - 1;
+        let child = node.children.find((c) => c.name === part && c.isDir === !isFile);
+        if (!child) {
+          const childKey = isFile ? `file:${f.file_path}` : `dir:/${parts.slice(0, i + 1).join("/")}`;
+          child = { name: part, children: [], isDir: !isFile, fullPath: isFile ? f.file_path : undefined, key: childKey };
+          node.children.push(child);
+        }
+        node = child;
       }
     }
 
-    const buildRoot = (label: string, key: string, baseDir: string, items: MemoryFileInfo[]): TreeNode => {
-      const root: TreeNode = { name: label, children: [], isDir: true, key };
-
-      for (const f of items) {
-        let relPath = f.file_path;
-        if (relPath.startsWith(baseDir + "/")) {
-          relPath = relPath.slice(baseDir.length + 1);
-        }
-
-        const parts = relPath.split("/");
-        let node = root;
-        for (let i = 0; i < parts.length; i++) {
-          const part = parts[i]!;
-          const isFile = i === parts.length - 1;
-          let child = node.children.find((c) => c.name === part && c.isDir === !isFile);
-          if (!child) {
-            const childKey = isFile ? `file:${f.file_path}` : `dir:${key}/${parts.slice(0, i + 1).join("/")}`;
-            child = { name: part, children: [], isDir: !isFile, fullPath: isFile ? f.file_path : undefined, key: childKey };
-            node.children.push(child);
-          }
-          node = child;
-        }
-      }
-
-      const sortChildren = (n: TreeNode) => {
-        n.children.sort((a, b) => {
-          if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
-          return a.name.localeCompare(b.name);
-        });
-        for (const c of n.children) if (c.isDir) sortChildren(c);
-      };
-      sortChildren(root);
-      return root;
+    const sortChildren = (n: TreeNode) => {
+      n.children.sort((a, b) => {
+        if (a.isDir !== b.isDir) return a.isDir ? -1 : 1;
+        return a.name.localeCompare(b.name);
+      });
+      for (const c of n.children) if (c.isDir) sortChildren(c);
     };
+    sortChildren(root);
 
-    const roots: TreeNode[] = [];
-    if (projectFiles.length > 0) {
-      const dp = projectFiles[0]!.dir_path;
-      const label = dp.split("/").pop() || dp;
-      roots.push(buildRoot(label, "root:project", dp, projectFiles));
-    }
-    if (autoFiles.length > 0) {
-      // Find the common base dir for auto-memory files (the ~/.claude/projects/<encoded>/memory dir).
-      const commonBase = autoFiles[0]!.file_path.split("/").slice(0, -1).join("/");
-      roots.push(buildRoot("auto-memory", "root:auto", commonBase, autoFiles));
-    }
-
-    return roots;
+    return root.children;
   }, [files]);
 
   // Auto-expand all dirs on first load.

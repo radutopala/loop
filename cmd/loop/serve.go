@@ -26,6 +26,7 @@ import (
 	"github.com/radutopala/loop/internal/logging"
 	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/orchestrator"
+	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/terminal"
 	"github.com/radutopala/loop/internal/types"
@@ -294,7 +295,7 @@ func (a *app) memoryDir(dirPath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("getting home directory: %w", err)
 	}
-	encoded := strings.ReplaceAll(dirPath, "/", "-")
+	encoded := osutil.EncodeClaudeProjectPath(dirPath)
 	return filepath.Join(home, ".claude", "projects", encoded, "memory"), nil
 }
 

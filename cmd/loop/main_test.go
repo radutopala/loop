@@ -759,6 +759,15 @@ func (s *MainSuite) TestMemoryDir() {
 	require.Equal(s.T(), "/home/testuser/.claude/projects/-Users-dev-loop/memory", dir)
 }
 
+func (s *MainSuite) TestMemoryDirDotPaths() {
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return("/home/testuser", nil)
+	dir, err := s.app.memoryDir("/Users/me/.loop/work")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "/home/testuser/.claude/projects/-Users-me--loop-work/memory", dir)
+}
+
 func (s *MainSuite) TestMemoryDirHomeDirError() {
 	sys := newPassthroughMock()
 	s.app.sys = sys
