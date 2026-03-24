@@ -4,6 +4,7 @@ export interface ColorPalette {
   bg: string;
   surface: string;
   sidebar: string;
+  sidebarNav: string;
   border: string;
   selectedBg: string;
   hoverBg: string;
@@ -58,6 +59,7 @@ export const darkColors: ColorPalette = {
   bg: "#212121",
   surface: "#2a2a2a",
   sidebar: "#171717",
+  sidebarNav: "#171717",
   border: "#333333",
   selectedBg: "#333333",
   hoverBg: "#2a2a2a",
@@ -103,6 +105,7 @@ export const lightColors: ColorPalette = {
   bg: "#ffffff",
   surface: "#f5f5f5",
   sidebar: "#f0f0f0",
+  sidebarNav: "#f0f0f0",
   border: "#e0e0e0",
   selectedBg: "#e8e8e8",
   hoverBg: "#f5f5f5",
@@ -144,10 +147,58 @@ export const lightColors: ColorPalette = {
   isDark: false,
 };
 
+// Claude for Desktop inspired warm palette
+export const claudeColors: ColorPalette = {
+  bg: "#FAF6F1",
+  surface: "#F0EBE4",
+  sidebar: "#EDE7DF",
+  sidebarNav: "#E5DED5",
+  border: "#D9D0C7",
+  selectedBg: "#E4DDD4",
+  hoverBg: "#F0EBE4",
+  inputBorder: "#C5BAB0",
+  text: "#2D2B28",
+  textLight: "#1A1816",
+  textMuted: "#6B6560",
+  textDim: "#8C8580",
+  textDisabled: "#AEA8A2",
+  cursor: "#2D2B28",
+  active: "#D97757",
+  error: "#C4362C",
+  warning: "#C27818",
+  white: "#fff",
+  userBubble: "#E8E1D8",
+  codeBg: "rgba(0,0,0,0.04)",
+  codeBlockBg: "rgba(0,0,0,0.03)",
+  scrollThumb: "rgba(0,0,0,0.12)",
+  scrollThumbHover: "rgba(0,0,0,0.22)",
+  overlay: "rgba(0, 0, 0, 0.25)",
+  shadow: "rgba(0, 0, 0, 0.12)",
+  errorBannerBg: "#FDF0EF",
+  errorBannerText: "#A52E25",
+  dangerText: "#C4362C",
+  dangerBg: "rgba(196, 54, 44, 0.1)",
+  dangerHoverBg: "#C4362C",
+  pillActiveBg: "#D97757",
+  pillActiveText: "#fff",
+  hoverAlpha: "rgba(0,0,0,0.05)",
+  panelLabelBg: "rgba(0,0,0,0.03)",
+  dirSelectedBg: "rgba(217, 119, 87, 0.12)",
+  diffAddText: "#1A6B3C",
+  diffDelText: "#A52E25",
+  diffAddBg: "rgba(34, 197, 94, 0.08)",
+  diffAddNumBg: "rgba(34, 197, 94, 0.14)",
+  diffDelBg: "rgba(196, 54, 44, 0.08)",
+  diffDelNumBg: "rgba(196, 54, 44, 0.14)",
+  diffHunkBg: "rgba(0, 0, 0, 0.03)",
+  isDark: false,
+};
+
 // Built-in theme registry — extensible at runtime with custom themes
 export const builtinThemes: Record<string, ColorPalette> = {
   dark: darkColors,
   light: lightColors,
+  claude: claudeColors,
 };
 
 // Backward compat: keep `colors` as default export for gradual migration

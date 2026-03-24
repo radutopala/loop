@@ -363,7 +363,7 @@ export function Sidebar({
         width,
         minWidth: MIN_WIDTH,
         flexShrink: 0,
-        backgroundColor: colors.sidebar,
+        backgroundColor: colors.sidebarNav,
         display: "flex",
         flexDirection: "column",
         overflow: "auto",

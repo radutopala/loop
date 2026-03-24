@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppSettings, ConfigInfo, DaemonInfo } from "../types";
-import { fonts } from "../theme";
+import { fonts, builtinThemes } from "../theme";
 import type { ColorPalette } from "../theme";
 import { useTheme } from "../ThemeContext";
 
@@ -342,50 +342,61 @@ export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, o
             {/* Appearance section */}
             <SectionHeader>Appearance</SectionHeader>
 
-            {availableThemes.length <= 2 ? (
-              <ToggleRow
-                label="Light theme"
-                description="Switch to a light color scheme."
-                checked={themeName === "light"}
-                onChange={() => {
-                  const next = themeName === "light" ? "dark" : "light";
-                  const updated = { ...settings, theme: next };
-                  setSettings(updated);
-                  setThemeName(next);
-                  window.loopAPI?.saveSettings?.(updated);
-                }}
-              />
-            ) : (
-              <div style={{
-                padding: "10px 12px",
-                backgroundColor: colors.bg,
-                borderRadius: 8,
-              }}>
-                <div style={{ fontSize: 13, color: colors.text, marginBottom: 6 }}>Theme</div>
-                <select
-                  value={themeName}
-                  onChange={(e) => {
-                    const next = e.target.value;
-                    const updated = { ...settings, theme: next };
-                    setSettings(updated);
-                    setThemeName(next);
-                    window.loopAPI?.saveSettings?.(updated);
-                  }}
-                  style={{
-                    background: colors.surface,
-                    border: `1px solid ${colors.border}`,
-                    borderRadius: 4,
-                    color: colors.text,
-                    fontSize: 12,
-                    padding: "4px 8px",
-                  }}
-                >
-                  {availableThemes.map((t) => (
-                    <option key={t} value={t}>{t.charAt(0).toUpperCase() + t.slice(1)}</option>
-                  ))}
-                </select>
+            <div style={{
+              padding: "10px 12px",
+              backgroundColor: colors.bg,
+              borderRadius: 8,
+            }}>
+              <div style={{ fontSize: 13, color: colors.text, marginBottom: 8 }}>Theme</div>
+              <div style={{ display: "flex", gap: 8 }}>
+                {availableThemes.map((t) => {
+                  const palette = builtinThemes[t] ?? colors;
+                  const isSelected = themeName === t;
+                  return (
+                    <button
+                      key={t}
+                      onClick={() => {
+                        const updated = { ...settings, theme: t };
+                        setSettings(updated);
+                        setThemeName(t);
+                        window.loopAPI?.saveSettings?.(updated);
+                      }}
+                      style={{
+                        flex: 1,
+                        border: `2px solid ${isSelected ? colors.active : colors.border}`,
+                        borderRadius: 8,
+                        padding: 0,
+                        cursor: "pointer",
+                        background: "none",
+                        overflow: "hidden",
+                      }}
+                    >
+                      {/* Mini preview */}
+                      <div style={{
+                        display: "flex",
+                        height: 40,
+                      }}>
+                        <div style={{ width: "30%", backgroundColor: palette.sidebarNav }} />
+                        <div style={{ flex: 1, backgroundColor: palette.bg, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 3, padding: 4 }}>
+                          <div style={{ width: "60%", height: 3, borderRadius: 2, backgroundColor: palette.textMuted }} />
+                          <div style={{ width: "40%", height: 3, borderRadius: 2, backgroundColor: palette.active }} />
+                          <div style={{ width: "50%", height: 3, borderRadius: 2, backgroundColor: palette.textMuted }} />
+                        </div>
+                      </div>
+                      <div style={{
+                        fontSize: 11,
+                        color: colors.text,
+                        padding: "4px 0",
+                        backgroundColor: colors.surface,
+                        borderTop: `1px solid ${isSelected ? colors.active : colors.border}`,
+                      }}>
+                        {t.charAt(0).toUpperCase() + t.slice(1)}
+                      </div>
+                    </button>
+                  );
+                })}
               </div>
-            )}
+            </div>
 
             {/* Global config */}
             {globalConfig && (

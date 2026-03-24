@@ -20,8 +20,8 @@
       (function() {
         var theme = 'dark';
         try { theme = localStorage.getItem('loop-theme') || 'dark'; } catch(e) {}
-        var isDark = theme !== 'light';
-        var bg = isDark ? '#212121' : '#ffffff';
+        var isDark = theme === 'dark';
+        var bg = theme === 'claude' ? '#FAF6F1' : (isDark ? '#212121' : '#ffffff');
         document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
         document.documentElement.style.backgroundColor = bg;
         // Update meta theme-color to match

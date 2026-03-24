@@ -100,6 +100,7 @@ interface Settings {
   stopDaemonOnQuit: boolean;
   autoSaveOnBlur: boolean;
   previewTabs: boolean;
+  theme?: string;
 }
 
 const defaultSettings: Settings = {
