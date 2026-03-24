@@ -45,11 +45,23 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		e.logger.Error("getting channel for task", "error", err, "channel_id", task.ChannelID)
 	}
 
-	sessionID := ""
 	dirPath := ""
 	if channel != nil {
-		sessionID = channel.SessionID
 		dirPath = channel.DirPath
+	}
+
+	// Determine which session to resume:
+	// - Recurring task with existing thread → resume the thread's own session
+	// - First run (no thread yet) → fork the parent channel's session for initial context
+	sessionID := ""
+	forkSession := false
+	if task.ThreadID != "" {
+		if threadCh, err := e.store.GetChannel(ctx, task.ThreadID); err == nil && threadCh != nil {
+			sessionID = threadCh.SessionID
+		}
+	} else if channel != nil && channel.SessionID != "" {
+		sessionID = channel.SessionID
+		forkSession = true
 	}
 
 	systemPrompt := "IMPORTANT: Do NOT use the send_message, create_thread, or create_channel MCP tools. Your text responses are automatically delivered to the chat. Just respond with text directly."
@@ -58,7 +70,8 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	}
 
 	req := &agent.AgentRequest{
-		SessionID: sessionID,
+		SessionID:   sessionID,
+		ForkSession: forkSession,
 		Messages: []agent.AgentMessage{
 			{Role: "user", Content: task.Prompt},
 		},
@@ -71,15 +84,15 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	var threadID string
 	var threadName string
 	var threadFailed bool
-	// Reuse existing thread for recurring local-platform tasks.
+	// Reuse existing thread for recurring tasks (all platforms).
 	// Re-fetch from DB in case a concurrent execution persisted it since this task was loaded.
 	isLocal := channel != nil && channel.Platform == types.PlatformLocal
-	if task.Type != db.TaskTypeOnce && isLocal {
+	if task.Type != db.TaskTypeOnce {
 		if fresh, err := e.store.GetScheduledTask(ctx, task.ID); err == nil && fresh != nil && fresh.ThreadID != "" {
 			task.ThreadID = fresh.ThreadID
 		}
 	}
-	if task.ThreadID != "" && task.Type != db.TaskTypeOnce && isLocal {
+	if task.ThreadID != "" && task.Type != db.TaskTypeOnce {
 		threadID = task.ThreadID
 	}
 	if e.streamingEnabled {
@@ -121,8 +134,8 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 					})
 					e.invitePermissionUsers(ctx, threadID, channel.Permissions)
 				}
-				// Persist thread ID so recurring local tasks reuse the same thread.
-				if task.Type != db.TaskTypeOnce && isLocal {
+				// Persist thread ID so recurring tasks reuse the same thread.
+				if task.Type != db.TaskTypeOnce {
 					task.ThreadID = threadID
 					_ = e.store.UpdateScheduledTaskThreadID(ctx, task.ID, threadID)
 				}
@@ -239,8 +252,14 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		return "", fmt.Errorf("agent error: %s", resp.Error)
 	}
 
-	if err := e.store.UpdateSessionID(ctx, task.ChannelID, resp.SessionID); err != nil {
-		e.logger.Error("updating session data after task", "error", err, "channel_id", task.ChannelID)
+	// Update session on the thread (not the parent channel) so subsequent
+	// recurring runs resume the thread's own conversation.
+	sessionTarget := threadID
+	if sessionTarget == "" {
+		sessionTarget = task.ChannelID
+	}
+	if err := e.store.UpdateSessionID(ctx, sessionTarget, resp.SessionID); err != nil {
+		e.logger.Error("updating session data after task", "error", err, "channel_id", sessionTarget)
 	}
 
 	// Detect and strip [EPHEMERAL] tag (may appear at start or end of response)

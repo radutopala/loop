@@ -78,9 +78,11 @@ func (s *TaskExecutorSuite) TestHappyPathWithSession() {
 		SessionID: "existing-session",
 		DirPath:   "/home/user/project",
 	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(1)).Return(&db.ScheduledTask{ID: 1, Type: db.TaskTypeCron}, nil)
 	s.allowBotInserts()
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.SessionID == "existing-session" &&
+			req.ForkSession == true &&
 			req.ChannelID == "ch1" &&
 			req.DirPath == "/home/user/project" &&
 			len(req.Messages) == 1 &&
@@ -114,8 +116,9 @@ func (s *TaskExecutorSuite) TestHappyPathWithoutSession() {
 	}
 
 	s.store.On("GetChannel", s.ctx, "ch2").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(2)).Return(&db.ScheduledTask{ID: 2, Type: db.TaskTypeInterval}, nil)
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		return req.SessionID == "" && req.ChannelID == "ch2" && req.DirPath == ""
+		return req.SessionID == "" && req.ForkSession == false && req.ChannelID == "ch2" && req.DirPath == ""
 	})).Return(&agent.AgentResponse{
 		Response:  "hi!",
 		SessionID: "fresh-session",
@@ -162,6 +165,7 @@ func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsStatus() {
 
 	task := &db.ScheduledTask{ID: 50, ChannelID: "ch-err", Prompt: "fail", Type: db.TaskTypeCron, Schedule: "0 * * * *"}
 	s.store.On("GetChannel", s.ctx, "ch-err").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(50)).Return(&db.ScheduledTask{ID: 50, Type: db.TaskTypeCron}, nil)
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("runner broke"))
 
 	_, err := s.executor.ExecuteTask(s.ctx, task)
@@ -180,6 +184,7 @@ func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsToThreadAndParent() {
 	}
 	localCh := &db.Channel{ChannelID: "ch-parent", Platform: types.PlatformLocal}
 	s.store.On("GetChannel", mock.Anything, "ch-parent").Return(localCh, nil)
+	s.store.On("GetChannel", mock.Anything, "existing-thread").Return(&db.Channel{ChannelID: "existing-thread", ParentID: "ch-parent", Platform: types.PlatformLocal, SessionID: "thread-sess"}, nil)
 	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 	// Running broadcast to both thread and parent
 	eb.On("BroadcastAgentStatus", "existing-thread", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "running" })).Once()
@@ -206,6 +211,7 @@ func (s *TaskExecutorSuite) TestAgentResponseErrorBroadcastsStatus() {
 	}
 	localCh := &db.Channel{ChannelID: "ch-err2", Platform: types.PlatformLocal}
 	s.store.On("GetChannel", mock.Anything, "ch-err2").Return(localCh, nil)
+	s.store.On("GetChannel", mock.Anything, "err-thread").Return(&db.Channel{ChannelID: "err-thread", ParentID: "ch-err2", Platform: types.PlatformLocal, SessionID: "err-thread-sess"}, nil)
 	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 	// Running to both
 	eb.On("BroadcastAgentStatus", "err-thread", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "running" })).Once()
@@ -231,6 +237,7 @@ func (s *TaskExecutorSuite) TestAgentResponseError() {
 	}
 
 	s.store.On("GetChannel", s.ctx, "ch4").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(4)).Return(&db.ScheduledTask{ID: 4, Type: db.TaskTypeCron}, nil)
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 		Error: "agent broke",
 	}, nil)
@@ -281,6 +288,7 @@ func (s *TaskExecutorSuite) TestSoftErrorsStillSucceed() {
 		s.Run(tc.name, func() {
 			s.SetupTest()
 			tc.setupMocks()
+			s.store.On("GetScheduledTask", s.ctx, int64(5)).Return(&db.ScheduledTask{ID: 5, Type: db.TaskTypeCron}, nil)
 			s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 				Response: "ok", SessionID: "sess",
 			}, nil)
@@ -311,9 +319,11 @@ func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
 	}
 
 	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(9)).Return(&db.ScheduledTask{ID: 9, Type: db.TaskTypeCron}, nil)
 
 	// First OnTurn creates a thread with the first turn text
 	s.bot.On("CreateSimpleThread", s.ctx, "ch9", "⏱ task #9 (`0 * * * *`) stream task", "⏱ task #9 (`0 * * * *`) Intermediate").Return("thread-1", nil).Once()
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(9), "thread-1").Return(nil)
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -329,7 +339,7 @@ func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
 		SessionID: "sess-stream",
 	}, nil)
 
-	s.store.On("UpdateSessionID", s.ctx, "ch9", "sess-stream").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-1", "sess-stream").Return(nil)
 
 	// Second OnTurn sends to thread
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
@@ -375,7 +385,7 @@ func (s *TaskExecutorSuite) TestStreamingLocalPlatformPersistsThreadID() {
 		req.OnTurn("Result")
 		return true
 	})).Return(&agent.AgentResponse{Response: "Result", SessionID: "s1"}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch-local", "s1").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "local-thread-1", "s1").Return(nil)
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
@@ -392,12 +402,12 @@ func (s *TaskExecutorSuite) TestStreamingLocalPlatformReusesThreadID() {
 		Prompt:    "recurring task",
 		Type:      db.TaskTypeInterval,
 		Schedule:  "5m",
-		// ThreadID intentionally empty — re-fetch from DB finds it.
+		ThreadID:  "existing-thread",
 	}
 
 	localChannel := &db.Channel{ChannelID: "ch-local2", Platform: types.PlatformLocal, DirPath: "/work"}
 	s.store.On("GetChannel", mock.Anything, "ch-local2").Return(localChannel, nil)
-	threadChannel := &db.Channel{ChannelID: "existing-thread", ParentID: "ch-local2", Platform: types.PlatformLocal}
+	threadChannel := &db.Channel{ChannelID: "existing-thread", ParentID: "ch-local2", Platform: types.PlatformLocal, SessionID: "thread-session"}
 	s.store.On("GetChannel", mock.Anything, "existing-thread").Return(threadChannel, nil)
 	// Re-fetch finds the thread_id persisted by a prior execution.
 	s.store.On("GetScheduledTask", s.ctx, int64(31)).Return(&db.ScheduledTask{ID: 31, ThreadID: "existing-thread", Type: db.TaskTypeInterval}, nil)
@@ -408,10 +418,13 @@ func (s *TaskExecutorSuite) TestStreamingLocalPlatformReusesThreadID() {
 		if req.OnTurn == nil {
 			return false
 		}
+		if req.SessionID != "thread-session" || req.ForkSession != false {
+			return false
+		}
 		req.OnTurn("Update")
 		return true
 	})).Return(&agent.AgentResponse{Response: "Update", SessionID: "s2"}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch-local2", "s2").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "existing-thread", "s2").Return(nil)
 
 	// Second OnTurn goes to the existing thread
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
@@ -424,7 +437,7 @@ func (s *TaskExecutorSuite) TestStreamingLocalPlatformReusesThreadID() {
 	s.bot.AssertNotCalled(s.T(), "CreateSimpleThread", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
-func (s *TaskExecutorSuite) TestStreamingDiscordDoesNotReuseThread() {
+func (s *TaskExecutorSuite) TestStreamingDiscordReusesThread() {
 	s.executor.streamingEnabled = true
 
 	task := &db.ScheduledTask{
@@ -438,33 +451,38 @@ func (s *TaskExecutorSuite) TestStreamingDiscordDoesNotReuseThread() {
 
 	discordChannel := &db.Channel{ChannelID: "ch-discord", Platform: types.PlatformDiscord}
 	s.store.On("GetChannel", mock.Anything, "ch-discord").Return(discordChannel, nil)
+	oldThreadChannel := &db.Channel{ChannelID: "old-discord-thread", ParentID: "ch-discord", Platform: types.PlatformDiscord, SessionID: "old-thread-session"}
+	s.store.On("GetChannel", mock.Anything, "old-discord-thread").Return(oldThreadChannel, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(32)).Return(&db.ScheduledTask{ID: 32, ThreadID: "old-discord-thread", Type: db.TaskTypeCron}, nil)
+	s.allowBotInserts()
 
-	// Should create a NEW thread despite having ThreadID, because it's Discord
-	s.bot.On("CreateSimpleThread", s.ctx, "ch-discord", mock.Anything, mock.Anything).Return("new-discord-thread", nil).Once()
-	s.store.On("UpsertChannel", mock.Anything, mock.MatchedBy(func(ch *db.Channel) bool {
-		return ch.ChannelID == "new-discord-thread"
-	})).Return(nil)
-
+	// Should reuse existing thread — no CreateSimpleThread call
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
+			return false
+		}
+		if req.SessionID != "old-thread-session" || req.ForkSession != false {
 			return false
 		}
 		req.OnTurn("Discord result")
 		return true
 	})).Return(&agent.AgentResponse{Response: "Discord result", SessionID: "s3"}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch-discord", "s3").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "old-discord-thread", "s3").Return(nil)
+
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
+		return msg.ChannelID == "old-discord-thread" && msg.Content == "Discord result"
+	})).Return(nil)
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Discord result", resp)
-	s.bot.AssertCalled(s.T(), "CreateSimpleThread", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
-	// Should NOT persist thread_id for Discord
-	s.store.AssertNotCalled(s.T(), "UpdateScheduledTaskThreadID", mock.Anything, mock.Anything, mock.Anything)
+	s.bot.AssertNotCalled(s.T(), "CreateSimpleThread", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *TaskExecutorSuite) TestStreamingDisabledNoOnTurn() {
 	// streamingEnabled is false by default
 	s.store.On("GetChannel", s.ctx, "ch10").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{ID: 10, Type: db.TaskTypeCron}, nil)
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.OnTurn == nil
 	})).Return(&agent.AgentResponse{Response: "Result", SessionID: "sess-nostream"}, nil)
@@ -496,9 +514,11 @@ func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
 	}
 
 	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(11)).Return(&db.ScheduledTask{ID: 11, Type: db.TaskTypeInterval}, nil)
 
 	// First OnTurn creates thread
 	s.bot.On("CreateSimpleThread", s.ctx, "ch11", "⏱ task #11 (`5m`) stream diff", "⏱ task #11 (`5m`) Intermediate").Return("thread-2", nil).Once()
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(11), "thread-2").Return(nil)
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -511,7 +531,7 @@ func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
 		SessionID: "sess-diff",
 	}, nil)
 
-	s.store.On("UpdateSessionID", s.ctx, "ch11", "sess-diff").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-2", "sess-diff").Return(nil)
 
 	// Final response (different from last streamed) goes to thread
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
@@ -540,6 +560,7 @@ func (s *TaskExecutorSuite) TestStreamingThreadCreationFailsFallsBack() {
 	}
 
 	s.store.On("GetChannel", s.ctx, "ch12").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(12)).Return(&db.ScheduledTask{ID: 12, Type: db.TaskTypeCron}, nil)
 
 	// Thread creation fails
 	s.bot.On("CreateSimpleThread", s.ctx, "ch12", "⏱ task #12 (`0 * * * *`) fallback task", "⏱ task #12 (`0 * * * *`) Turn 1").Return("", errors.New("thread error")).Once()
@@ -588,6 +609,7 @@ func (s *TaskExecutorSuite) TestStreamingSendMessageErrorIsLogged() {
 	}
 
 	s.store.On("GetChannel", s.ctx, "ch14").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(14)).Return(&db.ScheduledTask{ID: 14, Type: db.TaskTypeCron}, nil)
 
 	// Thread creation fails → first turn falls back to channel, second turn hits else branch
 	s.bot.On("CreateSimpleThread", s.ctx, "ch14", mock.Anything, mock.Anything).Return("", errors.New("thread error")).Once()
@@ -635,9 +657,11 @@ func (s *TaskExecutorSuite) TestStreamingSingleTurnNoFinalDuplicate() {
 	}
 
 	s.store.On("GetChannel", s.ctx, "ch13").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(13)).Return(&db.ScheduledTask{ID: 13, Type: db.TaskTypeCron}, nil)
 
 	// Thread created for single turn
 	s.bot.On("CreateSimpleThread", s.ctx, "ch13", "⏱ task #13 (`0 * * * *`) single turn task", "⏱ task #13 (`0 * * * *`) Only turn").Return("thread-3", nil).Once()
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(13), "thread-3").Return(nil)
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -650,7 +674,7 @@ func (s *TaskExecutorSuite) TestStreamingSingleTurnNoFinalDuplicate() {
 		SessionID: "sess-single",
 	}, nil)
 
-	s.store.On("UpdateSessionID", s.ctx, "ch13", "sess-single").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-3", "sess-single").Return(nil)
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
@@ -676,6 +700,7 @@ func (s *TaskExecutorSuite) TestEphemeralInstructionInSystemPrompt() {
 			s.SetupTest()
 			chID := "ch-prompt"
 			s.store.On("GetChannel", s.ctx, chID).Return(nil, nil)
+			s.store.On("GetScheduledTask", s.ctx, int64(20)).Return(&db.ScheduledTask{ID: 20, Type: db.TaskTypeCron}, nil)
 			s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 				return strings.Contains(req.SystemPrompt, "[EPHEMERAL]") == tc.wantMarker
 			})).Return(&agent.AgentResponse{Response: "ok", SessionID: "sess"}, nil)
@@ -708,8 +733,10 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 	}
 
 	s.store.On("GetChannel", s.ctx, "ch15").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(15)).Return(&db.ScheduledTask{ID: 15, Type: db.TaskTypeCron}, nil)
 	s.allowBotInserts()
 	s.bot.On("CreateSimpleThread", s.ctx, "ch15", mock.Anything, mock.Anything).Return("thread-auto-del", nil).Once()
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(15), "thread-auto-del").Return(nil)
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -722,7 +749,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 		SessionID: "sess-auto-del",
 	}, nil)
 
-	s.store.On("UpdateSessionID", s.ctx, "ch15", "sess-auto-del").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-auto-del", "sess-auto-del").Return(nil)
 	// [EPHEMERAL] is stripped before tracker records lastText, so IsDuplicate
 	// returns true and no final SendMessage is needed.
 	// First turn broadcasts channel created + message to thread
@@ -784,7 +811,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteEphemeralLocalPlatform() {
 		return true
 	})).Return(&agent.AgentResponse{Response: "[EPHEMERAL] Nothing new", SessionID: "s-eph"}, nil)
 
-	s.store.On("UpdateSessionID", s.ctx, "ch-local-eph", "s-eph").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "local-eph-thread", "s-eph").Return(nil)
 	eb.On("BroadcastChannelCreated", "ch-local-eph", "local-eph-thread").Once()
 	eb.On("BroadcastMessageCreated", "local-eph-thread", mock.Anything).Maybe()
 	// Local platform: ephemeral rename uses [ephemeral] prefix
@@ -837,7 +864,9 @@ func (s *TaskExecutorSuite) TestAutoDeleteEphemeralVariants() {
 			s.executor.streamingEnabled = true
 
 			s.store.On("GetChannel", s.ctx, tc.channelID).Return(nil, nil)
+			s.store.On("GetScheduledTask", s.ctx, int64(22)).Return(&db.ScheduledTask{ID: 22, Type: db.TaskTypeCron}, nil)
 			s.bot.On("CreateSimpleThread", s.ctx, tc.channelID, mock.Anything, mock.Anything).Return(tc.threadID, nil).Once()
+			s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(22), tc.threadID).Return(nil)
 			s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 				if req.OnTurn == nil {
 					return false
@@ -847,7 +876,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteEphemeralVariants() {
 			})).Return(&agent.AgentResponse{
 				Response: tc.response, SessionID: "sess",
 			}, nil)
-			s.store.On("UpdateSessionID", s.ctx, tc.channelID, "sess").Return(nil)
+			s.store.On("UpdateSessionID", s.ctx, tc.threadID, "sess").Return(nil)
 			s.bot.On("RenameThread", s.ctx, tc.threadID, mock.Anything).Return(tc.renameErr).Once()
 			s.bot.On("DeleteThread", mock.Anything, tc.threadID).Return(tc.deleteErr).Once()
 
@@ -879,8 +908,10 @@ func (s *TaskExecutorSuite) TestAutoDeleteNonEphemeralNoRename() {
 	}
 
 	s.store.On("GetChannel", s.ctx, "ch19").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(19)).Return(&db.ScheduledTask{ID: 19, Type: db.TaskTypeCron}, nil)
 	s.bot.On("CreateSimpleThread", s.ctx, "ch19", mock.Anything, mock.Anything).Return("thread-del", nil).Once()
-	s.store.On("UpdateSessionID", s.ctx, "ch19", mock.Anything).Return(nil)
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(19), "thread-del").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-del", mock.Anything).Return(nil)
 	s.bot.On("DeleteThread", mock.Anything, "thread-del").Return(nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
@@ -928,8 +959,10 @@ func (s *TaskExecutorSuite) TestAutoDeleteSkipped() {
 			response: "Turn 1",
 			setupMocks: func() {
 				s.store.On("GetChannel", s.ctx, "ch16").Return(nil, nil)
+				s.store.On("GetScheduledTask", s.ctx, int64(16)).Return(&db.ScheduledTask{ID: 16, Type: db.TaskTypeCron}, nil)
 				s.bot.On("CreateSimpleThread", s.ctx, "ch16", mock.Anything, mock.Anything).Return("thread-no-del", nil).Once()
-				s.store.On("UpdateSessionID", s.ctx, "ch16", mock.Anything).Return(nil)
+				s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(16), "thread-no-del").Return(nil)
+				s.store.On("UpdateSessionID", s.ctx, "thread-no-del", mock.Anything).Return(nil)
 			},
 		},
 		{
@@ -942,6 +975,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteSkipped() {
 			response: "[EPHEMERAL] Result",
 			setupMocks: func() {
 				s.store.On("GetChannel", s.ctx, "ch17").Return(nil, nil)
+				s.store.On("GetScheduledTask", s.ctx, int64(17)).Return(&db.ScheduledTask{ID: 17, Type: db.TaskTypeCron}, nil)
 				s.store.On("UpdateSessionID", s.ctx, "ch17", mock.Anything).Return(nil)
 				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
 					return msg.ChannelID == "ch17" && msg.Content == "Result"
@@ -1032,6 +1066,7 @@ func (s *TaskExecutorSuite) TestFinalResponseBroadcasts() {
 	}
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 5, ChannelID: "ch1"}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(1)).Return(&db.ScheduledTask{ID: 1, Type: db.TaskTypeCron}, nil)
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
 		Response: "all good", SessionID: "s1",
 	}, nil)
@@ -1067,9 +1102,11 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 	}
 
 	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(&db.Channel{ID: 5, ChannelID: "ch20"}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(20)).Return(&db.ScheduledTask{ID: 20, Type: db.TaskTypeCron}, nil)
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "thread-20" && ch.ParentID == "ch20"
 	})).Return(nil)
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(20), "thread-20").Return(nil)
 
 	// Thread creation succeeds
 	s.bot.On("CreateSimpleThread", s.ctx, "ch20",
@@ -1086,7 +1123,7 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 	})).Return(&agent.AgentResponse{
 		Response: "Final", SessionID: "s20",
 	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch20", "s20").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-20", "s20").Return(nil)
 
 	// Final response goes to thread
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(msg *bot.OutgoingMessage) bool {
@@ -1135,8 +1172,10 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcasts() {
 	}
 
 	s.store.On("GetChannel", mock.Anything, "ch25").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(25)).Return(&db.ScheduledTask{ID: 25, Type: db.TaskTypeCron}, nil)
 
 	s.bot.On("CreateSimpleThread", s.ctx, "ch25", mock.Anything, mock.Anything).Return("thread-25", nil).Once()
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(25), "thread-25").Return(nil)
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnToolUse == nil {
@@ -1150,7 +1189,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcasts() {
 		Response: "Turn 1", SessionID: "sess-tu",
 	}, nil)
 
-	s.store.On("UpdateSessionID", s.ctx, "ch25", "sess-tu").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-25", "sess-tu").Return(nil)
 
 	eb.On("BroadcastChannelCreated", "ch25", "thread-25").Once()
 	eb.On("BroadcastMessageCreated", "thread-25", mock.Anything).Maybe()
@@ -1178,7 +1217,9 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseAskUserQuestion() {
 	}
 
 	s.store.On("GetChannel", mock.Anything, "ch27").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(27)).Return(&db.ScheduledTask{ID: 27, Type: db.TaskTypeCron}, nil)
 	s.bot.On("CreateSimpleThread", s.ctx, "ch27", mock.Anything, mock.Anything).Return("thread-27", nil).Once()
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(27), "thread-27").Return(nil)
 
 	askInput := `{"questions":[{"question":"What next?","header":"Task","options":[{"label":"A"}]}]}`
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
@@ -1190,7 +1231,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseAskUserQuestion() {
 		return true
 	})).Return(&agent.AgentResponse{Response: "Turn 1", SessionID: "sess-ask"}, nil)
 
-	s.store.On("UpdateSessionID", s.ctx, "ch27", "sess-ask").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-27", "sess-ask").Return(nil)
 
 	eb.On("BroadcastChannelCreated", "ch27", "thread-27").Once()
 	eb.On("BroadcastMessageCreated", "thread-27", mock.Anything).Maybe()
@@ -1217,7 +1258,9 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseExitPlanMode() {
 	}
 
 	s.store.On("GetChannel", mock.Anything, "ch28").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(28)).Return(&db.ScheduledTask{ID: 28, Type: db.TaskTypeCron}, nil)
 	s.bot.On("CreateSimpleThread", s.ctx, "ch28", mock.Anything, mock.Anything).Return("thread-28", nil).Once()
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(28), "thread-28").Return(nil)
 
 	exitInput := `{"plan":"# My Plan\nDo stuff","planFilePath":"/tmp/plan.md"}`
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
@@ -1229,7 +1272,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseExitPlanMode() {
 		return true
 	})).Return(&agent.AgentResponse{Response: "Turn 1", SessionID: "sess-exit"}, nil)
 
-	s.store.On("UpdateSessionID", s.ctx, "ch28", "sess-exit").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-28", "sess-exit").Return(nil)
 
 	eb.On("BroadcastChannelCreated", "ch28", "thread-28").Once()
 	eb.On("BroadcastMessageCreated", "thread-28", mock.Anything).Maybe()
@@ -1256,8 +1299,10 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcastsBeforeThread() {
 	}
 
 	s.store.On("GetChannel", mock.Anything, "ch26").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(26)).Return(&db.ScheduledTask{ID: 26, Type: db.TaskTypeCron}, nil)
 
 	s.bot.On("CreateSimpleThread", s.ctx, "ch26", mock.Anything, mock.Anything).Return("thread-26", nil).Once()
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(26), "thread-26").Return(nil)
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnToolUse == nil {
@@ -1271,7 +1316,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcastsBeforeThread() {
 		Response: "Turn 1", SessionID: "sess-tu2",
 	}, nil)
 
-	s.store.On("UpdateSessionID", s.ctx, "ch26", "sess-tu2").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-26", "sess-tu2").Return(nil)
 
 	eb.On("BroadcastChannelCreated", "ch26", "thread-26").Once()
 	eb.On("BroadcastMessageCreated", "thread-26", mock.Anything).Maybe()
@@ -1300,8 +1345,10 @@ func (s *TaskExecutorSuite) TestStreamingOnActivityBroadcasts() {
 	}
 
 	s.store.On("GetChannel", mock.Anything, "ch27").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(27)).Return(&db.ScheduledTask{ID: 27, Type: db.TaskTypeCron}, nil)
 
 	s.bot.On("CreateSimpleThread", s.ctx, "ch27", mock.Anything, mock.Anything).Return("thread-27", nil).Once()
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(27), "thread-27").Return(nil)
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnActivity == nil {
@@ -1315,7 +1362,7 @@ func (s *TaskExecutorSuite) TestStreamingOnActivityBroadcasts() {
 		Response: "Turn 1", SessionID: "sess-act",
 	}, nil)
 
-	s.store.On("UpdateSessionID", s.ctx, "ch27", "sess-act").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-27", "sess-act").Return(nil)
 
 	eb.On("BroadcastChannelCreated", "ch27", "thread-27").Once()
 	eb.On("BroadcastMessageCreated", "thread-27", mock.Anything).Maybe()
@@ -1352,11 +1399,13 @@ func (s *TaskExecutorSuite) TestStreamingInvitesPermissionUsersToThread() {
 			Members: types.RoleGrant{Users: []string{"member-1", "member-2"}},
 		},
 	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(21)).Return(&db.ScheduledTask{ID: 21, Type: db.TaskTypeCron}, nil)
 
 	s.bot.On("CreateSimpleThread", s.ctx, "ch21", mock.Anything, mock.Anything).Return("thread-21", nil).Once()
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "thread-21" && ch.ParentID == "ch21"
 	})).Return(nil)
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(21), "thread-21").Return(nil)
 	s.bot.On("InviteUserToChannel", s.ctx, "thread-21", "owner-1").Return(nil).Once()
 	s.bot.On("InviteUserToChannel", s.ctx, "thread-21", "member-1").Return(nil).Once()
 	s.bot.On("InviteUserToChannel", s.ctx, "thread-21", "member-2").Return(nil).Once()
@@ -1370,7 +1419,7 @@ func (s *TaskExecutorSuite) TestStreamingInvitesPermissionUsersToThread() {
 	})).Return(&agent.AgentResponse{
 		Response: "Turn 1", SessionID: "s21",
 	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch21", "s21").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-21", "s21").Return(nil)
 
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
@@ -1398,11 +1447,13 @@ func (s *TaskExecutorSuite) TestStreamingInviteErrorsAreLogged() {
 			Members: types.RoleGrant{Users: []string{"member-bad"}},
 		},
 	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(22)).Return(&db.ScheduledTask{ID: 22, Type: db.TaskTypeCron}, nil)
 
 	s.bot.On("CreateSimpleThread", s.ctx, "ch22", mock.Anything, mock.Anything).Return("thread-22", nil).Once()
 	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "thread-22" && ch.ParentID == "ch22"
 	})).Return(nil)
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(22), "thread-22").Return(nil)
 	s.bot.On("InviteUserToChannel", s.ctx, "thread-22", "owner-bad").Return(errors.New("invite failed")).Once()
 	s.bot.On("InviteUserToChannel", s.ctx, "thread-22", "member-bad").Return(errors.New("invite failed")).Once()
 
@@ -1415,7 +1466,7 @@ func (s *TaskExecutorSuite) TestStreamingInviteErrorsAreLogged() {
 	})).Return(&agent.AgentResponse{
 		Response: "Turn 1", SessionID: "s22",
 	}, nil)
-	s.store.On("UpdateSessionID", s.ctx, "ch22", "s22").Return(nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-22", "s22").Return(nil)
 
 	// Should not fail — invite errors are just logged
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
