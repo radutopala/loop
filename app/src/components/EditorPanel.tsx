@@ -137,7 +137,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   const [error, setError] = useState<string | null>(null);
   const [treeWidth, setTreeWidth] = useState(loadTreeWidth);
   const [treeResizing, setTreeResizing] = useState(false);
-  const [previewVisible, setPreviewVisible] = useState(true);
+  const [previewMode, setPreviewMode] = useState<"editor" | "both" | "preview">("both");
   const [previewHtml, setPreviewHtml] = useState("");
   const [dirtyTabs, setDirtyTabs] = useState<Set<string>>(new Set());
   const [autoSaveOnBlur, setAutoSaveOnBlur] = useState(true);
@@ -829,31 +829,27 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
                 })}
               </div>
               {isMd && (
-                <button
-                  onClick={() => setPreviewVisible((v) => !v)}
-                  title={previewVisible ? "Hide preview" : "Show preview"}
-                  style={{
-                    fontSize: 10,
-                    color: previewVisible ? colors.active : colors.textDim,
-                    flexShrink: 0,
-                    background: "none",
-                    border: `1px solid ${previewVisible ? colors.active : colors.border}`,
-                    borderRadius: 4,
-                    cursor: "pointer",
-                    padding: "1px 6px",
-                    margin: "0 6px",
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 4,
-                    lineHeight: 1,
-                  }}
-                >
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
-                    <circle cx="12" cy="12" r="3" />
-                  </svg>
-                  Preview
-                </button>
+                <div style={{ display: "flex", flexShrink: 0, margin: "0 6px", border: `1px solid ${colors.border}`, borderRadius: 4, overflow: "hidden" }}>
+                  {(["editor", "both", "preview"] as const).map((mode) => (
+                    <button
+                      key={mode}
+                      onClick={() => setPreviewMode(mode)}
+                      title={mode === "editor" ? "Editor only" : mode === "both" ? "Editor + Preview" : "Preview only"}
+                      style={{
+                        fontSize: 10,
+                        color: previewMode === mode ? colors.active : colors.textDim,
+                        background: previewMode === mode ? `${colors.active}18` : "none",
+                        border: "none",
+                        borderRight: mode !== "preview" ? `1px solid ${colors.border}` : undefined,
+                        cursor: "pointer",
+                        padding: "2px 6px",
+                        lineHeight: 1,
+                      }}
+                    >
+                      {mode === "editor" ? "Edit" : mode === "both" ? "Split" : "Preview"}
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
           )}
@@ -877,9 +873,10 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
               style={{
                 flex: 1,
                 overflow: "auto",
+                display: isMd && previewMode === "preview" ? "none" : undefined,
               }}
             />
-            {isMd && previewVisible && previewHtml && (
+            {isMd && previewMode !== "editor" && previewHtml && (
               <>
                 <div style={{ width: 1, backgroundColor: colors.border, flexShrink: 0 }} />
                 <div
