@@ -147,8 +147,10 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
 
   const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
+  const previewRef = useRef<HTMLDivElement>(null);
   const themeCompartment = useRef(new Compartment());
   const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const scrollSyncSource = useRef<"editor" | "preview" | null>(null);
   const selectedPathRef = useRef(selectedPath);
   selectedPathRef.current = selectedPath;
 
@@ -562,7 +564,22 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
       setPreviewHtml("");
     }
 
+    // Sync editor scroll → preview.
+    const scroller = editorRef.current;
+    const onEditorScroll = () => {
+      if (scrollSyncSource.current === "preview" || !scroller) return;
+      scrollSyncSource.current = "editor";
+      const el = previewRef.current;
+      if (el) {
+        const pct = scroller.scrollTop / Math.max(1, scroller.scrollHeight - scroller.clientHeight);
+        el.scrollTop = pct * (el.scrollHeight - el.clientHeight);
+      }
+      requestAnimationFrame(() => { scrollSyncSource.current = null; });
+    };
+    scroller?.addEventListener("scroll", onEditorScroll);
+
     return () => {
+      scroller?.removeEventListener("scroll", onEditorScroll);
       view.destroy();
       viewRef.current = null;
     };
@@ -866,8 +883,20 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
               <>
                 <div style={{ width: 1, backgroundColor: colors.border, flexShrink: 0 }} />
                 <div
+                  ref={previewRef}
                   className="readme-content"
                   dangerouslySetInnerHTML={{ __html: previewHtml }}
+                  onScroll={() => {
+                    if (scrollSyncSource.current === "editor") return;
+                    scrollSyncSource.current = "preview";
+                    const el = previewRef.current;
+                    const ed = editorRef.current;
+                    if (el && ed) {
+                      const pct = el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight);
+                      ed.scrollTop = pct * (ed.scrollHeight - ed.clientHeight);
+                    }
+                    requestAnimationFrame(() => { scrollSyncSource.current = null; });
+                  }}
                   style={{
                     flex: 1,
                     overflow: "auto",
