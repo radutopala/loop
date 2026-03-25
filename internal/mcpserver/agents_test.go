@@ -1,6 +1,7 @@
 package mcpserver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -52,7 +53,7 @@ func (s *AgentsToolsSuite) TearDownTest() {
 }
 
 func (s *AgentsToolsSuite) TestListAgents() {
-	result, _, err := s.srv.handleListAgents(nil, nil, listAgentsInput{})
+	result, _, err := s.srv.handleListAgents(context.TODO(), nil, listAgentsInput{})
 	require.NoError(s.T(), err)
 	require.False(s.T(), result.IsError)
 	text := result.Content[0].(*mcp.TextContent).Text
@@ -70,14 +71,14 @@ func (s *AgentsToolsSuite) TestListAgentsEmpty() {
 	defer emptySrv.Close()
 
 	srv := New("ch-1", emptySrv.URL, "author-1", emptySrv.Client(), nil, WithAgentTools("agent-0"))
-	result, _, err := srv.handleListAgents(nil, nil, listAgentsInput{})
+	result, _, err := srv.handleListAgents(context.TODO(), nil, listAgentsInput{})
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), result.Content[0].(*mcp.TextContent).Text, "No agents active")
 }
 
 func (s *AgentsToolsSuite) TestListAgentsError() {
 	srv := New("ch-1", "http://127.0.0.1:1", "author-1", http.DefaultClient, nil, WithAgentTools("agent-0"))
-	result, _, err := srv.handleListAgents(nil, nil, listAgentsInput{})
+	result, _, err := srv.handleListAgents(context.TODO(), nil, listAgentsInput{})
 	require.NoError(s.T(), err)
 	require.True(s.T(), result.IsError)
 }
