@@ -50,7 +50,7 @@ func (s *ThreadServiceSuite) SetupTest() {
 	s.creator = new(MockThreadCreator)
 	s.ctx = context.Background()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := NewThreadService(s.store, s.creator, logger)
+	svc := NewThreadService(s.store, s.creator, logger, false)
 	s.threadSvc = svc.(*threadService)
 	s.svc = svc
 }
@@ -271,7 +271,7 @@ func (s *ThreadServiceSuite) TestCreateThreadCreatorReturnsEmptyID() {
 
 func (s *ThreadServiceSuite) TestCreateThreadLocalPlatformNilCreator() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := NewThreadService(s.store, nil, logger)
+	svc := NewThreadService(s.store, nil, logger, false)
 	svc.(*threadService).generateThreadID = func() string { return "local-thread-abc" }
 
 	s.store.On("GetChannel", s.ctx, "ch-1").
@@ -288,7 +288,7 @@ func (s *ThreadServiceSuite) TestCreateThreadLocalPlatformNilCreator() {
 
 func (s *ThreadServiceSuite) TestDeleteThreadLocalPlatformNilCreator() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := NewThreadService(s.store, nil, logger)
+	svc := NewThreadService(s.store, nil, logger, false)
 
 	s.store.On("GetChannel", s.ctx, "thread-1").
 		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1"}, nil)
@@ -301,6 +301,23 @@ func (s *ThreadServiceSuite) TestDeleteThreadLocalPlatformNilCreator() {
 
 func (s *ThreadServiceSuite) TestDeleteThreadMCPConfigErrorLogsWarning() {
 	s.threadSvc.removeMCPConfig = func(string, string) error { return errors.New("rm error") }
+
+	s.store.On("GetChannel", s.ctx, "thread-1").
+		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1", DirPath: "/work"}, nil)
+	s.creator.On("DeleteThread", s.ctx, "thread-1").Return(nil)
+	s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
+
+	err := s.svc.DeleteThread(s.ctx, "thread-1")
+	require.NoError(s.T(), err)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ThreadServiceSuite) TestDeleteThreadKeepMCPConfigsSkipsRemoval() {
+	s.threadSvc.keepMCPConfigs = true
+	s.threadSvc.removeMCPConfig = func(string, string) error {
+		s.Fail("removeMCPConfig should not be called when keepMCPConfigs is true")
+		return nil
+	}
 
 	s.store.On("GetChannel", s.ctx, "thread-1").
 		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1", DirPath: "/work"}, nil)
@@ -440,7 +457,7 @@ func TestRemoveWorktreeExecInvalidPath(t *testing.T) {
 func TestGenerateThreadIDDefault(t *testing.T) {
 	store := new(testutil.MockStore)
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	svc := NewThreadService(store, nil, logger)
+	svc := NewThreadService(store, nil, logger, false)
 	got := svc.(*threadService).generateThreadID()
 	require.Len(t, got, 12) // 6 bytes = 12 hex chars
 }

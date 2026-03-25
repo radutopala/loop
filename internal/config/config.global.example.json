@@ -36,6 +36,7 @@
   //"claude_model": "", // defaults to sonnet; options: "claude-opus-4-6[1m]", "claude-opus-4-6", "claude-sonnet-4-6"
   //"claude_bin_path": "claude",
   //"streaming_enabled": true, // stream intermediate Claude turns to chat as they happen
+  //"keep_mcp_configs": false, // when true, MCP config JSON files are preserved after container runs (useful for debugging)
 
   // Browser automation: Docker (headless container) and Host (local Chrome) modes.
   // When enabled, Chrome starts lazily on first use and auto-stops after 5 min idle.

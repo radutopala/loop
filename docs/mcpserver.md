@@ -22,6 +22,7 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 | `--author-id` | User who triggered the request |
 | `--platform` | Platform identifier |
 | `--memory` | Enable memory search tools |
+| `--agent-id` | Agent ID for inter-agent tools and MCP Channels |
 | `--log` | Custom log file path |
 
 ## Registered Tools
@@ -55,6 +56,21 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 |------|-------------|
 | `get_readme` | Get Loop README with setup instructions, configuration, commands, and architecture |
 
+### Agent Tools (when `--agent-id` set)
+
+Enabled for Swarm/Canvas terminal agents. Uses MCP Channels for push delivery.
+
+| Tool | Description |
+|------|-------------|
+| `list_agents` | List active agents in the current channel with status and work summaries |
+| `send_agent_message` | Send a push message to another agent by ID (delivered via `notifications/claude/channel`) |
+| `update_agent_status` | Update this agent's display name and work summary (visible to other agents and frontend) |
+
+When `--agent-id` is set, the server also:
+- Declares `capabilities.experimental["claude/channel"]` in the MCP initialize response
+- Sets instructions telling Claude how to use agent tools and respond to channel messages
+- Starts a push receiver goroutine (WebSocket to `/api/ws/agent-channel`) that forwards messages as `notifications/claude/channel` JSON-RPC notifications to stdout
+
 ### Memory Tools (when `--memory` enabled)
 
 | Tool | Description |
@@ -66,10 +82,16 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 
 ```go
 server := mcpserver.New(channelID, apiURL, authorID, httpClient, logger,
-    mcpserver.WithMemoryAPI(dirPath),  // optional: enables memory tools
+    mcpserver.WithMemoryAPI(dirPath),       // optional: enables memory tools
+    mcpserver.WithAgentTools("agent-0"),    // optional: enables inter-agent tools
 )
 server.Run(ctx, transport)
+server.UnregisterAgent() // graceful cleanup after Run returns
 ```
+
+### Graceful Shutdown
+
+After `Run()` returns, the caller invokes `UnregisterAgent()` which sends `DELETE /api/agents/{id}?channel_id=X` to the backend. This removes the agent from the registry so other agents no longer see it in `list_agents` results. If no `--agent-id` was set, `UnregisterAgent()` is a no-op.
 
 ## Design
 
@@ -81,7 +103,8 @@ server.Run(ctx, transport)
 
 ## Related docs
 
-- [API](api.md) — HTTP API reference
+- [API](api.md) — HTTP API reference (includes agent registry endpoints)
+- [Multi-Agent](multi-agent.md) — Agent registry, MCP Channels, Swarm & Canvas layouts
 - [Containers](containers.md) — Container MCP config setup
 - [Memory](memory.md) — Semantic search and Ollama embeddings
 - [Scheduling](scheduling.md) — Task types and templates

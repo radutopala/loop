@@ -252,6 +252,7 @@ Available Commands:
     --author-id            User ID of the message author
     --platform             Platform for channel creation [default: local]
     --memory               Enable memory search/index tools
+    --agent-id             Agent ID for inter-agent tools and MCP Channels
   onboard:global           Initialize global config at ~/.loop/ (aliases: o:global, setup)
     --force                Overwrite existing config
     --owner-id             Set RBAC owner user ID (exits bootstrap mode)

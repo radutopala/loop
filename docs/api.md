@@ -962,3 +962,141 @@ Returns 503 if browser is not configured. The WS handles four message types:
 | `error` | Server → Client | Error message |
 
 Control operations (navigate, tabs, reload, etc.) go through `POST /api/browser/action`, not the WebSocket.
+
+
+---
+
+## Agent Registry
+
+### `GET /api/agents`
+
+List active agents for a channel.
+
+**Query Parameters:**
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `channel_id` | Yes | Channel ID to list agents for |
+
+**Response:** JSON array of `AgentInfo` objects.
+
+```json
+[
+  {
+    "agent_id": "agent-0",
+    "channel_id": "ch-1",
+    "session_id": "sid-abc",
+    "name": "Worker",
+    "status": "running",
+    "work_summary": "implementing auth module",
+    "created_at": "2026-03-25T10:00:00Z",
+    "updated_at": "2026-03-25T10:05:00Z"
+  }
+]
+```
+
+| Status | Description |
+|--------|-------------|
+| 200 | JSON array (empty `[]` if no agents) |
+| 400 | Missing `channel_id` |
+| 503 | Agent registry not configured |
+
+---
+
+### `PATCH /api/agents/{id}`
+
+Update an agent's status, name, or work summary.
+
+**Request Body:**
+
+```json
+{
+  "channel_id": "ch-1",
+  "status": "running",
+  "work_summary": "indexing files",
+  "name": "Worker"
+}
+```
+
+All fields except `channel_id` are optional — only non-empty values are applied.
+
+| Status | Description |
+|--------|-------------|
+| 200 | Updated `AgentInfo` JSON |
+| 400 | Missing `channel_id` or invalid JSON |
+| 404 | Agent not found |
+| 503 | Agent registry not configured |
+
+---
+
+### `DELETE /api/agents/{id}`
+
+Unregister an agent from the registry. Called by the MCP server on graceful shutdown.
+
+**Path Parameters:**
+
+| Param | Type   | Description |
+|-------|--------|-------------|
+| `id`  | string | Agent ID (e.g. `"agent-0"`) |
+
+**Query Parameters:**
+
+| Param        | Type   | Required | Description |
+|--------------|--------|----------|-------------|
+| `channel_id` | string | yes      | Channel ID the agent belongs to |
+
+**Response:** `204 No Content`
+
+**Behavior notes:** Broadcasts an `agent_instance.unregistered` event to the frontend via the EventsHub.
+
+**Errors:** `400` if `agent_id` or `channel_id` is missing. `503` if agent registry not configured.
+
+---
+
+### `POST /api/agents/{id}/message`
+
+Send a push message to an agent's mailbox.
+
+**Request Body:**
+
+```json
+{
+  "channel_id": "ch-1",
+  "from_agent_id": "agent-0",
+  "content": "I finished the API, you can start tests"
+}
+```
+
+| Status | Description |
+|--------|-------------|
+| 204 | Message delivered |
+| 400 | Missing `channel_id` or `content` |
+| 404 | Target agent not found |
+| 503 | Agent registry not configured |
+
+Messages are non-blocking — dropped if the target's mailbox (buffer size 64) is full.
+
+---
+
+### `GET /api/ws/agent-channel`
+
+WebSocket endpoint for MCP servers to receive pushed messages.
+
+**Query Parameters:**
+
+| Param | Required | Description |
+|-------|----------|-------------|
+| `agent_id` | Yes | Agent ID to subscribe for |
+| `channel_id` | Yes | Channel ID |
+
+Messages are forwarded as JSON:
+
+```json
+{
+  "from_agent_id": "agent-0",
+  "content": "task completed",
+  "timestamp": "2026-03-25T10:05:00Z"
+}
+```
+
+The WebSocket closes when the agent is unregistered (terminal session closed).

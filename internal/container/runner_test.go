@@ -1306,7 +1306,7 @@ func (s *RunnerSuite) TestEnsureNoProxy() {
 }
 
 func (s *RunnerSuite) TestBuildMCPConfig() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", false, true, nil)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, true, nil)
 	require.Len(s.T(), cfg.MCPServers, 2)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
@@ -1319,7 +1319,7 @@ func (s *RunnerSuite) TestBuildMCPConfig() {
 }
 
 func (s *RunnerSuite) TestBuildMCPConfigBrowserDisabled() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", false, false, nil)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, false, nil)
 	require.Len(s.T(), cfg.MCPServers, 1)
 	_, hasBrowser := cfg.MCPServers["loop-browser"]
 	require.False(s.T(), hasBrowser)
@@ -1328,7 +1328,7 @@ func (s *RunnerSuite) TestBuildMCPConfigBrowserDisabled() {
 }
 
 func (s *RunnerSuite) TestBuildMCPConfigWithAuthorID() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "user-42", false, true, nil)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "user-42", "", false, true, nil)
 	require.Len(s.T(), cfg.MCPServers, 2)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/usr/local/bin/loop", ls.Command)
@@ -1343,7 +1343,7 @@ func (s *RunnerSuite) TestBuildMCPConfigWithUserServers() {
 			Env:     map[string]string{"API_KEY": "secret"},
 		},
 	}
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", false, true, userServers)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, true, userServers)
 	require.Len(s.T(), cfg.MCPServers, 3)
 
 	custom := cfg.MCPServers["custom-tool"]
@@ -1362,7 +1362,7 @@ func (s *RunnerSuite) TestBuildMCPConfigUserLoopPreserved() {
 			Args:    []string{"--custom-flag"},
 		},
 	}
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", false, true, userServers)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, true, userServers)
 	require.Len(s.T(), cfg.MCPServers, 2)
 	ls := cfg.MCPServers["loop"]
 	require.Equal(s.T(), "/user/custom/loop", ls.Command)
@@ -1376,7 +1376,7 @@ func (s *RunnerSuite) TestBuildMCPConfigUserBrowserPreserved() {
 			Args:    []string{"--port", "9999"},
 		},
 	}
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", false, true, userServers)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", false, true, userServers)
 	require.Len(s.T(), cfg.MCPServers, 2)
 	bs := cfg.MCPServers["loop-browser"]
 	require.Equal(s.T(), "/user/custom/browser", bs.Command)
@@ -1384,10 +1384,18 @@ func (s *RunnerSuite) TestBuildMCPConfigUserBrowserPreserved() {
 }
 
 func (s *RunnerSuite) TestBuildMCPConfigWithMemory() {
-	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", true, true, nil)
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "", true, true, nil)
 	require.Len(s.T(), cfg.MCPServers, 2)
 	ls := cfg.MCPServers["loop"]
 	require.Contains(s.T(), ls.Args, "--memory")
+}
+
+func (s *RunnerSuite) TestBuildMCPConfigWithAgentID() {
+	cfg := buildMCPConfig("ch-1", "http://host.docker.internal:8222", "/home/user/project", "", "agent-0", false, true, nil)
+	require.Len(s.T(), cfg.MCPServers, 2)
+	ls := cfg.MCPServers["loop"]
+	require.Contains(s.T(), ls.Args, "--agent-id")
+	require.Contains(s.T(), ls.Args, "agent-0")
 }
 
 func (s *RunnerSuite) TestRunBrowserDisabledNoNetwork() {
@@ -1529,6 +1537,76 @@ func (s *RunnerSuite) TestRunMCPConfigRemovedAfterRun() {
 	require.NoError(s.T(), err)
 
 	require.Equal(s.T(), "/home/testuser/.loop/ch-1/work/.loop/mcp-ch-1.json", removedPath)
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunKeepMCPConfigsSkipsRemoval() {
+	s.cfg.KeepMCPConfigs = true
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+	}
+
+	s.setupMockRun(ctx, mock.AnythingOfType("*container.ContainerConfig"), testContainerName, testJSONOK)
+
+	_, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+
+	// Remove should NOT have been called — KeepMCPConfigs is true.
+	s.sys.AssertNotCalled(s.T(), "Remove", mock.Anything)
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunMCPConfigIncludesAgentID() {
+	var writtenPath string
+	var writtenData []byte
+	s.sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) {
+			writtenPath = args.String(0)
+			writtenData = args.Get(1).([]byte)
+		}).Return(nil)
+
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+		AgentID:   "chat",
+	}
+
+	s.setupMockRun(ctx, mock.AnythingOfType("*container.ContainerConfig"), testContainerName, testJSONOK)
+
+	_, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+
+	// Per-agent MCP config path includes the agent ID.
+	require.Equal(s.T(), "/home/testuser/.loop/ch-1/work/.loop/mcp-ch-1-chat.json", writtenPath)
+
+	var cfg mcpConfig
+	require.NoError(s.T(), json.Unmarshal(writtenData, &cfg))
+	require.Contains(s.T(), cfg.MCPServers, "loop")
+	ls := cfg.MCPServers["loop"]
+	require.Contains(s.T(), ls.Args, "--agent-id")
+	require.Contains(s.T(), ls.Args, "chat")
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunAgentIDAddsChannelFlag() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+		AgentID:   "chat",
+	}
+
+	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, "--dangerously-load-development-channels")
+	}), testContainerName, testJSONOK)
+
+	_, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
 	s.client.AssertExpectations(s.T())
 }
 
@@ -3075,26 +3153,38 @@ func (s *RunnerSuite) TestBuildInteractiveClaudeCmd() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			cfg := &config.Config{ClaudeBinPath: tc.binPath, ClaudeModel: tc.model}
-			got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", tc.sessionID, tc.forkSession)
+			got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", tc.sessionID, "", tc.forkSession)
 			require.Equal(s.T(), tc.expected, got)
 		})
 	}
+}
+
+func (s *RunnerSuite) TestBuildInteractiveClaudeCmdWithAgentID() {
+	cfg := &config.Config{ClaudeBinPath: "claude"}
+	got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "agent-0", false)
+	require.Equal(s.T(), "claude --mcp-config /work/.loop/mcp-ch-1-agent-0.json --dangerously-skip-permissions --dangerously-load-development-channels server:loop", got)
 }
 
 func (s *RunnerSuite) TestBuildBaseClaudeCmdPlanMode() {
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 
 	// Without plan mode: should contain --dangerously-skip-permissions but not --permission-mode.
-	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", false, false)
+	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, false)
 	got := strings.Join(cmd, " ")
 	require.Contains(s.T(), got, "--dangerously-skip-permissions")
 	require.NotContains(s.T(), got, "--permission-mode")
+	require.NotContains(s.T(), got, "--dangerously-load-development-channels")
 
 	// With plan mode: should contain --permission-mode plan but not --dangerously-skip-permissions.
-	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", false, true)
+	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, true)
 	got = strings.Join(cmd, " ")
 	require.NotContains(s.T(), got, "--dangerously-skip-permissions")
 	require.Contains(s.T(), got, "--permission-mode plan")
+
+	// With agent ID: should contain --dangerously-load-development-channels server:loop.
+	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "agent-0", false, false)
+	got = strings.Join(cmd, " ")
+	require.Contains(s.T(), got, "--dangerously-load-development-channels server:loop")
 }
 
 func (s *RunnerSuite) TestBuildClaudeCmdPlanMode() {
@@ -3170,7 +3260,7 @@ func (s *RunnerSuite) TestClaudeCmdBuilder() {
 				LoopDir:       tc.loopDir,
 			}
 			builder := NewClaudeCmdBuilder(cfg)
-			got := builder.BuildInteractiveCmd(tc.channelID, tc.dirPath, tc.sessionID, tc.forkSession)
+			got := builder.BuildInteractiveCmd(tc.channelID, tc.dirPath, tc.sessionID, "", tc.forkSession)
 			expectedMCP := tc.wantDir + "/.loop/mcp-" + tc.channelID + ".json"
 			require.Equal(s.T(), "claude --mcp-config "+expectedMCP+" --dangerously-skip-permissions"+tc.wantExtra, got)
 		})
@@ -3194,11 +3284,52 @@ func (s *RunnerSuite) TestClaudeCmdBuilderProjectConfigModel() {
 		LoopDir:       "/home/user/.loop",
 	}
 	builder := NewClaudeCmdBuilder(cfg)
-	got := builder.BuildInteractiveCmd("ch-1", tmpDir, "", false)
+	got := builder.BuildInteractiveCmd("ch-1", tmpDir, "", "", false)
 
 	// Project config's claude_model should override the global one.
 	expectedMCP := tmpDir + "/.loop/mcp-ch-1.json"
 	require.Equal(s.T(), "claude --mcp-config "+expectedMCP+" --model claude-opus-4-6 --dangerously-skip-permissions", got)
+}
+
+func (s *RunnerSuite) TestClaudeCmdBuilderWritesAgentMCPConfig() {
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0755))
+
+	cfg := &config.Config{
+		ClaudeBinPath: "claude",
+		LoopDir:       "/home/user/.loop",
+		APIAddr:       ":8222",
+		Memory:        config.MemoryConfig{Enabled: true},
+	}
+	builder := NewClaudeCmdBuilder(cfg)
+	got := builder.BuildInteractiveCmd("ch-1", tmpDir, "", "agent-0", false)
+
+	// Command should reference the per-agent MCP config.
+	expectedMCP := tmpDir + "/.loop/mcp-ch-1-agent-0.json"
+	require.Contains(s.T(), got, "--mcp-config "+expectedMCP)
+	require.Contains(s.T(), got, "--dangerously-load-development-channels server:loop")
+
+	// Verify the per-agent MCP config was written with --agent-id.
+	data, err := os.ReadFile(expectedMCP)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(data), "--agent-id")
+	require.Contains(s.T(), string(data), "agent-0")
+}
+
+func (s *RunnerSuite) TestClaudeCmdBuilderNoAgentSkipsMCPWrite() {
+	cfg := &config.Config{
+		ClaudeBinPath: "claude",
+		LoopDir:       "/home/user/.loop",
+	}
+	var writeCalled bool
+	builder := NewClaudeCmdBuilder(cfg)
+	builder.writeFile = func(name string, data []byte, perm os.FileMode) error {
+		writeCalled = true
+		return nil
+	}
+	builder.BuildInteractiveCmd("ch-1", "/projects/app", "", "", false)
+	require.False(s.T(), writeCalled, "should not write MCP config when agentID is empty")
 }
 
 func (s *RunnerSuite) TestCreateShellContainerWithCopyFiles() {

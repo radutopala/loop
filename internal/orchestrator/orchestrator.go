@@ -241,14 +241,14 @@ func (o *Orchestrator) resolveChannelName(ctx context.Context, channelID string,
 
 // HandleChannelDelete removes a deleted channel or thread from the database.
 // For channels (not threads), it also removes all child threads.
-// MCP config files are cleaned up on a best-effort basis.
+// MCP config files are cleaned up on a best-effort basis unless keep_mcp_configs is set.
 func (o *Orchestrator) HandleChannelDelete(ctx context.Context, channelID string, isThread bool) {
 	if isThread {
 		ch, err := o.store.GetChannel(ctx, channelID)
 		if err != nil {
 			o.logger.Error("looking up thread for MCP cleanup", "error", err, "thread_id", channelID)
 		}
-		if ch != nil {
+		if ch != nil && !o.cfg.KeepMCPConfigs {
 			if err := o.removeMCPConfig(ch.DirPath, channelID); err != nil {
 				o.logger.Warn("removing MCP config for thread", "error", err, "thread_id", channelID)
 			}
@@ -266,7 +266,7 @@ func (o *Orchestrator) HandleChannelDelete(ctx context.Context, channelID string
 	if err != nil {
 		o.logger.Error("looking up channel for MCP cleanup", "error", err, "channel_id", channelID)
 	}
-	if ch != nil {
+	if ch != nil && !o.cfg.KeepMCPConfigs {
 		// Clean up MCP configs for child threads.
 		childIDs, err := o.store.ListChannelIDsByParentID(ctx, channelID)
 		if err != nil {

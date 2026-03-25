@@ -1,6 +1,7 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -8,8 +9,10 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gorilla/websocket"
 )
@@ -69,6 +72,7 @@ type wsControlMessage struct {
 	Type        string   `json:"type"`
 	ContainerID string   `json:"container_id,omitempty"`
 	ChannelID   string   `json:"channel_id,omitempty"`
+	AgentID     string   `json:"agent_id,omitempty"` // e.g. "agent-0" — registers in agent registry
 	Cmd         []string `json:"cmd,omitempty"`
 	SessionID   string   `json:"session_id,omitempty"`
 	Data        string   `json:"data,omitempty"` // base64-encoded input
@@ -87,7 +91,7 @@ type wsStatusMessage struct {
 
 // InteractiveCmdBuilder builds the interactive Claude command for a terminal session.
 type InteractiveCmdBuilder interface {
-	BuildInteractiveCmd(channelID, dirPath, sessionID string, forkSession bool) string
+	BuildInteractiveCmd(channelID, dirPath, sessionID, agentID string, forkSession bool) string
 }
 
 // terminalWSConn manages a single WebSocket terminal connection.
@@ -110,6 +114,10 @@ type terminalWSConn struct {
 	sessionID     string
 	outputCh      <-chan []byte
 	sessionTarget string // "host" or "agent"
+
+	// autoAccept scans terminal output and sends Enter when prompts are detected.
+	autoAcceptMu        sync.Mutex
+	autoAcceptRemaining int // remaining prompts to auto-accept (0 = disabled)
 }
 
 // activeManager returns the correct manager based on the current session target.
@@ -160,6 +168,7 @@ func (t *terminalWSConn) sendError(message, code string) {
 }
 
 // streamOutput forwards terminal output to the WebSocket client.
+// It also scans for auto-accept trigger strings and sends Enter when matched.
 func (t *terminalWSConn) streamOutput(output <-chan []byte, done <-chan struct{}) {
 	for {
 		select {
@@ -169,6 +178,7 @@ func (t *terminalWSConn) streamOutput(output <-chan []byte, done <-chan struct{}
 				return
 			}
 			t.writeBinary(data)
+			t.scanAutoAccept(data)
 		case <-done:
 			t.writeJSON(wsStatusMessage{Type: wsStatusClosed})
 			return
@@ -201,6 +211,56 @@ func (t *terminalWSConn) close() {
 	t.detachCurrent()
 }
 
+// autoAcceptTrigger is the prompt text that triggers an automatic Enter.
+// Spaces stripped because ANSI escape codes between characters get removed by stripANSI,
+// collapsing "Enter to confirm" into "Entertoconfirm".
+const autoAcceptTrigger = "Entertoconfirm" // workspace trust + channel prompt
+
+// maxAutoAccepts is the maximum number of prompts to auto-accept per session.
+const maxAutoAccepts = 3
+
+// enableAutoAccept sets up output scanning to auto-accept interactive prompts.
+func (t *terminalWSConn) enableAutoAccept() {
+	t.autoAcceptMu.Lock()
+	defer t.autoAcceptMu.Unlock()
+	t.autoAcceptRemaining = maxAutoAccepts
+}
+
+// ansiEscapeRe matches ANSI escape sequences (CSI, OSC, etc.).
+var ansiEscapeRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x1b]*(?:\x1b\\|\x07)|\x1b[()][0-9A-B]`)
+
+// stripANSI removes ANSI escape codes from terminal output.
+func stripANSI(data []byte) []byte {
+	return ansiEscapeRe.ReplaceAll(data, nil)
+}
+
+// scanAutoAccept checks terminal output for the trigger string and sends Enter.
+func (t *terminalWSConn) scanAutoAccept(data []byte) {
+	t.autoAcceptMu.Lock()
+	if t.autoAcceptRemaining <= 0 {
+		t.autoAcceptMu.Unlock()
+		return
+	}
+	clean := stripANSI(data)
+	if !bytes.Contains(clean, []byte(autoAcceptTrigger)) {
+		t.autoAcceptMu.Unlock()
+		return
+	}
+	t.autoAcceptRemaining--
+	sid := t.sessionID
+	t.autoAcceptMu.Unlock()
+
+	// Small delay to let the TUI render before sending Enter.
+	go func() {
+		time.Sleep(200 * time.Millisecond)
+		if err := t.manager.SendInput(sid, []byte("\r")); err != nil {
+			t.logger.Warn("terminal ws: auto-accept send failed", "session_id", sid, "error", err)
+		} else {
+			t.logger.Info("terminal ws: auto-accept sent Enter", "session_id", sid, "trigger", autoAcceptTrigger)
+		}
+	}()
+}
+
 // startSession attaches to a session and begins streaming output.
 func (t *terminalWSConn) startSession(sessionID string, output <-chan []byte, history []byte, done <-chan struct{}, statusType string) {
 	t.sessionID = sessionID
@@ -208,6 +268,8 @@ func (t *terminalWSConn) startSession(sessionID string, output <-chan []byte, hi
 	t.writeJSON(wsStatusMessage{Type: statusType, SessionID: sessionID})
 	if len(history) > 0 {
 		t.writeBinary(history)
+		// Scan history for auto-accept triggers (handles reattach to a stuck prompt).
+		t.scanAutoAccept(history)
 	}
 	go t.streamOutput(output, done)
 }
@@ -294,6 +356,11 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 						}
 					}
 				}
+				// Agent terminals fork from the channel session so each agent
+				// gets its own session while inheriting the shared context.
+				if msg.AgentID != "" && claudeSessionID != "" {
+					forkSession = true
+				}
 			}
 		}
 		containerID, err := t.containerFinder.FindContainerByChannel(ctx, msg.ChannelID, dirPath)
@@ -325,6 +392,11 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 		t.sendError(err.Error(), wsErrCodeSessionFailed)
 		return
 	}
+	// Enable auto-accept BEFORE startSession begins streaming, so the scanner
+	// is ready when the prompt output arrives.
+	if msg.AgentID != "" {
+		t.enableAutoAccept()
+	}
 	t.startSession(sid, output, history, done, wsStatusCreated)
 
 	// Resize the PTY to match the client's terminal dimensions if provided.
@@ -337,7 +409,7 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 	// When no explicit command was provided, send the interactive Claude
 	// command as shell input so the terminal starts Claude automatically.
 	if len(msg.Cmd) == 0 && t.cmdBuilder != nil && msg.ChannelID != "" {
-		cmd := t.cmdBuilder.BuildInteractiveCmd(msg.ChannelID, dirPath, claudeSessionID, forkSession)
+		cmd := t.cmdBuilder.BuildInteractiveCmd(msg.ChannelID, dirPath, claudeSessionID, msg.AgentID, forkSession)
 		if err := t.manager.SendInput(sid, []byte(cmd+"\n")); err != nil {
 			t.logger.Warn("terminal ws: failed to send interactive cmd", "session_id", sid, "error", err)
 		}
@@ -372,6 +444,10 @@ func (t *terminalWSConn) handleAttach(msg wsControlMessage) {
 		return
 	}
 	t.sessionTarget = target
+	// Enable auto-accept before startSession so history is scanned for prompts.
+	if msg.AgentID != "" {
+		t.enableAutoAccept()
+	}
 	t.startSession(msg.SessionID, output, history, done, wsStatusAttached)
 }
 

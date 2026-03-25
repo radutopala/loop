@@ -43,6 +43,7 @@ Exactly one of these should be set. OAuth takes precedence if both are provided.
 | `claude_bin_path` | `string` | `"claude"` | Path to the Claude CLI binary inside containers. |
 | `claude_model` | `string` | `""` | Claude model to use. Defaults to Sonnet. Options: `"claude-opus-4-6"`, `"claude-sonnet-4-6"`. |
 | `streaming_enabled` | `bool` | `true` | Stream intermediate Claude turns to chat as they happen. |
+| `keep_mcp_configs` | `bool` | `false` | When true, preserves MCP config JSON files after container runs. Useful for debugging MCP server configuration. |
 
 #### Storage & Logging
 
@@ -256,6 +257,7 @@ Not all global fields are available in project configs. The following fields can
 | `container_image` | **Overrides** global value when set. |
 | `container_memory_mb` | **Overrides** global value when set. |
 | `container_cpus` | **Overrides** global value when set. |
+| `keep_mcp_configs` | **Overrides** global value when set. |
 | `memory.paths` | **Appended** to global memory paths. |
 | `memory.max_chunk_chars` | **Overrides** global value when set (> 0). |
 | `memory.embeddings` | **Overrides** global embeddings config entirely when set. |
@@ -318,6 +320,7 @@ The merge follows these principles:
   //"claude_model": "",
   //"claude_bin_path": "claude",
   //"streaming_enabled": true,
+  //"keep_mcp_configs": false, // preserve MCP config files after container runs for debugging
 
   // Browser automation
   //"browser": {
@@ -421,6 +424,9 @@ The merge follows these principles:
   //"container_image": "loop-agent:latest",
   //"container_memory_mb": 2048,
   //"container_cpus": 2.0,
+
+  // Preserve MCP config files after container runs for debugging
+  //"keep_mcp_configs": false,
 
   // Browser automation override
   //"browser": {

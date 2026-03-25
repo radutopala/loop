@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -94,8 +95,8 @@ type MockInteractiveCmdBuilder struct {
 	mock.Mock
 }
 
-func (m *MockInteractiveCmdBuilder) BuildInteractiveCmd(channelID, dirPath, sessionID string, forkSession bool) string {
-	return m.Called(channelID, dirPath, sessionID, forkSession).String(0)
+func (m *MockInteractiveCmdBuilder) BuildInteractiveCmd(channelID, dirPath, sessionID, agentID string, forkSession bool) string {
+	return m.Called(channelID, dirPath, sessionID, agentID, forkSession).String(0)
 }
 
 type TerminalHandlerSuite struct {
@@ -413,7 +414,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionSendsInteractiveCmd() {
 	s.srv.SetContainerFinder(finder)
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-99", "", "", false).Return("claude --dangerously-skip-permissions")
+	builder.On("BuildInteractiveCmd", "ch-99", "", "", "", false).Return("claude --dangerously-skip-permissions")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
 	conn, ts := s.dialWS()
@@ -451,7 +452,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionSendsInteractiveCmdWithDirPath()
 	s.srv.SetContainerFinder(finder)
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-dir", "/projects/app", "", false).Return("claude --mcp-config /projects/app/.loop/mcp-ch-dir.json")
+	builder.On("BuildInteractiveCmd", "ch-dir", "/projects/app", "", "", false).Return("claude --mcp-config /projects/app/.loop/mcp-ch-dir.json")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
 	conn, ts := s.dialWS()
@@ -489,7 +490,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionResumesChannelSession() {
 	s.srv.SetContainerFinder(finder)
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-resume", "", "sess-existing", false).
+	builder.On("BuildInteractiveCmd", "ch-resume", "", "sess-existing", "", false).
 		Return("claude --dangerously-skip-permissions --resume sess-existing")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -531,7 +532,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionForksThreadFromParent() {
 	s.srv.SetContainerFinder(finder)
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "thread-1", "", "sess-parent", true).
+	builder.On("BuildInteractiveCmd", "thread-1", "", "sess-parent", "", true).
 		Return("claude --dangerously-skip-permissions --resume sess-parent --fork-session")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -575,7 +576,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionThreadWithOwnSession() {
 
 	builder := new(MockInteractiveCmdBuilder)
 	// Has its own session — uses resume, not fork.
-	builder.On("BuildInteractiveCmd", "thread-2", "", "sess-thread-own", false).
+	builder.On("BuildInteractiveCmd", "thread-2", "", "sess-thread-own", "", false).
 		Return("claude --dangerously-skip-permissions --resume sess-thread-own")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -608,7 +609,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionInteractiveCmdSendInputError() {
 	s.srv.SetContainerFinder(finder)
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-err", "", "", false).Return("claude --dangerously-skip-permissions")
+	builder.On("BuildInteractiveCmd", "ch-err", "", "", "", false).Return("claude --dangerously-skip-permissions")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
 	conn, ts := s.dialWS()
@@ -669,6 +670,32 @@ func (s *TerminalHandlerSuite) TestAttachSession() {
 
 	data := readBinaryMsg(s.T(), conn)
 	require.Equal(s.T(), []byte("old output"), data)
+
+	close(doneCh)
+}
+
+func (s *TerminalHandlerSuite) TestAttachWithAgentIDEnablesAutoAccept() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	// History contains the trust prompt trigger.
+	history := []byte("Entertoconfirm · Esc to cancel")
+	s.terminal.On("AttachSession", "sess-1").
+		Return((<-chan []byte)(outCh), history, (<-chan struct{})(doneCh), nil)
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.terminal.On("SendInput", "sess-1", []byte("\r")).Return(nil).Maybe()
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "attach", SessionID: "sess-1", AgentID: "agent-0", ChannelID: "ch-1"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "attached", msg.Type)
+
+	// Wait for auto-accept to fire from history scan.
+	time.Sleep(300 * time.Millisecond)
+	s.terminal.AssertCalled(s.T(), "SendInput", "sess-1", []byte("\r"))
 
 	close(doneCh)
 }
@@ -2120,4 +2147,162 @@ func (s *TerminalHandlerSuite) TestWriteMessageError() {
 		stopCh:           make(chan struct{}),
 	}
 	t.writeMessage(websocket.TextMessage, []byte("test"))
+}
+
+// --- Agent Auto-Accept and Fork Tests ---
+
+func (s *TerminalHandlerSuite) TestCreateSessionWithAgentIDTriggersAutoAccept() {
+	finder := new(MockContainerFinder)
+	s.srv.containerFinder = finder
+	finder.On("FindContainerByChannel", mock.Anything, "ch-1", "").Return("ctr-1", nil)
+
+	builder := new(MockInteractiveCmdBuilder)
+	builder.On("BuildInteractiveCmd", "ch-1", "", "", "agent-0", false).Return("claude --dangerously-skip-permissions")
+	s.srv.SetInteractiveCmdBuilder(builder)
+
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-1", []string(nil)).
+		Return("sid-1", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	inputSent := onSendInputCalled(s.terminal, "sid-1", []byte("claude --dangerously-skip-permissions\n"))
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+	// Auto-accept scans output for prompt triggers and sends Enter.
+	s.terminal.On("SendInput", "sid-1", []byte("\r")).Return(nil).Maybe()
+
+	ws, ts := s.dialWS()
+	defer ts.Close()
+	defer ws.Close()
+
+	sendControl(s.T(), ws, wsControlMessage{
+		Type:      "create",
+		ChannelID: "ch-1",
+		AgentID:   "agent-0",
+	})
+	msg := readStatusMsg(s.T(), ws)
+	require.Equal(s.T(), wsStatusCreated, msg.Type)
+
+	select {
+	case <-inputSent:
+	case <-time.After(time.Second):
+		s.T().Fatal("timed out waiting for interactive cmd SendInput")
+	}
+
+	builder.AssertExpectations(s.T())
+
+	close(doneCh)
+}
+
+func (s *TerminalHandlerSuite) TestAgentTerminalForksChannelSession() {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", SessionID: "sess-main"}, nil)
+	s.srv.store = store
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-1", mock.Anything).Return("ctr-1", nil)
+	s.srv.SetContainerFinder(finder)
+
+	builder := new(MockInteractiveCmdBuilder)
+	// forkSession=true because agentID is set and channel has a session.
+	builder.On("BuildInteractiveCmd", "ch-1", "", "sess-main", "agent-0", true).
+		Return("claude --resume sess-main --fork-session")
+	s.srv.SetInteractiveCmdBuilder(builder)
+
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-1", []string(nil)).
+		Return("sid-1", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	inputSent := onSendInputCalled(s.terminal, "sid-1", []byte("claude --resume sess-main --fork-session\n"))
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.terminal.On("SendInput", "sid-1", []byte("\r")).Return(nil).Maybe()
+
+	ws, ts := s.dialWS()
+	defer ts.Close()
+	defer ws.Close()
+
+	sendControl(s.T(), ws, wsControlMessage{
+		Type:      "create",
+		ChannelID: "ch-1",
+		AgentID:   "agent-0",
+	})
+	msg := readStatusMsg(s.T(), ws)
+	require.Equal(s.T(), wsStatusCreated, msg.Type)
+
+	select {
+	case <-inputSent:
+	case <-time.After(time.Second):
+		s.T().Fatal("timed out waiting for fork-session SendInput")
+	}
+	builder.AssertExpectations(s.T())
+
+	close(doneCh)
+}
+
+func (s *TerminalHandlerSuite) TestAutoAcceptScansOutput() {
+	s.terminal.On("SendInput", "sid-1", []byte("\r")).Return(nil)
+
+	tc := &terminalWSConn{
+		manager:   s.terminal,
+		sessionID: "sid-1",
+		logger:    slog.Default(),
+	}
+	tc.enableAutoAccept()
+
+	// Output without trigger — should not send Enter.
+	tc.scanAutoAccept([]byte("Loading Claude..."))
+	time.Sleep(50 * time.Millisecond)
+	s.terminal.AssertNotCalled(s.T(), "SendInput", "sid-1", []byte("\r"))
+
+	// Output with trigger — should send Enter.
+	tc.scanAutoAccept([]byte("Entertoconfirm · Esc to cancel"))
+	time.Sleep(300 * time.Millisecond)
+	s.terminal.AssertCalled(s.T(), "SendInput", "sid-1", []byte("\r"))
+}
+
+func (s *TerminalHandlerSuite) TestAutoAcceptFiresForMultiplePrompts() {
+	s.terminal.On("SendInput", "sid-1", []byte("\r")).Return(nil)
+
+	tc := &terminalWSConn{
+		manager:   s.terminal,
+		sessionID: "sid-1",
+		logger:    slog.Default(),
+	}
+	tc.enableAutoAccept()
+
+	// First prompt (trust) fires.
+	tc.scanAutoAccept([]byte("Entertoconfirm · Esc to cancel"))
+	time.Sleep(300 * time.Millisecond)
+	s.terminal.AssertNumberOfCalls(s.T(), "SendInput", 1)
+
+	// Second prompt (channel) also fires.
+	tc.scanAutoAccept([]byte("Entertoconfirm · Esc to cancel"))
+	time.Sleep(300 * time.Millisecond)
+	s.terminal.AssertNumberOfCalls(s.T(), "SendInput", 2)
+}
+
+func (s *TerminalHandlerSuite) TestAutoAcceptSendError() {
+	s.terminal.On("SendInput", "sid-1", []byte("\r")).Return(errors.New("session gone"))
+
+	tc := &terminalWSConn{
+		manager:   s.terminal,
+		sessionID: "sid-1",
+		logger:    slog.Default(),
+	}
+	tc.enableAutoAccept()
+
+	tc.scanAutoAccept([]byte("Entertoconfirm"))
+	time.Sleep(300 * time.Millisecond)
+	s.terminal.AssertCalled(s.T(), "SendInput", "sid-1", []byte("\r"))
+}
+
+func (s *TerminalHandlerSuite) TestAutoAcceptDisabledByDefault() {
+	tc := &terminalWSConn{
+		manager:   s.terminal,
+		sessionID: "sid-1",
+		logger:    slog.Default(),
+	}
+	// No enableAutoAccept() — should not scan.
+	tc.scanAutoAccept([]byte("Entertoconfirm"))
+	time.Sleep(50 * time.Millisecond)
+	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
 }

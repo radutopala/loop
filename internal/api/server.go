@@ -11,6 +11,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/scheduler"
@@ -69,6 +70,7 @@ type Server struct {
 	activeChatLister      ActiveChatLister
 	msgHandler            IncomingMessageHandler
 	interactionHandler    InteractionHandler
+	agentRegistry         *agentregistry.Registry
 	eventsHub             *EventsHub
 	loopDir               string
 	screenshotDir         string // if set, write screenshots to this dir instead of base64
@@ -177,6 +179,12 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/worktrees/import", s.handleImportWorktree)
 	mux.HandleFunc("POST /api/browser/action", s.handleBrowserAction)
 	mux.HandleFunc("POST /api/browser/mode", s.handleBrowserMode)
+	mux.HandleFunc("POST /api/agents", s.handleRegisterAgent)
+	mux.HandleFunc("GET /api/agents", s.handleListAgents)
+	mux.HandleFunc("PATCH /api/agents/{id}", s.handleUpdateAgent)
+	mux.HandleFunc("DELETE /api/agents/{id}", s.handleDeleteAgent)
+	mux.HandleFunc("POST /api/agents/{id}/message", s.handleSendAgentMessage)
+	mux.HandleFunc("GET /api/ws/agent-channel", s.handleAgentChannelWS)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
 	mux.HandleFunc("GET /api/ws/browser", s.handleBrowserWS)

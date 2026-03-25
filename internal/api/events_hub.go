@@ -13,16 +13,19 @@ import (
 
 // Event type constants.
 const (
-	EventMessageCreated    = "message.created"
-	EventMessageStreaming  = "message.streaming"
-	EventMessagesProcessed = "messages.processed"
-	EventAgentStatus       = "agent.status"
-	EventToolUse           = "tool.use"
-	EventAgentActivity     = "agent.activity"
-	EventAskUser           = "agent.ask_user"
-	EventExitPlan          = "agent.exit_plan"
-	EventChannelCreated    = "channel.created"
-	EventChannelDeleted    = "channel.deleted"
+	EventMessageCreated            = "message.created"
+	EventMessageStreaming          = "message.streaming"
+	EventMessagesProcessed         = "messages.processed"
+	EventAgentStatus               = "agent.status"
+	EventToolUse                   = "tool.use"
+	EventAgentActivity             = "agent.activity"
+	EventAskUser                   = "agent.ask_user"
+	EventExitPlan                  = "agent.exit_plan"
+	EventChannelCreated            = "channel.created"
+	EventChannelDeleted            = "channel.deleted"
+	EventAgentInstanceRegistered   = "agent_instance.registered"
+	EventAgentInstanceUnregistered = "agent_instance.unregistered"
+	EventAgentInstanceMetadata     = "agent_instance.metadata"
 )
 
 // Event represents a server-sent event to WebSocket clients.
@@ -160,6 +163,33 @@ func (h *EventsHub) BroadcastChannelDeleted(channelID string) {
 	h.Broadcast(Event{
 		Type:      EventChannelDeleted,
 		ChannelID: channelID,
+	})
+}
+
+// BroadcastAgentInstanceRegistered sends an agent_instance.registered event.
+func (h *EventsHub) BroadcastAgentInstanceRegistered(channelID string, data events.AgentInstanceEventData) {
+	h.Broadcast(Event{
+		Type:      EventAgentInstanceRegistered,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastAgentInstanceUnregistered sends an agent_instance.unregistered event.
+func (h *EventsHub) BroadcastAgentInstanceUnregistered(channelID string, data events.AgentInstanceEventData) {
+	h.Broadcast(Event{
+		Type:      EventAgentInstanceUnregistered,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastAgentInstanceMetadata sends an agent_instance.metadata event.
+func (h *EventsHub) BroadcastAgentInstanceMetadata(channelID string, data events.AgentInstanceEventData) {
+	h.Broadcast(Event{
+		Type:      EventAgentInstanceMetadata,
+		ChannelID: channelID,
+		Data:      data,
 	})
 }
 

@@ -12,6 +12,9 @@ type Broadcaster interface {
 	BroadcastMessagesProcessed(channelID string, data MessagesProcessedData)
 	BroadcastChannelCreated(parentChannelID, channelID string)
 	BroadcastChannelDeleted(channelID string)
+	BroadcastAgentInstanceRegistered(channelID string, data AgentInstanceEventData)
+	BroadcastAgentInstanceUnregistered(channelID string, data AgentInstanceEventData)
+	BroadcastAgentInstanceMetadata(channelID string, data AgentInstanceEventData)
 }
 
 // MessageEventData is the payload for message.created events.
@@ -77,6 +80,15 @@ type AskUserQuestion struct {
 	Header      string          `json:"header,omitempty"`
 	Options     []AskUserOption `json:"options,omitempty"`
 	MultiSelect bool            `json:"multi_select,omitempty"`
+}
+
+// AgentInstanceEventData is the payload for agent_instance.* events.
+type AgentInstanceEventData struct {
+	AgentID     string `json:"agent_id"`
+	ChannelID   string `json:"channel_id"`
+	Name        string `json:"name,omitempty"`
+	Status      string `json:"status,omitempty"`
+	WorkSummary string `json:"work_summary,omitempty"`
 }
 
 // AskUserOption represents a selectable option in a question.

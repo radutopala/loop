@@ -78,6 +78,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		SystemPrompt: systemPrompt,
 		ChannelID:    task.ChannelID,
 		DirPath:      dirPath,
+		AgentID:      "chat",
 	}
 
 	var tracker *streamTracker

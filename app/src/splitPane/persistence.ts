@@ -1,18 +1,28 @@
 import type { PaneNode } from "./types";
+import type { LayoutRoot } from "../canvas/types";
 
 const LAYOUT_KEY = "loop-workspace-layout";
 
 /** Default layout names — these are the "fixed" buttons in the header. */
-export const DEFAULT_LAYOUT_NAMES = ["Chat", "Editor", "Memory", "Terminal", "Diff", "Browser Chat"] as const;
+export const DEFAULT_LAYOUT_NAMES = ["Chat", "Editor", "Memory", "Terminal", "Diff", "Browser Chat", "Swarm", "Canvas"] as const;
+
+export type LayoutType = "split" | "canvas";
 
 export interface ChannelLayouts {
   active: string;
-  layouts: Record<string, PaneNode>;
+  layouts: Record<string, LayoutRoot>;
+  /** Layout type per tab — "split" (default) or "canvas". */
+  types: Record<string, LayoutType>;
   /** Ordered layout names for tab display. */
   order: string[];
   /** Default layout names that were explicitly removed by the user. */
   removed?: string[];
 }
+
+/** Default layout type per tab name. */
+export const DEFAULT_LAYOUT_TYPES: Record<string, LayoutType> = {
+  Canvas: "canvas",
+};
 
 function loadAll(): Record<string, ChannelLayouts> {
   try {
@@ -49,7 +59,7 @@ export function loadChannelLayouts(channelId: string): ChannelLayouts | null {
   return all[channelId] ?? null;
 }
 
-export function loadLayout(channelId: string): PaneNode | null {
+export function loadLayout(channelId: string): LayoutRoot | null {
   const ch = loadChannelLayouts(channelId);
   if (!ch) return null;
   return ch.layouts[ch.active] ?? null;
@@ -62,8 +72,18 @@ export function loadActiveLayoutName(channelId: string): string | null {
 
 export function saveLayout(channelId: string, layoutName: string, tree: PaneNode): void {
   const all = loadAll();
-  const ch = all[channelId] ?? { active: layoutName, layouts: {}, order: [] };
+  const ch = all[channelId] ?? { active: layoutName, layouts: {}, types: {}, order: [] };
   ch.layouts[layoutName] = tree;
+  ch.active = layoutName;
+  if (!ch.order.includes(layoutName)) ch.order.push(layoutName);
+  all[channelId] = ch;
+  saveAll(all);
+}
+
+export function saveLayoutType(channelId: string, layoutName: string, lt: LayoutType): void {
+  const all = loadAll();
+  const ch = all[channelId] ?? { active: layoutName, layouts: {}, types: {}, order: [] };
+  ch.types[layoutName] = lt;
   ch.active = layoutName;
   if (!ch.order.includes(layoutName)) ch.order.push(layoutName);
   all[channelId] = ch;
@@ -127,13 +147,16 @@ export function getLayoutNames(channelId: string): string[] {
 export function createDefaultLayouts(): ChannelLayouts {
   return {
     active: "Chat",
-    order: ["Chat", "Editor", "Memory", "Terminal", "Diff", "Browser Chat"],
+    order: ["Chat", "Editor", "Memory", "Terminal", "Diff", "Browser Chat", "Swarm", "Canvas"],
+    types: { Canvas: "canvas" },
     layouts: {
       Chat: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "leaf", id: "diff", panel: "diff", flex: 50 }] },
       Editor: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "editor", panel: "editor", flex: 65 }, { type: "leaf", id: "diff-1", panel: "diff", flex: 35 }] },
       Memory: { type: "leaf", id: "memory", panel: "memory", flex: 1 },
       Diff: { type: "leaf", id: "diff", panel: "diff", flex: 1 },
       "Browser Chat": { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "split", direction: "vertical", flex: 50, children: [{ type: "leaf", id: "browser", panel: "browser", flex: 70 }, { type: "leaf", id: "diff", panel: "diff", flex: 30 }] }] },
+      Swarm: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "agent-0", panel: "agent", flex: 40 }, { type: "split", direction: "vertical", flex: 60, children: [{ type: "leaf", id: "agent-1", panel: "agent", flex: 1 }, { type: "leaf", id: "agent-2", panel: "agent", flex: 1 }] }] },
+      Canvas: { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [{ id: "agent-0", panel: "agent", x: 0, y: 0, width: 550, height: 800, zIndex: 0 }, { id: "agent-1", panel: "agent", x: 570, y: 0, width: 500, height: 390, zIndex: 0 }, { id: "agent-2", panel: "agent", x: 570, y: 410, width: 500, height: 390, zIndex: 0 }, { id: "diff", panel: "diff", x: 1090, y: 0, width: 600, height: 800, zIndex: 0 }, { id: "memory", panel: "memory", x: 1710, y: 0, width: 800, height: 800, zIndex: 0 }] },
     },
   };
 }
@@ -161,6 +184,12 @@ export function ensureDefaultLayouts(channelId: string): ChannelLayouts {
   const defaults = createDefaultLayouts();
   let changed = false;
 
+  // Migrate: ensure types map exists.
+  if (!ch.types) {
+    ch.types = { ...DEFAULT_LAYOUT_TYPES };
+    changed = true;
+  }
+
   // Rename "Browser" → "Browser Chat"
   if (ch.layouts["Browser"] || ch.order.includes("Browser")) {
     if (ch.layouts["Browser"]) {
@@ -179,11 +208,20 @@ export function ensureDefaultLayouts(channelId: string): ChannelLayouts {
     if (hadBrowser) changed = true;
   }
 
+  // Fix corrupted canvas layouts: type says "canvas" but data is a split pane.
+  for (const [name, lt] of Object.entries(ch.types)) {
+    if (lt === "canvas" && ch.layouts[name] && !Array.isArray((ch.layouts[name] as any).tiles)) {
+      ch.layouts[name] = defaults.layouts[name] ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] };
+      changed = true;
+    }
+  }
+
   const removed = ch.removed ?? [];
   for (const name of DEFAULT_LAYOUT_NAMES) {
     if (removed.includes(name)) continue;
     if (!ch.layouts[name] && defaults.layouts[name]) {
       ch.layouts[name] = defaults.layouts[name];
+      if (defaults.types[name]) ch.types[name] = defaults.types[name];
       changed = true;
     }
     if (!ch.order.includes(name)) {

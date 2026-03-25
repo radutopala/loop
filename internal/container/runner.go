@@ -345,7 +345,7 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 // buildMCPConfig creates the merged MCP config with the built-in loop
 // and any user-defined servers from the config. The built-in loop always
 // takes precedence over a user-defined server with the same name.
-func buildMCPConfig(channelID, apiURL, workDir, authorID string, memoryEnabled, browserEnabled bool, userServers map[string]config.MCPServerConfig) mcpConfig {
+func buildMCPConfig(channelID, apiURL, workDir, authorID, agentID string, memoryEnabled, browserEnabled bool, userServers map[string]config.MCPServerConfig) mcpConfig {
 	servers := make(map[string]mcpServerEntry, len(userServers)+1)
 	for name, srv := range userServers {
 		servers[name] = mcpServerEntry{
@@ -362,6 +362,9 @@ func buildMCPConfig(channelID, apiURL, workDir, authorID string, memoryEnabled, 
 		}
 		if memoryEnabled {
 			args = append(args, "--memory")
+		}
+		if agentID != "" {
+			args = append(args, "--agent-id", agentID)
 		}
 		servers["loop"] = mcpServerEntry{
 			Command: "/usr/local/bin/loop",
@@ -497,12 +500,12 @@ func (r *DockerRunner) gitExcludesMount() string {
 
 // runOnce executes a single container run.
 func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
-	containerID, mcpConfigPath, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID, req.ParentDirPath,
+	containerID, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID, req.ParentDirPath, req.AgentID,
 		func(cfg *config.Config, mcpConfigPath string) []string {
 			return buildClaudeCmd(cfg, mcpConfigPath, req)
 		},
 	)
-	if mcpConfigPath != "" {
+	if mcpConfigPath != "" && !keepMCP {
 		defer func() { _ = r.sys.Remove(mcpConfigPath) }()
 	}
 	if containerID != "" {
@@ -601,15 +604,15 @@ func (r *DockerRunner) addProxyEnv(env []string, extraNoProxyHosts ...string) []
 
 // writeMCPConfig creates host directories and writes the per-channel MCP
 // config file. Returns the config file path.
-func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID string, cfg *config.Config) (string, error) {
+func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID, agentID string, cfg *config.Config) (string, error) {
 	for _, dir := range []string{workDir, filepath.Join(workDir, ".loop")} {
 		if err := r.sys.MkdirAll(dir, 0o755); err != nil {
 			return "", fmt.Errorf("creating host directory %s: %w", dir, err)
 		}
 	}
 
-	mcpConfigPath := filepath.Join(workDir, ".loop", "mcp-"+channelID+".json")
-	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, authorID, cfg.Memory.Enabled, cfg.Browser.Enabled, cfg.MCPServers)
+	mcpConfigPath := mcpConfigPathForAgent(workDir, channelID, agentID)
+	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, authorID, agentID, cfg.Memory.Enabled, cfg.Browser.Enabled, cfg.MCPServers)
 	mcpJSON, _ := json.MarshalIndent(mcpCfg, "", "  ")
 	if err := r.sys.WriteFile(mcpConfigPath, mcpJSON, 0o644); err != nil {
 		return "", fmt.Errorf("writing mcp config: %w", err)
@@ -657,7 +660,7 @@ func (r *DockerRunner) buildContainerMounts(mounts []string, workDir, parentDirP
 
 // buildBaseClaudeCmd returns the common Claude CLI flags shared by both
 // batch and interactive modes.
-func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID string, forkSession, planMode bool) []string {
+func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID string, forkSession, planMode bool) []string {
 	cmd := []string{cfg.ClaudeBinPath, "--mcp-config", mcpConfigPath}
 	if cfg.ClaudeModel != "" {
 		cmd = append(cmd, "--model", cfg.ClaudeModel)
@@ -673,12 +676,17 @@ func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID string, for
 			cmd = append(cmd, "--fork-session")
 		}
 	}
+	// Enable MCP Channels when agent tools are configured, so the agent
+	// can receive push notifications from other agents.
+	if agentID != "" {
+		cmd = append(cmd, "--dangerously-load-development-channels", "server:loop")
+	}
 	return cmd
 }
 
 // buildClaudeCmd assembles the Claude CLI command with all flags for batch mode.
 func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest) []string {
-	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.ForkSession, req.PlanMode)
+	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.AgentID, req.ForkSession, req.PlanMode)
 	cmd = append(cmd, "--print", "--verbose", "--output-format", "stream-json")
 	if req.SystemPrompt != "" {
 		cmd = append(cmd, "--append-system-prompt", req.SystemPrompt)
@@ -686,11 +694,20 @@ func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRe
 	return append(cmd, req.BuildPrompt())
 }
 
+// mcpConfigPathForAgent returns the MCP config file path. When agentID is set,
+// a per-agent config is used so each agent gets its own --agent-id flag.
+func mcpConfigPathForAgent(workDir, channelID, agentID string) string {
+	if agentID != "" {
+		return filepath.Join(workDir, ".loop", "mcp-"+channelID+"-"+agentID+".json")
+	}
+	return filepath.Join(workDir, ".loop", "mcp-"+channelID+".json")
+}
+
 // BuildInteractiveClaudeCmd assembles the Claude CLI shell command for interactive
 // terminal sessions (no --print, --verbose, --output-format flags).
-func BuildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID string, forkSession bool) string {
-	mcpConfigPath := filepath.Join(workDir, ".loop", "mcp-"+channelID+".json")
-	return strings.Join(buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, forkSession, false), " ")
+func BuildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID, agentID string, forkSession bool) string {
+	mcpConfigPath := mcpConfigPathForAgent(workDir, channelID, agentID)
+	return strings.Join(buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, agentID, forkSession, false), " ")
 }
 
 // ClaudeCmdBuilder builds the interactive Claude command for terminal sessions.
@@ -698,17 +715,26 @@ func BuildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID
 type ClaudeCmdBuilder struct {
 	cfg               *config.Config
 	loadProjectConfig func(string, *config.Config) (*config.Config, error)
+	writeFile         func(string, []byte, os.FileMode) error
+	mkdirAll          func(string, os.FileMode) error
 }
 
 // NewClaudeCmdBuilder creates a builder that uses the given config.
 func NewClaudeCmdBuilder(cfg *config.Config) *ClaudeCmdBuilder {
-	return &ClaudeCmdBuilder{cfg: cfg, loadProjectConfig: config.LoadProjectConfig}
+	return &ClaudeCmdBuilder{
+		cfg:               cfg,
+		loadProjectConfig: config.LoadProjectConfig,
+		writeFile:         os.WriteFile,
+		mkdirAll:          os.MkdirAll,
+	}
 }
 
 // BuildInteractiveCmd returns the interactive Claude shell command for the given channel.
 // It loads the project-specific config (if any) to apply per-project overrides
 // such as claude_model before building the command.
-func (b *ClaudeCmdBuilder) BuildInteractiveCmd(channelID, dirPath, sessionID string, forkSession bool) string {
+// When agentID is set, a per-agent MCP config is written with --agent-id so
+// the agent can identify itself via the MCP tools.
+func (b *ClaudeCmdBuilder) BuildInteractiveCmd(channelID, dirPath, sessionID, agentID string, forkSession bool) string {
 	workDir := dirPath
 	if workDir == "" {
 		workDir = filepath.Join(b.cfg.LoopDir, channelID, "work")
@@ -717,7 +743,21 @@ func (b *ClaudeCmdBuilder) BuildInteractiveCmd(channelID, dirPath, sessionID str
 	if merged, err := b.loadProjectConfig(workDir, b.cfg); err == nil {
 		cfg = merged
 	}
-	return BuildInteractiveClaudeCmd(cfg, channelID, workDir, sessionID, forkSession)
+	if agentID != "" {
+		b.writeAgentMCPConfig(cfg, workDir, channelID, agentID)
+	}
+	return BuildInteractiveClaudeCmd(cfg, channelID, workDir, sessionID, agentID, forkSession)
+}
+
+// writeAgentMCPConfig writes a per-agent MCP config file with --agent-id.
+func (b *ClaudeCmdBuilder) writeAgentMCPConfig(cfg *config.Config, workDir, channelID, agentID string) {
+	apiURL := "http://host.docker.internal" + cfg.APIAddr
+	loopDir := filepath.Join(workDir, ".loop")
+	_ = b.mkdirAll(loopDir, 0o755)
+	mcpCfg := buildMCPConfig(channelID, apiURL, workDir, "", agentID, cfg.Memory.Enabled, cfg.Browser.Enabled, cfg.MCPServers)
+	data, _ := json.MarshalIndent(mcpCfg, "", "  ")
+	configPath := mcpConfigPathForAgent(workDir, channelID, agentID)
+	_ = b.writeFile(configPath, data, 0o644)
 }
 
 // filterMountedCopyFiles removes entries from copyFiles whose expanded paths
@@ -789,11 +829,12 @@ func (r *DockerRunner) copyFiles(ctx context.Context, containerID string, files 
 // builds environment and mounts, writes MCP config, creates the Docker
 // container with the command returned by buildCmd, and starts it.
 // The mcpConfigPath is returned so the caller can clean it up if needed.
+// keepMCPConfig reflects the merged config's KeepMCPConfigs flag.
 func (r *DockerRunner) createAndStartContainer(
 	ctx context.Context,
-	channelID, dirPath, authorID, parentDirPath string,
+	channelID, dirPath, authorID, parentDirPath, agentID string,
 	buildCmd func(cfg *config.Config, mcpConfigPath string) []string,
-) (containerID, mcpConfigPath string, err error) {
+) (containerID, mcpConfigPath string, keepMCPConfig bool, err error) {
 	workDir := filepath.Join(r.cfg.LoopDir, channelID, "work")
 	if dirPath != "" {
 		workDir = dirPath
@@ -806,14 +847,15 @@ func (r *DockerRunner) createAndStartContainer(
 		cfg, err = r.loadProjectConfig(workDir, r.cfg)
 	}
 	if err != nil {
-		return "", "", fmt.Errorf("loading project config: %w", err)
+		return "", "", false, fmt.Errorf("loading project config: %w", err)
 	}
+	keepMCPConfig = cfg.KeepMCPConfigs
 
 	apiURL := "http://host.docker.internal" + cfg.APIAddr
 
 	env, err := r.buildContainerEnv(cfg, channelID, apiURL)
 	if err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
 
 	binds, chownPaths := r.buildContainerMounts(cfg.Mounts, workDir, parentDirPath)
@@ -833,7 +875,7 @@ func (r *DockerRunner) createAndStartContainer(
 
 	// Ensure workDir exists on host (it's bind-mounted into the container).
 	if err := r.sys.MkdirAll(workDir, 0o755); err != nil {
-		return "", "", fmt.Errorf("creating work dir: %w", err)
+		return "", "", false, fmt.Errorf("creating work dir: %w", err)
 	}
 
 	// Initialize git in auto-created work directories so the agent can use version control.
@@ -841,9 +883,9 @@ func (r *DockerRunner) createAndStartContainer(
 		_, _ = r.sys.ExecCommandOutput("git", "init", workDir)
 	}
 
-	mcpConfigPath, err = r.writeMCPConfig(workDir, channelID, apiURL, authorID, cfg)
+	mcpConfigPath, err = r.writeMCPConfig(workDir, channelID, apiURL, authorID, agentID, cfg)
 	if err != nil {
-		return "", "", err
+		return "", "", false, err
 	}
 
 	cmd := buildCmd(cfg, mcpConfigPath)
@@ -862,18 +904,18 @@ func (r *DockerRunner) createAndStartContainer(
 	name := r.containerName(channelID, dirPath)
 	containerID, err = r.client.ContainerCreate(ctx, containerCfg, name)
 	if err != nil {
-		return "", mcpConfigPath, fmt.Errorf("creating container: %w", err)
+		return "", mcpConfigPath, keepMCPConfig, fmt.Errorf("creating container: %w", err)
 	}
 
 	if err := r.copyFiles(ctx, containerID, r.filterMountedCopyFiles(cfg.CopyFiles, binds)); err != nil {
-		return containerID, mcpConfigPath, fmt.Errorf("copying files: %w", err)
+		return containerID, mcpConfigPath, keepMCPConfig, fmt.Errorf("copying files: %w", err)
 	}
 
 	if err := r.client.ContainerStart(ctx, containerID); err != nil {
-		return containerID, mcpConfigPath, fmt.Errorf("starting container: %w", err)
+		return containerID, mcpConfigPath, keepMCPConfig, fmt.Errorf("starting container: %w", err)
 	}
 
-	return containerID, mcpConfigPath, nil
+	return containerID, mcpConfigPath, keepMCPConfig, nil
 }
 
 // collectOutput reads container logs (streaming or batch) and waits for exit.
@@ -1126,7 +1168,7 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 // Unlike Run, the container runs "sleep infinity" instead of Claude CLI and is
 // not auto-removed — it persists until explicitly stopped.
 func (r *DockerRunner) CreateShellContainer(ctx context.Context, channelID, dirPath string) (string, error) {
-	containerID, _, err := r.createAndStartContainer(ctx, channelID, dirPath, "", "", func(*config.Config, string) []string {
+	containerID, _, _, err := r.createAndStartContainer(ctx, channelID, dirPath, "", "", "", func(*config.Config, string) []string {
 		return []string{"sleep", "infinity"}
 	})
 	return containerID, err

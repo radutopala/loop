@@ -4,6 +4,7 @@ import { SINGLETON_PANELS } from "./types";
 import { emitLayoutDragStart, emitLayoutDragEnd, DRAG_MIME } from "./DropZoneOverlay";
 import type { ColorPalette } from "../theme";
 import { useTheme } from "../ThemeContext";
+import type { AgentInfo } from "../hooks/useAgentRegistry";
 
 const PANEL_LABELS: Record<PanelType, string> = {
   chat: "Chat",
@@ -61,16 +62,17 @@ interface PaneLeafHeaderProps {
   panel: PanelType;
   usedSingletons: Set<PanelType>;
   isMaximized?: boolean;
+  agentInfo?: AgentInfo;
   onRemove: () => void;
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
   onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void;
   onToggleMaximize?: () => void;
 }
 
-export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, onRemove, onDrop, onSplitLeaf, onToggleMaximize }: PaneLeafHeaderProps) {
+export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, agentInfo, onRemove, onDrop, onSplitLeaf, onToggleMaximize }: PaneLeafHeaderProps) {
   const { colors } = useTheme();
-  const label = PANEL_LABELS[panel];
   const isAgent = panel === "agent";
+  const label = isAgent && agentInfo?.name ? agentInfo.name : PANEL_LABELS[panel];
 
   const btnStyle = buildBtnStyle(colors);
 
@@ -136,6 +138,19 @@ export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, onR
           backgroundColor: isAgent ? colors.dirSelectedBg : colors.panelLabelBg,
         }}
       >
+        {isAgent && agentInfo && (
+          <span
+            title={agentInfo.status + (agentInfo.work_summary ? `: ${agentInfo.work_summary}` : "")}
+            style={{
+              display: "inline-block",
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              marginRight: 4,
+              backgroundColor: agentInfo.status === "running" ? colors.active : agentInfo.status === "error" ? colors.error : colors.textDim,
+            }}
+          />
+        )}
         {label}
       </span>
       <span style={{ width: 1, height: 10, backgroundColor: colors.border, flexShrink: 0, marginLeft: 2, marginRight: 2 }} />

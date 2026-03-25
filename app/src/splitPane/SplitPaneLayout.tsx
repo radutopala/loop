@@ -4,12 +4,14 @@ import { collectPanelTypes } from "./treeOps";
 import { PaneLeafHeader } from "./PaneLeafHeader";
 import { DropZoneOverlay } from "./DropZoneOverlay";
 import { useTheme } from "../ThemeContext";
+import type { AgentInfo } from "../hooks/useAgentRegistry";
 
 const HEADER_HEIGHT = 22;
 
 interface SplitPaneLayoutProps {
   tree: PaneNode;
   renderLeaf: (leaf: LeafNode) => React.ReactNode;
+  agentInfoMap?: Map<string, AgentInfo>;
   onUpdateFlex: (parentPath: number[], dividerIdx: number, flexA: number, flexB: number) => void;
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
   onRemoveLeaf: (id: string) => void;
@@ -17,7 +19,7 @@ interface SplitPaneLayoutProps {
   onMaximize?: (leafId: string) => void;
 }
 
-export function SplitPaneLayout({ tree, renderLeaf, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf, onMaximize }: SplitPaneLayoutProps) {
+export function SplitPaneLayout({ tree, renderLeaf, agentInfoMap, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf, onMaximize }: SplitPaneLayoutProps) {
   const usedSingletons = collectPanelTypes(tree);
   return (
     <PaneTree
@@ -25,6 +27,7 @@ export function SplitPaneLayout({ tree, renderLeaf, onUpdateFlex, onDrop, onRemo
       path={[]}
       usedSingletons={usedSingletons}
       renderLeaf={renderLeaf}
+      agentInfoMap={agentInfoMap}
       onUpdateFlex={onUpdateFlex}
       onDrop={onDrop}
       onRemoveLeaf={onRemoveLeaf}
@@ -39,6 +42,7 @@ interface PaneTreeProps {
   path: number[];
   usedSingletons: Set<PanelType>;
   renderLeaf: (leaf: LeafNode) => React.ReactNode;
+  agentInfoMap?: Map<string, AgentInfo>;
   onUpdateFlex: (parentPath: number[], dividerIdx: number, flexA: number, flexB: number) => void;
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
   onRemoveLeaf: (id: string) => void;
@@ -46,7 +50,7 @@ interface PaneTreeProps {
   onMaximize?: (leafId: string) => void;
 }
 
-function PaneTree({ node, path, usedSingletons, renderLeaf, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf, onMaximize }: PaneTreeProps) {
+function PaneTree({ node, path, usedSingletons, renderLeaf, agentInfoMap, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf, onMaximize }: PaneTreeProps) {
   const { colors } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -99,6 +103,7 @@ function PaneTree({ node, path, usedSingletons, renderLeaf, onUpdateFlex, onDrop
           leafId={node.id}
           panel={node.panel}
           usedSingletons={usedSingletons}
+          agentInfo={node.panel === "agent" ? agentInfoMap?.get(node.id) : undefined}
           onRemove={() => onRemoveLeaf(node.id)}
           onDrop={onDrop}
           onSplitLeaf={onSplitLeaf}
@@ -159,6 +164,7 @@ function PaneTree({ node, path, usedSingletons, renderLeaf, onUpdateFlex, onDrop
             path={[...path, i]}
             usedSingletons={usedSingletons}
             renderLeaf={renderLeaf}
+            agentInfoMap={agentInfoMap}
             onUpdateFlex={onUpdateFlex}
             onDrop={onDrop}
             onRemoveLeaf={onRemoveLeaf}

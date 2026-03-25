@@ -186,6 +186,18 @@ func (m *MockEventBroadcaster) BroadcastChannelDeleted(channelID string) {
 	m.Called(channelID)
 }
 
+func (m *MockEventBroadcaster) BroadcastAgentInstanceRegistered(channelID string, data events.AgentInstanceEventData) {
+	m.Called(channelID, data)
+}
+
+func (m *MockEventBroadcaster) BroadcastAgentInstanceUnregistered(channelID string, data events.AgentInstanceEventData) {
+	m.Called(channelID, data)
+}
+
+func (m *MockEventBroadcaster) BroadcastAgentInstanceMetadata(channelID string, data events.AgentInstanceEventData) {
+	m.Called(channelID, data)
+}
+
 type MockRunner struct {
 	mock.Mock
 }
@@ -1999,6 +2011,7 @@ func (s *OrchestratorSuite) TestBuildAgentRequest() {
 	require.Equal(s.T(), "sess-data", req.SessionID)
 	require.Equal(s.T(), "ch1", req.ChannelID)
 	require.Equal(s.T(), "/home/user/project", req.DirPath)
+	require.Equal(s.T(), "chat", req.AgentID)
 	require.Len(s.T(), req.Messages, 2)
 	// Messages should be reversed (oldest first)
 	require.Equal(s.T(), "assistant", req.Messages[0].Role)
@@ -2010,6 +2023,7 @@ func (s *OrchestratorSuite) TestBuildAgentRequestNilSession() {
 
 	require.Equal(s.T(), "", req.SessionID)
 	require.Equal(s.T(), "", req.DirPath)
+	require.Equal(s.T(), "chat", req.AgentID)
 	require.Empty(s.T(), req.Messages)
 }
 
@@ -2417,6 +2431,37 @@ func (s *OrchestratorSuite) TestHandleChannelDelete() {
 					Return([]string{}, nil)
 				s.store.On("DeleteChannelsByParentID", s.ctx, "ch-1").Return(nil)
 				s.store.On("DeleteChannel", s.ctx, "ch-1").Return(errors.New("db error"))
+			},
+		},
+		{
+			name: "thread KeepMCPConfigs skips removal", channelID: "thread-1", isThread: true,
+			setupFunc: func() {
+				s.orch.cfg.KeepMCPConfigs = true
+				s.orch.removeMCPConfig = func(string, string) error {
+					s.Fail("removeMCPConfig should not be called when KeepMCPConfigs is true")
+					return nil
+				}
+			},
+			setupMock: func() {
+				s.store.On("GetChannel", s.ctx, "thread-1").
+					Return(&db.Channel{ChannelID: "thread-1", DirPath: "/work", ParentID: "ch-1"}, nil)
+				s.store.On("DeleteChannel", s.ctx, "thread-1").Return(nil)
+			},
+		},
+		{
+			name: "channel KeepMCPConfigs skips removal", channelID: "ch-1", isThread: false,
+			setupFunc: func() {
+				s.orch.cfg.KeepMCPConfigs = true
+				s.orch.removeMCPConfig = func(string, string) error {
+					s.Fail("removeMCPConfig should not be called when KeepMCPConfigs is true")
+					return nil
+				}
+			},
+			setupMock: func() {
+				s.store.On("GetChannel", s.ctx, "ch-1").
+					Return(&db.Channel{ChannelID: "ch-1", DirPath: "/work"}, nil)
+				s.store.On("DeleteChannelsByParentID", s.ctx, "ch-1").Return(nil)
+				s.store.On("DeleteChannel", s.ctx, "ch-1").Return(nil)
 			},
 		},
 	}

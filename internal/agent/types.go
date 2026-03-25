@@ -16,6 +16,7 @@ type AgentRequest struct {
 	ParentDirPath string         `json:"parent_dir_path,omitempty"`
 	PlanMode      bool           `json:"plan_mode,omitempty"`
 	Prompt        string         `json:"prompt,omitempty"`
+	AgentID       string         `json:"agent_id,omitempty"`
 	// OnTurn is called for each assistant turn's text content during streaming.
 	// When set, the runner follows container logs in real-time instead of waiting
 	// for the container to exit. When nil, the runner uses the existing

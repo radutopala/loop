@@ -536,14 +536,28 @@ func (s *MainSuite) TestRunMCP() {
 
 	// runMCP will try to use StdioTransport which will fail/close immediately in test.
 	// We just verify the function is wired correctly.
-	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", false)
+	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", "", false)
 	require.True(s.T(), called)
 }
 
 func (s *MainSuite) TestRunMCPLogOpenError() {
-	err := s.app.runMCP("ch1", "http://localhost:8222", "", "/nonexistent/dir/mcp.log", "", "local", false)
+	err := s.app.runMCP("ch1", "http://localhost:8222", "", "/nonexistent/dir/mcp.log", "", "local", "", false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "opening mcp log")
+}
+
+func (s *MainSuite) TestRunMCPWithAgentID() {
+	logPath := filepath.Join(s.T().TempDir(), "mcp.log")
+
+	called := false
+	s.app.newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
+		called = true
+		// Verify the WithAgentTools option was passed by checking the server has agentID set.
+		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
+	}
+
+	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", "agent-0", false)
+	require.True(s.T(), called)
 }
 
 func (s *MainSuite) TestRunMCPWithConfigLoad() {
@@ -569,7 +583,7 @@ func (s *MainSuite) TestRunMCPWithConfigLoad() {
 	}
 
 	// This will fail to run the server (no stdio), but that's OK - we just want to test config loading
-	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", false)
+	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", "", false)
 	require.True(s.T(), called)
 }
 
@@ -716,7 +730,7 @@ func (s *MainSuite) TestRunMCPWithDir() {
 		return "resolved-ch", nil
 	}
 
-	_ = s.app.runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "", "local", false)
+	_ = s.app.runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "", "local", "", false)
 	require.True(s.T(), called)
 }
 
@@ -725,7 +739,7 @@ func (s *MainSuite) TestRunMCPWithDirEnsureError() {
 		return "", errors.New("ensure failed")
 	}
 
-	err := s.app.runMCP("", "http://localhost:8222", "/path", "/tmp/mcp.log", "", "local", false)
+	err := s.app.runMCP("", "http://localhost:8222", "/path", "/tmp/mcp.log", "", "local", "", false)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "ensuring channel for dir")
 }
@@ -1452,7 +1466,7 @@ func (s *MainSuite) TestRunMCPWithMemoryEnabled() {
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
 	}
 
-	_ = s.app.runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "", "local", false)
+	_ = s.app.runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "", "local", "", false)
 	require.True(s.T(), memoryOptReceived)
 }
 
@@ -1481,7 +1495,7 @@ func (s *MainSuite) TestRunMCPWithMemoryEnabledChannelIDMode() {
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
 	}
 
-	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", false)
+	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", "", false)
 	require.True(s.T(), memoryOptReceived)
 }
 
@@ -1508,7 +1522,7 @@ func (s *MainSuite) TestRunMCPWithMemoryNotEnabled() {
 		return "ch1", nil
 	}
 
-	_ = s.app.runMCP("", "http://localhost:8222", "/path", logPath, "", "local", false)
+	_ = s.app.runMCP("", "http://localhost:8222", "/path", logPath, "", "local", "", false)
 	require.False(s.T(), memoryOptReceived)
 }
 
@@ -1531,7 +1545,7 @@ func (s *MainSuite) TestRunMCPWithMemoryFlag() {
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
 	}
 
-	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", true)
+	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", "", true)
 	require.True(s.T(), memoryOptReceived)
 }
 

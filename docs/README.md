@@ -14,6 +14,7 @@ Comprehensive documentation for every feature of the Loop platform.
 
 - [**Containers**](containers.md) — Docker container lifecycle, environment, mounts, MCP config, cleanup
 - [**Scheduling**](scheduling.md) — Task types (cron/interval/once), templates, auto-deletion, thread creation
+- [**Multi-Agent**](multi-agent.md) — Agent registry, inter-agent MCP tools, channel push notifications, Swarm & Canvas layouts
 
 ## API & Data
 

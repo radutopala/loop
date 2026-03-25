@@ -71,6 +71,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.True(s.T(), cfg.StreamingEnabled)
 	require.True(s.T(), cfg.Browser.Enabled)
 	require.Equal(s.T(), []string{"~/.claude.json"}, cfg.CopyFiles)
+	require.False(s.T(), cfg.KeepMCPConfigs)
 }
 
 func (s *ConfigSuite) TestLoadCustomValues() {
@@ -1147,6 +1148,23 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 				require.Equal(s.T(), 9222, merged.Browser.HostCDPPort)
 			},
 		},
+		{
+			name:        "KeepMCPConfigs/Override",
+			projectJSON: `{"keep_mcp_configs": true}`,
+			mainCfg:     &Config{KeepMCPConfigs: false},
+			assert: func(merged, main *Config) {
+				require.True(s.T(), merged.KeepMCPConfigs)
+				require.False(s.T(), main.KeepMCPConfigs)
+			},
+		},
+		{
+			name:        "KeepMCPConfigs/NoOverride",
+			projectJSON: `{}`,
+			mainCfg:     &Config{KeepMCPConfigs: true},
+			assert: func(merged, _ *Config) {
+				require.True(s.T(), merged.KeepMCPConfigs)
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1625,4 +1643,32 @@ func (s *ConfigSuite) TestMemoryConfigOllamaCustomURL() {
 	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "http://gpu-server:11434", cfg.Memory.Embeddings.OllamaURL)
+}
+
+func (s *ConfigSuite) TestLoadPublicWrapper() {
+	// Load() calls newLoader().load() which reads from real home dir.
+	// Without a config file it returns an error — that's fine, we just verify it doesn't panic.
+	_, err := Load()
+	// Expect error since test home likely has no ~/.loop/config.json.
+	// If it happens to succeed (dev machine), that's fine too.
+	_ = err
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigPublicWrapper() {
+	dir := s.T().TempDir()
+	base := &Config{Platforms: []types.Platform{types.PlatformLocal}}
+	// No .loop/config.json in temp dir — returns main config unchanged.
+	cfg, err := LoadProjectConfig(dir, base)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), base.Platforms, cfg.Platforms)
+}
+
+func (s *ConfigSuite) TestLoadWorktreeProjectConfigPublicWrapper() {
+	worktree := s.T().TempDir()
+	parent := s.T().TempDir()
+	base := &Config{Platforms: []types.Platform{types.PlatformLocal}}
+	// No .loop/config.json in either dir — returns main config unchanged.
+	cfg, err := LoadWorktreeProjectConfig(worktree, parent, base)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), base.Platforms, cfg.Platforms)
 }

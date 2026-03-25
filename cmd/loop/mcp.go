@@ -14,7 +14,7 @@ import (
 )
 
 func (a *app) newMCPCmd() *cobra.Command {
-	var channelID, apiURL, logPath, dirPath, authorID, platform string
+	var channelID, apiURL, logPath, dirPath, authorID, platform, agentID string
 	var memoryEnabled bool
 
 	cmd := &cobra.Command{
@@ -22,7 +22,7 @@ func (a *app) newMCPCmd() *cobra.Command {
 		Aliases: []string{"m"},
 		Short:   "Run as an MCP server over stdio",
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return a.runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, memoryEnabled)
+			return a.runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, agentID, memoryEnabled)
 		},
 	}
 
@@ -33,6 +33,7 @@ func (a *app) newMCPCmd() *cobra.Command {
 	cmd.Flags().StringVar(&authorID, "author-id", "", "User ID of the message author")
 	cmd.Flags().StringVar(&platform, "platform", "local", "Platform for channel creation (used with --dir)")
 	cmd.Flags().BoolVar(&memoryEnabled, "memory", false, "Enable memory search/index tools")
+	cmd.Flags().StringVar(&agentID, "agent-id", "", "Agent ID for inter-agent communication tools")
 	cmd.MarkFlagsOneRequired("channel-id", "dir")
 	cmd.MarkFlagsMutuallyExclusive("channel-id", "dir")
 	_ = cmd.MarkFlagRequired("api-url")
@@ -40,7 +41,7 @@ func (a *app) newMCPCmd() *cobra.Command {
 	return cmd
 }
 
-func (a *app) runMCP(channelID, apiURL, dirPath, logPath, authorID, platform string, memoryEnabled bool) error {
+func (a *app) runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, agentID string, memoryEnabled bool) error {
 	if dirPath != "" {
 		resolved, err := a.ensureChannelFn(apiURL, dirPath, platform)
 		if err != nil {
@@ -68,7 +69,13 @@ func (a *app) runMCP(channelID, apiURL, dirPath, logPath, authorID, platform str
 	if memoryEnabled || (cfgErr == nil && cfg.Memory.Enabled) {
 		memOpts = append(memOpts, mcpserver.WithMemoryAPI(dirPath))
 	}
+	if agentID != "" {
+		memOpts = append(memOpts, mcpserver.WithAgentTools(agentID))
+	}
 
 	srv := a.newMCPServer(channelID, apiURL, authorID, http.DefaultClient, logger, memOpts...)
-	return srv.Run(context.Background(), &mcp.StdioTransport{})
+	srv.RegisterAgent()
+	runErr := srv.Run(context.Background(), &mcp.StdioTransport{})
+	srv.UnregisterAgent()
+	return runErr
 }

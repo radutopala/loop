@@ -14,6 +14,9 @@
   //"container_memory_mb": 512,
   //"container_cpus": 1.0,
 
+  // Preserve MCP config JSON files after container runs (useful for debugging)
+  //"keep_mcp_configs": false,
+
   // Browser automation override for this project
   //"browser": {
   //  "enabled": false,

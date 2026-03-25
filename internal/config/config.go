@@ -108,6 +108,7 @@ type Config struct {
 	Envs                 map[string]string
 	ClaudeModel          string
 	StreamingEnabled     bool
+	KeepMCPConfigs       bool
 	Browser              BrowserConfig
 	Memory               MemoryConfig
 	Permissions          types.Permissions
@@ -153,6 +154,7 @@ type jsonConfig struct {
 	ClaudeModel           string                 `json:"claude_model"`
 	ClaudeBinPath         string                 `json:"claude_bin_path"`
 	StreamingEnabled      *bool                  `json:"streaming_enabled"`
+	KeepMCPConfigs        *bool                  `json:"keep_mcp_configs"`
 	Browser               *jsonBrowserConfig     `json:"browser"`
 	Memory                *jsonMemoryConfig      `json:"memory"`
 	Permissions           *jsonPermissionsConfig `json:"permissions"`
@@ -255,6 +257,7 @@ func (l *Loader) load() (*Config, error) {
 		LoopDir:              loopDir,
 		ClaudeModel:          jc.ClaudeModel,
 		StreamingEnabled:     ptrDefault(jc.StreamingEnabled, true),
+		KeepMCPConfigs:       ptrDefault(jc.KeepMCPConfigs, false),
 	}
 
 	// Browser config: nested struct with defaults.
@@ -399,6 +402,7 @@ type projectConfig struct {
 	ContainerImage       string                 `json:"container_image"`
 	ContainerMemoryMB    *int64                 `json:"container_memory_mb"`
 	ContainerCPUs        *float64               `json:"container_cpus"`
+	KeepMCPConfigs       *bool                  `json:"keep_mcp_configs"`
 	Browser              *jsonBrowserConfig     `json:"browser"`
 	TaskTemplates        []TaskTemplate         `json:"task_templates"`
 	Memory               *jsonMemoryConfig      `json:"memory"`
@@ -528,6 +532,9 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 	}
 	if pc.ContainerCPUs != nil {
 		merged.ContainerCPUs = *pc.ContainerCPUs
+	}
+	if pc.KeepMCPConfigs != nil {
+		merged.KeepMCPConfigs = *pc.KeepMCPConfigs
 	}
 	if pc.Browser != nil {
 		if pc.Browser.Enabled != nil {

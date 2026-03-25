@@ -30,17 +30,19 @@ type threadService struct {
 	logger           *slog.Logger
 	generateThreadID func() string
 	removeMCPConfig  func(string, string) error
+	keepMCPConfigs   bool
 	removeWorktree   func(ctx context.Context, mainRepoDir, worktreePath string) error
 }
 
 // NewThreadService creates a new ThreadEnsurer.
-func NewThreadService(store db.Store, creator ThreadCreator, logger *slog.Logger) ThreadEnsurer {
+func NewThreadService(store db.Store, creator ThreadCreator, logger *slog.Logger, keepMCPConfigs bool) ThreadEnsurer {
 	return &threadService{
 		store:            store,
 		creator:          creator,
 		logger:           logger,
 		generateThreadID: func() string { return randutil.HexID(6) },
 		removeMCPConfig:  bot.RemoveMCPConfig,
+		keepMCPConfigs:   keepMCPConfigs,
 		removeWorktree:   removeWorktreeExec,
 	}
 }
@@ -79,8 +81,10 @@ func (s *threadService) DeleteThread(ctx context.Context, threadID string) error
 		return fmt.Errorf("channel %s is not a thread", threadID)
 	}
 
-	if err := s.removeMCPConfig(ch.DirPath, threadID); err != nil {
-		s.logger.Warn("removing MCP config for thread", "error", err, "thread_id", threadID)
+	if !s.keepMCPConfigs {
+		if err := s.removeMCPConfig(ch.DirPath, threadID); err != nil {
+			s.logger.Warn("removing MCP config for thread", "error", err, "thread_id", threadID)
+		}
 	}
 
 	if ch.Worktree && ch.DirPath != "" && s.removeWorktree != nil {

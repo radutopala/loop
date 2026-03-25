@@ -41,7 +41,7 @@ export function useTerminalWs({
       retriedRef.current = true;
       const size = getTerminalSizeRef.current?.();
       sendRef.current(
-        JSON.stringify({ type: "create", channel_id: channelId, target, ...size }),
+        JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId } : {}), ...size }),
       );
     }
   }, [channelId, target, killedRef]);
@@ -108,8 +108,8 @@ export function useTerminalWs({
     if (!channelId) return;
     killedRef.current = false;
     const size = getTerminalSizeRef.current?.();
-    send(JSON.stringify({ type: "create", channel_id: channelId, target, ...size }));
-  }, [channelId, target, send, killedRef]);
+    send(JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId } : {}), ...size }));
+  }, [channelId, target, instanceId, send, killedRef]);
 
   /** Close: stop the exec session but keep the container alive.
    *  Does NOT set killedRef — only explicit Kill should prevent auto-create. */

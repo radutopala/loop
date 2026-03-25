@@ -10,9 +10,10 @@ let scrollbarStyleInjected = false;
 function injectScrollbarStyle() {
   if (scrollbarStyleInjected) return;
   scrollbarStyleInjected = true;
+  // Use the same scrollbar appearance as the rest of the app (set in ThemeContext).
+  // Just ensure the xterm viewport doesn't hide it.
   const style = document.createElement("style");
-  style.textContent = `.xterm-viewport::-webkit-scrollbar { width: 0; height: 0; }
-.xterm-viewport { scrollbar-width: none; }`;
+  style.textContent = `.xterm-viewport { scrollbar-width: thin; }`;
   document.head.appendChild(style);
 }
 
@@ -89,14 +90,12 @@ export function useXTerminal({
       injectScrollbarStyle();
       term.open(containerRef.current!);
 
-      // xterm.js falls back to 15px scrollbar width when the computed value
-      // is 0 (macOS overlay scrollbars). Pin it to 0 so the FitAddon uses
-      // the full container width. The CSS above hides the scrollbar visually
-      // while preserving mouse-wheel scrolling.
+      // Pin scrollbar width to 8px (thin scrollbar).
+      // Without this, xterm.js may compute 0 (macOS overlay) or 15px (default).
       const core = (term as any)._core;
       if (core?.viewport) {
         Object.defineProperty(core.viewport, "scrollBarWidth", {
-          get: () => 0,
+          get: () => 8,
           set: () => {},
           configurable: true,
         });

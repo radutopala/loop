@@ -1,8 +1,33 @@
-# Split Pane Workspace Layouts
+# Workspace Layouts
 
-The workspace layout system provides a flexible split-pane interface where users can arrange multiple panels (chat, editor, terminal, etc.) in arbitrary horizontal and vertical splits. Layouts are named, switchable, and persisted per channel.
+The workspace layout system supports two layout types: **Split** (flexible split-pane interface) and **Canvas** (free-form draggable tiles). Layouts are named, switchable, and persisted per channel. Each layout tab stores its type (`"split"` or `"canvas"`).
 
 Related docs: [Chat](chat.md) | [Editor](editor.md) | [Desktop App](desktop-app.md)
+
+---
+
+## Layout Types
+
+### Split Layout
+
+The default layout type. Panels are arranged in arbitrary horizontal and vertical splits using a recursive tree data structure (see [Tree Data Structure](#tree-data-structure) below).
+
+### Canvas Layout
+
+A free-form layout with draggable, resizable tiles on an infinite surface.
+
+- **Background:** Dot grid pattern for spatial orientation.
+- **Pan:** Scroll to pan the canvas viewport.
+- **Zoom:** `Ctrl+Scroll` (or `Cmd+Scroll`) to zoom in/out.
+- **Add tiles:** Double-click an empty area or use the `+` button in a tile header.
+- **Tile controls:** Each tile header has `+` (add tile), maximize, and close buttons.
+- **Bring to front:** Click a tile to raise it above others.
+- **Singleton enforcement:** Chat, Editor, Memory, Diff, and Browser are limited to one tile per canvas. Agent and Shell can have multiple tiles.
+- **Auto-center:** Tiles are centered in the viewport on first load and after a layout reset.
+
+### Creating Layouts
+
+New layouts can be created as either Split or Canvas from the `+` button in the tab bar. The layout type is stored per tab and cannot be changed after creation.
 
 ---
 
@@ -82,7 +107,7 @@ The "Chat" layout is the initial active layout.
 | Operation | How | Behavior |
 |-----------|-----|----------|
 | **Switch** | Click a layout tab | Saves current tree, loads the target layout's tree from storage. Terminal sessions are cleared. |
-| **Create** | Click `+` button next to tabs | Creates a new layout with auto-generated name (`Layout 1`, `Layout 2`, ...). Starts empty -- user picks the first panel from the `EmptyLayoutPicker`. |
+| **Create** | Click `+` button next to tabs | Creates a new Split or Canvas layout with auto-generated name (`Layout 1`, `Layout 2`, ...). Split layouts start empty -- user picks the first panel from the `EmptyLayoutPicker`. |
 | **Rename** | Double-click the tab label | Opens an inline text input. Commit with Enter, cancel with Escape or blur. Rejects empty names and duplicates. |
 | **Delete** | Click `x` on the tab | Shows a confirmation popover ("Delete? Yes / No") with an upward-pointing arrow. Kills any running terminal sessions. Cannot delete the last remaining layout. |
 | **Reset current** | Click "Reset" dropdown > "Reset current" | Restores the active layout to its default tree (only available for default layout names). Kills running terminals. |
@@ -101,9 +126,10 @@ All layout state is stored in `localStorage` under the key `loop-workspace-layou
 ```typescript
 Record<channelId, {
   active: string;                    // name of the active layout
-  layouts: Record<string, PaneNode>; // layout name -> tree
+  layouts: Record<string, PaneNode>; // layout name -> tree (split layouts)
   order: string[];                   // tab display order
   removed?: string[];                // deleted default layout names
+  types?: Record<string, "split" | "canvas">; // layout name -> type
 }>
 ```
 

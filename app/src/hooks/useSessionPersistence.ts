@@ -69,14 +69,14 @@ export function useSessionPersistence(
     (ws: WebSocket) => {
       if (sessionIdRef.current) {
         ws.send(
-          JSON.stringify({ type: "attach", session_id: sessionIdRef.current }),
+          JSON.stringify({ type: "attach", session_id: sessionIdRef.current, ...(channelId ? { channel_id: channelId } : {}), ...(target === "agent" && instanceId ? { agent_id: instanceId } : {}) }),
         );
       } else if (channelId && !killedRef.current) {
         const size = getTerminalSizeRef?.current?.();
-        ws.send(JSON.stringify({ type: "create", channel_id: channelId, target, ...size }));
+        ws.send(JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId } : {}), ...size }));
       }
     },
-    [channelId, target, getTerminalSizeRef],
+    [channelId, target, instanceId, getTerminalSizeRef],
   );
 
   return { sessionIdRef, killedRef, setSessionId, handleOpen, markKilled, getStartTime };

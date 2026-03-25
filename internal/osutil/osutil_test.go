@@ -141,3 +141,9 @@ func (s *RealSystemSuite) TestCreateTemp() {
 	require.NoError(s.T(), f.Close())
 	require.NoError(s.T(), os.Remove(f.Name()))
 }
+
+func TestEncodeClaudeProjectPath(t *testing.T) {
+	require.Equal(t, "-Users-foo-dev-loop", EncodeClaudeProjectPath("/Users/foo/dev/loop"))
+	require.Equal(t, "-home-user--hidden", EncodeClaudeProjectPath("/home/user/.hidden"))
+	require.Equal(t, "", EncodeClaudeProjectPath(""))
+}

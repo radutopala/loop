@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tailscale/hujson"
 
+	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/api"
 	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/config"
@@ -356,6 +357,8 @@ func (a *app) serve() error {
 
 	runner := container.NewDockerRunner(dockerClient, cfg)
 
+	agentReg := agentregistry.New()
+
 	executor := orchestrator.NewTaskExecutor(runner, chatBot, store, logger, cfg.ContainerTimeout, cfg.StreamingEnabled)
 	sched := scheduler.NewTaskScheduler(store, executor, cfg.PollInterval, logger)
 
@@ -366,11 +369,12 @@ func (a *app) serve() error {
 		}
 	}
 	channelSvc := api.NewChannelService(store, channelCreators, cfg.LoopDir)
-	threadSvc := api.NewThreadService(store, chatBot, logger)
+	threadSvc := api.NewThreadService(store, chatBot, logger, cfg.KeepMCPConfigs)
 
 	apiSrv := a.newAPIServer(sched, channelSvc, threadSvc, store, chatBot, logger)
 	apiSrv.SetLoopDir(cfg.LoopDir)
 	apiSrv.SetRunningChannelLister(dockerClient)
+	apiSrv.SetAgentRegistry(agentReg)
 
 	execClient, err := a.newDockerExecClient()
 	if err != nil {
