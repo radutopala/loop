@@ -84,7 +84,7 @@ func (s *AgentsToolsSuite) TestListAgentsError() {
 }
 
 func (s *AgentsToolsSuite) TestSendAgentMessage() {
-	result, _, err := s.srv.handleSendAgentMessage(nil, nil, sendAgentMessageInput{
+	result, _, err := s.srv.handleSendAgentMessage(context.TODO(), nil, sendAgentMessageInput{
 		ToAgentID: "agent-1",
 		Content:   "hello",
 	})
@@ -94,14 +94,14 @@ func (s *AgentsToolsSuite) TestSendAgentMessage() {
 }
 
 func (s *AgentsToolsSuite) TestSendAgentMessageMissingFields() {
-	result, _, err := s.srv.handleSendAgentMessage(nil, nil, sendAgentMessageInput{})
+	result, _, err := s.srv.handleSendAgentMessage(context.TODO(), nil, sendAgentMessageInput{})
 	require.NoError(s.T(), err)
 	require.True(s.T(), result.IsError)
 	require.Contains(s.T(), result.Content[0].(*mcp.TextContent).Text, "required")
 }
 
 func (s *AgentsToolsSuite) TestSendAgentMessageNotFound() {
-	result, _, err := s.srv.handleSendAgentMessage(nil, nil, sendAgentMessageInput{
+	result, _, err := s.srv.handleSendAgentMessage(context.TODO(), nil, sendAgentMessageInput{
 		ToAgentID: "nonexistent",
 		Content:   "hello",
 	})
@@ -112,7 +112,7 @@ func (s *AgentsToolsSuite) TestSendAgentMessageNotFound() {
 
 func (s *AgentsToolsSuite) TestSendAgentMessageError() {
 	srv := New("ch-1", "http://127.0.0.1:1", "author-1", http.DefaultClient, nil, WithAgentTools("agent-0"))
-	result, _, err := srv.handleSendAgentMessage(nil, nil, sendAgentMessageInput{
+	result, _, err := srv.handleSendAgentMessage(context.TODO(), nil, sendAgentMessageInput{
 		ToAgentID: "agent-1",
 		Content:   "hello",
 	})
@@ -121,7 +121,7 @@ func (s *AgentsToolsSuite) TestSendAgentMessageError() {
 }
 
 func (s *AgentsToolsSuite) TestUpdateAgentStatus() {
-	result, _, err := s.srv.handleUpdateAgentStatus(nil, nil, updateAgentStatusInput{
+	result, _, err := s.srv.handleUpdateAgentStatus(context.TODO(), nil, updateAgentStatusInput{
 		Name:        "Worker",
 		WorkSummary: "indexing files",
 	})
@@ -131,7 +131,7 @@ func (s *AgentsToolsSuite) TestUpdateAgentStatus() {
 }
 
 func (s *AgentsToolsSuite) TestUpdateAgentStatusMissingFields() {
-	result, _, err := s.srv.handleUpdateAgentStatus(nil, nil, updateAgentStatusInput{})
+	result, _, err := s.srv.handleUpdateAgentStatus(context.TODO(), nil, updateAgentStatusInput{})
 	require.NoError(s.T(), err)
 	require.True(s.T(), result.IsError)
 	require.Contains(s.T(), result.Content[0].(*mcp.TextContent).Text, "required")
@@ -144,7 +144,7 @@ func (s *AgentsToolsSuite) TestUpdateAgentStatusHTTPError() {
 	defer errSrv.Close()
 
 	srv := New("ch-1", errSrv.URL, "author-1", errSrv.Client(), nil, WithAgentTools("agent-0"))
-	result, _, err := srv.handleUpdateAgentStatus(nil, nil, updateAgentStatusInput{Name: "x"})
+	result, _, err := srv.handleUpdateAgentStatus(context.TODO(), nil, updateAgentStatusInput{Name: "x"})
 	require.NoError(s.T(), err)
 	require.True(s.T(), result.IsError)
 	require.Contains(s.T(), result.Content[0].(*mcp.TextContent).Text, "HTTP 500")
@@ -152,7 +152,7 @@ func (s *AgentsToolsSuite) TestUpdateAgentStatusHTTPError() {
 
 func (s *AgentsToolsSuite) TestUpdateAgentStatusError() {
 	srv := New("ch-1", "http://127.0.0.1:1", "author-1", http.DefaultClient, nil, WithAgentTools("agent-0"))
-	result, _, err := srv.handleUpdateAgentStatus(nil, nil, updateAgentStatusInput{Name: "x"})
+	result, _, err := srv.handleUpdateAgentStatus(context.TODO(), nil, updateAgentStatusInput{Name: "x"})
 	require.NoError(s.T(), err)
 	require.True(s.T(), result.IsError)
 }
