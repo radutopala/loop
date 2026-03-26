@@ -62,3 +62,8 @@ func (a *ManagerAdapter) Resize(ctx context.Context, sessionID string, rows, col
 func (a *ManagerAdapter) StopSession(sessionID string) (string, error) {
 	return a.mgr.StopSession(sessionID)
 }
+
+// KillProcessGroup kills the exec process group for a session via PID file.
+func (a *ManagerAdapter) KillProcessGroup(ctx context.Context, sessionID string) error {
+	return a.mgr.KillProcessGroup(ctx, sessionID)
+}

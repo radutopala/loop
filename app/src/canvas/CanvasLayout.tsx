@@ -378,6 +378,7 @@ const PANEL_COLORS: Record<PanelType, string> = {
   shell: "#94a3b8",
   "docker-browser": "#fb923c",
   "host-browser": "#38bdf8",
+  sessions: "#c084fc",
 };
 
 function CanvasMinimap({ tiles, viewport: vp, containerRef, onPan, onZoom }: {
@@ -590,6 +591,7 @@ const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "shell", label: "Shell" },
   { panel: "docker-browser", label: "Docker Browser" },
   { panel: "host-browser", label: "Host Browser" },
+  { panel: "sessions", label: "Sessions" },
 ];
 
 /** Default tile sizes per panel type. Editor and Memory get more space. */

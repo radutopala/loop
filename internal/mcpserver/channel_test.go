@@ -223,6 +223,31 @@ func (m *mockTransport) Connect(_ context.Context) (mcp.Connection, error) {
 	return m.conn, m.err
 }
 
+func (s *ChannelSuite) TestStartPushReceiverWriteNotificationError() {
+	// Server sends a message; the transport writer fails, exercising the error log path.
+	upgrader := websocket.Upgrader{}
+	wsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		_ = conn.WriteJSON(map[string]string{
+			"from_agent_id": "agent-1",
+			"content":       "will fail",
+		})
+		time.Sleep(100 * time.Millisecond)
+	}))
+	defer wsSrv.Close()
+
+	transport := newChannelTransport()
+	transport.writer = &errorWriter{} // makes WriteNotification return an error
+
+	apiURL := "http" + strings.TrimPrefix(wsSrv.URL, "http")
+	startPushReceiver(apiURL, "ch-1", "agent-0", transport, slog.Default())
+	time.Sleep(200 * time.Millisecond)
+}
+
 func (s *ChannelSuite) TestStartPushReceiverDialError() {
 	transport := newChannelTransport()
 	safeBuf := &syncBuffer{}

@@ -35,6 +35,8 @@ type ExecClient interface {
 	ExecCreate(ctx context.Context, targetID string, cmd []string, tty bool) (string, error)
 	ExecAttach(ctx context.Context, execID string) (io.ReadWriteCloser, error)
 	ExecResize(ctx context.Context, execID string, height, width uint) error
+	// ExecInspectPid returns the PID of a running exec process (inside the container).
+	ExecInspectPid(ctx context.Context, execID string) (int, error)
 }
 
 // generateID returns a short random hex string for session IDs.
@@ -51,6 +53,7 @@ type Session struct {
 	id          string
 	containerID string
 	execID      string
+	pidFile     string // path inside the container where the shell's PID is stored
 	conn        io.ReadWriteCloser
 	buf         *RingBuffer
 	logger      *slog.Logger
@@ -208,10 +211,22 @@ func (m *Manager) SetIdleTimeout(d time.Duration) {
 	m.idleTimeout = d
 }
 
+// pidFileDir is where session PID files are written inside containers.
+const pidFileDir = "/tmp"
+
 // CreateSession starts a new interactive terminal session by creating a
 // Docker exec with a PTY, attaching to it, and starting the read loop.
-// If cmd is empty, the ExecClient decides the default shell.
+// If cmd is empty, starts a shell that writes its PID to a temp file
+// for reliable process group cleanup.
 func (m *Manager) CreateSession(ctx context.Context, containerID string, cmd []string) (*Session, error) {
+	sessionID := generateID(m.randRead)
+	pidFile := fmt.Sprintf("%s/.loop-exec-%s.pid", pidFileDir, sessionID)
+
+	// When no explicit command, wrap the shell to write its PID for later kill.
+	if len(cmd) == 0 {
+		cmd = []string{"/bin/sh", "-c", fmt.Sprintf("echo $$ > %s; exec /bin/sh", pidFile)}
+	}
+
 	execID, err := m.client.ExecCreate(ctx, containerID, cmd, true)
 	if err != nil {
 		return nil, fmt.Errorf("creating exec: %w", err)
@@ -223,9 +238,10 @@ func (m *Manager) CreateSession(ctx context.Context, containerID string, cmd []s
 	}
 
 	s := &Session{
-		id:          generateID(m.randRead),
+		id:          sessionID,
 		containerID: containerID,
 		execID:      execID,
+		pidFile:     pidFile,
 		conn:        conn,
 		buf:         NewRingBuffer(m.ringBufSize),
 		logger:      m.logger,
@@ -305,6 +321,34 @@ func (m *Manager) StopSession(id string) (string, error) {
 	s.mu.Unlock()
 
 	return s.containerID, err
+}
+
+// KillProcessGroup reads the shell's PID from its PID file (written at exec
+// startup) and runs `kill -9 -<pid>` (negative = process group) inside the
+// container. This reliably kills the shell and all its children (e.g. Claude).
+func (m *Manager) KillProcessGroup(ctx context.Context, sessionID string) error {
+	m.mu.Lock()
+	s, ok := m.sessions[sessionID]
+	m.mu.Unlock()
+	if !ok {
+		return ErrSessionNotFound
+	}
+	if s.pidFile == "" {
+		return nil // no PID file — session was created with explicit cmd
+	}
+
+	// Read PID file and kill the process group in one command.
+	killCmd := fmt.Sprintf("kill -9 -$(cat %s) 2>/dev/null; rm -f %s", s.pidFile, s.pidFile)
+	killExecID, err := m.client.ExecCreate(ctx, s.containerID, []string{"/bin/sh", "-c", killCmd}, false)
+	if err != nil {
+		return fmt.Errorf("creating kill exec: %w", err)
+	}
+	conn, err := m.client.ExecAttach(ctx, killExecID)
+	if err != nil {
+		return fmt.Errorf("attaching kill exec: %w", err)
+	}
+	conn.Close()
+	return nil
 }
 
 // ListSessions returns all active session IDs.

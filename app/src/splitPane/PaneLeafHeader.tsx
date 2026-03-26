@@ -15,6 +15,7 @@ const PANEL_LABELS: Record<PanelType, string> = {
   shell: "Shell",
   "docker-browser": "Docker Browser",
   "host-browser": "Host Browser",
+  sessions: "Sessions",
 };
 
 const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
@@ -26,6 +27,7 @@ const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "shell", label: "Shell" },
   { panel: "docker-browser", label: "Docker Browser" },
   { panel: "host-browser", label: "Host Browser" },
+  { panel: "sessions", label: "Sessions" },
 ];
 
 function buildBtnStyle(colors: ColorPalette): React.CSSProperties {

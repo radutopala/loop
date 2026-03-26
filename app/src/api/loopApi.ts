@@ -82,6 +82,7 @@ interface ChannelAPIResponse {
   name: string;
   dir_path: string;
   parent_id: string;
+  session_id: string;
   active: boolean;
   container_running: boolean;
   agent_running: boolean;
@@ -99,6 +100,7 @@ export async function fetchChannels(): Promise<Channel[]> {
     name: c.name,
     dir_path: c.dir_path,
     parent_id: c.parent_id,
+    session_id: c.session_id || "",
     active: c.active,
     container_running: c.container_running,
     agent_running: c.agent_running,
@@ -111,19 +113,40 @@ export async function fetchChannels(): Promise<Channel[]> {
 export async function createThread(
   channelId: string,
   name: string,
+  sessionId?: string,
 ): Promise<string> {
+  const body: Record<string, string> = {
+    channel_id: channelId,
+    name,
+    author_id: "desktop",
+  };
+  if (sessionId) body.session_id = sessionId;
   const res = await fetch(`${apiUrl}/api/threads`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      channel_id: channelId,
-      name,
-      author_id: "desktop",
-    }),
+    body: JSON.stringify(body),
   });
   if (!res.ok) throw new Error(`Failed to create thread: ${res.statusText}`);
   const data: { thread_id: string } = await res.json();
   return data.thread_id;
+}
+
+export interface SessionEntry {
+  session_id: string;
+  last_modified: string;
+  last_message?: string;
+}
+
+export interface SessionsResponse {
+  current_session_id: string;
+  sessions: SessionEntry[];
+  imported_session_ids: string[];
+}
+
+export async function fetchSessions(channelId: string): Promise<SessionsResponse> {
+  const res = await fetch(`${apiUrl}/api/channels/${channelId}/sessions`);
+  if (!res.ok) throw new Error(`Failed to fetch sessions: ${res.statusText}`);
+  return res.json();
 }
 
 export async function deleteThread(threadId: string): Promise<void> {
@@ -153,6 +176,7 @@ export async function ensureChannel(dirPath: string): Promise<Channel> {
     name: data.name,
     dir_path: data.dir_path,
     parent_id: data.parent_id,
+    session_id: data.session_id || "",
     active: data.active,
     container_running: data.container_running,
     agent_running: data.agent_running,

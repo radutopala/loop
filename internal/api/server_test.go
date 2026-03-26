@@ -6,19 +6,23 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"io/fs"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/memory"
@@ -190,6 +194,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("GET /api/tasks/{id}", s.srv.handleGetTask)
 	s.mux.HandleFunc("DELETE /api/tasks/{id}", s.srv.handleDeleteTask)
 	s.mux.HandleFunc("PATCH /api/tasks/{id}", s.srv.handleUpdateTask)
+	s.mux.HandleFunc("GET /api/channels/{id}/sessions", s.srv.handleListSessions)
 	s.mux.HandleFunc("GET /api/channels/{id}/messages", s.srv.handleListMessages)
 	s.mux.HandleFunc("GET /api/messages/search", s.srv.handleSearchMessages)
 	s.mux.HandleFunc("POST /api/commands", s.srv.handleCommand)
@@ -209,6 +214,12 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("POST /api/channels/{id}/branches/create", s.srv.handleCreateBranch)
 	s.mux.HandleFunc("POST /api/worktrees", s.srv.handleCreateWorktree)
 	s.mux.HandleFunc("POST /api/worktrees/import", s.srv.handleImportWorktree)
+	s.mux.HandleFunc("POST /api/agents", s.srv.handleRegisterAgent)
+	s.mux.HandleFunc("GET /api/agents", s.srv.handleListAgents)
+	s.mux.HandleFunc("PATCH /api/agents/{id}", s.srv.handleUpdateAgent)
+	s.mux.HandleFunc("DELETE /api/agents/{id}", s.srv.handleDeleteAgent)
+	s.mux.HandleFunc("POST /api/agents/{id}/message", s.srv.handleSendAgentMessage)
+	s.mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
 	s.mux.HandleFunc("GET /api/health", handleHealth)
 	s.mux.HandleFunc("GET /api/ws/terminal", s.srv.handleTerminalWS)
 	s.mux.HandleFunc("GET /api/ws", s.srv.handleEventsWS)
@@ -968,6 +979,297 @@ func (s *ServerSuite) TestCreateThreadError() {
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.threads.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCreateThreadWithSessionID() {
+	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread", "", "").
+		Return("thread-1", nil)
+	s.store.On("UpdateSessionID", mock.Anything, "thread-1", "imported-session-42").Return(nil)
+	// importSessionMessages looks up parent channel — return nil to skip import in this test.
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(nil, nil).Maybe()
+
+	rec := s.testRequest("POST", "/api/threads", `{"channel_id":"ch-1","name":"my-thread","session_id":"imported-session-42"}`)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+
+	var resp createThreadResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(s.T(), "thread-1", resp.ThreadID)
+	s.threads.AssertExpectations(s.T())
+	s.store.AssertCalled(s.T(), "UpdateSessionID", mock.Anything, "thread-1", "imported-session-42")
+}
+
+func (s *ServerSuite) TestCreateThreadWithSessionIDNoStore() {
+	threads := new(MockThreadEnsurer)
+	threads.On("CreateThread", mock.Anything, "ch-1", "my-thread", "", "").
+		Return("thread-1", nil)
+
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewServer(nil, nil, threads, nil, nil, logger)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/threads", srv.handleCreateThread)
+
+	req := httptest.NewRequest("POST", "/api/threads", bytes.NewBufferString(`{"channel_id":"ch-1","name":"my-thread","session_id":"sess-1"}`))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	// session_id is silently ignored when store is nil.
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+	threads.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCreateThreadWithEmptySessionID() {
+	s.threads.On("CreateThread", mock.Anything, "ch-1", "my-thread", "", "").
+		Return("thread-1", nil)
+
+	rec := s.testRequest("POST", "/api/threads", `{"channel_id":"ch-1","name":"my-thread","session_id":""}`)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+
+	var resp createThreadResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Equal(s.T(), "thread-1", resp.ThreadID)
+	s.threads.AssertExpectations(s.T())
+	// UpdateSessionID should NOT be called when session_id is empty.
+	s.store.AssertNotCalled(s.T(), "UpdateSessionID", mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (s *ServerSuite) TestCreateThreadWithSessionIDUpdateError() {
+	s.threads.On("CreateThread", mock.Anything, "ch-1", "test", "desktop", "").Return("thread-1", nil)
+	s.store.On("UpdateSessionID", mock.Anything, "thread-1", "bad-session").Return(errors.New("db error"))
+
+	body := `{"channel_id":"ch-1","name":"test","author_id":"desktop","session_id":"bad-session"}`
+	req := httptest.NewRequest("POST", "/api/threads", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+}
+
+// --- importSessionMessages tests ---
+
+func (s *ServerSuite) TestImportSessionMessagesNilStoreOrSys() {
+	// When store is nil, importSessionMessages returns early.
+	srv := NewServer(nil, nil, nil, nil, nil, testLogger())
+	srv.importSessionMessages(context.Background(), "ch-1", "thread-1", "sess-1")
+	// No panic = success.
+
+	// When sys is nil, importSessionMessages returns early.
+	store := new(MockChannelLister)
+	srv2 := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv2.sys = nil
+	srv2.importSessionMessages(context.Background(), "ch-1", "thread-1", "sess-1")
+	// store.GetChannel should not be called when sys is nil.
+	store.AssertNotCalled(s.T(), "GetChannel")
+}
+
+func (s *ServerSuite) TestImportSessionMessagesParentChannelNotFound() {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-parent").Return(nil, nil)
+
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.sys = s.sys
+	srv.importSessionMessages(context.Background(), "ch-parent", "thread-1", "sess-1")
+	store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestImportSessionMessagesParentEmptyDirPath() {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-parent").Return(&db.Channel{ChannelID: "ch-parent", DirPath: ""}, nil)
+
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.sys = s.sys
+	srv.importSessionMessages(context.Background(), "ch-parent", "thread-1", "sess-1")
+	store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestImportSessionMessagesParentGetError() {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-parent").Return(nil, errors.New("db err"))
+
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.sys = s.sys
+	srv.importSessionMessages(context.Background(), "ch-parent", "thread-1", "sess-1")
+	store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestImportSessionMessagesThreadNotFound() {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-parent").Return(&db.Channel{ChannelID: "ch-parent", DirPath: "/Users/test/dev/proj"}, nil)
+	store.On("GetChannel", mock.Anything, "thread-1").Return(nil, nil)
+
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.sys = s.sys
+	srv.importSessionMessages(context.Background(), "ch-parent", "thread-1", "sess-1")
+	store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestImportSessionMessagesThreadGetError() {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-parent").Return(&db.Channel{ChannelID: "ch-parent", DirPath: "/Users/test/dev/proj"}, nil)
+	store.On("GetChannel", mock.Anything, "thread-1").Return(nil, errors.New("db err"))
+
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.sys = s.sys
+	srv.importSessionMessages(context.Background(), "ch-parent", "thread-1", "sess-1")
+	store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestImportSessionMessagesUserHomeDirError() {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-parent").Return(&db.Channel{ChannelID: "ch-parent", DirPath: "/Users/test/dev/proj"}, nil)
+	store.On("GetChannel", mock.Anything, "thread-1").Return(&db.Channel{ChannelID: "thread-1", ID: 42}, nil)
+
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return("", errors.New("no home"))
+
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.sys = sys
+	srv.importSessionMessages(context.Background(), "ch-parent", "thread-1", "sess-1")
+	store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestImportSessionMessagesFileNotFound() {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-parent").Return(&db.Channel{ChannelID: "ch-parent", DirPath: "/Users/test/dev/proj"}, nil)
+	store.On("GetChannel", mock.Anything, "thread-1").Return(&db.Channel{ChannelID: "thread-1", ID: 42}, nil)
+
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return("/home/testuser", nil)
+	sys.On("Open", mock.Anything).Return(nil, os.ErrNotExist)
+
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.sys = sys
+	srv.importSessionMessages(context.Background(), "ch-parent", "thread-1", "sess-1")
+	store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestImportSessionMessagesSuccess() {
+	tmpDir := s.T().TempDir()
+	encodedPath := "-Users-test-dev-proj" // EncodeClaudeProjectPath for /Users/test/dev/proj
+	projectDir := filepath.Join(tmpDir, ".claude", "projects", encodedPath)
+	require.NoError(s.T(), os.MkdirAll(projectDir, 0755))
+
+	// Build a JSONL file with various line types.
+	lines := []string{
+		`{"type":"system","subtype":"init"}`,
+		`{"type":"user","message":{"role":"user","content":"Hello, world!"}}`,
+		`{"type":"assistant","timestamp":"2025-06-15T10:30:00Z","message":{"content":[{"type":"text","text":"Hi there!"}]}}`,
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}`,
+		`not valid json`,
+		`{"type":"result","subtype":"success"}`,
+		`{"type":"user","message":{"role":"user","content":"Second question"}}`,
+		`{"type":"assistant","message":{"content":[{"type":"text","text":""}]}}`,
+		``,
+	}
+	jsonlPath := filepath.Join(projectDir, "sess-import.jsonl")
+	require.NoError(s.T(), os.WriteFile(jsonlPath, []byte(strings.Join(lines, "\n")), 0644))
+
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-parent").Return(&db.Channel{ChannelID: "ch-parent", DirPath: "/Users/test/dev/proj"}, nil)
+	store.On("GetChannel", mock.Anything, "thread-1").Return(&db.Channel{ChannelID: "thread-1", ID: 42}, nil)
+	store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(msg *db.Message) bool {
+		return msg.ChatID == 42 && msg.ChannelID == "thread-1"
+	})).Return(nil)
+
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return(tmpDir, nil)
+
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.sys = &realOpenSys{sys}
+
+	srv.importSessionMessages(context.Background(), "ch-parent", "thread-1", "sess-import")
+
+	// Expected messages: "Hello, world!" (user), "Hi there!" (assistant), "Second question" (user).
+	// tool_result user line, invalid json, result type, empty assistant text are all skipped.
+	store.AssertNumberOfCalls(s.T(), "InsertMessage", 3)
+
+	// Verify message details from the calls.
+	calls := store.Calls
+	var insertedMsgs []*db.Message
+	for _, c := range calls {
+		if c.Method == "InsertMessage" {
+			insertedMsgs = append(insertedMsgs, c.Arguments.Get(1).(*db.Message))
+		}
+	}
+	require.Len(s.T(), insertedMsgs, 3)
+
+	// First message: user "Hello, world!"
+	require.Equal(s.T(), "Hello, world!", insertedMsgs[0].Content)
+	require.Equal(s.T(), "user", insertedMsgs[0].AuthorName)
+	require.False(s.T(), insertedMsgs[0].IsBot)
+
+	// Second message: assistant "Hi there!" with timestamp
+	require.Equal(s.T(), "Hi there!", insertedMsgs[1].Content)
+	require.Equal(s.T(), "agent", insertedMsgs[1].AuthorName)
+	require.True(s.T(), insertedMsgs[1].IsBot)
+	require.Equal(s.T(), time.Date(2025, 6, 15, 10, 30, 0, 0, time.UTC), insertedMsgs[1].CreatedAt)
+
+	// Third message: user "Second question"
+	require.Equal(s.T(), "Second question", insertedMsgs[2].Content)
+	require.Equal(s.T(), "user", insertedMsgs[2].AuthorName)
+	require.False(s.T(), insertedMsgs[2].IsBot)
+}
+
+func (s *ServerSuite) TestImportSessionMessagesReadAllError() {
+	tmpDir := s.T().TempDir()
+	encodedPath := "-Users-test-dev-proj"
+	projectDir := filepath.Join(tmpDir, ".claude", "projects", encodedPath)
+	require.NoError(s.T(), os.MkdirAll(projectDir, 0755))
+
+	// Create a directory at the JSONL path so Open succeeds but ReadAll fails.
+	jsonlDir := filepath.Join(projectDir, "sess-dir.jsonl")
+	require.NoError(s.T(), os.MkdirAll(jsonlDir, 0755))
+
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-parent").Return(&db.Channel{ChannelID: "ch-parent", DirPath: "/Users/test/dev/proj"}, nil)
+	store.On("GetChannel", mock.Anything, "thread-1").Return(&db.Channel{ChannelID: "thread-1", ID: 10}, nil)
+
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return(tmpDir, nil)
+
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.sys = &realOpenSys{sys}
+
+	// Should return early because ReadAll fails on a directory fd.
+	srv.importSessionMessages(context.Background(), "ch-parent", "thread-1", "sess-dir")
+	store.AssertNotCalled(s.T(), "InsertMessage")
+}
+
+func (s *ServerSuite) TestImportSessionMessagesInsertError() {
+	tmpDir := s.T().TempDir()
+	encodedPath := "-Users-test-dev-proj"
+	projectDir := filepath.Join(tmpDir, ".claude", "projects", encodedPath)
+	require.NoError(s.T(), os.MkdirAll(projectDir, 0755))
+
+	lines := []string{
+		`{"type":"user","message":{"role":"user","content":"First"}}`,
+		`{"type":"user","message":{"role":"user","content":"Second"}}`,
+	}
+	jsonlPath := filepath.Join(projectDir, "sess-fail.jsonl")
+	require.NoError(s.T(), os.WriteFile(jsonlPath, []byte(strings.Join(lines, "\n")), 0644))
+
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-parent").Return(&db.Channel{ChannelID: "ch-parent", DirPath: "/Users/test/dev/proj"}, nil)
+	store.On("GetChannel", mock.Anything, "thread-1").Return(&db.Channel{ChannelID: "thread-1", ID: 10}, nil)
+	// First insert succeeds, second fails — should abort.
+	store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(msg *db.Message) bool {
+		return msg.Content == "First"
+	})).Return(nil).Once()
+	store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(msg *db.Message) bool {
+		return msg.Content == "Second"
+	})).Return(errors.New("insert failed")).Once()
+
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return(tmpDir, nil)
+
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.sys = &realOpenSys{sys}
+
+	srv.importSessionMessages(context.Background(), "ch-parent", "thread-1", "sess-fail")
+	// "Second" insert fails — only 2 InsertMessage calls total.
+	store.AssertNumberOfCalls(s.T(), "InsertMessage", 2)
 }
 
 // --- DeleteThread tests ---
@@ -2046,4 +2348,860 @@ func (s *ServerSuite) TestSetInteractionHandler() {
 
 	require.NotNil(s.T(), s.srv.interactionHandler)
 	require.Equal(s.T(), handler, s.srv.interactionHandler)
+}
+
+// --- SetAgentRegistry ---
+
+func (s *ServerSuite) TestAgentSetAgentRegistry() {
+	old := s.srv.agentRegistry
+	defer func() { s.srv.agentRegistry = old }()
+	s.srv.agentRegistry = nil
+	require.Nil(s.T(), s.srv.agentRegistry)
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	require.NotNil(s.T(), s.srv.agentRegistry)
+}
+
+// --- handleListAgents ---
+
+func (s *ServerSuite) TestAgentListAgentsSuccess() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	reg.Register(&agentregistry.AgentInfo{AgentID: "a-0", ChannelID: "ch-1", Name: "Alpha"})
+	reg.Register(&agentregistry.AgentInfo{AgentID: "a-1", ChannelID: "ch-1", Name: "Beta"})
+
+	req := httptest.NewRequest("GET", "/api/agents?channel_id=ch-1", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	var agents []*agentregistry.AgentInfo
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &agents))
+	require.Len(s.T(), agents, 2)
+}
+
+func (s *ServerSuite) TestAgentListAgentsEmpty() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	req := httptest.NewRequest("GET", "/api/agents?channel_id=ch-1", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	var agents []*agentregistry.AgentInfo
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &agents))
+	require.Empty(s.T(), agents)
+}
+
+func (s *ServerSuite) TestAgentListAgentsMissingChannelID() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	req := httptest.NewRequest("GET", "/api/agents", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+}
+
+func (s *ServerSuite) TestAgentListAgentsNotConfigured() {
+	req := httptest.NewRequest("GET", "/api/agents?channel_id=ch-1", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusServiceUnavailable, w.Code)
+}
+
+// --- handleUpdateAgent ---
+
+func (s *ServerSuite) TestAgentUpdateAgentSuccess() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	reg.Register(&agentregistry.AgentInfo{AgentID: "a-0", ChannelID: "ch-1", Status: "idle"})
+	s.srv.SetEventsHub(NewEventsHub(slog.Default()))
+	defer func() { s.srv.eventsHub = nil }()
+
+	body := `{"channel_id":"ch-1","status":"running","work_summary":"indexing","name":"Worker"}`
+	req := httptest.NewRequest("PATCH", "/api/agents/a-0", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	var updated agentregistry.AgentInfo
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &updated))
+	require.Equal(s.T(), "running", updated.Status)
+	require.Equal(s.T(), "indexing", updated.WorkSummary)
+	require.Equal(s.T(), "Worker", updated.Name)
+}
+
+func (s *ServerSuite) TestAgentUpdateAgentNotFound() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	body := `{"channel_id":"ch-1","status":"running"}`
+	req := httptest.NewRequest("PATCH", "/api/agents/nope", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusNotFound, w.Code)
+}
+
+func (s *ServerSuite) TestAgentUpdateAgentMissingChannelID() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	body := `{"status":"running"}`
+	req := httptest.NewRequest("PATCH", "/api/agents/a-0", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+}
+
+func (s *ServerSuite) TestAgentUpdateAgentInvalidJSON() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	req := httptest.NewRequest("PATCH", "/api/agents/a-0", strings.NewReader("{bad"))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+}
+
+func (s *ServerSuite) TestAgentUpdateAgentNotConfigured() {
+	body := `{"channel_id":"ch-1","status":"running"}`
+	req := httptest.NewRequest("PATCH", "/api/agents/a-0", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusServiceUnavailable, w.Code)
+}
+
+// --- handleSendAgentMessage ---
+
+func (s *ServerSuite) TestAgentSendMessageSuccess() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	reg.Register(&agentregistry.AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
+	reg.Register(&agentregistry.AgentInfo{AgentID: "a-1", ChannelID: "ch-1"})
+
+	body := `{"channel_id":"ch-1","from_agent_id":"a-0","content":"hello"}`
+	req := httptest.NewRequest("POST", "/api/agents/a-1/message", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusNoContent, w.Code)
+}
+
+func (s *ServerSuite) TestAgentSendMessageTargetNotFound() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	body := `{"channel_id":"ch-1","from_agent_id":"a-0","content":"hello"}`
+	req := httptest.NewRequest("POST", "/api/agents/nope/message", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusNotFound, w.Code)
+}
+
+func (s *ServerSuite) TestAgentSendMessageMissingFields() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	body := `{"channel_id":"ch-1"}`
+	req := httptest.NewRequest("POST", "/api/agents/a-1/message", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+}
+
+func (s *ServerSuite) TestAgentSendMessageInvalidJSON() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	req := httptest.NewRequest("POST", "/api/agents/a-1/message", strings.NewReader("{bad"))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+}
+
+func (s *ServerSuite) TestAgentSendMessageNotConfigured() {
+	body := `{"channel_id":"ch-1","from_agent_id":"a-0","content":"hello"}`
+	req := httptest.NewRequest("POST", "/api/agents/a-1/message", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusServiceUnavailable, w.Code)
+}
+
+// --- handleAgentChannelWS ---
+
+func (s *ServerSuite) TestAgentChannelWSSuccess() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	reg.Register(&agentregistry.AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/ws/agent-channel?agent_id=a-0&channel_id=ch-1"
+	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer ws.Close()
+
+	// Send a message to the agent.
+	require.NoError(s.T(), reg.SendMessage("ch-1", "a-1", "a-0", "hello"))
+
+	// Read the message from WebSocket.
+	var msg agentregistry.AgentMessage
+	require.NoError(s.T(), ws.ReadJSON(&msg))
+	require.Equal(s.T(), "a-1", msg.FromAgentID)
+	require.Equal(s.T(), "hello", msg.Content)
+}
+
+func (s *ServerSuite) TestAgentChannelWSClosesOnUnregister() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	reg.Register(&agentregistry.AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/ws/agent-channel?agent_id=a-0&channel_id=ch-1"
+	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer ws.Close()
+
+	// Unregister the agent — WebSocket should close.
+	reg.Unregister("ch-1", "a-0")
+
+	// Reading should return an error (connection closed).
+	_, _, err = ws.ReadMessage()
+	require.Error(s.T(), err)
+}
+
+func (s *ServerSuite) TestAgentChannelWSMissingParams() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/ws/agent-channel")
+	require.NoError(s.T(), err)
+	defer resp.Body.Close()
+	require.Equal(s.T(), http.StatusBadRequest, resp.StatusCode)
+}
+
+func (s *ServerSuite) TestAgentChannelWSAgentNotFound() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/ws/agent-channel?agent_id=nope&channel_id=ch-1")
+	require.NoError(s.T(), err)
+	defer resp.Body.Close()
+	require.Equal(s.T(), http.StatusNotFound, resp.StatusCode)
+}
+
+func (s *ServerSuite) TestAgentChannelWSUpgradeFail() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	// Agent exists but request is a regular HTTP GET (not WS upgrade).
+	reg.Register(&agentregistry.AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
+	s.srv.logger = slog.Default()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/ws/agent-channel?agent_id=a-0&channel_id=ch-1")
+	require.NoError(s.T(), err)
+	defer resp.Body.Close()
+	// Upgrade fails — returns 400 (Bad Request from gorilla/websocket).
+	require.Equal(s.T(), http.StatusBadRequest, resp.StatusCode)
+}
+
+func (s *ServerSuite) TestAgentChannelWSNotConfigured() {
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	resp, err := http.Get(ts.URL + "/api/ws/agent-channel?agent_id=a-0&channel_id=ch-1")
+	require.NoError(s.T(), err)
+	defer resp.Body.Close()
+	require.Equal(s.T(), http.StatusServiceUnavailable, resp.StatusCode)
+}
+
+// --- integration: send + receive via WS ---
+
+func (s *ServerSuite) TestAgentChannelWSMultipleMessages() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	reg.Register(&agentregistry.AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
+	ts := httptest.NewServer(mux)
+	defer ts.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/ws/agent-channel?agent_id=a-0&channel_id=ch-1"
+	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer ws.Close()
+
+	// Send 3 messages.
+	for i := range 3 {
+		require.NoError(s.T(), reg.SendMessage("ch-1", "sender", "a-0", strings.Repeat("x", i+1)))
+	}
+
+	// Read all 3.
+	for i := range 3 {
+		require.NoError(s.T(), ws.SetReadDeadline(time.Now().Add(time.Second)))
+		var msg agentregistry.AgentMessage
+		require.NoError(s.T(), ws.ReadJSON(&msg))
+		require.Equal(s.T(), strings.Repeat("x", i+1), msg.Content)
+	}
+}
+
+func (s *ServerSuite) TestAgentChannelWSWriteError() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	s.srv.agentWSWriteJSON = func(v any) error { return errors.New("write failed") }
+
+	reg.Register(&agentregistry.AgentInfo{AgentID: "a-0", ChannelID: "ch-1"})
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/ws/agent-channel", s.srv.handleAgentChannelWS)
+	ts := httptest.NewServer(mux)
+
+	wsURL := "ws" + strings.TrimPrefix(ts.URL, "http") + "/api/ws/agent-channel?agent_id=a-0&channel_id=ch-1"
+	ws, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+
+	// Send a message; the injected writeJSON returns an error, exercising the error branch.
+	require.NoError(s.T(), reg.SendMessage("ch-1", "sender", "a-0", "boom"))
+	time.Sleep(50 * time.Millisecond)
+
+	// Close WS + server before test cleanup to avoid race on agentWSWriteJSON.
+	ws.Close()
+	ts.Close()
+}
+
+// --- handleDeleteAgent ---
+
+func (s *ServerSuite) TestAgentDeleteAgent() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	reg.Register(&agentregistry.AgentInfo{AgentID: "a-0", ChannelID: "ch-1", Name: "a-0"})
+	require.NotNil(s.T(), reg.Get("ch-1", "a-0"))
+
+	req := httptest.NewRequest("DELETE", "/api/agents/a-0?channel_id=ch-1", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusNoContent, w.Code)
+	require.Nil(s.T(), reg.Get("ch-1", "a-0"))
+}
+
+func (s *ServerSuite) TestAgentDeleteAgentMissingParams() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	req := httptest.NewRequest("DELETE", "/api/agents/a-0", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+}
+
+func (s *ServerSuite) TestAgentDeleteAgentNoRegistry() {
+	req := httptest.NewRequest("DELETE", "/api/agents/a-0?channel_id=ch-1", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+	require.Equal(s.T(), http.StatusServiceUnavailable, w.Code)
+}
+
+func (s *ServerSuite) TestAgentDeleteAgentBroadcastsEvent() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	hub := NewEventsHub(slog.Default())
+	s.srv.SetEventsHub(hub)
+	defer func() { s.srv.eventsHub = nil }()
+
+	reg.Register(&agentregistry.AgentInfo{AgentID: "a-0", ChannelID: "ch-1", Name: "a-0"})
+
+	req := httptest.NewRequest("DELETE", "/api/agents/a-0?channel_id=ch-1", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusNoContent, w.Code)
+	require.Nil(s.T(), reg.Get("ch-1", "a-0"))
+}
+
+// --- handleRegisterAgent ---
+
+func (s *ServerSuite) TestAgentRegisterAgent() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	body := `{"channel_id":"ch-1","agent_id":"a-0","name":"a-0","status":"idle"}`
+	req := httptest.NewRequest("POST", "/api/agents", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusCreated, w.Code)
+	agent := reg.Get("ch-1", "a-0")
+	require.NotNil(s.T(), agent)
+	require.Equal(s.T(), "idle", agent.Status)
+}
+
+func (s *ServerSuite) TestAgentRegisterAgentMissingFields() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	body := `{"channel_id":"ch-1"}`
+	req := httptest.NewRequest("POST", "/api/agents", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+}
+
+func (s *ServerSuite) TestAgentRegisterAgentInvalidJSON() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	req := httptest.NewRequest("POST", "/api/agents", strings.NewReader("not json"))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+}
+
+func (s *ServerSuite) TestAgentRegisterAgentBroadcastsEvent() {
+	reg := agentregistry.New()
+	s.srv.SetAgentRegistry(reg)
+	defer func() { s.srv.agentRegistry = nil }()
+
+	hub := NewEventsHub(slog.Default())
+	s.srv.SetEventsHub(hub)
+	defer func() { s.srv.eventsHub = nil }()
+
+	body := `{"channel_id":"ch-1","agent_id":"a-0","name":"a-0","status":"idle"}`
+	req := httptest.NewRequest("POST", "/api/agents", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusCreated, w.Code)
+}
+
+func (s *ServerSuite) TestAgentRegisterAgentNoRegistry() {
+	body := `{"channel_id":"ch-1","agent_id":"a-0"}`
+	req := httptest.NewRequest("POST", "/api/agents", strings.NewReader(body))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusServiceUnavailable, w.Code)
+}
+
+// --- ListSessions tests ---
+
+// mockDirEntry implements fs.DirEntry for testing.
+type mockDirEntry struct {
+	name    string
+	isDir   bool
+	modTime time.Time
+	infoErr error
+}
+
+func (m *mockDirEntry) Name() string      { return m.name }
+func (m *mockDirEntry) IsDir() bool       { return m.isDir }
+func (m *mockDirEntry) Type() fs.FileMode { return 0 }
+func (m *mockDirEntry) Info() (fs.FileInfo, error) {
+	if m.infoErr != nil {
+		return nil, m.infoErr
+	}
+	return &mockFileInfo{name: m.name, modTime: m.modTime}, nil
+}
+
+type mockFileInfo struct {
+	name    string
+	size    int64
+	modTime time.Time
+}
+
+func (m *mockFileInfo) Name() string       { return m.name }
+func (m *mockFileInfo) Size() int64        { return m.size }
+func (m *mockFileInfo) Mode() fs.FileMode  { return 0 }
+func (m *mockFileInfo) ModTime() time.Time { return m.modTime }
+func (m *mockFileInfo) IsDir() bool        { return false }
+func (m *mockFileInfo) Sys() any           { return nil }
+
+// realOpenSys wraps MockSystem but delegates Open to os.Open (for real temp files in tests).
+type realOpenSys struct{ *testutil.MockSystem }
+
+func (r *realOpenSys) Open(name string) (*os.File, error) { return os.Open(name) }
+
+func (s *ServerSuite) TestSessionListSuccess() {
+	// Create a temp dir to simulate the Claude projects directory.
+	tmpDir := s.T().TempDir()
+	projectDir := filepath.Join(tmpDir, ".claude", "projects", "-Users-test-dev-myproject")
+	require.NoError(s.T(), os.MkdirAll(projectDir, 0755))
+
+	// Create .jsonl files with different mod times.
+	t1 := time.Now().Add(-2 * time.Hour)
+	t2 := time.Now().Add(-1 * time.Hour)
+	t3 := time.Now()
+
+	f1 := filepath.Join(projectDir, "session-aaa.jsonl")
+	f2 := filepath.Join(projectDir, "session-bbb.jsonl")
+	f3 := filepath.Join(projectDir, "session-ccc.jsonl")
+
+	userLine := `{"type":"user","message":{"role":"user","content":"What is Go?"}}`
+	require.NoError(s.T(), os.WriteFile(f1, []byte(userLine+"\n"), 0644))
+	assistantLine := `{"type":"assistant","message":{"content":[{"type":"text","text":"Hello from Claude!"}]}}`
+	require.NoError(s.T(), os.WriteFile(f2, []byte(assistantLine+"\n"), 0644))
+	require.NoError(s.T(), os.WriteFile(f3, []byte("{}"), 0644))
+
+	require.NoError(s.T(), os.Chtimes(f1, t1, t1))
+	require.NoError(s.T(), os.Chtimes(f2, t2, t2))
+	require.NoError(s.T(), os.Chtimes(f3, t3, t3))
+
+	// Also create a non-.jsonl file and a directory that should be skipped.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(projectDir, "notes.txt"), []byte("hi"), 0644))
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(projectDir, "subdir"), 0755))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
+		ChannelID: "ch-1",
+		DirPath:   "/Users/test/dev/myproject",
+		SessionID: "session-bbb",
+	}, nil)
+
+	// Override sys mocks for this test.
+	sys := new(testutil.MockSystem)
+	s.srv.sys = sys
+	sys.On("UserHomeDir").Return(tmpDir, nil)
+
+	// Use real ReadDir and Open since we have real temp files.
+	realEntries, err := os.ReadDir(projectDir)
+	require.NoError(s.T(), err)
+	sys.On("ReadDir", projectDir).Return(realEntries, nil)
+	sys.On("Open", mock.Anything).Return(nil, os.ErrNotExist).Maybe()
+
+	// Wrap the mock so Open delegates to os.Open (for real temp files).
+	s.srv.sys = &realOpenSys{sys}
+
+	// Mock ListChannels for imported_session_ids — include a thread with a session.
+	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{
+		{ChannelID: "thread-1", ParentID: "ch-1", SessionID: "session-bbb"},
+	}, nil).Maybe()
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-1/sessions", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+
+	var resp listSessionsResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(s.T(), "session-bbb", resp.CurrentSessionID)
+	require.Len(s.T(), resp.Sessions, 3)
+
+	// Newest first.
+	require.Equal(s.T(), "session-ccc", resp.Sessions[0].SessionID)
+	require.Equal(s.T(), "session-bbb", resp.Sessions[1].SessionID)
+	require.Equal(s.T(), "session-aaa", resp.Sessions[2].SessionID)
+
+	// Verify last_message extraction.
+	require.Equal(s.T(), "Hello from Claude!", resp.Sessions[1].LastMessage) // session-bbb (assistant)
+	require.Equal(s.T(), "What is Go?", resp.Sessions[2].LastMessage)        // session-aaa (user prompt)
+	require.Empty(s.T(), resp.Sessions[0].LastMessage)                       // session-ccc (empty)
+
+	// Verify imported_session_ids — session-bbb is already a thread.
+	require.Equal(s.T(), []string{"session-bbb"}, resp.ImportedSessionIDs)
+}
+
+func (s *ServerSuite) TestFindLastMessage() {
+	// Assistant text block is last.
+	data := `{"type":"system","subtype":"init"}` + "\n" +
+		`{"type":"user","message":{"role":"user","content":"Hello"}}` + "\n" +
+		`{"type":"assistant","message":{"content":[{"type":"text","text":"Hi there!"}]}}` + "\n"
+	require.Equal(s.T(), "Hi there!", findLastMessage([]byte(data)))
+
+	// User prompt is last.
+	data = `{"type":"assistant","message":{"content":[{"type":"text","text":"earlier"}]}}` + "\n" +
+		`{"type":"user","message":{"role":"user","content":"What next?"}}` + "\n"
+	require.Equal(s.T(), "What next?", findLastMessage([]byte(data)))
+
+	// Tool result user line is skipped — falls through to assistant.
+	data = `{"type":"assistant","message":{"content":[{"type":"text","text":"check this"}]}}` + "\n" +
+		`{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}` + "\n"
+	require.Equal(s.T(), "check this", findLastMessage([]byte(data)))
+
+	// Long text is truncated.
+	longText := strings.Repeat("x", 300)
+	data = `{"type":"assistant","message":{"content":[{"type":"text","text":"` + longText + `"}]}}` + "\n"
+	result := findLastMessage([]byte(data))
+	require.Equal(s.T(), maxLastMessageLen+3, len(result))
+	require.True(s.T(), strings.HasSuffix(result, "..."))
+
+	// Empty input.
+	require.Empty(s.T(), findLastMessage([]byte("")))
+
+	// Only system events.
+	require.Empty(s.T(), findLastMessage([]byte(`{"type":"system","subtype":"init"}`+"\n")))
+
+	// Malformed JSON is skipped.
+	data = `{"type":"assistant","message":{"content":[{"type":"text","text":"good"}]}}` + "\n" + "not json\n"
+	require.Equal(s.T(), "good", findLastMessage([]byte(data)))
+
+	// Invalid content array falls through.
+	data = `{"type":"user","message":{"role":"user","content":"fallback"}}` + "\n" +
+		`{"type":"assistant","message":{"content":"not an array"}}` + "\n"
+	require.Equal(s.T(), "fallback", findLastMessage([]byte(data)))
+}
+
+func (s *ServerSuite) TestReadLastMessageTextFileNotFound() {
+	require.Empty(s.T(), readLastMessageText(realSys{}, "/nonexistent/path.jsonl"))
+}
+
+func (s *ServerSuite) TestFindLastMessageFromReaderStatError() {
+	require.Empty(s.T(), findLastMessageFromReader(&failStatReader{}, tailReadSize))
+}
+
+func (s *ServerSuite) TestFindLastMessageFromReaderSeekError() {
+	// File "larger" than maxBytes triggers Seek.
+	require.Empty(s.T(), findLastMessageFromReader(&failSeekReader{size: tailReadSize + 100}, tailReadSize))
+}
+
+func (s *ServerSuite) TestFindLastMessageFromReaderReadError() {
+	require.Empty(s.T(), findLastMessageFromReader(&failReadReader{size: 10}, tailReadSize))
+}
+
+type failStatReader struct{}
+
+func (f *failStatReader) Stat() (os.FileInfo, error)     { return nil, errors.New("stat err") }
+func (f *failStatReader) Read([]byte) (int, error)       { return 0, nil }
+func (f *failStatReader) Seek(int64, int) (int64, error) { return 0, nil }
+
+type failSeekReader struct{ size int64 }
+
+func (f *failSeekReader) Stat() (os.FileInfo, error)     { return &mockFileInfo{size: f.size}, nil }
+func (f *failSeekReader) Read([]byte) (int, error)       { return 0, nil }
+func (f *failSeekReader) Seek(int64, int) (int64, error) { return 0, errors.New("seek err") }
+
+type failReadReader struct{ size int64 }
+
+func (f *failReadReader) Stat() (os.FileInfo, error)     { return &mockFileInfo{size: f.size}, nil }
+func (f *failReadReader) Read([]byte) (int, error)       { return 0, errors.New("read err") }
+func (f *failReadReader) Seek(int64, int) (int64, error) { return 0, nil }
+
+// realSys delegates Open to os.Open for testing readLastMessageText.
+type realSys struct{}
+
+func (realSys) Open(name string) (*os.File, error) { return os.Open(name) }
+
+func (s *ServerSuite) TestSessionListEmptyDirPath() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
+		ChannelID: "ch-1",
+		DirPath:   "",
+		SessionID: "sess-1",
+	}, nil)
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-1/sessions", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+
+	var resp listSessionsResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(s.T(), "sess-1", resp.CurrentSessionID)
+	require.Empty(s.T(), resp.Sessions)
+}
+
+func (s *ServerSuite) TestSessionListChannelNotFound() {
+	s.store.On("GetChannel", mock.Anything, "unknown-ch").Return(nil, nil)
+
+	req := httptest.NewRequest("GET", "/api/channels/unknown-ch/sessions", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusNotFound, w.Code)
+}
+
+func (s *ServerSuite) TestSessionListGetChannelError() {
+	s.store.On("GetChannel", mock.Anything, "err-ch").Return(nil, errors.New("db error"))
+
+	req := httptest.NewRequest("GET", "/api/channels/err-ch/sessions", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+}
+
+func (s *ServerSuite) TestSessionListNoProjectDir() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
+		ChannelID: "ch-1",
+		DirPath:   "/Users/test/dev/myproject",
+		SessionID: "sess-1",
+	}, nil)
+
+	tmpDir := s.T().TempDir()
+
+	// Override sys mocks for this test.
+	sys := new(testutil.MockSystem)
+	s.srv.sys = sys
+	sys.On("UserHomeDir").Return(tmpDir, nil)
+
+	// ReadDir will fail because the directory doesn't exist.
+	projectDir := filepath.Join(tmpDir, ".claude", "projects", "-Users-test-dev-myproject")
+	sys.On("ReadDir", projectDir).Return(nil, os.ErrNotExist)
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-1/sessions", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+
+	var resp listSessionsResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(s.T(), "sess-1", resp.CurrentSessionID)
+	require.Empty(s.T(), resp.Sessions)
+}
+
+func (s *ServerSuite) TestSessionListStoreNotConfigured() {
+	oldStore := s.srv.store
+	defer func() { s.srv.store = oldStore }()
+	s.srv.store = nil
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-1/sessions", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+func (s *ServerSuite) TestSessionListHomeDirError() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
+		ChannelID: "ch-1",
+		DirPath:   "/Users/test/dev/myproject",
+		SessionID: "sess-1",
+	}, nil)
+
+	// Override sys mocks for this test.
+	sys := new(testutil.MockSystem)
+	s.srv.sys = sys
+	sys.On("UserHomeDir").Return("", os.ErrNotExist)
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-1/sessions", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+}
+
+func (s *ServerSuite) TestSessionListEntryInfoError() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
+		ChannelID: "ch-1",
+		DirPath:   "/Users/test/dev/myproject",
+		SessionID: "sess-1",
+	}, nil)
+
+	tmpDir := s.T().TempDir()
+
+	// Override sys mocks for this test.
+	sys := new(testutil.MockSystem)
+	s.srv.sys = sys
+	sys.On("UserHomeDir").Return(tmpDir, nil)
+
+	projectDir := filepath.Join(tmpDir, ".claude", "projects", "-Users-test-dev-myproject")
+	// Return a mock DirEntry whose Info() returns an error.
+	badEntry := &mockDirEntry{name: "bad.jsonl", isDir: false, infoErr: errors.New("stat failed")}
+	goodEntry := &mockDirEntry{name: "good.jsonl", isDir: false, modTime: time.Now()}
+	sys.On("ReadDir", projectDir).Return([]fs.DirEntry{badEntry, goodEntry}, nil)
+	sys.On("Open", mock.Anything).Return(nil, os.ErrNotExist).Maybe()
+	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{}, nil).Maybe()
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-1/sessions", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+
+	var resp listSessionsResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	// Bad entry skipped, good entry included.
+	require.Len(s.T(), resp.Sessions, 1)
+	require.Equal(s.T(), "good", resp.Sessions[0].SessionID)
+}
+
+func (s *ServerSuite) TestSessionListEmptyDir() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
+		ChannelID: "ch-1",
+		DirPath:   "/Users/test/dev/myproject",
+		SessionID: "",
+	}, nil)
+
+	tmpDir := s.T().TempDir()
+
+	// Override sys mocks for this test.
+	sys := new(testutil.MockSystem)
+	s.srv.sys = sys
+	sys.On("UserHomeDir").Return(tmpDir, nil)
+
+	projectDir := filepath.Join(tmpDir, ".claude", "projects", "-Users-test-dev-myproject")
+	sys.On("ReadDir", projectDir).Return([]fs.DirEntry{}, nil)
+	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{}, nil).Maybe()
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-1/sessions", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+
+	var resp listSessionsResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(s.T(), "", resp.CurrentSessionID)
+	require.Empty(s.T(), resp.Sessions)
 }

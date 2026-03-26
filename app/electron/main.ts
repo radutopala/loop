@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, Menu } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Menu, shell } from "electron";
 import { autoUpdater } from "electron-updater";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
@@ -302,6 +302,15 @@ function createWindow(hash?: string): BrowserWindow {
       navigateToChannel(pendingChannelId);
       pendingChannelId = null;
     }
+  });
+
+  // Open external links (http/https) in the native browser instead of Electron.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    if (url.startsWith("http://") || url.startsWith("https://")) {
+      shell.openExternal(url);
+      return { action: "deny" };
+    }
+    return { action: "allow" };
   });
 
   return win;

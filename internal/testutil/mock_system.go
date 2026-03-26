@@ -50,6 +50,14 @@ func (m *MockSystem) MkdirAll(path string, perm os.FileMode) error {
 	return m.Called(path, perm).Error(0)
 }
 
+func (m *MockSystem) Open(name string) (*os.File, error) {
+	args := m.Called(name)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*os.File), args.Error(1)
+}
+
 func (m *MockSystem) Readlink(name string) (string, error) {
 	args := m.Called(name)
 	return args.String(0), args.Error(1)

@@ -3809,6 +3809,10 @@ func (n *noopExecClient) ExecResize(_ context.Context, _ string, _, _ uint) erro
 	return nil
 }
 
+func (n *noopExecClient) ExecInspectPid(_ context.Context, _ string) (int, error) {
+	return 0, nil
+}
+
 type noopBrowserProvider struct{}
 
 func (n *noopBrowserProvider) EnsureBrowser(_ context.Context, _, _ string) error { return nil }

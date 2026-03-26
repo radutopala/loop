@@ -75,10 +75,13 @@ interface SplitNode {
 | Diff | `diff` | `"diff"` | Yes | Git diff viewer |
 | Docker Browser | `docker-browser` | `"docker-browser"` | Yes | Chrome browser inside the Docker container |
 | Host Browser | `host-browser` | `"host-browser"` | Yes | Chrome browser on the host machine via CDP |
+| Sessions | `sessions` | `"sessions"` | Yes | Browse and resume Claude sessions (channels only) |
 | Agent | `agent` | `"agent-N"` | No | Docker-isolated terminal session |
 | Shell | `shell` | `"shell-N"` | No | Local machine shell session |
 
-**Singleton panels** (chat, editor, memory, diff, docker-browser, host-browser) can appear at most once in a layout tree. The `canAddPanel()` function enforces this: if the panel type is in `SINGLETON_PANELS` and already present in the tree, the add operation is rejected.
+**Singleton panels** (chat, editor, memory, diff, docker-browser, host-browser, sessions) can appear at most once in a layout tree. The `canAddPanel()` function enforces this: if the panel type is in `SINGLETON_PANELS` and already present in the tree, the add operation is rejected.
+
+**Channel-only panels**: The Sessions panel is only available for channels (not threads). The "Sessions" tab is hidden from the layout tab bar when viewing a thread.
 
 **Multi-instance panels** (agent, shell) can appear multiple times. Each instance gets a unique numbered ID (e.g., `agent-0`, `shell-1`) from a per-channel counter.
 
@@ -100,16 +103,19 @@ Each channel has an ordered list of named layouts, displayed as a tab bar above 
 
 ### Default Layouts
 
-Five default layouts are created for every new channel:
+Default layouts are created for every new channel:
 
-| Name | Structure |
-|------|-----------|
-| **Chat** | Horizontal split: Chat (50%) + Diff (50%) |
-| **Editor** | Horizontal split: Editor (65%) + Diff (35%) |
-| **Memory** | Single leaf: Memory |
-| **Terminal** | Empty (user picks a panel on first use) |
-| **Browser** | Horizontal split: Chat (50%) + Docker Browser (50%) |
-| **Diff** | Single leaf: Diff |
+| Name | Structure | Notes |
+|------|-----------|-------|
+| **Chat** | Horizontal split: Chat (50%) + Diff (50%) | |
+| **Editor** | Horizontal split: Editor (65%) + Diff (35%) | |
+| **Memory** | Single leaf: Memory | |
+| **Terminal** | Empty (user picks a panel on first use) | |
+| **Diff** | Single leaf: Diff | |
+| **Browser Chat** | Horizontal split: Chat (50%) + (Docker Browser + Diff stacked) | |
+| **Sessions** | Single leaf: Sessions | Channels only — hidden for threads |
+| **Swarm** | Three Agent panels in a split | |
+| **Canvas** | Free-form canvas with draggable Agent, Diff, Memory tiles | |
 
 The "Chat" layout is the initial active layout.
 
@@ -240,7 +246,7 @@ Singleton panels always use their panel type as the ID (e.g., `"chat"`, `"editor
 The `canAddPanel()` function prevents adding duplicate singleton panels and mutually exclusive panels:
 
 ```typescript
-const SINGLETON_PANELS: PanelType[] = ["chat", "editor", "memory", "diff", "docker-browser", "host-browser"];
+const SINGLETON_PANELS: PanelType[] = ["chat", "editor", "memory", "diff", "docker-browser", "host-browser", "sessions"];
 const EXCLUSIVE_PANELS: PanelType[][] = [["docker-browser", "host-browser"]];
 
 function canAddPanel(tree: PaneNode | null, panel: PanelType): boolean {

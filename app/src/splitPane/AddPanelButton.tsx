@@ -10,6 +10,7 @@ const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "shell", label: "Shell" },
   { panel: "docker-browser", label: "Docker Browser" },
   { panel: "host-browser", label: "Host Browser" },
+  { panel: "sessions", label: "Sessions" },
 ];
 
 const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
@@ -64,6 +65,12 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
       <line x1="12" y1="17" x2="12" y2="21" />
     </svg>
   ),
+  sessions: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 8v4l3 3" />
+      <circle cx="12" cy="12" r="10" />
+    </svg>
+  ),
 };
 
 const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
@@ -75,6 +82,7 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   shell: "Local machine shell",
   "docker-browser": "Browser in Docker container",
   "host-browser": "Browser on host machine",
+  sessions: "Browse and resume Claude sessions",
 };
 
 /** Centered picker for when layout is empty (no tree). */

@@ -43,6 +43,7 @@ type serverSystem interface {
 	Remove(name string) error
 	MkdirAll(path string, perm os.FileMode) error
 	UserHomeDir() (string, error)
+	Open(name string) (*os.File, error)
 }
 
 // Server exposes a lightweight HTTP API for task CRUD operations.
@@ -77,7 +78,8 @@ type Server struct {
 	logger                *slog.Logger
 	server                *http.Server
 	listener              net.Listener
-	stopErr               error // if set, Stop returns this error (for testing)
+	stopErr               error             // if set, Stop returns this error (for testing)
+	agentWSWriteJSON      func(v any) error // injectable for testing agent-channel WS write errors
 	sys                   serverSystem
 }
 
@@ -157,6 +159,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/tasks/{id}", s.handleGetTask)
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.handleDeleteTask)
 	mux.HandleFunc("PATCH /api/tasks/{id}", s.handleUpdateTask)
+	mux.HandleFunc("GET /api/channels/{id}/sessions", s.handleListSessions)
 	mux.HandleFunc("GET /api/channels/{id}/messages", s.handleListMessages)
 	mux.HandleFunc("GET /api/messages/search", s.handleSearchMessages)
 	mux.HandleFunc("POST /api/commands", s.handleCommand)

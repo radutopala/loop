@@ -409,6 +409,46 @@ func (s *HostSuite) TestExecAttachSetsPTY() {
 	require.Equal(s.T(), w, he.pty)
 }
 
+func (s *HostSuite) TestExecInspectPidSuccess() {
+	r, w, err := os.Pipe()
+	require.NoError(s.T(), err)
+	defer r.Close()
+
+	s.client.ptyStart = func(cmd *exec.Cmd) (*os.File, error) {
+		cmd.Process = &os.Process{Pid: 42}
+		return w, nil
+	}
+
+	id, err := s.client.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
+	require.NoError(s.T(), err)
+
+	// Attach to set the process.
+	_, err = s.client.ExecAttach(context.Background(), id)
+	require.NoError(s.T(), err)
+
+	pid, err := s.client.ExecInspectPid(context.Background(), id)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 42, pid)
+}
+
+func (s *HostSuite) TestExecInspectPidNotFound() {
+	pid, err := s.client.ExecInspectPid(context.Background(), "nonexistent")
+	require.Error(s.T(), err)
+	require.Equal(s.T(), 0, pid)
+	require.Contains(s.T(), err.Error(), "exec nonexistent not found")
+}
+
+func (s *HostSuite) TestExecInspectPidNotStarted() {
+	id, err := s.client.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
+	require.NoError(s.T(), err)
+
+	// Process is nil because ExecAttach hasn't been called.
+	pid, err := s.client.ExecInspectPid(context.Background(), id)
+	require.Error(s.T(), err)
+	require.Equal(s.T(), 0, pid)
+	require.Contains(s.T(), err.Error(), "not started")
+}
+
 func (s *HostSuite) TestHostPTYConnCloseTimeout() {
 	// Test the SIGKILL path when the process ignores SIGHUP and doesn't exit
 	// within processCleanupTimeout.

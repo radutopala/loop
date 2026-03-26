@@ -12,9 +12,13 @@ import { CommandPalette } from "./components/CommandPalette";
 import { Settings } from "./components/Settings";
 import { useChatStateStore, type ActiveChatState } from "./hooks/useChatStateStore";
 
+const LAST_CHANNEL_KEY = "loop-last-channel";
+
 function getHashChannelId(): string | null {
   const hash = window.location.hash.slice(1);
-  return hash || null;
+  if (hash) return hash;
+  // Restore last selected channel (Electron loses hash on restart).
+  try { return localStorage.getItem(LAST_CHANNEL_KEY); } catch { return null; }
 }
 
 export default function App() {
@@ -81,9 +85,13 @@ function AppInner() {
     initApiUrl().then(() => setReady(true));
   }, []);
 
-  // Sync hash with selected channel.
+  // Sync hash and localStorage with selected channel.
   useEffect(() => {
     window.location.hash = selectedId ? selectedId : "";
+    try {
+      if (selectedId) localStorage.setItem(LAST_CHANNEL_KEY, selectedId);
+      else localStorage.removeItem(LAST_CHANNEL_KEY);
+    } catch { /* ignore */ }
   }, [selectedId]);
 
   // Handle back/forward navigation.

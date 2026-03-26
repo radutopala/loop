@@ -123,6 +123,29 @@ func (s *AdapterSuite) TestStopSessionNotFound() {
 	require.ErrorIs(s.T(), err, ErrSessionNotFound)
 }
 
+func (s *AdapterSuite) TestKillProcessGroupDelegates() {
+	s.mock.execID = "exec-1"
+	s.mock.conn = newFakeConn()
+
+	sid, _, _, _, err := s.adapter.CreateSession(context.Background(), "container-1", nil)
+	require.NoError(s.T(), err)
+
+	// KillProcessGroup should delegate to the underlying Manager.
+	// The session has a pidFile, but ExecCreate for the kill cmd will be called
+	// via the mock which returns "exec-1" + the fakeConn. The kill exec attach
+	// closes immediately — no error expected.
+	err = s.adapter.KillProcessGroup(context.Background(), sid)
+	require.NoError(s.T(), err)
+
+	_, err2 := s.adapter.StopSession(sid)
+	require.NoError(s.T(), err2)
+}
+
+func (s *AdapterSuite) TestKillProcessGroupNotFound() {
+	err := s.adapter.KillProcessGroup(context.Background(), "nonexistent")
+	require.ErrorIs(s.T(), err, ErrSessionNotFound)
+}
+
 // adapterMockExecClient for adapter tests.
 type adapterMockExecClient struct {
 	execID    string
@@ -143,6 +166,10 @@ func (m *adapterMockExecClient) ExecAttach(_ context.Context, _ string) (io.Read
 
 func (m *adapterMockExecClient) ExecResize(_ context.Context, _ string, _, _ uint) error {
 	return nil
+}
+
+func (m *adapterMockExecClient) ExecInspectPid(_ context.Context, _ string) (int, error) {
+	return 0, nil
 }
 
 // fakeConn is a simple ReadWriteCloser that blocks on read.

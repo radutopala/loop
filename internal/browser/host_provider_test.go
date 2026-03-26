@@ -297,6 +297,32 @@ func (s *HostProviderSuite) TestDiscoverWSEndpointUsesOsDefaults() {
 	}
 }
 
+func (s *HostProviderSuite) TestDiscoverWSEndpointError() {
+	// Temporarily rename DevToolsActivePort so DiscoverWSEndpoint hits the error branch.
+	home, err := os.UserHomeDir()
+	require.NoError(s.T(), err)
+
+	dataDir := chromeUserDataDirForOS(func() (string, error) { return home, nil }, runtime.GOOS)
+	if dataDir == "" {
+		s.T().Skip("unsupported OS for this test")
+	}
+
+	portFile := filepath.Join(dataDir, "DevToolsActivePort")
+	backupFile := portFile + ".test-backup"
+
+	// Rename existing file if present; restore after the test.
+	renamed := false
+	if _, statErr := os.Stat(portFile); statErr == nil {
+		require.NoError(s.T(), os.Rename(portFile, backupFile))
+		renamed = true
+		defer func() { _ = os.Rename(backupFile, portFile) }()
+	}
+	_ = renamed
+
+	_, discoverErr := DiscoverWSEndpoint()
+	require.Error(s.T(), discoverErr)
+}
+
 func (s *HostProviderSuite) TestDiscoverWSEndpointSuccess() {
 	// Write a real DevToolsActivePort file at the path DiscoverWSEndpoint will
 	// look for (based on os.UserHomeDir + runtime.GOOS), start a TCP listener,

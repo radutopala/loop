@@ -79,11 +79,7 @@ func (s *Server) handleUpdateAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agentID := r.PathValue("id")
-	if agentID == "" {
-		http.Error(w, "agent ID required", http.StatusBadRequest)
-		return
-	}
+	agentID := r.PathValue("id") // always non-empty: mux pattern requires {id}
 
 	var body struct {
 		ChannelID   string `json:"channel_id"`
@@ -129,10 +125,10 @@ func (s *Server) handleDeleteAgent(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	agentID := r.PathValue("id")
+	agentID := r.PathValue("id") // always non-empty: mux pattern requires {id}
 	channelID := r.URL.Query().Get("channel_id")
-	if agentID == "" || channelID == "" {
-		http.Error(w, "agent ID and channel_id required", http.StatusBadRequest)
+	if channelID == "" {
+		http.Error(w, "channel_id required", http.StatusBadRequest)
 		return
 	}
 
@@ -154,11 +150,7 @@ func (s *Server) handleSendAgentMessage(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	toAgentID := r.PathValue("id")
-	if toAgentID == "" {
-		http.Error(w, "agent ID required", http.StatusBadRequest)
-		return
-	}
+	toAgentID := r.PathValue("id") // always non-empty: mux pattern requires {id}
 
 	var body struct {
 		ChannelID   string `json:"channel_id"`
@@ -219,6 +211,11 @@ func (s *Server) handleAgentChannelWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	writeJSON := conn.WriteJSON
+	if s.agentWSWriteJSON != nil {
+		writeJSON = s.agentWSWriteJSON
+	}
+
 	// Read pump: detect client disconnect.
 	done := make(chan struct{})
 	go func() {
@@ -238,7 +235,7 @@ func (s *Server) handleAgentChannelWS(w http.ResponseWriter, r *http.Request) {
 				// Channel closed — agent unregistered.
 				return
 			}
-			if err := conn.WriteJSON(msg); err != nil {
+			if err := writeJSON(msg); err != nil {
 				return
 			}
 		case <-done:

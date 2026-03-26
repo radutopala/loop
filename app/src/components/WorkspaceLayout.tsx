@@ -17,6 +17,7 @@ import { EditorPanel } from "./EditorPanel";
 import { MemoryPanel } from "./MemoryPanel";
 import { DiffPanel } from "./DiffPanel";
 import { BrowserPanel } from "./BrowserPanel";
+import { SessionsPanel } from "./SessionsPanel";
 import { killAgentContainer, fetchBranches, switchBranch, type BranchInfo } from "../api/loopApi";
 import { useChatState } from "../hooks/useChatState";
 import type { ActiveChatState, ChatEventListener } from "../hooks/useChatStateStore";
@@ -950,6 +951,14 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               fixedMode="host"
             />
           );
+        case "sessions":
+          return (
+            <SessionsPanel
+              key={`layout-sessions-${channelId}`}
+              channelId={channelId}
+              onStatusChange={onStatusChange}
+            />
+          );
         default:
           return null;
       }
@@ -1053,6 +1062,24 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             >
               {dirPath}
             </span>
+            {/* Session ID — read-only for both channels and threads */}
+            <>
+              <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px 0 12px" }}>|</span>
+              {channel.session_id ? (
+                <span
+                  onDoubleClick={(e) => { navigator.clipboard.writeText(channel.session_id); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
+                  title={`Session: ${channel.session_id}\nDouble-click to copy`}
+                  style={{ fontSize: 11, color: colors.textDim, fontFamily: fonts.mono, flexShrink: 0, cursor: "default",
+                    // @ts-expect-error: WebKit-specific CSS property
+                    WebkitAppRegion: "no-drag",
+                  }}
+                >
+                  {channel.session_id}
+                </span>
+              ) : (
+                <span style={{ fontSize: 11, color: colors.textDim, fontFamily: fonts.mono, flexShrink: 0 }}>no session</span>
+              )}
+            </>
             {commit && (
               <>
                 <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px 0 12px" }}>|</span>
@@ -1157,7 +1184,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         >
           Layouts
         </span>
-        {layoutNames.map((name) => (
+        {layoutNames
+          .filter((name) => !(channel.parent_id && name === "Sessions"))
+          .map((name) => (
           <LayoutTab
             key={name}
             name={name}

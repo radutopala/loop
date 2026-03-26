@@ -83,6 +83,10 @@ func (m *MockTerminalManager) StopSession(sessionID string) (string, error) {
 	return args.String(0), args.Error(1)
 }
 
+func (m *MockTerminalManager) KillProcessGroup(ctx context.Context, sessionID string) error {
+	return m.Called(ctx, sessionID).Error(0)
+}
+
 type MockContainerStopper struct {
 	mock.Mock
 }
@@ -111,6 +115,8 @@ func TestTerminalHandlerSuite(t *testing.T) {
 
 func (s *TerminalHandlerSuite) SetupTest() {
 	s.terminal = new(MockTerminalManager)
+	// Default DetachSession mock to prevent panics on WS close in all tests.
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.srv = nilServer()
 	s.srv.SetTerminalManager(s.terminal)
 }
@@ -508,6 +514,53 @@ func (s *TerminalHandlerSuite) TestCreateSessionResumesChannelSession() {
 		s.T().Fatal("timed out waiting for SendInput")
 	}
 	builder.AssertExpectations(s.T())
+}
+
+func (s *TerminalHandlerSuite) TestCreateSessionOverridesWithMsgSessionID() {
+	// Use a fresh mock so stopOnClose cleanup mocks don't conflict with SetupTest defaults.
+	s.terminal = new(MockTerminalManager)
+	s.srv.SetTerminalManager(s.terminal)
+
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "resolved-ctr", []string(nil)).
+		Return("sess-override", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	// The override session ID should be used, not the channel's stored one.
+	inputSent := onSendInputCalled(s.terminal, "sess-override", []byte("claude --dangerously-skip-permissions --resume sess-picked\n"))
+	// stopOnClose triggers KillProcessGroup + StopSession on WS disconnect.
+	s.terminal.On("KillProcessGroup", mock.Anything, "sess-override").Return(nil).Maybe()
+	s.terminal.On("StopSession", "sess-override").Return("resolved-ctr", nil).Maybe()
+
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-sess").
+		Return(&db.Channel{ChannelID: "ch-sess", SessionID: "sess-stored"}, nil)
+	s.srv.store = store
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-sess", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.SetContainerFinder(finder)
+
+	builder := new(MockInteractiveCmdBuilder)
+	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false).
+		Return("claude --dangerously-skip-permissions --resume sess-picked")
+	s.srv.SetInteractiveCmdBuilder(builder)
+
+	conn, ts := s.dialWS()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-sess", SessionID: "sess-picked"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	select {
+	case <-inputSent:
+	case <-time.After(time.Second):
+		s.T().Fatal("timed out waiting for SendInput")
+	}
+	builder.AssertExpectations(s.T())
+
+	conn.Close()
+	ts.Close()
+	time.Sleep(50 * time.Millisecond)
 }
 
 func (s *TerminalHandlerSuite) TestCreateSessionForksThreadFromParent() {
@@ -1168,6 +1221,10 @@ func (s *TerminalHandlerSuite) TestDetachOnNewCreate() {
 }
 
 func (s *TerminalHandlerSuite) TestDetachErrorLogged() {
+	// Use a fresh mock so the default DetachSession→nil from SetupTest doesn't shadow the error return.
+	s.terminal = new(MockTerminalManager)
+	s.srv.SetTerminalManager(s.terminal)
+
 	outCh := make(chan []byte, 1)
 	doneCh := make(chan struct{})
 	s.terminal.On("CreateSession", mock.Anything, "ctr-1", ([]string)(nil)).
@@ -1204,6 +1261,171 @@ func (s *TerminalHandlerSuite) TestDetachErrorLogged() {
 	}
 
 	close(doneCh2)
+}
+
+func (s *TerminalHandlerSuite) TestStopOnCloseWhenSessionIDOverride() {
+	// When a create message includes session_id (sessions panel), the exec session
+	// should be stopped (not just detached) when the WebSocket disconnects.
+	s.terminal = new(MockTerminalManager)
+	s.srv.SetTerminalManager(s.terminal)
+
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "resolved-ctr", []string(nil)).
+		Return("sess-preview", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	inputSent := onSendInputCalled(s.terminal, "sess-preview", []byte("claude --dangerously-skip-permissions --resume sess-picked\n"))
+	// On WS close: KillProcessGroup + StopSession (not DetachSession).
+	s.terminal.On("KillProcessGroup", mock.Anything, "sess-preview").Return(nil).Maybe()
+	stopCalled := make(chan struct{}, 1)
+	s.terminal.On("StopSession", "sess-preview").Return("resolved-ctr", nil).Run(func(_ mock.Arguments) {
+		stopCalled <- struct{}{}
+	}).Maybe()
+
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-sess").
+		Return(&db.Channel{ChannelID: "ch-sess", SessionID: "sess-stored"}, nil)
+	s.srv.store = store
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-sess", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.SetContainerFinder(finder)
+
+	builder := new(MockInteractiveCmdBuilder)
+	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false).
+		Return("claude --dangerously-skip-permissions --resume sess-picked")
+	s.srv.SetInteractiveCmdBuilder(builder)
+
+	conn, ts := s.dialWS()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-sess", SessionID: "sess-picked"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	select {
+	case <-inputSent:
+	case <-time.After(time.Second):
+		s.T().Fatal("timed out waiting for SendInput")
+	}
+
+	// Close WS — should trigger StopSession (not DetachSession).
+	conn.Close()
+	ts.Close()
+
+	select {
+	case <-stopCalled:
+	case <-time.After(2 * time.Second):
+		s.T().Fatal("timed out waiting for StopSession")
+	}
+}
+
+func (s *TerminalHandlerSuite) TestStopOnCloseKillProcessGroupError() {
+	// When KillProcessGroup returns an error, stopCurrentSession should log a warning
+	// and still call StopSession.
+	s.terminal = new(MockTerminalManager)
+	s.srv.SetTerminalManager(s.terminal)
+
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "resolved-ctr", []string(nil)).
+		Return("sess-err", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	inputSent := onSendInputCalled(s.terminal, "sess-err", []byte("claude --dangerously-skip-permissions --resume sess-picked\n"))
+	// KillProcessGroup returns an error — StopSession should still be called.
+	s.terminal.On("KillProcessGroup", mock.Anything, "sess-err").Return(errors.New("kill failed")).Maybe()
+	stopCalled := make(chan struct{}, 1)
+	s.terminal.On("StopSession", "sess-err").Return("resolved-ctr", nil).Run(func(_ mock.Arguments) {
+		stopCalled <- struct{}{}
+	}).Maybe()
+
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-sess").
+		Return(&db.Channel{ChannelID: "ch-sess", SessionID: "sess-stored"}, nil)
+	s.srv.store = store
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-sess", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.SetContainerFinder(finder)
+
+	builder := new(MockInteractiveCmdBuilder)
+	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false).
+		Return("claude --dangerously-skip-permissions --resume sess-picked")
+	s.srv.SetInteractiveCmdBuilder(builder)
+
+	conn, ts := s.dialWS()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-sess", SessionID: "sess-picked"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	select {
+	case <-inputSent:
+	case <-time.After(time.Second):
+		s.T().Fatal("timed out waiting for SendInput")
+	}
+
+	// Close WS — triggers stopCurrentSession with KillProcessGroup error.
+	conn.Close()
+	ts.Close()
+
+	select {
+	case <-stopCalled:
+	case <-time.After(2 * time.Second):
+		s.T().Fatal("timed out waiting for StopSession after KillProcessGroup error")
+	}
+}
+
+func (s *TerminalHandlerSuite) TestStopOnCloseStopSessionError() {
+	// When StopSession returns an error, stopCurrentSession should log a warning
+	// and still clear session state.
+	s.terminal = new(MockTerminalManager)
+	s.srv.SetTerminalManager(s.terminal)
+
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "resolved-ctr", []string(nil)).
+		Return("sess-stop-err", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	inputSent := onSendInputCalled(s.terminal, "sess-stop-err", []byte("claude --dangerously-skip-permissions --resume sess-picked\n"))
+	s.terminal.On("KillProcessGroup", mock.Anything, "sess-stop-err").Return(nil).Maybe()
+	// StopSession returns an error.
+	stopCalled := make(chan struct{}, 1)
+	s.terminal.On("StopSession", "sess-stop-err").Return("", errors.New("stop failed")).Run(func(_ mock.Arguments) {
+		stopCalled <- struct{}{}
+	}).Maybe()
+
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-sess").
+		Return(&db.Channel{ChannelID: "ch-sess", SessionID: "sess-stored"}, nil)
+	s.srv.store = store
+
+	finder := new(MockContainerFinder)
+	finder.On("FindContainerByChannel", mock.Anything, "ch-sess", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.SetContainerFinder(finder)
+
+	builder := new(MockInteractiveCmdBuilder)
+	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false).
+		Return("claude --dangerously-skip-permissions --resume sess-picked")
+	s.srv.SetInteractiveCmdBuilder(builder)
+
+	conn, ts := s.dialWS()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "ch-sess", SessionID: "sess-picked"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	select {
+	case <-inputSent:
+	case <-time.After(time.Second):
+		s.T().Fatal("timed out waiting for SendInput")
+	}
+
+	// Close WS — triggers stopCurrentSession with StopSession error.
+	conn.Close()
+	ts.Close()
+
+	select {
+	case <-stopCalled:
+	case <-time.After(2 * time.Second):
+		s.T().Fatal("timed out waiting for StopSession error path")
+	}
 }
 
 func (s *TerminalHandlerSuite) TestUpgradeError() {

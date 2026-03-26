@@ -55,6 +55,7 @@ type TerminalManager interface {
 	SendInput(sessionID string, data []byte) error
 	Resize(ctx context.Context, sessionID string, rows, cols uint) error
 	StopSession(sessionID string) (containerID string, err error)
+	KillProcessGroup(ctx context.Context, sessionID string) error
 }
 
 // ContainerFinder resolves a channel ID to a running container ID.
@@ -114,6 +115,7 @@ type terminalWSConn struct {
 	sessionID     string
 	outputCh      <-chan []byte
 	sessionTarget string // "host" or "agent"
+	stopOnClose   bool   // if true, stop (not just detach) the session on WS disconnect
 
 	// autoAccept scans terminal output and sends Enter when prompts are detected.
 	autoAcceptMu        sync.Mutex
@@ -202,13 +204,35 @@ func (t *terminalWSConn) detachCurrent() {
 	}
 }
 
-// close stops streaming and detaches the current session.
-// Both host and agent sessions are detached (not stopped) so they survive
-// WebSocket disconnects and can be reattached later.  Sessions are only
-// killed via explicit "close" or "stop" control messages.
+// close stops streaming and detaches (or stops) the current session.
+// By default sessions are detached so they survive WebSocket disconnects.
+// When stopOnClose is set (e.g. sessions panel), the session is stopped
+// to avoid leaving orphaned Claude processes in the container.
 func (t *terminalWSConn) close() {
 	t.stopOnce.Do(func() { close(t.stopCh) })
-	t.detachCurrent()
+	if t.stopOnClose {
+		t.stopCurrentSession()
+	} else {
+		t.detachCurrent()
+	}
+}
+
+// stopCurrentSession kills the exec's process group via a PID file, then stops the session.
+// Used only for sessions panel terminals (stopOnClose) to avoid orphaned Claude processes.
+func (t *terminalWSConn) stopCurrentSession() {
+	if t.sessionID != "" && t.outputCh != nil {
+		if mgr := t.activeManager(); mgr != nil {
+			if err := mgr.KillProcessGroup(context.Background(), t.sessionID); err != nil {
+				t.logger.Warn("terminal ws: kill process group failed", "session_id", t.sessionID, "error", err)
+			}
+			if _, err := mgr.StopSession(t.sessionID); err != nil {
+				t.logger.Warn("terminal ws: stop on close failed", "session_id", t.sessionID, "error", err)
+			}
+		}
+		t.sessionID = ""
+		t.outputCh = nil
+		t.sessionTarget = ""
+	}
 }
 
 // autoAcceptTrigger is the prompt text that triggers an automatic Enter.
@@ -411,6 +435,13 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 	// When no explicit command was provided, send the interactive Claude
 	// command as shell input so the terminal starts Claude automatically.
 	if len(msg.Cmd) == 0 && t.cmdBuilder != nil && msg.ChannelID != "" {
+		// Allow the client to override the session ID (e.g. sessions panel resuming a specific session).
+		// Stop the exec process on WS disconnect to avoid orphaned Claude processes.
+		if msg.SessionID != "" {
+			claudeSessionID = msg.SessionID
+			forkSession = false
+			t.stopOnClose = true
+		}
 		cmd := t.cmdBuilder.BuildInteractiveCmd(msg.ChannelID, dirPath, claudeSessionID, msg.AgentID, forkSession)
 		if err := t.manager.SendInput(sid, []byte(cmd+"\n")); err != nil {
 			t.logger.Warn("terminal ws: failed to send interactive cmd", "session_id", sid, "error", err)

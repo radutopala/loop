@@ -36,6 +36,11 @@ func (m *mockDockerExecAPI) ContainerExecResize(ctx context.Context, execID stri
 	return args.Error(0)
 }
 
+func (m *mockDockerExecAPI) ContainerExecInspect(ctx context.Context, execID string) (containertypes.ExecInspect, error) {
+	args := m.Called(ctx, execID)
+	return args.Get(0).(containertypes.ExecInspect), args.Error(1)
+}
+
 type DockerSuite struct {
 	suite.Suite
 }
@@ -273,6 +278,35 @@ func (s *DockerSuite) TestHijackedConnReadEOF() {
 	buf := make([]byte, 4)
 	_, err := h.Read(buf)
 	require.ErrorIs(s.T(), err, io.EOF)
+}
+
+func (s *DockerSuite) TestExecInspectPid() {
+	api := new(mockDockerExecAPI)
+	c := &DockerExecClient{api: api, osGetenv: os.Getenv}
+
+	api.On("ContainerExecInspect", mock.Anything, "exec-1").
+		Return(containertypes.ExecInspect{Pid: 12345}, nil)
+
+	pid, err := c.ExecInspectPid(context.Background(), "exec-1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 12345, pid)
+
+	api.AssertExpectations(s.T())
+}
+
+func (s *DockerSuite) TestExecInspectPidError() {
+	api := new(mockDockerExecAPI)
+	c := &DockerExecClient{api: api, osGetenv: os.Getenv}
+
+	api.On("ContainerExecInspect", mock.Anything, "exec-1").
+		Return(containertypes.ExecInspect{}, errors.New("inspect failed"))
+
+	pid, err := c.ExecInspectPid(context.Background(), "exec-1")
+	require.Error(s.T(), err)
+	require.Equal(s.T(), 0, pid)
+	require.Contains(s.T(), err.Error(), "inspect failed")
+
+	api.AssertExpectations(s.T())
 }
 
 func (s *DockerSuite) TestExecCreateNoTTY() {

@@ -4,7 +4,7 @@ import type { LayoutRoot } from "../canvas/types";
 const LAYOUT_KEY = "loop-workspace-layout";
 
 /** Default layout names — these are the "fixed" buttons in the header. */
-export const DEFAULT_LAYOUT_NAMES = ["Chat", "Editor", "Memory", "Terminal", "Diff", "Browser Chat", "Swarm", "Canvas"] as const;
+export const DEFAULT_LAYOUT_NAMES = ["Chat", "Editor", "Memory", "Terminal", "Diff", "Browser Chat", "Sessions", "Swarm", "Canvas"] as const;
 
 export type LayoutType = "split" | "canvas";
 
@@ -31,7 +31,7 @@ export const DEFAULT_LAYOUT_TYPES: Record<string, LayoutType> = {
 // ---------------------------------------------------------------------------
 
 /** Current schema version. Bump when adding a new migration. */
-const CURRENT_VERSION = 4;
+const CURRENT_VERSION = 5;
 
 /**
  * Each migration transforms a ChannelLayouts from version N-1 to N.
@@ -83,6 +83,9 @@ const migrations: Record<number, (ch: ChannelLayouts) => void> = {
       migrateBrowserPanel(layout);
     }
   },
+
+  // v5: Add "Sessions" default layout (ensureDefaultLayouts handles insertion).
+  5: () => {},
 };
 
 /** Run all pending migrations on a channel's layouts. Returns true if any ran. */
@@ -228,7 +231,7 @@ export function getLayoutNames(channelId: string): string[] {
 export function createDefaultLayouts(): ChannelLayouts {
   return {
     active: "Chat",
-    order: ["Chat", "Editor", "Memory", "Terminal", "Diff", "Browser Chat", "Swarm", "Canvas"],
+    order: ["Chat", "Editor", "Memory", "Terminal", "Diff", "Browser Chat", "Sessions", "Swarm", "Canvas"],
     types: { Canvas: "canvas" },
     version: CURRENT_VERSION,
     layouts: {
@@ -237,6 +240,7 @@ export function createDefaultLayouts(): ChannelLayouts {
       Memory: { type: "leaf", id: "memory", panel: "memory", flex: 1 },
       Diff: { type: "leaf", id: "diff", panel: "diff", flex: 1 },
       "Browser Chat": { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "split", direction: "vertical", flex: 50, children: [{ type: "leaf", id: "docker-browser", panel: "docker-browser", flex: 70 }, { type: "leaf", id: "diff", panel: "diff", flex: 30 }] }] },
+      Sessions: { type: "leaf", id: "sessions", panel: "sessions", flex: 1 },
       Swarm: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "agent-0", panel: "agent", flex: 40 }, { type: "split", direction: "vertical", flex: 60, children: [{ type: "leaf", id: "agent-1", panel: "agent", flex: 1 }, { type: "leaf", id: "agent-2", panel: "agent", flex: 1 }] }] },
       Canvas: { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [{ id: "agent-0", panel: "agent", x: 0, y: 0, width: 550, height: 800, zIndex: 0 }, { id: "agent-1", panel: "agent", x: 570, y: 0, width: 500, height: 390, zIndex: 0 }, { id: "agent-2", panel: "agent", x: 570, y: 410, width: 500, height: 390, zIndex: 0 }, { id: "diff", panel: "diff", x: 1090, y: 0, width: 600, height: 800, zIndex: 0 }, { id: "memory", panel: "memory", x: 1710, y: 0, width: 800, height: 800, zIndex: 0 }] },
     },

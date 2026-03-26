@@ -35,6 +35,7 @@ type channelResponse struct {
 	Name             string `json:"name"`
 	DirPath          string `json:"dir_path"`
 	ParentID         string `json:"parent_id"`
+	SessionID        string `json:"session_id"`
 	Active           bool   `json:"active"`
 	ContainerRunning bool   `json:"container_running"`
 	AgentRunning     bool   `json:"agent_running"`
@@ -139,6 +140,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			Name:             ch.Name,
 			DirPath:          dirPath,
 			ParentID:         ch.ParentID,
+			SessionID:        ch.SessionID,
 			Active:           ch.Active,
 			ContainerRunning: running,
 			AgentRunning:     runningBot,

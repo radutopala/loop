@@ -102,6 +102,21 @@ func (c *HostExecClient) ExecAttach(_ context.Context, execID string) (io.ReadWr
 	}, nil
 }
 
+// ExecInspectPid returns the PID of the exec process.
+// On the host, the PID is read directly from the os/exec Cmd.
+func (c *HostExecClient) ExecInspectPid(_ context.Context, execID string) (int, error) {
+	c.mu.Lock()
+	he, ok := c.execs[execID]
+	c.mu.Unlock()
+	if !ok {
+		return 0, fmt.Errorf("exec %s not found", execID)
+	}
+	if he.cmd.Process == nil {
+		return 0, fmt.Errorf("exec %s not started", execID)
+	}
+	return he.cmd.Process.Pid, nil
+}
+
 // ExecResize changes the PTY dimensions of the exec process.
 func (c *HostExecClient) ExecResize(_ context.Context, execID string, height, width uint) error {
 	c.mu.Lock()

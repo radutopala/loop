@@ -15,6 +15,7 @@ type dockerExecAPI interface {
 	ContainerExecCreate(ctx context.Context, container string, options containertypes.ExecOptions) (containertypes.ExecCreateResponse, error)
 	ContainerExecAttach(ctx context.Context, execID string, options containertypes.ExecAttachOptions) (types.HijackedResponse, error)
 	ContainerExecResize(ctx context.Context, execID string, options containertypes.ResizeOptions) error
+	ContainerExecInspect(ctx context.Context, execID string) (containertypes.ExecInspect, error)
 }
 
 // DockerExecClient implements ExecClient using the Docker SDK.
@@ -81,6 +82,15 @@ func (c *DockerExecClient) ExecResize(ctx context.Context, execID string, height
 		Height: height,
 		Width:  width,
 	})
+}
+
+// ExecInspectPid returns the PID of the exec process inside the container.
+func (c *DockerExecClient) ExecInspectPid(ctx context.Context, execID string) (int, error) {
+	info, err := c.api.ContainerExecInspect(ctx, execID)
+	if err != nil {
+		return 0, err
+	}
+	return info.Pid, nil
 }
 
 // hijackedConn wraps a Docker HijackedResponse as an io.ReadWriteCloser.

@@ -12,9 +12,12 @@ Comprehensive documentation for every feature of the Loop platform.
 
 ## Agent & Containers
 
+- [**Agent**](agent.md) — Agent request/response types, session management, streaming callbacks
 - [**Containers**](containers.md) — Docker container lifecycle, environment, mounts, MCP config, cleanup
+- [**MCP Server**](mcpserver.md) — MCP tools for task scheduling, communication, and memory search
+- [**Browser**](browser.md) — Chrome sidecar containers, CDP client, screencast, input dispatch, tabs
 - [**Scheduling**](scheduling.md) — Task types (cron/interval/once), templates, auto-deletion, thread creation
-- [**Multi-Agent**](multi-agent.md) — Agent registry, inter-agent MCP tools, channel push notifications, Swarm & Canvas layouts
+- [**Daemon**](daemon.md) — Cross-platform service management (launchd, systemd, Windows SCM)
 
 ## API & Data
 

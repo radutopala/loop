@@ -3,6 +3,7 @@ export interface Channel {
   name: string;
   parent_id: string;
   dir_path: string;
+  session_id: string;
   active: boolean;
   container_running: boolean;
   agent_running: boolean;

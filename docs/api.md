@@ -264,6 +264,35 @@ Send a message to a channel. When an orchestrator is configured, routes through 
 
 ---
 
+### `GET /api/channels/{id}/sessions`
+
+List Claude Code session JSONL files for a channel's project directory.
+
+**Path Parameters:**
+
+| Param | Type   | Description |
+|-------|--------|-------------|
+| `id`  | string | Channel ID  |
+
+**Response:**
+
+```json
+{
+  "current_session_id": "4482da1c-831c-...",
+  "sessions": [
+    {
+      "session_id": "4482da1c-831c-...",
+      "last_modified": "2026-03-25T14:30:00Z",
+      "last_message": "I've updated the configuration file..."
+    }
+  ]
+}
+```
+
+Sessions are sorted by modification time (newest first). `last_message` is extracted from the last assistant or user message in the JSONL file (last 32KB reverse-scanned). `current_session_id` is the session currently associated with the channel.
+
+---
+
 ### `GET /api/channels/{id}/messages`
 
 List messages for a channel. Supports two modes: **cursor-based pagination** (default) and **around mode**.

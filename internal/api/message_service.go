@@ -19,7 +19,9 @@ type ChannelLister interface {
 	GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*db.Message, error)
 	SearchMessages(ctx context.Context, query string, limit int) ([]*db.Message, error)
 	GetMessagesAround(ctx context.Context, channelID string, messageID int64, limit int) ([]*db.Message, error)
+	UpdateSessionID(ctx context.Context, channelID string, sessionID string) error
 	DeleteChannel(ctx context.Context, channelID string) error
 	DeleteChannelsByParentID(ctx context.Context, parentID string) error
 	ListDistinctMemoryFilePaths(ctx context.Context, dirPath string) ([]db.MemoryFileInfo, error)
+	InsertMessage(ctx context.Context, msg *db.Message) error
 }

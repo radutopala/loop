@@ -20,7 +20,8 @@ func (RealSystem) WriteFile(name string, data []byte, perm os.FileMode) error {
 func (RealSystem) ReadDir(name string) ([]fs.DirEntry, error) {
 	return os.ReadDir(filepath.Clean(name))
 }
-func (RealSystem) Remove(name string) error { return os.Remove(filepath.Clean(name)) }
+func (RealSystem) Remove(name string) error           { return os.Remove(filepath.Clean(name)) }
+func (RealSystem) Open(name string) (*os.File, error) { return os.Open(filepath.Clean(name)) }
 func (RealSystem) MkdirAll(path string, perm os.FileMode) error {
 	return os.MkdirAll(filepath.Clean(path), perm)
 }

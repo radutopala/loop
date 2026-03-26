@@ -13,6 +13,7 @@ const PANEL_ADD_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "shell", label: "Shell" },
   { panel: "docker-browser", label: "Docker Browser" },
   { panel: "host-browser", label: "Host Browser" },
+  { panel: "sessions", label: "Sessions" },
 ];
 
 const HEADER_HEIGHT = 24;
@@ -296,4 +297,5 @@ const PANEL_LABELS: Record<PanelType, string> = {
   shell: "Shell",
   "docker-browser": "Docker Browser",
   "host-browser": "Host Browser",
+  sessions: "Sessions",
 };

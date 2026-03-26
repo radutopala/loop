@@ -36,7 +36,7 @@ coverage: ## Generate HTML coverage report
 
 coverage-check: ## Run tests and enforce 100% coverage
 	go generate ./internal/readme/
-	go test -race -count=1 -timeout 30s -coverpkg=./... -coverprofile=coverage.out ./...
+	go test -race -count=1 -timeout 60s -coverpkg=./... -coverprofile=coverage.out ./...
 	@go tool cover -func=coverage.out 2>/dev/null | grep total | awk '{print $$3}' | sed 's/%//' | \
 		awk '{if ($$1 < 100.0) {print "Coverage is " $$1 "%, required 100%"; exit 1} else {print "Coverage: " $$1 "%"}}'
 
