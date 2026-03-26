@@ -11,7 +11,8 @@ const PANEL_ADD_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "diff", label: "Diff" },
   { panel: "agent", label: "Agent" },
   { panel: "shell", label: "Shell" },
-  { panel: "browser", label: "Browser" },
+  { panel: "docker-browser", label: "Docker Browser" },
+  { panel: "host-browser", label: "Host Browser" },
 ];
 
 const HEADER_HEIGHT = 24;
@@ -293,5 +294,6 @@ const PANEL_LABELS: Record<PanelType, string> = {
   diff: "Diff",
   agent: "Agent",
   shell: "Shell",
-  browser: "Browser",
+  "docker-browser": "Docker Browser",
+  "host-browser": "Host Browser",
 };

@@ -5,9 +5,11 @@ import { useBrowserWs, type TabInfo } from "../hooks/useBrowserWs";
 
 interface BrowserPanelProps {
   channelId: string;
+  /** When set, locks the browser to this mode and hides the Docker|Host pill. */
+  fixedMode?: "docker" | "host";
 }
 
-export function BrowserPanel({ channelId }: BrowserPanelProps) {
+export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
   const { colors } = useTheme();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const canvasContainerRef = useRef<HTMLDivElement>(null);
@@ -16,6 +18,7 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
   const [error, setError] = useState<string | null>(null);
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
   const [browserMode, setBrowserMode] = useState<"docker" | "host">(() => {
+    if (fixedMode) return fixedMode;
     const saved = localStorage.getItem(`browserMode:${channelId}`);
     return saved === "host" ? "host" : "docker";
   });
@@ -248,8 +251,8 @@ export function BrowserPanel({ channelId }: BrowserPanelProps) {
           />
         </form>
 
-        {/* Docker / Host mode toggle pill */}
-        <ModePill mode={browserMode} onToggle={handleModeToggle} colors={colors} />
+        {/* Docker / Host mode toggle pill — hidden when fixedMode is set */}
+        {!fixedMode && <ModePill mode={browserMode} onToggle={handleModeToggle} colors={colors} />}
       </div>
 
       {/* Error bar */}

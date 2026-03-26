@@ -8,7 +8,8 @@ const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "diff", label: "Diff" },
   { panel: "agent", label: "Agent" },
   { panel: "shell", label: "Shell" },
-  { panel: "browser", label: "Browser" },
+  { panel: "docker-browser", label: "Docker Browser" },
+  { panel: "host-browser", label: "Host Browser" },
 ];
 
 const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
@@ -48,11 +49,19 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
       <line x1="12" y1="19" x2="20" y2="19" />
     </svg>
   ),
-  browser: (
+  "docker-browser": (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <circle cx="12" cy="12" r="10" />
-      <line x1="2" y1="12" x2="22" y2="12" />
-      <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z" />
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <line x1="3" y1="9" x2="21" y2="9" />
+      <circle cx="7" cy="6" r="1" fill="currentColor" />
+      <circle cx="11" cy="6" r="1" fill="currentColor" />
+    </svg>
+  ),
+  "host-browser": (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="2" y="3" width="20" height="14" rx="2" />
+      <line x1="8" y1="21" x2="16" y2="21" />
+      <line x1="12" y1="17" x2="12" y2="21" />
     </svg>
   ),
 };
@@ -64,7 +73,8 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   diff: "Git diff viewer",
   agent: "Docker isolated terminal",
   shell: "Local machine shell",
-  browser: "Browser viewer",
+  "docker-browser": "Browser in Docker container",
+  "host-browser": "Browser on host machine",
 };
 
 /** Centered picker for when layout is empty (no tree). */

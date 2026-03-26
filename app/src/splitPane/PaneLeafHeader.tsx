@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { PanelType, SplitDirection, DropPosition } from "./types";
-import { SINGLETON_PANELS } from "./types";
+import { SINGLETON_PANELS, EXCLUSIVE_PANELS } from "./types";
 import { emitLayoutDragStart, emitLayoutDragEnd, DRAG_MIME } from "./DropZoneOverlay";
 import type { ColorPalette } from "../theme";
 import { useTheme } from "../ThemeContext";
@@ -13,7 +13,8 @@ const PANEL_LABELS: Record<PanelType, string> = {
   diff: "Diff",
   agent: "Agent",
   shell: "Shell",
-  browser: "Browser",
+  "docker-browser": "Docker Browser",
+  "host-browser": "Host Browser",
 };
 
 const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
@@ -23,7 +24,8 @@ const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "diff", label: "Diff" },
   { panel: "agent", label: "Agent" },
   { panel: "shell", label: "Shell" },
-  { panel: "browser", label: "Browser" },
+  { panel: "docker-browser", label: "Docker Browser" },
+  { panel: "host-browser", label: "Host Browser" },
 ];
 
 function buildBtnStyle(colors: ColorPalette): React.CSSProperties {
@@ -260,7 +262,8 @@ function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf }: { leafId: string
           gap: 2,
         }}>
           {PANEL_OPTIONS.map(({ panel: p, label: l }) => {
-            const disabled = SINGLETON_PANELS.includes(p) && usedSingletons.has(p);
+            const disabled = (SINGLETON_PANELS.includes(p) && usedSingletons.has(p))
+              || EXCLUSIVE_PANELS.some((g) => g.includes(p) && g.some((x) => x !== p && usedSingletons.has(x)));
             return (
               <>
                 <button

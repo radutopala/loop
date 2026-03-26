@@ -22,7 +22,7 @@ A free-form layout with draggable, resizable tiles on an infinite surface.
 - **Add tiles:** Double-click an empty area or use the `+` button in a tile header.
 - **Tile controls:** Each tile header has `+` (add tile), maximize, and close buttons.
 - **Bring to front:** Click a tile to raise it above others.
-- **Singleton enforcement:** Chat, Editor, Memory, Diff, and Browser are limited to one tile per canvas. Agent and Shell can have multiple tiles.
+- **Singleton enforcement:** Chat, Editor, Memory, Diff, Docker Browser, and Host Browser are limited to one tile per canvas (Docker Browser and Host Browser are also mutually exclusive). Agent and Shell can have multiple tiles.
 - **Auto-center:** Tiles are centered in the viewport on first load and after a layout reset.
 
 ### Creating Layouts
@@ -73,13 +73,24 @@ interface SplitNode {
 | Editor | `editor` | `"editor"` | Yes | File browser and code editor (see [editor.md](editor.md)) |
 | Memory | `memory` | `"memory"` | Yes | Agent memory explorer |
 | Diff | `diff` | `"diff"` | Yes | Git diff viewer |
-| Browser | `browser` | `"browser"` | Yes | Docker Chrome browser with live screencast |
+| Docker Browser | `docker-browser` | `"docker-browser"` | Yes | Chrome browser inside the Docker container |
+| Host Browser | `host-browser` | `"host-browser"` | Yes | Chrome browser on the host machine via CDP |
 | Agent | `agent` | `"agent-N"` | No | Docker-isolated terminal session |
 | Shell | `shell` | `"shell-N"` | No | Local machine shell session |
 
-**Singleton panels** (chat, editor, memory, diff) can appear at most once in a layout tree. The `canAddPanel()` function enforces this: if the panel type is in `SINGLETON_PANELS` and already present in the tree, the add operation is rejected.
+**Singleton panels** (chat, editor, memory, diff, docker-browser, host-browser) can appear at most once in a layout tree. The `canAddPanel()` function enforces this: if the panel type is in `SINGLETON_PANELS` and already present in the tree, the add operation is rejected.
 
 **Multi-instance panels** (agent, shell) can appear multiple times. Each instance gets a unique numbered ID (e.g., `agent-0`, `shell-1`) from a per-channel counter.
+
+**Exclusive panels** are singleton panels that are mutually exclusive -- only one from each exclusive group can exist in a layout at a time. If one is present, the others in the same group are greyed out and disabled in the split menu.
+
+```typescript
+const EXCLUSIVE_PANELS: PanelType[][] = [
+  ["docker-browser", "host-browser"],
+];
+```
+
+The `canAddPanel()` function checks both singleton and exclusive constraints.
 
 ---
 
@@ -97,7 +108,7 @@ Five default layouts are created for every new channel:
 | **Editor** | Horizontal split: Editor (65%) + Diff (35%) |
 | **Memory** | Single leaf: Memory |
 | **Terminal** | Empty (user picks a panel on first use) |
-| **Browser** | Horizontal split: Chat (50%) + Browser (50%) |
+| **Browser** | Horizontal split: Chat (50%) + Docker Browser (50%) |
 | **Diff** | Single leaf: Diff |
 
 The "Chat" layout is the initial active layout.
@@ -119,12 +130,13 @@ When a default layout is deleted, its name is tracked in a `removed` list so `en
 
 ## Persistence
 
-All layout state is stored in `localStorage` under the key `loop-workspace-layout`.
+All layout state is stored in `localStorage` under the key `loop-workspace-layout`. The persistence logic lives in `app/src/layouts/persistence.ts`.
 
 ### Storage Format
 
 ```typescript
 Record<channelId, {
+  version: number;                   // migration version (current: 4)
   active: string;                    // name of the active layout
   layouts: Record<string, PaneNode>; // layout name -> tree (split layouts)
   order: string[];                   // tab display order
@@ -134,6 +146,21 @@ Record<channelId, {
 ```
 
 The tree is saved whenever it changes (on every split, remove, flex update, or drop operation). The active layout name is saved on switch.
+
+### Versioned Migrations
+
+Persisted data is migrated on load via a versioned migration system. Each channel's data stores a `version` field. On load, migrations run sequentially from the stored version up to `CURRENT_VERSION`.
+
+```typescript
+const migrations: Record<number, (data: ChannelData) => ChannelData> = {
+  1: removeDefaultLayout,
+  2: renameBrowserToBrowserChat,
+  3: addTypesMap,
+  4: migrateBrowserToDockerBrowser, // "browser" panel type -> "docker-browser"
+};
+```
+
+New migrations increment `CURRENT_VERSION` and add an entry to the `migrations` map.
 
 ---
 
@@ -197,7 +224,7 @@ All operations are immutable -- they return new tree objects.
 | `moveLeaf` | `(tree, dragId, dropId, position) -> PaneNode` | Remove dragged leaf, then split the drop target to insert it |
 | `collectLeaves` | `(node) -> LeafNode[]` | Flatten all leaves in the tree |
 | `leafCount` | `(node) -> number` | Count total leaves |
-| `canAddPanel` | `(tree, panel) -> boolean` | Check singleton constraint |
+| `canAddPanel` | `(tree, panel) -> boolean` | Check singleton and exclusive constraints |
 | `hasAgentLeaf` | `(node) -> boolean` | Check if any leaf has `panel === "agent"` |
 
 ### Panel ID Allocation
@@ -208,23 +235,26 @@ Singleton panels always use their panel type as the ID (e.g., `"chat"`, `"editor
 
 ---
 
-## Singleton Enforcement
+## Singleton & Exclusive Enforcement
 
-The `canAddPanel()` function prevents adding duplicate singleton panels:
+The `canAddPanel()` function prevents adding duplicate singleton panels and mutually exclusive panels:
 
 ```typescript
-const SINGLETON_PANELS: PanelType[] = ["chat", "editor", "memory", "diff", "browser"];
+const SINGLETON_PANELS: PanelType[] = ["chat", "editor", "memory", "diff", "docker-browser", "host-browser"];
+const EXCLUSIVE_PANELS: PanelType[][] = [["docker-browser", "host-browser"]];
 
 function canAddPanel(tree: PaneNode | null, panel: PanelType): boolean {
   if (!tree) return true;
-  if (SINGLETON_PANELS.includes(panel)) {
-    return !collectPanelTypes(tree).has(panel);
+  const existing = collectPanelTypes(tree);
+  if (SINGLETON_PANELS.includes(panel) && existing.has(panel)) return false;
+  for (const group of EXCLUSIVE_PANELS) {
+    if (group.includes(panel) && group.some((p) => existing.has(p))) return false;
   }
-  return true; // multi-instance: always allowed
+  return true;
 }
 ```
 
-In the `PaneSplitMenu`, singleton panels that are already present are rendered with `opacity: 0.35` and `disabled`.
+In the `PaneSplitMenu`, singleton panels that are already present and exclusive panels blocked by a sibling are rendered with `opacity: 0.35` and `disabled`.
 
 ---
 

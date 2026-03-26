@@ -715,10 +715,35 @@ function parseMarkdown(text: string, s: Record<string, React.CSSProperties>): Re
   return nodes;
 }
 
+function linkifyText(text: string, keyBase: number): React.ReactNode[] {
+  const urlRegex = /(https?:\/\/[^\s<>)"']+)/g;
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  for (;;) {
+    const m = urlRegex.exec(text);
+    if (!m) break;
+    if (m.index > last) parts.push(text.slice(last, m.index));
+    parts.push(
+      <a
+        key={`link-${keyBase}-${parts.length}`}
+        href={m[0]}
+        target="_blank"
+        rel="noopener noreferrer"
+        style={{ color: "#6ba3f7", textDecoration: "underline" }}
+      >
+        {m[0]}
+      </a>,
+    );
+    last = m.index + m[0].length;
+  }
+  if (last < text.length) parts.push(text.slice(last));
+  return parts;
+}
+
 function formatInline(text: string, s: Record<string, React.CSSProperties>): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
-  // Match inline code, bold, italic.
-  const regex = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/g;
+  // Match inline code, bold, italic, markdown links.
+  const regex = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\))/g;
   let lastIndex = 0;
 
   for (;;) {
@@ -726,7 +751,7 @@ function formatInline(text: string, s: Record<string, React.CSSProperties>): Rea
     if (!match) break;
 
     if (match.index > lastIndex) {
-      nodes.push(text.slice(lastIndex, match.index));
+      nodes.push(...linkifyText(text.slice(lastIndex, match.index), nodes.length));
     }
 
     const token = match[0];
@@ -742,13 +767,28 @@ function formatInline(text: string, s: Record<string, React.CSSProperties>): Rea
       );
     } else if (token.startsWith("*")) {
       nodes.push(<em key={nodes.length}>{token.slice(1, -1)}</em>);
+    } else if (token.startsWith("[")) {
+      const mdMatch = token.match(/^\[([^\]]+)\]\(([^)]+)\)$/);
+      if (mdMatch) {
+        nodes.push(
+          <a
+            key={nodes.length}
+            href={mdMatch[2]}
+            target="_blank"
+            rel="noopener noreferrer"
+            style={{ color: "#6ba3f7", textDecoration: "underline" }}
+          >
+            {mdMatch[1]}
+          </a>,
+        );
+      }
     }
 
     lastIndex = match.index + token.length;
   }
 
   if (lastIndex < text.length) {
-    nodes.push(text.slice(lastIndex));
+    nodes.push(...linkifyText(text.slice(lastIndex), nodes.length));
   }
 
   return nodes;

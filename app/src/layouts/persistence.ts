@@ -1,4 +1,4 @@
-import type { PaneNode } from "./types";
+import type { PaneNode } from "../splitPane/types";
 import type { LayoutRoot } from "../canvas/types";
 
 const LAYOUT_KEY = "loop-workspace-layout";
@@ -17,12 +17,89 @@ export interface ChannelLayouts {
   order: string[];
   /** Default layout names that were explicitly removed by the user. */
   removed?: string[];
+  /** Migration version — incremented after each migration runs. */
+  version?: number;
 }
 
 /** Default layout type per tab name. */
 export const DEFAULT_LAYOUT_TYPES: Record<string, LayoutType> = {
   Canvas: "canvas",
 };
+
+// ---------------------------------------------------------------------------
+// Versioned migrations
+// ---------------------------------------------------------------------------
+
+/** Current schema version. Bump when adding a new migration. */
+const CURRENT_VERSION = 4;
+
+/**
+ * Each migration transforms a ChannelLayouts from version N-1 to N.
+ * They run in order, once per channel, and the version is bumped after each.
+ */
+const migrations: Record<number, (ch: ChannelLayouts) => void> = {
+  // v1: Remove stale "Default" layout from very old format.
+  1: (ch) => {
+    if (ch.layouts["Default"]) {
+      delete ch.layouts["Default"];
+      ch.order = ch.order.filter((n) => n !== "Default");
+      if (ch.active === "Default") ch.active = "Chat";
+    }
+  },
+
+  // v2: Rename "Browser" layout tab to "Browser Chat".
+  2: (ch) => {
+    if (ch.layouts["Browser"] || ch.order.includes("Browser")) {
+      if (ch.layouts["Browser"]) {
+        if (!ch.layouts["Browser Chat"]) {
+          ch.layouts["Browser Chat"] = ch.layouts["Browser"];
+        }
+        delete ch.layouts["Browser"];
+      }
+      ch.order = ch.order.map((n) => (n === "Browser" ? "Browser Chat" : n));
+      if (ch.active === "Browser") ch.active = "Browser Chat";
+    }
+    if (ch.removed) {
+      ch.removed = ch.removed.map((n: string) => (n === "Browser" ? "Browser Chat" : n));
+    }
+  },
+
+  // v3: Add layout types map and fix corrupted canvas layouts.
+  3: (ch) => {
+    if (!ch.types) {
+      ch.types = { ...DEFAULT_LAYOUT_TYPES };
+    }
+    const defaults = createDefaultLayouts();
+    for (const [name, lt] of Object.entries(ch.types)) {
+      if (lt === "canvas" && ch.layouts[name] && !Array.isArray((ch.layouts[name] as any).tiles)) {
+        ch.layouts[name] = defaults.layouts[name] ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] };
+      }
+    }
+  },
+
+  // v4: Replace panel:"browser" with "docker-browser" in all layouts.
+  4: (ch) => {
+    for (const layout of Object.values(ch.layouts)) {
+      migrateBrowserPanel(layout);
+    }
+  },
+};
+
+/** Run all pending migrations on a channel's layouts. Returns true if any ran. */
+function runMigrations(ch: ChannelLayouts): boolean {
+  const from = ch.version ?? 0;
+  if (from >= CURRENT_VERSION) return false;
+
+  for (let v = from + 1; v <= CURRENT_VERSION; v++) {
+    migrations[v]?.(ch);
+  }
+  ch.version = CURRENT_VERSION;
+  return true;
+}
+
+// ---------------------------------------------------------------------------
+// Storage helpers
+// ---------------------------------------------------------------------------
 
 function loadAll(): Record<string, ChannelLayouts> {
   try {
@@ -54,6 +131,10 @@ function saveAll(all: Record<string, ChannelLayouts>): void {
   } catch { /* ignore */ }
 }
 
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
 export function loadChannelLayouts(channelId: string): ChannelLayouts | null {
   const all = loadAll();
   return all[channelId] ?? null;
@@ -72,7 +153,7 @@ export function loadActiveLayoutName(channelId: string): string | null {
 
 export function saveLayout(channelId: string, layoutName: string, tree: PaneNode): void {
   const all = loadAll();
-  const ch = all[channelId] ?? { active: layoutName, layouts: {}, types: {}, order: [] };
+  const ch = all[channelId] ?? { active: layoutName, layouts: {}, types: {}, order: [], version: CURRENT_VERSION };
   ch.layouts[layoutName] = tree;
   ch.active = layoutName;
   if (!ch.order.includes(layoutName)) ch.order.push(layoutName);
@@ -82,7 +163,7 @@ export function saveLayout(channelId: string, layoutName: string, tree: PaneNode
 
 export function saveLayoutType(channelId: string, layoutName: string, lt: LayoutType): void {
   const all = loadAll();
-  const ch = all[channelId] ?? { active: layoutName, layouts: {}, types: {}, order: [] };
+  const ch = all[channelId] ?? { active: layoutName, layouts: {}, types: {}, order: [], version: CURRENT_VERSION };
   ch.types[layoutName] = lt;
   ch.active = layoutName;
   if (!ch.order.includes(layoutName)) ch.order.push(layoutName);
@@ -149,12 +230,13 @@ export function createDefaultLayouts(): ChannelLayouts {
     active: "Chat",
     order: ["Chat", "Editor", "Memory", "Terminal", "Diff", "Browser Chat", "Swarm", "Canvas"],
     types: { Canvas: "canvas" },
+    version: CURRENT_VERSION,
     layouts: {
       Chat: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "leaf", id: "diff", panel: "diff", flex: 50 }] },
       Editor: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "editor", panel: "editor", flex: 65 }, { type: "leaf", id: "diff-1", panel: "diff", flex: 35 }] },
       Memory: { type: "leaf", id: "memory", panel: "memory", flex: 1 },
       Diff: { type: "leaf", id: "diff", panel: "diff", flex: 1 },
-      "Browser Chat": { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "split", direction: "vertical", flex: 50, children: [{ type: "leaf", id: "browser", panel: "browser", flex: 70 }, { type: "leaf", id: "diff", panel: "diff", flex: 30 }] }] },
+      "Browser Chat": { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "split", direction: "vertical", flex: 50, children: [{ type: "leaf", id: "docker-browser", panel: "docker-browser", flex: 70 }, { type: "leaf", id: "diff", panel: "diff", flex: 30 }] }] },
       Swarm: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "agent-0", panel: "agent", flex: 40 }, { type: "split", direction: "vertical", flex: 60, children: [{ type: "leaf", id: "agent-1", panel: "agent", flex: 1 }, { type: "leaf", id: "agent-2", panel: "agent", flex: 1 }] }] },
       Canvas: { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [{ id: "agent-0", panel: "agent", x: 0, y: 0, width: 550, height: 800, zIndex: 0 }, { id: "agent-1", panel: "agent", x: 570, y: 0, width: 500, height: 390, zIndex: 0 }, { id: "agent-2", panel: "agent", x: 570, y: 410, width: 500, height: 390, zIndex: 0 }, { id: "diff", panel: "diff", x: 1090, y: 0, width: 600, height: 800, zIndex: 0 }, { id: "memory", panel: "memory", x: 1710, y: 0, width: 800, height: 800, zIndex: 0 }] },
     },
@@ -173,49 +255,11 @@ export function ensureDefaultLayouts(channelId: string): ChannelLayouts {
     return ch;
   }
 
-  // Remove stale "Default" layout from old migration
-  if (ch.layouts["Default"]) {
-    delete ch.layouts["Default"];
-    ch.order = ch.order.filter((n) => n !== "Default");
-    if (ch.active === "Default") ch.active = "Chat";
-  }
+  // Run versioned migrations.
+  let changed = runMigrations(ch);
 
-  // Add any missing default layouts (unless explicitly removed by user)
+  // Add any missing default layouts (unless explicitly removed by user).
   const defaults = createDefaultLayouts();
-  let changed = false;
-
-  // Migrate: ensure types map exists.
-  if (!ch.types) {
-    ch.types = { ...DEFAULT_LAYOUT_TYPES };
-    changed = true;
-  }
-
-  // Rename "Browser" → "Browser Chat"
-  if (ch.layouts["Browser"] || ch.order.includes("Browser")) {
-    if (ch.layouts["Browser"]) {
-      if (!ch.layouts["Browser Chat"]) {
-        ch.layouts["Browser Chat"] = ch.layouts["Browser"];
-      }
-      delete ch.layouts["Browser"];
-    }
-    ch.order = ch.order.map((n) => (n === "Browser" ? "Browser Chat" : n));
-    if (ch.active === "Browser") ch.active = "Browser Chat";
-    changed = true;
-  }
-  if (ch.removed) {
-    const hadBrowser = ch.removed.includes("Browser");
-    ch.removed = ch.removed.map((n: string) => (n === "Browser" ? "Browser Chat" : n));
-    if (hadBrowser) changed = true;
-  }
-
-  // Fix corrupted canvas layouts: type says "canvas" but data is a split pane.
-  for (const [name, lt] of Object.entries(ch.types)) {
-    if (lt === "canvas" && ch.layouts[name] && !Array.isArray((ch.layouts[name] as any).tiles)) {
-      ch.layouts[name] = defaults.layouts[name] ?? { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [] };
-      changed = true;
-    }
-  }
-
   const removed = ch.removed ?? [];
   for (const name of DEFAULT_LAYOUT_NAMES) {
     if (removed.includes(name)) continue;
@@ -274,4 +318,30 @@ export function restoreDefaultLayouts(channelId: string): ChannelLayouts {
   ch.removed = [];
   saveAll(all);
   return ch;
+}
+
+// ---------------------------------------------------------------------------
+// Migration helpers
+// ---------------------------------------------------------------------------
+
+/** Recursively replace panel:"browser" with "docker-browser" in a layout tree. */
+function migrateBrowserPanel(node: any): void {
+  if (!node) return;
+  if (node.type === "leaf" && node.panel === "browser") {
+    node.panel = "docker-browser";
+    if (node.id === "browser") node.id = "docker-browser";
+  }
+  if (node.type === "canvas" && Array.isArray(node.tiles)) {
+    for (const tile of node.tiles) {
+      if (tile.panel === "browser") {
+        tile.panel = "docker-browser";
+        if (tile.id === "browser") tile.id = "docker-browser";
+      }
+    }
+  }
+  if (Array.isArray(node.children)) {
+    for (const child of node.children) {
+      migrateBrowserPanel(child);
+    }
+  }
 }

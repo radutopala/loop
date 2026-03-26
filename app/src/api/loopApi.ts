@@ -278,6 +278,7 @@ export async function sendCommand(
 
 export interface DiffFile {
   path: string;
+  old_path?: string; // set when file was renamed
   additions: number;
   deletions: number;
   binary: boolean;

@@ -14,6 +14,7 @@ import (
 
 type diffFileEntry struct {
 	Path      string `json:"path"`
+	OldPath   string `json:"old_path,omitempty"` // set when file was renamed
 	Additions int    `json:"additions"`
 	Deletions int    `json:"deletions"`
 	Binary    bool   `json:"binary"`
@@ -60,7 +61,7 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Run git diff --numstat for file-level stats.
-	numstatCmd := exec.CommandContext(r.Context(), "git", "diff", "--numstat")
+	numstatCmd := exec.CommandContext(r.Context(), "git", "diff", "--numstat", "-z")
 	numstatCmd.Dir = dirPath
 	numstatOut, err := numstatCmd.Output()
 	if err != nil {
@@ -178,7 +179,7 @@ func (s *Server) handleBranchDiff(w http.ResponseWriter, r *http.Request, dirPat
 
 	rangeSpec := source + "..." + target
 
-	numstatCmd := exec.CommandContext(r.Context(), "git", "diff", "--numstat", rangeSpec)
+	numstatCmd := exec.CommandContext(r.Context(), "git", "diff", "--numstat", "-z", rangeSpec)
 	numstatCmd.Dir = dirPath
 	numstatOut, err := numstatCmd.Output()
 	if err != nil {
@@ -216,28 +217,47 @@ func (s *Server) handleBranchDiff(w http.ResponseWriter, r *http.Request, dirPat
 	}, s.logger)
 }
 
-// parseNumstat parses `git diff --numstat` output into file entries.
-// Format: "additions\tdeletions\tpath" per line. Binary files show "-\t-\tpath".
+// parseNumstat parses `git diff --numstat -z` output into file entries.
+// With -z, fields are NUL-separated. Renames have an empty path field
+// followed by two NUL-separated paths: "adds\tdels\t\0old\0new\0".
+// Normal files: "adds\tdels\tpath\0".
 func parseNumstat(output string) []diffFileEntry {
-	lines := strings.Split(strings.TrimSpace(output), "\n")
-	files := make([]diffFileEntry, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
+	// Split on NUL to get tokens. The output is a sequence of records
+	// where each record starts with "adds\tdels\tpath" (normal) or
+	// "adds\tdels\t" followed by old_path and new_path (rename).
+	records := strings.Split(output, "\x00")
+	files := make([]diffFileEntry, 0)
+
+	for i := 0; i < len(records); i++ {
+		record := records[i]
+		if record == "" || record == "\n" {
 			continue
 		}
-		parts := strings.SplitN(line, "\t", 3)
+		// Each record is "adds\tdels\tpath" — split on tabs.
+		parts := strings.SplitN(strings.TrimLeft(record, "\n"), "\t", 3)
 		if len(parts) < 3 {
 			continue
 		}
-		entry := diffFileEntry{Path: parts[2]}
+		entry := diffFileEntry{}
 		if parts[0] == "-" && parts[1] == "-" {
 			entry.Binary = true
 		} else {
 			entry.Additions, _ = strconv.Atoi(parts[0])
 			entry.Deletions, _ = strconv.Atoi(parts[1])
 		}
-		files = append(files, entry)
+		if parts[2] == "" {
+			// Rename: next two NUL-separated tokens are old_path and new_path.
+			if i+2 < len(records) {
+				entry.OldPath = records[i+1]
+				entry.Path = records[i+2]
+				i += 2
+			}
+		} else {
+			entry.Path = parts[2]
+		}
+		if entry.Path != "" {
+			files = append(files, entry)
+		}
 	}
 	return files
 }

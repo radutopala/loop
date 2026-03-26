@@ -439,7 +439,7 @@ func TestParseNumstat(t *testing.T) {
 		},
 		{
 			name:  "normal files",
-			input: "10\t5\tfile.go\n3\t0\tREADME.md\n",
+			input: "10\t5\tfile.go\x003\t0\tREADME.md\x00",
 			expect: []diffFileEntry{
 				{Path: "file.go", Additions: 10, Deletions: 5},
 				{Path: "README.md", Additions: 3, Deletions: 0},
@@ -447,21 +447,37 @@ func TestParseNumstat(t *testing.T) {
 		},
 		{
 			name:  "binary file",
-			input: "-\t-\timage.png\n",
+			input: "-\t-\timage.png\x00",
 			expect: []diffFileEntry{
 				{Path: "image.png", Binary: true},
 			},
 		},
 		{
 			name:  "malformed line",
-			input: "not-a-valid-line\n10\t5\tfile.go\n",
+			input: "not-a-valid-line\x0010\t5\tfile.go\x00",
 			expect: []diffFileEntry{
 				{Path: "file.go", Additions: 10, Deletions: 5},
 			},
 		},
 		{
+			name:  "renamed file",
+			input: "115\t45\t\x00app/src/splitPane/persistence.ts\x00app/src/layouts/persistence.ts\x00",
+			expect: []diffFileEntry{
+				{Path: "app/src/layouts/persistence.ts", OldPath: "app/src/splitPane/persistence.ts", Additions: 115, Deletions: 45},
+			},
+		},
+		{
+			name:  "mixed with rename",
+			input: "10\t5\tfile.go\x00100\t50\t\x00old/path.ts\x00new/path.ts\x003\t0\tREADME.md\x00",
+			expect: []diffFileEntry{
+				{Path: "file.go", Additions: 10, Deletions: 5},
+				{Path: "new/path.ts", OldPath: "old/path.ts", Additions: 100, Deletions: 50},
+				{Path: "README.md", Additions: 3, Deletions: 0},
+			},
+		},
+		{
 			name:  "mixed",
-			input: "100\t50\tsrc/main.ts\n-\t-\ticon.icns\n0\t3\told.txt\n",
+			input: "100\t50\tsrc/main.ts\x00-\t-\ticon.icns\x000\t3\told.txt\x00",
 			expect: []diffFileEntry{
 				{Path: "src/main.ts", Additions: 100, Deletions: 50},
 				{Path: "icon.icns", Binary: true},

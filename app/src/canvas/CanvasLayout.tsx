@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CanvasNode, CanvasTile as CanvasTileType } from "./types";
 import type { LeafNode, PanelType } from "../splitPane/types";
-import { SINGLETON_PANELS } from "../splitPane/types";
+import { SINGLETON_PANELS, EXCLUSIVE_PANELS } from "../splitPane/types";
 import { CanvasTile } from "./CanvasTile";
 import { EmptyLayoutPicker } from "../splitPane/AddPanelButton";
 import { useTheme } from "../ThemeContext";
@@ -227,10 +227,16 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, onCanvasChange 
     return () => el.removeEventListener("wheel", handler);
   }, []);
 
-  // Singletons already in use — filter from add menus.
+  // Singletons and exclusive groups already in use — grey out in add menus.
   const usedSingletons = new Set(
     canvas.tiles.map((t) => t.panel).filter((p) => (SINGLETON_PANELS as string[]).includes(p)),
   );
+  // If any panel in an exclusive group is used, mark all others in that group as used.
+  for (const group of EXCLUSIVE_PANELS) {
+    if (group.some((p) => usedSingletons.has(p))) {
+      for (const p of group) usedSingletons.add(p);
+    }
+  }
   // Dot grid: scale spacing with zoom, offset with pan.
   const dotSpacing = DOT_SPACING * vp.zoom;
   const dotSize = Math.max(1, vp.zoom) * 1.5;
@@ -370,7 +376,8 @@ const PANEL_COLORS: Record<PanelType, string> = {
   diff: "#fbbf24",
   agent: "#f87171",
   shell: "#94a3b8",
-  browser: "#fb923c",
+  "docker-browser": "#fb923c",
+  "host-browser": "#38bdf8",
 };
 
 function CanvasMinimap({ tiles, viewport: vp, containerRef, onPan, onZoom }: {
@@ -581,12 +588,14 @@ const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "diff", label: "Diff" },
   { panel: "agent", label: "Agent" },
   { panel: "shell", label: "Shell" },
-  { panel: "browser", label: "Browser" },
+  { panel: "docker-browser", label: "Docker Browser" },
+  { panel: "host-browser", label: "Host Browser" },
 ];
 
 /** Default tile sizes per panel type. Editor and Memory get more space. */
 const DEFAULT_TILE_SIZES: Partial<Record<PanelType, { w: number; h: number }>> = {
   editor: { w: 900, h: 900 },
   memory: { w: 900, h: 900 },
-  browser: { w: 700, h: 500 },
+  "docker-browser": { w: 700, h: 500 },
+  "host-browser": { w: 700, h: 500 },
 };

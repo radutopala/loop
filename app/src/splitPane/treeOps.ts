@@ -1,5 +1,5 @@
 import type { PaneNode, LeafNode, SplitDirection, DropPosition, PanelType } from "./types";
-import { SINGLETON_PANELS } from "./types";
+import { SINGLETON_PANELS, EXCLUSIVE_PANELS } from "./types";
 
 export function makeLeaf(id: string, panel: PanelType, flex = 1): LeafNode {
   return { type: "leaf", id, panel, flex };
@@ -133,8 +133,15 @@ export function collectPanelTypes(node: PaneNode): Set<PanelType> {
 
 export function canAddPanel(tree: PaneNode | null, panel: PanelType): boolean {
   if (!tree) return true;
-  if ((SINGLETON_PANELS as string[]).includes(panel)) {
-    return !collectPanelTypes(tree).has(panel);
+  const used = collectPanelTypes(tree);
+  if ((SINGLETON_PANELS as string[]).includes(panel) && used.has(panel)) {
+    return false;
+  }
+  // Check exclusive groups — if any panel in the same group is present, block.
+  for (const group of EXCLUSIVE_PANELS) {
+    if (group.includes(panel) && group.some((p) => p !== panel && used.has(p))) {
+      return false;
+    }
   }
   return true; // multi-instance: always allowed
 }

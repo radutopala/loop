@@ -877,7 +877,7 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 - **Chat** — send messages, stream agent responses in real-time, search messages (Cmd+K), copy-on-select, persistent drafts across channel switches
 - **Terminal** — interactive xterm.js terminals for agent containers and host shells, with horizontal/vertical splits
 - **File editor** — CodeMirror-powered editor with syntax highlighting, markdown preview, in-file search, context menus, and auto-save
-- **Diff panel** — git changes with per-file addition/deletion stats, maximizable to full width, expandable context rows between hunks (GitLab-style "load more"), branch-to-branch diff mode for comparing any two branches
+- **Diff panel** — git changes with per-file addition/deletion stats, maximizable to full width, expandable context rows between hunks (GitLab-style "load more"), branch-to-branch diff mode for comparing any two branches, renamed file support with `{old => new}` notation
 - **Memory panel** — browse and search semantic memory files
 - **Custom layouts** — named split-pane workspaces with drag-to-resize, saved per channel. Create, rename, delete, and restore default layouts from the tab bar
 - **Multi-window** — open multiple windows (Cmd+N), each navigating independently
@@ -885,7 +885,7 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 - **Auto-update** — checks for new releases every 30 minutes, download and install with one click
 - **Deep links** — `loop://channel/<id>` opens the app directly to a channel
 - **Branch picker** — switch branches from the header bar, create worktree threads, import existing worktrees. Threads show branches only; parent channels show branches + worktrees in a 50/50 split. Double-click a branch name to copy it
-- **Browser** — live Chrome screencast via WebSocket, click/type/navigate directly in the browser pane. Supports Docker (headless container) and Host (local Chrome) modes with pill toggle
+- **Browser** — live Chrome screencast via WebSocket, click/type/navigate directly in the browser pane. Two panel types: Docker Browser (headless container) and Host Browser (local Chrome via CDP), mutually exclusive per layout
 - **Plan mode** — run agents in read-only preview mode (`--permission-mode plan`)
 - **Agent activity** — see model info, tool use, and completion summaries in the chat view
 - **Message queue** — processing indicators and trigger quote showing which message is being handled, with timestamp

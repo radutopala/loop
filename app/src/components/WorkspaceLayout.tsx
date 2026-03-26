@@ -3,8 +3,8 @@ import type { Channel } from "../types";
 import type { SessionStatus } from "../types";
 import type { PaneNode, LeafNode, PanelType, SplitDirection, DropPosition } from "../splitPane/types";
 import { makeLeaf, findLeafById, splitLeaf, removeLeaf, updateFlex, swapLeavesInTree, moveLeaf, leafCount, collectLeaves, canAddPanel, hasAgentLeaf, collectPanelTypes } from "../splitPane/treeOps";
-import { saveLayout, clearLayout, saveActiveLayout, saveLayoutType, deleteLayout, renameLayout, loadChannelLayouts, ensureDefaultLayouts, createDefaultLayouts, restoreDefaultLayouts, DEFAULT_LAYOUT_NAMES, DEFAULT_LAYOUT_TYPES } from "../splitPane/persistence";
-import type { LayoutType } from "../splitPane/persistence";
+import { saveLayout, clearLayout, saveActiveLayout, saveLayoutType, deleteLayout, renameLayout, loadChannelLayouts, ensureDefaultLayouts, createDefaultLayouts, restoreDefaultLayouts, DEFAULT_LAYOUT_NAMES, DEFAULT_LAYOUT_TYPES } from "../layouts/persistence";
+import type { LayoutType } from "../layouts/persistence";
 import { SplitPaneLayout } from "../splitPane/SplitPaneLayout";
 import { PaneLeafHeader } from "../splitPane/PaneLeafHeader";
 import { useAgentRegistry } from "../hooks/useAgentRegistry";
@@ -934,11 +934,20 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               />
             </div>
           );
-        case "browser":
+        case "docker-browser":
           return (
             <BrowserPanel
-              key={`layout-browser-${channelId}`}
+              key={`layout-docker-browser-${channelId}`}
               channelId={channelId}
+              fixedMode="docker"
+            />
+          );
+        case "host-browser":
+          return (
+            <BrowserPanel
+              key={`layout-host-browser-${channelId}`}
+              channelId={channelId}
+              fixedMode="host"
             />
           );
         default:

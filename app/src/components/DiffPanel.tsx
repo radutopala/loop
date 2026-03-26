@@ -7,6 +7,32 @@ import type { ColorPalette } from "../theme";
 import { useTheme } from "../ThemeContext";
 import { ContextMenu } from "./ContextMenu";
 
+/** Format a rename as "prefix/{old => new}/suffix" like git does. */
+function formatRenamePath(oldPath: string, newPath: string): string {
+  // Find common prefix.
+  const oldParts = oldPath.split("/");
+  const newParts = newPath.split("/");
+  let prefixLen = 0;
+  while (prefixLen < oldParts.length && prefixLen < newParts.length && oldParts[prefixLen] === newParts[prefixLen]) {
+    prefixLen++;
+  }
+  // Find common suffix.
+  let suffixLen = 0;
+  while (suffixLen < oldParts.length - prefixLen && suffixLen < newParts.length - prefixLen && oldParts[oldParts.length - 1 - suffixLen] === newParts[newParts.length - 1 - suffixLen]) {
+    suffixLen++;
+  }
+  const prefix = oldParts.slice(0, prefixLen).join("/");
+  const suffix = oldParts.slice(oldParts.length - suffixLen).join("/");
+  const oldMiddle = oldParts.slice(prefixLen, oldParts.length - suffixLen).join("/");
+  const newMiddle = newParts.slice(prefixLen, newParts.length - suffixLen).join("/");
+
+  const parts: string[] = [];
+  if (prefix) parts.push(prefix + "/");
+  parts.push(`{${oldMiddle} => ${newMiddle}}`);
+  if (suffix) parts.push("/" + suffix);
+  return parts.join("");
+}
+
 const MIN_WIDTH = 280;
 const MAX_WIDTH_PERCENT = 0.6;
 const POLL_INTERVAL = 5_000;
@@ -671,7 +697,7 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
                 <path d="M2.5 3.5L5 6.5L7.5 3.5" />
               </svg>
               <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", direction: "rtl", textAlign: "left" }}>
-                <bdi>{file.path}</bdi>
+                <bdi>{file.old_path ? formatRenamePath(file.old_path, file.path) : file.path}</bdi>
               </span>
               <span style={{ flexShrink: 0, fontSize: 11 }}>
                 {file.binary ? (
