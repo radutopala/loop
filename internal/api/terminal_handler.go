@@ -250,12 +250,14 @@ func (t *terminalWSConn) scanAutoAccept(data []byte) {
 	sid := t.sessionID
 	t.autoAcceptMu.Unlock()
 
-	// Small delay to let the TUI render before sending Enter.
+	// Send Enter after a delay, retrying a few times in case the TUI isn't ready.
 	go func() {
-		time.Sleep(200 * time.Millisecond)
-		if err := t.manager.SendInput(sid, []byte("\r")); err != nil {
-			t.logger.Warn("terminal ws: auto-accept send failed", "session_id", sid, "error", err)
-		} else {
+		for _, delay := range []time.Duration{500 * time.Millisecond, time.Second, time.Second} {
+			time.Sleep(delay)
+			if err := t.manager.SendInput(sid, []byte("\r")); err != nil {
+				t.logger.Warn("terminal ws: auto-accept send failed", "session_id", sid, "error", err)
+				return
+			}
 			t.logger.Info("terminal ws: auto-accept sent Enter", "session_id", sid, "trigger", autoAcceptTrigger)
 		}
 	}()

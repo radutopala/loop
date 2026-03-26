@@ -693,8 +693,8 @@ func (s *TerminalHandlerSuite) TestAttachWithAgentIDEnablesAutoAccept() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "attached", msg.Type)
 
-	// Wait for auto-accept to fire from history scan.
-	time.Sleep(300 * time.Millisecond)
+	// Wait for auto-accept to fire from history scan (first retry at 500ms).
+	time.Sleep(700 * time.Millisecond)
 	s.terminal.AssertCalled(s.T(), "SendInput", "sess-1", []byte("\r"))
 
 	close(doneCh)
@@ -2253,9 +2253,9 @@ func (s *TerminalHandlerSuite) TestAutoAcceptScansOutput() {
 	time.Sleep(50 * time.Millisecond)
 	s.terminal.AssertNotCalled(s.T(), "SendInput", "sid-1", []byte("\r"))
 
-	// Output with trigger — should send Enter.
+	// Output with trigger — should send Enter (first retry at 500ms).
 	tc.scanAutoAccept([]byte("Entertoconfirm · Esc to cancel"))
-	time.Sleep(300 * time.Millisecond)
+	time.Sleep(700 * time.Millisecond)
 	s.terminal.AssertCalled(s.T(), "SendInput", "sid-1", []byte("\r"))
 }
 
@@ -2269,15 +2269,16 @@ func (s *TerminalHandlerSuite) TestAutoAcceptFiresForMultiplePrompts() {
 	}
 	tc.enableAutoAccept()
 
-	// First prompt (trust) fires.
+	// First prompt fires (with retries).
 	tc.scanAutoAccept([]byte("Entertoconfirm · Esc to cancel"))
-	time.Sleep(300 * time.Millisecond)
-	s.terminal.AssertNumberOfCalls(s.T(), "SendInput", 1)
+	time.Sleep(3 * time.Second)
 
-	// Second prompt (channel) also fires.
+	// Second prompt also fires.
 	tc.scanAutoAccept([]byte("Entertoconfirm · Esc to cancel"))
-	time.Sleep(300 * time.Millisecond)
-	s.terminal.AssertNumberOfCalls(s.T(), "SendInput", 2)
+	time.Sleep(3 * time.Second)
+
+	// Each trigger sends Enter 3 times (retries), so 6 total.
+	s.terminal.AssertNumberOfCalls(s.T(), "SendInput", 6)
 }
 
 func (s *TerminalHandlerSuite) TestAutoAcceptSendError() {
@@ -2291,8 +2292,9 @@ func (s *TerminalHandlerSuite) TestAutoAcceptSendError() {
 	tc.enableAutoAccept()
 
 	tc.scanAutoAccept([]byte("Entertoconfirm"))
-	time.Sleep(300 * time.Millisecond)
-	s.terminal.AssertCalled(s.T(), "SendInput", "sid-1", []byte("\r"))
+	time.Sleep(700 * time.Millisecond)
+	// Error on first retry, stops immediately.
+	s.terminal.AssertNumberOfCalls(s.T(), "SendInput", 1)
 }
 
 func (s *TerminalHandlerSuite) TestAutoAcceptDisabledByDefault() {
