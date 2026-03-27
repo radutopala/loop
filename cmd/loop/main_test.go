@@ -3353,6 +3353,57 @@ func (s *MainSuite) TestEnsureImageChromeDockerfileWrite() {
 	require.Contains(s.T(), string(data), "chromium")
 }
 
+func (s *MainSuite) TestEnsureImageRebuildsOnVersionMismatch() {
+	dockerClient := new(mockDockerClient)
+	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:abc"}, nil)
+	dockerClient.On("ImageInspectLabels", mock.Anything, "loop-agent:latest").Return(map[string]string{
+		"loop.version": "1.0.0",
+	}, nil)
+	dockerClient.On("ImageBuild", mock.Anything, mock.Anything, "loop-agent:latest").Return(nil)
+	dockerClient.On("ImageList", mock.Anything, "loop-chrome:latest").Return([]string{"sha256:def"}, nil)
+
+	cfg := &config.Config{
+		LoopDir:        s.T().TempDir(),
+		ContainerImage: "loop-agent:latest",
+		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
+	}
+	containerDir := filepath.Join(cfg.LoopDir, "container")
+	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "chrome.Dockerfile"), []byte("FROM alpine"), 0644))
+
+	s.app.version = "2.0.0" // differs from image label "1.0.0"
+	s.app.sys = newPassthroughMock()
+	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
+	require.NoError(s.T(), err)
+	dockerClient.AssertCalled(s.T(), "ImageBuild", mock.Anything, mock.Anything, "loop-agent:latest")
+}
+
+func (s *MainSuite) TestEnsureImageSkipsRebuildWhenVersionMatches() {
+	dockerClient := new(mockDockerClient)
+	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:abc"}, nil)
+	dockerClient.On("ImageInspectLabels", mock.Anything, "loop-agent:latest").Return(map[string]string{
+		"loop.version": "2.0.0",
+	}, nil)
+	dockerClient.On("ImageList", mock.Anything, "loop-chrome:latest").Return([]string{"sha256:def"}, nil)
+
+	cfg := &config.Config{
+		LoopDir:        s.T().TempDir(),
+		ContainerImage: "loop-agent:latest",
+		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
+	}
+	containerDir := filepath.Join(cfg.LoopDir, "container")
+	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "chrome.Dockerfile"), []byte("FROM alpine"), 0644))
+
+	s.app.version = "2.0.0" // matches image label
+	s.app.sys = newPassthroughMock()
+	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
+	require.NoError(s.T(), err)
+	dockerClient.AssertNotCalled(s.T(), "ImageBuild", mock.Anything, mock.Anything, mock.Anything)
+}
+
 // --- resolveVersion ---
 
 func (s *MainSuite) TestResolveVersionKeepsNonDev() {

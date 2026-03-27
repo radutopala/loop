@@ -74,12 +74,20 @@ func (a *app) defaultEnsureImage(ctx context.Context, client container.DockerCli
 		}
 	}
 
-	// Build agent image if missing
+	// Build agent image if missing or if Loop version changed.
 	ids, err := client.ImageList(ctx, cfg.ContainerImage)
 	if err != nil {
 		return fmt.Errorf("listing images: %w", err)
 	}
-	if len(ids) == 0 {
+	needsBuild := len(ids) == 0
+	if !needsBuild && a.version != "" && a.version != "dev" {
+		if labels, err := client.ImageInspectLabels(ctx, cfg.ContainerImage); err == nil && labels != nil {
+			if imgVersion := labels["loop.version"]; imgVersion != "" && imgVersion != a.version {
+				needsBuild = true
+			}
+		}
+	}
+	if needsBuild {
 		if err := client.ImageBuild(ctx, containerDir, cfg.ContainerImage); err != nil {
 			return err
 		}
