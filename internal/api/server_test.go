@@ -1047,7 +1047,43 @@ func (s *ServerSuite) TestCreateThreadWithSessionIDUpdateError() {
 	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
 }
 
+func (s *ServerSuite) TestCreateThreadWithTraversalSessionID() {
+	s.threads.On("CreateThread", mock.Anything, "ch-1", "test", "", "").
+		Return("thread-1", nil)
+	// filepath.Base strips traversal: "../../etc/passwd" → "passwd".
+	s.store.On("UpdateSessionID", mock.Anything, "thread-1", "passwd").Return(nil)
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(nil, nil).Maybe()
+
+	body := `{"channel_id":"ch-1","name":"test","session_id":"../../etc/passwd"}`
+	rec := s.testRequest("POST", "/api/threads", body)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+	// Stored value must be the sanitised base name, not the original traversal path.
+	s.store.AssertCalled(s.T(), "UpdateSessionID", mock.Anything, "thread-1", "passwd")
+}
+
 // --- importSessionMessages tests ---
+
+func (s *ServerSuite) TestImportSessionMessagesTraversalSessionID() {
+	store := new(MockChannelLister)
+	// filepath.Base strips traversal — "../../etc/passwd" → "passwd".
+	// GetChannel is called with the sanitised value; parent lookup returns nil to stop the flow.
+	store.On("GetChannel", mock.Anything, "ch-parent").Return(nil, nil)
+
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.sys = s.sys
+	srv.importSessionMessages(context.Background(), "ch-parent", "thread-1", "../../etc/passwd")
+	store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestImportSessionMessagesDotDotSessionID() {
+	store := new(MockChannelLister)
+	// A bare ".." sessionID should be rejected entirely — no store calls.
+	srv := NewServer(nil, nil, nil, store, nil, testLogger())
+	srv.sys = s.sys
+	srv.importSessionMessages(context.Background(), "ch-parent", "thread-1", "..")
+	store.AssertNotCalled(s.T(), "GetChannel")
+}
 
 func (s *ServerSuite) TestImportSessionMessagesNilStoreOrSys() {
 	// When store is nil, importSessionMessages returns early.

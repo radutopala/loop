@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
@@ -425,6 +426,27 @@ func (s *ServerSuite) TestCopySessionFile_Errors() {
 	err = s.srv.copySessionFile("/src", "/dst", "sess")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing session file")
+}
+
+func (s *ServerSuite) TestCopySessionFile_TraversalSessionID() {
+	// Traversal sessionID should be sanitised to base name.
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return("/home/test", nil)
+	// filepath.Base("../../etc/passwd") = "passwd", so ReadFile path ends with "passwd.jsonl".
+	sys.On("ReadFile", mock.MatchedBy(func(p string) bool {
+		return strings.HasSuffix(p, "passwd.jsonl") && !strings.Contains(p, "..")
+	})).Return(nil, errors.New("not found"))
+	s.srv.sys = sys
+	err := s.srv.copySessionFile("/src", "/dst", "../../etc/passwd")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading session file")
+	sys.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCopySessionFile_DotDotSessionID() {
+	err := s.srv.copySessionFile("/src", "/dst", "..")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "invalid session ID")
 }
 
 func (s *ServerSuite) TestEncodeClaudeProjectPath() {

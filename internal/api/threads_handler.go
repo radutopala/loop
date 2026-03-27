@@ -58,13 +58,14 @@ func (s *Server) handleCreateThread(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.SessionID != "" && s.store != nil {
-		if err := s.store.UpdateSessionID(r.Context(), threadID, req.SessionID); err != nil {
+	cleanSessionID := filepath.Base(req.SessionID)
+	if cleanSessionID != "" && cleanSessionID != "." && cleanSessionID != ".." && s.store != nil {
+		if err := s.store.UpdateSessionID(r.Context(), threadID, cleanSessionID); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 		// Import conversation history from the session JSONL file.
-		s.importSessionMessages(r.Context(), req.ChannelID, threadID, req.SessionID)
+		s.importSessionMessages(r.Context(), req.ChannelID, threadID, cleanSessionID)
 	}
 
 	if s.eventsHub != nil {
@@ -96,6 +97,13 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 // importSessionMessages parses a Claude Code session JSONL file and inserts
 // user prompts and assistant text responses as messages in the thread.
 func (s *Server) importSessionMessages(ctx context.Context, parentChannelID, threadID, sessionID string) {
+	// Sanitise sessionID to prevent path traversal — only the base name is
+	// valid (no slashes, no ".." components).
+	sessionID = filepath.Base(sessionID)
+	if sessionID == "." || sessionID == ".." || sessionID == "" {
+		return
+	}
+
 	if s.store == nil || s.sys == nil {
 		return
 	}

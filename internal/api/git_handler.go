@@ -472,6 +472,12 @@ func (s *Server) handleImportWorktree(w http.ResponseWriter, r *http.Request) {
 // copySessionFile copies a Claude session file from the parent project dir
 // to the worktree project dir so that --resume --fork-session can find it.
 func (s *Server) copySessionFile(parentDirPath, worktreeDirPath, sessionID string) error {
+	// Sanitise sessionID to prevent path traversal.
+	sessionID = filepath.Base(sessionID)
+	if sessionID == "." || sessionID == ".." || sessionID == "" {
+		return fmt.Errorf("invalid session ID")
+	}
+
 	home, err := s.sys.UserHomeDir()
 	if err != nil {
 		return fmt.Errorf("getting home dir: %w", err)
