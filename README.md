@@ -98,7 +98,7 @@ Or build from source:
 brew install radutopala/tap/loop
 
 # From source
-go install github.com/radutopala/loop/cmd/loop@latest
+go install github.com/radutopala/loop/cmd/loop@main
 cd app && npm install && npm run dev   # run the app in dev mode
 ```
 
