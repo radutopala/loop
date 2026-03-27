@@ -231,6 +231,8 @@ func (a *app) newRootCmd() *cobra.Command {
 	root.AddCommand(a.newVersionCmd())
 	root.AddCommand(a.newReadmeCmd())
 	root.AddCommand(a.newUpdateCmd())
+	root.AddCommand(a.newImageRebuildCmd())
+	root.AddCommand(a.newImageStatusCmd())
 	root.AddCommand(a.newMCPBrowserCmd())
 	root.AddCommand(a.newMCPHostBrowserCmd())
 	root.SetHelpTemplate(helpTemplate)
@@ -266,6 +268,8 @@ Available Commands:
   daemon:status            Show daemon status (alias: d:status)
   mcp-host-browser         Standalone MCP server for host Chrome automation (auto-discovers via DevToolsActivePort)
     --log                  Path to MCP log file [default: .loop/mcp-host-browser.log]
+  image:rebuild            Rebuild the Docker agent image (aliases: i:rebuild, i:r)
+  image:status             Show Docker agent image status and versions (aliases: i:status, i:s)
   version                  Print version information (alias: v)
   readme                   Print the README documentation (alias: r)
   update                   Update loop to the latest version (alias: u)

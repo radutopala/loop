@@ -597,3 +597,59 @@ func (s *EventsHubSuite) TestBroadcastAgentInstanceMetadata() {
 	require.NoError(s.T(), json.Unmarshal(msg, &evt))
 	require.Equal(s.T(), EventAgentInstanceMetadata, evt.Type)
 }
+
+func (s *EventsHubSuite) TestBroadcastImageBuildStatus() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastImageBuildStatus(events.ImageBuildStatusData{State: "building", Phase: "removing"})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventImageBuildStatus, evt.Type)
+}
+
+func (s *EventsHubSuite) TestBroadcastImageUpdateAvailable() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastImageUpdateAvailable(events.ImageUpdateAvailableData{CurrentVersion: "1.0.0", LatestVersion: "2.0.0", Component: "claude_code"})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventImageUpdateAvailable, evt.Type)
+}

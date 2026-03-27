@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AppSettings, ConfigInfo, DaemonInfo } from "../types";
+import type { AppSettings, ConfigInfo, DaemonInfo, ImageBuildStatusData, ImageStatusResponse, ImageUpdateAvailableData } from "../types";
+import { getImageStatus } from "../api/loopApi";
 import { fonts, builtinThemes } from "../theme";
 import type { ColorPalette } from "../theme";
 import { useTheme } from "../ThemeContext";
@@ -26,9 +27,12 @@ interface SettingsProps {
   onOpenPalette?: () => void;
   onClose: () => void;
   onDaemonRestarted?: () => void;
+  imageBuildStatus?: ImageBuildStatusData | null;
+  imageUpdateAvailable?: ImageUpdateAvailableData | null;
+  onRebuildImage?: () => void;
 }
 
-export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, onOpenPalette, onClose, onDaemonRestarted }: SettingsProps) {
+export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, onOpenPalette, onClose, onDaemonRestarted, imageBuildStatus, imageUpdateAvailable, onRebuildImage }: SettingsProps) {
   const { colors, themeName, setThemeName, availableThemes } = useTheme();
   const [settings, setSettings] = useState<AppSettings>({ stopDaemonOnQuit: false, autoSaveOnBlur: true, previewTabs: true });
   const [daemonInfo, setDaemonInfo] = useState<DaemonInfo | null>(null);
@@ -36,6 +40,7 @@ export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, o
   const [globalConfig, setGlobalConfig] = useState<ConfigInfo | null>(null);
   const [projectConfig, setProjectConfig] = useState<ConfigInfo | null>(null);
   const [loaded, setLoaded] = useState(false);
+  const [imageStatus, setImageStatus] = useState<ImageStatusResponse | null>(null);
 
   const headerBtnStyle = buildHeaderBtnStyle(colors);
   const hoverIn = (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -57,11 +62,13 @@ export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, o
       api.getSettings(),
       api.getDaemonInfo(),
       api.getConfig?.() ?? Promise.resolve(null),
+      getImageStatus().catch(() => null),
     ])
-      .then(([s, d, c]) => {
+      .then(([s, d, c, img]) => {
         setSettings(s);
         setDaemonInfo(d);
         if (c) setGlobalConfig(c);
+        if (img) setImageStatus(img);
         setLoaded(true);
       })
       .catch(() => setLoaded(true));
@@ -338,6 +345,119 @@ export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, o
               checked={settings.previewTabs ?? true}
               onChange={() => handleToggle("previewTabs")}
             />
+
+            {/* Docker Image section */}
+            <SectionHeader>Docker Image</SectionHeader>
+
+            <div style={{
+              backgroundColor: colors.bg,
+              borderRadius: 8,
+              padding: "10px 12px",
+              marginBottom: 12,
+              fontSize: 12,
+              fontFamily: fonts.mono,
+            }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+                <span style={{ color: colors.textDim }}>Status</span>
+                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                  <span style={{
+                    width: 6,
+                    height: 6,
+                    borderRadius: "50%",
+                    backgroundColor:
+                      (imageBuildStatus?.state === "building") ? colors.warning
+                      : (imageBuildStatus?.state === "failed") ? colors.error
+                      : colors.active,
+                    display: "inline-block",
+                  }} />
+                  <span style={{
+                    color:
+                      (imageBuildStatus?.state === "building") ? colors.warning
+                      : (imageBuildStatus?.state === "failed") ? colors.error
+                      : colors.active,
+                    fontWeight: 500,
+                  }}>
+                    {imageBuildStatus?.state === "building" ? "Building"
+                      : imageBuildStatus?.state === "failed" ? "Failed"
+                      : "Ready"}
+                    {imageBuildStatus?.phase ? ` — ${imageBuildStatus.phase}` : ""}
+                  </span>
+                </span>
+              </div>
+              {imageStatus?.versions && (
+                <>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
+                    <span style={{ color: colors.textDim, flexShrink: 0 }}>Loop</span>
+                    <span style={{ color: colors.text }}>{imageStatus.versions.loop_version || "unknown"}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
+                    <span style={{ color: colors.textDim, flexShrink: 0 }}>Claude</span>
+                    <span style={{ color: colors.text }}>{imageStatus.versions.claude_version || "unknown"}</span>
+                  </div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+                    <span style={{ color: colors.textDim, flexShrink: 0 }}>Built</span>
+                    <span style={{ color: colors.text }}>{imageStatus.versions.built_at || "unknown"}</span>
+                  </div>
+                </>
+              )}
+            </div>
+
+            {imageUpdateAvailable && (
+              <div style={{
+                backgroundColor: "rgba(255, 200, 50, 0.1)",
+                border: `1px solid rgba(255, 200, 50, 0.3)`,
+                borderRadius: 8,
+                padding: "8px 12px",
+                marginBottom: 12,
+                fontSize: 12,
+                color: colors.warning,
+              }}>
+                Claude Code update available: v{imageUpdateAvailable.current_version} → v{imageUpdateAvailable.latest_version}
+              </div>
+            )}
+
+            {imageBuildStatus?.state === "failed" && imageBuildStatus.error && (
+              <div style={{
+                fontSize: 11,
+                color: colors.error,
+                marginBottom: 8,
+              }}>
+                {imageBuildStatus.error}
+              </div>
+            )}
+
+            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+              <button
+                onClick={onRebuildImage}
+                disabled={imageBuildStatus?.state === "building"}
+                style={{
+                  flex: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  gap: 6,
+                  padding: "8px 12px",
+                  backgroundColor: colors.bg,
+                  border: `1px solid ${colors.border}`,
+                  borderRadius: 8,
+                  color: imageBuildStatus?.state === "building" ? colors.textDim : colors.text,
+                  fontSize: 12,
+                  cursor: imageBuildStatus?.state === "building" ? "default" : "pointer",
+                  fontFamily: "inherit",
+                }}
+                onMouseEnter={(e) => { if (imageBuildStatus?.state !== "building") e.currentTarget.style.borderColor = colors.textDim; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; }}
+              >
+                <svg
+                  width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+                  style={imageBuildStatus?.state === "building" ? { animation: "spin 1s linear infinite" } : undefined}
+                >
+                  <path d="M21 12a9 9 0 1 1-3-6.7" />
+                  <polyline points="21,3 21,9 15,9" />
+                </svg>
+                {imageBuildStatus?.state === "building" ? "Building..." : "Rebuild Image"}
+              </button>
+            </div>
 
             {/* Appearance section */}
             <SectionHeader>Appearance</SectionHeader>

@@ -7,7 +7,7 @@ FROM golang:1.26-alpine
 ENV GOTOOLCHAIN=auto
 RUN apk add --no-cache bash ca-certificates curl git make nodejs npm docker-cli docker-cli-compose su-exec aws-cli libgcc libstdc++ ripgrep uv gcc musl-dev openssh-client
 ENV USE_BUILTIN_RIPGREP=0
-ARG LOOP_VERSION=latest
+ARG LOOP_VERSION=main
 RUN ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/amd64/') && \
     if [ "$LOOP_VERSION" != "latest" ]; then \
     TAG="v${LOOP_VERSION#v}"; \
@@ -25,6 +25,8 @@ RUN ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/amd64/') && \
     curl -fsSL -o /tmp/tk.tar.gz "https://github.com/radutopala/ticket/releases/download/${TAG}/tk_${V}_linux_${ARCH}.tar.gz" && \
     tar -xzf /tmp/tk.tar.gz -C /usr/local/bin tk && rm /tmp/tk.tar.gz
 ARG CLAUDE_VERSION=latest
+LABEL loop.version="${LOOP_VERSION}" \
+    loop.claude_version="${CLAUDE_VERSION}"
 RUN curl -fsSL https://claude.ai/install.sh | bash && cp -L ~/.local/bin/claude /usr/local/bin/claude && rm -rf ~/.local/share/claude ~/.local/bin/claude
 COPY --from=builder /go/bin/gopls /usr/local/bin/gopls
 COPY setup.sh /usr/local/bin/setup.sh

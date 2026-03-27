@@ -26,6 +26,8 @@ const (
 	EventAgentInstanceRegistered   = "agent_instance.registered"
 	EventAgentInstanceUnregistered = "agent_instance.unregistered"
 	EventAgentInstanceMetadata     = "agent_instance.metadata"
+	EventImageBuildStatus          = "image.build_status"
+	EventImageUpdateAvailable      = "image.update_available"
 )
 
 // Event represents a server-sent event to WebSocket clients.
@@ -238,5 +240,23 @@ func (h *EventsHub) BroadcastExitPlan(channelID string, data events.ExitPlanMode
 		Type:      EventExitPlan,
 		ChannelID: channelID,
 		Data:      data,
+	})
+}
+
+// BroadcastImageBuildStatus sends a global image.build_status event.
+func (h *EventsHub) BroadcastImageBuildStatus(data events.ImageBuildStatusData) {
+	h.Broadcast(Event{
+		Type:   EventImageBuildStatus,
+		Data:   data,
+		Global: true,
+	})
+}
+
+// BroadcastImageUpdateAvailable sends a global image.update_available event.
+func (h *EventsHub) BroadcastImageUpdateAvailable(data events.ImageUpdateAvailableData) {
+	h.Broadcast(Event{
+		Type:   EventImageUpdateAvailable,
+		Data:   data,
+		Global: true,
 	})
 }

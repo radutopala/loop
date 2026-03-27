@@ -192,11 +192,14 @@ type DockerClient interface {
 	ImagePull(ctx context.Context, image string) error
 	ImageBuild(ctx context.Context, contextDir, tag string) error
 	ImageBuildFile(ctx context.Context, contextDir, dockerfile, tag string) error
+	RemoveImageAndContainers(ctx context.Context, imageName string) error
+	ImageInspectLabels(ctx context.Context, imageName string) (map[string]string, error)
 	ContainerList(ctx context.Context, labelKey, labelValue string) ([]string, error)
 	CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader) error
 	RunningChannelIDs(ctx context.Context) (map[string]struct{}, error)
 	NetworkEnsure(ctx context.Context, name string) error
 	SetLoopVersion(v string)
+	LatestClaudeVersion() string
 }
 
 // Runner executes agent requests inside containers.

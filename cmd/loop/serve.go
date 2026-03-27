@@ -426,6 +426,15 @@ func (a *app) serve() error {
 	eventsHub := api.NewEventsHub(logger)
 	apiSrv.SetEventsHub(eventsHub)
 
+	containerDir := filepath.Join(cfg.LoopDir, "container")
+	lifecycleMgr := container.NewImageLifecycleManager(
+		dockerClient, eventsHub, a.sys, logger,
+		containerDir, cfg.ContainerImage, a.version,
+		dockerClient.LatestClaudeVersion,
+	)
+	apiSrv.SetImageManager(lifecycleMgr)
+	go lifecycleMgr.RunUpdateChecker(ctx, 30*time.Minute)
+
 	executor.SetEventBroadcaster(eventsHub)
 
 	screenshotDir := filepath.Join(cfg.LoopDir, "screenshots")

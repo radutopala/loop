@@ -198,6 +198,14 @@ func (m *MockEventBroadcaster) BroadcastAgentInstanceMetadata(channelID string, 
 	m.Called(channelID, data)
 }
 
+func (m *MockEventBroadcaster) BroadcastImageBuildStatus(data events.ImageBuildStatusData) {
+	m.Called(data)
+}
+
+func (m *MockEventBroadcaster) BroadcastImageUpdateAvailable(data events.ImageUpdateAvailableData) {
+	m.Called(data)
+}
+
 type MockRunner struct {
 	mock.Mock
 }

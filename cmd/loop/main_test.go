@@ -134,7 +134,24 @@ func (m *mockDockerClient) NetworkEnsure(ctx context.Context, name string) error
 	return m.Called(ctx, name).Error(0)
 }
 
+func (m *mockDockerClient) RemoveImageAndContainers(ctx context.Context, imageName string) error {
+	return m.Called(ctx, imageName).Error(0)
+}
+
+func (m *mockDockerClient) ImageInspectLabels(ctx context.Context, imageName string) (map[string]string, error) {
+	args := m.Called(ctx, imageName)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]string), args.Error(1)
+}
+
 func (m *mockDockerClient) SetLoopVersion(v string) {}
+
+func (m *mockDockerClient) LatestClaudeVersion() string {
+	args := m.Called()
+	return args.String(0)
+}
 
 type mockBot struct {
 	mock.Mock
@@ -413,6 +430,7 @@ func (s *MainSuite) setupServeMocks() *serveMocks {
 		cfg:          testConfig(),
 	}
 	m.store.On("Close").Return(nil)
+	m.dockerClient.On("LatestClaudeVersion").Return("1.0.0").Maybe()
 	s.app.configLoad = func() (*config.Config, error) { return m.cfg, nil }
 	s.app.newSQLiteStore = func(_ string) (db.Store, error) { return m.store, nil }
 	s.app.newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) { return m.bot, nil }
@@ -1626,8 +1644,10 @@ func (s *MainSuite) TestServeEarlyErrors() {
 				s.app.newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
 					return new(mockBot), nil
 				}
+				dc := new(mockDockerClient)
+				dc.On("LatestClaudeVersion").Return("1.0.0").Maybe()
 				s.app.newDockerClient = func() (container.DockerClient, error) {
-					return new(mockDockerClient), nil
+					return dc, nil
 				}
 				s.app.ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
 					return errors.New("image build failed")
@@ -1885,9 +1905,11 @@ func (s *MainSuite) TestServeDockerClientCloserCalled() {
 	m.bot.On("RegisterCommands", mock.Anything).Return(errors.New("fail"))
 
 	closeCalled := false
+	innerClient := new(mockDockerClient)
+	innerClient.On("LatestClaudeVersion").Return("1.0.0").Maybe()
 	s.app.newDockerClient = func() (container.DockerClient, error) {
 		return &closableDockerClient{
-			mockDockerClient: new(mockDockerClient),
+			mockDockerClient: innerClient,
 			closeFn:          func() error { closeCalled = true; return nil },
 		}, nil
 	}

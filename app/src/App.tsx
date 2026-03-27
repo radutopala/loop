@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AppSettings, Channel, UpdateStatus, WSEvent } from "./types";
+import type { AppSettings, Channel, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
 import { fonts } from "./theme";
 import { ThemeProvider, useTheme } from "./ThemeContext";
-import { createChannel, createThread, createWorktreeThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, importWorktree, initApiUrl } from "./api/loopApi";
+import { createChannel, createThread, createWorktreeThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, importWorktree, initApiUrl, rebuildImage } from "./api/loopApi";
 import { Sidebar } from "./components/Sidebar";
 import { MarkdownFilePanel } from "./components/FilePanel";
 import { WorkspaceLayout, type WorkspaceLayoutRef } from "./components/WorkspaceLayout";
@@ -60,6 +60,8 @@ function AppInner() {
   const [readmeOpen, setReadmeOpen] = useState(false);
   const [openMemoryFile, setOpenMemoryFile] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
+  const [imageBuildStatus, setImageBuildStatus] = useState<ImageBuildStatusData | null>(null);
+  const [imageUpdateAvailable, setImageUpdateAvailable] = useState<ImageUpdateAvailableData | null>(null);
 
   const layoutRef = useRef<WorkspaceLayoutRef>(null);
 
@@ -157,6 +159,10 @@ function AppInner() {
     window.loopAPI?.installUpdate?.();
   }, []);
 
+  const handleRebuildImage = useCallback(async () => {
+    try { await rebuildImage(); } catch (e) { console.warn("rebuild image failed:", e); }
+  }, []);
+
   const dmEnsuredRef = useRef(false);
 
   const loadChannels = useCallback(async () => {
@@ -196,6 +202,14 @@ function AppInner() {
         setSelectedId(null);
       }
       loadChannels();
+      return;
+    }
+    if (event.type === "image.build_status") {
+      setImageBuildStatus(event.data as ImageBuildStatusData);
+      return;
+    }
+    if (event.type === "image.update_available") {
+      setImageUpdateAvailable(event.data as ImageUpdateAvailableData);
       return;
     }
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -457,6 +471,9 @@ function AppInner() {
         unreadIdsRef={unreadIdsRef}
         unreadCount={unreadCount}
         onMarkAllRead={markAllRead}
+        imageBuildStatus={imageBuildStatus}
+        imageUpdateAvailable={imageUpdateAvailable}
+        onRebuildImage={handleRebuildImage}
       />
       {selectedId && selectedChannel ? (
         <>
@@ -504,6 +521,9 @@ function AppInner() {
               onOpenPalette={() => setPaletteOpen(true)}
               onClose={() => setSettingsOpen(false)}
               onDaemonRestarted={loadChannels}
+              imageBuildStatus={imageBuildStatus}
+              imageUpdateAvailable={imageUpdateAvailable}
+              onRebuildImage={handleRebuildImage}
             />
           )}
         </>
@@ -518,6 +538,9 @@ function AppInner() {
               onOpenPalette={() => setPaletteOpen(true)}
               onClose={() => setSettingsOpen(false)}
               onDaemonRestarted={loadChannels}
+              imageBuildStatus={imageBuildStatus}
+              imageUpdateAvailable={imageUpdateAvailable}
+              onRebuildImage={handleRebuildImage}
             />
           ) : (
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>

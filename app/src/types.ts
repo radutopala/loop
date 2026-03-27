@@ -158,6 +158,27 @@ export interface UpdateStatus {
   error?: string;
 }
 
+export interface ImageBuildStatusData {
+  state: "idle" | "building" | "completed" | "failed";
+  phase?: string;
+  error?: string;
+}
+
+export interface ImageUpdateAvailableData {
+  current_version: string;
+  latest_version: string;
+  component: string;
+}
+
+export interface ImageStatusResponse {
+  status: ImageBuildStatusData;
+  versions: {
+    loop_version: string;
+    claude_version: string;
+    built_at: string;
+  };
+}
+
 export interface AppSettings {
   stopDaemonOnQuit: boolean;
   autoSaveOnBlur: boolean;

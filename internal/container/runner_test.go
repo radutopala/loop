@@ -92,6 +92,19 @@ func (m *MockDockerClient) ImageBuildFile(ctx context.Context, contextDir, docke
 	return args.Error(0)
 }
 
+func (m *MockDockerClient) RemoveImageAndContainers(ctx context.Context, imageName string) error {
+	args := m.Called(ctx, imageName)
+	return args.Error(0)
+}
+
+func (m *MockDockerClient) ImageInspectLabels(ctx context.Context, imageName string) (map[string]string, error) {
+	args := m.Called(ctx, imageName)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(map[string]string), args.Error(1)
+}
+
 func (m *MockDockerClient) ContainerList(ctx context.Context, labelKey, labelValue string) ([]string, error) {
 	args := m.Called(ctx, labelKey, labelValue)
 	return args.Get(0).([]string), args.Error(1)
@@ -116,6 +129,11 @@ func (m *MockDockerClient) NetworkEnsure(ctx context.Context, name string) error
 }
 
 func (m *MockDockerClient) SetLoopVersion(v string) {}
+
+func (m *MockDockerClient) LatestClaudeVersion() string {
+	args := m.Called()
+	return args.String(0)
+}
 
 type RunnerSuite struct {
 	suite.Suite

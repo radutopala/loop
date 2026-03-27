@@ -12,7 +12,10 @@ FROM golang:1.26-alpine
 ENV GOTOOLCHAIN=auto
 RUN apk add --no-cache bash ca-certificates curl git make nodejs npm docker-cli docker-cli-compose su-exec aws-cli libgcc libstdc++ ripgrep uv gcc musl-dev openssh-client
 ENV USE_BUILTIN_RIPGREP=0
+ARG LOOP_VERSION=dev
 ARG CLAUDE_VERSION=latest
+LABEL loop.version="${LOOP_VERSION}" \
+      loop.claude_version="${CLAUDE_VERSION}"
 RUN curl -fsSL https://claude.ai/install.sh | bash && cp -L ~/.local/bin/claude /usr/local/bin/claude && rm -rf ~/.local/share/claude ~/.local/bin/claude
 COPY --from=builder /loop /usr/local/bin/loop
 COPY --from=builder /go/bin/tk /usr/local/bin/tk

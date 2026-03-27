@@ -15,6 +15,8 @@ type Broadcaster interface {
 	BroadcastAgentInstanceRegistered(channelID string, data AgentInstanceEventData)
 	BroadcastAgentInstanceUnregistered(channelID string, data AgentInstanceEventData)
 	BroadcastAgentInstanceMetadata(channelID string, data AgentInstanceEventData)
+	BroadcastImageBuildStatus(data ImageBuildStatusData)
+	BroadcastImageUpdateAvailable(data ImageUpdateAvailableData)
 }
 
 // MessageEventData is the payload for message.created events.
@@ -95,4 +97,18 @@ type AgentInstanceEventData struct {
 type AskUserOption struct {
 	Label       string `json:"label"`
 	Description string `json:"description,omitempty"`
+}
+
+// ImageBuildStatusData is the payload for image.build_status events.
+type ImageBuildStatusData struct {
+	State string `json:"state"`           // "idle", "building", "completed", "failed"
+	Phase string `json:"phase,omitempty"` // "removing", "building", ""
+	Error string `json:"error,omitempty"`
+}
+
+// ImageUpdateAvailableData is the payload for image.update_available events.
+type ImageUpdateAvailableData struct {
+	CurrentVersion string `json:"current_version"`
+	LatestVersion  string `json:"latest_version"`
+	Component      string `json:"component"` // "claude_code"
 }

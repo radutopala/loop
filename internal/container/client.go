@@ -32,6 +32,8 @@ type dockerAPI interface {
 	ContainerStop(ctx context.Context, containerID string, options containertypes.StopOptions) error
 	ContainerList(ctx context.Context, options containertypes.ListOptions) ([]containertypes.Summary, error)
 	ImageList(ctx context.Context, options image.ListOptions) ([]image.Summary, error)
+	ImageRemove(ctx context.Context, imageID string, options image.RemoveOptions) ([]image.DeleteResponse, error)
+	ImageInspectWithRaw(ctx context.Context, imageID string) (image.InspectResponse, []byte, error)
 	ImagePull(ctx context.Context, refStr string, options image.PullOptions) (io.ReadCloser, error)
 	ContainerInspect(ctx context.Context, containerID string) (containertypes.InspectResponse, error)
 	CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader, options containertypes.CopyToContainerOptions) error
@@ -93,6 +95,11 @@ func NewClientWith(apiFactory func() (dockerAPI, error)) (*Client, error) {
 // of @latest in `go install`.
 func (c *Client) SetLoopVersion(v string) {
 	c.loopVersion = v
+}
+
+// LatestClaudeVersion returns the latest available Claude Code version string.
+func (c *Client) LatestClaudeVersion() string {
+	return c.latestClaudeVersion()
 }
 
 // Close releases the underlying Docker client resources.
@@ -278,6 +285,51 @@ func (c *Client) ImageList(ctx context.Context, imageName string) ([]string, err
 		ids = append(ids, img.ID)
 	}
 	return ids, nil
+}
+
+// RemoveImageAndContainers stops and removes all containers (running and stopped)
+// that reference the given image, then removes the image itself.
+func (c *Client) RemoveImageAndContainers(ctx context.Context, imageName string) error {
+	// Find all containers (including stopped) using this image.
+	f := filters.NewArgs()
+	f.Add("ancestor", imageName)
+	containers, err := c.api.ContainerList(ctx, containertypes.ListOptions{Filters: f, All: true})
+	if err != nil {
+		return fmt.Errorf("listing containers for image %s: %w", imageName, err)
+	}
+	for _, ctr := range containers {
+		if err := c.api.ContainerRemove(ctx, ctr.ID, containertypes.RemoveOptions{Force: true}); err != nil {
+			return fmt.Errorf("removing container %s: %w", ctr.ID[:12], err)
+		}
+	}
+
+	// Remove the image.
+	ids, err := c.ImageList(ctx, imageName)
+	if err != nil {
+		return fmt.Errorf("listing image %s: %w", imageName, err)
+	}
+	for _, id := range ids {
+		if _, err := c.api.ImageRemove(ctx, id, image.RemoveOptions{Force: true}); err != nil {
+			return fmt.Errorf("removing image %s: %w", id[:12], err)
+		}
+	}
+	return nil
+}
+
+// ImageInspectLabels returns the labels of the given image.
+func (c *Client) ImageInspectLabels(ctx context.Context, imageName string) (map[string]string, error) {
+	ids, err := c.ImageList(ctx, imageName)
+	if err != nil || len(ids) == 0 {
+		return nil, err
+	}
+	inspect, _, err := c.api.ImageInspectWithRaw(ctx, ids[0])
+	if err != nil {
+		return nil, err
+	}
+	if inspect.Config == nil {
+		return nil, nil
+	}
+	return inspect.Config.Labels, nil
 }
 
 // ImagePull pulls the specified image and drains the response.

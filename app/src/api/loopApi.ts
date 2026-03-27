@@ -1,4 +1,4 @@
-import type { Channel, Message } from "../types";
+import type { Channel, ImageStatusResponse, Message } from "../types";
 
 let apiUrl = "http://localhost:8222";
 
@@ -385,6 +385,24 @@ export async function saveMemoryFileContent(channelId: string, filePath: string,
     body: content,
   });
   if (!res.ok) throw new Error(`Failed to save memory file: ${res.statusText}`);
+}
+
+// ── Image operations ──
+
+export async function getImageStatus(): Promise<ImageStatusResponse> {
+  const resp = await fetch(`${apiUrl}/api/image/status`);
+  if (!resp.ok) throw new Error(await resp.text());
+  return resp.json();
+}
+
+export async function rebuildImage(): Promise<void> {
+  const resp = await fetch(`${apiUrl}/api/image/rebuild`, { method: "POST" });
+  if (!resp.ok) throw new Error(await resp.text());
+}
+
+export async function removeImage(): Promise<void> {
+  const resp = await fetch(`${apiUrl}/api/image`, { method: "DELETE" });
+  if (!resp.ok) throw new Error(await resp.text());
 }
 
 // ── File operations ──

@@ -566,7 +566,18 @@ ipcMain.handle("download-update", async () => {
   await autoUpdater.downloadUpdate();
 });
 
-ipcMain.handle("install-update", () => {
+ipcMain.handle("install-update", async () => {
+  // Remove Docker image so daemon rebuilds with new binary.
+  try {
+    const url = resolveApiUrl();
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+    await fetch(`${url}/api/image`, { method: "DELETE", signal: controller.signal });
+    clearTimeout(timeout);
+  } catch {
+    // Best-effort — image will be stale but functional
+  }
+
   // Restart daemon so it picks up the new bundled binary.
   const binary = findLoopBinary();
   if (binary) {

@@ -73,6 +73,7 @@ type Server struct {
 	interactionHandler    InteractionHandler
 	agentRegistry         *agentregistry.Registry
 	eventsHub             *EventsHub
+	imageManager          ImageManager
 	loopDir               string
 	screenshotDir         string // if set, write screenshots to this dir instead of base64
 	logger                *slog.Logger
@@ -127,6 +128,11 @@ func (s *Server) SetIncomingMessageHandler(h IncomingMessageHandler) {
 // SetInteractionHandler configures the handler for slash command interactions.
 func (s *Server) SetInteractionHandler(h InteractionHandler) {
 	s.interactionHandler = h
+}
+
+// SetImageManager configures the image lifecycle manager for the /api/image/* endpoints.
+func (s *Server) SetImageManager(im ImageManager) {
+	s.imageManager = im
 }
 
 // NewServer creates a new API server. The channels, threads, store, and messages
@@ -188,6 +194,9 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/agents/{id}", s.handleDeleteAgent)
 	mux.HandleFunc("POST /api/agents/{id}/message", s.handleSendAgentMessage)
 	mux.HandleFunc("GET /api/ws/agent-channel", s.handleAgentChannelWS)
+	mux.HandleFunc("GET /api/image/status", s.handleImageStatus)
+	mux.HandleFunc("POST /api/image/rebuild", s.handleImageRebuild)
+	mux.HandleFunc("DELETE /api/image", s.handleImageRemove)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
 	mux.HandleFunc("GET /api/ws/browser", s.handleBrowserWS)
