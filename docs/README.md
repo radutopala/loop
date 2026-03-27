@@ -34,3 +34,7 @@ Comprehensive documentation for every feature of the Loop platform.
 - [**Editor**](editor.md) — CodeMirror editor, file tree, tabs, dirty tracking, auto-save
 - [**Sidebar**](sidebar.md) — Channel/thread navigation, ordering, search, batch operations
 - [**Settings**](settings.md) — Settings panel, command palette (Cmd+K), daemon management
+
+## Help
+
+- [**Troubleshooting**](troubleshooting.md) — Common issues: LaunchAgents permissions, corporate TLS/proxy Docker build failures
