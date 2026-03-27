@@ -1054,6 +1054,10 @@ make test-integration
 
 Both suites create temporary channels, run all tests, and clean up on teardown. Tests are skipped automatically when the required credentials are not configured.
 
+## Documentation
+
+Full documentation is available in the [docs/](docs/README.md) directory. For common issues such as LaunchAgents permissions or corporate proxy TLS errors during Docker builds, see the [Troubleshooting Guide](docs/troubleshooting.md).
+
 ## License
 
 This project is licensed under the [Apache License 2.0](LICENSE).

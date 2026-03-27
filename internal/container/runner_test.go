@@ -115,6 +115,8 @@ func (m *MockDockerClient) NetworkEnsure(ctx context.Context, name string) error
 	return args.Error(0)
 }
 
+func (m *MockDockerClient) SetLoopVersion(v string) {}
+
 type RunnerSuite struct {
 	suite.Suite
 	client *MockDockerClient

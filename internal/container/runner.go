@@ -196,6 +196,7 @@ type DockerClient interface {
 	CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader) error
 	RunningChannelIDs(ctx context.Context) (map[string]struct{}, error)
 	NetworkEnsure(ctx context.Context, name string) error
+	SetLoopVersion(v string)
 }
 
 // Runner executes agent requests inside containers.

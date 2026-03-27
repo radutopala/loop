@@ -1,7 +1,8 @@
 FROM golang:1.26-alpine AS builder
 RUN apk add --no-cache git
 ENV GOTOOLCHAIN=auto
-RUN go install github.com/radutopala/loop/cmd/loop@latest
+ARG LOOP_VERSION=latest
+RUN go install github.com/radutopala/loop/cmd/loop@${LOOP_VERSION}
 RUN go install github.com/radutopala/ticket/cmd/tk@latest
 RUN go install golang.org/x/tools/gopls@latest
 

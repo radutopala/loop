@@ -343,6 +343,7 @@ func (a *app) serve() error {
 	if err != nil {
 		return fmt.Errorf("creating docker client: %w", err)
 	}
+	dockerClient.SetLoopVersion(a.version)
 	if closer, ok := dockerClient.(io.Closer); ok {
 		defer closer.Close()
 	}

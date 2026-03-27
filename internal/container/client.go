@@ -62,6 +62,7 @@ type Client struct {
 	dockerBuildFileCmd  func(ctx context.Context, contextDir, dockerfile, tag string) ([]byte, error)
 	claudeVersionURL    string
 	latestClaudeVersion func() string
+	loopVersion         string
 }
 
 // NewClient creates a new Client backed by the Docker SDK.
@@ -85,6 +86,13 @@ func NewClientWith(apiFactory func() (dockerAPI, error)) (*Client, error) {
 	c.dockerBuildCmd = c.defaultDockerBuildCmd
 	c.dockerBuildFileCmd = c.defaultDockerBuildFileCmd
 	return c, nil
+}
+
+// SetLoopVersion sets the loop version used as a build argument when building
+// the agent Docker image. When set, the Dockerfile uses this version instead
+// of @latest in `go install`.
+func (c *Client) SetLoopVersion(v string) {
+	c.loopVersion = v
 }
 
 // Close releases the underlying Docker client resources.
@@ -313,6 +321,9 @@ func (c *Client) defaultLatestClaudeVersion() string {
 func (c *Client) defaultDockerBuildCmd(ctx context.Context, contextDir, tag string) ([]byte, error) {
 	claudeVersion := "CLAUDE_VERSION=" + c.latestClaudeVersion()
 	args := []string{"build", "--build-arg", claudeVersion}
+	if c.loopVersion != "" && c.loopVersion != "dev" {
+		args = append(args, "--build-arg", "LOOP_VERSION="+c.loopVersion)
+	}
 	if gitconfigPath := c.gitconfigSecretPath(); gitconfigPath != "" {
 		args = append(args, "--secret", "id=gitconfig,src="+gitconfigPath)
 	}

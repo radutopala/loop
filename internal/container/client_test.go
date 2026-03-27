@@ -762,6 +762,18 @@ func (s *ClientSuite) TestDefaultDockerBuildCmd() {
 	_, _ = s.client.defaultDockerBuildCmd(ctx, "/nonexistent", "test:latest")
 }
 
+func (s *ClientSuite) TestDefaultDockerBuildCmdWithLoopVersion() {
+	s.client.SetLoopVersion("v2026.3.23")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _ = s.client.defaultDockerBuildCmd(ctx, "/nonexistent", "test:latest")
+}
+
+func (s *ClientSuite) TestSetLoopVersionDev() {
+	s.client.SetLoopVersion("dev")
+	require.Equal(s.T(), "dev", s.client.loopVersion)
+}
+
 func (s *ClientSuite) TestGitconfigSecretPath() {
 	s.sys.Override("Stat", "/home/testuser/.gitconfig").Return(nil, nil)
 

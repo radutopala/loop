@@ -134,6 +134,8 @@ func (m *mockDockerClient) NetworkEnsure(ctx context.Context, name string) error
 	return m.Called(ctx, name).Error(0)
 }
 
+func (m *mockDockerClient) SetLoopVersion(v string) {}
+
 type mockBot struct {
 	mock.Mock
 }
