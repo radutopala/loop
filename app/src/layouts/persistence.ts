@@ -31,7 +31,7 @@ export const DEFAULT_LAYOUT_TYPES: Record<string, LayoutType> = {
 // ---------------------------------------------------------------------------
 
 /** Current schema version. Bump when adding a new migration. */
-const CURRENT_VERSION = 5;
+const CURRENT_VERSION = 6;
 
 /**
  * Each migration transforms a ChannelLayouts from version N-1 to N.
@@ -86,6 +86,14 @@ const migrations: Record<number, (ch: ChannelLayouts) => void> = {
 
   // v5: Add "Sessions" default layout (ensureDefaultLayouts handles insertion).
   5: () => {},
+
+  // v6: Update Editor layout to include host shell and chat pane.
+  6: (ch) => {
+    const defaults = createDefaultLayouts();
+    if (defaults.layouts["Editor"]) {
+      ch.layouts["Editor"] = defaults.layouts["Editor"];
+    }
+  },
 };
 
 /** Run all pending migrations on a channel's layouts. Returns true if any ran. */
@@ -236,7 +244,7 @@ export function createDefaultLayouts(): ChannelLayouts {
     version: CURRENT_VERSION,
     layouts: {
       Chat: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "leaf", id: "diff", panel: "diff", flex: 50 }] },
-      Editor: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "editor", panel: "editor", flex: 65 }, { type: "leaf", id: "diff-1", panel: "diff", flex: 35 }] },
+      Editor: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "split", direction: "vertical", flex: 65, children: [{ type: "leaf", id: "editor", panel: "editor", flex: 70 }, { type: "leaf", id: "shell-0", panel: "shell", flex: 30 }] }, { type: "leaf", id: "chat", panel: "chat", flex: 35 }] },
       Memory: { type: "leaf", id: "memory", panel: "memory", flex: 1 },
       Diff: { type: "leaf", id: "diff", panel: "diff", flex: 1 },
       "Browser Chat": { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "split", direction: "vertical", flex: 50, children: [{ type: "leaf", id: "docker-browser", panel: "docker-browser", flex: 70 }, { type: "leaf", id: "diff", panel: "diff", flex: 30 }] }] },
