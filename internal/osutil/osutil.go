@@ -1,6 +1,7 @@
 package osutil
 
 import (
+	"fmt"
 	"io/fs"
 	"os"
 	"os/exec"
@@ -20,8 +21,21 @@ func (RealSystem) WriteFile(name string, data []byte, perm os.FileMode) error {
 func (RealSystem) ReadDir(name string) ([]fs.DirEntry, error) {
 	return os.ReadDir(filepath.Clean(name))
 }
-func (RealSystem) Remove(name string) error           { return os.Remove(filepath.Clean(name)) }
-func (RealSystem) Open(name string) (*os.File, error) { return os.Open(filepath.Clean(name)) }
+func (RealSystem) Remove(name string) error {
+	clean := filepath.Clean(name)
+	if strings.Contains(clean, "..") {
+		return fmt.Errorf("path contains disallowed traversal: %s", clean)
+	}
+	return os.Remove(clean)
+}
+
+func (RealSystem) Open(name string) (*os.File, error) {
+	clean := filepath.Clean(name)
+	if strings.Contains(clean, "..") {
+		return nil, fmt.Errorf("path contains disallowed traversal: %s", clean)
+	}
+	return os.Open(clean)
+}
 func (RealSystem) MkdirAll(path string, perm os.FileMode) error {
 	return os.MkdirAll(filepath.Clean(path), perm)
 }
