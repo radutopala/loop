@@ -257,13 +257,31 @@ function installCLI(): void {
       // not a symlink or doesn't exist — proceed
     }
     try {
-      // Remove stale symlink/file if it exists
+      // Try direct symlink first (works if /usr/local/bin is writable)
       try { fs.unlinkSync(linkPath); } catch { /* ignore */ }
       fs.symlinkSync(bundled, linkPath);
       console.log(`CLI symlinked: ${linkPath} -> ${bundled}`);
     } catch {
-      // /usr/local/bin may need sudo — best-effort, don't block startup
-      console.warn(`Could not create symlink at ${linkPath} — run: sudo ln -sf "${bundled}" ${linkPath}`);
+      // Needs elevated permissions — use osascript on macOS for native password prompt
+      if (process.platform === "darwin") {
+        try {
+          execFileSync("osascript", [
+            "-e",
+            `do shell script "ln -sf '${bundled}' '${linkPath}'" with administrator privileges`,
+          ], { encoding: "utf-8", timeout: 60_000 });
+          console.log(`CLI symlinked (admin): ${linkPath} -> ${bundled}`);
+        } catch {
+          console.warn(`Could not create symlink at ${linkPath}`);
+        }
+      } else {
+        // Linux: try with pkexec, fall back to warning
+        try {
+          execFileSync("pkexec", ["ln", "-sf", bundled, linkPath], { encoding: "utf-8", timeout: 60_000 });
+          console.log(`CLI symlinked (pkexec): ${linkPath} -> ${bundled}`);
+        } catch {
+          console.warn(`Could not create symlink at ${linkPath} — run: sudo ln -sf "${bundled}" ${linkPath}`);
+        }
+      }
     }
   }
 }
