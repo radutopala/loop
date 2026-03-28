@@ -227,61 +227,56 @@ async function ensureDaemon(): Promise<void> {
 }
 
 // installCLI creates a symlink so `loop` is available on the user's PATH.
-function installCLI(): void {
+// When interactive is true, shows a dialog with the result.
+function installCLI(interactive = false): void {
   const bundled = bundledBinaryPath();
-  if (!bundled) return; // dev mode — no bundled binary
+  if (!bundled) {
+    if (interactive) dialog.showMessageBox({ message: "CLI binary not found.", detail: "Not available in dev mode.", buttons: ["OK"] });
+    return;
+  }
 
-  let linkPath: string;
-  if (process.platform === "win32") {
-    // Windows: create a .cmd wrapper in %LOCALAPPDATA%\Loop\bin
-    const binDir = path.join(process.env.LOCALAPPDATA || "", "Loop", "bin");
-    try { fs.mkdirSync(binDir, { recursive: true }); } catch { return; }
-    linkPath = path.join(binDir, "loop.cmd");
-    const content = `@echo off\n"${bundled}" %*\n`;
-    try {
-      if (fs.existsSync(linkPath)) {
-        const existing = fs.readFileSync(linkPath, "utf-8");
-        if (existing === content) return; // already correct
+  const linkPath = process.platform === "win32"
+    ? path.join(process.env.LOCALAPPDATA || "", "Loop", "bin", "loop.cmd")
+    : "/usr/local/bin/loop";
+
+  // Check if already installed correctly.
+  try {
+    if (process.platform === "win32") {
+      const expected = `@echo off\n"${bundled}" %*\n`;
+      if (fs.existsSync(linkPath) && fs.readFileSync(linkPath, "utf-8") === expected) {
+        if (interactive) dialog.showMessageBox({ message: "CLI already installed.", detail: linkPath, buttons: ["OK"] });
+        return;
       }
-      fs.writeFileSync(linkPath, content);
-      // Add to PATH via registry would need elevation — just log the path
-      console.log(`CLI installed at ${linkPath} — add ${binDir} to your PATH`);
-    } catch { /* best-effort */ }
-  } else {
-    // macOS / Linux: symlink to /usr/local/bin/loop
-    linkPath = "/usr/local/bin/loop";
-    try {
-      const existing = fs.readlinkSync(linkPath);
-      if (existing === bundled) return; // already correct
-    } catch {
-      // not a symlink or doesn't exist — proceed
+    } else {
+      if (fs.readlinkSync(linkPath) === bundled) {
+        if (interactive) dialog.showMessageBox({ message: "CLI already installed.", detail: linkPath, buttons: ["OK"] });
+        return;
+      }
     }
-    try {
-      // Try direct symlink first (works if /usr/local/bin is writable)
+  } catch { /* not installed yet */ }
+
+  try {
+    if (process.platform === "win32") {
+      const binDir = path.dirname(linkPath);
+      fs.mkdirSync(binDir, { recursive: true });
+      fs.writeFileSync(linkPath, `@echo off\n"${bundled}" %*\n`);
+    } else {
+      // Try direct symlink first.
       try { fs.unlinkSync(linkPath); } catch { /* ignore */ }
       fs.symlinkSync(bundled, linkPath);
-      console.log(`CLI symlinked: ${linkPath} -> ${bundled}`);
-    } catch {
-      // Needs elevated permissions — use osascript on macOS for native password prompt
+    }
+    if (interactive) dialog.showMessageBox({ message: "CLI installed.", detail: `${linkPath} -> ${bundled}`, buttons: ["OK"] });
+  } catch {
+    // Needs elevated permissions.
+    try {
       if (process.platform === "darwin") {
-        try {
-          execFileSync("osascript", [
-            "-e",
-            `do shell script "ln -sf '${bundled}' '${linkPath}'" with administrator privileges`,
-          ], { encoding: "utf-8", timeout: 60_000 });
-          console.log(`CLI symlinked (admin): ${linkPath} -> ${bundled}`);
-        } catch {
-          console.warn(`Could not create symlink at ${linkPath}`);
-        }
-      } else {
-        // Linux: try with pkexec, fall back to warning
-        try {
-          execFileSync("pkexec", ["ln", "-sf", bundled, linkPath], { encoding: "utf-8", timeout: 60_000 });
-          console.log(`CLI symlinked (pkexec): ${linkPath} -> ${bundled}`);
-        } catch {
-          console.warn(`Could not create symlink at ${linkPath} — run: sudo ln -sf "${bundled}" ${linkPath}`);
-        }
+        execFileSync("osascript", ["-e", `do shell script "ln -sf '${bundled}' '${linkPath}'" with administrator privileges`], { timeout: 60_000 });
+      } else if (process.platform !== "win32") {
+        execFileSync("pkexec", ["ln", "-sf", bundled, linkPath], { timeout: 60_000 });
       }
+      if (interactive) dialog.showMessageBox({ message: "CLI installed.", detail: `${linkPath} -> ${bundled}`, buttons: ["OK"] });
+    } catch {
+      if (interactive) dialog.showMessageBox({ type: "error", message: "Could not install CLI.", detail: `Run manually:\nsudo ln -sf "${bundled}" ${linkPath}`, buttons: ["OK"] });
     }
   }
 }
@@ -326,6 +321,13 @@ function parseChannelId(url: string): string {
   }
 }
 
+function initialBackgroundColor(): string {
+  const theme = loadSettings().theme ?? "dark";
+  if (theme === "claude") return "#FAF6F1";
+  if (theme === "light") return "#ffffff";
+  return "#212121"; // dark
+}
+
 function createWindow(hash?: string): BrowserWindow {
   const preloadPath = path.join(__dirname, "preload.cjs");
   const win = new BrowserWindow({
@@ -335,6 +337,7 @@ function createWindow(hash?: string): BrowserWindow {
     height: 800,
     minWidth: 900,
     minHeight: 400,
+    backgroundColor: initialBackgroundColor(),
     titleBarStyle: process.platform === "darwin" ? "hiddenInset" : "hidden",
     webPreferences: {
       preload: preloadPath,
@@ -453,6 +456,10 @@ function buildMenu() {
                     dialog.showMessageBox({ message: "Unable to check for updates.", detail: "Please try again later.", buttons: ["OK"] });
                   }
                 },
+              },
+              {
+                label: "Install CLI",
+                click: () => installCLI(true),
               },
               { type: "separator" as const },
               {
@@ -585,7 +592,6 @@ function setupAutoUpdater() {
 app.on("ready", async () => {
   buildMenu();
   await ensureDaemon();
-  installCLI();
   createWindow(pendingChannelId || undefined);
   pendingChannelId = null;
 
