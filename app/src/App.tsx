@@ -89,10 +89,11 @@ function AppInner() {
     initApiUrl().then(() => setReady(true));
   }, []);
 
-  // Seed image update availability from API on mount.
+  // Seed image build status and update availability from API on mount.
   useEffect(() => {
     if (!ready) return;
     getImageStatus().then((img) => {
+      if (img?.status && img.status.state !== "idle") setImageBuildStatus(img.status);
       if (img?.update_available) setImageUpdateAvailable(img.update_available);
     }).catch(() => {});
   }, [ready]);
