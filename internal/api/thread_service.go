@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os/exec"
-	"strings"
 
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
@@ -31,7 +29,6 @@ type threadService struct {
 	generateThreadID func() string
 	removeMCPConfig  func(string, string) error
 	keepMCPConfigs   bool
-	removeWorktree   func(ctx context.Context, mainRepoDir, worktreePath string) error
 }
 
 // NewThreadService creates a new ThreadEnsurer.
@@ -43,30 +40,7 @@ func NewThreadService(store db.Store, creator ThreadCreator, logger *slog.Logger
 		generateThreadID: func() string { return randutil.HexID(6) },
 		removeMCPConfig:  bot.RemoveMCPConfig,
 		keepMCPConfigs:   keepMCPConfigs,
-		removeWorktree:   removeWorktreeExec,
 	}
-}
-
-func removeWorktreeExec(ctx context.Context, mainRepoDir, worktreePath string) error {
-	// Read the branch checked out in the worktree before removing it.
-	branchCmd := exec.CommandContext(ctx, "git", "rev-parse", "--abbrev-ref", "HEAD")
-	branchCmd.Dir = worktreePath
-	branchOut, _ := branchCmd.Output()
-	branch := strings.TrimSpace(string(branchOut))
-
-	cmd := exec.CommandContext(ctx, "git", "worktree", "remove", "--force", worktreePath)
-	cmd.Dir = mainRepoDir
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s: %w", strings.TrimSpace(string(out)), err)
-	}
-
-	// Delete the worktree branch if we captured one.
-	if branch != "" && branch != "HEAD" {
-		delCmd := exec.CommandContext(ctx, "git", "branch", "-D", branch)
-		delCmd.Dir = mainRepoDir
-		_ = delCmd.Run() // best-effort
-	}
-	return nil
 }
 
 func (s *threadService) DeleteThread(ctx context.Context, threadID string) error {
@@ -84,17 +58,6 @@ func (s *threadService) DeleteThread(ctx context.Context, threadID string) error
 	if !s.keepMCPConfigs {
 		if err := s.removeMCPConfig(ch.DirPath, threadID); err != nil {
 			s.logger.Warn("removing MCP config for thread", "error", err, "thread_id", threadID)
-		}
-	}
-
-	if ch.Worktree && ch.DirPath != "" && s.removeWorktree != nil {
-		parent, err := s.store.GetChannel(ctx, ch.ParentID)
-		if err != nil {
-			s.logger.Warn("looking up parent for worktree removal", "error", err, "thread_id", threadID)
-		} else if parent != nil && parent.DirPath != "" {
-			if err := s.removeWorktree(ctx, parent.DirPath, ch.DirPath); err != nil {
-				s.logger.Warn("removing git worktree", "error", err, "thread_id", threadID, "path", ch.DirPath)
-			}
 		}
 	}
 
