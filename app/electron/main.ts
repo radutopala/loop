@@ -226,6 +226,48 @@ async function ensureDaemon(): Promise<void> {
   console.warn("Loop daemon did not become healthy within 15s");
 }
 
+// installCLI creates a symlink so `loop` is available on the user's PATH.
+function installCLI(): void {
+  const bundled = bundledBinaryPath();
+  if (!bundled) return; // dev mode — no bundled binary
+
+  let linkPath: string;
+  if (process.platform === "win32") {
+    // Windows: create a .cmd wrapper in %LOCALAPPDATA%\Loop\bin
+    const binDir = path.join(process.env.LOCALAPPDATA || "", "Loop", "bin");
+    try { fs.mkdirSync(binDir, { recursive: true }); } catch { return; }
+    linkPath = path.join(binDir, "loop.cmd");
+    const content = `@echo off\n"${bundled}" %*\n`;
+    try {
+      if (fs.existsSync(linkPath)) {
+        const existing = fs.readFileSync(linkPath, "utf-8");
+        if (existing === content) return; // already correct
+      }
+      fs.writeFileSync(linkPath, content);
+      // Add to PATH via registry would need elevation — just log the path
+      console.log(`CLI installed at ${linkPath} — add ${binDir} to your PATH`);
+    } catch { /* best-effort */ }
+  } else {
+    // macOS / Linux: symlink to /usr/local/bin/loop
+    linkPath = "/usr/local/bin/loop";
+    try {
+      const existing = fs.readlinkSync(linkPath);
+      if (existing === bundled) return; // already correct
+    } catch {
+      // not a symlink or doesn't exist — proceed
+    }
+    try {
+      // Remove stale symlink/file if it exists
+      try { fs.unlinkSync(linkPath); } catch { /* ignore */ }
+      fs.symlinkSync(bundled, linkPath);
+      console.log(`CLI symlinked: ${linkPath} -> ${bundled}`);
+    } catch {
+      // /usr/local/bin may need sudo — best-effort, don't block startup
+      console.warn(`Could not create symlink at ${linkPath} — run: sudo ln -sf "${bundled}" ${linkPath}`);
+    }
+  }
+}
+
 const PROTOCOL = "loop";
 
 if (process.defaultApp) {
@@ -525,6 +567,7 @@ function setupAutoUpdater() {
 app.on("ready", async () => {
   buildMenu();
   await ensureDaemon();
+  installCLI();
   createWindow(pendingChannelId || undefined);
   pendingChannelId = null;
 
