@@ -538,6 +538,11 @@ func (s *LifecycleSuite) TestCheckAndBroadcast_UpdateAvailable() {
 		LatestVersion:  "3.0.0",
 		Component:      "claude_code",
 	})
+
+	// UpdateAvailable should be cached.
+	ua := m.UpdateAvailable()
+	require.NotNil(s.T(), ua)
+	require.Equal(s.T(), "3.0.0", ua.LatestVersion)
 }
 
 func (s *LifecycleSuite) TestCheckAndBroadcast_NoUpdateAvailable() {

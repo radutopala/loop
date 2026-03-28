@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppSettings, Channel, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
 import { fonts } from "./theme";
 import { ThemeProvider, useTheme } from "./ThemeContext";
-import { createChannel, createThread, createWorktreeThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, importWorktree, initApiUrl, rebuildImage } from "./api/loopApi";
+import { createChannel, createThread, createWorktreeThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, getImageStatus, importWorktree, initApiUrl, rebuildImage } from "./api/loopApi";
 import { Sidebar } from "./components/Sidebar";
 import { MarkdownFilePanel } from "./components/FilePanel";
 import { WorkspaceLayout, type WorkspaceLayoutRef } from "./components/WorkspaceLayout";
@@ -88,6 +88,14 @@ function AppInner() {
   useEffect(() => {
     initApiUrl().then(() => setReady(true));
   }, []);
+
+  // Seed image update availability from API on mount.
+  useEffect(() => {
+    if (!ready) return;
+    getImageStatus().then((img) => {
+      if (img?.update_available) setImageUpdateAvailable(img.update_available);
+    }).catch(() => {});
+  }, [ready]);
 
   // Sync hash and localStorage with selected channel.
   useEffect(() => {

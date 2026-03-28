@@ -49,9 +49,10 @@ type ImageLifecycleManager struct {
 	sys         lifecycleSystem
 	logger      *slog.Logger
 
-	mu       sync.Mutex
-	status   ImageBuildStatus
-	versions ImageVersions
+	mu              sync.Mutex
+	status          ImageBuildStatus
+	versions        ImageVersions
+	updateAvailable *events.ImageUpdateAvailableData
 
 	containerDir        string
 	imageName           string
@@ -98,6 +99,13 @@ func (m *ImageLifecycleManager) SetStatus(s ImageBuildStatus) {
 	m.mu.Lock()
 	m.status = s
 	m.mu.Unlock()
+}
+
+// UpdateAvailable returns the cached update info, or nil if no update is available.
+func (m *ImageLifecycleManager) UpdateAvailable() *events.ImageUpdateAvailableData {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.updateAvailable
 }
 
 // Versions returns the version info for the current image by reading Docker labels.
@@ -215,6 +223,9 @@ func (m *ImageLifecycleManager) RunUpdateChecker(ctx context.Context, interval t
 func (m *ImageLifecycleManager) checkAndBroadcast() {
 	latest, available := m.CheckClaudeUpdate()
 	if !available {
+		m.mu.Lock()
+		m.updateAvailable = nil
+		m.mu.Unlock()
 		return
 	}
 
@@ -222,13 +233,19 @@ func (m *ImageLifecycleManager) checkAndBroadcast() {
 	current := m.versions.ClaudeVersion
 	m.mu.Unlock()
 
+	data := &events.ImageUpdateAvailableData{
+		CurrentVersion: current,
+		LatestVersion:  latest,
+		Component:      "claude_code",
+	}
+
+	m.mu.Lock()
+	m.updateAvailable = data
+	m.mu.Unlock()
+
 	m.logger.Info("image lifecycle: Claude Code update available", "current", current, "latest", latest)
 	if m.broadcaster != nil {
-		m.broadcaster.BroadcastImageUpdateAvailable(events.ImageUpdateAvailableData{
-			CurrentVersion: current,
-			LatestVersion:  latest,
-			Component:      "claude_code",
-		})
+		m.broadcaster.BroadcastImageUpdateAvailable(*data)
 	}
 }
 

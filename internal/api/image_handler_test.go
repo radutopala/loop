@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/container"
+	"github.com/radutopala/loop/internal/events"
 )
 
 // MockImageManager implements the ImageManager interface for testing.
@@ -25,6 +26,14 @@ func (m *MockImageManager) Status() container.ImageBuildStatus {
 func (m *MockImageManager) Versions() container.ImageVersions {
 	args := m.Called()
 	return args.Get(0).(container.ImageVersions)
+}
+
+func (m *MockImageManager) UpdateAvailable() *events.ImageUpdateAvailableData {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(*events.ImageUpdateAvailableData)
 }
 
 func (m *MockImageManager) RemoveImage(ctx context.Context) error {
@@ -51,6 +60,7 @@ func (s *ServerSuite) TestImageStatusSuccess() {
 
 	mockImgMgr.On("Status").Return(expectedStatus)
 	mockImgMgr.On("Versions").Return(expectedVersions)
+	mockImgMgr.On("UpdateAvailable").Return((*events.ImageUpdateAvailableData)(nil))
 
 	s.mux.HandleFunc("GET /api/image/status", s.srv.handleImageStatus)
 	rec := s.testRequest("GET", "/api/image/status", "")
@@ -79,6 +89,7 @@ func (s *ServerSuite) TestImageStatusBuildingState() {
 
 	mockImgMgr.On("Status").Return(expectedStatus)
 	mockImgMgr.On("Versions").Return(expectedVersions)
+	mockImgMgr.On("UpdateAvailable").Return((*events.ImageUpdateAvailableData)(nil))
 
 	s.mux.HandleFunc("GET /api/image/status", s.srv.handleImageStatus)
 	rec := s.testRequest("GET", "/api/image/status", "")

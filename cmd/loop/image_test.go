@@ -1,15 +1,14 @@
 package main
 
 import (
-	"errors"
-	"path/filepath"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 
-	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/config"
-	"github.com/radutopala/loop/internal/container"
-	"github.com/radutopala/loop/internal/testutil"
 )
 
 // --- image:rebuild tests ---
@@ -22,126 +21,119 @@ func (s *MainSuite) TestNewImageRebuildCmd() {
 }
 
 func (s *MainSuite) TestImageRebuildHappyPath() {
-	tmpDir := s.T().TempDir()
-	cfg := &config.Config{
-		ContainerImage: "loop-agent:latest",
-		LoopDir:        tmpDir,
-	}
-	containerDir := filepath.Join(tmpDir, "container")
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/api/image/rebuild":
+			w.WriteHeader(http.StatusAccepted)
+		case r.Method == "GET" && r.URL.Path == "/api/image/status":
+			callCount++
+			resp := imageStatusJSON{}
+			resp.Status.State = "completed"
+			resp.Versions.LoopVersion = "1.2.3"
+			resp.Versions.ClaudeVersion = "4.0.0"
+			json.NewEncoder(w).Encode(resp)
+		}
+	}))
+	defer srv.Close()
 
-	dc := new(mockDockerClient)
-	dc.On("RemoveImageAndContainers", mock.Anything, cfg.ContainerImage).Return(nil)
-	dc.On("ImageBuild", mock.Anything, containerDir, cfg.ContainerImage).Return(nil)
-	dc.On("ImageInspectLabels", mock.Anything, cfg.ContainerImage).Return(map[string]string{
-		"loop.version":        "1.2.3",
-		"loop.claude_version": "4.0.0",
-	}, nil)
-	dc.On("LatestClaudeVersion").Return("4.0.0")
-
-	sys := newPassthroughMock()
-	sys.On("UserHomeDir").Unset()
-	sys.On("UserHomeDir").Return(tmpDir, nil)
-	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Unset()
-	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	s.app.sys = sys
-	s.app.version = "1.2.3"
-	s.app.configLoad = func() (*config.Config, error) { return cfg, nil }
-	s.app.newDockerClient = func() (container.DockerClient, error) { return dc, nil }
-
-	cmd := s.app.newImageRebuildCmd()
-	err := cmd.Execute()
-	require.NoError(s.T(), err)
-
-	dc.AssertCalled(s.T(), "RemoveImageAndContainers", mock.Anything, cfg.ContainerImage)
-	dc.AssertCalled(s.T(), "ImageBuild", mock.Anything, containerDir, cfg.ContainerImage)
-	dc.AssertCalled(s.T(), "ImageInspectLabels", mock.Anything, cfg.ContainerImage)
-}
-
-func (s *MainSuite) TestImageRebuildConfigLoadError() {
 	s.app.configLoad = func() (*config.Config, error) {
-		return nil, errors.New("config fail")
+		return &config.Config{APIAddr: srv.Listener.Addr().String()}, nil
 	}
-
-	cmd := s.app.newImageRebuildCmd()
-	err := cmd.Execute()
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "loading config")
-	require.Contains(s.T(), err.Error(), "config fail")
-}
-
-func (s *MainSuite) TestImageRebuildDockerClientError() {
-	cfg := &config.Config{
-		ContainerImage: "loop-agent:latest",
-		LoopDir:        s.T().TempDir(),
-	}
-	s.app.configLoad = func() (*config.Config, error) { return cfg, nil }
-	s.app.newDockerClient = func() (container.DockerClient, error) {
-		return nil, errors.New("docker fail")
-	}
-
-	cmd := s.app.newImageRebuildCmd()
-	err := cmd.Execute()
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "creating docker client")
-	require.Contains(s.T(), err.Error(), "docker fail")
-}
-
-func (s *MainSuite) TestImageRebuildImageBuildError() {
-	tmpDir := s.T().TempDir()
-	cfg := &config.Config{
-		ContainerImage: "loop-agent:latest",
-		LoopDir:        tmpDir,
-	}
-	containerDir := filepath.Join(tmpDir, "container")
-
-	dc := new(mockDockerClient)
-	dc.On("RemoveImageAndContainers", mock.Anything, cfg.ContainerImage).Return(nil)
-	dc.On("ImageBuild", mock.Anything, containerDir, cfg.ContainerImage).Return(errors.New("build fail"))
-
-	s.app.configLoad = func() (*config.Config, error) { return cfg, nil }
-	s.app.newDockerClient = func() (container.DockerClient, error) { return dc, nil }
-
-	cmd := s.app.newImageRebuildCmd()
-	err := cmd.Execute()
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "building image")
-	require.Contains(s.T(), err.Error(), "build fail")
-
-	// RemoveImageAndContainers should still have been called before the build.
-	dc.AssertCalled(s.T(), "RemoveImageAndContainers", mock.Anything, cfg.ContainerImage)
-}
-
-func (s *MainSuite) TestImageRebuildRemoveWarningStillBuilds() {
-	tmpDir := s.T().TempDir()
-	cfg := &config.Config{
-		ContainerImage: "loop-agent:latest",
-		LoopDir:        tmpDir,
-	}
-	containerDir := filepath.Join(tmpDir, "container")
-
-	dc := new(mockDockerClient)
-	dc.On("RemoveImageAndContainers", mock.Anything, cfg.ContainerImage).Return(errors.New("remove warning"))
-	dc.On("ImageBuild", mock.Anything, containerDir, cfg.ContainerImage).Return(nil)
-	dc.On("ImageInspectLabels", mock.Anything, cfg.ContainerImage).Return(map[string]string{}, nil)
-	dc.On("LatestClaudeVersion").Return("")
-
-	sys := newPassthroughMock()
-	sys.On("UserHomeDir").Unset()
-	sys.On("UserHomeDir").Return(tmpDir, nil)
-	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Unset()
-	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
-
-	s.app.sys = sys
-	s.app.configLoad = func() (*config.Config, error) { return cfg, nil }
-	s.app.newDockerClient = func() (container.DockerClient, error) { return dc, nil }
 
 	cmd := s.app.newImageRebuildCmd()
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
+}
 
-	// Build should proceed despite remove error.
-	dc.AssertCalled(s.T(), "ImageBuild", mock.Anything, containerDir, cfg.ContainerImage)
+func (s *MainSuite) TestImageRebuildPolling() {
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/api/image/rebuild":
+			w.WriteHeader(http.StatusAccepted)
+		case r.Method == "GET" && r.URL.Path == "/api/image/status":
+			callCount++
+			resp := imageStatusJSON{}
+			if callCount <= 1 {
+				resp.Status.State = "building"
+				resp.Status.Phase = "building"
+			} else {
+				resp.Status.State = "completed"
+				resp.Versions.LoopVersion = "1.0.0"
+				resp.Versions.ClaudeVersion = "2.0.0"
+			}
+			json.NewEncoder(w).Encode(resp)
+		}
+	}))
+	defer srv.Close()
+
+	s.app.configLoad = func() (*config.Config, error) {
+		return &config.Config{APIAddr: srv.Listener.Addr().String()}, nil
+	}
+
+	cmd := s.app.newImageRebuildCmd()
+	err := cmd.Execute()
+	require.NoError(s.T(), err)
+	require.GreaterOrEqual(s.T(), callCount, 2)
+}
+
+func (s *MainSuite) TestImageRebuildAPIError() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	s.app.configLoad = func() (*config.Config, error) {
+		return &config.Config{APIAddr: srv.Listener.Addr().String()}, nil
+	}
+
+	cmd := s.app.newImageRebuildCmd()
+	err := cmd.Execute()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "rebuild failed")
+}
+
+func (s *MainSuite) TestImageRebuildConflict() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusConflict)
+	}))
+	defer srv.Close()
+
+	s.app.configLoad = func() (*config.Config, error) {
+		return &config.Config{APIAddr: srv.Listener.Addr().String()}, nil
+	}
+
+	cmd := s.app.newImageRebuildCmd()
+	err := cmd.Execute()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "already in progress")
+}
+
+func (s *MainSuite) TestImageRebuildBuildFailed() {
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == "POST" && r.URL.Path == "/api/image/rebuild":
+			w.WriteHeader(http.StatusAccepted)
+		case r.Method == "GET" && r.URL.Path == "/api/image/status":
+			callCount++
+			resp := imageStatusJSON{}
+			resp.Status.State = "failed"
+			resp.Status.Error = "build exploded"
+			json.NewEncoder(w).Encode(resp)
+		}
+	}))
+	defer srv.Close()
+
+	s.app.configLoad = func() (*config.Config, error) {
+		return &config.Config{APIAddr: srv.Listener.Addr().String()}, nil
+	}
+
+	cmd := s.app.newImageRebuildCmd()
+	err := cmd.Execute()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "build exploded")
 }
 
 // --- image:status tests ---
@@ -153,145 +145,179 @@ func (s *MainSuite) TestNewImageStatusCmd() {
 	require.NotNil(s.T(), cmd.RunE)
 }
 
-func (s *MainSuite) TestImageStatusImageFoundWithLabels() {
-	tmpDir := s.T().TempDir()
-	cfg := &config.Config{
-		ContainerImage: "loop-agent:latest",
-		LoopDir:        tmpDir,
-	}
+func (s *MainSuite) TestImageStatusSuccess() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := imageStatusJSON{}
+		resp.Status.State = "idle"
+		resp.Versions.LoopVersion = "1.2.3"
+		resp.Versions.ClaudeVersion = "4.0.0"
+		resp.Versions.BuiltAt = "2026-03-28T10:00:00Z"
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
 
-	dc := new(mockDockerClient)
-	dc.On("ImageList", mock.Anything, cfg.ContainerImage).Return([]string{"sha256:abc123"}, nil)
-	dc.On("ImageInspectLabels", mock.Anything, cfg.ContainerImage).Return(map[string]string{
-		"loop.version":        "1.2.3",
-		"loop.claude_version": "4.0.0",
-	}, nil)
-
-	sys := newPassthroughMock()
-	sys.On("UserHomeDir").Unset()
-	sys.On("UserHomeDir").Return(tmpDir, nil)
-
-	s.app.sys = sys
-	s.app.configLoad = func() (*config.Config, error) { return cfg, nil }
-	s.app.newDockerClient = func() (container.DockerClient, error) { return dc, nil }
-
-	cmd := s.app.newImageStatusCmd()
-	err := cmd.Execute()
-	require.NoError(s.T(), err)
-
-	dc.AssertCalled(s.T(), "ImageList", mock.Anything, cfg.ContainerImage)
-	dc.AssertCalled(s.T(), "ImageInspectLabels", mock.Anything, cfg.ContainerImage)
-}
-
-func (s *MainSuite) TestImageStatusImageNotFound() {
-	cfg := &config.Config{
-		ContainerImage: "loop-agent:latest",
-	}
-
-	dc := new(mockDockerClient)
-	dc.On("ImageList", mock.Anything, cfg.ContainerImage).Return([]string{}, nil)
-
-	s.app.configLoad = func() (*config.Config, error) { return cfg, nil }
-	s.app.newDockerClient = func() (container.DockerClient, error) { return dc, nil }
-
-	cmd := s.app.newImageStatusCmd()
-	err := cmd.Execute()
-	require.NoError(s.T(), err)
-
-	dc.AssertCalled(s.T(), "ImageList", mock.Anything, cfg.ContainerImage)
-	// ImageInspectLabels should NOT be called when image is not found.
-	dc.AssertNotCalled(s.T(), "ImageInspectLabels", mock.Anything, mock.Anything)
-}
-
-func (s *MainSuite) TestImageStatusConfigLoadError() {
 	s.app.configLoad = func() (*config.Config, error) {
-		return nil, errors.New("config fail")
+		return &config.Config{APIAddr: srv.Listener.Addr().String()}, nil
 	}
 
 	cmd := s.app.newImageStatusCmd()
 	err := cmd.Execute()
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "loading config")
-	require.Contains(s.T(), err.Error(), "config fail")
-}
-
-func (s *MainSuite) TestImageStatusDockerClientError() {
-	cfg := &config.Config{
-		ContainerImage: "loop-agent:latest",
-	}
-	s.app.configLoad = func() (*config.Config, error) { return cfg, nil }
-	s.app.newDockerClient = func() (container.DockerClient, error) {
-		return nil, errors.New("docker fail")
-	}
-
-	cmd := s.app.newImageStatusCmd()
-	err := cmd.Execute()
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "creating docker client")
-	require.Contains(s.T(), err.Error(), "docker fail")
-}
-
-func (s *MainSuite) TestImageStatusImageListError() {
-	cfg := &config.Config{
-		ContainerImage: "loop-agent:latest",
-	}
-
-	dc := new(mockDockerClient)
-	dc.On("ImageList", mock.Anything, cfg.ContainerImage).Return(nil, errors.New("list fail"))
-
-	s.app.configLoad = func() (*config.Config, error) { return cfg, nil }
-	s.app.newDockerClient = func() (container.DockerClient, error) { return dc, nil }
-
-	cmd := s.app.newImageStatusCmd()
-	err := cmd.Execute()
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "listing images")
-	require.Contains(s.T(), err.Error(), "list fail")
-}
-
-func (s *MainSuite) TestImageStatusHomeDirError() {
-	cfg := &config.Config{
-		ContainerImage: "loop-agent:latest",
-	}
-
-	dc := new(mockDockerClient)
-	dc.On("ImageList", mock.Anything, cfg.ContainerImage).Return([]string{"sha256:abc123"}, nil)
-	dc.On("ImageInspectLabels", mock.Anything, cfg.ContainerImage).Return(map[string]string{
-		"loop.version": "1.2.3",
-	}, nil)
-
-	sys := new(testutil.MockSystem)
-	sys.On("UserHomeDir").Return("", errors.New("no home"))
-
-	s.app.sys = sys
-	s.app.configLoad = func() (*config.Config, error) { return cfg, nil }
-	s.app.newDockerClient = func() (container.DockerClient, error) { return dc, nil }
-
-	cmd := s.app.newImageStatusCmd()
-	err := cmd.Execute()
-	// Should succeed -- home dir error is non-fatal, just skips built_at.
 	require.NoError(s.T(), err)
 }
 
-func (s *MainSuite) TestImageStatusInspectLabelsError() {
-	cfg := &config.Config{
-		ContainerImage: "loop-agent:latest",
+func (s *MainSuite) TestImageStatusWithUpdate() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := imageStatusJSON{}
+		resp.Status.State = "idle"
+		resp.Versions.LoopVersion = "1.2.3"
+		resp.Versions.ClaudeVersion = "4.0.0"
+		resp.UpdateAvailable = &struct {
+			CurrentVersion string `json:"current_version"`
+			LatestVersion  string `json:"latest_version"`
+			Component      string `json:"component"`
+		}{"4.0.0", "5.0.0", "claude_code"}
+		json.NewEncoder(w).Encode(resp)
+	}))
+	defer srv.Close()
+
+	s.app.configLoad = func() (*config.Config, error) {
+		return &config.Config{APIAddr: srv.Listener.Addr().String()}, nil
 	}
-
-	dc := new(mockDockerClient)
-	dc.On("ImageList", mock.Anything, cfg.ContainerImage).Return([]string{"sha256:abc123"}, nil)
-	dc.On("ImageInspectLabels", mock.Anything, cfg.ContainerImage).Return(nil, errors.New("inspect fail"))
-
-	sys := newPassthroughMock()
-	sys.On("UserHomeDir").Unset()
-	sys.On("UserHomeDir").Return(s.T().TempDir(), nil)
-
-	s.app.sys = sys
-	s.app.configLoad = func() (*config.Config, error) { return cfg, nil }
-	s.app.newDockerClient = func() (container.DockerClient, error) { return dc, nil }
 
 	cmd := s.app.newImageStatusCmd()
 	err := cmd.Execute()
-	// Should succeed -- label inspect error is non-fatal.
 	require.NoError(s.T(), err)
+}
+
+func (s *MainSuite) TestImageStatusAPIError() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "not configured", http.StatusNotImplemented)
+	}))
+	defer srv.Close()
+
+	s.app.configLoad = func() (*config.Config, error) {
+		return &config.Config{APIAddr: srv.Listener.Addr().String()}, nil
+	}
+
+	cmd := s.app.newImageStatusCmd()
+	err := cmd.Execute()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "image status failed")
+}
+
+func (s *MainSuite) TestImageStatusBadJSON() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not json"))
+	}))
+	defer srv.Close()
+
+	s.app.configLoad = func() (*config.Config, error) {
+		return &config.Config{APIAddr: srv.Listener.Addr().String()}, nil
+	}
+
+	cmd := s.app.newImageStatusCmd()
+	err := cmd.Execute()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "parsing image status")
+}
+
+func (s *MainSuite) TestImageRebuildConnectionError() {
+	s.app.configLoad = func() (*config.Config, error) {
+		return &config.Config{APIAddr: "localhost:1"}, nil
+	}
+
+	cmd := s.app.newImageRebuildCmd()
+	err := cmd.Execute()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "calling rebuild API")
+}
+
+func (s *MainSuite) TestImageStatusConnectionError() {
+	s.app.configLoad = func() (*config.Config, error) {
+		return &config.Config{APIAddr: "localhost:1"}, nil
+	}
+
+	cmd := s.app.newImageStatusCmd()
+	err := cmd.Execute()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "calling image status API")
+}
+
+func (s *MainSuite) TestImageRebuildIdleStatus() {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "POST":
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			resp := imageStatusJSON{}
+			resp.Status.State = "idle"
+			resp.Versions.LoopVersion = "1.0.0"
+			resp.Versions.ClaudeVersion = "2.0.0"
+			json.NewEncoder(w).Encode(resp)
+		}
+	}))
+	defer srv.Close()
+
+	s.app.configLoad = func() (*config.Config, error) {
+		return &config.Config{APIAddr: srv.Listener.Addr().String()}, nil
+	}
+
+	cmd := s.app.newImageRebuildCmd()
+	err := cmd.Execute()
+	require.NoError(s.T(), err)
+}
+
+func (s *MainSuite) TestImageRebuildPollError() {
+	callCount := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.Method {
+		case "POST":
+			w.WriteHeader(http.StatusAccepted)
+		default:
+			callCount++
+			if callCount == 1 {
+				w.WriteHeader(http.StatusInternalServerError)
+				w.Write([]byte("server error"))
+			}
+		}
+	}))
+	defer srv.Close()
+
+	s.app.configLoad = func() (*config.Config, error) {
+		return &config.Config{APIAddr: srv.Listener.Addr().String()}, nil
+	}
+
+	cmd := s.app.newImageRebuildCmd()
+	err := cmd.Execute()
+	require.Error(s.T(), err)
+}
+
+// --- resolveAPIURL ---
+
+func (s *MainSuite) TestResolveAPIURL_Default() {
+	s.app.configLoad = func() (*config.Config, error) {
+		return &config.Config{}, nil
+	}
+	require.Equal(s.T(), "http://localhost:8222", s.app.resolveAPIURL())
+}
+
+func (s *MainSuite) TestResolveAPIURL_CustomAddr() {
+	s.app.configLoad = func() (*config.Config, error) {
+		return &config.Config{APIAddr: ":9999"}, nil
+	}
+	require.Equal(s.T(), "http://localhost:9999", s.app.resolveAPIURL())
+}
+
+func (s *MainSuite) TestResolveAPIURL_FullAddr() {
+	s.app.configLoad = func() (*config.Config, error) {
+		return &config.Config{APIAddr: "192.168.1.1:8222"}, nil
+	}
+	require.Equal(s.T(), "http://192.168.1.1:8222", s.app.resolveAPIURL())
+}
+
+func (s *MainSuite) TestResolveAPIURL_ConfigError() {
+	s.app.configLoad = func() (*config.Config, error) {
+		return nil, fmt.Errorf("fail")
+	}
+	require.Equal(s.T(), "http://localhost:8222", s.app.resolveAPIURL())
 }
