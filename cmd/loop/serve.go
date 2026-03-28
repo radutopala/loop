@@ -24,6 +24,7 @@ import (
 	containerimage "github.com/radutopala/loop/internal/container/image"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/embeddings"
+	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/logging"
 	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/orchestrator"
@@ -42,6 +43,23 @@ func (a *app) newServeCmd() *cobra.Command {
 			return a.serve()
 		},
 	}
+}
+
+func (a *app) ensureImageAsync(ctx context.Context, client container.DockerClient, cfg *config.Config, hub *api.EventsHub, mgr *container.ImageLifecycleManager, logger *slog.Logger) {
+	go a.ensureImageWithBroadcast(ctx, client, cfg, hub, mgr, logger)
+}
+
+func (a *app) ensureImageWithBroadcast(ctx context.Context, client container.DockerClient, cfg *config.Config, hub *api.EventsHub, mgr *container.ImageLifecycleManager, logger *slog.Logger) {
+	hub.BroadcastImageBuildStatus(events.ImageBuildStatusData{State: "building", Phase: "checking"})
+	logger.Info("ensuring agent image", "image", cfg.ContainerImage)
+	if err := a.ensureImage(ctx, client, cfg); err != nil {
+		logger.Error("ensuring agent image failed", "error", err)
+		hub.BroadcastImageBuildStatus(events.ImageBuildStatusData{State: "failed", Error: err.Error()})
+	} else {
+		hub.BroadcastImageBuildStatus(events.ImageBuildStatusData{State: "completed"})
+		logger.Info("agent image ready", "image", cfg.ContainerImage)
+	}
+	go mgr.RunUpdateChecker(ctx, 30*time.Minute)
 }
 
 func (a *app) defaultEnsureImage(ctx context.Context, client container.DockerClient, cfg *config.Config) error {
@@ -359,11 +377,6 @@ func (a *app) serve() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	logger.Info("ensuring agent image", "image", cfg.ContainerImage)
-	if err := a.ensureImage(ctx, dockerClient, cfg); err != nil {
-		return fmt.Errorf("ensuring agent image: %w", err)
-	}
-
 	runner := container.NewDockerRunner(dockerClient, cfg)
 
 	agentReg := agentregistry.New()
@@ -441,7 +454,9 @@ func (a *app) serve() error {
 		dockerClient.LatestClaudeVersion,
 	)
 	apiSrv.SetImageManager(lifecycleMgr)
-	go lifecycleMgr.RunUpdateChecker(ctx, 30*time.Minute)
+
+	// Ensure agent image asynchronously so the API is available during builds.
+	a.ensureImageAsync(ctx, dockerClient, cfg, eventsHub, lifecycleMgr, logger)
 
 	executor.SetEventBroadcaster(eventsHub)
 

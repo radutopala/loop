@@ -11,11 +11,12 @@ interface FieldDef {
   key: string;
   label: string;
   description?: string;
-  type: "text" | "password" | "number" | "toggle" | "dropdown" | "array" | "multiselect" | "keyvalue";
+  type: "text" | "password" | "number" | "toggle" | "dropdown" | "array" | "multiselect" | "keyvalue" | "objectarray";
   options?: string[];
   placeholder?: string;
   section: string;
   step?: number;
+  itemProperties?: Record<string, SchemaProperty>; // for objectarray
 }
 
 export interface ConfigFormProps {
@@ -35,7 +36,7 @@ export interface ConfigFormProps {
 function schemaToFields(schema: ConfigSchema, isGlobal: boolean): FieldDef[] {
   const fields: FieldDef[] = [];
 
-  function processProperties(props: Record<string, SchemaProperty>, prefix: string, parentSection?: string) {
+  function processProperties(props: Record<string, SchemaProperty>, prefix: string, parentSection?: string, parentTitle?: string) {
     const entries = Object.entries(props).sort(
       ([, a], [, b]) => (a["x-order"] ?? 999) - (b["x-order"] ?? 999)
     );
@@ -49,19 +50,21 @@ function schemaToFields(schema: ConfigSchema, isGlobal: boolean): FieldDef[] {
 
       // Recurse into nested objects that have properties (but not additionalProperties — those are key-value maps)
       if (prop.type === "object" && prop.properties && !prop.additionalProperties) {
-        processProperties(prop.properties, fullKey, section);
+        processProperties(prop.properties, fullKey, section, prop.title);
         continue;
       }
 
+      const label = parentTitle ? `${parentTitle} ${prop.title ?? key}` : (prop.title ?? key);
       fields.push({
         key: fullKey,
-        label: prop.title ?? key,
+        label,
         description: prop.description,
         type: inferFieldType(prop),
         options: (prop.enum ?? prop.items?.enum)?.map(String),
         placeholder: prop["x-placeholder"],
         section,
         step: prop["x-step"],
+        itemProperties: prop.items?.properties,
       });
     }
   }
@@ -76,6 +79,7 @@ function inferFieldType(prop: SchemaProperty): FieldDef["type"] {
   if (prop.type === "boolean") return "toggle";
   if (prop.type === "integer" || prop.type === "number") return "number";
   if (prop.type === "array" && prop.items?.enum) return "multiselect";
+  if (prop.type === "array" && prop.items?.type === "object" && prop.items?.properties) return "objectarray";
   if (prop.type === "array") return "array";
   if (prop.type === "object" && prop.additionalProperties) return "keyvalue";
   return "text";
@@ -359,6 +363,7 @@ function FieldRenderer({ field, value, onChange, colors, inputStyle }: {
     case "dropdown": return <DropdownFieldRow field={field} value={value ?? ""} onChange={onChange} colors={colors} inputStyle={inputStyle} />;
     case "array": return <ArrayFieldRow field={field} value={value ?? []} onChange={onChange} colors={colors} inputStyle={inputStyle} />;
     case "multiselect": return <MultiSelectFieldRow field={field} value={value ?? []} onChange={onChange} colors={colors} />;
+    case "objectarray": return <ObjectArrayFieldRow field={field} value={value ?? []} onChange={onChange} colors={colors} inputStyle={inputStyle} />;
     case "keyvalue": return <KeyValueFieldRow field={field} value={value ?? {}} onChange={onChange} colors={colors} inputStyle={inputStyle} />;
     default: return null;
   }
@@ -488,6 +493,66 @@ function MultiSelectFieldRow({ field, value, onChange, colors }: {
             border: `1px solid ${selected.has(opt) ? colors.active : colors.border}`,
           }}>{opt}</button>
         ))}
+      </div>
+    </div>
+  );
+}
+
+function ObjectArrayFieldRow({ field, value, onChange, colors, inputStyle }: {
+  field: FieldDef; value: any[]; onChange: (v: any[]) => void; colors: ColorPalette; inputStyle: React.CSSProperties;
+}) {
+  const items: Record<string, any>[] = Array.isArray(value) ? value : [];
+  const props = field.itemProperties ?? {};
+  const propKeys = Object.entries(props).sort(([, a], [, b]) => (a["x-order"] ?? 999) - (b["x-order"] ?? 999));
+
+  const addItem = () => {
+    const empty: Record<string, any> = {};
+    for (const [k, p] of propKeys) {
+      if (p.type === "string") empty[k] = "";
+      else if (p.type === "integer" || p.type === "number") empty[k] = 0;
+    }
+    onChange([...items, empty]);
+  };
+
+  const updateItem = (idx: number, key: string, val: any) => {
+    const next = items.map((item, i) => i === idx ? { ...item, [key]: val } : item);
+    onChange(next);
+  };
+
+  return (
+    <div style={{ padding: "8px 12px", ...rowBorder(colors) }}>
+      <FieldLabel field={field} colors={colors} />
+      {items.map((item, idx) => (
+        <div key={idx} style={{ backgroundColor: colors.bg, borderRadius: 8, padding: "8px 10px", marginTop: 8, position: "relative" }}>
+          <div style={{ position: "absolute", top: 4, right: 4 }}>
+            <RemoveBtn onClick={() => onChange(items.filter((_, i) => i !== idx))} colors={colors} />
+          </div>
+          {propKeys.map(([k, p]) => {
+            if (p.enum) {
+              return (
+                <div key={k} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "3px 0" }}>
+                  <span style={{ fontSize: 12, color: colors.textDim, minWidth: 80 }}>{p.title ?? k}</span>
+                  <select value={item[k] ?? ""} onChange={(e) => updateItem(idx, k, e.target.value)}
+                    style={{ ...inputStyle, flex: 1, maxWidth: 200 }}>
+                    <option value="">—</option>
+                    {p.enum.map((v: any) => <option key={String(v)} value={String(v)}>{String(v)}</option>)}
+                  </select>
+                </div>
+              );
+            }
+            return (
+              <div key={k} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "3px 0" }}>
+                <span style={{ fontSize: 12, color: colors.textDim, minWidth: 80 }}>{p.title ?? k}</span>
+                <input type={p.type === "integer" ? "number" : "text"} value={item[k] ?? ""}
+                  onChange={(e) => updateItem(idx, k, p.type === "integer" ? Number(e.target.value) : e.target.value)}
+                  placeholder={p["x-placeholder"] ?? ""} style={{ ...inputStyle, flex: 1 }} />
+              </div>
+            );
+          })}
+        </div>
+      ))}
+      <div style={{ marginTop: 8 }}>
+        <AddBtn onClick={addItem} colors={colors} />
       </div>
     </div>
   );

@@ -1635,26 +1635,8 @@ func (s *MainSuite) TestServeEarlyErrors() {
 			},
 			wantErr: "creating docker client",
 		},
-		{
-			name: "ensure image error",
-			setup: func(store *testutil.MockStore) {
-				store.On("Close").Return(nil)
-				s.app.configLoad = func() (*config.Config, error) { return testConfig(), nil }
-				s.app.newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
-				s.app.newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) {
-					return new(mockBot), nil
-				}
-				dc := new(mockDockerClient)
-				dc.On("LatestClaudeVersion").Return("1.0.0").Maybe()
-				s.app.newDockerClient = func() (container.DockerClient, error) {
-					return dc, nil
-				}
-				s.app.ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
-					return errors.New("image build failed")
-				}
-			},
-			wantErr: "ensuring agent image",
-		},
+		// Note: ensureImage errors are now logged (not returned) since
+		// image build runs async after the API server starts.
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
@@ -3088,6 +3070,36 @@ func (s *MainSuite) TestEnsureImageBuildsWhenMissing() {
 	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
 	require.NoError(s.T(), err)
 	dockerClient.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestEnsureImageWithBroadcastSuccess() {
+	s.app.ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
+		return nil
+	}
+	hub := api.NewEventsHub(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel immediately so RunUpdateChecker exits
+
+	dc := new(mockDockerClient)
+	dc.On("LatestClaudeVersion").Return("1.0.0").Maybe()
+	mgr := container.NewImageLifecycleManager(dc, hub, s.app.sys, nil, "", "", "", dc.LatestClaudeVersion)
+
+	s.app.ensureImageWithBroadcast(ctx, dc, testConfig(), hub, mgr, slog.New(slog.NewTextHandler(io.Discard, nil)))
+}
+
+func (s *MainSuite) TestEnsureImageWithBroadcastError() {
+	s.app.ensureImage = func(_ context.Context, _ container.DockerClient, _ *config.Config) error {
+		return errors.New("build failed")
+	}
+	hub := api.NewEventsHub(slog.New(slog.NewTextHandler(io.Discard, nil)))
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	dc := new(mockDockerClient)
+	dc.On("LatestClaudeVersion").Return("1.0.0").Maybe()
+	mgr := container.NewImageLifecycleManager(dc, hub, s.app.sys, nil, "", "", "", dc.LatestClaudeVersion)
+
+	s.app.ensureImageWithBroadcast(ctx, dc, testConfig(), hub, mgr, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
 func (s *MainSuite) TestEnsureImageWritesEmbeddedFiles() {

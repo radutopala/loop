@@ -89,6 +89,13 @@ export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggl
     loadAll();
   }, [open, loadAll]);
 
+  // Refresh image status when a build completes.
+  useEffect(() => {
+    if (imageBuildStatus?.state === "completed") {
+      getImageStatus().then(setImageStatus).catch(() => {});
+    }
+  }, [imageBuildStatus]);
+
   // Load project config when channelId changes.
   useEffect(() => {
     if (!open || !channelId) {
