@@ -139,7 +139,7 @@ loop daemon:start
 
 **5. Add a project**
 
-Open the app and click **"+ new"** → **"Open directory..."** to add a project folder. Or from the CLI:
+Open the app and click **"+ new"** → **"Open directory..."** to add a project folder. You can add additional directories to a workspace via the **Settings** panel (gear icon on a channel) under the **Directories** section — useful for multi-root projects. Or from the CLI:
 
 ```sh
 cd /path/to/your/project
@@ -886,6 +886,7 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 - **Deep links** — `loop://channel/<id>` opens the app directly to a channel
 - **Branch picker** — switch branches from the header bar, create worktree threads, import existing worktrees. Threads show branches only; parent channels show branches + worktrees in a 50/50 split. Double-click a branch name to copy it
 - **Browser** — live Chrome screencast via WebSocket, click/type/navigate directly in the browser pane. Two panel types: Docker Browser (headless container) and Host Browser (local Chrome via CDP), mutually exclusive per layout
+- **Settings** — schema-driven config form with typed controls (toggles, dropdowns, number inputs, password fields, arrays, key-value editors) plus a raw JSON editor, with Form/JSON toggle and unsaved changes confirmation
 - **Plan mode** — run agents in read-only preview mode (`--permission-mode plan`)
 - **Agent activity** — see model info, tool use, and completion summaries in the chat view
 - **Message queue** — processing indicators and trigger quote showing which message is being handled, with timestamp
@@ -937,6 +938,7 @@ make app-install
 | `POST` | `/api/channels/{id}/branches/create` | Create and checkout a new branch |
 | `POST` | `/api/worktrees` | Create a git worktree as a new thread |
 | `POST` | `/api/worktrees/import` | Import an existing worktree as a thread |
+| `GET` | `/api/channels/{id}/roots` | List all root directories (primary + extra from project config) |
 | `GET` | `/api/channels/{id}/diff` | Get git diff (working changes, or `?source=X&target=Y` for branch diff) |
 | `GET` | `/api/channels/{id}/messages` | List messages with cursor-based pagination |
 | `POST` | `/api/commands` | Send a slash command to a channel |
@@ -945,6 +947,11 @@ make app-install
 | `GET` | `/api/readme` | Get the Loop README documentation |
 | `POST` | `/api/browser/action` | Browser automation (navigate, tabs, screenshot, input, etc.) |
 | `POST` | `/api/browser/mode` | Switch browser mode (docker/host) |
+| `GET` | `/api/config/schema` | JSON Schema for all config fields |
+| `GET` | `/api/config` | Get global config (parsed + raw HJSON) |
+| `PUT` | `/api/config` | Save global config |
+| `GET` | `/api/config/project?channel_id=<id>` | Get project config for a channel |
+| `PUT` | `/api/config/project?channel_id=<id>` | Save project config for a channel |
 | `GET` | `/api/ws` | WebSocket for real-time event streaming |
 | `GET` | `/api/ws/terminal` | WebSocket for interactive terminal sessions |
 | `GET` | `/api/ws/browser` | WebSocket for browser screencast frames and input |

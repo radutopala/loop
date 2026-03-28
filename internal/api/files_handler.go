@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"io/fs"
@@ -8,7 +9,10 @@ import (
 	"os"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
+
+	"github.com/radutopala/loop/internal/config"
 )
 
 // validateFilePath validates a relative path against a root directory.
@@ -69,6 +73,74 @@ func validateFilePath(rootDir, relativePath string) (string, error) {
 	return absPath, nil
 }
 
+// allDirPaths returns the primary dir_path followed by any extra_dirs from project config.
+func (s *Server) allDirPaths(ctx context.Context, channelID string) ([]string, error) {
+	dirPath, err := s.resolveDirPath(ctx, "", channelID)
+	if err != nil {
+		return nil, err
+	}
+	paths := []string{dirPath}
+	cfg, err := config.LoadProjectConfig(dirPath, &config.Config{})
+	if err == nil && len(cfg.ExtraDirs) > 0 {
+		paths = append(paths, cfg.ExtraDirs...)
+	}
+	return paths, nil
+}
+
+// resolveRootDir returns the root directory for file operations, supporting
+// multi-root workspaces via the "root" query parameter (0-indexed, default 0).
+func (s *Server) resolveRootDir(ctx context.Context, channelID string, r *http.Request) (string, error) {
+	rootIdx, _ := strconv.Atoi(r.URL.Query().Get("root")) // default 0
+	if rootIdx == 0 {
+		return s.resolveDirPath(ctx, "", channelID)
+	}
+
+	allPaths, err := s.allDirPaths(ctx, channelID)
+	if err != nil {
+		return "", err
+	}
+	if rootIdx < 0 || rootIdx >= len(allPaths) {
+		return "", fmt.Errorf("invalid root index %d", rootIdx)
+	}
+	return allPaths[rootIdx], nil
+}
+
+type rootEntry struct {
+	Index int    `json:"index"`
+	Path  string `json:"path"`
+	Name  string `json:"name"`
+}
+
+type listRootsResponse struct {
+	Roots []rootEntry `json:"roots"`
+}
+
+func (s *Server) handleListRoots(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel listing not configured") {
+		return
+	}
+
+	channelID := r.PathValue("id")
+	allPaths, err := s.allDirPaths(r.Context(), channelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	roots := make([]rootEntry, 0, len(allPaths))
+	for i, p := range allPaths {
+		if p == "" {
+			continue
+		}
+		roots = append(roots, rootEntry{
+			Index: i,
+			Path:  p,
+			Name:  filepath.Base(p),
+		})
+	}
+
+	writeHTTPJSON(w, http.StatusOK, listRootsResponse{Roots: roots}, s.logger)
+}
+
 type fileEntry struct {
 	Name string `json:"name"`
 	Type string `json:"type"`
@@ -85,7 +157,7 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 	}
 
 	channelID := r.PathValue("id")
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.resolveRootDir(r.Context(), channelID, r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -150,7 +222,7 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	channelID := r.PathValue("id")
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.resolveRootDir(r.Context(), channelID, r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -217,7 +289,7 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	channelID := r.PathValue("id")
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.resolveRootDir(r.Context(), channelID, r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -260,7 +332,7 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	channelID := r.PathValue("id")
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.resolveRootDir(r.Context(), channelID, r)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

@@ -496,7 +496,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionResumesChannelSession() {
 	s.srv.SetContainerFinder(finder)
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-resume", "", "sess-existing", "", false).
+	builder.On("BuildInteractiveCmd", "ch-resume", "", "sess-existing", "", false, mock.Anything).
 		Return("claude --dangerously-skip-permissions --resume sess-existing")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -541,7 +541,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionOverridesWithMsgSessionID() {
 	s.srv.SetContainerFinder(finder)
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false).
+	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false, mock.Anything).
 		Return("claude --dangerously-skip-permissions --resume sess-picked")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -585,7 +585,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionForksThreadFromParent() {
 	s.srv.SetContainerFinder(finder)
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "thread-1", "", "sess-parent", "", true).
+	builder.On("BuildInteractiveCmd", "thread-1", "", "sess-parent", "", true, mock.Anything).
 		Return("claude --dangerously-skip-permissions --resume sess-parent --fork-session")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -629,7 +629,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionThreadWithOwnSession() {
 
 	builder := new(MockInteractiveCmdBuilder)
 	// Has its own session — uses resume, not fork.
-	builder.On("BuildInteractiveCmd", "thread-2", "", "sess-thread-own", "", false).
+	builder.On("BuildInteractiveCmd", "thread-2", "", "sess-thread-own", "", false, mock.Anything).
 		Return("claude --dangerously-skip-permissions --resume sess-thread-own")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -1291,7 +1291,7 @@ func (s *TerminalHandlerSuite) TestStopOnCloseWhenSessionIDOverride() {
 	s.srv.SetContainerFinder(finder)
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false).
+	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false, mock.Anything).
 		Return("claude --dangerously-skip-permissions --resume sess-picked")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -1346,7 +1346,7 @@ func (s *TerminalHandlerSuite) TestStopOnCloseKillProcessGroupError() {
 	s.srv.SetContainerFinder(finder)
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false).
+	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false, mock.Anything).
 		Return("claude --dangerously-skip-permissions --resume sess-picked")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -1401,7 +1401,7 @@ func (s *TerminalHandlerSuite) TestStopOnCloseStopSessionError() {
 	s.srv.SetContainerFinder(finder)
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false).
+	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false, mock.Anything).
 		Return("claude --dangerously-skip-permissions --resume sess-picked")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -2426,7 +2426,7 @@ func (s *TerminalHandlerSuite) TestAgentTerminalForksChannelSession() {
 
 	builder := new(MockInteractiveCmdBuilder)
 	// forkSession=true because agentID is set and channel has a session.
-	builder.On("BuildInteractiveCmd", "ch-1", "", "sess-main", "agent-0", true).
+	builder.On("BuildInteractiveCmd", "ch-1", "", "sess-main", "agent-0", true, mock.Anything).
 		Return("claude --resume sess-main --fork-session")
 	s.srv.SetInteractiveCmdBuilder(builder)
 

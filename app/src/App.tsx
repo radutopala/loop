@@ -62,6 +62,8 @@ function AppInner() {
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [imageBuildStatus, setImageBuildStatus] = useState<ImageBuildStatusData | null>(null);
   const [imageUpdateAvailable, setImageUpdateAvailable] = useState<ImageUpdateAvailableData | null>(null);
+  const [configDirty, setConfigDirty] = useState(false);
+  const [pendingSelectId, setPendingSelectId] = useState<string | null>(null);
 
   const layoutRef = useRef<WorkspaceLayoutRef>(null);
 
@@ -252,19 +254,27 @@ function AppInner() {
     }
   }, [selectedId, channels]);
 
-  const handleSelect = useCallback((id: string | null) => {
+  const doSelect = useCallback((id: string | null) => {
     setScrollToMessageId(null);
     setReadmeOpen(false);
     setSettingsOpen(false);
+    setConfigDirty(false);
     if (id) markRead(id);
     setSelectedId((prev) => {
-      // Re-clicking the same channel increments mountKey to force re-mount.
       if (id !== null && id === prev) {
         setMountKey((k) => k + 1);
       }
       return id;
     });
   }, [markRead]);
+
+  const handleSelect = useCallback((id: string | null) => {
+    if (configDirty && settingsOpen) {
+      setPendingSelectId(id);
+      return;
+    }
+    doSelect(id);
+  }, [configDirty, settingsOpen, doSelect]);
 
   // Auto-select DM channel if nothing is selected on first load.
   const autoSelectedRef = useRef(false);
@@ -425,6 +435,11 @@ function AppInner() {
   const selectedDirPath = selectedChannel?.dir_path || "";
   const selectedBranch = selectedChannel?.branch || "";
 
+  // Derive channel ID for Settings when opened from a channel's config button.
+  const settingsChannelId = settingsDirPath
+    ? channels.find((c) => c.dir_path === settingsDirPath && !c.parent_id)?.id ?? null
+    : null;
+
   return (
     <div
       style={{
@@ -516,6 +531,7 @@ function AppInner() {
             <Settings
               open={settingsOpen}
               projectDirPath={settingsDirPath}
+              channelId={settingsChannelId}
               sidebarOpen={sidebarOpen}
               onToggleSidebar={() => setSidebarOpen((v) => !v)}
               onOpenPalette={() => setPaletteOpen(true)}
@@ -524,6 +540,7 @@ function AppInner() {
               imageBuildStatus={imageBuildStatus}
               imageUpdateAvailable={imageUpdateAvailable}
               onRebuildImage={handleRebuildImage}
+              onConfigDirtyChange={setConfigDirty}
             />
           )}
         </>
@@ -533,6 +550,7 @@ function AppInner() {
             <Settings
               open={settingsOpen}
               projectDirPath={settingsDirPath}
+              channelId={settingsChannelId}
               sidebarOpen={sidebarOpen}
               onToggleSidebar={() => setSidebarOpen((v) => !v)}
               onOpenPalette={() => setPaletteOpen(true)}
@@ -541,6 +559,7 @@ function AppInner() {
               imageBuildStatus={imageBuildStatus}
               imageUpdateAvailable={imageUpdateAvailable}
               onRebuildImage={handleRebuildImage}
+              onConfigDirtyChange={setConfigDirty}
             />
           ) : (
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>
@@ -558,6 +577,30 @@ function AppInner() {
         onSelectMessage={handleSelectMessage}
         onSelectMemoryFile={handleSelectMemoryFile}
       />
+
+      {/* Unsaved config changes — confirm channel switch */}
+      {pendingSelectId !== null && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.5)" }}
+          onClick={() => setPendingSelectId(null)}>
+          <div style={{ backgroundColor: colors.surface, borderRadius: 12, padding: "20px 24px", maxWidth: 360, boxShadow: "0 8px 32px rgba(0,0,0,0.3)" }}
+            onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: colors.text, marginBottom: 8 }}>Unsaved Changes</div>
+            <div style={{ fontSize: 13, color: colors.textDim, marginBottom: 16, lineHeight: 1.5 }}>
+              You have unsaved config changes. Discard them and switch channels?
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => setPendingSelectId(null)} style={{
+                padding: "6px 14px", backgroundColor: "transparent", border: `1px solid ${colors.border}`,
+                borderRadius: 6, color: colors.text, fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+              }}>Cancel</button>
+              <button onClick={() => { const id = pendingSelectId; setPendingSelectId(null); doSelect(id); }} style={{
+                padding: "6px 14px", backgroundColor: colors.error, border: "none",
+                borderRadius: 6, color: colors.white, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
+              }}>Discard & Switch</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

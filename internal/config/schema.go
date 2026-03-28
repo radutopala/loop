@@ -1,0 +1,409 @@
+package config
+
+import "sync"
+
+// SchemaProperty describes a single configuration field for UI rendering.
+type SchemaProperty struct {
+	Type                 string                     `json:"type"`
+	Title                string                     `json:"title,omitempty"`
+	Description          string                     `json:"description,omitempty"`
+	Enum                 []any                      `json:"enum,omitempty"`
+	Default              any                        `json:"default,omitempty"`
+	Items                *SchemaProperty            `json:"items,omitempty"`
+	Properties           map[string]*SchemaProperty `json:"properties,omitempty"`
+	AdditionalProperties *SchemaProperty            `json:"additionalProperties,omitempty"`
+	XSection             string                     `json:"x-section,omitempty"`
+	XGlobalOnly          bool                       `json:"x-global-only,omitempty"`
+	XSecret              bool                       `json:"x-secret,omitempty"`
+	XOrder               int                        `json:"x-order,omitempty"`
+	XStep                float64                    `json:"x-step,omitempty"`
+	XPlaceholder         string                     `json:"x-placeholder,omitempty"`
+}
+
+// ConfigSchema is the top-level JSON schema for the config file.
+type ConfigSchema struct {
+	Type       string                     `json:"type"`
+	Properties map[string]*SchemaProperty `json:"properties"`
+}
+
+var (
+	globalSchema     *ConfigSchema
+	globalSchemaOnce sync.Once
+)
+
+// GlobalConfigSchema returns the singleton config schema describing all
+// configuration fields with their types and UI metadata.
+func GlobalConfigSchema() *ConfigSchema {
+	globalSchemaOnce.Do(func() {
+		globalSchema = buildSchema()
+	})
+	return globalSchema
+}
+
+func buildSchema() *ConfigSchema {
+	return &ConfigSchema{
+		Type: "object",
+		Properties: map[string]*SchemaProperty{
+			// ── Claude section ──
+			"claude_model": {
+				Type:        "string",
+				Title:       "Model",
+				Description: "Claude model override",
+				Enum:        []any{"", "claude-opus-4-6[1m]", "claude-opus-4-6", "claude-sonnet-4-6"},
+				XSection:    "Claude",
+				XOrder:      1,
+			},
+			"claude_bin_path": {
+				Type:         "string",
+				Title:        "Binary Path",
+				XSection:     "Claude",
+				XOrder:       2,
+				XPlaceholder: "claude",
+			},
+			"streaming_enabled": {
+				Type:        "boolean",
+				Title:       "Streaming",
+				Description: "Stream agent responses to chat",
+				Default:     true,
+				XSection:    "Claude",
+				XOrder:      3,
+			},
+
+			// ── Authentication section ──
+			"claude_code_oauth_token": {
+				Type:     "string",
+				Title:    "OAuth Token",
+				XSecret:  true,
+				XSection: "Authentication",
+				XOrder:   1,
+			},
+			"anthropic_api_key": {
+				Type:        "string",
+				Title:       "API Key",
+				Description: "Used if OAuth not set",
+				XSecret:     true,
+				XSection:    "Authentication",
+				XOrder:      2,
+			},
+
+			// ── Container section ──
+			"container_image": {
+				Type:         "string",
+				Title:        "Image",
+				XSection:     "Container",
+				XOrder:       1,
+				XPlaceholder: "loop-agent:latest",
+			},
+			"container_memory_mb": {
+				Type:         "integer",
+				Title:        "Memory (MB)",
+				Default:      1024,
+				XSection:     "Container",
+				XOrder:       2,
+				XPlaceholder: "1024",
+			},
+			"container_cpus": {
+				Type:         "number",
+				Title:        "CPUs",
+				Default:      1.0,
+				XStep:        0.5,
+				XSection:     "Container",
+				XOrder:       3,
+				XPlaceholder: "1.0",
+			},
+			"container_timeout_sec": {
+				Type:         "integer",
+				Title:        "Timeout (sec)",
+				XSection:     "Container",
+				XOrder:       4,
+				XGlobalOnly:  true,
+				XPlaceholder: "21600",
+			},
+			"container_keep_alive_sec": {
+				Type:         "integer",
+				Title:        "Keep Alive (sec)",
+				Description:  "Seconds to keep container alive after run",
+				XSection:     "Container",
+				XOrder:       5,
+				XGlobalOnly:  true,
+				XPlaceholder: "300",
+			},
+			"keep_mcp_configs": {
+				Type:        "boolean",
+				Title:       "Keep MCP Configs",
+				Description: "Preserve MCP config files after runs",
+				XSection:    "Container",
+				XOrder:      6,
+			},
+
+			// ── Browser section (nested object) ──
+			"browser": {
+				Type:     "object",
+				XSection: "Browser",
+				Properties: map[string]*SchemaProperty{
+					"enabled": {
+						Type:    "boolean",
+						Title:   "Enabled",
+						Default: true,
+					},
+					"chrome_image": {
+						Type:         "string",
+						Title:        "Chrome Image",
+						XPlaceholder: "loop-chrome:latest",
+					},
+					"mode": {
+						Type:    "string",
+						Title:   "Mode",
+						Enum:    []any{"docker", "host"},
+						Default: "docker",
+					},
+					"host_cdp_port": {
+						Type:         "integer",
+						Title:        "Host CDP Port",
+						Description:  "Chrome DevTools port (when mode is host)",
+						XPlaceholder: "9222",
+					},
+				},
+			},
+
+			// ── Memory section (nested object) ──
+			"memory": {
+				Type:     "object",
+				XSection: "Memory",
+				Properties: map[string]*SchemaProperty{
+					"enabled": {
+						Type:  "boolean",
+						Title: "Enabled",
+					},
+					"paths": {
+						Type:        "array",
+						Title:       "Paths",
+						Description: "Memory file paths (prefix with ! to exclude)",
+						Items:       &SchemaProperty{Type: "string"},
+					},
+					"max_chunk_chars": {
+						Type:         "integer",
+						Title:        "Max Chunk Chars",
+						Description:  "Characters per embedding chunk",
+						XPlaceholder: "5000",
+					},
+					"reindex_interval_sec": {
+						Type:         "integer",
+						Title:        "Reindex Interval (sec)",
+						XPlaceholder: "300",
+					},
+					"embeddings": {
+						Type: "object",
+						Properties: map[string]*SchemaProperty{
+							"provider": {
+								Type:  "string",
+								Title: "Provider",
+								Enum:  []any{"ollama"},
+							},
+							"model": {
+								Type:         "string",
+								Title:        "Model",
+								XPlaceholder: "nomic-embed-text",
+							},
+							"ollama_url": {
+								Type:         "string",
+								Title:        "Ollama URL",
+								XPlaceholder: "http://localhost:11434",
+							},
+						},
+					},
+				},
+			},
+
+			// ── Workspace section ──
+			"extra_dirs": {
+				Type:        "array",
+				Title:       "Extra Directories",
+				Description: "Additional workspace directories",
+				Items:       &SchemaProperty{Type: "string"},
+				XSection:    "Workspace",
+				XOrder:      1,
+			},
+			"mounts": {
+				Type:        "array",
+				Title:       "Mounts",
+				Description: "Container bind mounts (host:container[:ro])",
+				Items:       &SchemaProperty{Type: "string"},
+				XSection:    "Workspace",
+				XOrder:      2,
+			},
+			"copy_files": {
+				Type:        "array",
+				Title:       "Copy Files",
+				Description: "Files copied into containers",
+				Items:       &SchemaProperty{Type: "string"},
+				XSection:    "Workspace",
+				XOrder:      3,
+			},
+
+			// ── Platforms section ──
+			"platforms": {
+				Type:        "array",
+				Title:       "Platforms",
+				Description: "Enabled platforms",
+				Items:       &SchemaProperty{Type: "string", Enum: []any{"local", "discord", "slack"}},
+				XSection:    "Platforms",
+				XGlobalOnly: true,
+			},
+
+			// ── Discord section ──
+			"discord_token": {
+				Type:        "string",
+				Title:       "Token",
+				XSecret:     true,
+				XSection:    "Discord",
+				XGlobalOnly: true,
+			},
+			"discord_app_id": {
+				Type:        "string",
+				Title:       "App ID",
+				XSection:    "Discord",
+				XGlobalOnly: true,
+			},
+			"discord_guild_id": {
+				Type:        "string",
+				Title:       "Guild ID",
+				XSection:    "Discord",
+				XGlobalOnly: true,
+			},
+
+			// ── Slack section ──
+			"slack_bot_token": {
+				Type:        "string",
+				Title:       "Bot Token",
+				XSecret:     true,
+				XSection:    "Slack",
+				XGlobalOnly: true,
+			},
+			"slack_app_token": {
+				Type:        "string",
+				Title:       "App Token",
+				XSecret:     true,
+				XSection:    "Slack",
+				XGlobalOnly: true,
+			},
+
+			// ── Environment section ──
+			"envs": {
+				Type:                 "object",
+				Title:                "Environment Variables",
+				AdditionalProperties: &SchemaProperty{Type: "string"},
+				XSection:             "Environment",
+			},
+
+			// ── Logging section ──
+			"log_level": {
+				Type:        "string",
+				Title:       "Level",
+				Enum:        []any{"info", "debug", "warn", "error"},
+				XSection:    "Logging",
+				XGlobalOnly: true,
+			},
+			"log_format": {
+				Type:        "string",
+				Title:       "Format",
+				Enum:        []any{"text", "json"},
+				XSection:    "Logging",
+				XGlobalOnly: true,
+			},
+			"log_file": {
+				Type:         "string",
+				Title:        "File",
+				XSection:     "Logging",
+				XGlobalOnly:  true,
+				XPlaceholder: "~/.loop/loop.log",
+			},
+
+			// ── API section ──
+			"api_addr": {
+				Type:         "string",
+				Title:        "Listen Address",
+				XSection:     "API",
+				XGlobalOnly:  true,
+				XPlaceholder: ":8222",
+			},
+			"db_path": {
+				Type:         "string",
+				Title:        "Database Path",
+				XSection:     "API",
+				XGlobalOnly:  true,
+				XPlaceholder: "~/.loop/loop.db",
+			},
+			"poll_interval_sec": {
+				Type:         "integer",
+				Title:        "Poll Interval (sec)",
+				XSection:     "API",
+				XGlobalOnly:  true,
+				XPlaceholder: "30",
+			},
+
+			// ── MCP section (nested object) ──
+			"mcp": {
+				Type:     "object",
+				XSection: "MCP Servers",
+				Properties: map[string]*SchemaProperty{
+					"servers": {
+						Type:  "object",
+						Title: "Servers",
+						AdditionalProperties: &SchemaProperty{
+							Type: "object",
+							Properties: map[string]*SchemaProperty{
+								"command": {Type: "string", Title: "Command"},
+								"args":    {Type: "array", Title: "Args", Items: &SchemaProperty{Type: "string"}},
+								"env":     {Type: "object", Title: "Env", AdditionalProperties: &SchemaProperty{Type: "string"}},
+							},
+						},
+					},
+				},
+			},
+
+			// ── Task Templates section ──
+			"task_templates": {
+				Type:     "array",
+				Title:    "Task Templates",
+				XSection: "Task Templates",
+				Items: &SchemaProperty{
+					Type: "object",
+					Properties: map[string]*SchemaProperty{
+						"name":            {Type: "string", Title: "Name"},
+						"description":     {Type: "string", Title: "Description"},
+						"schedule":        {Type: "string", Title: "Schedule", Description: "Cron expression, Go duration, or RFC3339 timestamp"},
+						"type":            {Type: "string", Title: "Type", Enum: []any{"cron", "interval", "once"}},
+						"prompt":          {Type: "string", Title: "Prompt"},
+						"prompt_path":     {Type: "string", Title: "Prompt Path", Description: "Relative to ~/.loop/templates/"},
+						"auto_delete_sec": {Type: "integer", Title: "Auto Delete (sec)"},
+					},
+				},
+			},
+
+			// ── Permissions section (nested object) ──
+			"permissions": {
+				Type:     "object",
+				XSection: "Permissions",
+				Properties: map[string]*SchemaProperty{
+					"owners": {
+						Type:  "object",
+						Title: "Owners",
+						Properties: map[string]*SchemaProperty{
+							"users": {Type: "array", Title: "Users", Items: &SchemaProperty{Type: "string"}},
+							"roles": {Type: "array", Title: "Roles", Items: &SchemaProperty{Type: "string"}},
+						},
+					},
+					"members": {
+						Type:  "object",
+						Title: "Members",
+						Properties: map[string]*SchemaProperty{
+							"users": {Type: "array", Title: "Users", Items: &SchemaProperty{Type: "string"}},
+							"roles": {Type: "array", Title: "Roles", Items: &SchemaProperty{Type: "string"}},
+						},
+					},
+				},
+			},
+		},
+	}
+}

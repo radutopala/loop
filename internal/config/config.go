@@ -112,6 +112,7 @@ type Config struct {
 	Browser              BrowserConfig
 	Memory               MemoryConfig
 	Permissions          types.Permissions
+	ExtraDirs            []string
 }
 
 // HasPlatform returns true if the given platform is enabled.
@@ -407,6 +408,7 @@ type projectConfig struct {
 	TaskTemplates        []TaskTemplate         `json:"task_templates"`
 	Memory               *jsonMemoryConfig      `json:"memory"`
 	Permissions          *jsonPermissionsConfig `json:"permissions"`
+	ExtraDirs            []string               `json:"extra_dirs"`
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
@@ -605,6 +607,11 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 			}
 		}
 		merged.TaskTemplates = mergedTemplates
+	}
+
+	// ExtraDirs: project replaces global when set.
+	if len(pc.ExtraDirs) > 0 {
+		merged.ExtraDirs = pc.ExtraDirs
 	}
 
 	return &merged, nil

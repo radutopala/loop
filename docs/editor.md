@@ -113,6 +113,12 @@ Right-clicking a file or directory opens a context menu with:
 | New file here | Directory only | Opens inline input prefilled with directory path |
 | Delete | File only | Deletes the file via API, closes its tab if open |
 
+### Multi-Root File Tree
+
+When a project has extra directories configured (via Settings or `.loop/config.json` → `extra_dirs`), the file tree displays multiple roots. Each root appears as a top-level entry labeled with its directory name. File operations within each root use the corresponding `root` query parameter index (0 for the primary directory, 1+ for extras).
+
+This is useful for multi-root projects where related code lives in separate directories — for example, a backend service and a shared library, or a monorepo with multiple packages.
+
 ### Resize Handle
 
 A 4px-wide handle on the right edge of the tree allows horizontal resizing:

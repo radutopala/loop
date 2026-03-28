@@ -84,24 +84,57 @@ Settings are persisted to `~/.loop/app.json` via the `save-settings` IPC handler
 
 ---
 
+### Directories
+
+Only shown when a specific project channel is selected (via the gear icon on a channel item in the sidebar).
+
+Displays the channel's root directories: the primary `dir_path` and any extra directories. You can add additional directories to create a multi-root workspace — useful when a project depends on code in separate directories (e.g., a shared library or a protobuf definitions repo).
+
+- **Add** -- click the "+" button and select a directory to add as an extra root
+- **Remove** -- click the remove button next to an extra directory to remove it
+
+Extra directories are stored in the project config (`.loop/config.json` → `extra_dirs`) and affect the [editor file tree](editor.md#multi-root-file-tree), container mounts, and the Claude CLI `--add-dir` flags.
+
+---
+
 ### Global Config
 
-An editable view of the global Loop configuration file at `~/.loop/config.json`.
+Editable view of the global Loop configuration file at `~/.loop/config.json`. Config is read and written via the HTTP API (`GET /api/config`, `PUT /api/config`), so it works in both the Electron app and browser dev mode.
 
-#### Read Mode
+#### Form / JSON Toggle
 
-- File path displayed in monospace, dimmed text
-- Content shown in a `<pre>` block with `colors.bg` background
-- "Edit" button in the section header
+A pill toggle in the section header switches between two views:
 
-#### Edit Mode
+- **Form** — schema-driven form with typed controls, rendered from the JSON Schema returned by `GET /api/config/schema`
+- **JSON** — raw HJSON editor (textarea) for direct text editing
+
+The active view is remembered while the Settings panel is open. Both views edit the same underlying config; switching from JSON to Form re-parses the text.
+
+#### Form View
+
+Each config field renders as a typed control based on its schema:
+
+| Schema Type | Control |
+|-------------|---------|
+| `boolean` | Toggle switch |
+| `string` with `enum` | Dropdown select |
+| `string` with `format: "password"` | Password input with show/hide toggle |
+| `string` | Text input |
+| `integer` / `number` | Number input |
+| `array` of `string` enum | Multi-select pills |
+| `array` of `string` | Editable list (add/remove items) |
+| `object` (key-value) | Key-value editor rows |
+
+Nested objects (e.g. `browser`, `memory`, `mcp`) render as collapsible groups.
+
+#### JSON View
 
 - Full-width textarea (200-400px height, resizable vertically)
 - Monospace font, 12px, 1.5 line-height
 - Syntax is HJSON (JSON with comments and trailing commas)
 - Red border when there is a save error
 
-**Keyboard shortcuts in edit mode:**
+**Keyboard shortcuts in JSON view:**
 
 | Shortcut | Action |
 |----------|--------|
@@ -109,10 +142,14 @@ An editable view of the global Loop configuration file at `~/.loop/config.json`.
 | `Escape` | Cancel editing (stops propagation to prevent closing Settings) |
 | `Tab` | Insert two spaces (no focus change) |
 
-**Buttons:**
-- "Cancel" -- reverts to read mode
-- "Save" -- writes to disk via `save-config` IPC. Shows "Saving..." while in progress. Displays error message below textarea on failure.
-- Hint text: "Cmd+S to save" (right-aligned, 10px)
+#### Saving
+
+- "Save" button writes config via `PUT /api/config`. Shows "Saving..." while in progress. Displays error message on failure.
+- `Cmd+S` / `Ctrl+S` keyboard shortcut saves from either view.
+
+#### Unsaved Changes
+
+When there are unsaved changes and the user tries to close Settings or switch to a different channel, a confirmation modal appears with three options: **Save**, **Discard**, and **Cancel** (stay on the current view).
 
 ---
 
@@ -121,7 +158,7 @@ An editable view of the global Loop configuration file at `~/.loop/config.json`.
 Only shown when a specific project channel is selected (via the gear icon on a channel item in the sidebar).
 
 - Displays the project-level config at `<dir>/.loop/config.json`
-- Same editable UI as Global Config
+- Same Form/JSON toggle UI as Global Config, backed by `GET /api/config/project` and `PUT /api/config/project`
 - If the file does not exist, shows: "No .loop/config.json found -- click Edit to create one."
 - Editing creates the `.loop/` directory and file if needed
 

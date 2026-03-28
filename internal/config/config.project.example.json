@@ -34,6 +34,9 @@
   //  }
   //},
 
+  // Extra directories to include in the workspace (mounted into containers, passed as --add-dir to Claude)
+  //"extra_dirs": ["/path/to/other/project", "/path/to/shared/lib"],
+
   // Files copied into containers (replaces global copy_files when set)
   // Default: ["~/.claude.json"]
   //"copy_files": ["~/.claude.json"],

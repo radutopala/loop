@@ -628,7 +628,7 @@ func (r *DockerRunner) writeMCPConfig(workDir, channelID, apiURL, authorID, agen
 // If parentDirPath is set and workDir is inside it (worktree), also mounts
 // the parent so the container sees the main .git directory.
 // Returns the bind strings and any named-volume container paths that need chown.
-func (r *DockerRunner) buildContainerMounts(mounts []string, workDir, parentDirPath string) (binds, chownPaths []string) {
+func (r *DockerRunner) buildContainerMounts(mounts []string, workDir, parentDirPath string, extraDirs []string) (binds, chownPaths []string) {
 	for _, mount := range mounts {
 		if ms, err := parseMountSpec(mount); err == nil && config.IsNamedVolume(ms.Host) {
 			expanded, _ := r.expandPath(ms.Container)
@@ -659,12 +659,30 @@ func (r *DockerRunner) buildContainerMounts(mounts []string, workDir, parentDirP
 		binds = append(binds, workDir+":"+workDir)
 	}
 
+	// Mount extra directories for multi-dir workspaces.
+	// Build a set of already-mounted container paths to avoid duplicates.
+	mounted := make(map[string]bool, len(binds))
+	for _, b := range binds {
+		if parts := strings.SplitN(b, ":", 3); len(parts) >= 2 {
+			mounted[parts[1]] = true
+		}
+	}
+	for _, dir := range extraDirs {
+		if dir == workDir || dir == parentDirPath || mounted[dir] {
+			continue
+		}
+		if parentDirPath != "" && strings.HasPrefix(dir, parentDirPath+"/") {
+			continue
+		}
+		binds = append(binds, dir+":"+dir)
+	}
+
 	return binds, chownPaths
 }
 
 // buildBaseClaudeCmd returns the common Claude CLI flags shared by both
 // batch and interactive modes.
-func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID string, forkSession, planMode bool) []string {
+func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID string, forkSession, planMode bool, extraDirs []string) []string {
 	cmd := []string{cfg.ClaudeBinPath, "--mcp-config", mcpConfigPath}
 	if cfg.ClaudeModel != "" {
 		cmd = append(cmd, "--model", cfg.ClaudeModel)
@@ -685,12 +703,15 @@ func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID st
 	if agentID != "" {
 		cmd = append(cmd, "--dangerously-load-development-channels", "server:loop")
 	}
+	for _, dir := range extraDirs {
+		cmd = append(cmd, "--add-dir", dir)
+	}
 	return cmd
 }
 
 // buildClaudeCmd assembles the Claude CLI command with all flags for batch mode.
 func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest) []string {
-	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.AgentID, req.ForkSession, req.PlanMode)
+	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.AgentID, req.ForkSession, req.PlanMode, cfg.ExtraDirs)
 	cmd = append(cmd, "--print", "--verbose", "--output-format", "stream-json")
 	if req.SystemPrompt != "" {
 		cmd = append(cmd, "--append-system-prompt", req.SystemPrompt)
@@ -711,7 +732,7 @@ func mcpConfigPathForAgent(workDir, channelID, agentID string) string {
 // terminal sessions (no --print, --verbose, --output-format flags).
 func BuildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID, agentID string, forkSession bool) string {
 	mcpConfigPath := mcpConfigPathForAgent(workDir, channelID, agentID)
-	return strings.Join(buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, agentID, forkSession, false), " ")
+	return strings.Join(buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, agentID, forkSession, false, cfg.ExtraDirs), " ")
 }
 
 // ClaudeCmdBuilder builds the interactive Claude command for terminal sessions.
@@ -862,7 +883,7 @@ func (r *DockerRunner) createAndStartContainer(
 		return "", "", false, err
 	}
 
-	binds, chownPaths := r.buildContainerMounts(cfg.Mounts, workDir, parentDirPath)
+	binds, chownPaths := r.buildContainerMounts(cfg.Mounts, workDir, parentDirPath, cfg.ExtraDirs)
 	for _, f := range r.filterMountedCopyFiles(cfg.CopyFiles, binds) {
 		if expanded, err := r.expandPath(f); err == nil {
 			chownPaths = append(chownPaths, expanded)

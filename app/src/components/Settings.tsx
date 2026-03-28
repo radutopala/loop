@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AppSettings, ConfigInfo, DaemonInfo, ImageBuildStatusData, ImageStatusResponse, ImageUpdateAvailableData } from "../types";
+import type { AppSettings, DaemonInfo, ImageBuildStatusData, ImageStatusResponse, ImageUpdateAvailableData } from "../types";
 import { getImageStatus } from "../api/loopApi";
+import { fetchConfigSchema, fetchGlobalConfig, saveGlobalConfig, fetchProjectConfig, saveProjectConfig, type ConfigSchema, type ConfigResponse } from "../api/configApi";
 import { fonts, builtinThemes } from "../theme";
 import type { ColorPalette } from "../theme";
 import { useTheme } from "../ThemeContext";
+import { ConfigForm } from "./ConfigForm";
 
 function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   return {
@@ -22,6 +24,7 @@ function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
 interface SettingsProps {
   open: boolean;
   projectDirPath?: string | null;
+  channelId?: string | null;
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
   onOpenPalette?: () => void;
@@ -30,17 +33,22 @@ interface SettingsProps {
   imageBuildStatus?: ImageBuildStatusData | null;
   imageUpdateAvailable?: ImageUpdateAvailableData | null;
   onRebuildImage?: () => void;
+  onConfigDirtyChange?: (dirty: boolean) => void;
 }
 
-export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, onOpenPalette, onClose, onDaemonRestarted, imageBuildStatus, imageUpdateAvailable, onRebuildImage }: SettingsProps) {
+export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggleSidebar, onOpenPalette, onClose, onDaemonRestarted, imageBuildStatus, imageUpdateAvailable, onRebuildImage, onConfigDirtyChange }: SettingsProps) {
   const { colors, themeName, setThemeName, availableThemes } = useTheme();
   const [settings, setSettings] = useState<AppSettings>({ stopDaemonOnQuit: false, autoSaveOnBlur: true, previewTabs: true });
   const [daemonInfo, setDaemonInfo] = useState<DaemonInfo | null>(null);
   const [restarting, setRestarting] = useState(false);
-  const [globalConfig, setGlobalConfig] = useState<ConfigInfo | null>(null);
-  const [projectConfig, setProjectConfig] = useState<ConfigInfo | null>(null);
+  const [schema, setSchema] = useState<ConfigSchema | null>(null);
+  const [globalConfig, setGlobalConfig] = useState<ConfigResponse | null>(null);
+  const [projectConfig, setProjectConfig] = useState<ConfigResponse | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [imageStatus, setImageStatus] = useState<ImageStatusResponse | null>(null);
+  const [configDirty, setConfigDirtyRaw] = useState(false);
+  const [showDirtyModal, setShowDirtyModal] = useState(false);
+  const setConfigDirty = (v: boolean) => { setConfigDirtyRaw(v); onConfigDirtyChange?.(v); };
 
   const headerBtnStyle = buildHeaderBtnStyle(colors);
   const hoverIn = (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -54,20 +62,21 @@ export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, o
 
   const loadAll = useCallback(() => {
     const api = window.loopAPI;
-    if (!api?.getSettings || !api?.getDaemonInfo) {
-      setLoaded(true);
-      return;
-    }
+    const settingsP = api?.getSettings?.() ?? Promise.resolve(settings);
+    const daemonP = api?.getDaemonInfo?.() ?? Promise.resolve(null);
+
     Promise.all([
-      api.getSettings(),
-      api.getDaemonInfo(),
-      api.getConfig?.() ?? Promise.resolve(null),
+      settingsP,
+      daemonP,
+      fetchConfigSchema().catch(() => null),
+      fetchGlobalConfig().catch(() => null),
       getImageStatus().catch(() => null),
     ])
-      .then(([s, d, c, img]) => {
+      .then(([s, d, sch, cfg, img]) => {
         setSettings(s);
-        setDaemonInfo(d);
-        if (c) setGlobalConfig(c);
+        if (d) setDaemonInfo(d);
+        if (sch) setSchema(sch);
+        if (cfg) setGlobalConfig(cfg);
         if (img) setImageStatus(img);
         setLoaded(true);
       })
@@ -80,16 +89,17 @@ export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, o
     loadAll();
   }, [open, loadAll]);
 
-  // Load project config when projectDirPath changes.
+  // Load project config when channelId changes.
   useEffect(() => {
-    if (!open || !projectDirPath) {
+    if (!open || !channelId) {
       setProjectConfig(null);
       return;
     }
-    window.loopAPI?.getProjectConfig?.(projectDirPath)
+    fetchProjectConfig(channelId)
       .then((c) => setProjectConfig(c))
       .catch(() => setProjectConfig(null));
-  }, [open, projectDirPath]);
+  }, [open, channelId]);
+
 
   const handleToggle = async (key: keyof AppSettings) => {
     const updated = { ...settings, [key]: !settings[key] };
@@ -107,19 +117,40 @@ export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, o
     setRestarting(false);
   };
 
-  const handleSaveConfig = async (filePath: string, content: string): Promise<string | null> => {
-    const result = await window.loopAPI?.saveConfig?.(filePath, content);
-    if (result && !result.ok) return result.error ?? "Failed to save";
-    return null;
+  const handleSaveGlobalConfig = async (content: string): Promise<string | null> => {
+    try {
+      await saveGlobalConfig(content);
+      return null;
+    } catch (e: any) {
+      return e.message ?? "Failed to save";
+    }
   };
 
+  const handleSaveProjectConfig = async (content: string): Promise<string | null> => {
+    if (!channelId) return "No channel selected";
+    try {
+      await saveProjectConfig(channelId, content);
+      return null;
+    } catch (e: any) {
+      return e.message ?? "Failed to save";
+    }
+  };
+
+  const tryClose = useCallback(() => {
+    if (configDirty) {
+      setShowDirtyModal(true);
+    } else {
+      onClose();
+    }
+  }, [configDirty, onClose]);
+
   // Close on Escape.
-  const closeRef = useRef(onClose);
-  closeRef.current = onClose;
+  const tryCloseRef = useRef(tryClose);
+  tryCloseRef.current = tryClose;
   useEffect(() => {
     if (!open) return;
     const onKeyDown = (e: KeyboardEvent) => {
-      if (e.key === "Escape") closeRef.current();
+      if (e.key === "Escape") tryCloseRef.current();
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -234,7 +265,7 @@ export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, o
           Settings
         </span>
         <button
-          onClick={onClose}
+          onClick={tryClose}
           title="Close panel"
           style={headerBtnStyle}
           onMouseEnter={hoverIn}
@@ -520,20 +551,27 @@ export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, o
 
             {/* Global config */}
             {globalConfig && (
-              <EditableConfigSection
+              <ConfigForm
                 title="Global Config"
+                schema={schema}
                 config={globalConfig}
-                onSave={handleSaveConfig}
+                onSave={handleSaveGlobalConfig}
+                isGlobal={true}
+                colors={colors}
+                onDirtyChange={setConfigDirty}
               />
             )}
 
             {/* Project config */}
             {projectDirPath && (
-              <EditableConfigSection
+              <ConfigForm
                 title="Project Config"
+                schema={schema}
                 config={projectConfig}
-                emptyText={`No .loop/config.json found — click Edit to create one.`}
-                onSave={handleSaveConfig}
+                onSave={handleSaveProjectConfig}
+                isGlobal={false}
+                colors={colors}
+                onDirtyChange={setConfigDirty}
               />
             )}
           </>
@@ -542,6 +580,30 @@ export function Settings({ open, projectDirPath, sidebarOpen, onToggleSidebar, o
 
       {/* Inline keyframes for spinner */}
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+
+      {/* Unsaved changes confirmation modal */}
+      {showDirtyModal && (
+        <div style={{ position: "fixed", inset: 0, zIndex: 9999, display: "flex", alignItems: "center", justifyContent: "center", backgroundColor: "rgba(0,0,0,0.5)" }}
+          onClick={() => setShowDirtyModal(false)}>
+          <div style={{ backgroundColor: colors.surface, borderRadius: 12, padding: "20px 24px", maxWidth: 360, boxShadow: "0 8px 32px rgba(0,0,0,0.3)" }}
+            onClick={(e) => e.stopPropagation()}>
+            <div style={{ fontSize: 14, fontWeight: 600, color: colors.text, marginBottom: 8 }}>Unsaved Changes</div>
+            <div style={{ fontSize: 13, color: colors.textDim, marginBottom: 16, lineHeight: 1.5 }}>
+              You have unsaved config changes. Discard them and close?
+            </div>
+            <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+              <button onClick={() => setShowDirtyModal(false)} style={{
+                padding: "6px 14px", backgroundColor: "transparent", border: `1px solid ${colors.border}`,
+                borderRadius: 6, color: colors.text, fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+              }}>Cancel</button>
+              <button onClick={() => { setShowDirtyModal(false); setConfigDirty(false); onClose(); }} style={{
+                padding: "6px 14px", backgroundColor: colors.error, border: "none",
+                borderRadius: 6, color: colors.white, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
+              }}>Discard & Close</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -563,193 +625,6 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
   );
 }
 
-function EditableConfigSection({ title, config, emptyText, onSave }: {
-  title: string;
-  config: ConfigInfo | null;
-  emptyText?: string;
-  onSave: (filePath: string, content: string) => Promise<string | null>;
-}) {
-  const { colors } = useTheme();
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState("");
-  const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-
-  const startEditing = () => {
-    setDraft(config?.content ?? "{\n  \n}\n");
-    setEditing(true);
-    setError(null);
-    setTimeout(() => textareaRef.current?.focus(), 0);
-  };
-
-  const handleSave = async () => {
-    if (!config?.path) return;
-    setSaving(true);
-    setError(null);
-    const err = await onSave(config.path, draft);
-    setSaving(false);
-    if (err) {
-      setError(err);
-    } else {
-      if (config) config.content = draft;
-      setEditing(false);
-    }
-  };
-
-  const handleCancel = () => {
-    setEditing(false);
-    setError(null);
-  };
-
-  const handleKeyDown = (e: React.KeyboardEvent) => {
-    // Cmd+S to save
-    if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-      e.preventDefault();
-      handleSave();
-    }
-    if (e.key === "Escape") {
-      e.stopPropagation();
-      handleCancel();
-    }
-    // Tab inserts two spaces
-    if (e.key === "Tab") {
-      e.preventDefault();
-      const ta = textareaRef.current;
-      if (!ta) return;
-      const start = ta.selectionStart;
-      const end = ta.selectionEnd;
-      const val = draft;
-      setDraft(val.substring(0, start) + "  " + val.substring(end));
-      setTimeout(() => { ta.selectionStart = ta.selectionEnd = start + 2; }, 0);
-    }
-  };
-
-  return (
-    <div style={{ marginTop: 20 }}>
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-        <SectionHeader>{title}</SectionHeader>
-        {!editing && (
-          <button
-            onClick={startEditing}
-            style={{
-              background: "none",
-              border: "none",
-              color: colors.textDim,
-              cursor: "pointer",
-              padding: "2px 6px",
-              fontSize: 11,
-              borderRadius: 4,
-              fontFamily: "inherit",
-            }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; e.currentTarget.style.backgroundColor = "transparent"; }}
-          >
-            Edit
-          </button>
-        )}
-      </div>
-      <div style={{
-        fontSize: 11,
-        fontFamily: fonts.mono,
-        color: colors.textDim,
-        marginBottom: 6,
-        overflow: "hidden",
-        textOverflow: "ellipsis",
-        whiteSpace: "nowrap",
-      }}>
-        {config?.path}
-      </div>
-
-      {editing ? (
-        <div>
-          <textarea
-            ref={textareaRef}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={handleKeyDown}
-            spellCheck={false}
-            style={{
-              width: "100%",
-              minHeight: 200,
-              maxHeight: 400,
-              backgroundColor: colors.bg,
-              border: `1px solid ${error ? colors.error : colors.border}`,
-              borderRadius: 8,
-              padding: "10px 12px",
-              fontSize: 12,
-              fontFamily: fonts.mono,
-              color: colors.text,
-              lineHeight: 1.5,
-              resize: "vertical",
-              outline: "none",
-              boxSizing: "border-box",
-            }}
-          />
-          {error && (
-            <div style={{ fontSize: 11, color: colors.error, marginTop: 4 }}>{error}</div>
-          )}
-          <div style={{ display: "flex", gap: 8, marginTop: 8, justifyContent: "flex-end" }}>
-            <button
-              onClick={handleCancel}
-              style={{
-                padding: "5px 12px",
-                backgroundColor: "transparent",
-                border: `1px solid ${colors.border}`,
-                borderRadius: 6,
-                color: colors.text,
-                fontSize: 12,
-                cursor: "pointer",
-                fontFamily: "inherit",
-              }}
-            >
-              Cancel
-            </button>
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              style={{
-                padding: "5px 12px",
-                backgroundColor: colors.active,
-                border: "none",
-                borderRadius: 6,
-                color: colors.white,
-                fontSize: 12,
-                fontWeight: 500,
-                cursor: saving ? "default" : "pointer",
-                opacity: saving ? 0.6 : 1,
-                fontFamily: "inherit",
-              }}
-            >
-              {saving ? "Saving..." : "Save"}
-            </button>
-          </div>
-          <div style={{ fontSize: 10, color: colors.textDim, marginTop: 4, textAlign: "right" }}>
-            {navigator.platform.includes("Mac") ? "\u2318S" : "Ctrl+S"} to save
-          </div>
-        </div>
-      ) : (
-        <pre style={{
-          backgroundColor: colors.bg,
-          borderRadius: 8,
-          padding: "10px 12px",
-          margin: 0,
-          fontSize: 12,
-          fontFamily: fonts.mono,
-          color: config?.content ? colors.text : colors.textDim,
-          lineHeight: 1.5,
-          overflowX: "auto",
-          whiteSpace: "pre-wrap",
-          wordBreak: "break-all",
-          maxHeight: 300,
-          overflowY: "auto",
-        }}>
-          {config?.content ?? emptyText ?? "File not found"}
-        </pre>
-      )}
-    </div>
-  );
-}
 
 function ToggleRow({ label, description, checked, onChange }: {
   label: string;

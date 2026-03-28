@@ -538,9 +538,40 @@ Execute a slash command. The command is parsed and dispatched asynchronously thr
 
 ---
 
+## Extra Directories
+
+Extra directories are configured in the project config (`.loop/config.json`) via the `extra_dirs` field. They are automatically loaded when listing roots or resolving file paths.
+
+### `GET /api/channels/{id}/roots`
+
+List all root directories for a channel: the primary `dir_path` followed by any extra directories from the project config.
+
+**Path Parameters:**
+
+| Param | Type   | Description |
+|-------|--------|-------------|
+| `id`  | string | Channel ID  |
+
+**Response (200):**
+```json
+{
+  "roots": [
+    "/home/user/projects/my-project",
+    "/home/user/projects/shared-lib",
+    "/home/user/projects/proto"
+  ]
+}
+```
+
+The first entry is always the primary `dir_path`. Subsequent entries are the extra directories in the order they were set.
+
+**Errors:** `404` if channel not found.
+
+---
+
 ## Files
 
-All file endpoints resolve the channel's `dir_path` from the database, falling back to `~/.loop/{channel_id}/work` when the channel has no explicit path.
+All file endpoints resolve the channel's `dir_path` from the database, falling back to `~/.loop/{channel_id}/work` when the channel has no explicit path. When a channel has extra directories, file endpoints accept an optional `root` query parameter to select which root directory to operate on.
 
 ### `GET /api/channels/{id}/files`
 
@@ -551,6 +582,7 @@ List directory contents for a channel's working directory.
 | Param  | Type   | Default | Description |
 |--------|--------|---------|-------------|
 | `path` | string | `"."`   | Relative path within the channel's directory |
+| `root` | int    | `0`     | Root directory index (0 = primary `dir_path`, 1+ = extra directories) |
 
 **Response (200):**
 ```json
@@ -577,6 +609,7 @@ Read a file's contents.
 | Param  | Type   | Required | Description |
 |--------|--------|----------|-------------|
 | `path` | string | yes      | Relative path to the file |
+| `root` | int    | no       | Root directory index (0 = primary, 1+ = extra directories) |
 
 **Response (200):**
 - **Text files:** `Content-Type: text/plain; charset=utf-8` with file contents as body.
@@ -600,6 +633,7 @@ Write content to a file.
 | Param  | Type   | Required | Description |
 |--------|--------|----------|-------------|
 | `path` | string | yes      | Relative path to the file |
+| `root` | int    | no       | Root directory index (0 = primary, 1+ = extra directories) |
 
 **Request body:** Raw file content (not JSON). Maximum **5 MB**.
 
@@ -623,6 +657,7 @@ Delete a file.
 | Param  | Type   | Required | Description |
 |--------|--------|----------|-------------|
 | `path` | string | yes      | Relative path to the file |
+| `root` | int    | no       | Root directory index (0 = primary, 1+ = extra directories) |
 
 **Response (200):**
 ```json
@@ -1129,3 +1164,129 @@ Messages are forwarded as JSON:
 ```
 
 The WebSocket closes when the agent is unregistered (terminal session closed).
+
+---
+
+## Configuration
+
+Config endpoints expose a schema-driven API for reading and writing Loop configuration. Both global (`~/.loop/config.json`) and per-project (`{workDir}/.loop/config.json`) configs are supported. The schema endpoint powers the Settings form UI.
+
+### `GET /api/config/schema`
+
+Returns the JSON Schema describing all config fields, their types, defaults, and descriptions. Used by the frontend to render typed form controls.
+
+**Response (200):**
+```json
+{
+  "type": "object",
+  "properties": {
+    "platforms": {
+      "type": "array",
+      "items": {"type": "string", "enum": ["local", "discord", "slack"]},
+      "description": "Platforms to enable"
+    },
+    "claude_model": {
+      "type": "string",
+      "enum": ["", "claude-opus-4-6", "claude-sonnet-4-6"],
+      "description": "Claude model to use"
+    }
+  }
+}
+```
+
+The schema includes metadata for rendering (e.g. `enum` for dropdowns, `format: "password"` for secret fields).
+
+---
+
+### `GET /api/config`
+
+Returns the global config as both parsed JSON and raw HJSON text.
+
+**Response (200):**
+```json
+{
+  "config": { "platforms": ["local"], "claude_model": "" },
+  "raw": "{\n  \"platforms\": [\"local\"]\n}"
+}
+```
+
+| Field    | Type   | Description |
+|----------|--------|-------------|
+| `config` | object | Parsed config values |
+| `raw`    | string | Raw HJSON file contents (for the JSON editor view) |
+
+---
+
+### `PUT /api/config`
+
+Save global config. Accepts raw HJSON text.
+
+**Request:**
+```json
+{
+  "raw": "{\n  \"platforms\": [\"local\"],\n  \"claude_model\": \"claude-opus-4-6\"\n}"
+}
+```
+
+| Field | Type   | Required | Description |
+|-------|--------|----------|-------------|
+| `raw` | string | yes      | HJSON config text to write to `~/.loop/config.json` |
+
+**Response (200):**
+```json
+{"ok": true}
+```
+
+**Errors:** `400` if the HJSON is invalid.
+
+---
+
+### `GET /api/config/project`
+
+Returns the project config for a channel.
+
+**Query Parameters:**
+
+| Param        | Type   | Required | Description |
+|--------------|--------|----------|-------------|
+| `channel_id` | string | yes      | Channel ID to look up the project directory |
+
+**Response (200):**
+```json
+{
+  "config": { "claude_model": "claude-opus-4-6" },
+  "raw": "{\n  \"claude_model\": \"claude-opus-4-6\"\n}"
+}
+```
+
+Same shape as `GET /api/config`. If no project config file exists, `config` is an empty object and `raw` is `""`.
+
+**Errors:** `400` if `channel_id` is missing. `404` if channel not found.
+
+---
+
+### `PUT /api/config/project`
+
+Save project config for a channel.
+
+**Query Parameters:**
+
+| Param        | Type   | Required | Description |
+|--------------|--------|----------|-------------|
+| `channel_id` | string | yes      | Channel ID |
+
+**Request:**
+```json
+{
+  "raw": "{\n  \"claude_model\": \"claude-opus-4-6\"\n}"
+}
+```
+
+**Response (200):**
+```json
+{"ok": true}
+```
+
+Creates the `.loop/` directory and config file if they don't exist.
+
+**Errors:** `400` if `channel_id` is missing or HJSON is invalid. `404` if channel not found.

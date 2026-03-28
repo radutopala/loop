@@ -2,6 +2,8 @@
 
 Loop is configured via HJSON files (JSON with comments and trailing commas). This document covers all configuration fields, their defaults, and the merge rules for project-level overrides.
 
+Config files can be edited directly on disk, or through the HTTP API (`GET/PUT /api/config` for global, `GET/PUT /api/config/project` for per-project). The desktop app Settings panel uses the API to provide a schema-driven form editor and a raw JSON editor. See [API Reference: Configuration](api.md#configuration) for endpoint details.
+
 See also: [Docker Container Lifecycle](containers.md), [Task Scheduling](scheduling.md).
 
 ---

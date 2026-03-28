@@ -16,7 +16,7 @@ import { yaml } from "@codemirror/lang-yaml";
 import { marked } from "marked";
 import { fonts } from "../theme";
 import { useTheme } from "../ThemeContext";
-import { fetchFiles, fetchFileContent, saveFileContent, deleteFile, type FileEntry } from "../api/loopApi";
+import { fetchFiles, fetchFileContent, saveFileContent, deleteFile, fetchRoots, updateExtraDirs, type FileEntry, type RootEntry } from "../api/loopApi";
 import { FilePanel, buildMarkdownStyles } from "./FilePanel";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { buildEditorTheme } from "./editorTheme";
@@ -119,12 +119,29 @@ function saveEditorTabs(channelId: string, state: EditorTabsState, key = EDITOR_
   } catch { /* ignore */ }
 }
 
+// ── Multi-root path key helpers ──
+// Internal path keys use "{rootIndex}:{relativePath}" to disambiguate across roots.
+// When there's only one root (index 0), the prefix is still present internally
+// but stripped for display / API calls.
+
+function makePathKey(rootIndex: number, relativePath: string): string {
+  return `${rootIndex}:${relativePath}`;
+}
+
+function parsePathKey(key: string): { rootIndex: number; relativePath: string } {
+  const colonIdx = key.indexOf(":");
+  if (colonIdx < 0) return { rootIndex: 0, relativePath: key };
+  const rootIndex = parseInt(key.substring(0, colonIdx), 10);
+  return { rootIndex: isNaN(rootIndex) ? 0 : rootIndex, relativePath: key.substring(colonIdx + 1) };
+}
+
 export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageKey, ...panelProps }: EditorPanelProps) {
   const { colors } = useTheme();
   const tabsKey = tabsStorageKey ?? EDITOR_TABS_KEY;
-  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set([""]));
+  const [roots, setRoots] = useState<RootEntry[]>([]);
+  const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set([makePathKey(0, "")]));
   const [dirContents, setDirContents] = useState<Map<string, FileEntry[]>>(new Map());
-  const [selectedDir, setSelectedDir] = useState("");
+  const [selectedDir, setSelectedDir] = useState(makePathKey(0, ""));
 
   const [openTabs, setOpenTabs] = useState<string[]>(() => loadEditorTabs(channelId, tabsKey).tabs);
   const [selectedPath, setSelectedPath] = useState<string | null>(() => loadEditorTabs(channelId, tabsKey).selected);
@@ -154,7 +171,9 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   const selectedPathRef = useRef(selectedPath);
   selectedPathRef.current = selectedPath;
 
-  const isMd = selectedPath ? isMarkdownFile(selectedPath) : false;
+  const selectedRelPath = selectedPath ? parsePathKey(selectedPath).relativePath : null;
+  const isMd = selectedRelPath ? isMarkdownFile(selectedRelPath) : false;
+  const hasMultipleRoots = roots.length > 1;
 
   const [previewTabsEnabled, setPreviewTabsEnabled] = useState(true);
 
@@ -200,7 +219,8 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
       content += "\n";
       view.dispatch({ changes: { from: view.state.doc.length, insert: "\n" } });
     }
-    saveFileContent(channelId, savePath, content).then(() => {
+    const { rootIndex: ri, relativePath: rp } = parsePathKey(savePath);
+    saveFileContent(channelId, rp, content, ri).then(() => {
       dirtyContentRef.current.delete(savePath);
       setDirtyTabs((prev) => { if (!prev.has(savePath)) return prev; const next = new Set(prev); next.delete(savePath); return next; });
     }).catch(() => {});
@@ -231,7 +251,8 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   useEffect(() => {
     if (!selectedPath) return;
     setLoading(true);
-    fetchFileContent(channelId, selectedPath).then((result) => {
+    const { rootIndex: ri, relativePath: rp } = parsePathKey(selectedPath);
+    fetchFileContent(channelId, rp, ri).then((result) => {
       if (result.binary) {
         setIsBinary(true);
         setBinarySize(0);
@@ -269,18 +290,36 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
     document.addEventListener("mouseup", onMouseUp);
   }, [treeWidth]);
 
-  // Load root directory on mount.
+  // Load roots and root directories on mount.
   useEffect(() => {
-    loadDir(".");
+    fetchRoots(channelId).then((r) => {
+      setRoots(r);
+      // Initialize expanded dirs to include all root keys.
+      setExpandedDirs((prev) => {
+        const next = new Set(prev);
+        for (const root of r) {
+          next.add(makePathKey(root.index, ""));
+        }
+        return next;
+      });
+      // Load each root's contents.
+      for (const root of r) {
+        loadDir(".", root.index);
+      }
+    }).catch(() => {
+      // Fallback: load single root.
+      loadDir(".", 0);
+    });
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId]);
 
-  const loadDir = useCallback(async (path: string) => {
+  const loadDir = useCallback(async (path: string, rootIndex = 0) => {
     try {
-      const entries = await fetchFiles(channelId, path);
+      const entries = await fetchFiles(channelId, path, rootIndex);
+      const mapKey = makePathKey(rootIndex, path === "." ? "" : path);
       setDirContents((prev) => {
         const next = new Map(prev);
-        next.set(path === "." ? "" : path, entries);
+        next.set(mapKey, entries);
         return next;
       });
     } catch {
@@ -289,45 +328,57 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   }, [channelId]);
 
   const refreshTree = useCallback(async () => {
-    // Reload root and all expanded directories.
-    await loadDir(".");
-    for (const dir of expandedDirs) {
-      loadDir(dir === "" ? "." : dir);
+    // Reload roots.
+    try {
+      const r = await fetchRoots(channelId);
+      setRoots(r);
+      for (const root of r) {
+        loadDir(".", root.index);
+      }
+    } catch {
+      loadDir(".", 0);
+    }
+    // Reload all expanded directories.
+    for (const dirKey of expandedDirs) {
+      const { rootIndex, relativePath } = parsePathKey(dirKey);
+      loadDir(relativePath === "" ? "." : relativePath, rootIndex);
     }
     // Reload the currently open file from disk.
-    const path = selectedPathRef.current;
-    if (path) {
+    const pathKey = selectedPathRef.current;
+    if (pathKey) {
       try {
-        const result = await fetchFileContent(channelId, path);
-        if (selectedPathRef.current !== path || result.binary) return;
+        const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+        const result = await fetchFileContent(channelId, rp, ri);
+        if (selectedPathRef.current !== pathKey || result.binary) return;
         const view = viewRef.current;
         if (!view) return;
         const current = view.state.doc.toString();
         if (result.content !== current) {
           view.dispatch({ changes: { from: 0, to: current.length, insert: result.content } });
-          setDirtyTabs((prev) => { if (!prev.has(path)) return prev; const next = new Set(prev); next.delete(path); return next; });
+          setDirtyTabs((prev) => { if (!prev.has(pathKey)) return prev; const next = new Set(prev); next.delete(pathKey); return next; });
         }
       } catch { /* file may have been deleted */ }
     }
   }, [loadDir, expandedDirs, channelId]);
 
-  const handleDirClick = useCallback((path: string) => {
-    setSelectedDir(path);
+  const handleDirClick = useCallback((pathKey: string) => {
+    setSelectedDir(pathKey);
     setExpandedDirs((prev) => {
       const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
+      if (next.has(pathKey)) {
+        next.delete(pathKey);
       } else {
-        next.add(path);
-        if (!dirContents.has(path)) {
-          loadDir(path === "" ? "." : path);
+        next.add(pathKey);
+        if (!dirContents.has(pathKey)) {
+          const { rootIndex, relativePath } = parsePathKey(pathKey);
+          loadDir(relativePath === "" ? "." : relativePath, rootIndex);
         }
       }
       return next;
     });
   }, [dirContents, loadDir]);
 
-  const switchToTab = useCallback((path: string) => {
+  const switchToTab = useCallback((pathKey: string) => {
     // Snapshot current dirty content before switching away.
     const curPath = selectedPathRef.current;
     if (curPath && dirtyTabsRef.current.has(curPath)) {
@@ -336,17 +387,18 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
       // Auto-save if enabled.
       if (autoSaveOnBlurRef.current) saveAllDirty();
     }
-    setSelectedPath(path);
+    setSelectedPath(pathKey);
     setError(null);
     setIsBinary(false);
     // Restore from dirty cache if available, otherwise fetch from disk.
-    const cached = dirtyContentRef.current.get(path);
+    const cached = dirtyContentRef.current.get(pathKey);
     if (cached !== undefined) {
       setFileContent(cached);
     } else {
       setLoading(true);
       setFileContent(null);
-      fetchFileContent(channelId, path).then((result) => {
+      const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+      fetchFileContent(channelId, rp, ri).then((result) => {
         if (result.binary) {
           setIsBinary(true);
           setBinarySize(0);
@@ -421,26 +473,34 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
     const trimmed = name.trim();
     if (!trimmed) return;
     setNewFileName(null);
-    saveFileContent(channelId, trimmed, "").then(() => {
+    // Determine root index from the selected directory.
+    const { rootIndex } = parsePathKey(selectedDir);
+    const { rootIndex: ri, relativePath: rp } = parsePathKey(trimmed);
+    // If the name was typed without a root prefix, use the selected dir's root.
+    const actualRoot = trimmed.includes(":") ? ri : rootIndex;
+    const actualPath = trimmed.includes(":") ? rp : trimmed;
+    saveFileContent(channelId, actualPath, "", actualRoot).then(() => {
       // Reload parent directory to show the new file.
-      const parent = trimmed.includes("/") ? trimmed.substring(0, trimmed.lastIndexOf("/")) : ".";
-      loadDir(parent);
+      const parentRelPath = actualPath.includes("/") ? actualPath.substring(0, actualPath.lastIndexOf("/")) : ".";
+      loadDir(parentRelPath, actualRoot);
       // Open the new file in a tab.
-      setOpenTabs((prev) => prev.includes(trimmed) ? prev : [...prev, trimmed]);
-      switchToTab(trimmed);
+      const newKey = makePathKey(actualRoot, actualPath);
+      setOpenTabs((prev) => prev.includes(newKey) ? prev : [...prev, newKey]);
+      switchToTab(newKey);
     }).catch((err) => {
       setError(err instanceof Error ? err.message : "Failed to create file");
     });
-  }, [channelId, loadDir, switchToTab]);
+  }, [channelId, loadDir, switchToTab, selectedDir]);
 
-  const handleDeleteFilePath = useCallback((path: string) => {
-    deleteFile(channelId, path).then(() => {
+  const handleDeleteFilePath = useCallback((pathKey: string) => {
+    const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+    deleteFile(channelId, rp, ri).then(() => {
       // Close the tab if it was open.
       setOpenTabs((prev) => {
-        const next = prev.filter((p) => p !== path);
-        if (path === selectedPathRef.current) {
+        const next = prev.filter((p) => p !== pathKey);
+        if (pathKey === selectedPathRef.current) {
           if (next.length > 0) {
-            switchToTab(next[Math.max(0, Math.min(prev.indexOf(path), next.length - 1))]!);
+            switchToTab(next[Math.max(0, Math.min(prev.indexOf(pathKey), next.length - 1))]!);
           } else {
             setSelectedPath(null);
             setFileContent(null);
@@ -450,11 +510,11 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
         }
         return next;
       });
-      dirtyContentRef.current.delete(path);
-      setDirtyTabs((prev) => { if (!prev.has(path)) return prev; const next = new Set(prev); next.delete(path); return next; });
+      dirtyContentRef.current.delete(pathKey);
+      setDirtyTabs((prev) => { if (!prev.has(pathKey)) return prev; const next = new Set(prev); next.delete(pathKey); return next; });
       // Reload parent directory.
-      const parent = path.includes("/") ? path.substring(0, path.lastIndexOf("/")) : ".";
-      loadDir(parent);
+      const parentRelPath = rp.includes("/") ? rp.substring(0, rp.lastIndexOf("/")) : ".";
+      loadDir(parentRelPath, ri);
     }).catch((err) => {
       setError(err instanceof Error ? err.message : "Failed to delete file");
     });
@@ -467,16 +527,19 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
 
   const getContextMenuItems = useCallback((): MenuItem[] => {
     if (!contextMenu) return [];
+    const { rootIndex: ctxRoot, relativePath: ctxRelPath } = parsePathKey(contextMenu.path);
+    const ctxRootEntry = roots.find((r) => r.index === ctxRoot);
+    const absBase = ctxRootEntry?.path ?? dirPath;
     const items: MenuItem[] = [];
-    items.push({ label: "Copy relative path", onClick: () => navigator.clipboard.writeText(contextMenu.path) });
-    items.push({ label: "Copy absolute path", onClick: () => navigator.clipboard.writeText(dirPath + "/" + contextMenu.path) });
+    items.push({ label: "Copy relative path", onClick: () => navigator.clipboard.writeText(ctxRelPath) });
+    items.push({ label: "Copy absolute path", onClick: () => navigator.clipboard.writeText(absBase + "/" + ctxRelPath) });
     if (contextMenu.isDir) {
-      items.push({ label: "New file here", separator: true, onClick: () => setNewFileName(contextMenu.path + "/") });
+      items.push({ label: "New file here", separator: true, onClick: () => setNewFileName(ctxRelPath + "/") });
     } else {
       items.push({ label: "Delete", danger: true, separator: true, onClick: () => handleDeleteFilePath(contextMenu.path) });
     }
     return items;
-  }, [contextMenu, dirPath, handleDeleteFilePath]);
+  }, [contextMenu, dirPath, roots, handleDeleteFilePath]);
 
   const handleEditorContextMenu = useCallback((e: React.MouseEvent) => {
     // Only show custom menu when right-clicking inside the CodeMirror editor area.
@@ -535,14 +598,17 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
       EditorView.updateListener.of((update) => {
         if (update.docChanged) {
           markDirty();
-          if (selectedPathRef.current && isMarkdownFile(selectedPathRef.current)) {
-            updatePreview(update.state.doc.toString());
+          if (selectedPathRef.current) {
+            const { relativePath: curRel } = parsePathKey(selectedPathRef.current);
+            if (isMarkdownFile(curRel)) {
+              updatePreview(update.state.doc.toString());
+            }
           }
         }
       }),
     ];
 
-    const lang = selectedPath ? getLangExtension(selectedPath) : null;
+    const lang = selectedRelPath ? getLangExtension(selectedRelPath) : null;
     if (lang) extensions.push(lang);
 
     const state = EditorState.create({
@@ -558,7 +624,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
     viewRef.current = view;
 
     // Set initial markdown preview.
-    if (selectedPath && isMarkdownFile(selectedPath)) {
+    if (selectedRelPath && isMarkdownFile(selectedRelPath)) {
       setPreviewHtml(marked.parse(fileContent, { async: false }) as string);
     } else {
       setPreviewHtml("");
@@ -611,10 +677,11 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   useEffect(() => {
     const onBlur = () => { if (autoSaveOnBlur) saveAllDirty(); };
     const onFocus = () => {
-      const path = selectedPathRef.current;
-      if (!path) return;
-      fetchFileContent(channelId, path).then((result) => {
-        if (selectedPathRef.current !== path) return;
+      const pathKey = selectedPathRef.current;
+      if (!pathKey) return;
+      const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+      fetchFileContent(channelId, rp, ri).then((result) => {
+        if (selectedPathRef.current !== pathKey) return;
         if (result.binary) return;
         const view = viewRef.current;
         if (!view) return;
@@ -623,8 +690,8 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
           view.dispatch({
             changes: { from: 0, to: current.length, insert: result.content },
           });
-          setDirtyTabs((prev) => { if (!prev.has(path)) return prev; const next = new Set(prev); next.delete(path); return next; });
-          if (isMarkdownFile(path)) {
+          setDirtyTabs((prev) => { if (!prev.has(pathKey)) return prev; const next = new Set(prev); next.delete(pathKey); return next; });
+          if (isMarkdownFile(rp)) {
             setPreviewHtml(marked.parse(result.content, { async: false }) as string);
           }
         }
@@ -651,7 +718,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
           }}
         >
           <div style={{ display: "flex", alignItems: "center", padding: "4px 8px 2px", flexShrink: 0 }}>
-            <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Files</span>
+            <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Workspace</span>
             <button
               onClick={refreshTree}
               title="Refresh files"
@@ -665,7 +732,10 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
               </svg>
             </button>
             <button
-              onClick={() => setNewFileName(selectedDir ? selectedDir + "/" : "")}
+              onClick={() => {
+                const { relativePath: selRel } = parsePathKey(selectedDir);
+                setNewFileName(selRel ? selRel + "/" : "");
+              }}
               title="New file"
               style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: 0, lineHeight: 1, display: "flex", alignItems: "center", marginLeft: 4 }}
               onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
@@ -676,6 +746,42 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
                 <line x1="5" y1="12" x2="19" y2="12" />
               </svg>
             </button>
+            {window.loopAPI?.showOpenDirectoryDialog && (
+              <button
+                onClick={async () => {
+                  const dir = await window.loopAPI?.showOpenDirectoryDialog?.();
+                  if (!dir) return;
+                  const currentExtras = roots.filter((r) => r.index > 0).map((r) => r.path);
+                  try {
+                    await updateExtraDirs(channelId, [...currentExtras, dir]);
+                    const r = await fetchRoots(channelId);
+                    setRoots(r);
+                    for (const root of r) {
+                      loadDir(".", root.index);
+                    }
+                    setExpandedDirs((prev) => {
+                      const next = new Set(prev);
+                      for (const root of r) {
+                        next.add(makePathKey(root.index, ""));
+                      }
+                      return next;
+                    });
+                  } catch (err) {
+                    setError(err instanceof Error ? err.message : "Failed to add directory");
+                  }
+                }}
+                title="Add directory"
+                style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: 0, lineHeight: 1, display: "flex", alignItems: "center", marginLeft: 4 }}
+                onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
+                onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                  <line x1="12" y1="11" x2="12" y2="17" />
+                  <line x1="9" y1="14" x2="15" y2="14" />
+                </svg>
+              </button>
+            )}
           </div>
           {newFileName !== null && (
             <div style={{ padding: "2px 8px" }}>
@@ -705,48 +811,73 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
             </div>
           )}
           <div style={{ flex: 1, overflow: "auto", padding: "2px 0" }}>
-            <button
-              onClick={() => { setSelectedDir(""); }}
-              onContextMenu={(e) => handleContextMenu(e, "", true)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
-                width: "max-content",
-                minWidth: "100%",
-                padding: "3px 8px",
-                border: "none",
-                background: selectedDir === "" ? colors.dirSelectedBg : "none",
-                color: colors.textLight,
-                cursor: "pointer",
-                fontSize: 12,
-                fontFamily: fonts.mono,
-                fontWeight: 700,
-                textAlign: "left",
-                whiteSpace: "nowrap",
-              }}
-              onMouseEnter={(e) => { if (selectedDir !== "") e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-              onMouseLeave={(e) => { if (selectedDir !== "") e.currentTarget.style.backgroundColor = "transparent"; }}
-            >
-              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.6 }}>
-                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-              </svg>
-              {dirPath.split("/").pop() || dirPath}
-            </button>
-            <FileTree
-              entries={dirContents.get("") || []}
-              dirContents={dirContents}
-              expandedDirs={expandedDirs}
-              selectedPath={selectedPath}
-              previewTab={previewTab}
-              selectedDir={selectedDir}
-              depth={1}
-              parentPath=""
-              onDirClick={handleDirClick}
-              onFileClick={handleFileClick}
-              onFileDoubleClick={handleFileDoubleClick}
-              onContextMenu={handleContextMenu}
-            />
+            {(roots.length > 0 ? roots : [{ index: 0, path: dirPath, name: dirPath.split("/").pop() || dirPath }]).map((root) => {
+              const rootKey = makePathKey(root.index, "");
+              const isRootExpanded = expandedDirs.has(rootKey);
+              const isRootSelected = selectedDir === rootKey;
+              return (
+                <div key={root.index}>
+                  <button
+                    onClick={() => {
+                      setSelectedDir(rootKey);
+                      setExpandedDirs((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(rootKey)) {
+                          next.delete(rootKey);
+                        } else {
+                          next.add(rootKey);
+                          if (!dirContents.has(rootKey)) loadDir(".", root.index);
+                        }
+                        return next;
+                      });
+                    }}
+                    onContextMenu={(e) => handleContextMenu(e, rootKey, true)}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 4,
+                      width: "max-content",
+                      minWidth: "100%",
+                      padding: "3px 8px",
+                      border: "none",
+                      background: isRootSelected ? colors.dirSelectedBg : "none",
+                      color: colors.textLight,
+                      cursor: "pointer",
+                      fontSize: 12,
+                      fontFamily: fonts.mono,
+                      fontWeight: 700,
+                      textAlign: "left",
+                      whiteSpace: "nowrap",
+                    }}
+                    onMouseEnter={(e) => { if (!isRootSelected) e.currentTarget.style.backgroundColor = colors.hoverBg; }}
+                    onMouseLeave={(e) => { if (!isRootSelected) e.currentTarget.style.backgroundColor = "transparent"; }}
+                  >
+                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.5, transform: isRootExpanded ? "rotate(90deg)" : "rotate(0deg)", transition: "transform 0.15s" }}>
+                      <polyline points="9 18 15 12 9 6" />
+                    </svg>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.6 }}>
+                      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+                    </svg>
+                    {root.name}
+                  </button>
+                  {isRootExpanded && <FileTree
+                    entries={dirContents.get(rootKey) || []}
+                    dirContents={dirContents}
+                    expandedDirs={expandedDirs}
+                    selectedPath={selectedPath}
+                    previewTab={previewTab}
+                    selectedDir={selectedDir}
+                    depth={1}
+                    parentPath={rootKey}
+                    rootIndex={root.index}
+                    onDirClick={handleDirClick}
+                    onFileClick={handleFileClick}
+                    onFileDoubleClick={handleFileDoubleClick}
+                    onContextMenu={handleContextMenu}
+                  />}
+                </div>
+              );
+            })}
           </div>
         </div>
         {/* Tree resize handle */}
@@ -780,13 +911,16 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
                   const isActive = tab === selectedPath;
                   const isDirty = dirtyTabs.has(tab);
                   const isPreview = tab === previewTab;
-                  const fileName = tab.split("/").pop() || tab;
+                  const { rootIndex: tabRoot, relativePath: tabRelPath } = parsePathKey(tab);
+                  const fileName = tabRelPath.split("/").pop() || tabRelPath;
+                  const tabRootEntry = roots.find((r) => r.index === tabRoot);
+                  const tabLabel = hasMultipleRoots && tabRootEntry ? `${tabRootEntry.name}/${fileName}` : fileName;
                   return (
                     <button
                       key={tab}
                       onClick={() => { if (!isActive) switchToTab(tab); }}
                       onDoubleClick={() => { if (isPreview) setPreviewTab(null); }}
-                      title={tab}
+                      title={tabRelPath}
                       style={{
                         display: "flex",
                         alignItems: "center",
@@ -807,7 +941,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
                       onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = "transparent"; }}
                     >
                       <FileIcon name={fileName} />
-                      <span style={{ fontStyle: isPreview || isDirty ? "italic" : undefined }}>{fileName}</span>
+                      <span style={{ fontStyle: isPreview || isDirty ? "italic" : undefined }}>{tabLabel}</span>
                       <span
                         onClick={(e) => handleCloseTab(tab, e)}
                         style={{ marginLeft: 2, width: 8, height: 8, display: "flex", alignItems: "center", justifyContent: "center" }}
@@ -994,29 +1128,35 @@ interface FileTreeProps {
   selectedDir: string;
   depth: number;
   parentPath: string;
+  rootIndex: number;
   onDirClick: (path: string) => void;
   onFileClick: (path: string, entry: FileEntry) => void;
   onFileDoubleClick: (path: string, entry: FileEntry) => void;
   onContextMenu: (e: React.MouseEvent, path: string, isDir: boolean) => void;
 }
 
-function FileTree({ entries, dirContents, expandedDirs, selectedPath, previewTab, selectedDir, depth, parentPath, onDirClick, onFileClick, onFileDoubleClick, onContextMenu }: FileTreeProps) {
+function FileTree({ entries, dirContents, expandedDirs, selectedPath, previewTab, selectedDir, depth, parentPath, rootIndex, onDirClick, onFileClick, onFileDoubleClick, onContextMenu }: FileTreeProps) {
   const { colors } = useTheme();
   return (
     <>
       {entries.map((entry) => {
-        const path = parentPath ? `${parentPath}/${entry.name}` : entry.name;
+        // parentPath is already a root-prefixed key (e.g. "0:" or "0:src").
+        // For children, strip the root prefix from parentPath to get the relative parent,
+        // then build the child relative path, then re-prefix.
+        const { relativePath: parentRel } = parsePathKey(parentPath);
+        const childRel = parentRel ? `${parentRel}/${entry.name}` : entry.name;
+        const pathKey = makePathKey(rootIndex, childRel);
         const isDir = entry.type === "dir";
-        const isExpanded = expandedDirs.has(path);
-        const isSelected = path === selectedPath;
-        const isDirSelected = isDir && path === selectedDir;
+        const isExpanded = expandedDirs.has(pathKey);
+        const isSelected = pathKey === selectedPath;
+        const isDirSelected = isDir && pathKey === selectedDir;
 
         return (
-          <div key={path}>
+          <div key={pathKey}>
             <button
-              onClick={() => isDir ? onDirClick(path) : onFileClick(path, entry)}
-              onDoubleClick={() => { if (!isDir) onFileDoubleClick(path, entry); }}
-              onContextMenu={(e) => onContextMenu(e, path, isDir)}
+              onClick={() => isDir ? onDirClick(pathKey) : onFileClick(pathKey, entry)}
+              onDoubleClick={() => { if (!isDir) onFileDoubleClick(pathKey, entry); }}
+              onContextMenu={(e) => onContextMenu(e, pathKey, isDir)}
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -1052,16 +1192,17 @@ function FileTree({ entries, dirContents, expandedDirs, selectedPath, previewTab
               )}
               {entry.name}
             </button>
-            {isDir && isExpanded && dirContents.has(path) && (
+            {isDir && isExpanded && dirContents.has(pathKey) && (
               <FileTree
-                entries={dirContents.get(path)!}
+                entries={dirContents.get(pathKey)!}
                 dirContents={dirContents}
                 expandedDirs={expandedDirs}
                 selectedPath={selectedPath}
                 previewTab={previewTab}
                 selectedDir={selectedDir}
                 depth={depth + 1}
-                parentPath={path}
+                parentPath={pathKey}
+                rootIndex={rootIndex}
                 onDirClick={onDirClick}
                 onFileClick={onFileClick}
                 onFileDoubleClick={onFileDoubleClick}

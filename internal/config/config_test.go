@@ -1654,6 +1654,27 @@ func (s *ConfigSuite) TestLoadPublicWrapper() {
 	_ = err
 }
 
+func (s *ConfigSuite) TestLoadProjectConfigExtraDirs() {
+	s.setupProjectReadFile(`{"extra_dirs": ["/home/user/lib", "/home/user/common"]}`)
+
+	mainCfg := &Config{}
+	merged, err := s.loader.loadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"/home/user/lib", "/home/user/common"}, merged.ExtraDirs)
+	// Main config should be unchanged.
+	require.Empty(s.T(), mainCfg.ExtraDirs)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigExtraDirsEmpty() {
+	s.setupProjectReadFile(`{}`)
+
+	mainCfg := &Config{ExtraDirs: []string{"/global/dir"}}
+	merged, err := s.loader.loadProjectConfig("/project", mainCfg)
+	require.NoError(s.T(), err)
+	// Empty project extra_dirs should not replace global.
+	require.Equal(s.T(), []string{"/global/dir"}, merged.ExtraDirs)
+}
+
 func (s *ConfigSuite) TestLoadProjectConfigPublicWrapper() {
 	dir := s.T().TempDir()
 	base := &Config{Platforms: []types.Platform{types.PlatformLocal}}

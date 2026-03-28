@@ -3189,20 +3189,20 @@ func (s *RunnerSuite) TestBuildBaseClaudeCmdPlanMode() {
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 
 	// Without plan mode: should contain --dangerously-skip-permissions but not --permission-mode.
-	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, false)
+	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, false, nil)
 	got := strings.Join(cmd, " ")
 	require.Contains(s.T(), got, "--dangerously-skip-permissions")
 	require.NotContains(s.T(), got, "--permission-mode")
 	require.NotContains(s.T(), got, "--dangerously-load-development-channels")
 
 	// With plan mode: should contain --permission-mode plan but not --dangerously-skip-permissions.
-	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, true)
+	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, true, nil)
 	got = strings.Join(cmd, " ")
 	require.NotContains(s.T(), got, "--dangerously-skip-permissions")
 	require.Contains(s.T(), got, "--permission-mode plan")
 
 	// With agent ID: should contain --dangerously-load-development-channels server:loop.
-	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "agent-0", false, false)
+	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "agent-0", false, false, nil)
 	got = strings.Join(cmd, " ")
 	require.Contains(s.T(), got, "--dangerously-load-development-channels server:loop")
 }
@@ -3476,4 +3476,79 @@ func TestScanStreamJSONUserEventWithNewline(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "OK", resp.Result)
 	require.Equal(t, []string{"Got it"}, turns)
+}
+
+// --- buildContainerMounts extra dirs tests ---
+
+func (s *RunnerSuite) TestBuildContainerMountsExtraDirs() {
+	workDir := "/home/user/project"
+	extraDirs := []string{"/home/user/lib", "/home/user/common"}
+
+	binds, _ := s.runner.buildContainerMounts(nil, workDir, "", extraDirs)
+
+	require.Contains(s.T(), binds, workDir+":"+workDir)
+	require.Contains(s.T(), binds, "/home/user/lib:/home/user/lib")
+	require.Contains(s.T(), binds, "/home/user/common:/home/user/common")
+}
+
+func (s *RunnerSuite) TestBuildContainerMountsExtraDirSameAsWorkDir() {
+	workDir := "/home/user/project"
+	extraDirs := []string{"/home/user/project", "/home/user/lib"}
+
+	binds, _ := s.runner.buildContainerMounts(nil, workDir, "", extraDirs)
+
+	// workDir should appear only once (from the default bind), the duplicate should be skipped.
+	count := 0
+	for _, b := range binds {
+		if b == workDir+":"+workDir {
+			count++
+		}
+	}
+	require.Equal(s.T(), 1, count, "workDir should be mounted exactly once")
+	require.Contains(s.T(), binds, "/home/user/lib:/home/user/lib")
+}
+
+func (s *RunnerSuite) TestBuildContainerMountsExtraDirUnderParent() {
+	workDir := "/projects/myapp/.worktrees/wt1"
+	parentDirPath := "/projects/myapp"
+	extraDirs := []string{"/projects/myapp/subdir", "/external/lib"}
+
+	binds, _ := s.runner.buildContainerMounts(nil, workDir, parentDirPath, extraDirs)
+
+	// Parent dir is mounted (worktree case).
+	require.Contains(s.T(), binds, parentDirPath+":"+parentDirPath)
+	// Extra dir under parent is skipped (already covered by parent mount).
+	require.NotContains(s.T(), binds, "/projects/myapp/subdir:/projects/myapp/subdir")
+	// Extra dir same as parent is skipped.
+	require.NotContains(s.T(), binds, parentDirPath+":"+parentDirPath+":"+parentDirPath+":"+parentDirPath)
+	// External lib should be mounted.
+	require.Contains(s.T(), binds, "/external/lib:/external/lib")
+}
+
+// --- buildBaseClaudeCmd extra dirs tests ---
+
+func (s *RunnerSuite) TestBuildBaseClaudeCmdWithExtraDirs() {
+	cfg := &config.Config{ClaudeBinPath: "claude"}
+	extraDirs := []string{"/home/user/lib", "/home/user/common"}
+
+	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, false, extraDirs)
+	got := strings.Join(cmd, " ")
+
+	require.Contains(s.T(), got, "--add-dir /home/user/lib")
+	require.Contains(s.T(), got, "--add-dir /home/user/common")
+}
+
+func (s *RunnerSuite) TestBuildBaseClaudeCmdNoExtraDirs() {
+	cfg := &config.Config{ClaudeBinPath: "claude"}
+
+	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, false, nil)
+	got := strings.Join(cmd, " ")
+
+	require.NotContains(s.T(), got, "--add-dir")
+}
+
+func (s *RunnerSuite) TestBuildInteractiveClaudeCmdWithExtraDirs() {
+	cfg := &config.Config{ClaudeBinPath: "claude", ExtraDirs: []string{"/extra/dir"}}
+	got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "", false)
+	require.Contains(s.T(), got, "--add-dir /extra/dir")
 }
