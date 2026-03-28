@@ -2,10 +2,7 @@ package container
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"io"
-	"log/slog"
 	"os"
 	"sync/atomic"
 	"testing"
@@ -93,67 +90,6 @@ func (s *LifecycleSuite) TestNewImageLifecycleManager_NilLogger() {
 	require.NotNil(s.T(), m.logger, "nil logger should be replaced with discard logger")
 }
 
-func (s *LifecycleSuite) TestNewImageLifecycleManager_LoadsVersionsFromFile() {
-	v := ImageVersions{
-		LoopVersion:   "1.2.3",
-		ClaudeVersion: "4.5.6",
-		BuiltAt:       time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-	}
-	data, err := json.Marshal(v)
-	require.NoError(s.T(), err)
-
-	s.sys.On("UserHomeDir").Return("/home/test", nil)
-	s.sys.On("ReadFile", "/home/test/.loop/image-versions.json").Return(data, nil)
-
-	m := NewImageLifecycleManager(
-		s.client, s.broadcaster, s.sys, nil,
-		s.containerDir, s.imageName, s.loopVersion,
-		func() string { return "" },
-	)
-
-	require.Equal(s.T(), "1.2.3", m.versions.LoopVersion)
-	require.Equal(s.T(), "4.5.6", m.versions.ClaudeVersion)
-}
-
-func (s *LifecycleSuite) TestNewImageLifecycleManager_LoadVersionsFileNotFound() {
-	s.sys.On("UserHomeDir").Return("/home/test", nil)
-	s.sys.On("ReadFile", "/home/test/.loop/image-versions.json").Return(nil, os.ErrNotExist)
-
-	m := NewImageLifecycleManager(
-		s.client, s.broadcaster, s.sys, nil,
-		s.containerDir, s.imageName, s.loopVersion,
-		func() string { return "" },
-	)
-
-	require.Empty(s.T(), m.versions.LoopVersion)
-	require.Empty(s.T(), m.versions.ClaudeVersion)
-}
-
-func (s *LifecycleSuite) TestNewImageLifecycleManager_LoadVersionsHomeDirError() {
-	s.sys.On("UserHomeDir").Return("", errors.New("no home"))
-
-	m := NewImageLifecycleManager(
-		s.client, s.broadcaster, s.sys, nil,
-		s.containerDir, s.imageName, s.loopVersion,
-		func() string { return "" },
-	)
-
-	require.Empty(s.T(), m.versions.LoopVersion)
-}
-
-func (s *LifecycleSuite) TestNewImageLifecycleManager_LoadVersionsInvalidJSON() {
-	s.sys.On("UserHomeDir").Return("/home/test", nil)
-	s.sys.On("ReadFile", "/home/test/.loop/image-versions.json").Return([]byte("not json"), nil)
-
-	m := NewImageLifecycleManager(
-		s.client, s.broadcaster, s.sys, nil,
-		s.containerDir, s.imageName, s.loopVersion,
-		func() string { return "" },
-	)
-
-	require.Empty(s.T(), m.versions.LoopVersion)
-}
-
 // --- Status ---
 
 func (s *LifecycleSuite) TestStatus_ReturnsCurrentState() {
@@ -172,20 +108,8 @@ func (s *LifecycleSuite) TestStatus_ReturnsCurrentState() {
 
 // --- Versions ---
 
-func (s *LifecycleSuite) TestVersions_ReturnsCachedVersions() {
+func (s *LifecycleSuite) TestVersions_ReadsFromLabels() {
 	m := s.newManager(func() string { return "" })
-	m.mu.Lock()
-	m.versions = ImageVersions{LoopVersion: "1.0.0", ClaudeVersion: "2.0.0"}
-	m.mu.Unlock()
-
-	v := m.Versions()
-	require.Equal(s.T(), "1.0.0", v.LoopVersion)
-	require.Equal(s.T(), "2.0.0", v.ClaudeVersion)
-}
-
-func (s *LifecycleSuite) TestVersions_FallsBackToImageInspectLabels() {
-	m := s.newManager(func() string { return "" })
-	// versions are empty (default)
 
 	s.client.On("ImageInspectLabels", mock.Anything, s.imageName).Return(map[string]string{
 		"loop.version":        "3.0.0",
@@ -195,39 +119,28 @@ func (s *LifecycleSuite) TestVersions_FallsBackToImageInspectLabels() {
 	v := m.Versions()
 	require.Equal(s.T(), "3.0.0", v.LoopVersion)
 	require.Equal(s.T(), "5.0.0", v.ClaudeVersion)
-	s.client.AssertCalled(s.T(), "ImageInspectLabels", mock.Anything, s.imageName)
 }
 
-func (s *LifecycleSuite) TestVersions_InspectLabelsError() {
+func (s *LifecycleSuite) TestVersions_InspectLabelsError_FallsBackToCached() {
 	m := s.newManager(func() string { return "" })
+	m.mu.Lock()
+	m.versions = ImageVersions{LoopVersion: "1.0.0", ClaudeVersion: "2.0.0"}
+	m.mu.Unlock()
 
 	s.client.On("ImageInspectLabels", mock.Anything, s.imageName).Return(nil, errors.New("inspect failed"))
 
 	v := m.Versions()
-	require.Empty(s.T(), v.LoopVersion)
-	require.Empty(s.T(), v.ClaudeVersion)
+	require.Equal(s.T(), "1.0.0", v.LoopVersion)
+	require.Equal(s.T(), "2.0.0", v.ClaudeVersion)
 }
 
-func (s *LifecycleSuite) TestVersions_InspectLabelsNilMap() {
+func (s *LifecycleSuite) TestVersions_InspectLabelsNilMap_FallsBackToCached() {
 	m := s.newManager(func() string { return "" })
 
 	s.client.On("ImageInspectLabels", mock.Anything, s.imageName).Return(nil, nil)
 
 	v := m.Versions()
 	require.Empty(s.T(), v.LoopVersion)
-	require.Empty(s.T(), v.ClaudeVersion)
-}
-
-func (s *LifecycleSuite) TestVersions_SkipsInspectWhenVersionsPopulated() {
-	m := s.newManager(func() string { return "" })
-	m.mu.Lock()
-	m.versions = ImageVersions{LoopVersion: "1.0.0"} // only loop version set
-	m.mu.Unlock()
-
-	v := m.Versions()
-	require.Equal(s.T(), "1.0.0", v.LoopVersion)
-	// ImageInspectLabels should NOT be called since LoopVersion is non-empty
-	s.client.AssertNotCalled(s.T(), "ImageInspectLabels", mock.Anything, mock.Anything)
 }
 
 // --- RemoveImage ---
@@ -673,175 +586,4 @@ func (s *LifecycleSuite) TestBroadcastStatus_WithBroadcaster() {
 		State: "building",
 		Phase: "removing",
 	})
-}
-
-// --- loadVersions / saveVersions ---
-
-func (s *LifecycleSuite) TestLoadVersions_Success() {
-	v := ImageVersions{
-		LoopVersion:   "1.2.3",
-		ClaudeVersion: "4.5.6",
-	}
-	data, err := json.Marshal(v)
-	require.NoError(s.T(), err)
-
-	s.sys.On("UserHomeDir").Return("/home/test", nil)
-	s.sys.On("ReadFile", "/home/test/.loop/image-versions.json").Return(data, nil)
-
-	m := &ImageLifecycleManager{sys: s.sys}
-	loaded := m.loadVersions()
-
-	require.Equal(s.T(), "1.2.3", loaded.LoopVersion)
-	require.Equal(s.T(), "4.5.6", loaded.ClaudeVersion)
-}
-
-func (s *LifecycleSuite) TestLoadVersions_HomeDirError() {
-	s.sys.On("UserHomeDir").Return("", errors.New("no home"))
-
-	m := &ImageLifecycleManager{sys: s.sys}
-	loaded := m.loadVersions()
-
-	require.Empty(s.T(), loaded.LoopVersion)
-}
-
-func (s *LifecycleSuite) TestLoadVersions_ReadFileError() {
-	s.sys.On("UserHomeDir").Return("/home/test", nil)
-	s.sys.On("ReadFile", "/home/test/.loop/image-versions.json").Return(nil, os.ErrNotExist)
-
-	m := &ImageLifecycleManager{sys: s.sys}
-	loaded := m.loadVersions()
-
-	require.Empty(s.T(), loaded.LoopVersion)
-}
-
-func (s *LifecycleSuite) TestLoadVersions_InvalidJSON() {
-	s.sys.On("UserHomeDir").Return("/home/test", nil)
-	s.sys.On("ReadFile", "/home/test/.loop/image-versions.json").Return([]byte("{broken"), nil)
-
-	m := &ImageLifecycleManager{sys: s.sys}
-	loaded := m.loadVersions()
-
-	require.Empty(s.T(), loaded.LoopVersion)
-}
-
-func (s *LifecycleSuite) TestSaveVersions_Success() {
-	s.sys.On("UserHomeDir").Return("/home/test", nil)
-	s.sys.On("WriteFile", "/home/test/.loop/image-versions.json", mock.Anything, os.FileMode(0o644)).Return(nil)
-
-	m := &ImageLifecycleManager{
-		sys:    s.sys,
-		logger: slogDiscard(),
-	}
-
-	v := ImageVersions{LoopVersion: "1.0.0", ClaudeVersion: "2.0.0"}
-	m.saveVersions(v)
-
-	s.sys.AssertCalled(s.T(), "WriteFile", "/home/test/.loop/image-versions.json", mock.Anything, os.FileMode(0o644))
-}
-
-func (s *LifecycleSuite) TestSaveVersions_HomeDirError() {
-	s.sys.On("UserHomeDir").Return("", errors.New("no home"))
-
-	m := &ImageLifecycleManager{
-		sys:    s.sys,
-		logger: slogDiscard(),
-	}
-
-	// Should not panic and should return early.
-	v := ImageVersions{LoopVersion: "1.0.0"}
-	m.saveVersions(v)
-
-	s.sys.AssertNotCalled(s.T(), "WriteFile", mock.Anything, mock.Anything, mock.Anything)
-}
-
-func (s *LifecycleSuite) TestSaveVersions_WriteFileError() {
-	s.sys.On("UserHomeDir").Return("/home/test", nil)
-	s.sys.On("WriteFile", "/home/test/.loop/image-versions.json", mock.Anything, os.FileMode(0o644)).Return(errors.New("write failed"))
-
-	m := &ImageLifecycleManager{
-		sys:    s.sys,
-		logger: slogDiscard(),
-	}
-
-	// Should log warning but not panic.
-	v := ImageVersions{LoopVersion: "1.0.0"}
-	m.saveVersions(v)
-
-	s.sys.AssertCalled(s.T(), "WriteFile", "/home/test/.loop/image-versions.json", mock.Anything, os.FileMode(0o644))
-}
-
-// --- SaveVersions (public) ---
-
-func (s *LifecycleSuite) TestSaveVersions_Public_UpdatesAndPersists() {
-	m := s.newManager(func() string { return "" })
-
-	s.sys.On("WriteFile", "/home/test/.loop/image-versions.json", mock.Anything, os.FileMode(0o644)).Return(nil)
-
-	v := ImageVersions{
-		LoopVersion:   "5.0.0",
-		ClaudeVersion: "6.0.0",
-		BuiltAt:       time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC),
-	}
-	m.SaveVersions(v)
-
-	got := m.Versions()
-	require.Equal(s.T(), "5.0.0", got.LoopVersion)
-	require.Equal(s.T(), "6.0.0", got.ClaudeVersion)
-
-	s.sys.AssertCalled(s.T(), "WriteFile", "/home/test/.loop/image-versions.json", mock.Anything, os.FileMode(0o644))
-}
-
-// --- versionsFilePath ---
-
-func (s *LifecycleSuite) TestVersionsFilePath_Success() {
-	s.sys.On("UserHomeDir").Return("/home/test", nil)
-
-	m := &ImageLifecycleManager{sys: s.sys}
-	path := m.versionsFilePath()
-
-	require.Equal(s.T(), "/home/test/.loop/image-versions.json", path)
-}
-
-func (s *LifecycleSuite) TestVersionsFilePath_HomeDirError() {
-	s.sys.On("UserHomeDir").Return("", errors.New("no home"))
-
-	m := &ImageLifecycleManager{sys: s.sys}
-	path := m.versionsFilePath()
-
-	require.Empty(s.T(), path)
-}
-
-// --- Rebuild integration test ---
-
-func (s *LifecycleSuite) TestRebuild_SavesVersionsFile() {
-	m := s.newManager(func() string { return "" })
-
-	s.client.On("RemoveImageAndContainers", mock.Anything, s.imageName).Return(nil)
-	s.client.On("ImageBuild", mock.Anything, s.containerDir, s.imageName).Return(nil)
-	s.client.On("ImageInspectLabels", mock.Anything, s.imageName).Return(map[string]string{
-		"loop.version":        "2.0.0",
-		"loop.claude_version": "3.0.0",
-	}, nil)
-	s.broadcaster.On("BroadcastImageBuildStatus", mock.Anything).Return()
-
-	var writtenData []byte
-	s.sys.On("WriteFile", "/home/test/.loop/image-versions.json", mock.Anything, os.FileMode(0o644)).
-		Run(func(args mock.Arguments) {
-			writtenData = args.Get(1).([]byte)
-		}).Return(nil)
-
-	m.doRebuild(context.Background())
-
-	require.NotEmpty(s.T(), writtenData)
-	var saved ImageVersions
-	require.NoError(s.T(), json.Unmarshal(writtenData, &saved))
-	require.Equal(s.T(), "2.0.0", saved.LoopVersion)
-	require.Equal(s.T(), "3.0.0", saved.ClaudeVersion)
-	require.False(s.T(), saved.BuiltAt.IsZero())
-}
-
-// slogDiscard returns a discard slog.Logger for use in unit-level tests
-// that construct ImageLifecycleManager directly (without NewImageLifecycleManager).
-func slogDiscard() *slog.Logger {
-	return slog.New(slog.NewTextHandler(io.Discard, nil))
 }

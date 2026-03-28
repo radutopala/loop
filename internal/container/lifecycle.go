@@ -2,12 +2,10 @@ package container
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
@@ -84,8 +82,6 @@ func NewImageLifecycleManager(
 		latestClaudeVersion: latestClaudeVersion,
 		status:              ImageBuildStatus{State: "idle"},
 	}
-	// Load saved versions if available.
-	m.versions = m.loadVersions()
 	return m
 }
 
@@ -96,19 +92,16 @@ func (m *ImageLifecycleManager) Status() ImageBuildStatus {
 	return m.status
 }
 
-// Versions returns the version info for the current image.
-// Falls back to inspecting Docker image labels if the versions file is empty.
+// Versions returns the version info for the current image by reading Docker labels.
 func (m *ImageLifecycleManager) Versions() ImageVersions {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if m.versions.LoopVersion == "" && m.versions.ClaudeVersion == "" {
-		if labels, err := m.client.ImageInspectLabels(context.Background(), m.imageName); err == nil && labels != nil {
-			m.versions = ImageVersions{
-				LoopVersion:   labels["loop.version"],
-				ClaudeVersion: labels["loop.claude_version"],
-			}
+	if labels, err := m.client.ImageInspectLabels(context.Background(), m.imageName); err == nil && labels != nil {
+		return ImageVersions{
+			LoopVersion:   labels["loop.version"],
+			ClaudeVersion: labels["loop.claude_version"],
 		}
 	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
 	return m.versions
 }
 
@@ -168,7 +161,6 @@ func (m *ImageLifecycleManager) doRebuild(ctx context.Context) {
 	m.status = ImageBuildStatus{State: "completed"}
 	m.mu.Unlock()
 
-	m.saveVersions(v)
 	m.broadcastStatus()
 	m.logger.Info("image lifecycle: build completed", "loop_version", v.LoopVersion, "claude_version", v.ClaudeVersion)
 }
@@ -241,50 +233,4 @@ func (m *ImageLifecycleManager) broadcastStatus() {
 		Phase: s.Phase,
 		Error: s.Error,
 	})
-}
-
-const versionsFileName = "image-versions.json"
-
-func (m *ImageLifecycleManager) versionsFilePath() string {
-	home, err := m.sys.UserHomeDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(home, ".loop", versionsFileName)
-}
-
-func (m *ImageLifecycleManager) loadVersions() ImageVersions {
-	p := m.versionsFilePath()
-	if p == "" {
-		return ImageVersions{}
-	}
-	data, err := m.sys.ReadFile(p)
-	if err != nil {
-		return ImageVersions{}
-	}
-	var v ImageVersions
-	if json.Unmarshal(data, &v) != nil {
-		return ImageVersions{}
-	}
-	return v
-}
-
-func (m *ImageLifecycleManager) saveVersions(v ImageVersions) {
-	p := m.versionsFilePath()
-	if p == "" {
-		return
-	}
-	data, _ := json.MarshalIndent(v, "", "  ")
-	if err := m.sys.WriteFile(p, data, 0o644); err != nil {
-		m.logger.Warn("image lifecycle: failed to save versions", "error", err)
-	}
-}
-
-// SaveVersions persists the given version info to the versions file.
-// Used by defaultEnsureImage after a successful initial build.
-func (m *ImageLifecycleManager) SaveVersions(v ImageVersions) {
-	m.mu.Lock()
-	m.versions = v
-	m.mu.Unlock()
-	m.saveVersions(v)
 }

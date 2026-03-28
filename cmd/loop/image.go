@@ -2,14 +2,10 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"path/filepath"
-	"time"
 
 	"github.com/spf13/cobra"
-
-	"github.com/radutopala/loop/internal/container"
 )
 
 func (a *app) newImageRebuildCmd() *cobra.Command {
@@ -41,23 +37,18 @@ func (a *app) newImageRebuildCmd() *cobra.Command {
 				return fmt.Errorf("building image: %w", err)
 			}
 
-			// Read and save version info from labels.
-			v := container.ImageVersions{LoopVersion: a.version, BuiltAt: time.Now()}
+			// Read version info from labels.
+			loopV, claudeV := a.version, "unknown"
 			if labels, labelErr := client.ImageInspectLabels(context.Background(), cfg.ContainerImage); labelErr == nil && labels != nil {
 				if lv := labels["loop.version"]; lv != "" {
-					v.LoopVersion = lv
+					loopV = lv
 				}
-				v.ClaudeVersion = labels["loop.claude_version"]
+				if cv := labels["loop.claude_version"]; cv != "" {
+					claudeV = cv
+				}
 			}
 
-			lifecycleMgr := container.NewImageLifecycleManager(
-				client, nil, a.sys, nil,
-				containerDir, cfg.ContainerImage, a.version,
-				client.LatestClaudeVersion,
-			)
-			lifecycleMgr.SaveVersions(v)
-
-			fmt.Printf("Done. loop=%s claude=%s\n", v.LoopVersion, v.ClaudeVersion)
+			fmt.Printf("Done. loop=%s claude=%s\n", loopV, claudeV)
 			return nil
 		},
 	}
@@ -100,19 +91,6 @@ func (a *app) newImageStatusCmd() *cobra.Command {
 				}
 				if v := labels["loop.claude_version"]; v != "" {
 					fmt.Printf("  Claude version: %s\n", v)
-				}
-			}
-
-			// Also read versions file for built_at timestamp.
-			home, homeErr := a.sys.UserHomeDir()
-			if homeErr == nil {
-				p := filepath.Join(home, ".loop", "image-versions.json")
-				data, readErr := a.sys.ReadFile(p)
-				if readErr == nil {
-					var v container.ImageVersions
-					if json.Unmarshal(data, &v) == nil && !v.BuiltAt.IsZero() {
-						fmt.Printf("  Built at:       %s\n", v.BuiltAt.Format(time.RFC3339))
-					}
 				}
 			}
 

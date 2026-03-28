@@ -1,11 +1,8 @@
 package main
 
 import (
-	"encoding/json"
 	"errors"
-	"os"
 	"path/filepath"
-	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -59,16 +56,6 @@ func (s *MainSuite) TestImageRebuildHappyPath() {
 	dc.AssertCalled(s.T(), "RemoveImageAndContainers", mock.Anything, cfg.ContainerImage)
 	dc.AssertCalled(s.T(), "ImageBuild", mock.Anything, containerDir, cfg.ContainerImage)
 	dc.AssertCalled(s.T(), "ImageInspectLabels", mock.Anything, cfg.ContainerImage)
-
-	// Verify versions file was written.
-	versionFile := filepath.Join(tmpDir, ".loop", "image-versions.json")
-	data, readErr := os.ReadFile(versionFile)
-	if readErr == nil {
-		var v container.ImageVersions
-		require.NoError(s.T(), json.Unmarshal(data, &v))
-		require.Equal(s.T(), "1.2.3", v.LoopVersion)
-		require.Equal(s.T(), "4.0.0", v.ClaudeVersion)
-	}
 }
 
 func (s *MainSuite) TestImageRebuildConfigLoadError() {
@@ -179,17 +166,6 @@ func (s *MainSuite) TestImageStatusImageFoundWithLabels() {
 		"loop.version":        "1.2.3",
 		"loop.claude_version": "4.0.0",
 	}, nil)
-
-	// Write a versions file so the built_at path is exercised.
-	loopDir := filepath.Join(tmpDir, ".loop")
-	require.NoError(s.T(), os.MkdirAll(loopDir, 0o755))
-	builtAt := time.Date(2025, 1, 15, 10, 30, 0, 0, time.UTC)
-	versionsData, _ := json.Marshal(container.ImageVersions{
-		LoopVersion:   "1.2.3",
-		ClaudeVersion: "4.0.0",
-		BuiltAt:       builtAt,
-	})
-	require.NoError(s.T(), os.WriteFile(filepath.Join(loopDir, "image-versions.json"), versionsData, 0o644))
 
 	sys := newPassthroughMock()
 	sys.On("UserHomeDir").Unset()
