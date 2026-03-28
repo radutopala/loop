@@ -5,19 +5,22 @@ import (
 	"net/http"
 
 	"github.com/radutopala/loop/internal/container"
+	"github.com/radutopala/loop/internal/events"
 )
 
 // ImageManager defines the interface for image lifecycle operations.
 type ImageManager interface {
 	Status() container.ImageBuildStatus
 	Versions() container.ImageVersions
+	UpdateAvailable() *events.ImageUpdateAvailableData
 	RemoveImage(ctx context.Context) error
 	Rebuild(ctx context.Context) error
 }
 
 type imageStatusResponse struct {
-	Status   container.ImageBuildStatus `json:"status"`
-	Versions container.ImageVersions    `json:"versions"`
+	Status          container.ImageBuildStatus       `json:"status"`
+	Versions        container.ImageVersions          `json:"versions"`
+	UpdateAvailable *events.ImageUpdateAvailableData `json:"update_available,omitempty"`
 }
 
 func (s *Server) handleImageStatus(w http.ResponseWriter, _ *http.Request) {
@@ -26,8 +29,9 @@ func (s *Server) handleImageStatus(w http.ResponseWriter, _ *http.Request) {
 	}
 
 	resp := imageStatusResponse{
-		Status:   s.imageManager.Status(),
-		Versions: s.imageManager.Versions(),
+		Status:          s.imageManager.Status(),
+		Versions:        s.imageManager.Versions(),
+		UpdateAvailable: s.imageManager.UpdateAvailable(),
 	}
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }

@@ -177,6 +177,7 @@ export interface ImageStatusResponse {
     claude_version: string;
     built_at: string;
   };
+  update_available?: ImageUpdateAvailableData;
 }
 
 export interface AppSettings {

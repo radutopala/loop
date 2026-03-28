@@ -101,7 +101,7 @@ func (a *app) defaultEnsureImage(ctx context.Context, client container.DockerCli
 		return fmt.Errorf("listing images: %w", err)
 	}
 	needsBuild := len(ids) == 0
-	if !needsBuild && a.version != "" && a.version != "dev" && !strings.Contains(a.version, "-g") {
+	if !needsBuild && a.version != "" && a.version != "dev" && !strings.Contains(a.version, "-g") && !strings.Contains(a.version, "-dirty") {
 		if labels, err := client.ImageInspectLabels(ctx, cfg.ContainerImage); err == nil && labels != nil {
 			if imgVersion := labels["loop.version"]; imgVersion != "" && imgVersion != a.version {
 				needsBuild = true
