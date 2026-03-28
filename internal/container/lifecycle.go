@@ -95,10 +95,14 @@ func (m *ImageLifecycleManager) Status() ImageBuildStatus {
 // Versions returns the version info for the current image by reading Docker labels.
 func (m *ImageLifecycleManager) Versions() ImageVersions {
 	if labels, err := m.client.ImageInspectLabels(context.Background(), m.imageName); err == nil && labels != nil {
-		return ImageVersions{
+		v := ImageVersions{
 			LoopVersion:   labels["loop.version"],
 			ClaudeVersion: labels["loop.claude_version"],
 		}
+		if t, err := time.Parse(time.RFC3339, labels["loop.built_at"]); err == nil {
+			v.BuiltAt = t
+		}
+		return v
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()

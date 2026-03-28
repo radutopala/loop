@@ -373,9 +373,12 @@ func (c *Client) defaultLatestClaudeVersion() string {
 func (c *Client) defaultDockerBuildCmd(ctx context.Context, contextDir, tag string) ([]byte, error) {
 	claudeVersion := "CLAUDE_VERSION=" + c.latestClaudeVersion()
 	args := []string{"build", "--build-arg", claudeVersion}
-	if c.loopVersion != "" && c.loopVersion != "dev" {
+	if c.loopVersion != "" && c.loopVersion != "dev" && !strings.Contains(c.loopVersion, "-g") {
 		args = append(args, "--build-arg", "LOOP_VERSION="+c.loopVersion)
+	} else {
+		args = append(args, "--build-arg", "LOOP_VERSION=main")
 	}
+	args = append(args, "--label", "loop.built_at="+time.Now().UTC().Format(time.RFC3339))
 	if gitconfigPath := c.gitconfigSecretPath(); gitconfigPath != "" {
 		args = append(args, "--secret", "id=gitconfig,src="+gitconfigPath)
 	}

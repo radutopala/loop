@@ -9,7 +9,7 @@ RUN apk add --no-cache bash ca-certificates curl git make nodejs npm docker-cli 
 ENV USE_BUILTIN_RIPGREP=0
 ARG LOOP_VERSION=main
 RUN ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/amd64/') && \
-    if [ "$LOOP_VERSION" != "latest" ]; then \
+    if [ "$LOOP_VERSION" != "main" ]; then \
     TAG="v${LOOP_VERSION#v}"; \
     curl -fsSL -o /tmp/loop.tar.gz "https://github.com/radutopala/loop/releases/download/${TAG}/loop_${LOOP_VERSION#v}_linux_${ARCH}.tar.gz" && \
     tar -xzf /tmp/loop.tar.gz -C /usr/local/bin loop && rm /tmp/loop.tar.gz; \

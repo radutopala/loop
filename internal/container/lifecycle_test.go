@@ -108,6 +108,21 @@ func (s *LifecycleSuite) TestStatus_ReturnsCurrentState() {
 
 // --- Versions ---
 
+func (s *LifecycleSuite) TestVersions_ReadsFromLabelsWithBuiltAt() {
+	m := s.newManager(func() string { return "" })
+
+	s.client.On("ImageInspectLabels", mock.Anything, s.imageName).Return(map[string]string{
+		"loop.version":        "3.0.0",
+		"loop.claude_version": "5.0.0",
+		"loop.built_at":       "2026-03-28T10:00:00Z",
+	}, nil)
+
+	v := m.Versions()
+	require.Equal(s.T(), "3.0.0", v.LoopVersion)
+	require.Equal(s.T(), "5.0.0", v.ClaudeVersion)
+	require.Equal(s.T(), 2026, v.BuiltAt.Year())
+}
+
 func (s *LifecycleSuite) TestVersions_ReadsFromLabels() {
 	m := s.newManager(func() string { return "" })
 
