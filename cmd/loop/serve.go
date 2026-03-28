@@ -50,12 +50,15 @@ func (a *app) ensureImageAsync(ctx context.Context, client container.DockerClien
 }
 
 func (a *app) ensureImageWithBroadcast(ctx context.Context, client container.DockerClient, cfg *config.Config, hub *api.EventsHub, mgr *container.ImageLifecycleManager, logger *slog.Logger) {
+	mgr.SetStatus(container.ImageBuildStatus{State: "building", Phase: "checking"})
 	hub.BroadcastImageBuildStatus(events.ImageBuildStatusData{State: "building", Phase: "checking"})
 	logger.Info("ensuring agent image", "image", cfg.ContainerImage)
 	if err := a.ensureImage(ctx, client, cfg); err != nil {
 		logger.Error("ensuring agent image failed", "error", err)
+		mgr.SetStatus(container.ImageBuildStatus{State: "failed", Error: err.Error()})
 		hub.BroadcastImageBuildStatus(events.ImageBuildStatusData{State: "failed", Error: err.Error()})
 	} else {
+		mgr.SetStatus(container.ImageBuildStatus{State: "completed"})
 		hub.BroadcastImageBuildStatus(events.ImageBuildStatusData{State: "completed"})
 		logger.Info("agent image ready", "image", cfg.ContainerImage)
 	}

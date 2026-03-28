@@ -92,6 +92,14 @@ func (m *ImageLifecycleManager) Status() ImageBuildStatus {
 	return m.status
 }
 
+// SetStatus updates the build status. Used by the startup image build
+// to keep the API status endpoint in sync with WebSocket events.
+func (m *ImageLifecycleManager) SetStatus(s ImageBuildStatus) {
+	m.mu.Lock()
+	m.status = s
+	m.mu.Unlock()
+}
+
 // Versions returns the version info for the current image by reading Docker labels.
 func (m *ImageLifecycleManager) Versions() ImageVersions {
 	if labels, err := m.client.ImageInspectLabels(context.Background(), m.imageName); err == nil && labels != nil {
