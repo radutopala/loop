@@ -1,4 +1,4 @@
-import type { PanelType } from "./types";
+import type { PanelType } from "../types/panels";
 import { useTheme } from "../ThemeContext";
 
 const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
@@ -11,6 +11,7 @@ const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "docker-browser", label: "Docker Browser" },
   { panel: "host-browser", label: "Host Browser" },
   { panel: "sessions", label: "Sessions" },
+  { panel: "playground", label: "Playground" },
 ];
 
 const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
@@ -71,6 +72,11 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
       <circle cx="12" cy="12" r="10" />
     </svg>
   ),
+  playground: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <polygon points="5 3 19 12 5 21 5 3" />
+    </svg>
+  ),
 };
 
 const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
@@ -83,6 +89,7 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   "docker-browser": "Browser in Docker container",
   "host-browser": "Browser on host machine",
   sessions: "Browse and resume Claude sessions",
+  playground: "Live interactive code sandbox",
 };
 
 /** Centered picker for when layout is empty (no tree). */

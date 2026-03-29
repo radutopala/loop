@@ -89,6 +89,14 @@ func noContentResponse(status int) *http.Response {
 	}
 }
 
+// stringResponse returns a response with the given status and body string.
+func stringResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Body:       io.NopCloser(bytes.NewReader([]byte(body))),
+	}
+}
+
 func (s *MCPServerSuite) TestNew() {
 	require.NotNil(s.T(), s.srv)
 	require.Equal(s.T(), "test-channel", s.srv.channelID)
@@ -105,7 +113,7 @@ func (s *MCPServerSuite) TestMCPServer() {
 func (s *MCPServerSuite) TestListTools() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 12)
+	require.Len(s.T(), res.Tools, 14) // 12 base + 2 playground
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -123,6 +131,8 @@ func (s *MCPServerSuite) TestListTools() {
 	require.True(s.T(), names["search_channels"])
 	require.True(s.T(), names["send_message"])
 	require.True(s.T(), names["get_readme"])
+	require.True(s.T(), names["playground"])
+	require.True(s.T(), names["playground_file"])
 }
 
 // --- schedule_task ---
@@ -953,7 +963,7 @@ func (s *MCPMemorySuite) callTool(name string, args map[string]any) (string, boo
 func (s *MCPMemorySuite) TestListToolsIncludesMemory() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 14) // 12 base + 2 memory
+	require.Len(s.T(), res.Tools, 16) // 12 base + 2 memory + 2 playground
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -1149,7 +1159,7 @@ func (s *MCPMemoryChannelIDSuite) TestMemoryEnabledWithEmptyDirPath() {
 func (s *MCPMemoryChannelIDSuite) TestListToolsIncludesMemory() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 14)
+	require.Len(s.T(), res.Tools, 16)
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {

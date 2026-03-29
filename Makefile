@@ -51,9 +51,9 @@ run: build ## Build and run the bot
 
 restart: install docker-build ## Install, stop and start the daemon
 	@echo "Claude CLI version: $(CLAUDE_VERSION)"
-	loop daemon:stop || true
+	$(shell go env GOPATH)/bin/loop daemon:stop || true
 	#docker volume rm -f loop-npmcache loop-uvcache loop-cache loop-gocache
-	loop daemon:start
+	$(shell go env GOPATH)/bin/loop daemon:start
 
 docker-shell: ## Start a bash shell in the agent container (requires make docker-snapshot first)
 	docker run --rm -it $$(cat ~/.loop/snapshot-run) loop-agent:snapshot bash

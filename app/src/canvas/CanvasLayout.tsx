@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CanvasNode, CanvasTile as CanvasTileType } from "./types";
-import type { LeafNode, PanelType } from "../splitPane/types";
-import { SINGLETON_PANELS, EXCLUSIVE_PANELS } from "../splitPane/types";
+import type { LeafNode, PanelType } from "../types/panels";
+import { SINGLETON_PANELS, EXCLUSIVE_PANELS } from "../types/panels";
 import { CanvasTile } from "./CanvasTile";
 import { EmptyLayoutPicker } from "../splitPane/AddPanelButton";
 import { useTheme } from "../ThemeContext";
@@ -379,6 +379,7 @@ const PANEL_COLORS: Record<PanelType, string> = {
   "docker-browser": "#fb923c",
   "host-browser": "#38bdf8",
   sessions: "#c084fc",
+  playground: "#10b981",
 };
 
 function CanvasMinimap({ tiles, viewport: vp, containerRef, onPan, onZoom }: {

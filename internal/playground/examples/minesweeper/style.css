@@ -1,0 +1,17 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a2e; display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; font-family: "SF Mono", "Fira Code", monospace; color: #ccc; }
+#header { display: flex; align-items: center; gap: 20px; padding: 8px 0; font-size: 13px; font-weight: bold; color: #8888cc; }
+#reset { background: none; border: 1px solid #8888cc; border-radius: 4px; color: #8888cc; padding: 4px 12px; cursor: pointer; font-family: inherit; font-size: 12px; font-weight: bold; }
+#reset:hover { background: rgba(136,136,204,0.15); }
+#board { display: grid; gap: 1px; background: #2a2a4a; border: 2px solid #2a2a4a; border-radius: 4px; user-select: none; }
+.cell { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; font-size: 13px; font-weight: bold; cursor: pointer; border-radius: 2px; }
+.cell.hidden { background: #16213e; }
+.cell.hidden:hover { background: #1a2a4e; }
+.cell.revealed { background: #0d0d2b; }
+.cell.mine { background: #4a1020; }
+.cell.flagged::after { content: "F"; color: #ff3860; }
+.n1 { color: #00d4ff; } .n2 { color: #06d6a0; } .n3 { color: #ff3860; }
+.n4 { color: #c77dff; } .n5 { color: #ff6b35; } .n6 { color: #00d4ff; }
+.n7 { color: #fff; } .n8 { color: #888; }
+#overlay { position: absolute; top: 0; left: 0; width: 100%; height: 100%; display: none; align-items: center; justify-content: center; pointer-events: none; }
+#msg { background: rgba(10,10,26,0.92); color: #8888ff; padding: 16px 32px; border-radius: 8px; font-size: 18px; font-weight: bold; border: 2px solid #8888ff; text-align: center; line-height: 1.6; }

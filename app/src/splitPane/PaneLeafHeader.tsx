@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { PanelType, SplitDirection, DropPosition } from "./types";
-import { SINGLETON_PANELS, EXCLUSIVE_PANELS } from "./types";
+import type { SplitDirection, DropPosition } from "./types";
+import type { PanelType } from "../types/panels";
+import { SINGLETON_PANELS, EXCLUSIVE_PANELS } from "../types/panels";
 import { emitLayoutDragStart, emitLayoutDragEnd, DRAG_MIME } from "./DropZoneOverlay";
 import type { ColorPalette } from "../theme";
 import { useTheme } from "../ThemeContext";
@@ -16,6 +17,7 @@ const PANEL_LABELS: Record<PanelType, string> = {
   "docker-browser": "Docker Browser",
   "host-browser": "Host Browser",
   sessions: "Sessions",
+  playground: "Playground",
 };
 
 const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
@@ -28,6 +30,7 @@ const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "docker-browser", label: "Docker Browser" },
   { panel: "host-browser", label: "Host Browser" },
   { panel: "sessions", label: "Sessions" },
+  { panel: "playground", label: "Playground" },
 ];
 
 function buildBtnStyle(colors: ColorPalette): React.CSSProperties {

@@ -156,6 +156,16 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 		}, s.handleIndexMemory)
 	}
 
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "playground",
+		Description: "Manage playgrounds — live interactive sandboxes for HTML/CSS/JS that render in the user's Playground panel. Actions: create (new playground with html + title + description), update (modify html/title/description), delete (remove entirely). After creating, use playground_file to add script.js, style.css, and other files. JS runs as ES module — use import for npm packages via esm.sh CDN.",
+	}, s.handlePlayground)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "playground_file",
+		Description: "Manage files within a playground. Actions: create/update (write a file), read (get content), delete (remove a file), list (show all files). Use for script.js, style.css, importmap.json, lib/utils.js, assets, etc. Files are served at relative URLs — use import './lib/utils.js' between JS modules.",
+	}, s.handlePlaygroundFile)
+
 	// Register agent tools after mcpServer is created.
 	if s.agentID != "" {
 		s.registerAgentTools()

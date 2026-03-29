@@ -1,5 +1,6 @@
 import { Fragment, useCallback, useRef } from "react";
-import type { PaneNode, LeafNode, PanelType, SplitDirection, DropPosition } from "./types";
+import type { PaneNode, LeafNode, SplitDirection, DropPosition } from "./types";
+import type { PanelType } from "../types/panels";
 import { collectPanelTypes } from "./treeOps";
 import { PaneLeafHeader } from "./PaneLeafHeader";
 import { DropZoneOverlay } from "./DropZoneOverlay";
@@ -86,10 +87,13 @@ function PaneTree({ node, path, usedSingletons, renderLeaf, agentInfoMap, onUpda
         document.removeEventListener("mouseup", onMouseUp);
         document.body.style.cursor = "";
         document.body.style.userSelect = "";
+        document.querySelectorAll("iframe").forEach((f) => ((f as HTMLElement).style.pointerEvents = ""));
       };
 
       document.body.style.cursor = direction === "vertical" ? "row-resize" : "col-resize";
       document.body.style.userSelect = "none";
+      // Prevent iframes from capturing mouse events during divider drag.
+      document.querySelectorAll("iframe").forEach((f) => ((f as HTMLElement).style.pointerEvents = "none"));
       document.addEventListener("mousemove", onMouseMove);
       document.addEventListener("mouseup", onMouseUp);
     },

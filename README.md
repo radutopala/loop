@@ -886,6 +886,7 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 - **Deep links** — `loop://channel/<id>` opens the app directly to a channel
 - **Branch picker** — switch branches from the header bar, create worktree threads, import existing worktrees. Threads show branches only; parent channels show branches + worktrees in a 50/50 split. Double-click a branch name to copy it
 - **Browser** — live Chrome screencast via WebSocket, click/type/navigate directly in the browser pane. Two panel types: Docker Browser (headless container) and Host Browser (local Chrome via CDP), mutually exclusive per layout
+- **Playground** — live interactive sandbox where agents generate HTML/CSS/JS and it renders in a sandboxed iframe. Multiple named playgrounds stored globally in `~/.loop/playground/`, shareable across channels. Multi-instance panels, hot-reloads on updates, console capture, import maps, multi-file support with relative imports. Agents use `playground` + `playground_file` MCP tools
 - **Settings** — schema-driven config form with typed controls (toggles, dropdowns, number inputs, password fields, arrays, key-value editors) plus a raw JSON editor, with Form/JSON toggle and unsaved changes confirmation
 - **Plan mode** — run agents in read-only preview mode (`--permission-mode plan`)
 - **Agent activity** — see model info, tool use, and completion summaries in the chat view
@@ -945,6 +946,14 @@ make app-install
 | `POST` | `/api/memory/search` | Semantic search across memory files |
 | `POST` | `/api/memory/index` | Re-index memory files |
 | `GET` | `/api/readme` | Get the Loop README documentation |
+| `PUT` | `/api/playground?name=...` | Create/update a playground (html, title, description) |
+| `GET` | `/api/playground?name=...` | Get playground metadata |
+| `DELETE` | `/api/playground?name=...` | Delete entire playground |
+| `GET` | `/api/playground/items` | List all playgrounds |
+| `PUT` | `/api/playground/file?name=...&path=...` | Write a file |
+| `GET` | `/api/playground/file?name=...&path=...` | Read a file |
+| `DELETE` | `/api/playground/file?name=...&path=...` | Delete a file |
+| `GET` | `/api/playground/files?name=...` | List files in a playground |
 | `POST` | `/api/browser/action` | Browser automation (navigate, tabs, screenshot, input, etc.) |
 | `POST` | `/api/browser/mode` | Switch browser mode (docker/host) |
 | `GET` | `/api/config/schema` | JSON Schema for all config fields |
@@ -974,6 +983,8 @@ make app-install
 | `search_memory` | Semantic search across memory files (ranked by similarity) |
 | `index_memory` | Force re-index all memory files |
 | `get_readme` | Get the full Loop README documentation |
+| `playground` | Manage playgrounds (create/update/delete) |
+| `playground_file` | Manage files within a playground (create/update/read/delete/list) |
 | | **Browser Automation** |
 | `navigate` | Navigate the browser to a URL |
 | `read_page` | Get the accessibility tree of interactive elements |

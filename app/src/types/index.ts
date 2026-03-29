@@ -1,3 +1,6 @@
+export type { PanelType } from "./panels";
+export { SINGLETON_PANELS, EXCLUSIVE_PANELS } from "./panels";
+
 export interface Channel {
   id: string;
   name: string;

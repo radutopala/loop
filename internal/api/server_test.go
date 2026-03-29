@@ -226,6 +226,16 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("PUT /api/config", s.srv.handleSaveConfig)
 	s.mux.HandleFunc("GET /api/config/project", s.srv.handleGetProjectConfig)
 	s.mux.HandleFunc("PUT /api/config/project", s.srv.handleSaveProjectConfig)
+	s.mux.HandleFunc("PUT /api/playground", s.srv.handlePlaygroundUpdate)
+	s.mux.HandleFunc("GET /api/playground", s.srv.handlePlaygroundGet)
+	s.mux.HandleFunc("DELETE /api/playground", s.srv.handlePlaygroundDelete)
+	s.mux.HandleFunc("GET /api/playground/items", s.srv.handlePlaygroundList)
+	s.mux.HandleFunc("PUT /api/playground/file", s.srv.handlePlaygroundFileWrite)
+	s.mux.HandleFunc("GET /api/playground/file", s.srv.handlePlaygroundFileRead)
+	s.mux.HandleFunc("DELETE /api/playground/file", s.srv.handlePlaygroundFileDelete)
+	s.mux.HandleFunc("GET /api/playground/files", s.srv.handlePlaygroundFileList)
+	s.mux.HandleFunc("GET /api/playground/serve/{name}", s.srv.handlePlaygroundServe)
+	s.mux.HandleFunc("GET /api/playground/serve/{name}/{path...}", s.srv.handlePlaygroundServeFile)
 	s.mux.HandleFunc("GET /api/health", handleHealth)
 	s.mux.HandleFunc("GET /api/ws/terminal", s.srv.handleTerminalWS)
 	s.mux.HandleFunc("GET /api/ws", s.srv.handleEventsWS)
@@ -260,6 +270,23 @@ func (s *ServerSuite) TestNewServer() {
 	require.NotNil(s.T(), s.srv.store)
 	require.NotNil(s.T(), s.srv.messages)
 	require.NotNil(s.T(), s.srv.logger)
+}
+
+func (s *ServerSuite) TestSetImageManager() {
+	srv := nilServer()
+	require.Nil(s.T(), srv.imageManager)
+	srv.SetImageManager(nil) // just exercises the setter
+}
+
+func (s *ServerSuite) TestExtractTextBlocksInvalidJSON() {
+	result := extractTextBlocks(json.RawMessage(`not json`))
+	require.Equal(s.T(), "", result)
+}
+
+func (s *ServerSuite) TestExtractTextBlocksMultipleTexts() {
+	raw := json.RawMessage(`[{"type":"text","text":"hello"},{"type":"tool_use","text":"skip"},{"type":"text","text":"world"}]`)
+	result := extractTextBlocks(raw)
+	require.Equal(s.T(), "hello world", result)
 }
 
 func (s *ServerSuite) TestHealth() {
@@ -3216,6 +3243,49 @@ func (s *ServerSuite) TestSessionListEntryInfoError() {
 	// Bad entry skipped, good entry included.
 	require.Len(s.T(), resp.Sessions, 1)
 	require.Equal(s.T(), "good", resp.Sessions[0].SessionID)
+}
+
+func (s *ServerSuite) TestSessionListWithRealJSONLFile() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
+		ChannelID: "ch-1",
+		DirPath:   "/Users/test/dev/myproject",
+		SessionID: "sess-1",
+	}, nil)
+
+	tmpDir := s.T().TempDir()
+	projectDir := filepath.Join(tmpDir, ".claude", "projects", "-Users-test-dev-myproject")
+	require.NoError(s.T(), os.MkdirAll(projectDir, 0o755))
+
+	// Write a real JSONL file so Open succeeds and readLastMessageText can parse it.
+	jsonl := `{"type":"assistant","message":{"content":[{"type":"text","text":"Hello world"}]}}` + "\n"
+	require.NoError(s.T(), os.WriteFile(filepath.Join(projectDir, "sess-abc.jsonl"), []byte(jsonl), 0o644))
+
+	sys := new(testutil.MockSystem)
+	s.srv.sys = sys
+	sys.On("UserHomeDir").Return(tmpDir, nil)
+
+	realEntries, _ := os.ReadDir(projectDir)
+	sys.On("ReadDir", projectDir).Return(realEntries, nil)
+	// Open the file now so the mock returns a real *os.File (exercises MockSystem.Open success path line 58).
+	jsonlPath := filepath.Join(projectDir, "sess-abc.jsonl")
+	realFile, err := os.Open(jsonlPath)
+	require.NoError(s.T(), err)
+	s.T().Cleanup(func() { realFile.Close() })
+	sys.On("Open", jsonlPath).Return(realFile, nil)
+	sys.On("Open", mock.Anything).Return(nil, os.ErrNotExist).Maybe()
+	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{}, nil).Maybe()
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-1/sessions", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+
+	var resp listSessionsResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(s.T(), resp.Sessions, 1)
+	require.Equal(s.T(), "sess-abc", resp.Sessions[0].SessionID)
+	require.Equal(s.T(), "Hello world", resp.Sessions[0].LastMessage)
 }
 
 func (s *ServerSuite) TestSessionListEmptyDir() {

@@ -76,6 +76,7 @@ interface SplitNode {
 | Docker Browser | `docker-browser` | `"docker-browser"` | Yes | Chrome browser inside the Docker container |
 | Host Browser | `host-browser` | `"host-browser"` | Yes | Chrome browser on the host machine via CDP |
 | Sessions | `sessions` | `"sessions"` | Yes | Browse and resume Claude sessions (channels only) |
+| Playground | `playground` | `"playground-N"` | No | Live interactive code sandbox (HTML/CSS/JS) |
 | Agent | `agent` | `"agent-N"` | No | Docker-isolated terminal session |
 | Shell | `shell` | `"shell-N"` | No | Local machine shell session |
 
@@ -83,7 +84,7 @@ interface SplitNode {
 
 **Channel-only panels**: The Sessions panel is only available for channels (not threads). The "Sessions" tab is hidden from the layout tab bar when viewing a thread.
 
-**Multi-instance panels** (agent, shell) can appear multiple times. Each instance gets a unique numbered ID (e.g., `agent-0`, `shell-1`) from a per-channel counter.
+**Multi-instance panels** (agent, shell, playground) can appear multiple times. Each instance gets a unique numbered ID (e.g., `agent-0`, `shell-1`, `playground-0`) from a per-channel counter.
 
 **Exclusive panels** are singleton panels that are mutually exclusive -- only one from each exclusive group can exist in a layout at a time. If one is present, the others in the same group are greyed out and disabled in the split menu.
 
@@ -246,6 +247,7 @@ Singleton panels always use their panel type as the ID (e.g., `"chat"`, `"editor
 The `canAddPanel()` function prevents adding duplicate singleton panels and mutually exclusive panels:
 
 ```typescript
+// In app/src/types/panels.ts
 const SINGLETON_PANELS: PanelType[] = ["chat", "editor", "memory", "diff", "docker-browser", "host-browser", "sessions"];
 const EXCLUSIVE_PANELS: PanelType[][] = [["docker-browser", "host-browser"]];
 

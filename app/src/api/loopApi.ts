@@ -505,3 +505,27 @@ export async function fetchMessages(
   if (!res.ok) throw new Error(`Failed to fetch messages: ${res.statusText}`);
   return res.json();
 }
+
+/** Fetch the current playground content by name. */
+export async function fetchPlayground(
+  name: string,
+): Promise<{ name: string; title?: string; html: string; description?: string } | null> {
+  const res = await fetch(`${apiUrl}/api/playground?name=${encodeURIComponent(name)}`);
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`Failed to fetch playground: ${res.statusText}`);
+  return res.json();
+}
+
+export interface PlaygroundItem {
+  name: string;
+  title?: string;
+  description?: string;
+}
+
+/** List all playground items with names and titles. */
+export async function fetchPlaygroundItems(): Promise<PlaygroundItem[]> {
+  const res = await fetch(`${apiUrl}/api/playground/items`);
+  if (!res.ok) throw new Error(`Failed to fetch playground items: ${res.statusText}`);
+  const data: { items: PlaygroundItem[] } = await res.json();
+  return data.items;
+}

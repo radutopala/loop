@@ -27,7 +27,7 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 
 ## Registered Tools
 
-### Always Available (12 tools)
+### Always Available (14 tools)
 
 #### Task Management
 
@@ -55,6 +55,13 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 | Tool | Description |
 |------|-------------|
 | `get_readme` | Get Loop README with setup instructions, configuration, commands, and architecture |
+
+#### Playground
+
+| Tool | Description |
+|------|-------------|
+| `playground` | Manage playgrounds (action: create/update/delete). Create sets up the entry HTML, title, and description. Use `playground_file` to add JS, CSS, and other files. |
+| `playground_file` | Manage files within a playground (action: create/update/read/delete/list). Write script.js, style.css, importmap.json, lib/utils.js, etc. Files served at relative URLs for ES module imports. |
 
 ### Agent Tools (when `--agent-id` set)
 

@@ -28,6 +28,7 @@ const (
 	EventAgentInstanceMetadata     = "agent_instance.metadata"
 	EventImageBuildStatus          = "image.build_status"
 	EventImageUpdateAvailable      = "image.update_available"
+	EventPlaygroundUpdate          = "playground.update"
 )
 
 // Event represents a server-sent event to WebSocket clients.

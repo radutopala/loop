@@ -304,6 +304,26 @@ A new channel or thread was created. Sent to the **parent** channel so subscribe
 
 ---
 
+### `playground.update`
+
+A named playground was updated (by agent via MCP tool or API). This event is broadcast globally (no channel scoping).
+
+**Payload schema:**
+```json
+{
+  "name": "snake-game",
+  "html": "<div id='app'>...</div>",
+  "css": "body { margin: 0; }",
+  "js": "console.log('hello')",
+  "import_map": "{\"imports\":{}}",
+  "description": "Added score counter"
+}
+```
+
+The frontend `PlaygroundPanel` listens for this event. If the event's `name` matches the active playground, the iframe hot-reloads. If it's a new name, the panel auto-switches to it.
+
+---
+
 ### `channel.deleted`
 
 A channel was deleted.

@@ -1,0 +1,9 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #1a1a2e; display: flex; align-items: center; justify-content: center; height: 100vh; font-family: "SF Mono", "Fira Code", monospace; }
+#app { display: flex; flex-direction: column; align-items: center; gap: 8px; }
+#header { display: flex; align-items: center; gap: 12px; color: #ccc; font-size: 13px; font-weight: bold; }
+#status { color: #ffd166; }
+button { background: none; border: 1px solid #444; border-radius: 4px; color: #888; padding: 4px 12px; cursor: pointer; font-family: inherit; font-size: 11px; }
+button:hover { background: rgba(255,255,255,0.05); }
+canvas { border-radius: 4px; cursor: pointer; }
+#moves { max-width: 480px; max-height: 60px; overflow-y: auto; font-size: 11px; color: #555; line-height: 1.6; text-align: center; }

@@ -12,6 +12,7 @@ import (
 
 	"github.com/radutopala/loop/internal/config"
 	containerimage "github.com/radutopala/loop/internal/container/image"
+	"github.com/radutopala/loop/internal/playground"
 )
 
 func (a *app) newOnboardGlobalCmd() *cobra.Command {
@@ -139,6 +140,12 @@ func (a *app) onboardGlobal(force bool, ownerID string) error {
 		return err
 	}
 
+	// Dump embedded playground examples
+	playgroundDir := filepath.Join(loopDir, "playground")
+	if err := a.dumpPlaygroundExamples(playgroundDir); err != nil {
+		return err
+	}
+
 	fmt.Printf("✓ Created config at %s\n", configPath)
 	fmt.Println("\nNext steps:")
 	fmt.Println("1. Edit config.json and add your platform credentials (Discord or Slack)")
@@ -170,6 +177,47 @@ func (a *app) dumpTemplates(dir string) error {
 		}
 		if err := a.sys.WriteFile(dst, data, 0644); err != nil {
 			return fmt.Errorf("writing template %s: %w", e.Name(), err)
+		}
+	}
+	return nil
+}
+
+// dumpPlaygroundExamples writes embedded example playgrounds to ~/.loop/playground/,
+// skipping directories that already exist (so user edits are preserved).
+func (a *app) dumpPlaygroundExamples(dir string) error {
+	if err := a.sys.MkdirAll(dir, 0755); err != nil {
+		return fmt.Errorf("creating playground directory: %w", err)
+	}
+	examples, err := fs.ReadDir(playground.Examples, "examples")
+	if err != nil {
+		return fmt.Errorf("reading embedded playground examples: %w", err)
+	}
+	for _, example := range examples {
+		if !example.IsDir() {
+			continue
+		}
+		exampleDir := filepath.Join(dir, example.Name())
+		if _, err := a.sys.Stat(exampleDir); err == nil {
+			continue // don't overwrite existing
+		}
+		if err := a.sys.MkdirAll(exampleDir, 0755); err != nil {
+			return fmt.Errorf("creating playground example %s: %w", example.Name(), err)
+		}
+		files, err := fs.ReadDir(playground.Examples, "examples/"+example.Name())
+		if err != nil {
+			return fmt.Errorf("reading playground example %s: %w", example.Name(), err)
+		}
+		for _, f := range files {
+			if f.IsDir() {
+				continue
+			}
+			data, err := playground.Examples.ReadFile("examples/" + example.Name() + "/" + f.Name())
+			if err != nil {
+				return fmt.Errorf("reading playground file %s/%s: %w", example.Name(), f.Name(), err)
+			}
+			if err := a.sys.WriteFile(filepath.Join(exampleDir, f.Name()), data, 0644); err != nil {
+				return fmt.Errorf("writing playground file %s/%s: %w", example.Name(), f.Name(), err)
+			}
 		}
 	}
 	return nil

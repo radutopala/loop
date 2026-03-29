@@ -1290,3 +1290,87 @@ Save project config for a channel.
 Creates the `.loop/` directory and config file if they don't exist.
 
 **Errors:** `400` if `channel_id` is missing or HJSON is invalid. `404` if channel not found.
+
+---
+
+## Playground
+
+The playground stores named HTML/CSS/JS items globally in `~/.loop/playground/{name}/` and broadcasts updates for live rendering in the desktop app's Playground panel.
+
+### `PUT /api/playground?name=...`
+
+Update a named playground. Stores files and broadcasts a `playground.update` event.
+
+**Query Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | Playground name (alphanumeric, hyphens, underscores, max 64 chars) |
+
+**Request:**
+```json
+{
+  "html": "<div id='app'></div>",
+  "css": "body { margin: 0; background: #111; }",
+  "js": "import confetti from 'canvas-confetti'; confetti();",
+  "import_map": "{\"imports\":{\"canvas-confetti\":\"https://esm.sh/canvas-confetti\"}}",
+  "description": "Added confetti effect"
+}
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `html` | string | no | HTML body content (no `<html>`/`<head>`/`<body>` tags) |
+| `css` | string | no | CSS styles |
+| `js` | string | no | JavaScript ES module code |
+| `import_map` | string | no | JSON import map for bare module specifiers |
+| `description` | string | no | Brief description (saved as README.md) |
+
+**Response:** `200 OK`
+
+**Errors:** `400` if name is invalid or missing. `500` on file write errors.
+
+### `GET /api/playground?name=...`
+
+Get a named playground's content.
+
+**Query Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | yes | Playground name |
+
+**Response (200):**
+```json
+{
+  "name": "snake-game",
+  "html": "<div id='app'></div>",
+  "css": "body { margin: 0; }",
+  "js": "console.log('hi')",
+  "import_map": "{\"imports\":{}}",
+  "description": "Initial setup"
+}
+```
+
+**Errors:** `400` if name is invalid. `404` if playground not found.
+
+### `GET /api/playground/export?name=...`
+
+Export a playground as a standalone HTML file with embedded CSS, JS, and import map.
+
+**Response (200):** `text/html` with `Content-Disposition: attachment; filename="playground-{name}.html"`.
+
+**Errors:** `400` if name is invalid.
+
+### `GET /api/playground/items`
+
+List all playground names.
+
+**Response (200):**
+```json
+{
+  "items": ["snake-game", "dashboard", "chart-demo"]
+}
+```
+
+Returns `{"items": []}` if no playgrounds exist.

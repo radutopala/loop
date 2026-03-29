@@ -1,5 +1,6 @@
-import type { PaneNode, LeafNode, SplitDirection, DropPosition, PanelType } from "./types";
-import { SINGLETON_PANELS, EXCLUSIVE_PANELS } from "./types";
+import type { PaneNode, LeafNode, SplitDirection, DropPosition } from "./types";
+import type { PanelType } from "../types/panels";
+import { SINGLETON_PANELS, EXCLUSIVE_PANELS } from "../types/panels";
 
 export function makeLeaf(id: string, panel: PanelType, flex = 1): LeafNode {
   return { type: "leaf", id, panel, flex };

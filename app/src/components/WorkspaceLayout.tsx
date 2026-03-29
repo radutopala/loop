@@ -1,7 +1,8 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { Channel } from "../types";
 import type { SessionStatus } from "../types";
-import type { PaneNode, LeafNode, PanelType, SplitDirection, DropPosition } from "../splitPane/types";
+import type { PaneNode, LeafNode, PanelType } from "../types/panels";
+import type { SplitDirection, DropPosition } from "../splitPane/types";
 import { makeLeaf, findLeafById, splitLeaf, removeLeaf, updateFlex, swapLeavesInTree, moveLeaf, leafCount, collectLeaves, canAddPanel, hasAgentLeaf, collectPanelTypes } from "../splitPane/treeOps";
 import { saveLayout, clearLayout, saveActiveLayout, saveLayoutType, deleteLayout, renameLayout, loadChannelLayouts, ensureDefaultLayouts, createDefaultLayouts, restoreDefaultLayouts, DEFAULT_LAYOUT_NAMES, DEFAULT_LAYOUT_TYPES } from "../layouts/persistence";
 import type { LayoutType } from "../layouts/persistence";
@@ -18,6 +19,7 @@ import { MemoryPanel } from "./MemoryPanel";
 import { DiffPanel } from "./DiffPanel";
 import { BrowserPanel } from "./BrowserPanel";
 import { SessionsPanel } from "./SessionsPanel";
+import { PlaygroundPanel } from "./PlaygroundPanel";
 import { killAgentContainer, fetchBranches, switchBranch, type BranchInfo } from "../api/loopApi";
 import { useChatState } from "../hooks/useChatState";
 import type { ActiveChatState, ChatEventListener } from "../hooks/useChatStateStore";
@@ -957,6 +959,13 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               key={`layout-sessions-${channelId}`}
               channelId={channelId}
               onStatusChange={onStatusChange}
+            />
+          );
+        case "playground":
+          return (
+            <PlaygroundPanel
+              key={`layout-playground-${channelId}`}
+              channelId={channelId}
             />
           );
         default:

@@ -894,6 +894,10 @@ func (r *DockerRunner) createAndStartContainer(
 	screenshotDir := filepath.Join(r.cfg.LoopDir, "screenshots")
 	binds = append(binds, screenshotDir+":"+screenshotDir+":ro")
 
+	// Bind-mount the playground directory so agents can read/write playground files.
+	playgroundDir := filepath.Join(r.cfg.LoopDir, "playground")
+	binds = append(binds, playgroundDir+":"+playgroundDir)
+
 	if len(chownPaths) > 0 {
 		env = append(env, "CHOWN_PATHS="+strings.Join(chownPaths, ":"))
 	}

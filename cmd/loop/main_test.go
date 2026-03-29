@@ -625,7 +625,7 @@ func (s *MainSuite) TestRunMCPWithInMemoryTransport() {
 
 	res, err := session.ListTools(context.Background(), nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 12)
+	require.Len(s.T(), res.Tools, 14) // 12 base + 2 playground
 }
 
 func (s *MainSuite) TestEnsureChannelSuccess() {
@@ -2268,6 +2268,22 @@ func (s *MainSuite) TestOnboardGlobalSuccess() {
 	tkAutoWorkerData, err := os.ReadFile(tkAutoWorkerPath)
 	require.NoError(s.T(), err)
 	require.Contains(s.T(), string(tkAutoWorkerData), "ticket dispatcher")
+
+	// Verify playground examples were written
+	playgroundDir := filepath.Join(tmpDir, ".loop", "playground")
+	pgInfo, err := os.Stat(playgroundDir)
+	require.NoError(s.T(), err)
+	require.True(s.T(), pgInfo.IsDir())
+
+	pongIndex := filepath.Join(playgroundDir, "pong", "index.html")
+	pongData, err := os.ReadFile(pongIndex)
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), pongData)
+
+	tetrisReadme := filepath.Join(playgroundDir, "tetris", "README.md")
+	tetrisData, err := os.ReadFile(tetrisReadme)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(tetrisData), "title:")
 }
 
 func (s *MainSuite) TestOnboardGlobalConfigAlreadyExists() {
@@ -2483,6 +2499,118 @@ func (s *MainSuite) TestOnboardGlobalTemplatesSkipIfExist() {
 	data, err = os.ReadFile(filepath.Join(templatesDir, "tk-auto-worker.md"))
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "custom worker", string(data))
+}
+
+func (s *MainSuite) TestDumpPlaygroundExamplesSuccess() {
+	dir := s.T().TempDir()
+	s.app.sys = newPassthroughMock()
+	err := s.app.dumpPlaygroundExamples(dir)
+	require.NoError(s.T(), err)
+
+	// Verify at least one example was written.
+	entries, err := os.ReadDir(dir)
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), entries)
+
+	// Verify pong has files.
+	pongHTML, err := os.ReadFile(filepath.Join(dir, "pong", "index.html"))
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), pongHTML)
+}
+
+func (s *MainSuite) TestDumpPlaygroundExamplesMkdirError() {
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("MkdirAll", mock.Anything, mock.Anything).Return(errors.New("mkdir error"))
+
+	err := s.app.dumpPlaygroundExamples("/tmp/nonexistent")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating playground directory")
+}
+
+func (s *MainSuite) TestDumpPlaygroundExamplesWriteError() {
+	dir := s.T().TempDir()
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	writeCall := sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
+	calls := 0
+	writeCall.RunFn = func(args mock.Arguments) {
+		calls++
+		if calls == 1 {
+			writeCall.ReturnArguments = mock.Arguments{errors.New("write error")}
+			return
+		}
+		writeCall.ReturnArguments = mock.Arguments{os.WriteFile(args.String(0), args.Get(1).([]byte), args.Get(2).(os.FileMode))}
+	}
+
+	err := s.app.dumpPlaygroundExamples(dir)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing playground file")
+}
+
+func (s *MainSuite) TestDumpPlaygroundExamplesExampleMkdirError() {
+	dir := s.T().TempDir()
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	mkdirCalls := 0
+	mkdirCall := sys.Override("MkdirAll", mock.Anything, mock.Anything).Maybe().Return(nil)
+	mkdirCall.RunFn = func(args mock.Arguments) {
+		mkdirCalls++
+		if mkdirCalls == 2 { // first is the playground dir itself, second is the first example
+			mkdirCall.ReturnArguments = mock.Arguments{errors.New("mkdir error")}
+			return
+		}
+		mkdirCall.ReturnArguments = mock.Arguments{os.MkdirAll(args.String(0), args.Get(1).(os.FileMode))}
+	}
+
+	err := s.app.dumpPlaygroundExamples(dir)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating playground example")
+}
+
+func (s *MainSuite) TestOnboardGlobalPlaygroundDumpError() {
+	tmpDir := s.T().TempDir()
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return(tmpDir, nil)
+
+	// Let all prior writes succeed, then fail MkdirAll for the playground example subdirs.
+	mkdirCalls := 0
+	mkdirCall := sys.Override("MkdirAll", mock.Anything, mock.Anything).Maybe().Return(nil)
+	mkdirCall.RunFn = func(args mock.Arguments) {
+		mkdirCalls++
+		path := args.String(0)
+		// The playground base dir is created first, then the first example subdir.
+		// Fail on the first example subdir (contains "/playground/" and a subdir name).
+		if mkdirCalls > 1 && filepath.Dir(path) == filepath.Join(tmpDir, ".loop", "playground") {
+			mkdirCall.ReturnArguments = mock.Arguments{errors.New("playground mkdir error")}
+			return
+		}
+		mkdirCall.ReturnArguments = mock.Arguments{os.MkdirAll(path, args.Get(1).(os.FileMode))}
+	}
+
+	err := s.app.onboardGlobal(false, "")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating playground example")
+}
+
+func (s *MainSuite) TestOnboardGlobalPlaygroundSkipIfExist() {
+	tmpDir := s.T().TempDir()
+	playgroundDir := filepath.Join(tmpDir, ".loop", "playground", "pong")
+	require.NoError(s.T(), os.MkdirAll(playgroundDir, 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(playgroundDir, "index.html"), []byte("custom pong"), 0644))
+
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return(tmpDir, nil)
+
+	err := s.app.onboardGlobal(true, "")
+	require.NoError(s.T(), err)
+
+	// Custom pong should be preserved.
+	data, err := os.ReadFile(filepath.Join(playgroundDir, "index.html"))
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "custom pong", string(data))
 }
 
 // brokenReadDirFS implements fs.ReadFileFS but fails on ReadDir.

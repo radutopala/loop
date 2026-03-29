@@ -1,5 +1,4 @@
-import type { PanelType } from "../splitPane/types";
-import type { PaneNode } from "../splitPane/types";
+import type { PanelType, PaneNode } from "../types/panels";
 
 export interface CanvasNode {
   type: "canvas";

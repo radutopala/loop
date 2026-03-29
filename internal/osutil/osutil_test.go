@@ -59,6 +59,14 @@ func (s *RealSystemSuite) TestRemoveTraversal() {
 	require.Contains(s.T(), err.Error(), "disallowed traversal")
 }
 
+func (s *RealSystemSuite) TestOpenSuccess() {
+	p := filepath.Join(s.dir, "open.txt")
+	require.NoError(s.T(), os.WriteFile(p, []byte("data"), 0o644))
+	f, err := s.sys.Open(p)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), f.Close())
+}
+
 func (s *RealSystemSuite) TestOpenTraversal() {
 	_, err := s.sys.Open("../passwd")
 	require.Error(s.T(), err)

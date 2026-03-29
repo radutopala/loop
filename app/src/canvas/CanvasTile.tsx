@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CanvasTile as CanvasTileType } from "./types";
-import type { PanelType, LeafNode } from "../splitPane/types";
+import type { LeafNode, PanelType } from "../types/panels";
 import { useTheme } from "../ThemeContext";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
 
@@ -298,4 +298,5 @@ const PANEL_LABELS: Record<PanelType, string> = {
   "docker-browser": "Docker Browser",
   "host-browser": "Host Browser",
   sessions: "Sessions",
+  playground: "Playground",
 };
