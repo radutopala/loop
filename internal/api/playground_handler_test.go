@@ -311,6 +311,17 @@ func (s *ServerSuite) TestPlaygroundServeFileInvalidName() {
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
+func (s *ServerSuite) TestPlaygroundServeFileNullBytePath() {
+	s.setPlaygroundDir()
+	// Null byte in path triggers validatePlaygroundPath rejection.
+	req := httptest.NewRequest("GET", "/api/playground/serve/my-app/foo", nil)
+	req.SetPathValue("name", "my-app")
+	req.SetPathValue("path", "foo\x00bar")
+	rec := httptest.NewRecorder()
+	s.srv.handlePlaygroundServeFile(rec, req)
+	require.Equal(s.T(), http.StatusNotFound, rec.Code)
+}
+
 // --- handlePlaygroundDelete ---
 
 func (s *ServerSuite) TestPlaygroundDeleteSuccess() {
@@ -579,4 +590,90 @@ func (s *ServerSuite) TestPlaygroundFileListWalkError() {
 func (s *ServerSuite) TestPlaygroundFileListMissingName() {
 	rec := s.testRequest("GET", "/api/playground/files", "")
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+// --- validation unit tests ---
+
+func (s *ServerSuite) TestValidatePlaygroundDir() {
+	s.setPlaygroundDir()
+	// Valid name.
+	pgDir, err := s.srv.validatePlaygroundDir("my-app")
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), pgDir, "playground/my-app")
+	// Traversal attempt (fails containment check).
+	_, err = s.srv.validatePlaygroundDir("../escape")
+	require.ErrorContains(s.T(), err, "invalid or missing playground name")
+	// Empty name (resolves to base dir itself, fails containment).
+	_, err = s.srv.validatePlaygroundDir("")
+	require.ErrorContains(s.T(), err, "invalid or missing playground name")
+	// Name that passes containment but fails regex (e.g. contains @).
+	_, err = s.srv.validatePlaygroundDir("ab@cd")
+	require.ErrorContains(s.T(), err, "invalid or missing playground name")
+}
+
+func (s *ServerSuite) TestValidatePlaygroundPath() {
+	root := "/tmp/test-root"
+	// Valid path.
+	p, err := validatePlaygroundPath(root, "script.js")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), filepath.Join(root, "script.js"), p)
+	// Empty path.
+	_, err = validatePlaygroundPath(root, "")
+	require.ErrorContains(s.T(), err, "path is required")
+	// Absolute path.
+	_, err = validatePlaygroundPath(root, "/etc/passwd")
+	require.ErrorContains(s.T(), err, "absolute paths")
+	// Null byte.
+	_, err = validatePlaygroundPath(root, "foo\x00bar")
+	require.ErrorContains(s.T(), err, "invalid characters")
+	// Traversal.
+	_, err = validatePlaygroundPath(root, "../../etc/passwd")
+	require.ErrorContains(s.T(), err, "path traversal")
+	// Single dot (resolves to root itself, not under root+separator).
+	_, err = validatePlaygroundPath(root, ".")
+	require.ErrorContains(s.T(), err, "path traversal")
+}
+
+// --- path traversal prevention ---
+
+func (s *ServerSuite) TestPlaygroundFileWritePathTraversal() {
+	dir := s.setPlaygroundDir()
+	pgDir := filepath.Join(dir, "playground", "my-app")
+	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
+
+	rec := s.testRequest("PUT", "/api/playground/file?name=my-app&path=../../etc/passwd", "pwned")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "path traversal")
+}
+
+func (s *ServerSuite) TestPlaygroundFileReadPathTraversal() {
+	s.setPlaygroundDir()
+	rec := s.testRequest("GET", "/api/playground/file?name=my-app&path=../../../etc/passwd", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "path traversal")
+}
+
+func (s *ServerSuite) TestPlaygroundFileDeletePathTraversal() {
+	s.setPlaygroundDir()
+	rec := s.testRequest("DELETE", "/api/playground/file?name=my-app&path=../../../etc/passwd", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "path traversal")
+}
+
+func (s *ServerSuite) TestPlaygroundFileWriteAbsolutePath() {
+	dir := s.setPlaygroundDir()
+	pgDir := filepath.Join(dir, "playground", "my-app")
+	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
+
+	rec := s.testRequest("PUT", "/api/playground/file?name=my-app&path=/etc/passwd", "pwned")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "absolute paths")
+}
+
+func (s *ServerSuite) TestPlaygroundServeFilePathTraversal() {
+	s.setPlaygroundDir()
+	rec := s.testRequest("GET", "/api/playground/serve/my-app/../../etc/passwd", "")
+	// Go's mux normalizes ".." but validatePlaygroundPath provides defense in depth.
+	// Either the mux rewrites the path (so the handler never sees it) or the validator catches it.
+	require.NotEqual(s.T(), http.StatusOK, rec.Code)
 }

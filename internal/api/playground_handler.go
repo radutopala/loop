@@ -10,6 +10,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/adrg/frontmatter"
 )
@@ -50,23 +51,50 @@ func buildReadme(title, body string) string {
 	return buf.String()
 }
 
-func (s *Server) playgroundDir(name string) string {
-	return filepath.Join(s.loopDir, "playground", name)
+// validatePlaygroundDir validates the playground name (path containment + regex)
+// and returns a safe directory path under the playground base directory.
+func (s *Server) validatePlaygroundDir(name string) (string, error) {
+	baseDir := filepath.Join(s.loopDir, "playground")
+	pgDir := filepath.Join(baseDir, filepath.Clean(name))
+	if !strings.HasPrefix(pgDir, baseDir+string(filepath.Separator)) {
+		return "", fmt.Errorf("invalid or missing playground name")
+	}
+	if !validPlaygroundName.MatchString(name) {
+		return "", fmt.Errorf("invalid or missing playground name")
+	}
+	return pgDir, nil
 }
 
-func parsePlaygroundName(r *http.Request) (string, bool) {
-	name := r.URL.Query().Get("name")
-	if name == "" {
-		return "", false
+// validatePlaygroundPath validates a relative file path within a playground directory,
+// preventing path traversal. Unlike validateFilePath, it does not require the target
+// directory to exist (playground dirs are created on demand by the server).
+func validatePlaygroundPath(rootDir, relativePath string) (string, error) {
+	if relativePath == "" {
+		return "", fmt.Errorf("path is required")
 	}
-	return name, validPlaygroundName.MatchString(name)
+	if filepath.IsAbs(relativePath) {
+		return "", fmt.Errorf("absolute paths are not allowed")
+	}
+	if strings.ContainsRune(relativePath, 0) {
+		return "", fmt.Errorf("path contains invalid characters")
+	}
+	cleaned := filepath.Clean(relativePath)
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path traversal not allowed")
+	}
+	fullPath := filepath.Join(rootDir, cleaned)
+	if !strings.HasPrefix(fullPath, rootDir+string(filepath.Separator)) {
+		return "", fmt.Errorf("path traversal not allowed")
+	}
+	return fullPath, nil
 }
 
 // handlePlaygroundUpdate handles PUT /api/playground?name=... — stores code and pushes event.
 func (s *Server) handlePlaygroundUpdate(w http.ResponseWriter, r *http.Request) {
-	name, valid := parsePlaygroundName(r)
-	if !valid {
-		http.Error(w, "invalid or missing playground name", http.StatusBadRequest)
+	name := r.URL.Query().Get("name")
+	pgDir, err := s.validatePlaygroundDir(name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -76,8 +104,6 @@ func (s *Server) handlePlaygroundUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	content.Name = name
-
-	pgDir := s.playgroundDir(name)
 	if err := os.MkdirAll(pgDir, 0o755); err != nil {
 		http.Error(w, "creating playground dir: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -110,13 +136,12 @@ func (s *Server) handlePlaygroundUpdate(w http.ResponseWriter, r *http.Request) 
 
 // handlePlaygroundGet handles GET /api/playground?name=... — retrieves playground content.
 func (s *Server) handlePlaygroundGet(w http.ResponseWriter, r *http.Request) {
-	name, valid := parsePlaygroundName(r)
-	if !valid {
-		http.Error(w, "invalid or missing playground name", http.StatusBadRequest)
+	name := r.URL.Query().Get("name")
+	pgDir, err := s.validatePlaygroundDir(name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	pgDir := s.playgroundDir(name)
 	html, _ := os.ReadFile(filepath.Join(pgDir, "index.html"))
 	readme, _ := os.ReadFile(filepath.Join(pgDir, "README.md"))
 
@@ -190,12 +215,11 @@ const consoleBridgeScript = `<script>
 // GET /api/playground/serve/{name}
 func (s *Server) handlePlaygroundServe(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !validPlaygroundName.MatchString(name) {
-		http.Error(w, "invalid playground name", http.StatusBadRequest)
+	pgDir, err := s.validatePlaygroundDir(name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	pgDir := s.playgroundDir(name)
 	html, _ := os.ReadFile(filepath.Join(pgDir, "index.html"))
 	importMap, _ := os.ReadFile(filepath.Join(pgDir, "importmap.json"))
 
@@ -235,14 +259,16 @@ func (s *Server) handlePlaygroundServe(w http.ResponseWriter, r *http.Request) {
 // GET /api/playground/serve/{name}/{path...}
 func (s *Server) handlePlaygroundServeFile(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	if !validPlaygroundName.MatchString(name) {
-		http.Error(w, "invalid playground name", http.StatusBadRequest)
+	pgDir, err := s.validatePlaygroundDir(name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	// Go's mux normalizes ".." segments before they reach the handler.
-	filePath := filepath.Clean(r.PathValue("path"))
-	fullPath := filepath.Join(s.playgroundDir(name), filePath)
+	fullPath, err := validatePlaygroundPath(pgDir, r.PathValue("path"))
+	if err != nil {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		http.Error(w, "file not found", http.StatusNotFound)
@@ -250,7 +276,7 @@ func (s *Server) handlePlaygroundServeFile(w http.ResponseWriter, r *http.Reques
 	}
 
 	// Set content type based on extension.
-	ext := filepath.Ext(filePath)
+	ext := filepath.Ext(fullPath)
 	ct := mime.TypeByExtension(ext)
 	if ct == "" {
 		ct = "application/octet-stream"
@@ -261,13 +287,12 @@ func (s *Server) handlePlaygroundServeFile(w http.ResponseWriter, r *http.Reques
 
 // handlePlaygroundDelete handles DELETE /api/playground?name=... — removes an entire playground.
 func (s *Server) handlePlaygroundDelete(w http.ResponseWriter, r *http.Request) {
-	name, valid := parsePlaygroundName(r)
-	if !valid {
-		http.Error(w, "invalid or missing playground name", http.StatusBadRequest)
+	name := r.URL.Query().Get("name")
+	pgDir, err := s.validatePlaygroundDir(name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	pgDir := s.playgroundDir(name)
 	if _, err := os.Stat(pgDir); os.IsNotExist(err) {
 		http.Error(w, "playground not found", http.StatusNotFound)
 		return
@@ -290,14 +315,15 @@ func (s *Server) handlePlaygroundDelete(w http.ResponseWriter, r *http.Request) 
 
 // handlePlaygroundFileWrite handles PUT /api/playground/file?name=...&path=... — creates or updates a file.
 func (s *Server) handlePlaygroundFileWrite(w http.ResponseWriter, r *http.Request) {
-	name, valid := parsePlaygroundName(r)
-	if !valid {
-		http.Error(w, "invalid or missing playground name", http.StatusBadRequest)
+	name := r.URL.Query().Get("name")
+	pgDir, err := s.validatePlaygroundDir(name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	filePath := r.URL.Query().Get("path")
-	if filePath == "" {
-		http.Error(w, "path is required", http.StatusBadRequest)
+	fullPath, err := validatePlaygroundPath(pgDir, r.URL.Query().Get("path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
@@ -307,10 +333,7 @@ func (s *Server) handlePlaygroundFileWrite(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	cleaned := filepath.Clean(filePath)
-	fullPath := filepath.Join(s.playgroundDir(name), cleaned)
-
-	if dir := filepath.Dir(fullPath); dir != s.playgroundDir(name) {
+	if dir := filepath.Dir(fullPath); dir != pgDir {
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			http.Error(w, "creating directory: "+err.Error(), http.StatusInternalServerError)
 			return
@@ -334,19 +357,17 @@ func (s *Server) handlePlaygroundFileWrite(w http.ResponseWriter, r *http.Reques
 
 // handlePlaygroundFileRead handles GET /api/playground/file?name=...&path=... — reads a file.
 func (s *Server) handlePlaygroundFileRead(w http.ResponseWriter, r *http.Request) {
-	name, valid := parsePlaygroundName(r)
-	if !valid {
-		http.Error(w, "invalid or missing playground name", http.StatusBadRequest)
+	name := r.URL.Query().Get("name")
+	pgDir, err := s.validatePlaygroundDir(name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	filePath := r.URL.Query().Get("path")
-	if filePath == "" {
-		http.Error(w, "path is required", http.StatusBadRequest)
+	fullPath, err := validatePlaygroundPath(pgDir, r.URL.Query().Get("path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	cleaned := filepath.Clean(filePath)
-	fullPath := filepath.Join(s.playgroundDir(name), cleaned)
 	data, err := os.ReadFile(fullPath)
 	if err != nil {
 		http.Error(w, "file not found", http.StatusNotFound)
@@ -359,19 +380,17 @@ func (s *Server) handlePlaygroundFileRead(w http.ResponseWriter, r *http.Request
 
 // handlePlaygroundFileDelete handles DELETE /api/playground/file?name=...&path=... — removes a file.
 func (s *Server) handlePlaygroundFileDelete(w http.ResponseWriter, r *http.Request) {
-	name, valid := parsePlaygroundName(r)
-	if !valid {
-		http.Error(w, "invalid or missing playground name", http.StatusBadRequest)
+	name := r.URL.Query().Get("name")
+	pgDir, err := s.validatePlaygroundDir(name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	filePath := r.URL.Query().Get("path")
-	if filePath == "" {
-		http.Error(w, "path is required", http.StatusBadRequest)
+	fullPath, err := validatePlaygroundPath(pgDir, r.URL.Query().Get("path"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	cleaned := filepath.Clean(filePath)
-	fullPath := filepath.Join(s.playgroundDir(name), cleaned)
 	if err := os.Remove(fullPath); err != nil {
 		http.Error(w, "file not found", http.StatusNotFound)
 		return
@@ -390,13 +409,12 @@ func (s *Server) handlePlaygroundFileDelete(w http.ResponseWriter, r *http.Reque
 
 // handlePlaygroundFileList handles GET /api/playground/files?name=... — lists all files.
 func (s *Server) handlePlaygroundFileList(w http.ResponseWriter, r *http.Request) {
-	name, valid := parsePlaygroundName(r)
-	if !valid {
-		http.Error(w, "invalid or missing playground name", http.StatusBadRequest)
+	name := r.URL.Query().Get("name")
+	pgDir, err := s.validatePlaygroundDir(name)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-
-	pgDir := s.playgroundDir(name)
 	var files []string
 	filepath.WalkDir(pgDir, func(path string, d os.DirEntry, _ error) error { //nolint:errcheck
 		if d != nil && !d.IsDir() {

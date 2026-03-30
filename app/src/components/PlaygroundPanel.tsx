@@ -215,7 +215,7 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
       {/* Sandbox iframe — served from the backend so relative imports work */}
       <iframe
         ref={iframeRef}
-        src={`${getApiUrl()}/api/playground/serve/${activeItem}?v=${iframeVersion}`}
+        src={`${getApiUrl()}/api/playground/serve/${encodeURIComponent(activeItem)}?v=${iframeVersion}`}
         sandbox="allow-scripts allow-same-origin allow-forms"
         style={{ flex: 1, border: "none", width: "100%" }}
       />
