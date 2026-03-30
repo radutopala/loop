@@ -559,7 +559,7 @@ func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL s
 		"HOME=" + hostHome,
 		"HOST_USER=" + r.sys.Getenv("USER"),
 		"TZ=" + r.localTimezone(),
-		"PATH=" + hostHome + "/.local/bin:" + hostHome + "/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+		"PATH=" + hostHome + "/.local/bin:" + hostHome + "/bin:" + hostHome + "/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 	}
 	env = addAuthEnv(env, cfg)
 	env = r.addProxyEnv(env)

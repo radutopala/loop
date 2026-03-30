@@ -60,7 +60,7 @@ The following environment variables are set on every container:
 | `HOME` | Host user's home directory | Container HOME matches host HOME for path consistency |
 | `HOST_USER` | `$USER` from host | The host username |
 | `TZ` | IANA timezone (e.g. `Europe/Bucharest`) | Detected from `$TZ`, `time.Now().Location()`, `/etc/timezone`, or `/etc/localtime` symlink; falls back to `UTC` |
-| `PATH` | `$HOME/.local/bin:$HOME/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` | Standard PATH with user-local bin directories |
+| `PATH` | `$HOME/.local/bin:$HOME/bin:$HOME/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` | Standard PATH with user-local bin and Go directories |
 | `CHOWN_PATHS` | Colon-separated paths | Named volume mount targets and copy-file targets that need ownership adjustment by the container entrypoint |
 
 ### Authentication
