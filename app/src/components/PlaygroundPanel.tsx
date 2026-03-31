@@ -33,17 +33,34 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
   const [items, setItems] = useState<PlaygroundItem[]>([]);
-  const [activeItem, setActiveItem] = useState<string>("");
+  const itemsRef = useRef<PlaygroundItem[]>([]);
+  itemsRef.current = items;
+  const storageKey = `playground-active:${channelId}`;
+  const [activeItem, setActiveItem] = useState<string>(() => {
+    try { return JSON.parse(localStorage.getItem(storageKey) || "{}").name || ""; } catch { return ""; }
+  });
+  const activeItemRef = useRef("");
+  activeItemRef.current = activeItem;
+  const [activeScope, setActiveScope] = useState<"global" | "project">(() => {
+    try { return JSON.parse(localStorage.getItem(storageKey) || "{}").scope || "global"; } catch { return "global"; }
+  });
+
+  const selectItem = useCallback((name: string, scope?: "global" | "project") => {
+    setActiveItem(name);
+    const resolved = scope ?? itemsRef.current.find((i) => i.name === name)?.scope ?? "global";
+    setActiveScope(resolved);
+    try { localStorage.setItem(storageKey, JSON.stringify({ name, scope: resolved })); } catch {}
+  }, [storageKey]);
 
   // Load items list on mount.
   useEffect(() => {
-    fetchPlaygroundItems().then(setItems).catch(() => {});
+    fetchPlaygroundItems(channelId).then(setItems).catch(() => {});
   }, [channelId]);
 
   // Load content when active item changes.
   useEffect(() => {
     if (!activeItem) return;
-    fetchPlayground(activeItem).then((data) => {
+    fetchPlayground(activeItem, activeScope, channelId).then((data) => {
       if (data) {
         setCode(data);
         setTitle(data.title || "");
@@ -54,31 +71,39 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
         setDescription("");
       }
     }).catch(() => {});
-  }, [activeItem]);
+  }, [activeItem, activeScope, channelId]);
 
   // Listen for live updates from agent via EventsHub.
   useEventStream({
     channelId,
     onEvent: useCallback((event: WSEvent) => {
       if (event.type === "playground.update") {
-        const data = event.data as PlaygroundCode;
+        const data = event.data as Record<string, string>;
         const eventName = data.name || "";
+        if (!eventName) return;
         // Refresh items list (a new item may have been created).
-        fetchPlaygroundItems().then((list) => {
+        fetchPlaygroundItems(channelId).then((list) => {
           setItems(list);
-          // Auto-switch to newly created items.
-          if (eventName && !items.some((i) => i.name === eventName)) {
-            setActiveItem(eventName);
+          // Auto-switch to the playground being worked on.
+          if (eventName !== activeItemRef.current) {
+            const found = list.find((i) => i.name === eventName);
+            selectItem(eventName, found?.scope);
           }
         }).catch(() => {});
-        // Update rendered code if it matches the active item.
-        if (eventName === activeItem) {
-          setCode(data);
-          setTitle(data.title || "");
-          setDescription(data.description || "");
+        // Reload active item with fresh content from server.
+        if (eventName === activeItemRef.current) {
+          if (data.html) {
+            // Full playground update — update metadata (triggers iframe reload via code change).
+            setCode(data as unknown as PlaygroundCode);
+            setTitle(data.title || "");
+            setDescription(data.description || "");
+          } else {
+            // File-level update — just reload iframe (server serves fresh files from disk).
+            setIframeVersion((v) => v + 1);
+          }
         }
       }
-    }, [activeItem, items]),
+    }, [channelId, selectItem]),
   });
 
   // Listen for console messages from iframe via postMessage.
@@ -114,23 +139,7 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
           {items.length > 0 ? "Select a playground" : "No playgrounds yet — ask an agent to create one, or run onboard:global to install examples"}
         </div>
         {items.length > 0 && (
-          <select
-            value=""
-            onChange={(e) => setActiveItem(e.target.value)}
-            style={{
-              background: "none",
-              border: `1px solid ${colors.border}`,
-              borderRadius: 6,
-              color: colors.textLight,
-              fontSize: 13,
-              padding: "6px 12px",
-            }}
-          >
-            <option value="" disabled>Choose playground...</option>
-            {items.map((item) => (
-              <option key={item.name} value={item.name}>{item.title || item.name}</option>
-            ))}
-          </select>
+          <PlaygroundSelector items={items} value="" onChange={selectItem} colors={colors} style={{ fontSize: 13, padding: "6px 12px" }} />
         )}
       </div>
     );
@@ -152,22 +161,7 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
         }}
       >
         {items.length > 0 && (
-          <select
-            value={activeItem}
-            onChange={(e) => setActiveItem(e.target.value)}
-            style={{
-              background: "none",
-              border: "1px solid rgba(128,128,128,0.3)",
-              borderRadius: 4,
-              color: colors.textLight,
-              fontSize: 11,
-              padding: "2px 4px",
-            }}
-          >
-            {items.map((item) => (
-              <option key={item.name} value={item.name}>{item.title || item.name}</option>
-            ))}
-          </select>
+          <PlaygroundSelector items={items} value={activeItem} onChange={selectItem} colors={colors} />
         )}
         <ToolbarButton onClick={handleReset} title="Reset" colors={colors}>
           Reset
@@ -215,9 +209,17 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
       {/* Sandbox iframe — served from the backend so relative imports work */}
       <iframe
         ref={iframeRef}
-        src={`${getApiUrl()}/api/playground/serve/${encodeURIComponent(activeItem)}?v=${iframeVersion}`}
+        src={activeScope === "project"
+          ? `${getApiUrl()}/api/playground/serve-project/${encodeURIComponent(channelId)}/${encodeURIComponent(activeItem)}?v=${iframeVersion}`
+          : `${getApiUrl()}/api/playground/serve/${encodeURIComponent(activeItem)}?v=${iframeVersion}`
+        }
         sandbox="allow-scripts allow-same-origin allow-forms"
         style={{ flex: 1, border: "none", width: "100%" }}
+        onMouseEnter={() => {
+          // Blur any focused element (e.g. chat textarea) so keyboard events reach the iframe.
+          if (document.activeElement instanceof HTMLElement) document.activeElement.blur();
+          iframeRef.current?.focus();
+        }}
       />
 
       {/* Console (collapsible) */}
@@ -245,6 +247,53 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
         </div>
       )}
     </div>
+  );
+}
+
+function PlaygroundSelector({ items, value, onChange, colors, style }: {
+  items: PlaygroundItem[];
+  value: string;
+  onChange: (name: string, scope: "global" | "project") => void;
+  colors: { border: string; textLight: string };
+  style?: React.CSSProperties;
+}) {
+  const globalItems = items.filter((i) => i.scope !== "project");
+  const projectItems = items.filter((i) => i.scope === "project");
+
+  return (
+    <select
+      value={value}
+      onChange={(e) => {
+        const name = e.target.value;
+        const item = items.find((i) => i.name === name);
+        onChange(name, item?.scope ?? "global");
+      }}
+      style={{
+        background: "none",
+        border: `1px solid rgba(128,128,128,0.3)`,
+        borderRadius: 4,
+        color: colors.textLight,
+        fontSize: 11,
+        padding: "2px 4px",
+        ...style,
+      }}
+    >
+      {!value && <option value="" disabled>Choose playground...</option>}
+      {projectItems.length > 0 && (
+        <optgroup label="Project">
+          {projectItems.map((item) => (
+            <option key={`project:${item.name}`} value={item.name}>{item.title || item.name}</option>
+          ))}
+        </optgroup>
+      )}
+      {globalItems.length > 0 && (
+        <optgroup label="Global">
+          {globalItems.map((item) => (
+            <option key={`global:${item.name}`} value={item.name}>{item.title || item.name}</option>
+          ))}
+        </optgroup>
+      )}
+    </select>
   );
 }
 

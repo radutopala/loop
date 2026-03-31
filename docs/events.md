@@ -334,6 +334,92 @@ The `channel_id` in the event envelope identifies which channel was deleted.
 
 ---
 
+### `container.registered`
+
+A new container was added to the registry (agent started, shell created, Chrome launched).
+
+**Payload schema:**
+
+```json
+{
+  "container_id": "abc123def456",
+  "channel_id": "chan_a",
+  "type": "agent",
+  "status": "running",
+  "container_name": "loop-my-project-a1b2c3"
+}
+```
+
+| Field            | Type   | Description |
+|------------------|--------|-------------|
+| `container_id`   | string | Docker container ID |
+| `channel_id`     | string | Channel the container belongs to |
+| `type`           | string | Container type: `"agent"`, `"shell"`, or `"chrome"` |
+| `status`         | string | Lifecycle status (always `"running"` on registration) |
+| `container_name` | string | Docker container name |
+
+**Scope:** Global (no channel filtering — broadcast to all subscribers).
+
+---
+
+### `container.status_changed`
+
+A container's lifecycle status changed (e.g. running → stopped, stopped → pending-removal).
+
+**Payload schema:**
+
+```json
+{
+  "container_id": "abc123def456",
+  "channel_id": "chan_a",
+  "type": "agent",
+  "status": "pending-removal",
+  "container_name": "loop-my-project-a1b2c3",
+  "remove_at": "2026-03-31T12:05:00Z"
+}
+```
+
+| Field            | Type    | Description |
+|------------------|---------|-------------|
+| `container_id`   | string  | Docker container ID |
+| `channel_id`     | string  | Channel the container belongs to |
+| `type`           | string  | Container type |
+| `status`         | string  | New status: `"running"`, `"stopped"`, or `"pending-removal"` |
+| `container_name` | string  | Docker container name |
+| `remove_at`      | string? | ISO 8601 timestamp when removal is scheduled (only for `pending-removal`) |
+
+**Scope:** Global.
+
+---
+
+### `container.removed`
+
+A container was unregistered from the registry (removed from Docker or reconciled away).
+
+**Payload schema:**
+
+```json
+{
+  "container_id": "abc123def456",
+  "channel_id": "chan_a",
+  "type": "agent",
+  "status": "pending-removal",
+  "container_name": "loop-my-project-a1b2c3"
+}
+```
+
+| Field            | Type   | Description |
+|------------------|--------|-------------|
+| `container_id`   | string | Docker container ID |
+| `channel_id`     | string | Channel the container belonged to |
+| `type`           | string | Container type |
+| `status`         | string | Status at time of removal |
+| `container_name` | string | Docker container name |
+
+**Scope:** Global.
+
+---
+
 ## Broadcast Flow
 
 1. **Event source** calls a typed broadcast method (e.g., `BroadcastMessageCreated`).
@@ -361,6 +447,9 @@ The `channel_id` in the event envelope identifies which channel was deleted.
 | `BroadcastExitPlan` | `agent.exit_plan` | `ExitPlanModeEventData` |
 | `BroadcastChannelCreated` | `channel.created` | `map[string]string{"channel_id": id}` |
 | `BroadcastChannelDeleted` | `channel.deleted` | `nil` |
+| `BroadcastContainerRegistered` | `container.registered` | `ContainerEventData` |
+| `BroadcastContainerStatusChanged` | `container.status_changed` | `ContainerEventData` |
+| `BroadcastContainerRemoved` | `container.removed` | `ContainerEventData` |
 
 ---
 
@@ -390,4 +479,14 @@ type Broadcaster interface {
 }
 ```
 
-The `EventsHub` implements this interface, allowing it to be injected into any component that needs to emit events.
+The `EventsHub` also implements `ContainerBroadcaster` for container lifecycle events:
+
+```go
+type ContainerBroadcaster interface {
+    BroadcastContainerRegistered(data ContainerEventData)
+    BroadcastContainerRemoved(data ContainerEventData)
+    BroadcastContainerStatusChanged(data ContainerEventData)
+}
+```
+
+Container events are broadcast globally (empty channel ID) so all connected clients receive them regardless of their channel subscription.

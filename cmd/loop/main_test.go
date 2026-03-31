@@ -4120,3 +4120,93 @@ func (n *noopBrowserProvider) IsRunning(_ context.Context, _ string) bool { retu
 func (n *noopBrowserProvider) GetCDPEndpoint(_ string) string             { return "" }
 func (n *noopBrowserProvider) GetContainerID(_ string) (string, bool)     { return "", false }
 func (n *noopBrowserProvider) IsHostMode() bool                           { return false }
+
+func (s *MainSuite) TestDumpPlaygroundExamplesSkipExisting() {
+	dir := s.T().TempDir()
+	s.app.sys = newPassthroughMock()
+
+	// First run: populate all examples.
+	err := s.app.dumpPlaygroundExamples(dir)
+	require.NoError(s.T(), err)
+
+	// Pick one of the example directories and write a sentinel file inside it.
+	entries, err := os.ReadDir(dir)
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), entries)
+
+	existingExample := entries[0].Name()
+	sentinelPath := filepath.Join(dir, existingExample, "sentinel.txt")
+	require.NoError(s.T(), os.WriteFile(sentinelPath, []byte("do-not-overwrite"), 0644))
+
+	// Second run: should skip the existing example directory.
+	err = s.app.dumpPlaygroundExamples(dir)
+	require.NoError(s.T(), err)
+
+	// Verify the sentinel file still exists (directory was not re-created).
+	data, err := os.ReadFile(sentinelPath)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "do-not-overwrite", string(data))
+}
+
+// --- Fake FS types for playground error branch testing ---
+
+// brokenPlaygroundReadDirFS fails on ReadDir("examples").
+type brokenPlaygroundReadDirFS struct{}
+
+func (brokenPlaygroundReadDirFS) Open(string) (fs.File, error) { return nil, errors.New("broken") }
+
+// playgroundReadDirErrorFS succeeds on ReadDir("examples") returning one dir entry,
+// but fails on ReadDir("examples/myexample") to cover the per-example ReadDir error.
+type playgroundReadDirErrorFS struct{}
+
+func (playgroundReadDirErrorFS) Open(name string) (fs.File, error) {
+	if name == "examples" {
+		return &fakeDirFile{entries: []fs.DirEntry{&fakeDirEntry{name: "myexample"}}}, nil
+	}
+	return nil, errors.New("broken readdir for example")
+}
+
+// playgroundReadFileErrorFS succeeds on ReadDir at both levels,
+// but fails on ReadFile to cover the per-file read error.
+type playgroundReadFileErrorFS struct{}
+
+func (playgroundReadFileErrorFS) Open(name string) (fs.File, error) {
+	if name == "examples" {
+		return &fakeDirFile{entries: []fs.DirEntry{&fakeDirEntry{name: "myexample"}}}, nil
+	}
+	if name == "examples/myexample" {
+		return &fakeDirFile{entries: []fs.DirEntry{&fakeEntry{name: "index.html"}}}, nil
+	}
+	return nil, errors.New("broken readfile")
+}
+
+func (playgroundReadFileErrorFS) ReadFile(string) ([]byte, error) {
+	return nil, errors.New("broken readfile")
+}
+
+func (s *MainSuite) TestDumpPlaygroundExamplesReadDirError() {
+	s.app.sys = newPassthroughMock()
+	s.app.playgroundExamplesFS = brokenPlaygroundReadDirFS{}
+
+	err := s.app.dumpPlaygroundExamples(s.T().TempDir())
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading embedded playground examples")
+}
+
+func (s *MainSuite) TestDumpPlaygroundExamplesExampleReadDirError() {
+	s.app.sys = newPassthroughMock()
+	s.app.playgroundExamplesFS = playgroundReadDirErrorFS{}
+
+	err := s.app.dumpPlaygroundExamples(s.T().TempDir())
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading playground example myexample")
+}
+
+func (s *MainSuite) TestDumpPlaygroundExamplesReadFileError() {
+	s.app.sys = newPassthroughMock()
+	s.app.playgroundExamplesFS = playgroundReadFileErrorFS{}
+
+	err := s.app.dumpPlaygroundExamples(s.T().TempDir())
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading playground file myexample/index.html")
+}

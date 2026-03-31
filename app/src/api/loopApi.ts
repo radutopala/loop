@@ -315,6 +315,26 @@ export interface DiffResponse {
   total_deletions: number;
 }
 
+export interface CommitEntry {
+  hash: string;
+  short: string;
+  subject: string;
+  author: string;
+  date: string;
+}
+
+export async function fetchCommits(channelId: string, branch?: string, limit?: number, skip?: number): Promise<CommitEntry[]> {
+  const params = new URLSearchParams();
+  if (branch) params.set("branch", branch);
+  if (limit) params.set("limit", String(limit));
+  if (skip) params.set("skip", String(skip));
+  const qs = params.toString();
+  const res = await fetch(`${apiUrl}/api/channels/${channelId}/commits${qs ? `?${qs}` : ""}`);
+  if (!res.ok) throw new Error(`Failed to fetch commits: ${res.statusText}`);
+  const data: { commits: CommitEntry[] } = await res.json();
+  return data.commits;
+}
+
 export async function fetchDiff(channelId: string, source?: string, target?: string): Promise<DiffResponse> {
   let url = `${apiUrl}/api/channels/${channelId}/diff`;
   if (source && target) {
@@ -507,7 +527,16 @@ export async function deleteFile(channelId: string, path: string, root?: number)
   const res = await fetch(`${apiUrl}/api/channels/${channelId}/file?${params}`, {
     method: "DELETE",
   });
-  if (!res.ok) throw new Error(`Failed to delete file: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Failed to delete: ${res.statusText}`);
+}
+
+export async function createDir(channelId: string, path: string, root?: number): Promise<void> {
+  const params = new URLSearchParams({ path });
+  if (root !== undefined && root > 0) params.set("root", String(root));
+  const res = await fetch(`${apiUrl}/api/channels/${channelId}/dir?${params}`, {
+    method: "POST",
+  });
+  if (!res.ok) throw new Error(`Failed to create directory: ${res.statusText}`);
 }
 
 export async function fetchMessages(
@@ -528,8 +557,15 @@ export async function fetchMessages(
 /** Fetch the current playground content by name. */
 export async function fetchPlayground(
   name: string,
+  scope?: "global" | "project",
+  channelId?: string,
 ): Promise<{ name: string; title?: string; html: string; description?: string } | null> {
-  const res = await fetch(`${apiUrl}/api/playground?name=${encodeURIComponent(name)}`);
+  const params = new URLSearchParams({ name });
+  if (scope === "project" && channelId) {
+    params.set("scope", "project");
+    params.set("channel_id", channelId);
+  }
+  const res = await fetch(`${apiUrl}/api/playground?${params}`);
   if (res.status === 404) return null;
   if (!res.ok) throw new Error(`Failed to fetch playground: ${res.statusText}`);
   return res.json();
@@ -539,11 +575,13 @@ export interface PlaygroundItem {
   name: string;
   title?: string;
   description?: string;
+  scope: "global" | "project";
 }
 
-/** List all playground items with names and titles. */
-export async function fetchPlaygroundItems(): Promise<PlaygroundItem[]> {
-  const res = await fetch(`${apiUrl}/api/playground/items`);
+/** List all playground items with names and titles (global + project-scoped). */
+export async function fetchPlaygroundItems(channelId?: string): Promise<PlaygroundItem[]> {
+  const params = channelId ? `?channel_id=${encodeURIComponent(channelId)}` : "";
+  const res = await fetch(`${apiUrl}/api/playground/items${params}`);
   if (!res.ok) throw new Error(`Failed to fetch playground items: ${res.statusText}`);
   const data: { items: PlaygroundItem[] } = await res.json();
   return data.items;

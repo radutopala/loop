@@ -30,6 +30,7 @@ import (
 	"github.com/radutopala/loop/internal/mcpserver"
 	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/osutil"
+	"github.com/radutopala/loop/internal/playground"
 	"github.com/radutopala/loop/internal/readme"
 	"github.com/radutopala/loop/internal/scheduler"
 	slackbot "github.com/radutopala/loop/internal/slack"
@@ -125,15 +126,19 @@ type app struct {
 	// Update dependencies
 	httpGet            func(string) (*http.Response, error)
 	getLatestVersionFn func() (string, error)
+
+	// Embedded FS for playground examples (overridable for testing)
+	playgroundExamplesFS fs.FS
 }
 
 func newApp() *app {
 	a := &app{
-		sys:         osutil.RealSystem{},
-		templatesFS: config.Templates,
-		version:     version,
-		commit:      commit,
-		date:        date,
+		sys:                  osutil.RealSystem{},
+		templatesFS:          config.Templates,
+		playgroundExamplesFS: playground.Examples,
+		version:              version,
+		commit:               commit,
+		date:                 date,
 
 		// Config & DB
 		configLoad: config.Load,

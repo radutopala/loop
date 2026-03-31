@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/radutopala/loop/internal/osutil"
@@ -149,6 +150,99 @@ func realPath(p string) string {
 		return p
 	}
 	return r
+}
+
+// ── Commits ──
+
+type commitEntry struct {
+	Hash    string `json:"hash"`
+	Short   string `json:"short"`
+	Subject string `json:"subject"`
+	Author  string `json:"author"`
+	Date    string `json:"date"`
+}
+
+type commitsResponse struct {
+	Commits []commitEntry `json:"commits"`
+}
+
+// handleListCommits returns the commit log for a given branch (or HEAD if omitted).
+// GET /api/channels/{id}/commits?branch=...&limit=...&skip=...
+func (s *Server) handleListCommits(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel listing not configured") {
+		return
+	}
+
+	channelID := r.PathValue("id")
+	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	limit := 50
+	if l := r.URL.Query().Get("limit"); l != "" {
+		if parsed, parseErr := strconv.Atoi(l); parseErr == nil && parsed >= 1 {
+			limit = parsed
+		}
+		if limit > 200 {
+			limit = 200
+		}
+	}
+
+	skip := 0
+	if s := r.URL.Query().Get("skip"); s != "" {
+		if parsed, parseErr := strconv.Atoi(s); parseErr == nil && parsed >= 0 {
+			skip = parsed
+		}
+	}
+
+	args := []string{"log", fmt.Sprintf("--max-count=%d", limit), fmt.Sprintf("--skip=%d", skip), "--format=%H\x1e%h\x1e%s\x1e%an\x1e%ci"}
+	if branch := r.URL.Query().Get("branch"); branch != "" {
+		safe, ok := sanitizeBranch(branch)
+		if !ok {
+			http.Error(w, "invalid branch name", http.StatusBadRequest)
+			return
+		}
+		args = append(args, safe)
+	}
+
+	cmd := exec.CommandContext(r.Context(), "git", args...)
+	cmd.Dir = dirPath
+	out, err := cmd.Output()
+	if err != nil {
+		// Empty repos (no commits yet) cause git log to fail — return empty list.
+		writeHTTPJSON(w, http.StatusOK, commitsResponse{Commits: []commitEntry{}}, s.logger)
+		return
+	}
+
+	writeHTTPJSON(w, http.StatusOK, commitsResponse{Commits: parseCommitLog(string(out))}, s.logger)
+}
+
+// parseCommitLog parses the output of git log --format=%H\x1e%h\x1e%s\x1e%an\x1e%ci
+// into a slice of commitEntry. Malformed lines are skipped.
+func parseCommitLog(output string) []commitEntry {
+	var commits []commitEntry
+	for _, line := range strings.Split(strings.TrimSpace(output), "\n") {
+		if line == "" {
+			continue
+		}
+		parts := strings.SplitN(line, "\x1e", 5)
+		if len(parts) < 5 {
+			continue
+		}
+		commits = append(commits, commitEntry{
+			Hash:    parts[0],
+			Short:   parts[1],
+			Subject: parts[2],
+			Author:  parts[3],
+			Date:    parts[4],
+		})
+	}
+	if commits == nil {
+		commits = []commitEntry{}
+	}
+	return commits
 }
 
 type switchBranchRequest struct {

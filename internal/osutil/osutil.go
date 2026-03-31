@@ -28,6 +28,13 @@ func (RealSystem) Remove(name string) error {
 	}
 	return os.Remove(clean)
 }
+func (RealSystem) RemoveAll(path string) error {
+	clean := filepath.Clean(path)
+	if strings.Contains(clean, "..") {
+		return fmt.Errorf("path contains disallowed traversal: %s", clean)
+	}
+	return os.RemoveAll(clean)
+}
 
 func (RealSystem) Open(name string) (*os.File, error) {
 	clean := filepath.Clean(name)

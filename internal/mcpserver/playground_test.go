@@ -369,3 +369,40 @@ func (s *MCPServerSuite) TestPlaygroundFileListEmpty() {
 	require.False(s.T(), isError)
 	require.Contains(s.T(), text, "No files")
 }
+
+func (s *MCPServerSuite) TestPlaygroundCreateProjectScope() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "PUT", req.Method)
+		require.Contains(s.T(), req.URL.String(), "&scope=project&channel_id=test-channel")
+		return noContentResponse(http.StatusOK), nil
+	}
+
+	text, isError := s.callTool("playground", map[string]any{
+		"action":      "create",
+		"name":        "my-app",
+		"title":       "My App",
+		"description": "A scoped app",
+		"html":        "<h1>Hi</h1>",
+		"scope":       "project",
+	})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "created")
+}
+
+func (s *MCPServerSuite) TestPlaygroundFileCreateProjectScope() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "PUT", req.Method)
+		require.Contains(s.T(), req.URL.String(), "&scope=project&channel_id=test-channel")
+		return noContentResponse(http.StatusOK), nil
+	}
+
+	text, isError := s.callTool("playground_file", map[string]any{
+		"action":  "create",
+		"name":    "my-app",
+		"path":    "script.js",
+		"content": "console.log('hi')",
+		"scope":   "project",
+	})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "written")
+}

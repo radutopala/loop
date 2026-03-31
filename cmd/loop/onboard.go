@@ -12,7 +12,6 @@ import (
 
 	"github.com/radutopala/loop/internal/config"
 	containerimage "github.com/radutopala/loop/internal/container/image"
-	"github.com/radutopala/loop/internal/playground"
 )
 
 func (a *app) newOnboardGlobalCmd() *cobra.Command {
@@ -188,7 +187,8 @@ func (a *app) dumpPlaygroundExamples(dir string) error {
 	if err := a.sys.MkdirAll(dir, 0755); err != nil {
 		return fmt.Errorf("creating playground directory: %w", err)
 	}
-	examples, err := fs.ReadDir(playground.Examples, "examples")
+	examplesFS := a.playgroundExamplesFS
+	examples, err := fs.ReadDir(examplesFS, "examples")
 	if err != nil {
 		return fmt.Errorf("reading embedded playground examples: %w", err)
 	}
@@ -203,7 +203,7 @@ func (a *app) dumpPlaygroundExamples(dir string) error {
 		if err := a.sys.MkdirAll(exampleDir, 0755); err != nil {
 			return fmt.Errorf("creating playground example %s: %w", example.Name(), err)
 		}
-		files, err := fs.ReadDir(playground.Examples, "examples/"+example.Name())
+		files, err := fs.ReadDir(examplesFS, "examples/"+example.Name())
 		if err != nil {
 			return fmt.Errorf("reading playground example %s: %w", example.Name(), err)
 		}
@@ -211,7 +211,7 @@ func (a *app) dumpPlaygroundExamples(dir string) error {
 			if f.IsDir() {
 				continue
 			}
-			data, err := playground.Examples.ReadFile("examples/" + example.Name() + "/" + f.Name())
+			data, err := fs.ReadFile(examplesFS, "examples/"+example.Name()+"/"+f.Name())
 			if err != nil {
 				return fmt.Errorf("reading playground file %s/%s: %w", example.Name(), f.Name(), err)
 			}

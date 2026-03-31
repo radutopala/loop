@@ -7,7 +7,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
+
+	"github.com/radutopala/loop/internal/db"
 )
 
 func (s *ServerSuite) setPlaygroundDir() string {
@@ -676,4 +679,453 @@ func (s *ServerSuite) TestPlaygroundServeFilePathTraversal() {
 	// Go's mux normalizes ".." but validatePlaygroundPath provides defense in depth.
 	// Either the mux rewrites the path (so the handler never sees it) or the validator catches it.
 	require.NotEqual(s.T(), http.StatusOK, rec.Code)
+}
+
+// --- resolvePlaygroundDir project scope ---
+
+func (s *ServerSuite) TestResolvePlaygroundDirProjectScope() {
+	dir := s.setPlaygroundDir()
+	projectDir := s.T().TempDir()
+	pgDir := filepath.Join(projectDir, ".loop", "playground", "my-app")
+	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1",
+		DirPath:   projectDir,
+	}, nil).Once()
+
+	req := httptest.NewRequest("GET", "/api/playground?name=my-app&scope=project&channel_id=ch1", nil)
+	resolved, err := s.srv.resolvePlaygroundDir(req, "my-app")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), pgDir, resolved)
+	// Verify global scope still works.
+	req2 := httptest.NewRequest("GET", "/api/playground?name=my-app", nil)
+	resolved2, err := s.srv.resolvePlaygroundDir(req2, "my-app")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), filepath.Join(dir, "playground", "my-app"), resolved2)
+}
+
+func (s *ServerSuite) TestResolvePlaygroundDirProjectScopeMissingChannelID() {
+	s.setPlaygroundDir()
+	req := httptest.NewRequest("GET", "/api/playground?name=my-app&scope=project", nil)
+	_, err := s.srv.resolvePlaygroundDir(req, "my-app")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "channel_id is required")
+}
+
+func (s *ServerSuite) TestResolvePlaygroundDirProjectScopeBadChannel() {
+	s.setPlaygroundDir()
+	s.store.On("GetChannel", mock.Anything, "bad-ch").Return(nil, nil).Once()
+
+	req := httptest.NewRequest("GET", "/api/playground?name=my-app&scope=project&channel_id=bad-ch", nil)
+	_, err := s.srv.resolvePlaygroundDir(req, "my-app")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "not found")
+}
+
+// --- handlePlaygroundList with channel_id ---
+
+func (s *ServerSuite) TestPlaygroundListWithChannelID() {
+	dir := s.setPlaygroundDir()
+	// Create global playground.
+	globalDir := filepath.Join(dir, "playground")
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(globalDir, "global-app"), 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(globalDir, "global-app", "README.md"),
+		[]byte("---\ntitle: Global App\n---\nA global one"), 0o644))
+
+	// Create project playground.
+	projectDir := s.T().TempDir()
+	projectPgDir := filepath.Join(projectDir, ".loop", "playground", "project-app")
+	require.NoError(s.T(), os.MkdirAll(projectPgDir, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(projectPgDir, "README.md"),
+		[]byte("---\ntitle: Project App\n---\nA project one"), 0o644))
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1",
+		DirPath:   projectDir,
+	}, nil).Once()
+
+	rec := s.testRequest("GET", "/api/playground/items?channel_id=ch1", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var result struct{ Items []playgroundItem }
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &result))
+	require.Len(s.T(), result.Items, 2)
+
+	names := make(map[string]playgroundItem)
+	for _, item := range result.Items {
+		names[item.Name] = item
+	}
+	require.Equal(s.T(), "global", names["global-app"].Scope)
+	require.Equal(s.T(), "Global App", names["global-app"].Title)
+	require.Equal(s.T(), "project", names["project-app"].Scope)
+	require.Equal(s.T(), "Project App", names["project-app"].Title)
+}
+
+func (s *ServerSuite) TestPlaygroundListWithBadChannelID() {
+	dir := s.setPlaygroundDir()
+	// Create global playground only.
+	globalDir := filepath.Join(dir, "playground")
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(globalDir, "global-app"), 0o755))
+
+	s.store.On("GetChannel", mock.Anything, "bad-ch").Return(nil, nil).Once()
+
+	rec := s.testRequest("GET", "/api/playground/items?channel_id=bad-ch", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var result struct{ Items []playgroundItem }
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &result))
+	// Only global items returned, project error is swallowed.
+	require.Len(s.T(), result.Items, 1)
+	require.Equal(s.T(), "global", result.Items[0].Scope)
+}
+
+// --- handlePlaygroundServe project scope base URL ---
+
+func (s *ServerSuite) TestPlaygroundServeProjectScopeBaseURL() {
+	dir := s.setPlaygroundDir()
+	projectDir := s.T().TempDir()
+	pgDir := filepath.Join(projectDir, ".loop", "playground", "my-app")
+	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(pgDir, "index.html"), []byte("<div>project</div>"), 0o644))
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1",
+		DirPath:   projectDir,
+	}, nil).Once()
+
+	// Use the existing serve route with scope=project query params.
+	rec := s.testRequest("GET", "/api/playground/serve/my-app?scope=project&channel_id=ch1", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), `<base href="/api/playground/serve-project/ch1/my-app/">`)
+	require.Contains(s.T(), rec.Body.String(), "<div>project</div>")
+	_ = dir
+}
+
+// --- resolveProjectPlaygroundDir ---
+
+func (s *ServerSuite) TestResolveProjectPlaygroundDirSuccess() {
+	s.setPlaygroundDir()
+	projectDir := s.T().TempDir()
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1",
+		DirPath:   projectDir,
+	}, nil).Once()
+
+	req := httptest.NewRequest("GET", "/api/playground/serve-project/ch1/my-app", nil)
+	req.SetPathValue("channel_id", "ch1")
+	req.SetPathValue("name", "my-app")
+
+	resolved, err := s.srv.resolveProjectPlaygroundDir(req)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), filepath.Join(projectDir, ".loop", "playground", "my-app"), resolved)
+}
+
+func (s *ServerSuite) TestResolveProjectPlaygroundDirMissingChannelID() {
+	s.setPlaygroundDir()
+	req := httptest.NewRequest("GET", "/api/playground/serve-project//my-app", nil)
+	req.SetPathValue("channel_id", "")
+	req.SetPathValue("name", "my-app")
+
+	_, err := s.srv.resolveProjectPlaygroundDir(req)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "channel_id and name are required")
+}
+
+func (s *ServerSuite) TestResolveProjectPlaygroundDirMissingName() {
+	s.setPlaygroundDir()
+	req := httptest.NewRequest("GET", "/api/playground/serve-project/ch1/", nil)
+	req.SetPathValue("channel_id", "ch1")
+	req.SetPathValue("name", "")
+
+	_, err := s.srv.resolveProjectPlaygroundDir(req)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "channel_id and name are required")
+}
+
+func (s *ServerSuite) TestResolveProjectPlaygroundDirBadChannel() {
+	s.setPlaygroundDir()
+	s.store.On("GetChannel", mock.Anything, "bad-ch").Return(nil, nil).Once()
+
+	req := httptest.NewRequest("GET", "/api/playground/serve-project/bad-ch/my-app", nil)
+	req.SetPathValue("channel_id", "bad-ch")
+	req.SetPathValue("name", "my-app")
+
+	_, err := s.srv.resolveProjectPlaygroundDir(req)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "not found")
+}
+
+// --- handlePlaygroundServeProject ---
+
+func (s *ServerSuite) TestPlaygroundServeProjectSuccess() {
+	s.setPlaygroundDir()
+	projectDir := s.T().TempDir()
+	pgDir := filepath.Join(projectDir, ".loop", "playground", "my-app")
+	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(pgDir, "index.html"), []byte("<div>project app</div>"), 0o644))
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1",
+		DirPath:   projectDir,
+	}, nil).Once()
+
+	req := httptest.NewRequest("GET", "/api/playground/serve-project/ch1/my-app", nil)
+	req.SetPathValue("channel_id", "ch1")
+	req.SetPathValue("name", "my-app")
+	rec := httptest.NewRecorder()
+	s.srv.handlePlaygroundServeProject(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Header().Get("Content-Type"), "text/html")
+	require.Contains(s.T(), rec.Body.String(), `<base href="/api/playground/serve-project/ch1/my-app/">`)
+	require.Contains(s.T(), rec.Body.String(), "<div>project app</div>")
+	require.Contains(s.T(), rec.Body.String(), "playground-console")
+	require.Contains(s.T(), rec.Body.String(), `<script type="module" src="script.js">`)
+}
+
+func (s *ServerSuite) TestPlaygroundServeProjectEmpty() {
+	s.setPlaygroundDir()
+	projectDir := s.T().TempDir()
+	pgDir := filepath.Join(projectDir, ".loop", "playground", "empty-proj")
+	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1",
+		DirPath:   projectDir,
+	}, nil).Once()
+
+	req := httptest.NewRequest("GET", "/api/playground/serve-project/ch1/empty-proj", nil)
+	req.SetPathValue("channel_id", "ch1")
+	req.SetPathValue("name", "empty-proj")
+	rec := httptest.NewRecorder()
+	s.srv.handlePlaygroundServeProject(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "waiting for code from agent")
+}
+
+func (s *ServerSuite) TestPlaygroundServeProjectWithImportmap() {
+	s.setPlaygroundDir()
+	projectDir := s.T().TempDir()
+	pgDir := filepath.Join(projectDir, ".loop", "playground", "with-imports")
+	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(pgDir, "index.html"), []byte("<div>imports</div>"), 0o644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(pgDir, "importmap.json"), []byte(`{"imports":{"react":"https://esm.sh/react"}}`), 0o644))
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1",
+		DirPath:   projectDir,
+	}, nil).Once()
+
+	req := httptest.NewRequest("GET", "/api/playground/serve-project/ch1/with-imports", nil)
+	req.SetPathValue("channel_id", "ch1")
+	req.SetPathValue("name", "with-imports")
+	rec := httptest.NewRecorder()
+	s.srv.handlePlaygroundServeProject(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), `<script type="importmap">`)
+	require.Contains(s.T(), rec.Body.String(), `"react"`)
+}
+
+func (s *ServerSuite) TestPlaygroundServeProjectInvalidChannel() {
+	s.setPlaygroundDir()
+	s.store.On("GetChannel", mock.Anything, "bad-ch").Return(nil, nil).Once()
+
+	req := httptest.NewRequest("GET", "/api/playground/serve-project/bad-ch/my-app", nil)
+	req.SetPathValue("channel_id", "bad-ch")
+	req.SetPathValue("name", "my-app")
+	rec := httptest.NewRecorder()
+	s.srv.handlePlaygroundServeProject(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+// --- handlePlaygroundServeProjectFile ---
+
+func (s *ServerSuite) TestPlaygroundServeProjectFileSuccess() {
+	s.setPlaygroundDir()
+	projectDir := s.T().TempDir()
+	pgDir := filepath.Join(projectDir, ".loop", "playground", "my-app")
+	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(pgDir, "script.js"), []byte("console.log('project')"), 0o644))
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1",
+		DirPath:   projectDir,
+	}, nil).Once()
+
+	req := httptest.NewRequest("GET", "/api/playground/serve-project/ch1/my-app/script.js", nil)
+	req.SetPathValue("channel_id", "ch1")
+	req.SetPathValue("name", "my-app")
+	req.SetPathValue("path", "script.js")
+	rec := httptest.NewRecorder()
+	s.srv.handlePlaygroundServeProjectFile(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Header().Get("Content-Type"), "javascript")
+	require.Equal(s.T(), "console.log('project')", rec.Body.String())
+}
+
+func (s *ServerSuite) TestPlaygroundServeProjectFileUnknownExtension() {
+	s.setPlaygroundDir()
+	projectDir := s.T().TempDir()
+	pgDir := filepath.Join(projectDir, ".loop", "playground", "my-app")
+	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(pgDir, "data"), []byte("binary"), 0o644))
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1",
+		DirPath:   projectDir,
+	}, nil).Once()
+
+	req := httptest.NewRequest("GET", "/api/playground/serve-project/ch1/my-app/data", nil)
+	req.SetPathValue("channel_id", "ch1")
+	req.SetPathValue("name", "my-app")
+	req.SetPathValue("path", "data")
+	rec := httptest.NewRecorder()
+	s.srv.handlePlaygroundServeProjectFile(rec, req)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Equal(s.T(), "application/octet-stream", rec.Header().Get("Content-Type"))
+}
+
+func (s *ServerSuite) TestPlaygroundServeProjectFileNotFound() {
+	s.setPlaygroundDir()
+	projectDir := s.T().TempDir()
+	pgDir := filepath.Join(projectDir, ".loop", "playground", "my-app")
+	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1",
+		DirPath:   projectDir,
+	}, nil).Once()
+
+	req := httptest.NewRequest("GET", "/api/playground/serve-project/ch1/my-app/nonexistent.js", nil)
+	req.SetPathValue("channel_id", "ch1")
+	req.SetPathValue("name", "my-app")
+	req.SetPathValue("path", "nonexistent.js")
+	rec := httptest.NewRecorder()
+	s.srv.handlePlaygroundServeProjectFile(rec, req)
+
+	require.Equal(s.T(), http.StatusNotFound, rec.Code)
+}
+
+func (s *ServerSuite) TestPlaygroundServeProjectFilePathTraversal() {
+	s.setPlaygroundDir()
+	projectDir := s.T().TempDir()
+	pgDir := filepath.Join(projectDir, ".loop", "playground", "my-app")
+	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1",
+		DirPath:   projectDir,
+	}, nil).Once()
+
+	req := httptest.NewRequest("GET", "/api/playground/serve-project/ch1/my-app/../../etc/passwd", nil)
+	req.SetPathValue("channel_id", "ch1")
+	req.SetPathValue("name", "my-app")
+	req.SetPathValue("path", "../../etc/passwd")
+	rec := httptest.NewRecorder()
+	s.srv.handlePlaygroundServeProjectFile(rec, req)
+
+	require.Equal(s.T(), http.StatusNotFound, rec.Code)
+}
+
+func (s *ServerSuite) TestPlaygroundServeProjectFileInvalidChannel() {
+	s.setPlaygroundDir()
+	s.store.On("GetChannel", mock.Anything, "bad-ch").Return(nil, nil).Once()
+
+	req := httptest.NewRequest("GET", "/api/playground/serve-project/bad-ch/my-app/script.js", nil)
+	req.SetPathValue("channel_id", "bad-ch")
+	req.SetPathValue("name", "my-app")
+	req.SetPathValue("path", "script.js")
+	rec := httptest.NewRecorder()
+	s.srv.handlePlaygroundServeProjectFile(rec, req)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+// --- project-scoped playground CRUD via query params ---
+
+func (s *ServerSuite) TestPlaygroundUpdateProjectScope() {
+	s.setPlaygroundDir()
+	projectDir := s.T().TempDir()
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1",
+		DirPath:   projectDir,
+	}, nil).Once()
+
+	body := `{"html":"<h1>Project Hello</h1>","title":"Proj","description":"A project app"}`
+	rec := s.testRequest("PUT", "/api/playground?name=proj-app&scope=project&channel_id=ch1", body)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	pgDir := filepath.Join(projectDir, ".loop", "playground", "proj-app")
+	html, err := os.ReadFile(filepath.Join(pgDir, "index.html"))
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "<h1>Project Hello</h1>", string(html))
+}
+
+func (s *ServerSuite) TestPlaygroundGetProjectScope() {
+	s.setPlaygroundDir()
+	projectDir := s.T().TempDir()
+	pgDir := filepath.Join(projectDir, ".loop", "playground", "proj-app")
+	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(pgDir, "index.html"), []byte("<p>proj</p>"), 0o644))
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1",
+		DirPath:   projectDir,
+	}, nil).Once()
+
+	rec := s.testRequest("GET", "/api/playground?name=proj-app&scope=project&channel_id=ch1", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var content playgroundContent
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &content))
+	require.Equal(s.T(), "<p>proj</p>", content.HTML)
+}
+
+func (s *ServerSuite) TestPlaygroundDeleteProjectScope() {
+	s.setPlaygroundDir()
+	projectDir := s.T().TempDir()
+	pgDir := filepath.Join(projectDir, ".loop", "playground", "proj-app")
+	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(pgDir, "index.html"), []byte("<p>bye</p>"), 0o644))
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1",
+		DirPath:   projectDir,
+	}, nil).Once()
+
+	rec := s.testRequest("DELETE", "/api/playground?name=proj-app&scope=project&channel_id=ch1", "")
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	_, err := os.Stat(pgDir)
+	require.True(s.T(), os.IsNotExist(err))
+}
+
+func (s *ServerSuite) TestPlaygroundFileListProjectScope() {
+	s.setPlaygroundDir()
+	projectDir := s.T().TempDir()
+	pgDir := filepath.Join(projectDir, ".loop", "playground", "proj-app")
+	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(pgDir, "index.html"), []byte("<p>hi</p>"), 0o644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(pgDir, "script.js"), []byte("x"), 0o644))
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1",
+		DirPath:   projectDir,
+	}, nil).Once()
+
+	rec := s.testRequest("GET", "/api/playground/files?name=proj-app&scope=project&channel_id=ch1", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var result struct{ Files []string }
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &result))
+	require.Contains(s.T(), result.Files, "index.html")
+	require.Contains(s.T(), result.Files, "script.js")
 }

@@ -46,6 +46,10 @@ func (m *MockSystem) Remove(name string) error {
 	return m.Called(name).Error(0)
 }
 
+func (m *MockSystem) RemoveAll(path string) error {
+	return m.Called(path).Error(0)
+}
+
 func (m *MockSystem) MkdirAll(path string, perm os.FileMode) error {
 	return m.Called(path, perm).Error(0)
 }

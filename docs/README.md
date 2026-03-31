@@ -13,7 +13,7 @@ Comprehensive documentation for every feature of the Loop platform.
 ## Agent & Containers
 
 - [**Agent**](agent.md) — Agent request/response types, session management, streaming callbacks
-- [**Containers**](containers.md) — Docker container lifecycle, environment, mounts, MCP config, cleanup
+- [**Containers**](containers.md) — Docker container lifecycle, container registry with status tracking, environment, mounts, MCP config, scheduled removal
 - [**MCP Server**](mcpserver.md) — MCP tools for task scheduling, communication, and memory search
 - [**Browser**](browser.md) — Chrome sidecar containers, CDP client, screencast, input dispatch, tabs
 - [**Scheduling**](scheduling.md) — Task types (cron/interval/once), templates, auto-deletion, thread creation
@@ -21,8 +21,8 @@ Comprehensive documentation for every feature of the Loop platform.
 
 ## API & Data
 
-- [**API**](api.md) — HTTP API reference, request/response schemas, branches, worktrees, error codes
-- [**Events**](events.md) — Real-time WebSocket events, subscription model, event payloads
+- [**API**](api.md) — HTTP API reference, request/response schemas, branches, worktrees, commits, containers, error codes
+- [**Events**](events.md) — Real-time WebSocket events, subscription model, event payloads, container lifecycle events
 - [**Terminal**](terminal.md) — Terminal WebSocket protocol, Docker exec, host PTY, ring buffer
 - [**Memory**](memory.md) — Semantic search, Ollama embeddings, chunking, re-indexing
 
@@ -30,10 +30,10 @@ Comprehensive documentation for every feature of the Loop platform.
 
 - [**Desktop App**](desktop-app.md) — Electron architecture, windows, deep links, auto-update, daemon management
 - [**Layouts**](layouts.md) — Split pane workspaces, named layouts, drag-to-split, persistence
-- [**Chat**](chat.md) — Chat view, message rendering, streaming, agent activity, input with autocomplete
-- [**Editor**](editor.md) — CodeMirror editor, file tree, tabs, dirty tracking, auto-save
+- [**Chat**](chat.md) — Chat view, message rendering, streaming, agent activity, input with autocomplete, message history
+- [**Editor**](editor.md) — CodeMirror editor, file tree, tabs, dirty tracking, auto-save, directory create/delete
 - [**Sidebar**](sidebar.md) — Channel/thread navigation, ordering, search, batch operations
-- [**Playground**](playground.md) — Live interactive code sandbox, agent-driven HTML/CSS/JS rendering
+- [**Playground**](playground.md) — Live interactive code sandbox, agent-driven HTML/CSS/JS rendering, global and project scopes
 - [**Settings**](settings.md) — Settings panel, command palette (Cmd+K), daemon management
 
 ## Help

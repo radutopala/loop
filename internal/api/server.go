@@ -49,6 +49,7 @@ type serverSystem interface {
 	WriteFile(name string, data []byte, perm os.FileMode) error
 	ReadDir(name string) ([]fs.DirEntry, error)
 	Remove(name string) error
+	RemoveAll(path string) error
 	MkdirAll(path string, perm os.FileMode) error
 	UserHomeDir() (string, error)
 	Open(name string) (*os.File, error)
@@ -205,8 +206,10 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/channels/{id}/file", s.handleReadFile)
 	mux.HandleFunc("PUT /api/channels/{id}/file", s.handleWriteFile)
 	mux.HandleFunc("DELETE /api/channels/{id}/file", s.handleDeleteFile)
+	mux.HandleFunc("POST /api/channels/{id}/dir", s.handleCreateDir)
 	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
 	mux.HandleFunc("GET /api/channels/{id}/branches", s.handleListBranches)
+	mux.HandleFunc("GET /api/channels/{id}/commits", s.handleListCommits)
 	mux.HandleFunc("POST /api/channels/{id}/branches/switch", s.handleSwitchBranch)
 	mux.HandleFunc("POST /api/channels/{id}/branches/create", s.handleCreateBranch)
 	mux.HandleFunc("POST /api/worktrees", s.handleCreateWorktree)
@@ -223,6 +226,8 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/playground/files", s.handlePlaygroundFileList)
 	mux.HandleFunc("GET /api/playground/serve/{name}", s.handlePlaygroundServe)
 	mux.HandleFunc("GET /api/playground/serve/{name}/{path...}", s.handlePlaygroundServeFile)
+	mux.HandleFunc("GET /api/playground/serve-project/{channel_id}/{name}", s.handlePlaygroundServeProject)
+	mux.HandleFunc("GET /api/playground/serve-project/{channel_id}/{name}/{path...}", s.handlePlaygroundServeProjectFile)
 	mux.HandleFunc("POST /api/agents", s.handleRegisterAgent)
 	mux.HandleFunc("GET /api/agents", s.handleListAgents)
 	mux.HandleFunc("PATCH /api/agents/{id}", s.handleUpdateAgent)

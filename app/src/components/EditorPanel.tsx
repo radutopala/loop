@@ -16,7 +16,7 @@ import { yaml } from "@codemirror/lang-yaml";
 import { marked } from "marked";
 import { fonts } from "../theme";
 import { useTheme } from "../ThemeContext";
-import { fetchFiles, fetchFileContent, saveFileContent, deleteFile, fetchRoots, updateExtraDirs, type FileEntry, type RootEntry } from "../api/loopApi";
+import { fetchFiles, fetchFileContent, saveFileContent, deleteFile, createDir, fetchRoots, updateExtraDirs, type FileEntry, type RootEntry } from "../api/loopApi";
 import { FilePanel, buildMarkdownStyles } from "./FilePanel";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { buildEditorTheme } from "./editorTheme";
@@ -159,6 +159,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   const [dirtyTabs, setDirtyTabs] = useState<Set<string>>(new Set());
   const [autoSaveOnBlur, setAutoSaveOnBlur] = useState(true);
   const [newFileName, setNewFileName] = useState<string | null>(null);
+  const [newDirName, setNewDirName] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string; isDir: boolean } | null>(null);
   const [editorMenu, setEditorMenu] = useState<{ x: number; y: number } | null>(null);
 
@@ -520,6 +521,48 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
     });
   }, [channelId, loadDir, switchToTab]);
 
+  const handleCreateDirPath = useCallback((name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    setNewDirName(null);
+    const { rootIndex } = parsePathKey(selectedDir);
+    const { rootIndex: ri, relativePath: rp } = parsePathKey(trimmed);
+    const actualRoot = trimmed.includes(":") ? ri : rootIndex;
+    const actualPath = trimmed.includes(":") ? rp : trimmed;
+    createDir(channelId, actualPath, actualRoot).then(() => {
+      const parentRelPath = actualPath.includes("/") ? actualPath.substring(0, actualPath.lastIndexOf("/")) : ".";
+      loadDir(parentRelPath, actualRoot);
+    }).catch((err) => {
+      setError(err instanceof Error ? err.message : "Failed to create directory");
+    });
+  }, [channelId, loadDir, selectedDir]);
+
+  const handleDeleteDirPath = useCallback((pathKey: string) => {
+    const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+    deleteFile(channelId, rp, ri).then(() => {
+      // Close any tabs whose path starts with this directory.
+      setOpenTabs((prev) => {
+        const next = prev.filter((p) => p !== pathKey && !p.startsWith(pathKey + "/"));
+        if (selectedPathRef.current && (selectedPathRef.current === pathKey || selectedPathRef.current.startsWith(pathKey + "/"))) {
+          if (next.length > 0) {
+            switchToTab(next[0]!);
+          } else {
+            setSelectedPath(null);
+            setFileContent(null);
+            setIsBinary(false);
+            setError(null);
+          }
+        }
+        return next;
+      });
+      // Reload parent directory.
+      const parentRelPath = rp.includes("/") ? rp.substring(0, rp.lastIndexOf("/")) : ".";
+      loadDir(parentRelPath, ri);
+    }).catch((err) => {
+      setError(err instanceof Error ? err.message : "Failed to delete directory");
+    });
+  }, [channelId, loadDir, switchToTab]);
+
   const handleContextMenu = useCallback((e: React.MouseEvent, path: string, isDir: boolean) => {
     e.preventDefault();
     setContextMenu({ x: e.clientX, y: e.clientY, path, isDir });
@@ -534,12 +577,15 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
     items.push({ label: "Copy relative path", onClick: () => navigator.clipboard.writeText(ctxRelPath) });
     items.push({ label: "Copy absolute path", onClick: () => navigator.clipboard.writeText(absBase + "/" + ctxRelPath) });
     if (contextMenu.isDir) {
-      items.push({ label: "New file here", separator: true, onClick: () => setNewFileName(ctxRelPath + "/") });
+      const prefix = ctxRelPath && ctxRelPath !== "." ? ctxRelPath + "/" : "";
+      items.push({ label: "New file here", separator: true, onClick: () => setNewFileName(prefix) });
+      items.push({ label: "New directory here", onClick: () => setNewDirName(prefix) });
+      items.push({ label: "Delete", danger: true, separator: true, onClick: () => handleDeleteDirPath(contextMenu.path) });
     } else {
       items.push({ label: "Delete", danger: true, separator: true, onClick: () => handleDeleteFilePath(contextMenu.path) });
     }
     return items;
-  }, [contextMenu, dirPath, roots, handleDeleteFilePath]);
+  }, [contextMenu, dirPath, roots, handleDeleteFilePath, handleDeleteDirPath]);
 
   const handleEditorContextMenu = useCallback((e: React.MouseEvent) => {
     // Only show custom menu when right-clicking inside the CodeMirror editor area.
@@ -800,6 +846,33 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
                   boxSizing: "border-box",
                   background: colors.bg,
                   border: `1px solid ${colors.active}`,
+                  color: colors.textLight,
+                  fontSize: 11,
+                  fontFamily: fonts.mono,
+                  padding: "2px 4px",
+                  borderRadius: 3,
+                  outline: "none",
+                }}
+              />
+            </div>
+          )}
+          {newDirName !== null && (
+            <div style={{ padding: "2px 8px" }}>
+              <input
+                autoFocus
+                placeholder="path/to/directory"
+                value={newDirName}
+                onChange={(e) => setNewDirName(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") handleCreateDirPath(newDirName);
+                  if (e.key === "Escape") setNewDirName(null);
+                }}
+                onBlur={() => setNewDirName(null)}
+                style={{
+                  width: "100%",
+                  boxSizing: "border-box",
+                  background: colors.bg,
+                  border: `1px solid ${colors.warning}`,
                   color: colors.textLight,
                   fontSize: 11,
                   fontFamily: fonts.mono,

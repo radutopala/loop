@@ -399,7 +399,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
           <WelcomeScreen />
         </div>
         <div style={styles.inputBar}>
-          <ChatInput channelId={channelId} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} />
+          <ChatInput channelId={channelId} messages={messages} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} />
         </div>
 
         <div style={styles.isolationLabel}>
@@ -456,7 +456,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
         </div>
       </div>
       <div style={styles.inputBar}>
-        <ChatInput channelId={channelId} isRunning={isRunning} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} />
+        <ChatInput channelId={channelId} messages={messages} isRunning={isRunning} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} />
       </div>
       <div style={styles.isolationLabel}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={isRunning ? colors.active : colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -817,7 +817,7 @@ const LOOP_COMMANDS: CommandDef[] = [
   { name: "iamtheowner", description: "Claim channel ownership" },
 ];
 
-function ChatInput({ channelId, isRunning, mode, setMode, onDismissCards, onSent }: { channelId: string; isRunning?: boolean; mode: "agent" | "plan"; setMode: (m: "agent" | "plan") => void; onDismissCards?: () => void; onSent?: () => void }) {
+function ChatInput({ channelId, messages, isRunning, mode, setMode, onDismissCards, onSent }: { channelId: string; messages: Message[]; isRunning?: boolean; mode: "agent" | "plan"; setMode: (m: "agent" | "plan") => void; onDismissCards?: () => void; onSent?: () => void }) {
   const { colors } = useTheme();
   const styles = buildStyles(colors);
   const modeStyles = buildModeStyles(colors);
@@ -832,6 +832,24 @@ function ChatInput({ channelId, isRunning, mode, setMode, onDismissCards, onSent
   const [cmdSelectedIdx, setCmdSelectedIdx] = useState(0);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const cmdDropdownRef = useRef<HTMLDivElement>(null);
+
+  // ── Message history (ArrowUp / ArrowDown) ──
+  // Stores user-sent message contents for this channel; -1 = composing new text.
+  const historyRef = useRef<string[]>([]);
+  const historyIdxRef = useRef(-1);
+  const draftRef = useRef("");
+  const seededRef = useRef<string | null>(null);
+
+  // Seed history from backend messages on first load / channel switch.
+  useEffect(() => {
+    if (seededRef.current === channelId) return;
+    const userMsgs = messages.filter((m) => !m.is_bot).map((m) => m.content);
+    if (userMsgs.length === 0) return;
+    seededRef.current = channelId;
+    historyRef.current = userMsgs;
+    historyIdxRef.current = -1;
+    draftRef.current = "";
+  }, [channelId, messages]);
 
   // Auto-focus textarea on mount; move cursor to end if restoring a draft.
   useEffect(() => {
@@ -869,6 +887,11 @@ function ChatInput({ channelId, isRunning, mode, setMode, onDismissCards, onSent
       } else {
         await sendMessage(channelId, trimmed, mode);
       }
+      // Push to history.
+      historyRef.current.push(trimmed);
+      historyIdxRef.current = -1;
+      draftRef.current = "";
+
       setText("");
       draftText.delete(channelId);
       onDismissCards?.();
@@ -1010,12 +1033,59 @@ function ChatInput({ channelId, isRunning, mode, setMode, onDismissCards, onSent
         setShowMention(false);
         return;
       }
+      // Message history navigation.
+      if (e.key === "ArrowUp" && !showCommands && !showMention) {
+        const el = inputRef.current;
+        if (el && el.selectionStart === 0 && el.selectionEnd === 0) {
+          const hist = historyRef.current;
+          if (hist.length === 0) return;
+          e.preventDefault();
+          if (historyIdxRef.current === -1) {
+            // Save current draft before entering history.
+            draftRef.current = text;
+            historyIdxRef.current = hist.length - 1;
+          } else if (historyIdxRef.current > 0) {
+            historyIdxRef.current--;
+          }
+          const val = hist[historyIdxRef.current]!;
+          setText(val);
+          draftText.set(channelId, val);
+          requestAnimationFrame(() => {
+            if (el) el.setSelectionRange(0, 0);
+          });
+          return;
+        }
+      }
+      if (e.key === "ArrowDown" && !showCommands && !showMention) {
+        const el = inputRef.current;
+        if (el && el.selectionStart === el.value.length && el.selectionEnd === el.value.length && historyIdxRef.current !== -1) {
+          e.preventDefault();
+          const hist = historyRef.current;
+          if (historyIdxRef.current < hist.length - 1) {
+            historyIdxRef.current++;
+            const val = hist[historyIdxRef.current]!;
+            setText(val);
+            draftText.set(channelId, val);
+          } else {
+            // Back to draft.
+            historyIdxRef.current = -1;
+            const val = draftRef.current;
+            setText(val);
+            if (val) draftText.set(channelId, val);
+            else draftText.delete(channelId);
+          }
+          requestAnimationFrame(() => {
+            if (el) el.setSelectionRange(el.value.length, el.value.length);
+          });
+          return;
+        }
+      }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
         handleSend();
       }
     },
-    [handleSend, showMention, acceptMention, showCommands, filteredCommands, cmdSelectedIdx, acceptCommand],
+    [handleSend, text, channelId, showMention, acceptMention, showCommands, filteredCommands, cmdSelectedIdx, acceptCommand],
   );
 
   return (

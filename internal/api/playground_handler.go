@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"html"
 	"io"
 	"mime"
 	"net/http"
@@ -55,6 +56,11 @@ func buildReadme(title, body string) string {
 // and returns a safe directory path under the playground base directory.
 func (s *Server) validatePlaygroundDir(name string) (string, error) {
 	baseDir := filepath.Join(s.loopDir, "playground")
+	return validatePlaygroundDirIn(baseDir, name)
+}
+
+// validatePlaygroundDirIn validates a playground name under an arbitrary base directory.
+func validatePlaygroundDirIn(baseDir, name string) (string, error) {
 	pgDir := filepath.Join(baseDir, filepath.Clean(name))
 	if !strings.HasPrefix(pgDir, baseDir+string(filepath.Separator)) {
 		return "", fmt.Errorf("invalid or missing playground name")
@@ -63,6 +69,25 @@ func (s *Server) validatePlaygroundDir(name string) (string, error) {
 		return "", fmt.Errorf("invalid or missing playground name")
 	}
 	return pgDir, nil
+}
+
+// resolvePlaygroundDir resolves the playground directory based on scope.
+// scope "project" requires a channel_id to resolve the project dir.
+func (s *Server) resolvePlaygroundDir(r *http.Request, name string) (string, error) {
+	scope := r.URL.Query().Get("scope")
+	if scope == "project" {
+		channelID := r.URL.Query().Get("channel_id")
+		if channelID == "" {
+			return "", fmt.Errorf("channel_id is required for project-scoped playgrounds")
+		}
+		dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+		if err != nil {
+			return "", err
+		}
+		baseDir := filepath.Join(dirPath, ".loop", "playground")
+		return validatePlaygroundDirIn(baseDir, name)
+	}
+	return s.validatePlaygroundDir(name)
 }
 
 // validatePlaygroundPath validates a relative file path within a playground directory,
@@ -89,10 +114,10 @@ func validatePlaygroundPath(rootDir, relativePath string) (string, error) {
 	return fullPath, nil
 }
 
-// handlePlaygroundUpdate handles PUT /api/playground?name=... — stores code and pushes event.
+// handlePlaygroundUpdate handles PUT /api/playground?name=...&scope=...&channel_id=... — stores code and pushes event.
 func (s *Server) handlePlaygroundUpdate(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
-	pgDir, err := s.validatePlaygroundDir(name)
+	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -134,10 +159,10 @@ func (s *Server) handlePlaygroundUpdate(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusOK)
 }
 
-// handlePlaygroundGet handles GET /api/playground?name=... — retrieves playground content.
+// handlePlaygroundGet handles GET /api/playground?name=...&scope=...&channel_id=... — retrieves playground content.
 func (s *Server) handlePlaygroundGet(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
-	pgDir, err := s.validatePlaygroundDir(name)
+	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -164,28 +189,44 @@ type playgroundItem struct {
 	Name        string `json:"name"`
 	Title       string `json:"title,omitempty"`
 	Description string `json:"description,omitempty"`
+	Scope       string `json:"scope"` // "global" or "project"
 }
 
-// handlePlaygroundList handles GET /api/playground/items — lists all playground names.
-func (s *Server) handlePlaygroundList(w http.ResponseWriter, _ *http.Request) {
-	baseDir := filepath.Join(s.loopDir, "playground")
+// listPlaygroundsIn scans a base directory for valid playground subdirectories.
+func listPlaygroundsIn(baseDir, scope string) []playgroundItem {
 	entries, err := os.ReadDir(baseDir)
 	if err != nil {
-		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string][]playgroundItem{"items": {}}) //nolint:errcheck
-		return
+		return nil
 	}
-
 	var items []playgroundItem
 	for _, e := range entries {
 		if e.IsDir() && validPlaygroundName.MatchString(e.Name()) {
-			item := playgroundItem{Name: e.Name()}
+			item := playgroundItem{Name: e.Name(), Scope: scope}
 			if readme, readErr := os.ReadFile(filepath.Join(baseDir, e.Name(), "README.md")); readErr == nil {
 				item.Title, item.Description = parseReadme(readme)
 			}
 			items = append(items, item)
 		}
 	}
+	return items
+}
+
+// handlePlaygroundList handles GET /api/playground/items?channel_id=... — lists all playground names.
+// Returns items from both global (~/.loop/playground/) and project ({dir}/.loop/playground/) scopes.
+func (s *Server) handlePlaygroundList(w http.ResponseWriter, r *http.Request) {
+	globalDir := filepath.Join(s.loopDir, "playground")
+	items := listPlaygroundsIn(globalDir, "global")
+
+	// If channel_id is provided, also list project-scoped playgrounds.
+	if channelID := r.URL.Query().Get("channel_id"); channelID != "" {
+		if dirPath, err := s.resolveDirPath(r.Context(), "", channelID); err == nil {
+			projectDir := filepath.Clean(filepath.Join(dirPath, ".loop", "playground"))
+			if !strings.Contains(projectDir, "..") {
+				items = append(items, listPlaygroundsIn(projectDir, "project")...)
+			}
+		}
+	}
+
 	if items == nil {
 		items = []playgroundItem{}
 	}
@@ -212,15 +253,15 @@ const consoleBridgeScript = `<script>
 </script>`
 
 // handlePlaygroundServe serves the composed HTML page for a playground.
-// GET /api/playground/serve/{name}
+// GET /api/playground/serve/{name}?scope=...&channel_id=...
 func (s *Server) handlePlaygroundServe(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	pgDir, err := s.validatePlaygroundDir(name)
+	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	html, _ := os.ReadFile(filepath.Join(pgDir, "index.html"))
+	rawHTML, _ := os.ReadFile(filepath.Join(pgDir, "index.html"))
 	importMap, _ := os.ReadFile(filepath.Join(pgDir, "importmap.json"))
 
 	var importMapBlock string
@@ -228,19 +269,23 @@ func (s *Server) handlePlaygroundServe(w http.ResponseWriter, r *http.Request) {
 		importMapBlock = fmt.Sprintf("<script type=\"importmap\">%s</script>\n", string(importMap))
 	}
 
-	body := string(html)
+	body := string(rawHTML)
 	if body == "" {
-		body = `<div style="padding:20px;color:#888;text-align:center">Playground — waiting for code from agent</div>`
+		body = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#555;font-family:system-ui,sans-serif;font-size:13px">Playground — waiting for code from agent</div>`
 	}
 
 	// <base> ensures relative URLs (style.css, script.js, import './utils.js')
 	// resolve against the playground's serve path, not the document URL.
 	baseURL := fmt.Sprintf("/api/playground/serve/%s/", name)
+	if scope := r.URL.Query().Get("scope"); scope == "project" {
+		channelID := r.URL.Query().Get("channel_id")
+		baseURL = fmt.Sprintf("/api/playground/serve-project/%s/%s/", channelID, name)
+	}
 
 	var buf bytes.Buffer
 	fmt.Fprintf(&buf, "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n")
-	fmt.Fprintf(&buf, "<base href=\"%s\">\n", baseURL)
-	buf.WriteString("<link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body>\n")
+	fmt.Fprintf(&buf, "<base href=\"%s\">\n", html.EscapeString(baseURL))
+	buf.WriteString("<link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body style=\"margin:0;background:#000\">\n")
 	buf.WriteString(consoleBridgeScript)
 	buf.WriteByte('\n')
 	buf.WriteString(body)
@@ -256,10 +301,10 @@ func (s *Server) handlePlaygroundServe(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePlaygroundServeFile serves individual files from a playground directory.
-// GET /api/playground/serve/{name}/{path...}
+// GET /api/playground/serve/{name}/{path...}?scope=...&channel_id=...
 func (s *Server) handlePlaygroundServeFile(w http.ResponseWriter, r *http.Request) {
 	name := r.PathValue("name")
-	pgDir, err := s.validatePlaygroundDir(name)
+	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -285,10 +330,96 @@ func (s *Server) handlePlaygroundServeFile(w http.ResponseWriter, r *http.Reques
 	w.Write(data) //nolint:errcheck
 }
 
-// handlePlaygroundDelete handles DELETE /api/playground?name=... — removes an entire playground.
+// resolveProjectPlaygroundDir resolves a playground dir from channel_id and name path values.
+func (s *Server) resolveProjectPlaygroundDir(r *http.Request) (string, error) {
+	channelID := r.PathValue("channel_id")
+	name := r.PathValue("name")
+	if channelID == "" || name == "" {
+		return "", fmt.Errorf("channel_id and name are required")
+	}
+	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	if err != nil {
+		return "", err
+	}
+	baseDir := filepath.Join(dirPath, ".loop", "playground")
+	return validatePlaygroundDirIn(baseDir, name)
+}
+
+// handlePlaygroundServeProject serves the composed HTML page for a project-scoped playground.
+// GET /api/playground/serve-project/{channel_id}/{name}
+func (s *Server) handlePlaygroundServeProject(w http.ResponseWriter, r *http.Request) {
+	name := r.PathValue("name")
+	pgDir, err := s.resolveProjectPlaygroundDir(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	rawHTML, _ := os.ReadFile(filepath.Join(pgDir, "index.html"))
+	importMap, _ := os.ReadFile(filepath.Join(pgDir, "importmap.json"))
+
+	var importMapBlock string
+	if len(importMap) > 0 {
+		importMapBlock = fmt.Sprintf("<script type=\"importmap\">%s</script>\n", string(importMap))
+	}
+
+	body := string(rawHTML)
+	if body == "" {
+		body = `<div style="display:flex;align-items:center;justify-content:center;height:100vh;margin:0;color:#555;font-family:system-ui,sans-serif;font-size:13px">Playground — waiting for code from agent</div>`
+	}
+
+	channelID := r.PathValue("channel_id")
+	baseURL := fmt.Sprintf("/api/playground/serve-project/%s/%s/", channelID, name)
+
+	var buf bytes.Buffer
+	fmt.Fprintf(&buf, "<!DOCTYPE html>\n<html>\n<head>\n<meta charset=\"utf-8\">\n")
+	fmt.Fprintf(&buf, "<base href=\"%s\">\n", html.EscapeString(baseURL))
+	buf.WriteString("<link rel=\"stylesheet\" href=\"style.css\">\n</head>\n<body style=\"margin:0;background:#000\">\n")
+	buf.WriteString(consoleBridgeScript)
+	buf.WriteByte('\n')
+	buf.WriteString(body)
+	buf.WriteByte('\n')
+	if importMapBlock != "" {
+		buf.WriteString(importMapBlock)
+	}
+	buf.WriteString("<script type=\"module\" src=\"script.js\"></script>\n")
+	buf.WriteString("</body>\n</html>")
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Write(buf.Bytes()) //nolint:errcheck
+}
+
+// handlePlaygroundServeProjectFile serves files from a project-scoped playground.
+// GET /api/playground/serve-project/{channel_id}/{name}/{path...}
+func (s *Server) handlePlaygroundServeProjectFile(w http.ResponseWriter, r *http.Request) {
+	pgDir, err := s.resolveProjectPlaygroundDir(r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	fullPath, err := validatePlaygroundPath(pgDir, r.PathValue("path"))
+	if err != nil {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+	data, err := os.ReadFile(fullPath)
+	if err != nil {
+		http.Error(w, "file not found", http.StatusNotFound)
+		return
+	}
+
+	ext := filepath.Ext(fullPath)
+	ct := mime.TypeByExtension(ext)
+	if ct == "" {
+		ct = "application/octet-stream"
+	}
+	w.Header().Set("Content-Type", ct)
+	w.Write(data) //nolint:errcheck
+}
+
+// handlePlaygroundDelete handles DELETE /api/playground?name=...&scope=...&channel_id=... — removes an entire playground.
 func (s *Server) handlePlaygroundDelete(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
-	pgDir, err := s.validatePlaygroundDir(name)
+	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -313,10 +444,10 @@ func (s *Server) handlePlaygroundDelete(w http.ResponseWriter, r *http.Request) 
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handlePlaygroundFileWrite handles PUT /api/playground/file?name=...&path=... — creates or updates a file.
+// handlePlaygroundFileWrite handles PUT /api/playground/file?name=...&path=...&scope=...&channel_id=... — creates or updates a file.
 func (s *Server) handlePlaygroundFileWrite(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
-	pgDir, err := s.validatePlaygroundDir(name)
+	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -355,10 +486,10 @@ func (s *Server) handlePlaygroundFileWrite(w http.ResponseWriter, r *http.Reques
 	w.WriteHeader(http.StatusOK)
 }
 
-// handlePlaygroundFileRead handles GET /api/playground/file?name=...&path=... — reads a file.
+// handlePlaygroundFileRead handles GET /api/playground/file?name=...&path=...&scope=...&channel_id=... — reads a file.
 func (s *Server) handlePlaygroundFileRead(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
-	pgDir, err := s.validatePlaygroundDir(name)
+	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -378,10 +509,10 @@ func (s *Server) handlePlaygroundFileRead(w http.ResponseWriter, r *http.Request
 	w.Write(data) //nolint:errcheck
 }
 
-// handlePlaygroundFileDelete handles DELETE /api/playground/file?name=...&path=... — removes a file.
+// handlePlaygroundFileDelete handles DELETE /api/playground/file?name=...&path=...&scope=...&channel_id=... — removes a file.
 func (s *Server) handlePlaygroundFileDelete(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
-	pgDir, err := s.validatePlaygroundDir(name)
+	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -407,10 +538,10 @@ func (s *Server) handlePlaygroundFileDelete(w http.ResponseWriter, r *http.Reque
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// handlePlaygroundFileList handles GET /api/playground/files?name=... — lists all files.
+// handlePlaygroundFileList handles GET /api/playground/files?name=...&scope=...&channel_id=... — lists all files.
 func (s *Server) handlePlaygroundFileList(w http.ResponseWriter, r *http.Request) {
 	name := r.URL.Query().Get("name")
-	pgDir, err := s.validatePlaygroundDir(name)
+	pgDir, err := s.resolvePlaygroundDir(r, name)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

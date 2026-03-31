@@ -190,13 +190,74 @@ For other failures with an existing session:
 
 ---
 
+## Container Registry
+
+The `ContainerRegistry` is a centralized, in-memory registry that tracks all Docker containers (agent, shell, chrome) throughout their lifecycle. It serves as the single source of truth for container state and is the entry point for all container lookups.
+
+### Lifecycle States
+
+| Status | Description |
+|--------|-------------|
+| `running` | Container is active and running |
+| `stopped` | Container has exited but hasn't been removed yet |
+| `pending-removal` | Container is scheduled for removal after a delay |
+
+### Container Types
+
+| Type | Singleton | Description |
+|------|-----------|-------------|
+| `agent` | No | Claude Code agent containers — multiple per channel allowed |
+| `shell` | Yes | Terminal access containers — one per channel |
+| `chrome` | Yes | Chrome sidecar containers — one per channel |
+
+Singleton types (shell, chrome) enforce at most one running instance per channel. Registering a duplicate returns the existing entry.
+
+### Docker Labels
+
+All Loop containers carry these labels for identification:
+
+| Label | Value | Purpose |
+|-------|-------|---------|
+| `app` | `loop-agent` | Identifies all Loop-managed containers |
+| `loop-type` | `agent`, `shell`, or `chrome` | Container type classification |
+| `loop-channel` | Channel ID | Associates the container with a channel |
+
+### Registration & Events
+
+When a container is registered, updated, or removed, the registry broadcasts real-time events through the `ContainerBroadcaster` interface:
+
+| Event | Trigger |
+|-------|---------|
+| `container.registered` | New container added to registry |
+| `container.status_changed` | Container status transitions (e.g. running → stopped) |
+| `container.removed` | Container unregistered from registry |
+
+Events are delivered to all connected WebSocket clients (no channel scoping — containers are a global concern).
+
+### Startup Restore
+
+On server startup, `Restore()` populates the registry from Docker containers that survived a daemon restart. It queries Docker for containers with the `app=loop-agent` label and registers them without broadcasting events.
+
+### Reconcile Loop
+
+`RunReconcileLoop` runs periodically (every 30 seconds) and:
+
+1. Queries Docker for live containers
+2. Removes registry entries for containers that no longer exist in Docker (stale entries)
+3. Syncs statuses for containers whose Docker state changed (e.g. running → stopped)
+4. Schedules removal for containers that just stopped
+
+### FindOrCreateShell
+
+Terminal connections use `FindOrCreateShell` to get a shell container for a channel. It uses a per-channel mutex to prevent duplicate containers when multiple terminal panes connect simultaneously (double-checked locking pattern).
+
 ## Container Removal
 
 ### Scheduled Removal
 
-After a container run completes, `scheduleRemove` schedules its removal after a configurable delay (`container_keep_alive_sec`, default 300 seconds / 5 minutes). This keeps `docker logs` available for debugging shortly after the run finishes.
+`ScheduleRemove` marks a container as `pending-removal`, records the `remove_at` timestamp, and schedules actual Docker removal after a configurable delay (`container_keep_alive_sec`, default 300 seconds / 5 minutes). This keeps `docker logs` available for debugging shortly after a run finishes.
 
-The removal uses `ContainerRemove` with `Force: true`.
+If a container is re-registered before the timer fires (e.g. restarted), the pending timer is cancelled automatically.
 
 ### Cleanup on Shutdown
 

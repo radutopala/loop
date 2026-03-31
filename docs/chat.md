@@ -322,6 +322,27 @@ Unsent text in the chat input is automatically persisted to `localStorage` under
 
 ---
 
+## Message History (ArrowUp / ArrowDown)
+
+The chat input supports shell-style message history navigation. Pressing ArrowUp cycles through previously sent messages; ArrowDown returns toward the current draft.
+
+### Behavior
+
+| Key | Condition | Action |
+|-----|-----------|--------|
+| `ArrowUp` | Cursor at position 0 | Save current text as draft, load previous sent message |
+| `ArrowDown` | Cursor at end of text, in history mode | Load next sent message, or restore draft at the end |
+
+### Seeding
+
+On first ArrowUp press, if the local history buffer is empty, it is seeded from backend messages (`is_bot === false`) for the current channel. Subsequent presses use the local buffer.
+
+### Implementation
+
+History is stored in `useRef` arrays (`historyRef`, `historyIdxRef`, `draftRef`) to avoid unnecessary re-renders. Each sent message is appended to the history buffer before clearing the input. The index `-1` means "not in history mode."
+
+---
+
 ## Message Queue Indicators
 
 When multiple messages are sent while the agent is running, unprocessed messages are tracked and annotated with status labels.

@@ -17,12 +17,21 @@ type playgroundInput struct {
 	Title       string `json:"title,omitempty" jsonschema:"Display title (required for create, optional for update)"`
 	Description string `json:"description,omitempty" jsonschema:"What it does, controls, usage (required for create, optional for update). Saved as README.md body, supports markdown."`
 	HTML        string `json:"html,omitempty" jsonschema:"HTML body content — the entry point (required for create, optional for update). No html/head/body tags."`
+	Scope       string `json:"scope,omitempty" jsonschema:"Storage scope: 'global' (default, ~/.loop/playground/) or 'project' (project .loop/playground/). Requires channel_id for project scope."`
+}
+
+// playgroundScopeParams returns URL query params for scope routing.
+func (s *Server) playgroundScopeParams(scope string) string {
+	if scope == "project" && s.channelID != "" {
+		return "&scope=project&channel_id=" + url.QueryEscape(s.channelID)
+	}
+	return ""
 }
 
 func (s *Server) handlePlayground(_ context.Context, _ *mcp.CallToolRequest, input playgroundInput) (*mcp.CallToolResult, any, error) {
-	s.logger.Info("mcp tool call", "tool", "playground", "action", input.Action, "name", input.Name)
+	s.logger.Info("mcp tool call", "tool", "playground", "action", input.Action, "name", input.Name, "scope", input.Scope)
 
-	apiURL := fmt.Sprintf("%s/api/playground?name=%s", s.apiURL, url.QueryEscape(input.Name))
+	apiURL := fmt.Sprintf("%s/api/playground?name=%s%s", s.apiURL, url.QueryEscape(input.Name), s.playgroundScopeParams(input.Scope))
 
 	switch input.Action {
 	case "create":
@@ -78,6 +87,7 @@ type playgroundFileInput struct {
 	Name    string `json:"name" jsonschema:"required,Playground name"`
 	Path    string `json:"path,omitempty" jsonschema:"File path relative to playground root (e.g. 'script.js', 'lib/utils.js'). Required for create/update/read/delete."`
 	Content string `json:"content,omitempty" jsonschema:"File content. Required for create/update."`
+	Scope   string `json:"scope,omitempty" jsonschema:"Storage scope: 'global' (default) or 'project'. Must match the playground's scope."`
 }
 
 func (s *Server) handlePlaygroundFile(_ context.Context, _ *mcp.CallToolRequest, input playgroundFileInput) (*mcp.CallToolResult, any, error) {
@@ -86,6 +96,7 @@ func (s *Server) handlePlaygroundFile(_ context.Context, _ *mcp.CallToolRequest,
 	baseURL := fmt.Sprintf("%s/api/playground", s.apiURL)
 	nameParam := url.QueryEscape(input.Name)
 	pathParam := url.QueryEscape(input.Path)
+	scopeParams := s.playgroundScopeParams(input.Scope)
 
 	switch input.Action {
 	case "create", "update":
@@ -95,7 +106,7 @@ func (s *Server) handlePlaygroundFile(_ context.Context, _ *mcp.CallToolRequest,
 		if input.Content == "" {
 			return errorResult("content is required"), nil, nil
 		}
-		apiURL := fmt.Sprintf("%s/file?name=%s&path=%s", baseURL, nameParam, pathParam)
+		apiURL := fmt.Sprintf("%s/file?name=%s&path=%s%s", baseURL, nameParam, pathParam, scopeParams)
 		if errResult, err := doAPICallNoBody(s, "PUT", apiURL, http.StatusOK, []byte(input.Content)); errResult != nil || err != nil {
 			return errResult, nil, err
 		}
@@ -105,7 +116,7 @@ func (s *Server) handlePlaygroundFile(_ context.Context, _ *mcp.CallToolRequest,
 		if input.Path == "" {
 			return errorResult("path is required"), nil, nil
 		}
-		apiURL := fmt.Sprintf("%s/file?name=%s&path=%s", baseURL, nameParam, pathParam)
+		apiURL := fmt.Sprintf("%s/file?name=%s&path=%s%s", baseURL, nameParam, pathParam, scopeParams)
 		body, status, err := s.doRequest("GET", apiURL, nil)
 		if err != nil {
 			return errorResult(fmt.Sprintf("reading file: %v", err)), nil, nil
@@ -119,14 +130,14 @@ func (s *Server) handlePlaygroundFile(_ context.Context, _ *mcp.CallToolRequest,
 		if input.Path == "" {
 			return errorResult("path is required"), nil, nil
 		}
-		apiURL := fmt.Sprintf("%s/file?name=%s&path=%s", baseURL, nameParam, pathParam)
+		apiURL := fmt.Sprintf("%s/file?name=%s&path=%s%s", baseURL, nameParam, pathParam, scopeParams)
 		if errResult, err := doAPICallNoBody(s, "DELETE", apiURL, http.StatusNoContent, nil); errResult != nil || err != nil {
 			return errResult, nil, err
 		}
 		return textResult(fmt.Sprintf("File '%s' deleted from playground '%s'.", input.Path, input.Name)), nil, nil
 
 	case "list":
-		apiURL := fmt.Sprintf("%s/files?name=%s", baseURL, nameParam)
+		apiURL := fmt.Sprintf("%s/files?name=%s%s", baseURL, nameParam, scopeParams)
 		body, status, err := s.doRequest("GET", apiURL, nil)
 		if err != nil {
 			return errorResult(fmt.Sprintf("listing files: %v", err)), nil, nil

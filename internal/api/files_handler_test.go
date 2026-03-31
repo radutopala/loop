@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -601,14 +602,19 @@ func (s *ServerSuite) TestDeleteFile_NotFound() {
 
 func (s *ServerSuite) TestDeleteFile_Directory() {
 	tmpDir := s.T().TempDir()
-	require.NoError(s.T(), os.MkdirAll(filepath.Join(tmpDir, "subdir"), 0755))
+	subDir := filepath.Join(tmpDir, "subdir")
+	require.NoError(s.T(), os.MkdirAll(subDir, 0755))
+	// Place a file inside so we can verify recursive removal.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(subDir, "inner.txt"), []byte("x"), 0644))
 
 	s.store.On("GetChannel", mock.Anything, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
 
 	rec := s.testRequest("DELETE", "/api/channels/ch-1/file?path=subdir", "")
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
-	require.Contains(s.T(), rec.Body.String(), "cannot delete directories")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	// Directory should be gone.
+	_, err := os.Stat(subDir)
+	require.True(s.T(), os.IsNotExist(err))
 }
 
 func (s *ServerSuite) TestDeleteFile_PathTraversal() {
@@ -765,4 +771,182 @@ func TestValidateFilePathUnit(t *testing.T) {
 			require.Contains(t, err.Error(), tt.wantErr)
 		})
 	}
+}
+
+// ── createDir ──
+
+func (s *ServerSuite) TestCreateDir_Success() {
+	tmpDir := s.T().TempDir()
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/dir?path=newdir", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	info, err := os.Stat(filepath.Join(tmpDir, "newdir"))
+	require.NoError(s.T(), err)
+	require.True(s.T(), info.IsDir())
+}
+
+func (s *ServerSuite) TestCreateDir_Nested() {
+	tmpDir := s.T().TempDir()
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/dir?path=a/b/c", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	info, err := os.Stat(filepath.Join(tmpDir, "a", "b", "c"))
+	require.NoError(s.T(), err)
+	require.True(s.T(), info.IsDir())
+}
+
+func (s *ServerSuite) TestCreateDir_EmptyPath() {
+	tmpDir := s.T().TempDir()
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/dir?path=", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestCreateDir_PathTraversal() {
+	tmpDir := s.T().TempDir()
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/dir?path=../escape", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+// ── handleDeleteFile: RemoveAll error ──
+
+// fakeFileInfo implements os.FileInfo for testing directory stat results.
+type fakeFileInfo struct {
+	name  string
+	isDir bool
+}
+
+func (f fakeFileInfo) Name() string      { return f.name }
+func (f fakeFileInfo) Size() int64       { return 0 }
+func (f fakeFileInfo) Mode() fs.FileMode { return 0755 }
+func (f fakeFileInfo) ModTime() time.Time {
+	return time.Time{}
+}
+func (f fakeFileInfo) IsDir() bool { return f.isDir }
+func (f fakeFileInfo) Sys() any    { return nil }
+
+func (s *ServerSuite) TestDeleteFile_RemoveAllError() {
+	tmpDir := s.T().TempDir()
+	subDir := filepath.Join(tmpDir, "mydir")
+	require.NoError(s.T(), os.MkdirAll(subDir, 0755))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	// Override Stat to return a directory FileInfo.
+	s.sys.Override("Stat", mock.Anything).Return(fakeFileInfo{name: "mydir", isDir: true}, nil)
+	// Override RemoveAll to return an error.
+	s.sys.On("RemoveAll", mock.Anything).Return(fmt.Errorf("injected removeall error"))
+	s.srv.sys = s.sys
+
+	rec := s.testRequest("DELETE", "/api/channels/ch-1/file?path=mydir", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "failed to delete directory")
+}
+
+// ── validateDirPath ──
+
+func TestValidateDirPath_AbsolutePath(t *testing.T) {
+	_, err := validateDirPath("/tmp/root", "/etc/passwd")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "absolute paths are not allowed")
+}
+
+func TestValidateDirPath_NullByte(t *testing.T) {
+	_, err := validateDirPath("/tmp/root", "foo\x00bar")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "path contains invalid characters")
+}
+
+func TestValidateDirPath_InvalidRoot(t *testing.T) {
+	_, err := validateDirPath("/nonexistent-root-dir-99999", "sub")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "invalid root directory")
+}
+
+func TestValidateDirPath_EmptyPath(t *testing.T) {
+	_, err := validateDirPath("/tmp", "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "path is required")
+}
+
+func TestValidateDirPath_Traversal(t *testing.T) {
+	_, err := validateDirPath("/tmp", "../escape")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "path traversal not allowed")
+}
+
+func TestValidateDirPath_DotDot(t *testing.T) {
+	_, err := validateDirPath("/tmp", "..")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "path traversal not allowed")
+}
+
+func TestValidateDirPath_Success(t *testing.T) {
+	tmpDir := t.TempDir()
+	abs, err := validateDirPath(tmpDir, "newdir/sub")
+	require.NoError(t, err)
+	require.Equal(t, filepath.Join(tmpDir, "newdir/sub"), abs)
+}
+
+func TestValidateDirPath_SymlinkTraversal(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+
+	// Create a symlink inside root that points outside.
+	require.NoError(t, os.Symlink(outside, filepath.Join(root, "escape")))
+
+	_, err := validateDirPath(root, "escape/sub")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "path traversal not allowed")
+}
+
+// ── handleCreateDir: missing coverage ──
+
+func (s *ServerSuite) TestCreateDir_NotConfigured() {
+	srv := nilServer()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/channels/{id}/dir", srv.handleCreateDir)
+
+	req, _ := http.NewRequest("POST", "/api/channels/ch-1/dir?path=newdir", nil)
+	rec := newRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+func (s *ServerSuite) TestCreateDir_ChannelNotFound() {
+	s.store.On("GetChannel", mock.Anything, "missing").
+		Return((*db.Channel)(nil), nil)
+
+	rec := s.testRequest("POST", "/api/channels/missing/dir?path=newdir", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestCreateDir_MkdirAllError() {
+	tmpDir := s.T().TempDir()
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	s.sys.Override("MkdirAll", mock.Anything, mock.Anything).Return(fmt.Errorf("injected mkdir error"))
+	s.srv.sys = s.sys
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/dir?path=newdir", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "failed to create directory")
 }

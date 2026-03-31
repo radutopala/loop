@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { DiffResponse } from "../api/loopApi";
-import { fetchDiff, fetchFileContent, fetchBranches } from "../api/loopApi";
+import type { DiffResponse, CommitEntry } from "../api/loopApi";
+import { fetchDiff, fetchFileContent, fetchBranches, fetchCommits } from "../api/loopApi";
 import { useEventStream } from "../hooks/useEventStream";
 import { fonts } from "../theme";
 import type { ColorPalette } from "../theme";
@@ -274,12 +274,17 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
   const [expandedFiles, setExpandedFiles] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(false);
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
-  // Branch diff mode state
-  type DiffMode = "uncommitted" | "branches";
+  // Mode state
+  type DiffMode = "uncommitted" | "branches" | "commits";
   const [diffMode, setDiffMode] = useState<DiffMode>("uncommitted");
   const [branches, setBranches] = useState<string[]>([]);
   const [sourceBranch, setSourceBranch] = useState<string>("");
   const [targetBranch, setTargetBranch] = useState<string>("");
+  const [commitBranch, setCommitBranch] = useState<string>("");
+  const [commits, setCommits] = useState<CommitEntry[]>([]);
+  const [commitsLoading, setCommitsLoading] = useState(false);
+  const [commitsHasMore, setCommitsHasMore] = useState(true);
+  const COMMITS_PAGE = 50;
   // Expand context state: file content cache and per-gap expansion tracking
   const fileContentCache = useRef<Map<string, string[]>>(new Map());
   const [expandedGaps, setExpandedGaps] = useState<Map<string, Map<string, { fromTop: number; fromBottom: number }>>>(new Map());
@@ -303,9 +308,9 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     ctx: { bg: "transparent", numBg: "transparent", text: colors.textMuted },
   };
 
-  // Fetch branch list when switching to branch mode
+  // Fetch branch list when switching to branch or commits mode
   useEffect(() => {
-    if (diffMode === "branches" && channelId) {
+    if ((diffMode === "branches" || diffMode === "commits") && channelId) {
       fetchBranches(channelId).then((info) => {
         // Combine regular branches + current branch (which may be filtered out of the list).
         const all = new Set(info.branches);
@@ -324,9 +329,32 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
         if (!targetBranch && info.current) {
           setTargetBranch(info.current);
         }
+        if (!commitBranch && info.current) {
+          setCommitBranch(info.current);
+        }
       }).catch(() => {});
     }
   }, [diffMode, channelId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load first page of commits when branch changes
+  useEffect(() => {
+    if (diffMode !== "commits" || !channelId || !commitBranch) return;
+    setCommitsLoading(true);
+    setCommitsHasMore(true);
+    fetchCommits(channelId, commitBranch, COMMITS_PAGE, 0)
+      .then((c) => { setCommits(c); setCommitsHasMore(c.length >= COMMITS_PAGE); })
+      .catch(() => { setCommits([]); setCommitsHasMore(false); })
+      .finally(() => setCommitsLoading(false));
+  }, [diffMode, channelId, commitBranch]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const loadMoreCommits = useCallback(() => {
+    if (!channelId || !commitBranch || commitsLoading || !commitsHasMore) return;
+    setCommitsLoading(true);
+    fetchCommits(channelId, commitBranch, COMMITS_PAGE, commits.length)
+      .then((c) => { setCommits((prev) => [...prev, ...c]); setCommitsHasMore(c.length >= COMMITS_PAGE); })
+      .catch(() => setCommitsHasMore(false))
+      .finally(() => setCommitsLoading(false));
+  }, [channelId, commitBranch, commitsLoading, commitsHasMore, commits.length]);
 
   const load = useCallback(async () => {
     if (!channelId) return;
@@ -510,8 +538,9 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button style={modeTabStyle(diffMode === "uncommitted")} onClick={() => setDiffMode("uncommitted")}>Uncommitted</button>
           <button style={modeTabStyle(diffMode === "branches")} onClick={() => setDiffMode("branches")}>Branches</button>
-          {totalFiles > 0 && <span style={{ fontSize: 10, color: colors.textDim }}>{totalFiles}</span>}
-          {(totalAdd > 0 || totalDel > 0) && (
+          <button style={modeTabStyle(diffMode === "commits")} onClick={() => setDiffMode("commits")}>Commits</button>
+          {diffMode !== "commits" && totalFiles > 0 && <span style={{ fontSize: 10, color: colors.textDim }}>{totalFiles}</span>}
+          {diffMode !== "commits" && (totalAdd > 0 || totalDel > 0) && (
             <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
               <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>{" "}
               <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
@@ -519,7 +548,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
           )}
         </span>
         <div style={{ flex: 1 }} />
-        {totalFiles > 0 && (
+        {diffMode !== "commits" && totalFiles > 0 && (
           <>
             <button onClick={expandAll} title="Expand all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,8 12,13 17,8" /><polyline points="7,14 12,19 17,14" /></svg>
@@ -555,6 +584,61 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
             {branches.map((b) => <option key={b} value={b}>{b}</option>)}
           </select>
         </div>
+      )}
+      {diffMode === "commits" && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 8px", fontSize: 11, color: colors.textDim }}>
+          <select
+            value={commitBranch}
+            onChange={(e) => setCommitBranch(e.target.value)}
+            style={selectStyle}
+            title="Branch"
+          >
+            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+        </div>
+      )}
+    </div>
+  );
+
+  const handleCommitsScroll = useCallback((e: React.UIEvent<HTMLDivElement>) => {
+    const el = e.currentTarget;
+    if (el.scrollHeight - el.scrollTop - el.clientHeight < 100) {
+      loadMoreCommits();
+    }
+  }, [loadMoreCommits]);
+
+  const commitsContent = (
+    <div style={{ flex: 1, overflow: "auto" }} onScroll={handleCommitsScroll}>
+      {commitsLoading && commits.length === 0 && (
+        <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>Loading...</div>
+      )}
+      {!commitsLoading && commits.length === 0 && (
+        <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>No commits</div>
+      )}
+      {commits.map((c) => (
+        <div
+          key={c.hash}
+          style={{
+            padding: "6px 12px",
+            borderBottom: `1px solid ${colors.border}`,
+            fontSize: 12,
+            cursor: "default",
+          }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = colors.hoverBg; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; }}
+        >
+          <div style={{ display: "flex", alignItems: "baseline", gap: 8 }}>
+            <span style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.active, flexShrink: 0 }}>{c.short}</span>
+            <span style={{ color: colors.textLight, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", flex: 1 }}>{c.subject}</span>
+          </div>
+          <div style={{ display: "flex", gap: 8, fontSize: 11, color: colors.textDim, marginTop: 2 }}>
+            <span>{c.author}</span>
+            <span>{new Date(c.date).toLocaleDateString()}</span>
+          </div>
+        </div>
+      ))}
+      {commitsLoading && commits.length > 0 && (
+        <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 11, textAlign: "center" }}>Loading more...</div>
       )}
     </div>
   );
@@ -738,7 +822,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar }}>
         {diffToolbar}
-        {diffContent}
+        {diffMode === "commits" ? commitsContent : diffContent}
         {fileContextMenu && (
           <ContextMenu
             x={fileContextMenu.x}
@@ -921,12 +1005,13 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
             <>
               <button style={modeTabStyle(diffMode === "uncommitted")} onClick={() => setDiffMode("uncommitted")}>Uncommitted</button>
               <button style={modeTabStyle(diffMode === "branches")} onClick={() => setDiffMode("branches")}>Branches</button>
-              {totalFiles > 0 && (
+              <button style={modeTabStyle(diffMode === "commits")} onClick={() => setDiffMode("commits")}>Commits</button>
+              {diffMode !== "commits" && totalFiles > 0 && (
                 <span style={{ fontSize: 10, color: colors.textDim }}>
                   {totalFiles}
                 </span>
               )}
-              {(totalAdd > 0 || totalDel > 0) && (
+              {diffMode !== "commits" && (totalAdd > 0 || totalDel > 0) && (
                 <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
                   <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>
                   {" "}
@@ -941,12 +1026,13 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
             <span style={{ display: "flex", alignItems: "center", gap: 8, marginRight: 8 }}>
               <button style={modeTabStyle(diffMode === "uncommitted")} onClick={() => setDiffMode("uncommitted")}>Uncommitted</button>
               <button style={modeTabStyle(diffMode === "branches")} onClick={() => setDiffMode("branches")}>Branches</button>
-              {totalFiles > 0 && (
+              <button style={modeTabStyle(diffMode === "commits")} onClick={() => setDiffMode("commits")}>Commits</button>
+              {diffMode !== "commits" && totalFiles > 0 && (
                 <span style={{ fontSize: 10, color: colors.textDim }}>
                   {totalFiles}
                 </span>
               )}
-              {(totalAdd > 0 || totalDel > 0) && (
+              {diffMode !== "commits" && (totalAdd > 0 || totalDel > 0) && (
                 <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
                   <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>
                   {" "}
@@ -955,7 +1041,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
               )}
             </span>
           )}
-          {totalFiles > 0 && (
+          {diffMode !== "commits" && totalFiles > 0 && (
             <>
               <button onClick={expandAll} title="Expand all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -971,12 +1057,14 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
               </button>
             </>
           )}
-          <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M21 12a9 9 0 1 1-3-6.7" />
-              <polyline points="21,3 21,9 15,9" />
-            </svg>
-          </button>
+          {diffMode !== "commits" && (
+            <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M21 12a9 9 0 1 1-3-6.7" />
+                <polyline points="21,3 21,9 15,9" />
+              </svg>
+            </button>
+          )}
           {onToggleMaximize && (
             <button onClick={onToggleMaximize} title={maximized ? "Restore panel" : "Maximize panel"} style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
               {maximized ? (
@@ -1027,10 +1115,22 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
           </select>
         </div>
       )}
+      {diffMode === "commits" && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 12px", fontSize: 11, color: colors.textDim }}>
+          <select
+            value={commitBranch}
+            onChange={(e) => setCommitBranch(e.target.value)}
+            style={selectStyle}
+            title="Branch"
+          >
+            {branches.map((b) => <option key={b} value={b}>{b}</option>)}
+          </select>
+        </div>
+      )}
       </div>
 
-      {/* File list + diffs */}
-      {diffContent}
+      {/* File list + diffs / Commits */}
+      {diffMode === "commits" ? commitsContent : diffContent}
       {fileContextMenu && (
         <ContextMenu
           x={fileContextMenu.x}

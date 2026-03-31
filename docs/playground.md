@@ -2,7 +2,11 @@
 
 A live interactive code sandbox where agents generate HTML/CSS/JS and it renders in real-time. Useful for building games, data visualizations, UI prototypes, and interactive demos.
 
-Playgrounds are **global** — stored in `~/.loop/playground/` and shared across all channels. Each playground has a unique name and can be viewed from any channel's Playground panel.
+Playgrounds support two scopes:
+- **Global** — stored in `~/.loop/playground/`, shared across all channels.
+- **Project** — stored in `.loop/playground/` within the channel's working directory, scoped to that project.
+
+The panel shows both scopes grouped under "Global" and "Project" headings in the selector dropdown.
 
 **Related docs:** [MCP Server](mcpserver.md) | [API](api.md) | [Events](events.md) | [Layouts](layouts.md)
 
@@ -116,8 +120,9 @@ At least `html` or `js` is required. The `title` and `description` are composed 
 
 ## File Storage
 
-Playgrounds are stored globally in `~/.loop/playground/`:
+Playgrounds are stored in two locations depending on scope:
 
+**Global** (`~/.loop/playground/`):
 ```
 ~/.loop/playground/
   snake-game/
@@ -126,14 +131,19 @@ Playgrounds are stored globally in `~/.loop/playground/`:
     script.js        # JavaScript code
     importmap.json   # Import map (optional)
     README.md        # Description (optional)
-  dashboard/
+```
+
+**Project** (`.loop/playground/` in the channel's working directory):
+```
+/path/to/project/.loop/playground/
+  my-viz/
     index.html
     style.css
     script.js
     ...
 ```
 
-The playground directory is bind-mounted into agent containers, so agents can also read/write playground files directly.
+The global playground directory is bind-mounted into agent containers, so agents can also read/write playground files directly. Project-scoped playgrounds live within the project directory and are accessible via the channel's mount.
 
 ---
 
@@ -144,7 +154,11 @@ The playground directory is bind-mounted into agent containers, so agents can al
 | `PUT` | `/api/playground?name=...` | Store code + broadcast update |
 | `GET` | `/api/playground?name=...` | Retrieve current code |
 | `GET` | `/api/playground/export?name=...` | Download as standalone HTML |
-| `GET` | `/api/playground/items` | List all playground names |
+| `GET` | `/api/playground/items` | List all playground names (global + project) |
+| `GET` | `/api/playground/serve/{name}` | Serve global playground as HTML page |
+| `GET` | `/api/playground/serve-project/{channel_id}/{name}/` | Serve project-scoped playground as HTML page |
+
+All endpoints accept optional `scope=project&channel_id=...` query parameters to target project-scoped playgrounds. Without these parameters, operations default to the global scope.
 
 See [API Reference](api.md#playground) for full request/response schemas.
 
@@ -152,5 +166,6 @@ See [API Reference](api.md#playground) for full request/response schemas.
 
 ## Security
 
-- The iframe uses `sandbox="allow-scripts"` without `allow-same-origin`, which means playground code runs in an opaque origin and cannot access the parent page, localStorage, cookies, or the Loop API.
+- The iframe uses `sandbox="allow-scripts allow-same-origin allow-forms"`. Playground code runs in a sandboxed context.
+- When the mouse enters the playground iframe, the parent page blurs any focused element (e.g. the chat textarea) and focuses the iframe, so keyboard events reach the playground content (important for interactive games).
 - Playground names are validated against `^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$` to prevent path traversal.

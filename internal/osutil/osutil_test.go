@@ -73,6 +73,21 @@ func (s *RealSystemSuite) TestOpenTraversal() {
 	require.Contains(s.T(), err.Error(), "disallowed traversal")
 }
 
+func (s *RealSystemSuite) TestRemoveAll() {
+	p := filepath.Join(s.dir, "rmdir")
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(p, "sub"), 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(p, "sub", "f.txt"), nil, 0o644))
+	require.NoError(s.T(), s.sys.RemoveAll(p))
+	_, err := os.Stat(p)
+	require.True(s.T(), os.IsNotExist(err))
+}
+
+func (s *RealSystemSuite) TestRemoveAllTraversal() {
+	err := s.sys.RemoveAll("../passwd")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "disallowed traversal")
+}
+
 func (s *RealSystemSuite) TestMkdirAll() {
 	p := filepath.Join(s.dir, "a", "b")
 	require.NoError(s.T(), s.sys.MkdirAll(p, 0o755))

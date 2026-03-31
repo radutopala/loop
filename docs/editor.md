@@ -111,7 +111,8 @@ Right-clicking a file or directory opens a context menu with:
 | Copy relative path | File, Directory | Copies relative path to clipboard |
 | Copy absolute path | File, Directory | Copies `dirPath + "/" + relativePath` to clipboard |
 | New file here | Directory only | Opens inline input prefilled with directory path |
-| Delete | File only | Deletes the file via API, closes its tab if open |
+| New directory here | Directory only | Opens inline input prefilled with directory path; creates via `POST /api/channels/{id}/dir` which supports nested creation (`MkdirAll`) |
+| Delete | File, Directory | Deletes the file or directory via API. For directories, uses recursive removal (`RemoveAll`). Closes any open tabs whose paths fall within a deleted directory. |
 
 ### Multi-Root File Tree
 

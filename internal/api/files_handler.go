@@ -348,20 +348,92 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 	info, err := s.sys.Stat(absPath)
 	if err != nil {
 		if os.IsNotExist(err) {
-			http.Error(w, "file not found", http.StatusNotFound)
+			http.Error(w, "not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, "failed to stat file", http.StatusInternalServerError)
+		http.Error(w, "failed to stat path", http.StatusInternalServerError)
 		return
 	}
 
 	if info.IsDir() {
-		http.Error(w, "cannot delete directories", http.StatusBadRequest)
+		if err := s.sys.RemoveAll(absPath); err != nil {
+			http.Error(w, "failed to delete directory", http.StatusInternalServerError)
+			return
+		}
+	} else {
+		if err := s.sys.Remove(absPath); err != nil {
+			http.Error(w, "failed to delete file", http.StatusInternalServerError)
+			return
+		}
+	}
+
+	writeHTTPJSON(w, http.StatusOK, writeFileResponse{OK: true}, s.logger)
+}
+
+// validateDirPath is like validateFilePath but allows non-existent intermediate
+// parents (for MkdirAll). It walks up to the first existing ancestor to verify
+// the path stays under rootDir.
+func validateDirPath(rootDir, relativePath string) (string, error) {
+	if relativePath == "" {
+		return "", fmt.Errorf("path is required")
+	}
+	if filepath.IsAbs(relativePath) {
+		return "", fmt.Errorf("absolute paths are not allowed")
+	}
+	if strings.ContainsRune(relativePath, 0) {
+		return "", fmt.Errorf("path contains invalid characters")
+	}
+	cleaned := filepath.Clean(relativePath)
+	if cleaned == ".." || strings.HasPrefix(cleaned, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("path traversal not allowed")
+	}
+	absPath := filepath.Join(rootDir, cleaned)
+
+	realRoot, err := filepath.EvalSymlinks(rootDir)
+	if err != nil {
+		return "", fmt.Errorf("invalid root directory: %w", err)
+	}
+	rootPrefix := realRoot + string(filepath.Separator)
+
+	// Walk up to the first existing ancestor.
+	ancestor := absPath
+	for {
+		realAncestor, err2 := filepath.EvalSymlinks(ancestor)
+		if err2 == nil {
+			if realAncestor != realRoot && !strings.HasPrefix(realAncestor, rootPrefix) {
+				return "", fmt.Errorf("path traversal not allowed")
+			}
+			return absPath, nil
+		}
+		parent := filepath.Dir(ancestor)
+		if parent == ancestor {
+			return "", fmt.Errorf("path not found")
+		}
+		ancestor = parent
+	}
+}
+
+func (s *Server) handleCreateDir(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel listing not configured") {
 		return
 	}
 
-	if err := s.sys.Remove(absPath); err != nil {
-		http.Error(w, "failed to delete file", http.StatusInternalServerError)
+	channelID := r.PathValue("id")
+	dirPath, err := s.resolveRootDir(r.Context(), channelID, r)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	relPath := r.URL.Query().Get("path")
+	absPath, err := validateDirPath(dirPath, relPath)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	if err := s.sys.MkdirAll(absPath, 0o755); err != nil {
+		http.Error(w, "failed to create directory", http.StatusInternalServerError)
 		return
 	}
 

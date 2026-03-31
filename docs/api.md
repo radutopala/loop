@@ -650,13 +650,13 @@ Write content to a file.
 
 ### `DELETE /api/channels/{id}/file`
 
-Delete a file.
+Delete a file or directory.
 
 **Query Parameters:**
 
 | Param  | Type   | Required | Description |
 |--------|--------|----------|-------------|
-| `path` | string | yes      | Relative path to the file |
+| `path` | string | yes      | Relative path to the file or directory |
 | `root` | int    | no       | Root directory index (0 = primary, 1+ = extra directories) |
 
 **Response (200):**
@@ -664,7 +664,31 @@ Delete a file.
 {"ok": true}
 ```
 
-**Errors:** `400` if path is invalid or target is a directory. `404` if file not found.
+**Behavior notes:** If the target is a directory, it is removed recursively (`RemoveAll`) with path traversal protection. If the target is a file, it is removed with `Remove`.
+
+**Errors:** `400` if path is invalid. `404` if not found.
+
+---
+
+### `POST /api/channels/{id}/dir`
+
+Create a directory (including nested intermediate directories).
+
+**Query Parameters:**
+
+| Param  | Type   | Required | Description |
+|--------|--------|----------|-------------|
+| `path` | string | yes      | Relative path to the directory to create |
+| `root` | int    | no       | Root directory index (0 = primary, 1+ = extra directories) |
+
+**Response (200):**
+```json
+{"ok": true}
+```
+
+**Behavior notes:** Uses `MkdirAll` to create the directory and any missing intermediate parents. Path validation walks up to the first existing ancestor to verify the path stays under the root directory.
+
+**Errors:** `400` if path is invalid.
 
 ---
 
@@ -676,6 +700,7 @@ All file operations validate the relative path against the channel's root direct
 2. Rejects `..` traversal components.
 3. Resolves symlinks and verifies the real path stays under the root directory.
 4. For writes to nonexistent files, validates the parent directory instead.
+5. For directory creation, walks up to the first existing ancestor (allows creating nested directories).
 
 ---
 
@@ -749,6 +774,41 @@ Create and checkout a new branch.
 **Request:** `{"name": "feature/new", "from": "main"}` (`from` is optional)
 
 **Response (200):** `{"ok": true}`
+
+### `GET /api/channels/{id}/commits`
+
+List commit history for a channel's git repository.
+
+**Query Parameters:**
+
+| Param    | Type   | Default | Description |
+|----------|--------|---------|-------------|
+| `branch` | string | HEAD    | Branch name to list commits from |
+| `limit`  | int    | 50      | Maximum number of commits to return (max 200) |
+| `skip`   | int    | 0       | Number of commits to skip (for pagination) |
+
+**Response (200):**
+```json
+{
+  "commits": [
+    {
+      "hash": "abc123def456...",
+      "short": "abc123d",
+      "subject": "feat: add new feature",
+      "author": "John Doe",
+      "date": "2026-03-30 14:22:01 +0000"
+    }
+  ]
+}
+```
+
+**Behavior notes:**
+- Commits are returned in reverse chronological order (newest first).
+- On empty repositories (no commits yet), returns `{"commits": []}` instead of an error.
+- Branch names are validated against a safe character set (alphanumeric, slashes, hyphens, dots, underscores).
+- The `skip` parameter enables lazy pagination — the frontend loads pages of 50 commits and fetches more on scroll.
+
+**Errors:** `400` if branch name is invalid.
 
 ### `POST /api/worktrees`
 
@@ -1030,6 +1090,53 @@ Control operations (navigate, tabs, reload, etc.) go through `POST /api/browser/
 
 ---
 
+## Containers
+
+### `GET /api/containers`
+
+List all tracked containers across all channels. Returns containers sorted with running containers first (newest first), then non-running containers (newest first).
+
+**Response:** `200 OK`
+
+```json
+[
+  {
+    "container_id": "abc123def456",
+    "channel_id": "chan_a",
+    "type": "agent",
+    "status": "running",
+    "container_name": "loop-my-project-a1b2c3",
+    "created_at": "2026-03-31T10:00:00Z",
+    "updated_at": "2026-03-31T10:00:00Z"
+  },
+  {
+    "container_id": "def789ghi012",
+    "channel_id": "chan_b",
+    "type": "chrome",
+    "status": "pending-removal",
+    "container_name": "loop-chrome-chan-b",
+    "created_at": "2026-03-31T09:50:00Z",
+    "updated_at": "2026-03-31T10:01:00Z",
+    "remove_at": "2026-03-31T10:06:00Z"
+  }
+]
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `container_id` | string | Docker container ID |
+| `channel_id` | string | Channel the container belongs to |
+| `type` | string | `"agent"`, `"shell"`, or `"chrome"` |
+| `status` | string | `"running"`, `"stopped"`, or `"pending-removal"` |
+| `container_name` | string | Docker container name |
+| `created_at` | string | ISO 8601 creation timestamp |
+| `updated_at` | string | ISO 8601 last status change timestamp |
+| `remove_at` | string? | ISO 8601 scheduled removal time (only for `pending-removal`) |
+
+**Errors:** `503` if the container registry is not configured.
+
+---
+
 ## Agent Registry
 
 ### `GET /api/agents`
@@ -1295,7 +1402,9 @@ Creates the `.loop/` directory and config file if they don't exist.
 
 ## Playground
 
-The playground stores named HTML/CSS/JS items globally in `~/.loop/playground/{name}/` and broadcasts updates for live rendering in the desktop app's Playground panel.
+The playground stores named HTML/CSS/JS items and broadcasts updates for live rendering in the desktop app's Playground panel. Items can be stored globally (`~/.loop/playground/{name}/`) or per-project (`.loop/playground/{name}/` in the channel's working directory).
+
+All playground endpoints accept optional `scope` and `channel_id` query parameters to target project-scoped items. Without these, operations default to global scope.
 
 ### `PUT /api/playground?name=...`
 
@@ -1306,6 +1415,8 @@ Update a named playground. Stores files and broadcasts a `playground.update` eve
 | Param | Type | Required | Description |
 |-------|------|----------|-------------|
 | `name` | string | yes | Playground name (alphanumeric, hyphens, underscores, max 64 chars) |
+| `scope` | string | no | `"global"` (default) or `"project"` |
+| `channel_id` | string | no | Required when `scope=project` — identifies the project directory |
 
 **Request:**
 ```json
@@ -1364,13 +1475,30 @@ Export a playground as a standalone HTML file with embedded CSS, JS, and import 
 
 ### `GET /api/playground/items`
 
-List all playground names.
+List all playground names from both global and project scopes.
+
+**Query Parameters:**
+
+| Param | Type | Required | Description |
+|-------|------|----------|-------------|
+| `channel_id` | string | no | If provided, also includes project-scoped items from the channel's directory |
 
 **Response (200):**
 ```json
 {
-  "items": ["snake-game", "dashboard", "chart-demo"]
+  "items": [
+    {"name": "snake-game", "scope": "global"},
+    {"name": "my-viz", "scope": "project"}
+  ]
 }
 ```
 
-Returns `{"items": []}` if no playgrounds exist.
+Returns `{"items": []}` if no playgrounds exist. Items include a `scope` field indicating whether they are `"global"` or `"project"`.
+
+### `GET /api/playground/serve/{name}`
+
+Serve a global playground as a standalone HTML page (used as iframe `src`).
+
+### `GET /api/playground/serve-project/{channel_id}/{name}/`
+
+Serve a project-scoped playground as a standalone HTML page. Uses path-based routing instead of query parameters so that relative sub-resource URLs (style.css, script.js) resolve correctly via the `<base>` tag.
