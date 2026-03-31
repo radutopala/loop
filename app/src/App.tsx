@@ -10,6 +10,7 @@ import { LoopLogo } from "./components/LoopLogo";
 import horizontalLogo from "./assets/logo-horizontal.svg";
 import { CommandPalette } from "./components/CommandPalette";
 import { Settings } from "./components/Settings";
+import { ContainersPanel, type ContainersPanelHandle } from "./components/ContainersPanel";
 import { useChatStateStore, type ActiveChatState } from "./hooks/useChatStateStore";
 
 const LAST_CHANNEL_KEY = "loop-last-channel";
@@ -58,6 +59,8 @@ function AppInner() {
   const [settingsDirPath, setSettingsDirPath] = useState<string | null>(null);
   const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(null);
   const [readmeOpen, setReadmeOpen] = useState(false);
+  const [containersOpen, setContainersOpen] = useState(false);
+  const containersPanelRef = useRef<ContainersPanelHandle | null>(null);
   const [openMemoryFile, setOpenMemoryFile] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [imageBuildStatus, setImageBuildStatus] = useState<ImageBuildStatusData | null>(null);
@@ -135,7 +138,7 @@ function AppInner() {
       if ((e.metaKey || e.ctrlKey) && e.key === ",") {
         e.preventDefault();
         setSettingsOpen((v) => {
-          if (!v) setReadmeOpen(false);
+          if (!v) { setReadmeOpen(false); setContainersOpen(false); }
           return !v;
         });
         setSettingsDirPath(null);
@@ -152,7 +155,7 @@ function AppInner() {
   // Listen for Settings menu item from main process.
   useEffect(() => {
     if (window.loopAPI?.onOpenSettings) {
-      window.loopAPI.onOpenSettings(() => { setReadmeOpen(false); setSettingsOpen(true); setSettingsDirPath(null); });
+      window.loopAPI.onOpenSettings(() => { setReadmeOpen(false); setContainersOpen(false); setSettingsOpen(true); setSettingsDirPath(null); });
     }
   }, []);
 
@@ -223,6 +226,10 @@ function AppInner() {
       setImageUpdateAvailable(event.data as ImageUpdateAvailableData);
       return;
     }
+    if (event.type.startsWith("container.")) {
+      containersPanelRef.current?.handleContainerEvent(event);
+      return;
+    }
     if (debounceRef.current) clearTimeout(debounceRef.current);
     debounceRef.current = setTimeout(loadDiffStats, 1_000);
   }, [loadDiffStats, selectedId, loadChannels]);
@@ -267,6 +274,7 @@ function AppInner() {
     setScrollToMessageId(null);
     setReadmeOpen(false);
     setSettingsOpen(false);
+    setContainersOpen(false);
     setConfigDirty(false);
     if (id) markRead(id);
     setSelectedId((prev) => {
@@ -485,9 +493,10 @@ function AppInner() {
         onCreateThread={handleCreateThread}
         onDeleteThread={handleDelete}
         onDeleteBatch={handleDeleteBatch}
-        onOpenSettings={() => { setReadmeOpen(false); setSettingsOpen((v) => !v); setSettingsDirPath(null); }}
-        onOpenConfig={(dirPath) => { setReadmeOpen(false); setSettingsOpen((v) => { if (v && settingsDirPath === dirPath) return false; setSettingsDirPath(dirPath); return true; }); }}
-        onOpenReadme={() => { setSettingsOpen(false); setReadmeOpen((v) => !v); }}
+        onOpenSettings={() => { setReadmeOpen(false); setContainersOpen(false); setSettingsOpen((v) => !v); setSettingsDirPath(null); }}
+        onOpenConfig={(dirPath) => { setReadmeOpen(false); setContainersOpen(false); setSettingsOpen((v) => { if (v && settingsDirPath === dirPath) return false; setSettingsDirPath(dirPath); return true; }); }}
+        onOpenReadme={() => { setSettingsOpen(false); setContainersOpen(false); setReadmeOpen((v) => !v); }}
+        onOpenContainers={() => { setSettingsOpen(false); setReadmeOpen(false); setContainersOpen((v) => !v); }}
         updateStatus={updateStatus}
         onDownloadUpdate={handleDownloadUpdate}
         onInstallUpdate={handleInstallUpdate}
@@ -507,7 +516,7 @@ function AppInner() {
             channelId={selectedId}
             channel={selectedChannel}
             sidebarOpen={sidebarOpen}
-            style={readmeOpen || settingsOpen ? { display: "none" } : undefined}
+            style={readmeOpen || settingsOpen || containersOpen ? { display: "none" } : undefined}
             onToggleSidebar={() => setSidebarOpen((v) => !v)}
             onOpenPalette={() => setPaletteOpen(true)}
             scrollToMessageId={scrollToMessageId}
@@ -552,6 +561,15 @@ function AppInner() {
               onConfigDirtyChange={setConfigDirty}
             />
           )}
+          {containersOpen && (
+            <ContainersPanel
+              ref={containersPanelRef}
+              sidebarOpen={sidebarOpen}
+              onToggleSidebar={() => setSidebarOpen((v) => !v)}
+              onOpenPalette={() => setPaletteOpen(true)}
+              onClose={() => setContainersOpen(false)}
+            />
+          )}
         </>
       ) : (
         <>
@@ -569,6 +587,14 @@ function AppInner() {
               imageUpdateAvailable={imageUpdateAvailable}
               onRebuildImage={handleRebuildImage}
               onConfigDirtyChange={setConfigDirty}
+            />
+          ) : containersOpen ? (
+            <ContainersPanel
+              ref={containersPanelRef}
+              sidebarOpen={sidebarOpen}
+              onToggleSidebar={() => setSidebarOpen((v) => !v)}
+              onOpenPalette={() => setPaletteOpen(true)}
+              onClose={() => setContainersOpen(false)}
             />
           ) : (
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>

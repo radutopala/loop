@@ -136,8 +136,9 @@ export function useChatStateStore({
       const store = storeRef.current;
       const runMap = isRunningMapRef.current;
 
-      // Update store for non-selected channels silently.
-      if (channelId && channelId !== selectedIdRef.current) {
+      // Always update the store for any channel's events so getState()
+      // returns current data even when a component remounts mid-stream.
+      if (channelId) {
         const state = store.get(channelId);
         if (state) {
           applyEvent(state, wsEvent);

@@ -6,14 +6,14 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"regexp"
-	"strings"
 
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/filters"
 	"github.com/docker/docker/api/types/network"
 	"github.com/docker/go-connections/nat"
 	ocispec "github.com/opencontainers/image-spec/specs-go/v1"
+
+	"github.com/radutopala/loop/internal/container"
 )
 
 // DockerClient abstracts Docker container operations for testing.
@@ -32,10 +32,11 @@ type DockerClient interface {
 type DockerProvider struct {
 	sessionManager // embedded shared session management
 
-	api    DockerClient
-	image  string // Docker image to use for Chrome containers
-	screen string
-	logger *slog.Logger
+	api      DockerClient
+	image    string // Docker image to use for Chrome containers
+	screen   string
+	logger   *slog.Logger
+	registry container.ContainerRegistry
 }
 
 const (
@@ -60,31 +61,19 @@ func NewDockerProvider(api DockerClient, image, screen string, logger *slog.Logg
 	}
 }
 
+// SetContainerRegistry configures the container registry for lifecycle tracking.
+func (m *DockerProvider) SetContainerRegistry(reg container.ContainerRegistry) {
+	m.registry = reg
+}
+
 // chromeArgs returns CMD args for the chrome container (appended to ENTRYPOINT).
 func (m *DockerProvider) chromeArgs() []string {
 	return []string{"--window-size=" + m.screen, "about:blank"}
 }
 
-// sanitizeID replaces non-alphanumeric characters with hyphens, collapses
-// consecutive hyphens, trims leading/trailing hyphens, and lowercases.
-// This ensures channel IDs like Slack thread IDs ("C0AG3Q1GH0Q:1773661657.701029")
-// produce valid Docker container names and hostnames.
-var nonAlphanumRe = regexp.MustCompile(`[^a-z0-9]+`)
-
-func sanitizeID(id string) string {
-	s := strings.ToLower(id)
-	s = nonAlphanumRe.ReplaceAllString(s, "-")
-	s = strings.Trim(s, "-")
-	if len(s) > 40 {
-		s = s[:40]
-		s = strings.TrimRight(s, "-")
-	}
-	return s
-}
-
 // ChromeHostname returns the Chrome container hostname for a channel.
 func ChromeHostname(channelID string) string {
-	return containerPrefix + sanitizeID(channelID)
+	return containerPrefix + container.SanitizeName(channelID)
 }
 
 // EnsureBrowser ensures a Chrome sidecar container is running for the channel.
@@ -104,9 +93,35 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 		delete(m.sessions, channelID)
 	}
 
+	// Fast path: check registry for an existing Chrome container (populated by Restore at startup).
+	// Avoids a Docker list query by using the container ID from the in-memory registry.
+	if m.registry != nil {
+		if info := m.registry.FindByChannelAndType(channelID, container.ContainerTypeChrome); info != nil {
+			if m.isContainerRunning(ctx, info.ContainerID) {
+				if port, err := m.getHostPort(ctx, info.ContainerID); err == nil && isChromeReachable("127.0.0.1:"+port) {
+					m.logger.Info("reusing Chrome container from registry",
+						"channel_id", channelID,
+						"container_id", info.ContainerID,
+						"host_port", port,
+					)
+					sess := newBrowserSession(m.timeNow())
+					sess.chromeContainerID = info.ContainerID
+					sess.hostPort = port
+					m.sessions[channelID] = sess
+					return nil
+				}
+			}
+			// Registry says it exists but it's not usable — clean up.
+			m.logger.Info("removing stale Chrome container from registry", "container_id", info.ContainerID)
+			_ = m.api.ContainerRemove(ctx, info.ContainerID, containertypes.RemoveOptions{Force: true})
+			m.registry.Unregister(info.ContainerID)
+		}
+	}
+
 	containerName := ChromeHostname(channelID)
 
-	// Check if Chrome container already exists (e.g. from a previous daemon run).
+	// Check if Chrome container already exists (e.g. from a previous daemon run
+	// before the registry was introduced, or created outside of loop).
 	if id, port := m.findExistingChrome(ctx, containerName); id != "" {
 		if isChromeReachable("127.0.0.1:" + port) {
 			m.logger.Info("reusing existing Chrome container",
@@ -118,11 +133,22 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 			sess.chromeContainerID = id
 			sess.hostPort = port
 			m.sessions[channelID] = sess
+			if m.registry != nil {
+				m.registry.Register(&container.ContainerInfo{
+					ContainerID:   id,
+					ChannelID:     channelID,
+					Type:          container.ContainerTypeChrome,
+					ContainerName: containerName,
+				})
+			}
 			return nil
 		}
 		// Stale container — remove it so we can create a fresh one.
 		m.logger.Info("removing stale Chrome container", "container_id", id)
 		_ = m.api.ContainerRemove(ctx, id, containertypes.RemoveOptions{Force: true})
+		if m.registry != nil {
+			m.registry.Unregister(id)
+		}
 	}
 
 	m.logger.Info("creating Chrome sidecar container",
@@ -172,6 +198,15 @@ func (m *DockerProvider) EnsureBrowser(ctx context.Context, channelID, _ string)
 	sess.hostPort = hostPort
 	m.sessions[channelID] = sess
 
+	if m.registry != nil {
+		m.registry.Register(&container.ContainerInfo{
+			ContainerID:   resp.ID,
+			ChannelID:     channelID,
+			Type:          container.ContainerTypeChrome,
+			ContainerName: containerName,
+		})
+	}
+
 	m.logger.Info("Chrome sidecar started",
 		"channel_id", channelID,
 		"container_id", resp.ID,
@@ -207,8 +242,11 @@ func (m *DockerProvider) GetContainerID(channelID string) (string, bool) {
 	return sess.chromeContainerID, true
 }
 
-// StopBrowser stops and removes the Chrome container for a channel.
-func (m *DockerProvider) StopBrowser(ctx context.Context, channelID string) error {
+// StopBrowser stops the Chrome container for a channel and cleans up the
+// session. The container is not removed from Docker or unregistered from
+// the registry — callers should use ScheduleRemove or RemoveContainer for that.
+// Returns the stopped container ID, or empty string if no session existed.
+func (m *DockerProvider) StopBrowser(ctx context.Context, channelID string) (string, error) {
 	m.mu.Lock()
 	sess, ok := m.sessions[channelID]
 	if ok {
@@ -217,7 +255,7 @@ func (m *DockerProvider) StopBrowser(ctx context.Context, channelID string) erro
 	m.mu.Unlock()
 
 	if !ok {
-		return nil
+		return "", nil
 	}
 
 	m.logger.Info("stopping Chrome sidecar",
@@ -229,11 +267,12 @@ func (m *DockerProvider) StopBrowser(ctx context.Context, channelID string) erro
 	_ = m.api.ContainerStop(ctx, sess.chromeContainerID, containertypes.StopOptions{
 		Timeout: &timeout,
 	})
-	_ = m.api.ContainerRemove(ctx, sess.chromeContainerID, containertypes.RemoveOptions{
-		Force: true,
-	})
 
-	return nil
+	if m.registry != nil {
+		m.registry.UpdateStatus(sess.chromeContainerID, container.ContainerStatusStopped)
+	}
+
+	return sess.chromeContainerID, nil
 }
 
 // IsRunning returns true if Chrome is running for the given channel.
@@ -247,7 +286,7 @@ func (m *DockerProvider) IsRunning(ctx context.Context, channelID string) bool {
 	return m.isContainerRunning(ctx, sess.chromeContainerID)
 }
 
-// Cleanup stops all Chrome sidecar containers.
+// Cleanup stops and removes all Chrome sidecar containers.
 func (m *DockerProvider) Cleanup(ctx context.Context) {
 	m.mu.Lock()
 	channels := make([]string, 0, len(m.sessions))
@@ -257,7 +296,10 @@ func (m *DockerProvider) Cleanup(ctx context.Context) {
 	m.mu.Unlock()
 
 	for _, ch := range channels {
-		_ = m.StopBrowser(ctx, ch)
+		containerID, _ := m.StopBrowser(ctx, ch)
+		if containerID != "" && m.registry != nil {
+			_ = m.registry.RemoveContainer(ctx, containerID)
+		}
 	}
 }
 

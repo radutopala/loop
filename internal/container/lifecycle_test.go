@@ -179,6 +179,48 @@ func (s *LifecycleSuite) TestRemoveImage_Error() {
 	require.EqualError(s.T(), err, "remove failed")
 }
 
+func (s *LifecycleSuite) TestRemoveImage_UnregistersContainers() {
+	m := s.newManager(func() string { return "" })
+
+	reg := NewRegistry(nil)
+	reg.Register(&ContainerInfo{ContainerID: "c1", ChannelID: "ch-1", Type: ContainerTypeAgent})
+	reg.Register(&ContainerInfo{ContainerID: "c2", ChannelID: "ch-2", Type: ContainerTypeShell})
+	m.SetContainerRegistry(reg)
+
+	s.client.On("RemoveImageAndContainers", mock.Anything, s.imageName).Return(nil)
+
+	err := m.RemoveImage(context.Background())
+	require.NoError(s.T(), err)
+
+	// Registry should be empty after image removal.
+	require.Empty(s.T(), reg.List())
+}
+
+func (s *LifecycleSuite) TestRemoveImage_ErrorDoesNotUnregister() {
+	m := s.newManager(func() string { return "" })
+
+	reg := NewRegistry(nil)
+	reg.Register(&ContainerInfo{ContainerID: "c1", ChannelID: "ch-1", Type: ContainerTypeAgent})
+	m.SetContainerRegistry(reg)
+
+	s.client.On("RemoveImageAndContainers", mock.Anything, s.imageName).Return(errors.New("fail"))
+
+	err := m.RemoveImage(context.Background())
+	require.Error(s.T(), err)
+
+	// Registry should still have entries — removal failed.
+	require.Len(s.T(), reg.List(), 1)
+}
+
+func (s *LifecycleSuite) TestSetContainerRegistry() {
+	m := s.newManager(func() string { return "" })
+	require.Nil(s.T(), m.registry)
+
+	reg := NewRegistry(nil)
+	m.SetContainerRegistry(reg)
+	require.NotNil(s.T(), m.registry)
+}
+
 // --- Rebuild ---
 
 func (s *LifecycleSuite) TestRebuild_AlreadyBuilding() {
@@ -587,6 +629,16 @@ func (s *LifecycleSuite) TestBroadcastStatus_NilBroadcaster() {
 
 	// Should not panic.
 	m.broadcastStatus()
+}
+
+func (s *LifecycleSuite) TestSetStatus() {
+	m := s.newManager(func() string { return "" })
+	m.SetStatus(ImageBuildStatus{State: "building", Phase: "pulling"})
+
+	m.mu.Lock()
+	require.Equal(s.T(), "building", m.status.State)
+	require.Equal(s.T(), "pulling", m.status.Phase)
+	m.mu.Unlock()
 }
 
 func (s *LifecycleSuite) TestBroadcastStatus_WithBroadcaster() {

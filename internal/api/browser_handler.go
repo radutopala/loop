@@ -22,7 +22,7 @@ import (
 // BrowserProvider is the interface for managing browser lifecycle.
 type BrowserProvider interface {
 	EnsureBrowser(ctx context.Context, channelID, containerID string) error
-	StopBrowser(ctx context.Context, channelID string) error
+	StopBrowser(ctx context.Context, channelID string) (string, error)
 	IsRunning(ctx context.Context, channelID string) bool
 	GetCDPEndpoint(channelID string) string
 	GetContainerID(channelID string) (string, bool)
@@ -60,8 +60,9 @@ type browserWSConn struct {
 	writeMu         sync.Mutex
 
 	// CDPManager resolvers — set by handleBrowserWS from Server.
-	resolveCDPMgr func(channelID, mode string, provider BrowserProvider) *browser.CDPManager
-	setMode       func(channelID, mode string) // sets active browser mode
+	resolveCDPMgr  func(channelID, mode string, provider BrowserProvider) *browser.CDPManager
+	setMode        func(channelID, mode string) // sets active browser mode
+	scheduleRemove func(containerID string)     // schedules delayed container removal
 
 	mu               sync.Mutex
 	cdpMgr           *browser.CDPManager // active CDPManager
@@ -199,6 +200,11 @@ func (s *Server) handleBrowserWS(w http.ResponseWriter, r *http.Request) {
 			s.activeBrowserMode[channelID] = mode
 			s.browserModeMu.Unlock()
 		},
+		scheduleRemove: func(containerID string) {
+			if containerID != "" && s.containerRegistry != nil {
+				s.containerRegistry.ScheduleRemove(containerID, s.browserKeepAlive)
+			}
+		},
 		stopCh: make(chan struct{}),
 	}
 	defer bc.cleanup()
@@ -323,7 +329,10 @@ func (bc *browserWSConn) handleStop(ctx context.Context, msg browserWSMessage) {
 	bc.cleanup()
 
 	if msg.ChannelID != "" {
-		_ = bc.browserProvider.StopBrowser(ctx, msg.ChannelID)
+		containerID, _ := bc.browserProvider.StopBrowser(ctx, msg.ChannelID)
+		if bc.scheduleRemove != nil {
+			bc.scheduleRemove(containerID)
+		}
 	}
 
 	bc.sendJSON(browserWSResponse{Type: bwsRespStopped})
@@ -1205,7 +1214,10 @@ func (s *Server) cleanIdleBrowserSessions(ctx context.Context, timeout time.Dura
 			mgr.Close()
 		}
 		if mode == "docker" && s.dockerBrowserProvider != nil {
-			_ = s.dockerBrowserProvider.StopBrowser(ctx, channelID)
+			containerID, _ := s.dockerBrowserProvider.StopBrowser(ctx, channelID)
+			if containerID != "" && s.containerRegistry != nil {
+				s.containerRegistry.ScheduleRemove(containerID, s.browserKeepAlive)
+			}
 		}
 	}
 }

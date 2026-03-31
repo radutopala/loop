@@ -64,7 +64,11 @@ func (c *HostExecClient) ExecCreate(_ context.Context, dirPath string, cmd []str
 
 	command := exec.Command(resolvedPath, cmd[1:]...) // #nosec G204 — host terminal; user runs commands on their own machine
 	command.Dir = dirPath
-	command.Env = os.Environ()
+	env := os.Environ()
+	if !hasEnvKey(env, "TERM") {
+		env = append(env, "TERM=xterm-256color")
+	}
+	command.Env = env
 	command.SysProcAttr = &syscall.SysProcAttr{Setsid: true}
 
 	id := generateID(c.randRead)
@@ -174,4 +178,15 @@ func (h *hostPTYConn) Close() error {
 		closeErr = h.pty.Close()
 	})
 	return closeErr
+}
+
+// hasEnvKey reports whether the env slice contains a variable with the given key.
+func hasEnvKey(env []string, key string) bool {
+	prefix := key + "="
+	for _, e := range env {
+		if len(e) > len(prefix) && e[:len(prefix)] == prefix {
+			return true
+		}
+	}
+	return false
 }

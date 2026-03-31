@@ -28,6 +28,7 @@ import (
 	"github.com/radutopala/loop/internal/api"
 	"github.com/radutopala/loop/internal/bot"
 
+	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/daemon"
@@ -118,12 +119,12 @@ func (m *mockDockerClient) ContainerList(ctx context.Context, labelKey, labelVal
 	return args.Get(0).([]string), args.Error(1)
 }
 
-func (m *mockDockerClient) RunningChannelIDs(ctx context.Context) (map[string]struct{}, error) {
+func (m *mockDockerClient) ListContainerInfos(ctx context.Context) ([]*container.ContainerInfo, error) {
 	args := m.Called(ctx)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(map[string]struct{}), args.Error(1)
+	return args.Get(0).([]*container.ContainerInfo), args.Error(1)
 }
 
 func (m *mockDockerClient) CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader) error {
@@ -431,6 +432,7 @@ func (s *MainSuite) setupServeMocks() *serveMocks {
 	}
 	m.store.On("Close").Return(nil)
 	m.dockerClient.On("LatestClaudeVersion").Return("1.0.0").Maybe()
+	m.dockerClient.On("ListContainerInfos", mock.Anything).Return([]*container.ContainerInfo{}, nil).Maybe()
 	s.app.configLoad = func() (*config.Config, error) { return m.cfg, nil }
 	s.app.newSQLiteStore = func(_ string) (db.Store, error) { return m.store, nil }
 	s.app.newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) { return m.bot, nil }
@@ -1889,6 +1891,7 @@ func (s *MainSuite) TestServeDockerClientCloserCalled() {
 	closeCalled := false
 	innerClient := new(mockDockerClient)
 	innerClient.On("LatestClaudeVersion").Return("1.0.0").Maybe()
+	innerClient.On("ListContainerInfos", mock.Anything).Return([]*container.ContainerInfo{}, nil).Maybe()
 	s.app.newDockerClient = func() (container.DockerClient, error) {
 		return &closableDockerClient{
 			mockDockerClient: innerClient,
@@ -3732,6 +3735,85 @@ func (s *MainSuite) TestServeWithBrowserProvider() {
 	}
 }
 
+func (s *MainSuite) TestServeWithDockerBrowserProvider() {
+	m := s.setupServeMocks()
+	m.setupHappyBot()
+	m.cfg.Browser.Enabled = true
+
+	s.app.newBrowserProvider = func(_ string, logger *slog.Logger) (api.BrowserProvider, error) {
+		return browser.NewDockerProvider(nil, "loop-chrome:latest", "1920,1080", logger), nil
+	}
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.app.serve() }()
+
+	time.Sleep(100 * time.Millisecond)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+}
+
+func (s *MainSuite) TestServeRegistryRestoreError() {
+	m := s.setupServeMocks()
+	m.setupHappyBot()
+
+	// Override ListContainerInfos to return an error (covers the warn log path).
+	m.dockerClient.ExpectedCalls = filterExpected(m.dockerClient.ExpectedCalls, "ListContainerInfos")
+	m.dockerClient.On("ListContainerInfos", mock.Anything).Return(([]*container.ContainerInfo)(nil), errors.New("docker unavailable"))
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.app.serve() }()
+
+	time.Sleep(100 * time.Millisecond)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+}
+
+func (s *MainSuite) TestServeRegistryRestoreWithData() {
+	m := s.setupServeMocks()
+	m.setupHappyBot()
+
+	// Override ListContainerInfos to return existing containers (covers the Restore path
+	// and ScheduleRemove for stopped containers).
+	m.dockerClient.ExpectedCalls = filterExpected(m.dockerClient.ExpectedCalls, "ListContainerInfos")
+	m.dockerClient.On("ListContainerInfos", mock.Anything).Return([]*container.ContainerInfo{
+		{ContainerID: "existing-1", ChannelID: "ch-1", Type: container.ContainerTypeAgent},
+		{ContainerID: "stopped-1", ChannelID: "ch-2", Type: container.ContainerTypeAgent, Status: container.ContainerStatusStopped},
+	}, nil)
+	// ScheduleRemove fires immediately (ContainerKeepAlive=0) and calls ContainerRemove.
+	m.dockerClient.On("ContainerRemove", mock.Anything, "stopped-1").Return(nil).Maybe()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.app.serve() }()
+
+	time.Sleep(100 * time.Millisecond)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+}
+
 func (s *MainSuite) TestServeWithBrowserProviderError() {
 	m := s.setupServeMocks()
 	m.setupHappyBot()
@@ -4031,8 +4113,10 @@ func (n *noopExecClient) ExecInspectPid(_ context.Context, _ string) (int, error
 type noopBrowserProvider struct{}
 
 func (n *noopBrowserProvider) EnsureBrowser(_ context.Context, _, _ string) error { return nil }
-func (n *noopBrowserProvider) StopBrowser(_ context.Context, _ string) error      { return nil }
-func (n *noopBrowserProvider) IsRunning(_ context.Context, _ string) bool         { return false }
-func (n *noopBrowserProvider) GetCDPEndpoint(_ string) string                     { return "" }
-func (n *noopBrowserProvider) GetContainerID(_ string) (string, bool)             { return "", false }
-func (n *noopBrowserProvider) IsHostMode() bool                                   { return false }
+func (n *noopBrowserProvider) StopBrowser(_ context.Context, _ string) (string, error) {
+	return "", nil
+}
+func (n *noopBrowserProvider) IsRunning(_ context.Context, _ string) bool { return false }
+func (n *noopBrowserProvider) GetCDPEndpoint(_ string) string             { return "" }
+func (n *noopBrowserProvider) GetContainerID(_ string) (string, bool)     { return "", false }
+func (n *noopBrowserProvider) IsHostMode() bool                           { return false }

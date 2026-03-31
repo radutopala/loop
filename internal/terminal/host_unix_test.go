@@ -487,3 +487,50 @@ func (s *HostSuite) TestGenerateIDUnique() {
 		ids[id] = struct{}{}
 	}
 }
+
+func (s *HostSuite) TestHasEnvKey() {
+	env := []string{"HOME=/home/user", "PATH=/usr/bin", "TERM=xterm-256color"}
+	require.True(s.T(), hasEnvKey(env, "HOME"))
+	require.True(s.T(), hasEnvKey(env, "PATH"))
+	require.True(s.T(), hasEnvKey(env, "TERM"))
+	require.False(s.T(), hasEnvKey(env, "MISSING"))
+	require.False(s.T(), hasEnvKey(nil, "HOME"))
+	require.False(s.T(), hasEnvKey([]string{}, "HOME"))
+}
+
+func (s *HostSuite) TestExecCreateSetsTERMWhenMissing() {
+	// Temporarily unset TERM to test the fallback.
+	origTerm := os.Getenv("TERM")
+	os.Unsetenv("TERM")
+	defer os.Setenv("TERM", origTerm)
+
+	id, err := s.client.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
+	require.NoError(s.T(), err)
+
+	s.client.mu.Lock()
+	he := s.client.execs[id]
+	s.client.mu.Unlock()
+
+	require.True(s.T(), hasEnvKey(he.cmd.Env, "TERM"), "TERM should be set when missing from environment")
+}
+
+func (s *HostSuite) TestExecCreatePreservesExistingTERM() {
+	// Ensure TERM is set so the code doesn't add a duplicate.
+	os.Setenv("TERM", "screen")
+	defer os.Setenv("TERM", "screen") // restore
+
+	id, err := s.client.ExecCreate(context.Background(), "/tmp", []string{"/bin/echo"}, true)
+	require.NoError(s.T(), err)
+
+	s.client.mu.Lock()
+	he := s.client.execs[id]
+	s.client.mu.Unlock()
+
+	count := 0
+	for _, e := range he.cmd.Env {
+		if len(e) > 5 && e[:5] == "TERM=" {
+			count++
+		}
+	}
+	require.Equal(s.T(), 1, count, "should have exactly one TERM entry")
+}

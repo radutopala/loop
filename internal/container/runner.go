@@ -195,8 +195,8 @@ type DockerClient interface {
 	RemoveImageAndContainers(ctx context.Context, imageName string) error
 	ImageInspectLabels(ctx context.Context, imageName string) (map[string]string, error)
 	ContainerList(ctx context.Context, labelKey, labelValue string) ([]string, error)
+	ListContainerInfos(ctx context.Context) ([]*ContainerInfo, error)
 	CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader) error
-	RunningChannelIDs(ctx context.Context) (map[string]struct{}, error)
 	NetworkEnsure(ctx context.Context, name string) error
 	SetLoopVersion(v string)
 	LatestClaudeVersion() string
@@ -228,9 +228,9 @@ type DockerRunner struct {
 	sys                       runnerSystem
 	loadProjectConfig         func(string, *config.Config) (*config.Config, error)
 	loadWorktreeProjectConfig func(string, string, *config.Config) (*config.Config, error)
-	osTimeAfterFunc           func(time.Duration, func()) *time.Timer
 	osRandRead                func([]byte) (int, error)
 	osTimeLocalName           func() string
+	registry                  ContainerRegistry
 }
 
 // NewDockerRunner creates a new DockerRunner with the given Docker client and config.
@@ -241,14 +241,17 @@ func NewDockerRunner(client DockerClient, cfg *config.Config) *DockerRunner {
 		sys:                       osutil.RealSystem{},
 		loadProjectConfig:         config.LoadProjectConfig,
 		loadWorktreeProjectConfig: config.LoadWorktreeProjectConfig,
-		osTimeAfterFunc:           time.AfterFunc,
 		osRandRead:                rand.Read,
 		osTimeLocalName:           func() string { return time.Now().Location().String() },
 	}
 }
 
+// SetContainerRegistry configures the container registry for lifecycle tracking.
+func (r *DockerRunner) SetContainerRegistry(reg ContainerRegistry) {
+	r.registry = reg
+}
+
 const (
-	containerLabel = "loop-agent"
 	scannerBufInit = 64 * 1024 // initial reader buffer capacity
 )
 
@@ -277,10 +280,10 @@ func (r *DockerRunner) localTimezone() string {
 	return "UTC"
 }
 
-// sanitizeName lowercases the input, replaces non-alphanumeric chars with
+// SanitizeName lowercases the input, replaces non-alphanumeric chars with
 // hyphens, collapses consecutive hyphens, trims leading/trailing hyphens,
-// and truncates to 40 characters.
-func sanitizeName(name string) string {
+// and truncates to 40 characters. Used for Docker container names and hostnames.
+func SanitizeName(name string) string {
 	s := strings.ToLower(name)
 	s = nonAlphanumRegexp.ReplaceAllString(s, "-")
 	s = strings.Trim(s, "-")
@@ -299,7 +302,7 @@ func (r *DockerRunner) containerName(channelID, dirPath string) string {
 	if dirPath != "" {
 		base = filepath.Base(dirPath)
 	}
-	sanitized := sanitizeName(base)
+	sanitized := SanitizeName(base)
 	b := make([]byte, 3)
 	_, _ = r.osRandRead(b)
 	return "loop-" + sanitized + "-" + hex.EncodeToString(b)
@@ -504,7 +507,8 @@ func (r *DockerRunner) gitExcludesMount() string {
 
 // runOnce executes a single container run.
 func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*agent.AgentResponse, error) {
-	containerID, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID, req.ParentDirPath, req.AgentID,
+	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, req.ChannelID, req.DirPath, req.AuthorID, req.ParentDirPath, req.AgentID,
+		ContainerTypeAgent,
 		func(cfg *config.Config, mcpConfigPath string) []string {
 			return buildClaudeCmd(cfg, mcpConfigPath, req)
 		},
@@ -513,7 +517,19 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		defer func() { _ = r.sys.Remove(mcpConfigPath) }()
 	}
 	if containerID != "" {
-		defer r.scheduleRemove(containerID)
+		if r.registry != nil {
+			r.registry.Register(&ContainerInfo{
+				ContainerID:   containerID,
+				ChannelID:     req.ChannelID,
+				Type:          ContainerTypeAgent,
+				ContainerName: ctrName,
+			})
+		}
+		defer func() {
+			if r.registry != nil {
+				r.registry.ScheduleRemove(containerID, r.cfg.ContainerKeepAlive)
+			}
+		}()
 	}
 	if err != nil {
 		return nil, err
@@ -858,8 +874,9 @@ func (r *DockerRunner) copyFiles(ctx context.Context, containerID string, files 
 func (r *DockerRunner) createAndStartContainer(
 	ctx context.Context,
 	channelID, dirPath, authorID, parentDirPath, agentID string,
+	cType ContainerType,
 	buildCmd func(cfg *config.Config, mcpConfigPath string) []string,
-) (containerID, mcpConfigPath string, keepMCPConfig bool, err error) {
+) (containerID, containerName, mcpConfigPath string, keepMCPConfig bool, err error) {
 	workDir := filepath.Join(r.cfg.LoopDir, channelID, "work")
 	if dirPath != "" {
 		workDir = dirPath
@@ -872,7 +889,7 @@ func (r *DockerRunner) createAndStartContainer(
 		cfg, err = r.loadProjectConfig(workDir, r.cfg)
 	}
 	if err != nil {
-		return "", "", false, fmt.Errorf("loading project config: %w", err)
+		return "", "", "", false, fmt.Errorf("loading project config: %w", err)
 	}
 	keepMCPConfig = cfg.KeepMCPConfigs
 
@@ -880,7 +897,7 @@ func (r *DockerRunner) createAndStartContainer(
 
 	env, err := r.buildContainerEnv(cfg, channelID, apiURL)
 	if err != nil {
-		return "", "", false, err
+		return "", "", "", false, err
 	}
 
 	binds, chownPaths := r.buildContainerMounts(cfg.Mounts, workDir, parentDirPath, cfg.ExtraDirs)
@@ -904,7 +921,7 @@ func (r *DockerRunner) createAndStartContainer(
 
 	// Ensure workDir exists on host (it's bind-mounted into the container).
 	if err := r.sys.MkdirAll(workDir, 0o755); err != nil {
-		return "", "", false, fmt.Errorf("creating work dir: %w", err)
+		return "", "", "", false, fmt.Errorf("creating work dir: %w", err)
 	}
 
 	// Initialize git in auto-created work directories so the agent can use version control.
@@ -914,7 +931,7 @@ func (r *DockerRunner) createAndStartContainer(
 
 	mcpConfigPath, err = r.writeMCPConfig(workDir, channelID, apiURL, authorID, agentID, cfg)
 	if err != nil {
-		return "", "", false, err
+		return "", "", "", false, err
 	}
 
 	cmd := buildCmd(cfg, mcpConfigPath)
@@ -927,24 +944,24 @@ func (r *DockerRunner) createAndStartContainer(
 		Cmd:        cmd,
 		Binds:      binds,
 		WorkingDir: workDir,
-		Labels:     map[string]string{channelLabelKey: channelID},
+		Labels:     map[string]string{ChannelLabelKey: channelID, ContainerTypeKey: string(cType)},
 	}
 
-	name := r.containerName(channelID, dirPath)
-	containerID, err = r.client.ContainerCreate(ctx, containerCfg, name)
+	containerName = r.containerName(channelID, dirPath)
+	containerID, err = r.client.ContainerCreate(ctx, containerCfg, containerName)
 	if err != nil {
-		return "", mcpConfigPath, keepMCPConfig, fmt.Errorf("creating container: %w", err)
+		return "", "", mcpConfigPath, keepMCPConfig, fmt.Errorf("creating container: %w", err)
 	}
 
 	if err := r.copyFiles(ctx, containerID, r.filterMountedCopyFiles(cfg.CopyFiles, binds)); err != nil {
-		return containerID, mcpConfigPath, keepMCPConfig, fmt.Errorf("copying files: %w", err)
+		return containerID, containerName, mcpConfigPath, keepMCPConfig, fmt.Errorf("copying files: %w", err)
 	}
 
 	if err := r.client.ContainerStart(ctx, containerID); err != nil {
-		return containerID, mcpConfigPath, keepMCPConfig, fmt.Errorf("starting container: %w", err)
+		return containerID, containerName, mcpConfigPath, keepMCPConfig, fmt.Errorf("starting container: %w", err)
 	}
 
-	return containerID, mcpConfigPath, keepMCPConfig, nil
+	return containerID, containerName, mcpConfigPath, keepMCPConfig, nil
 }
 
 // collectOutput reads container logs (streaming or batch) and waits for exit.
@@ -1197,32 +1214,40 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 // Unlike Run, the container runs "sleep infinity" instead of Claude CLI and is
 // not auto-removed — it persists until explicitly stopped.
 func (r *DockerRunner) CreateShellContainer(ctx context.Context, channelID, dirPath string) (string, error) {
-	containerID, _, _, err := r.createAndStartContainer(ctx, channelID, dirPath, "", "", "", func(*config.Config, string) []string {
-		return []string{"sleep", "infinity"}
-	})
+	containerID, ctrName, _, _, err := r.createAndStartContainer(ctx, channelID, dirPath, "", "", "",
+		ContainerTypeShell,
+		func(*config.Config, string) []string {
+			return []string{"sleep", "infinity"}
+		})
+	if err == nil && containerID != "" && r.registry != nil {
+		r.registry.Register(&ContainerInfo{
+			ContainerID:   containerID,
+			ChannelID:     channelID,
+			Type:          ContainerTypeShell,
+			ContainerName: ctrName,
+		})
+	}
 	return containerID, err
 }
 
 // Cleanup removes any lingering containers with the loop-agent label.
 func (r *DockerRunner) Cleanup(ctx context.Context) error {
-	containers, err := r.client.ContainerList(ctx, "app", containerLabel)
+	containers, err := r.client.ContainerList(ctx, "app", ContainerLabel)
 	if err != nil {
 		return fmt.Errorf("listing containers: %w", err)
 	}
 
 	var lastErr error
 	for _, id := range containers {
-		if err := r.client.ContainerRemove(ctx, id); err != nil {
-			lastErr = fmt.Errorf("removing container %s: %w", id, err)
+		if r.registry != nil {
+			if err := r.registry.RemoveContainer(ctx, id); err != nil {
+				lastErr = fmt.Errorf("removing container %s: %w", id, err)
+			}
+		} else {
+			if err := r.client.ContainerRemove(ctx, id); err != nil {
+				lastErr = fmt.Errorf("removing container %s: %w", id, err)
+			}
 		}
 	}
 	return lastErr
-}
-
-// scheduleRemove removes a container after a delay so that `docker logs`
-// remains available for debugging shortly after the run completes.
-func (r *DockerRunner) scheduleRemove(containerID string) {
-	r.osTimeAfterFunc(r.cfg.ContainerKeepAlive, func() {
-		_ = r.client.ContainerRemove(context.Background(), containerID)
-	})
 }

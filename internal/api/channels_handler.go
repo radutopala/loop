@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/radutopala/loop/internal/container"
 )
 
 const channelsNotConfiguredMsg = "channel creation not configured (discord_guild_id not set or Slack not configured)"
@@ -103,13 +105,10 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Get running container channel IDs if a lister is configured.
+	// Get running container channel IDs if a registry is configured.
 	var runningIDs map[string]struct{}
-	if s.runningChLister != nil {
-		runningIDs, err = s.runningChLister.RunningChannelIDs(r.Context())
-		if err != nil {
-			s.logger.Warn("failed to list running channels", "error", err)
-		}
+	if s.containerRegistry != nil {
+		runningIDs = s.containerRegistry.RunningChannelIDs(r.Context())
 	}
 
 	// Get channels with active chat agent runs.
@@ -209,7 +208,41 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Clean up containers associated with this channel.
+	s.cleanupChannelContainers(r.Context(), channelID)
+
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// cleanupChannelContainers removes all containers (agent, shell, chrome)
+// associated with a channel. Called on channel deletion to prevent orphaned containers.
+func (s *Server) cleanupChannelContainers(ctx context.Context, channelID string) {
+	if s.containerRegistry != nil {
+		for _, info := range s.containerRegistry.ListByChannel(channelID) {
+			if info.Type == container.ContainerTypeChrome {
+				continue // handled separately via BrowserProvider
+			}
+			if err := s.containerRegistry.RemoveContainer(ctx, info.ContainerID); err != nil {
+				s.logger.Warn("channel cleanup: container remove failed",
+					"channel_id", channelID,
+					"container_id", info.ContainerID,
+					"error", err,
+				)
+			}
+		}
+	}
+	if s.dockerBrowserProvider != nil {
+		containerID, _ := s.dockerBrowserProvider.StopBrowser(ctx, channelID)
+		if containerID != "" && s.containerRegistry != nil {
+			if err := s.containerRegistry.RemoveContainer(ctx, containerID); err != nil {
+				s.logger.Warn("channel cleanup: chrome container remove failed",
+					"channel_id", channelID,
+					"container_id", containerID,
+					"error", err,
+				)
+			}
+		}
+	}
 }
 
 type ensureAllChannelsRequest struct {

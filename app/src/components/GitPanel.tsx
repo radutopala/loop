@@ -58,7 +58,7 @@ function saveWidth(w: number) {
   } catch { /* ignore */ }
 }
 
-interface DiffPanelProps {
+interface GitPanelProps {
   channelId: string | null;
   dirPath?: string;
   branch?: string;
@@ -265,7 +265,7 @@ function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   };
 }
 
-export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, tabBar, embedded, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose }: DiffPanelProps) {
+export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, tabBar, embedded, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose }: GitPanelProps) {
   const { colors } = useTheme();
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
@@ -275,8 +275,8 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
   const [loading, setLoading] = useState(false);
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
   // Branch diff mode state
-  type DiffMode = "changes" | "branches";
-  const [diffMode, setDiffMode] = useState<DiffMode>("changes");
+  type DiffMode = "uncommitted" | "branches";
+  const [diffMode, setDiffMode] = useState<DiffMode>("uncommitted");
   const [branches, setBranches] = useState<string[]>([]);
   const [sourceBranch, setSourceBranch] = useState<string>("");
   const [targetBranch, setTargetBranch] = useState<string>("");
@@ -508,7 +508,7 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
         }}
       >
         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button style={modeTabStyle(diffMode === "changes")} onClick={() => setDiffMode("changes")}>Changes</button>
+          <button style={modeTabStyle(diffMode === "uncommitted")} onClick={() => setDiffMode("uncommitted")}>Uncommitted</button>
           <button style={modeTabStyle(diffMode === "branches")} onClick={() => setDiffMode("branches")}>Branches</button>
           {totalFiles > 0 && <span style={{ fontSize: 10, color: colors.textDim }}>{totalFiles}</span>}
           {(totalAdd > 0 || totalDel > 0) && (
@@ -919,7 +919,7 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
           {maximized && tabBar}
           {!maximized && (
             <>
-              <button style={modeTabStyle(diffMode === "changes")} onClick={() => setDiffMode("changes")}>Changes</button>
+              <button style={modeTabStyle(diffMode === "uncommitted")} onClick={() => setDiffMode("uncommitted")}>Uncommitted</button>
               <button style={modeTabStyle(diffMode === "branches")} onClick={() => setDiffMode("branches")}>Branches</button>
               {totalFiles > 0 && (
                 <span style={{ fontSize: 10, color: colors.textDim }}>
@@ -939,7 +939,7 @@ export function DiffPanel({ channelId, dirPath, branch, maximized, sidebarOpen, 
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {maximized && (
             <span style={{ display: "flex", alignItems: "center", gap: 8, marginRight: 8 }}>
-              <button style={modeTabStyle(diffMode === "changes")} onClick={() => setDiffMode("changes")}>Changes</button>
+              <button style={modeTabStyle(diffMode === "uncommitted")} onClick={() => setDiffMode("uncommitted")}>Uncommitted</button>
               <button style={modeTabStyle(diffMode === "branches")} onClick={() => setDiffMode("branches")}>Branches</button>
               {totalFiles > 0 && (
                 <span style={{ fontSize: 10, color: colors.textDim }}>

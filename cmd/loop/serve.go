@@ -396,9 +396,29 @@ func (a *app) serve() error {
 	channelSvc := api.NewChannelService(store, channelCreators, cfg.LoopDir)
 	threadSvc := api.NewThreadService(store, chatBot, logger, cfg.KeepMCPConfigs)
 
+	containerReg := container.NewRegistry(nil)
+	containerReg.SetLogger(logger)
+	containerReg.SetContainerRemover(dockerClient)
+	containerReg.SetShellCreator(runner)
+	runner.SetContainerRegistry(containerReg)
+
+	// Restore registry from running Docker containers (survives daemon restarts).
+	if infos, restoreErr := dockerClient.ListContainerInfos(ctx); restoreErr != nil {
+		logger.Warn("failed to restore container registry", "error", restoreErr)
+	} else if len(infos) > 0 {
+		containerReg.Restore(infos)
+		logger.Info("restored container registry", "count", len(infos))
+		// Schedule removal for containers that are already stopped.
+		for _, info := range infos {
+			if info.Status == container.ContainerStatusStopped {
+				containerReg.ScheduleRemove(info.ContainerID, cfg.ContainerKeepAlive)
+			}
+		}
+	}
+
 	apiSrv := a.newAPIServer(sched, channelSvc, threadSvc, store, chatBot, logger)
 	apiSrv.SetLoopDir(cfg.LoopDir)
-	apiSrv.SetRunningChannelLister(dockerClient)
+	apiSrv.SetContainerRegistry(containerReg)
 	apiSrv.SetAgentRegistry(agentReg)
 
 	execClient, err := a.newDockerExecClient()
@@ -407,8 +427,6 @@ func (a *app) serve() error {
 	} else {
 		termMgr := terminal.NewManager(execClient, logger)
 		apiSrv.SetTerminalManager(terminal.NewManagerAdapter(termMgr))
-		apiSrv.SetContainerFinder(container.NewChannelContainerEnsurer(dockerClient, runner))
-		apiSrv.SetContainerStopper(dockerClient)
 		apiSrv.SetInteractiveCmdBuilder(container.NewClaudeCmdBuilder(cfg))
 	}
 
@@ -421,6 +439,9 @@ func (a *app) serve() error {
 		if browserErr != nil {
 			logger.Warn("browser docker provider unavailable", "error", browserErr)
 		} else {
+			if dp, ok := dockerProvider.(*browser.DockerProvider); ok {
+				dp.SetContainerRegistry(containerReg)
+			}
 			apiSrv.SetBrowserProvider(dockerProvider)
 		}
 
@@ -429,6 +450,7 @@ func (a *app) serve() error {
 		apiSrv.SetHostBrowserProvider(hostProvider)
 
 		// Idle monitoring for browser sessions (CDPManagers + containers).
+		apiSrv.SetBrowserKeepAlive(cfg.ContainerKeepAlive)
 		go apiSrv.RunBrowserIdleMonitor(ctx, 5*time.Minute)
 	}
 
@@ -449,6 +471,7 @@ func (a *app) serve() error {
 
 	eventsHub := api.NewEventsHub(logger)
 	apiSrv.SetEventsHub(eventsHub)
+	containerReg.SetBroadcaster(eventsHub)
 
 	containerDir := filepath.Join(cfg.LoopDir, "container")
 	lifecycleMgr := container.NewImageLifecycleManager(
@@ -456,6 +479,7 @@ func (a *app) serve() error {
 		containerDir, cfg.ContainerImage, a.version,
 		dockerClient.LatestClaudeVersion,
 	)
+	lifecycleMgr.SetContainerRegistry(containerReg)
 	apiSrv.SetImageManager(lifecycleMgr)
 
 	// Ensure agent image asynchronously so the API is available during builds.
@@ -482,6 +506,10 @@ func (a *app) serve() error {
 		return fmt.Errorf("starting orchestrator: %w", err)
 	}
 
+	// Periodic registry reconciliation: detect containers that disappeared
+	// externally (OOM kill, docker rm, daemon restart) and remove stale entries.
+	go containerReg.RunReconcileLoop(ctx, dockerClient, 30*time.Second, cfg.ContainerKeepAlive, logger)
+
 	<-ctx.Done()
 	logger.Info("shutting down")
 
@@ -490,6 +518,9 @@ func (a *app) serve() error {
 	if err := apiSrv.Stop(shutdownCtx); err != nil {
 		slog.Error("api server stop error", "error", err)
 	}
+
+	// Clean up Chrome sidecar containers.
+	apiSrv.CleanupBrowsers(shutdownCtx)
 
 	if err := orch.Stop(); err != nil {
 		slog.Error("shutdown error", "error", err)

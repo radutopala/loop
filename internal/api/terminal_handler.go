@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/gorilla/websocket"
+
+	"github.com/radutopala/loop/internal/container"
 )
 
 // Terminal WebSocket control message types (client → server).
@@ -58,16 +60,6 @@ type TerminalManager interface {
 	KillProcessGroup(ctx context.Context, sessionID string) error
 }
 
-// ContainerFinder resolves a channel ID to a running container ID.
-type ContainerFinder interface {
-	FindContainerByChannel(ctx context.Context, channelID, dirPath string) (string, error)
-}
-
-// ContainerStopper removes a container by ID.
-type ContainerStopper interface {
-	ContainerRemove(ctx context.Context, containerID string) error
-}
-
 // wsControlMessage represents a JSON control message from the client.
 type wsControlMessage struct {
 	Type        string   `json:"type"`
@@ -97,20 +89,19 @@ type InteractiveCmdBuilder interface {
 
 // terminalWSConn manages a single WebSocket terminal connection.
 type terminalWSConn struct {
-	conn             *websocket.Conn
-	connWriteMessage func(messageType int, data []byte) error
-	manager          TerminalManager
-	hostManager      TerminalManager // may be nil
-	containerFinder  ContainerFinder
-	containerStopper ContainerStopper
-	browserProvider  BrowserProvider // may be nil
-	cmdBuilder       InteractiveCmdBuilder
-	store            ChannelLister
-	loopDir          string // fallback work dir root (e.g. ~/.loop)
-	logger           *slog.Logger
-	writeMu          sync.Mutex
-	stopOnce         sync.Once
-	stopCh           chan struct{}
+	conn              *websocket.Conn
+	connWriteMessage  func(messageType int, data []byte) error
+	manager           TerminalManager
+	hostManager       TerminalManager  // may be nil
+	containerRegistry ContainerManager // may be nil
+	browserProvider   BrowserProvider  // may be nil
+	cmdBuilder        InteractiveCmdBuilder
+	store             ChannelLister
+	loopDir           string // fallback work dir root (e.g. ~/.loop)
+	logger            *slog.Logger
+	writeMu           sync.Mutex
+	stopOnce          sync.Once
+	stopCh            chan struct{}
 
 	sessionID     string
 	outputCh      <-chan []byte
@@ -130,19 +121,18 @@ func (t *terminalWSConn) activeManager() TerminalManager {
 	return t.manager
 }
 
-func newTerminalWSConn(conn *websocket.Conn, manager TerminalManager, hostManager TerminalManager, finder ContainerFinder, stopper ContainerStopper, cmdBuilder InteractiveCmdBuilder, store ChannelLister, loopDir string, logger *slog.Logger) *terminalWSConn {
+func newTerminalWSConn(conn *websocket.Conn, manager TerminalManager, hostManager TerminalManager, registry ContainerManager, cmdBuilder InteractiveCmdBuilder, store ChannelLister, loopDir string, logger *slog.Logger) *terminalWSConn {
 	return &terminalWSConn{
-		conn:             conn,
-		connWriteMessage: conn.WriteMessage,
-		manager:          manager,
-		hostManager:      hostManager,
-		containerFinder:  finder,
-		containerStopper: stopper,
-		cmdBuilder:       cmdBuilder,
-		store:            store,
-		loopDir:          loopDir,
-		logger:           logger,
-		stopCh:           make(chan struct{}),
+		conn:              conn,
+		connWriteMessage:  conn.WriteMessage,
+		manager:           manager,
+		hostManager:       hostManager,
+		containerRegistry: registry,
+		cmdBuilder:        cmdBuilder,
+		store:             store,
+		loopDir:           loopDir,
+		logger:            logger,
+		stopCh:            make(chan struct{}),
 	}
 }
 
@@ -366,7 +356,7 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 	// Resolve channel_id to container_id via ContainerFinder.
 	var dirPath, claudeSessionID string
 	var forkSession bool
-	if msg.ContainerID == "" && msg.ChannelID != "" && t.containerFinder != nil {
+	if msg.ContainerID == "" && msg.ChannelID != "" && t.containerRegistry != nil {
 		// Look up channel's dir_path and session_id for the interactive command.
 		if t.store != nil {
 			if ch, err := t.store.GetChannel(ctx, msg.ChannelID); err == nil && ch != nil {
@@ -389,7 +379,7 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 				}
 			}
 		}
-		containerID, err := t.containerFinder.FindContainerByChannel(ctx, msg.ChannelID, dirPath)
+		containerID, err := t.containerRegistry.FindOrCreateShell(ctx, msg.ChannelID, dirPath)
 		if err != nil {
 			t.sendError("no running container for channel: "+err.Error(), wsErrCodeSessionFailed)
 			return
@@ -539,8 +529,8 @@ func (t *terminalWSConn) handleStop(ctx context.Context, msg wsControlMessage) {
 	// Remove the container before notifying the client, so the channel list
 	// API reflects the updated running state when the client refreshes.
 	// Skip container removal for host sessions (no container involved).
-	if !isHost && containerID != "" && t.containerStopper != nil {
-		if err := t.containerStopper.ContainerRemove(ctx, containerID); err != nil {
+	if !isHost && containerID != "" && t.containerRegistry != nil {
+		if err := t.containerRegistry.RemoveContainer(ctx, containerID); err != nil {
 			t.logger.Warn("terminal ws: container remove failed", "container_id", containerID, "error", err)
 		}
 	}
@@ -575,7 +565,7 @@ func (t *terminalWSConn) handleKill(ctx context.Context, msg wsControlMessage) {
 		t.sendError("channel_id required", wsErrCodeMissingField)
 		return
 	}
-	if t.containerFinder == nil || t.containerStopper == nil {
+	if t.containerRegistry == nil {
 		t.sendError("container management not configured", wsErrCodeSessionFailed)
 		return
 	}
@@ -590,28 +580,24 @@ func (t *terminalWSConn) handleKill(ctx context.Context, msg wsControlMessage) {
 		t.sessionTarget = ""
 	}
 
-	// Resolve channel to container and remove it.
-	var dirPath string
-	if t.store != nil {
-		if ch, err := t.store.GetChannel(ctx, msg.ChannelID); err == nil && ch != nil {
-			dirPath = ch.DirPath
+	// Remove all containers for this channel.
+	for _, info := range t.containerRegistry.ListByChannel(msg.ChannelID) {
+		if info.Type == container.ContainerTypeChrome {
+			continue // handled separately via BrowserProvider
+		}
+		if err := t.containerRegistry.RemoveContainer(ctx, info.ContainerID); err != nil {
+			// Suppress benign race: another goroutine (e.g. scheduleRemove) already started removal.
+			if !strings.Contains(err.Error(), "already in progress") {
+				t.logger.Warn("terminal ws: kill container remove failed", "container_id", info.ContainerID, "error", err)
+			}
 		}
 	}
-	containerID, err := t.containerFinder.FindContainerByChannel(ctx, msg.ChannelID, dirPath)
-	if err != nil {
-		// No container found — nothing to kill, still report success.
-		t.writeJSON(wsStatusMessage{Type: wsStatusStopped})
-		return
-	}
-	if err := t.containerStopper.ContainerRemove(ctx, containerID); err != nil {
-		// Suppress benign race: another goroutine (e.g. scheduleRemove) already started removal.
-		if !strings.Contains(err.Error(), "already in progress") {
-			t.logger.Warn("terminal ws: kill container remove failed", "container_id", containerID, "error", err)
-		}
-	}
-	// Also stop the Chrome sidecar container for this channel.
+	// Also stop and remove the Chrome sidecar container for this channel.
 	if t.browserProvider != nil {
-		_ = t.browserProvider.StopBrowser(ctx, msg.ChannelID)
+		containerID, _ := t.browserProvider.StopBrowser(ctx, msg.ChannelID)
+		if containerID != "" && t.containerRegistry != nil {
+			_ = t.containerRegistry.RemoveContainer(ctx, containerID)
+		}
 	}
 	t.writeJSON(wsStatusMessage{Type: wsStatusStopped})
 }
@@ -629,7 +615,7 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
-	tc := newTerminalWSConn(conn, s.termManager, s.hostTermManager, s.containerFinder, s.containerStopper, s.cmdBuilder, s.store, s.loopDir, s.logger)
+	tc := newTerminalWSConn(conn, s.termManager, s.hostTermManager, s.containerRegistry, s.cmdBuilder, s.store, s.loopDir, s.logger)
 	tc.browserProvider = s.dockerBrowserProvider
 	defer tc.close()
 
@@ -669,16 +655,6 @@ func (s *Server) handleTerminalWS(w http.ResponseWriter, r *http.Request) {
 // SetTerminalManager configures the terminal manager for WebSocket terminal sessions.
 func (s *Server) SetTerminalManager(mgr TerminalManager) {
 	s.termManager = mgr
-}
-
-// SetContainerFinder configures the container finder for channel_id → container resolution.
-func (s *Server) SetContainerFinder(finder ContainerFinder) {
-	s.containerFinder = finder
-}
-
-// SetContainerStopper configures the container stopper for removing containers on session stop.
-func (s *Server) SetContainerStopper(stopper ContainerStopper) {
-	s.containerStopper = stopper
 }
 
 // SetInteractiveCmdBuilder configures the command builder for interactive terminal sessions.

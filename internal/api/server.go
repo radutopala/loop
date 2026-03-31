@@ -10,16 +10,24 @@ import (
 	"net/http"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/browser"
+	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/scheduler"
 )
 
-// RunningChannelLister returns the set of channel IDs that have running containers.
-type RunningChannelLister interface {
-	RunningChannelIDs(ctx context.Context) (map[string]struct{}, error)
+// ContainerManager provides container registry operations for the API server:
+// listing, lifecycle management (find-or-create, remove).
+type ContainerManager interface {
+	List() []*container.ContainerInfo
+	ListByChannel(channelID string) []*container.ContainerInfo
+	RunningChannelIDs(ctx context.Context) map[string]struct{}
+	RemoveContainer(ctx context.Context, containerID string) error
+	ScheduleRemove(containerID string, delay time.Duration)
+	FindOrCreateShell(ctx context.Context, channelID, dirPath string) (string, error)
 }
 
 // ActiveChatLister returns channel IDs with active chat agent runs.
@@ -56,8 +64,6 @@ type Server struct {
 	memoryIndexer         MemoryIndexer
 	termManager           TerminalManager
 	hostTermManager       TerminalManager
-	containerFinder       ContainerFinder
-	containerStopper      ContainerStopper
 	dockerBrowserProvider BrowserProvider
 	hostBrowserProvider   BrowserProvider                // for host Chrome mode
 	activeBrowserMode     map[string]string              // channelID -> "docker"|"host"; nil defaults to docker
@@ -67,13 +73,14 @@ type Server struct {
 	browserCaptures       map[string]*browser.CaptureState // channelID -> state
 	browserCapturesMu     sync.Mutex
 	cmdBuilder            InteractiveCmdBuilder
-	runningChLister       RunningChannelLister
+	containerRegistry     ContainerManager
 	activeChatLister      ActiveChatLister
 	msgHandler            IncomingMessageHandler
 	interactionHandler    InteractionHandler
 	agentRegistry         *agentregistry.Registry
 	eventsHub             *EventsHub
 	imageManager          ImageManager
+	browserKeepAlive      time.Duration // delay before removing idle browser containers
 	loopDir               string
 	screenshotDir         string // if set, write screenshots to this dir instead of base64
 	logger                *slog.Logger
@@ -110,9 +117,21 @@ func (s *Server) SetScreenshotDir(dir string) {
 	s.screenshotDir = dir
 }
 
-// SetRunningChannelLister configures the running channel lister for the channel list endpoint.
-func (s *Server) SetRunningChannelLister(lister RunningChannelLister) {
-	s.runningChLister = lister
+// BrowserCleaner stops all browser sessions. Implemented by DockerProvider.
+type BrowserCleaner interface {
+	Cleanup(ctx context.Context)
+}
+
+// CleanupBrowsers stops all Docker browser containers during shutdown.
+func (s *Server) CleanupBrowsers(ctx context.Context) {
+	if c, ok := s.dockerBrowserProvider.(BrowserCleaner); ok {
+		c.Cleanup(ctx)
+	}
+}
+
+// SetContainerRegistry configures the container registry for the /api/containers endpoint.
+func (s *Server) SetContainerRegistry(reg ContainerManager) {
+	s.containerRegistry = reg
 }
 
 // SetActiveChatLister configures the active chat lister for the channel list endpoint.
@@ -128,6 +147,11 @@ func (s *Server) SetIncomingMessageHandler(h IncomingMessageHandler) {
 // SetInteractionHandler configures the handler for slash command interactions.
 func (s *Server) SetInteractionHandler(h InteractionHandler) {
 	s.interactionHandler = h
+}
+
+// SetBrowserKeepAlive sets the delay before idle browser containers are removed.
+func (s *Server) SetBrowserKeepAlive(d time.Duration) {
+	s.browserKeepAlive = d
 }
 
 // SetImageManager configures the image lifecycle manager for the /api/image/* endpoints.
@@ -213,6 +237,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("PUT /api/config", s.handleSaveConfig)
 	mux.HandleFunc("GET /api/config/project", s.handleGetProjectConfig)
 	mux.HandleFunc("PUT /api/config/project", s.handleSaveProjectConfig)
+	mux.HandleFunc("GET /api/containers", s.handleListContainers)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
 	mux.HandleFunc("GET /api/ws/browser", s.handleBrowserWS)
