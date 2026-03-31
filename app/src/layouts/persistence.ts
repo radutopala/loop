@@ -4,7 +4,7 @@ import type { LayoutRoot } from "../canvas/types";
 const LAYOUT_KEY = "loop-workspace-layout";
 
 /** Default layout names — these are the "fixed" buttons in the header. */
-export const DEFAULT_LAYOUT_NAMES = ["Chat", "Editor", "Memory", "Terminal", "Diff", "Browser Chat", "Sessions", "Swarm", "Canvas", "Playground"] as const;
+export const DEFAULT_LAYOUT_NAMES = ["Chat", "Editor", "Memory", "Terminal", "Git", "Browser Chat", "Sessions", "Swarm", "Canvas", "Playground"] as const;
 
 export type LayoutType = "split" | "canvas";
 
@@ -31,7 +31,7 @@ export const DEFAULT_LAYOUT_TYPES: Record<string, LayoutType> = {
 // ---------------------------------------------------------------------------
 
 /** Current schema version. Bump when adding a new migration. */
-const CURRENT_VERSION = 7;
+const CURRENT_VERSION = 8;
 
 /**
  * Each migration transforms a ChannelLayouts from version N-1 to N.
@@ -97,6 +97,24 @@ const migrations: Record<number, (ch: ChannelLayouts) => void> = {
   // v7: Add "Playground" default layout.
   7: () => {
     // ensureDefaultLayouts handles insertion — no explicit migration needed.
+  },
+
+  // v8: Rename "Diff" layout tab to "Git" and panel:"diff" to "git".
+  8: (ch) => {
+    if (ch.layouts["Diff"]) {
+      if (!ch.layouts["Git"]) {
+        ch.layouts["Git"] = ch.layouts["Diff"];
+      }
+      delete ch.layouts["Diff"];
+    }
+    ch.order = ch.order.map((n) => (n === "Diff" ? "Git" : n));
+    if (ch.active === "Diff") ch.active = "Git";
+    if (ch.removed) {
+      ch.removed = ch.removed.map((n: string) => (n === "Diff" ? "Git" : n));
+    }
+    for (const layout of Object.values(ch.layouts)) {
+      migrateDiffPanel(layout);
+    }
   },
 };
 
@@ -243,18 +261,18 @@ export function getLayoutNames(channelId: string): string[] {
 export function createDefaultLayouts(): ChannelLayouts {
   return {
     active: "Chat",
-    order: ["Chat", "Editor", "Memory", "Terminal", "Diff", "Browser Chat", "Sessions", "Swarm", "Canvas", "Playground"],
+    order: ["Chat", "Editor", "Memory", "Terminal", "Git", "Browser Chat", "Sessions", "Swarm", "Canvas", "Playground"],
     types: { Canvas: "canvas" },
     version: CURRENT_VERSION,
     layouts: {
-      Chat: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "leaf", id: "diff", panel: "diff", flex: 50 }] },
+      Chat: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "leaf", id: "git", panel: "git", flex: 50 }] },
       Editor: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "split", direction: "vertical", flex: 65, children: [{ type: "leaf", id: "editor", panel: "editor", flex: 70 }, { type: "leaf", id: "shell-0", panel: "shell", flex: 30 }] }, { type: "leaf", id: "chat", panel: "chat", flex: 35 }] },
       Memory: { type: "leaf", id: "memory", panel: "memory", flex: 1 },
-      Diff: { type: "leaf", id: "diff", panel: "diff", flex: 1 },
-      "Browser Chat": { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "split", direction: "vertical", flex: 50, children: [{ type: "leaf", id: "docker-browser", panel: "docker-browser", flex: 70 }, { type: "leaf", id: "diff", panel: "diff", flex: 30 }] }] },
+      Git: { type: "leaf", id: "git", panel: "git", flex: 1 },
+      "Browser Chat": { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "split", direction: "vertical", flex: 50, children: [{ type: "leaf", id: "docker-browser", panel: "docker-browser", flex: 70 }, { type: "leaf", id: "git", panel: "git", flex: 30 }] }] },
       Sessions: { type: "leaf", id: "sessions", panel: "sessions", flex: 1 },
       Swarm: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "agent-0", panel: "agent", flex: 40 }, { type: "split", direction: "vertical", flex: 60, children: [{ type: "leaf", id: "agent-1", panel: "agent", flex: 1 }, { type: "leaf", id: "agent-2", panel: "agent", flex: 1 }] }] },
-      Canvas: { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [{ id: "agent-0", panel: "agent", x: 0, y: 0, width: 550, height: 800, zIndex: 0 }, { id: "agent-1", panel: "agent", x: 570, y: 0, width: 500, height: 390, zIndex: 0 }, { id: "agent-2", panel: "agent", x: 570, y: 410, width: 500, height: 390, zIndex: 0 }, { id: "diff", panel: "diff", x: 1090, y: 0, width: 600, height: 400, zIndex: 0 }, { id: "playground", panel: "playground", x: 1090, y: 420, width: 600, height: 380, zIndex: 0 }, { id: "memory", panel: "memory", x: 1710, y: 0, width: 800, height: 800, zIndex: 0 }] },
+      Canvas: { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [{ id: "agent-0", panel: "agent", x: 0, y: 0, width: 550, height: 800, zIndex: 0 }, { id: "agent-1", panel: "agent", x: 570, y: 0, width: 500, height: 390, zIndex: 0 }, { id: "agent-2", panel: "agent", x: 570, y: 410, width: 500, height: 390, zIndex: 0 }, { id: "git", panel: "git", x: 1090, y: 0, width: 600, height: 400, zIndex: 0 }, { id: "playground", panel: "playground", x: 1090, y: 420, width: 600, height: 380, zIndex: 0 }, { id: "memory", panel: "memory", x: 1710, y: 0, width: 800, height: 800, zIndex: 0 }] },
       Playground: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 40 }, { type: "leaf", id: "playground", panel: "playground", flex: 60 }] },
     },
   };
@@ -340,6 +358,28 @@ export function restoreDefaultLayouts(channelId: string): ChannelLayouts {
 // ---------------------------------------------------------------------------
 // Migration helpers
 // ---------------------------------------------------------------------------
+
+/** Recursively replace panel:"diff" with "git" in a layout tree. */
+function migrateDiffPanel(node: any): void {
+  if (!node) return;
+  if (node.type === "leaf" && node.panel === "diff") {
+    node.panel = "git";
+    if (node.id === "diff") node.id = "git";
+  }
+  if (node.type === "canvas" && Array.isArray(node.tiles)) {
+    for (const tile of node.tiles) {
+      if (tile.panel === "diff") {
+        tile.panel = "git";
+        if (tile.id === "diff") tile.id = "git";
+      }
+    }
+  }
+  if (Array.isArray(node.children)) {
+    for (const child of node.children) {
+      migrateDiffPanel(child);
+    }
+  }
+}
 
 /** Recursively replace panel:"browser" with "docker-browser" in a layout tree. */
 function migrateBrowserPanel(node: any): void {

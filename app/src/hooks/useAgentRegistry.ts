@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { WSEvent } from "../types";
 import { useEventStream } from "./useEventStream";
 
@@ -24,11 +24,37 @@ interface UseAgentRegistryResult {
 
 /**
  * Subscribes to agent_instance.* events and maintains a live map of agents.
+ * Seeds the map from GET /api/agents on mount so agents registered before
+ * the hook started listening are included.
  */
 export function useAgentRegistry(channelId: string | null): UseAgentRegistryResult {
   const [agents, setAgents] = useState<Map<string, AgentInfo>>(new Map());
   const agentsRef = useRef(agents);
   agentsRef.current = agents;
+
+  // Seed from existing agents on mount / channel change.
+  useEffect(() => {
+    if (!channelId) return;
+    let cancelled = false;
+    fetch(`/api/agents?channel_id=${encodeURIComponent(channelId)}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list: AgentInfo[]) => {
+        if (cancelled || !Array.isArray(list)) return;
+        const next = new Map(agentsRef.current);
+        for (const a of list) {
+          next.set(a.agent_id, {
+            agent_id: a.agent_id,
+            channel_id: a.channel_id,
+            name: a.name || a.agent_id,
+            status: a.status || "idle",
+            work_summary: a.work_summary || "",
+          });
+        }
+        setAgents(next);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [channelId]);
 
   const onEvent = useCallback((event: WSEvent) => {
     const data = event.data as AgentInstanceEventData;

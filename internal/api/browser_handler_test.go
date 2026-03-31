@@ -29,8 +29,9 @@ func (m *mockBrowserProvider) EnsureBrowser(ctx context.Context, channelID, cont
 	return m.Called(ctx, channelID, containerID).Error(0)
 }
 
-func (m *mockBrowserProvider) StopBrowser(ctx context.Context, channelID string) error {
-	return m.Called(ctx, channelID).Error(0)
+func (m *mockBrowserProvider) StopBrowser(ctx context.Context, channelID string) (string, error) {
+	args := m.Called(ctx, channelID)
+	return args.String(0), args.Error(1)
 }
 
 func (m *mockBrowserProvider) IsRunning(ctx context.Context, channelID string) bool {
@@ -50,10 +51,13 @@ func (m *mockBrowserProvider) IsHostMode() bool {
 	return false
 }
 
+func (m *mockBrowserProvider) Cleanup(ctx context.Context) {
+	m.Called(ctx)
+}
+
 type BrowserHandlerSuite struct {
 	suite.Suite
 	browserMgr *mockBrowserProvider
-	cFinder    *MockContainerFinder
 	srv        *Server
 }
 
@@ -63,10 +67,8 @@ func TestBrowserHandlerSuite(t *testing.T) {
 
 func (s *BrowserHandlerSuite) SetupTest() {
 	s.browserMgr = new(mockBrowserProvider)
-	s.cFinder = new(MockContainerFinder)
 	s.srv = nilServer()
 	s.srv.SetBrowserProvider(s.browserMgr)
-	s.srv.containerFinder = s.cFinder
 }
 
 func (s *BrowserHandlerSuite) dialBrowserWS() (*websocket.Conn, *httptest.Server) {
@@ -283,13 +285,34 @@ func (s *BrowserHandlerSuite) TestStopNoSession() {
 	defer ts.Close()
 	defer ws.Close()
 
-	s.browserMgr.On("StopBrowser", mock.Anything, "ch-1").Return(nil)
+	s.browserMgr.On("StopBrowser", mock.Anything, "ch-1").Return("", nil)
 
 	err := ws.WriteJSON(browserWSMessage{Type: bwsMsgStop, ChannelID: "ch-1"})
 	require.NoError(s.T(), err)
 
 	resp := s.readResp(ws)
 	require.Equal(s.T(), bwsRespStopped, resp.Type)
+}
+
+func (s *BrowserHandlerSuite) TestStopSchedulesRemoval() {
+	reg := new(mockContainerManager)
+	reg.On("ScheduleRemove", "chrome-stop-1", 5*time.Minute)
+	s.srv.containerRegistry = reg
+	s.srv.browserKeepAlive = 5 * time.Minute
+
+	s.browserMgr.On("StopBrowser", mock.Anything, "ch-1").Return("chrome-stop-1", nil)
+
+	ws, ts := s.dialBrowserWS()
+	defer ts.Close()
+	defer ws.Close()
+
+	err := ws.WriteJSON(browserWSMessage{Type: bwsMsgStop, ChannelID: "ch-1"})
+	require.NoError(s.T(), err)
+
+	resp := s.readResp(ws)
+	require.Equal(s.T(), bwsRespStopped, resp.Type)
+
+	reg.AssertCalled(s.T(), "ScheduleRemove", "chrome-stop-1", 5*time.Minute)
 }
 
 func (s *BrowserHandlerSuite) TestStopNoChannelID() {
@@ -1509,7 +1532,7 @@ func (s *BrowserHandlerSuite) TestCleanIdleBrowserSessions() {
 	s.srv.cdpManagers["ch-1|docker"] = cdpMgr
 	s.srv.cdpManagersMu.Unlock()
 
-	s.browserMgr.On("StopBrowser", mock.Anything, "ch-1").Return(nil)
+	s.browserMgr.On("StopBrowser", mock.Anything, "ch-1").Return("", nil)
 
 	s.srv.cleanIdleBrowserSessions(context.Background(), time.Minute)
 
@@ -1517,6 +1540,37 @@ func (s *BrowserHandlerSuite) TestCleanIdleBrowserSessions() {
 	_, exists := s.srv.cdpManagers["ch-1|docker"]
 	s.srv.cdpManagersMu.Unlock()
 	require.False(s.T(), exists)
+}
+
+func (s *BrowserHandlerSuite) TestCleanIdleBrowserSessionsSchedulesRemove() {
+	cdpMgr := browser.NewCDPManager("ws://test:9222", browser.CDPManagerConfig{}, slog.Default())
+	browser.SetTimeNowForTest(cdpMgr, func() time.Time {
+		return time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+	})
+	cdpMgr.Touch()
+
+	s.srv.cdpManagersMu.Lock()
+	if s.srv.cdpManagers == nil {
+		s.srv.cdpManagers = make(map[string]*browser.CDPManager)
+	}
+	s.srv.cdpManagers["ch-1|docker"] = cdpMgr
+	s.srv.cdpManagersMu.Unlock()
+
+	s.browserMgr.On("StopBrowser", mock.Anything, "ch-1").Return("chrome-c1", nil)
+
+	reg := new(mockContainerManager)
+	reg.On("ScheduleRemove", "chrome-c1", 5*time.Minute)
+	s.srv.containerRegistry = reg
+	s.srv.browserKeepAlive = 5 * time.Minute
+
+	s.srv.cleanIdleBrowserSessions(context.Background(), time.Minute)
+
+	reg.AssertCalled(s.T(), "ScheduleRemove", "chrome-c1", 5*time.Minute)
+}
+
+func (s *BrowserHandlerSuite) TestSetBrowserKeepAlive() {
+	s.srv.SetBrowserKeepAlive(10 * time.Minute)
+	require.Equal(s.T(), 10*time.Minute, s.srv.browserKeepAlive)
 }
 
 // --- activeMode ---
@@ -1559,8 +1613,9 @@ type mockHostBrowserProvider struct {
 func (m *mockHostBrowserProvider) EnsureBrowser(ctx context.Context, channelID, containerID string) error {
 	return m.Called(ctx, channelID, containerID).Error(0)
 }
-func (m *mockHostBrowserProvider) StopBrowser(ctx context.Context, channelID string) error {
-	return m.Called(ctx, channelID).Error(0)
+func (m *mockHostBrowserProvider) StopBrowser(ctx context.Context, channelID string) (string, error) {
+	args := m.Called(ctx, channelID)
+	return args.String(0), args.Error(1)
 }
 func (m *mockHostBrowserProvider) IsRunning(ctx context.Context, channelID string) bool {
 	return m.Called(ctx, channelID).Bool(0)
@@ -2094,7 +2149,6 @@ func (s *BrowserHandlerSuite) TestHandleStartHostModeActivatesTab() {
 	srv := nilServer()
 	srv.SetHostBrowserProvider(hostProvider)
 	srv.SetBrowserProvider(s.browserMgr)
-	srv.containerFinder = s.cFinder
 
 	// Set mode to host for this channel.
 	srv.browserModeMu.Lock()
@@ -2984,7 +3038,7 @@ func (s *BrowserHandlerSuite) TestRunBrowserIdleMonitorTickerFires() {
 	s.srv.cdpManagers["ch-idle|docker"] = cdpMgr
 	s.srv.cdpManagersMu.Unlock()
 
-	s.browserMgr.On("StopBrowser", mock.Anything, "ch-idle").Return(nil)
+	s.browserMgr.On("StopBrowser", mock.Anything, "ch-idle").Return("chrome-idle-1", nil)
 
 	done := make(chan struct{})
 	go func() {
@@ -3078,7 +3132,6 @@ func (s *BrowserHandlerSuite) TestBrowserActionListTabsHostMode() {
 	srv := nilServer()
 	srv.SetBrowserProvider(s.browserMgr)
 	srv.SetHostBrowserProvider(hostProvider)
-	srv.containerFinder = s.cFinder
 
 	srv.browserModeMu.Lock()
 	srv.activeBrowserMode = map[string]string{"ch-host": "host"}

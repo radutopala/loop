@@ -41,6 +41,13 @@ type ImageVersions struct {
 	BuiltAt       time.Time `json:"built_at"`
 }
 
+// containerUnregisterer is the subset of ContainerRegistry needed to clean up
+// stale entries when containers are force-removed during image rebuild/removal.
+type containerUnregisterer interface {
+	List() []*ContainerInfo
+	Unregister(containerID string)
+}
+
 // ImageLifecycleManager orchestrates image builds, version tracking,
 // and update checking for the Loop agent Docker image.
 type ImageLifecycleManager struct {
@@ -48,6 +55,7 @@ type ImageLifecycleManager struct {
 	broadcaster ImageBroadcaster
 	sys         lifecycleSystem
 	logger      *slog.Logger
+	registry    containerUnregisterer
 
 	mu              sync.Mutex
 	status          ImageBuildStatus
@@ -58,6 +66,12 @@ type ImageLifecycleManager struct {
 	imageName           string
 	loopVersion         string
 	latestClaudeVersion func() string
+}
+
+// SetContainerRegistry configures the registry so that containers removed
+// during image removal are also unregistered from the in-memory registry.
+func (m *ImageLifecycleManager) SetContainerRegistry(reg containerUnregisterer) {
+	m.registry = reg
 }
 
 // NewImageLifecycleManager creates a new lifecycle manager.
@@ -126,8 +140,19 @@ func (m *ImageLifecycleManager) Versions() ImageVersions {
 }
 
 // RemoveImage removes the current image and all containers using it.
+// If a registry is configured, all tracked containers are unregistered
+// since RemoveImageAndContainers force-removes them from Docker.
 func (m *ImageLifecycleManager) RemoveImage(ctx context.Context) error {
-	return m.client.RemoveImageAndContainers(ctx, m.imageName)
+	err := m.client.RemoveImageAndContainers(ctx, m.imageName)
+	if err != nil {
+		return err
+	}
+	if m.registry != nil {
+		for _, info := range m.registry.List() {
+			m.registry.Unregister(info.ContainerID)
+		}
+	}
+	return nil
 }
 
 // Rebuild removes the old image and builds a new one asynchronously.

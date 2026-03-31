@@ -11,7 +11,7 @@ const PANEL_LABELS: Record<PanelType, string> = {
   chat: "Chat",
   editor: "Editor",
   memory: "Memory",
-  diff: "Diff",
+  git: "Git",
   agent: "Agent",
   shell: "Shell",
   "docker-browser": "Docker Browser",
@@ -24,7 +24,7 @@ const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "chat", label: "Chat" },
   { panel: "editor", label: "Editor" },
   { panel: "memory", label: "Memory" },
-  { panel: "diff", label: "Diff" },
+  { panel: "git", label: "Git" },
   { panel: "agent", label: "Agent" },
   { panel: "shell", label: "Shell" },
   { panel: "docker-browser", label: "Docker Browser" },
@@ -79,7 +79,7 @@ interface PaneLeafHeaderProps {
 export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, agentInfo, onRemove, onDrop, onSplitLeaf, onToggleMaximize }: PaneLeafHeaderProps) {
   const { colors } = useTheme();
   const isAgent = panel === "agent";
-  const label = isAgent && agentInfo?.name ? agentInfo.name : PANEL_LABELS[panel];
+  const label = isAgent ? (agentInfo?.name || leafId) : PANEL_LABELS[panel];
 
   const btnStyle = buildBtnStyle(colors);
 

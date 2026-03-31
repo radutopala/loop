@@ -5,7 +5,7 @@ const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "chat", label: "Chat" },
   { panel: "editor", label: "Editor" },
   { panel: "memory", label: "Memory" },
-  { panel: "diff", label: "Diff" },
+  { panel: "git", label: "Git" },
   { panel: "agent", label: "Agent" },
   { panel: "shell", label: "Shell" },
   { panel: "docker-browser", label: "Docker Browser" },
@@ -33,7 +33,7 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
       <line x1="12" y1="16" x2="12.01" y2="16" />
     </svg>
   ),
-  diff: (
+  git: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <line x1="12" y1="5" x2="12" y2="19" />
       <polyline points="19 12 12 19 5 12" />
@@ -83,7 +83,7 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   chat: "Chat with the agent",
   editor: "Browse and edit files",
   memory: "Agent memory explorer",
-  diff: "Git diff viewer",
+  git: "Git diff viewer",
   agent: "Docker isolated terminal",
   shell: "Local machine shell",
   "docker-browser": "Browser in Docker container",

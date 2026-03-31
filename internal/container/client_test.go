@@ -682,36 +682,143 @@ func (s *ClientSuite) TestContainerListError() {
 	s.api.AssertExpectations(s.T())
 }
 
-func (s *ClientSuite) TestRunningChannelIDs() {
+func (s *ClientSuite) TestListContainerInfos() {
 	ctx := context.Background()
 
+	// Agent/shell containers (including stopped).
 	s.api.On("ContainerList", ctx, mock.MatchedBy(func(opts containertypes.ListOptions) bool {
-		return !opts.All && opts.Filters.Get("label")[0] == channelLabelKey
+		return opts.All && opts.Filters.Get("label")[0] == "app="+ContainerLabel
 	})).Return([]containertypes.Summary{
-		{ID: "cid-1", Labels: map[string]string{channelLabelKey: "ch-1"}},
-		{ID: "cid-2", Labels: map[string]string{channelLabelKey: "ch-2"}},
-		{ID: "cid-3", Labels: map[string]string{channelLabelKey: "ch-1"}}, // duplicate channel
+		{
+			ID:      "agent-1",
+			Names:   []string{"/loop-abc"},
+			Labels:  map[string]string{ChannelLabelKey: "ch-1", ContainerTypeKey: "agent"},
+			State:   "running",
+			Created: 1700000000,
+		},
+		{
+			ID:      "shell-1",
+			Names:   []string{"/loop-shell-def"},
+			Labels:  map[string]string{ChannelLabelKey: "ch-1", ContainerTypeKey: "shell"},
+			State:   "exited",
+			Created: 1700000100,
+		},
+		{
+			ID:     "old-agent",
+			Names:  []string{"/loop-old"},
+			Labels: map[string]string{ChannelLabelKey: "ch-2"}, // no loop-type label (pre-upgrade)
+			State:  "running",
+		},
+		{
+			ID:     "no-channel",
+			Labels: map[string]string{}, // no channel label — should be skipped
+		},
 	}, nil)
 
-	result, err := s.client.RunningChannelIDs(ctx)
+	// Chrome containers (including stopped).
+	s.api.On("ContainerList", ctx, mock.MatchedBy(func(opts containertypes.ListOptions) bool {
+		return opts.All && opts.Filters.Get("label")[0] == "loop-chrome"
+	})).Return([]containertypes.Summary{
+		{
+			ID:      "chrome-1",
+			Names:   []string{"/loop-chrome-ch-3"},
+			Labels:  map[string]string{"loop-chrome": "ch-3"},
+			State:   "exited",
+			Created: 1700000200,
+		},
+		{
+			ID:     "chrome-no-channel",
+			Labels: map[string]string{"loop-chrome": ""}, // empty channel — should be skipped
+		},
+	}, nil)
+
+	infos, err := s.client.ListContainerInfos(ctx)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), result, 2)
-	_, ok := result["ch-1"]
-	require.True(s.T(), ok)
-	_, ok = result["ch-2"]
-	require.True(s.T(), ok)
+	require.Len(s.T(), infos, 4) // 3 agent/shell (1 skipped) + 1 chrome
+
+	// Verify agent container (running).
+	require.Equal(s.T(), "agent-1", infos[0].ContainerID)
+	require.Equal(s.T(), "ch-1", infos[0].ChannelID)
+	require.Equal(s.T(), ContainerTypeAgent, infos[0].Type)
+	require.Equal(s.T(), ContainerStatusRunning, infos[0].Status)
+	require.Equal(s.T(), "loop-abc", infos[0].ContainerName)
+
+	// Verify shell container (exited → stopped).
+	require.Equal(s.T(), "shell-1", infos[1].ContainerID)
+	require.Equal(s.T(), ContainerTypeShell, infos[1].Type)
+	require.Equal(s.T(), ContainerStatusStopped, infos[1].Status)
+
+	// Verify old agent defaults to "agent" type (running).
+	require.Equal(s.T(), "old-agent", infos[2].ContainerID)
+	require.Equal(s.T(), ContainerTypeAgent, infos[2].Type)
+	require.Equal(s.T(), ContainerStatusRunning, infos[2].Status)
+
+	// Verify chrome container (exited → stopped).
+	require.Equal(s.T(), "chrome-1", infos[3].ContainerID)
+	require.Equal(s.T(), "ch-3", infos[3].ChannelID)
+	require.Equal(s.T(), ContainerTypeChrome, infos[3].Type)
+	require.Equal(s.T(), ContainerStatusStopped, infos[3].Status)
+	require.Equal(s.T(), "loop-chrome-ch-3", infos[3].ContainerName)
+
 	s.api.AssertExpectations(s.T())
 }
 
-func (s *ClientSuite) TestRunningChannelIDsError() {
+func (s *ClientSuite) TestListContainerInfosAgentError() {
 	ctx := context.Background()
 
-	s.api.On("ContainerList", ctx, mock.Anything).Return([]containertypes.Summary(nil), errors.New("docker err"))
+	s.api.On("ContainerList", ctx, mock.MatchedBy(func(opts containertypes.ListOptions) bool {
+		return opts.All && opts.Filters.Get("label")[0] == "app="+ContainerLabel
+	})).Return([]containertypes.Summary(nil), errors.New("docker down"))
 
-	result, err := s.client.RunningChannelIDs(ctx)
+	infos, err := s.client.ListContainerInfos(ctx)
 	require.Error(s.T(), err)
-	require.Nil(s.T(), result)
+	require.Nil(s.T(), infos)
+	require.Contains(s.T(), err.Error(), "listing agent containers")
 	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestListContainerInfosChromeError() {
+	ctx := context.Background()
+
+	s.api.On("ContainerList", ctx, mock.MatchedBy(func(opts containertypes.ListOptions) bool {
+		return opts.All && opts.Filters.Get("label")[0] == "app="+ContainerLabel
+	})).Return([]containertypes.Summary{}, nil)
+
+	s.api.On("ContainerList", ctx, mock.MatchedBy(func(opts containertypes.ListOptions) bool {
+		return opts.All && opts.Filters.Get("label")[0] == "loop-chrome"
+	})).Return([]containertypes.Summary(nil), errors.New("chrome error"))
+
+	infos, err := s.client.ListContainerInfos(ctx)
+	require.Error(s.T(), err)
+	require.Nil(s.T(), infos)
+	require.Contains(s.T(), err.Error(), "listing chrome containers")
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestListContainerInfosEmpty() {
+	ctx := context.Background()
+
+	s.api.On("ContainerList", ctx, mock.Anything).Return([]containertypes.Summary{}, nil)
+
+	infos, err := s.client.ListContainerInfos(ctx)
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), infos)
+	s.api.AssertExpectations(s.T())
+}
+
+func (s *ClientSuite) TestNewClientDefault() {
+	c, err := NewClient()
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), c)
+}
+
+func (s *ClientSuite) TestDockerStateToStatus() {
+	require.Equal(s.T(), ContainerStatusRunning, dockerStateToStatus("running"))
+	require.Equal(s.T(), ContainerStatusStopped, dockerStateToStatus("exited"))
+	require.Equal(s.T(), ContainerStatusStopped, dockerStateToStatus("dead"))
+	require.Equal(s.T(), ContainerStatusStopped, dockerStateToStatus("created"))
+	require.Equal(s.T(), ContainerStatusStopped, dockerStateToStatus("paused"))
+	require.Equal(s.T(), ContainerStatusStopped, dockerStateToStatus(""))
 }
 
 func (s *ClientSuite) TestImageBuild() {

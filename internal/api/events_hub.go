@@ -8,6 +8,7 @@ import (
 
 	"github.com/gorilla/websocket"
 
+	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/events"
 )
 
@@ -29,6 +30,9 @@ const (
 	EventImageBuildStatus          = "image.build_status"
 	EventImageUpdateAvailable      = "image.update_available"
 	EventPlaygroundUpdate          = "playground.update"
+	EventContainerRegistered       = "container.registered"
+	EventContainerRemoved          = "container.removed"
+	EventContainerStatusChanged    = "container.status_changed"
 )
 
 // Event represents a server-sent event to WebSocket clients.
@@ -257,6 +261,33 @@ func (h *EventsHub) BroadcastImageBuildStatus(data events.ImageBuildStatusData) 
 func (h *EventsHub) BroadcastImageUpdateAvailable(data events.ImageUpdateAvailableData) {
 	h.Broadcast(Event{
 		Type:   EventImageUpdateAvailable,
+		Data:   data,
+		Global: true,
+	})
+}
+
+// BroadcastContainerRegistered sends a global container.registered event.
+func (h *EventsHub) BroadcastContainerRegistered(data container.ContainerEventData) {
+	h.Broadcast(Event{
+		Type:   EventContainerRegistered,
+		Data:   data,
+		Global: true,
+	})
+}
+
+// BroadcastContainerRemoved sends a global container.removed event.
+func (h *EventsHub) BroadcastContainerRemoved(data container.ContainerEventData) {
+	h.Broadcast(Event{
+		Type:   EventContainerRemoved,
+		Data:   data,
+		Global: true,
+	})
+}
+
+// BroadcastContainerStatusChanged sends a global container.status_changed event.
+func (h *EventsHub) BroadcastContainerStatusChanged(data container.ContainerEventData) {
+	h.Broadcast(Event{
+		Type:   EventContainerStatusChanged,
 		Data:   data,
 		Global: true,
 	})

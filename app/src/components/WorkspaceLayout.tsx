@@ -16,7 +16,7 @@ import { Terminal, getCloseForInstance } from "./Terminal";
 import { ChatView } from "./ChatView";
 import { EditorPanel } from "./EditorPanel";
 import { MemoryPanel } from "./MemoryPanel";
-import { DiffPanel } from "./DiffPanel";
+import { GitPanel } from "./GitPanel";
 import { BrowserPanel } from "./BrowserPanel";
 import { SessionsPanel } from "./SessionsPanel";
 import { PlaygroundPanel } from "./PlaygroundPanel";
@@ -53,7 +53,7 @@ function initIdCounter(channelId: string, tree: PaneNode) {
 }
 
 function leafIdForPanel(channelId: string, panel: PanelType): string {
-  if (panel === "chat" || panel === "editor" || panel === "memory" || panel === "diff") {
+  if (panel === "chat" || panel === "editor" || panel === "memory" || panel === "git") {
     return panel;
   }
   return nextId(channelId, panel);
@@ -900,10 +900,10 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               onClose={() => handleRemoveLeaf(leaf.id)}
             />
           );
-        case "diff":
+        case "git":
           return (
-            <DiffPanel
-              key={`layout-diff-${channelId}`}
+            <GitPanel
+              key={`layout-git-${channelId}`}
               channelId={channelId}
               dirPath={dirPath}
               branch={branch}

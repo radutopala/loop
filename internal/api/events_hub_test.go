@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/events"
 )
 
@@ -652,4 +653,88 @@ func (s *EventsHubSuite) TestBroadcastImageUpdateAvailable() {
 	var evt Event
 	require.NoError(s.T(), json.Unmarshal(msg, &evt))
 	require.Equal(s.T(), EventImageUpdateAvailable, evt.Type)
+}
+
+func (s *EventsHubSuite) TestBroadcastContainerRegistered() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastContainerRegistered(container.ContainerEventData{ContainerID: "c1", ChannelID: "ch-1", Type: "agent", Status: "running"})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventContainerRegistered, evt.Type)
+}
+
+func (s *EventsHubSuite) TestBroadcastContainerRemoved() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastContainerRemoved(container.ContainerEventData{ContainerID: "c1", ChannelID: "ch-1", Type: "agent", Status: "running"})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventContainerRemoved, evt.Type)
+}
+
+func (s *EventsHubSuite) TestBroadcastContainerStatusChanged() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastContainerStatusChanged(container.ContainerEventData{ContainerID: "c1", ChannelID: "ch-1", Type: "agent", Status: "pending-removal"})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventContainerStatusChanged, evt.Type)
 }

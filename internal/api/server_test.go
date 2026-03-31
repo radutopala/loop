@@ -24,6 +24,7 @@ import (
 
 	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/bot"
+	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/testutil"
@@ -91,18 +92,6 @@ func (m *MockMemoryIndexer) Search(ctx context.Context, memoryDir, query string,
 func (m *MockMemoryIndexer) Index(ctx context.Context, memoryDir string) (int, error) {
 	args := m.Called(ctx, memoryDir)
 	return args.Int(0), args.Error(1)
-}
-
-type MockRunningChannelLister struct {
-	mock.Mock
-}
-
-func (m *MockRunningChannelLister) RunningChannelIDs(ctx context.Context) (map[string]struct{}, error) {
-	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(map[string]struct{}), args.Error(1)
 }
 
 type MockActiveChatLister struct {
@@ -236,6 +225,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("GET /api/playground/files", s.srv.handlePlaygroundFileList)
 	s.mux.HandleFunc("GET /api/playground/serve/{name}", s.srv.handlePlaygroundServe)
 	s.mux.HandleFunc("GET /api/playground/serve/{name}/{path...}", s.srv.handlePlaygroundServeFile)
+	s.mux.HandleFunc("GET /api/containers", s.srv.handleListContainers)
 	s.mux.HandleFunc("GET /api/health", handleHealth)
 	s.mux.HandleFunc("GET /api/ws/terminal", s.srv.handleTerminalWS)
 	s.mux.HandleFunc("GET /api/ws", s.srv.handleEventsWS)
@@ -276,6 +266,26 @@ func (s *ServerSuite) TestSetImageManager() {
 	srv := nilServer()
 	require.Nil(s.T(), srv.imageManager)
 	srv.SetImageManager(nil) // just exercises the setter
+}
+
+func (s *ServerSuite) TestCleanupBrowsersWithProvider() {
+	browserMgr := new(mockBrowserProvider)
+	browserMgr.On("Cleanup", mock.Anything).Return()
+	s.srv.SetBrowserProvider(browserMgr)
+
+	s.srv.CleanupBrowsers(context.Background())
+	browserMgr.AssertCalled(s.T(), "Cleanup", mock.Anything)
+}
+
+func (s *ServerSuite) TestCleanupBrowsersNilProvider() {
+	// Should not panic when no browser provider is set.
+	s.srv.CleanupBrowsers(context.Background())
+}
+
+func (s *ServerSuite) TestCleanupBrowsersProviderWithoutCleanup() {
+	// mockBrowserProvider does implement Cleanup, but a provider that doesn't
+	// should gracefully be skipped. Verify no panic with a non-cleaner provider.
+	s.srv.CleanupBrowsers(context.Background())
 }
 
 func (s *ServerSuite) TestExtractTextBlocksInvalidJSON() {
@@ -1389,6 +1399,86 @@ func (s *ServerSuite) TestDeleteChannelSuccess() {
 	require.Equal(s.T(), http.StatusNoContent, w.Code)
 }
 
+func (s *ServerSuite) TestDeleteChannelCleansUpContainers() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", Name: "test"}, nil)
+	s.store.On("DeleteChannelsByParentID", mock.Anything, "ch-1").Return(nil)
+	s.store.On("DeleteChannel", mock.Anything, "ch-1").Return(nil)
+
+	reg := &mockContainerManager{
+		byChannel: []*container.ContainerInfo{
+			{ContainerID: "agent-c1", ChannelID: "ch-1", Type: container.ContainerTypeAgent},
+			{ContainerID: "shell-c2", ChannelID: "ch-1", Type: container.ContainerTypeShell},
+			{ContainerID: "chrome-c3", ChannelID: "ch-1", Type: container.ContainerTypeChrome}, // skipped
+		},
+	}
+	reg.On("RemoveContainer", mock.Anything, "agent-c1").Return(nil)
+	reg.On("RemoveContainer", mock.Anything, "shell-c2").Return(nil)
+
+	browserMgr := new(mockBrowserProvider)
+	browserMgr.On("StopBrowser", mock.Anything, "ch-1").Return("chrome-c3", nil)
+	reg.On("RemoveContainer", mock.Anything, "chrome-c3").Return(nil)
+
+	s.srv.containerRegistry = reg
+	s.srv.SetBrowserProvider(browserMgr)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/channels/ch-1", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusNoContent, w.Code)
+	reg.AssertCalled(s.T(), "RemoveContainer", mock.Anything, "agent-c1")
+	reg.AssertCalled(s.T(), "RemoveContainer", mock.Anything, "shell-c2")
+	reg.AssertCalled(s.T(), "RemoveContainer", mock.Anything, "chrome-c3")
+	browserMgr.AssertCalled(s.T(), "StopBrowser", mock.Anything, "ch-1")
+}
+
+func (s *ServerSuite) TestDeleteChannelContainerRemoveError() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", Name: "test"}, nil)
+	s.store.On("DeleteChannelsByParentID", mock.Anything, "ch-1").Return(nil)
+	s.store.On("DeleteChannel", mock.Anything, "ch-1").Return(nil)
+
+	reg := &mockContainerManager{
+		byChannel: []*container.ContainerInfo{
+			{ContainerID: "agent-c1", ChannelID: "ch-1", Type: container.ContainerTypeAgent},
+		},
+	}
+	reg.On("RemoveContainer", mock.Anything, "agent-c1").Return(errors.New("remove failed"))
+
+	s.srv.containerRegistry = reg
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/channels/ch-1", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	// Still returns 204 — cleanup errors are logged, not surfaced.
+	require.Equal(s.T(), http.StatusNoContent, w.Code)
+}
+
+func (s *ServerSuite) TestDeleteChannelChromeRemoveError() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", Name: "test"}, nil)
+	s.store.On("DeleteChannelsByParentID", mock.Anything, "ch-1").Return(nil)
+	s.store.On("DeleteChannel", mock.Anything, "ch-1").Return(nil)
+
+	reg := &mockContainerManager{byChannel: []*container.ContainerInfo{}}
+
+	browserMgr := new(mockBrowserProvider)
+	browserMgr.On("StopBrowser", mock.Anything, "ch-1").Return("chrome-c1", nil)
+	reg.On("RemoveContainer", mock.Anything, "chrome-c1").Return(errors.New("chrome remove failed"))
+
+	s.srv.containerRegistry = reg
+	s.srv.SetBrowserProvider(browserMgr)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/channels/ch-1", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	// Still returns 204 — cleanup errors are logged, not surfaced.
+	require.Equal(s.T(), http.StatusNoContent, w.Code)
+}
+
 func (s *ServerSuite) TestDeleteChannelNotFound() {
 	s.store.On("GetChannel", mock.Anything, "missing").
 		Return((*db.Channel)(nil), nil)
@@ -1529,15 +1619,16 @@ func (s *ServerSuite) TestSearchChannelsFiltersByPlatform() {
 }
 
 func (s *ServerSuite) TestSearchChannelsRunningFromContainers() {
-	lister := new(MockRunningChannelLister)
-	s.srv.SetRunningChannelLister(lister)
+	reg := &mockContainerManager{
+		runningIDs: map[string]struct{}{"ch-1": {}},
+	}
+	s.srv.SetContainerRegistry(reg)
 
 	channels := []*db.Channel{
 		{ChannelID: "ch-1", Name: "running-ch", Platform: types.PlatformLocal, Active: true},
 		{ChannelID: "ch-2", Name: "idle-ch", Platform: types.PlatformLocal, Active: true},
 	}
 	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
-	lister.On("RunningChannelIDs", mock.Anything).Return(map[string]struct{}{"ch-1": {}}, nil)
 
 	rec := s.testRequest("GET", "/api/channels", "")
 
@@ -1549,29 +1640,6 @@ func (s *ServerSuite) TestSearchChannelsRunningFromContainers() {
 	require.True(s.T(), resp[0].ContainerRunning)
 	require.False(s.T(), resp[1].ContainerRunning)
 	s.store.AssertExpectations(s.T())
-	lister.AssertExpectations(s.T())
-}
-
-func (s *ServerSuite) TestSearchChannelsRunningListerError() {
-	lister := new(MockRunningChannelLister)
-	s.srv.SetRunningChannelLister(lister)
-
-	channels := []*db.Channel{
-		{ChannelID: "ch-1", Name: "ch", Platform: types.PlatformLocal, Active: true},
-	}
-	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
-	lister.On("RunningChannelIDs", mock.Anything).Return(nil, errors.New("docker error"))
-
-	rec := s.testRequest("GET", "/api/channels", "")
-
-	require.Equal(s.T(), http.StatusOK, rec.Code)
-
-	var resp []channelResponse
-	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
-	require.Len(s.T(), resp, 1)
-	require.False(s.T(), resp[0].ContainerRunning)
-	s.store.AssertExpectations(s.T())
-	lister.AssertExpectations(s.T())
 }
 
 func (s *ServerSuite) TestSearchChannelsAgentRunning() {

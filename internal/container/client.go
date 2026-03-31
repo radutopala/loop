@@ -441,26 +441,78 @@ func (c *Client) ContainerList(ctx context.Context, labelKey, labelValue string)
 	return ids, nil
 }
 
-// RunningChannelIDs returns the set of channel IDs that have at least one
-// running Docker container (containers labeled with the loop-channel key).
-func (c *Client) RunningChannelIDs(ctx context.Context) (map[string]struct{}, error) {
-	f := filters.NewArgs()
-	f.Add("label", channelLabelKey)
-
-	containers, err := c.api.ContainerList(ctx, containertypes.ListOptions{
-		Filters: f,
-	})
+// ListContainerInfos returns metadata for all loop-managed containers
+// (both agent/shell containers labeled "app=loop-agent" and Chrome containers
+// labeled "loop-chrome"), including stopped ones. Used to restore the registry
+// after a daemon restart and for reconciliation.
+func (c *Client) ListContainerInfos(ctx context.Context) ([]*ContainerInfo, error) {
+	// Query agent/shell containers (including stopped).
+	agentFilter := filters.NewArgs()
+	agentFilter.Add("label", "app="+ContainerLabel)
+	agentContainers, err := c.api.ContainerList(ctx, containertypes.ListOptions{All: true, Filters: agentFilter})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("listing agent containers: %w", err)
 	}
 
-	result := make(map[string]struct{}, len(containers))
-	for _, ctr := range containers {
-		if chID := ctr.Labels[channelLabelKey]; chID != "" {
-			result[chID] = struct{}{}
+	// Query Chrome containers (including stopped).
+	chromeFilter := filters.NewArgs()
+	chromeFilter.Add("label", "loop-chrome")
+	chromeContainers, err := c.api.ContainerList(ctx, containertypes.ListOptions{All: true, Filters: chromeFilter})
+	if err != nil {
+		return nil, fmt.Errorf("listing chrome containers: %w", err)
+	}
+
+	var result []*ContainerInfo
+	for _, ctr := range agentContainers {
+		channelID := ctr.Labels[ChannelLabelKey]
+		if channelID == "" {
+			continue
 		}
+		cType := ContainerType(ctr.Labels[ContainerTypeKey])
+		if cType == "" {
+			cType = ContainerTypeAgent // default for containers created before the label existed
+		}
+		var name string
+		if len(ctr.Names) > 0 {
+			name = strings.TrimPrefix(ctr.Names[0], "/")
+		}
+		result = append(result, &ContainerInfo{
+			ContainerID:   ctr.ID,
+			ChannelID:     channelID,
+			Type:          cType,
+			Status:        dockerStateToStatus(ctr.State),
+			ContainerName: name,
+			CreatedAt:     time.Unix(ctr.Created, 0),
+		})
+	}
+	for _, ctr := range chromeContainers {
+		channelID := ctr.Labels["loop-chrome"]
+		if channelID == "" {
+			continue
+		}
+		var name string
+		if len(ctr.Names) > 0 {
+			name = strings.TrimPrefix(ctr.Names[0], "/")
+		}
+		result = append(result, &ContainerInfo{
+			ContainerID:   ctr.ID,
+			ChannelID:     channelID,
+			Type:          ContainerTypeChrome,
+			Status:        dockerStateToStatus(ctr.State),
+			ContainerName: name,
+			CreatedAt:     time.Unix(ctr.Created, 0),
+		})
 	}
 	return result, nil
+}
+
+// dockerStateToStatus maps Docker's container state string to a ContainerStatus.
+// Docker states: "created", "restarting", "running", "removing", "paused", "exited", "dead".
+func dockerStateToStatus(state string) ContainerStatus {
+	if state == "running" {
+		return ContainerStatusRunning
+	}
+	return ContainerStatusStopped
 }
 
 // CopyToContainer copies a tar archive into the container at the given path.

@@ -110,12 +110,9 @@ func (m *MockDockerClient) ContainerList(ctx context.Context, labelKey, labelVal
 	return args.Get(0).([]string), args.Error(1)
 }
 
-func (m *MockDockerClient) RunningChannelIDs(ctx context.Context) (map[string]struct{}, error) {
+func (m *MockDockerClient) ListContainerInfos(ctx context.Context) ([]*ContainerInfo, error) {
 	args := m.Called(ctx)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
-	}
-	return args.Get(0).(map[string]struct{}), args.Error(1)
+	return args.Get(0).([]*ContainerInfo), args.Error(1)
 }
 
 func (m *MockDockerClient) CopyToContainer(ctx context.Context, containerID, dstPath string, content io.Reader) error {
@@ -129,6 +126,38 @@ func (m *MockDockerClient) NetworkEnsure(ctx context.Context, name string) error
 }
 
 func (m *MockDockerClient) SetLoopVersion(v string) {}
+
+// MockContainerRegistry implements ContainerRegistry for testing.
+type MockContainerRegistry struct {
+	mock.Mock
+}
+
+func (m *MockContainerRegistry) Register(info *ContainerInfo) *ContainerInfo {
+	m.Called(info)
+	return info
+}
+func (m *MockContainerRegistry) Unregister(containerID string) { m.Called(containerID) }
+func (m *MockContainerRegistry) UpdateStatus(containerID string, s ContainerStatus) {
+	m.Called(containerID, s)
+}
+func (m *MockContainerRegistry) List() []*ContainerInfo                { return nil }
+func (m *MockContainerRegistry) ListByChannel(string) []*ContainerInfo { return nil }
+func (m *MockContainerRegistry) FindByChannelAndType(string, ContainerType) *ContainerInfo {
+	return nil
+}
+func (m *MockContainerRegistry) RunningChannelIDs(context.Context) map[string]struct{} {
+	return nil
+}
+func (m *MockContainerRegistry) RemoveContainer(ctx context.Context, containerID string) error {
+	args := m.Called(ctx, containerID)
+	return args.Error(0)
+}
+func (m *MockContainerRegistry) ScheduleRemove(containerID string, delay time.Duration) {
+	m.Called(containerID, delay)
+}
+func (m *MockContainerRegistry) FindOrCreateShell(context.Context, string, string) (string, error) {
+	return "", nil
+}
 
 func (m *MockDockerClient) LatestClaudeVersion() string {
 	args := m.Called()
@@ -224,10 +253,6 @@ func (s *RunnerSuite) SetupTest() {
 	s.cfg.Browser.Enabled = true
 	s.runner = NewDockerRunner(s.client, s.cfg)
 	s.runner.sys = s.sys
-	s.runner.osTimeAfterFunc = func(d time.Duration, f func()) *time.Timer {
-		f() // execute immediately in tests
-		return time.NewTimer(0)
-	}
 	s.runner.osRandRead = func(b []byte) (int, error) {
 		copy(b, []byte{0xaa, 0xbb, 0xcc})
 		return len(b), nil
@@ -257,10 +282,6 @@ func (s *RunnerSuite) applyMockDefaults() {
 	s.client.On("NetworkEnsure", mock.Anything, mock.Anything).Maybe().Return(nil)
 	s.sys = newDefaultMockSystem()
 	s.runner.sys = s.sys
-	s.runner.osTimeAfterFunc = func(d time.Duration, f func()) *time.Timer {
-		f()
-		return time.NewTimer(0)
-	}
 	s.runner.osRandRead = func(b []byte) (int, error) {
 		copy(b, []byte{0xaa, 0xbb, 0xcc})
 		return len(b), nil
@@ -280,7 +301,6 @@ func (s *RunnerSuite) setupMockRun(ctx context.Context, createMatcher any, conta
 	s.client.On("ContainerLogs", ctx, testContainerID).Return(reader, nil)
 	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
 	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
-	s.client.On("ContainerRemove", ctx, testContainerID).Return(nil)
 }
 
 func (s *RunnerSuite) TestNewDockerRunner() {
@@ -363,7 +383,6 @@ func (s *RunnerSuite) TestRunForkSessionCompactOnPromptTooLong() {
 	s.client.On("ContainerLogs", ctx, "container-fork").Return(forkReader, nil)
 	s.client.On("ContainerStart", ctx, "container-fork").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-fork").Return((<-chan WaitResponse)(forkWait), (<-chan error)(forkErr))
-	s.client.On("ContainerRemove", ctx, "container-fork").Return(nil)
 
 	// Compact: run /compact on the forked session
 	compactJSON := `{"type":"result","result":"Conversation compacted","session_id":"sess-compacted","is_error":false}`
@@ -381,7 +400,6 @@ func (s *RunnerSuite) TestRunForkSessionCompactOnPromptTooLong() {
 	s.client.On("ContainerLogs", ctx, "container-compact").Return(compactReader, nil)
 	s.client.On("ContainerStart", ctx, "container-compact").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-compact").Return((<-chan WaitResponse)(compactWait), (<-chan error)(compactErrCh))
-	s.client.On("ContainerRemove", ctx, "container-compact").Return(nil)
 
 	// Retry: resume compacted session with original prompt
 	retryJSON := `{"type":"result","result":"Hi from compacted session!","session_id":"sess-final","is_error":false}`
@@ -398,7 +416,6 @@ func (s *RunnerSuite) TestRunForkSessionCompactOnPromptTooLong() {
 	s.client.On("ContainerLogs", ctx, "container-retry").Return(retryReader, nil)
 	s.client.On("ContainerStart", ctx, "container-retry").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-retry").Return((<-chan WaitResponse)(retryWait), (<-chan error)(retryErrCh))
-	s.client.On("ContainerRemove", ctx, "container-retry").Return(nil)
 
 	resp, err := s.runner.Run(ctx, req)
 	require.NoError(s.T(), err)
@@ -431,7 +448,6 @@ func (s *RunnerSuite) TestRunForkSessionCompactFails() {
 	s.client.On("ContainerLogs", ctx, "container-fork").Return(forkReader, nil)
 	s.client.On("ContainerStart", ctx, "container-fork").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-fork").Return((<-chan WaitResponse)(forkWait), (<-chan error)(forkErr))
-	s.client.On("ContainerRemove", ctx, "container-fork").Return(nil)
 
 	// Compact fails: container create error
 	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
@@ -469,7 +485,6 @@ func (s *RunnerSuite) TestRunSessionCompactOnPromptTooLong() {
 	s.client.On("ContainerLogs", ctx, "container-fail").Return(failReader, nil)
 	s.client.On("ContainerStart", ctx, "container-fail").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-fail").Return((<-chan WaitResponse)(failWait), (<-chan error)(failErr))
-	s.client.On("ContainerRemove", ctx, "container-fail").Return(nil)
 
 	// Compact
 	compactJSON := `{"type":"result","result":"Compacted","session_id":"sess-compacted","is_error":false}`
@@ -485,7 +500,6 @@ func (s *RunnerSuite) TestRunSessionCompactOnPromptTooLong() {
 	s.client.On("ContainerLogs", ctx, "container-compact").Return(compactReader, nil)
 	s.client.On("ContainerStart", ctx, "container-compact").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-compact").Return((<-chan WaitResponse)(compactWait), (<-chan error)(compactErrCh))
-	s.client.On("ContainerRemove", ctx, "container-compact").Return(nil)
 
 	// Retry with compacted session
 	retryJSON := `{"type":"result","result":"Hello!","session_id":"sess-compacted","is_error":false}`
@@ -501,7 +515,6 @@ func (s *RunnerSuite) TestRunSessionCompactOnPromptTooLong() {
 	s.client.On("ContainerLogs", ctx, "container-retry").Return(retryReader, nil)
 	s.client.On("ContainerStart", ctx, "container-retry").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-retry").Return((<-chan WaitResponse)(retryWait), (<-chan error)(retryErrCh))
-	s.client.On("ContainerRemove", ctx, "container-retry").Return(nil)
 
 	resp, err := s.runner.Run(ctx, req)
 	require.NoError(s.T(), err)
@@ -632,7 +645,6 @@ func (s *RunnerSuite) TestRunLogsFails() {
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerLogs", ctx, "container-123").Return(nil, errors.New("logs failed"))
-	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
 
 	resp, err := s.runner.Run(ctx, req)
 	require.Nil(s.T(), resp)
@@ -648,7 +660,6 @@ func (s *RunnerSuite) TestRunStartFails() {
 
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(errors.New("start failed"))
-	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
 
 	resp, err := s.runner.Run(ctx, req)
 	require.Nil(s.T(), resp)
@@ -670,8 +681,6 @@ func (s *RunnerSuite) TestRunTimeout() {
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerStop", mock.Anything, "container-123").Return(nil)
-	// scheduleRemove uses context.Background(), not the cancelled ctx
-	s.client.On("ContainerRemove", mock.Anything, "container-123").Return(nil)
 
 	// Cancel context to simulate timeout
 	cancel()
@@ -695,7 +704,6 @@ func (s *RunnerSuite) TestRunWaitError() {
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
-	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
 
 	resp, err := s.runner.Run(ctx, req)
 	require.Nil(s.T(), resp)
@@ -720,7 +728,6 @@ func (s *RunnerSuite) TestRunWaitErrChNil() {
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerLogs", ctx, "container-123").Return(reader, nil)
-	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
 
 	resp, err := s.runner.Run(ctx, req)
 	require.NoError(s.T(), err)
@@ -740,7 +747,6 @@ func (s *RunnerSuite) TestRunContainerExitError() {
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
 	s.client.On("ContainerStart", ctx, "container-123").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-123").Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
-	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
 
 	resp, err := s.runner.Run(ctx, req)
 	require.Nil(s.T(), resp)
@@ -802,7 +808,6 @@ func (s *RunnerSuite) TestRunOutputErrors() {
 			s.client.On("ContainerLogs", ctx, testContainerID).Return(tt.reader, nil)
 			s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
 			s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
-			s.client.On("ContainerRemove", ctx, testContainerID).Return(nil)
 
 			resp, err := s.runner.Run(ctx, req)
 			require.Error(s.T(), err)
@@ -987,7 +992,7 @@ func (s *RunnerSuite) TestRunConfigEnvsExpandError() {
 func (s *RunnerSuite) TestCleanup() {
 	ctx := context.Background()
 
-	s.client.On("ContainerList", ctx, "app", containerLabel).Return([]string{"c1", "c2"}, nil)
+	s.client.On("ContainerList", ctx, "app", ContainerLabel).Return([]string{"c1", "c2"}, nil)
 	s.client.On("ContainerRemove", ctx, "c1").Return(nil)
 	s.client.On("ContainerRemove", ctx, "c2").Return(nil)
 
@@ -1000,7 +1005,7 @@ func (s *RunnerSuite) TestCleanup() {
 func (s *RunnerSuite) TestCleanupListError() {
 	ctx := context.Background()
 
-	s.client.On("ContainerList", ctx, "app", containerLabel).Return([]string(nil), errors.New("list error"))
+	s.client.On("ContainerList", ctx, "app", ContainerLabel).Return([]string(nil), errors.New("list error"))
 
 	err := s.runner.Cleanup(ctx)
 	require.Error(s.T(), err)
@@ -1012,7 +1017,7 @@ func (s *RunnerSuite) TestCleanupListError() {
 func (s *RunnerSuite) TestCleanupRemoveError() {
 	ctx := context.Background()
 
-	s.client.On("ContainerList", ctx, "app", containerLabel).Return([]string{"c1", "c2"}, nil)
+	s.client.On("ContainerList", ctx, "app", ContainerLabel).Return([]string{"c1", "c2"}, nil)
 	s.client.On("ContainerRemove", ctx, "c1").Return(errors.New("remove failed"))
 	s.client.On("ContainerRemove", ctx, "c2").Return(nil)
 
@@ -1026,7 +1031,7 @@ func (s *RunnerSuite) TestCleanupRemoveError() {
 func (s *RunnerSuite) TestCleanupNoContainers() {
 	ctx := context.Background()
 
-	s.client.On("ContainerList", ctx, "app", containerLabel).Return([]string{}, nil)
+	s.client.On("ContainerList", ctx, "app", ContainerLabel).Return([]string{}, nil)
 
 	err := s.runner.Cleanup(ctx)
 	require.NoError(s.T(), err)
@@ -1054,7 +1059,6 @@ func (s *RunnerSuite) TestRunRetryWithSession() {
 	s.client.On("ContainerLogs", ctx, "container-fail").Return(failReader, nil)
 	s.client.On("ContainerStart", ctx, "container-fail").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-fail").Return((<-chan WaitResponse)(failWaitCh), (<-chan error)(failErrCh))
-	s.client.On("ContainerRemove", ctx, "container-fail").Return(nil)
 
 	// Retry (with session, prompt only) — succeeds
 	okJSON := `{"type":"result","result":"Hello!","session_id":"new-sess","is_error":false}`
@@ -1069,7 +1073,6 @@ func (s *RunnerSuite) TestRunRetryWithSession() {
 	s.client.On("ContainerLogs", ctx, "container-ok").Return(okReader, nil)
 	s.client.On("ContainerStart", ctx, "container-ok").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-ok").Return((<-chan WaitResponse)(okWaitCh), (<-chan error)(okErrCh))
-	s.client.On("ContainerRemove", ctx, "container-ok").Return(nil)
 
 	resp, err := s.runner.Run(ctx, req)
 	require.NoError(s.T(), err)
@@ -1099,7 +1102,6 @@ func (s *RunnerSuite) TestRunRetryAlsoFails() {
 	s.client.On("ContainerLogs", ctx, "container-fail1").Return(failReader1, nil)
 	s.client.On("ContainerStart", ctx, "container-fail1").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-fail1").Return((<-chan WaitResponse)(failWaitCh1), (<-chan error)(failErrCh1))
-	s.client.On("ContainerRemove", ctx, "container-fail1").Return(nil)
 
 	// Retry (with session, prompt only) — also fails
 	failReader2 := bytes.NewReader([]byte("some other error"))
@@ -1113,7 +1115,6 @@ func (s *RunnerSuite) TestRunRetryAlsoFails() {
 	s.client.On("ContainerLogs", ctx, "container-fail2").Return(failReader2, nil)
 	s.client.On("ContainerStart", ctx, "container-fail2").Return(nil)
 	s.client.On("ContainerWait", ctx, "container-fail2").Return((<-chan WaitResponse)(failWaitCh2), (<-chan error)(failErrCh2))
-	s.client.On("ContainerRemove", ctx, "container-fail2").Return(nil)
 
 	resp, err := s.runner.Run(ctx, req)
 	require.Nil(s.T(), resp)
@@ -2164,50 +2165,6 @@ func (s *RunnerSuite) TestRunWithGitExcludesMount() {
 // Default implementation for ExecCommand is now provided by osutil.RealSystem
 // (tested in osutil package).
 
-func (s *RunnerSuite) TestScheduleRemove() {
-	var capturedDuration time.Duration
-	s.runner.osTimeAfterFunc = func(d time.Duration, f func()) *time.Timer {
-		capturedDuration = d
-		f()
-		return time.NewTimer(0)
-	}
-
-	s.client.On("ContainerRemove", mock.Anything, "container-xyz").Return(nil)
-
-	s.runner.scheduleRemove("container-xyz")
-
-	require.Equal(s.T(), 5*time.Minute, capturedDuration)
-	s.client.AssertExpectations(s.T())
-}
-
-func (s *RunnerSuite) TestScheduleRemoveIgnoresError() {
-	s.runner.osTimeAfterFunc = func(d time.Duration, f func()) *time.Timer {
-		f()
-		return time.NewTimer(0)
-	}
-
-	s.client.On("ContainerRemove", mock.Anything, "container-xyz").Return(errors.New("remove failed"))
-
-	// Should not panic
-	s.runner.scheduleRemove("container-xyz")
-	s.client.AssertExpectations(s.T())
-}
-
-func (s *RunnerSuite) TestDefaultTimeAfterFunc() {
-	r := NewDockerRunner(s.client, s.cfg)
-	done := make(chan struct{})
-	timer := r.osTimeAfterFunc(time.Millisecond, func() {
-		close(done)
-	})
-	require.NotNil(s.T(), timer)
-	select {
-	case <-done:
-		// success
-	case <-time.After(time.Second):
-		s.T().Fatal("timer callback was not called")
-	}
-}
-
 func (s *RunnerSuite) TestRunProjectConfigError() {
 	ctx := context.Background()
 	req := &agent.AgentRequest{
@@ -2236,7 +2193,7 @@ func (s *RunnerSuite) TestDefaultRandRead() {
 	require.Equal(s.T(), 3, n)
 }
 
-// --- Tests for sanitizeName ---
+// --- Tests for SanitizeName ---
 
 func TestSanitizeName(t *testing.T) {
 	tests := []struct {
@@ -2257,7 +2214,7 @@ func TestSanitizeName(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			result := sanitizeName(tc.input)
+			result := SanitizeName(tc.input)
 			require.Equal(t, tc.expected, result)
 		})
 	}
@@ -2690,7 +2647,6 @@ func (s *RunnerSuite) TestRunWithOnTurnStreaming() {
 	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
 	s.client.On("ContainerLogsFollow", ctx, testContainerID).Return(io.NopCloser(strings.NewReader(streamOutput)), nil)
 	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
-	s.client.On("ContainerRemove", mock.Anything, testContainerID).Return(nil)
 
 	resp, err := s.runner.Run(ctx, req)
 	require.NoError(s.T(), err)
@@ -2713,7 +2669,6 @@ func (s *RunnerSuite) TestRunWithOnTurnFollowError() {
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), testContainerName).Return(testContainerID, nil)
 	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
 	s.client.On("ContainerLogsFollow", ctx, testContainerID).Return(nil, errors.New("follow failed"))
-	s.client.On("ContainerRemove", mock.Anything, testContainerID).Return(nil)
 
 	resp, err := s.runner.Run(ctx, req)
 	require.Nil(s.T(), resp)
@@ -2791,7 +2746,6 @@ func (s *RunnerSuite) TestRunWithOnTurnErrors() {
 			s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
 			s.client.On("ContainerLogsFollow", ctx, testContainerID).Return(io.NopCloser(strings.NewReader(tt.streamOutput)), nil)
 			s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
-			s.client.On("ContainerRemove", mock.Anything, testContainerID).Return(nil)
 
 			resp, err := s.runner.Run(ctx, req)
 			require.Error(s.T(), err)
@@ -2829,7 +2783,6 @@ func (s *RunnerSuite) TestRunWithOnTurnTimeout() {
 	s.client.On("ContainerLogsFollow", ctx, testContainerID).Return(pr, nil)
 	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
 	s.client.On("ContainerStop", mock.Anything, testContainerID).Return(nil)
-	s.client.On("ContainerRemove", mock.Anything, testContainerID).Return(nil)
 
 	// Cancel immediately to simulate timeout
 	cancel()
@@ -2942,7 +2895,6 @@ func (s *RunnerSuite) TestRunCopyFilesFails() {
 	s.sys.On("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
 
 	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), "loop-ch-1-aabbcc").Return("container-123", nil)
-	s.client.On("ContainerRemove", ctx, "container-123").Return(nil)
 
 	resp, err := s.runner.Run(ctx, req)
 	require.Nil(s.T(), resp)
@@ -3105,7 +3057,6 @@ func (s *RunnerSuite) TestCreateShellContainerStartError() {
 
 	s.client.On("ContainerCreate", ctx, mock.Anything, testContainerName).Return(testContainerID, nil)
 	s.client.On("ContainerStart", ctx, testContainerID).Return(errors.New("start failed"))
-	s.client.On("ContainerRemove", ctx, testContainerID).Return(nil)
 
 	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
 	require.Error(s.T(), err)
@@ -3551,4 +3502,101 @@ func (s *RunnerSuite) TestBuildInteractiveClaudeCmdWithExtraDirs() {
 	cfg := &config.Config{ClaudeBinPath: "claude", ExtraDirs: []string{"/extra/dir"}}
 	got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "", false)
 	require.Contains(s.T(), got, "--add-dir /extra/dir")
+}
+
+// --- Container registry integration tests ---
+
+func (s *RunnerSuite) TestCleanupRegistryRemoveContainer() {
+	ctx := context.Background()
+
+	reg := new(MockContainerRegistry)
+	s.runner.SetContainerRegistry(reg)
+
+	s.client.On("ContainerList", ctx, "app", ContainerLabel).Return([]string{"c1", "c2"}, nil)
+	reg.On("RemoveContainer", ctx, "c1").Return(nil).Once()
+	reg.On("RemoveContainer", ctx, "c2").Return(nil).Once()
+
+	err := s.runner.Cleanup(ctx)
+	require.NoError(s.T(), err)
+
+	reg.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestCleanupRegistryRemoveContainerError() {
+	ctx := context.Background()
+
+	reg := new(MockContainerRegistry)
+	s.runner.SetContainerRegistry(reg)
+
+	s.client.On("ContainerList", ctx, "app", ContainerLabel).Return([]string{"c1"}, nil)
+	reg.On("RemoveContainer", ctx, "c1").Return(errors.New("remove failed")).Once()
+
+	err := s.runner.Cleanup(ctx)
+	require.Error(s.T(), err)
+
+	reg.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestCreateShellContainerRegistersContainer() {
+	ctx := context.Background()
+
+	reg := new(MockContainerRegistry)
+	s.runner.SetContainerRegistry(reg)
+
+	reg.On("Register", mock.MatchedBy(func(info *ContainerInfo) bool {
+		return info.ContainerID == testContainerID &&
+			info.ChannelID == "ch-1" &&
+			info.Type == ContainerTypeShell
+	})).Once()
+
+	s.client.On("ContainerCreate", ctx, mock.Anything, testContainerName).Return(testContainerID, nil)
+	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
+
+	id, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), testContainerID, id)
+
+	reg.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunRegistersAgentContainer() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		SessionID:    "sess-1",
+		Messages:     []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		SystemPrompt: "You are helpful",
+		ChannelID:    "ch-1",
+	}
+
+	reg := new(MockContainerRegistry)
+	s.runner.SetContainerRegistry(reg)
+
+	reg.On("Register", mock.MatchedBy(func(info *ContainerInfo) bool {
+		return info.ContainerID == testContainerID &&
+			info.ChannelID == "ch-1" &&
+			info.Type == ContainerTypeAgent
+	})).Once()
+	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
+
+	s.setupMockRun(ctx, mock.Anything, testContainerName, testJSONOK)
+
+	_, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+
+	reg.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestCreateShellContainerNoRegistryOnError() {
+	ctx := context.Background()
+
+	reg := new(MockContainerRegistry)
+	s.runner.SetContainerRegistry(reg)
+
+	s.client.On("ContainerCreate", ctx, mock.Anything, mock.Anything).Return("", errors.New("create failed"))
+
+	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	require.Error(s.T(), err)
+
+	// Registry.Register should NOT be called on error.
+	reg.AssertNotCalled(s.T(), "Register", mock.Anything)
 }

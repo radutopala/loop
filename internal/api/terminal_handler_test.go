@@ -16,20 +16,12 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
 )
 
 type MockTerminalManager struct {
 	mock.Mock
-}
-
-type MockContainerFinder struct {
-	mock.Mock
-}
-
-func (m *MockContainerFinder) FindContainerByChannel(ctx context.Context, channelID, dirPath string) (string, error) {
-	args := m.Called(ctx, channelID, dirPath)
-	return args.String(0), args.Error(1)
 }
 
 func (m *MockTerminalManager) CreateSession(ctx context.Context, containerID string, cmd []string) (string, <-chan []byte, []byte, <-chan struct{}, error) {
@@ -85,14 +77,6 @@ func (m *MockTerminalManager) StopSession(sessionID string) (string, error) {
 
 func (m *MockTerminalManager) KillProcessGroup(ctx context.Context, sessionID string) error {
 	return m.Called(ctx, sessionID).Error(0)
-}
-
-type MockContainerStopper struct {
-	mock.Mock
-}
-
-func (m *MockContainerStopper) ContainerRemove(ctx context.Context, containerID string) error {
-	return m.Called(ctx, containerID).Error(0)
 }
 
 type MockInteractiveCmdBuilder struct {
@@ -320,9 +304,9 @@ func (s *TerminalHandlerSuite) TestCreateSessionWithChannelID() {
 		Return("sess-new", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
 	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-42", mock.Anything).Return("resolved-container-123", nil)
-	s.srv.SetContainerFinder(finder)
+	finder := new(mockContainerManager)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-42", mock.Anything).Return("resolved-container-123", nil)
+	s.srv.containerRegistry = finder
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -348,9 +332,9 @@ func (s *TerminalHandlerSuite) TestCreateSessionWithChannelIDResolvesDirPath() {
 		Return(&db.Channel{ChannelID: "ch-proj", DirPath: "/home/user/dev/loop"}, nil)
 	s.srv.store = store
 
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-proj", "/home/user/dev/loop").Return("resolved-container-456", nil)
-	s.srv.SetContainerFinder(finder)
+	finder := new(mockContainerManager)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-proj", "/home/user/dev/loop").Return("resolved-container-456", nil)
+	s.srv.containerRegistry = finder
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -366,10 +350,10 @@ func (s *TerminalHandlerSuite) TestCreateSessionWithChannelIDResolvesDirPath() {
 }
 
 func (s *TerminalHandlerSuite) TestCreateSessionWithChannelIDNotFound() {
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-missing", mock.Anything).
+	finder := new(mockContainerManager)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-missing", mock.Anything).
 		Return("", errors.New("no container found"))
-	s.srv.SetContainerFinder(finder)
+	s.srv.containerRegistry = finder
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -383,20 +367,12 @@ func (s *TerminalHandlerSuite) TestCreateSessionWithChannelIDNotFound() {
 	require.Equal(s.T(), wsErrCodeSessionFailed, msg.ErrorCode)
 }
 
-func (s *TerminalHandlerSuite) TestSetContainerFinder() {
+func (s *TerminalHandlerSuite) TestSetContainerRegistry() {
 	srv := nilServer()
-	require.Nil(s.T(), srv.containerFinder)
-	finder := new(MockContainerFinder)
-	srv.SetContainerFinder(finder)
-	require.NotNil(s.T(), srv.containerFinder)
-}
-
-func (s *TerminalHandlerSuite) TestSetContainerStopper() {
-	srv := nilServer()
-	require.Nil(s.T(), srv.containerStopper)
-	stopper := new(MockContainerStopper)
-	srv.SetContainerStopper(stopper)
-	require.NotNil(s.T(), srv.containerStopper)
+	require.Nil(s.T(), srv.containerRegistry)
+	reg := new(mockContainerManager)
+	srv.SetContainerRegistry(reg)
+	require.NotNil(s.T(), srv.containerRegistry)
 }
 
 func (s *TerminalHandlerSuite) TestSetInteractiveCmdBuilder() {
@@ -415,9 +391,9 @@ func (s *TerminalHandlerSuite) TestCreateSessionSendsInteractiveCmd() {
 	inputSent := onSendInputCalled(s.terminal, "sess-claude", []byte("claude --dangerously-skip-permissions\n"))
 	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-99", mock.Anything).Return("resolved-ctr", nil)
-	s.srv.SetContainerFinder(finder)
+	finder := new(mockContainerManager)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-99", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
 	builder.On("BuildInteractiveCmd", "ch-99", "", "", "", false).Return("claude --dangerously-skip-permissions")
@@ -453,9 +429,9 @@ func (s *TerminalHandlerSuite) TestCreateSessionSendsInteractiveCmdWithDirPath()
 		Return(&db.Channel{ChannelID: "ch-dir", DirPath: "/projects/app"}, nil)
 	s.srv.store = store
 
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-dir", "/projects/app").Return("resolved-ctr-dir", nil)
-	s.srv.SetContainerFinder(finder)
+	finder := new(mockContainerManager)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-dir", "/projects/app").Return("resolved-ctr-dir", nil)
+	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
 	builder.On("BuildInteractiveCmd", "ch-dir", "/projects/app", "", "", false).Return("claude --mcp-config /projects/app/.loop/mcp-ch-dir.json")
@@ -491,9 +467,9 @@ func (s *TerminalHandlerSuite) TestCreateSessionResumesChannelSession() {
 		Return(&db.Channel{ChannelID: "ch-resume", SessionID: "sess-existing"}, nil)
 	s.srv.store = store
 
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-resume", mock.Anything).Return("resolved-ctr", nil)
-	s.srv.SetContainerFinder(finder)
+	finder := new(mockContainerManager)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-resume", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
 	builder.On("BuildInteractiveCmd", "ch-resume", "", "sess-existing", "", false, mock.Anything).
@@ -536,9 +512,9 @@ func (s *TerminalHandlerSuite) TestCreateSessionOverridesWithMsgSessionID() {
 		Return(&db.Channel{ChannelID: "ch-sess", SessionID: "sess-stored"}, nil)
 	s.srv.store = store
 
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-sess", mock.Anything).Return("resolved-ctr", nil)
-	s.srv.SetContainerFinder(finder)
+	finder := new(mockContainerManager)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-sess", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
 	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false, mock.Anything).
@@ -580,9 +556,9 @@ func (s *TerminalHandlerSuite) TestCreateSessionForksThreadFromParent() {
 		Return(&db.Channel{ChannelID: "ch-parent", SessionID: "sess-parent"}, nil)
 	s.srv.store = store
 
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "thread-1", mock.Anything).Return("resolved-ctr", nil)
-	s.srv.SetContainerFinder(finder)
+	finder := new(mockContainerManager)
+	finder.On("FindOrCreateShell", mock.Anything, "thread-1", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
 	builder.On("BuildInteractiveCmd", "thread-1", "", "sess-parent", "", true, mock.Anything).
@@ -623,9 +599,9 @@ func (s *TerminalHandlerSuite) TestCreateSessionThreadWithOwnSession() {
 		Return(&db.Channel{ChannelID: "ch-parent", SessionID: "sess-parent"}, nil)
 	s.srv.store = store
 
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "thread-2", mock.Anything).Return("resolved-ctr", nil)
-	s.srv.SetContainerFinder(finder)
+	finder := new(mockContainerManager)
+	finder.On("FindOrCreateShell", mock.Anything, "thread-2", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
 	// Has its own session — uses resume, not fork.
@@ -657,9 +633,9 @@ func (s *TerminalHandlerSuite) TestCreateSessionInteractiveCmdSendInputError() {
 	s.terminal.On("SendInput", "sess-err", mock.Anything).Return(errors.New("write failed"))
 	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-err", mock.Anything).Return("resolved-ctr", nil)
-	s.srv.SetContainerFinder(finder)
+	finder := new(mockContainerManager)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-err", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
 	builder.On("BuildInteractiveCmd", "ch-err", "", "", "", false).Return("claude --dangerously-skip-permissions")
@@ -685,9 +661,9 @@ func (s *TerminalHandlerSuite) TestCreateSessionExplicitCmdSkipsInteractiveCmd()
 		Return("sess-bash", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
 	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-explicit", mock.Anything).Return("resolved-ctr", nil)
-	s.srv.SetContainerFinder(finder)
+	finder := new(mockContainerManager)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-explicit", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
 	s.srv.SetInteractiveCmdBuilder(builder)
@@ -960,9 +936,9 @@ func (s *TerminalHandlerSuite) TestStopSession() {
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
 	s.terminal.On("StopSession", "sess-1").Return("ctr-1", nil)
 
-	stopper := new(MockContainerStopper)
-	stopper.On("ContainerRemove", mock.Anything, "ctr-1").Return(nil)
-	s.srv.SetContainerStopper(stopper)
+	reg := new(mockContainerManager)
+	reg.On("RemoveContainer", mock.Anything, "ctr-1").Return(nil)
+	s.srv.containerRegistry = reg
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -978,7 +954,7 @@ func (s *TerminalHandlerSuite) TestStopSession() {
 
 	// Allow goroutine cleanup.
 	time.Sleep(50 * time.Millisecond)
-	stopper.AssertCalled(s.T(), "ContainerRemove", mock.Anything, "ctr-1")
+	reg.AssertCalled(s.T(), "RemoveContainer", mock.Anything, "ctr-1")
 
 	close(doneCh)
 }
@@ -1027,9 +1003,9 @@ func (s *TerminalHandlerSuite) TestStopSessionContainerRemoveError() {
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
 	s.terminal.On("StopSession", "sess-1").Return("ctr-1", nil)
 
-	stopper := new(MockContainerStopper)
-	stopper.On("ContainerRemove", mock.Anything, "ctr-1").Return(errors.New("remove failed"))
-	s.srv.SetContainerStopper(stopper)
+	reg := new(mockContainerManager)
+	reg.On("RemoveContainer", mock.Anything, "ctr-1").Return(errors.New("remove failed"))
+	s.srv.containerRegistry = reg
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -1044,7 +1020,7 @@ func (s *TerminalHandlerSuite) TestStopSessionContainerRemoveError() {
 	require.Equal(s.T(), "stopped", msg.Type)
 
 	time.Sleep(50 * time.Millisecond)
-	stopper.AssertCalled(s.T(), "ContainerRemove", mock.Anything, "ctr-1")
+	reg.AssertCalled(s.T(), "RemoveContainer", mock.Anything, "ctr-1")
 
 	close(doneCh)
 }
@@ -1056,8 +1032,8 @@ func (s *TerminalHandlerSuite) TestCloseSession() {
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
 	s.terminal.On("StopSession", "sess-1").Return("ctr-1", nil)
 
-	stopper := new(MockContainerStopper)
-	s.srv.SetContainerStopper(stopper)
+	reg := new(mockContainerManager)
+	s.srv.containerRegistry = reg
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -1071,9 +1047,9 @@ func (s *TerminalHandlerSuite) TestCloseSession() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "stopped", msg.Type)
 
-	// ContainerRemove should NOT be called for close (unlike stop).
+	// RemoveContainer should NOT be called for close (unlike stop).
 	time.Sleep(50 * time.Millisecond)
-	stopper.AssertNotCalled(s.T(), "ContainerRemove", mock.Anything, mock.Anything)
+	reg.AssertNotCalled(s.T(), "RemoveContainer", mock.Anything, mock.Anything)
 
 	close(doneCh)
 }
@@ -1286,9 +1262,9 @@ func (s *TerminalHandlerSuite) TestStopOnCloseWhenSessionIDOverride() {
 		Return(&db.Channel{ChannelID: "ch-sess", SessionID: "sess-stored"}, nil)
 	s.srv.store = store
 
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-sess", mock.Anything).Return("resolved-ctr", nil)
-	s.srv.SetContainerFinder(finder)
+	finder := new(mockContainerManager)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-sess", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
 	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false, mock.Anything).
@@ -1341,9 +1317,9 @@ func (s *TerminalHandlerSuite) TestStopOnCloseKillProcessGroupError() {
 		Return(&db.Channel{ChannelID: "ch-sess", SessionID: "sess-stored"}, nil)
 	s.srv.store = store
 
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-sess", mock.Anything).Return("resolved-ctr", nil)
-	s.srv.SetContainerFinder(finder)
+	finder := new(mockContainerManager)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-sess", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
 	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false, mock.Anything).
@@ -1396,9 +1372,9 @@ func (s *TerminalHandlerSuite) TestStopOnCloseStopSessionError() {
 		Return(&db.Channel{ChannelID: "ch-sess", SessionID: "sess-stored"}, nil)
 	s.srv.store = store
 
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-sess", mock.Anything).Return("resolved-ctr", nil)
-	s.srv.SetContainerFinder(finder)
+	finder := new(mockContainerManager)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-sess", mock.Anything).Return("resolved-ctr", nil)
+	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
 	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false, mock.Anything).
@@ -1880,8 +1856,8 @@ func (s *TerminalHandlerSuite) TestHostSessionStopSkipsContainerRemove() {
 		Return("host-sess-7", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
 	hostMgr.On("StopSession", "host-sess-7").Return("", nil)
 
-	stopper := new(MockContainerStopper)
-	s.srv.SetContainerStopper(stopper)
+	reg := new(mockContainerManager)
+	s.srv.containerRegistry = reg
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -1896,7 +1872,7 @@ func (s *TerminalHandlerSuite) TestHostSessionStopSkipsContainerRemove() {
 	require.Equal(s.T(), "stopped", msg.Type)
 
 	time.Sleep(50 * time.Millisecond)
-	stopper.AssertNotCalled(s.T(), "ContainerRemove", mock.Anything, mock.Anything)
+	reg.AssertNotCalled(s.T(), "RemoveContainer", mock.Anything, mock.Anything)
 	close(doneCh)
 }
 
@@ -2040,18 +2016,13 @@ func (s *TerminalHandlerSuite) TestStopSessionByExplicitIDHost() {
 // --- Kill (container removal by channel_id, no session required) ---
 
 func (s *TerminalHandlerSuite) TestKillRemovesContainer() {
-	store := new(MockChannelLister)
-	store.On("GetChannel", mock.Anything, "ch-kill").
-		Return(&db.Channel{ChannelID: "ch-kill", DirPath: "/projects/app"}, nil)
-	s.srv.store = store
-
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-kill", "/projects/app").Return("ctr-kill", nil)
-	s.srv.SetContainerFinder(finder)
-
-	stopper := new(MockContainerStopper)
-	stopper.On("ContainerRemove", mock.Anything, "ctr-kill").Return(nil)
-	s.srv.SetContainerStopper(stopper)
+	reg := &mockContainerManager{
+		byChannel: []*container.ContainerInfo{
+			{ContainerID: "ctr-kill", ChannelID: "ch-kill", Type: container.ContainerTypeShell},
+		},
+	}
+	reg.On("RemoveContainer", mock.Anything, "ctr-kill").Return(nil)
+	s.srv.containerRegistry = reg
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -2062,26 +2033,22 @@ func (s *TerminalHandlerSuite) TestKillRemovesContainer() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "stopped", msg.Type)
 
-	finder.AssertCalled(s.T(), "FindContainerByChannel", mock.Anything, "ch-kill", "/projects/app")
-	stopper.AssertCalled(s.T(), "ContainerRemove", mock.Anything, "ctr-kill")
+	reg.AssertCalled(s.T(), "RemoveContainer", mock.Anything, "ctr-kill")
 }
 
 func (s *TerminalHandlerSuite) TestKillAlsoStopsBrowser() {
-	store := new(MockChannelLister)
-	store.On("GetChannel", mock.Anything, "ch-kill-br").
-		Return(&db.Channel{ChannelID: "ch-kill-br", DirPath: "/projects/app"}, nil)
-	s.srv.store = store
-
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-kill-br", "/projects/app").Return("ctr-kill", nil)
-	s.srv.SetContainerFinder(finder)
-
-	stopper := new(MockContainerStopper)
-	stopper.On("ContainerRemove", mock.Anything, "ctr-kill").Return(nil)
-	s.srv.SetContainerStopper(stopper)
+	reg := &mockContainerManager{
+		byChannel: []*container.ContainerInfo{
+			{ContainerID: "ctr-kill", ChannelID: "ch-kill-br", Type: container.ContainerTypeShell},
+			{ContainerID: "chrome-skip", ChannelID: "ch-kill-br", Type: container.ContainerTypeChrome}, // skipped
+		},
+	}
+	reg.On("RemoveContainer", mock.Anything, "ctr-kill").Return(nil)
+	s.srv.containerRegistry = reg
 
 	browserMgr := new(mockBrowserProvider)
-	browserMgr.On("StopBrowser", mock.Anything, "ch-kill-br").Return(nil)
+	browserMgr.On("StopBrowser", mock.Anything, "ch-kill-br").Return("chrome-kill-1", nil)
+	reg.On("RemoveContainer", mock.Anything, "chrome-kill-1").Return(nil)
 	s.srv.SetBrowserProvider(browserMgr)
 
 	conn, ts := s.dialWS()
@@ -2097,13 +2064,8 @@ func (s *TerminalHandlerSuite) TestKillAlsoStopsBrowser() {
 }
 
 func (s *TerminalHandlerSuite) TestKillNoContainerFound() {
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-gone", "").
-		Return("", errors.New("not found"))
-	s.srv.SetContainerFinder(finder)
-
-	stopper := new(MockContainerStopper)
-	s.srv.SetContainerStopper(stopper)
+	reg := &mockContainerManager{byChannel: []*container.ContainerInfo{}}
+	s.srv.containerRegistry = reg
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -2114,7 +2076,7 @@ func (s *TerminalHandlerSuite) TestKillNoContainerFound() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "stopped", msg.Type)
 
-	stopper.AssertNotCalled(s.T(), "ContainerRemove", mock.Anything, mock.Anything)
+	reg.AssertNotCalled(s.T(), "RemoveContainer", mock.Anything, mock.Anything)
 }
 
 func (s *TerminalHandlerSuite) TestKillMissingChannelID() {
@@ -2137,18 +2099,13 @@ func (s *TerminalHandlerSuite) TestKillWithActiveSession() {
 		Return("sess-1", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
 	s.terminal.On("StopSession", "sess-1").Return("ctr-1", nil)
 
-	store := new(MockChannelLister)
-	store.On("GetChannel", mock.Anything, "ch-active").
-		Return(&db.Channel{ChannelID: "ch-active"}, nil)
-	s.srv.store = store
-
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-active", "").Return("ctr-1", nil)
-	s.srv.SetContainerFinder(finder)
-
-	stopper := new(MockContainerStopper)
-	stopper.On("ContainerRemove", mock.Anything, "ctr-1").Return(nil)
-	s.srv.SetContainerStopper(stopper)
+	reg := &mockContainerManager{
+		byChannel: []*container.ContainerInfo{
+			{ContainerID: "ctr-1", ChannelID: "ch-active", Type: container.ContainerTypeShell},
+		},
+	}
+	reg.On("RemoveContainer", mock.Anything, "ctr-1").Return(nil)
+	s.srv.containerRegistry = reg
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -2163,7 +2120,7 @@ func (s *TerminalHandlerSuite) TestKillWithActiveSession() {
 	require.Equal(s.T(), "stopped", msg.Type)
 
 	s.terminal.AssertCalled(s.T(), "StopSession", "sess-1")
-	stopper.AssertCalled(s.T(), "ContainerRemove", mock.Anything, "ctr-1")
+	reg.AssertCalled(s.T(), "RemoveContainer", mock.Anything, "ctr-1")
 
 	close(doneCh)
 }
@@ -2280,9 +2237,8 @@ func (s *TerminalHandlerSuite) TestHostCreateLoopDirFallback() {
 }
 
 func (s *TerminalHandlerSuite) TestKillNotConfigured() {
-	// When containerFinder or containerStopper is nil, kill should return an error.
-	s.srv.containerFinder = nil
-	s.srv.containerStopper = nil
+	// When containerRegistry is nil, kill should return an error.
+	s.srv.containerRegistry = nil
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -2304,18 +2260,13 @@ func (s *TerminalHandlerSuite) TestKillWithActiveSessionStopError() {
 		Return("sess-err", (<-chan []byte)(outCh), ([]byte)(nil), (<-chan struct{})(doneCh), nil)
 	s.terminal.On("StopSession", "sess-err").Return("", errors.New("stop failed"))
 
-	store := new(MockChannelLister)
-	store.On("GetChannel", mock.Anything, "ch-err").
-		Return(&db.Channel{ChannelID: "ch-err"}, nil)
-	s.srv.store = store
-
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-err", "").Return("ctr-1", nil)
-	s.srv.SetContainerFinder(finder)
-
-	stopper := new(MockContainerStopper)
-	stopper.On("ContainerRemove", mock.Anything, "ctr-1").Return(nil)
-	s.srv.SetContainerStopper(stopper)
+	reg := &mockContainerManager{
+		byChannel: []*container.ContainerInfo{
+			{ContainerID: "ctr-1", ChannelID: "ch-err", Type: container.ContainerTypeShell},
+		},
+	}
+	reg.On("RemoveContainer", mock.Anything, "ctr-1").Return(nil)
+	s.srv.containerRegistry = reg
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -2330,24 +2281,19 @@ func (s *TerminalHandlerSuite) TestKillWithActiveSessionStopError() {
 	require.Equal(s.T(), "stopped", msg.Type)
 
 	s.terminal.AssertCalled(s.T(), "StopSession", "sess-err")
-	stopper.AssertCalled(s.T(), "ContainerRemove", mock.Anything, "ctr-1")
+	reg.AssertCalled(s.T(), "RemoveContainer", mock.Anything, "ctr-1")
 	close(doneCh)
 }
 
 func (s *TerminalHandlerSuite) TestKillContainerRemoveError() {
-	// When ContainerRemove fails during kill, it should still report stopped.
-	store := new(MockChannelLister)
-	store.On("GetChannel", mock.Anything, "ch-rm-err").
-		Return(&db.Channel{ChannelID: "ch-rm-err"}, nil)
-	s.srv.store = store
-
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-rm-err", "").Return("ctr-rm", nil)
-	s.srv.SetContainerFinder(finder)
-
-	stopper := new(MockContainerStopper)
-	stopper.On("ContainerRemove", mock.Anything, "ctr-rm").Return(errors.New("remove failed"))
-	s.srv.SetContainerStopper(stopper)
+	// When RemoveContainer fails during kill, it should still report stopped.
+	reg := &mockContainerManager{
+		byChannel: []*container.ContainerInfo{
+			{ContainerID: "ctr-rm", ChannelID: "ch-rm-err", Type: container.ContainerTypeShell},
+		},
+	}
+	reg.On("RemoveContainer", mock.Anything, "ctr-rm").Return(errors.New("remove failed"))
+	s.srv.containerRegistry = reg
 
 	conn, ts := s.dialWS()
 	defer ts.Close()
@@ -2358,7 +2304,7 @@ func (s *TerminalHandlerSuite) TestKillContainerRemoveError() {
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "stopped", msg.Type)
 
-	stopper.AssertCalled(s.T(), "ContainerRemove", mock.Anything, "ctr-rm")
+	reg.AssertCalled(s.T(), "RemoveContainer", mock.Anything, "ctr-rm")
 }
 
 func (s *TerminalHandlerSuite) TestWriteMessageError() {
@@ -2374,9 +2320,9 @@ func (s *TerminalHandlerSuite) TestWriteMessageError() {
 // --- Agent Auto-Accept and Fork Tests ---
 
 func (s *TerminalHandlerSuite) TestCreateSessionWithAgentIDTriggersAutoAccept() {
-	finder := new(MockContainerFinder)
-	s.srv.containerFinder = finder
-	finder.On("FindContainerByChannel", mock.Anything, "ch-1", "").Return("ctr-1", nil)
+	finder := new(mockContainerManager)
+	s.srv.containerRegistry = finder
+	finder.On("FindOrCreateShell", mock.Anything, "ch-1", "").Return("ctr-1", nil)
 
 	builder := new(MockInteractiveCmdBuilder)
 	builder.On("BuildInteractiveCmd", "ch-1", "", "", "agent-0", false).Return("claude --dangerously-skip-permissions")
@@ -2420,9 +2366,9 @@ func (s *TerminalHandlerSuite) TestAgentTerminalForksChannelSession() {
 		Return(&db.Channel{ChannelID: "ch-1", SessionID: "sess-main"}, nil)
 	s.srv.store = store
 
-	finder := new(MockContainerFinder)
-	finder.On("FindContainerByChannel", mock.Anything, "ch-1", mock.Anything).Return("ctr-1", nil)
-	s.srv.SetContainerFinder(finder)
+	finder := new(mockContainerManager)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-1", mock.Anything).Return("ctr-1", nil)
+	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
 	// forkSession=true because agentID is set and channel has a session.

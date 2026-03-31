@@ -173,7 +173,9 @@ func (s *HostProviderSuite) TestIsRunningViaDevToolsActivePort() {
 
 func (s *HostProviderSuite) TestStopBrowser() {
 	require.NoError(s.T(), s.provider.EnsureBrowser(context.Background(), "ch-1", ""))
-	require.NoError(s.T(), s.provider.StopBrowser(context.Background(), "ch-1"))
+	containerID, err := s.provider.StopBrowser(context.Background(), "ch-1")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), containerID)
 
 	s.provider.mu.Lock()
 	_, ok := s.provider.sessions["ch-1"]
@@ -182,7 +184,9 @@ func (s *HostProviderSuite) TestStopBrowser() {
 }
 
 func (s *HostProviderSuite) TestStopBrowserNotExist() {
-	require.NoError(s.T(), s.provider.StopBrowser(context.Background(), "nonexistent"))
+	containerID, err := s.provider.StopBrowser(context.Background(), "nonexistent")
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), containerID)
 }
 
 func (s *HostProviderSuite) TestIsChromeReachableUnreachablePort() {

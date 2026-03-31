@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"testing"
+	"time"
 
 	containertypes "github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/network"
@@ -14,6 +15,8 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
+
+	"github.com/radutopala/loop/internal/container"
 )
 
 // mockDockerClient implements DockerClient for testing.
@@ -246,19 +249,19 @@ func (s *ManagerSuite) TestStopBrowserRunning() {
 	timeout := 5
 	s.api.On("ContainerStop", ctx, "chrome-ctr-1", containertypes.StopOptions{Timeout: &timeout}).
 		Return(nil)
-	s.api.On("ContainerRemove", ctx, "chrome-ctr-1", containertypes.RemoveOptions{Force: true}).
-		Return(nil)
 
-	err := s.mgr.StopBrowser(ctx, "ch-1")
+	containerID, err := s.mgr.StopBrowser(ctx, "ch-1")
 	require.NoError(s.T(), err)
+	require.Equal(s.T(), "chrome-ctr-1", containerID)
 
 	_, ok := s.mgr.GetContainerID("ch-1")
 	require.False(s.T(), ok)
 }
 
 func (s *ManagerSuite) TestStopBrowserNoSession() {
-	err := s.mgr.StopBrowser(context.Background(), "ch-nonexistent")
+	containerID, err := s.mgr.StopBrowser(context.Background(), "ch-nonexistent")
 	require.NoError(s.T(), err)
+	require.Empty(s.T(), containerID)
 }
 
 func (s *ManagerSuite) TestIsRunningTrue() {
@@ -323,7 +326,6 @@ func (s *ManagerSuite) TestCleanup() {
 
 	timeout := 5
 	s.api.On("ContainerStop", ctx, mock.Anything, containertypes.StopOptions{Timeout: &timeout}).Return(nil)
-	s.api.On("ContainerRemove", ctx, mock.Anything, containertypes.RemoveOptions{Force: true}).Return(nil)
 
 	s.mgr.Cleanup(ctx)
 	require.Empty(s.T(), s.mgr.sessions)
@@ -336,11 +338,28 @@ func (s *ManagerSuite) TestCleanupWithStopError() {
 	timeout := 5
 	s.api.On("ContainerStop", ctx, "chrome-ctr-1", containertypes.StopOptions{Timeout: &timeout}).
 		Return(errors.New("stop error"))
-	s.api.On("ContainerRemove", ctx, "chrome-ctr-1", containertypes.RemoveOptions{Force: true}).
-		Return(nil)
 
 	s.mgr.Cleanup(ctx)
 	require.Empty(s.T(), s.mgr.sessions)
+}
+
+func (s *ManagerSuite) TestCleanupWithRegistry() {
+	ctx := context.Background()
+
+	reg := new(mockContainerRegistry)
+	s.mgr.SetContainerRegistry(reg)
+
+	s.mgr.sessions["ch-1"] = &browserSession{chromeContainerID: "chrome-ctr-1", hostPort: "49152"}
+
+	timeout := 5
+	s.api.On("ContainerStop", ctx, "chrome-ctr-1", containertypes.StopOptions{Timeout: &timeout}).Return(nil)
+
+	reg.On("UpdateStatus", "chrome-ctr-1", container.ContainerStatusStopped)
+	reg.On("RemoveContainer", ctx, "chrome-ctr-1").Return(nil)
+
+	s.mgr.Cleanup(ctx)
+	require.Empty(s.T(), s.mgr.sessions)
+	reg.AssertCalled(s.T(), "RemoveContainer", ctx, "chrome-ctr-1")
 }
 
 func (s *ManagerSuite) TestSessionChannels() {
@@ -372,13 +391,14 @@ func (s *ManagerSuite) TestChromeHostname() {
 }
 
 func (s *ManagerSuite) TestSanitizeID() {
-	require.Equal(s.T(), "abc-123", sanitizeID("abc-123"))
-	require.Equal(s.T(), "c0ag-1773661657-701029", sanitizeID("C0AG:1773661657.701029"))
+	// sanitizeID was consolidated into container.SanitizeName.
+	require.Equal(s.T(), "abc-123", container.SanitizeName("abc-123"))
+	require.Equal(s.T(), "c0ag-1773661657-701029", container.SanitizeName("C0AG:1773661657.701029"))
 	long := "abcdefghijklmnopqrstuvwxyz-1234567890-extra-stuff"
-	result := sanitizeID(long)
+	result := container.SanitizeName(long)
 	require.LessOrEqual(s.T(), len(result), 40)
 	require.NotEqual(s.T(), "-", string(result[len(result)-1]))
-	require.Equal(s.T(), "hello", sanitizeID("---hello---"))
+	require.Equal(s.T(), "hello", container.SanitizeName("---hello---"))
 }
 
 func (s *ManagerSuite) TestEnsureBrowserReusesExistingContainer() {
@@ -404,6 +424,41 @@ func (s *ManagerSuite) TestEnsureBrowserReusesExistingContainer() {
 	require.Equal(s.T(), "existing-ctr", cid)
 
 	s.api.AssertNotCalled(s.T(), "ContainerCreate", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (s *ManagerSuite) TestEnsureBrowserReusesExistingContainerRegistersInRegistry() {
+	ctx := context.Background()
+
+	reg := new(mockContainerRegistry)
+	s.mgr.SetContainerRegistry(reg)
+
+	reg.On("FindByChannelAndType", "ch-1", container.ContainerTypeChrome).
+		Return((*container.ContainerInfo)(nil))
+	reg.On("Register", mock.MatchedBy(func(info *container.ContainerInfo) bool {
+		return info.ContainerID == "existing-ctr" &&
+			info.ChannelID == "ch-1" &&
+			info.Type == container.ContainerTypeChrome
+	})).Once()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(s.T(), err)
+	defer ln.Close()
+	_, chromePort, _ := net.SplitHostPort(ln.Addr().String())
+
+	s.api.On("ContainerList", ctx, mock.Anything).
+		Return([]containertypes.Summary{
+			{ID: "existing-ctr", State: "running"},
+		}, nil)
+	s.api.On("ContainerInspect", ctx, "existing-ctr").
+		Return(inspectResponseWithPort(chromePort), nil)
+
+	err = s.mgr.EnsureBrowser(ctx, "ch-1", "")
+	require.NoError(s.T(), err)
+
+	cid, ok := s.mgr.GetContainerID("ch-1")
+	require.True(s.T(), ok)
+	require.Equal(s.T(), "existing-ctr", cid)
+	reg.AssertExpectations(s.T())
 }
 
 func (s *ManagerSuite) TestEnsureBrowserReusesStoppedExistingContainer() {
@@ -456,6 +511,44 @@ func (s *ManagerSuite) TestEnsureBrowserRemovesStaleContainer() {
 	err := s.mgr.EnsureBrowser(ctx, "ch-1", "")
 	require.NoError(s.T(), err)
 	s.api.AssertCalled(s.T(), "ContainerRemove", ctx, "stale-ctr", containertypes.RemoveOptions{Force: true})
+}
+
+func (s *ManagerSuite) TestEnsureBrowserRemovesStaleContainerUnregisters() {
+	ctx := context.Background()
+
+	reg := new(mockContainerRegistry)
+	s.mgr.SetContainerRegistry(reg)
+
+	// Registry returns nil — no fast path.
+	reg.On("FindByChannelAndType", "ch-1", container.ContainerTypeChrome).
+		Return((*container.ContainerInfo)(nil))
+	// The stale container found via Docker list should be unregistered.
+	reg.On("Unregister", "stale-ctr").Once()
+	reg.On("Register", mock.Anything).Once()
+
+	s.api.On("ContainerList", ctx, mock.Anything).
+		Return([]containertypes.Summary{
+			{ID: "stale-ctr", State: "running"},
+		}, nil)
+	s.api.On("ContainerInspect", ctx, "stale-ctr").
+		Return(inspectResponseWithPort("1"), nil) // unreachable port
+	s.api.On("ContainerRemove", ctx, "stale-ctr", containertypes.RemoveOptions{Force: true}).Return(nil)
+
+	s.api.On("ContainerCreate", ctx, mock.Anything, mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "loop-chrome-ch-1").
+		Return(containertypes.CreateResponse{ID: "new-ctr"}, nil)
+	s.api.On("ContainerStart", ctx, "new-ctr", containertypes.StartOptions{}).
+		Return(nil)
+	ln, lnErr := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(s.T(), lnErr)
+	defer ln.Close()
+	_, newPort, _ := net.SplitHostPort(ln.Addr().String())
+	s.api.On("ContainerInspect", ctx, "new-ctr").
+		Return(inspectResponseWithPort(newPort), nil)
+
+	err := s.mgr.EnsureBrowser(ctx, "ch-1", "")
+	require.NoError(s.T(), err)
+	reg.AssertCalled(s.T(), "Unregister", "stale-ctr")
+	reg.AssertExpectations(s.T())
 }
 
 func (s *ManagerSuite) TestFindExistingChromeStartFails() {
@@ -517,4 +610,192 @@ func (s *ManagerSuite) TestIsChromeReachableSuccess() {
 	require.NoError(s.T(), err)
 	defer ln.Close()
 	require.True(s.T(), isChromeReachable(ln.Addr().String()))
+}
+
+// mockContainerRegistry implements container.ContainerRegistry for testing.
+type mockContainerRegistry struct {
+	mock.Mock
+}
+
+func (m *mockContainerRegistry) Register(info *container.ContainerInfo) *container.ContainerInfo {
+	m.Called(info)
+	return info
+}
+func (m *mockContainerRegistry) Unregister(containerID string) { m.Called(containerID) }
+func (m *mockContainerRegistry) UpdateStatus(containerID string, s container.ContainerStatus) {
+	m.Called(containerID, s)
+}
+func (m *mockContainerRegistry) List() []*container.ContainerInfo                { return nil }
+func (m *mockContainerRegistry) ListByChannel(string) []*container.ContainerInfo { return nil }
+func (m *mockContainerRegistry) FindByChannelAndType(channelID string, ct container.ContainerType) *container.ContainerInfo {
+	args := m.Called(channelID, ct)
+	if v := args.Get(0); v != nil {
+		return v.(*container.ContainerInfo)
+	}
+	return nil
+}
+func (m *mockContainerRegistry) RunningChannelIDs(context.Context) map[string]struct{} {
+	return nil
+}
+func (m *mockContainerRegistry) RemoveContainer(ctx context.Context, containerID string) error {
+	return m.Called(ctx, containerID).Error(0)
+}
+func (m *mockContainerRegistry) ScheduleRemove(string, time.Duration) {}
+func (m *mockContainerRegistry) FindOrCreateShell(context.Context, string, string) (string, error) {
+	return "", nil
+}
+
+func (s *ManagerSuite) TestEnsureBrowserRegistersContainer() {
+	ctx := context.Background()
+
+	reg := new(mockContainerRegistry)
+	s.mgr.SetContainerRegistry(reg)
+
+	reg.On("FindByChannelAndType", "ch-1", container.ContainerTypeChrome).
+		Return((*container.ContainerInfo)(nil))
+	reg.On("Register", mock.MatchedBy(func(info *container.ContainerInfo) bool {
+		return info.ContainerID == "chrome-ctr-1" &&
+			info.ChannelID == "ch-1" &&
+			info.Type == container.ContainerTypeChrome &&
+			info.ContainerName == "loop-chrome-ch-1"
+	})).Once()
+
+	s.api.On("ContainerList", ctx, mock.Anything).
+		Return([]containertypes.Summary{}, nil)
+	s.api.On("ContainerCreate", ctx, mock.Anything, mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "loop-chrome-ch-1").
+		Return(containertypes.CreateResponse{ID: "chrome-ctr-1"}, nil)
+	s.api.On("ContainerStart", ctx, "chrome-ctr-1", containertypes.StartOptions{}).
+		Return(nil)
+	s.api.On("ContainerInspect", ctx, "chrome-ctr-1").
+		Return(inspectResponseWithPort("49152"), nil)
+
+	err := s.mgr.EnsureBrowser(ctx, "ch-1", "")
+	require.NoError(s.T(), err)
+
+	reg.AssertExpectations(s.T())
+}
+
+func (s *ManagerSuite) TestEnsureBrowserRegistryFastPathReuse() {
+	ctx := context.Background()
+
+	reg := new(mockContainerRegistry)
+	s.mgr.SetContainerRegistry(reg)
+
+	// Start a listener so isChromeReachable returns true.
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(s.T(), err)
+	defer ln.Close()
+	_, chromePort, _ := net.SplitHostPort(ln.Addr().String())
+
+	reg.On("FindByChannelAndType", "ch-1", container.ContainerTypeChrome).
+		Return(&container.ContainerInfo{
+			ContainerID:   "registry-ctr",
+			ChannelID:     "ch-1",
+			Type:          container.ContainerTypeChrome,
+			ContainerName: "loop-chrome-ch-1",
+		})
+
+	// Container is running and has a port mapping.
+	s.api.On("ContainerInspect", ctx, "registry-ctr").
+		Return(inspectResponseWithPort(chromePort), nil)
+
+	err = s.mgr.EnsureBrowser(ctx, "ch-1", "")
+	require.NoError(s.T(), err)
+
+	cid, ok := s.mgr.GetContainerID("ch-1")
+	require.True(s.T(), ok)
+	require.Equal(s.T(), "registry-ctr", cid)
+
+	// Should NOT call ContainerList — fast path skips Docker list query.
+	s.api.AssertNotCalled(s.T(), "ContainerList", mock.Anything, mock.Anything)
+	reg.AssertExpectations(s.T())
+}
+
+func (s *ManagerSuite) TestEnsureBrowserRegistryStaleContainerCleanup() {
+	ctx := context.Background()
+
+	reg := new(mockContainerRegistry)
+	s.mgr.SetContainerRegistry(reg)
+
+	// Registry says it exists but container is not running.
+	reg.On("FindByChannelAndType", "ch-1", container.ContainerTypeChrome).
+		Return(&container.ContainerInfo{
+			ContainerID:   "stale-reg-ctr",
+			ChannelID:     "ch-1",
+			Type:          container.ContainerTypeChrome,
+			ContainerName: "loop-chrome-ch-1",
+		})
+	reg.On("Unregister", "stale-reg-ctr").Once()
+	reg.On("Register", mock.Anything).Once()
+
+	// Container is not running.
+	s.api.On("ContainerInspect", ctx, "stale-reg-ctr").
+		Return(inspectStopped(), nil)
+	// Clean up stale container.
+	s.api.On("ContainerRemove", ctx, "stale-reg-ctr", containertypes.RemoveOptions{Force: true}).Return(nil)
+
+	// Falls through to findExistingChrome then create.
+	s.api.On("ContainerList", ctx, mock.Anything).
+		Return([]containertypes.Summary{}, nil)
+	s.api.On("ContainerCreate", ctx, mock.Anything, mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "loop-chrome-ch-1").
+		Return(containertypes.CreateResponse{ID: "new-ctr"}, nil)
+	s.api.On("ContainerStart", ctx, "new-ctr", containertypes.StartOptions{}).
+		Return(nil)
+	s.api.On("ContainerInspect", ctx, "new-ctr").
+		Return(inspectResponseWithPort("49300"), nil)
+
+	err := s.mgr.EnsureBrowser(ctx, "ch-1", "")
+	require.NoError(s.T(), err)
+
+	cid, ok := s.mgr.GetContainerID("ch-1")
+	require.True(s.T(), ok)
+	require.Equal(s.T(), "new-ctr", cid)
+
+	s.api.AssertCalled(s.T(), "ContainerRemove", ctx, "stale-reg-ctr", containertypes.RemoveOptions{Force: true})
+	reg.AssertExpectations(s.T())
+}
+
+func (s *ManagerSuite) TestStopBrowserUpdatesStatusToStopped() {
+	ctx := context.Background()
+
+	reg := new(mockContainerRegistry)
+	s.mgr.SetContainerRegistry(reg)
+
+	reg.On("UpdateStatus", "chrome-ctr-1", container.ContainerStatusStopped).Once()
+
+	s.mgr.sessions["ch-1"] = &browserSession{chromeContainerID: "chrome-ctr-1", hostPort: "49152"}
+
+	timeout := 5
+	s.api.On("ContainerStop", ctx, "chrome-ctr-1", containertypes.StopOptions{Timeout: &timeout}).Return(nil)
+
+	containerID, err := s.mgr.StopBrowser(ctx, "ch-1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "chrome-ctr-1", containerID)
+
+	reg.AssertExpectations(s.T())
+}
+
+func (s *ManagerSuite) TestSetContainerRegistry() {
+	require.Nil(s.T(), s.mgr.registry)
+
+	reg := new(mockContainerRegistry)
+	s.mgr.SetContainerRegistry(reg)
+	require.NotNil(s.T(), s.mgr.registry)
+}
+
+func (s *ManagerSuite) TestEnsureBrowserNilRegistryNoError() {
+	ctx := context.Background()
+
+	// registry is nil by default — should not panic.
+	s.api.On("ContainerList", ctx, mock.Anything).
+		Return([]containertypes.Summary{}, nil)
+	s.api.On("ContainerCreate", ctx, mock.Anything, mock.Anything, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "loop-chrome-ch-1").
+		Return(containertypes.CreateResponse{ID: "chrome-ctr-1"}, nil)
+	s.api.On("ContainerStart", ctx, "chrome-ctr-1", containertypes.StartOptions{}).
+		Return(nil)
+	s.api.On("ContainerInspect", ctx, "chrome-ctr-1").
+		Return(inspectResponseWithPort("49152"), nil)
+
+	err := s.mgr.EnsureBrowser(ctx, "ch-1", "")
+	require.NoError(s.T(), err)
 }

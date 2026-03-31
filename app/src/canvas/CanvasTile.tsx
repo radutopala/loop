@@ -8,7 +8,7 @@ const PANEL_ADD_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "chat", label: "Chat" },
   { panel: "editor", label: "Editor" },
   { panel: "memory", label: "Memory" },
-  { panel: "diff", label: "Diff" },
+  { panel: "git", label: "Git" },
   { panel: "agent", label: "Agent" },
   { panel: "shell", label: "Shell" },
   { panel: "docker-browser", label: "Docker Browser" },
@@ -58,7 +58,7 @@ export function CanvasTile({ tile, renderLeaf, agentInfo, onMove, onResize, onBr
   }, [showAddMenu]);
 
   const isAgent = tile.panel === "agent";
-  const label = isAgent && agentInfo?.name ? agentInfo.name : PANEL_LABELS[tile.panel];
+  const label = isAgent ? (agentInfo?.name || tile.id) : PANEL_LABELS[tile.panel];
 
   // --- Drag (reports deltas in world coords) ---
   const handleDragStart = useCallback((e: React.MouseEvent) => {
@@ -292,7 +292,7 @@ const PANEL_LABELS: Record<PanelType, string> = {
   chat: "Chat",
   editor: "Editor",
   memory: "Memory",
-  diff: "Diff",
+  git: "Git",
   agent: "Agent",
   shell: "Shell",
   "docker-browser": "Docker Browser",

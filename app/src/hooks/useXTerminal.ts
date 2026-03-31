@@ -126,15 +126,30 @@ export function useXTerminal({
         if (sel) navigator.clipboard.writeText(sel).catch(() => {});
       });
 
-      const resizeObserver = new ResizeObserver(() => {
-        fitAddon.fit();
-        // Scroll after fit reflow so terminal shows latest output on resize
-        // (e.g. switching from terminal-only to split mode).
-        requestAnimationFrame(() => term.scrollToBottom());
+      let fitTimer: ReturnType<typeof setTimeout> | null = null;
+      const resizeObserver = new ResizeObserver((entries) => {
+        const entry = entries[0];
+        if (!entry) return;
+        const { width, height } = entry.contentRect;
+        // Skip fit when container is hidden (display: none).
+        if (width === 0 || height === 0) return;
+        // Debounce: when a parent toggles display:none → visible, the
+        // observer fires with a transient intermediate size (~86px) before
+        // the final layout size arrives ~18ms later.  Fitting to the
+        // transient size sends a PTY resize that squashes active TUI output
+        // (e.g. Claude CLI).  A short debounce ensures we only fit once the
+        // layout has stabilised.
+        if (fitTimer) clearTimeout(fitTimer);
+        fitTimer = setTimeout(() => {
+          fitTimer = null;
+          fitAddon.fit();
+          requestAnimationFrame(() => term.scrollToBottom());
+        }, 50);
       });
       resizeObserver.observe(containerRef.current!);
 
       return () => {
+        if (fitTimer) clearTimeout(fitTimer);
         resizeObserver.disconnect();
       };
     }

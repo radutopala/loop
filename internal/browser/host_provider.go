@@ -170,11 +170,12 @@ func (h *HostProvider) GetContainerID(_ string) (string, bool) {
 }
 
 // StopBrowser clears the session state but does NOT kill Chrome.
-func (h *HostProvider) StopBrowser(_ context.Context, channelID string) error {
+// Always returns an empty container ID since host mode has no Docker container.
+func (h *HostProvider) StopBrowser(_ context.Context, channelID string) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	delete(h.sessions, channelID)
-	return nil
+	return "", nil
 }
 
 // IsRunning checks if host Chrome is reachable.
