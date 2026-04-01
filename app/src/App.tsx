@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AppSettings, Channel, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
+import type { Channel, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
 import { fonts } from "./theme";
-import { ThemeProvider, useTheme } from "./ThemeContext";
+import { ThemeProvider, useTheme, DEFAULT_FONT_SIZES } from "./ThemeContext";
 import { createChannel, createThread, createWorktreeThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, getImageStatus, importWorktree, initApiUrl, rebuildImage } from "./api/loopApi";
+import { fetchGlobalConfig } from "./api/configApi";
 import { Sidebar } from "./components/Sidebar";
 import { MarkdownFilePanel } from "./components/FilePanel";
 import { WorkspaceLayout, type WorkspaceLayoutRef } from "./components/WorkspaceLayout";
@@ -23,23 +24,23 @@ function getHashChannelId(): string | null {
 }
 
 export default function App() {
-  const [settings, setSettings] = useState<AppSettings | null>(null);
+  const [desktop, setDesktop] = useState<Record<string, any> | null | undefined>(undefined);
 
   useEffect(() => {
-    const defaults: AppSettings = { stopDaemonOnQuit: false, autoSaveOnBlur: true, previewTabs: true };
-    const p = window.loopAPI?.getSettings?.();
-    if (p) {
-      p.then((s) => setSettings(s)).catch(() => setSettings(defaults));
-    } else {
-      setSettings(defaults);
-    }
+    initApiUrl()
+      .then(() => fetchGlobalConfig())
+      .then((cfg) => setDesktop(cfg.content?.desktop ?? null))
+      .catch(() => setDesktop(null));
   }, []);
 
-  // Wait for settings to load before rendering so we don't flash wrong theme.
-  if (!settings) return null;
+  // Wait for config to load before rendering so we don't flash wrong theme.
+  if (desktop === undefined) return null;
 
   return (
-    <ThemeProvider initialTheme={settings.theme} initialFontSizes={settings.fontSizes}>
+    <ThemeProvider
+      initialTheme={desktop?.theme}
+      initialFontSizes={desktop?.font_sizes ? { ...DEFAULT_FONT_SIZES, ...desktop.font_sizes } : undefined}
+    >
       <AppInner />
     </ThemeProvider>
   );
@@ -88,9 +89,8 @@ function AppInner() {
 
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  useEffect(() => {
-    initApiUrl().then(() => setReady(true));
-  }, []);
+  // API URL already initialized by parent App component.
+  useEffect(() => { setReady(true); }, []);
 
   // Seed image build status and update availability from API on mount.
   useEffect(() => {

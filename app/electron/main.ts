@@ -94,44 +94,15 @@ function resolveApiUrl(): string {
   return `http://${host}`;
 }
 
-// --- App settings (stored in ~/.loop/app.json) ---
+// --- Desktop config helpers (read from ~/.loop/config.json desktop section) ---
 
-interface Settings {
-  stopDaemonOnQuit: boolean;
-  autoSaveOnBlur: boolean;
-  previewTabs: boolean;
-  theme?: string;
-  fontSizes?: {
-    sidebar?: number;
-    chat?: number;
-    terminal?: number;
-    editor?: number;
-    panels?: number;
-  };
-}
-
-const defaultSettings: Settings = {
-  stopDaemonOnQuit: false,
-  autoSaveOnBlur: true,
-  previewTabs: true,
-};
-
-function appSettingsPath(): string {
-  return path.join(loopDir(), "app.json");
-}
-
-function loadSettings(): Settings {
+function readDesktopConfig(): Record<string, unknown> {
   try {
-    const data = fs.readFileSync(appSettingsPath(), "utf-8");
-    return { ...defaultSettings, ...JSON.parse(data) };
-  } catch {
-    return { ...defaultSettings };
-  }
-}
-
-function saveSettings(settings: Settings): void {
-  fs.mkdirSync(loopDir(), { recursive: true });
-  fs.writeFileSync(appSettingsPath(), JSON.stringify(settings, null, 2));
+    const data = fs.readFileSync(loopConfigPath(), "utf-8");
+    const config = JSON.parse(stripHJSON(data));
+    if (config.desktop && typeof config.desktop === "object") return config.desktop;
+  } catch { /* ignore */ }
+  return {};
 }
 
 // --- Bundled binary resolution ---
@@ -329,7 +300,7 @@ function parseChannelId(url: string): string {
 }
 
 function initialBackgroundColor(): string {
-  const theme = loadSettings().theme ?? "dark";
+  const theme = (readDesktopConfig().theme as string) ?? "dark";
   if (theme === "claude") return "#FAF6F1";
   if (theme === "light") return "#ffffff";
   return "#212121"; // dark
@@ -616,8 +587,8 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
-  const settings = loadSettings();
-  if (settings.stopDaemonOnQuit) {
+  const desktop = readDesktopConfig();
+  if (desktop.stop_daemon_on_quit) {
     const binary = findLoopBinary();
     if (binary) {
       console.log(`Stopping loop daemon via: ${binary} daemon:stop`);
@@ -694,53 +665,11 @@ ipcMain.handle("get-api-url", () => {
   return resolveApiUrl();
 });
 
-ipcMain.handle("get-settings", () => {
-  return loadSettings();
-});
-
-ipcMain.handle("save-settings", (_event, settings: Settings) => {
-  saveSettings(settings);
-  return true;
-});
-
 ipcMain.handle("get-daemon-info", async () => {
   return {
     running: await isDaemonRunning(),
     binaryPath: findLoopBinary(),
   };
-});
-
-ipcMain.handle("get-config", () => {
-  try {
-    return {
-      path: loopConfigPath(),
-      content: fs.readFileSync(loopConfigPath(), "utf-8"),
-    };
-  } catch {
-    return { path: loopConfigPath(), content: null };
-  }
-});
-
-ipcMain.handle("get-project-config", (_event, dirPath: string) => {
-  const p = path.join(dirPath, ".loop", "config.json");
-  try {
-    return {
-      path: p,
-      content: fs.readFileSync(p, "utf-8"),
-    };
-  } catch {
-    return { path: p, content: null };
-  }
-});
-
-ipcMain.handle("save-config", (_event, filePath: string, content: string) => {
-  try {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.writeFileSync(filePath, content);
-    return { ok: true };
-  } catch (err) {
-    return { ok: false, error: String(err) };
-  }
 });
 
 ipcMain.handle("restart-daemon", async () => {

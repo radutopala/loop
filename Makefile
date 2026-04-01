@@ -34,11 +34,18 @@ coverage: ## Generate HTML coverage report
 	go tool cover -html=coverage.out -o coverage.html
 	@echo "Coverage report: coverage.html"
 
-coverage-check: ## Run tests and enforce 100% coverage
+_coverage-check-run:
 	go generate ./internal/readme/
 	go test -race -count=1 -timeout 60s -coverpkg=./... -coverprofile=coverage.out ./...
 	@go tool cover -func=coverage.out 2>/dev/null | grep total | awk '{print $$3}' | sed 's/%//' | \
 		awk '{if ($$1 < 100.0) {print "Coverage is " $$1 "%, required 100%"; exit 1} else {print "Coverage: " $$1 "%"}}'
+
+coverage-check: ## Run tests and enforce 100% coverage (via Docker on host, directly in CI)
+	@if [ "$$CI" = "true" ] || [ -f /.dockerenv ]; then \
+		$(MAKE) _coverage-check-run; \
+	else \
+		docker run --rm -v "$$(pwd)":/app -w /app golang:1.26 make _coverage-check-run; \
+	fi
 
 CLAUDE_VERSION := $(shell curl -sf https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases/latest 2>/dev/null || echo latest)
 

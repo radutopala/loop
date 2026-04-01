@@ -183,28 +183,9 @@ export interface ImageStatusResponse {
   update_available?: ImageUpdateAvailableData;
 }
 
-export interface AppSettings {
-  stopDaemonOnQuit: boolean;
-  autoSaveOnBlur: boolean;
-  previewTabs: boolean;
-  theme?: string;
-  fontSizes?: {
-    sidebar?: number;
-    chat?: number;
-    terminal?: number;
-    editor?: number;
-    panels?: number;
-  };
-}
-
 export interface DaemonInfo {
   running: boolean;
   binaryPath: string | null;
-}
-
-export interface ConfigInfo {
-  path: string;
-  content: string | null;
 }
 
 declare global {
@@ -214,12 +195,7 @@ declare global {
       showOpenDirectoryDialog?: () => Promise<string | null>;
       onboardLocal?: (dirPath: string) => Promise<{ ok: boolean; output?: string; error?: string }>;
       onNavigateChannel: (callback: (channelId: string) => void) => void;
-      getSettings: () => Promise<AppSettings>;
-      saveSettings: (settings: AppSettings) => Promise<void>;
       getDaemonInfo: () => Promise<DaemonInfo>;
-      getConfig: () => Promise<ConfigInfo>;
-      getProjectConfig: (dirPath: string) => Promise<ConfigInfo>;
-      saveConfig: (filePath: string, content: string) => Promise<{ ok: boolean; error?: string }>;
       restartDaemon: () => Promise<DaemonInfo>;
       onOpenSettings: (callback: () => void) => void;
       getUpdateStatus?: () => Promise<UpdateStatus>;

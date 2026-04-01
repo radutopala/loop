@@ -22,6 +22,7 @@ export interface SchemaProperty {
   "x-order"?: number;
   "x-step"?: number;
   "x-placeholder"?: string;
+  "x-widget"?: string;
 }
 
 export interface ConfigResponse {

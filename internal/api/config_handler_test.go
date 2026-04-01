@@ -246,6 +246,141 @@ func (s *ServerSuite) TestSaveProjectConfigMissingChannelID() {
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
+func (s *ServerSuite) TestGetProjectConfigWorktreeUsesParentDir() {
+	s.store.On("GetChannel", mock.Anything, "wt-1").Return(&db.Channel{
+		ChannelID: "wt-1",
+		DirPath:   "/projects/myapp/.worktrees/wt-1",
+		ParentID:  "ch-1",
+		Worktree:  true,
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
+		ChannelID: "ch-1",
+		DirPath:   "/projects/myapp",
+	}, nil)
+
+	sys := new(testutil.MockSystem)
+	sys.On("ReadFile", "/projects/myapp/.loop/config.json").Return(
+		[]byte(`{"claude_model":"claude-opus-4-6"}`), nil,
+	)
+	s.srv.sys = sys
+
+	rec := s.testRequest("GET", "/api/config/project?channel_id=wt-1", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp configResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(s.T(), "/projects/myapp/.loop/config.json", resp.Path)
+	require.Equal(s.T(), "claude-opus-4-6", resp.Content["claude_model"])
+}
+
+func (s *ServerSuite) TestSaveProjectConfigWorktreeUsesParentDir() {
+	s.store.On("GetChannel", mock.Anything, "wt-1").Return(&db.Channel{
+		ChannelID: "wt-1",
+		DirPath:   "/projects/myapp/.worktrees/wt-1",
+		ParentID:  "ch-1",
+		Worktree:  true,
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
+		ChannelID: "ch-1",
+		DirPath:   "/projects/myapp",
+	}, nil)
+
+	sys := new(testutil.MockSystem)
+	sys.On("MkdirAll", "/projects/myapp/.loop", os.FileMode(0755)).Return(nil)
+	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte(`{"streaming_enabled":true}`), os.FileMode(0644)).Return(nil)
+	s.srv.sys = sys
+
+	rec := s.testRequest("PUT", "/api/config/project?channel_id=wt-1", `{"content":"{\"streaming_enabled\":true}"}`)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	sys.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestGetProjectConfigWorktreeParentLookupError() {
+	s.store.On("GetChannel", mock.Anything, "wt-1").Return(&db.Channel{
+		ChannelID: "wt-1",
+		DirPath:   "/projects/myapp/.worktrees/wt-1",
+		ParentID:  "ch-1",
+		Worktree:  true,
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(nil, errors.New("db error"))
+	s.srv.sys = s.sys
+
+	rec := s.testRequest("GET", "/api/config/project?channel_id=wt-1", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "looking up parent channel")
+}
+
+func (s *ServerSuite) TestGetProjectConfigWorktreeParentNoDirPath() {
+	// Parent has no DirPath → falls back to worktree's own DirPath.
+	s.store.On("GetChannel", mock.Anything, "wt-1").Return(&db.Channel{
+		ChannelID: "wt-1",
+		DirPath:   "/projects/myapp/.worktrees/wt-1",
+		ParentID:  "ch-1",
+		Worktree:  true,
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
+		ChannelID: "ch-1",
+		DirPath:   "",
+	}, nil)
+
+	sys := new(testutil.MockSystem)
+	sys.On("ReadFile", "/projects/myapp/.worktrees/wt-1/.loop/config.json").Return(nil, os.ErrNotExist)
+	s.srv.sys = sys
+
+	rec := s.testRequest("GET", "/api/config/project?channel_id=wt-1", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+}
+
+func (s *ServerSuite) TestResolveProjectConfigDirPathStoreNil() {
+	s.srv.store = nil
+	s.srv.sys = s.sys
+
+	rec := s.testRequest("GET", "/api/config/project?channel_id=ch-1", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "channel lookup not configured")
+}
+
+func (s *ServerSuite) TestResolveProjectConfigDirPathNoDirPathUsesLoopDir() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
+		ChannelID: "ch-1",
+		DirPath:   "",
+	}, nil)
+	s.srv.loopDir = "/home/test/.loop"
+
+	sys := new(testutil.MockSystem)
+	sys.On("ReadFile", "/home/test/.loop/ch-1/work/.loop/config.json").Return(nil, os.ErrNotExist)
+	s.srv.sys = sys
+
+	rec := s.testRequest("GET", "/api/config/project?channel_id=ch-1", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp configResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(s.T(), "/home/test/.loop/ch-1/work/.loop/config.json", resp.Path)
+}
+
+func (s *ServerSuite) TestResolveProjectConfigDirPathNoDirPathNoLoopDir() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
+		ChannelID: "ch-1",
+		DirPath:   "",
+	}, nil)
+	s.srv.loopDir = ""
+	s.srv.sys = s.sys
+
+	rec := s.testRequest("GET", "/api/config/project?channel_id=ch-1", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "has no dir_path")
+}
+
+func (s *ServerSuite) TestResolveProjectConfigDirPathGetChannelError() {
+	s.store.On("GetChannel", mock.Anything, "ch-err").Return(nil, errors.New("db down"))
+	s.srv.sys = s.sys
+
+	rec := s.testRequest("GET", "/api/config/project?channel_id=ch-err", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "looking up channel")
+}
+
 // ── readConfigFile ──
 
 func (s *ServerSuite) TestReadConfigFileWithHJSON() {

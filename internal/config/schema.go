@@ -18,6 +18,7 @@ type SchemaProperty struct {
 	XOrder               int                        `json:"x-order,omitempty"`
 	XStep                float64                    `json:"x-step,omitempty"`
 	XPlaceholder         string                     `json:"x-placeholder,omitempty"`
+	XWidget              string                     `json:"x-widget,omitempty"`
 }
 
 // ConfigSchema is the top-level JSON schema for the config file.
@@ -377,6 +378,51 @@ func buildSchema() *ConfigSchema {
 						"prompt":          {Type: "string", Title: "Prompt"},
 						"prompt_path":     {Type: "string", Title: "Prompt Path", Description: "Relative to ~/.loop/templates/"},
 						"auto_delete_sec": {Type: "integer", Title: "Auto Delete (sec)"},
+					},
+				},
+			},
+
+			// ── Desktop section (Electron app preferences) ──
+			"desktop": {
+				Type:        "object",
+				XSection:    "Desktop",
+				XGlobalOnly: true,
+				XOrder:      -100,
+				Properties: map[string]*SchemaProperty{
+					"stop_daemon_on_quit": {
+						Type:        "boolean",
+						Title:       "Stop Daemon on Quit",
+						Description: "Uninstalls the daemon service on quit. It will be re-installed on next app launch.",
+					},
+					"auto_save_on_blur": {
+						Type:        "boolean",
+						Title:       "Auto-save on Blur",
+						Description: "Save open editor tabs when the window loses focus.",
+					},
+					"preview_tabs": {
+						Type:        "boolean",
+						Title:       "Preview Tabs",
+						Description: "Single-click opens files in a transient preview tab. Double-click promotes to permanent.",
+						Default:     true,
+					},
+					"theme": {
+						Type:    "string",
+						Title:   "Theme",
+						Enum:    []any{"dark", "light", "claude"},
+						XWidget: "theme-picker",
+						XOrder:  1,
+					},
+					"font_sizes": {
+						Type:   "object",
+						Title:  "Font Sizes",
+						XOrder: 2,
+						Properties: map[string]*SchemaProperty{
+							"sidebar":  {Type: "integer", Title: "Sidebar", Default: 12, XWidget: "stepper", XOrder: 1},
+							"chat":     {Type: "integer", Title: "Chat", Default: 13, XWidget: "stepper", XOrder: 2},
+							"terminal": {Type: "integer", Title: "Terminal", Default: 13, XWidget: "stepper", XOrder: 3},
+							"editor":   {Type: "integer", Title: "Editor", Default: 13, XWidget: "stepper", XOrder: 4},
+							"panels":   {Type: "integer", Title: "Panels", Default: 12, XWidget: "stepper", XOrder: 5},
+						},
 					},
 				},
 			},

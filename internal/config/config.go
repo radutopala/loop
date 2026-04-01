@@ -113,6 +113,25 @@ type Config struct {
 	Memory               MemoryConfig
 	Permissions          types.Permissions
 	ExtraDirs            []string
+	Desktop              DesktopConfig
+}
+
+// DesktopConfig holds Electron desktop app preferences.
+type DesktopConfig struct {
+	StopDaemonOnQuit bool              `json:"stop_daemon_on_quit"`
+	AutoSaveOnBlur   bool              `json:"auto_save_on_blur"`
+	PreviewTabs      bool              `json:"preview_tabs"`
+	Theme            string            `json:"theme,omitempty"`
+	FontSizes        *DesktopFontSizes `json:"font_sizes,omitempty"`
+}
+
+// DesktopFontSizes holds per-area font size preferences.
+type DesktopFontSizes struct {
+	Sidebar  *int `json:"sidebar,omitempty"`
+	Chat     *int `json:"chat,omitempty"`
+	Terminal *int `json:"terminal,omitempty"`
+	Editor   *int `json:"editor,omitempty"`
+	Panels   *int `json:"panels,omitempty"`
 }
 
 // HasPlatform returns true if the given platform is enabled.
@@ -159,6 +178,7 @@ type jsonConfig struct {
 	Browser               *jsonBrowserConfig     `json:"browser"`
 	Memory                *jsonMemoryConfig      `json:"memory"`
 	Permissions           *jsonPermissionsConfig `json:"permissions"`
+	Desktop               *DesktopConfig         `json:"desktop"`
 }
 
 // jsonMemoryConfig is the JSON representation of the memory block.
@@ -317,6 +337,15 @@ func (l *Loader) load() (*Config, error) {
 		}
 	}
 
+	// Desktop config (Electron app preferences).
+	cfg.Desktop = DesktopConfig{
+		AutoSaveOnBlur: false,
+		PreviewTabs:    true,
+	}
+	if jc.Desktop != nil {
+		cfg.Desktop = *jc.Desktop
+	}
+
 	// Build the platforms list.
 	for _, p := range jc.Platforms {
 		cfg.Platforms = append(cfg.Platforms, types.Platform(strings.ToLower(p)))
@@ -434,11 +463,21 @@ func LoadWorktreeProjectConfig(worktreeDir, parentDir string, mainConfig *Config
 }
 
 func (l *Loader) loadWorktreeProjectConfig(worktreeDir, parentDir string, mainConfig *Config) (*Config, error) {
-	_, err := l.readFile(filepath.Join(worktreeDir, ".loop", "config.json"))
-	if os.IsNotExist(err) && parentDir != "" {
-		return l.loadProjectConfig(parentDir, mainConfig)
+	// Always apply parent project config first (global → parent).
+	parentMerged := mainConfig
+	if parentDir != "" {
+		var err error
+		parentMerged, err = l.loadProjectConfig(parentDir, mainConfig)
+		if err != nil {
+			return nil, err
+		}
 	}
-	return l.loadProjectConfig(worktreeDir, mainConfig)
+	// Then layer worktree-specific overrides on top (global → parent → worktree).
+	_, err := l.readFile(filepath.Join(worktreeDir, ".loop", "config.json"))
+	if os.IsNotExist(err) {
+		return parentMerged, nil
+	}
+	return l.loadProjectConfig(worktreeDir, parentMerged)
 }
 
 func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config, error) {

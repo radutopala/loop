@@ -84,6 +84,21 @@
     //}
   },
 
+  // Desktop app preferences (Electron only)
+  //"desktop": {
+  //  "stop_daemon_on_quit": false,
+  //  "auto_save_on_blur": false,
+  //  "preview_tabs": true,
+  //  "theme": "dark", // "dark", "light", "claude"
+  //  "font_sizes": {
+  //    "sidebar": 12,
+  //    "chat": 13,
+  //    "terminal": 13,
+  //    "editor": 13,
+  //    "panels": 12
+  //  }
+  //},
+
   // Extra environment variables passed to all containers
   "envs": {
     // Ensure .bashrc is sourced in non-interactive shells (e.g. Claude's bash subshells)

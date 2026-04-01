@@ -1,11 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AppSettings, DaemonInfo, ImageBuildStatusData, ImageStatusResponse, ImageUpdateAvailableData } from "../types";
+import type { DaemonInfo, ImageBuildStatusData, ImageStatusResponse, ImageUpdateAvailableData } from "../types";
 import { getImageStatus } from "../api/loopApi";
 import { fetchConfigSchema, fetchGlobalConfig, saveGlobalConfig, fetchProjectConfig, saveProjectConfig, type ConfigSchema, type ConfigResponse } from "../api/configApi";
-import { fonts, builtinThemes } from "../theme";
+import { fonts } from "../theme";
 import type { ColorPalette } from "../theme";
-import { useTheme, DEFAULT_FONT_SIZES, type FontSizes } from "../ThemeContext";
-import { ConfigForm } from "./ConfigForm";
+import { useTheme, DEFAULT_FONT_SIZES } from "../ThemeContext";
+import { ConfigForm, getSections, type ConfigFormHandle } from "./ConfigForm";
 
 function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   return {
@@ -37,8 +37,7 @@ interface SettingsProps {
 }
 
 export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggleSidebar, onOpenPalette, onClose, onDaemonRestarted, imageBuildStatus, imageUpdateAvailable, onRebuildImage, onConfigDirtyChange }: SettingsProps) {
-  const { colors, themeName, setThemeName, availableThemes, fontSizes, setFontSizes } = useTheme();
-  const [settings, setSettings] = useState<AppSettings>({ stopDaemonOnQuit: false, autoSaveOnBlur: true, previewTabs: true });
+  const { colors, setThemeName, setFontSizes } = useTheme();
   const [daemonInfo, setDaemonInfo] = useState<DaemonInfo | null>(null);
   const [restarting, setRestarting] = useState(false);
   const [schema, setSchema] = useState<ConfigSchema | null>(null);
@@ -46,9 +45,21 @@ export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggl
   const [projectConfig, setProjectConfig] = useState<ConfigResponse | null>(null);
   const [loaded, setLoaded] = useState(false);
   const [imageStatus, setImageStatus] = useState<ImageStatusResponse | null>(null);
-  const [configDirty, setConfigDirtyRaw] = useState(false);
+  const [globalDirty, setGlobalDirty] = useState(false);
+  const [projectDirty, setProjectDirty] = useState(false);
+  const configDirty = globalDirty || projectDirty;
   const [showDirtyModal, setShowDirtyModal] = useState(false);
-  const setConfigDirty = (v: boolean) => { setConfigDirtyRaw(v); onConfigDirtyChange?.(v); };
+  const [saving, setSaving] = useState(false);
+  const [activeSection, setActiveSection] = useState("Desktop");
+  const globalFormRef = useRef<ConfigFormHandle>(null);
+  const projectFormRef = useRef<ConfigFormHandle>(null);
+
+  useEffect(() => { onConfigDirtyChange?.(configDirty); }, [configDirty, onConfigDirtyChange]);
+
+  // Build section groups for sidebar nav.
+  const HARDCODED_GLOBAL = ["Daemon", "Docker Image"];
+  const globalSchemaSections = getSections(schema, true);
+  const projectSchemaSections = projectDirPath ? getSections(schema, false) : [];
 
   const headerBtnStyle = buildHeaderBtnStyle(colors);
   const hoverIn = (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -61,19 +72,15 @@ export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggl
   };
 
   const loadAll = useCallback(() => {
-    const api = window.loopAPI;
-    const settingsP = api?.getSettings?.() ?? Promise.resolve(settings);
-    const daemonP = api?.getDaemonInfo?.() ?? Promise.resolve(null);
+    const daemonP = window.loopAPI?.getDaemonInfo?.() ?? Promise.resolve(null);
 
     Promise.all([
-      settingsP,
       daemonP,
       fetchConfigSchema().catch(() => null),
       fetchGlobalConfig().catch(() => null),
       getImageStatus().catch(() => null),
     ])
-      .then(([s, d, sch, cfg, img]) => {
-        setSettings(s);
+      .then(([d, sch, cfg, img]) => {
         if (d) setDaemonInfo(d);
         if (sch) setSchema(sch);
         if (cfg) setGlobalConfig(cfg);
@@ -108,12 +115,6 @@ export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggl
   }, [open, channelId]);
 
 
-  const handleToggle = async (key: keyof AppSettings) => {
-    const updated = { ...settings, [key]: !settings[key] };
-    setSettings(updated);
-    await window.loopAPI?.saveSettings?.(updated);
-  };
-
   const handleRestart = async () => {
     setRestarting(true);
     try {
@@ -127,6 +128,19 @@ export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggl
   const handleSaveGlobalConfig = async (content: string): Promise<string | null> => {
     try {
       await saveGlobalConfig(content);
+      // Apply desktop settings live (theme, font sizes).
+      try {
+        const parsed = JSON.parse(content);
+        const desktop = parsed.desktop;
+        if (desktop) {
+          setThemeName(desktop.theme || "dark");
+          setFontSizes(desktop.font_sizes
+            ? { ...DEFAULT_FONT_SIZES, ...desktop.font_sizes }
+            : { ...DEFAULT_FONT_SIZES });
+        }
+      } catch { /* ignore parse errors */ }
+      // Re-fetch so other sections see the updated values.
+      fetchGlobalConfig().then(setGlobalConfig).catch(() => {});
       return null;
     } catch (e: any) {
       return e.message ?? "Failed to save";
@@ -137,10 +151,24 @@ export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggl
     if (!channelId) return "No channel selected";
     try {
       await saveProjectConfig(channelId, content);
+      // Re-fetch so other sections see the updated values.
+      fetchProjectConfig(channelId).then(setProjectConfig).catch(() => {});
       return null;
     } catch (e: any) {
       return e.message ?? "Failed to save";
     }
+  };
+
+  const handleFloatingSave = async () => {
+    setSaving(true);
+    if (globalDirty) await globalFormRef.current?.save();
+    if (projectDirty) await projectFormRef.current?.save();
+    setSaving(false);
+  };
+
+  const handleFloatingCancel = () => {
+    globalFormRef.current?.cancel();
+    projectFormRef.current?.cancel();
   };
 
   const tryClose = useCallback(() => {
@@ -285,374 +313,154 @@ export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggl
         </button>
       </div>
 
-      {/* Body */}
-      <div style={{ flex: 1, overflow: "auto", padding: "16px 16px 24px" }}>
-        {!loaded ? (
-          <div style={{ color: colors.textDim, fontSize: 13, padding: "20px 0", textAlign: "center" }}>Loading...</div>
-        ) : (
-          <>
-            {/* Daemon section */}
-            <SectionHeader>Daemon</SectionHeader>
-
-            {daemonInfo && (
-              <div style={{
-                backgroundColor: colors.bg,
-                borderRadius: 8,
-                padding: "10px 12px",
-                marginBottom: 12,
-                fontSize: 12,
-                fontFamily: fonts.mono,
-              }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: daemonInfo.binaryPath ? 6 : 0 }}>
-                  <span style={{ color: colors.textDim }}>Status</span>
-                  <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{
-                      width: 6,
-                      height: 6,
-                      borderRadius: "50%",
-                      backgroundColor: daemonInfo.running ? colors.active : colors.error,
-                      display: "inline-block",
-                    }} />
-                    <span style={{
-                      color: daemonInfo.running ? colors.active : colors.error,
-                      fontWeight: 500,
-                    }}>
-                      {daemonInfo.running ? "Running" : "Stopped"}
-                    </span>
-                  </span>
-                </div>
-                {daemonInfo.binaryPath && (
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
-                    <span style={{ color: colors.textDim, flexShrink: 0 }}>Binary</span>
-                    <span style={{ color: colors.text, wordBreak: "break-all", textAlign: "right" }}>{daemonInfo.binaryPath}</span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              <button
-                onClick={handleRestart}
-                disabled={restarting}
-                style={{
-                  flex: 1,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 6,
-                  padding: "8px 12px",
-                  backgroundColor: colors.bg,
-                  border: `1px solid ${colors.border}`,
-                  borderRadius: 8,
-                  color: restarting ? colors.textDim : colors.text,
-                  fontSize: 12,
-                  cursor: restarting ? "default" : "pointer",
-                  fontFamily: "inherit",
-                }}
-                onMouseEnter={(e) => { if (!restarting) e.currentTarget.style.borderColor = colors.textDim; }}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; }}
-              >
-                <svg
-                  width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                  style={restarting ? { animation: "spin 1s linear infinite" } : undefined}
-                >
-                  <path d="M21 12a9 9 0 1 1-3-6.7" />
-                  <polyline points="21,3 21,9 15,9" />
-                </svg>
-                {restarting ? "Restarting..." : "Restart Daemon"}
-              </button>
-            </div>
-
-            <ToggleRow
-              label="Stop daemon when app quits"
-              description="Uninstalls the daemon service on quit. It will be re-installed on next app launch."
-              checked={settings.stopDaemonOnQuit}
-              onChange={() => handleToggle("stopDaemonOnQuit")}
-            />
-
-            <ToggleRow
-              label="Auto-save editor on blur"
-              description="Save open editor tabs when the window loses focus. Manual save with Cmd+S always works."
-              checked={settings.autoSaveOnBlur}
-              onChange={() => handleToggle("autoSaveOnBlur")}
-            />
-
-            <ToggleRow
-              label="Preview tabs"
-              description="Single-click opens files in a transient preview tab (italic title). Double-click or editing promotes to a permanent tab."
-              checked={settings.previewTabs ?? true}
-              onChange={() => handleToggle("previewTabs")}
-            />
-
-            {/* Docker Image section */}
-            <SectionHeader>Docker Image</SectionHeader>
-
-            <div style={{
-              backgroundColor: colors.bg,
-              borderRadius: 8,
-              padding: "10px 12px",
-              marginBottom: 12,
-              fontSize: 12,
-              fontFamily: fonts.mono,
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
-                <span style={{ color: colors.textDim }}>Status</span>
-                <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                  <span style={{
-                    width: 6,
-                    height: 6,
-                    borderRadius: "50%",
-                    backgroundColor:
-                      (imageBuildStatus?.state === "building") ? colors.warning
-                      : (imageBuildStatus?.state === "failed") ? colors.error
-                      : colors.active,
-                    display: "inline-block",
-                  }} />
-                  <span style={{
-                    color:
-                      (imageBuildStatus?.state === "building") ? colors.warning
-                      : (imageBuildStatus?.state === "failed") ? colors.error
-                      : colors.active,
-                    fontWeight: 500,
-                  }}>
-                    {imageBuildStatus?.state === "building" ? "Building"
-                      : imageBuildStatus?.state === "failed" ? "Failed"
-                      : "Ready"}
-                    {imageBuildStatus?.phase ? ` — ${imageBuildStatus.phase}` : ""}
-                  </span>
-                </span>
-              </div>
-              {imageStatus?.versions && (
-                <>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
-                    <span style={{ color: colors.textDim, flexShrink: 0 }}>Loop</span>
-                    <span style={{ color: colors.text }}>{imageStatus.versions.loop_version || "unknown"}</span>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
-                    <span style={{ color: colors.textDim, flexShrink: 0 }}>Claude</span>
-                    <span style={{ color: colors.text }}>{imageStatus.versions.claude_version || "unknown"}</span>
-                  </div>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
-                    <span style={{ color: colors.textDim, flexShrink: 0 }}>Built</span>
-                    <span style={{ color: colors.text }}>{imageStatus.versions.built_at || "unknown"}</span>
-                  </div>
-                </>
-              )}
-            </div>
-
-            {imageUpdateAvailable && (
-              <div style={{
-                backgroundColor: "rgba(255, 200, 50, 0.1)",
-                border: `1px solid rgba(255, 200, 50, 0.3)`,
-                borderRadius: 8,
-                padding: "8px 12px",
-                marginBottom: 12,
-                fontSize: 12,
-                color: colors.warning,
-              }}>
-                Claude Code update available: v{imageUpdateAvailable.current_version} → v{imageUpdateAvailable.latest_version}
-              </div>
-            )}
-
-            {imageBuildStatus?.state === "failed" && imageBuildStatus.error && (
-              <div style={{
-                fontSize: 11,
-                color: colors.error,
-                marginBottom: 8,
-              }}>
-                {imageBuildStatus.error}
-              </div>
-            )}
-
-            <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-              <button
-                onClick={onRebuildImage}
-                disabled={imageBuildStatus?.state === "building"}
-                style={{
-                  flex: 1,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  gap: 6,
-                  padding: "8px 12px",
-                  backgroundColor: colors.bg,
-                  border: `1px solid ${colors.border}`,
-                  borderRadius: 8,
-                  color: imageBuildStatus?.state === "building" ? colors.textDim : colors.text,
-                  fontSize: 12,
-                  cursor: imageBuildStatus?.state === "building" ? "default" : "pointer",
-                  fontFamily: "inherit",
-                }}
-                onMouseEnter={(e) => { if (imageBuildStatus?.state !== "building") e.currentTarget.style.borderColor = colors.textDim; }}
-                onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; }}
-              >
-                <svg
-                  width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
-                  style={imageBuildStatus?.state === "building" ? { animation: "spin 1s linear infinite" } : undefined}
-                >
-                  <path d="M21 12a9 9 0 1 1-3-6.7" />
-                  <polyline points="21,3 21,9 15,9" />
-                </svg>
-                {imageBuildStatus?.state === "building" ? "Building..." : "Rebuild Image"}
-              </button>
-            </div>
-
-            {/* Appearance section */}
-            <SectionHeader>Appearance</SectionHeader>
-
-            <div style={{
-              padding: "10px 12px",
-              backgroundColor: colors.bg,
-              borderRadius: 8,
-            }}>
-              <div style={{ fontSize: 13, color: colors.text, marginBottom: 8 }}>Theme</div>
-              <div style={{ display: "flex", gap: 8 }}>
-                {availableThemes.map((t) => {
-                  const palette = builtinThemes[t] ?? colors;
-                  const isSelected = themeName === t;
-                  return (
-                    <button
-                      key={t}
-                      onClick={() => {
-                        const updated = { ...settings, theme: t };
-                        setSettings(updated);
-                        setThemeName(t);
-                        window.loopAPI?.saveSettings?.(updated);
-                      }}
-                      style={{
-                        flex: 1,
-                        border: `2px solid ${isSelected ? colors.active : colors.border}`,
-                        borderRadius: 8,
-                        padding: 0,
-                        cursor: "pointer",
-                        background: "none",
-                        overflow: "hidden",
-                      }}
-                    >
-                      {/* Mini preview */}
-                      <div style={{
-                        display: "flex",
-                        height: 40,
-                      }}>
-                        <div style={{ width: "30%", backgroundColor: palette.sidebarNav }} />
-                        <div style={{ flex: 1, backgroundColor: palette.bg, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center", gap: 3, padding: 4 }}>
-                          <div style={{ width: "60%", height: 3, borderRadius: 2, backgroundColor: palette.textMuted }} />
-                          <div style={{ width: "40%", height: 3, borderRadius: 2, backgroundColor: palette.active }} />
-                          <div style={{ width: "50%", height: 3, borderRadius: 2, backgroundColor: palette.textMuted }} />
-                        </div>
-                      </div>
-                      <div style={{
-                        fontSize: 11,
-                        color: colors.text,
-                        padding: "4px 0",
-                        backgroundColor: colors.surface,
-                        borderTop: `1px solid ${isSelected ? colors.active : colors.border}`,
-                      }}>
-                        {t.charAt(0).toUpperCase() + t.slice(1)}
-                      </div>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            <div style={{
-              padding: "10px 12px",
-              backgroundColor: colors.bg,
-              borderRadius: 8,
-              marginTop: 8,
-            }}>
-              <div style={{ fontSize: 13, color: colors.text, marginBottom: 8 }}>Font Sizes</div>
-              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-                {([
-                  ["sidebar", "Sidebar"],
-                  ["chat", "Chat"],
-                  ["terminal", "Terminal"],
-                  ["editor", "Editor"],
-                  ["panels", "Panels"],
-                ] as [keyof FontSizes, string][]).map(([key, label]) => (
-                  <div key={key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 12, color: colors.textMuted, width: 60 }}>{label}</span>
-                    <button
-                      onClick={() => {
-                        const updated = { ...fontSizes, [key]: Math.max(10, fontSizes[key] - 1) };
-                        setFontSizes(updated);
-                        const s = { ...settings, fontSizes: updated };
-                        setSettings(s);
-                        window.loopAPI?.saveSettings?.(s);
-                      }}
-                      style={{
-                        width: 24, height: 24, border: `1px solid ${colors.border}`, borderRadius: 4,
-                        backgroundColor: colors.surface, color: colors.text, cursor: "pointer",
-                        display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit",
-                        fontSize: 14, lineHeight: 1, padding: 0,
-                      }}
-                    >−</button>
-                    <span style={{ fontSize: 12, color: colors.text, fontFamily: fonts.mono, minWidth: 32, textAlign: "center" }}>
-                      {fontSizes[key]}px
-                    </span>
-                    <button
-                      onClick={() => {
-                        const updated = { ...fontSizes, [key]: Math.min(24, fontSizes[key] + 1) };
-                        setFontSizes(updated);
-                        const s = { ...settings, fontSizes: updated };
-                        setSettings(s);
-                        window.loopAPI?.saveSettings?.(s);
-                      }}
-                      style={{
-                        width: 24, height: 24, border: `1px solid ${colors.border}`, borderRadius: 4,
-                        backgroundColor: colors.surface, color: colors.text, cursor: "pointer",
-                        display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit",
-                        fontSize: 14, lineHeight: 1, padding: 0,
-                      }}
-                    >+</button>
-                  </div>
-                ))}
-              </div>
-              {JSON.stringify(fontSizes) !== JSON.stringify(DEFAULT_FONT_SIZES) && (
-                <button
-                  onClick={() => {
-                    setFontSizes({ ...DEFAULT_FONT_SIZES });
-                    const s = { ...settings, fontSizes: undefined };
-                    setSettings(s);
-                    window.loopAPI?.saveSettings?.(s);
-                  }}
-                  style={{
-                    marginTop: 8, background: "none", border: `1px solid ${colors.border}`, borderRadius: 4,
-                    color: colors.textMuted, cursor: "pointer", padding: "3px 8px", fontSize: 11, fontFamily: "inherit",
-                  }}
-                >Reset to defaults</button>
-              )}
-            </div>
-
-            {/* Global config */}
+      {/* Body: two-column layout */}
+      <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
+        {/* Left: section nav */}
+        {loaded && (
+          <div style={{
+            width: 150,
+            flexShrink: 0,
+            borderRight: `1px solid ${colors.border}`,
+            overflow: "auto",
+            padding: "8px 0",
+          }}>
+            {/* Global group */}
+            <NavGroupLabel colors={colors}>Global</NavGroupLabel>
+            {[...HARDCODED_GLOBAL, ...globalSchemaSections].map((name) => (
+              <NavButton key={name} name={name} active={activeSection === name} colors={colors} onClick={() => setActiveSection(name)} />
+            ))}
             {globalConfig && (
-              <ConfigForm
-                title="Global Config"
-                schema={schema}
-                config={globalConfig}
-                onSave={handleSaveGlobalConfig}
-                isGlobal={true}
-                colors={colors}
-                onDirtyChange={setConfigDirty}
-              />
+              <NavButton name="JSON" active={activeSection === "__global_json__"} colors={colors} onClick={() => setActiveSection("__global_json__")} />
             )}
 
-            {/* Project config */}
-            {projectDirPath && (
-              <ConfigForm
-                title="Project Config"
-                schema={schema}
-                config={projectConfig}
-                onSave={handleSaveProjectConfig}
-                isGlobal={false}
-                colors={colors}
-                onDirtyChange={setConfigDirty}
-              />
+            {/* Project group */}
+            {projectSchemaSections.length > 0 && (
+              <>
+                <div style={{ height: 1, backgroundColor: colors.border, margin: "8px 12px" }} />
+                <NavGroupLabel colors={colors}>Project</NavGroupLabel>
+                {projectSchemaSections.map((name) => (
+                  <NavButton key={`proj_${name}`} name={name} active={activeSection === `__proj_${name}`} colors={colors} onClick={() => setActiveSection(`__proj_${name}`)} />
+                ))}
+                <NavButton name="JSON" active={activeSection === "__project_json__"} colors={colors} onClick={() => setActiveSection("__project_json__")} />
+              </>
             )}
-          </>
+          </div>
         )}
+
+        {/* Right: section content */}
+        <div style={{
+          flex: 1,
+          display: "flex",
+          flexDirection: "column",
+          overflow: activeSection.includes("json") ? "hidden" : "auto",
+          padding: "16px 16px 24px",
+        }}>
+          {!loaded ? (
+            <div style={{ color: colors.textDim, fontSize: 13, padding: "20px 0", textAlign: "center" }}>Loading...</div>
+          ) : (
+            <>
+              {activeSection === "Daemon" && (
+                <DaemonSection
+                  colors={colors}
+                  daemonInfo={daemonInfo}
+                  restarting={restarting}
+                  onRestart={handleRestart}
+                />
+              )}
+
+              {activeSection === "Docker Image" && (
+                <DockerImageSection
+                  colors={colors}
+                  imageBuildStatus={imageBuildStatus}
+                  imageStatus={imageStatus}
+                  imageUpdateAvailable={imageUpdateAvailable}
+                  onRebuildImage={onRebuildImage}
+                />
+              )}
+
+              {activeSection === "__global_json__" && globalConfig && (
+                <ConfigForm
+                  ref={globalFormRef}
+                  title="Global Config"
+                  schema={schema}
+                  config={globalConfig}
+                  onSave={handleSaveGlobalConfig}
+                  isGlobal={true}
+                  colors={colors}
+                  onDirtyChange={setGlobalDirty}
+                  jsonOnly
+                />
+              )}
+
+              {globalConfig && globalSchemaSections.includes(activeSection) && (
+                <ConfigForm
+                  ref={globalFormRef}
+                  title="Global Config"
+                  schema={schema}
+                  config={globalConfig}
+                  onSave={handleSaveGlobalConfig}
+                  isGlobal={true}
+                  colors={colors}
+                  onDirtyChange={setGlobalDirty}
+                  visibleSection={activeSection}
+                />
+              )}
+
+              {activeSection === "__project_json__" && projectConfig && (
+                <ConfigForm
+                  ref={projectFormRef}
+                  title="Project Config"
+                  schema={schema}
+                  config={projectConfig}
+                  onSave={handleSaveProjectConfig}
+                  isGlobal={false}
+                  colors={colors}
+                  onDirtyChange={setProjectDirty}
+                  jsonOnly
+                />
+              )}
+
+              {activeSection.startsWith("__proj_") && projectConfig && (
+                <ConfigForm
+                  ref={projectFormRef}
+                  title="Project Config"
+                  schema={schema}
+                  config={projectConfig}
+                  onSave={handleSaveProjectConfig}
+                  isGlobal={false}
+                  colors={colors}
+                  onDirtyChange={setProjectDirty}
+                  visibleSection={activeSection.replace("__proj_", "")}
+                />
+              )}
+            </>
+          )}
+        </div>
       </div>
+
+      {/* Floating save/cancel bar */}
+      {configDirty && (
+        <div style={{
+          padding: "10px 16px",
+          borderTop: `1px solid ${colors.border}`,
+          display: "flex",
+          gap: 8,
+          justifyContent: "flex-end",
+          alignItems: "center",
+          backgroundColor: colors.sidebar,
+          flexShrink: 0,
+        }}>
+          <button onClick={handleFloatingCancel} style={{
+            padding: "6px 14px", backgroundColor: "transparent", border: `1px solid ${colors.border}`,
+            borderRadius: 6, color: colors.text, fontSize: 12, cursor: "pointer", fontFamily: "inherit",
+          }}>Cancel</button>
+          <button onClick={handleFloatingSave} disabled={saving} style={{
+            padding: "6px 14px", backgroundColor: colors.active, border: "none", borderRadius: 6,
+            color: colors.white, fontSize: 12, fontWeight: 500, cursor: saving ? "default" : "pointer",
+            opacity: saving ? 0.6 : 1, fontFamily: "inherit",
+          }}>{saving ? "Saving..." : "Save"}</button>
+        </div>
+      )}
 
       {/* Inline keyframes for spinner */}
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
@@ -672,7 +480,7 @@ export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggl
                 padding: "6px 14px", backgroundColor: "transparent", border: `1px solid ${colors.border}`,
                 borderRadius: 6, color: colors.text, fontSize: 12, cursor: "pointer", fontFamily: "inherit",
               }}>Cancel</button>
-              <button onClick={() => { setShowDirtyModal(false); setConfigDirty(false); onClose(); }} style={{
+              <button onClick={() => { setShowDirtyModal(false); handleFloatingCancel(); onClose(); }} style={{
                 padding: "6px 14px", backgroundColor: colors.error, border: "none",
                 borderRadius: 6, color: colors.white, fontSize: 12, fontWeight: 500, cursor: "pointer", fontFamily: "inherit",
               }}>Discard & Close</button>
@@ -684,75 +492,248 @@ export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggl
   );
 }
 
-function SectionHeader({ children }: { children: React.ReactNode }) {
-  const { colors } = useTheme();
+function NavGroupLabel({ colors, children }: { colors: ColorPalette; children: React.ReactNode }) {
   return (
     <div style={{
-      fontSize: 11,
+      fontSize: 9,
       fontWeight: 700,
       color: colors.textDim,
       textTransform: "uppercase",
       letterSpacing: 1,
-      marginBottom: 10,
-      marginTop: 4,
+      padding: "6px 16px 2px",
     }}>
       {children}
     </div>
   );
 }
 
-
-function ToggleRow({ label, description, checked, onChange }: {
-  label: string;
-  description?: string;
-  checked: boolean;
-  onChange: () => void;
+function NavButton({ name, active, colors, onClick }: {
+  name: string;
+  active: boolean;
+  colors: ColorPalette;
+  onClick: () => void;
 }) {
-  const { colors } = useTheme();
   return (
-    <div
+    <button
+      onClick={onClick}
       style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        gap: 12,
-        padding: "10px 12px",
+        display: "block",
+        width: "100%",
+        textAlign: "left",
+        padding: "6px 16px",
+        border: "none",
+        background: active ? colors.hoverBg : "transparent",
+        color: active ? colors.text : colors.textDim,
+        fontSize: 12,
+        fontWeight: active ? 600 : 400,
+        cursor: "pointer",
+        fontFamily: "inherit",
+        borderLeft: active ? `2px solid ${colors.active}` : "2px solid transparent",
+      }}
+    >
+      {name}
+    </button>
+  );
+}
+
+function DaemonSection({ colors, daemonInfo, restarting, onRestart }: {
+  colors: ColorPalette;
+  daemonInfo: DaemonInfo | null;
+  restarting: boolean;
+  onRestart: () => void;
+}) {
+  return (
+    <>
+      {daemonInfo && (
+        <div style={{
+          backgroundColor: colors.bg,
+          borderRadius: 8,
+          padding: "10px 12px",
+          marginBottom: 12,
+          fontSize: 12,
+          fontFamily: fonts.mono,
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: daemonInfo.binaryPath ? 6 : 0 }}>
+            <span style={{ color: colors.textDim }}>Status</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{
+                width: 6,
+                height: 6,
+                borderRadius: "50%",
+                backgroundColor: daemonInfo.running ? colors.active : colors.error,
+                display: "inline-block",
+              }} />
+              <span style={{
+                color: daemonInfo.running ? colors.active : colors.error,
+                fontWeight: 500,
+              }}>
+                {daemonInfo.running ? "Running" : "Stopped"}
+              </span>
+            </span>
+          </div>
+          {daemonInfo.binaryPath && (
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+              <span style={{ color: colors.textDim, flexShrink: 0 }}>Binary</span>
+              <span style={{ color: colors.text, wordBreak: "break-all", textAlign: "right" }}>{daemonInfo.binaryPath}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <button
+          onClick={onRestart}
+          disabled={restarting}
+          style={{
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+            padding: "8px 12px",
+            backgroundColor: colors.bg,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 8,
+            color: restarting ? colors.textDim : colors.text,
+            fontSize: 12,
+            cursor: restarting ? "default" : "pointer",
+            fontFamily: "inherit",
+          }}
+          onMouseEnter={(e) => { if (!restarting) e.currentTarget.style.borderColor = colors.textDim; }}
+          onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; }}
+        >
+          <svg
+            width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            style={restarting ? { animation: "spin 1s linear infinite" } : undefined}
+          >
+            <path d="M21 12a9 9 0 1 1-3-6.7" />
+            <polyline points="21,3 21,9 15,9" />
+          </svg>
+          {restarting ? "Restarting..." : "Restart Daemon"}
+        </button>
+      </div>
+    </>
+  );
+}
+
+function DockerImageSection({ colors, imageBuildStatus, imageStatus, imageUpdateAvailable, onRebuildImage }: {
+  colors: ColorPalette;
+  imageBuildStatus?: ImageBuildStatusData | null;
+  imageStatus: ImageStatusResponse | null;
+  imageUpdateAvailable?: ImageUpdateAvailableData | null;
+  onRebuildImage?: () => void;
+}) {
+  return (
+    <>
+      <div style={{
         backgroundColor: colors.bg,
         borderRadius: 8,
-        cursor: "pointer",
-      }}
-      onClick={onChange}
-    >
-      <div>
-        <div style={{ fontSize: 13, color: colors.text }}>{label}</div>
-        {description && (
-          <div style={{ fontSize: 11, color: colors.textDim, marginTop: 2 }}>{description}</div>
+        padding: "10px 12px",
+        marginBottom: 12,
+        fontSize: 12,
+        fontFamily: fonts.mono,
+      }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 6 }}>
+          <span style={{ color: colors.textDim }}>Status</span>
+          <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <span style={{
+              width: 6,
+              height: 6,
+              borderRadius: "50%",
+              backgroundColor:
+                (imageBuildStatus?.state === "building") ? colors.warning
+                : (imageBuildStatus?.state === "failed") ? colors.error
+                : colors.active,
+              display: "inline-block",
+            }} />
+            <span style={{
+              color:
+                (imageBuildStatus?.state === "building") ? colors.warning
+                : (imageBuildStatus?.state === "failed") ? colors.error
+                : colors.active,
+              fontWeight: 500,
+            }}>
+              {imageBuildStatus?.state === "building" ? "Building"
+                : imageBuildStatus?.state === "failed" ? "Failed"
+                : "Ready"}
+              {imageBuildStatus?.phase ? ` — ${imageBuildStatus.phase}` : ""}
+            </span>
+          </span>
+        </div>
+        {imageStatus?.versions && (
+          <>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
+              <span style={{ color: colors.textDim, flexShrink: 0 }}>Loop</span>
+              <span style={{ color: colors.text }}>{imageStatus.versions.loop_version || "unknown"}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12, marginBottom: 4 }}>
+              <span style={{ color: colors.textDim, flexShrink: 0 }}>Claude</span>
+              <span style={{ color: colors.text }}>{imageStatus.versions.claude_version || "unknown"}</span>
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: 12 }}>
+              <span style={{ color: colors.textDim, flexShrink: 0 }}>Built</span>
+              <span style={{ color: colors.text }}>{imageStatus.versions.built_at || "unknown"}</span>
+            </div>
+          </>
         )}
       </div>
-      <div
-        style={{
-          width: 36,
-          height: 20,
-          borderRadius: 10,
-          backgroundColor: checked ? colors.active : colors.border,
-          position: "relative",
-          flexShrink: 0,
-          transition: "background-color 0.2s",
-        }}
-      >
-        <div
+
+      {imageUpdateAvailable && (
+        <div style={{
+          backgroundColor: "rgba(255, 200, 50, 0.1)",
+          border: `1px solid rgba(255, 200, 50, 0.3)`,
+          borderRadius: 8,
+          padding: "8px 12px",
+          marginBottom: 12,
+          fontSize: 12,
+          color: colors.warning,
+        }}>
+          Claude Code update available: v{imageUpdateAvailable.current_version} → v{imageUpdateAvailable.latest_version}
+        </div>
+      )}
+
+      {imageBuildStatus?.state === "failed" && imageBuildStatus.error && (
+        <div style={{
+          fontSize: 11,
+          color: colors.error,
+          marginBottom: 8,
+        }}>
+          {imageBuildStatus.error}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <button
+          onClick={onRebuildImage}
+          disabled={imageBuildStatus?.state === "building"}
           style={{
-            width: 16,
-            height: 16,
-            borderRadius: "50%",
-            backgroundColor: colors.white,
-            position: "absolute",
-            top: 2,
-            left: checked ? 18 : 2,
-            transition: "left 0.2s",
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+            padding: "8px 12px",
+            backgroundColor: colors.bg,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 8,
+            color: imageBuildStatus?.state === "building" ? colors.textDim : colors.text,
+            fontSize: 12,
+            cursor: imageBuildStatus?.state === "building" ? "default" : "pointer",
+            fontFamily: "inherit",
           }}
-        />
+          onMouseEnter={(e) => { if (imageBuildStatus?.state !== "building") e.currentTarget.style.borderColor = colors.textDim; }}
+          onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; }}
+        >
+          <svg
+            width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+            style={imageBuildStatus?.state === "building" ? { animation: "spin 1s linear infinite" } : undefined}
+          >
+            <path d="M21 12a9 9 0 1 1-3-6.7" />
+            <polyline points="21,3 21,9 15,9" />
+          </svg>
+          {imageBuildStatus?.state === "building" ? "Building..." : "Rebuild Image"}
+        </button>
       </div>
-    </div>
+    </>
   );
 }

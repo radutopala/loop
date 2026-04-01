@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -560,9 +561,12 @@ func (s *ServerSuite) TestPlaygroundDeleteRemoveError() {
 	dir := s.setPlaygroundDir()
 	pgDir := filepath.Join(dir, "playground", "locked")
 	require.NoError(s.T(), os.MkdirAll(pgDir, 0o755))
-	// Make parent read-only so RemoveAll fails.
-	require.NoError(s.T(), os.Chmod(filepath.Join(dir, "playground"), 0o555))
-	defer os.Chmod(filepath.Join(dir, "playground"), 0o755) //nolint:errcheck
+
+	info, err := os.Stat(pgDir)
+	require.NoError(s.T(), err)
+	s.sys.Override("Stat", mock.Anything).Return(info, nil)
+	s.sys.Override("RemoveAll", mock.Anything).Return(fmt.Errorf("injected remove error"))
+	s.srv.sys = s.sys
 
 	rec := s.testRequest("DELETE", "/api/playground?name=locked", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)

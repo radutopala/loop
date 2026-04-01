@@ -396,16 +396,15 @@ func (s *ServerSuite) TestReadFile_ChannelNotFound() {
 
 func (s *ServerSuite) TestReadFile_StatError() {
 	tmpDir := s.T().TempDir()
-	subDir := filepath.Join(tmpDir, "locked")
-	require.NoError(s.T(), os.MkdirAll(subDir, 0755))
-	require.NoError(s.T(), os.WriteFile(filepath.Join(subDir, "secret.txt"), []byte("x"), 0644))
-	require.NoError(s.T(), os.Chmod(subDir, 0000))
-	s.T().Cleanup(func() { require.NoError(s.T(), os.Chmod(subDir, 0755)) })
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("x"), 0644))
 
 	s.store.On("GetChannel", mock.Anything, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
 
-	rec := s.testRequest("GET", "/api/channels/ch-1/file?path=locked/secret.txt", "")
+	s.sys.Override("Stat", mock.Anything).Return(nil, fmt.Errorf("injected stat error"))
+	s.srv.sys = s.sys
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/file?path=test.txt", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
 
@@ -529,11 +528,12 @@ func (s *ServerSuite) TestWriteFile_ChannelNotFound() {
 func (s *ServerSuite) TestWriteFile_WriteError() {
 	tmpDir := s.T().TempDir()
 	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "readonly.txt"), []byte("old"), 0644))
-	require.NoError(s.T(), os.Chmod(filepath.Join(tmpDir, "readonly.txt"), 0000))
-	s.T().Cleanup(func() { require.NoError(s.T(), os.Chmod(filepath.Join(tmpDir, "readonly.txt"), 0644)) })
 
 	s.store.On("GetChannel", mock.Anything, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	s.sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(fmt.Errorf("injected write error"))
+	s.srv.sys = s.sys
 
 	rec := s.testRequest("PUT", "/api/channels/ch-1/file?path=readonly.txt", "content")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
@@ -678,16 +678,15 @@ func (s *ServerSuite) TestDeleteFile_RemoveError() {
 
 func (s *ServerSuite) TestDeleteFile_StatError() {
 	tmpDir := s.T().TempDir()
-	subDir := filepath.Join(tmpDir, "locked")
-	require.NoError(s.T(), os.MkdirAll(subDir, 0755))
-	require.NoError(s.T(), os.WriteFile(filepath.Join(subDir, "secret.txt"), []byte("x"), 0644))
-	require.NoError(s.T(), os.Chmod(subDir, 0000))
-	s.T().Cleanup(func() { require.NoError(s.T(), os.Chmod(subDir, 0755)) })
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "test.txt"), []byte("x"), 0644))
 
 	s.store.On("GetChannel", mock.Anything, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
 
-	rec := s.testRequest("DELETE", "/api/channels/ch-1/file?path=locked/secret.txt", "")
+	s.sys.Override("Stat", mock.Anything).Return(nil, fmt.Errorf("injected stat error"))
+	s.srv.sys = s.sys
+
+	rec := s.testRequest("DELETE", "/api/channels/ch-1/file?path=test.txt", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
 

@@ -348,6 +348,10 @@ func (s *ServerSuite) TestCreateWorktree_Success() {
 	require.True(s.T(), ch.Worktree)
 	require.Equal(s.T(), wtPath, ch.DirPath)
 
+	// Verify worktree config was seeded with extra_dirs pointing to parent.
+	s.sys.AssertCalled(s.T(), "MkdirAll", filepath.Join(wtPath, ".loop"), os.FileMode(0755))
+	s.sys.AssertCalled(s.T(), "WriteFile", filepath.Join(wtPath, ".loop", "config.json"), mock.Anything, os.FileMode(0644))
+
 	// Verify session file copy was attempted.
 	s.sys.AssertCalled(s.T(), "ReadFile", mock.Anything)
 }
@@ -493,7 +497,10 @@ func (s *ServerSuite) TestCreateWorktree_SessionCopyFailsGracefully() {
 	require.NoError(s.T(), cmd.Run())
 
 	// Set sys that will fail on UserHomeDir (causing session copy to fail).
+	// MkdirAll/WriteFile succeed so worktree config seeding works, but session copy fails.
 	sysFail := new(testutil.MockSystem)
+	sysFail.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sysFail.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	sysFail.On("UserHomeDir").Return("", errors.New("no home"))
 	s.srv.sys = sysFail
 
@@ -508,6 +515,57 @@ func (s *ServerSuite) TestCreateWorktree_SessionCopyFailsGracefully() {
 
 	// Session copy fails but handler should still succeed (non-fatal).
 	rec := s.testRequest("POST", "/api/worktrees", `{"channel_id":"ch1","branch":"feature/sc-fail","name":"sc-fail-wt"}`)
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+}
+
+func (s *ServerSuite) TestCreateWorktree_ConfigMkdirFails() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/mkdir-fail")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	sysFail := new(testutil.MockSystem)
+	sysFail.On("MkdirAll", mock.Anything, mock.Anything).Return(errors.New("mkdir fail"))
+	sysFail.On("UserHomeDir").Return("", errors.New("no home"))
+	s.srv.sys = sysFail
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: dir, SessionID: "sess",
+	}, nil)
+	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("mkdir-th", nil)
+	s.store.On("GetChannel", mock.Anything, "mkdir-th").Return(&db.Channel{
+		ChannelID: "mkdir-th", DirPath: dir, ParentID: "ch1", Active: true,
+	}, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+
+	// MkdirAll fails but handler still succeeds (non-fatal warning).
+	rec := s.testRequest("POST", "/api/worktrees", `{"channel_id":"ch1","branch":"feature/mkdir-fail","name":"mkdir-fail-wt"}`)
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+}
+
+func (s *ServerSuite) TestCreateWorktree_ConfigWriteFails() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/write-fail")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	sysFail := new(testutil.MockSystem)
+	sysFail.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sysFail.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("write fail"))
+	sysFail.On("UserHomeDir").Return("", errors.New("no home"))
+	s.srv.sys = sysFail
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: dir, SessionID: "sess",
+	}, nil)
+	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("write-th", nil)
+	s.store.On("GetChannel", mock.Anything, "write-th").Return(&db.Channel{
+		ChannelID: "write-th", DirPath: dir, ParentID: "ch1", Active: true,
+	}, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+
+	// WriteFile fails but handler still succeeds (non-fatal warning).
+	rec := s.testRequest("POST", "/api/worktrees", `{"channel_id":"ch1","branch":"feature/write-fail","name":"write-fail-wt"}`)
 	require.Equal(s.T(), http.StatusCreated, rec.Code)
 }
 

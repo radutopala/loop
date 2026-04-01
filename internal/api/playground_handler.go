@@ -437,11 +437,11 @@ func (s *Server) handlePlaygroundDelete(w http.ResponseWriter, r *http.Request) 
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
-	if _, err := os.Stat(pgDir); os.IsNotExist(err) {
+	if _, err := s.sys.Stat(pgDir); os.IsNotExist(err) {
 		http.Error(w, "playground not found", http.StatusNotFound)
 		return
 	}
-	if err := os.RemoveAll(pgDir); err != nil {
+	if err := s.sys.RemoveAll(pgDir); err != nil {
 		http.Error(w, "deleting playground: "+err.Error(), http.StatusInternalServerError)
 		return
 	}

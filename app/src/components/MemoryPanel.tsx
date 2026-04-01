@@ -10,6 +10,7 @@ import { marked } from "marked";
 import { fonts } from "../theme";
 import { useTheme } from "../ThemeContext";
 import { fetchMemoryFiles, fetchMemoryFileContent, saveMemoryFileContent, type MemoryFileInfo } from "../api/loopApi";
+import { fetchGlobalConfig } from "../api/configApi";
 import { FilePanel, buildMarkdownStyles } from "./FilePanel";
 import { buildEditorTheme } from "./editorTheme";
 
@@ -103,7 +104,7 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
   const [previewTab, setPreviewTab] = useState<string | null>(null);
   const [previewMode, setPreviewMode] = useState<"editor" | "both" | "preview">("editor");
   const [previewHtml, setPreviewHtml] = useState("");
-  const [autoSaveOnBlur, setAutoSaveOnBlur] = useState(true);
+  const [autoSaveOnBlur, setAutoSaveOnBlur] = useState(false);
   const [previewTabsEnabled, setPreviewTabsEnabled] = useState(true);
 
   const editorRef = useRef<HTMLDivElement>(null);
@@ -122,11 +123,13 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
   channelIdRef.current = channelId;
   const dirtyContentRef = useRef(new Map<string, string>());
 
-  // Load settings.
+  // Load desktop settings from global config.
   useEffect(() => {
-    window.loopAPI?.getSettings?.().then((s) => {
-      if (typeof s.autoSaveOnBlur === "boolean") setAutoSaveOnBlur(s.autoSaveOnBlur);
-      if (typeof s.previewTabs === "boolean") setPreviewTabsEnabled(s.previewTabs);
+    fetchGlobalConfig().then((cfg) => {
+      const d = cfg.content?.desktop;
+      if (!d) return;
+      if (typeof d.auto_save_on_blur === "boolean") setAutoSaveOnBlur(d.auto_save_on_blur);
+      if (typeof d.preview_tabs === "boolean") setPreviewTabsEnabled(d.preview_tabs);
     }).catch(() => {});
   }, []);
 

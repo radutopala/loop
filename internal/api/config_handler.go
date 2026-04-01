@@ -1,7 +1,9 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -66,7 +68,7 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 // given channel.
 func (s *Server) handleGetProjectConfig(w http.ResponseWriter, r *http.Request) {
 	channelID := r.URL.Query().Get("channel_id")
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.resolveProjectConfigDirPath(r.Context(), channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -80,7 +82,7 @@ func (s *Server) handleGetProjectConfig(w http.ResponseWriter, r *http.Request) 
 // .loop/config.json for the given channel.
 func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request) {
 	channelID := r.URL.Query().Get("channel_id")
-	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	dirPath, err := s.resolveProjectConfigDirPath(r.Context(), channelID)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -106,6 +108,42 @@ func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// resolveProjectConfigDirPath returns the directory to use for project config.
+// For worktree channels it returns the parent channel's dir path, so all
+// worktrees share the root project's .loop/config.json.
+func (s *Server) resolveProjectConfigDirPath(ctx context.Context, channelID string) (string, error) {
+	if channelID == "" {
+		return "", fmt.Errorf("dir_path or channel_id is required")
+	}
+	if s.store == nil {
+		return "", fmt.Errorf("channel lookup not configured")
+	}
+	ch, err := s.store.GetChannel(ctx, channelID)
+	if err != nil {
+		return "", fmt.Errorf("looking up channel: %w", err)
+	}
+	if ch == nil {
+		return "", fmt.Errorf("channel %s not found", channelID)
+	}
+	// Worktree channels delegate config to the parent project.
+	if ch.Worktree && ch.ParentID != "" {
+		parent, err := s.store.GetChannel(ctx, ch.ParentID)
+		if err != nil {
+			return "", fmt.Errorf("looking up parent channel: %w", err)
+		}
+		if parent != nil && parent.DirPath != "" {
+			return parent.DirPath, nil
+		}
+	}
+	if ch.DirPath == "" {
+		if s.loopDir != "" {
+			return filepath.Join(s.loopDir, channelID, "work"), nil
+		}
+		return "", fmt.Errorf("channel %s has no dir_path", channelID)
+	}
+	return ch.DirPath, nil
 }
 
 // readConfigFile reads a config file and returns a configResponse.

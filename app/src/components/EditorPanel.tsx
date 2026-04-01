@@ -17,6 +17,7 @@ import { marked } from "marked";
 import { fonts } from "../theme";
 import { useTheme } from "../ThemeContext";
 import { fetchFiles, fetchFileContent, saveFileContent, deleteFile, createDir, fetchRoots, updateExtraDirs, type FileEntry, type RootEntry } from "../api/loopApi";
+import { fetchGlobalConfig } from "../api/configApi";
 import { FilePanel, buildMarkdownStyles } from "./FilePanel";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { buildEditorTheme } from "./editorTheme";
@@ -157,7 +158,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   const [previewMode, setPreviewMode] = useState<"editor" | "both" | "preview">("both");
   const [previewHtml, setPreviewHtml] = useState("");
   const [dirtyTabs, setDirtyTabs] = useState<Set<string>>(new Set());
-  const [autoSaveOnBlur, setAutoSaveOnBlur] = useState(true);
+  const [autoSaveOnBlur, setAutoSaveOnBlur] = useState(false);
   const [newFileName, setNewFileName] = useState<string | null>(null);
   const [newDirName, setNewDirName] = useState<string | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string; isDir: boolean } | null>(null);
@@ -178,11 +179,13 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
 
   const [previewTabsEnabled, setPreviewTabsEnabled] = useState(true);
 
-  // Load settings.
+  // Load desktop settings from global config.
   useEffect(() => {
-    window.loopAPI?.getSettings?.().then((s) => {
-      if (typeof s.autoSaveOnBlur === "boolean") setAutoSaveOnBlur(s.autoSaveOnBlur);
-      if (typeof s.previewTabs === "boolean") setPreviewTabsEnabled(s.previewTabs);
+    fetchGlobalConfig().then((cfg) => {
+      const d = cfg.content?.desktop;
+      if (!d) return;
+      if (typeof d.auto_save_on_blur === "boolean") setAutoSaveOnBlur(d.auto_save_on_blur);
+      if (typeof d.preview_tabs === "boolean") setPreviewTabsEnabled(d.preview_tabs);
     }).catch(() => {});
   }, []);
 
