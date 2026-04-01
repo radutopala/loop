@@ -1,20 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CanvasTile as CanvasTileType } from "./types";
-import type { LeafNode, PanelType } from "../types/panels";
+import { PANEL_OPTIONS, PANEL_LABELS, type LeafNode, type PanelType } from "../types/panels";
 import { useTheme } from "../ThemeContext";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
-
-const PANEL_ADD_OPTIONS: { panel: PanelType; label: string }[] = [
-  { panel: "chat", label: "Chat" },
-  { panel: "editor", label: "Editor" },
-  { panel: "memory", label: "Memory" },
-  { panel: "git", label: "Git" },
-  { panel: "agent", label: "Agent" },
-  { panel: "shell", label: "Shell" },
-  { panel: "docker-browser", label: "Docker Browser" },
-  { panel: "host-browser", label: "Host Browser" },
-  { panel: "sessions", label: "Sessions" },
-];
 
 const HEADER_HEIGHT = 24;
 const MIN_WIDTH = 200;
@@ -200,7 +188,7 @@ export function CanvasTile({ tile, renderLeaf, agentInfo, onMove, onResize, onBr
               }}
               onMouseDown={(e) => e.stopPropagation()}
             >
-              {PANEL_ADD_OPTIONS.map((opt) => {
+              {PANEL_OPTIONS.map((opt) => {
                 const disabled = !!usedSingletons?.has(opt.panel);
                 return (
                   <button
@@ -287,16 +275,3 @@ export function CanvasTile({ tile, renderLeaf, agentInfo, onMove, onResize, onBr
     </div>
   );
 }
-
-const PANEL_LABELS: Record<PanelType, string> = {
-  chat: "Chat",
-  editor: "Editor",
-  memory: "Memory",
-  git: "Git",
-  agent: "Agent",
-  shell: "Shell",
-  "docker-browser": "Docker Browser",
-  "host-browser": "Host Browser",
-  sessions: "Sessions",
-  playground: "Playground",
-};

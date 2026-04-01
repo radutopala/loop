@@ -1,37 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { SplitDirection, DropPosition } from "./types";
-import type { PanelType } from "../types/panels";
-import { SINGLETON_PANELS, EXCLUSIVE_PANELS } from "../types/panels";
+import { SINGLETON_PANELS, EXCLUSIVE_PANELS, PANEL_OPTIONS, PANEL_LABELS, type PanelType } from "../types/panels";
 import { emitLayoutDragStart, emitLayoutDragEnd, DRAG_MIME } from "./DropZoneOverlay";
 import type { ColorPalette } from "../theme";
 import { useTheme } from "../ThemeContext";
 import type { AgentInfo } from "../hooks/useAgentRegistry";
 
-const PANEL_LABELS: Record<PanelType, string> = {
-  chat: "Chat",
-  editor: "Editor",
-  memory: "Memory",
-  git: "Git",
-  agent: "Agent",
-  shell: "Shell",
-  "docker-browser": "Docker Browser",
-  "host-browser": "Host Browser",
-  sessions: "Sessions",
-  playground: "Playground",
-};
-
-const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
-  { panel: "chat", label: "Chat" },
-  { panel: "editor", label: "Editor" },
-  { panel: "memory", label: "Memory" },
-  { panel: "git", label: "Git" },
-  { panel: "agent", label: "Agent" },
-  { panel: "shell", label: "Shell" },
-  { panel: "docker-browser", label: "Docker Browser" },
-  { panel: "host-browser", label: "Host Browser" },
-  { panel: "sessions", label: "Sessions" },
-  { panel: "playground", label: "Playground" },
-];
 
 function buildBtnStyle(colors: ColorPalette): React.CSSProperties {
   return {
@@ -69,14 +43,16 @@ interface PaneLeafHeaderProps {
   panel: PanelType;
   usedSingletons: Set<PanelType>;
   isMaximized?: boolean;
+  isMinimized?: boolean;
   agentInfo?: AgentInfo;
   onRemove: () => void;
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
   onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void;
   onToggleMaximize?: () => void;
+  onToggleMinimize?: () => void;
 }
 
-export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, agentInfo, onRemove, onDrop, onSplitLeaf, onToggleMaximize }: PaneLeafHeaderProps) {
+export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, isMinimized, agentInfo, onRemove, onDrop, onSplitLeaf, onToggleMaximize, onToggleMinimize }: PaneLeafHeaderProps) {
   const { colors } = useTheme();
   const isAgent = panel === "agent";
   const label = isAgent ? (agentInfo?.name || leafId) : PANEL_LABELS[panel];
@@ -162,6 +138,19 @@ export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, age
       </span>
       <span style={{ width: 1, height: 10, backgroundColor: colors.border, flexShrink: 0, marginLeft: 2, marginRight: 2 }} />
       <PaneSplitMenu leafId={leafId} usedSingletons={usedSingletons} onSplitLeaf={onSplitLeaf} />
+      {onToggleMinimize && (
+        <button
+          onClick={onToggleMinimize}
+          title={isMinimized ? "Restore pane" : "Minimize pane"}
+          style={btnStyle}
+          onMouseEnter={hoverIn}
+          onMouseLeave={hoverOut}
+        >
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12" />
+          </svg>
+        </button>
+      )}
       {onToggleMaximize && (
         <button
           onClick={onToggleMaximize}

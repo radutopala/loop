@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CanvasNode, CanvasTile as CanvasTileType } from "./types";
-import type { LeafNode, PanelType } from "../types/panels";
-import { SINGLETON_PANELS, EXCLUSIVE_PANELS } from "../types/panels";
+import { SINGLETON_PANELS, EXCLUSIVE_PANELS, PANEL_OPTIONS, type LeafNode, type PanelType } from "../types/panels";
 import { CanvasTile } from "./CanvasTile";
 import { EmptyLayoutPicker } from "../splitPane/AddPanelButton";
 import { useTheme } from "../ThemeContext";
@@ -380,6 +379,7 @@ const PANEL_COLORS: Record<PanelType, string> = {
   "host-browser": "#38bdf8",
   sessions: "#c084fc",
   playground: "#10b981",
+  notes: "#f9a8d4",
 };
 
 function CanvasMinimap({ tiles, viewport: vp, containerRef, onPan, onZoom }: {
@@ -582,18 +582,6 @@ function findNonOverlappingPosition(x: number, y: number, w: number, h: number, 
   const maxBottom = Math.max(...tiles.map((t) => t.y + t.height), 0);
   return { x, y: maxBottom + GAP };
 }
-
-const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
-  { panel: "chat", label: "Chat" },
-  { panel: "editor", label: "Editor" },
-  { panel: "memory", label: "Memory" },
-  { panel: "git", label: "Git" },
-  { panel: "agent", label: "Agent" },
-  { panel: "shell", label: "Shell" },
-  { panel: "docker-browser", label: "Docker Browser" },
-  { panel: "host-browser", label: "Host Browser" },
-  { panel: "sessions", label: "Sessions" },
-];
 
 /** Default tile sizes per panel type. Editor and Memory get more space. */
 const DEFAULT_TILE_SIZES: Partial<Record<PanelType, { w: number; h: number }>> = {

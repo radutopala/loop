@@ -9,18 +9,26 @@ import type { AgentInfo } from "../hooks/useAgentRegistry";
 
 const HEADER_HEIGHT = 22;
 
+/** Check if every leaf in a subtree is minimized. */
+function isSubtreeMinimized(node: PaneNode, minimizedLeaves?: Set<string>): boolean {
+  if (node.type === "leaf") return minimizedLeaves?.has(node.id) ?? false;
+  return node.children.every(child => isSubtreeMinimized(child, minimizedLeaves));
+}
+
 interface SplitPaneLayoutProps {
   tree: PaneNode;
   renderLeaf: (leaf: LeafNode) => React.ReactNode;
   agentInfoMap?: Map<string, AgentInfo>;
+  minimizedLeaves?: Set<string>;
   onUpdateFlex: (parentPath: number[], dividerIdx: number, flexA: number, flexB: number) => void;
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
   onRemoveLeaf: (id: string) => void;
   onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void;
   onMaximize?: (leafId: string) => void;
+  onToggleMinimize?: (leafId: string) => void;
 }
 
-export function SplitPaneLayout({ tree, renderLeaf, agentInfoMap, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf, onMaximize }: SplitPaneLayoutProps) {
+export function SplitPaneLayout({ tree, renderLeaf, agentInfoMap, minimizedLeaves, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf, onMaximize, onToggleMinimize }: SplitPaneLayoutProps) {
   const usedSingletons = collectPanelTypes(tree);
   return (
     <PaneTree
@@ -29,11 +37,13 @@ export function SplitPaneLayout({ tree, renderLeaf, agentInfoMap, onUpdateFlex, 
       usedSingletons={usedSingletons}
       renderLeaf={renderLeaf}
       agentInfoMap={agentInfoMap}
+      minimizedLeaves={minimizedLeaves}
       onUpdateFlex={onUpdateFlex}
       onDrop={onDrop}
       onRemoveLeaf={onRemoveLeaf}
       onSplitLeaf={onSplitLeaf}
       onMaximize={onMaximize}
+      onToggleMinimize={onToggleMinimize}
     />
   );
 }
@@ -44,14 +54,20 @@ interface PaneTreeProps {
   usedSingletons: Set<PanelType>;
   renderLeaf: (leaf: LeafNode) => React.ReactNode;
   agentInfoMap?: Map<string, AgentInfo>;
+  minimizedLeaves?: Set<string>;
+  /** Override node.flex — used by parent splits to scale flex when minimized siblings cause sum < 1. */
+  flexOverride?: number;
+  /** Parent split direction — controls whether an all-minimized subtree can collapse its flex. */
+  parentDirection?: "vertical" | "horizontal";
   onUpdateFlex: (parentPath: number[], dividerIdx: number, flexA: number, flexB: number) => void;
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
   onRemoveLeaf: (id: string) => void;
   onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void;
   onMaximize?: (leafId: string) => void;
+  onToggleMinimize?: (leafId: string) => void;
 }
 
-function PaneTree({ node, path, usedSingletons, renderLeaf, agentInfoMap, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf, onMaximize }: PaneTreeProps) {
+function PaneTree({ node, path, usedSingletons, renderLeaf, agentInfoMap, minimizedLeaves, flexOverride, parentDirection, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf, onMaximize, onToggleMinimize }: PaneTreeProps) {
   const { colors } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -101,33 +117,53 @@ function PaneTree({ node, path, usedSingletons, renderLeaf, agentInfoMap, onUpda
   );
 
   if (node.type === "leaf") {
+    const isMinimized = minimizedLeaves?.has(node.id) ?? false;
+    const effectiveFlex = flexOverride ?? node.flex;
     return (
-      <div style={{ flex: node.flex, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, minWidth: 0, position: "relative" }}>
+      <div style={{ flex: isMinimized ? "0 0 auto" : `${effectiveFlex} 1 0%`, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, minWidth: 0, position: "relative" }}>
         <PaneLeafHeader
           leafId={node.id}
           panel={node.panel}
           usedSingletons={usedSingletons}
+          isMinimized={isMinimized}
           agentInfo={node.panel === "agent" ? agentInfoMap?.get(node.id) : undefined}
           onRemove={() => onRemoveLeaf(node.id)}
           onDrop={onDrop}
           onSplitLeaf={onSplitLeaf}
           onToggleMaximize={onMaximize ? () => onMaximize(node.id) : undefined}
+          onToggleMinimize={onToggleMinimize ? () => onToggleMinimize(node.id) : undefined}
         />
         <DropZoneOverlay leafId={node.id} headerHeight={HEADER_HEIGHT} onDrop={onDrop} />
-        <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
-          {renderLeaf(node)}
-        </div>
+        {!isMinimized && (
+          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 }}>
+            {renderLeaf(node)}
+          </div>
+        )}
       </div>
     );
   }
 
   const isVertical = node.direction === "vertical";
 
+  // CSS spec: when sum of flex-grow < 1, only that fraction of free space is distributed.
+  // Scale non-minimized children's flex so their sum >= 1 to avoid wasted space.
+  // Uses recursive check so collapsed split subtrees also count as minimized.
+  const childFlexes = node.children.map((child) => {
+    return isSubtreeMinimized(child, minimizedLeaves) ? 0 : child.flex;
+  });
+  const totalActiveFlex = childFlexes.reduce((s, f) => s + f, 0);
+  const flexScale = totalActiveFlex > 0 && totalActiveFlex < 1 ? 1 / totalActiveFlex : 1;
+
+  // If every child in this split is minimized, collapse height — but only when
+  // this node sits inside a vertical parent.  Collapsing inside a horizontal
+  // parent would shrink the column width, which is not the intended behavior.
+  const allMinimized = totalActiveFlex === 0 && parentDirection === "vertical";
+
   return (
     <div
       ref={containerRef}
       style={{
-        flex: node.flex,
+        flex: allMinimized ? "0 0 auto" : (flexOverride ?? node.flex),
         display: "flex",
         flexDirection: isVertical ? "column" : "row",
         overflow: "hidden",
@@ -169,11 +205,15 @@ function PaneTree({ node, path, usedSingletons, renderLeaf, agentInfoMap, onUpda
             usedSingletons={usedSingletons}
             renderLeaf={renderLeaf}
             agentInfoMap={agentInfoMap}
+            minimizedLeaves={minimizedLeaves}
+            flexOverride={childFlexes[i]! > 0 && flexScale !== 1 ? childFlexes[i]! * flexScale : undefined}
+            parentDirection={node.direction}
             onUpdateFlex={onUpdateFlex}
             onDrop={onDrop}
             onRemoveLeaf={onRemoveLeaf}
             onSplitLeaf={onSplitLeaf}
             onMaximize={onMaximize}
+            onToggleMinimize={onToggleMinimize}
           />
         </Fragment>
       ))}

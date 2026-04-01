@@ -608,7 +608,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
   }, [loadMoreCommits]);
 
   const commitsContent = (
-    <div style={{ flex: 1, overflow: "auto" }} onScroll={handleCommitsScroll}>
+    <div style={{ flex: 1, overflow: "auto", minHeight: 0 }} onScroll={handleCommitsScroll}>
       {commitsLoading && commits.length === 0 && (
         <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>Loading...</div>
       )}
@@ -749,7 +749,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
   };
 
   const diffContent = (
-    <div style={{ flex: 1, overflow: "auto" }}>
+    <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
       {loading && !data && (
         <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>Loading...</div>
       )}

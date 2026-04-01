@@ -1,18 +1,5 @@
-import type { PanelType } from "../types/panels";
+import { PANEL_OPTIONS, type PanelType } from "../types/panels";
 import { useTheme } from "../ThemeContext";
-
-const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
-  { panel: "chat", label: "Chat" },
-  { panel: "editor", label: "Editor" },
-  { panel: "memory", label: "Memory" },
-  { panel: "git", label: "Git" },
-  { panel: "agent", label: "Agent" },
-  { panel: "shell", label: "Shell" },
-  { panel: "docker-browser", label: "Docker Browser" },
-  { panel: "host-browser", label: "Host Browser" },
-  { panel: "sessions", label: "Sessions" },
-  { panel: "playground", label: "Playground" },
-];
 
 const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
   chat: (
@@ -77,6 +64,15 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
       <polygon points="5 3 19 12 5 21 5 3" />
     </svg>
   ),
+  notes: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
+      <polyline points="14 2 14 8 20 8" />
+      <line x1="16" y1="13" x2="8" y2="13" />
+      <line x1="16" y1="17" x2="8" y2="17" />
+      <polyline points="10 9 9 9 8 9" />
+    </svg>
+  ),
 };
 
 const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
@@ -90,6 +86,7 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   "host-browser": "Browser on host machine",
   sessions: "Browse and resume Claude sessions",
   playground: "Live interactive code sandbox",
+  notes: "Quick scratch notes (Markdown)",
 };
 
 /** Centered picker for when layout is empty (no tree). */

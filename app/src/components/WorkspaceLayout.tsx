@@ -20,6 +20,7 @@ import { GitPanel } from "./GitPanel";
 import { BrowserPanel } from "./BrowserPanel";
 import { SessionsPanel } from "./SessionsPanel";
 import { PlaygroundPanel } from "./PlaygroundPanel";
+import { NotesPanel } from "./NotesPanel";
 import { killAgentContainer, fetchBranches, switchBranch, type BranchInfo } from "../api/loopApi";
 import { useChatState } from "../hooks/useChatState";
 import type { ActiveChatState, ChatEventListener } from "../hooks/useChatStateStore";
@@ -53,7 +54,7 @@ function initIdCounter(channelId: string, tree: PaneNode) {
 }
 
 function leafIdForPanel(channelId: string, panel: PanelType): string {
-  if (panel === "chat" || panel === "editor" || panel === "memory" || panel === "git") {
+  if (panel === "chat" || panel === "editor" || panel === "memory" || panel === "git" || panel === "sessions" || panel === "notes") {
     return panel;
   }
   return nextId(channelId, panel);
@@ -523,6 +524,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   const [showLayoutMenu, setShowLayoutMenu] = useState(false);
   const [showNewLayoutMenu, setShowNewLayoutMenu] = useState(false);
   const [maximizedLeafId, setMaximizedLeafId] = useState<string | null>(null);
+  const [minimizedLeaves, setMinimizedLeaves] = useState<Set<string>>(new Set());
 
   // Close layout menu on outside click.
   useEffect(() => {
@@ -968,6 +970,13 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               channelId={channelId}
             />
           );
+        case "notes":
+          return (
+            <NotesPanel
+              key={`layout-notes-${channelId}`}
+              channelId={channelId}
+            />
+          );
         default:
           return null;
       }
@@ -1399,11 +1408,18 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             tree={tree}
             renderLeaf={renderLeaf}
             agentInfoMap={agentInfoMap}
+            minimizedLeaves={minimizedLeaves}
             onUpdateFlex={handleUpdateFlex}
             onDrop={handleDrop}
             onRemoveLeaf={handleRemoveLeaf}
             onSplitLeaf={handleSplitLeaf}
             onMaximize={(leafId) => setMaximizedLeafId(leafId)}
+            onToggleMinimize={(leafId) => setMinimizedLeaves((prev) => {
+              const next = new Set(prev);
+              if (next.has(leafId)) next.delete(leafId);
+              else next.add(leafId);
+              return next;
+            })}
           />
         )}
       </div>
