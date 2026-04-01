@@ -838,17 +838,19 @@ function ChatInput({ channelId, messages, isRunning, mode, setMode, onDismissCar
   const historyRef = useRef<string[]>([]);
   const historyIdxRef = useRef(-1);
   const draftRef = useRef("");
-  const seededRef = useRef<string | null>(null);
+  const historyChannelRef = useRef<string | null>(null);
 
-  // Seed history from backend messages on first load / channel switch.
+  // Keep history scoped to the active channel and clear stale entries on switch.
   useEffect(() => {
-    if (seededRef.current === channelId) return;
+    const channelChanged = historyChannelRef.current !== channelId;
+    historyChannelRef.current = channelId;
+
     const userMsgs = messages.filter((m) => !m.is_bot).map((m) => m.content);
-    if (userMsgs.length === 0) return;
-    seededRef.current = channelId;
     historyRef.current = userMsgs;
-    historyIdxRef.current = -1;
-    draftRef.current = "";
+    if (channelChanged) {
+      historyIdxRef.current = -1;
+      draftRef.current = draftText.get(channelId) ?? "";
+    }
   }, [channelId, messages]);
 
   // Auto-focus textarea on mount; move cursor to end if restoring a draft.

@@ -21,6 +21,10 @@ interface PlaygroundPanelProps {
   channelId: string;
 }
 
+function playgroundSelectionKey(name: string, scope: "global" | "project"): string {
+  return `${scope}:${name}`;
+}
+
 export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
   const { colors } = useTheme();
   const iframeRef = useRef<HTMLIFrameElement>(null);
@@ -44,6 +48,8 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
   const [activeScope, setActiveScope] = useState<"global" | "project">(() => {
     try { return JSON.parse(localStorage.getItem(storageKey) || "{}").scope || "global"; } catch { return "global"; }
   });
+  const activeScopeRef = useRef<"global" | "project">("global");
+  activeScopeRef.current = activeScope;
 
   const selectItem = useCallback((name: string, scope?: "global" | "project") => {
     setActiveItem(name);
@@ -81,17 +87,20 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
         const data = event.data as Record<string, string>;
         const eventName = data.name || "";
         if (!eventName) return;
+        const eventScope = data.scope === "project" ? "project" : "global";
+        const eventChannelId = data.channel_id || "";
+        if (eventScope === "project" && eventChannelId !== channelId) return;
         // Refresh items list (a new item may have been created).
         fetchPlaygroundItems(channelId).then((list) => {
           setItems(list);
           // Auto-switch to the playground being worked on.
-          if (eventName !== activeItemRef.current) {
-            const found = list.find((i) => i.name === eventName);
+          if (eventName !== activeItemRef.current || eventScope !== activeScopeRef.current) {
+            const found = list.find((i) => i.name === eventName && i.scope === eventScope);
             selectItem(eventName, found?.scope);
           }
         }).catch(() => {});
         // Reload active item with fresh content from server.
-        if (eventName === activeItemRef.current) {
+        if (eventName === activeItemRef.current && eventScope === activeScopeRef.current) {
           if (data.html) {
             // Full playground update — update metadata (triggers iframe reload via code change).
             setCode(data as unknown as PlaygroundCode);
@@ -161,7 +170,7 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
         }}
       >
         {items.length > 0 && (
-          <PlaygroundSelector items={items} value={activeItem} onChange={selectItem} colors={colors} />
+          <PlaygroundSelector items={items} value={playgroundSelectionKey(activeItem, activeScope)} onChange={selectItem} colors={colors} />
         )}
         <ToolbarButton onClick={handleReset} title="Reset" colors={colors}>
           Reset
@@ -264,9 +273,11 @@ function PlaygroundSelector({ items, value, onChange, colors, style }: {
     <select
       value={value}
       onChange={(e) => {
-        const name = e.target.value;
-        const item = items.find((i) => i.name === name);
-        onChange(name, item?.scope ?? "global");
+        const selectedKey = e.target.value;
+        const item = items.find((i) => playgroundSelectionKey(i.name, i.scope) === selectedKey);
+        if (item) {
+          onChange(item.name, item.scope);
+        }
       }}
       style={{
         background: "none",
@@ -282,14 +293,14 @@ function PlaygroundSelector({ items, value, onChange, colors, style }: {
       {projectItems.length > 0 && (
         <optgroup label="Project">
           {projectItems.map((item) => (
-            <option key={`project:${item.name}`} value={item.name}>{item.title || item.name}</option>
+            <option key={playgroundSelectionKey(item.name, item.scope)} value={playgroundSelectionKey(item.name, item.scope)}>{item.title || item.name}</option>
           ))}
         </optgroup>
       )}
       {globalItems.length > 0 && (
         <optgroup label="Global">
           {globalItems.map((item) => (
-            <option key={`global:${item.name}`} value={item.name}>{item.title || item.name}</option>
+            <option key={playgroundSelectionKey(item.name, item.scope)} value={playgroundSelectionKey(item.name, item.scope)}>{item.title || item.name}</option>
           ))}
         </optgroup>
       )}

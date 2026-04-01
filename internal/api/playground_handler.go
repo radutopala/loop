@@ -24,6 +24,8 @@ type playgroundContent struct {
 	Title       string `json:"title,omitempty"`
 	HTML        string `json:"html,omitempty"`
 	Description string `json:"description,omitempty"`
+	Scope       string `json:"scope,omitempty"`
+	ChannelID   string `json:"channel_id,omitempty"`
 }
 
 // readmeFrontmatter holds parsed YAML frontmatter fields from README.md.
@@ -90,6 +92,13 @@ func (s *Server) resolvePlaygroundDir(r *http.Request, name string) (string, err
 	return s.validatePlaygroundDir(name)
 }
 
+func playgroundScopeFromRequest(r *http.Request) (scope, channelID string) {
+	if r.URL.Query().Get("scope") == "project" {
+		return "project", r.URL.Query().Get("channel_id")
+	}
+	return "global", ""
+}
+
 // validatePlaygroundPath validates a relative file path within a playground directory,
 // preventing path traversal. Unlike validateFilePath, it does not require the target
 // directory to exist (playground dirs are created on demand by the server).
@@ -129,6 +138,7 @@ func (s *Server) handlePlaygroundUpdate(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	content.Name = name
+	content.Scope, content.ChannelID = playgroundScopeFromRequest(r)
 	if err := os.MkdirAll(pgDir, 0o755); err != nil {
 		http.Error(w, "creating playground dir: "+err.Error(), http.StatusInternalServerError)
 		return
@@ -176,12 +186,15 @@ func (s *Server) handlePlaygroundGet(w http.ResponseWriter, r *http.Request) {
 	}
 
 	title, body := parseReadme(readme)
+	scope, channelID := playgroundScopeFromRequest(r)
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(playgroundContent{ //nolint:errcheck
 		Name:        name,
 		Title:       title,
 		HTML:        string(html),
 		Description: body,
+		Scope:       scope,
+		ChannelID:   channelID,
 	})
 }
 
@@ -434,10 +447,11 @@ func (s *Server) handlePlaygroundDelete(w http.ResponseWriter, r *http.Request) 
 	}
 
 	if s.eventsHub != nil {
+		scope, channelID := playgroundScopeFromRequest(r)
 		s.eventsHub.Broadcast(Event{
 			Type:   EventPlaygroundUpdate,
 			Global: true,
-			Data:   map[string]string{"name": name, "deleted": "true"},
+			Data:   map[string]string{"name": name, "deleted": "true", "scope": scope, "channel_id": channelID},
 		})
 	}
 
@@ -476,10 +490,11 @@ func (s *Server) handlePlaygroundFileWrite(w http.ResponseWriter, r *http.Reques
 	}
 
 	if s.eventsHub != nil {
+		scope, channelID := playgroundScopeFromRequest(r)
 		s.eventsHub.Broadcast(Event{
 			Type:   EventPlaygroundUpdate,
 			Global: true,
-			Data:   map[string]string{"name": name},
+			Data:   map[string]string{"name": name, "scope": scope, "channel_id": channelID},
 		})
 	}
 
@@ -528,10 +543,11 @@ func (s *Server) handlePlaygroundFileDelete(w http.ResponseWriter, r *http.Reque
 	}
 
 	if s.eventsHub != nil {
+		scope, channelID := playgroundScopeFromRequest(r)
 		s.eventsHub.Broadcast(Event{
 			Type:   EventPlaygroundUpdate,
 			Global: true,
-			Data:   map[string]string{"name": name},
+			Data:   map[string]string{"name": name, "scope": scope, "channel_id": channelID},
 		})
 	}
 
