@@ -305,7 +305,7 @@ interface ChatViewProps {
 }
 
 export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComplete }: ChatViewProps) {
-  const { colors } = useTheme();
+  const { colors, fontSizes } = useTheme();
   const styles = buildStyles(colors);
   const { messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, completionInfo, triggerContent } = chatState;
   const dismissCards = useCallback(() => { chatState.clearAskUser(); chatState.clearExitPlan(); }, [chatState]);
@@ -394,7 +394,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
   // Empty state: centered welcome + full-width input at bottom
   if (isEmpty) {
     return (
-      <div style={styles.container}>
+      <div style={{ ...styles.container, zoom: fontSizes.chat / 13 }}>
         <div style={styles.welcome}>
           <WelcomeScreen />
         </div>
@@ -414,7 +414,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
   }
 
   return (
-    <div style={styles.container}>
+    <div style={{ ...styles.container, zoom: fontSizes.chat / 13 }}>
       <div ref={containerRef} style={styles.messages} onScroll={handleScroll}>
         <div style={styles.messageColumn}>
           {hasMore && (

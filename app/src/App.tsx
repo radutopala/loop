@@ -39,7 +39,7 @@ export default function App() {
   if (!settings) return null;
 
   return (
-    <ThemeProvider initialTheme={settings.theme}>
+    <ThemeProvider initialTheme={settings.theme} initialFontSizes={settings.fontSizes}>
       <AppInner />
     </ThemeProvider>
   );

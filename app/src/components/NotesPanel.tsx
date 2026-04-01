@@ -20,7 +20,7 @@ interface NotesPanelProps {
 }
 
 export function NotesPanel({ channelId }: NotesPanelProps) {
-  const { colors } = useTheme();
+  const { colors, fontSizes } = useTheme();
   const editorRef = useRef<HTMLDivElement>(null);
   const previewRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
@@ -87,7 +87,7 @@ export function NotesPanel({ channelId }: NotesPanelProps) {
           state: EditorState.create({
             doc: initialContent,
             extensions: [
-              themeComp.current.of(buildEditorTheme(colors)),
+              themeComp.current.of(buildEditorTheme(colors, fontSizes.panels)),
               markdown(),
               EditorView.lineWrapping,
               history(),
@@ -151,9 +151,9 @@ export function NotesPanel({ channelId }: NotesPanelProps) {
   useEffect(() => {
     if (!viewRef.current) return;
     viewRef.current.dispatch({
-      effects: themeComp.current.reconfigure(buildEditorTheme(colors)),
+      effects: themeComp.current.reconfigure(buildEditorTheme(colors, fontSizes.panels)),
     });
-  }, [colors]);
+  }, [colors, fontSizes.panels]);
 
   const statusLabel = saveStatus === "saving" ? "Saving..."
     : saveStatus === "saved" ? "Saved"
@@ -162,7 +162,7 @@ export function NotesPanel({ channelId }: NotesPanelProps) {
     : "";
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar }}>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12 }}>
       <div style={{
         height: 22,
         display: "flex",

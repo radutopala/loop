@@ -1,11 +1,29 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
 import { builtinThemes, darkColors, type ColorPalette } from "./theme";
 
+export interface FontSizes {
+  sidebar: number;
+  chat: number;
+  terminal: number;
+  editor: number;
+  panels: number;
+}
+
+export const DEFAULT_FONT_SIZES: FontSizes = {
+  sidebar: 12,
+  chat: 13,
+  terminal: 13,
+  editor: 13,
+  panels: 12,
+};
+
 interface ThemeContextValue {
   themeName: string;
   colors: ColorPalette;
   setThemeName: (name: string) => void;
   availableThemes: string[];
+  fontSizes: FontSizes;
+  setFontSizes: (sizes: FontSizes) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
@@ -13,11 +31,14 @@ const ThemeContext = createContext<ThemeContextValue>({
   colors: darkColors,
   setThemeName: () => {},
   availableThemes: ["dark", "light"],
+  fontSizes: DEFAULT_FONT_SIZES,
+  setFontSizes: () => {},
 });
 
-export function ThemeProvider({ children, initialTheme, customThemes }: {
+export function ThemeProvider({ children, initialTheme, initialFontSizes, customThemes }: {
   children: ReactNode;
   initialTheme?: string;
+  initialFontSizes?: Partial<FontSizes>;
   customThemes?: Record<string, ColorPalette>;
 }) {
   const allThemes = { ...builtinThemes, ...customThemes };
@@ -27,6 +48,8 @@ export function ThemeProvider({ children, initialTheme, customThemes }: {
     initialTheme && allThemes[initialTheme] ? initialTheme : "dark"
   );
   const colors = allThemes[themeName] ?? darkColors;
+
+  const [fontSizes, setFontSizes] = useState<FontSizes>({ ...DEFAULT_FONT_SIZES, ...initialFontSizes });
 
   // Wrap setThemeName to also persist to localStorage
   const setThemeName = (name: string) => {
@@ -68,7 +91,7 @@ export function ThemeProvider({ children, initialTheme, customThemes }: {
   }, [themeName, colors]);
 
   return (
-    <ThemeContext.Provider value={{ themeName, colors, setThemeName, availableThemes }}>
+    <ThemeContext.Provider value={{ themeName, colors, setThemeName, availableThemes, fontSizes, setFontSizes }}>
       {children}
     </ThemeContext.Provider>
   );

@@ -136,7 +136,7 @@ function parsePathKey(key: string): { rootIndex: number; relativePath: string } 
 }
 
 export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageKey, ...panelProps }: EditorPanelProps) {
-  const { colors } = useTheme();
+  const { colors, fontSizes } = useTheme();
   const tabsKey = tabsStorageKey ?? EDITOR_TABS_KEY;
   const [roots, setRoots] = useState<RootEntry[]>([]);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set([makePathKey(0, "")]));
@@ -633,7 +633,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
       foldGutter(),
       history(),
       search({ top: true }),
-      themeCompartment.current.of(buildEditorTheme(colors)),
+      themeCompartment.current.of(buildEditorTheme(colors, fontSizes.editor)),
       keymap.of([
         ...defaultKeymap,
         ...historyKeymap,
@@ -702,10 +702,10 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   useEffect(() => {
     if (viewRef.current) {
       viewRef.current.dispatch({
-        effects: themeCompartment.current.reconfigure(buildEditorTheme(colors)),
+        effects: themeCompartment.current.reconfigure(buildEditorTheme(colors, fontSizes.editor)),
       });
     }
-  }, [colors]);
+  }, [colors, fontSizes.editor]);
 
   // Cmd+S keyboard shortcut — immediate save.
   useEffect(() => {

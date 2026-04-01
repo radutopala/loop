@@ -53,7 +53,7 @@ interface ContainersPanelProps {
 }
 
 export const ContainersPanel = forwardRef<ContainersPanelHandle, ContainersPanelProps>(function ContainersPanel({ sidebarOpen, onToggleSidebar, onOpenPalette, onClose }, ref) {
-  const { colors } = useTheme();
+  const { colors, fontSizes } = useTheme();
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
   const containersRef = useRef(containers);
   containersRef.current = containers;
@@ -136,6 +136,7 @@ export const ContainersPanel = forwardRef<ContainersPanelHandle, ContainersPanel
       style={{
         flex: 1,
         backgroundColor: colors.sidebar,
+        zoom: fontSizes.panels / 12,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",

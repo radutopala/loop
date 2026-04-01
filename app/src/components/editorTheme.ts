@@ -5,7 +5,7 @@ import { type ColorPalette, fonts } from "../theme";
 
 // Build CodeMirror editor theme + syntax highlighting from the active palette.
 // Dark values match GoLand Darcula; light values match JetBrains IntelliJ Light.
-export function buildEditorTheme(palette: ColorPalette) {
+export function buildEditorTheme(palette: ColorPalette, editorFontSize?: number) {
   const isDark = palette.isDark;
 
   // --- chrome / UI colors ---
@@ -36,7 +36,7 @@ export function buildEditorTheme(palette: ColorPalette) {
     "&": {
       backgroundColor: palette.sidebar,
       color: textColor,
-      fontSize: "13px",
+      fontSize: `${editorFontSize ?? 13}px`,
       fontFamily: "'JetBrains Mono', " + fonts.mono,
     },
     ".cm-content": {

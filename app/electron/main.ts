@@ -101,6 +101,13 @@ interface Settings {
   autoSaveOnBlur: boolean;
   previewTabs: boolean;
   theme?: string;
+  fontSizes?: {
+    sidebar?: number;
+    chat?: number;
+    terminal?: number;
+    editor?: number;
+    panels?: number;
+  };
 }
 
 const defaultSettings: Settings = {
@@ -591,7 +598,9 @@ function setupAutoUpdater() {
 
 app.on("ready", async () => {
   buildMenu();
-  await ensureDaemon();
+  if (!VITE_DEV_SERVER_URL) {
+    await ensureDaemon();
+  }
   createWindow(pendingChannelId || undefined);
   pendingChannelId = null;
 

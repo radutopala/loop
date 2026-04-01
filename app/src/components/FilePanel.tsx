@@ -59,7 +59,7 @@ interface FilePanelProps {
 }
 
 export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPadding, embedded, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose, children }: FilePanelProps) {
-  const { colors } = useTheme();
+  const { colors, fontSizes } = useTheme();
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
 
@@ -75,7 +75,7 @@ export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPa
 
   if (embedded) {
     return (
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12 }}>
         <div style={{ flex: 1, overflow: "auto", padding: noPadding ? 0 : "12px 16px" }}>
           {children}
         </div>
@@ -120,6 +120,7 @@ export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPa
         flex: maximized ? 1 : undefined,
         flexShrink: maximized ? undefined : 1,
         backgroundColor: colors.sidebar,
+        zoom: fontSizes.panels / 12,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",

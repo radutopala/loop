@@ -87,7 +87,7 @@ interface MemoryPanelProps {
 }
 
 export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFile, ...panelProps }: MemoryPanelProps) {
-  const { colors } = useTheme();
+  const { colors, fontSizes } = useTheme();
   const [files, setFiles] = useState<MemoryFileInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -329,7 +329,7 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
       history(),
       search({ top: true }),
       markdown(),
-      themeCompartment.current.of(buildEditorTheme(colors)),
+      themeCompartment.current.of(buildEditorTheme(colors, fontSizes.panels)),
       keymap.of([
         ...defaultKeymap,
         ...historyKeymap,
@@ -384,10 +384,10 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
   useEffect(() => {
     if (viewRef.current) {
       viewRef.current.dispatch({
-        effects: themeCompartment.current.reconfigure(buildEditorTheme(colors)),
+        effects: themeCompartment.current.reconfigure(buildEditorTheme(colors, fontSizes.panels)),
       });
     }
-  }, [colors]);
+  }, [colors, fontSizes.panels]);
 
   // Cmd+S keyboard shortcut.
   useEffect(() => {

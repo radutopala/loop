@@ -30,7 +30,7 @@ interface TerminalProps {
 }
 
 export function Terminal({ channelId, target = "agent", instanceId, claudeSessionId, hideActions, killSignal, onStatusChange, onPaneStatus, onSessionEnd }: TerminalProps) {
-  const { colors } = useTheme();
+  const { colors, fontSizes } = useTheme();
   const terminalRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<SessionStatus>("connecting");
   const { elapsed, start, stop, reset } = useElapsedTimer();
@@ -112,6 +112,7 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
   const { write, xtermRef } = useXTerminal({
     containerRef: terminalRef,
     colors,
+    fontSize: fontSizes.terminal,
     onInput: sendInput,
     onResize: sendResize,
   });

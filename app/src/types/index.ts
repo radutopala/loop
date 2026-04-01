@@ -188,6 +188,13 @@ export interface AppSettings {
   autoSaveOnBlur: boolean;
   previewTabs: boolean;
   theme?: string;
+  fontSizes?: {
+    sidebar?: number;
+    chat?: number;
+    terminal?: number;
+    editor?: number;
+    panels?: number;
+  };
 }
 
 export interface DaemonInfo {

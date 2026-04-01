@@ -4,7 +4,7 @@ import { getImageStatus } from "../api/loopApi";
 import { fetchConfigSchema, fetchGlobalConfig, saveGlobalConfig, fetchProjectConfig, saveProjectConfig, type ConfigSchema, type ConfigResponse } from "../api/configApi";
 import { fonts, builtinThemes } from "../theme";
 import type { ColorPalette } from "../theme";
-import { useTheme } from "../ThemeContext";
+import { useTheme, DEFAULT_FONT_SIZES, type FontSizes } from "../ThemeContext";
 import { ConfigForm } from "./ConfigForm";
 
 function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
@@ -37,7 +37,7 @@ interface SettingsProps {
 }
 
 export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggleSidebar, onOpenPalette, onClose, onDaemonRestarted, imageBuildStatus, imageUpdateAvailable, onRebuildImage, onConfigDirtyChange }: SettingsProps) {
-  const { colors, themeName, setThemeName, availableThemes } = useTheme();
+  const { colors, themeName, setThemeName, availableThemes, fontSizes, setFontSizes } = useTheme();
   const [settings, setSettings] = useState<AppSettings>({ stopDaemonOnQuit: false, autoSaveOnBlur: true, previewTabs: true });
   const [daemonInfo, setDaemonInfo] = useState<DaemonInfo | null>(null);
   const [restarting, setRestarting] = useState(false);
@@ -554,6 +554,75 @@ export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggl
                   );
                 })}
               </div>
+            </div>
+
+            <div style={{
+              padding: "10px 12px",
+              backgroundColor: colors.bg,
+              borderRadius: 8,
+              marginTop: 8,
+            }}>
+              <div style={{ fontSize: 13, color: colors.text, marginBottom: 8 }}>Font Sizes</div>
+              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                {([
+                  ["sidebar", "Sidebar"],
+                  ["chat", "Chat"],
+                  ["terminal", "Terminal"],
+                  ["editor", "Editor"],
+                  ["panels", "Panels"],
+                ] as [keyof FontSizes, string][]).map(([key, label]) => (
+                  <div key={key} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontSize: 12, color: colors.textMuted, width: 60 }}>{label}</span>
+                    <button
+                      onClick={() => {
+                        const updated = { ...fontSizes, [key]: Math.max(10, fontSizes[key] - 1) };
+                        setFontSizes(updated);
+                        const s = { ...settings, fontSizes: updated };
+                        setSettings(s);
+                        window.loopAPI?.saveSettings?.(s);
+                      }}
+                      style={{
+                        width: 24, height: 24, border: `1px solid ${colors.border}`, borderRadius: 4,
+                        backgroundColor: colors.surface, color: colors.text, cursor: "pointer",
+                        display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit",
+                        fontSize: 14, lineHeight: 1, padding: 0,
+                      }}
+                    >−</button>
+                    <span style={{ fontSize: 12, color: colors.text, fontFamily: fonts.mono, minWidth: 32, textAlign: "center" }}>
+                      {fontSizes[key]}px
+                    </span>
+                    <button
+                      onClick={() => {
+                        const updated = { ...fontSizes, [key]: Math.min(24, fontSizes[key] + 1) };
+                        setFontSizes(updated);
+                        const s = { ...settings, fontSizes: updated };
+                        setSettings(s);
+                        window.loopAPI?.saveSettings?.(s);
+                      }}
+                      style={{
+                        width: 24, height: 24, border: `1px solid ${colors.border}`, borderRadius: 4,
+                        backgroundColor: colors.surface, color: colors.text, cursor: "pointer",
+                        display: "flex", alignItems: "center", justifyContent: "center", fontFamily: "inherit",
+                        fontSize: 14, lineHeight: 1, padding: 0,
+                      }}
+                    >+</button>
+                  </div>
+                ))}
+              </div>
+              {JSON.stringify(fontSizes) !== JSON.stringify(DEFAULT_FONT_SIZES) && (
+                <button
+                  onClick={() => {
+                    setFontSizes({ ...DEFAULT_FONT_SIZES });
+                    const s = { ...settings, fontSizes: undefined };
+                    setSettings(s);
+                    window.loopAPI?.saveSettings?.(s);
+                  }}
+                  style={{
+                    marginTop: 8, background: "none", border: `1px solid ${colors.border}`, borderRadius: 4,
+                    color: colors.textMuted, cursor: "pointer", padding: "3px 8px", fontSize: 11, fontFamily: "inherit",
+                  }}
+                >Reset to defaults</button>
+              )}
             </div>
 
             {/* Global config */}

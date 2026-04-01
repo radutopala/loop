@@ -169,7 +169,7 @@ export function Sidebar({
   imageUpdateAvailable,
   onRebuildImage,
 }: SidebarProps) {
-  const { colors } = useTheme();
+  const { colors, fontSizes } = useTheme();
   const [width, setWidth] = useState(DEFAULT_WIDTH);
   const [resizing, setResizing] = useState(false);
   const [contextMenu, setContextMenu] = useState<ContextMenuState | null>(null);
@@ -376,6 +376,7 @@ export function Sidebar({
         flexDirection: "column",
         overflow: "auto",
         position: "relative",
+        zoom: fontSizes.sidebar / 12,
         // Prevent text selection while dragging
         userSelect: resizing ? "none" : undefined,
       }}

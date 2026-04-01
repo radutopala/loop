@@ -31,6 +31,7 @@ function buildXTermTheme(colors: ColorPalette) {
 interface UseXTerminalOptions {
   containerRef: RefObject<HTMLDivElement | null>;
   colors: ColorPalette;
+  fontSize?: number;
   onInput: (data: string) => void;
   onResize: (cols: number, rows: number) => void;
 }
@@ -43,10 +44,12 @@ interface UseXTerminalOptions {
 export function useXTerminal({
   containerRef,
   colors,
+  fontSize: termFontSize,
   onInput,
   onResize,
 }: UseXTerminalOptions) {
   const xtermRef = useRef<import("@xterm/xterm").Terminal | null>(null);
+  const fitAddonRef = useRef<import("@xterm/addon-fit").FitAddon | null>(null);
 
   const write = useCallback((data: Uint8Array | string) => {
     const term = xtermRef.current;
@@ -78,12 +81,13 @@ export function useXTerminal({
 
       const term = new XTerm({
         cursorBlink: true,
-        fontSize: 13,
+        fontSize: termFontSize ?? 13,
         fontFamily: fonts.mono,
         theme: buildXTermTheme(colors),
       });
 
       const fitAddon = new FitAddon();
+      fitAddonRef.current = fitAddon;
       term.loadAddon(fitAddon);
       term.loadAddon(new WebLinksAddon());
 
@@ -170,6 +174,14 @@ export function useXTerminal({
       xtermRef.current.options.theme = buildXTermTheme(colors);
     }
   }, [colors]);
+
+  // Update xterm font size at runtime.
+  useEffect(() => {
+    if (xtermRef.current && termFontSize != null) {
+      xtermRef.current.options.fontSize = termFontSize;
+      fitAddonRef.current?.fit();
+    }
+  }, [termFontSize]);
 
   return { write, clear, xtermRef };
 }

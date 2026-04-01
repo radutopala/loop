@@ -266,7 +266,7 @@ function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
 }
 
 export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, tabBar, embedded, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose }: GitPanelProps) {
-  const { colors } = useTheme();
+  const { colors, fontSizes } = useTheme();
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
   const [data, setData] = useState<DiffResponse | null>(null);
@@ -820,7 +820,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
 
   if (embedded) {
     return (
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12 }}>
         {diffToolbar}
         {diffMode === "commits" ? commitsContent : diffContent}
         {fileContextMenu && (
@@ -848,6 +848,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
         flex: maximized ? 1 : undefined,
         flexShrink: maximized ? undefined : 1,
         backgroundColor: colors.sidebar,
+        zoom: fontSizes.panels / 12,
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",

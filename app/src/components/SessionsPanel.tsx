@@ -20,7 +20,7 @@ function timeAgo(dateStr: string): string {
 }
 
 export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps) {
-  const { colors } = useTheme();
+  const { colors, fontSizes } = useTheme();
   const [sessions, setSessions] = useState<SessionEntry[]>([]);
   const [currentSessionId, setCurrentSessionId] = useState("");
   const [importedIds, setImportedIds] = useState<Set<string>>(new Set());
@@ -161,7 +161,7 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
   };
 
   return (
-    <div style={{ display: "flex", flex: 1, height: "100%", overflow: "hidden" }}>
+    <div style={{ display: "flex", flex: 1, height: "100%", overflow: "hidden", zoom: fontSizes.panels / 12 }}>
       {/* Left: session list */}
       <div
         style={{

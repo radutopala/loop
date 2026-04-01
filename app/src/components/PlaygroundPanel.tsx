@@ -26,7 +26,7 @@ function playgroundSelectionKey(name: string, scope: "global" | "project"): stri
 }
 
 export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
-  const { colors } = useTheme();
+  const { colors, fontSizes } = useTheme();
   const iframeRef = useRef<HTMLIFrameElement>(null);
   const [iframeVersion, setIframeVersion] = useState(0);
   const [code, setCode] = useState<PlaygroundCode>({ html: "" });
@@ -155,7 +155,7 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
   }
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", backgroundColor: colors.bg, overflow: "hidden" }}>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", backgroundColor: colors.bg, overflow: "hidden", zoom: fontSizes.panels / 12 }}>
       {/* Toolbar */}
       <div
         style={{
