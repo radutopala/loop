@@ -183,6 +183,10 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *bot.Inc
 
 	resp, lastStreamedText, err := o.executeAgentRun(ctx, msg, req)
 	if err != nil {
+		// Mark the trigger message as processed even on error/stop so the
+		// frontend doesn't keep showing it as "processing" when the next
+		// queued message starts.
+		o.markTriggerProcessed(ctx, msg, recent)
 		return
 	}
 
@@ -403,6 +407,38 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 			NumTurns:   resp.NumTurns,
 			StopReason: resp.StopReason,
 			Model:      resp.Model,
+		})
+	}
+}
+
+// markTriggerProcessed marks the trigger message (and any earlier unprocessed
+// messages) as processed after a failed/stopped run so the frontend doesn't
+// keep showing it as "processing" when the next queued message starts.
+func (o *Orchestrator) markTriggerProcessed(ctx context.Context, msg *bot.IncomingMessage, recent []*db.Message) {
+	if len(recent) == 0 {
+		return
+	}
+	toMark := recent
+	for i, m := range recent {
+		if m.MsgID == msg.MessageID {
+			toMark = recent[i:]
+			break
+		}
+	}
+	ids := make([]int64, len(toMark))
+	msgIDs := make([]string, 0, len(toMark))
+	for i, m := range toMark {
+		ids[i] = m.ID
+		if m.MsgID != "" {
+			msgIDs = append(msgIDs, m.MsgID)
+		}
+	}
+	if err := o.store.MarkMessagesProcessed(ctx, ids); err != nil {
+		o.logger.Error("marking trigger messages processed after error", "error", err, "channel_id", msg.ChannelID)
+	}
+	if o.events != nil && len(msgIDs) > 0 {
+		o.events.BroadcastMessagesProcessed(msg.ChannelID, events.MessagesProcessedData{
+			MsgIDs: msgIDs,
 		})
 	}
 }

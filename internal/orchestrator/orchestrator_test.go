@@ -1097,6 +1097,49 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredErrors() {
 			assertFn: func() { s.bot.AssertExpectations(s.T()) },
 		},
 		{
+			name: "runner error marks trigger processed",
+			setupMock: func() {
+				eb := new(MockEventBroadcaster)
+				s.orch.SetEventBroadcaster(eb)
+				s.setupTriggeredBase()
+				s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{
+					{ID: 10, MsgID: "msg0", Content: "earlier"},
+					{ID: 11, MsgID: "msg1", Content: "hello"},
+				}, nil)
+				s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("runner err"))
+				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+					return out.Content == "Sorry, I encountered an error processing your request."
+				})).Return(nil)
+				// markTriggerProcessed should mark from trigger msg onward.
+				s.store.On("MarkMessagesProcessed", s.ctx, []int64{11}).Return(nil)
+				eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return().Maybe()
+				eb.On("BroadcastAgentStatus", "ch1", mock.Anything).Return().Maybe()
+				eb.On("BroadcastMessagesProcessed", "ch1", events.MessagesProcessedData{
+					MsgIDs: []string{"msg1"},
+				}).Return()
+			},
+			assertFn: func() {
+				s.store.AssertExpectations(s.T())
+			},
+		},
+		{
+			name: "runner error mark processed db error",
+			setupMock: func() {
+				s.setupTriggeredBase()
+				s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{
+					{ID: 11, MsgID: "msg1", Content: "hello"},
+				}, nil)
+				s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("runner err"))
+				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+					return out.Content == "Sorry, I encountered an error processing your request."
+				})).Return(nil)
+				s.store.On("MarkMessagesProcessed", s.ctx, []int64{11}).Return(errors.New("db err"))
+			},
+			assertFn: func() {
+				s.store.AssertExpectations(s.T())
+			},
+		},
+		{
 			name: "agent response error",
 			setupMock: func() {
 				s.setupTriggeredBase()
