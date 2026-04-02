@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentActivityData, AskUserQuestion, ExitPlanModeData, Message } from "../types";
+import type { AgentActivityData, AskUserQuestion, ExitPlanModeData, Message, TodoItem } from "../types";
 import type { ChatState } from "../hooks/useChatState";
 import { sendCommand, sendMessage } from "../api/loopApi";
 import { fonts } from "../theme";
@@ -307,7 +307,7 @@ interface ChatViewProps {
 export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComplete }: ChatViewProps) {
   const { colors, fontSizes } = useTheme();
   const styles = buildStyles(colors);
-  const { messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, completionInfo, triggerContent } = chatState;
+  const { messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, todos, completionInfo, triggerContent } = chatState;
   const dismissCards = useCallback(() => { chatState.clearAskUser(); chatState.clearExitPlan(); }, [chatState]);
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -319,7 +319,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
     if (autoScrollRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages, streamingContent, toolActivity, agentActivity, askUserQuestions, exitPlanRequest]);
+  }, [messages, streamingContent, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, todos]);
 
   // Scroll to a specific message (from search) and highlight it.
   useEffect(() => {
@@ -455,6 +455,9 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
           <div ref={bottomRef} />
         </div>
       </div>
+      {todos && (
+        <TodoChecklist todos={todos.todos} />
+      )}
       <div style={styles.inputBar}>
         <ChatInput channelId={channelId} messages={messages} isRunning={isRunning} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} />
       </div>
@@ -661,6 +664,50 @@ function ToolActivityIndicator({ toolName, input }: { toolName: string; input: s
       <span style={{ opacity: 0.5 }}>&#9881;</span>
       <span style={{ color: colors.textMuted, fontWeight: 500 }}>{toolName}</span>
       {summary && <span style={{ opacity: 0.7 }}>{summary}</span>}
+    </div>
+  );
+}
+
+function TodoChecklist({ todos }: { todos: TodoItem[] }) {
+  const { colors } = useTheme();
+  const completed = todos.filter((t) => t.status === "completed").length;
+  return (
+    <div style={{ display: "flex", justifyContent: "center", padding: "4px 24px 0" }}>
+      <div style={{
+        width: "100%",
+        maxWidth: 768,
+        padding: "8px 14px",
+        borderRadius: 8,
+        border: `1px solid ${colors.border}`,
+        backgroundColor: colors.surface,
+        fontSize: 12,
+        fontFamily: fonts.mono,
+      }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: colors.active, textTransform: "uppercase" as const, letterSpacing: 1, marginBottom: 4 }}>
+          Progress {completed}/{todos.length}
+        </div>
+        {todos.map((todo, i) => (
+          <div key={i} style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "2px 0",
+            color: todo.status === "pending" ? colors.textDim
+                 : todo.status === "in_progress" ? colors.active
+                 : colors.text,
+          }}>
+            <span style={{ fontSize: 14, lineHeight: 1 }}>
+              {todo.status === "completed" ? "\u2611" : "\u2610"}
+            </span>
+            <span style={{
+              textDecoration: todo.status === "completed" ? "line-through" : "none",
+              opacity: todo.status === "pending" ? 0.6 : 1,
+            }}>
+              {todo.status === "in_progress" ? todo.activeForm : todo.content}
+            </span>
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

@@ -178,6 +178,10 @@ func (m *MockEventBroadcaster) BroadcastExitPlan(channelID string, data events.E
 	m.Called(channelID, data)
 }
 
+func (m *MockEventBroadcaster) BroadcastTodoWrite(channelID string, data events.TodoWriteEventData) {
+	m.Called(channelID, data)
+}
+
 func (m *MockEventBroadcaster) BroadcastChannelCreated(parentChannelID, channelID string) {
 	m.Called(parentChannelID, channelID)
 }
@@ -3620,6 +3624,49 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
 	s.orch.HandleMessage(s.ctx, msg)
 
 	eb.AssertCalled(s.T(), "BroadcastExitPlan", "ch1", mock.Anything)
+	eb.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleMessageStreamingTodoWrite() {
+	s.orch.cfg.StreamingEnabled = true
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+
+	msg := &bot.IncomingMessage{
+		ChannelID: "ch1", GuildID: "g1", AuthorID: "user1", AuthorName: "Alice",
+		Content: "do tasks", MessageID: "msg-todo", IsBotMention: true, Timestamp: time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+
+	todoInput := `{"todos":[{"content":"Fix bug","status":"in_progress","activeForm":"Fixing bug"}]}`
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnToolUse == nil {
+			return false
+		}
+		req.OnToolUse("TodoWrite", todoInput)
+		req.OnTurn("done")
+		return true
+	})).Return(&agent.AgentResponse{Response: "done", SessionID: "sess-todo"}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-todo").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.Anything).Return()
+	eb.On("BroadcastToolUse", "ch1", mock.Anything).Once()
+	eb.On("BroadcastTodoWrite", "ch1", mock.MatchedBy(func(d events.TodoWriteEventData) bool {
+		return len(d.Todos) == 1 && d.Todos[0].Content == "Fix bug"
+	})).Once()
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	eb.AssertCalled(s.T(), "BroadcastTodoWrite", "ch1", mock.Anything)
 	eb.AssertExpectations(s.T())
 }
 

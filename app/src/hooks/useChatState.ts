@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentActivityData, AgentStatusData, AskUserQuestionData, ExitPlanModeData, Message, MessageCreatedData, MessagesProcessedData, MessageStreamingData, ToolUseData, WSEvent } from "../types";
+import type { AgentActivityData, AgentStatusData, AskUserQuestionData, ExitPlanModeData, Message, MessageCreatedData, MessagesProcessedData, MessageStreamingData, TodoWriteData, ToolUseData, WSEvent } from "../types";
 import type { ActiveChatState, ChatEventListener } from "./useChatStateStore";
 import { useMessages } from "./useMessages";
 
@@ -15,6 +15,7 @@ export interface ChatState {
   agentActivity: AgentActivityData | null;
   askUserQuestions: AskUserQuestionData | null;
   exitPlanRequest: ExitPlanModeData | null;
+  todos: TodoWriteData | null;
   clearAskUser: () => void;
   clearExitPlan: () => void;
   mode: "agent" | "plan";
@@ -59,6 +60,7 @@ export function useChatState(
   const [agentActivity, setAgentActivity] = useState<AgentActivityData | null>(initialState?.agentActivity ?? null);
   const [askUserQuestions, setAskUserQuestions] = useState<AskUserQuestionData | null>(initialState?.askUserQuestions ?? null);
   const [exitPlanRequest, setExitPlanRequest] = useState<ExitPlanModeData | null>(initialState?.exitPlanRequest ?? null);
+  const [todos, setTodos] = useState<TodoWriteData | null>(initialState?.todos ?? null);
   const [mode, setMode] = useState<"agent" | "plan">(initialState?.mode ?? "agent");
   const [completionInfo, setCompletionInfo] = useState<{ duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null>(initialState?.completionInfo ?? null);
   const [triggerContent, setTriggerContent] = useState<string | null>(initialState?.triggerContent ?? null);
@@ -76,6 +78,8 @@ export function useChatState(
   askRef.current = askUserQuestions;
   const exitRef = useRef(exitPlanRequest);
   exitRef.current = exitPlanRequest;
+  const todosRef = useRef(todos);
+  todosRef.current = todos;
   const modeRef = useRef(mode);
   modeRef.current = mode;
   const completionRef = useRef(completionInfo);
@@ -96,6 +100,7 @@ export function useChatState(
         agentActivity: agentRef.current,
         askUserQuestions: askRef.current,
         exitPlanRequest: exitRef.current,
+        todos: todosRef.current,
         mode: modeRef.current,
         completionInfo: completionRef.current,
         triggerContent: triggerRef.current,
@@ -137,6 +142,8 @@ export function useChatState(
       if (event.type === "tool.use") {
         const data = event.data as ToolUseData;
         setToolActivity({ tool_name: data.tool_name, input: data.input });
+        if (data.tool_name === "EnterPlanMode") setMode("plan");
+        if (data.tool_name === "ExitPlanMode") setMode("agent");
         return;
       }
       if (event.type === "agent.activity") {
@@ -154,6 +161,11 @@ export function useChatState(
         setExitPlanRequest(data);
         return;
       }
+      if (event.type === "agent.todos") {
+        const data = event.data as TodoWriteData;
+        setTodos(data);
+        return;
+      }
       if (event.type === "agent.status") {
         const data = event.data as AgentStatusData;
         if (data.status === "running") {
@@ -167,6 +179,8 @@ export function useChatState(
           setToolActivity(null);
           setAgentActivity(null);
           setTriggerContent(null);
+          // Clear todos only if all are completed; otherwise persist so the user sees remaining work.
+          setTodos((prev) => prev && prev.todos.every((t) => t.status === "completed") ? null : prev);
           // Don't clear askUserQuestions/exitPlanRequest on stop — they persist
           // until the user submits answers or approves the plan.
           if (data.status === "completed" && (data.duration_ms || data.stop_reason)) {
@@ -206,6 +220,7 @@ export function useChatState(
     agentActivity,
     askUserQuestions,
     exitPlanRequest,
+    todos,
     clearAskUser: useCallback(() => setAskUserQuestions(null), []),
     clearExitPlan: useCallback(() => setExitPlanRequest(null), []),
     mode,

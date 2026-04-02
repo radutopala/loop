@@ -276,6 +276,12 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 						o.events.BroadcastExitPlan(msg.ChannelID, data)
 					}
 				}
+				if name == "TodoWrite" {
+					var data events.TodoWriteEventData
+					if err := json.Unmarshal([]byte(input), &data); err == nil && len(data.Todos) > 0 {
+						o.events.BroadcastTodoWrite(msg.ChannelID, data)
+					}
+				}
 			}
 			req.OnActivity = func(activity, detail string) {
 				data := events.AgentActivityEventData{Activity: activity}

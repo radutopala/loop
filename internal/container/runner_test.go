@@ -2389,6 +2389,7 @@ func TestSummarizeToolInput(t *testing.T) {
 		{"long fallback truncated", "WebSearch", `{"query":"` + strings.Repeat("y", 200) + `"}`, strings.Repeat("y", 120) + "..."},
 		{"AskUserQuestion raw", "AskUserQuestion", `{"questions":[{"question":"What?"}]}`, `{"questions":[{"question":"What?"}]}`},
 		{"ExitPlanMode raw", "ExitPlanMode", `{"plan":"# My Plan","planFilePath":"/tmp/p.md"}`, `{"plan":"# My Plan","planFilePath":"/tmp/p.md"}`},
+		{"TodoWrite raw", "TodoWrite", `{"todos":[{"content":"Do thing","status":"pending","activeForm":"Doing thing"}]}`, `{"todos":[{"content":"Do thing","status":"pending","activeForm":"Doing thing"}]}`},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {

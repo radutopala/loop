@@ -9,6 +9,7 @@ type Broadcaster interface {
 	BroadcastAgentActivity(channelID string, data AgentActivityEventData)
 	BroadcastAskUser(channelID string, data AskUserQuestionEventData)
 	BroadcastExitPlan(channelID string, data ExitPlanModeEventData)
+	BroadcastTodoWrite(channelID string, data TodoWriteEventData)
 	BroadcastMessagesProcessed(channelID string, data MessagesProcessedData)
 	BroadcastChannelCreated(parentChannelID, channelID string)
 	BroadcastChannelDeleted(channelID string)
@@ -74,6 +75,18 @@ type AskUserQuestionEventData struct {
 type ExitPlanModeEventData struct {
 	Plan         string `json:"plan"`
 	PlanFilePath string `json:"planFilePath,omitempty"`
+}
+
+// TodoItem represents a single todo item from Claude's TodoWrite tool.
+type TodoItem struct {
+	Content    string `json:"content"`
+	Status     string `json:"status"`     // "completed", "in_progress", "pending"
+	ActiveForm string `json:"activeForm"` // present-continuous form shown during execution
+}
+
+// TodoWriteEventData is the payload for agent.todos events.
+type TodoWriteEventData struct {
+	Todos []TodoItem `json:"todos"`
 }
 
 // AskUserQuestion represents a single question from Claude's AskUserQuestion tool.

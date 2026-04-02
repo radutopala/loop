@@ -6,6 +6,7 @@ import type {
   ExitPlanModeData,
   MessageCreatedData,
   MessageStreamingData,
+  TodoWriteData,
   ToolUseData,
   WSEvent,
 } from "../types";
@@ -19,6 +20,7 @@ export interface ActiveChatState {
   agentActivity: AgentActivityData | null;
   askUserQuestions: AskUserQuestionData | null;
   exitPlanRequest: ExitPlanModeData | null;
+  todos: TodoWriteData | null;
   mode: "agent" | "plan";
   completionInfo: {
     duration_ms?: number;
@@ -281,6 +283,7 @@ function createEmptyState(): ActiveChatState {
     agentActivity: null,
     askUserQuestions: null,
     exitPlanRequest: null,
+    todos: null,
     mode: "agent",
     completionInfo: null,
     triggerContent: null,
@@ -294,6 +297,7 @@ function isRunningEvent(event: WSEvent): boolean {
     "agent.activity",
     "agent.ask_user",
     "agent.exit_plan",
+    "agent.todos",
     "agent.status",
   ].includes(event.type);
 }
@@ -316,6 +320,8 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
     case "tool.use": {
       const data = event.data as ToolUseData;
       state.toolActivity = { tool_name: data.tool_name, input: data.input };
+      if (data.tool_name === "EnterPlanMode") state.mode = "plan";
+      if (data.tool_name === "ExitPlanMode") state.mode = "agent";
       break;
     }
     case "agent.activity": {
@@ -328,6 +334,10 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
     }
     case "agent.exit_plan": {
       state.exitPlanRequest = event.data as ExitPlanModeData;
+      break;
+    }
+    case "agent.todos": {
+      state.todos = event.data as TodoWriteData;
       break;
     }
     case "agent.status": {
@@ -343,6 +353,10 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
         state.toolActivity = null;
         state.agentActivity = null;
         state.triggerContent = null;
+        // Clear todos only if all are completed; otherwise persist so the user sees remaining work.
+        if (state.todos && state.todos.todos.every((t) => t.status === "completed")) {
+          state.todos = null;
+        }
         if (
           data.status === "completed" &&
           (data.duration_ms || data.stop_reason)

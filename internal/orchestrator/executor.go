@@ -200,6 +200,12 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 						e.events.BroadcastExitPlan(targetID, data)
 					}
 				}
+				if name == "TodoWrite" {
+					var data events.TodoWriteEventData
+					if err := json.Unmarshal([]byte(input), &data); err == nil && len(data.Todos) > 0 {
+						e.events.BroadcastTodoWrite(targetID, data)
+					}
+				}
 			}
 			req.OnActivity = func(activity, detail string) {
 				targetID := threadID

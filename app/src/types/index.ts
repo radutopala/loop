@@ -95,6 +95,16 @@ export interface ExitPlanModeData {
   planFilePath?: string;
 }
 
+export interface TodoItem {
+  content: string;
+  status: "completed" | "in_progress" | "pending";
+  activeForm: string;
+}
+
+export interface TodoWriteData {
+  todos: TodoItem[];
+}
+
 // UI-level session status (mapped from server message types).
 export type SessionStatus = "connecting" | "running" | "completed" | "failed";
 

@@ -22,6 +22,7 @@ const (
 	EventAgentActivity             = "agent.activity"
 	EventAskUser                   = "agent.ask_user"
 	EventExitPlan                  = "agent.exit_plan"
+	EventTodoWrite                 = "agent.todos"
 	EventChannelCreated            = "channel.created"
 	EventChannelDeleted            = "channel.deleted"
 	EventAgentInstanceRegistered   = "agent_instance.registered"
@@ -243,6 +244,15 @@ func (h *EventsHub) BroadcastAskUser(channelID string, data events.AskUserQuesti
 func (h *EventsHub) BroadcastExitPlan(channelID string, data events.ExitPlanModeEventData) {
 	h.Broadcast(Event{
 		Type:      EventExitPlan,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastTodoWrite sends an agent.todos event with the current todo list.
+func (h *EventsHub) BroadcastTodoWrite(channelID string, data events.TodoWriteEventData) {
+	h.Broadcast(Event{
+		Type:      EventTodoWrite,
 		ChannelID: channelID,
 		Data:      data,
 	})
