@@ -434,7 +434,8 @@ func (s *OrchestratorSuite) TestHandleMessageWorktreeThread() {
 	}, nil)
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return req.ParentDirPath == "/project" && req.DirPath == "/project/.worktrees/wt1" &&
-			strings.Contains(req.SystemPrompt, "/project/.worktrees/wt1")
+			req.SystemPrompt == "" &&
+			strings.Contains(req.Prompt, "IMPORTANT: Your working directory is /project/.worktrees/wt1")
 	})).Return(&agent.AgentResponse{
 		Response: "worktree response", SessionID: "sess-wt",
 	}, nil)
