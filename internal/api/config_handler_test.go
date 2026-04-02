@@ -92,7 +92,19 @@ func (s *ServerSuite) TestSaveConfigInvalidJSON() {
 
 	rec := s.testRequest("PUT", "/api/config", `{"content":"not valid json"}`)
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
-	require.Contains(s.T(), rec.Body.String(), "content is not valid JSON")
+	require.Contains(s.T(), rec.Body.String(), "content is not valid HJSON")
+}
+
+func (s *ServerSuite) TestSaveConfigAcceptsHJSON() {
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return("/home/test", nil)
+	content := "{\n  // comment\n  \"key\": \"val\",\n}\n"
+	sys.On("WriteFile", "/home/test/.loop/config.json", []byte(content), os.FileMode(0644)).Return(nil)
+	s.srv.sys = sys
+
+	rec := s.testRequest("PUT", "/api/config", `{"content":"{\n  \/\/ comment\n  \"key\": \"val\",\n}\n"}`)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	sys.AssertExpectations(s.T())
 }
 
 func (s *ServerSuite) TestSaveConfigInvalidBody() {
@@ -195,7 +207,24 @@ func (s *ServerSuite) TestSaveProjectConfigInvalidJSON() {
 
 	rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-1", `{"content":"not json"}`)
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
-	require.Contains(s.T(), rec.Body.String(), "content is not valid JSON")
+	require.Contains(s.T(), rec.Body.String(), "content is not valid HJSON")
+}
+
+func (s *ServerSuite) TestSaveProjectConfigAcceptsHJSON() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
+		ChannelID: "ch-1",
+		DirPath:   "/projects/myapp",
+	}, nil)
+
+	sys := new(testutil.MockSystem)
+	content := "{\n  // comment\n  \"streaming_enabled\": true,\n}\n"
+	sys.On("MkdirAll", "/projects/myapp/.loop", os.FileMode(0755)).Return(nil)
+	sys.On("WriteFile", "/projects/myapp/.loop/config.json", []byte(content), os.FileMode(0644)).Return(nil)
+	s.srv.sys = sys
+
+	rec := s.testRequest("PUT", "/api/config/project?channel_id=ch-1", `{"content":"{\n  \/\/ comment\n  \"streaming_enabled\": true,\n}\n"}`)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	sys.AssertExpectations(s.T())
 }
 
 func (s *ServerSuite) TestSaveProjectConfigInvalidBody() {

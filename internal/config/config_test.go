@@ -72,6 +72,8 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.True(s.T(), cfg.Browser.Enabled)
 	require.Equal(s.T(), []string{"~/.claude.json"}, cfg.CopyFiles)
 	require.False(s.T(), cfg.KeepMCPConfigs)
+	require.False(s.T(), cfg.Desktop.AutoSaveOnBlur)
+	require.True(s.T(), cfg.Desktop.PreviewTabs)
 }
 
 func (s *ConfigSuite) TestLoadCustomValues() {

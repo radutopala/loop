@@ -1,7 +1,9 @@
 package api
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"net/http"
 	"os/exec"
 	"path/filepath"
@@ -535,7 +537,11 @@ func (s *Server) handleImportWorktree(w http.ResponseWriter, r *http.Request) {
 
 	// Derive thread name from worktree directory name and branch.
 	name := filepath.Base(resolvedPath)
-	threadName := fmt.Sprintf("%s (%s)", name, matched.Branch)
+	branchLabel := matched.Branch
+	if branchLabel == "" {
+		branchLabel = "detached"
+	}
+	threadName := fmt.Sprintf("%s (%s)", name, branchLabel)
 
 	threadID, err := s.threads.CreateThread(r.Context(), req.ChannelID, threadName, "", "")
 	if err != nil {
@@ -553,6 +559,21 @@ func (s *Server) handleImportWorktree(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.UpsertChannel(r.Context(), ch); err != nil {
 		http.Error(w, fmt.Sprintf("updating thread: %s", err), http.StatusInternalServerError)
 		return
+	}
+
+	// Seed worktree config with extra_dirs pointing at the parent project.
+	wtLoopDir := filepath.Join(req.WorktreePath, ".loop")
+	if err := s.sys.MkdirAll(wtLoopDir, 0755); err != nil {
+		s.logger.Warn("creating worktree .loop dir", "error", err)
+	} else {
+		cfgPath := filepath.Join(wtLoopDir, "config.json")
+		// Only write if the config doesn't already exist (don't overwrite user edits).
+		if _, err := s.sys.Stat(cfgPath); errors.Is(err, fs.ErrNotExist) {
+			wtCfg := fmt.Sprintf("{\n  \"extra_dirs\": [\n    %q\n  ]\n}\n", parent.DirPath)
+			if err := s.sys.WriteFile(cfgPath, []byte(wtCfg), 0644); err != nil {
+				s.logger.Warn("writing worktree config", "error", err)
+			}
+		}
 	}
 
 	// Copy session file so --resume --fork-session works in the worktree dir.

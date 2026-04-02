@@ -361,7 +361,7 @@ function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreateWorktr
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke={colors.textDim} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.5 }}>
                         <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
                       </svg>
-                      <span style={{ color: colors.text, overflow: "hidden", textOverflow: "ellipsis" }}>{wt.branch}</span>
+                      <span style={{ color: colors.text, overflow: "hidden", textOverflow: "ellipsis" }}>{wt.branch || "(detached)"}</span>
                       <span style={{ color: colors.textDim, fontSize: 10, flexShrink: 0 }}>{dirName}</span>
                     </div>
                     {hasThread && onSelectThread ? (

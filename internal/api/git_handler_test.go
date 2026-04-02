@@ -936,6 +936,9 @@ func (s *ServerSuite) TestImportWorktree_SessionCopyError() {
 	s.sys = new(testutil.MockSystem)
 	s.sys.On("UserHomeDir").Return("/home/testuser", nil)
 	s.sys.On("ReadFile", mock.Anything).Return(nil, errors.New("session read error"))
+	s.sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	s.sys.On("Stat", mock.Anything).Return(nil, os.ErrNotExist)
+	s.sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.srv.sys = s.sys
 
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
@@ -953,6 +956,132 @@ func (s *ServerSuite) TestImportWorktree_SessionCopyError() {
 	// Session copy error is logged but doesn't fail the request.
 	require.Equal(s.T(), http.StatusCreated, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), `"thread_id":"imp-sess-err"`)
+}
+
+func (s *ServerSuite) TestImportWorktree_DetachedHead() {
+	dir := initGitRepo(s.T())
+
+	wtPath := filepath.Join(dir, ".worktrees", "detached-wt")
+	// Create a detached worktree (no branch).
+	cmd := exec.Command("git", "worktree", "add", "--detach", wtPath, "HEAD")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	s.srv.sys = s.sys
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: dir,
+	}, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
+	s.threads.On("CreateThread", mock.Anything, "ch1", "detached-wt (detached)", "", "").Return("det-th", nil)
+	s.store.On("GetChannel", mock.Anything, "det-th").Return(&db.Channel{
+		ChannelID: "det-th", DirPath: dir, ParentID: "ch1", Active: true,
+	}, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+
+	body := `{"channel_id":"ch1","worktree_path":"` + wtPath + `"}`
+	rec := s.testRequest("POST", "/api/worktrees/import", body)
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+	// Verify thread name uses "detached" label.
+	s.threads.AssertCalled(s.T(), "CreateThread", mock.Anything, "ch1", "detached-wt (detached)", "", "")
+}
+
+func (s *ServerSuite) TestImportWorktree_ConfigMkdirFails() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/imp-mkdir")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	wtPath := filepath.Join(dir, ".worktrees", "imp-mkdir-wt")
+	cmd = exec.Command("git", "worktree", "add", wtPath, "feature/imp-mkdir")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	sys := new(testutil.MockSystem)
+	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(errors.New("mkdir fail"))
+	sys.On("UserHomeDir").Return("", errors.New("no home"))
+	s.srv.sys = sys
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: dir, SessionID: "",
+	}, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
+	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("imp-mkdir-th", nil)
+	s.store.On("GetChannel", mock.Anything, "imp-mkdir-th").Return(&db.Channel{
+		ChannelID: "imp-mkdir-th", DirPath: dir, ParentID: "ch1", Active: true,
+	}, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+
+	body := `{"channel_id":"ch1","worktree_path":"` + wtPath + `"}`
+	rec := s.testRequest("POST", "/api/worktrees/import", body)
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+}
+
+func (s *ServerSuite) TestImportWorktree_ConfigWriteFails() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/imp-write")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	wtPath := filepath.Join(dir, ".worktrees", "imp-write-wt")
+	cmd = exec.Command("git", "worktree", "add", wtPath, "feature/imp-write")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	sys := new(testutil.MockSystem)
+	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("Stat", mock.Anything).Return(nil, os.ErrNotExist)
+	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("write fail"))
+	sys.On("UserHomeDir").Return("", errors.New("no home"))
+	s.srv.sys = sys
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: dir, SessionID: "",
+	}, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
+	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("imp-write-th", nil)
+	s.store.On("GetChannel", mock.Anything, "imp-write-th").Return(&db.Channel{
+		ChannelID: "imp-write-th", DirPath: dir, ParentID: "ch1", Active: true,
+	}, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+
+	body := `{"channel_id":"ch1","worktree_path":"` + wtPath + `"}`
+	rec := s.testRequest("POST", "/api/worktrees/import", body)
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+}
+
+func (s *ServerSuite) TestImportWorktree_ConfigAlreadyExists() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/imp-exists")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	wtPath := filepath.Join(dir, ".worktrees", "imp-exists-wt")
+	cmd = exec.Command("git", "worktree", "add", wtPath, "feature/imp-exists")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	sys := new(testutil.MockSystem)
+	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	// Stat returns nil error — config already exists, so WriteFile should NOT be called.
+	sys.On("Stat", mock.Anything).Return(nil, nil)
+	sys.On("UserHomeDir").Return("", errors.New("no home"))
+	s.srv.sys = sys
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: dir, SessionID: "",
+	}, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
+	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "", "").Return("imp-exists-th", nil)
+	s.store.On("GetChannel", mock.Anything, "imp-exists-th").Return(&db.Channel{
+		ChannelID: "imp-exists-th", DirPath: dir, ParentID: "ch1", Active: true,
+	}, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+
+	body := `{"channel_id":"ch1","worktree_path":"` + wtPath + `"}`
+	rec := s.testRequest("POST", "/api/worktrees/import", body)
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+	// WriteFile should not have been called since config already exists.
+	sys.AssertNotCalled(s.T(), "WriteFile", mock.Anything, mock.Anything, mock.Anything)
 }
 
 // ── listCommits ──

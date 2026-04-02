@@ -46,8 +46,8 @@ func (s *Server) handleSaveConfig(w http.ResponseWriter, r *http.Request) {
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if !json.Valid([]byte(req.Content)) {
-		http.Error(w, "content is not valid JSON", http.StatusBadRequest)
+	if _, err := hujson.Standardize([]byte(req.Content)); err != nil {
+		http.Error(w, "content is not valid HJSON", http.StatusBadRequest)
 		return
 	}
 
@@ -92,8 +92,8 @@ func (s *Server) handleSaveProjectConfig(w http.ResponseWriter, r *http.Request)
 	if !decodeJSON(w, r, &req) {
 		return
 	}
-	if !json.Valid([]byte(req.Content)) {
-		http.Error(w, "content is not valid JSON", http.StatusBadRequest)
+	if _, err := hujson.Standardize([]byte(req.Content)); err != nil {
+		http.Error(w, "content is not valid HJSON", http.StatusBadRequest)
 		return
 	}
 
