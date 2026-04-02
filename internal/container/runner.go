@@ -670,9 +670,14 @@ func (r *DockerRunner) buildContainerMounts(mounts []string, workDir, parentDirP
 	// worktree subdir) so the container sees the main .git directory.
 	// Otherwise mount just the workDir.
 	if parentDirPath != "" && strings.HasPrefix(workDir, parentDirPath+"/") {
+		// Worktree is inside the parent — mounting parent covers both.
 		binds = append(binds, parentDirPath+":"+parentDirPath)
 	} else {
 		binds = append(binds, workDir+":"+workDir)
+		// External worktree (outside parent dir): mount parent separately for .git access.
+		if parentDirPath != "" {
+			binds = append(binds, parentDirPath+":"+parentDirPath)
+		}
 	}
 
 	// Mount extra directories for multi-dir workspaces.

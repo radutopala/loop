@@ -3477,6 +3477,27 @@ func (s *RunnerSuite) TestBuildContainerMountsExtraDirUnderParent() {
 	require.Contains(s.T(), binds, "/external/lib:/external/lib")
 }
 
+func (s *RunnerSuite) TestBuildContainerMountsExternalWorktree() {
+	// External worktree (outside parent dir): workDir is NOT inside parentDirPath.
+	workDir := "/Users/user/.external/worktrees/abc/myapp"
+	parentDirPath := "/Users/user/dev/myapp"
+	extraDirs := []string{"/Users/user/dev/myapp"}
+
+	binds, _ := s.runner.buildContainerMounts(nil, workDir, parentDirPath, extraDirs)
+
+	// Both workDir and parentDirPath should be mounted.
+	require.Contains(s.T(), binds, workDir+":"+workDir)
+	require.Contains(s.T(), binds, parentDirPath+":"+parentDirPath)
+	// extra_dirs entry matching parentDirPath should not produce a duplicate.
+	count := 0
+	for _, b := range binds {
+		if b == parentDirPath+":"+parentDirPath {
+			count++
+		}
+	}
+	require.Equal(s.T(), 1, count, "parent dir should be mounted exactly once")
+}
+
 // --- buildBaseClaudeCmd extra dirs tests ---
 
 func (s *RunnerSuite) TestBuildBaseClaudeCmdWithExtraDirs() {
