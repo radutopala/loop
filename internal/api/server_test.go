@@ -542,9 +542,67 @@ func (s *ServerSuite) TestListTasksEmpty() {
 	s.scheduler.AssertExpectations(s.T())
 }
 
-func (s *ServerSuite) TestListTasksMissingChannelID() {
+func (s *ServerSuite) TestListAllTasks() {
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	tasks := []*db.ScheduledTask{
+		{ID: 1, ChannelID: "ch1", Schedule: "0 9 * * *", Type: db.TaskTypeCron, Prompt: "task1", Enabled: true, NextRunAt: now},
+		{ID: 2, ChannelID: "ch2", Schedule: "5m", Type: db.TaskTypeInterval, Prompt: "task2", Enabled: true, NextRunAt: now},
+	}
+	channels := []*db.Channel{
+		{ChannelID: "ch1", Name: "general", DirPath: "/home/user/project", Platform: types.PlatformLocal},
+		{ChannelID: "ch2", Name: "deploy", DirPath: "/home/user/deploy", Platform: types.PlatformLocal, Worktree: true},
+	}
+	s.store.On("ListAllScheduledTasks", mock.Anything).Return(tasks, nil)
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+
 	rec := s.testRequest("GET", "/api/tasks", "")
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []taskResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 2)
+	require.Equal(s.T(), "ch1", resp[0].ChannelID)
+	require.Equal(s.T(), "general", resp[0].ChannelName)
+	require.Equal(s.T(), "/home/user/project", resp[0].DirPath)
+	require.False(s.T(), resp[0].ChannelWorktree)
+	require.Equal(s.T(), "ch2", resp[1].ChannelID)
+	require.Equal(s.T(), "deploy", resp[1].ChannelName)
+	require.Equal(s.T(), "/home/user/deploy", resp[1].DirPath)
+	require.True(s.T(), resp[1].ChannelWorktree)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestListAllTasksPlatformFilter() {
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	tasks := []*db.ScheduledTask{
+		{ID: 1, ChannelID: "ch-local", Schedule: "0 9 * * *", Type: db.TaskTypeCron, Prompt: "local task", Enabled: true, NextRunAt: now},
+		{ID: 2, ChannelID: "ch-discord", Schedule: "5m", Type: db.TaskTypeInterval, Prompt: "discord task", Enabled: true, NextRunAt: now},
+	}
+	channels := []*db.Channel{
+		{ChannelID: "ch-local", Name: "dm", DirPath: "/home/user/project", Platform: types.PlatformLocal},
+		{ChannelID: "ch-discord", Name: "bot-channel", DirPath: "/home/user/project", Platform: types.PlatformDiscord},
+	}
+	s.store.On("ListAllScheduledTasks", mock.Anything).Return(tasks, nil)
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+
+	rec := s.testRequest("GET", "/api/tasks?platform=local", "")
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []taskResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 1)
+	require.Equal(s.T(), "ch-local", resp[0].ChannelID)
+	require.Equal(s.T(), "dm", resp[0].ChannelName)
+}
+
+func (s *ServerSuite) TestListAllTasksError() {
+	s.store.On("ListAllScheduledTasks", mock.Anything).Return(nil, errors.New("db error"))
+
+	rec := s.testRequest("GET", "/api/tasks", "")
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
 
 func (s *ServerSuite) TestListTasksSchedulerError() {

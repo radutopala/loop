@@ -130,6 +130,7 @@ interface SidebarProps {
   onOpenConfig?: (dirPath: string) => void;
   onOpenReadme?: () => void;
   onOpenContainers?: () => void;
+  onOpenTasks?: () => void;
   updateStatus?: UpdateStatus | null;
   onDownloadUpdate?: () => void;
   onInstallUpdate?: () => void;
@@ -158,6 +159,7 @@ export function Sidebar({
   onOpenConfig,
   onOpenReadme,
   onOpenContainers,
+  onOpenTasks,
   updateStatus,
   onDownloadUpdate,
   onInstallUpdate,
@@ -702,6 +704,18 @@ export function Sidebar({
             <circle cx="12" cy="12" r="3" />
           </svg>
           Settings
+        </button>
+        <button
+          onClick={onOpenTasks}
+          style={footerBtnStyle}
+          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
+          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+        >
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="10" />
+            <polyline points="12 6 12 12 16 14" />
+          </svg>
+          Tasks
         </button>
         <button
           onClick={onOpenContainers}

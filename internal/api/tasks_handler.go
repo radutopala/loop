@@ -48,16 +48,19 @@ type updateTaskRequest struct {
 }
 
 type taskResponse struct {
-	ID            int64     `json:"id"`
-	ChannelID     string    `json:"channel_id"`
-	Schedule      string    `json:"schedule"`
-	Type          string    `json:"type"`
-	Prompt        string    `json:"prompt"`
-	Enabled       bool      `json:"enabled"`
-	NextRunAt     time.Time `json:"next_run_at"`
-	TemplateName  string    `json:"template_name,omitempty"`
-	AutoDeleteSec int       `json:"auto_delete_sec"`
-	Worktree      bool      `json:"worktree"`
+	ID              int64     `json:"id"`
+	ChannelID       string    `json:"channel_id"`
+	Schedule        string    `json:"schedule"`
+	Type            string    `json:"type"`
+	Prompt          string    `json:"prompt"`
+	Enabled         bool      `json:"enabled"`
+	NextRunAt       time.Time `json:"next_run_at"`
+	TemplateName    string    `json:"template_name,omitempty"`
+	AutoDeleteSec   int       `json:"auto_delete_sec"`
+	Worktree        bool      `json:"worktree"`
+	ChannelName     string    `json:"channel_name,omitempty"`
+	DirPath         string    `json:"dir_path,omitempty"`
+	ChannelWorktree bool      `json:"channel_worktree,omitempty"`
 }
 
 func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
@@ -92,20 +95,47 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleListTasks(w http.ResponseWriter, r *http.Request) {
 	channelID := r.URL.Query().Get("channel_id")
-	if channelID == "" {
-		http.Error(w, "channel_id query parameter required", http.StatusBadRequest)
-		return
-	}
 
-	tasks, err := s.scheduler.ListTasks(r.Context(), s.resolveTaskChannelID(r.Context(), channelID))
+	var tasks []*db.ScheduledTask
+	var err error
+	if channelID == "" {
+		tasks, err = s.store.ListAllScheduledTasks(r.Context())
+	} else {
+		tasks, err = s.scheduler.ListTasks(r.Context(), s.resolveTaskChannelID(r.Context(), channelID))
+	}
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
+	// For the global listing, enrich with channel info and filter by platform.
+	var channelMap map[string]*db.Channel
+	platform := r.URL.Query().Get("platform")
+	if channelID == "" {
+		channels, chErr := s.store.ListChannels(r.Context())
+		if chErr == nil {
+			channelMap = make(map[string]*db.Channel, len(channels))
+			for _, ch := range channels {
+				channelMap[ch.ChannelID] = ch
+			}
+		}
+	}
+
 	resp := make([]taskResponse, 0, len(tasks))
 	for _, t := range tasks {
-		resp = append(resp, toTaskResponse(t))
+		tr := toTaskResponse(t)
+		if channelMap != nil {
+			ch := channelMap[t.ChannelID]
+			if ch != nil {
+				if platform != "" && string(ch.Platform) != platform {
+					continue
+				}
+				tr.ChannelName = ch.Name
+				tr.DirPath = ch.DirPath
+				tr.ChannelWorktree = ch.Worktree
+			}
+		}
+		resp = append(resp, tr)
 	}
 
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)

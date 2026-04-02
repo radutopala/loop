@@ -740,6 +740,29 @@ func (s *StoreSuite) TestListScheduledTasksError() {
 	require.Nil(s.T(), tasks)
 }
 
+func (s *StoreSuite) TestListAllScheduledTasks() {
+	now := time.Now().UTC()
+	rows := newMockTaskRows().
+		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check", 1, now, now, now, "", 0, "", 0).
+		AddRow(2, "ch2", "g1", "1h", "interval", "deploy", 1, now.Add(time.Hour), now, now, "", 0, "", 0)
+	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnRows(rows)
+
+	tasks, err := s.store.ListAllScheduledTasks(context.Background())
+	require.NoError(s.T(), err)
+	require.Len(s.T(), tasks, 2)
+	require.Equal(s.T(), "ch1", tasks[0].ChannelID)
+	require.Equal(s.T(), "ch2", tasks[1].ChannelID)
+}
+
+func (s *StoreSuite) TestListAllScheduledTasksError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE`).WithArgs(sqlmock.AnyArg()).WillReturnError(sql.ErrConnDone)
+	tasks, err := s.store.ListAllScheduledTasks(context.Background())
+	require.Error(s.T(), err)
+	require.Nil(s.T(), tasks)
+}
+
 func (s *StoreSuite) TestUpdateScheduledTaskEnabled() {
 	s.mock.ExpectExec(`UPDATE scheduled_tasks SET enabled`).WithArgs(0, sqlmock.AnyArg(), int64(1)).WillReturnResult(sqlmock.NewResult(0, 1))
 	require.NoError(s.T(), s.store.UpdateScheduledTaskEnabled(context.Background(), 1, false))

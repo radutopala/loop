@@ -12,6 +12,7 @@ import horizontalLogo from "./assets/logo-horizontal.svg";
 import { CommandPalette } from "./components/CommandPalette";
 import { Settings } from "./components/Settings";
 import { ContainersPanel, type ContainersPanelHandle } from "./components/ContainersPanel";
+import { GlobalTasksPanel } from "./components/GlobalTasksPanel";
 import { useChatStateStore, type ActiveChatState } from "./hooks/useChatStateStore";
 
 const LAST_CHANNEL_KEY = "loop-last-channel";
@@ -61,6 +62,7 @@ function AppInner() {
   const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(null);
   const [readmeOpen, setReadmeOpen] = useState(false);
   const [containersOpen, setContainersOpen] = useState(false);
+  const [tasksOpen, setTasksOpen] = useState(false);
   const containersPanelRef = useRef<ContainersPanelHandle | null>(null);
   const [openMemoryFile, setOpenMemoryFile] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
@@ -155,7 +157,7 @@ function AppInner() {
   // Listen for Settings menu item from main process.
   useEffect(() => {
     if (window.loopAPI?.onOpenSettings) {
-      window.loopAPI.onOpenSettings(() => { setReadmeOpen(false); setContainersOpen(false); setSettingsOpen(true); setSettingsDirPath(null); });
+      window.loopAPI.onOpenSettings(() => { setReadmeOpen(false); setContainersOpen(false); setTasksOpen(false); setSettingsOpen(true); setSettingsDirPath(null); });
     }
   }, []);
 
@@ -275,6 +277,7 @@ function AppInner() {
     setReadmeOpen(false);
     setSettingsOpen(false);
     setContainersOpen(false);
+    setTasksOpen(false);
     setConfigDirty(false);
     if (id) markRead(id);
     setSelectedId((prev) => {
@@ -493,10 +496,11 @@ function AppInner() {
         onCreateThread={handleCreateThread}
         onDeleteThread={handleDelete}
         onDeleteBatch={handleDeleteBatch}
-        onOpenSettings={() => { setReadmeOpen(false); setContainersOpen(false); setSettingsOpen((v) => !v); setSettingsDirPath(null); }}
-        onOpenConfig={(dirPath) => { setReadmeOpen(false); setContainersOpen(false); setSettingsOpen((v) => { if (v && settingsDirPath === dirPath) return false; setSettingsDirPath(dirPath); return true; }); }}
-        onOpenReadme={() => { setSettingsOpen(false); setContainersOpen(false); setReadmeOpen((v) => !v); }}
-        onOpenContainers={() => { setSettingsOpen(false); setReadmeOpen(false); setContainersOpen((v) => !v); }}
+        onOpenSettings={() => { setReadmeOpen(false); setContainersOpen(false); setTasksOpen(false); setSettingsOpen((v) => !v); setSettingsDirPath(null); }}
+        onOpenConfig={(dirPath) => { setReadmeOpen(false); setContainersOpen(false); setTasksOpen(false); setSettingsOpen((v) => { if (v && settingsDirPath === dirPath) return false; setSettingsDirPath(dirPath); return true; }); }}
+        onOpenReadme={() => { setSettingsOpen(false); setContainersOpen(false); setTasksOpen(false); setReadmeOpen((v) => !v); }}
+        onOpenContainers={() => { setSettingsOpen(false); setReadmeOpen(false); setTasksOpen(false); setContainersOpen((v) => !v); }}
+        onOpenTasks={() => { setSettingsOpen(false); setReadmeOpen(false); setContainersOpen(false); setTasksOpen((v) => !v); }}
         updateStatus={updateStatus}
         onDownloadUpdate={handleDownloadUpdate}
         onInstallUpdate={handleInstallUpdate}
@@ -516,7 +520,7 @@ function AppInner() {
             channelId={selectedId}
             channel={selectedChannel}
             sidebarOpen={sidebarOpen}
-            style={readmeOpen || settingsOpen || containersOpen ? { display: "none" } : undefined}
+            style={readmeOpen || settingsOpen || containersOpen || tasksOpen ? { display: "none" } : undefined}
             onToggleSidebar={() => setSidebarOpen((v) => !v)}
             onOpenPalette={() => setPaletteOpen(true)}
             scrollToMessageId={scrollToMessageId}
@@ -571,6 +575,15 @@ function AppInner() {
               onClose={() => setContainersOpen(false)}
             />
           )}
+          {tasksOpen && (
+            <GlobalTasksPanel
+              sidebarOpen={sidebarOpen}
+              onToggleSidebar={() => setSidebarOpen((v) => !v)}
+              onOpenPalette={() => setPaletteOpen(true)}
+              onClose={() => setTasksOpen(false)}
+              onSelectChannel={(id) => { setTasksOpen(false); handleSelect(id); }}
+            />
+          )}
         </>
       ) : (
         <>
@@ -596,6 +609,14 @@ function AppInner() {
               onToggleSidebar={() => setSidebarOpen((v) => !v)}
               onOpenPalette={() => setPaletteOpen(true)}
               onClose={() => setContainersOpen(false)}
+            />
+          ) : tasksOpen ? (
+            <GlobalTasksPanel
+              sidebarOpen={sidebarOpen}
+              onToggleSidebar={() => setSidebarOpen((v) => !v)}
+              onOpenPalette={() => setPaletteOpen(true)}
+              onClose={() => setTasksOpen(false)}
+              onSelectChannel={(id) => { setTasksOpen(false); handleSelect(id); }}
             />
           ) : (
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>

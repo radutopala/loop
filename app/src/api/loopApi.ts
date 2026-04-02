@@ -591,6 +591,9 @@ export interface ScheduledTask {
   template_name?: string;
   auto_delete_sec: number;
   worktree: boolean;
+  channel_name?: string;
+  dir_path?: string;
+  channel_worktree?: boolean;
 }
 
 export interface TaskRunLog {
@@ -605,6 +608,12 @@ export interface TaskRunLog {
 
 export async function fetchTasks(channelId: string): Promise<ScheduledTask[]> {
   const res = await fetch(`${apiUrl}/api/tasks?channel_id=${encodeURIComponent(channelId)}`);
+  if (!res.ok) throw new Error(`Failed to fetch tasks: ${res.statusText}`);
+  return res.json();
+}
+
+export async function fetchAllTasks(): Promise<ScheduledTask[]> {
+  const res = await fetch(`${apiUrl}/api/tasks?platform=local`);
   if (!res.ok) throw new Error(`Failed to fetch tasks: ${res.statusText}`);
   return res.json();
 }

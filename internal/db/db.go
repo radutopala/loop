@@ -35,6 +35,7 @@ type Store interface {
 	UpdateScheduledTask(ctx context.Context, task *ScheduledTask) error
 	DeleteScheduledTask(ctx context.Context, id int64) error
 	ListScheduledTasks(ctx context.Context, channelID string) ([]*ScheduledTask, error)
+	ListAllScheduledTasks(ctx context.Context) ([]*ScheduledTask, error)
 	UpdateScheduledTaskEnabled(ctx context.Context, id int64, enabled bool) error
 	UpdateScheduledTaskThreadID(ctx context.Context, id int64, threadID string) error
 	GetScheduledTask(ctx context.Context, id int64) (*ScheduledTask, error)
@@ -393,6 +394,18 @@ func (s *SQLiteStore) ListScheduledTasks(ctx context.Context, channelID string) 
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+taskColumns+` FROM scheduled_tasks WHERE channel_id = ? AND (type != 'once' OR next_run_at > ?) ORDER BY next_run_at ASC`,
 		channelID, s.nowFunc(),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanScheduledTasks(rows)
+}
+
+func (s *SQLiteStore) ListAllScheduledTasks(ctx context.Context) ([]*ScheduledTask, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+taskColumns+` FROM scheduled_tasks WHERE (type != 'once' OR next_run_at > ?) ORDER BY next_run_at ASC`,
+		s.nowFunc(),
 	)
 	if err != nil {
 		return nil, err

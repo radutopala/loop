@@ -121,6 +121,14 @@ func (m *MockStore) ListScheduledTasks(ctx context.Context, channelID string) ([
 	return args.Get(0).([]*db.ScheduledTask), args.Error(1)
 }
 
+func (m *MockStore) ListAllScheduledTasks(ctx context.Context) ([]*db.ScheduledTask, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.ScheduledTask), args.Error(1)
+}
+
 func (m *MockStore) UpdateScheduledTaskEnabled(ctx context.Context, id int64, enabled bool) error {
 	return m.Called(ctx, id, enabled).Error(0)
 }
