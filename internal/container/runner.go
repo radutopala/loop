@@ -748,7 +748,7 @@ func mcpConfigPathForAgent(workDir, channelID, agentID string) string {
 // terminal sessions (no --print, --verbose, --output-format flags).
 func BuildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID, agentID string, forkSession bool) string {
 	mcpConfigPath := mcpConfigPathForAgent(workDir, channelID, agentID)
-	return strings.Join(buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, agentID, forkSession, false, cfg.ExtraDirs), " ")
+	return "CLAUDE_CODE_NO_FLICKER=1 " + strings.Join(buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, agentID, forkSession, false, cfg.ExtraDirs), " ")
 }
 
 // ClaudeCmdBuilder builds the interactive Claude command for terminal sessions.

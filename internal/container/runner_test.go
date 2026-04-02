@@ -3088,38 +3088,38 @@ func (s *RunnerSuite) TestBuildInteractiveClaudeCmd() {
 		{
 			name:     "default without model",
 			binPath:  "claude",
-			expected: "claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions",
+			expected: "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions",
 		},
 		{
 			name:     "with model",
 			model:    "claude-opus-4-6",
 			binPath:  "claude",
-			expected: "claude --mcp-config /work/.loop/mcp-ch-1.json --model claude-opus-4-6 --dangerously-skip-permissions",
+			expected: "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1.json --model claude-opus-4-6 --dangerously-skip-permissions",
 		},
 		{
 			name:     "custom bin path",
 			binPath:  "/usr/local/bin/claude",
-			expected: "/usr/local/bin/claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions",
+			expected: "CLAUDE_CODE_NO_FLICKER=1 /usr/local/bin/claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions",
 		},
 		{
 			name:      "with session uses resume",
 			binPath:   "claude",
 			sessionID: "sess-abc-123",
-			expected:  "claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions --resume sess-abc-123",
+			expected:  "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions --resume sess-abc-123",
 		},
 		{
 			name:        "with session fork uses resume and fork-session",
 			binPath:     "claude",
 			sessionID:   "sess-parent",
 			forkSession: true,
-			expected:    "claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions --resume sess-parent --fork-session",
+			expected:    "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions --resume sess-parent --fork-session",
 		},
 		{
 			name:      "with model and session uses resume",
 			model:     "claude-opus-4-6",
 			binPath:   "claude",
 			sessionID: "sess-xyz",
-			expected:  "claude --mcp-config /work/.loop/mcp-ch-1.json --model claude-opus-4-6 --dangerously-skip-permissions --resume sess-xyz",
+			expected:  "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1.json --model claude-opus-4-6 --dangerously-skip-permissions --resume sess-xyz",
 		},
 	}
 	for _, tc := range tests {
@@ -3134,7 +3134,7 @@ func (s *RunnerSuite) TestBuildInteractiveClaudeCmd() {
 func (s *RunnerSuite) TestBuildInteractiveClaudeCmdWithAgentID() {
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 	got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "agent-0", false)
-	require.Equal(s.T(), "claude --mcp-config /work/.loop/mcp-ch-1-agent-0.json --dangerously-skip-permissions --dangerously-load-development-channels server:loop", got)
+	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1-agent-0.json --dangerously-skip-permissions --dangerously-load-development-channels server:loop", got)
 }
 
 func (s *RunnerSuite) TestBuildBaseClaudeCmdPlanMode() {
@@ -3234,7 +3234,7 @@ func (s *RunnerSuite) TestClaudeCmdBuilder() {
 			builder := NewClaudeCmdBuilder(cfg)
 			got := builder.BuildInteractiveCmd(tc.channelID, tc.dirPath, tc.sessionID, "", tc.forkSession)
 			expectedMCP := tc.wantDir + "/.loop/mcp-" + tc.channelID + ".json"
-			require.Equal(s.T(), "claude --mcp-config "+expectedMCP+" --dangerously-skip-permissions"+tc.wantExtra, got)
+			require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --dangerously-skip-permissions"+tc.wantExtra, got)
 		})
 	}
 }
@@ -3260,7 +3260,7 @@ func (s *RunnerSuite) TestClaudeCmdBuilderProjectConfigModel() {
 
 	// Project config's claude_model should override the global one.
 	expectedMCP := tmpDir + "/.loop/mcp-ch-1.json"
-	require.Equal(s.T(), "claude --mcp-config "+expectedMCP+" --model claude-opus-4-6 --dangerously-skip-permissions", got)
+	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --model claude-opus-4-6 --dangerously-skip-permissions", got)
 }
 
 func (s *RunnerSuite) TestClaudeCmdBuilderWritesAgentMCPConfig() {
