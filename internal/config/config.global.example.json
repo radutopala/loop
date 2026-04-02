@@ -89,6 +89,7 @@
   //  "stop_daemon_on_quit": false,
   //  "auto_save_on_blur": false,
   //  "preview_tabs": true,
+  //  "islands": true, // floating rounded panels with gaps
   //  "theme": "dark", // "dark", "light", "claude"
   //  "font_sizes": {
   //    "sidebar": 12,

@@ -1003,7 +1003,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         flex: 1,
         display: "flex",
         flexDirection: "column",
-        backgroundColor: colors.sidebar,
+        backgroundColor: colors.islandRadius ? "transparent" : colors.sidebar,
         overflow: "hidden",
         ...style,
       }}
@@ -1197,10 +1197,15 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           display: "flex",
           alignItems: "center",
           padding: "0 8px",
-          borderBottom: `1px solid ${colors.border}`,
           height: 35,
           boxSizing: "border-box",
           gap: 4,
+          backgroundColor: colors.surface,
+          borderRadius: colors.islandRadius,
+          boxShadow: colors.islandShadow,
+          border: colors.islandBorder,
+          marginBottom: colors.islandGap,
+          ...(!colors.islandRadius && { borderBottom: `1px solid ${colors.border}` }),
         }}
       >
         <span
@@ -1398,7 +1403,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             const leaf = findLeafById(tree, maximizedLeafId)!;
             const usedSingletons = collectPanelTypes(tree);
             return (
-              <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, minWidth: 0 }}>
+              <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, minWidth: 0, borderRadius: colors.islandRadius, boxShadow: colors.islandShadow, border: colors.islandBorder, backgroundColor: colors.sidebar }}>
                 <PaneLeafHeader
                   leafId={leaf.id}
                   panel={leaf.panel}

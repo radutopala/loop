@@ -121,6 +121,7 @@ type DesktopConfig struct {
 	StopDaemonOnQuit bool              `json:"stop_daemon_on_quit"`
 	AutoSaveOnBlur   bool              `json:"auto_save_on_blur"`
 	PreviewTabs      bool              `json:"preview_tabs"`
+	Islands          bool              `json:"islands"`
 	Theme            string            `json:"theme,omitempty"`
 	FontSizes        *DesktopFontSizes `json:"font_sizes,omitempty"`
 }
@@ -341,6 +342,7 @@ func (l *Loader) load() (*Config, error) {
 	cfg.Desktop = DesktopConfig{
 		AutoSaveOnBlur: false,
 		PreviewTabs:    true,
+		Islands:        true,
 	}
 	if jc.Desktop != nil {
 		cfg.Desktop = *jc.Desktop

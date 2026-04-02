@@ -881,6 +881,7 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 - **Containers panel** — global view of all Docker containers (agent, shell, chrome) with real-time status lifecycle (running → stopped → pending-removal), type labels, scheduled removal countdown, and live updates via WebSocket events
 - **Memory panel** — browse and search semantic memory files
 - **Custom layouts** — named split-pane workspaces with drag-to-resize, saved per channel. Create, rename, delete, and restore default layouts from the tab bar
+- **Islands layout** — panels float as rounded cards over a deep canvas background with gaps between them. Enable via `"islands": true` in the `desktop` config section (on by default)
 - **Multi-window** — open multiple windows (Cmd+N), each navigating independently
 - **Sidebar** — browse channels and threads, create new ones, batch-delete, see running status (green dot), and open directories directly from the sidebar
 - **Auto-update** — checks for new releases every 30 minutes, download and install with one click

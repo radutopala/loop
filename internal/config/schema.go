@@ -405,6 +405,12 @@ func buildSchema() *ConfigSchema {
 						Description: "Single-click opens files in a transient preview tab. Double-click promotes to permanent.",
 						Default:     true,
 					},
+					"islands": {
+						Type:        "boolean",
+						Title:       "Islands Layout",
+						Description: "Panels float as rounded cards over a deep canvas background with gaps between them.",
+						Default:     true,
+					},
 					"theme": {
 						Type:    "string",
 						Title:   "Theme",

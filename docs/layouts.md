@@ -25,6 +25,17 @@ A free-form layout with draggable, resizable tiles on an infinite surface.
 - **Singleton enforcement:** Chat, Editor, Memory, Diff, Docker Browser, and Host Browser are limited to one tile per canvas (Docker Browser and Host Browser are also mutually exclusive). Agent and Shell can have multiple tiles.
 - **Auto-center:** Tiles are centered in the viewport on first load and after a layout reset.
 
+### Islands Mode
+
+When `desktop.islands` is enabled (the default), panels render as floating rounded cards over a deep canvas background. This applies to both Split and Canvas layout types:
+
+- **Split panes** become individual islands with rounded corners, subtle shadows, and transparent gaps between them (replacing the old 1px border dividers).
+- **The sidebar** floats as its own island.
+- **The layout tab bar** becomes a rounded island strip.
+- **Overlay panels** (Settings, Containers, Tasks, README) also get island styling.
+
+The canvas color, corner radius, gap size, shadow, and border are defined per theme in the color palette. The dark theme has the strongest visual effect. Disable via `"islands": false` in the `desktop` config section. See [Configuration: Desktop](configuration.md#desktop-electron-app).
+
 ### Creating Layouts
 
 New layouts can be created as either Split or Canvas from the `+` button in the tab bar. The layout type is stored per tab and cannot be changed after creation.

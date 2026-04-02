@@ -120,7 +120,7 @@ function PaneTree({ node, path, usedSingletons, renderLeaf, agentInfoMap, minimi
     const isMinimized = minimizedLeaves?.has(node.id) ?? false;
     const effectiveFlex = flexOverride ?? node.flex;
     return (
-      <div style={{ flex: isMinimized ? "0 0 auto" : `${effectiveFlex} 1 0%`, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, minWidth: 0, position: "relative" }}>
+      <div style={{ flex: isMinimized ? "0 0 auto" : `${effectiveFlex} 1 0%`, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0, minWidth: 0, position: "relative", borderRadius: colors.islandRadius, boxShadow: colors.islandShadow, border: colors.islandBorder, backgroundColor: colors.sidebar }}>
         <PaneLeafHeader
           leafId={node.id}
           panel={node.panel}
@@ -177,26 +177,28 @@ function PaneTree({ node, path, usedSingletons, renderLeaf, agentInfoMap, minimi
             <div
               onMouseDown={(e) => handleDivider(e, i - 1, node.direction)}
               style={{
-                [isVertical ? "height" : "width"]: 4,
+                [isVertical ? "height" : "width"]: colors.islandGap || 4,
                 flexShrink: 0,
                 cursor: isVertical ? "row-resize" : "col-resize",
-                backgroundColor: colors.border,
+                backgroundColor: colors.islandGap ? "transparent" : colors.border,
                 position: "relative",
               }}
             >
-              <div
-                style={{
-                  position: "absolute",
-                  left: "50%",
-                  top: "50%",
-                  transform: "translate(-50%, -50%)",
-                  [isVertical ? "width" : "height"]: 24,
-                  [isVertical ? "height" : "width"]: 2,
-                  borderRadius: 1,
-                  backgroundColor: colors.textDim,
-                  opacity: 0.5,
-                }}
-              />
+              {!colors.islandGap && (
+                <div
+                  style={{
+                    position: "absolute",
+                    left: "50%",
+                    top: "50%",
+                    transform: "translate(-50%, -50%)",
+                    [isVertical ? "width" : "height"]: 24,
+                    [isVertical ? "height" : "width"]: 2,
+                    borderRadius: 1,
+                    backgroundColor: colors.textDim,
+                    opacity: 0.5,
+                  }}
+                />
+              )}
             </div>
           )}
           <PaneTree

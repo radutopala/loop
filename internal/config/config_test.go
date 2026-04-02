@@ -74,6 +74,7 @@ func (s *ConfigSuite) TestLoadDefaults() {
 	require.False(s.T(), cfg.KeepMCPConfigs)
 	require.False(s.T(), cfg.Desktop.AutoSaveOnBlur)
 	require.True(s.T(), cfg.Desktop.PreviewTabs)
+	require.True(s.T(), cfg.Desktop.Islands)
 }
 
 func (s *ConfigSuite) TestLoadCustomValues() {

@@ -37,7 +37,7 @@ interface SettingsProps {
 }
 
 export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggleSidebar, onOpenPalette, onClose, onDaemonRestarted, imageBuildStatus, imageUpdateAvailable, onRebuildImage, onConfigDirtyChange }: SettingsProps) {
-  const { colors, setThemeName, setFontSizes } = useTheme();
+  const { colors, setThemeName, setFontSizes, setIslands } = useTheme();
   const [daemonInfo, setDaemonInfo] = useState<DaemonInfo | null>(null);
   const [restarting, setRestarting] = useState(false);
   const [schema, setSchema] = useState<ConfigSchema | null>(null);
@@ -137,6 +137,7 @@ export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggl
           setFontSizes(desktop.font_sizes
             ? { ...DEFAULT_FONT_SIZES, ...desktop.font_sizes }
             : { ...DEFAULT_FONT_SIZES });
+          setIslands(desktop.islands ?? false);
         }
       } catch { /* ignore parse errors */ }
       // Re-fetch so other sections see the updated values.
@@ -201,6 +202,9 @@ export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggl
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
+        borderRadius: colors.islandRadius,
+        boxShadow: colors.islandShadow,
+        border: colors.islandBorder,
       }}
     >
       {/* Drag region */}

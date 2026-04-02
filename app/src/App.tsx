@@ -41,6 +41,7 @@ export default function App() {
     <ThemeProvider
       initialTheme={desktop?.theme}
       initialFontSizes={desktop?.font_sizes ? { ...DEFAULT_FONT_SIZES, ...desktop.font_sizes } : undefined}
+      initialIslands={desktop?.islands ?? true}
     >
       <AppInner />
     </ThemeProvider>
@@ -465,10 +466,12 @@ function AppInner() {
       style={{
         display: "flex",
         height: "100vh",
-        backgroundColor: colors.bg,
+        backgroundColor: colors.canvas,
         color: colors.text,
         fontFamily: fonts.sans,
         position: "relative",
+        padding: colors.islandGap,
+        gap: colors.islandGap,
       }}
     >
       {/* Branding — always pinned to top-right corner */}

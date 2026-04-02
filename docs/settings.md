@@ -70,6 +70,14 @@ When enabled, the `before-quit` handler runs `loop daemon:stop`.
 
 This setting affects the [Editor panel](editor.md) behavior.
 
+#### Islands Layout
+
+- **Label:** "Islands layout"
+- **Description:** "Panels float as rounded cards over a deep canvas background with gaps between them."
+- **Default:** `true`
+
+When enabled, each panel (sidebar, split panes, tab bar, settings, etc.) renders as a rounded island with subtle shadows and borders, separated by transparent gaps that reveal a deeper canvas color underneath. When disabled, the UI reverts to the classic flat tiled layout with 1px border separators. The setting is applied live — no restart required.
+
 ### Toggle Switch UI
 
 Each setting is a clickable row with:

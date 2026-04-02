@@ -542,6 +542,9 @@ export function GlobalTasksPanel({
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
+        borderRadius: colors.islandRadius,
+        boxShadow: colors.islandShadow,
+        border: colors.islandBorder,
       }}
     >
       {/* Drag region */}

@@ -75,7 +75,7 @@ export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPa
 
   if (embedded) {
     return (
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12 }}>
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12, borderRadius: colors.islandRadius, boxShadow: colors.islandShadow, border: colors.islandBorder }}>
         <div style={{ flex: 1, overflow: "auto", padding: noPadding ? 0 : "12px 16px" }}>
           {children}
         </div>
@@ -126,7 +126,9 @@ export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPa
         overflow: "hidden",
         position: "relative",
         userSelect: resizing ? "none" : undefined,
-        borderLeft: maximized ? "none" : `1px solid ${colors.border}`,
+        borderRadius: colors.islandRadius,
+        boxShadow: colors.islandShadow,
+        border: colors.islandBorder,
       }}
     >
       {/* Resize handle */}

@@ -20,8 +20,12 @@
       (function() {
         var theme = 'dark';
         try { theme = localStorage.getItem('loop-theme') || 'dark'; } catch(e) {}
+        var islandsOn = true;
+        try { var v = localStorage.getItem('loop-islands'); if (v !== null) islandsOn = v === '1'; } catch(e) {}
         var isDark = theme === 'dark';
-        var bg = theme === 'claude' ? '#FAF6F1' : (isDark ? '#212121' : '#ffffff');
+        var bg = islandsOn
+          ? (theme === 'claude' ? '#E5DED5' : (isDark ? '#141414' : '#e8e8e8'))
+          : (theme === 'claude' ? '#FAF6F1' : (isDark ? '#212121' : '#ffffff'));
         document.documentElement.style.colorScheme = isDark ? 'dark' : 'light';
         document.documentElement.style.backgroundColor = bg;
         // Update meta theme-color to match

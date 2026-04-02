@@ -376,11 +376,16 @@ export function Sidebar({
         backgroundColor: colors.sidebarNav,
         display: "flex",
         flexDirection: "column",
-        overflow: "auto",
+        overflowX: "hidden",
+        overflowY: "auto",
         position: "relative",
         zoom: fontSizes.sidebar / 12,
         // Prevent text selection while dragging
         userSelect: resizing ? "none" : undefined,
+        borderRadius: colors.islandRadius,
+        boxShadow: colors.islandShadow,
+        border: colors.islandBorder,
+        ...(!colors.islandRadius && { borderRight: `1px solid ${colors.border}` }),
       }}
     >
       {/* Drag region over traffic lights area */}
@@ -759,23 +764,14 @@ export function Sidebar({
         style={{
           position: "absolute",
           top: 0,
-          right: 0,
-          width: 4,
+          right: -colors.islandGap,
+          width: colors.islandGap + 4,
           height: "100%",
           cursor: "col-resize",
-          backgroundColor: resizing ? colors.textDim : "transparent",
-          borderRight: `1px solid ${colors.border}`,
+          backgroundColor: "transparent",
         }}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLDivElement).style.backgroundColor =
-            colors.textDim;
-        }}
-        onMouseLeave={(e) => {
-          if (!resizing) {
-            (e.currentTarget as HTMLDivElement).style.backgroundColor =
-              "transparent";
-          }
-        }}
+        onMouseEnter={() => {}}
+        onMouseLeave={() => {}}
       />
 
       {/* Inline keyframes for spinner */}

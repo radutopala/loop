@@ -234,6 +234,36 @@ See [Task Scheduling](scheduling.md) for full details.
 
 If all config and DB permissions are empty, everyone is treated as an owner (bootstrap mode).
 
+#### Desktop (Electron App)
+
+```jsonc
+"desktop": {
+  "theme": "dark",
+  "islands": true,
+  "preview_tabs": true,
+  "auto_save_on_blur": false,
+  "stop_daemon_on_quit": false,
+  "font_sizes": {
+    "sidebar": 12,
+    "chat": 13,
+    "terminal": 13,
+    "editor": 13,
+    "panels": 12
+  }
+}
+```
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `desktop.theme` | `string` | `"dark"` | Color theme. One of `"dark"`, `"light"`, `"claude"`. |
+| `desktop.islands` | `bool` | `true` | Islands layout — panels float as rounded cards over a deep canvas with gaps between them. |
+| `desktop.preview_tabs` | `bool` | `true` | Single-click opens files in a transient preview tab. Double-click promotes to permanent. |
+| `desktop.auto_save_on_blur` | `bool` | `false` | Save open editor tabs when the window loses focus. |
+| `desktop.stop_daemon_on_quit` | `bool` | `false` | Uninstalls the daemon service on quit. Re-installed on next app launch. |
+| `desktop.font_sizes` | `object` | See above | Per-area font size overrides (in px). Keys: `sidebar`, `chat`, `terminal`, `editor`, `panels`. |
+
+These settings are global-only (not available in project configs). Changes are applied live when saving the config — no restart required.
+
 ---
 
 ## Project Config

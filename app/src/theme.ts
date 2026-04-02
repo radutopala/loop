@@ -53,6 +53,12 @@ export interface ColorPalette {
   // Hunk header bg
   diffHunkBg: string;
   isDark: boolean;
+  // Island layout tokens
+  canvas: string;
+  islandRadius: number;
+  islandGap: number;
+  islandShadow: string;
+  islandBorder: string;
 }
 
 export const darkColors: ColorPalette = {
@@ -99,6 +105,11 @@ export const darkColors: ColorPalette = {
   diffDelNumBg: "rgba(239, 68, 68, 0.2)",
   diffHunkBg: "rgba(100, 100, 100, 0.1)",
   isDark: true,
+  canvas: "#141414",
+  islandRadius: 10,
+  islandGap: 6,
+  islandShadow: "0 2px 8px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04)",
+  islandBorder: "1px solid rgba(255, 255, 255, 0.06)",
 };
 
 export const lightColors: ColorPalette = {
@@ -145,6 +156,11 @@ export const lightColors: ColorPalette = {
   diffDelNumBg: "rgba(239, 68, 68, 0.15)",
   diffHunkBg: "rgba(0, 0, 0, 0.04)",
   isDark: false,
+  canvas: "#e8e8e8",
+  islandRadius: 10,
+  islandGap: 6,
+  islandShadow: "0 1px 4px rgba(0, 0, 0, 0.08)",
+  islandBorder: "1px solid rgba(0, 0, 0, 0.06)",
 };
 
 // Claude for Desktop inspired warm palette
@@ -192,6 +208,11 @@ export const claudeColors: ColorPalette = {
   diffDelNumBg: "rgba(196, 54, 44, 0.14)",
   diffHunkBg: "rgba(0, 0, 0, 0.03)",
   isDark: false,
+  canvas: "#E5DED5",
+  islandRadius: 10,
+  islandGap: 6,
+  islandShadow: "0 1px 4px rgba(0, 0, 0, 0.06)",
+  islandBorder: "1px solid rgba(0, 0, 0, 0.05)",
 };
 
 // Built-in theme registry — extensible at runtime with custom themes

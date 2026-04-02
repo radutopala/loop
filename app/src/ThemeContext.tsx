@@ -24,6 +24,8 @@ interface ThemeContextValue {
   availableThemes: string[];
   fontSizes: FontSizes;
   setFontSizes: (sizes: FontSizes) => void;
+  islands: boolean;
+  setIslands: (v: boolean) => void;
 }
 
 const ThemeContext = createContext<ThemeContextValue>({
@@ -33,12 +35,15 @@ const ThemeContext = createContext<ThemeContextValue>({
   availableThemes: ["dark", "light"],
   fontSizes: DEFAULT_FONT_SIZES,
   setFontSizes: () => {},
+  islands: true,
+  setIslands: () => {},
 });
 
-export function ThemeProvider({ children, initialTheme, initialFontSizes, customThemes }: {
+export function ThemeProvider({ children, initialTheme, initialFontSizes, initialIslands, customThemes }: {
   children: ReactNode;
   initialTheme?: string;
   initialFontSizes?: Partial<FontSizes>;
+  initialIslands?: boolean;
   customThemes?: Record<string, ColorPalette>;
 }) {
   const allThemes = { ...builtinThemes, ...customThemes };
@@ -47,9 +52,18 @@ export function ThemeProvider({ children, initialTheme, initialFontSizes, custom
   const [themeName, setThemeNameState] = useState<string>(
     initialTheme && allThemes[initialTheme] ? initialTheme : "dark"
   );
-  const colors = allThemes[themeName] ?? darkColors;
-
   const [fontSizes, setFontSizes] = useState<FontSizes>({ ...DEFAULT_FONT_SIZES, ...initialFontSizes });
+  const [islands, setIslands] = useState(initialIslands ?? true);
+
+  const baseColors = allThemes[themeName] ?? darkColors;
+  const colors = islands ? baseColors : {
+    ...baseColors,
+    canvas: baseColors.bg,
+    islandRadius: 0,
+    islandGap: 0,
+    islandShadow: "none",
+    islandBorder: "none",
+  };
 
   // Wrap setThemeName to also persist to localStorage
   const setThemeName = (name: string) => {
@@ -57,9 +71,10 @@ export function ThemeProvider({ children, initialTheme, initialFontSizes, custom
     try { localStorage.setItem("loop-theme", name); } catch { /* ignore */ }
   };
 
-  // On initial mount, persist the initial theme to localStorage
+  // On initial mount, persist the initial theme + islands to localStorage
   useEffect(() => {
     try { localStorage.setItem("loop-theme", themeName); } catch { /* ignore */ }
+    try { localStorage.setItem("loop-islands", islands ? "1" : "0"); } catch { /* ignore */ }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Update scrollbar & body background via injected <style>, update meta theme-color
@@ -78,20 +93,20 @@ export function ThemeProvider({ children, initialTheme, initialFontSizes, custom
     el.textContent = `
       ::-webkit-scrollbar-thumb { background: ${colors.scrollThumb} !important; }
       ::-webkit-scrollbar-thumb:hover { background: ${colors.scrollThumbHover} !important; }
-      body { background-color: ${colors.bg}; }
+      body { background-color: ${colors.canvas}; }
     `;
 
     // Update color-scheme on <html>
     document.documentElement.style.colorScheme = colors.isDark ? "dark" : "light";
-    document.documentElement.style.backgroundColor = colors.bg;
+    document.documentElement.style.backgroundColor = colors.canvas;
 
     // Update <meta name="theme-color"> for browser/OS chrome
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute("content", colors.bg);
-  }, [themeName, colors]);
+    if (meta) meta.setAttribute("content", colors.canvas);
+  }, [themeName, colors, islands]);
 
   return (
-    <ThemeContext.Provider value={{ themeName, colors, setThemeName, availableThemes, fontSizes, setFontSizes }}>
+    <ThemeContext.Provider value={{ themeName, colors, setThemeName, availableThemes, fontSizes, setFontSizes, islands, setIslands }}>
       {children}
     </ThemeContext.Provider>
   );
