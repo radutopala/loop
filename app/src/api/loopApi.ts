@@ -578,6 +578,85 @@ export interface PlaygroundItem {
   scope: "global" | "project";
 }
 
+// --- Scheduled Tasks ---
+
+export interface ScheduledTask {
+  id: number;
+  channel_id: string;
+  schedule: string;
+  type: "cron" | "interval" | "once";
+  prompt: string;
+  enabled: boolean;
+  next_run_at: string;
+  template_name?: string;
+  auto_delete_sec: number;
+  worktree: boolean;
+}
+
+export interface TaskRunLog {
+  id: number;
+  task_id: number;
+  status: "running" | "success" | "failed";
+  response_text: string;
+  error_text: string;
+  started_at: string;
+  finished_at: string;
+}
+
+export async function fetchTasks(channelId: string): Promise<ScheduledTask[]> {
+  const res = await fetch(`${apiUrl}/api/tasks?channel_id=${encodeURIComponent(channelId)}`);
+  if (!res.ok) throw new Error(`Failed to fetch tasks: ${res.statusText}`);
+  return res.json();
+}
+
+export async function createTask(data: {
+  channel_id: string;
+  schedule: string;
+  type: string;
+  prompt: string;
+  template_name?: string;
+  auto_delete_sec?: number;
+  worktree?: boolean;
+}): Promise<{ id: number }> {
+  const res = await fetch(`${apiUrl}/api/tasks`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`Failed to create task: ${res.statusText}`);
+  return res.json();
+}
+
+export async function updateTask(
+  taskId: number,
+  data: {
+    enabled?: boolean;
+    schedule?: string;
+    type?: string;
+    prompt?: string;
+    auto_delete_sec?: number;
+    worktree?: boolean;
+  },
+): Promise<void> {
+  const res = await fetch(`${apiUrl}/api/tasks/${taskId}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) throw new Error(`Failed to update task: ${res.statusText}`);
+}
+
+export async function deleteTask(taskId: number): Promise<void> {
+  const res = await fetch(`${apiUrl}/api/tasks/${taskId}`, { method: "DELETE" });
+  if (!res.ok) throw new Error(`Failed to delete task: ${res.statusText}`);
+}
+
+export async function fetchTaskRuns(taskId: number): Promise<TaskRunLog[]> {
+  const res = await fetch(`${apiUrl}/api/tasks/${taskId}/runs`);
+  if (!res.ok) throw new Error(`Failed to fetch task runs: ${res.statusText}`);
+  return (await res.json()) ?? [];
+}
+
 /** List all playground items with names and titles (global + project-scoped). */
 export async function fetchPlaygroundItems(channelId?: string): Promise<PlaygroundItem[]> {
   const params = channelId ? `?channel_id=${encodeURIComponent(channelId)}` : "";

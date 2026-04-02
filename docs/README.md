@@ -16,7 +16,7 @@ Comprehensive documentation for every feature of the Loop platform.
 - [**Containers**](containers.md) — Docker container lifecycle, container registry with status tracking, environment, mounts, MCP config, scheduled removal
 - [**MCP Server**](mcpserver.md) — MCP tools for task scheduling, communication, and memory search
 - [**Browser**](browser.md) — Chrome sidecar containers, CDP client, screencast, input dispatch, tabs
-- [**Scheduling**](scheduling.md) — Task types (cron/interval/once), templates, auto-deletion, thread creation
+- [**Scheduling**](scheduling.md) — Task types (cron/interval/once), templates, auto-deletion, thread creation, worktree isolation, Tasks panel
 - [**Daemon**](daemon.md) — Cross-platform service management (launchd, systemd, Windows SCM)
 
 ## API & Data

@@ -304,7 +304,11 @@ When there are no messages and loading is complete, the chat view shows:
 
 ## Copy-on-Select
 
-Selecting text in the chat message area automatically copies it to the clipboard. The feature listens for `mouseup` events on the message container and calls `navigator.clipboard.writeText()` if the selection is non-empty and within the container.
+Selecting text anywhere in the workspace automatically copies it to the clipboard. A single top-level `useCopyOnSelect` hook (mounted in `WorkspaceLayout`) listens for `mouseup` events on the document and copies any non-empty selection to the clipboard. The hook:
+
+- **Skips editable elements**: Selections inside `<textarea>` or `<input>` are not auto-copied (avoids interfering with chat input, form fields, etc.).
+- **Supports xterm.js terminals**: For canvas-rendered terminal panels (Agent, Shell), the hook reads the selection via a `_xtermGetSelection` property set on the `.xterm` DOM element by `useXTerminal`.
+- **Works on non-secure HTTP contexts**: Falls back to `document.execCommand("copy")` with a hidden textarea and `clipboardData.setData` when `navigator.clipboard` is unavailable (e.g., `host.docker.internal`).
 
 ---
 

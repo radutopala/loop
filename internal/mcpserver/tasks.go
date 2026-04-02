@@ -19,6 +19,7 @@ type scheduleTaskInput struct {
 	Prompt        string `json:"prompt" jsonschema:"The prompt to execute on schedule"`
 	TemplateName  string `json:"template_name,omitempty" jsonschema:"Optional template name to associate with this task (for identification and deduplication)"`
 	AutoDeleteSec int    `json:"auto_delete_sec,omitempty" jsonschema:"Seconds after execution to auto-delete the thread (0 = disabled)"`
+	Worktree      bool   `json:"worktree,omitempty" jsonschema:"If true, run the task in an isolated git worktree instead of the parent channel directory"`
 }
 
 type cancelTaskInput struct {
@@ -36,6 +37,7 @@ type editTaskInput struct {
 	Type          *string `json:"type,omitempty" jsonschema:"New task type: cron, interval, or once"`
 	Prompt        *string `json:"prompt,omitempty" jsonschema:"New prompt to execute on schedule"`
 	AutoDeleteSec *int    `json:"auto_delete_sec,omitempty" jsonschema:"Seconds after execution to auto-delete the thread (0 = disabled)"`
+	Worktree      *bool   `json:"worktree,omitempty" jsonschema:"If true, run the task in an isolated git worktree instead of the parent channel directory"`
 }
 
 type showTaskInput struct {
@@ -64,6 +66,7 @@ func (s *Server) handleScheduleTask(_ context.Context, _ *mcp.CallToolRequest, i
 		"type":            input.Type,
 		"prompt":          input.Prompt,
 		"auto_delete_sec": input.AutoDeleteSec,
+		"worktree":        input.Worktree,
 	}
 	if input.TemplateName != "" {
 		body["template_name"] = input.TemplateName
@@ -97,6 +100,7 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 		NextRunAt     string `json:"next_run_at"`
 		TemplateName  string `json:"template_name"`
 		AutoDeleteSec int    `json:"auto_delete_sec"`
+		Worktree      bool   `json:"worktree"`
 	}
 	tasks, errResult, err := doAPICall[[]taskEntry](s, "GET", fmt.Sprintf("%s/api/tasks?channel_id=%s", s.apiURL, s.channelID), http.StatusOK, nil)
 	if errResult != nil || err != nil {
@@ -122,6 +126,9 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 		if t.AutoDeleteSec > 0 {
 			fmt.Fprintf(&text, ", auto_delete: %ds", t.AutoDeleteSec)
 		}
+		if t.Worktree {
+			text.WriteString(", worktree: true")
+		}
 		text.WriteString(")\n")
 	}
 
@@ -144,6 +151,7 @@ func (s *Server) handleShowTask(_ context.Context, _ *mcp.CallToolRequest, input
 		NextRunAt     string `json:"next_run_at"`
 		TemplateName  string `json:"template_name"`
 		AutoDeleteSec int    `json:"auto_delete_sec"`
+		Worktree      bool   `json:"worktree"`
 	}
 	task, errResult, err := doAPICall[taskEntry](s, "GET", fmt.Sprintf("%s/api/tasks/%d", s.apiURL, input.TaskID), http.StatusOK, nil)
 	if errResult != nil || err != nil {
@@ -167,6 +175,7 @@ func (s *Server) handleShowTask(_ context.Context, _ *mcp.CallToolRequest, input
 	if task.AutoDeleteSec > 0 {
 		fmt.Fprintf(&text, "Auto-delete: %ds\n", task.AutoDeleteSec)
 	}
+	fmt.Fprintf(&text, "Worktree: %v\n", task.Worktree)
 	fmt.Fprintf(&text, "\nPrompt:\n%s", task.Prompt)
 
 	return &mcp.CallToolResult{
@@ -206,9 +215,12 @@ func (s *Server) handleEditTask(_ context.Context, _ *mcp.CallToolRequest, input
 	if input.AutoDeleteSec != nil {
 		body["auto_delete_sec"] = *input.AutoDeleteSec
 	}
+	if input.Worktree != nil {
+		body["worktree"] = *input.Worktree
+	}
 
 	if len(body) == 0 {
-		return errorResult("at least one of schedule, type, prompt, or auto_delete_sec is required"), nil, nil
+		return errorResult("at least one of schedule, type, prompt, auto_delete_sec, or worktree is required"), nil, nil
 	}
 
 	// Validate schedule when editing to once/interval type with a schedule

@@ -49,6 +49,12 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
       }
       if (newStatus === "completed" || newStatus === "failed") {
         stop();
+        // Reset terminal mouse tracking modes that the killed process may not
+        // have cleaned up.  Without this, mouse movements generate raw escape
+        // sequences that the shell interprets as text input.
+        writeRef.current?.(
+          "\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l",
+        );
         onSessionEnd?.();
       }
       onStatusChange?.();

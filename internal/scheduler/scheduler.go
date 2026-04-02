@@ -10,6 +10,7 @@ import (
 	"github.com/robfig/cron/v3"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/events"
 )
 
 // TaskExecutor executes a scheduled task and returns a response or error.
@@ -27,7 +28,12 @@ type Scheduler interface {
 	GetTask(ctx context.Context, taskID int64) (*db.ScheduledTask, error)
 	SetTaskEnabled(ctx context.Context, taskID int64, enabled bool) error
 	ToggleTask(ctx context.Context, taskID int64) (bool, error)
-	EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int) error
+	EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int, worktree *bool) error
+}
+
+// TaskEventBroadcaster broadcasts task lifecycle events.
+type TaskEventBroadcaster interface {
+	BroadcastTaskRunCompleted(data events.TaskRunEventData)
 }
 
 // TaskScheduler implements Scheduler using a polling loop.
@@ -36,6 +42,7 @@ type TaskScheduler struct {
 	executor     TaskExecutor
 	pollInterval time.Duration
 	logger       *slog.Logger
+	events       TaskEventBroadcaster
 
 	cancel context.CancelFunc
 	wg     sync.WaitGroup
@@ -49,6 +56,11 @@ func NewTaskScheduler(store db.Store, executor TaskExecutor, pollInterval time.D
 		pollInterval: pollInterval,
 		logger:       logger,
 	}
+}
+
+// SetEventBroadcaster sets the event broadcaster for task run lifecycle events.
+func (s *TaskScheduler) SetEventBroadcaster(eb TaskEventBroadcaster) {
+	s.events = eb
 }
 
 // Start launches the polling loop in a background goroutine.
@@ -116,8 +128,8 @@ func (s *TaskScheduler) ToggleTask(ctx context.Context, taskID int64) (bool, err
 	return newEnabled, nil
 }
 
-// EditTask updates a scheduled task's schedule, type, prompt, and/or auto_delete_sec.
-func (s *TaskScheduler) EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int) error {
+// EditTask updates a scheduled task's schedule, type, prompt, auto_delete_sec, and/or worktree flag.
+func (s *TaskScheduler) EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int, worktree *bool) error {
 	task, err := s.store.GetScheduledTask(ctx, taskID)
 	if err != nil {
 		return fmt.Errorf("getting task: %w", err)
@@ -137,6 +149,9 @@ func (s *TaskScheduler) EditTask(ctx context.Context, taskID int64, schedule, ta
 	}
 	if autoDeleteSec != nil {
 		task.AutoDeleteSec = *autoDeleteSec
+	}
+	if worktree != nil {
+		task.Worktree = *worktree
 	}
 
 	if schedule != nil || taskType != nil {
@@ -212,6 +227,15 @@ func (s *TaskScheduler) executeAndUpdate(ctx context.Context, task *db.Scheduled
 
 	if err := s.store.UpdateTaskRunLog(ctx, runLog); err != nil {
 		s.logger.Error("failed to update task run log", "task_id", task.ID, "error", err)
+	}
+
+	if s.events != nil {
+		s.events.BroadcastTaskRunCompleted(events.TaskRunEventData{
+			TaskID:    task.ID,
+			RunID:     runLog.ID,
+			Status:    string(runLog.Status),
+			ChannelID: task.ChannelID,
+		})
 	}
 
 	now := time.Now().UTC()

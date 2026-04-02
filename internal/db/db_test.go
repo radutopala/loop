@@ -43,7 +43,7 @@ func newMockChannelRows() *sqlmock.Rows {
 }
 
 func newMockTaskRows() *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "schedule", "type", "prompt", "enabled", "next_run_at", "created_at", "updated_at", "template_name", "auto_delete_sec", "thread_id"})
+	return sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "schedule", "type", "prompt", "enabled", "next_run_at", "created_at", "updated_at", "template_name", "auto_delete_sec", "thread_id", "worktree"})
 }
 
 func newMockMessageRows() *sqlmock.Rows {
@@ -623,7 +623,7 @@ func (s *StoreSuite) TestCreateScheduledTask() {
 		NextRunAt: time.Now().UTC(),
 	}
 	s.mock.ExpectExec(`INSERT INTO scheduled_tasks`).
-		WithArgs(task.ChannelID, task.GuildID, task.Schedule, "cron", task.Prompt, 1, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "", 0).
+		WithArgs(task.ChannelID, task.GuildID, task.Schedule, "cron", task.Prompt, 1, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "", 0, 0).
 		WillReturnResult(sqlmock.NewResult(5, 1))
 
 	id, err := s.store.CreateScheduledTask(context.Background(), task)
@@ -633,7 +633,7 @@ func (s *StoreSuite) TestCreateScheduledTask() {
 }
 
 func (s *StoreSuite) TestCreateScheduledTaskErrors() {
-	anyArgs := []driver.Value{sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()}
+	anyArgs := []driver.Value{sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()}
 	s.mock.ExpectExec(`INSERT INTO scheduled_tasks`).WithArgs(anyArgs...).WillReturnError(sql.ErrConnDone)
 	id, err := s.store.CreateScheduledTask(context.Background(), &ScheduledTask{ChannelID: "ch1", Type: TaskTypeCron, NextRunAt: time.Now().UTC()})
 	require.Error(s.T(), err)
@@ -648,7 +648,7 @@ func (s *StoreSuite) TestCreateScheduledTaskErrors() {
 func (s *StoreSuite) TestGetDueTasks() {
 	now := time.Now().UTC()
 	rows := newMockTaskRows().
-		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "", 0, "")
+		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "", 0, "", 0)
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE enabled = 1 AND next_run_at`).
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnRows(rows)
@@ -668,7 +668,7 @@ func (s *StoreSuite) TestGetDueTasksErrors() {
 	require.Nil(s.T(), tasks)
 
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE enabled = 1`).WithArgs(sqlmock.AnyArg()).WillReturnRows(
-		newMockTaskRows().AddRow("bad", "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "", 0, ""))
+		newMockTaskRows().AddRow("bad", "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "", 0, "", 0))
 	tasks, err = s.store.GetDueTasks(context.Background(), now)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), tasks)
@@ -680,7 +680,7 @@ func (s *StoreSuite) TestUpdateScheduledTask() {
 		Prompt: "updated prompt", Enabled: false, NextRunAt: time.Now().UTC(),
 	}
 	s.mock.ExpectExec(`UPDATE scheduled_tasks SET`).
-		WithArgs(task.Schedule, "interval", task.Prompt, 0, sqlmock.AnyArg(), sqlmock.AnyArg(), 0, "", task.ID).
+		WithArgs(task.Schedule, "interval", task.Prompt, 0, sqlmock.AnyArg(), sqlmock.AnyArg(), 0, "", 0, task.ID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := s.store.UpdateScheduledTask(context.Background(), task)
@@ -689,7 +689,7 @@ func (s *StoreSuite) TestUpdateScheduledTask() {
 
 func (s *StoreSuite) TestUpdateScheduledTaskError() {
 	s.mock.ExpectExec(`UPDATE scheduled_tasks SET`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
 	require.Error(s.T(), s.store.UpdateScheduledTask(context.Background(), &ScheduledTask{ID: 1, Type: TaskTypeCron, NextRunAt: time.Now().UTC()}))
 }
@@ -720,8 +720,8 @@ func (s *StoreSuite) TestDeleteScheduledTaskErrors() {
 func (s *StoreSuite) TestListScheduledTasks() {
 	now := time.Now().UTC()
 	rows := newMockTaskRows().
-		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check", 1, now, now, now, "", 0, "").
-		AddRow(2, "ch1", "g1", "30m", "interval", "ping", 0, now.Add(time.Hour), now, now, "", 0, "")
+		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check", 1, now, now, now, "", 0, "", 0).
+		AddRow(2, "ch1", "g1", "30m", "interval", "ping", 0, now.Add(time.Hour), now, now, "", 0, "", 0)
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE channel_id`).
 		WithArgs("ch1", sqlmock.AnyArg()).
 		WillReturnRows(rows)
@@ -749,7 +749,7 @@ func (s *StoreSuite) TestUpdateScheduledTaskEnabled() {
 func (s *StoreSuite) TestGetScheduledTask() {
 	now := time.Now().UTC()
 	rows := newMockTaskRows().
-		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "", 0, "")
+		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "", 0, "", 0)
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE id`).
 		WithArgs(int64(1)).
 		WillReturnRows(rows)
@@ -841,6 +841,44 @@ func (s *StoreSuite) TestUpdateTaskRunLogError() {
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
 	require.Error(s.T(), s.store.UpdateTaskRunLog(context.Background(), &TaskRunLog{ID: 10, Status: RunStatusFailed}))
+}
+
+func (s *StoreSuite) TestListTaskRunLogs() {
+	now := time.Now().UTC()
+	rows := sqlmock.NewRows([]string{"id", "task_id", "status", "response_text", "error_text", "started_at", "finished_at"}).
+		AddRow(1, 42, "success", "ok", "", now, now.Add(time.Second)).
+		AddRow(2, 42, "failed", "", "boom", now.Add(time.Minute), now.Add(time.Minute+time.Second))
+	s.mock.ExpectQuery(`SELECT .+ FROM task_run_logs WHERE task_id .+ ORDER BY started_at DESC LIMIT`).
+		WithArgs(int64(42), 50).
+		WillReturnRows(rows)
+
+	logs, err := s.store.ListTaskRunLogs(context.Background(), 42, 50)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), logs, 2)
+	require.Equal(s.T(), RunStatusSuccess, logs[0].Status)
+	require.Equal(s.T(), "boom", logs[1].ErrorText)
+}
+
+func (s *StoreSuite) TestListTaskRunLogsError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM task_run_logs WHERE task_id`).
+		WithArgs(int64(42), 50).
+		WillReturnError(sql.ErrConnDone)
+
+	logs, err := s.store.ListTaskRunLogs(context.Background(), 42, 50)
+	require.Error(s.T(), err)
+	require.Nil(s.T(), logs)
+}
+
+func (s *StoreSuite) TestListTaskRunLogsScanError() {
+	rows := sqlmock.NewRows([]string{"id", "task_id", "status", "response_text", "error_text", "started_at", "finished_at"}).
+		AddRow("bad", 42, "success", "ok", "", time.Now().UTC(), time.Now().UTC())
+	s.mock.ExpectQuery(`SELECT .+ FROM task_run_logs WHERE task_id`).
+		WithArgs(int64(42), 50).
+		WillReturnRows(rows)
+
+	logs, err := s.store.ListTaskRunLogs(context.Background(), 42, 50)
+	require.Error(s.T(), err)
+	require.Nil(s.T(), logs)
 }
 
 // --- initDB tests ---
@@ -1055,7 +1093,7 @@ func (s *StoreSuite) TestBoolToInt() {
 func (s *StoreSuite) TestGetScheduledTaskByTemplateName() {
 	now := time.Now().UTC()
 	rows := newMockTaskRows().
-		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "my-template", 0, "")
+		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "my-template", 0, "", 0)
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE channel_id .+ AND template_name`).
 		WithArgs("ch1", "my-template").
 		WillReturnRows(rows)
@@ -1272,7 +1310,7 @@ func (s *StoreSuite) TestNowFuncUsedInCreateScheduledTask() {
 		Prompt: "test", Enabled: true, NextRunAt: fixedTime,
 	}
 	s.mock.ExpectExec(`INSERT INTO scheduled_tasks`).
-		WithArgs("ch1", "", "0 9 * * *", "cron", "test", 1, fixedTime, fixedTime, fixedTime, "", 0).
+		WithArgs("ch1", "", "0 9 * * *", "cron", "test", 1, fixedTime, fixedTime, fixedTime, "", 0, 0).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	id, err := s.store.CreateScheduledTask(context.Background(), task)

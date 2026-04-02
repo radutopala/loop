@@ -125,3 +125,17 @@ type ImageUpdateAvailableData struct {
 	LatestVersion  string `json:"latest_version"`
 	Component      string `json:"component"` // "claude_code"
 }
+
+// TaskEventData is the payload for task.created and task.updated events.
+type TaskEventData struct {
+	TaskID    int64  `json:"task_id"`
+	ChannelID string `json:"channel_id"`
+}
+
+// TaskRunEventData is the payload for task.run_completed events.
+type TaskRunEventData struct {
+	TaskID    int64  `json:"task_id"`
+	RunID     int64  `json:"run_id"`
+	Status    string `json:"status"`
+	ChannelID string `json:"channel_id"`
+}

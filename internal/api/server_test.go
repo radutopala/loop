@@ -168,6 +168,7 @@ func (s *ServerSuite) SetupTest() {
 	s.sys.On("Remove", mock.Anything).Return(nil)
 	s.sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
 	s.sys.On("UserHomeDir").Return("/home/testuser", nil)
+	s.srv.worktreeCreator.Sys = s.sys
 
 	s.mux = http.NewServeMux()
 	s.mux.HandleFunc("GET /api/channels", s.srv.handleSearchChannels)
@@ -183,6 +184,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("GET /api/tasks/{id}", s.srv.handleGetTask)
 	s.mux.HandleFunc("DELETE /api/tasks/{id}", s.srv.handleDeleteTask)
 	s.mux.HandleFunc("PATCH /api/tasks/{id}", s.srv.handleUpdateTask)
+	s.mux.HandleFunc("GET /api/tasks/{id}/runs", s.srv.handleListTaskRuns)
 	s.mux.HandleFunc("GET /api/channels/{id}/sessions", s.srv.handleListSessions)
 	s.mux.HandleFunc("GET /api/channels/{id}/messages", s.srv.handleListMessages)
 	s.mux.HandleFunc("GET /api/messages/search", s.srv.handleSearchMessages)
@@ -433,6 +435,32 @@ func (s *ServerSuite) TestCreateTaskWithTemplateName() {
 	s.scheduler.AssertExpectations(s.T())
 }
 
+func (s *ServerSuite) TestCreateTaskWithWorktree() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
+	s.scheduler.On("AddTask", mock.Anything, mock.MatchedBy(func(task *db.ScheduledTask) bool {
+		return task.ChannelID == "ch1" && task.Worktree
+	})).Return(int64(70), nil)
+
+	rec := s.testRequest("POST", "/api/tasks", `{"channel_id":"ch1","schedule":"0 9 * * *","type":"cron","prompt":"test","worktree":true}`)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestCreateTaskBroadcastsEvent() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
+	s.scheduler.On("AddTask", mock.Anything, mock.Anything).Return(int64(42), nil)
+
+	hub := NewEventsHub(slog.Default())
+	s.srv.SetEventsHub(hub)
+	defer func() { s.srv.eventsHub = nil }()
+
+	rec := s.testRequest("POST", "/api/tasks", `{"channel_id":"ch1","schedule":"0 9 * * *","type":"cron","prompt":"test"}`)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
 func (s *ServerSuite) TestCreateTaskSchedulerError() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
 	s.scheduler.On("AddTask", mock.Anything, mock.Anything).Return(int64(0), errors.New("bad schedule"))
@@ -553,6 +581,24 @@ func (s *ServerSuite) TestGetTaskSuccess() {
 	s.scheduler.AssertExpectations(s.T())
 }
 
+func (s *ServerSuite) TestGetTaskWithWorktree() {
+	now := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
+	task := &db.ScheduledTask{
+		ID: 43, ChannelID: "ch1", Schedule: "0 9 * * *", Type: db.TaskTypeCron,
+		Prompt: "wt task", Enabled: true, NextRunAt: now, Worktree: true,
+	}
+	s.scheduler.On("GetTask", mock.Anything, int64(43)).Return(task, nil)
+
+	rec := s.testRequest("GET", "/api/tasks/43", "")
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp taskResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.True(s.T(), resp.Worktree)
+	s.scheduler.AssertExpectations(s.T())
+}
+
 func (s *ServerSuite) TestGetTaskNotFound() {
 	s.scheduler.On("GetTask", mock.Anything, int64(99)).Return(nil, nil)
 
@@ -601,6 +647,19 @@ func (s *ServerSuite) TestDeleteTaskSchedulerError() {
 	s.scheduler.AssertExpectations(s.T())
 }
 
+func (s *ServerSuite) TestDeleteTaskBroadcastsEvent() {
+	s.scheduler.On("RemoveTask", mock.Anything, int64(42)).Return(nil)
+
+	hub := NewEventsHub(slog.Default())
+	s.srv.SetEventsHub(hub)
+	defer func() { s.srv.eventsHub = nil }()
+
+	rec := s.testRequest("DELETE", "/api/tasks/42", "")
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
 // --- UpdateTask tests ---
 
 func (s *ServerSuite) TestUpdateTaskToggle() {
@@ -637,7 +696,7 @@ func (s *ServerSuite) TestUpdateTaskNoFields() {
 func (s *ServerSuite) TestUpdateTaskEditPrompt() {
 	s.scheduler.On("EditTask", mock.Anything, int64(42), (*string)(nil), (*string)(nil), mock.MatchedBy(func(p *string) bool {
 		return p != nil && *p == "new prompt"
-	}), (*int)(nil)).Return(nil)
+	}), (*int)(nil), (*bool)(nil)).Return(nil)
 
 	rec := s.testRequest("PATCH", "/api/tasks/42", `{"prompt":"new prompt"}`)
 
@@ -646,11 +705,22 @@ func (s *ServerSuite) TestUpdateTaskEditPrompt() {
 }
 
 func (s *ServerSuite) TestUpdateTaskEditSchedulerError() {
-	s.scheduler.On("EditTask", mock.Anything, int64(42), mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("edit error"))
+	s.scheduler.On("EditTask", mock.Anything, int64(42), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("edit error"))
 
 	rec := s.testRequest("PATCH", "/api/tasks/42", `{"prompt":"new"}`)
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestUpdateTaskEditWorktree() {
+	s.scheduler.On("EditTask", mock.Anything, int64(42), (*string)(nil), (*string)(nil), (*string)(nil), (*int)(nil), mock.MatchedBy(func(w *bool) bool {
+		return w != nil && *w
+	})).Return(nil)
+
+	rec := s.testRequest("PATCH", "/api/tasks/42", `{"worktree":true}`)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
 	s.scheduler.AssertExpectations(s.T())
 }
 
@@ -661,6 +731,55 @@ func (s *ServerSuite) TestUpdateTaskSchedulerError() {
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestUpdateTaskBroadcastsEvent() {
+	s.scheduler.On("SetTaskEnabled", mock.Anything, int64(42), false).Return(nil)
+
+	hub := NewEventsHub(slog.Default())
+	s.srv.SetEventsHub(hub)
+	defer func() { s.srv.eventsHub = nil }()
+
+	rec := s.testRequest("PATCH", "/api/tasks/42", `{"enabled":false}`)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+// --- ListTaskRuns tests ---
+
+func (s *ServerSuite) TestListTaskRunsSuccess() {
+	now := time.Date(2025, 6, 1, 10, 0, 0, 0, time.UTC)
+	runs := []*db.TaskRunLog{
+		{ID: 1, TaskID: 42, Status: db.RunStatusSuccess, ResponseText: "ok", StartedAt: now, FinishedAt: now.Add(time.Second)},
+		{ID: 2, TaskID: 42, Status: db.RunStatusFailed, ErrorText: "boom", StartedAt: now.Add(time.Minute), FinishedAt: now.Add(time.Minute + time.Second)},
+	}
+	s.store.On("ListTaskRunLogs", mock.Anything, int64(42), 50).Return(runs, nil)
+
+	rec := s.testRequest("GET", "/api/tasks/42/runs", "")
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []db.TaskRunLog
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 2)
+	require.Equal(s.T(), db.RunStatusSuccess, resp[0].Status)
+	require.Equal(s.T(), "boom", resp[1].ErrorText)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestListTaskRunsInvalidID() {
+	rec := s.testRequest("GET", "/api/tasks/abc/runs", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestListTaskRunsStoreError() {
+	s.store.On("ListTaskRunLogs", mock.Anything, int64(42), 50).Return(nil, errors.New("db error"))
+
+	rec := s.testRequest("GET", "/api/tasks/42/runs", "")
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.store.AssertExpectations(s.T())
 }
 
 // --- Start / Stop tests ---

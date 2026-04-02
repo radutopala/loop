@@ -72,15 +72,17 @@ interface SplitNode {
 | Chat | `chat` | `"chat"` | Yes | Chat with the agent (see [chat.md](chat.md)) |
 | Editor | `editor` | `"editor"` | Yes | File browser and code editor (see [editor.md](editor.md)) |
 | Memory | `memory` | `"memory"` | Yes | Agent memory explorer |
-| Diff | `diff` | `"diff"` | Yes | Git diff viewer |
+| Git | `git` | `"git"` | Yes | Git diff viewer |
 | Docker Browser | `docker-browser` | `"docker-browser"` | Yes | Chrome browser inside the Docker container |
 | Host Browser | `host-browser` | `"host-browser"` | Yes | Chrome browser on the host machine via CDP |
 | Sessions | `sessions` | `"sessions"` | Yes | Browse and resume Claude sessions (channels only) |
+| Notes | `notes` | `"notes"` | Yes | Freeform text notes (CodeMirror-based) |
+| Tasks | `tasks` | `"tasks"` | Yes | Scheduled task management UI (see [scheduling.md](scheduling.md)) |
 | Playground | `playground` | `"playground-N"` | No | Live interactive code sandbox (HTML/CSS/JS) |
 | Agent | `agent` | `"agent-N"` | No | Docker-isolated terminal session |
 | Shell | `shell` | `"shell-N"` | No | Local machine shell session |
 
-**Singleton panels** (chat, editor, memory, diff, docker-browser, host-browser, sessions) can appear at most once in a layout tree. The `canAddPanel()` function enforces this: if the panel type is in `SINGLETON_PANELS` and already present in the tree, the add operation is rejected.
+**Singleton panels** (chat, editor, memory, diff, docker-browser, host-browser, sessions, notes, tasks) can appear at most once in a layout tree. The `canAddPanel()` function enforces this: if the panel type is in `SINGLETON_PANELS` and already present in the tree, the add operation is rejected.
 
 **Channel-only panels**: The Sessions panel is only available for channels (not threads). The "Sessions" tab is hidden from the layout tab bar when viewing a thread.
 
@@ -108,15 +110,13 @@ Default layouts are created for every new channel:
 
 | Name | Structure | Notes |
 |------|-----------|-------|
-| **Chat** | Horizontal split: Chat (50%) + Diff (50%) | |
-| **Editor** | Horizontal split: Editor (65%) + Diff (35%) | |
+| **Chat** | Horizontal split: Chat (50%) + Git (50%) | |
+| **Editor** | Horizontal split: (Editor + Shell stacked, 65%) + Chat (35%) | |
 | **Memory** | Single leaf: Memory | |
-| **Terminal** | Empty (user picks a panel on first use) | |
-| **Diff** | Single leaf: Diff | |
-| **Browser Chat** | Horizontal split: Chat (50%) + (Docker Browser + Diff stacked) | |
+| **Git** | Single leaf: Git | |
+| **Browser Chat** | Horizontal split: Chat (50%) + (Docker Browser + Git stacked) | |
 | **Sessions** | Single leaf: Sessions | Channels only — hidden for threads |
 | **Swarm** | Three Agent panels in a split | |
-| **Canvas** | Free-form canvas with draggable Agent, Diff, Memory tiles | |
 
 The "Chat" layout is the initial active layout.
 
@@ -143,7 +143,7 @@ All layout state is stored in `localStorage` under the key `loop-workspace-layou
 
 ```typescript
 Record<channelId, {
-  version: number;                   // migration version (current: 4)
+  version: number;                   // migration version (current: 8)
   active: string;                    // name of the active layout
   layouts: Record<string, PaneNode>; // layout name -> tree (split layouts)
   order: string[];                   // tab display order
@@ -164,6 +164,10 @@ const migrations: Record<number, (data: ChannelData) => ChannelData> = {
   2: renameBrowserToBrowserChat,
   3: addTypesMap,
   4: migrateBrowserToDockerBrowser, // "browser" panel type -> "docker-browser"
+  5: addSessionsLayout,
+  6: updateEditorLayout,            // Editor + Shell + Chat pane
+  7: addPlaygroundLayout,
+  8: renameDiffToGit,               // "Diff" tab -> "Git", panel:"diff" -> "git"
 };
 ```
 
@@ -248,7 +252,7 @@ The `canAddPanel()` function prevents adding duplicate singleton panels and mutu
 
 ```typescript
 // In app/src/types/panels.ts
-const SINGLETON_PANELS: PanelType[] = ["chat", "editor", "memory", "diff", "docker-browser", "host-browser", "sessions"];
+const SINGLETON_PANELS: PanelType[] = ["chat", "editor", "memory", "git", "docker-browser", "host-browser", "sessions", "notes", "tasks"];
 const EXCLUSIVE_PANELS: PanelType[][] = [["docker-browser", "host-browser"]];
 
 function canAddPanel(tree: PaneNode | null, panel: PanelType): boolean {

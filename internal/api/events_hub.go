@@ -34,6 +34,10 @@ const (
 	EventContainerRegistered       = "container.registered"
 	EventContainerRemoved          = "container.removed"
 	EventContainerStatusChanged    = "container.status_changed"
+	EventTaskCreated               = "task.created"
+	EventTaskUpdated               = "task.updated"
+	EventTaskDeleted               = "task.deleted"
+	EventTaskRunCompleted          = "task.run_completed"
 )
 
 // Event represents a server-sent event to WebSocket clients.
@@ -298,6 +302,42 @@ func (h *EventsHub) BroadcastContainerRemoved(data container.ContainerEventData)
 func (h *EventsHub) BroadcastContainerStatusChanged(data container.ContainerEventData) {
 	h.Broadcast(Event{
 		Type:   EventContainerStatusChanged,
+		Data:   data,
+		Global: true,
+	})
+}
+
+// BroadcastTaskCreated sends a global task.created event.
+func (h *EventsHub) BroadcastTaskCreated(data events.TaskEventData) {
+	h.Broadcast(Event{
+		Type:   EventTaskCreated,
+		Data:   data,
+		Global: true,
+	})
+}
+
+// BroadcastTaskUpdated sends a global task.updated event.
+func (h *EventsHub) BroadcastTaskUpdated(data events.TaskEventData) {
+	h.Broadcast(Event{
+		Type:   EventTaskUpdated,
+		Data:   data,
+		Global: true,
+	})
+}
+
+// BroadcastTaskDeleted sends a global task.deleted event.
+func (h *EventsHub) BroadcastTaskDeleted(data events.TaskEventData) {
+	h.Broadcast(Event{
+		Type:   EventTaskDeleted,
+		Data:   data,
+		Global: true,
+	})
+}
+
+// BroadcastTaskRunCompleted sends a global task.run_completed event.
+func (h *EventsHub) BroadcastTaskRunCompleted(data events.TaskRunEventData) {
+	h.Broadcast(Event{
+		Type:   EventTaskRunCompleted,
 		Data:   data,
 		Global: true,
 	})

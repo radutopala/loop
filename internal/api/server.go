@@ -17,6 +17,7 @@ import (
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/scheduler"
+	"github.com/radutopala/loop/internal/worktree"
 )
 
 // ContainerManager provides container registry operations for the API server:
@@ -89,6 +90,7 @@ type Server struct {
 	listener              net.Listener
 	stopErr               error             // if set, Stop returns this error (for testing)
 	agentWSWriteJSON      func(v any) error // injectable for testing agent-channel WS write errors
+	worktreeCreator       *worktree.Creator
 	sys                   serverSystem
 }
 
@@ -163,6 +165,7 @@ func (s *Server) SetImageManager(im ImageManager) {
 // NewServer creates a new API server. The channels, threads, store, and messages
 // parameters may be nil if those features are not configured.
 func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads ThreadEnsurer, store ChannelLister, messages MessageSender, logger *slog.Logger) *Server {
+	sys := osutil.RealSystem{}
 	return &Server{
 		scheduler: sched,
 		channels:  channels,
@@ -170,7 +173,11 @@ func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads Threa
 		store:     store,
 		messages:  messages,
 		logger:    logger,
-		sys:       osutil.RealSystem{},
+		worktreeCreator: &worktree.Creator{
+			Sys: sys,
+			Run: worktree.ExecCommandRunner,
+		},
+		sys: sys,
 	}
 }
 
@@ -190,6 +197,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/tasks/{id}", s.handleGetTask)
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.handleDeleteTask)
 	mux.HandleFunc("PATCH /api/tasks/{id}", s.handleUpdateTask)
+	mux.HandleFunc("GET /api/tasks/{id}/runs", s.handleListTaskRuns)
 	mux.HandleFunc("GET /api/channels/{id}/sessions", s.handleListSessions)
 	mux.HandleFunc("GET /api/channels/{id}/messages", s.handleListMessages)
 	mux.HandleFunc("GET /api/messages/search", s.handleSearchMessages)

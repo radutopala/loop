@@ -32,6 +32,7 @@ import (
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/terminal"
 	"github.com/radutopala/loop/internal/types"
+	"github.com/radutopala/loop/internal/worktree"
 )
 
 func (a *app) newServeCmd() *cobra.Command {
@@ -385,6 +386,10 @@ func (a *app) serve() error {
 	agentReg := agentregistry.New()
 
 	executor := orchestrator.NewTaskExecutor(runner, chatBot, store, logger, cfg.ContainerTimeout, cfg.StreamingEnabled)
+	executor.SetWorktreeCreator(&worktree.Creator{
+		Sys: osutil.RealSystem{},
+		Run: worktree.ExecCommandRunner,
+	})
 	sched := scheduler.NewTaskScheduler(store, executor, cfg.PollInterval, logger)
 
 	channelCreators := make(map[types.Platform]api.ChannelCreator, len(bots))
@@ -486,6 +491,7 @@ func (a *app) serve() error {
 	a.ensureImageAsync(ctx, dockerClient, cfg, eventsHub, lifecycleMgr, logger)
 
 	executor.SetEventBroadcaster(eventsHub)
+	sched.SetEventBroadcaster(eventsHub)
 
 	screenshotDir := filepath.Join(cfg.LoopDir, "screenshots")
 	_ = os.MkdirAll(screenshotDir, 0o755)

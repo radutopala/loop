@@ -84,12 +84,13 @@ Each tick:
 For each due task:
 1. A `TaskRunLog` record is inserted with status `"running"`.
 2. The task executor retrieves the channel from the database to get the session ID and work directory.
-3. An `AgentRequest` is built with:
+3. If the task has `worktree = true`, a git worktree is created (see [Worktree Isolation](#worktree-isolation) below).
+4. An `AgentRequest` is built with:
    - The task's prompt as a user message.
    - A system prompt instructing the agent NOT to use `send_message`, `create_thread`, or `create_channel` MCP tools (responses are delivered automatically).
    - If `auto_delete_sec > 0`, the system prompt also instructs the agent to prefix "nothing to report" responses with `[EPHEMERAL]`.
-4. The agent runs inside a Docker container (see [Containers](containers.md)).
-5. The run log is updated to `"success"` or `"failed"` with the response or error text.
+5. The agent runs inside a Docker container (see [Containers](containers.md)).
+6. The run log is updated to `"success"` or `"failed"` with the response or error text.
 
 ### 4. Update Next Run
 
@@ -135,7 +136,7 @@ Thread names differ by platform:
 1. **First streaming turn**: A thread is created via `CreateSimpleThread` (no bot @mention to avoid re-triggering the agent).
 2. **Subsequent turns**: Messages are sent to the thread.
 3. **Final response**: Sent to the thread (or channel if thread creation failed). Duplicate detection prevents re-sending the last streamed turn.
-4. **Thread channel record**: A DB channel record is upserted for the thread, inheriting the parent channel's guild, directory, platform, session, and permissions.
+4. **Thread channel record**: A DB channel record is upserted for the thread, inheriting the parent channel's guild, directory, platform, session, and permissions. For worktree tasks, the thread's `dir_path` is set to the worktree path and `worktree = true`.
 5. **Permission users invited**: All RBAC owner and member users are invited to the thread.
 6. **UI notification**: A `channel_created` event is broadcast so the Electron app sidebar refreshes.
 
@@ -144,6 +145,82 @@ If thread creation fails, the executor falls back to sending messages directly t
 ### Sub-Thread Resolution
 
 When an agent running inside a task thread (sub-thread) schedules or lists tasks, the API automatically resolves the channel up to the parent thread. This ensures tasks are always associated with the correct parent rather than being nested deeper.
+
+---
+
+## Worktree Isolation
+
+Tasks with `worktree = true` run the agent in an isolated git worktree so changes don't affect the main working directory.
+
+### How It Works
+
+1. **First run** (no `thread_id` yet):
+   - The executor reads the current branch via `git rev-parse --abbrev-ref HEAD` in the channel's `dir_path`.
+   - A new worktree is created at `{dir_path}/.worktrees/task-{id}-{hex}` on branch `worktree/task-{id}-{hex}`.
+   - The worktree's `.loop/config.json` is seeded with `extra_dirs` pointing back to the parent project.
+   - The parent channel's session file is copied so `--resume --fork-session` works.
+   - The agent runs in the worktree directory instead of the channel directory.
+
+2. **Subsequent runs** (recurring tasks with existing `thread_id`):
+   - The executor looks up the thread's channel record and reuses its `dir_path`, which already points to the worktree from the first run.
+
+3. **Thread record**: The thread channel created on first run has `worktree = true` and its `dir_path` set to the worktree path.
+
+### Requirements
+
+- The channel's `dir_path` must be a git repository. If `git rev-parse` fails (e.g., the directory is not a git repo), the task fails with a descriptive error.
+- Detached HEAD is supported -- the executor falls back to the commit hash when `rev-parse --abbrev-ref HEAD` returns `"HEAD"`.
+
+### UI Restrictions
+
+The worktree checkbox in the Tasks panel is only shown when:
+- The channel is **not** itself a worktree thread (worktree threads already run in isolation).
+- The channel has a **git repository** (non-empty branch detected).
+
+---
+
+## Tasks Panel
+
+The Tasks panel (`tasks` panel type, singleton) provides a GUI for managing scheduled tasks within a channel. It can be added to any layout from the panel menu.
+
+### Layout
+
+The panel is split into two resizable panes:
+
+- **Left pane** (200-500px): Task list with a `+` button to create tasks and a count header.
+- **Right pane**: Task detail view showing the selected task's full details, action buttons, and run history.
+
+### Create Form
+
+Clicking `+` opens an inline form at the top of the task list with fields for:
+- **Type** selector (Cron / Interval / Once)
+- **Schedule** expression (placeholder adapts to the selected type)
+- **Prompt** textarea
+- **Worktree** checkbox (only shown for non-worktree channels with a git repo)
+- **Auto-delete** delay in seconds
+
+### Task Detail View
+
+Selecting a task shows:
+- Task ID, type badge (color-coded), and worktree badge if enabled
+- Schedule expression and full prompt text
+- Next run time (relative) when enabled
+- Auto-delete delay when configured
+- **Enable/Disable** button to toggle the task
+- **Edit** button to open an inline edit form
+- **Delete** button to permanently remove the task
+
+### Run History
+
+Below the task details, a scrollable list shows all `TaskRunLog` entries with:
+- Status indicator (green = success, red = failed, yellow = running)
+- Relative timestamp
+- Error text (on failure)
+- Response text preview (truncated to 200 chars)
+
+### Real-Time Updates
+
+The panel subscribes to the event stream and refreshes the task list on any `task.*` event. Run history refreshes on `task.run_completed` events.
 
 ---
 
@@ -185,6 +262,7 @@ Templates are pre-defined task configurations in the global config. They allow q
 | `type` | `"cron"`, `"interval"`, or `"once"`. |
 | `prompt` | Inline prompt text. |
 | `prompt_path` | File path resolved as `~/.loop/templates/{prompt_path}`. |
+| `worktree` | Run the agent in an isolated git worktree (default: `false`). |
 | `auto_delete_sec` | Auto-delete delay for the task's thread. |
 
 ### Prompt Resolution
@@ -219,10 +297,10 @@ All commands are available as slash commands (`/loop <command>`) and MCP tools.
 ### Create
 
 ```
-/loop schedule type:<cron|interval|once> schedule:<expression> prompt:<text>
+/loop schedule type:<cron|interval|once> schedule:<expression> prompt:<text> [worktree:<true|false>]
 ```
 
-Creates a new task. The scheduler calculates `next_run_at` and enables the task immediately.
+Creates a new task. The scheduler calculates `next_run_at` and enables the task immediately. Set `worktree: true` to run the task in an isolated git worktree (see [Worktree Isolation](#worktree-isolation)).
 
 ### List
 
@@ -259,7 +337,7 @@ Flips a task's enabled state. Disabled tasks are skipped during poll cycles but 
 ### Edit
 
 ```
-/loop edit task_id:<id> [schedule:<expr>] [type:<type>] [prompt:<text>]
+/loop edit task_id:<id> [schedule:<expr>] [type:<type>] [prompt:<text>] [worktree:<true|false>]
 ```
 
 Updates one or more fields of an existing task. If `schedule` or `type` changes, `next_run_at` is recalculated. At least one field must be provided.

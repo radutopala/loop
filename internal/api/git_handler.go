@@ -402,34 +402,12 @@ func (s *Server) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {
 		name = "wt-" + randutil.HexID(4)
 	}
 
-	worktreePath := filepath.Join(dirPath, ".worktrees", name)
-
-	// Create git worktree with a dedicated branch based on the selected one.
-	wtBranch := "worktree/" + name
-	cmd := exec.CommandContext(r.Context(), "git", "worktree", "add", "-b", wtBranch, worktreePath, branch)
-	cmd.Dir = dirPath
-	if out, err := cmd.CombinedOutput(); err != nil {
-		http.Error(w, fmt.Sprintf("git worktree add failed: %s", strings.TrimSpace(string(out))), http.StatusInternalServerError)
+	result, err := s.worktreeCreator.Create(r.Context(), dirPath, branch, name, parent.SessionID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-
-	// Seed worktree config with extra_dirs pointing at the parent project.
-	wtLoopDir := filepath.Join(worktreePath, ".loop")
-	if err := s.sys.MkdirAll(wtLoopDir, 0755); err != nil {
-		s.logger.Warn("creating worktree .loop dir", "error", err)
-	} else {
-		wtCfg := fmt.Sprintf("{\n  \"extra_dirs\": [\n    %q\n  ]\n}\n", dirPath)
-		if err := s.sys.WriteFile(filepath.Join(wtLoopDir, "config.json"), []byte(wtCfg), 0644); err != nil {
-			s.logger.Warn("writing worktree config", "error", err)
-		}
-	}
-
-	// Copy session file so --resume --fork-session works in the worktree dir.
-	if parent.SessionID != "" {
-		if err := s.copySessionFile(dirPath, worktreePath, parent.SessionID); err != nil {
-			s.logger.Warn("copying session file for worktree", "error", err)
-		}
-	}
+	worktreePath := result.WorktreePath
 
 	threadName := fmt.Sprintf("%s (%s)", name, req.Branch)
 	threadID, err := s.threads.CreateThread(r.Context(), req.ChannelID, threadName, "", "")

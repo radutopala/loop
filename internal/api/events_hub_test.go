@@ -773,3 +773,115 @@ func (s *EventsHubSuite) TestBroadcastContainerStatusChanged() {
 	require.NoError(s.T(), json.Unmarshal(msg, &evt))
 	require.Equal(s.T(), EventContainerStatusChanged, evt.Type)
 }
+
+func (s *EventsHubSuite) TestBroadcastTaskCreated() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastTaskCreated(events.TaskEventData{TaskID: 1, ChannelID: "ch-1"})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventTaskCreated, evt.Type)
+}
+
+func (s *EventsHubSuite) TestBroadcastTaskUpdated() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastTaskUpdated(events.TaskEventData{TaskID: 2, ChannelID: "ch-2"})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventTaskUpdated, evt.Type)
+}
+
+func (s *EventsHubSuite) TestBroadcastTaskDeleted() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastTaskDeleted(events.TaskEventData{TaskID: 3, ChannelID: "ch-3"})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventTaskDeleted, evt.Type)
+}
+
+func (s *EventsHubSuite) TestBroadcastTaskRunCompleted() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastTaskRunCompleted(events.TaskRunEventData{TaskID: 1, RunID: 10, Status: "success", ChannelID: "ch-1"})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventTaskRunCompleted, evt.Type)
+}

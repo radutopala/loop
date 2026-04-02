@@ -24,4 +24,5 @@ type ChannelLister interface {
 	DeleteChannelsByParentID(ctx context.Context, parentID string) error
 	ListDistinctMemoryFilePaths(ctx context.Context, dirPath string) ([]db.MemoryFileInfo, error)
 	InsertMessage(ctx context.Context, msg *db.Message) error
+	ListTaskRunLogs(ctx context.Context, taskID int64, limit int) ([]*db.TaskRunLog, error)
 }

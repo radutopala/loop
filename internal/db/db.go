@@ -42,6 +42,7 @@ type Store interface {
 	ListChannels(ctx context.Context) ([]*Channel, error)
 	InsertTaskRunLog(ctx context.Context, log *TaskRunLog) (int64, error)
 	UpdateTaskRunLog(ctx context.Context, log *TaskRunLog) error
+	ListTaskRunLogs(ctx context.Context, taskID int64, limit int) ([]*TaskRunLog, error)
 	UpsertMemoryFile(ctx context.Context, file *MemoryFile) error
 	GetMemoryFilesByDirPath(ctx context.Context, dirPath string) ([]*MemoryFile, error)
 	GetMemoryFileHash(ctx context.Context, filePath, dirPath string) (string, error)
@@ -337,9 +338,9 @@ func (s *SQLiteStore) GetMessagesAround(ctx context.Context, channelID string, m
 func (s *SQLiteStore) CreateScheduledTask(ctx context.Context, task *ScheduledTask) (int64, error) {
 	now := s.nowFunc()
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO scheduled_tasks (channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		task.ChannelID, task.GuildID, task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, now, now, task.TemplateName, task.AutoDeleteSec,
+		`INSERT INTO scheduled_tasks (channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, worktree)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		task.ChannelID, task.GuildID, task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, now, now, task.TemplateName, task.AutoDeleteSec, boolToInt(task.Worktree),
 	)
 	if err != nil {
 		return 0, err
@@ -366,8 +367,8 @@ func (s *SQLiteStore) GetDueTasks(ctx context.Context, now time.Time) ([]*Schedu
 
 func (s *SQLiteStore) UpdateScheduledTask(ctx context.Context, task *ScheduledTask) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE scheduled_tasks SET schedule = ?, type = ?, prompt = ?, enabled = ?, next_run_at = ?, updated_at = ?, auto_delete_sec = ?, thread_id = ? WHERE id = ?`,
-		task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, s.nowFunc(), task.AutoDeleteSec, task.ThreadID, task.ID,
+		`UPDATE scheduled_tasks SET schedule = ?, type = ?, prompt = ?, enabled = ?, next_run_at = ?, updated_at = ?, auto_delete_sec = ?, thread_id = ?, worktree = ? WHERE id = ?`,
+		task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, s.nowFunc(), task.AutoDeleteSec, task.ThreadID, boolToInt(task.Worktree), task.ID,
 	)
 	return err
 }
@@ -410,14 +411,14 @@ func (s *SQLiteStore) UpdateScheduledTaskEnabled(ctx context.Context, id int64, 
 
 func (s *SQLiteStore) GetScheduledTask(ctx context.Context, id int64) (*ScheduledTask, error) {
 	task := &ScheduledTask{}
-	var enabled int
+	var enabled, worktree int
 	var taskType string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT `+taskColumns+` FROM scheduled_tasks WHERE id = ?`,
 		id,
 	).Scan(&task.ID, &task.ChannelID, &task.GuildID, &task.Schedule,
 		&taskType, &task.Prompt, &enabled, &task.NextRunAt,
-		&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID)
+		&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID, &worktree)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -426,19 +427,20 @@ func (s *SQLiteStore) GetScheduledTask(ctx context.Context, id int64) (*Schedule
 	}
 	task.Type = TaskType(taskType)
 	task.Enabled = enabled == 1
+	task.Worktree = worktree == 1
 	return task, nil
 }
 
 func (s *SQLiteStore) GetScheduledTaskByTemplateName(ctx context.Context, channelID, templateName string) (*ScheduledTask, error) {
 	task := &ScheduledTask{}
-	var enabled int
+	var enabled, worktree int
 	var taskType string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT `+taskColumns+` FROM scheduled_tasks WHERE channel_id = ? AND template_name = ?`,
 		channelID, templateName,
 	).Scan(&task.ID, &task.ChannelID, &task.GuildID, &task.Schedule,
 		&taskType, &task.Prompt, &enabled, &task.NextRunAt,
-		&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID)
+		&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID, &worktree)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -447,6 +449,7 @@ func (s *SQLiteStore) GetScheduledTaskByTemplateName(ctx context.Context, channe
 	}
 	task.Type = TaskType(taskType)
 	task.Enabled = enabled == 1
+	task.Worktree = worktree == 1
 	return task, nil
 }
 
@@ -473,6 +476,27 @@ func (s *SQLiteStore) UpdateTaskRunLog(ctx context.Context, trl *TaskRunLog) err
 		string(trl.Status), trl.ResponseText, trl.ErrorText, trl.FinishedAt, trl.ID,
 	)
 	return err
+}
+
+func (s *SQLiteStore) ListTaskRunLogs(ctx context.Context, taskID int64, limit int) ([]*TaskRunLog, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, task_id, status, response_text, error_text, started_at, finished_at
+		 FROM task_run_logs WHERE task_id = ? ORDER BY started_at DESC LIMIT ?`,
+		taskID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var logs []*TaskRunLog
+	for rows.Next() {
+		trl := &TaskRunLog{}
+		if err := rows.Scan(&trl.ID, &trl.TaskID, &trl.Status, &trl.ResponseText, &trl.ErrorText, &trl.StartedAt, &trl.FinishedAt); err != nil {
+			return nil, err
+		}
+		logs = append(logs, trl)
+	}
+	return logs, rows.Err()
 }
 
 func (s *SQLiteStore) UpsertMemoryFile(ctx context.Context, file *MemoryFile) error {
@@ -553,7 +577,7 @@ func (s *SQLiteStore) ListDistinctMemoryFilePaths(ctx context.Context, dirPath s
 // Column lists for SELECT queries.
 const (
 	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at`
-	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id`
+	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree`
 )
 
 // helpers
@@ -625,17 +649,18 @@ func scanScheduledTasks(rows *sql.Rows) ([]*ScheduledTask, error) {
 	var tasks []*ScheduledTask
 	for rows.Next() {
 		task := &ScheduledTask{}
-		var enabled int
+		var enabled, worktree int
 		var taskType string
 		if err := rows.Scan(
 			&task.ID, &task.ChannelID, &task.GuildID, &task.Schedule,
 			&taskType, &task.Prompt, &enabled, &task.NextRunAt,
-			&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID,
+			&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID, &worktree,
 		); err != nil {
 			return nil, err
 		}
 		task.Type = TaskType(taskType)
 		task.Enabled = enabled == 1
+		task.Worktree = worktree == 1
 		tasks = append(tasks, task)
 	}
 	return tasks, rows.Err()

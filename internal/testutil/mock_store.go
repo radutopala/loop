@@ -146,6 +146,14 @@ func (m *MockStore) UpdateTaskRunLog(ctx context.Context, trl *db.TaskRunLog) er
 	return m.Called(ctx, trl).Error(0)
 }
 
+func (m *MockStore) ListTaskRunLogs(ctx context.Context, taskID int64, limit int) ([]*db.TaskRunLog, error) {
+	args := m.Called(ctx, taskID, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.TaskRunLog), args.Error(1)
+}
+
 func (m *MockStore) DeleteChannel(ctx context.Context, channelID string) error {
 	return m.Called(ctx, channelID).Error(0)
 }

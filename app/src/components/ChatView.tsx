@@ -353,20 +353,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
     }
   }, [hasMore, loading, loadMore]);
 
-  // Copy-on-select: copy selected text to clipboard on mouse up.
-  useEffect(() => {
-    const el = containerRef.current;
-    if (!el) return;
-    const onMouseUp = () => {
-      const sel = window.getSelection();
-      const text = sel?.toString();
-      if (text && sel?.anchorNode && el.contains(sel.anchorNode)) {
-        navigator.clipboard.writeText(text).catch(() => {});
-      }
-    };
-    el.addEventListener("mouseup", onMouseUp);
-    return () => el.removeEventListener("mouseup", onMouseUp);
-  }, []);
+
 
   // Find the first unprocessed user message ID — the one currently being processed.
   // Later unprocessed messages are shown with a "queued" label.

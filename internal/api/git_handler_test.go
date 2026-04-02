@@ -365,6 +365,7 @@ func (s *ServerSuite) TestCreateWorktree_SessionCopy() {
 	// Override sys so ReadFile returns session data for any path.
 	s.sys = new(testutil.MockSystem)
 	s.srv.sys = s.sys
+	s.srv.worktreeCreator.Sys = s.sys
 	s.sys.On("UserHomeDir").Return("/home/testuser", nil)
 	s.sys.On("ReadFile", mock.Anything).Return([]byte(`{"session":"data"}`), nil)
 	s.sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
@@ -503,6 +504,7 @@ func (s *ServerSuite) TestCreateWorktree_SessionCopyFailsGracefully() {
 	sysFail.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	sysFail.On("UserHomeDir").Return("", errors.New("no home"))
 	s.srv.sys = sysFail
+	s.srv.worktreeCreator.Sys = sysFail
 
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
 		ChannelID: "ch1", DirPath: dir, SessionID: "sess-will-fail",
@@ -528,6 +530,7 @@ func (s *ServerSuite) TestCreateWorktree_ConfigMkdirFails() {
 	sysFail.On("MkdirAll", mock.Anything, mock.Anything).Return(errors.New("mkdir fail"))
 	sysFail.On("UserHomeDir").Return("", errors.New("no home"))
 	s.srv.sys = sysFail
+	s.srv.worktreeCreator.Sys = sysFail
 
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
 		ChannelID: "ch1", DirPath: dir, SessionID: "sess",
@@ -554,6 +557,7 @@ func (s *ServerSuite) TestCreateWorktree_ConfigWriteFails() {
 	sysFail.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("write fail"))
 	sysFail.On("UserHomeDir").Return("", errors.New("no home"))
 	s.srv.sys = sysFail
+	s.srv.worktreeCreator.Sys = sysFail
 
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
 		ChannelID: "ch1", DirPath: dir, SessionID: "sess",

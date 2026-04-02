@@ -73,6 +73,13 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
       <polyline points="10 9 9 9 8 9" />
     </svg>
   ),
+  tasks: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M12 8v4l3 3" />
+      <circle cx="12" cy="12" r="10" />
+      <path d="M16 3.13a4 4 0 0 1 0 .74" />
+    </svg>
+  ),
 };
 
 const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
@@ -87,6 +94,7 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   sessions: "Browse and resume Claude sessions",
   playground: "Live interactive code sandbox",
   notes: "Quick scratch notes (Markdown)",
+  tasks: "Manage scheduled tasks",
 };
 
 /** Centered picker for when layout is empty (no tree). */

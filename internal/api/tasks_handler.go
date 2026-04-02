@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/events"
 )
 
 // resolveTaskChannelID walks up from deeply nested threads to the nearest
@@ -30,6 +31,7 @@ type createTaskRequest struct {
 	Prompt        string `json:"prompt"`
 	TemplateName  string `json:"template_name,omitempty"`
 	AutoDeleteSec int    `json:"auto_delete_sec"`
+	Worktree      bool   `json:"worktree"`
 }
 
 type createTaskResponse struct {
@@ -42,6 +44,7 @@ type updateTaskRequest struct {
 	Type          *string `json:"type"`
 	Prompt        *string `json:"prompt"`
 	AutoDeleteSec *int    `json:"auto_delete_sec"`
+	Worktree      *bool   `json:"worktree"`
 }
 
 type taskResponse struct {
@@ -54,6 +57,7 @@ type taskResponse struct {
 	NextRunAt     time.Time `json:"next_run_at"`
 	TemplateName  string    `json:"template_name,omitempty"`
 	AutoDeleteSec int       `json:"auto_delete_sec"`
+	Worktree      bool      `json:"worktree"`
 }
 
 func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
@@ -70,12 +74,17 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		Enabled:       true,
 		TemplateName:  req.TemplateName,
 		AutoDeleteSec: req.AutoDeleteSec,
+		Worktree:      req.Worktree,
 	}
 
 	id, err := s.scheduler.AddTask(r.Context(), task)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	if s.eventsHub != nil {
+		s.eventsHub.BroadcastTaskCreated(events.TaskEventData{TaskID: id, ChannelID: task.ChannelID})
 	}
 
 	writeHTTPJSON(w, http.StatusCreated, createTaskResponse{ID: id}, s.logger)
@@ -132,6 +141,7 @@ func toTaskResponse(t *db.ScheduledTask) taskResponse {
 		NextRunAt:     t.NextRunAt,
 		TemplateName:  t.TemplateName,
 		AutoDeleteSec: t.AutoDeleteSec,
+		Worktree:      t.Worktree,
 	}
 }
 
@@ -144,6 +154,10 @@ func (s *Server) handleDeleteTask(w http.ResponseWriter, r *http.Request) {
 	if err := s.scheduler.RemoveTask(r.Context(), taskID); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
+	}
+
+	if s.eventsHub != nil {
+		s.eventsHub.BroadcastTaskDeleted(events.TaskEventData{TaskID: taskID})
 	}
 
 	w.WriteHeader(http.StatusNoContent)
@@ -160,7 +174,7 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Enabled == nil && req.Schedule == nil && req.Type == nil && req.Prompt == nil && req.AutoDeleteSec == nil {
+	if req.Enabled == nil && req.Schedule == nil && req.Type == nil && req.Prompt == nil && req.AutoDeleteSec == nil && req.Worktree == nil {
 		http.Error(w, "at least one field is required", http.StatusBadRequest)
 		return
 	}
@@ -172,12 +186,31 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if req.Schedule != nil || req.Type != nil || req.Prompt != nil || req.AutoDeleteSec != nil {
-		if err := s.scheduler.EditTask(r.Context(), taskID, req.Schedule, req.Type, req.Prompt, req.AutoDeleteSec); err != nil {
+	if req.Schedule != nil || req.Type != nil || req.Prompt != nil || req.AutoDeleteSec != nil || req.Worktree != nil {
+		if err := s.scheduler.EditTask(r.Context(), taskID, req.Schedule, req.Type, req.Prompt, req.AutoDeleteSec, req.Worktree); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 	}
 
+	if s.eventsHub != nil {
+		s.eventsHub.BroadcastTaskUpdated(events.TaskEventData{TaskID: taskID})
+	}
+
 	w.WriteHeader(http.StatusOK)
+}
+
+func (s *Server) handleListTaskRuns(w http.ResponseWriter, r *http.Request) {
+	taskID, ok := parsePathInt64(w, r, "id")
+	if !ok {
+		return
+	}
+
+	runs, err := s.store.ListTaskRunLogs(r.Context(), taskID, 50)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeHTTPJSON(w, http.StatusOK, runs, s.logger)
 }

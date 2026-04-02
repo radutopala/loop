@@ -52,6 +52,7 @@ type ScheduledTask struct {
 	TemplateName  string    `json:"template_name"`
 	AutoDeleteSec int       `json:"auto_delete_sec"`
 	ThreadID      string    `json:"thread_id"`
+	Worktree      bool      `json:"worktree"`
 }
 
 // TaskType represents the type of scheduled task.

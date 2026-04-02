@@ -187,6 +187,23 @@ func (s *MCPServerSuite) TestScheduleTaskWithoutTemplateName() {
 	require.Contains(s.T(), text, "ID: 56")
 }
 
+func (s *MCPServerSuite) TestScheduleTaskWithWorktree() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"worktree":true`)
+		return jsonResponse(http.StatusCreated, `{"id":99}`), nil
+	}
+
+	text, isError := s.callTool("schedule_task", map[string]any{
+		"schedule": "0 9 * * *",
+		"type":     "cron",
+		"prompt":   "test",
+		"worktree": true,
+	})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "ID: 99")
+}
+
 func (s *MCPServerSuite) TestScheduleTaskScheduleValidation() {
 	tests := []struct {
 		name     string
@@ -287,6 +304,16 @@ func (s *MCPServerSuite) TestListTasksSuccess() {
 	require.Contains(s.T(), text, "auto_delete: 120s")
 }
 
+func (s *MCPServerSuite) TestListTasksWithWorktree() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `[{"id":1,"schedule":"0 9 * * *","type":"cron","prompt":"wt task","enabled":true,"next_run_at":"2025-01-01T09:00:00Z","worktree":true}]`), nil
+	}
+
+	text, isError := s.callTool("list_tasks", map[string]any{})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "worktree: true")
+}
+
 func (s *MCPServerSuite) TestListTasksEmpty() {
 	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
 		return jsonResponse(http.StatusOK, `[]`), nil
@@ -341,6 +368,16 @@ func (s *MCPServerSuite) TestShowTaskSuccess() {
 	require.Contains(s.T(), text, "Template: my-tmpl")
 	require.Contains(s.T(), text, "Auto-delete: 60s")
 	require.Contains(s.T(), text, "Prompt:\nfull prompt text here")
+}
+
+func (s *MCPServerSuite) TestShowTaskWithWorktree() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"id":42,"schedule":"0 9 * * *","type":"cron","prompt":"wt task","enabled":true,"next_run_at":"2025-01-01T09:00:00Z","worktree":true}`), nil
+	}
+
+	text, isError := s.callTool("show_task", map[string]any{"task_id": float64(42)})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "Worktree: true")
 }
 
 func (s *MCPServerSuite) TestShowTaskDisabled() {
@@ -455,6 +492,18 @@ func (s *MCPServerSuite) TestEditTaskWithAutoDeleteSec() {
 	}
 
 	text, isError := s.callTool("edit_task", map[string]any{"task_id": float64(42), "auto_delete_sec": float64(120)})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "Task 42 updated")
+}
+
+func (s *MCPServerSuite) TestEditTaskWithWorktree() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"worktree":true`)
+		return noContentResponse(http.StatusOK), nil
+	}
+
+	text, isError := s.callTool("edit_task", map[string]any{"task_id": float64(42), "worktree": true})
 	require.False(s.T(), isError)
 	require.Contains(s.T(), text, "Task 42 updated")
 }

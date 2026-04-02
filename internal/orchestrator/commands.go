@@ -279,7 +279,7 @@ func (o *Orchestrator) handleEditInteraction(ctx context.Context, inter *bot.Int
 		return
 	}
 
-	if err := o.scheduler.EditTask(ctx, taskID, schedule, taskType, prompt, nil); err != nil {
+	if err := o.scheduler.EditTask(ctx, taskID, schedule, taskType, prompt, nil, nil); err != nil {
 		o.logger.Error("editing task", "error", err, "channel_id", inter.ChannelID)
 		o.sendReply(ctx, inter.ChannelID, "Failed to edit task.")
 		return

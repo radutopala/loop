@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -19,6 +20,7 @@ import (
 	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/testutil"
 	"github.com/radutopala/loop/internal/types"
+	"github.com/radutopala/loop/internal/worktree"
 )
 
 type TaskExecutorSuite struct {
@@ -1515,3 +1517,219 @@ func (s *TaskExecutorSuite) TestStreamingInviteErrorsAreLogged() {
 	require.Equal(s.T(), "Turn 1", resp)
 	s.bot.AssertExpectations(s.T())
 }
+
+// --- Worktree tests ---
+
+func (s *TaskExecutorSuite) TestWorktreeFirstRun() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: true,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: "/proj", SessionID: "sess-1", Platform: types.PlatformLocal,
+	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{ID: 10, Type: db.TaskTypeCron}, nil)
+	s.allowBotInserts()
+
+	// Mock worktree creator
+	s.executor.SetWorktreeCreator(&worktree.Creator{
+		Sys: &mockWorktreeSys{},
+		Run: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			if name == "git" && len(args) > 0 && args[0] == "rev-parse" {
+				if args[1] == "--abbrev-ref" {
+					return []byte("main\n"), nil
+				}
+			}
+			return nil, nil // git worktree add succeeds
+		},
+	})
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return strings.Contains(req.DirPath, ".worktrees/task-10-")
+	})).Return(&agent.AgentResponse{Response: "done", SessionID: "s2"}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "s2").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "done", resp)
+}
+
+func (s *TaskExecutorSuite) TestWorktreeSubsequentRun() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: true, ThreadID: "wt-thread",
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: "/proj", Platform: types.PlatformLocal,
+	}, nil)
+	// Worktree subsequent run: get thread channel to get its DirPath
+	s.store.On("GetChannel", s.ctx, "wt-thread").Return(&db.Channel{
+		ChannelID: "wt-thread", DirPath: "/proj/.worktrees/task-10-abc", SessionID: "sess-wt",
+	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{
+		ID: 10, Type: db.TaskTypeCron, ThreadID: "wt-thread",
+	}, nil)
+	s.allowBotInserts()
+
+	s.executor.SetWorktreeCreator(&worktree.Creator{
+		Sys: &mockWorktreeSys{},
+		Run: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return nil, nil
+		},
+	})
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.DirPath == "/proj/.worktrees/task-10-abc" && req.SessionID == "sess-wt"
+	})).Return(&agent.AgentResponse{Response: "done2", SessionID: "s3"}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "wt-thread", "s3").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "done2", resp)
+}
+
+func (s *TaskExecutorSuite) TestWorktreeCreationError() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: true,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: "/proj",
+	}, nil)
+
+	s.executor.SetWorktreeCreator(&worktree.Creator{
+		Sys: &mockWorktreeSys{},
+		Run: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			if name == "git" && len(args) > 0 && args[0] == "rev-parse" {
+				return []byte("main\n"), nil
+			}
+			return []byte("fatal: error"), errors.New("exit 1")
+		},
+	})
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating worktree for task 10")
+}
+
+func (s *TaskExecutorSuite) TestWorktreeBranchDetectionError() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: true,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: "/proj",
+	}, nil)
+
+	s.executor.SetWorktreeCreator(&worktree.Creator{
+		Sys: &mockWorktreeSys{},
+		Run: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			return nil, errors.New("not a git repo")
+		},
+	})
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "getting current branch")
+}
+
+func (s *TaskExecutorSuite) TestWorktreeDetachedHead() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: true,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: "/proj", Platform: types.PlatformLocal,
+	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{ID: 10, Type: db.TaskTypeCron}, nil)
+	s.allowBotInserts()
+
+	s.executor.SetWorktreeCreator(&worktree.Creator{
+		Sys: &mockWorktreeSys{},
+		Run: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			if name == "git" && len(args) > 1 && args[0] == "rev-parse" && args[1] == "--abbrev-ref" {
+				return []byte("HEAD\n"), nil
+			}
+			if name == "git" && len(args) > 0 && args[0] == "rev-parse" {
+				return []byte("abc123\n"), nil
+			}
+			return nil, nil
+		},
+	})
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return strings.Contains(req.DirPath, ".worktrees/task-10-")
+	})).Return(&agent.AgentResponse{Response: "ok", SessionID: "s4"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "s4").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp)
+}
+
+func (s *TaskExecutorSuite) TestWorktreeDetachedHeadFallbackError() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: true,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: "/proj",
+	}, nil)
+
+	s.executor.SetWorktreeCreator(&worktree.Creator{
+		Sys: &mockWorktreeSys{},
+		Run: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			if name == "git" && len(args) > 1 && args[0] == "rev-parse" && args[1] == "--abbrev-ref" {
+				return []byte("HEAD\n"), nil
+			}
+			// Second rev-parse HEAD fails
+			return nil, errors.New("git error")
+		},
+	})
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "getting current branch")
+}
+
+func (s *TaskExecutorSuite) TestWorktreeFalsePreservesExisting() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: false,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: "/proj",
+	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{ID: 10, Type: db.TaskTypeCron}, nil)
+	s.allowBotInserts()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.DirPath == "/proj"
+	})).Return(&agent.AgentResponse{Response: "ok", SessionID: "s5"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "s5").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp)
+}
+
+// mockWorktreeSys is a minimal System implementation for worktree tests.
+type mockWorktreeSys struct{}
+
+func (m *mockWorktreeSys) MkdirAll(string, os.FileMode) error          { return nil }
+func (m *mockWorktreeSys) WriteFile(string, []byte, os.FileMode) error { return nil }
+func (m *mockWorktreeSys) ReadFile(string) ([]byte, error)             { return nil, nil }
+func (m *mockWorktreeSys) UserHomeDir() (string, error)                { return "/home/test", nil }

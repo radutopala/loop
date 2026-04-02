@@ -21,12 +21,14 @@ import { BrowserPanel } from "./BrowserPanel";
 import { SessionsPanel } from "./SessionsPanel";
 import { PlaygroundPanel } from "./PlaygroundPanel";
 import { NotesPanel } from "./NotesPanel";
+import { TasksPanel } from "./TasksPanel";
 import { killAgentContainer, fetchBranches, switchBranch, type BranchInfo } from "../api/loopApi";
 import { useChatState } from "../hooks/useChatState";
 import type { ActiveChatState, ChatEventListener } from "../hooks/useChatStateStore";
 import { fonts } from "../theme";
 import type { ColorPalette } from "../theme";
 import { useTheme } from "../ThemeContext";
+import { useCopyOnSelect } from "../hooks/useCopyOnSelect";
 
 type AgentState = "running" | "stopped" | "none";
 
@@ -438,6 +440,7 @@ interface WorkspaceLayoutProps {
   onDismissError?: () => void;
   diffStats?: { add: number; del: number };
   style?: React.CSSProperties;
+  parentIsWorktree?: boolean;
   onCreateWorktree?: (channelId: string, branch: string) => Promise<void>;
   onImportWorktree?: (channelId: string, worktreePath: string) => Promise<void>;
   onSelectThread?: (threadId: string) => void;
@@ -464,6 +467,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   onDismissError,
   diffStats: _diffStats,
   style,
+  parentIsWorktree,
   onCreateWorktree,
   onImportWorktree,
   onSelectThread,
@@ -472,6 +476,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   subscribeChatEvents,
 }, ref) {
   const { colors } = useTheme();
+  useCopyOnSelect();
   const { agents: agentInfoMap } = useAgentRegistry(channelId);
   const [branchError, setBranchError] = useState<string | null>(null);
 
@@ -977,6 +982,14 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               channelId={channelId}
             />
           );
+        case "tasks":
+          return (
+            <TasksPanel
+              key={`layout-tasks-${channelId}`}
+              channelId={channelId}
+              allowWorktree={!channel.worktree && !!channel.branch}
+            />
+          );
         default:
           return null;
       }
@@ -1121,7 +1134,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             {branch && (
               <>
                 <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px" }}>|</span>
-                {channel.worktree ? (
+                {channel.worktree || parentIsWorktree ? (
                   <span
                     onDoubleClick={(e) => { navigator.clipboard.writeText(branch); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
                     title="Double-click to copy branch name"

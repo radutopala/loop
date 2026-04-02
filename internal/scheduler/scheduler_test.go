@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/testutil"
 )
 
@@ -661,7 +662,7 @@ func (s *SchedulerSuite) TestEditTaskPromptOnly() {
 	})).Return(nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 1, nil, nil, new("new prompt"), nil)
+	err := ts.EditTask(context.Background(), 1, nil, nil, new("new prompt"), nil, nil)
 
 	require.NoError(s.T(), err)
 	s.store.AssertExpectations(s.T())
@@ -678,7 +679,7 @@ func (s *SchedulerSuite) TestEditTaskScheduleChange() {
 	})).Return(nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 1, new("0 9 * * *"), nil, nil, nil)
+	err := ts.EditTask(context.Background(), 1, new("0 9 * * *"), nil, nil, nil, nil)
 
 	require.NoError(s.T(), err)
 	s.store.AssertExpectations(s.T())
@@ -695,7 +696,7 @@ func (s *SchedulerSuite) TestEditTaskAutoDeleteSec() {
 	})).Return(nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 1, nil, nil, nil, new(300))
+	err := ts.EditTask(context.Background(), 1, nil, nil, nil, new(300), nil)
 
 	require.NoError(s.T(), err)
 	s.store.AssertExpectations(s.T())
@@ -705,7 +706,7 @@ func (s *SchedulerSuite) TestEditTaskNotFound() {
 	s.store.On("GetScheduledTask", mock.Anything, int64(99)).Return(nil, nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 99, nil, nil, nil, nil)
+	err := ts.EditTask(context.Background(), 99, nil, nil, nil, nil, nil)
 
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "not found")
@@ -716,7 +717,7 @@ func (s *SchedulerSuite) TestEditTaskGetError() {
 	s.store.On("GetScheduledTask", mock.Anything, int64(1)).Return(nil, errors.New("db error"))
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 1, nil, nil, nil, nil)
+	err := ts.EditTask(context.Background(), 1, nil, nil, nil, nil, nil)
 
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "getting task")
@@ -731,7 +732,7 @@ func (s *SchedulerSuite) TestEditTaskInvalidSchedule() {
 	s.store.On("GetScheduledTask", mock.Anything, int64(1)).Return(task, nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 1, new("invalid"), nil, nil, nil)
+	err := ts.EditTask(context.Background(), 1, new("invalid"), nil, nil, nil, nil)
 
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "calculating next run")
@@ -749,7 +750,7 @@ func (s *SchedulerSuite) TestEditTaskTypeChange() {
 	})).Return(nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 1, nil, new(string(db.TaskTypeOnce)), nil, nil)
+	err := ts.EditTask(context.Background(), 1, nil, new(string(db.TaskTypeOnce)), nil, nil, nil)
 
 	require.NoError(s.T(), err)
 	s.store.AssertExpectations(s.T())
@@ -764,13 +765,127 @@ func (s *SchedulerSuite) TestEditTaskUpdateError() {
 	s.store.On("UpdateScheduledTask", mock.Anything, mock.Anything).Return(errors.New("update error"))
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 1, nil, nil, new("new"), nil)
+	err := ts.EditTask(context.Background(), 1, nil, nil, new("new"), nil, nil)
 
 	require.Error(s.T(), err)
 	require.Equal(s.T(), "update error", err.Error())
 	s.store.AssertExpectations(s.T())
 }
 
+func (s *SchedulerSuite) TestEditTaskWorktree() {
+	task := &db.ScheduledTask{
+		ID: 1, ChannelID: "ch1", Schedule: "*/5 * * * *",
+		Type: db.TaskTypeCron, Prompt: "prompt", Enabled: true, Worktree: false,
+	}
+	s.store.On("GetScheduledTask", mock.Anything, int64(1)).Return(task, nil)
+	s.store.On("UpdateScheduledTask", mock.Anything, mock.MatchedBy(func(t *db.ScheduledTask) bool {
+		return t.Worktree
+	})).Return(nil)
+
+	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
+	wt := true
+	err := ts.EditTask(context.Background(), 1, nil, nil, nil, nil, &wt)
+
+	require.NoError(s.T(), err)
+	s.store.AssertExpectations(s.T())
+}
+
 func (s *SchedulerSuite) TestSchedulerImplementsInterface() {
 	var _ Scheduler = (*TaskScheduler)(nil)
+}
+
+// mockTaskEventBroadcaster implements TaskEventBroadcaster for testing.
+type mockTaskEventBroadcaster struct {
+	mock.Mock
+}
+
+func (m *mockTaskEventBroadcaster) BroadcastTaskRunCompleted(data events.TaskRunEventData) {
+	m.Called(data)
+}
+
+func (s *SchedulerSuite) TestSetEventBroadcaster() {
+	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
+	require.Nil(s.T(), ts.events)
+
+	bc := new(mockTaskEventBroadcaster)
+	ts.SetEventBroadcaster(bc)
+	require.Equal(s.T(), bc, ts.events)
+}
+
+func (s *SchedulerSuite) TestTaskRunCompletedEventBroadcast() {
+	task := &db.ScheduledTask{
+		ID: 1, ChannelID: "ch1", Schedule: "*/5 * * * *",
+		Type: db.TaskTypeCron, Prompt: "test", Enabled: true,
+	}
+	done, signal := signalDone()
+
+	setupDueTasks(s.store, []*db.ScheduledTask{task})
+	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(10), nil)
+	s.executor.On("ExecuteTask", mock.Anything, task).Return("done", nil)
+	s.store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("UpdateScheduledTask", mock.Anything, mock.Anything).Return(nil)
+
+	bc := new(mockTaskEventBroadcaster)
+	bc.On("BroadcastTaskRunCompleted", events.TaskRunEventData{
+		TaskID:    1,
+		RunID:     10,
+		Status:    string(db.RunStatusSuccess),
+		ChannelID: "ch1",
+	}).Run(signal)
+
+	ts := NewTaskScheduler(s.store, s.executor, 10*time.Millisecond, s.logger)
+	ts.SetEventBroadcaster(bc)
+
+	err := ts.Start(context.Background())
+	require.NoError(s.T(), err)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		s.T().Fatal("timed out waiting for event broadcast")
+	}
+
+	err = ts.Stop()
+	require.NoError(s.T(), err)
+
+	bc.AssertExpectations(s.T())
+}
+
+func (s *SchedulerSuite) TestTaskRunFailedEventBroadcast() {
+	task := &db.ScheduledTask{
+		ID: 2, ChannelID: "ch2", Schedule: "1h",
+		Type: db.TaskTypeInterval, Prompt: "fail", Enabled: true,
+	}
+	done, signal := signalDone()
+
+	setupDueTasks(s.store, []*db.ScheduledTask{task})
+	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(20), nil)
+	s.executor.On("ExecuteTask", mock.Anything, task).Return("", errors.New("exec failed"))
+	s.store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("UpdateScheduledTask", mock.Anything, mock.Anything).Return(nil)
+
+	bc := new(mockTaskEventBroadcaster)
+	bc.On("BroadcastTaskRunCompleted", events.TaskRunEventData{
+		TaskID:    2,
+		RunID:     20,
+		Status:    string(db.RunStatusFailed),
+		ChannelID: "ch2",
+	}).Run(signal)
+
+	ts := NewTaskScheduler(s.store, s.executor, 10*time.Millisecond, s.logger)
+	ts.SetEventBroadcaster(bc)
+
+	err := ts.Start(context.Background())
+	require.NoError(s.T(), err)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		s.T().Fatal("timed out waiting for event broadcast")
+	}
+
+	err = ts.Stop()
+	require.NoError(s.T(), err)
+
+	bc.AssertExpectations(s.T())
 }

@@ -527,6 +527,7 @@ function AppInner() {
             error={error}
             onDismissError={() => setError(null)}
             diffStats={diffStats}
+            parentIsWorktree={!!(selectedChannel.parent_id && channels.find((c) => c.id === selectedChannel.parent_id)?.worktree)}
             onCreateWorktree={handleCreateWorktree}
             onImportWorktree={handleImportWorktree}
             onSelectThread={handleSelect}

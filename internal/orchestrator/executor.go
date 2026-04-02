@@ -12,7 +12,9 @@ import (
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
+	"github.com/radutopala/loop/internal/randutil"
 	"github.com/radutopala/loop/internal/types"
+	"github.com/radutopala/loop/internal/worktree"
 )
 
 // TaskExecutor implements scheduler.TaskExecutor by running an agent and
@@ -26,6 +28,7 @@ type TaskExecutor struct {
 	streamingEnabled bool
 	events           events.Broadcaster
 	timeAfterFunc    func(time.Duration, func()) *time.Timer
+	worktreeCreator  *worktree.Creator
 }
 
 // NewTaskExecutor creates a new TaskExecutor.
@@ -38,6 +41,11 @@ func (e *TaskExecutor) SetEventBroadcaster(eb events.Broadcaster) {
 	e.events = eb
 }
 
+// SetWorktreeCreator sets the worktree creator for tasks with worktree=true.
+func (e *TaskExecutor) SetWorktreeCreator(wc *worktree.Creator) {
+	e.worktreeCreator = wc
+}
+
 // ExecuteTask runs an agent for the given scheduled task and sends the result to the chat platform.
 func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) (string, error) {
 	channel, err := e.store.GetChannel(ctx, task.ChannelID)
@@ -48,6 +56,36 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	dirPath := ""
 	if channel != nil {
 		dirPath = channel.DirPath
+	}
+
+	// Worktree: on first run, create a git worktree; on subsequent runs, reuse
+	// the thread's DirPath which already points to the worktree.
+	worktreeCreated := false
+	if task.Worktree && e.worktreeCreator != nil && dirPath != "" {
+		if task.ThreadID == "" {
+			// First run — create worktree
+			branch, branchErr := e.getCurrentBranch(ctx, dirPath)
+			if branchErr != nil {
+				return "", fmt.Errorf("getting current branch for worktree: %w", branchErr)
+			}
+			name := fmt.Sprintf("task-%d-%s", task.ID, randutil.HexID(4))
+			sessionForCopy := ""
+			if channel != nil {
+				sessionForCopy = channel.SessionID
+			}
+			result, wtErr := e.worktreeCreator.Create(ctx, dirPath, branch, name, sessionForCopy)
+			if wtErr != nil {
+				return "", fmt.Errorf("creating worktree for task %d: %w", task.ID, wtErr)
+			}
+			dirPath = result.WorktreePath
+			worktreeCreated = true
+			e.logger.Info("created worktree for task", "task_id", task.ID, "worktree_path", dirPath)
+		} else {
+			// Subsequent runs — reuse thread's DirPath
+			if threadCh, err := e.store.GetChannel(ctx, task.ThreadID); err == nil && threadCh != nil && threadCh.DirPath != "" {
+				dirPath = threadCh.DirPath
+			}
+		}
 	}
 
 	// Determine which session to resume:
@@ -126,12 +164,13 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 						ChannelID:   threadID,
 						GuildID:     channel.GuildID,
 						Name:        threadName,
-						DirPath:     channel.DirPath,
+						DirPath:     dirPath,
 						ParentID:    task.ChannelID,
 						Platform:    channel.Platform,
 						SessionID:   channel.SessionID,
 						Permissions: channel.Permissions,
 						Active:      true,
+						Worktree:    worktreeCreated,
 					})
 					e.invitePermissionUsers(ctx, threadID, channel.Permissions)
 				}
@@ -333,6 +372,24 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	}
 
 	return resp.Response, nil
+}
+
+// getCurrentBranch returns the current branch name in the given directory.
+func (e *TaskExecutor) getCurrentBranch(ctx context.Context, dirPath string) (string, error) {
+	out, err := e.worktreeCreator.Run(ctx, dirPath, "git", "rev-parse", "--abbrev-ref", "HEAD")
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse in %s: %s", dirPath, strings.TrimSpace(string(out)))
+	}
+	branch := strings.TrimSpace(string(out))
+	if branch == "" || branch == "HEAD" {
+		// Detached HEAD — fall back to the commit hash.
+		out, err = e.worktreeCreator.Run(ctx, dirPath, "git", "rev-parse", "HEAD")
+		if err != nil {
+			return "", fmt.Errorf("git rev-parse HEAD in %s: %s", dirPath, strings.TrimSpace(string(out)))
+		}
+		branch = strings.TrimSpace(string(out))
+	}
+	return branch, nil
 }
 
 // invitePermissionUsers invites all RBAC owner and member users to a thread.
