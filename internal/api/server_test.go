@@ -448,6 +448,18 @@ func (s *ServerSuite) TestCreateTaskWithWorktree() {
 	s.scheduler.AssertExpectations(s.T())
 }
 
+func (s *ServerSuite) TestCreateTaskWithOriginBranch() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
+	s.scheduler.On("AddTask", mock.Anything, mock.MatchedBy(func(task *db.ScheduledTask) bool {
+		return task.OriginBranch == "main" && task.UpdateBeforeRun
+	})).Return(int64(1), nil)
+
+	rec := s.testRequest("POST", "/api/tasks", `{"channel_id":"ch1","schedule":"0 9 * * *","type":"cron","prompt":"test","origin_branch":"main","update_before_run":true}`)
+
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
 func (s *ServerSuite) TestCreateTaskBroadcastsEvent() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
 	s.scheduler.On("AddTask", mock.Anything, mock.Anything).Return(int64(42), nil)
@@ -755,7 +767,7 @@ func (s *ServerSuite) TestUpdateTaskNoFields() {
 func (s *ServerSuite) TestUpdateTaskEditPrompt() {
 	s.scheduler.On("EditTask", mock.Anything, int64(42), (*string)(nil), (*string)(nil), mock.MatchedBy(func(p *string) bool {
 		return p != nil && *p == "new prompt"
-	}), (*int)(nil), (*bool)(nil)).Return(nil)
+	}), (*int)(nil), (*bool)(nil), (*string)(nil), (*bool)(nil)).Return(nil)
 
 	rec := s.testRequest("PATCH", "/api/tasks/42", `{"prompt":"new prompt"}`)
 
@@ -764,7 +776,7 @@ func (s *ServerSuite) TestUpdateTaskEditPrompt() {
 }
 
 func (s *ServerSuite) TestUpdateTaskEditSchedulerError() {
-	s.scheduler.On("EditTask", mock.Anything, int64(42), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("edit error"))
+	s.scheduler.On("EditTask", mock.Anything, int64(42), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("edit error"))
 
 	rec := s.testRequest("PATCH", "/api/tasks/42", `{"prompt":"new"}`)
 
@@ -775,9 +787,31 @@ func (s *ServerSuite) TestUpdateTaskEditSchedulerError() {
 func (s *ServerSuite) TestUpdateTaskEditWorktree() {
 	s.scheduler.On("EditTask", mock.Anything, int64(42), (*string)(nil), (*string)(nil), (*string)(nil), (*int)(nil), mock.MatchedBy(func(w *bool) bool {
 		return w != nil && *w
-	})).Return(nil)
+	}), (*string)(nil), (*bool)(nil)).Return(nil)
 
 	rec := s.testRequest("PATCH", "/api/tasks/42", `{"worktree":true}`)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestUpdateTaskEditOriginBranch() {
+	s.scheduler.On("EditTask", mock.Anything, int64(42), (*string)(nil), (*string)(nil), (*string)(nil), (*int)(nil), (*bool)(nil), mock.MatchedBy(func(ob *string) bool {
+		return ob != nil && *ob == "develop"
+	}), (*bool)(nil)).Return(nil)
+
+	rec := s.testRequest("PATCH", "/api/tasks/42", `{"origin_branch":"develop"}`)
+
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestUpdateTaskEditUpdateBeforeRun() {
+	s.scheduler.On("EditTask", mock.Anything, int64(42), (*string)(nil), (*string)(nil), (*string)(nil), (*int)(nil), (*bool)(nil), (*string)(nil), mock.MatchedBy(func(ubr *bool) bool {
+		return ubr != nil && *ubr
+	})).Return(nil)
+
+	rec := s.testRequest("PATCH", "/api/tasks/42", `{"update_before_run":true}`)
 
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	s.scheduler.AssertExpectations(s.T())

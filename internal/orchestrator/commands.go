@@ -212,6 +212,15 @@ func (o *Orchestrator) handleTaskInteraction(ctx context.Context, inter *bot.Int
 	if task.AutoDeleteSec > 0 {
 		fmt.Fprintf(&sb, "Auto-delete: %ds\n", task.AutoDeleteSec)
 	}
+	if task.Worktree {
+		fmt.Fprintf(&sb, "Worktree: true\n")
+		if task.OriginBranch != "" {
+			fmt.Fprintf(&sb, "Origin branch: %s\n", task.OriginBranch)
+		}
+		if task.UpdateBeforeRun {
+			fmt.Fprintf(&sb, "Update before run: true\n")
+		}
+	}
 	fmt.Fprintf(&sb, "\n**Prompt:**\n%s", task.Prompt)
 
 	o.sendReply(ctx, inter.ChannelID, sb.String())
@@ -279,7 +288,7 @@ func (o *Orchestrator) handleEditInteraction(ctx context.Context, inter *bot.Int
 		return
 	}
 
-	if err := o.scheduler.EditTask(ctx, taskID, schedule, taskType, prompt, nil, nil); err != nil {
+	if err := o.scheduler.EditTask(ctx, taskID, schedule, taskType, prompt, nil, nil, nil, nil); err != nil {
 		o.logger.Error("editing task", "error", err, "channel_id", inter.ChannelID)
 		o.sendReply(ctx, inter.ChannelID, "Failed to edit task.")
 		return
@@ -346,14 +355,17 @@ func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *
 	}
 
 	task := &db.ScheduledTask{
-		ChannelID:     inter.ChannelID,
-		GuildID:       inter.GuildID,
-		Schedule:      tmpl.Schedule,
-		Prompt:        prompt,
-		Type:          db.TaskType(tmpl.Type),
-		Enabled:       true,
-		TemplateName:  name,
-		AutoDeleteSec: tmpl.AutoDeleteSec,
+		ChannelID:       inter.ChannelID,
+		GuildID:         inter.GuildID,
+		Schedule:        tmpl.Schedule,
+		Prompt:          prompt,
+		Type:            db.TaskType(tmpl.Type),
+		Enabled:         true,
+		TemplateName:    name,
+		AutoDeleteSec:   tmpl.AutoDeleteSec,
+		Worktree:        tmpl.Worktree,
+		OriginBranch:    tmpl.OriginBranch,
+		UpdateBeforeRun: tmpl.UpdateBeforeRun,
 	}
 
 	id, err := o.scheduler.AddTask(ctx, task)

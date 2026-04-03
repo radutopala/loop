@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -204,6 +205,27 @@ func (s *MCPServerSuite) TestScheduleTaskWithWorktree() {
 	require.Contains(s.T(), text, "ID: 99")
 }
 
+func (s *MCPServerSuite) TestScheduleTaskWithWorktreeFields() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		var payload map[string]any
+		require.NoError(s.T(), json.Unmarshal(body, &payload))
+		require.Equal(s.T(), "main", payload["origin_branch"])
+		require.Equal(s.T(), true, payload["update_before_run"])
+		return jsonResponse(http.StatusCreated, `{"id":99}`), nil
+	}
+
+	text, isError := s.callTool("schedule_task", map[string]any{
+		"schedule":          "0 9 * * *",
+		"type":              "cron",
+		"prompt":            "test",
+		"origin_branch":     "main",
+		"update_before_run": true,
+	})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "ID: 99")
+}
+
 func (s *MCPServerSuite) TestScheduleTaskScheduleValidation() {
 	tests := []struct {
 		name     string
@@ -314,6 +336,17 @@ func (s *MCPServerSuite) TestListTasksWithWorktree() {
 	require.Contains(s.T(), text, "worktree: true")
 }
 
+func (s *MCPServerSuite) TestListTasksWithWorktreeFields() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `[{"id":1,"schedule":"0 9 * * *","type":"cron","prompt":"wt task","enabled":true,"next_run_at":"2025-01-01T09:00:00Z","worktree":true,"origin_branch":"develop","update_before_run":true}]`), nil
+	}
+
+	text, isError := s.callTool("list_tasks", map[string]any{})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "branch: develop")
+	require.Contains(s.T(), text, "update_before_run: true")
+}
+
 func (s *MCPServerSuite) TestListTasksEmpty() {
 	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
 		return jsonResponse(http.StatusOK, `[]`), nil
@@ -378,6 +411,17 @@ func (s *MCPServerSuite) TestShowTaskWithWorktree() {
 	text, isError := s.callTool("show_task", map[string]any{"task_id": float64(42)})
 	require.False(s.T(), isError)
 	require.Contains(s.T(), text, "Worktree: true")
+}
+
+func (s *MCPServerSuite) TestShowTaskWithWorktreeFields() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"id":42,"schedule":"0 9 * * *","type":"cron","prompt":"wt task","enabled":true,"next_run_at":"2025-01-01T09:00:00Z","worktree":true,"origin_branch":"develop","update_before_run":true}`), nil
+	}
+
+	text, isError := s.callTool("show_task", map[string]any{"task_id": float64(42)})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "Origin branch: develop")
+	require.Contains(s.T(), text, "Update before run: true")
 }
 
 func (s *MCPServerSuite) TestShowTaskDisabled() {
@@ -504,6 +548,34 @@ func (s *MCPServerSuite) TestEditTaskWithWorktree() {
 	}
 
 	text, isError := s.callTool("edit_task", map[string]any{"task_id": float64(42), "worktree": true})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "Task 42 updated")
+}
+
+func (s *MCPServerSuite) TestEditTaskWithOriginBranch() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		var payload map[string]any
+		require.NoError(s.T(), json.Unmarshal(body, &payload))
+		require.Equal(s.T(), "main", payload["origin_branch"])
+		return noContentResponse(http.StatusOK), nil
+	}
+
+	text, isError := s.callTool("edit_task", map[string]any{"task_id": float64(42), "origin_branch": "main"})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "Task 42 updated")
+}
+
+func (s *MCPServerSuite) TestEditTaskWithUpdateBeforeRun() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		var payload map[string]any
+		require.NoError(s.T(), json.Unmarshal(body, &payload))
+		require.Equal(s.T(), true, payload["update_before_run"])
+		return noContentResponse(http.StatusOK), nil
+	}
+
+	text, isError := s.callTool("edit_task", map[string]any{"task_id": float64(42), "update_before_run": true})
 	require.False(s.T(), isError)
 	require.Contains(s.T(), text, "Task 42 updated")
 }

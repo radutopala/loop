@@ -137,6 +137,10 @@ func (m *MockStore) UpdateScheduledTaskThreadID(ctx context.Context, id int64, t
 	return m.Called(ctx, id, threadID).Error(0)
 }
 
+func (m *MockStore) UpdateScheduledTaskOriginBranch(ctx context.Context, id int64, branch string) error {
+	return m.Called(ctx, id, branch).Error(0)
+}
+
 func (m *MockStore) GetScheduledTask(ctx context.Context, id int64) (*db.ScheduledTask, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {

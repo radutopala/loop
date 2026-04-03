@@ -591,6 +591,8 @@ export interface ScheduledTask {
   template_name?: string;
   auto_delete_sec: number;
   worktree: boolean;
+  origin_branch: string;
+  update_before_run: boolean;
   channel_name?: string;
   dir_path?: string;
   channel_worktree?: boolean;
@@ -626,6 +628,8 @@ export async function createTask(data: {
   template_name?: string;
   auto_delete_sec?: number;
   worktree?: boolean;
+  origin_branch?: string;
+  update_before_run?: boolean;
 }): Promise<{ id: number }> {
   const res = await fetch(`${apiUrl}/api/tasks`, {
     method: "POST",
@@ -645,6 +649,8 @@ export async function updateTask(
     prompt?: string;
     auto_delete_sec?: number;
     worktree?: boolean;
+    origin_branch?: string;
+    update_before_run?: boolean;
   },
 ): Promise<void> {
   const res = await fetch(`${apiUrl}/api/tasks/${taskId}`, {

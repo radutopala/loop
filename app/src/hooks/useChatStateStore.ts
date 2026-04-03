@@ -139,16 +139,28 @@ export function useChatStateStore({
       const store = storeRef.current;
       const runMap = isRunningMapRef.current;
 
+      // For agent.status events with thread_id, route state to the thread
+      // so the parent channel doesn't show a running indicator for thread work.
+      // The backend sends status to the parent with thread_id set; the frontend
+      // uses thread_id as the effective target for store/isRunningMap updates.
+      let stateTarget = channelId;
+      if (channelId && wsEvent.type === "agent.status") {
+        const statusData = wsEvent.data as AgentStatusData;
+        if (statusData.thread_id) {
+          stateTarget = statusData.thread_id;
+        }
+      }
+
       // Always update the store for any channel's events so getState()
       // returns current data even when a component remounts mid-stream.
-      if (channelId) {
-        const state = store.get(channelId);
+      if (stateTarget) {
+        const state = store.get(stateTarget);
         if (state) {
           applyEvent(state, wsEvent);
         } else if (isRunningEvent(wsEvent)) {
           const fresh = createEmptyState();
           applyEvent(fresh, wsEvent);
-          store.set(channelId, fresh);
+          store.set(stateTarget, fresh);
         }
       }
 
@@ -156,15 +168,18 @@ export function useChatStateStore({
       // The map value is the run_id so we can distinguish concurrent runs.
       if (channelId && wsEvent.type === "agent.status") {
         const data = wsEvent.data as AgentStatusData;
+        const runTarget = data.thread_id || channelId;
         if (data.status === "running") {
-          runMap.set(channelId, data.run_id ?? "");
+          runMap.set(runTarget, data.run_id ?? "");
         } else {
-          // Only clear if the finishing run_id matches the one we're tracking,
-          // or if either side has no run_id (backwards compat).
-          const tracked = runMap.get(channelId);
-          const finishing = data.run_id ?? "";
-          if (tracked === undefined || tracked === "" || finishing === "" || tracked === finishing) {
-            runMap.delete(channelId);
+          // Clear both thread and parent from runMap — the running event
+          // may have targeted either one (first run → parent, subsequent → thread).
+          for (const t of [runTarget, channelId]) {
+            const tracked = runMap.get(t);
+            const finishing = data.run_id ?? "";
+            if (tracked === undefined || tracked === "" || finishing === "" || tracked === finishing) {
+              runMap.delete(t);
+            }
           }
           // Keep the store entry — it holds completionInfo, mode, askUser, etc.
           // that should be restored when the user switches back.
@@ -187,13 +202,16 @@ export function useChatStateStore({
         }
       }
 
-      // Forward selected channel events to the chat listener (useChatState).
-      if (channelId && channelId === selectedIdRef.current) {
-        chatListenerRef.current?.(wsEvent);
+      // Forward events to the chat listener (useChatState) when they
+      // target the selected channel — either directly or via thread_id.
+      if (channelId) {
+        if (channelId === selectedIdRef.current || stateTarget === selectedIdRef.current) {
+          chatListenerRef.current?.(wsEvent);
+        }
       }
 
       // Forward selected channel + global events to App-level handler.
-      if (!channelId || channelId === selectedIdRef.current) {
+      if (!channelId || channelId === selectedIdRef.current || stateTarget === selectedIdRef.current) {
         onAppEventRef.current(wsEvent);
       }
     }, []),

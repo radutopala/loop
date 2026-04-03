@@ -55,8 +55,8 @@ func (m *MockScheduler) ToggleTask(ctx context.Context, taskID int64) (bool, err
 	return args.Bool(0), args.Error(1)
 }
 
-func (m *MockScheduler) EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int, worktree *bool) error {
-	return m.Called(ctx, taskID, schedule, taskType, prompt, autoDeleteSec, worktree).Error(0)
+func (m *MockScheduler) EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int, worktree *bool, originBranch *string, updateBeforeRun *bool) error {
+	return m.Called(ctx, taskID, schedule, taskType, prompt, autoDeleteSec, worktree, originBranch, updateBeforeRun).Error(0)
 }
 
 func (m *MockScheduler) RunNow(ctx context.Context, taskID int64) error {

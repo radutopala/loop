@@ -84,10 +84,18 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	worktreeCreated := false
 	if task.Worktree && e.worktreeCreator != nil && dirPath != "" {
 		if task.ThreadID == "" {
-			// First run — create worktree
-			branch, branchErr := e.getCurrentBranch(ctx, dirPath)
-			if branchErr != nil {
-				return "", fmt.Errorf("getting current branch for worktree: %w", branchErr)
+			// First run — create worktree using explicit or auto-detected branch.
+			branch := task.OriginBranch
+			if branch == "" {
+				detectedBranch, branchErr := e.getCurrentBranch(ctx, dirPath)
+				if branchErr != nil {
+					return "", fmt.Errorf("getting current branch for worktree: %w", branchErr)
+				}
+				branch = detectedBranch
+				// Persist the detected branch so subsequent updates know the target.
+				if err := e.store.UpdateScheduledTaskOriginBranch(ctx, task.ID, branch); err != nil {
+					e.logger.Error("persisting origin branch", "error", err, "task_id", task.ID)
+				}
 			}
 			name := fmt.Sprintf("task-%d-%s", task.ID, randutil.HexID(4))
 			sessionForCopy := ""
@@ -127,17 +135,29 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	if task.AutoDeleteSec > 0 {
 		systemPrompt += "\nIf you have nothing meaningful to report, start your response with [EPHEMERAL]. Otherwise respond normally."
 	}
+	// Track parent dir for worktree config inheritance (model, etc.).
+	parentDirPath := ""
+	if task.Worktree && channel != nil {
+		parentDirPath = channel.DirPath
+	}
+
+	// Prepend git update instructions to the user prompt when enabled.
+	prompt := task.Prompt
+	if task.UpdateBeforeRun && task.OriginBranch != "" {
+		prompt = fmt.Sprintf("Before starting work, update your worktree to the latest origin/%s:\n1. git stash (if there are uncommitted changes)\n2. git fetch origin %s\n3. git rebase origin/%s (this keeps your previous commits on top of latest origin)\n4. git stash pop (if you stashed changes in step 1)\nHandle any merge conflicts if they arise.\n\n%s", task.OriginBranch, task.OriginBranch, task.OriginBranch, task.Prompt)
+	}
 
 	req := &agent.AgentRequest{
 		SessionID:   sessionID,
 		ForkSession: forkSession,
 		Messages: []agent.AgentMessage{
-			{Role: "user", Content: task.Prompt},
+			{Role: "user", Content: prompt},
 		},
-		SystemPrompt: systemPrompt,
-		ChannelID:    task.ChannelID,
-		DirPath:      dirPath,
-		AgentID:      "chat",
+		SystemPrompt:  systemPrompt,
+		ChannelID:     task.ChannelID,
+		DirPath:       dirPath,
+		ParentDirPath: parentDirPath,
+		AgentID:       "chat",
 	}
 
 	var tracker *streamTracker
@@ -155,6 +175,10 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	if task.ThreadID != "" && task.Type != db.TaskTypeOnce {
 		threadID = task.ThreadID
 	}
+	// hasExistingThread is true when the thread was created by a previous run.
+	// Used to decide broadcast targets: subsequent runs only notify the parent
+	// (with thread_id set) so the frontend routes state to the thread.
+	hasExistingThread := threadID != ""
 	if streamingEnabled {
 		tracker = newStreamTracker(func(text string) {
 			if threadID == "" && !threadFailed {
@@ -287,13 +311,12 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	// on the same channel (e.g. a scheduled task vs. a chat agent).
 	runID := randutil.HexID(8)
 
-	// Broadcast running status to both the task thread and parent channel
-	// so the frontend picks it up regardless of which channel is subscribed.
+	// Broadcast running status. For subsequent runs (thread already exists),
+	// only notify the parent with thread_id set — the frontend routes the state
+	// to the thread via thread_id so the parent doesn't show a running indicator.
+	// For first runs, broadcast to parent only (no thread yet).
 	if e.events != nil {
-		status := events.AgentStatusEventData{Status: "running", RunID: runID}
-		if threadID != "" {
-			e.events.BroadcastAgentStatus(threadID, status)
-		}
+		status := events.AgentStatusEventData{Status: "running", RunID: runID, ThreadID: threadID}
 		e.events.BroadcastAgentStatus(task.ChannelID, status)
 	}
 
@@ -303,8 +326,9 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	resp, err := e.runner.Run(runCtx, req)
 	if err != nil {
 		if e.events != nil {
-			errStatus := events.AgentStatusEventData{Status: "error", RunID: runID, Error: err.Error()}
-			if threadID != "" {
+			errStatus := events.AgentStatusEventData{Status: "error", RunID: runID, Error: err.Error(), ThreadID: threadID}
+			if hasExistingThread {
+				// Broadcast to thread directly so the thread view updates immediately.
 				e.events.BroadcastAgentStatus(threadID, errStatus)
 			}
 			e.events.BroadcastAgentStatus(task.ChannelID, errStatus)
@@ -314,8 +338,8 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 
 	if resp.Error != "" {
 		if e.events != nil {
-			errStatus := events.AgentStatusEventData{Status: "error", RunID: runID, Error: resp.Error}
-			if threadID != "" {
+			errStatus := events.AgentStatusEventData{Status: "error", RunID: runID, Error: resp.Error, ThreadID: threadID}
+			if hasExistingThread {
 				e.events.BroadcastAgentStatus(threadID, errStatus)
 			}
 			e.events.BroadcastAgentStatus(task.ChannelID, errStatus)
@@ -357,7 +381,9 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		storeBotMessage(ctx, e.store, e.events, targetChannelID, resp.Response)
 	}
 
-	// Broadcast completed status to both thread and parent channel.
+	// Broadcast completed status. For subsequent runs, broadcast to both
+	// thread and parent (with thread_id set) so both views update immediately.
+	// For first runs, targetChannelID may be a newly-created thread or the channel.
 	if e.events != nil {
 		done := events.AgentStatusEventData{
 			Status:     "completed",

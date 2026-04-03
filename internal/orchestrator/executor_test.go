@@ -191,12 +191,17 @@ func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsToThreadAndParent() {
 	s.store.On("GetChannel", mock.Anything, "ch-parent").Return(localCh, nil)
 	s.store.On("GetChannel", mock.Anything, "existing-thread").Return(&db.Channel{ChannelID: "existing-thread", ParentID: "ch-parent", Platform: types.PlatformLocal, SessionID: "thread-sess"}, nil)
 	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
-	// Running broadcast to both thread and parent
-	eb.On("BroadcastAgentStatus", "existing-thread", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "running" })).Once()
-	eb.On("BroadcastAgentStatus", "ch-parent", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "running" })).Once()
-	// Error broadcast to both
-	eb.On("BroadcastAgentStatus", "existing-thread", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "error" })).Once()
-	eb.On("BroadcastAgentStatus", "ch-parent", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "error" })).Once()
+	// Running: only to parent (with thread_id set) — no direct thread broadcast
+	eb.On("BroadcastAgentStatus", "ch-parent", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "running" && d.ThreadID == "existing-thread"
+	})).Once()
+	// Error: to both thread and parent (with thread_id set)
+	eb.On("BroadcastAgentStatus", "existing-thread", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "error" && d.ThreadID == "existing-thread"
+	})).Once()
+	eb.On("BroadcastAgentStatus", "ch-parent", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "error" && d.ThreadID == "existing-thread"
+	})).Once()
 
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("boom"))
 
@@ -218,12 +223,17 @@ func (s *TaskExecutorSuite) TestAgentResponseErrorBroadcastsStatus() {
 	s.store.On("GetChannel", mock.Anything, "ch-err2").Return(localCh, nil)
 	s.store.On("GetChannel", mock.Anything, "err-thread").Return(&db.Channel{ChannelID: "err-thread", ParentID: "ch-err2", Platform: types.PlatformLocal, SessionID: "err-thread-sess"}, nil)
 	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
-	// Running to both
-	eb.On("BroadcastAgentStatus", "err-thread", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "running" })).Once()
-	eb.On("BroadcastAgentStatus", "ch-err2", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "running" })).Once()
-	// Error to both (resp.Error path)
-	eb.On("BroadcastAgentStatus", "err-thread", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "error" })).Once()
-	eb.On("BroadcastAgentStatus", "ch-err2", mock.MatchedBy(func(d events.AgentStatusEventData) bool { return d.Status == "error" })).Once()
+	// Running: only to parent (with thread_id set)
+	eb.On("BroadcastAgentStatus", "ch-err2", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "running" && d.ThreadID == "err-thread"
+	})).Once()
+	// Error: to both thread and parent (with thread_id set)
+	eb.On("BroadcastAgentStatus", "err-thread", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "error" && d.ThreadID == "err-thread"
+	})).Once()
+	eb.On("BroadcastAgentStatus", "ch-err2", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "error" && d.ThreadID == "err-thread"
+	})).Once()
 
 	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{Error: "agent broke"}, nil)
 
@@ -1548,6 +1558,8 @@ func (s *TaskExecutorSuite) TestWorktreeFirstRun() {
 		},
 	})
 
+	s.store.On("UpdateScheduledTaskOriginBranch", s.ctx, int64(10), "main").Return(nil)
+
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return strings.Contains(req.DirPath, ".worktrees/task-10-")
 	})).Return(&agent.AgentResponse{Response: "done", SessionID: "s2"}, nil)
@@ -1606,6 +1618,8 @@ func (s *TaskExecutorSuite) TestWorktreeCreationError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ChannelID: "ch1", DirPath: "/proj",
 	}, nil)
+
+	s.store.On("UpdateScheduledTaskOriginBranch", s.ctx, int64(10), "main").Return(nil)
 
 	s.executor.SetWorktreeCreator(&worktree.Creator{
 		Sys: &mockWorktreeSys{},
@@ -1669,6 +1683,8 @@ func (s *TaskExecutorSuite) TestWorktreeDetachedHead() {
 		},
 	})
 
+	s.store.On("UpdateScheduledTaskOriginBranch", s.ctx, int64(10), "abc123").Return(nil)
+
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		return strings.Contains(req.DirPath, ".worktrees/task-10-")
 	})).Return(&agent.AgentResponse{Response: "ok", SessionID: "s4"}, nil)
@@ -1727,6 +1743,202 @@ func (s *TaskExecutorSuite) TestWorktreeFalsePreservesExisting() {
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "ok", resp)
+}
+
+func (s *TaskExecutorSuite) TestWorktreeTaskSetsParentDirPath() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: true,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: "/proj", SessionID: "sess-1", Platform: types.PlatformLocal,
+	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{ID: 10, Type: db.TaskTypeCron}, nil)
+	s.allowBotInserts()
+
+	s.executor.SetWorktreeCreator(&worktree.Creator{
+		Sys: &mockWorktreeSys{},
+		Run: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			if name == "git" && len(args) > 0 && args[0] == "rev-parse" {
+				return []byte("main\n"), nil
+			}
+			return nil, nil
+		},
+	})
+
+	s.store.On("UpdateScheduledTaskOriginBranch", s.ctx, int64(10), "main").Return(nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.ParentDirPath == "/proj" && strings.Contains(req.DirPath, ".worktrees/task-10-")
+	})).Return(&agent.AgentResponse{Response: "done", SessionID: "s2"}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "s2").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "done", resp)
+}
+
+func (s *TaskExecutorSuite) TestNonWorktreeTaskNoParentDirPath() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: false,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: "/proj",
+	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{ID: 10, Type: db.TaskTypeCron}, nil)
+	s.allowBotInserts()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.ParentDirPath == "" && req.DirPath == "/proj"
+	})).Return(&agent.AgentResponse{Response: "ok", SessionID: "s5"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "s5").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp)
+}
+
+func (s *TaskExecutorSuite) TestWorktreeFirstRunWithOriginBranch() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: true, OriginBranch: "develop",
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: "/proj", SessionID: "sess-1", Platform: types.PlatformLocal,
+	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{ID: 10, Type: db.TaskTypeCron}, nil)
+	s.allowBotInserts()
+
+	var createdBranch string
+	s.executor.SetWorktreeCreator(&worktree.Creator{
+		Sys: &mockWorktreeSys{},
+		Run: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			// Should NOT be called for rev-parse since OriginBranch is set.
+			if name == "git" && len(args) > 0 && args[0] == "rev-parse" {
+				s.Fail("getCurrentBranch should not be called when OriginBranch is set")
+			}
+			// Capture the branch used for worktree add.
+			if name == "git" && len(args) > 2 && args[0] == "worktree" {
+				createdBranch = args[len(args)-1] // last arg is the branch
+			}
+			return nil, nil
+		},
+	})
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return strings.Contains(req.DirPath, ".worktrees/task-10-")
+	})).Return(&agent.AgentResponse{Response: "done", SessionID: "s2"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "s2").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "done", resp)
+	require.Equal(s.T(), "develop", createdBranch)
+}
+
+func (s *TaskExecutorSuite) TestWorktreeFirstRunPersistsDetectedBranch() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: true, OriginBranch: "", // empty — auto-detect
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: "/proj", SessionID: "sess-1", Platform: types.PlatformLocal,
+	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{ID: 10, Type: db.TaskTypeCron}, nil)
+	s.store.On("UpdateScheduledTaskOriginBranch", s.ctx, int64(10), "main").Return(nil)
+	s.allowBotInserts()
+
+	s.executor.SetWorktreeCreator(&worktree.Creator{
+		Sys: &mockWorktreeSys{},
+		Run: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			if name == "git" && len(args) > 0 && args[0] == "rev-parse" {
+				return []byte("main\n"), nil
+			}
+			return nil, nil
+		},
+	})
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return strings.Contains(req.DirPath, ".worktrees/task-10-")
+	})).Return(&agent.AgentResponse{Response: "done", SessionID: "s2"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "s2").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	s.store.AssertCalled(s.T(), "UpdateScheduledTaskOriginBranch", s.ctx, int64(10), "main")
+}
+
+func (s *TaskExecutorSuite) TestWorktreeUpdateBeforeRunSystemPrompt() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: true, OriginBranch: "main",
+		UpdateBeforeRun: true, ThreadID: "thread-1",
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: "/proj",
+	}, nil)
+	s.store.On("GetChannel", s.ctx, "thread-1").Return(&db.Channel{
+		ChannelID: "thread-1", DirPath: "/proj/.worktrees/task-10-abc", SessionID: "s-thread",
+	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{ID: 10, Type: db.TaskTypeCron}, nil)
+	s.allowBotInserts()
+
+	s.executor.SetWorktreeCreator(&worktree.Creator{Sys: &mockWorktreeSys{}})
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		msg := req.Messages[0].Content
+		return strings.Contains(msg, "git rebase origin/main") &&
+			strings.Contains(msg, "git fetch origin main") &&
+			strings.Contains(msg, "git stash") &&
+			strings.HasSuffix(msg, "build") &&
+			!strings.Contains(req.SystemPrompt, "git rebase")
+	})).Return(&agent.AgentResponse{Response: "done", SessionID: "s3"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-1", "s3").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "done", resp)
+}
+
+func (s *TaskExecutorSuite) TestWorktreeNoUpdatePromptWhenDisabled() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: true, OriginBranch: "main",
+		UpdateBeforeRun: false, ThreadID: "thread-1",
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: "/proj",
+	}, nil)
+	s.store.On("GetChannel", s.ctx, "thread-1").Return(&db.Channel{
+		ChannelID: "thread-1", DirPath: "/proj/.worktrees/task-10-abc", SessionID: "s-thread",
+	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{ID: 10, Type: db.TaskTypeCron}, nil)
+	s.allowBotInserts()
+
+	s.executor.SetWorktreeCreator(&worktree.Creator{Sys: &mockWorktreeSys{}})
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.Messages[0].Content == "build" && !strings.Contains(req.Messages[0].Content, "git rebase")
+	})).Return(&agent.AgentResponse{Response: "done", SessionID: "s3"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-1", "s3").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "done", resp)
 }
 
 // mockWorktreeSys is a minimal System implementation for worktree tests.

@@ -28,7 +28,7 @@ type Scheduler interface {
 	GetTask(ctx context.Context, taskID int64) (*db.ScheduledTask, error)
 	SetTaskEnabled(ctx context.Context, taskID int64, enabled bool) error
 	ToggleTask(ctx context.Context, taskID int64) (bool, error)
-	EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int, worktree *bool) error
+	EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int, worktree *bool, originBranch *string, updateBeforeRun *bool) error
 	RunNow(ctx context.Context, taskID int64) error
 }
 
@@ -130,7 +130,7 @@ func (s *TaskScheduler) ToggleTask(ctx context.Context, taskID int64) (bool, err
 }
 
 // EditTask updates a scheduled task's schedule, type, prompt, auto_delete_sec, and/or worktree flag.
-func (s *TaskScheduler) EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int, worktree *bool) error {
+func (s *TaskScheduler) EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int, worktree *bool, originBranch *string, updateBeforeRun *bool) error {
 	task, err := s.store.GetScheduledTask(ctx, taskID)
 	if err != nil {
 		return fmt.Errorf("getting task: %w", err)
@@ -153,6 +153,12 @@ func (s *TaskScheduler) EditTask(ctx context.Context, taskID int64, schedule, ta
 	}
 	if worktree != nil {
 		task.Worktree = *worktree
+	}
+	if originBranch != nil {
+		task.OriginBranch = *originBranch
+	}
+	if updateBeforeRun != nil {
+		task.UpdateBeforeRun = *updateBeforeRun
 	}
 
 	if schedule != nil || taskType != nil {

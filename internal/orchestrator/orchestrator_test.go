@@ -1611,6 +1611,31 @@ func (s *OrchestratorSuite) TestHandleInteractionTaskOnceType() {
 	s.store.AssertExpectations(s.T())
 }
 
+func (s *OrchestratorSuite) TestHandleInteractionTaskWithWorktreeFields() {
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	nextRun := time.Now().Add(30 * time.Minute)
+	task := &db.ScheduledTask{
+		ID: 74, Prompt: "do stuff", Schedule: "0 * * * *", Type: db.TaskTypeCron,
+		Enabled: true, NextRunAt: nextRun, Worktree: true, OriginBranch: "main", UpdateBeforeRun: true,
+	}
+	s.store.On("GetScheduledTask", s.ctx, int64(74)).Return(task, nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+		return out.ChannelID == "ch1" &&
+			strings.Contains(out.Content, "**Task 74**") &&
+			strings.Contains(out.Content, "Worktree: true") &&
+			strings.Contains(out.Content, "Origin branch: main") &&
+			strings.Contains(out.Content, "Update before run: true")
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
+		ChannelID:   "ch1",
+		CommandName: "task",
+		Options:     map[string]string{"task_id": "74"},
+	})
+
+	s.store.AssertExpectations(s.T())
+}
+
 func (s *OrchestratorSuite) TestHandleInteractionCancel() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.scheduler.On("RemoveTask", s.ctx, int64(42)).Return(nil)
@@ -1725,7 +1750,7 @@ func (s *OrchestratorSuite) TestHandleInteractionToggleError() {
 
 func (s *OrchestratorSuite) TestHandleInteractionEditSuccess() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.scheduler.On("EditTask", s.ctx, int64(42), new("0 9 * * *"), (*string)(nil), (*string)(nil), (*int)(nil), (*bool)(nil)).Return(nil)
+	s.scheduler.On("EditTask", s.ctx, int64(42), new("0 9 * * *"), (*string)(nil), (*string)(nil), (*int)(nil), (*bool)(nil), (*string)(nil), (*bool)(nil)).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Task 42 updated."
 	})).Return(nil)
@@ -1742,7 +1767,7 @@ func (s *OrchestratorSuite) TestHandleInteractionEditSuccess() {
 
 func (s *OrchestratorSuite) TestHandleInteractionEditWithTypeAndPrompt() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.scheduler.On("EditTask", s.ctx, int64(10), (*string)(nil), new("interval"), new("new prompt"), (*int)(nil), (*bool)(nil)).Return(nil)
+	s.scheduler.On("EditTask", s.ctx, int64(10), (*string)(nil), new("interval"), new("new prompt"), (*int)(nil), (*bool)(nil), (*string)(nil), (*bool)(nil)).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Task 10 updated."
 	})).Return(nil)
@@ -1789,7 +1814,7 @@ func (s *OrchestratorSuite) TestHandleInteractionEditNoFields() {
 
 func (s *OrchestratorSuite) TestHandleInteractionEditError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.scheduler.On("EditTask", s.ctx, int64(42), (*string)(nil), (*string)(nil), new("new"), (*int)(nil), (*bool)(nil)).Return(errors.New("edit err"))
+	s.scheduler.On("EditTask", s.ctx, int64(42), (*string)(nil), (*string)(nil), new("new"), (*int)(nil), (*bool)(nil), (*string)(nil), (*bool)(nil)).Return(errors.New("edit err"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Failed to edit task."
 	})).Return(nil)
@@ -2387,6 +2412,33 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddResolvePromptError()
 	})
 
 	s.store.AssertExpectations(s.T())
+	s.bot.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleInteractionTemplateAddWithWorktreeFields() {
+	templates := []config.TaskTemplate{
+		{Name: "wt-task", Schedule: "0 * * * *", Type: "cron", Prompt: "do stuff", Worktree: true, OriginBranch: "main", UpdateBeforeRun: true},
+	}
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute}, nil)
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
+	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "wt-task").Return(nil, nil)
+	s.scheduler.On("AddTask", s.ctx, mock.MatchedBy(func(task *db.ScheduledTask) bool {
+		return task.Worktree && task.OriginBranch == "main" && task.UpdateBeforeRun
+	})).Return(int64(20), nil)
+	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+		return out.Content == "Template 'wt-task' loaded (task ID: 20)."
+	})).Return(nil)
+
+	s.orch.HandleInteraction(s.ctx, &bot.Interaction{
+		ChannelID:   "ch1",
+		CommandName: "template-add",
+		Options:     map[string]string{"name": "wt-task"},
+	})
+
+	s.store.AssertExpectations(s.T())
+	s.scheduler.AssertExpectations(s.T())
 	s.bot.AssertExpectations(s.T())
 }
 

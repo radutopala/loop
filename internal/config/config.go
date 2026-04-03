@@ -23,13 +23,16 @@ type MCPServerConfig struct {
 
 // TaskTemplate represents a reusable task template with schedule and prompt.
 type TaskTemplate struct {
-	Name          string `json:"name"`
-	Description   string `json:"description"`
-	Schedule      string `json:"schedule"`
-	Type          string `json:"type"`
-	Prompt        string `json:"prompt"`
-	PromptPath    string `json:"prompt_path"`
-	AutoDeleteSec int    `json:"auto_delete_sec"`
+	Name            string `json:"name"`
+	Description     string `json:"description"`
+	Schedule        string `json:"schedule"`
+	Type            string `json:"type"`
+	Prompt          string `json:"prompt"`
+	PromptPath      string `json:"prompt_path"`
+	AutoDeleteSec   int    `json:"auto_delete_sec"`
+	Worktree        bool   `json:"worktree,omitempty"`
+	OriginBranch    string `json:"origin_branch,omitempty"`
+	UpdateBeforeRun bool   `json:"update_before_run,omitempty"`
 }
 
 // ResolvePrompt returns the prompt text for the template.

@@ -63,6 +63,8 @@ export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
   const [newType, setNewType] = useState<"cron" | "interval" | "once">("cron");
   const [newPrompt, setNewPrompt] = useState("");
   const [newWorktree, setNewWorktree] = useState(false);
+  const [newOriginBranch, setNewOriginBranch] = useState("");
+  const [newUpdateBeforeRun, setNewUpdateBeforeRun] = useState(false);
   const [newAutoDelete, setNewAutoDelete] = useState(0);
 
   // Edit form state
@@ -70,6 +72,8 @@ export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
   const [editType, setEditType] = useState<"cron" | "interval" | "once">("cron");
   const [editPrompt, setEditPrompt] = useState("");
   const [editWorktree, setEditWorktree] = useState(false);
+  const [editOriginBranch, setEditOriginBranch] = useState("");
+  const [editUpdateBeforeRun, setEditUpdateBeforeRun] = useState(false);
   const [editAutoDelete, setEditAutoDelete] = useState(0);
   const [runningNow, setRunningNow] = useState(false);
 
@@ -124,15 +128,19 @@ export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
         type: newType,
         prompt: newPrompt,
         worktree: newWorktree,
+        origin_branch: newOriginBranch || undefined,
+        update_before_run: newUpdateBeforeRun || undefined,
         auto_delete_sec: newAutoDelete,
       });
       setShowCreate(false);
       setNewPrompt("");
+      setNewOriginBranch("");
+      setNewUpdateBeforeRun(false);
       loadTasks();
     } catch {
       /* ignore */
     }
-  }, [channelId, newSchedule, newType, newPrompt, newWorktree, newAutoDelete, loadTasks]);
+  }, [channelId, newSchedule, newType, newPrompt, newWorktree, newOriginBranch, newUpdateBeforeRun, newAutoDelete, loadTasks]);
 
   const handleToggle = useCallback(
     async (task: ScheduledTask) => {
@@ -179,6 +187,8 @@ export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
     setEditType(task.type);
     setEditPrompt(task.prompt);
     setEditWorktree(task.worktree);
+    setEditOriginBranch(task.origin_branch || "");
+    setEditUpdateBeforeRun(task.update_before_run);
     setEditAutoDelete(task.auto_delete_sec);
     setEditing(true);
   }, []);
@@ -191,6 +201,8 @@ export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
         type: editType,
         prompt: editPrompt,
         worktree: editWorktree,
+        origin_branch: editOriginBranch,
+        update_before_run: editUpdateBeforeRun,
         auto_delete_sec: editAutoDelete,
       });
       setEditing(false);
@@ -198,7 +210,7 @@ export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
     } catch {
       /* ignore */
     }
-  }, [selectedId, editSchedule, editType, editPrompt, editWorktree, editAutoDelete, loadTasks]);
+  }, [selectedId, editSchedule, editType, editPrompt, editWorktree, editOriginBranch, editUpdateBeforeRun, editAutoDelete, loadTasks]);
 
   // Resizable divider
   const onMouseDown = useCallback(() => {
@@ -273,12 +285,27 @@ export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
         rows={3}
         style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
       />
-      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         {allowWorktree && (
           <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11, cursor: "pointer" }}>
             <input type="checkbox" checked={newWorktree} onChange={(e) => setNewWorktree(e.target.checked)} />
             Worktree
           </label>
+        )}
+        {newWorktree && (
+          <>
+            <input
+              type="text"
+              placeholder="Origin branch (auto-detect)"
+              value={newOriginBranch}
+              onChange={(e) => setNewOriginBranch(e.target.value)}
+              style={{ ...inputStyle, width: 150 }}
+            />
+            <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11, cursor: "pointer" }}>
+              <input type="checkbox" checked={newUpdateBeforeRun} onChange={(e) => setNewUpdateBeforeRun(e.target.checked)} />
+              Update before run
+            </label>
+          </>
         )}
         <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11 }}>
           Auto-delete (s):
@@ -396,12 +423,27 @@ export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
             rows={5}
             style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
           />
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {allowWorktree && (
               <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11, cursor: "pointer" }}>
                 <input type="checkbox" checked={editWorktree} onChange={(e) => setEditWorktree(e.target.checked)} />
                 Worktree
               </label>
+            )}
+            {editWorktree && (
+              <>
+                <input
+                  type="text"
+                  placeholder="Origin branch (auto-detect)"
+                  value={editOriginBranch}
+                  onChange={(e) => setEditOriginBranch(e.target.value)}
+                  style={{ ...inputStyle, width: 150 }}
+                />
+                <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11, cursor: "pointer" }}>
+                  <input type="checkbox" checked={editUpdateBeforeRun} onChange={(e) => setEditUpdateBeforeRun(e.target.checked)} />
+                  Update before run
+                </label>
+              </>
             )}
             <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11 }}>
               Auto-delete (s):
@@ -466,6 +508,11 @@ export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
           {selectedTask.enabled && (
             <div style={{ color: colors.textDim, fontSize: 11 }}>
               Next run: {nextRunLabel(selectedTask.next_run_at)}
+            </div>
+          )}
+          {selectedTask.worktree && selectedTask.origin_branch && (
+            <div style={{ color: colors.textDim, fontSize: 11 }}>
+              Branch: {selectedTask.origin_branch}{selectedTask.update_before_run ? " (updates before run)" : ""}
             </div>
           )}
           {selectedTask.auto_delete_sec > 0 && (

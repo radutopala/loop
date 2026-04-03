@@ -25,13 +25,15 @@ func (s *Server) resolveTaskChannelID(ctx context.Context, channelID string) str
 }
 
 type createTaskRequest struct {
-	ChannelID     string `json:"channel_id"`
-	Schedule      string `json:"schedule"`
-	Type          string `json:"type"`
-	Prompt        string `json:"prompt"`
-	TemplateName  string `json:"template_name,omitempty"`
-	AutoDeleteSec int    `json:"auto_delete_sec"`
-	Worktree      bool   `json:"worktree"`
+	ChannelID       string `json:"channel_id"`
+	Schedule        string `json:"schedule"`
+	Type            string `json:"type"`
+	Prompt          string `json:"prompt"`
+	TemplateName    string `json:"template_name,omitempty"`
+	AutoDeleteSec   int    `json:"auto_delete_sec"`
+	Worktree        bool   `json:"worktree"`
+	OriginBranch    string `json:"origin_branch,omitempty"`
+	UpdateBeforeRun bool   `json:"update_before_run"`
 }
 
 type createTaskResponse struct {
@@ -39,12 +41,14 @@ type createTaskResponse struct {
 }
 
 type updateTaskRequest struct {
-	Enabled       *bool   `json:"enabled"`
-	Schedule      *string `json:"schedule"`
-	Type          *string `json:"type"`
-	Prompt        *string `json:"prompt"`
-	AutoDeleteSec *int    `json:"auto_delete_sec"`
-	Worktree      *bool   `json:"worktree"`
+	Enabled         *bool   `json:"enabled"`
+	Schedule        *string `json:"schedule"`
+	Type            *string `json:"type"`
+	Prompt          *string `json:"prompt"`
+	AutoDeleteSec   *int    `json:"auto_delete_sec"`
+	Worktree        *bool   `json:"worktree"`
+	OriginBranch    *string `json:"origin_branch"`
+	UpdateBeforeRun *bool   `json:"update_before_run"`
 }
 
 type taskResponse struct {
@@ -58,6 +62,8 @@ type taskResponse struct {
 	TemplateName    string    `json:"template_name,omitempty"`
 	AutoDeleteSec   int       `json:"auto_delete_sec"`
 	Worktree        bool      `json:"worktree"`
+	OriginBranch    string    `json:"origin_branch,omitempty"`
+	UpdateBeforeRun bool      `json:"update_before_run"`
 	ChannelName     string    `json:"channel_name,omitempty"`
 	DirPath         string    `json:"dir_path,omitempty"`
 	ChannelWorktree bool      `json:"channel_worktree,omitempty"`
@@ -70,14 +76,16 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 	}
 
 	task := &db.ScheduledTask{
-		ChannelID:     s.resolveTaskChannelID(r.Context(), req.ChannelID),
-		Schedule:      req.Schedule,
-		Type:          db.TaskType(req.Type),
-		Prompt:        req.Prompt,
-		Enabled:       true,
-		TemplateName:  req.TemplateName,
-		AutoDeleteSec: req.AutoDeleteSec,
-		Worktree:      req.Worktree,
+		ChannelID:       s.resolveTaskChannelID(r.Context(), req.ChannelID),
+		Schedule:        req.Schedule,
+		Type:            db.TaskType(req.Type),
+		Prompt:          req.Prompt,
+		Enabled:         true,
+		TemplateName:    req.TemplateName,
+		AutoDeleteSec:   req.AutoDeleteSec,
+		Worktree:        req.Worktree,
+		OriginBranch:    req.OriginBranch,
+		UpdateBeforeRun: req.UpdateBeforeRun,
 	}
 
 	id, err := s.scheduler.AddTask(r.Context(), task)
@@ -162,16 +170,18 @@ func (s *Server) handleGetTask(w http.ResponseWriter, r *http.Request) {
 
 func toTaskResponse(t *db.ScheduledTask) taskResponse {
 	return taskResponse{
-		ID:            t.ID,
-		ChannelID:     t.ChannelID,
-		Schedule:      t.Schedule,
-		Type:          string(t.Type),
-		Prompt:        t.Prompt,
-		Enabled:       t.Enabled,
-		NextRunAt:     t.NextRunAt,
-		TemplateName:  t.TemplateName,
-		AutoDeleteSec: t.AutoDeleteSec,
-		Worktree:      t.Worktree,
+		ID:              t.ID,
+		ChannelID:       t.ChannelID,
+		Schedule:        t.Schedule,
+		Type:            string(t.Type),
+		Prompt:          t.Prompt,
+		Enabled:         t.Enabled,
+		NextRunAt:       t.NextRunAt,
+		TemplateName:    t.TemplateName,
+		AutoDeleteSec:   t.AutoDeleteSec,
+		Worktree:        t.Worktree,
+		OriginBranch:    t.OriginBranch,
+		UpdateBeforeRun: t.UpdateBeforeRun,
 	}
 }
 
@@ -204,7 +214,7 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Enabled == nil && req.Schedule == nil && req.Type == nil && req.Prompt == nil && req.AutoDeleteSec == nil && req.Worktree == nil {
+	if req.Enabled == nil && req.Schedule == nil && req.Type == nil && req.Prompt == nil && req.AutoDeleteSec == nil && req.Worktree == nil && req.OriginBranch == nil && req.UpdateBeforeRun == nil {
 		http.Error(w, "at least one field is required", http.StatusBadRequest)
 		return
 	}
@@ -216,8 +226,8 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if req.Schedule != nil || req.Type != nil || req.Prompt != nil || req.AutoDeleteSec != nil || req.Worktree != nil {
-		if err := s.scheduler.EditTask(r.Context(), taskID, req.Schedule, req.Type, req.Prompt, req.AutoDeleteSec, req.Worktree); err != nil {
+	if req.Schedule != nil || req.Type != nil || req.Prompt != nil || req.AutoDeleteSec != nil || req.Worktree != nil || req.OriginBranch != nil || req.UpdateBeforeRun != nil {
+		if err := s.scheduler.EditTask(r.Context(), taskID, req.Schedule, req.Type, req.Prompt, req.AutoDeleteSec, req.Worktree, req.OriginBranch, req.UpdateBeforeRun); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
