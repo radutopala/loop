@@ -666,6 +666,11 @@ export async function fetchTaskRuns(taskId: number): Promise<TaskRunLog[]> {
   return (await res.json()) ?? [];
 }
 
+export async function runTaskNow(taskId: number): Promise<void> {
+  const res = await fetch(`${apiUrl}/api/tasks/${taskId}/run`, { method: "POST" });
+  if (!res.ok) throw new Error(`Failed to run task: ${res.statusText}`);
+}
+
 /** List all playground items with names and titles (global + project-scoped). */
 export async function fetchPlaygroundItems(channelId?: string): Promise<PlaygroundItem[]> {
   const params = channelId ? `?channel_id=${encodeURIComponent(channelId)}` : "";

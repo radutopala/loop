@@ -29,6 +29,7 @@ type Scheduler interface {
 	SetTaskEnabled(ctx context.Context, taskID int64, enabled bool) error
 	ToggleTask(ctx context.Context, taskID int64) (bool, error)
 	EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int, worktree *bool) error
+	RunNow(ctx context.Context, taskID int64) error
 }
 
 // TaskEventBroadcaster broadcasts task lifecycle events.
@@ -193,7 +194,51 @@ func (s *TaskScheduler) processDueTasks(ctx context.Context) {
 	}
 }
 
+// RunNow immediately executes a task without updating its schedule.
+func (s *TaskScheduler) RunNow(ctx context.Context, taskID int64) error {
+	task, err := s.store.GetScheduledTask(ctx, taskID)
+	if err != nil {
+		return fmt.Errorf("getting task: %w", err)
+	}
+	if task == nil {
+		return fmt.Errorf("task %d not found", taskID)
+	}
+	return s.executeAndLog(ctx, task)
+}
+
 func (s *TaskScheduler) executeAndUpdate(ctx context.Context, task *db.ScheduledTask) {
+	if err := s.executeAndLog(ctx, task); err != nil {
+		return
+	}
+
+	now := time.Now().UTC()
+	switch task.Type {
+	case db.TaskTypeCron:
+		nextRun, err := calculateNextRun(db.TaskTypeCron, task.Schedule, now)
+		if err != nil {
+			s.logger.Error("failed to calculate next cron run", "task_id", task.ID, "error", err)
+			return
+		}
+		task.NextRunAt = nextRun
+	case db.TaskTypeInterval:
+		nextRun, err := calculateNextRun(db.TaskTypeInterval, task.Schedule, now)
+		if err != nil {
+			s.logger.Error("failed to calculate next interval run", "task_id", task.ID, "error", err)
+			return
+		}
+		task.NextRunAt = nextRun
+	case db.TaskTypeOnce:
+		task.Enabled = false
+	}
+
+	if err := s.store.UpdateScheduledTask(ctx, task); err != nil {
+		s.logger.Error("failed to update scheduled task", "task_id", task.ID, "error", err)
+	}
+}
+
+// executeAndLog runs the task executor, records the result in a run log, and
+// broadcasts a completion event. It does not update the task's schedule.
+func (s *TaskScheduler) executeAndLog(ctx context.Context, task *db.ScheduledTask) error {
 	platform := ""
 	if ch, err := s.store.GetChannel(ctx, task.ChannelID); err == nil && ch != nil {
 		platform = string(ch.Platform)
@@ -208,7 +253,7 @@ func (s *TaskScheduler) executeAndUpdate(ctx context.Context, task *db.Scheduled
 	logID, err := s.store.InsertTaskRunLog(ctx, runLog)
 	if err != nil {
 		s.logger.Error("failed to insert task run log", "task_id", task.ID, "error", err)
-		return
+		return err
 	}
 	runLog.ID = logID
 
@@ -238,29 +283,7 @@ func (s *TaskScheduler) executeAndUpdate(ctx context.Context, task *db.Scheduled
 		})
 	}
 
-	now := time.Now().UTC()
-	switch task.Type {
-	case db.TaskTypeCron:
-		nextRun, err := calculateNextRun(db.TaskTypeCron, task.Schedule, now)
-		if err != nil {
-			s.logger.Error("failed to calculate next cron run", "task_id", task.ID, "error", err)
-			return
-		}
-		task.NextRunAt = nextRun
-	case db.TaskTypeInterval:
-		nextRun, err := calculateNextRun(db.TaskTypeInterval, task.Schedule, now)
-		if err != nil {
-			s.logger.Error("failed to calculate next interval run", "task_id", task.ID, "error", err)
-			return
-		}
-		task.NextRunAt = nextRun
-	case db.TaskTypeOnce:
-		task.Enabled = false
-	}
-
-	if err := s.store.UpdateScheduledTask(ctx, task); err != nil {
-		s.logger.Error("failed to update scheduled task", "task_id", task.ID, "error", err)
-	}
+	return nil
 }
 
 func parseOnceSchedule(schedule string) (time.Time, error) {

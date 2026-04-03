@@ -185,6 +185,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("DELETE /api/tasks/{id}", s.srv.handleDeleteTask)
 	s.mux.HandleFunc("PATCH /api/tasks/{id}", s.srv.handleUpdateTask)
 	s.mux.HandleFunc("GET /api/tasks/{id}/runs", s.srv.handleListTaskRuns)
+	s.mux.HandleFunc("POST /api/tasks/{id}/run", s.srv.handleRunTask)
 	s.mux.HandleFunc("GET /api/channels/{id}/sessions", s.srv.handleListSessions)
 	s.mux.HandleFunc("GET /api/channels/{id}/messages", s.srv.handleListMessages)
 	s.mux.HandleFunc("GET /api/messages/search", s.srv.handleSearchMessages)
@@ -838,6 +839,41 @@ func (s *ServerSuite) TestListTaskRunsStoreError() {
 
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	s.store.AssertExpectations(s.T())
+}
+
+// --- RunTask tests ---
+
+func (s *ServerSuite) TestRunTaskSuccess() {
+	task := &db.ScheduledTask{ID: 42, ChannelID: "ch1"}
+	s.scheduler.On("GetTask", mock.Anything, int64(42)).Return(task, nil)
+	s.scheduler.On("RunNow", mock.Anything, int64(42)).Return(nil).Maybe()
+
+	rec := s.testRequest("POST", "/api/tasks/42/run", "")
+
+	require.Equal(s.T(), http.StatusAccepted, rec.Code)
+	s.scheduler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestRunTaskNotFound() {
+	s.scheduler.On("GetTask", mock.Anything, int64(99)).Return(nil, nil)
+
+	rec := s.testRequest("POST", "/api/tasks/99/run", "")
+
+	require.Equal(s.T(), http.StatusNotFound, rec.Code)
+}
+
+func (s *ServerSuite) TestRunTaskInvalidID() {
+	rec := s.testRequest("POST", "/api/tasks/abc/run", "")
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestRunTaskGetTaskError() {
+	s.scheduler.On("GetTask", mock.Anything, int64(42)).Return(nil, errors.New("db error"))
+
+	rec := s.testRequest("POST", "/api/tasks/42/run", "")
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
 
 // --- Start / Stop tests ---

@@ -58,3 +58,7 @@ func (m *MockScheduler) ToggleTask(ctx context.Context, taskID int64) (bool, err
 func (m *MockScheduler) EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int, worktree *bool) error {
 	return m.Called(ctx, taskID, schedule, taskType, prompt, autoDeleteSec, worktree).Error(0)
 }
+
+func (m *MockScheduler) RunNow(ctx context.Context, taskID int64) error {
+	return m.Called(ctx, taskID).Error(0)
+}

@@ -244,3 +244,29 @@ func (s *Server) handleListTaskRuns(w http.ResponseWriter, r *http.Request) {
 
 	writeHTTPJSON(w, http.StatusOK, runs, s.logger)
 }
+
+func (s *Server) handleRunTask(w http.ResponseWriter, r *http.Request) {
+	taskID, ok := parsePathInt64(w, r, "id")
+	if !ok {
+		return
+	}
+
+	task, err := s.scheduler.GetTask(r.Context(), taskID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if task == nil {
+		http.Error(w, "task not found", http.StatusNotFound)
+		return
+	}
+
+	go func() {
+		ctx := context.Background()
+		if err := s.scheduler.RunNow(ctx, taskID); err != nil {
+			s.logger.Error("run-now failed", "task_id", taskID, "error", err)
+		}
+	}()
+
+	w.WriteHeader(http.StatusAccepted)
+}

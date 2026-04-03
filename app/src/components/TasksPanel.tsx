@@ -7,6 +7,7 @@ import {
   updateTask,
   deleteTask,
   fetchTaskRuns,
+  runTaskNow,
 } from "../api/loopApi";
 import type { ScheduledTask, TaskRunLog } from "../api/loopApi";
 
@@ -70,6 +71,7 @@ export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
   const [editPrompt, setEditPrompt] = useState("");
   const [editWorktree, setEditWorktree] = useState(false);
   const [editAutoDelete, setEditAutoDelete] = useState(0);
+  const [runningNow, setRunningNow] = useState(false);
 
   const loadTasks = useCallback(async () => {
     try {
@@ -155,6 +157,21 @@ export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
       }
     },
     [selectedId, loadTasks],
+  );
+
+  const handleRunNow = useCallback(
+    async (taskId: number) => {
+      setRunningNow(true);
+      try {
+        await runTaskNow(taskId);
+        loadRuns(taskId);
+      } catch {
+        /* error will appear in run history */
+      } finally {
+        setRunningNow(false);
+      }
+    },
+    [loadRuns],
   );
 
   const startEdit = useCallback((task: ScheduledTask) => {
@@ -422,6 +439,13 @@ export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
               <span style={{ fontSize: 11, color: colors.textDim, border: `1px solid ${colors.border}`, borderRadius: 3, padding: "0 4px" }}>worktree</span>
             )}
             <div style={{ flex: 1 }} />
+            <button
+              onClick={() => handleRunNow(selectedTask.id)}
+              disabled={runningNow}
+              style={{ ...btnStyle, opacity: runningNow ? 0.5 : 1 }}
+            >
+              {runningNow ? "Running..." : "\u25B6 Run Now"}
+            </button>
             <button onClick={() => handleToggle(selectedTask)} style={{ ...btnSecondaryStyle, color: selectedTask.enabled ? (colors.warning ?? "#eab308") : colors.active }}>
               {selectedTask.enabled ? "Disable" : "Enable"}
             </button>

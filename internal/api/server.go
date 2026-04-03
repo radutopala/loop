@@ -199,6 +199,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/tasks/{id}", s.handleDeleteTask)
 	mux.HandleFunc("PATCH /api/tasks/{id}", s.handleUpdateTask)
 	mux.HandleFunc("GET /api/tasks/{id}/runs", s.handleListTaskRuns)
+	mux.HandleFunc("POST /api/tasks/{id}/run", s.handleRunTask)
 	mux.HandleFunc("GET /api/channels/{id}/sessions", s.handleListSessions)
 	mux.HandleFunc("GET /api/channels/{id}/messages", s.handleListMessages)
 	mux.HandleFunc("GET /api/messages/search", s.handleSearchMessages)

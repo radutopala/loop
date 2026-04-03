@@ -889,3 +889,141 @@ func (s *SchedulerSuite) TestTaskRunFailedEventBroadcast() {
 
 	bc.AssertExpectations(s.T())
 }
+
+// --- RunNow tests ---
+
+func (s *SchedulerSuite) TestRunNowSuccess() {
+	task := &db.ScheduledTask{
+		ID: 5, ChannelID: "ch1", Schedule: "*/5 * * * *",
+		Type: db.TaskTypeCron, Prompt: "run now", Enabled: true,
+	}
+
+	s.store.On("GetScheduledTask", mock.Anything, int64(5)).Return(task, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", Platform: "local"}, nil)
+	s.store.On("InsertTaskRunLog", mock.Anything, mock.MatchedBy(func(trl *db.TaskRunLog) bool {
+		return trl.TaskID == 5 && trl.Status == db.RunStatusRunning
+	})).Return(int64(50), nil)
+	s.executor.On("ExecuteTask", mock.Anything, task).Return("result", nil)
+	s.store.On("UpdateTaskRunLog", mock.Anything, mock.MatchedBy(func(trl *db.TaskRunLog) bool {
+		return trl.Status == db.RunStatusSuccess && trl.ResponseText == "result"
+	})).Return(nil)
+
+	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
+
+	err := ts.RunNow(context.Background(), 5)
+	require.NoError(s.T(), err)
+
+	// UpdateScheduledTask must NOT be called — RunNow does not update the schedule.
+	s.store.AssertNotCalled(s.T(), "UpdateScheduledTask", mock.Anything, mock.Anything)
+	s.store.AssertExpectations(s.T())
+	s.executor.AssertExpectations(s.T())
+}
+
+func (s *SchedulerSuite) TestRunNowWithEventBroadcast() {
+	task := &db.ScheduledTask{
+		ID: 6, ChannelID: "ch2", Schedule: "30m",
+		Type: db.TaskTypeInterval, Prompt: "run now event", Enabled: true,
+	}
+
+	s.store.On("GetScheduledTask", mock.Anything, int64(6)).Return(task, nil)
+	s.store.On("GetChannel", mock.Anything, "ch2").Return(nil, nil)
+	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(60), nil)
+	s.executor.On("ExecuteTask", mock.Anything, task).Return("ok", nil)
+	s.store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(nil)
+
+	bc := new(mockTaskEventBroadcaster)
+	bc.On("BroadcastTaskRunCompleted", events.TaskRunEventData{
+		TaskID: 6, RunID: 60, Status: string(db.RunStatusSuccess), ChannelID: "ch2",
+	}).Return()
+
+	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
+	ts.SetEventBroadcaster(bc)
+
+	err := ts.RunNow(context.Background(), 6)
+	require.NoError(s.T(), err)
+
+	bc.AssertExpectations(s.T())
+}
+
+func (s *SchedulerSuite) TestRunNowTaskNotFound() {
+	s.store.On("GetScheduledTask", mock.Anything, int64(99)).Return(nil, nil)
+
+	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
+
+	err := ts.RunNow(context.Background(), 99)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "not found")
+}
+
+func (s *SchedulerSuite) TestRunNowGetTaskError() {
+	s.store.On("GetScheduledTask", mock.Anything, int64(7)).Return(nil, errors.New("db down"))
+
+	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
+
+	err := ts.RunNow(context.Background(), 7)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "db down")
+}
+
+func (s *SchedulerSuite) TestRunNowExecutorError() {
+	task := &db.ScheduledTask{
+		ID: 8, ChannelID: "ch1", Schedule: "1h",
+		Type: db.TaskTypeInterval, Prompt: "will fail", Enabled: true,
+	}
+
+	s.store.On("GetScheduledTask", mock.Anything, int64(8)).Return(task, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
+	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(80), nil)
+	s.executor.On("ExecuteTask", mock.Anything, task).Return("", errors.New("exec failed"))
+	s.store.On("UpdateTaskRunLog", mock.Anything, mock.MatchedBy(func(trl *db.TaskRunLog) bool {
+		return trl.Status == db.RunStatusFailed && trl.ErrorText == "exec failed"
+	})).Return(nil)
+
+	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
+
+	// RunNow returns nil even when the executor fails — the error is in the run log.
+	err := ts.RunNow(context.Background(), 8)
+	require.NoError(s.T(), err)
+
+	s.store.AssertNotCalled(s.T(), "UpdateScheduledTask", mock.Anything, mock.Anything)
+}
+
+func (s *SchedulerSuite) TestRunNowDisabledTask() {
+	task := &db.ScheduledTask{
+		ID: 9, ChannelID: "ch1", Schedule: "*/10 * * * *",
+		Type: db.TaskTypeCron, Prompt: "disabled task", Enabled: false,
+	}
+
+	s.store.On("GetScheduledTask", mock.Anything, int64(9)).Return(task, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
+	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(90), nil)
+	s.executor.On("ExecuteTask", mock.Anything, task).Return("ran anyway", nil)
+	s.store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(nil)
+
+	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
+
+	err := ts.RunNow(context.Background(), 9)
+	require.NoError(s.T(), err)
+
+	s.executor.AssertExpectations(s.T())
+}
+
+func (s *SchedulerSuite) TestRunNowInsertRunLogError() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Schedule: "1h",
+		Type: db.TaskTypeInterval, Prompt: "log fail", Enabled: true,
+	}
+
+	s.store.On("GetScheduledTask", mock.Anything, int64(10)).Return(task, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
+	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(0), errors.New("log insert failed"))
+
+	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
+
+	err := ts.RunNow(context.Background(), 10)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "log insert failed")
+
+	// Executor should NOT be called when run log insert fails.
+	s.executor.AssertNotCalled(s.T(), "ExecuteTask", mock.Anything, mock.Anything)
+}
