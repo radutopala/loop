@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"sync"
@@ -42,6 +43,39 @@ func (m *mockExecClient) ExecResize(ctx context.Context, execID string, height, 
 }
 
 func (m *mockExecClient) ExecInspectPid(ctx context.Context, execID string) (int, error) {
+	args := m.Called(ctx, execID)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *mockExecClient) DefaultShellCmd(pidFile string) []string {
+	return []string{"/bin/sh", "-c", fmt.Sprintf("echo $$ > %s; exec /bin/sh", pidFile)}
+}
+
+// mockHostExecClient implements ExecClient but NOT PidFileShellCmd,
+// simulating host-based clients that manage processes directly.
+type mockHostExecClient struct {
+	mock.Mock
+}
+
+func (m *mockHostExecClient) ExecCreate(ctx context.Context, containerID string, cmd []string, tty bool) (string, error) {
+	args := m.Called(ctx, containerID, cmd, tty)
+	return args.String(0), args.Error(1)
+}
+
+func (m *mockHostExecClient) ExecAttach(ctx context.Context, execID string) (io.ReadWriteCloser, error) {
+	args := m.Called(ctx, execID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(io.ReadWriteCloser), args.Error(1)
+}
+
+func (m *mockHostExecClient) ExecResize(ctx context.Context, execID string, height, width uint) error {
+	args := m.Called(ctx, execID, height, width)
+	return args.Error(0)
+}
+
+func (m *mockHostExecClient) ExecInspectPid(ctx context.Context, execID string) (int, error) {
 	args := m.Called(ctx, execID)
 	return args.Int(0), args.Error(1)
 }
@@ -88,6 +122,28 @@ func (s *TerminalSuite) TestCreateSession() {
 	require.NoError(s.T(), err)
 	require.NotEmpty(s.T(), sess.ID())
 	require.Equal(s.T(), "ctr-1", sess.ContainerID())
+
+	pw.Close()
+	<-sess.Done()
+
+	client.AssertExpectations(s.T())
+}
+
+func (s *TerminalSuite) TestCreateSessionHostNoPidFile() {
+	// mockHostExecClient does NOT implement PidFileShellCmd,
+	// so CreateSession should pass empty cmd through and set pidFile="".
+	client := new(mockHostExecClient)
+	pr, pw := io.Pipe()
+	conn := &mockConn{r: pr, w: io.Discard}
+
+	client.On("ExecCreate", mock.Anything, "/home/user", []string(nil), true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+
+	mgr := NewManager(client, testLogger)
+	sess, err := mgr.CreateSession(context.Background(), "/home/user", nil)
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), sess.ID())
+	require.Empty(s.T(), sess.pidFile, "host sessions should have no pidFile")
 
 	pw.Close()
 	<-sess.Done()

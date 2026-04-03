@@ -262,7 +262,7 @@ func (s *OrchestratorSuite) SetupTest() {
 	})).Return(nil).Maybe()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{}, nil)
 }
 
 func (s *OrchestratorSuite) TestNew() {
@@ -943,8 +943,12 @@ func (s *OrchestratorSuite) TestHandleMessageWithEventBroadcaster() {
 	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
 		return d.AuthorName == "Alice" && d.Content == "hi" && !d.IsBot
 	})).Return()
-	eb.On("BroadcastAgentStatus", "ch1", events.AgentStatusEventData{Status: "running", TriggerContent: "hi"}).Return()
-	eb.On("BroadcastAgentStatus", "ch1", events.AgentStatusEventData{Status: "completed"}).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "running" && d.TriggerContent == "hi" && d.RunID != ""
+	})).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "completed" && d.RunID != ""
+	})).Return()
 	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
 		return d.AuthorName == "agent" && d.Content == "Hello!" && d.IsBot
 	})).Return()
@@ -981,9 +985,11 @@ func (s *OrchestratorSuite) TestHandleMessageWithEventBroadcasterRunError() {
 	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
 
 	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
-	eb.On("BroadcastAgentStatus", "ch1", events.AgentStatusEventData{Status: "running", TriggerContent: "hi"}).Return()
 	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
-		return d.Status == "error" && d.Error == "runner failed"
+		return d.Status == "running" && d.TriggerContent == "hi" && d.RunID != ""
+	})).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "error" && d.Error == "runner failed" && d.RunID != ""
 	})).Return()
 
 	s.orch.HandleMessage(s.ctx, msg)
@@ -1014,9 +1020,11 @@ func (s *OrchestratorSuite) TestHandleMessageWithEventBroadcasterAgentError() {
 	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
 
 	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
-	eb.On("BroadcastAgentStatus", "ch1", events.AgentStatusEventData{Status: "running", TriggerContent: "hi"}).Return()
 	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
-		return d.Status == "error" && d.Error == "agent broke"
+		return d.Status == "running" && d.TriggerContent == "hi" && d.RunID != ""
+	})).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "error" && d.Error == "agent broke" && d.RunID != ""
 	})).Return()
 
 	s.orch.HandleMessage(s.ctx, msg)
@@ -1936,7 +1944,9 @@ func (s *OrchestratorSuite) TestHandleMessageRemoveStopButtonError() {
 
 func (s *OrchestratorSuite) TestHandleMessageRunCanceledByStopButton() {
 	// Set a real timeout so runCtx doesn't expire immediately.
-	s.orch.cfg.ContainerTimeout = 10 * time.Second
+	cfgCT := s.orch.cfg.Load()
+	cfgCT.ContainerTimeout = 10 * time.Second
+	s.orch.cfg.Store(cfgCT)
 
 	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
@@ -2144,7 +2154,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSuccess() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute}, nil)
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
@@ -2172,7 +2182,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddWithAutoDelete() {
 		{Name: "ephemeral-check", Description: "Ephemeral check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff", AutoDeleteSec: 300},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute}, nil)
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "ephemeral-check").Return(nil, nil)
@@ -2200,7 +2210,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddIdempotent() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute}, nil)
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(&db.ScheduledTask{ID: 5, TemplateName: "daily-check"}, nil)
@@ -2238,7 +2248,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddStoreError() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute}, nil)
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, errors.New("db error"))
@@ -2261,7 +2271,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSchedulerError() {
 		{Name: "daily-check", Description: "Daily check", Schedule: "0 9 * * *", Type: "cron", Prompt: "check stuff"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute}, nil)
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
@@ -2286,7 +2296,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateList() {
 		{Name: "weekly-report", Description: "Weekly report", Schedule: "0 17 * * 5", Type: "cron", Prompt: "generate report"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute}, nil)
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
@@ -2333,7 +2343,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddWithPromptPath() {
 		{Name: "daily-from-file", Description: "Daily from file", Schedule: "0 9 * * *", Type: "cron", PromptPath: "daily.md"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute, LoopDir: tmpDir})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute, LoopDir: tmpDir}, nil)
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-from-file").Return(nil, nil)
@@ -2362,7 +2372,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddResolvePromptError()
 		// Neither prompt nor prompt_path set
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute})
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute}, nil)
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "bad-template").Return(nil, nil)
@@ -2492,7 +2502,9 @@ func (s *OrchestratorSuite) TestHandleChannelDelete() {
 		{
 			name: "thread KeepMCPConfigs skips removal", channelID: "thread-1", isThread: true,
 			setupFunc: func() {
-				s.orch.cfg.KeepMCPConfigs = true
+				cfgKeep := s.orch.cfg.Load()
+				cfgKeep.KeepMCPConfigs = true
+				s.orch.cfg.Store(cfgKeep)
 				s.orch.removeMCPConfig = func(string, string) error {
 					s.Fail("removeMCPConfig should not be called when KeepMCPConfigs is true")
 					return nil
@@ -2507,7 +2519,9 @@ func (s *OrchestratorSuite) TestHandleChannelDelete() {
 		{
 			name: "channel KeepMCPConfigs skips removal", channelID: "ch-1", isThread: false,
 			setupFunc: func() {
-				s.orch.cfg.KeepMCPConfigs = true
+				cfgKeep := s.orch.cfg.Load()
+				cfgKeep.KeepMCPConfigs = true
+				s.orch.cfg.Store(cfgKeep)
 				s.orch.removeMCPConfig = func(string, string) error {
 					s.Fail("removeMCPConfig should not be called when KeepMCPConfigs is true")
 					return nil
@@ -2538,15 +2552,15 @@ func (s *OrchestratorSuite) TestHandleChannelDelete() {
 
 func (s *OrchestratorSuite) TestConfigPermissionsForEmptyConfig() {
 	// Default zero-value config → empty permissions.
-	s.orch.cfg = config.Config{}
+	s.orch.cfg.Store(&config.Config{})
 	perms := s.orch.configPermissionsFor("")
 	require.True(s.T(), perms.IsEmpty())
 }
 
 func (s *OrchestratorSuite) TestConfigPermissionsForGlobalNoProjectConfig() {
-	s.orch.cfg = config.Config{
+	s.orch.cfg.Store(&config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}},
-	}
+	})
 	// Empty dirPath → global permissions returned directly.
 	perms := s.orch.configPermissionsFor("")
 	require.Equal(s.T(), []string{"U1"}, perms.Owners.Users)
@@ -2557,9 +2571,9 @@ func (s *OrchestratorSuite) TestConfigPermissionsForWithDirPath() {
 		return mainCfg, nil
 	}
 
-	s.orch.cfg = config.Config{
+	s.orch.cfg.Store(&config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}},
-	}
+	})
 	// Non-existent project config → LoadProjectConfig returns global config → global permissions returned.
 	perms := s.orch.configPermissionsFor("/some/project")
 	require.Equal(s.T(), []string{"U1"}, perms.Owners.Users)
@@ -2570,9 +2584,9 @@ func (s *OrchestratorSuite) TestConfigPermissionsForLoadError() {
 		return nil, errors.New("permission denied")
 	}
 
-	s.orch.cfg = config.Config{
+	s.orch.cfg.Store(&config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}},
-	}
+	})
 	// Read error (not ErrNotExist) → LoadProjectConfig returns error → global permissions returned as fallback.
 	perms := s.orch.configPermissionsFor("/some/project")
 	require.Equal(s.T(), []string{"U1"}, perms.Owners.Users)
@@ -2586,9 +2600,9 @@ func (s *OrchestratorSuite) TestConfigPermissionsForProjectOverridesGlobal() {
 		return &merged, nil
 	}
 
-	s.orch.cfg = config.Config{
+	s.orch.cfg.Store(&config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"U1"}}},
-	}
+	})
 	perms := s.orch.configPermissionsFor("/project")
 	require.Equal(s.T(), []string{"U2"}, perms.Owners.Users)
 }
@@ -2668,9 +2682,9 @@ func (s *OrchestratorSuite) TestResolveRole() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessagePermissionDenied() {
-	s.orch.cfg = config.Config{
+	s.orch.cfg.Store(&config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
-	}
+	})
 
 	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
@@ -2693,9 +2707,9 @@ func (s *OrchestratorSuite) TestHandleMessagePermissionDenied() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageLocalPlatformBypassesPermissions() {
-	s.orch.cfg = config.Config{
+	s.orch.cfg.Store(&config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
-	}
+	})
 
 	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
@@ -2729,9 +2743,9 @@ func (s *OrchestratorSuite) TestHandleMessageLocalPlatformBypassesPermissions() 
 }
 
 func (s *OrchestratorSuite) TestHandleMessageBotSelfMentionBypassesPermissions() {
-	s.orch.cfg = config.Config{
+	s.orch.cfg.Store(&config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
-	}
+	})
 	// Replace the default IsBotUser(mock.Anything)->false with a specific one for "BOT"->true.
 	filtered := s.bot.ExpectedCalls[:0]
 	for _, c := range s.bot.ExpectedCalls {
@@ -2773,9 +2787,9 @@ func (s *OrchestratorSuite) TestHandleMessageBotSelfMentionBypassesPermissions()
 }
 
 func (s *OrchestratorSuite) TestHandleMessagePermissionAllowed() {
-	s.orch.cfg = config.Config{
+	s.orch.cfg.Store(&config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
-	}
+	})
 
 	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
@@ -2807,9 +2821,9 @@ func (s *OrchestratorSuite) TestHandleMessagePermissionAllowed() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionPermissionDenied() {
-	s.orch.cfg = config.Config{
+	s.orch.cfg.Store(&config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
-	}
+	})
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1", DirPath: "",
@@ -2830,9 +2844,9 @@ func (s *OrchestratorSuite) TestHandleInteractionPermissionDenied() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionLocalPlatformBypassesPermissions() {
-	s.orch.cfg = config.Config{
+	s.orch.cfg.Store(&config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
-	}
+	})
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1", DirPath: "",
@@ -2855,9 +2869,9 @@ func (s *OrchestratorSuite) TestHandleInteractionLocalPlatformBypassesPermission
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionPermissionAllowed() {
-	s.orch.cfg = config.Config{
+	s.orch.cfg.Store(&config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
-	}
+	})
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1", DirPath: "",
@@ -2879,9 +2893,9 @@ func (s *OrchestratorSuite) TestHandleInteractionPermissionAllowed() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionPermissionByRole() {
-	s.orch.cfg = config.Config{
+	s.orch.cfg.Store(&config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Roles: []string{"admin-role"}}},
-	}
+	})
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1", DirPath: "",
@@ -2904,9 +2918,9 @@ func (s *OrchestratorSuite) TestHandleInteractionPermissionByRole() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionGetChannelNil() {
-	s.orch.cfg = config.Config{
+	s.orch.cfg.Store(&config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"allowed-user"}}},
-	}
+	})
 
 	// Channel not found — dirPath will be empty, permissions come from global.
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
@@ -2926,12 +2940,12 @@ func (s *OrchestratorSuite) TestHandleInteractionGetChannelNil() {
 
 func (s *OrchestratorSuite) TestHandleInteractionPermCmdRequiresOwner() {
 	// Member user cannot manage permissions.
-	s.orch.cfg = config.Config{
+	s.orch.cfg.Store(&config.Config{
 		Permissions: types.Permissions{
 			Owners:  types.RoleGrant{Users: []string{"owner-user"}},
 			Members: types.RoleGrant{Users: []string{"member-user"}},
 		},
-	}
+	})
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1", DirPath: "",
@@ -3305,7 +3319,9 @@ func (s *OrchestratorSuite) TestHandleInteractionDenyRoleStoreError() {
 // --- Streaming tests ---
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingSkipsDuplicate() {
-	s.orch.cfg.StreamingEnabled = true
+	cfgStream := s.orch.cfg.Load()
+	cfgStream.StreamingEnabled = true
+	s.orch.cfg.Store(cfgStream)
 
 	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
@@ -3356,7 +3372,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingSkipsDuplicate() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingSendsFinalWhenDifferent() {
-	s.orch.cfg.StreamingEnabled = true
+	cfgStream := s.orch.cfg.Load()
+	cfgStream.StreamingEnabled = true
+	s.orch.cfg.Store(cfgStream)
 
 	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
@@ -3403,7 +3421,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingSendsFinalWhenDifferent() 
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingSendErrorIsLogged() {
-	s.orch.cfg.StreamingEnabled = true
+	cfgStream := s.orch.cfg.Load()
+	cfgStream.StreamingEnabled = true
+	s.orch.cfg.Store(cfgStream)
 
 	msg := &bot.IncomingMessage{
 		ChannelID:    "ch1",
@@ -3488,7 +3508,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingDisabledNoOnTurn() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingBroadcastsViaEvents() {
-	s.orch.cfg.StreamingEnabled = true
+	cfgStream := s.orch.cfg.Load()
+	cfgStream.StreamingEnabled = true
+	s.orch.cfg.Store(cfgStream)
 	eb := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(eb)
 
@@ -3536,7 +3558,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingBroadcastsViaEvents() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingOnToolUseBroadcasts() {
-	s.orch.cfg.StreamingEnabled = true
+	cfgStream := s.orch.cfg.Load()
+	cfgStream.StreamingEnabled = true
+	s.orch.cfg.Store(cfgStream)
 	eb := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(eb)
 
@@ -3586,7 +3610,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnToolUseBroadcasts() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingAskUserQuestion() {
-	s.orch.cfg.StreamingEnabled = true
+	cfgStream := s.orch.cfg.Load()
+	cfgStream.StreamingEnabled = true
+	s.orch.cfg.Store(cfgStream)
 	eb := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(eb)
 
@@ -3629,7 +3655,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingAskUserQuestion() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
-	s.orch.cfg.StreamingEnabled = true
+	cfgStream := s.orch.cfg.Load()
+	cfgStream.StreamingEnabled = true
+	s.orch.cfg.Store(cfgStream)
 	eb := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(eb)
 
@@ -3672,7 +3700,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingTodoWrite() {
-	s.orch.cfg.StreamingEnabled = true
+	cfgStream := s.orch.cfg.Load()
+	cfgStream.StreamingEnabled = true
+	s.orch.cfg.Store(cfgStream)
 	eb := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(eb)
 
@@ -3715,7 +3745,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingTodoWrite() {
 }
 
 func (s *OrchestratorSuite) TestHandleMessageStreamingOnActivityBroadcasts() {
-	s.orch.cfg.StreamingEnabled = true
+	cfgStream := s.orch.cfg.Load()
+	cfgStream.StreamingEnabled = true
+	s.orch.cfg.Store(cfgStream)
 	eb := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(eb)
 
@@ -3858,9 +3890,9 @@ func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerStoreError() {
 }
 
 func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerBlockedByCfgPerms() {
-	s.orch.cfg = config.Config{
+	s.orch.cfg.Store(&config.Config{
 		Permissions: types.Permissions{Owners: types.RoleGrant{Users: []string{"cfg-owner"}}},
-	}
+	})
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
 		ID: 1, ChannelID: "ch1", DirPath: "",
@@ -3884,7 +3916,7 @@ func (s *OrchestratorSuite) TestHandleInteractionIAmTheOwnerBlockedByCfgPerms() 
 
 func (s *OrchestratorSuite) TestSendReplyLocalPlatformStoresAndBroadcasts() {
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	localOrch := New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{})
+	localOrch := New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{}, nil)
 	eb := new(MockEventBroadcaster)
 	localOrch.SetEventBroadcaster(eb)
 
@@ -3937,4 +3969,34 @@ func (s *OrchestratorSuite) TestActiveChatChannelIDs() {
 	_, ok2 := ids["ch-2"]
 	require.True(s.T(), ok1)
 	require.True(s.T(), ok2)
+}
+
+func (s *OrchestratorSuite) TestCurrentConfigReloads() {
+	s.orch.cfg.Store(&config.Config{KeepMCPConfigs: false})
+	s.orch.configLoad = func() (*config.Config, error) {
+		return &config.Config{KeepMCPConfigs: true}, nil
+	}
+
+	cfg := s.orch.currentConfig()
+	require.True(s.T(), cfg.KeepMCPConfigs)
+	// Verify it was also stored as the fallback.
+	require.True(s.T(), s.orch.cfg.Load().KeepMCPConfigs)
+}
+
+func (s *OrchestratorSuite) TestCurrentConfigFallbackOnError() {
+	s.orch.cfg.Store(&config.Config{KeepMCPConfigs: true})
+	s.orch.configLoad = func() (*config.Config, error) {
+		return nil, errors.New("reload failed")
+	}
+
+	cfg := s.orch.currentConfig()
+	require.True(s.T(), cfg.KeepMCPConfigs)
+}
+
+func (s *OrchestratorSuite) TestCurrentConfigNilLoader() {
+	s.orch.cfg.Store(&config.Config{StreamingEnabled: true})
+	s.orch.configLoad = nil
+
+	cfg := s.orch.currentConfig()
+	require.True(s.T(), cfg.StreamingEnabled)
 }

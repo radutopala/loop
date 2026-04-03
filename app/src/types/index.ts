@@ -54,6 +54,7 @@ export interface MessageStreamingData {
 
 export interface AgentStatusData {
   status: "running" | "completed" | "error";
+  run_id?: string;
   error?: string;
   duration_ms?: number;
   num_turns?: number;

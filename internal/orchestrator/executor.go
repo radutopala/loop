@@ -6,10 +6,12 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/bot"
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/randutil"
@@ -24,16 +26,33 @@ type TaskExecutor struct {
 	bot              Bot
 	store            db.Store
 	logger           *slog.Logger
-	containerTimeout time.Duration
-	streamingEnabled bool
+	containerTimeout atomic.Int64 // nanoseconds
+	streamingEnabled atomic.Bool
+	configLoad       func() (*config.Config, error)
 	events           events.Broadcaster
 	timeAfterFunc    func(time.Duration, func()) *time.Timer
 	worktreeCreator  *worktree.Creator
 }
 
 // NewTaskExecutor creates a new TaskExecutor.
-func NewTaskExecutor(runner Runner, bot Bot, store db.Store, logger *slog.Logger, containerTimeout time.Duration, streamingEnabled bool) *TaskExecutor {
-	return &TaskExecutor{runner: runner, bot: bot, store: store, logger: logger, containerTimeout: containerTimeout, streamingEnabled: streamingEnabled, timeAfterFunc: time.AfterFunc}
+func NewTaskExecutor(runner Runner, bot Bot, store db.Store, logger *slog.Logger, containerTimeout time.Duration, streamingEnabled bool, configLoad func() (*config.Config, error)) *TaskExecutor {
+	e := &TaskExecutor{runner: runner, bot: bot, store: store, logger: logger, configLoad: configLoad, timeAfterFunc: time.AfterFunc}
+	e.containerTimeout.Store(int64(containerTimeout))
+	e.streamingEnabled.Store(streamingEnabled)
+	return e
+}
+
+// refreshConfig reloads configuration and returns the current container timeout
+// and streaming flag. On reload error (or nil configLoad), the last-known-good
+// values are returned.
+func (e *TaskExecutor) refreshConfig() (time.Duration, bool) {
+	if e.configLoad != nil {
+		if fresh, err := e.configLoad(); err == nil {
+			e.containerTimeout.Store(int64(fresh.ContainerTimeout))
+			e.streamingEnabled.Store(fresh.StreamingEnabled)
+		}
+	}
+	return time.Duration(e.containerTimeout.Load()), e.streamingEnabled.Load()
 }
 
 // SetEventBroadcaster sets the event broadcaster for real-time updates.
@@ -48,6 +67,8 @@ func (e *TaskExecutor) SetWorktreeCreator(wc *worktree.Creator) {
 
 // ExecuteTask runs an agent for the given scheduled task and sends the result to the chat platform.
 func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) (string, error) {
+	containerTimeout, streamingEnabled := e.refreshConfig()
+
 	channel, err := e.store.GetChannel(ctx, task.ChannelID)
 	if err != nil {
 		e.logger.Error("getting channel for task", "error", err, "channel_id", task.ChannelID)
@@ -134,7 +155,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	if task.ThreadID != "" && task.Type != db.TaskTypeOnce {
 		threadID = task.ThreadID
 	}
-	if e.streamingEnabled {
+	if streamingEnabled {
 		tracker = newStreamTracker(func(text string) {
 			if threadID == "" && !threadFailed {
 				// First turn — create a thread for the task output
@@ -262,23 +283,27 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		}
 	}
 
+	// Generate a unique run ID so the frontend can distinguish concurrent runs
+	// on the same channel (e.g. a scheduled task vs. a chat agent).
+	runID := randutil.HexID(8)
+
 	// Broadcast running status to both the task thread and parent channel
 	// so the frontend picks it up regardless of which channel is subscribed.
 	if e.events != nil {
-		status := events.AgentStatusEventData{Status: "running"}
+		status := events.AgentStatusEventData{Status: "running", RunID: runID}
 		if threadID != "" {
 			e.events.BroadcastAgentStatus(threadID, status)
 		}
 		e.events.BroadcastAgentStatus(task.ChannelID, status)
 	}
 
-	runCtx, runCancel := context.WithTimeout(ctx, e.containerTimeout)
+	runCtx, runCancel := context.WithTimeout(ctx, containerTimeout)
 	defer runCancel()
 
 	resp, err := e.runner.Run(runCtx, req)
 	if err != nil {
 		if e.events != nil {
-			errStatus := events.AgentStatusEventData{Status: "error", Error: err.Error()}
+			errStatus := events.AgentStatusEventData{Status: "error", RunID: runID, Error: err.Error()}
 			if threadID != "" {
 				e.events.BroadcastAgentStatus(threadID, errStatus)
 			}
@@ -289,7 +314,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 
 	if resp.Error != "" {
 		if e.events != nil {
-			errStatus := events.AgentStatusEventData{Status: "error", Error: resp.Error}
+			errStatus := events.AgentStatusEventData{Status: "error", RunID: runID, Error: resp.Error}
 			if threadID != "" {
 				e.events.BroadcastAgentStatus(threadID, errStatus)
 			}
@@ -336,6 +361,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	if e.events != nil {
 		done := events.AgentStatusEventData{
 			Status:     "completed",
+			RunID:      runID,
 			DurationMs: resp.DurationMs,
 			NumTurns:   resp.NumTurns,
 			Model:      resp.Model,

@@ -1705,6 +1705,53 @@ func (s *ConfigSuite) TestLoadPublicWrapper() {
 	_ = err
 }
 
+func (s *ConfigSuite) TestReloadPublicWrapper() {
+	// Reload() calls newLoader().reload() which reads from real home dir.
+	// Same as Load() but skips platform validation.
+	_, err := Reload()
+	_ = err
+}
+
+func (s *ConfigSuite) TestReloadSkipsPlatformValidation() {
+	// reload() should succeed without platform credentials — it only calls parse().
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{"log_level": "debug"}`), nil
+	}
+	cfg, err := s.loader.reload()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "debug", cfg.LogLevel)
+	require.Empty(s.T(), cfg.Platforms)
+}
+
+func (s *ConfigSuite) TestParseReturnsDefaults() {
+	// parse() returns config with defaults when given minimal JSON.
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{}`), nil
+	}
+	cfg, err := s.loader.parse()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "claude", cfg.ClaudeBinPath)
+	require.Equal(s.T(), "/home/testuser/.loop", cfg.LoopDir)
+}
+
+func (s *ConfigSuite) TestParseHomeDirError() {
+	s.loader.userHomeDir = func() (string, error) {
+		return "", errors.New("no home")
+	}
+	_, err := s.loader.parse()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "getting home directory")
+}
+
+func (s *ConfigSuite) TestParseReadError() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return nil, errors.New("permission denied")
+	}
+	_, err := s.loader.parse()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading config file")
+}
+
 func (s *ConfigSuite) TestLoadProjectConfigExtraDirs() {
 	s.setupProjectReadFile(`{"extra_dirs": ["/home/user/lib", "/home/user/common"]}`)
 

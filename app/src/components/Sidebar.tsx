@@ -135,7 +135,7 @@ interface SidebarProps {
   onDownloadUpdate?: () => void;
   onInstallUpdate?: () => void;
   /** Real-time running status from the app-level chat state store. */
-  isRunningMapRef?: React.RefObject<Map<string, boolean>>;
+  isRunningMapRef?: React.RefObject<Map<string, string>>;
   /** Channels with unread agent completions. */
   unreadIdsRef?: React.RefObject<Set<string>>;
   unreadCount?: number;

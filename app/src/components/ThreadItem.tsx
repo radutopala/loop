@@ -15,7 +15,7 @@ interface ThreadItemProps {
   checked?: boolean;
   onToggleCheck?: (id: string) => void;
   /** Real-time running status from app-level chat state store. */
-  isRunningMapRef?: React.RefObject<Map<string, boolean>>;
+  isRunningMapRef?: React.RefObject<Map<string, string>>;
   unreadIdsRef?: React.RefObject<Set<string>>;
 }
 

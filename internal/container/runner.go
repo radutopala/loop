@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/radutopala/loop/internal/agent"
@@ -224,7 +225,8 @@ type runnerSystem interface {
 
 type DockerRunner struct {
 	client                    DockerClient
-	cfg                       *config.Config
+	cfg                       atomic.Pointer[config.Config]
+	configLoad                func() (*config.Config, error)
 	sys                       runnerSystem
 	loadProjectConfig         func(string, *config.Config) (*config.Config, error)
 	loadWorktreeProjectConfig func(string, string, *config.Config) (*config.Config, error)
@@ -234,16 +236,32 @@ type DockerRunner struct {
 }
 
 // NewDockerRunner creates a new DockerRunner with the given Docker client and config.
-func NewDockerRunner(client DockerClient, cfg *config.Config) *DockerRunner {
-	return &DockerRunner{
+func NewDockerRunner(client DockerClient, cfg *config.Config, configLoad func() (*config.Config, error)) *DockerRunner {
+	r := &DockerRunner{
 		client:                    client,
-		cfg:                       cfg,
+		configLoad:                configLoad,
 		sys:                       osutil.RealSystem{},
 		loadProjectConfig:         config.LoadProjectConfig,
 		loadWorktreeProjectConfig: config.LoadWorktreeProjectConfig,
 		osRandRead:                rand.Read,
 		osTimeLocalName:           func() string { return time.Now().Location().String() },
 	}
+	r.cfg.Store(cfg)
+	return r
+}
+
+// currentConfig returns a fresh config by calling configLoad, falling back
+// to the last-known-good config on error or when configLoad is nil.
+func (r *DockerRunner) currentConfig() *config.Config {
+	if r.configLoad == nil {
+		return r.cfg.Load()
+	}
+	fresh, err := r.configLoad()
+	if err != nil {
+		return r.cfg.Load()
+	}
+	r.cfg.Store(fresh)
+	return fresh
 }
 
 // SetContainerRegistry configures the container registry for lifecycle tracking.
@@ -527,7 +545,7 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 		}
 		defer func() {
 			if r.registry != nil {
-				r.registry.ScheduleRemove(containerID, r.cfg.ContainerKeepAlive)
+				r.registry.ScheduleRemove(containerID, r.cfg.Load().ContainerKeepAlive)
 			}
 		}()
 	}
@@ -759,20 +777,37 @@ func BuildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID
 // ClaudeCmdBuilder builds the interactive Claude command for terminal sessions.
 // It implements api.InteractiveCmdBuilder.
 type ClaudeCmdBuilder struct {
-	cfg               *config.Config
+	cfg               atomic.Pointer[config.Config]
+	configLoad        func() (*config.Config, error)
 	loadProjectConfig func(string, *config.Config) (*config.Config, error)
 	writeFile         func(string, []byte, os.FileMode) error
 	mkdirAll          func(string, os.FileMode) error
 }
 
 // NewClaudeCmdBuilder creates a builder that uses the given config.
-func NewClaudeCmdBuilder(cfg *config.Config) *ClaudeCmdBuilder {
-	return &ClaudeCmdBuilder{
-		cfg:               cfg,
+func NewClaudeCmdBuilder(cfg *config.Config, configLoad func() (*config.Config, error)) *ClaudeCmdBuilder {
+	b := &ClaudeCmdBuilder{
+		configLoad:        configLoad,
 		loadProjectConfig: config.LoadProjectConfig,
 		writeFile:         os.WriteFile,
 		mkdirAll:          os.MkdirAll,
 	}
+	b.cfg.Store(cfg)
+	return b
+}
+
+// currentConfig returns a fresh config by calling configLoad, falling back
+// to the last-known-good config on error or when configLoad is nil.
+func (b *ClaudeCmdBuilder) currentConfig() *config.Config {
+	if b.configLoad == nil {
+		return b.cfg.Load()
+	}
+	fresh, err := b.configLoad()
+	if err != nil {
+		return b.cfg.Load()
+	}
+	b.cfg.Store(fresh)
+	return fresh
 }
 
 // BuildInteractiveCmd returns the interactive Claude shell command for the given channel.
@@ -781,12 +816,13 @@ func NewClaudeCmdBuilder(cfg *config.Config) *ClaudeCmdBuilder {
 // When agentID is set, a per-agent MCP config is written with --agent-id so
 // the agent can identify itself via the MCP tools.
 func (b *ClaudeCmdBuilder) BuildInteractiveCmd(channelID, dirPath, sessionID, agentID string, forkSession bool) string {
+	baseCfg := b.currentConfig()
 	workDir := dirPath
 	if workDir == "" {
-		workDir = filepath.Join(b.cfg.LoopDir, channelID, "work")
+		workDir = filepath.Join(baseCfg.LoopDir, channelID, "work")
 	}
-	cfg := b.cfg
-	if merged, err := b.loadProjectConfig(workDir, b.cfg); err == nil {
+	cfg := baseCfg
+	if merged, err := b.loadProjectConfig(workDir, baseCfg); err == nil {
 		cfg = merged
 	}
 	if agentID != "" {
@@ -882,16 +918,17 @@ func (r *DockerRunner) createAndStartContainer(
 	cType ContainerType,
 	buildCmd func(cfg *config.Config, mcpConfigPath string) []string,
 ) (containerID, containerName, mcpConfigPath string, keepMCPConfig bool, err error) {
-	workDir := filepath.Join(r.cfg.LoopDir, channelID, "work")
+	workDir := filepath.Join(r.currentConfig().LoopDir, channelID, "work")
 	if dirPath != "" {
 		workDir = dirPath
 	}
 
+	baseCfg := r.currentConfig()
 	var cfg *config.Config
 	if parentDirPath != "" {
-		cfg, err = r.loadWorktreeProjectConfig(workDir, parentDirPath, r.cfg)
+		cfg, err = r.loadWorktreeProjectConfig(workDir, parentDirPath, baseCfg)
 	} else {
-		cfg, err = r.loadProjectConfig(workDir, r.cfg)
+		cfg, err = r.loadProjectConfig(workDir, baseCfg)
 	}
 	if err != nil {
 		return "", "", "", false, fmt.Errorf("loading project config: %w", err)
@@ -913,11 +950,11 @@ func (r *DockerRunner) createAndStartContainer(
 	}
 
 	// Bind-mount the screenshot directory so the MCP server can read files written by the host.
-	screenshotDir := filepath.Join(r.cfg.LoopDir, "screenshots")
+	screenshotDir := filepath.Join(baseCfg.LoopDir, "screenshots")
 	binds = append(binds, screenshotDir+":"+screenshotDir+":ro")
 
 	// Bind-mount the playground directory so agents can read/write playground files.
-	playgroundDir := filepath.Join(r.cfg.LoopDir, "playground")
+	playgroundDir := filepath.Join(baseCfg.LoopDir, "playground")
 	binds = append(binds, playgroundDir+":"+playgroundDir)
 
 	if len(chownPaths) > 0 {

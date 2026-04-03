@@ -7,13 +7,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"testing"
 	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/testutil"
 )
 
 // ── validateFilePath ──
@@ -22,7 +22,7 @@ func (s *ServerSuite) TestValidateFilePath_Success() {
 	tmpDir := s.T().TempDir()
 	require.NoError(s.T(), os.MkdirAll(filepath.Join(tmpDir, "src"), 0755))
 
-	abs, err := validateFilePath(tmpDir, "src")
+	abs, err := s.srv.validateFilePath(tmpDir, "src")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), filepath.Join(tmpDir, "src"), abs)
 }
@@ -30,19 +30,19 @@ func (s *ServerSuite) TestValidateFilePath_Success() {
 func (s *ServerSuite) TestValidateFilePath_Root() {
 	tmpDir := s.T().TempDir()
 
-	abs, err := validateFilePath(tmpDir, ".")
+	abs, err := s.srv.validateFilePath(tmpDir, ".")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), tmpDir, abs)
 }
 
 func (s *ServerSuite) TestValidateFilePath_EmptyPath() {
-	_, err := validateFilePath("/tmp", "")
+	_, err := s.srv.validateFilePath("/tmp", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "path is required")
 }
 
 func (s *ServerSuite) TestValidateFilePath_AbsolutePath() {
-	_, err := validateFilePath("/tmp", "/etc/passwd")
+	_, err := s.srv.validateFilePath("/tmp", "/etc/passwd")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "absolute paths are not allowed")
 }
@@ -50,7 +50,7 @@ func (s *ServerSuite) TestValidateFilePath_AbsolutePath() {
 func (s *ServerSuite) TestValidateFilePath_Traversal() {
 	tmpDir := s.T().TempDir()
 
-	_, err := validateFilePath(tmpDir, "../etc/passwd")
+	_, err := s.srv.validateFilePath(tmpDir, "../etc/passwd")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "path traversal not allowed")
 }
@@ -58,7 +58,7 @@ func (s *ServerSuite) TestValidateFilePath_Traversal() {
 func (s *ServerSuite) TestValidateFilePath_DotDot() {
 	tmpDir := s.T().TempDir()
 
-	_, err := validateFilePath(tmpDir, "..")
+	_, err := s.srv.validateFilePath(tmpDir, "..")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "path traversal not allowed")
 }
@@ -66,13 +66,13 @@ func (s *ServerSuite) TestValidateFilePath_DotDot() {
 func (s *ServerSuite) TestValidateFilePath_NewFile() {
 	tmpDir := s.T().TempDir()
 
-	abs, err := validateFilePath(tmpDir, "newfile.txt")
+	abs, err := s.srv.validateFilePath(tmpDir, "newfile.txt")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), filepath.Join(tmpDir, "newfile.txt"), abs)
 }
 
 func (s *ServerSuite) TestValidateFilePath_InvalidRoot() {
-	_, err := validateFilePath("/nonexistent-root-dir-12345", "file.txt")
+	_, err := s.srv.validateFilePath("/nonexistent-root-dir-12345", "file.txt")
 	require.Error(s.T(), err)
 }
 
@@ -83,7 +83,7 @@ func (s *ServerSuite) TestValidateFilePath_SymlinkTraversal() {
 
 	require.NoError(s.T(), os.Symlink(outside, filepath.Join(tmpDir, "escape")))
 
-	_, err := validateFilePath(tmpDir, "escape/secret.txt")
+	_, err := s.srv.validateFilePath(tmpDir, "escape/secret.txt")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "path traversal not allowed")
 }
@@ -91,14 +91,14 @@ func (s *ServerSuite) TestValidateFilePath_SymlinkTraversal() {
 func (s *ServerSuite) TestValidateFilePath_NewFileParentMissing() {
 	tmpDir := s.T().TempDir()
 
-	_, err := validateFilePath(tmpDir, "nosuchdir/file.txt")
+	_, err := s.srv.validateFilePath(tmpDir, "nosuchdir/file.txt")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "path not found")
 }
 
 func (s *ServerSuite) TestValidateFilePath_NullByte() {
 	tmpDir := s.T().TempDir()
-	_, err := validateFilePath(tmpDir, "file\x00.txt")
+	_, err := s.srv.validateFilePath(tmpDir, "file\x00.txt")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "invalid characters")
 }
@@ -115,7 +115,7 @@ func (s *ServerSuite) TestValidateFilePath_SiblingDirPrefixBypass() {
 	// Create a symlink inside root that points to the sibling.
 	require.NoError(s.T(), os.Symlink(sibling, filepath.Join(root, "link")))
 
-	_, err := validateFilePath(root, "link/secret.txt")
+	_, err := s.srv.validateFilePath(root, "link/secret.txt")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "path traversal not allowed")
 }
@@ -126,7 +126,7 @@ func (s *ServerSuite) TestValidateFilePath_NewFileParentSymlinkOutside() {
 
 	require.NoError(s.T(), os.Symlink(outside, filepath.Join(tmpDir, "escape")))
 
-	_, err := validateFilePath(tmpDir, "escape/newfile.txt")
+	_, err := s.srv.validateFilePath(tmpDir, "escape/newfile.txt")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "path traversal not allowed")
 }
@@ -241,7 +241,7 @@ func (s *ServerSuite) TestListFiles_ReadDirError() {
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
 
 	s.sys.Override("ReadDir", mock.Anything).Return(nil, fmt.Errorf("injected readdir error"))
-	s.srv.sys = s.sys
+	s.srv.sys = &realOpenSys{s.sys}
 
 	rec := s.testRequest("GET", "/api/channels/ch-1/files?path=.", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
@@ -254,7 +254,7 @@ func (s *ServerSuite) TestListFiles_MockReadDir() {
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
 
 	s.sys.Override("ReadDir", mock.Anything).Return([]fs.DirEntry{fakeDirEntry{name: "mock.go"}}, nil)
-	s.srv.sys = s.sys
+	s.srv.sys = &realOpenSys{s.sys}
 
 	rec := s.testRequest("GET", "/api/channels/ch-1/files?path=.", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
@@ -402,7 +402,7 @@ func (s *ServerSuite) TestReadFile_StatError() {
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
 
 	s.sys.Override("Stat", mock.Anything).Return(nil, fmt.Errorf("injected stat error"))
-	s.srv.sys = s.sys
+	s.srv.sys = &realOpenSys{s.sys}
 
 	rec := s.testRequest("GET", "/api/channels/ch-1/file?path=test.txt", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
@@ -420,7 +420,7 @@ func (s *ServerSuite) TestReadFile_ReadError() {
 	require.NoError(s.T(), err)
 	s.sys.Override("Stat", mock.Anything).Return(info, nil)
 	s.sys.Override("ReadFile", mock.Anything).Return(nil, fmt.Errorf("injected read error"))
-	s.srv.sys = s.sys
+	s.srv.sys = &realOpenSys{s.sys}
 
 	rec := s.testRequest("GET", "/api/channels/ch-1/file?path=test.txt", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
@@ -533,7 +533,7 @@ func (s *ServerSuite) TestWriteFile_WriteError() {
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
 
 	s.sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(fmt.Errorf("injected write error"))
-	s.srv.sys = s.sys
+	s.srv.sys = &realOpenSys{s.sys}
 
 	rec := s.testRequest("PUT", "/api/channels/ch-1/file?path=readonly.txt", "content")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
@@ -546,7 +546,7 @@ func (s *ServerSuite) TestWriteFile_WriteFileVarError() {
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
 
 	s.sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(fmt.Errorf("injected write error"))
-	s.srv.sys = s.sys
+	s.srv.sys = &realOpenSys{s.sys}
 
 	rec := s.testRequest("PUT", "/api/channels/ch-1/file?path=new.txt", "content")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
@@ -669,7 +669,7 @@ func (s *ServerSuite) TestDeleteFile_RemoveError() {
 	require.NoError(s.T(), err)
 	s.sys.Override("Stat", mock.Anything).Return(info, nil)
 	s.sys.Override("Remove", mock.Anything).Return(fmt.Errorf("injected remove error"))
-	s.srv.sys = s.sys
+	s.srv.sys = &realOpenSys{s.sys}
 
 	rec := s.testRequest("DELETE", "/api/channels/ch-1/file?path=test.txt", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
@@ -684,7 +684,7 @@ func (s *ServerSuite) TestDeleteFile_StatError() {
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
 
 	s.sys.Override("Stat", mock.Anything).Return(nil, fmt.Errorf("injected stat error"))
-	s.srv.sys = s.sys
+	s.srv.sys = &realOpenSys{s.sys}
 
 	rec := s.testRequest("DELETE", "/api/channels/ch-1/file?path=test.txt", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
@@ -751,7 +751,7 @@ func (r *httpRecorder) Write(b []byte) (int, error) {
 	return len(b), nil
 }
 
-func TestValidateFilePathUnit(t *testing.T) {
+func (s *ServerSuite) TestValidateFilePathUnit() {
 	tests := []struct {
 		name    string
 		root    string
@@ -764,10 +764,10 @@ func TestValidateFilePathUnit(t *testing.T) {
 		{"dotdot prefix", "/tmp", "../etc", "path traversal not allowed"},
 	}
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := validateFilePath(tt.root, tt.path)
-			require.Error(t, err)
-			require.Contains(t, err.Error(), tt.wantErr)
+		s.Run(tt.name, func() {
+			_, err := s.srv.validateFilePath(tt.root, tt.path)
+			require.Error(s.T(), err)
+			require.Contains(s.T(), err.Error(), tt.wantErr)
 		})
 	}
 }
@@ -851,7 +851,7 @@ func (s *ServerSuite) TestDeleteFile_RemoveAllError() {
 	s.sys.Override("Stat", mock.Anything).Return(fakeFileInfo{name: "mydir", isDir: true}, nil)
 	// Override RemoveAll to return an error.
 	s.sys.On("RemoveAll", mock.Anything).Return(fmt.Errorf("injected removeall error"))
-	s.srv.sys = s.sys
+	s.srv.sys = &realOpenSys{s.sys}
 
 	rec := s.testRequest("DELETE", "/api/channels/ch-1/file?path=mydir", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
@@ -860,59 +860,73 @@ func (s *ServerSuite) TestDeleteFile_RemoveAllError() {
 
 // ── validateDirPath ──
 
-func TestValidateDirPath_AbsolutePath(t *testing.T) {
-	_, err := validateDirPath("/tmp/root", "/etc/passwd")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "absolute paths are not allowed")
+func (s *ServerSuite) TestValidateDirPath_AbsolutePath() {
+	_, err := s.srv.validateDirPath("/tmp/root", "/etc/passwd")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "absolute paths are not allowed")
 }
 
-func TestValidateDirPath_NullByte(t *testing.T) {
-	_, err := validateDirPath("/tmp/root", "foo\x00bar")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "path contains invalid characters")
+func (s *ServerSuite) TestValidateDirPath_NullByte() {
+	_, err := s.srv.validateDirPath("/tmp/root", "foo\x00bar")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "path contains invalid characters")
 }
 
-func TestValidateDirPath_InvalidRoot(t *testing.T) {
-	_, err := validateDirPath("/nonexistent-root-dir-99999", "sub")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid root directory")
+func (s *ServerSuite) TestValidateDirPath_InvalidRoot() {
+	_, err := s.srv.validateDirPath("/nonexistent-root-dir-99999", "sub")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "invalid root directory")
 }
 
-func TestValidateDirPath_EmptyPath(t *testing.T) {
-	_, err := validateDirPath("/tmp", "")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "path is required")
+func (s *ServerSuite) TestValidateDirPath_EmptyPath() {
+	_, err := s.srv.validateDirPath("/tmp", "")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "path is required")
 }
 
-func TestValidateDirPath_Traversal(t *testing.T) {
-	_, err := validateDirPath("/tmp", "../escape")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "path traversal not allowed")
+func (s *ServerSuite) TestValidateDirPath_Traversal() {
+	_, err := s.srv.validateDirPath("/tmp", "../escape")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "path traversal not allowed")
 }
 
-func TestValidateDirPath_DotDot(t *testing.T) {
-	_, err := validateDirPath("/tmp", "..")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "path traversal not allowed")
+func (s *ServerSuite) TestValidateDirPath_DotDot() {
+	_, err := s.srv.validateDirPath("/tmp", "..")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "path traversal not allowed")
 }
 
-func TestValidateDirPath_Success(t *testing.T) {
-	tmpDir := t.TempDir()
-	abs, err := validateDirPath(tmpDir, "newdir/sub")
-	require.NoError(t, err)
-	require.Equal(t, filepath.Join(tmpDir, "newdir/sub"), abs)
+func (s *ServerSuite) TestValidateDirPath_Success() {
+	tmpDir := s.T().TempDir()
+	abs, err := s.srv.validateDirPath(tmpDir, "newdir/sub")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), filepath.Join(tmpDir, "newdir/sub"), abs)
 }
 
-func TestValidateDirPath_SymlinkTraversal(t *testing.T) {
-	root := t.TempDir()
-	outside := t.TempDir()
+func (s *ServerSuite) TestValidateDirPath_SymlinkTraversal() {
+	root := s.T().TempDir()
+	outside := s.T().TempDir()
 
 	// Create a symlink inside root that points outside.
-	require.NoError(t, os.Symlink(outside, filepath.Join(root, "escape")))
+	require.NoError(s.T(), os.Symlink(outside, filepath.Join(root, "escape")))
 
-	_, err := validateDirPath(root, "escape/sub")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "path traversal not allowed")
+	_, err := s.srv.validateDirPath(root, "escape/sub")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "path traversal not allowed")
+}
+
+func (s *ServerSuite) TestValidateDirPath_PathNotFound() {
+	sys := new(testutil.MockSystem)
+	// First call to EvalSymlinks (rootDir) succeeds.
+	sys.On("EvalSymlinks", "/root").Return("/root", nil).Once()
+	// All subsequent calls fail — including when the walk-up loop
+	// reaches rootDir again, so it falls through to parent==ancestor at "/".
+	sys.On("EvalSymlinks", mock.Anything).Return("", fmt.Errorf("no such file"))
+	s.srv.sys = sys
+
+	_, err := s.srv.validateDirPath("/root", "a")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "path not found")
 }
 
 // ── handleCreateDir: missing coverage ──
@@ -943,7 +957,7 @@ func (s *ServerSuite) TestCreateDir_MkdirAllError() {
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
 
 	s.sys.Override("MkdirAll", mock.Anything, mock.Anything).Return(fmt.Errorf("injected mkdir error"))
-	s.srv.sys = s.sys
+	s.srv.sys = &realOpenSys{s.sys}
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/dir?path=newdir", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)

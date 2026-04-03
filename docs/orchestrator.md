@@ -135,12 +135,13 @@ This prevents race conditions where multiple messages in rapid succession could 
    - Set `OnTurn` callback to send intermediate responses as they arrive.
    - Set `OnToolUse` callback to broadcast tool usage events (tool name + summarized input).
    - Set `OnActivity` callback to broadcast model detection and subagent progress events.
-4. **Status broadcast** -- Broadcast `agent.status: running` event.
-5. **Run** -- Execute `runner.Run(ctx, req)`.
-6. **Error handling**:
+4. **Run ID** -- Generate a unique `run_id` (random hex) for this run. The `run_id` is included in all `agent.status` broadcasts so the frontend can distinguish concurrent runs on the same channel (e.g. a chat agent and a scheduled task).
+5. **Status broadcast** -- Broadcast `agent.status: running` event with the `run_id`.
+6. **Run** -- Execute `runner.Run(ctx, req)`.
+7. **Error handling**:
    - Context cancelled (stop button) -- Send "Run stopped." message.
    - Agent error -- Send error message to the channel.
-   - Both cases broadcast `agent.status: error` event.
+   - Both cases broadcast `agent.status: error` event with the same `run_id`.
 
 ## Session Management
 
@@ -188,15 +189,18 @@ This prevents duplicate messages: without dedup, the user would see the last str
 For the Electron app, streaming events are broadcast via the `EventsHub`:
 
 - `message.created` -- New message (user or bot)
-- `agent.status` -- Status changes (running, completed, error) with metadata (duration, turns, model)
-- `tool_use` -- Tool invocations with name and input summary
+- `agent.status` -- Status changes (running, completed, error) with metadata (duration, turns, model, run_id)
+- `tool.use` -- Tool invocations with name and input summary
 - `agent.activity` -- Model detection and subagent progress
+- `agent.ask_user` -- Structured questions from AskUserQuestion tool
+- `agent.exit_plan` -- Plan ready for review from ExitPlanMode tool
+- `agent.todos` -- Todo list updates from TodoWrite tool
 
 ## Response Delivery
 
 `deliverResponse` handles the final output:
 
-1. **Broadcast completion** -- Send `agent.status: completed` with duration, turn count, stop reason, and model info.
+1. **Broadcast completion** -- Send `agent.status: completed` with run_id, duration, turn count, stop reason, and model info.
 2. **Update session** -- Store the new `SessionID` from the agent response.
 3. **Send response** -- Unless it duplicates the last streamed turn, send the response via `bot.SendMessage` with a reply-to reference. Also store the bot message in the database and broadcast via EventsHub.
 4. **Mark processed** -- Mark all recent messages as processed in the database. This prevents them from being included in future context windows unnecessarily.

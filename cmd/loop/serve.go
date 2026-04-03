@@ -381,11 +381,11 @@ func (a *app) serve() error {
 	ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer cancel()
 
-	runner := container.NewDockerRunner(dockerClient, cfg)
+	runner := container.NewDockerRunner(dockerClient, cfg, config.Reload)
 
 	agentReg := agentregistry.New()
 
-	executor := orchestrator.NewTaskExecutor(runner, chatBot, store, logger, cfg.ContainerTimeout, cfg.StreamingEnabled)
+	executor := orchestrator.NewTaskExecutor(runner, chatBot, store, logger, cfg.ContainerTimeout, cfg.StreamingEnabled, config.Reload)
 	executor.SetWorktreeCreator(&worktree.Creator{
 		Sys: osutil.RealSystem{},
 		Run: worktree.ExecCommandRunner,
@@ -432,7 +432,7 @@ func (a *app) serve() error {
 	} else {
 		termMgr := terminal.NewManager(execClient, logger)
 		apiSrv.SetTerminalManager(terminal.NewManagerAdapter(termMgr))
-		apiSrv.SetInteractiveCmdBuilder(container.NewClaudeCmdBuilder(cfg))
+		apiSrv.SetInteractiveCmdBuilder(container.NewClaudeCmdBuilder(cfg, config.Reload))
 	}
 
 	hostExecClient := a.newHostExecClient()
@@ -501,7 +501,7 @@ func (a *app) serve() error {
 		return fmt.Errorf("starting api server: %w", err)
 	}
 
-	orch := orchestrator.New(store, chatBot, runner, sched, logger, *cfg)
+	orch := orchestrator.New(store, chatBot, runner, sched, logger, *cfg, config.Reload)
 	orch.SetEventBroadcaster(eventsHub)
 	apiSrv.SetIncomingMessageHandler(chatBot)
 	apiSrv.SetInteractionHandler(orch)

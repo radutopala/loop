@@ -54,6 +54,7 @@ type serverSystem interface {
 	MkdirAll(path string, perm os.FileMode) error
 	UserHomeDir() (string, error)
 	Open(name string) (*os.File, error)
+	EvalSymlinks(path string) (string, error)
 }
 
 // Server exposes a lightweight HTTP API for task CRUD operations.

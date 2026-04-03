@@ -48,6 +48,9 @@ func Start(sys System, logFile string) error {
 			extraEnv[key] = v
 		}
 	}
+	if shell := sys.Getenv("SHELL"); shell != "" {
+		extraEnv["SHELL"] = shell
+	}
 
 	plist := generatePlist(binPath, logFile, extraEnv)
 	if err := sys.WriteFile(plistPath, []byte(plist), 0o644); err != nil {

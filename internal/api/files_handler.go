@@ -17,7 +17,7 @@ import (
 
 // validateFilePath validates a relative path against a root directory.
 // Returns the cleaned absolute path or an error.
-func validateFilePath(rootDir, relativePath string) (string, error) {
+func (s *Server) validateFilePath(rootDir, relativePath string) (string, error) {
 	if relativePath == "" {
 		return "", fmt.Errorf("path is required")
 	}
@@ -43,7 +43,7 @@ func validateFilePath(rootDir, relativePath string) (string, error) {
 	absPath := filepath.Join(rootDir, cleaned)
 
 	// Resolve symlinks and verify the real path is still under rootDir.
-	realRoot, err := filepath.EvalSymlinks(rootDir)
+	realRoot, err := s.sys.EvalSymlinks(rootDir)
 	if err != nil {
 		return "", fmt.Errorf("invalid root directory: %w", err)
 	}
@@ -52,11 +52,11 @@ func validateFilePath(rootDir, relativePath string) (string, error) {
 	// match "/projects/foobar".
 	rootPrefix := realRoot + string(filepath.Separator)
 
-	realPath, err := filepath.EvalSymlinks(absPath)
+	realPath, err := s.sys.EvalSymlinks(absPath)
 	if err != nil {
 		// File might not exist yet (for write). Check the parent.
 		parentDir := filepath.Dir(absPath)
-		realParent, err2 := filepath.EvalSymlinks(parentDir)
+		realParent, err2 := s.sys.EvalSymlinks(parentDir)
 		if err2 != nil {
 			return "", fmt.Errorf("path not found")
 		}
@@ -168,7 +168,7 @@ func (s *Server) handleListFiles(w http.ResponseWriter, r *http.Request) {
 		relPath = "."
 	}
 
-	absPath, err := validateFilePath(dirPath, relPath)
+	absPath, err := s.validateFilePath(dirPath, relPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -229,7 +229,7 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	relPath := r.URL.Query().Get("path")
-	absPath, err := validateFilePath(dirPath, relPath)
+	absPath, err := s.validateFilePath(dirPath, relPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -296,7 +296,7 @@ func (s *Server) handleWriteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	relPath := r.URL.Query().Get("path")
-	absPath, err := validateFilePath(dirPath, relPath)
+	absPath, err := s.validateFilePath(dirPath, relPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -339,7 +339,7 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 	}
 
 	relPath := r.URL.Query().Get("path")
-	absPath, err := validateFilePath(dirPath, relPath)
+	absPath, err := s.validateFilePath(dirPath, relPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
@@ -373,7 +373,7 @@ func (s *Server) handleDeleteFile(w http.ResponseWriter, r *http.Request) {
 // validateDirPath is like validateFilePath but allows non-existent intermediate
 // parents (for MkdirAll). It walks up to the first existing ancestor to verify
 // the path stays under rootDir.
-func validateDirPath(rootDir, relativePath string) (string, error) {
+func (s *Server) validateDirPath(rootDir, relativePath string) (string, error) {
 	if relativePath == "" {
 		return "", fmt.Errorf("path is required")
 	}
@@ -389,7 +389,7 @@ func validateDirPath(rootDir, relativePath string) (string, error) {
 	}
 	absPath := filepath.Join(rootDir, cleaned)
 
-	realRoot, err := filepath.EvalSymlinks(rootDir)
+	realRoot, err := s.sys.EvalSymlinks(rootDir)
 	if err != nil {
 		return "", fmt.Errorf("invalid root directory: %w", err)
 	}
@@ -398,7 +398,7 @@ func validateDirPath(rootDir, relativePath string) (string, error) {
 	// Walk up to the first existing ancestor.
 	ancestor := absPath
 	for {
-		realAncestor, err2 := filepath.EvalSymlinks(ancestor)
+		realAncestor, err2 := s.sys.EvalSymlinks(ancestor)
 		if err2 == nil {
 			if realAncestor != realRoot && !strings.HasPrefix(realAncestor, rootPrefix) {
 				return "", fmt.Errorf("path traversal not allowed")
@@ -426,7 +426,7 @@ func (s *Server) handleCreateDir(w http.ResponseWriter, r *http.Request) {
 	}
 
 	relPath := r.URL.Query().Get("path")
-	absPath, err := validateDirPath(dirPath, relPath)
+	absPath, err := s.validateDirPath(dirPath, relPath)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

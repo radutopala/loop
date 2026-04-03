@@ -314,10 +314,11 @@ func (o *Orchestrator) handleReadmeInteraction(ctx context.Context, inter *bot.I
 func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *bot.Interaction) {
 	name := inter.Options["name"]
 
+	cfg := o.currentConfig()
 	var tmpl *config.TaskTemplate
-	for i := range o.cfg.TaskTemplates {
-		if o.cfg.TaskTemplates[i].Name == name {
-			tmpl = &o.cfg.TaskTemplates[i]
+	for i := range cfg.TaskTemplates {
+		if cfg.TaskTemplates[i].Name == name {
+			tmpl = &cfg.TaskTemplates[i]
 			break
 		}
 	}
@@ -337,7 +338,7 @@ func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *
 		return
 	}
 
-	prompt, err := tmpl.ResolvePrompt(o.cfg.LoopDir, os.ReadFile)
+	prompt, err := tmpl.ResolvePrompt(cfg.LoopDir, os.ReadFile)
 	if err != nil {
 		o.logger.Error("resolving template prompt", "error", err, "template", name)
 		o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Failed to resolve template prompt: %v", err))
@@ -365,14 +366,15 @@ func (o *Orchestrator) handleTemplateAddInteraction(ctx context.Context, inter *
 }
 
 func (o *Orchestrator) handleTemplateListInteraction(ctx context.Context, inter *bot.Interaction) {
-	if len(o.cfg.TaskTemplates) == 0 {
+	cfg := o.currentConfig()
+	if len(cfg.TaskTemplates) == 0 {
 		o.sendReply(ctx, inter.ChannelID, "No templates configured.")
 		return
 	}
 
 	var sb strings.Builder
 	sb.WriteString("Available templates:\n")
-	for _, t := range o.cfg.TaskTemplates {
+	for _, t := range cfg.TaskTemplates {
 		fmt.Fprintf(&sb, "- **%s** [%s] `%s` — %s\n", t.Name, t.Type, t.Schedule, t.Description)
 	}
 	o.sendReply(ctx, inter.ChannelID, sb.String())

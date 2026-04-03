@@ -266,9 +266,14 @@ func (s *HostSuite) TestHostPTYConnCloseNilProcess() {
 }
 
 func (s *HostSuite) TestDefaultShellEnv() {
-	// Exercise the default defaultShell function.
+	// Explicitly set SHELL to cover the env-var branch in platformDefaults.
+	orig := os.Getenv("SHELL")
+	os.Setenv("SHELL", "/bin/zsh")
+	defer os.Setenv("SHELL", orig)
+
+	platformDefaults(s.client)
 	shell := s.client.defaultShell()
-	require.NotEmpty(s.T(), shell)
+	require.Equal(s.T(), "/bin/zsh", shell)
 }
 
 func (s *HostSuite) TestDefaultShellFallbackZsh() {

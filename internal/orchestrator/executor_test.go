@@ -16,6 +16,7 @@ import (
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/bot"
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/testutil"
@@ -43,7 +44,7 @@ func (s *TaskExecutorSuite) SetupTest() {
 	s.ctx = context.Background()
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	s.executor = NewTaskExecutor(s.runner, s.bot, s.store, logger, 5*time.Minute, false)
+	s.executor = NewTaskExecutor(s.runner, s.bot, s.store, logger, 5*time.Minute, false, nil)
 }
 
 // allowStatusBroadcasts adds BroadcastAgentStatus expectations for task execution.
@@ -160,9 +161,11 @@ func (s *TaskExecutorSuite) TestRunnerError() {
 func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsStatus() {
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
-	eb.On("BroadcastAgentStatus", "ch-err", events.AgentStatusEventData{Status: "running"}).Once()
 	eb.On("BroadcastAgentStatus", "ch-err", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
-		return d.Status == "error" && strings.Contains(d.Error, "runner broke")
+		return d.Status == "running" && d.RunID != ""
+	})).Once()
+	eb.On("BroadcastAgentStatus", "ch-err", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "error" && strings.Contains(d.Error, "runner broke") && d.RunID != ""
 	})).Once()
 
 	task := &db.ScheduledTask{ID: 50, ChannelID: "ch-err", Prompt: "fail", Type: db.TaskTypeCron, Schedule: "0 * * * *"}
@@ -178,7 +181,7 @@ func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsStatus() {
 func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsToThreadAndParent() {
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID: 52, ChannelID: "ch-parent", Prompt: "fail", Type: db.TaskTypeInterval, Schedule: "5m",
@@ -205,7 +208,7 @@ func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsToThreadAndParent() {
 func (s *TaskExecutorSuite) TestAgentResponseErrorBroadcastsStatus() {
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID: 51, ChannelID: "ch-err2", Prompt: "fail", Type: db.TaskTypeInterval, Schedule: "5m",
@@ -309,7 +312,7 @@ func (s *TaskExecutorSuite) TestSoftErrorsStillSucceed() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 	s.allowBotInserts()
 
 	task := &db.ScheduledTask{
@@ -361,7 +364,7 @@ func (s *TaskExecutorSuite) TestStreamingCreatesThread() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingLocalPlatformPersistsThreadID() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID:        30,
@@ -396,7 +399,7 @@ func (s *TaskExecutorSuite) TestStreamingLocalPlatformPersistsThreadID() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingLocalPlatformReusesThreadID() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID:        31,
@@ -440,7 +443,7 @@ func (s *TaskExecutorSuite) TestStreamingLocalPlatformReusesThreadID() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingDiscordReusesThread() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID:        32,
@@ -504,7 +507,7 @@ func (s *TaskExecutorSuite) TestStreamingDisabledNoOnTurn() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 	s.allowBotInserts()
 
 	task := &db.ScheduledTask{
@@ -551,7 +554,7 @@ func (s *TaskExecutorSuite) TestStreamingFinalSentWhenDifferent() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingThreadCreationFailsFallsBack() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID:        12,
@@ -600,7 +603,7 @@ func (s *TaskExecutorSuite) TestStreamingThreadCreationFailsFallsBack() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingSendMessageErrorIsLogged() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID:        14,
@@ -648,7 +651,7 @@ func (s *TaskExecutorSuite) TestStreamingSendMessageErrorIsLogged() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingSingleTurnNoFinalDuplicate() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID:        13,
@@ -720,7 +723,7 @@ func (s *TaskExecutorSuite) TestEphemeralInstructionInSystemPrompt() {
 }
 
 func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -784,7 +787,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteTimerFires() {
 }
 
 func (s *TaskExecutorSuite) TestAutoDeleteEphemeralLocalPlatform() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.events = eb
 	eb.On("BroadcastAgentStatus", mock.Anything, mock.Anything).Maybe()
@@ -863,7 +866,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteEphemeralVariants() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			s.SetupTest()
-			s.executor.streamingEnabled = true
+			s.executor.streamingEnabled.Store(true)
 
 			s.store.On("GetChannel", s.ctx, tc.channelID).Return(nil, nil)
 			s.store.On("GetScheduledTask", s.ctx, int64(22)).Return(&db.ScheduledTask{ID: 22, Type: db.TaskTypeCron}, nil)
@@ -902,7 +905,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteEphemeralVariants() {
 }
 
 func (s *TaskExecutorSuite) TestAutoDeleteNonEphemeralNoRename() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 
 	task := &db.ScheduledTask{
 		ID: 19, ChannelID: "ch19", Prompt: "important task",
@@ -989,7 +992,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteSkipped() {
 	for _, tc := range tests {
 		s.Run(tc.name, func() {
 			s.SetupTest()
-			s.executor.streamingEnabled = tc.streaming
+			s.executor.streamingEnabled.Store(tc.streaming)
 			tc.setupMocks()
 
 			s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
@@ -1093,7 +1096,7 @@ func (s *TaskExecutorSuite) TestFinalResponseBroadcasts() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -1163,7 +1166,7 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcasts() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -1208,7 +1211,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcasts() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingOnToolUseAskUserQuestion() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -1249,7 +1252,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseAskUserQuestion() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingOnToolUseExitPlanMode() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -1290,7 +1293,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseExitPlanMode() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingOnToolUseTodoWrite() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -1331,7 +1334,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseTodoWrite() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcastsBeforeThread() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -1377,7 +1380,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcastsBeforeThread() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingOnActivityBroadcasts() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)
 	s.executor.SetEventBroadcaster(eb)
 	allowStatusBroadcasts(eb)
@@ -1427,7 +1430,7 @@ func (s *TaskExecutorSuite) TestStreamingOnActivityBroadcasts() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingInvitesPermissionUsersToThread() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 	s.allowBotInserts()
 
 	task := &db.ScheduledTask{
@@ -1475,7 +1478,7 @@ func (s *TaskExecutorSuite) TestStreamingInvitesPermissionUsersToThread() {
 }
 
 func (s *TaskExecutorSuite) TestStreamingInviteErrorsAreLogged() {
-	s.executor.streamingEnabled = true
+	s.executor.streamingEnabled.Store(true)
 	s.allowBotInserts()
 
 	task := &db.ScheduledTask{
@@ -1733,3 +1736,43 @@ func (m *mockWorktreeSys) MkdirAll(string, os.FileMode) error          { return 
 func (m *mockWorktreeSys) WriteFile(string, []byte, os.FileMode) error { return nil }
 func (m *mockWorktreeSys) ReadFile(string) ([]byte, error)             { return nil, nil }
 func (m *mockWorktreeSys) UserHomeDir() (string, error)                { return "/home/test", nil }
+
+func (s *TaskExecutorSuite) TestRefreshConfigReloads() {
+	called := false
+	s.executor.configLoad = func() (*config.Config, error) {
+		called = true
+		return &config.Config{
+			ContainerTimeout: 99 * time.Second,
+			StreamingEnabled: true,
+		}, nil
+	}
+
+	timeout, streaming := s.executor.refreshConfig()
+	require.True(s.T(), called)
+	require.Equal(s.T(), 99*time.Second, timeout)
+	require.True(s.T(), streaming)
+}
+
+func (s *TaskExecutorSuite) TestRefreshConfigFallbackOnError() {
+	// Set initial values.
+	s.executor.containerTimeout.Store(int64(30 * time.Second))
+	s.executor.streamingEnabled.Store(true)
+
+	s.executor.configLoad = func() (*config.Config, error) {
+		return nil, errors.New("reload failed")
+	}
+
+	timeout, streaming := s.executor.refreshConfig()
+	require.Equal(s.T(), 30*time.Second, timeout)
+	require.True(s.T(), streaming)
+}
+
+func (s *TaskExecutorSuite) TestRefreshConfigNilLoader() {
+	s.executor.containerTimeout.Store(int64(42 * time.Second))
+	s.executor.streamingEnabled.Store(false)
+
+	// configLoad is already nil from SetupTest (passed nil).
+	timeout, streaming := s.executor.refreshConfig()
+	require.Equal(s.T(), 42*time.Second, timeout)
+	require.False(s.T(), streaming)
+}

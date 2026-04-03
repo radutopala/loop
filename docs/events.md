@@ -162,29 +162,34 @@ Partial bot response during streaming. The client should update the in-progress 
 
 ### `agent.status`
 
-Agent lifecycle status change (started, completed, errored).
+Agent lifecycle status change (running, completed, errored).
 
 **Payload schema:**
 
 ```json
 {
   "status": "completed",
-  "error": "",
+  "run_id": "a1b2c3d4e5f67890",
   "duration_ms": 12345,
   "num_turns": 3,
   "stop_reason": "end_turn",
-  "model": "claude-sonnet-4-20250514"
+  "model": "claude-sonnet-4-20250514",
+  "trigger_content": "hi",
+  "thread_id": "thread_abc123"
 }
 ```
 
-| Field         | Type   | Description |
-|---------------|--------|-------------|
-| `status`      | string | Status value (e.g., `"started"`, `"completed"`, `"error"`) |
-| `error`       | string | Error message (only when status is error) |
-| `duration_ms` | int    | Total run duration in milliseconds |
-| `num_turns`   | int    | Number of conversation turns |
-| `stop_reason` | string | Why the agent stopped (e.g., `"end_turn"`, `"max_turns"`) |
-| `model`       | string | Model used for the run |
+| Field             | Type   | Description |
+|-------------------|--------|-------------|
+| `status`          | string | `"running"`, `"completed"`, or `"error"` |
+| `run_id`          | string | Unique identifier for this agent run. The frontend uses this to distinguish concurrent runs on the same channel (e.g. a scheduled task completing should not clear the running indicator for a parallel chat agent). |
+| `error`           | string | Error message (only when status is `"error"`) |
+| `duration_ms`     | int    | Total run duration in milliseconds (on completion) |
+| `num_turns`       | int    | Number of conversation turns (on completion) |
+| `stop_reason`     | string | Why the agent stopped (e.g., `"end_turn"`, `"max_turns"`) |
+| `model`           | string | Model used for the run |
+| `trigger_content` | string | Content of the message that triggered the run (on `"running"` status) |
+| `thread_id`       | string | Thread ID for scheduled task runs (enables global broadcast routing) |
 
 ---
 
@@ -436,20 +441,31 @@ A container was unregistered from the registry (removed from Docker or reconcile
 
 ### Broadcast Methods
 
-| Method | Event Type | Data Type |
-|--------|-----------|-----------|
-| `BroadcastMessageCreated` | `message.created` | `MessageEventData` |
-| `BroadcastMessageStreaming` | `message.streaming` | `MessageStreamingData` |
-| `BroadcastAgentStatus` | `agent.status` | `AgentStatusEventData` |
-| `BroadcastToolUse` | `tool.use` | `ToolUseEventData` |
-| `BroadcastAgentActivity` | `agent.activity` | `AgentActivityEventData` |
-| `BroadcastAskUser` | `agent.ask_user` | `AskUserQuestionEventData` |
-| `BroadcastExitPlan` | `agent.exit_plan` | `ExitPlanModeEventData` |
-| `BroadcastChannelCreated` | `channel.created` | `map[string]string{"channel_id": id}` |
-| `BroadcastChannelDeleted` | `channel.deleted` | `nil` |
-| `BroadcastContainerRegistered` | `container.registered` | `ContainerEventData` |
-| `BroadcastContainerStatusChanged` | `container.status_changed` | `ContainerEventData` |
-| `BroadcastContainerRemoved` | `container.removed` | `ContainerEventData` |
+| Method | Event Type | Data Type | Scope |
+|--------|-----------|-----------|-------|
+| `BroadcastMessageCreated` | `message.created` | `MessageEventData` | Channel |
+| `BroadcastMessageStreaming` | `message.streaming` | `MessageStreamingData` | Channel |
+| `BroadcastMessagesProcessed` | `messages.processed` | `MessagesProcessedData` | Channel |
+| `BroadcastAgentStatus` | `agent.status` | `AgentStatusEventData` | Channel (global when `ThreadID` is set) |
+| `BroadcastToolUse` | `tool.use` | `ToolUseEventData` | Channel |
+| `BroadcastAgentActivity` | `agent.activity` | `AgentActivityEventData` | Channel |
+| `BroadcastAskUser` | `agent.ask_user` | `AskUserQuestionEventData` | Channel |
+| `BroadcastExitPlan` | `agent.exit_plan` | `ExitPlanModeEventData` | Channel |
+| `BroadcastTodoWrite` | `agent.todos` | `TodoWriteEventData` | Channel |
+| `BroadcastChannelCreated` | `channel.created` | `map[string]string{"channel_id": id}` | Channel |
+| `BroadcastChannelDeleted` | `channel.deleted` | `nil` | Channel |
+| `BroadcastAgentInstanceRegistered` | `agent_instance.registered` | `AgentInstanceEventData` | Channel |
+| `BroadcastAgentInstanceUnregistered` | `agent_instance.unregistered` | `AgentInstanceEventData` | Channel |
+| `BroadcastAgentInstanceMetadata` | `agent_instance.metadata` | `AgentInstanceEventData` | Channel |
+| `BroadcastContainerRegistered` | `container.registered` | `ContainerEventData` | Global |
+| `BroadcastContainerStatusChanged` | `container.status_changed` | `ContainerEventData` | Global |
+| `BroadcastContainerRemoved` | `container.removed` | `ContainerEventData` | Global |
+| `BroadcastImageBuildStatus` | `image.build_status` | `ImageBuildStatusData` | Global |
+| `BroadcastImageUpdateAvailable` | `image.update_available` | `ImageUpdateAvailableData` | Global |
+| `BroadcastTaskCreated` | `task.created` | `TaskEventData` | Global |
+| `BroadcastTaskUpdated` | `task.updated` | `TaskEventData` | Global |
+| `BroadcastTaskDeleted` | `task.deleted` | `TaskEventData` | Global |
+| `BroadcastTaskRunCompleted` | `task.run_completed` | `TaskRunEventData` | Global |
 
 ---
 
@@ -474,8 +490,17 @@ type Broadcaster interface {
     BroadcastAgentStatus(channelID string, data AgentStatusEventData)
     BroadcastToolUse(channelID string, data ToolUseEventData)
     BroadcastAgentActivity(channelID string, data AgentActivityEventData)
+    BroadcastAskUser(channelID string, data AskUserQuestionEventData)
+    BroadcastExitPlan(channelID string, data ExitPlanModeEventData)
+    BroadcastTodoWrite(channelID string, data TodoWriteEventData)
+    BroadcastMessagesProcessed(channelID string, data MessagesProcessedData)
     BroadcastChannelCreated(parentChannelID, channelID string)
     BroadcastChannelDeleted(channelID string)
+    BroadcastAgentInstanceRegistered(channelID string, data AgentInstanceEventData)
+    BroadcastAgentInstanceUnregistered(channelID string, data AgentInstanceEventData)
+    BroadcastAgentInstanceMetadata(channelID string, data AgentInstanceEventData)
+    BroadcastImageBuildStatus(data ImageBuildStatusData)
+    BroadcastImageUpdateAvailable(data ImageUpdateAvailableData)
 }
 ```
 

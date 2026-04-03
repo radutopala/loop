@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/radutopala/loop/internal/agent"
@@ -64,7 +65,8 @@ type Orchestrator struct {
 	activeRuns        sync.Map // map[channelID]context.CancelFunc
 	logger            *slog.Logger
 	typingInterval    time.Duration
-	cfg               config.Config
+	cfg               atomic.Pointer[config.Config]
+	configLoad        func() (*config.Config, error)
 	loadProjectConfig func(string, *config.Config) (*config.Config, error)
 	removeMCPConfig   func(string, string) error
 }
@@ -76,8 +78,8 @@ func defaultRemoveMCPConfig(dirPath, channelID string) error {
 }
 
 // New creates a new Orchestrator.
-func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logger *slog.Logger, cfg config.Config) *Orchestrator {
-	return &Orchestrator{
+func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logger *slog.Logger, cfg config.Config, configLoad func() (*config.Config, error)) *Orchestrator {
+	o := &Orchestrator{
 		store:             store,
 		bot:               bot,
 		runner:            runner,
@@ -85,10 +87,26 @@ func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logg
 		queue:             NewChannelQueue(),
 		logger:            logger,
 		typingInterval:    TypingInterval,
-		cfg:               cfg,
+		configLoad:        configLoad,
 		loadProjectConfig: config.LoadProjectConfig,
 		removeMCPConfig:   defaultRemoveMCPConfig,
 	}
+	o.cfg.Store(&cfg)
+	return o
+}
+
+// currentConfig returns a fresh config by calling configLoad, falling back
+// to the last-known-good config on error or when configLoad is nil.
+func (o *Orchestrator) currentConfig() *config.Config {
+	if o.configLoad == nil {
+		return o.cfg.Load()
+	}
+	fresh, err := o.configLoad()
+	if err != nil {
+		return o.cfg.Load()
+	}
+	o.cfg.Store(fresh)
+	return fresh
 }
 
 // ActiveChatChannelIDs returns the set of channel IDs that have an active
@@ -177,14 +195,15 @@ func (o *Orchestrator) HandleChannelJoin(ctx context.Context, channelID string, 
 // configPermissionsFor returns the effective Permissions for the given dirPath.
 // Project config overrides global when present; falls back to global on error.
 func (o *Orchestrator) configPermissionsFor(dirPath string) types.Permissions {
+	cfg := o.currentConfig()
 	if dirPath == "" {
-		return o.cfg.Permissions
+		return cfg.Permissions
 	}
-	cfg, err := o.loadProjectConfig(dirPath, &o.cfg)
+	merged, err := o.loadProjectConfig(dirPath, cfg)
 	if err != nil {
-		return o.cfg.Permissions
+		return cfg.Permissions
 	}
-	return cfg.Permissions
+	return merged.Permissions
 }
 
 // resolveRole returns the effective role for the given author by merging config and DB grants.
@@ -243,12 +262,13 @@ func (o *Orchestrator) resolveChannelName(ctx context.Context, channelID string,
 // For channels (not threads), it also removes all child threads.
 // MCP config files are cleaned up on a best-effort basis unless keep_mcp_configs is set.
 func (o *Orchestrator) HandleChannelDelete(ctx context.Context, channelID string, isThread bool) {
+	keepMCPConfigs := o.currentConfig().KeepMCPConfigs
 	if isThread {
 		ch, err := o.store.GetChannel(ctx, channelID)
 		if err != nil {
 			o.logger.Error("looking up thread for MCP cleanup", "error", err, "thread_id", channelID)
 		}
-		if ch != nil && !o.cfg.KeepMCPConfigs {
+		if ch != nil && !keepMCPConfigs {
 			if err := o.removeMCPConfig(ch.DirPath, channelID); err != nil {
 				o.logger.Warn("removing MCP config for thread", "error", err, "thread_id", channelID)
 			}
@@ -266,7 +286,7 @@ func (o *Orchestrator) HandleChannelDelete(ctx context.Context, channelID string
 	if err != nil {
 		o.logger.Error("looking up channel for MCP cleanup", "error", err, "channel_id", channelID)
 	}
-	if ch != nil && !o.cfg.KeepMCPConfigs {
+	if ch != nil && !keepMCPConfigs {
 		// Clean up MCP configs for child threads.
 		childIDs, err := o.store.ListChannelIDsByParentID(ctx, channelID)
 		if err != nil {

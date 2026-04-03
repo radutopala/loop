@@ -3845,7 +3845,7 @@ func (s *MainSuite) TestLocalBotMessageHandler() {
 	localBot := local.NewBot(store, logger)
 	sched := scheduler.NewTaskScheduler(store, nil, 0, logger)
 
-	orch := orchestrator.New(store, localBot, nil, sched, logger, config.Config{})
+	orch := orchestrator.New(store, localBot, nil, sched, logger, config.Config{}, nil)
 	// Manually wire the OnMessage handler (in production, orch.Start does this via BotRouter).
 	localBot.OnMessage(func(ctx context.Context, msg *bot.IncomingMessage) {
 		orch.HandleMessage(ctx, msg)
@@ -3864,7 +3864,7 @@ func (s *MainSuite) TestLocalBotMentionParsing() {
 	store := &testutil.MockStore{}
 	localBot := local.NewBot(store, logger)
 	sched := scheduler.NewTaskScheduler(store, nil, 0, logger)
-	orch := orchestrator.New(store, localBot, nil, sched, logger, config.Config{})
+	orch := orchestrator.New(store, localBot, nil, sched, logger, config.Config{}, nil)
 	localBot.OnMessage(func(ctx context.Context, msg *bot.IncomingMessage) {
 		orch.HandleMessage(ctx, msg)
 	})
@@ -3891,7 +3891,7 @@ func (s *MainSuite) TestLocalBotPrefixParsing() {
 	store := &testutil.MockStore{}
 	localBot := local.NewBot(store, logger)
 	sched := scheduler.NewTaskScheduler(store, nil, 0, logger)
-	orch := orchestrator.New(store, localBot, nil, sched, logger, config.Config{})
+	orch := orchestrator.New(store, localBot, nil, sched, logger, config.Config{}, nil)
 	localBot.OnMessage(func(ctx context.Context, msg *bot.IncomingMessage) {
 		orch.HandleMessage(ctx, msg)
 	})
@@ -3916,7 +3916,7 @@ func (s *MainSuite) TestLocalBotPlainMessageTriggers() {
 	store := &testutil.MockStore{}
 	localBot := local.NewBot(store, logger)
 	sched := scheduler.NewTaskScheduler(store, nil, 0, logger)
-	orch := orchestrator.New(store, localBot, nil, sched, logger, config.Config{})
+	orch := orchestrator.New(store, localBot, nil, sched, logger, config.Config{}, nil)
 	localBot.OnMessage(func(ctx context.Context, msg *bot.IncomingMessage) {
 		orch.HandleMessage(ctx, msg)
 	})

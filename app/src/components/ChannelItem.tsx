@@ -24,7 +24,7 @@ interface ChannelItemProps {
   checkedIds?: Set<string>;
   onToggleCheck?: (id: string) => void;
   /** Real-time running status from app-level chat state store. */
-  isRunningMapRef?: React.RefObject<Map<string, boolean>>;
+  isRunningMapRef?: React.RefObject<Map<string, string>>;
   unreadIdsRef?: React.RefObject<Set<string>>;
 }
 

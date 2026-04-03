@@ -12,6 +12,7 @@ import (
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
+	"github.com/radutopala/loop/internal/randutil"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -26,7 +27,7 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 		if !o.resolveThread(ctx, msg.ChannelID) {
 			if msg.IsDM || msg.IsBotMention || msg.HasPrefix || msg.IsReplyToBot {
 				name := o.resolveChannelName(ctx, msg.ChannelID, msg.IsDM)
-				dirPath := filepath.Join(o.cfg.LoopDir, msg.ChannelID, "work")
+				dirPath := filepath.Join(o.currentConfig().LoopDir, msg.ChannelID, "work")
 				if err := o.store.UpsertChannel(ctx, &db.Channel{
 					ChannelID: msg.ChannelID,
 					GuildID:   msg.GuildID,
@@ -181,7 +182,7 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *bot.Inc
 		return
 	}
 
-	resp, lastStreamedText, err := o.executeAgentRun(ctx, msg, req)
+	resp, lastStreamedText, runID, err := o.executeAgentRun(ctx, msg, req)
 	if err != nil {
 		// Mark the trigger message as processed even on error/stop so the
 		// frontend doesn't keep showing it as "processing" when the next
@@ -190,7 +191,7 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *bot.Inc
 		return
 	}
 
-	o.deliverResponse(ctx, msg, resp, recent, lastStreamedText)
+	o.deliverResponse(ctx, msg, resp, recent, lastStreamedText, runID)
 }
 
 // prepareAgentRequest fetches recent messages and channel data, then builds an AgentRequest.
@@ -243,15 +244,18 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 // executeAgentRun runs the agent with timeout, streaming, and stop-button cancellation.
 // Returns the agent response and the last streamed text (for dedup), or an error if the
 // run failed and the caller should abort.
-func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMessage, req *agent.AgentRequest) (*agent.AgentResponse, string, error) {
-	runCtx, runCancel := context.WithTimeout(ctx, o.cfg.ContainerTimeout)
+func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMessage, req *agent.AgentRequest) (*agent.AgentResponse, string, string, error) {
+	cfg := o.currentConfig()
+	runCtx, runCancel := context.WithTimeout(ctx, cfg.ContainerTimeout)
 	defer runCancel()
+
+	runID := randutil.HexID(8)
 
 	// Register the cancel func so stop button clicks can cancel this run.
 	o.activeRuns.Store(msg.ChannelID, runCancel)
 
 	var tracker *streamTracker
-	if o.cfg.StreamingEnabled {
+	if cfg.StreamingEnabled {
 		tracker = newStreamTracker(func(text string) {
 			if err := o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 				ChannelID:        msg.ChannelID,
@@ -301,13 +305,13 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	}
 
 	if o.events != nil {
-		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "running", TriggerContent: msg.Content})
+		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "running", RunID: runID, TriggerContent: msg.Content})
 	}
 
 	resp, err := o.runner.Run(runCtx, req)
 	if err != nil {
 		if o.events != nil {
-			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "error", Error: err.Error()})
+			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "error", RunID: runID, Error: err.Error()})
 		}
 		if runCtx.Err() == context.Canceled {
 			o.logger.Info("run stopped by user", "channel_id", msg.ChannelID)
@@ -316,7 +320,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 				Content:          "Run stopped.",
 				ReplyToMessageID: msg.MessageID,
 			})
-			return nil, "", err
+			return nil, "", runID, err
 		}
 		o.logger.Error("running agent", "error", err, "channel_id", msg.ChannelID)
 		_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
@@ -324,12 +328,12 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 			Content:          "Sorry, I encountered an error processing your request.",
 			ReplyToMessageID: msg.MessageID,
 		})
-		return nil, "", err
+		return nil, "", runID, err
 	}
 
 	if resp.Error != "" {
 		if o.events != nil {
-			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "error", Error: resp.Error})
+			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "error", RunID: runID, Error: resp.Error})
 		}
 		o.logger.Error("agent returned error", "error", resp.Error, "channel_id", msg.ChannelID)
 		_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
@@ -337,18 +341,18 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 			Content:          fmt.Sprintf("Agent error: %s", resp.Error),
 			ReplyToMessageID: msg.MessageID,
 		})
-		return nil, "", fmt.Errorf("agent error: %s", resp.Error)
+		return nil, "", runID, fmt.Errorf("agent error: %s", resp.Error)
 	}
 
 	var lastText string
 	if tracker != nil {
 		lastText = tracker.lastText
 	}
-	return resp, lastText, nil
+	return resp, lastText, runID, nil
 }
 
 // deliverResponse sends the final response, records the bot message, and marks messages as processed.
-func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMessage, resp *agent.AgentResponse, recent []*db.Message, lastStreamedText string) {
+func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMessage, resp *agent.AgentResponse, recent []*db.Message, lastStreamedText, runID string) {
 	if err := o.store.UpdateSessionID(ctx, msg.ChannelID, resp.SessionID); err != nil {
 		o.logger.Error("updating session data", "error", err, "channel_id", msg.ChannelID)
 	}
@@ -404,6 +408,7 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 	if o.events != nil {
 		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{
 			Status:     "completed",
+			RunID:      runID,
 			DurationMs: resp.DurationMs,
 			NumTurns:   resp.NumTurns,
 			StopReason: resp.StopReason,

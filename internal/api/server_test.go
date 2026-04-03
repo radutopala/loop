@@ -3193,10 +3193,12 @@ func (m *mockFileInfo) ModTime() time.Time { return m.modTime }
 func (m *mockFileInfo) IsDir() bool        { return false }
 func (m *mockFileInfo) Sys() any           { return nil }
 
-// realOpenSys wraps MockSystem but delegates Open to os.Open (for real temp files in tests).
+// realOpenSys wraps MockSystem but delegates Open and EvalSymlinks to the real
+// OS implementations (for tests that use real temp directories).
 type realOpenSys struct{ *testutil.MockSystem }
 
-func (r *realOpenSys) Open(name string) (*os.File, error) { return os.Open(name) }
+func (r *realOpenSys) Open(name string) (*os.File, error)       { return os.Open(name) }
+func (r *realOpenSys) EvalSymlinks(path string) (string, error) { return filepath.EvalSymlinks(path) }
 
 func (s *ServerSuite) TestSessionListSuccess() {
 	// Create a temp dir to simulate the Claude projects directory.

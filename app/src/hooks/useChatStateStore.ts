@@ -16,6 +16,7 @@ import { useWebSocketConnection } from "./useWebSocketConnection";
 export interface ActiveChatState {
   streamingContent: string | null;
   isRunning: boolean;
+  runId: string | null;
   toolActivity: { tool_name: string; input: string } | null;
   agentActivity: AgentActivityData | null;
   askUserQuestions: AskUserQuestionData | null;
@@ -61,7 +62,7 @@ export function useChatStateStore({
   onAppEvent,
 }: UseChatStateStoreOptions) {
   const storeRef = useRef(new Map<string, ActiveChatState>());
-  const isRunningMapRef = useRef(new Map<string, boolean>());
+  const isRunningMapRef = useRef(new Map<string, string>());
   const unreadIdsRef = useRef(new Set<string>());
   const [unreadCount, setUnreadCount] = useState(0);
 
@@ -90,7 +91,7 @@ export function useChatStateStore({
     const map = isRunningMapRef.current;
     for (const ch of channels) {
       if (ch.agent_running && !map.has(ch.id)) {
-        map.set(ch.id, true);
+        map.set(ch.id, "");
       }
     }
   }, [channels]);
@@ -100,8 +101,8 @@ export function useChatStateStore({
     (send: (data: string) => void) => {
       const set = new Set<string>();
       if (selectedId) set.add(selectedId);
-      for (const [id, running] of isRunningMapRef.current) {
-        if (running) set.add(id);
+      for (const [id] of isRunningMapRef.current) {
+        set.add(id);
       }
       send(JSON.stringify({ type: "subscribe", channels: [...set] }));
     },
@@ -116,8 +117,8 @@ export function useChatStateStore({
       (ws: WebSocket) => {
         const set = new Set<string>();
         if (selectedIdRef.current) set.add(selectedIdRef.current);
-        for (const [id, running] of isRunningMapRef.current) {
-          if (running) set.add(id);
+        for (const [id] of isRunningMapRef.current) {
+          set.add(id);
         }
         ws.send(
           JSON.stringify({ type: "subscribe", channels: [...set] }),
@@ -152,12 +153,19 @@ export function useChatStateStore({
       }
 
       // Track isRunning in the map for subscription management.
+      // The map value is the run_id so we can distinguish concurrent runs.
       if (channelId && wsEvent.type === "agent.status") {
         const data = wsEvent.data as AgentStatusData;
         if (data.status === "running") {
-          runMap.set(channelId, true);
+          runMap.set(channelId, data.run_id ?? "");
         } else {
-          runMap.delete(channelId);
+          // Only clear if the finishing run_id matches the one we're tracking,
+          // or if either side has no run_id (backwards compat).
+          const tracked = runMap.get(channelId);
+          const finishing = data.run_id ?? "";
+          if (tracked === undefined || tracked === "" || finishing === "" || tracked === finishing) {
+            runMap.delete(channelId);
+          }
           // Keep the store entry — it holds completionInfo, mode, askUser, etc.
           // that should be restored when the user switches back.
 
@@ -204,8 +212,8 @@ export function useChatStateStore({
   useEffect(() => {
     const interval = setInterval(() => {
       const ids = [selectedId ?? ""];
-      for (const [id, running] of isRunningMapRef.current) {
-        if (running) ids.push(id);
+      for (const [id] of isRunningMapRef.current) {
+        ids.push(id);
       }
       ids.sort();
       const key = ids.join(",");
@@ -233,7 +241,7 @@ export function useChatStateStore({
     (channelId: string, state: ActiveChatState) => {
       storeRef.current.set(channelId, state);
       if (state.isRunning) {
-        isRunningMapRef.current.set(channelId, true);
+        isRunningMapRef.current.set(channelId, state.runId ?? "");
       }
     },
     [],
@@ -279,6 +287,7 @@ function createEmptyState(): ActiveChatState {
   return {
     streamingContent: null,
     isRunning: false,
+    runId: null,
     toolActivity: null,
     agentActivity: null,
     askUserQuestions: null,
@@ -344,18 +353,25 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
       const data = event.data as AgentStatusData;
       if (data.status === "running") {
         state.isRunning = true;
+        state.runId = data.run_id ?? null;
         state.completionInfo = null;
         state.askUserQuestions = null;
         state.exitPlanRequest = null;
         state.triggerContent = data.trigger_content ?? null;
       } else {
-        state.isRunning = false;
-        state.toolActivity = null;
-        state.agentActivity = null;
-        state.triggerContent = null;
-        // Clear todos only if all are completed; otherwise persist so the user sees remaining work.
-        if (state.todos && state.todos.todos.every((t) => t.status === "completed")) {
-          state.todos = null;
+        // Only clear isRunning if the finishing run_id matches the one we're
+        // tracking, or if either side has no run_id (backwards compat).
+        const matchesRun = !state.runId || !data.run_id || state.runId === data.run_id;
+        if (matchesRun) {
+          state.isRunning = false;
+          state.runId = null;
+          state.toolActivity = null;
+          state.agentActivity = null;
+          state.triggerContent = null;
+          // Clear todos only if all are completed; otherwise persist so the user sees remaining work.
+          if (state.todos && state.todos.todos.every((t) => t.status === "completed")) {
+            state.todos = null;
+          }
         }
         if (
           data.status === "completed" &&

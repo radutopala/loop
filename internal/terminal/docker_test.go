@@ -309,6 +309,12 @@ func (s *DockerSuite) TestExecInspectPidError() {
 	api.AssertExpectations(s.T())
 }
 
+func (s *DockerSuite) TestDefaultShellCmd() {
+	c := &DockerExecClient{}
+	cmd := c.DefaultShellCmd("/tmp/.loop-exec-abc.pid")
+	require.Equal(s.T(), []string{"/bin/sh", "-c", "echo $$ > /tmp/.loop-exec-abc.pid; exec /bin/sh"}, cmd)
+}
+
 func (s *DockerSuite) TestExecCreateNoTTY() {
 	api := new(mockDockerExecAPI)
 	c := &DockerExecClient{api: api, osGetenv: func(string) string { return "testuser" }}

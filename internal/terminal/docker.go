@@ -2,6 +2,7 @@ package terminal
 
 import (
 	"context"
+	"fmt"
 	"io"
 	"os"
 
@@ -40,6 +41,12 @@ func newDockerExecClientWith(apiFactory func() (dockerExecAPI, error)) (*DockerE
 		return nil, err
 	}
 	return &DockerExecClient{api: api, osGetenv: os.Getenv}, nil
+}
+
+// DefaultShellCmd returns a /bin/sh command that writes its PID to pidFile
+// for reliable process group cleanup inside the container.
+func (c *DockerExecClient) DefaultShellCmd(pidFile string) []string {
+	return []string{"/bin/sh", "-c", fmt.Sprintf("echo $$ > %s; exec /bin/sh", pidFile)}
 }
 
 // ExecCreate creates a new exec process in the container with the

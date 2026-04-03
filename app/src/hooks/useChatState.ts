@@ -56,6 +56,7 @@ export function useChatState(
   const { messages, loading, loadMore, hasMore, addMessage, markProcessed } = useMessages(channelId);
   const [streamingContent, setStreamingContent] = useState<string | null>(initialState?.streamingContent ?? null);
   const [isRunning, setIsRunning] = useState(initialState?.isRunning ?? initialRunningBot ?? false);
+  const [runId, setRunId] = useState<string | null>(initialState?.runId ?? null);
   const [toolActivity, setToolActivity] = useState<{ tool_name: string; input: string } | null>(initialState?.toolActivity ?? null);
   const [agentActivity, setAgentActivity] = useState<AgentActivityData | null>(initialState?.agentActivity ?? null);
   const [askUserQuestions, setAskUserQuestions] = useState<AskUserQuestionData | null>(initialState?.askUserQuestions ?? null);
@@ -70,6 +71,8 @@ export function useChatState(
   streamingRef.current = streamingContent;
   const isRunningRef = useRef(isRunning);
   isRunningRef.current = isRunning;
+  const runIdRef = useRef(runId);
+  runIdRef.current = runId;
   const toolRef = useRef(toolActivity);
   toolRef.current = toolActivity;
   const agentRef = useRef(agentActivity);
@@ -96,6 +99,7 @@ export function useChatState(
       const snapshot = {
         streamingContent: streamingRef.current,
         isRunning: isRunningRef.current,
+        runId: runIdRef.current,
         toolActivity: toolRef.current,
         agentActivity: agentRef.current,
         askUserQuestions: askRef.current,
@@ -170,17 +174,24 @@ export function useChatState(
         const data = event.data as AgentStatusData;
         if (data.status === "running") {
           setIsRunning(true);
+          setRunId(data.run_id ?? null);
           setCompletionInfo(null);
           setAskUserQuestions(null);
           setExitPlanRequest(null);
           setTriggerContent(data.trigger_content ?? null);
         } else {
-          setIsRunning(false);
-          setToolActivity(null);
-          setAgentActivity(null);
-          setTriggerContent(null);
-          // Clear todos only if all are completed; otherwise persist so the user sees remaining work.
-          setTodos((prev) => prev && prev.todos.every((t) => t.status === "completed") ? null : prev);
+          // Only clear isRunning if the finishing run_id matches the one we're
+          // tracking, or if either side has no run_id (backwards compat).
+          const matchesRun = !runIdRef.current || !data.run_id || runIdRef.current === data.run_id;
+          if (matchesRun) {
+            setIsRunning(false);
+            setRunId(null);
+            setToolActivity(null);
+            setAgentActivity(null);
+            setTriggerContent(null);
+            // Clear todos only if all are completed; otherwise persist so the user sees remaining work.
+            setTodos((prev) => prev && prev.todos.every((t) => t.status === "completed") ? null : prev);
+          }
           // Don't clear askUserQuestions/exitPlanRequest on stop — they persist
           // until the user submits answers or approves the plan.
           if (data.status === "completed" && (data.duration_ms || data.stop_reason)) {

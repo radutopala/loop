@@ -56,6 +56,27 @@ func (s *DaemonSuite) TestStartWithProxyEnv() {
 	sys.AssertExpectations(s.T())
 }
 
+func (s *DaemonSuite) TestStartWithShellEnv() {
+	sys := new(mockSystem)
+	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
+	sys.On("UserHomeDir").Return("/home/test", nil)
+	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("Getenv", "SHELL").Return("/bin/zsh")
+	sys.On("Getenv", mock.Anything).Return("")
+	sys.On("WriteFile", "/home/test/Library/LaunchAgents/com.loop.agent.plist", mock.MatchedBy(func(data []byte) bool {
+		s := string(data)
+		return strings.Contains(s, "<key>SHELL</key>") &&
+			strings.Contains(s, "<string>/bin/zsh</string>")
+	}), os.FileMode(0o644)).Return(nil)
+	sys.On("GetUID").Return(501)
+	sys.On("RunCommand", "launchctl", mock.Anything).Return([]byte(""), nil)
+
+	err := Start(sys, "/home/test/.loop/loop.log")
+	require.NoError(s.T(), err)
+	sys.AssertExpectations(s.T())
+}
+
 func (s *DaemonSuite) TestStartExecutableError() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("", errors.New("exec fail"))

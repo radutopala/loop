@@ -23,9 +23,19 @@ interface ChatState {
   isRunning: boolean;
   toolActivity: { tool_name: string; input: string } | null;
   agentActivity: AgentActivityData | null;
+  askUserQuestions: AskUserQuestionData | null;
+  exitPlanRequest: ExitPlanModeData | null;
+  todos: TodoWriteData | null;
+  clearAskUser: () => void;
+  clearExitPlan: () => void;
+  mode: "agent" | "plan";
+  setMode: (mode: "agent" | "plan") => void;
   completionInfo: { duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null;
+  triggerContent: string | null;
 }
 ```
+
+The `isRunning` flag is scoped per agent run via a `run_id` tracked internally by the state hooks. When a scheduled task and a chat agent run concurrently on the same channel, each has a unique `run_id` — the task completing only clears its own running state, not the chat agent's.
 
 ---
 

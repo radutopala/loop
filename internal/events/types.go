@@ -43,6 +43,7 @@ type MessageStreamingData struct {
 // AgentStatusEventData is the payload for agent.status events.
 type AgentStatusEventData struct {
 	Status         string `json:"status"`
+	RunID          string `json:"run_id,omitempty"`
 	Error          string `json:"error,omitempty"`
 	DurationMs     int    `json:"duration_ms,omitempty"`
 	NumTurns       int    `json:"num_turns,omitempty"`

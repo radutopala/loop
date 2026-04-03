@@ -25,6 +25,14 @@ const clientChannelBuffer = 64
 // readBufSize is the size of the temporary buffer used in readLoop.
 const readBufSize = 4096
 
+// PidFileShellCmd is an optional interface that ExecClient implementations
+// can implement to provide a PID-file-wrapped default shell command.
+// Container-based clients need this for process group cleanup; host-based
+// clients manage processes directly and should not implement it.
+type PidFileShellCmd interface {
+	DefaultShellCmd(pidFile string) []string
+}
+
 // ExecClient abstracts the Docker exec operations needed by the terminal
 // manager (docker exec), making it testable without a real Docker daemon.
 //
@@ -222,9 +230,15 @@ func (m *Manager) CreateSession(ctx context.Context, containerID string, cmd []s
 	sessionID := generateID(m.randRead)
 	pidFile := fmt.Sprintf("%s/.loop-exec-%s.pid", pidFileDir, sessionID)
 
-	// When no explicit command, wrap the shell to write its PID for later kill.
+	// When no explicit command and the client supports PID-file tracking
+	// (container-based), wrap the shell to write its PID for later kill.
+	// Host-based clients handle shell selection and process cleanup directly.
 	if len(cmd) == 0 {
-		cmd = []string{"/bin/sh", "-c", fmt.Sprintf("echo $$ > %s; exec /bin/sh", pidFile)}
+		if p, ok := m.client.(PidFileShellCmd); ok {
+			cmd = p.DefaultShellCmd(pidFile)
+		} else {
+			pidFile = "" // host client — no PID-file tracking needed
+		}
 	}
 
 	execID, err := m.client.ExecCreate(ctx, containerID, cmd, true)

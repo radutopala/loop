@@ -49,6 +49,9 @@ func Start(sys System, logFile string) error {
 			extraEnv[key] = v
 		}
 	}
+	if shell := sys.Getenv("SHELL"); shell != "" {
+		extraEnv["SHELL"] = shell
+	}
 
 	unit := generateUnit(binPath, logFile, extraEnv)
 	if err := sys.WriteFile(unitPath, []byte(unit), 0o644); err != nil {

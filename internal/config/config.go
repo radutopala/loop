@@ -233,7 +233,31 @@ func Load() (*Config, error) {
 	return newLoader().load()
 }
 
+// Reload re-reads ~/.loop/config.json without validating platform credentials.
+// Use this for hot-reloading config during runtime (e.g. before container launches)
+// where platform tokens are not needed and should not block the reload.
+func Reload() (*Config, error) {
+	return newLoader().reload()
+}
+
 func (l *Loader) load() (*Config, error) {
+	cfg, err := l.parse()
+	if err != nil {
+		return nil, err
+	}
+	if err := l.validatePlatforms(cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+func (l *Loader) reload() (*Config, error) {
+	return l.parse()
+}
+
+// parse reads and parses the config file into a Config struct.
+// It does NOT validate platform credentials.
+func (l *Loader) parse() (*Config, error) {
 	home, err := l.userHomeDir()
 	if err != nil {
 		return nil, fmt.Errorf("getting home directory: %w", err)
@@ -353,29 +377,32 @@ func (l *Loader) load() (*Config, error) {
 		cfg.Platforms = append(cfg.Platforms, types.Platform(strings.ToLower(p)))
 	}
 
+	return cfg, nil
+}
+
+// validatePlatforms checks that required credentials are present for each listed platform.
+func (l *Loader) validatePlatforms(cfg *Config) error {
 	if len(cfg.Platforms) == 0 {
-		return nil, fmt.Errorf("missing required config: \"platforms\" must be set")
+		return fmt.Errorf("missing required config: \"platforms\" must be set")
 	}
 
-	// Validate credentials for each listed platform.
 	for _, p := range cfg.Platforms {
 		switch p {
 		case types.PlatformDiscord:
 			if cfg.DiscordToken == "" || cfg.DiscordAppID == "" {
-				return nil, fmt.Errorf("platform \"discord\" requires discord_token and discord_app_id")
+				return fmt.Errorf("platform \"discord\" requires discord_token and discord_app_id")
 			}
 		case types.PlatformSlack:
 			if cfg.SlackBotToken == "" || cfg.SlackAppToken == "" {
-				return nil, fmt.Errorf("platform \"slack\" requires slack_bot_token and slack_app_token")
+				return fmt.Errorf("platform \"slack\" requires slack_bot_token and slack_app_token")
 			}
 		case types.PlatformLocal:
 			// Local platform requires no external credentials.
 		default:
-			return nil, fmt.Errorf("unsupported platform %q: must be \"discord\", \"slack\", or \"local\"", p)
+			return fmt.Errorf("unsupported platform %q: must be \"discord\", \"slack\", or \"local\"", p)
 		}
 	}
-
-	return cfg, nil
+	return nil
 }
 
 func stringDefault(val, def string) string {

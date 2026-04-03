@@ -53,6 +53,25 @@ func (s *DaemonSuite) TestStartWithProxyEnv() {
 	sys.AssertExpectations(s.T())
 }
 
+func (s *DaemonSuite) TestStartWithShellEnv() {
+	sys := new(mockSystem)
+	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
+	sys.On("UserHomeDir").Return("/home/test", nil)
+	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("Getenv", "SHELL").Return("/bin/zsh")
+	sys.On("Getenv", mock.Anything).Return("")
+	sys.On("WriteFile", "/home/test/.config/systemd/user/loop.service", mock.MatchedBy(func(data []byte) bool {
+		return strings.Contains(string(data), "Environment=SHELL=/bin/zsh")
+	}), os.FileMode(0o644)).Return(nil)
+	sys.On("RunCommand", "systemctl", mock.Anything).Return([]byte(""), nil)
+	sys.On("RunCommand", "loginctl", mock.Anything).Return([]byte(""), nil)
+
+	err := Start(sys, "/home/test/.loop/loop.log")
+	require.NoError(s.T(), err)
+	sys.AssertExpectations(s.T())
+}
+
 func (s *DaemonSuite) TestStartExecutableError() {
 	sys := new(mockSystem)
 	sys.On("Executable").Return("", errors.New("exec fail"))

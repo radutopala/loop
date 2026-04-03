@@ -251,7 +251,7 @@ func (s *RunnerSuite) SetupTest() {
 		LoopDir:            "/home/testuser/.loop",
 	}
 	s.cfg.Browser.Enabled = true
-	s.runner = NewDockerRunner(s.client, s.cfg)
+	s.runner = NewDockerRunner(s.client, s.cfg, nil)
 	s.runner.sys = s.sys
 	s.runner.osRandRead = func(b []byte) (int, error) {
 		copy(b, []byte{0xaa, 0xbb, 0xcc})
@@ -304,10 +304,10 @@ func (s *RunnerSuite) setupMockRun(ctx context.Context, createMatcher any, conta
 }
 
 func (s *RunnerSuite) TestNewDockerRunner() {
-	runner := NewDockerRunner(s.client, s.cfg)
+	runner := NewDockerRunner(s.client, s.cfg, nil)
 	require.NotNil(s.T(), runner)
 	require.Equal(s.T(), s.client, runner.client)
-	require.Equal(s.T(), s.cfg, runner.cfg)
+	require.Equal(s.T(), s.cfg, runner.cfg.Load())
 }
 
 func (s *RunnerSuite) TestRunHappyPath() {
@@ -794,7 +794,7 @@ func (s *RunnerSuite) TestRunOutputErrors() {
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
 			s.client = new(MockDockerClient)
-			s.runner = NewDockerRunner(s.client, s.cfg)
+			s.runner = NewDockerRunner(s.client, s.cfg, nil)
 			s.applyMockDefaults()
 
 			ctx := context.Background()
@@ -865,7 +865,7 @@ func (s *RunnerSuite) TestRunAuthConfig() {
 			s.client = new(MockDockerClient)
 			s.cfg.ClaudeCodeOAuthToken = tt.oauthToken
 			s.cfg.AnthropicAPIKey = tt.apiKey
-			s.runner = NewDockerRunner(s.client, s.cfg)
+			s.runner = NewDockerRunner(s.client, s.cfg, nil)
 			s.applyMockDefaults()
 
 			ctx := context.Background()
@@ -921,7 +921,7 @@ func (s *RunnerSuite) TestRunProxyEnv() {
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
 			s.client = new(MockDockerClient)
-			s.runner = NewDockerRunner(s.client, s.cfg)
+			s.runner = NewDockerRunner(s.client, s.cfg, nil)
 			s.applyMockDefaults()
 			// Re-register Getenv expectations with specific env vars first, catch-all last.
 			s.sys.Override("Getenv", "USER").Return("testuser")
@@ -1421,7 +1421,7 @@ func (s *RunnerSuite) TestBuildMCPConfigWithAgentID() {
 
 func (s *RunnerSuite) TestRunBrowserDisabledNoNetwork() {
 	s.cfg.Browser.Enabled = false
-	s.runner = NewDockerRunner(s.client, s.cfg)
+	s.runner = NewDockerRunner(s.client, s.cfg, nil)
 	s.applyMockDefaults()
 	ctx := context.Background()
 
@@ -1441,7 +1441,7 @@ func (s *RunnerSuite) TestRunBrowserEnabledNoNetwork() {
 	// Even with browser enabled, the agent container no longer joins a Docker
 	// network — the mcp-browser server proxies actions through the host API instead.
 	s.cfg.Browser.Enabled = true
-	s.runner = NewDockerRunner(s.client, s.cfg)
+	s.runner = NewDockerRunner(s.client, s.cfg, nil)
 	s.applyMockDefaults()
 	ctx := context.Background()
 
@@ -2119,7 +2119,7 @@ func (s *RunnerSuite) TestRunClaudeModelConfig() {
 		s.Run(tt.name, func() {
 			s.client = new(MockDockerClient)
 			s.cfg.ClaudeModel = tt.model
-			s.runner = NewDockerRunner(s.client, s.cfg)
+			s.runner = NewDockerRunner(s.client, s.cfg, nil)
 			s.applyMockDefaults()
 
 			ctx := context.Background()
@@ -2186,7 +2186,7 @@ func (s *RunnerSuite) TestRunProjectConfigError() {
 }
 
 func (s *RunnerSuite) TestDefaultRandRead() {
-	r := NewDockerRunner(s.client, s.cfg)
+	r := NewDockerRunner(s.client, s.cfg, nil)
 	b := make([]byte, 3)
 	n, err := r.osRandRead(b)
 	require.NoError(s.T(), err)
@@ -2726,7 +2726,7 @@ func (s *RunnerSuite) TestRunWithOnTurnErrors() {
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
 			s.client = new(MockDockerClient)
-			s.runner = NewDockerRunner(s.client, s.cfg)
+			s.runner = NewDockerRunner(s.client, s.cfg, nil)
 			s.applyMockDefaults()
 
 			ctx := context.Background()
@@ -3003,7 +3003,7 @@ func (s *RunnerSuite) TestFilterMountedCopyFilesExpandError() {
 
 func (s *RunnerSuite) TestOsTimeLocalNameDefault() {
 	// Call the real osTimeLocalName to cover the default function literal.
-	r := NewDockerRunner(s.client, s.cfg)
+	r := NewDockerRunner(s.client, s.cfg, nil)
 	loc := r.osTimeLocalName()
 	require.NotEmpty(s.T(), loc)
 }
@@ -3231,7 +3231,7 @@ func (s *RunnerSuite) TestClaudeCmdBuilder() {
 				ClaudeBinPath: "claude",
 				LoopDir:       tc.loopDir,
 			}
-			builder := NewClaudeCmdBuilder(cfg)
+			builder := NewClaudeCmdBuilder(cfg, nil)
 			got := builder.BuildInteractiveCmd(tc.channelID, tc.dirPath, tc.sessionID, "", tc.forkSession)
 			expectedMCP := tc.wantDir + "/.loop/mcp-" + tc.channelID + ".json"
 			require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --dangerously-skip-permissions"+tc.wantExtra, got)
@@ -3255,7 +3255,7 @@ func (s *RunnerSuite) TestClaudeCmdBuilderProjectConfigModel() {
 		ClaudeModel:   "claude-sonnet-4-5-20250929",
 		LoopDir:       "/home/user/.loop",
 	}
-	builder := NewClaudeCmdBuilder(cfg)
+	builder := NewClaudeCmdBuilder(cfg, nil)
 	got := builder.BuildInteractiveCmd("ch-1", tmpDir, "", "", false)
 
 	// Project config's claude_model should override the global one.
@@ -3274,7 +3274,7 @@ func (s *RunnerSuite) TestClaudeCmdBuilderWritesAgentMCPConfig() {
 		APIAddr:       ":8222",
 		Memory:        config.MemoryConfig{Enabled: true},
 	}
-	builder := NewClaudeCmdBuilder(cfg)
+	builder := NewClaudeCmdBuilder(cfg, nil)
 	got := builder.BuildInteractiveCmd("ch-1", tmpDir, "", "agent-0", false)
 
 	// Command should reference the per-agent MCP config.
@@ -3295,7 +3295,7 @@ func (s *RunnerSuite) TestClaudeCmdBuilderNoAgentSkipsMCPWrite() {
 		LoopDir:       "/home/user/.loop",
 	}
 	var writeCalled bool
-	builder := NewClaudeCmdBuilder(cfg)
+	builder := NewClaudeCmdBuilder(cfg, nil)
 	builder.writeFile = func(name string, data []byte, perm os.FileMode) error {
 		writeCalled = true
 		return nil
@@ -3621,4 +3621,66 @@ func (s *RunnerSuite) TestCreateShellContainerNoRegistryOnError() {
 
 	// Registry.Register should NOT be called on error.
 	reg.AssertNotCalled(s.T(), "Register", mock.Anything)
+}
+
+func (s *RunnerSuite) TestCurrentConfigReloads() {
+	s.runner.configLoad = func() (*config.Config, error) {
+		return &config.Config{
+			ClaudeBinPath:  "new-claude",
+			ContainerImage: "new-image:latest",
+			LoopDir:        "/new/loop",
+		}, nil
+	}
+
+	cfg := s.runner.currentConfig()
+	require.Equal(s.T(), "new-claude", cfg.ClaudeBinPath)
+	require.Equal(s.T(), "new-image:latest", cfg.ContainerImage)
+	// Verify it was stored as fallback.
+	require.Equal(s.T(), "new-claude", s.runner.cfg.Load().ClaudeBinPath)
+}
+
+func (s *RunnerSuite) TestCurrentConfigFallbackOnError() {
+	s.runner.configLoad = func() (*config.Config, error) {
+		return nil, errors.New("reload failed")
+	}
+
+	cfg := s.runner.currentConfig()
+	// Falls back to the original config from SetupTest.
+	require.Equal(s.T(), "claude", cfg.ClaudeBinPath)
+	require.Equal(s.T(), "loop-agent:latest", cfg.ContainerImage)
+}
+
+func (s *RunnerSuite) TestCurrentConfigNilLoader() {
+	// configLoad is nil by default from SetupTest.
+	cfg := s.runner.currentConfig()
+	require.Equal(s.T(), s.cfg, cfg)
+}
+
+func TestClaudeCmdBuilderCurrentConfigReloads(t *testing.T) {
+	initial := &config.Config{ClaudeBinPath: "old-claude"}
+	b := NewClaudeCmdBuilder(initial, func() (*config.Config, error) {
+		return &config.Config{ClaudeBinPath: "new-claude"}, nil
+	})
+
+	cfg := b.currentConfig()
+	require.Equal(t, "new-claude", cfg.ClaudeBinPath)
+	require.Equal(t, "new-claude", b.cfg.Load().ClaudeBinPath)
+}
+
+func TestClaudeCmdBuilderCurrentConfigFallbackOnError(t *testing.T) {
+	initial := &config.Config{ClaudeBinPath: "original"}
+	b := NewClaudeCmdBuilder(initial, func() (*config.Config, error) {
+		return nil, errors.New("fail")
+	})
+
+	cfg := b.currentConfig()
+	require.Equal(t, "original", cfg.ClaudeBinPath)
+}
+
+func TestClaudeCmdBuilderCurrentConfigNilLoader(t *testing.T) {
+	initial := &config.Config{ClaudeBinPath: "frozen"}
+	b := NewClaudeCmdBuilder(initial, nil)
+
+	cfg := b.currentConfig()
+	require.Equal(t, "frozen", cfg.ClaudeBinPath)
 }
