@@ -275,8 +275,8 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
   const [loading, setLoading] = useState(false);
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
   // Mode state
-  type DiffMode = "uncommitted" | "branches" | "commits";
-  const [diffMode, setDiffMode] = useState<DiffMode>("uncommitted");
+  type GitMode = "uncommitted" | "branches" | "commits";
+  const [gitMode, setGitMode] = useState<GitMode>("uncommitted");
   const [branches, setBranches] = useState<string[]>([]);
   const [sourceBranch, setSourceBranch] = useState<string>("");
   const [targetBranch, setTargetBranch] = useState<string>("");
@@ -310,7 +310,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
 
   // Fetch branch list when switching to branch or commits mode
   useEffect(() => {
-    if ((diffMode === "branches" || diffMode === "commits") && channelId) {
+    if ((gitMode === "branches" || gitMode === "commits") && channelId) {
       fetchBranches(channelId).then((info) => {
         // Combine regular branches + current branch (which may be filtered out of the list).
         const all = new Set(info.branches);
@@ -334,18 +334,18 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
         }
       }).catch(() => {});
     }
-  }, [diffMode, channelId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [gitMode, channelId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load first page of commits when branch changes
   useEffect(() => {
-    if (diffMode !== "commits" || !channelId || !commitBranch) return;
+    if (gitMode !== "commits" || !channelId || !commitBranch) return;
     setCommitsLoading(true);
     setCommitsHasMore(true);
     fetchCommits(channelId, commitBranch, COMMITS_PAGE, 0)
       .then((c) => { setCommits(c); setCommitsHasMore(c.length >= COMMITS_PAGE); })
       .catch(() => { setCommits([]); setCommitsHasMore(false); })
       .finally(() => setCommitsLoading(false));
-  }, [diffMode, channelId, commitBranch]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [gitMode, channelId, commitBranch]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const loadMoreCommits = useCallback(() => {
     if (!channelId || !commitBranch || commitsLoading || !commitsHasMore) return;
@@ -358,10 +358,26 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
 
   const load = useCallback(async () => {
     if (!channelId) return;
+    if (gitMode === "commits") {
+      if (!commitBranch) return;
+      setCommitsLoading(true);
+      setCommitsHasMore(true);
+      try {
+        const c = await fetchCommits(channelId, commitBranch, COMMITS_PAGE, 0);
+        setCommits(c);
+        setCommitsHasMore(c.length >= COMMITS_PAGE);
+      } catch {
+        setCommits([]);
+        setCommitsHasMore(false);
+      } finally {
+        setCommitsLoading(false);
+      }
+      return;
+    }
     // In branch mode, both branches must be selected
-    if (diffMode === "branches" && (!sourceBranch || !targetBranch)) return;
+    if (gitMode === "branches" && (!sourceBranch || !targetBranch)) return;
     try {
-      const d = diffMode === "branches"
+      const d = gitMode === "branches"
         ? await fetchDiff(channelId, sourceBranch, targetBranch)
         : await fetchDiff(channelId);
       // If diff changed, invalidate file content cache and expanded gaps
@@ -377,7 +393,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     } finally {
       setLoading(false);
     }
-  }, [channelId, diffMode, sourceBranch, targetBranch]);
+  }, [channelId, gitMode, sourceBranch, targetBranch, commitBranch]);
 
   // Initial load + background polling fallback
   useEffect(() => {
@@ -516,7 +532,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     lineHeight: "20px",
   });
 
-  const diffToolbar = (
+  const gitToolbar = (
     <div
       style={{
         display: "flex",
@@ -536,11 +552,11 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
         }}
       >
         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <button style={modeTabStyle(diffMode === "uncommitted")} onClick={() => setDiffMode("uncommitted")}>Uncommitted</button>
-          <button style={modeTabStyle(diffMode === "branches")} onClick={() => setDiffMode("branches")}>Branches</button>
-          <button style={modeTabStyle(diffMode === "commits")} onClick={() => setDiffMode("commits")}>Commits</button>
-          {diffMode !== "commits" && totalFiles > 0 && <span style={{ fontSize: 10, color: colors.textDim }}>{totalFiles}</span>}
-          {diffMode !== "commits" && (totalAdd > 0 || totalDel > 0) && (
+          <button style={modeTabStyle(gitMode === "uncommitted")} onClick={() => setGitMode("uncommitted")}>Uncommitted</button>
+          <button style={modeTabStyle(gitMode === "branches")} onClick={() => setGitMode("branches")}>Branches</button>
+          <button style={modeTabStyle(gitMode === "commits")} onClick={() => setGitMode("commits")}>Commits</button>
+          {gitMode !== "commits" && totalFiles > 0 && <span style={{ fontSize: 10, color: colors.textDim }}>{totalFiles}</span>}
+          {gitMode !== "commits" && (totalAdd > 0 || totalDel > 0) && (
             <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
               <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>{" "}
               <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
@@ -548,7 +564,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
           )}
         </span>
         <div style={{ flex: 1 }} />
-        {diffMode !== "commits" && totalFiles > 0 && (
+        {gitMode !== "commits" && totalFiles > 0 && (
           <>
             <button onClick={expandAll} title="Expand all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,8 12,13 17,8" /><polyline points="7,14 12,19 17,14" /></svg>
@@ -562,7 +578,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7" /><polyline points="21,3 21,9 15,9" /></svg>
         </button>
       </div>
-      {diffMode === "branches" && (
+      {gitMode === "branches" && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 8px", fontSize: 11, color: colors.textDim }}>
           <select
             value={targetBranch}
@@ -585,7 +601,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
           </select>
         </div>
       )}
-      {diffMode === "commits" && (
+      {gitMode === "commits" && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 8px", fontSize: 11, color: colors.textDim }}>
           <select
             value={commitBranch}
@@ -821,8 +837,8 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
   if (embedded) {
     return (
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12 }}>
-        {diffToolbar}
-        {diffMode === "commits" ? commitsContent : diffContent}
+        {gitToolbar}
+        {gitMode === "commits" ? commitsContent : diffContent}
         {fileContextMenu && (
           <ContextMenu
             x={fileContextMenu.x}
@@ -1004,15 +1020,15 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
           {maximized && tabBar}
           {!maximized && (
             <>
-              <button style={modeTabStyle(diffMode === "uncommitted")} onClick={() => setDiffMode("uncommitted")}>Uncommitted</button>
-              <button style={modeTabStyle(diffMode === "branches")} onClick={() => setDiffMode("branches")}>Branches</button>
-              <button style={modeTabStyle(diffMode === "commits")} onClick={() => setDiffMode("commits")}>Commits</button>
-              {diffMode !== "commits" && totalFiles > 0 && (
+              <button style={modeTabStyle(gitMode === "uncommitted")} onClick={() => setGitMode("uncommitted")}>Uncommitted</button>
+              <button style={modeTabStyle(gitMode === "branches")} onClick={() => setGitMode("branches")}>Branches</button>
+              <button style={modeTabStyle(gitMode === "commits")} onClick={() => setGitMode("commits")}>Commits</button>
+              {gitMode !== "commits" && totalFiles > 0 && (
                 <span style={{ fontSize: 10, color: colors.textDim }}>
                   {totalFiles}
                 </span>
               )}
-              {diffMode !== "commits" && (totalAdd > 0 || totalDel > 0) && (
+              {gitMode !== "commits" && (totalAdd > 0 || totalDel > 0) && (
                 <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
                   <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>
                   {" "}
@@ -1025,15 +1041,15 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           {maximized && (
             <span style={{ display: "flex", alignItems: "center", gap: 8, marginRight: 8 }}>
-              <button style={modeTabStyle(diffMode === "uncommitted")} onClick={() => setDiffMode("uncommitted")}>Uncommitted</button>
-              <button style={modeTabStyle(diffMode === "branches")} onClick={() => setDiffMode("branches")}>Branches</button>
-              <button style={modeTabStyle(diffMode === "commits")} onClick={() => setDiffMode("commits")}>Commits</button>
-              {diffMode !== "commits" && totalFiles > 0 && (
+              <button style={modeTabStyle(gitMode === "uncommitted")} onClick={() => setGitMode("uncommitted")}>Uncommitted</button>
+              <button style={modeTabStyle(gitMode === "branches")} onClick={() => setGitMode("branches")}>Branches</button>
+              <button style={modeTabStyle(gitMode === "commits")} onClick={() => setGitMode("commits")}>Commits</button>
+              {gitMode !== "commits" && totalFiles > 0 && (
                 <span style={{ fontSize: 10, color: colors.textDim }}>
                   {totalFiles}
                 </span>
               )}
-              {diffMode !== "commits" && (totalAdd > 0 || totalDel > 0) && (
+              {gitMode !== "commits" && (totalAdd > 0 || totalDel > 0) && (
                 <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
                   <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>
                   {" "}
@@ -1042,7 +1058,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
               )}
             </span>
           )}
-          {diffMode !== "commits" && totalFiles > 0 && (
+          {gitMode !== "commits" && totalFiles > 0 && (
             <>
               <button onClick={expandAll} title="Expand all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1058,14 +1074,12 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
               </button>
             </>
           )}
-          {diffMode !== "commits" && (
-            <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+          <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 12a9 9 0 1 1-3-6.7" />
                 <polyline points="21,3 21,9 15,9" />
               </svg>
             </button>
-          )}
           {onToggleMaximize && (
             <button onClick={onToggleMaximize} title={maximized ? "Restore panel" : "Maximize panel"} style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
               {maximized ? (
@@ -1093,7 +1107,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
           </button>
         </div>
       </div>
-      {diffMode === "branches" && (
+      {gitMode === "branches" && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 12px", fontSize: 11, color: colors.textDim }}>
           <select
             value={targetBranch}
@@ -1116,7 +1130,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
           </select>
         </div>
       )}
-      {diffMode === "commits" && (
+      {gitMode === "commits" && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 12px", fontSize: 11, color: colors.textDim }}>
           <select
             value={commitBranch}
@@ -1131,7 +1145,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
       </div>
 
       {/* File list + diffs / Commits */}
-      {diffMode === "commits" ? commitsContent : diffContent}
+      {gitMode === "commits" ? commitsContent : diffContent}
       {fileContextMenu && (
         <ContextMenu
           x={fileContextMenu.x}
