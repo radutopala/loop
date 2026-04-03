@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"database/sql/driver"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -912,6 +913,7 @@ func (s *StoreSuite) TestInitDBSuccess() {
 	defer db.Close()
 
 	mock.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`PRAGMA busy_timeout=5000`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnResult(sqlmock.NewResult(0, 0))
 	// schema_migrations creation
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS schema_migrations`).WillReturnResult(sqlmock.NewResult(0, 0))
@@ -934,12 +936,18 @@ func (s *StoreSuite) TestInitDBErrors() {
 		{"WAL error", func(m sqlmock.Sqlmock) {
 			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnError(sql.ErrConnDone)
 		}, "enabling WAL mode"},
+		{"busy timeout error", func(m sqlmock.Sqlmock) {
+			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA busy_timeout=5000`).WillReturnError(sql.ErrConnDone)
+		}, "setting busy timeout"},
 		{"foreign keys error", func(m sqlmock.Sqlmock) {
 			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA busy_timeout=5000`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnError(sql.ErrConnDone)
 		}, "enabling foreign keys"},
 		{"migrations error", func(m sqlmock.Sqlmock) {
 			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA busy_timeout=5000`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnResult(ok)
 			m.ExpectExec(`CREATE TABLE IF NOT EXISTS schema_migrations`).WillReturnError(sql.ErrConnDone)
 		}, "running migrations"},
@@ -1104,6 +1112,68 @@ func (s *StoreSuite) TestNewSQLiteStoreWithNowFunc() {
 
 	now := store.nowFunc()
 	require.False(s.T(), now.IsZero())
+}
+
+func (s *StoreSuite) TestNewSQLiteStoreReaderOpenError() {
+	callCount := 0
+	openFunc := func(driver, dsn string) (*sql.DB, error) {
+		callCount++
+		if callCount == 1 {
+			// Writer opens successfully with a real in-memory DB.
+			return sql.Open(driver, dsn)
+		}
+		// Reader open fails.
+		return nil, fmt.Errorf("reader open error")
+	}
+	store, err := newSQLiteStoreWith(openFunc, ":memory:")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), store)
+	require.Contains(s.T(), err.Error(), "opening reader database")
+}
+
+func (s *StoreSuite) TestSplitDB() {
+	// Use a temp file so writer and reader share the same database.
+	tmpFile := filepath.Join(s.T().TempDir(), "split_test.db")
+	store, err := NewSQLiteStore(tmpFile)
+	require.NoError(s.T(), err)
+	defer store.Close()
+
+	ctx := context.Background()
+
+	// ExecContext via writer.
+	_, err = store.db.ExecContext(ctx, `CREATE TABLE test_split (id INTEGER PRIMARY KEY, val TEXT)`)
+	require.NoError(s.T(), err)
+	_, err = store.db.ExecContext(ctx, `INSERT INTO test_split (val) VALUES (?)`, "hello")
+	require.NoError(s.T(), err)
+
+	// QueryRowContext via reader.
+	var val string
+	row := store.db.QueryRowContext(ctx, `SELECT val FROM test_split WHERE id = 1`)
+	require.NoError(s.T(), row.Scan(&val))
+	require.Equal(s.T(), "hello", val)
+
+	// QueryContext via reader.
+	rows, err := store.db.QueryContext(ctx, `SELECT val FROM test_split`)
+	require.NoError(s.T(), err)
+	defer rows.Close()
+	require.True(s.T(), rows.Next())
+	require.NoError(s.T(), rows.Scan(&val))
+	require.Equal(s.T(), "hello", val)
+}
+
+func (s *StoreSuite) TestSplitDBCloseWriterError() {
+	writerDB, writerMock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	readerDB, readerMock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+
+	writerMock.ExpectClose().WillReturnError(sql.ErrConnDone)
+	readerMock.ExpectClose()
+
+	sdb := &splitDB{writer: writerDB, reader: readerDB}
+	store := &SQLiteStore{db: sdb}
+	err = store.Close()
+	require.ErrorIs(s.T(), err, sql.ErrConnDone)
 }
 
 // --- Helper tests ---

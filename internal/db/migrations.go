@@ -153,6 +153,7 @@ var migrations = []migration{
 	sqlMigration(`UPDATE channels SET name = REPLACE(name, '🧵 ', '') WHERE name LIKE '🧵 %' AND platform = 'local'`),
 	sqlMigration(`UPDATE channels SET name = REPLACE(name, '🧵 ', '⏱ ') WHERE name LIKE '🧵 %'`),
 	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN worktree INTEGER NOT NULL DEFAULT 0`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_type_next_run ON scheduled_tasks(type, next_run_at)`),
 }
 
 // RunMigrations executes all pending schema migrations.

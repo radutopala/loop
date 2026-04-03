@@ -1,4 +1,4 @@
-.PHONY: help build install test test-integration lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-install app-build-binary app-dist-linux app-icons
+.PHONY: help build install test test-integration test-component lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-install app-build-binary app-dist-linux app-icons
 .DEFAULT_GOAL := help
 
 help: ## Show available targets
@@ -24,6 +24,13 @@ test: ## Run all tests
 
 test-integration: ## Run integration tests (requires tokens in ~/.loop/config.integration.json)
 	go test -v -tags integration -race -count=1 -timeout 10m ./internal/slack/ ./internal/discord/
+
+test-component: ## Run component performance tests (via Docker on host, natively in CI)
+	@if [ "$$CI" = "true" ] || [ -f /.dockerenv ]; then \
+		bash scripts/test-component.sh; \
+	else \
+		docker run --rm -v "$$(pwd)":/app -w /app golang:1.26 bash scripts/test-component.sh; \
+	fi
 
 lint: ## Run golangci-lint (with auto-fix)
 	docker run --rm --name loop-lint -v "$$(pwd)":/app -v /app/app/node_modules -w /app golangci/golangci-lint:v2.11.4 golangci-lint run -v --fix ./...

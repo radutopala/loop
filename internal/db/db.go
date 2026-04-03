@@ -52,9 +52,46 @@ type Store interface {
 	Close() error
 }
 
+// dbConn abstracts the database methods used by SQLiteStore so that reads and
+// writes can be routed to separate connections.
+type dbConn interface {
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	Close() error
+}
+
+// splitDB routes reads to a pooled reader and writes to a single-connection
+// writer. SQLite WAL mode supports concurrent readers with one writer.
+type splitDB struct {
+	writer *sql.DB
+	reader *sql.DB
+}
+
+func (s *splitDB) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	return s.writer.ExecContext(ctx, query, args...)
+}
+
+func (s *splitDB) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	return s.reader.QueryContext(ctx, query, args...)
+}
+
+func (s *splitDB) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return s.reader.QueryRowContext(ctx, query, args...)
+}
+
+func (s *splitDB) Close() error {
+	err1 := s.writer.Close()
+	err2 := s.reader.Close()
+	if err1 != nil {
+		return err1
+	}
+	return err2
+}
+
 // SQLiteStore implements Store using SQLite.
 type SQLiteStore struct {
-	db      *sql.DB
+	db      dbConn
 	nowFunc func() time.Time
 }
 
@@ -64,23 +101,36 @@ func NewSQLiteStore(dsn string) (*SQLiteStore, error) {
 }
 
 func newSQLiteStoreWith(openFunc func(string, string) (*sql.DB, error), dsn string) (*SQLiteStore, error) {
-	sqlDB, err := openFunc("sqlite", dsn)
+	writer, err := openFunc("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("opening database: %w", err)
 	}
+	// Single writer connection: serializes writes and ensures PRAGMAs stick.
+	writer.SetMaxOpenConns(1)
 
-	if err := initDB(sqlDB); err != nil {
-		sqlDB.Close()
+	if err := initDB(writer); err != nil {
+		writer.Close()
 		return nil, err
 	}
 
-	return &SQLiteStore{db: sqlDB, nowFunc: func() time.Time { return time.Now().UTC() }}, nil
+	reader, err := openFunc("sqlite", dsn)
+	if err != nil {
+		writer.Close()
+		return nil, fmt.Errorf("opening reader database: %w", err)
+	}
+
+	db := &splitDB{writer: writer, reader: reader}
+	return &SQLiteStore{db: db, nowFunc: func() time.Time { return time.Now().UTC() }}, nil
 }
 
 // initDB configures pragmas and runs migrations on an open database connection.
 func initDB(sqlDB *sql.DB) error {
 	if _, err := sqlDB.Exec("PRAGMA journal_mode=WAL"); err != nil {
 		return fmt.Errorf("enabling WAL mode: %w", err)
+	}
+
+	if _, err := sqlDB.Exec("PRAGMA busy_timeout=5000"); err != nil {
+		return fmt.Errorf("setting busy timeout: %w", err)
 	}
 
 	if _, err := sqlDB.Exec("PRAGMA foreign_keys=ON"); err != nil {

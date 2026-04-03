@@ -73,6 +73,16 @@ jobs:
       - name: Run Windows terminal tests
         run: go test -race -count=1 -v ./internal/terminal/
 
+  perf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: Run component performance tests
+        run: make test-component
+
   electron-typecheck:
     runs-on: ubuntu-latest
     steps:
