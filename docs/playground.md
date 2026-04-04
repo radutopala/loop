@@ -40,7 +40,7 @@ The panel toolbar shows a dropdown selector when multiple playgrounds exist. Whe
 
 ## Panel
 
-**Component:** `app/src/components/PlaygroundPanel.tsx`
+**Component:** `app/src/components/panels/PlaygroundPanel.tsx`
 
 The playground renders agent-generated code in a sandboxed `<iframe>` with `sandbox="allow-scripts"`. This provides process isolation — the playground code cannot access the parent page or the Loop API.
 

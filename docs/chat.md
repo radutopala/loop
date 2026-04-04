@@ -8,7 +8,7 @@ Related docs: [Layouts](layouts.md) | [Sidebar](sidebar.md) | [Settings](setting
 
 ## Architecture
 
-The `ChatView` component (`src/components/ChatView.tsx`) receives a `ChatState` object as props. The state is managed by the `useChatState` hook, which is hoisted in `WorkspaceLayout` so the WebSocket connection and messages persist across layout tab switches. See [Layouts - Chat State Hoisting](layouts.md#chat-state-hoisting).
+The `ChatView` component (`src/components/chat/ChatView.tsx`) receives a `ChatState` object as props. The state is managed by the `useChatState` hook, which is hoisted in `WorkspaceLayout` so the WebSocket connection and messages persist across layout tab switches. See [Layouts - Chat State Hoisting](layouts.md#chat-state-hoisting).
 
 ### ChatState Interface
 

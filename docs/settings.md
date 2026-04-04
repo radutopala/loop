@@ -8,7 +8,7 @@ Related docs: [Desktop App](desktop-app.md) | [Sidebar](sidebar.md) | [Editor](e
 
 ## Settings Panel
 
-The Settings panel (`src/components/Settings.tsx`) opens as a full-width overlay that replaces the workspace layout. It can be opened from:
+The Settings panel (`src/components/shared/Settings.tsx`) opens as a full-width overlay that replaces the workspace layout. It can be opened from:
 - Sidebar footer "Settings" button
 - macOS app menu "Settings..." item (`Cmd+,`)
 - Keyboard shortcut `Cmd+,` / `Ctrl+,`
@@ -187,7 +187,7 @@ The settings panel includes a header bar matching the workspace layout header:
 
 ## Command Palette
 
-The Command Palette (`src/components/CommandPalette.tsx`) is a spotlight-style search overlay for quick navigation to channels, threads, and messages.
+The Command Palette (`src/components/shared/CommandPalette.tsx`) is a spotlight-style search overlay for quick navigation to channels, threads, and messages.
 
 ### Opening
 

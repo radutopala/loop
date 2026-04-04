@@ -8,7 +8,7 @@ Related docs: [Layouts](layouts.md) | [Desktop App](desktop-app.md)
 
 ## Architecture
 
-The `EditorPanel` component (`src/components/EditorPanel.tsx`) combines:
+The `EditorPanel` component (`src/components/panels/EditorPanel.tsx`) combines:
 - A resizable **file tree sidebar** on the left
 - A **tab bar** for open files
 - A **CodeMirror 6 editor** for the active file
