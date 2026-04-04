@@ -387,18 +387,24 @@ Create a new scheduled task.
   "type": "cron",
   "prompt": "Summarize today's PRs",
   "template_name": "daily-summary",
-  "auto_delete_sec": 3600
+  "auto_delete_sec": 3600,
+  "worktree": true,
+  "origin_branch": "main",
+  "update_before_run": true
 }
 ```
 
-| Field            | Type   | Required | Description |
-|------------------|--------|----------|-------------|
-| `channel_id`     | string | yes      | Channel to run the task in |
-| `schedule`        | string | yes      | Cron expression, Go duration, or RFC3339 timestamp |
-| `type`           | string | yes      | `cron`, `interval`, or `once` |
-| `prompt`         | string | yes      | Prompt text for the agent |
-| `template_name`  | string | no       | Template identifier for deduplication |
-| `auto_delete_sec` | int   | no       | Auto-delete thread after N seconds |
+| Field              | Type   | Required | Description |
+|--------------------|--------|----------|-------------|
+| `channel_id`       | string | yes      | Channel to run the task in |
+| `schedule`         | string | yes      | Cron expression, Go duration, or RFC3339 timestamp |
+| `type`             | string | yes      | `cron`, `interval`, or `once` |
+| `prompt`           | string | yes      | Prompt text for the agent |
+| `template_name`    | string | no       | Template identifier for deduplication |
+| `auto_delete_sec`  | int    | no       | Auto-delete thread after N seconds |
+| `worktree`         | bool   | no       | Run the agent in an isolated git worktree |
+| `origin_branch`    | string | no       | Base branch for worktree tasks. Auto-detected on first run if omitted. |
+| `update_before_run`| bool   | no       | Prepend git fetch/rebase instructions to the prompt before each run |
 
 **Response (201):**
 ```json
@@ -429,7 +435,11 @@ List tasks for a channel.
     "enabled": true,
     "next_run_at": "2026-01-02T09:00:00Z",
     "template_name": "daily-summary",
-    "auto_delete_sec": 3600
+    "auto_delete_sec": 3600,
+    "worktree": true,
+    "origin_branch": "main",
+    "update_before_run": true,
+    "thread_id": "thread_abc123"
   }
 ]
 ```
@@ -475,7 +485,10 @@ Update one or more fields of a scheduled task. At least one field must be provid
   "schedule": "0 10 * * *",
   "type": "cron",
   "prompt": "Updated prompt",
-  "auto_delete_sec": 7200
+  "auto_delete_sec": 7200,
+  "worktree": true,
+  "origin_branch": "develop",
+  "update_before_run": true
 }
 ```
 

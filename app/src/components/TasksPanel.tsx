@@ -129,7 +129,7 @@ export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
         prompt: newPrompt,
         worktree: newWorktree,
         origin_branch: newOriginBranch || undefined,
-        update_before_run: newUpdateBeforeRun || undefined,
+        update_before_run: newUpdateBeforeRun,
         auto_delete_sec: newAutoDelete,
       });
       setShowCreate(false);

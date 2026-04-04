@@ -246,6 +246,8 @@ The `TaskExecutor` handles scheduled task runs. It follows a similar pattern to 
 3. **Ephemeral detection** -- If `AutoDeleteSec > 0`, the agent is instructed via system prompt that responses starting with `[EPHEMERAL]` indicate nothing meaningful to report. Ephemeral threads are renamed with a different emoji and auto-deleted after the configured delay.
 4. **Permission user invites** -- All owner and member users from the channel's permissions are invited to the task thread.
 5. **Channel event** -- A `channel.created` event is broadcast so the Electron sidebar refreshes.
+6. **Stop button support** -- The executor registers `runCancel` in the orchestrator's shared `activeRuns` map before calling `runner.Run`, and defers cleanup on return. This allows the `/loop stop` command and the Electron stop button to cancel a running task. On the local platform, subsequent runs (where the thread already exists) register under the thread's channel ID so the stop button in the thread view targets the correct container. Discord/Slack runs register under the parent channel ID.
+7. **Thread-routed status events** -- For subsequent runs on the local platform, `agent.status` events include `thread_id` in the payload. The frontend routes the running/completed/error state to the thread's store entry (not the parent), so the parent channel doesn't show a running indicator for thread work.
 
 ## Related Documentation
 
