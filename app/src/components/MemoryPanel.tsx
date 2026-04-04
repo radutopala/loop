@@ -1,18 +1,11 @@
-import "@fontsource/jetbrains-mono/400.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from "@codemirror/view";
-import { EditorState, Compartment } from "@codemirror/state";
-import { defaultKeymap, indentWithTab, history, historyKeymap } from "@codemirror/commands";
-import { search, searchKeymap } from "@codemirror/search";
-import { bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
-import { markdown } from "@codemirror/lang-markdown";
-import { marked } from "marked";
-import { fonts } from "../theme";
+import { type EditorView } from "@codemirror/view";
 import { useTheme } from "../ThemeContext";
 import { fetchMemoryFiles, fetchMemoryFileContent, saveMemoryFileContent, type MemoryFileInfo } from "../api/loopApi";
 import { fetchGlobalConfig } from "../api/configApi";
-import { FilePanel, buildMarkdownStyles } from "./FilePanel";
-import { buildEditorTheme } from "./editorTheme";
+import { FilePanel } from "./FilePanel";
+import { MemoryFileList, type TreeNode } from "./MemoryFileList";
+import { MemoryFileViewer } from "./MemoryFileViewer";
 
 const TREE_MIN_WIDTH = 120;
 const TREE_MAX_WIDTH = 400;
@@ -59,19 +52,6 @@ function saveTabs(channelId: string, state: TabsState) {
   } catch { /* ignore */ }
 }
 
-// ── File icon (matches EditorPanel style for .md) ──
-
-function MemoryFileIcon() {
-  const color = "#519aba"; // .md color from EditorPanel
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
-      <polyline points="14 2 14 8 20 8" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
-      <text x="12" y="18" textAnchor="middle" fill={color} fontSize="7" fontWeight="bold" fontFamily={fonts.mono}>M</text>
-    </svg>
-  );
-}
-
 interface MemoryPanelProps {
   channelId: string;
   dirPath: string;
@@ -88,7 +68,7 @@ interface MemoryPanelProps {
 }
 
 export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFile, ...panelProps }: MemoryPanelProps) {
-  const { colors, fontSizes } = useTheme();
+  const { colors } = useTheme();
   const [files, setFiles] = useState<MemoryFileInfo[]>([]);
   const [loading, setLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
@@ -102,17 +82,10 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
   const [contentError, setContentError] = useState<string | null>(null);
   const [dirtyTabs, setDirtyTabs] = useState<Set<string>>(new Set());
   const [previewTab, setPreviewTab] = useState<string | null>(null);
-  const [previewMode, setPreviewMode] = useState<"editor" | "both" | "preview">("editor");
-  const [previewHtml, setPreviewHtml] = useState("");
   const [autoSaveOnBlur, setAutoSaveOnBlur] = useState(false);
   const [previewTabsEnabled, setPreviewTabsEnabled] = useState(true);
 
-  const editorRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const previewRef = useRef<HTMLDivElement>(null);
-  const themeCompartment = useRef(new Compartment());
-  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scrollSyncSource = useRef<"editor" | "preview" | null>(null);
   const selectedPathRef = useRef(selectedPath);
   selectedPathRef.current = selectedPath;
   const dirtyTabsRef = useRef(dirtyTabs);
@@ -211,14 +184,6 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId]);
 
-  const updatePreview = useCallback((doc: string) => {
-    if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
-    previewTimerRef.current = setTimeout(() => {
-      previewTimerRef.current = null;
-      setPreviewHtml(marked.parse(doc, { async: false }) as string);
-    }, 300);
-  }, []);
-
   const switchToTab = useCallback((path: string) => {
     const curPath = selectedPathRef.current;
     if (curPath && dirtyTabsRef.current.has(curPath)) {
@@ -306,104 +271,6 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Mount/update CodeMirror editor.
-  useEffect(() => {
-    if (!editorRef.current || fileContent === null) {
-      if (viewRef.current) {
-        viewRef.current.destroy();
-        viewRef.current = null;
-      }
-      return;
-    }
-
-    if (viewRef.current) {
-      viewRef.current.destroy();
-      viewRef.current = null;
-    }
-
-    const extensions = [
-      lineNumbers(),
-      highlightActiveLine(),
-      highlightActiveLineGutter(),
-      drawSelection(),
-      EditorView.lineWrapping,
-      bracketMatching(),
-      foldGutter(),
-      history(),
-      search({ top: true }),
-      markdown(),
-      themeCompartment.current.of(buildEditorTheme(colors, fontSizes.panels)),
-      keymap.of([
-        ...defaultKeymap,
-        ...historyKeymap,
-        ...foldKeymap,
-        ...searchKeymap,
-        indentWithTab,
-      ]),
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
-          markDirty();
-          updatePreview(update.state.doc.toString());
-        }
-      }),
-    ];
-
-    const state = EditorState.create({
-      doc: fileContent,
-      extensions,
-    });
-
-    const view = new EditorView({
-      state,
-      parent: editorRef.current,
-    });
-
-    viewRef.current = view;
-    setPreviewHtml(marked.parse(fileContent, { async: false }) as string);
-
-    // Sync editor scroll → preview.
-    const scroller = editorRef.current;
-    const onEditorScroll = () => {
-      if (scrollSyncSource.current === "preview" || !scroller) return;
-      scrollSyncSource.current = "editor";
-      const el = previewRef.current;
-      if (el) {
-        const pct = scroller.scrollTop / Math.max(1, scroller.scrollHeight - scroller.clientHeight);
-        el.scrollTop = pct * (el.scrollHeight - el.clientHeight);
-      }
-      requestAnimationFrame(() => { scrollSyncSource.current = null; });
-    };
-    scroller?.addEventListener("scroll", onEditorScroll);
-
-    return () => {
-      scroller?.removeEventListener("scroll", onEditorScroll);
-      view.destroy();
-      viewRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileContent, selectedPath]);
-
-  // Reconfigure theme when palette changes.
-  useEffect(() => {
-    if (viewRef.current) {
-      viewRef.current.dispatch({
-        effects: themeCompartment.current.reconfigure(buildEditorTheme(colors, fontSizes.panels)),
-      });
-    }
-  }, [colors, fontSizes.panels]);
-
-  // Cmd+S keyboard shortcut.
-  useEffect(() => {
-    const onKeyDown = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key === "s") {
-        e.preventDefault();
-        saveAllDirty();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [saveAllDirty]);
-
   // Save on blur, reload on focus.
   useEffect(() => {
     const onBlur = () => { if (autoSaveOnBlur) saveAllDirty(); };
@@ -418,7 +285,6 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
         if (content !== current) {
           view.dispatch({ changes: { from: 0, to: current.length, insert: content } });
           setDirtyTabs((prev) => { if (!prev.has(path)) return prev; const next = new Set(prev); next.delete(path); return next; });
-          setPreviewHtml(marked.parse(content, { async: false }) as string);
         }
       }).catch(() => {});
     };
@@ -503,8 +369,6 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
     });
   }, []);
 
-  const fileName = (path: string) => path.split("/").pop() || path;
-
   return (
     <FilePanel title="Memory" dirPath={dirPath} branch={branch} noPadding={!loading && files.length > 0} embedded={embedded} {...panelProps}>
       {listError && (
@@ -518,310 +382,36 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
       )}
       {!loading && files.length > 0 && (
         <div style={{ display: "flex", height: "100%", userSelect: treeResizing ? "none" : undefined }}>
-          {/* File tree — matches EditorPanel style */}
-          <div
-            style={{
-              width: treeWidth,
-              minWidth: TREE_MIN_WIDTH,
-              maxWidth: TREE_MAX_WIDTH,
-              overflow: "auto",
-              flexShrink: 0,
-              display: "flex",
-              flexDirection: "column",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", padding: "4px 8px 2px", flexShrink: 0 }}>
-              <span style={{ flex: 1, fontSize: 10, fontWeight: 700, color: colors.textDim, textTransform: "uppercase", letterSpacing: 1 }}>Files</span>
-              <button
-                onClick={loadFiles}
-                title="Refresh files"
-                style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: 0, lineHeight: 1, display: "flex", alignItems: "center" }}
-                onMouseEnter={(e) => { e.currentTarget.style.color = colors.textLight; }}
-                onMouseLeave={(e) => { e.currentTarget.style.color = colors.textDim; }}
-              >
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="23 4 23 10 17 10" />
-                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
-                </svg>
-              </button>
-            </div>
-            <div style={{ flex: 1, overflow: "auto", padding: "2px 0" }}>
-              {tree.map((root) => (
-                <MemoryTreeNode
-                  key={root.key}
-                  node={root}
-                  depth={0}
-                  expandedDirs={expandedDirs}
-                  selectedPath={selectedPath}
-                  onDirToggle={handleDirToggle}
-                  onFileClick={handleFileClick}
-                  onFileDoubleClick={handleFileDoubleClick}
-                />
-              ))}
-            </div>
-          </div>
-          {/* Tree resize handle */}
-          <div
-            onMouseDown={handleTreeResize}
-            style={{
-              width: 4,
-              cursor: "col-resize",
-              backgroundColor: treeResizing ? colors.textDim : "transparent",
-              flexShrink: 0,
-              borderRight: `1px solid ${colors.border}`,
-            }}
-            onMouseEnter={(e) => { (e.currentTarget as HTMLDivElement).style.backgroundColor = colors.textDim; }}
-            onMouseLeave={(e) => { if (!treeResizing) (e.currentTarget as HTMLDivElement).style.backgroundColor = "transparent"; }}
+          <MemoryFileList
+            tree={tree}
+            treeWidth={treeWidth}
+            treeMinWidth={TREE_MIN_WIDTH}
+            treeMaxWidth={TREE_MAX_WIDTH}
+            treeResizing={treeResizing}
+            expandedDirs={expandedDirs}
+            selectedPath={selectedPath}
+            onLoadFiles={loadFiles}
+            onTreeResize={handleTreeResize}
+            onDirToggle={handleDirToggle}
+            onFileClick={handleFileClick}
+            onFileDoubleClick={handleFileDoubleClick}
           />
-          {/* Editor area (tabs + content) */}
-          <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar }}>
-            {/* Tab bar */}
-            {openTabs.length > 0 && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  borderBottom: `1px solid ${colors.border}`,
-                  flexShrink: 0,
-                  overflow: "auto",
-                }}
-              >
-                <div style={{ display: "flex", alignItems: "center", flex: 1, minWidth: 0 }}>
-                  {openTabs.map((path) => {
-                    const isActive = path === selectedPath;
-                    const isDirty = dirtyTabs.has(path);
-                    const isPreview = path === previewTab;
-                    const name = fileName(path);
-                    return (
-                      <button
-                        key={path}
-                        onClick={() => { if (!isActive) switchToTab(path); }}
-                        onDoubleClick={() => { if (isPreview) setPreviewTab(null); }}
-                        title={path}
-                        style={{
-                          display: "flex",
-                          alignItems: "center",
-                          gap: 4,
-                          padding: "5px 8px",
-                          border: "none",
-                          borderRight: `1px solid ${colors.border}`,
-                          borderBottom: isActive ? `2px solid ${colors.active}` : "2px solid transparent",
-                          background: isActive ? colors.sidebar : "transparent",
-                          color: isActive ? colors.textLight : colors.textDim,
-                          cursor: "pointer",
-                          fontSize: 11,
-                          fontFamily: fonts.mono,
-                          whiteSpace: "nowrap",
-                          flexShrink: 0,
-                        }}
-                        onMouseEnter={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-                        onMouseLeave={(e) => { if (!isActive) e.currentTarget.style.backgroundColor = "transparent"; }}
-                      >
-                        <MemoryFileIcon />
-                        <span style={{ fontStyle: isPreview || isDirty ? "italic" : undefined }}>{name}</span>
-                        <span
-                          onClick={(e) => handleCloseTab(path, e)}
-                          style={{ marginLeft: 2, width: 8, height: 8, display: "flex", alignItems: "center", justifyContent: "center" }}
-                        >
-                          {isDirty ? (
-                            <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: colors.warning, display: "block" }} />
-                          ) : (
-                            <span
-                              style={{ opacity: 0.5, fontSize: 14, lineHeight: 1 }}
-                              onMouseEnter={(e) => { e.currentTarget.style.opacity = "1"; }}
-                              onMouseLeave={(e) => { e.currentTarget.style.opacity = "0.5"; }}
-                            >
-                              &times;
-                            </span>
-                          )}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-                {/* Preview mode pill */}
-                <div style={{ display: "flex", flexShrink: 0, margin: "0 6px", border: `1px solid ${colors.border}`, borderRadius: 4, overflow: "hidden" }}>
-                  {(["editor", "both", "preview"] as const).map((mode) => (
-                    <button
-                      key={mode}
-                      onClick={() => setPreviewMode(mode)}
-                      title={mode === "editor" ? "Editor only" : mode === "both" ? "Editor + Preview" : "Preview only"}
-                      style={{
-                        fontSize: 10,
-                        color: previewMode === mode ? colors.active : colors.textDim,
-                        background: previewMode === mode ? `${colors.active}18` : "none",
-                        border: "none",
-                        borderRight: mode !== "preview" ? `1px solid ${colors.border}` : undefined,
-                        cursor: "pointer",
-                        padding: "2px 6px",
-                        lineHeight: 1,
-                      }}
-                    >
-                      {mode === "editor" ? "Edit" : mode === "both" ? "Split" : "Preview"}
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-            {/* Editor content */}
-            {!selectedPath && (
-              <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Select a file</div>
-            )}
-            {selectedPath && contentError && (
-              <div style={{ padding: 16, color: colors.textDim, fontSize: 13, fontStyle: "italic" }}>File not available on disk</div>
-            )}
-            {selectedPath && !contentError && fileContent === null && (
-              <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Loading...</div>
-            )}
-            <div style={{ flex: 1, display: fileContent !== null ? "flex" : "none", overflow: "hidden" }}>
-              <div
-                ref={editorRef}
-                style={{
-                  flex: 1,
-                  overflow: "auto",
-                  display: previewMode === "preview" ? "none" : undefined,
-                }}
-              />
-              {previewMode !== "editor" && previewHtml && (
-                <>
-                  <div style={{ width: 1, backgroundColor: colors.border, flexShrink: 0 }} />
-                  <div
-                    ref={previewRef}
-                    className="readme-content"
-                    dangerouslySetInnerHTML={{ __html: previewHtml }}
-                    onScroll={() => {
-                      if (scrollSyncSource.current === "editor") return;
-                      scrollSyncSource.current = "preview";
-                      const el = previewRef.current;
-                      const ed = editorRef.current;
-                      if (el && ed) {
-                        const pct = el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight);
-                        ed.scrollTop = pct * (ed.scrollHeight - ed.clientHeight);
-                      }
-                      requestAnimationFrame(() => { scrollSyncSource.current = null; });
-                    }}
-                    style={{
-                      flex: 1,
-                      overflow: "auto",
-                      padding: "12px 16px",
-                      fontSize: 13,
-                      fontFamily: fonts.sans,
-                      color: colors.text,
-                      lineHeight: 1.7,
-                      backgroundColor: colors.sidebar,
-                    }}
-                  />
-                  <style>{buildMarkdownStyles(colors)}</style>
-                </>
-              )}
-            </div>
-          </div>
+          <MemoryFileViewer
+            selectedPath={selectedPath}
+            fileContent={fileContent}
+            contentError={contentError}
+            openTabs={openTabs}
+            dirtyTabs={dirtyTabs}
+            previewTab={previewTab}
+            viewRef={viewRef}
+            onSwitchToTab={switchToTab}
+            onCloseTab={handleCloseTab}
+            onSetPreviewTab={setPreviewTab}
+            onMarkDirty={markDirty}
+            onSaveAllDirty={saveAllDirty}
+          />
         </div>
       )}
     </FilePanel>
-  );
-}
-
-// ── Recursive tree node ──
-
-interface TreeNode {
-  name: string;
-  fullPath?: string;
-  children: TreeNode[];
-  isDir: boolean;
-  key: string;
-}
-
-function MemoryTreeNode({ node, depth, expandedDirs, selectedPath, onDirToggle, onFileClick, onFileDoubleClick }: {
-  node: TreeNode;
-  depth: number;
-  expandedDirs: Set<string>;
-  selectedPath: string | null;
-  onDirToggle: (key: string) => void;
-  onFileClick: (path: string) => void;
-  onFileDoubleClick: (path: string) => void;
-}) {
-  const { colors } = useTheme();
-  const isExpanded = expandedDirs.has(node.key);
-
-  if (node.isDir) {
-    return (
-      <div>
-        <button
-          onClick={() => onDirToggle(node.key)}
-          title={node.name}
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 4,
-            width: "max-content",
-            minWidth: "100%",
-            padding: `3px 8px 3px ${8 + depth * 16}px`,
-            border: "none",
-            background: "none",
-            color: colors.textLight,
-            cursor: "pointer",
-            fontSize: 12,
-            fontFamily: fonts.mono,
-            fontWeight: depth === 0 ? 700 : 400,
-            textAlign: "left",
-            whiteSpace: "nowrap",
-          }}
-          onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-          onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; }}
-        >
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ flexShrink: 0, opacity: 0.6, transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}>
-            <polyline points="3,1 7,5 3,9" />
-          </svg>
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.6 }}>
-            <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-          </svg>
-          {node.name}
-        </button>
-        {isExpanded && node.children.map((child) => (
-          <MemoryTreeNode
-            key={child.key}
-            node={child}
-            depth={depth + 1}
-            expandedDirs={expandedDirs}
-            selectedPath={selectedPath}
-            onDirToggle={onDirToggle}
-            onFileClick={onFileClick}
-            onFileDoubleClick={onFileDoubleClick}
-          />
-        ))}
-      </div>
-    );
-  }
-
-  const isSelected = node.fullPath === selectedPath;
-  return (
-    <button
-      onClick={() => { if (node.fullPath) onFileClick(node.fullPath); }}
-      onDoubleClick={() => { if (node.fullPath) onFileDoubleClick(node.fullPath); }}
-      title={node.fullPath}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 4,
-        width: "max-content",
-        minWidth: "100%",
-        padding: `3px 8px 3px ${8 + depth * 16}px`,
-        border: "none",
-        background: isSelected ? colors.selectedBg : "none",
-        color: isSelected ? colors.textLight : colors.text,
-        cursor: "pointer",
-        fontSize: 12,
-        fontFamily: fonts.mono,
-        textAlign: "left",
-        whiteSpace: "nowrap",
-      }}
-      onMouseEnter={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-      onMouseLeave={(e) => { if (!isSelected) e.currentTarget.style.backgroundColor = "transparent"; }}
-    >
-      <span style={{ width: 10, flexShrink: 0 }} />
-      <MemoryFileIcon />
-      {node.name}
-    </button>
   );
 }

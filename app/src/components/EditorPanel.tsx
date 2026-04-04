@@ -1,26 +1,13 @@
-import "@fontsource/jetbrains-mono/400.css";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from "@codemirror/view";
-import { EditorState, Compartment } from "@codemirror/state";
-import { defaultKeymap, indentWithTab, history, historyKeymap } from "@codemirror/commands";
-import { search, searchKeymap, openSearchPanel } from "@codemirror/search";
-import { bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
-import { javascript } from "@codemirror/lang-javascript";
-import { go } from "@codemirror/lang-go";
-import { python } from "@codemirror/lang-python";
-import { json } from "@codemirror/lang-json";
-import { markdown } from "@codemirror/lang-markdown";
-import { css } from "@codemirror/lang-css";
-import { html } from "@codemirror/lang-html";
-import { yaml } from "@codemirror/lang-yaml";
 import { marked } from "marked";
 import { fonts } from "../theme";
 import { useTheme } from "../ThemeContext";
 import { fetchFiles, fetchFileContent, saveFileContent, deleteFile, createDir, fetchRoots, updateExtraDirs, type FileEntry, type RootEntry } from "../api/loopApi";
 import { fetchGlobalConfig } from "../api/configApi";
-import { FilePanel, buildMarkdownStyles } from "./FilePanel";
+import { FilePanel } from "./FilePanel";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
-import { buildEditorTheme } from "./editorTheme";
+import { FileTree, FileIcon, makePathKey, parsePathKey, TREE_MIN_WIDTH, TREE_MAX_WIDTH, loadTreeWidth, saveTreeWidth } from "./EditorFileTree";
+import { CodeEditor, isMarkdownFile, type CodeEditorHandle } from "./CodeEditor";
 
 interface EditorPanelProps {
   channelId: string;
@@ -35,59 +22,6 @@ interface EditorPanelProps {
   onOpenPalette?: () => void;
   onToggleMaximize?: () => void;
   onClose: () => void;
-}
-
-function getLangExtension(filename: string) {
-  const ext = filename.split(".").pop()?.toLowerCase();
-  switch (ext) {
-    case "js": case "jsx": case "mjs": case "cjs":
-      return javascript();
-    case "ts": case "tsx":
-      return javascript({ typescript: true, jsx: ext.includes("x") });
-    case "go":
-      return go();
-    case "py":
-      return python();
-    case "json": case "jsonl":
-      return json();
-    case "md": case "mdx":
-      return markdown();
-    case "css": case "scss":
-      return css();
-    case "html": case "htm": case "svg":
-      return html();
-    case "yaml": case "yml":
-      return yaml();
-    default:
-      return null;
-  }
-}
-
-function isMarkdownFile(path: string): boolean {
-  const ext = path.split(".").pop()?.toLowerCase();
-  return ext === "md" || ext === "mdx";
-}
-
-function formatSize(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-const TREE_MIN_WIDTH = 120;
-const TREE_MAX_WIDTH = 500;
-const TREE_DEFAULT_WIDTH = 280;
-const TREE_WIDTH_KEY = "loop-editor-tree-width";
-
-function loadTreeWidth(): number {
-  try {
-    const stored = localStorage.getItem(TREE_WIDTH_KEY);
-    if (stored) {
-      const w = parseInt(stored, 10);
-      if (w >= TREE_MIN_WIDTH && w <= TREE_MAX_WIDTH) return w;
-    }
-  } catch { /* ignore */ }
-  return TREE_DEFAULT_WIDTH;
 }
 
 const EDITOR_TABS_KEY = "loop-editor-tabs";
@@ -120,24 +54,8 @@ function saveEditorTabs(channelId: string, state: EditorTabsState, key = EDITOR_
   } catch { /* ignore */ }
 }
 
-// ── Multi-root path key helpers ──
-// Internal path keys use "{rootIndex}:{relativePath}" to disambiguate across roots.
-// When there's only one root (index 0), the prefix is still present internally
-// but stripped for display / API calls.
-
-function makePathKey(rootIndex: number, relativePath: string): string {
-  return `${rootIndex}:${relativePath}`;
-}
-
-function parsePathKey(key: string): { rootIndex: number; relativePath: string } {
-  const colonIdx = key.indexOf(":");
-  if (colonIdx < 0) return { rootIndex: 0, relativePath: key };
-  const rootIndex = parseInt(key.substring(0, colonIdx), 10);
-  return { rootIndex: isNaN(rootIndex) ? 0 : rootIndex, relativePath: key.substring(colonIdx + 1) };
-}
-
 export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageKey, ...panelProps }: EditorPanelProps) {
-  const { colors, fontSizes } = useTheme();
+  const { colors } = useTheme();
   const tabsKey = tabsStorageKey ?? EDITOR_TABS_KEY;
   const [roots, setRoots] = useState<RootEntry[]>([]);
   const [expandedDirs, setExpandedDirs] = useState<Set<string>>(new Set([makePathKey(0, "")]));
@@ -164,12 +82,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; path: string; isDir: boolean } | null>(null);
   const [editorMenu, setEditorMenu] = useState<{ x: number; y: number } | null>(null);
 
-  const editorRef = useRef<HTMLDivElement>(null);
-  const viewRef = useRef<EditorView | null>(null);
-  const previewRef = useRef<HTMLDivElement>(null);
-  const themeCompartment = useRef(new Compartment());
-  const previewTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const scrollSyncSource = useRef<"editor" | "preview" | null>(null);
+  const codeEditorRef = useRef<CodeEditorHandle>(null);
   const selectedPathRef = useRef(selectedPath);
   selectedPathRef.current = selectedPath;
 
@@ -215,14 +128,12 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   const saveFile = useCallback((filePath?: string) => {
     const savePath = filePath ?? selectedPathRef.current;
     if (!savePath) return;
-    const view = viewRef.current;
+    const editor = codeEditorRef.current;
     // If saving a non-active tab we don't have its content — skip.
-    if (!view || savePath !== selectedPathRef.current) return;
-    let content = view.state.doc.toString();
-    if (content.length > 0 && !content.endsWith("\n")) {
-      content += "\n";
-      view.dispatch({ changes: { from: view.state.doc.length, insert: "\n" } });
-    }
+    if (!editor || savePath !== selectedPathRef.current) return;
+    editor.appendNewlineIfMissing();
+    const content = editor.getContent();
+    if (content === null) return;
     const { rootIndex: ri, relativePath: rp } = parsePathKey(savePath);
     saveFileContent(channelId, rp, content, ri).then(() => {
       dirtyContentRef.current.delete(savePath);
@@ -242,14 +153,6 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
     return () => { if (autoSaveOnBlurRef.current) saveAllDirty(); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [channelId]);
-
-  const updatePreview = useCallback((doc: string) => {
-    if (previewTimerRef.current) clearTimeout(previewTimerRef.current);
-    previewTimerRef.current = setTimeout(() => {
-      previewTimerRef.current = null;
-      setPreviewHtml(marked.parse(doc, { async: false }) as string);
-    }, 300);
-  }, []);
 
   // On mount: if we have a selected path, load it from server.
   useEffect(() => {
@@ -285,7 +188,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
 
     const onMouseUp = () => {
       setTreeResizing(false);
-      try { localStorage.setItem(TREE_WIDTH_KEY, String(lastWidth)); } catch { /* ignore */ }
+      saveTreeWidth(lastWidth);
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
     };
@@ -354,11 +257,11 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
         const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
         const result = await fetchFileContent(channelId, rp, ri);
         if (selectedPathRef.current !== pathKey || result.binary) return;
-        const view = viewRef.current;
-        if (!view) return;
-        const current = view.state.doc.toString();
-        if (result.content !== current) {
-          view.dispatch({ changes: { from: 0, to: current.length, insert: result.content } });
+        const editor = codeEditorRef.current;
+        if (!editor) return;
+        const current = editor.getContent();
+        if (current !== null && result.content !== current) {
+          editor.replaceContent(result.content);
           setDirtyTabs((prev) => { if (!prev.has(pathKey)) return prev; const next = new Set(prev); next.delete(pathKey); return next; });
         }
       } catch { /* file may have been deleted */ }
@@ -386,8 +289,11 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
     // Snapshot current dirty content before switching away.
     const curPath = selectedPathRef.current;
     if (curPath && dirtyTabsRef.current.has(curPath)) {
-      const view = viewRef.current;
-      if (view) dirtyContentRef.current.set(curPath, view.state.doc.toString());
+      const editor = codeEditorRef.current;
+      if (editor) {
+        const content = editor.getContent();
+        if (content !== null) dirtyContentRef.current.set(curPath, content);
+      }
       // Auto-save if enabled.
       if (autoSaveOnBlurRef.current) saveAllDirty();
     }
@@ -598,118 +504,6 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
     setEditorMenu({ x: e.clientX, y: e.clientY });
   }, []);
 
-  const getEditorMenuItems = useCallback((): MenuItem[] => {
-    const view = viewRef.current;
-    const items: MenuItem[] = [];
-    const hasSelection = view ? view.state.selection.main.from !== view.state.selection.main.to : false;
-    if (hasSelection) {
-      items.push({ label: "Copy", onClick: () => { if (view) { const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to); navigator.clipboard.writeText(sel); } } });
-      items.push({ label: "Cut", onClick: () => { if (view) { const sel = view.state.sliceDoc(view.state.selection.main.from, view.state.selection.main.to); navigator.clipboard.writeText(sel); view.dispatch({ changes: { from: view.state.selection.main.from, to: view.state.selection.main.to, insert: "" } }); } } });
-    }
-    items.push({ label: "Select All", separator: hasSelection, onClick: () => { if (view) view.dispatch({ selection: { anchor: 0, head: view.state.doc.length } }); } });
-    items.push({ label: "Find...", separator: true, onClick: () => { if (view) openSearchPanel(view); } });
-    return items;
-  }, []);
-
-  // Mount/update CodeMirror editor.
-  useEffect(() => {
-    if (!editorRef.current || fileContent === null || isBinary) {
-      if (viewRef.current) {
-        viewRef.current.destroy();
-        viewRef.current = null;
-      }
-      return;
-    }
-
-    if (viewRef.current) {
-      viewRef.current.destroy();
-      viewRef.current = null;
-    }
-
-    const extensions = [
-      lineNumbers(),
-      highlightActiveLine(),
-      highlightActiveLineGutter(),
-      drawSelection(),
-      EditorView.lineWrapping,
-      bracketMatching(),
-      foldGutter(),
-      history(),
-      search({ top: true }),
-      themeCompartment.current.of(buildEditorTheme(colors, fontSizes.editor)),
-      keymap.of([
-        ...defaultKeymap,
-        ...historyKeymap,
-        ...foldKeymap,
-        ...searchKeymap,
-        indentWithTab,
-      ]),
-      EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
-          markDirty();
-          if (selectedPathRef.current) {
-            const { relativePath: curRel } = parsePathKey(selectedPathRef.current);
-            if (isMarkdownFile(curRel)) {
-              updatePreview(update.state.doc.toString());
-            }
-          }
-        }
-      }),
-    ];
-
-    const lang = selectedRelPath ? getLangExtension(selectedRelPath) : null;
-    if (lang) extensions.push(lang);
-
-    const state = EditorState.create({
-      doc: fileContent,
-      extensions,
-    });
-
-    const view = new EditorView({
-      state,
-      parent: editorRef.current,
-    });
-
-    viewRef.current = view;
-
-    // Set initial markdown preview.
-    if (selectedRelPath && isMarkdownFile(selectedRelPath)) {
-      setPreviewHtml(marked.parse(fileContent, { async: false }) as string);
-    } else {
-      setPreviewHtml("");
-    }
-
-    // Sync editor scroll → preview.
-    const scroller = editorRef.current;
-    const onEditorScroll = () => {
-      if (scrollSyncSource.current === "preview" || !scroller) return;
-      scrollSyncSource.current = "editor";
-      const el = previewRef.current;
-      if (el) {
-        const pct = scroller.scrollTop / Math.max(1, scroller.scrollHeight - scroller.clientHeight);
-        el.scrollTop = pct * (el.scrollHeight - el.clientHeight);
-      }
-      requestAnimationFrame(() => { scrollSyncSource.current = null; });
-    };
-    scroller?.addEventListener("scroll", onEditorScroll);
-
-    return () => {
-      scroller?.removeEventListener("scroll", onEditorScroll);
-      view.destroy();
-      viewRef.current = null;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileContent, isBinary, selectedPath]);
-
-  // Reconfigure CodeMirror theme when the palette changes.
-  useEffect(() => {
-    if (viewRef.current) {
-      viewRef.current.dispatch({
-        effects: themeCompartment.current.reconfigure(buildEditorTheme(colors, fontSizes.editor)),
-      });
-    }
-  }, [colors, fontSizes.editor]);
-
   // Cmd+S keyboard shortcut — immediate save.
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
@@ -732,13 +526,11 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
       fetchFileContent(channelId, rp, ri).then((result) => {
         if (selectedPathRef.current !== pathKey) return;
         if (result.binary) return;
-        const view = viewRef.current;
-        if (!view) return;
-        const current = view.state.doc.toString();
-        if (result.content !== current) {
-          view.dispatch({
-            changes: { from: 0, to: current.length, insert: result.content },
-          });
+        const editor = codeEditorRef.current;
+        if (!editor) return;
+        const current = editor.getContent();
+        if (current !== null && result.content !== current) {
+          editor.replaceContent(result.content);
           setDirtyTabs((prev) => { if (!prev.has(pathKey)) return prev; const next = new Set(prev); next.delete(pathKey); return next; });
           if (isMarkdownFile(rp)) {
             setPreviewHtml(marked.parse(result.content, { async: false }) as string);
@@ -750,6 +542,10 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
     window.addEventListener("focus", onFocus);
     return () => { window.removeEventListener("blur", onBlur); window.removeEventListener("focus", onFocus); };
   }, [channelId, saveAllDirty, autoSaveOnBlur]);
+
+  const handlePreviewUpdate = useCallback((html: string) => {
+    setPreviewHtml(html);
+  }, []);
 
   return (
     <FilePanel title="Editor" dirPath={dirPath} branch={branch} noPadding embedded={embedded} {...panelProps}>
@@ -1063,62 +859,23 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
               )}
             </div>
           )}
-          {loading && (
-            <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Loading...</div>
-          )}
-          {error && (
-            <div style={{ padding: 16, color: colors.error, fontSize: 13 }}>{error}</div>
-          )}
-          {isBinary && (
-            <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>
-              Binary file ({formatSize(binarySize)})
-            </div>
-          )}
-          {!selectedPath && !loading && (
-            <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>Select a file</div>
-          )}
-          <div style={{ flex: 1, display: fileContent !== null && !isBinary ? "flex" : "none", overflow: "hidden" }} onContextMenu={handleEditorContextMenu}>
-            <div
-              ref={editorRef}
-              style={{
-                flex: 1,
-                overflow: "auto",
-                display: isMd && previewMode === "preview" ? "none" : undefined,
-              }}
-            />
-            {isMd && previewMode !== "editor" && previewHtml && (
-              <>
-                <div style={{ width: 1, backgroundColor: colors.border, flexShrink: 0 }} />
-                <div
-                  ref={previewRef}
-                  className="readme-content"
-                  dangerouslySetInnerHTML={{ __html: previewHtml }}
-                  onScroll={() => {
-                    if (scrollSyncSource.current === "editor") return;
-                    scrollSyncSource.current = "preview";
-                    const el = previewRef.current;
-                    const ed = editorRef.current;
-                    if (el && ed) {
-                      const pct = el.scrollTop / Math.max(1, el.scrollHeight - el.clientHeight);
-                      ed.scrollTop = pct * (ed.scrollHeight - ed.clientHeight);
-                    }
-                    requestAnimationFrame(() => { scrollSyncSource.current = null; });
-                  }}
-                  style={{
-                    flex: 1,
-                    overflow: "auto",
-                    padding: "12px 16px",
-                    fontSize: 13,
-                    fontFamily: fonts.sans,
-                    color: colors.text,
-                    lineHeight: 1.7,
-                    backgroundColor: colors.sidebar,
-                  }}
-                />
-                <style>{buildMarkdownStyles(colors)}</style>
-              </>
-            )}
-          </div>
+          <CodeEditor
+            ref={codeEditorRef}
+            fileContent={fileContent}
+            isBinary={isBinary}
+            binarySize={binarySize}
+            selectedRelPath={selectedRelPath}
+            selectedPath={selectedPath}
+            loading={loading}
+            error={error}
+            previewMode={previewMode}
+            onDocChanged={markDirty}
+            onPreviewUpdate={handlePreviewUpdate}
+            editorMenu={editorMenu}
+            onEditorMenuClose={() => setEditorMenu(null)}
+            onEditorContextMenu={handleEditorContextMenu}
+            previewHtml={previewHtml}
+          />
         </div>
       </div>
       {contextMenu && (
@@ -1129,165 +886,6 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
           onClose={() => setContextMenu(null)}
         />
       )}
-      {editorMenu && (
-        <ContextMenu
-          x={editorMenu.x}
-          y={editorMenu.y}
-          items={getEditorMenuItems()}
-          onClose={() => setEditorMenu(null)}
-        />
-      )}
     </FilePanel>
-  );
-}
-
-// ── File Icons ──
-
-function fileIcon(name: string): { color: string; label: string } {
-  const ext = name.split(".").pop()?.toLowerCase() || "";
-  switch (ext) {
-    case "go": return { color: "#00add8", label: "Go" };
-    case "ts": case "tsx": return { color: "#3178c6", label: "TS" };
-    case "js": case "jsx": case "mjs": case "cjs": return { color: "#f7df1e", label: "JS" };
-    case "py": return { color: "#3776ab", label: "Py" };
-    case "rs": return { color: "#dea584", label: "Rs" };
-    case "json": case "jsonl": return { color: "#cbcb41", label: "{}" };
-    case "yaml": case "yml": return { color: "#cb171e", label: "Y" };
-    case "toml": return { color: "#9c4221", label: "T" };
-    case "md": case "mdx": return { color: "#519aba", label: "M" };
-    case "html": case "htm": return { color: "#e34c26", label: "<>" };
-    case "css": case "scss": case "less": return { color: "#563d7c", label: "#" };
-    case "svg": return { color: "#ffb13b", label: "S" };
-    case "sh": case "bash": case "zsh": return { color: "#89e051", label: "$" };
-    case "sql": return { color: "#e38c00", label: "Q" };
-    case "mod": return { color: "#00add8", label: "Go" };
-    case "sum": return { color: "#00add8", label: "Go" };
-    case "dockerfile": return { color: "#384d54", label: "D" };
-    case "makefile": return { color: "#6d8086", label: "M" };
-    case "txt": case "log": case "out": return { color: "#6d8086", label: "" };
-    case "png": case "jpg": case "jpeg": case "gif": case "webp": case "ico": return { color: "#a074c4", label: "I" };
-    default: break;
-  }
-  const lower = name.toLowerCase();
-  if (lower === "makefile") return { color: "#6d8086", label: "M" };
-  if (lower === "dockerfile") return { color: "#384d54", label: "D" };
-  if (lower === "license") return { color: "#d4930d", label: "L" };
-  if (lower.startsWith(".git")) return { color: "#f14e32", label: "G" };
-  if (lower.startsWith(".env")) return { color: "#ecd53f", label: "E" };
-  return { color: "", label: "" };
-}
-
-function FileIcon({ name }: { name: string }) {
-  const { colors } = useTheme();
-  const info = fileIcon(name);
-  const color = info.color || colors.textDim;
-  const label = info.label;
-  return (
-    <svg width="12" height="12" viewBox="0 0 24 24" style={{ flexShrink: 0 }}>
-      <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
-      <polyline points="14 2 14 8 20 8" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" opacity="0.7" />
-      {label && (
-        <text x="12" y="18" textAnchor="middle" fill={color} fontSize="7" fontWeight="bold" fontFamily={fonts.mono}>{label}</text>
-      )}
-    </svg>
-  );
-}
-
-// ── File Tree ──
-
-interface FileTreeProps {
-  entries: FileEntry[];
-  dirContents: Map<string, FileEntry[]>;
-  expandedDirs: Set<string>;
-  selectedPath: string | null;
-  previewTab: string | null;
-  selectedDir: string;
-  depth: number;
-  parentPath: string;
-  rootIndex: number;
-  onDirClick: (path: string) => void;
-  onFileClick: (path: string, entry: FileEntry) => void;
-  onFileDoubleClick: (path: string, entry: FileEntry) => void;
-  onContextMenu: (e: React.MouseEvent, path: string, isDir: boolean) => void;
-}
-
-function FileTree({ entries, dirContents, expandedDirs, selectedPath, previewTab, selectedDir, depth, parentPath, rootIndex, onDirClick, onFileClick, onFileDoubleClick, onContextMenu }: FileTreeProps) {
-  const { colors } = useTheme();
-  return (
-    <>
-      {entries.map((entry) => {
-        // parentPath is already a root-prefixed key (e.g. "0:" or "0:src").
-        // For children, strip the root prefix from parentPath to get the relative parent,
-        // then build the child relative path, then re-prefix.
-        const { relativePath: parentRel } = parsePathKey(parentPath);
-        const childRel = parentRel ? `${parentRel}/${entry.name}` : entry.name;
-        const pathKey = makePathKey(rootIndex, childRel);
-        const isDir = entry.type === "dir";
-        const isExpanded = expandedDirs.has(pathKey);
-        const isSelected = pathKey === selectedPath;
-        const isDirSelected = isDir && pathKey === selectedDir;
-
-        return (
-          <div key={pathKey}>
-            <button
-              onClick={() => isDir ? onDirClick(pathKey) : onFileClick(pathKey, entry)}
-              onDoubleClick={() => { if (!isDir) onFileDoubleClick(pathKey, entry); }}
-              onContextMenu={(e) => onContextMenu(e, pathKey, isDir)}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 4,
-                width: "max-content",
-                minWidth: "100%",
-                padding: `3px 8px 3px ${8 + depth * 16}px`,
-                border: "none",
-                background: isSelected ? colors.selectedBg : isDirSelected ? colors.dirSelectedBg : "none",
-                color: isSelected || isDirSelected ? colors.textLight : colors.text,
-                cursor: "pointer",
-                fontSize: 12,
-                fontFamily: fonts.mono,
-                textAlign: "left",
-                whiteSpace: "nowrap",
-              }}
-              onMouseEnter={(e) => { if (!isSelected && !isDirSelected) e.currentTarget.style.backgroundColor = colors.hoverBg; }}
-              onMouseLeave={(e) => { if (!isSelected && !isDirSelected) e.currentTarget.style.backgroundColor = "transparent"; }}
-            >
-              {isDir ? (
-                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" style={{ flexShrink: 0, opacity: 0.6, transform: isExpanded ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}>
-                  <polyline points="3,1 7,5 3,9" />
-                </svg>
-              ) : (
-                <span style={{ width: 10, flexShrink: 0 }} />
-              )}
-              {isDir ? (
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0, opacity: 0.6 }}>
-                  <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
-                </svg>
-              ) : (
-                <FileIcon name={entry.name} />
-              )}
-              {entry.name}
-            </button>
-            {isDir && isExpanded && dirContents.has(pathKey) && (
-              <FileTree
-                entries={dirContents.get(pathKey)!}
-                dirContents={dirContents}
-                expandedDirs={expandedDirs}
-                selectedPath={selectedPath}
-                previewTab={previewTab}
-                selectedDir={selectedDir}
-                depth={depth + 1}
-                parentPath={pathKey}
-                rootIndex={rootIndex}
-                onDirClick={onDirClick}
-                onFileClick={onFileClick}
-                onFileDoubleClick={onFileDoubleClick}
-                onContextMenu={onContextMenu}
-              />
-            )}
-          </div>
-        );
-      })}
-    </>
   );
 }

@@ -1,4 +1,4 @@
-import { getApiUrl } from "./loopApi";
+import { getApiUrl } from "./api";
 
 // ── Schema types ──
 
