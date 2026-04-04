@@ -4023,6 +4023,17 @@ func (s *OrchestratorSuite) TestActiveChatChannelIDs() {
 	require.True(s.T(), ok2)
 }
 
+func (s *OrchestratorSuite) TestActiveRunsMapReturnsSharedMap() {
+	m := s.orch.ActiveRunsMap()
+	require.NotNil(s.T(), m)
+	// Verify it's the same underlying map.
+	m.Store("test-ch", context.CancelFunc(func() {}))
+	ids := s.orch.ActiveChatChannelIDs()
+	_, ok := ids["test-ch"]
+	require.True(s.T(), ok, "ActiveRunsMap should return the orchestrator's activeRuns")
+	m.Delete("test-ch")
+}
+
 func (s *OrchestratorSuite) TestCurrentConfigReloads() {
 	s.orch.cfg.Store(&config.Config{KeepMCPConfigs: false})
 	s.orch.configLoad = func() (*config.Config, error) {

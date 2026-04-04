@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -156,6 +157,72 @@ func (s *TaskExecutorSuite) TestRunnerError() {
 	require.Empty(s.T(), resp)
 
 	s.bot.AssertNotCalled(s.T(), "SendMessage", mock.Anything, mock.Anything)
+}
+
+func (s *TaskExecutorSuite) TestActiveRunsRegisteredDuringExecution() {
+	activeRuns := &sync.Map{}
+	s.executor.SetActiveRuns(activeRuns)
+
+	task := &db.ScheduledTask{
+		ID: 60, ChannelID: "ch-active", Prompt: "run", Type: db.TaskTypeCron, Schedule: "* * * * *",
+	}
+	s.store.On("GetChannel", s.ctx, "ch-active").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(60)).Return(&db.ScheduledTask{ID: 60, Type: db.TaskTypeCron}, nil)
+	s.store.On("UpdateSessionID", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.bot.On("SendMessage", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("InsertMessage", mock.Anything, mock.Anything).Return(nil)
+
+	registered := false
+	s.runner.On("Run", mock.Anything, mock.Anything).Run(func(_ mock.Arguments) {
+		// During execution, activeRuns should have our channel registered.
+		_, ok := activeRuns.Load("ch-active")
+		registered = ok
+	}).Return(&agent.AgentResponse{Response: "ok", SessionID: "s1"}, nil)
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.True(s.T(), registered, "activeRuns should have been set during execution")
+
+	// After execution, it should be cleaned up.
+	_, ok := activeRuns.Load("ch-active")
+	require.False(s.T(), ok, "activeRuns should be cleaned up after execution")
+}
+
+func (s *TaskExecutorSuite) TestActiveRunsStopCancelsTaskRun() {
+	activeRuns := &sync.Map{}
+	s.executor.SetActiveRuns(activeRuns)
+	s.executor.streamingEnabled.Store(true)
+
+	task := &db.ScheduledTask{
+		ID: 61, ChannelID: "ch-stop", Prompt: "long task",
+		Type: db.TaskTypeInterval, Schedule: "5m",
+		ThreadID: "stop-thread",
+	}
+	localCh := &db.Channel{ChannelID: "ch-stop", Platform: types.PlatformLocal}
+	s.store.On("GetChannel", mock.Anything, "ch-stop").Return(localCh, nil)
+	s.store.On("GetChannel", mock.Anything, "stop-thread").Return(&db.Channel{
+		ChannelID: "stop-thread", ParentID: "ch-stop", Platform: types.PlatformLocal, SessionID: "s-thread",
+	}, nil)
+	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
+
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+	allowStatusBroadcasts(eb)
+
+	// Simulate stop: during Run, cancel via activeRuns entry.
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.ChannelID == "stop-thread" // registered under thread
+	})).Run(func(args mock.Arguments) {
+		// Stop button: look up and call cancel under the thread ID.
+		val, ok := activeRuns.Load("stop-thread")
+		require.True(s.T(), ok, "should be registered under thread ID")
+		cancel := val.(context.CancelFunc)
+		cancel()
+	}).Return(nil, context.Canceled)
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "context canceled")
 }
 
 func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsStatus() {

@@ -120,6 +120,12 @@ func (o *Orchestrator) ActiveChatChannelIDs() map[string]struct{} {
 	return result
 }
 
+// ActiveRunsMap returns a pointer to the activeRuns sync.Map so the
+// TaskExecutor can register task runs for stop button support.
+func (o *Orchestrator) ActiveRunsMap() *sync.Map {
+	return &o.activeRuns
+}
+
 // SetEventBroadcaster configures the event broadcaster for real-time event streaming.
 func (o *Orchestrator) SetEventBroadcaster(eb events.Broadcaster) {
 	o.events = eb

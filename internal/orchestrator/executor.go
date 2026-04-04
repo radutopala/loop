@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -32,6 +33,7 @@ type TaskExecutor struct {
 	events           events.Broadcaster
 	timeAfterFunc    func(time.Duration, func()) *time.Timer
 	worktreeCreator  *worktree.Creator
+	activeRuns       *sync.Map // shared with Orchestrator for stop button support
 }
 
 // NewTaskExecutor creates a new TaskExecutor.
@@ -63,6 +65,12 @@ func (e *TaskExecutor) SetEventBroadcaster(eb events.Broadcaster) {
 // SetWorktreeCreator sets the worktree creator for tasks with worktree=true.
 func (e *TaskExecutor) SetWorktreeCreator(wc *worktree.Creator) {
 	e.worktreeCreator = wc
+}
+
+// SetActiveRuns sets the shared activeRuns map so task runs can be stopped
+// via the stop button. The map is shared with the Orchestrator.
+func (e *TaskExecutor) SetActiveRuns(m *sync.Map) {
+	e.activeRuns = m
 }
 
 // ExecuteTask runs an agent for the given scheduled task and sends the result to the chat platform.
@@ -330,6 +338,12 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 
 	runCtx, runCancel := context.WithTimeout(ctx, containerTimeout)
 	defer runCancel()
+
+	// Register cancel func so the stop button can cancel this task run.
+	if e.activeRuns != nil {
+		e.activeRuns.Store(req.ChannelID, runCancel)
+		defer e.activeRuns.Delete(req.ChannelID)
+	}
 
 	resp, err := e.runner.Run(runCtx, req)
 	if err != nil {

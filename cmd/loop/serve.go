@@ -503,6 +503,7 @@ func (a *app) serve() error {
 
 	orch := orchestrator.New(store, chatBot, runner, sched, logger, *cfg, config.Reload)
 	orch.SetEventBroadcaster(eventsHub)
+	executor.SetActiveRuns(orch.ActiveRunsMap())
 	apiSrv.SetIncomingMessageHandler(chatBot)
 	apiSrv.SetInteractionHandler(orch)
 	apiSrv.SetActiveChatLister(orch)
