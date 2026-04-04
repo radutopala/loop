@@ -202,16 +202,16 @@ export function useChatStateStore({
         }
       }
 
-      // Forward events to the chat listener (useChatState) when they
-      // target the selected channel — either directly or via thread_id.
-      if (channelId) {
-        if (channelId === selectedIdRef.current || stateTarget === selectedIdRef.current) {
-          chatListenerRef.current?.(wsEvent);
-        }
+      // Forward events to the chat listener (useChatState) when the
+      // effective target matches the selected channel. Using stateTarget
+      // (not channelId) ensures that agent.status events routed to a
+      // thread via thread_id don't set isRunning on the parent view.
+      if (stateTarget && stateTarget === selectedIdRef.current) {
+        chatListenerRef.current?.(wsEvent);
       }
 
       // Forward selected channel + global events to App-level handler.
-      if (!channelId || channelId === selectedIdRef.current || stateTarget === selectedIdRef.current) {
+      if (!channelId || stateTarget === selectedIdRef.current) {
         onAppEventRef.current(wsEvent);
       }
     }, []),

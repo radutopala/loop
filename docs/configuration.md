@@ -186,6 +186,8 @@ A built-in `"loop"` server is always added unless the user defines one with the 
 | `type` | `string` | One of `"cron"`, `"interval"`, `"once"`. |
 | `prompt` | `string` | Inline prompt text. Mutually exclusive with `prompt_path`. |
 | `prompt_path` | `string` | Path to a prompt file, resolved as `~/.loop/templates/{prompt_path}`. Mutually exclusive with `prompt`. |
+| `origin_branch` | `string` | Base branch for worktree tasks. If omitted, auto-detected from the parent repo on first run. |
+| `update_before_run` | `bool` | When `true`, prepends git fetch/rebase instructions to the prompt before each run. Default: `false`. |
 | `auto_delete_sec` | `int` | Seconds after execution to auto-delete the task's thread. `0` disables. |
 
 See [Task Scheduling](scheduling.md) for full details.

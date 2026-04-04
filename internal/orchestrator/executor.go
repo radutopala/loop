@@ -175,10 +175,15 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	if task.ThreadID != "" && task.Type != db.TaskTypeOnce {
 		threadID = task.ThreadID
 	}
-	// hasExistingThread is true when the thread was created by a previous run.
-	// Used to decide broadcast targets: subsequent runs only notify the parent
-	// (with thread_id set) so the frontend routes state to the thread.
-	hasExistingThread := threadID != ""
+	// hasExistingThread is true when the thread was created by a previous run
+	// on the local platform. For subsequent local runs, register the agent
+	// under the thread so the stop button in the thread view targets the
+	// correct container. Discord/Slack are left unchanged — their threads
+	// use platform-native delivery and don't have a local stop button.
+	hasExistingThread := threadID != "" && isLocal
+	if hasExistingThread {
+		req.ChannelID = threadID
+	}
 	if streamingEnabled {
 		tracker = newStreamTracker(func(text string) {
 			if threadID == "" && !threadFailed {
@@ -311,12 +316,15 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	// on the same channel (e.g. a scheduled task vs. a chat agent).
 	runID := randutil.HexID(8)
 
-	// Broadcast running status. For subsequent runs (thread already exists),
-	// only notify the parent with thread_id set — the frontend routes the state
-	// to the thread via thread_id so the parent doesn't show a running indicator.
-	// For first runs, broadcast to parent only (no thread yet).
+	// Broadcast running status. For subsequent runs, broadcast to both the
+	// thread (for direct subscribers) and the parent (with thread_id set, for
+	// subscription bootstrap). The frontend routes the parent event to the
+	// thread's store via thread_id so the parent doesn't show running state.
 	if e.events != nil {
 		status := events.AgentStatusEventData{Status: "running", RunID: runID, ThreadID: threadID}
+		if hasExistingThread {
+			e.events.BroadcastAgentStatus(threadID, status)
+		}
 		e.events.BroadcastAgentStatus(task.ChannelID, status)
 	}
 

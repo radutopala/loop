@@ -191,7 +191,10 @@ func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsToThreadAndParent() {
 	s.store.On("GetChannel", mock.Anything, "ch-parent").Return(localCh, nil)
 	s.store.On("GetChannel", mock.Anything, "existing-thread").Return(&db.Channel{ChannelID: "existing-thread", ParentID: "ch-parent", Platform: types.PlatformLocal, SessionID: "thread-sess"}, nil)
 	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
-	// Running: only to parent (with thread_id set) — no direct thread broadcast
+	// Running: to both thread and parent (with thread_id set)
+	eb.On("BroadcastAgentStatus", "existing-thread", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "running" && d.ThreadID == "existing-thread"
+	})).Once()
 	eb.On("BroadcastAgentStatus", "ch-parent", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
 		return d.Status == "running" && d.ThreadID == "existing-thread"
 	})).Once()
@@ -203,7 +206,9 @@ func (s *TaskExecutorSuite) TestRunnerErrorBroadcastsToThreadAndParent() {
 		return d.Status == "error" && d.ThreadID == "existing-thread"
 	})).Once()
 
-	s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("boom"))
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.ChannelID == "existing-thread" // agent registered under thread
+	})).Return(nil, errors.New("boom"))
 
 	_, err := s.executor.ExecuteTask(s.ctx, task)
 	require.Error(s.T(), err)
@@ -223,7 +228,10 @@ func (s *TaskExecutorSuite) TestAgentResponseErrorBroadcastsStatus() {
 	s.store.On("GetChannel", mock.Anything, "ch-err2").Return(localCh, nil)
 	s.store.On("GetChannel", mock.Anything, "err-thread").Return(&db.Channel{ChannelID: "err-thread", ParentID: "ch-err2", Platform: types.PlatformLocal, SessionID: "err-thread-sess"}, nil)
 	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
-	// Running: only to parent (with thread_id set)
+	// Running: to both thread and parent (with thread_id set)
+	eb.On("BroadcastAgentStatus", "err-thread", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "running" && d.ThreadID == "err-thread"
+	})).Once()
 	eb.On("BroadcastAgentStatus", "ch-err2", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
 		return d.Status == "running" && d.ThreadID == "err-thread"
 	})).Once()

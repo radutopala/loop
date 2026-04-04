@@ -155,7 +155,7 @@ Tasks with `worktree = true` run the agent in an isolated git worktree so change
 ### How It Works
 
 1. **First run** (no `thread_id` yet):
-   - The executor reads the current branch via `git rev-parse --abbrev-ref HEAD` in the channel's `dir_path`.
+   - The executor determines the base branch: if `origin_branch` is set on the task, that value is used; otherwise, the current branch is auto-detected via `git rev-parse --abbrev-ref HEAD` and persisted to `origin_branch` for future runs.
    - A new worktree is created at `{dir_path}/.worktrees/task-{id}-{hex}` on branch `worktree/task-{id}-{hex}`.
    - The worktree's `.loop/config.json` is seeded with `extra_dirs` pointing back to the parent project.
    - The parent channel's session file is copied so `--resume --fork-session` works.
@@ -163,6 +163,7 @@ Tasks with `worktree = true` run the agent in an isolated git worktree so change
 
 2. **Subsequent runs** (recurring tasks with existing `thread_id`):
    - The executor looks up the thread's channel record and reuses its `dir_path`, which already points to the worktree from the first run.
+   - If `update_before_run` is enabled and `origin_branch` is set, the executor prepends git update instructions to the user prompt: `git stash` → `git fetch origin {branch}` → `git rebase origin/{branch}` → `git stash pop`. This keeps the worktree up to date with the latest upstream changes.
 
 3. **Thread record**: The thread channel created on first run has `worktree = true` and its `dir_path` set to the worktree path.
 
@@ -197,13 +198,16 @@ Clicking `+` opens an inline form at the top of the task list with fields for:
 - **Schedule** expression (placeholder adapts to the selected type)
 - **Prompt** textarea
 - **Worktree** checkbox (only shown for non-worktree channels with a git repo)
+- **Origin branch** text field (shown when worktree is checked; leave blank for auto-detection)
+- **Update before run** checkbox (shown when worktree is checked; prepends git rebase instructions)
 - **Auto-delete** delay in seconds
 
 ### Task Detail View
 
 Selecting a task shows:
-- Task ID, type badge (color-coded), and worktree badge if enabled
+- Task ID, type badge (color-coded), worktree badge if enabled, and origin branch
 - Schedule expression and full prompt text
+- Update-before-run indicator when enabled
 - Next run time (relative) when enabled
 - Auto-delete delay when configured
 - **Enable/Disable** button to toggle the task
@@ -263,6 +267,8 @@ Templates are pre-defined task configurations in the global config. They allow q
 | `prompt` | Inline prompt text. |
 | `prompt_path` | File path resolved as `~/.loop/templates/{prompt_path}`. |
 | `worktree` | Run the agent in an isolated git worktree (default: `false`). |
+| `origin_branch` | Base branch for worktree tasks. Auto-detected from parent repo on first run if not set. |
+| `update_before_run` | When `true`, prepends git fetch/rebase instructions to the prompt before each run. |
 | `auto_delete_sec` | Auto-delete delay for the task's thread. |
 
 ### Prompt Resolution
@@ -297,10 +303,10 @@ All commands are available as slash commands (`/loop <command>`) and MCP tools.
 ### Create
 
 ```
-/loop schedule type:<cron|interval|once> schedule:<expression> prompt:<text> [worktree:<true|false>]
+/loop schedule type:<cron|interval|once> schedule:<expression> prompt:<text> [worktree:<true|false>] [origin_branch:<branch>] [update_before_run:<true|false>]
 ```
 
-Creates a new task. The scheduler calculates `next_run_at` and enables the task immediately. Set `worktree: true` to run the task in an isolated git worktree (see [Worktree Isolation](#worktree-isolation)).
+Creates a new task. The scheduler calculates `next_run_at` and enables the task immediately. Set `worktree: true` to run the task in an isolated git worktree (see [Worktree Isolation](#worktree-isolation)). Optionally set `origin_branch` to pin the base branch (otherwise auto-detected on first run) and `update_before_run: true` to prepend git rebase instructions before each execution.
 
 ### List
 
@@ -337,7 +343,7 @@ Flips a task's enabled state. Disabled tasks are skipped during poll cycles but 
 ### Edit
 
 ```
-/loop edit task_id:<id> [schedule:<expr>] [type:<type>] [prompt:<text>] [worktree:<true|false>]
+/loop edit task_id:<id> [schedule:<expr>] [type:<type>] [prompt:<text>] [worktree:<true|false>] [origin_branch:<branch>] [update_before_run:<true|false>]
 ```
 
 Updates one or more fields of an existing task. If `schedule` or `type` changes, `next_run_at` is recalculated. At least one field must be provided.
