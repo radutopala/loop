@@ -181,12 +181,14 @@ export function useChatStateStore({
             }
           }
           // For thread-routed events, also clear the parent's entry if it
-          // tracks the same run (bootstrapped from first-run running event).
-          // Require exact run_id match to avoid clearing a concurrent user
-          // run on the parent channel.
+          // tracks the same run (bootstrapped from first-run running event
+          // or seeded with "" by the channels-refresh effect on page reload).
+          // Exact run_id match guards against clearing a concurrent user run;
+          // empty-string match is safe because if the WS running event had
+          // arrived it would have replaced "" with the real run_id already.
           if (runTarget !== channelId) {
             const parentTracked = runMap.get(channelId);
-            if (parentTracked !== undefined && parentTracked === finishing) {
+            if (parentTracked !== undefined && (parentTracked === "" || parentTracked === finishing)) {
               runMap.delete(channelId);
             }
           }
