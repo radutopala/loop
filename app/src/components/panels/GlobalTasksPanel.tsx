@@ -95,6 +95,8 @@ export function GlobalTasksPanel({
   const [editType, setEditType] = useState<"cron" | "interval" | "once">("cron");
   const [editPrompt, setEditPrompt] = useState("");
   const [editWorktree, setEditWorktree] = useState(false);
+  const [editOriginBranch, setEditOriginBranch] = useState("");
+  const [editUpdateBeforeRun, setEditUpdateBeforeRun] = useState(false);
   const [editAutoDelete, setEditAutoDelete] = useState(0);
   const [runningNow, setRunningNow] = useState(false);
 
@@ -174,6 +176,7 @@ export function GlobalTasksPanel({
       setRunningNow(true);
       try {
         await runTaskNow(taskId);
+        setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, running: true } : t)));
         loadRuns(taskId);
       } catch {
         /* error will appear in run history */
@@ -189,6 +192,8 @@ export function GlobalTasksPanel({
     setEditType(task.type);
     setEditPrompt(task.prompt);
     setEditWorktree(task.worktree);
+    setEditOriginBranch(task.origin_branch || "");
+    setEditUpdateBeforeRun(task.update_before_run);
     setEditAutoDelete(task.auto_delete_sec);
     setEditing(true);
   }, []);
@@ -201,6 +206,8 @@ export function GlobalTasksPanel({
         type: editType,
         prompt: editPrompt,
         worktree: editWorktree,
+        origin_branch: editOriginBranch || undefined,
+        update_before_run: editUpdateBeforeRun,
         auto_delete_sec: editAutoDelete,
       });
       setEditing(false);
@@ -208,7 +215,7 @@ export function GlobalTasksPanel({
     } catch {
       /* ignore */
     }
-  }, [selectedId, editSchedule, editType, editPrompt, editWorktree, editAutoDelete, loadTasks]);
+  }, [selectedId, editSchedule, editType, editPrompt, editWorktree, editOriginBranch, editUpdateBeforeRun, editAutoDelete, loadTasks]);
 
   // Resizable divider
   const onMouseDown = useCallback(() => {
@@ -302,6 +309,7 @@ export function GlobalTasksPanel({
             <span title="Runs in worktree" style={{ fontSize: 11, flexShrink: 0 }}>wt</span>
           )}
           <div style={{ flex: 1 }} />
+          <span style={{ color: colors.textLight, fontSize: 10, flexShrink: 0 }}>#{task.id}</span>
           <button
             onClick={(e) => { e.stopPropagation(); handleToggle(task); }}
             title={task.enabled ? "Disable" : "Enable"}
@@ -394,11 +402,26 @@ export function GlobalTasksPanel({
             rows={5}
             style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
           />
-          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11, cursor: "pointer" }}>
               <input type="checkbox" checked={editWorktree} onChange={(e) => setEditWorktree(e.target.checked)} />
               Worktree
             </label>
+            {editWorktree && (
+              <>
+                <input
+                  type="text"
+                  placeholder="Origin branch (auto-detect)"
+                  value={editOriginBranch}
+                  onChange={(e) => setEditOriginBranch(e.target.value)}
+                  style={{ ...inputStyle, width: 150 }}
+                />
+                <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11, cursor: "pointer" }}>
+                  <input type="checkbox" checked={editUpdateBeforeRun} onChange={(e) => setEditUpdateBeforeRun(e.target.checked)} />
+                  Update before run
+                </label>
+              </>
+            )}
             <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11 }}>
               Auto-delete (s):
               <input type="number" value={editAutoDelete} onChange={(e) => setEditAutoDelete(Number(e.target.value))} style={{ ...inputStyle, width: 60 }} min={0} />
@@ -451,13 +474,22 @@ export function GlobalTasksPanel({
               <span style={{ fontSize: 11, color: colors.textDim, border: `1px solid ${colors.border}`, borderRadius: 3, padding: "0 4px" }}>channel worktree</span>
             )}
             <div style={{ flex: 1 }} />
-            <button
-              onClick={() => handleRunNow(selectedTask.id)}
-              disabled={runningNow}
-              style={{ ...btnStyle, opacity: runningNow ? 0.5 : 1 }}
-            >
-              {runningNow ? "Running..." : "\u25B6 Run Now"}
-            </button>
+            {selectedTask.running && selectedTask.thread_id ? (
+              <button
+                onClick={() => onSelectChannel?.(selectedTask.thread_id!)}
+                style={{ ...btnStyle, background: colors.warning ?? "#eab308" }}
+              >
+                Running...
+              </button>
+            ) : (
+              <button
+                onClick={() => handleRunNow(selectedTask.id)}
+                disabled={runningNow || selectedTask.running}
+                style={{ ...btnStyle, opacity: runningNow || selectedTask.running ? 0.5 : 1 }}
+              >
+                {selectedTask.running ? "Running..." : runningNow ? "Starting..." : "\u25B6 Run Now"}
+              </button>
+            )}
             <button onClick={() => handleToggle(selectedTask)} style={{ ...btnSecondaryStyle, color: selectedTask.enabled ? (colors.warning ?? "#eab308") : colors.active }}>
               {selectedTask.enabled ? "Disable" : "Enable"}
             </button>
@@ -483,6 +515,11 @@ export function GlobalTasksPanel({
           {selectedTask.enabled && (
             <div style={{ color: colors.textDim, fontSize: 11 }}>
               Next run: {nextRunLabel(selectedTask.next_run_at)}
+            </div>
+          )}
+          {selectedTask.worktree && selectedTask.origin_branch && (
+            <div style={{ color: colors.textDim, fontSize: 11 }}>
+              Branch: {selectedTask.origin_branch}{selectedTask.update_before_run ? " (updates before run)" : ""}
             </div>
           )}
           {selectedTask.auto_delete_sec > 0 && (

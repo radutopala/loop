@@ -150,6 +150,10 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	}
 
 	// Prepend git update instructions to the user prompt when enabled.
+	// Note: on the very first run, task.OriginBranch may still be "" even
+	// if auto-detection just ran above, because we only update the DB copy.
+	// This is intentional — the first run just created the worktree from
+	// that exact branch, so a fetch/rebase would be a no-op anyway.
 	prompt := task.Prompt
 	if task.UpdateBeforeRun && task.OriginBranch != "" {
 		prompt = fmt.Sprintf("Before starting work, update your worktree to the latest origin/%s:\n1. git stash (if there are uncommitted changes)\n2. git fetch origin %s\n3. git rebase origin/%s (this keeps your previous commits on top of latest origin)\n4. git stash pop (if you stashed changes in step 1)\nHandle any merge conflicts if they arise.\n\n%s", task.OriginBranch, task.OriginBranch, task.OriginBranch, task.Prompt)
@@ -340,6 +344,10 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	defer runCancel()
 
 	// Register cancel func so the stop button can cancel this task run.
+	// Key is req.ChannelID (thread ID for subsequent local runs, parent
+	// channel ID for first runs). Two different tasks on the same parent
+	// channel both on their first run simultaneously would collide here,
+	// but this is an extremely rare edge case.
 	if e.activeRuns != nil {
 		e.activeRuns.Store(req.ChannelID, runCancel)
 		defer e.activeRuns.Delete(req.ChannelID)
