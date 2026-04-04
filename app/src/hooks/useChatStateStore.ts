@@ -172,13 +172,22 @@ export function useChatStateStore({
         if (data.status === "running") {
           runMap.set(runTarget, data.run_id ?? "");
         } else {
-          // Clear both thread and parent from runMap — the running event
-          // may have targeted either one (first run → parent, subsequent → thread).
-          for (const t of [runTarget, channelId]) {
-            const tracked = runMap.get(t);
-            const finishing = data.run_id ?? "";
+          // Clear the primary target (thread or channel).
+          const finishing = data.run_id ?? "";
+          {
+            const tracked = runMap.get(runTarget);
             if (tracked === undefined || tracked === "" || finishing === "" || tracked === finishing) {
-              runMap.delete(t);
+              runMap.delete(runTarget);
+            }
+          }
+          // For thread-routed events, also clear the parent's entry if it
+          // tracks the same run (bootstrapped from first-run running event).
+          // Require exact run_id match to avoid clearing a concurrent user
+          // run on the parent channel.
+          if (runTarget !== channelId) {
+            const parentTracked = runMap.get(channelId);
+            if (parentTracked !== undefined && parentTracked === finishing) {
+              runMap.delete(channelId);
             }
           }
           // Keep the store entry — it holds completionInfo, mode, askUser, etc.

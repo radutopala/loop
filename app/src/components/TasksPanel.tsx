@@ -201,7 +201,7 @@ export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
         type: editType,
         prompt: editPrompt,
         worktree: editWorktree,
-        origin_branch: editOriginBranch,
+        origin_branch: editOriginBranch || undefined,
         update_before_run: editUpdateBeforeRun,
         auto_delete_sec: editAutoDelete,
       });
