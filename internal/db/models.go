@@ -55,6 +55,7 @@ type ScheduledTask struct {
 	Worktree        bool      `json:"worktree"`
 	OriginBranch    string    `json:"origin_branch"`
 	UpdateBeforeRun bool      `json:"update_before_run"`
+	Running         bool      `json:"running"`
 }
 
 // TaskType represents the type of scheduled task.

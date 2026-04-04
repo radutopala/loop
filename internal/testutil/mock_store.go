@@ -231,6 +231,15 @@ func (m *MockStore) ListDistinctMemoryFilePaths(ctx context.Context, dirPath str
 	return args.Get(0).([]db.MemoryFileInfo), args.Error(1)
 }
 
+func (m *MockStore) ClaimScheduledTaskRunning(ctx context.Context, id int64) (bool, error) {
+	args := m.Called(ctx, id)
+	return args.Bool(0), args.Error(1)
+}
+
+func (m *MockStore) ReleaseScheduledTaskRunning(ctx context.Context, id int64) error {
+	return m.Called(ctx, id).Error(0)
+}
+
 func (m *MockStore) UpdateChannelPermissions(ctx context.Context, channelID string, perms types.Permissions) error {
 	return m.Called(ctx, channelID, perms).Error(0)
 }

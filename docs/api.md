@@ -439,10 +439,13 @@ List tasks for a channel.
     "worktree": true,
     "origin_branch": "main",
     "update_before_run": true,
+    "running": false,
     "thread_id": "thread_abc123"
   }
 ]
 ```
+
+The `running` field indicates whether the task is currently being executed. It is set atomically when execution begins and cleared when it finishes.
 
 **Errors:** `400` if `channel_id` is missing.
 
@@ -497,6 +500,53 @@ All fields are optional (use JSON `null` or omit). When `enabled` is provided, i
 **Response:** `200 OK` (empty body)
 
 **Errors:** `400` if no fields provided or ID is invalid.
+
+---
+
+### `POST /api/tasks/{id}/run`
+
+Trigger an immediate execution of a task ("Run Now"). The task runs asynchronously in the background; the endpoint returns immediately.
+
+**Path Parameters:**
+
+| Param | Type  | Description |
+|-------|-------|-------------|
+| `id`  | int64 | Task ID |
+
+**Response:** `202 Accepted` (empty body)
+
+**Errors:** `400` if ID is invalid. `404` if task not found. `409 Conflict` if the task is already running.
+
+---
+
+### `GET /api/tasks/{id}/runs`
+
+List recent run logs for a task (up to 50, newest first).
+
+**Path Parameters:**
+
+| Param | Type  | Description |
+|-------|-------|-------------|
+| `id`  | int64 | Task ID |
+
+**Response (200):**
+```json
+[
+  {
+    "id": 10,
+    "task_id": 1,
+    "status": "success",
+    "response_text": "Completed successfully",
+    "error_text": "",
+    "started_at": "2026-01-02T09:00:00Z",
+    "finished_at": "2026-01-02T09:01:30Z"
+  }
+]
+```
+
+The `status` field is one of `"running"`, `"success"`, or `"failed"`.
+
+**Errors:** `400` if ID is invalid.
 
 ---
 

@@ -902,6 +902,15 @@ func (s *ServerSuite) TestRunTaskInvalidID() {
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
+func (s *ServerSuite) TestRunTaskAlreadyRunning() {
+	task := &db.ScheduledTask{ID: 42, ChannelID: "ch1", Running: true}
+	s.scheduler.On("GetTask", mock.Anything, int64(42)).Return(task, nil)
+
+	rec := s.testRequest("POST", "/api/tasks/42/run", "")
+
+	require.Equal(s.T(), http.StatusConflict, rec.Code)
+}
+
 func (s *ServerSuite) TestRunTaskGetTaskError() {
 	s.scheduler.On("GetTask", mock.Anything, int64(42)).Return(nil, errors.New("db error"))
 

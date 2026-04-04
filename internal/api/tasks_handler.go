@@ -64,6 +64,7 @@ type taskResponse struct {
 	Worktree        bool      `json:"worktree"`
 	OriginBranch    string    `json:"origin_branch,omitempty"`
 	UpdateBeforeRun bool      `json:"update_before_run"`
+	Running         bool      `json:"running"`
 	ChannelName     string    `json:"channel_name,omitempty"`
 	DirPath         string    `json:"dir_path,omitempty"`
 	ChannelWorktree bool      `json:"channel_worktree,omitempty"`
@@ -182,6 +183,7 @@ func toTaskResponse(t *db.ScheduledTask) taskResponse {
 		Worktree:        t.Worktree,
 		OriginBranch:    t.OriginBranch,
 		UpdateBeforeRun: t.UpdateBeforeRun,
+		Running:         t.Running,
 	}
 }
 
@@ -268,6 +270,10 @@ func (s *Server) handleRunTask(w http.ResponseWriter, r *http.Request) {
 	}
 	if task == nil {
 		http.Error(w, "task not found", http.StatusNotFound)
+		return
+	}
+	if task.Running {
+		http.Error(w, "task is already running", http.StatusConflict)
 		return
 	}
 

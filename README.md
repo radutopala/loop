@@ -928,6 +928,8 @@ make app-install
 | `GET` | `/api/tasks/{id}` | Get a single task by ID |
 | `PATCH` | `/api/tasks/{id}` | Update a task (enabled, schedule, type, prompt) |
 | `DELETE` | `/api/tasks/{id}` | Delete a task |
+| `POST` | `/api/tasks/{id}/run` | Run a task immediately (409 if already running) |
+| `GET` | `/api/tasks/{id}/runs` | List recent run logs for a task |
 | `GET` | `/api/channels?query=<term>` | Search channels and threads (optional query filter) |
 | `POST` | `/api/channels` | Ensure/create a channel for a directory |
 | `POST` | `/api/channels/create` | Create a channel by name |

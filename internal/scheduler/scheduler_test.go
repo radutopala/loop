@@ -45,7 +45,7 @@ func (s *SchedulerSuite) SetupTest() {
 }
 
 // setupDueTasks configures the mock store to return tasks once, then empty.
-// It also allows GetChannel lookups used for platform logging.
+// It also allows GetChannel lookups used for platform logging and running state updates.
 func setupDueTasks(store *testutil.MockStore, tasks []*db.ScheduledTask) {
 	store.On("GetDueTasks", mock.Anything, mock.Anything).Return(tasks, nil).Once()
 	store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{}, nil).Maybe()
@@ -54,6 +54,8 @@ func setupDueTasks(store *testutil.MockStore, tasks []*db.ScheduledTask) {
 			ChannelID: tasks[0].ChannelID,
 			Platform:  "local",
 		}, nil).Maybe()
+		store.On("ClaimScheduledTaskRunning", mock.Anything, tasks[0].ID).Return(true, nil).Maybe()
+		store.On("ReleaseScheduledTaskRunning", mock.Anything, tasks[0].ID).Return(nil).Maybe()
 	}
 	store.On("GetChannel", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 }
@@ -935,6 +937,8 @@ func (s *SchedulerSuite) TestRunNowSuccess() {
 	}
 
 	s.store.On("GetScheduledTask", mock.Anything, int64(5)).Return(task, nil)
+	s.store.On("ClaimScheduledTaskRunning", mock.Anything, int64(5)).Return(true, nil)
+	s.store.On("ReleaseScheduledTaskRunning", mock.Anything, int64(5)).Return(nil)
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", Platform: "local"}, nil)
 	s.store.On("InsertTaskRunLog", mock.Anything, mock.MatchedBy(func(trl *db.TaskRunLog) bool {
 		return trl.TaskID == 5 && trl.Status == db.RunStatusRunning
@@ -962,6 +966,8 @@ func (s *SchedulerSuite) TestRunNowWithEventBroadcast() {
 	}
 
 	s.store.On("GetScheduledTask", mock.Anything, int64(6)).Return(task, nil)
+	s.store.On("ClaimScheduledTaskRunning", mock.Anything, int64(6)).Return(true, nil)
+	s.store.On("ReleaseScheduledTaskRunning", mock.Anything, int64(6)).Return(nil)
 	s.store.On("GetChannel", mock.Anything, "ch2").Return(nil, nil)
 	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(60), nil)
 	s.executor.On("ExecuteTask", mock.Anything, task).Return("ok", nil)
@@ -1008,6 +1014,8 @@ func (s *SchedulerSuite) TestRunNowExecutorError() {
 	}
 
 	s.store.On("GetScheduledTask", mock.Anything, int64(8)).Return(task, nil)
+	s.store.On("ClaimScheduledTaskRunning", mock.Anything, int64(8)).Return(true, nil)
+	s.store.On("ReleaseScheduledTaskRunning", mock.Anything, int64(8)).Return(nil)
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
 	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(80), nil)
 	s.executor.On("ExecuteTask", mock.Anything, task).Return("", errors.New("exec failed"))
@@ -1031,6 +1039,8 @@ func (s *SchedulerSuite) TestRunNowDisabledTask() {
 	}
 
 	s.store.On("GetScheduledTask", mock.Anything, int64(9)).Return(task, nil)
+	s.store.On("ClaimScheduledTaskRunning", mock.Anything, int64(9)).Return(true, nil)
+	s.store.On("ReleaseScheduledTaskRunning", mock.Anything, int64(9)).Return(nil)
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
 	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(90), nil)
 	s.executor.On("ExecuteTask", mock.Anything, task).Return("ran anyway", nil)
@@ -1051,6 +1061,8 @@ func (s *SchedulerSuite) TestRunNowInsertRunLogError() {
 	}
 
 	s.store.On("GetScheduledTask", mock.Anything, int64(10)).Return(task, nil)
+	s.store.On("ClaimScheduledTaskRunning", mock.Anything, int64(10)).Return(true, nil)
+	s.store.On("ReleaseScheduledTaskRunning", mock.Anything, int64(10)).Return(nil)
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
 	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(0), errors.New("log insert failed"))
 
@@ -1061,5 +1073,86 @@ func (s *SchedulerSuite) TestRunNowInsertRunLogError() {
 	require.Contains(s.T(), err.Error(), "log insert failed")
 
 	// Executor should NOT be called when run log insert fails.
+	s.executor.AssertNotCalled(s.T(), "ExecuteTask", mock.Anything, mock.Anything)
+}
+
+func (s *SchedulerSuite) TestRunNowAlreadyRunning() {
+	task := &db.ScheduledTask{
+		ID: 11, ChannelID: "ch1", Schedule: "*/5 * * * *",
+		Type: db.TaskTypeCron, Prompt: "busy task", Enabled: true, Running: true,
+	}
+
+	s.store.On("GetScheduledTask", mock.Anything, int64(11)).Return(task, nil)
+
+	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
+
+	err := ts.RunNow(context.Background(), 11)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "already running")
+
+	// Neither claim nor executor should be touched.
+	s.store.AssertNotCalled(s.T(), "ClaimScheduledTaskRunning", mock.Anything, mock.Anything)
+	s.executor.AssertNotCalled(s.T(), "ExecuteTask", mock.Anything, mock.Anything)
+}
+
+func (s *SchedulerSuite) TestRunNowClearRunningError() {
+	task := &db.ScheduledTask{
+		ID: 13, ChannelID: "ch1", Schedule: "1h",
+		Type: db.TaskTypeInterval, Prompt: "clear fail", Enabled: true,
+	}
+
+	s.store.On("GetScheduledTask", mock.Anything, int64(13)).Return(task, nil)
+	s.store.On("ClaimScheduledTaskRunning", mock.Anything, int64(13)).Return(true, nil)
+	s.store.On("ReleaseScheduledTaskRunning", mock.Anything, int64(13)).Return(errors.New("db locked on clear"))
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
+	s.store.On("InsertTaskRunLog", mock.Anything, mock.Anything).Return(int64(130), nil)
+	s.executor.On("ExecuteTask", mock.Anything, task).Return("ok", nil)
+	s.store.On("UpdateTaskRunLog", mock.Anything, mock.Anything).Return(nil)
+
+	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
+
+	// Should succeed despite the deferred running clear failing (error is only logged).
+	err := ts.RunNow(context.Background(), 13)
+	require.NoError(s.T(), err)
+
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *SchedulerSuite) TestRunNowClaimRace() {
+	task := &db.ScheduledTask{
+		ID: 12, ChannelID: "ch1", Schedule: "1h",
+		Type: db.TaskTypeInterval, Prompt: "race lose", Enabled: true,
+	}
+
+	s.store.On("GetScheduledTask", mock.Anything, int64(12)).Return(task, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
+	// Claim returns false (another execution won the race), no error.
+	s.store.On("ClaimScheduledTaskRunning", mock.Anything, int64(12)).Return(false, nil)
+
+	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
+
+	err := ts.RunNow(context.Background(), 12)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "already running")
+
+	s.executor.AssertNotCalled(s.T(), "ExecuteTask", mock.Anything, mock.Anything)
+}
+
+func (s *SchedulerSuite) TestRunNowClaimError() {
+	task := &db.ScheduledTask{
+		ID: 14, ChannelID: "ch1", Schedule: "1h",
+		Type: db.TaskTypeInterval, Prompt: "claim fail", Enabled: true,
+	}
+
+	s.store.On("GetScheduledTask", mock.Anything, int64(14)).Return(task, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, nil)
+	s.store.On("ClaimScheduledTaskRunning", mock.Anything, int64(14)).Return(false, errors.New("db locked"))
+
+	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
+
+	err := ts.RunNow(context.Background(), 14)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "db locked")
+
 	s.executor.AssertNotCalled(s.T(), "ExecuteTask", mock.Anything, mock.Anything)
 }

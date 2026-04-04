@@ -13,6 +13,7 @@ export interface ScheduledTask {
   worktree: boolean;
   origin_branch?: string;
   update_before_run: boolean;
+  running: boolean;
   thread_id?: string;
   channel_name?: string;
   dir_path?: string;
@@ -95,5 +96,6 @@ export async function fetchTaskRuns(taskId: number): Promise<TaskRunLog[]> {
 
 export async function runTaskNow(taskId: number): Promise<void> {
   const res = await fetch(`${getApiUrl()}/api/tasks/${taskId}/run`, { method: "POST" });
+  if (res.status === 409) throw new Error("Task is already running");
   if (!res.ok) throw new Error(`Failed to run task: ${res.statusText}`);
 }

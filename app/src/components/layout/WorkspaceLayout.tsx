@@ -667,6 +667,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               key={`layout-tasks-${channelId}`}
               channelId={channelId}
               allowWorktree={!channel.worktree && !!channel.branch}
+              onSelectChannel={onSelectThread}
             />
           );
         default:

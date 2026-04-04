@@ -209,6 +209,9 @@ func (s *TaskScheduler) RunNow(ctx context.Context, taskID int64) error {
 	if task == nil {
 		return fmt.Errorf("task %d not found", taskID)
 	}
+	if task.Running {
+		return fmt.Errorf("task %d is already running", taskID)
+	}
 	return s.executeAndLog(ctx, task)
 }
 
@@ -250,6 +253,22 @@ func (s *TaskScheduler) executeAndLog(ctx context.Context, task *db.ScheduledTas
 		platform = string(ch.Platform)
 	}
 	s.logger.Info("executing task", "task_id", task.ID, "channel_id", task.ChannelID, "platform", platform, "type", task.Type, "schedule", task.Schedule)
+
+	// Atomically claim the task — prevents concurrent executions even under races.
+	claimed, err := s.store.ClaimScheduledTaskRunning(ctx, task.ID)
+	if err != nil {
+		s.logger.Error("failed to claim task", "task_id", task.ID, "error", err)
+		return err
+	}
+	if !claimed {
+		s.logger.Info("task already claimed by another execution", "task_id", task.ID)
+		return fmt.Errorf("task %d is already running", task.ID)
+	}
+	defer func() {
+		if err := s.store.ReleaseScheduledTaskRunning(ctx, task.ID); err != nil {
+			s.logger.Error("failed to release task running state", "task_id", task.ID, "error", err)
+		}
+	}()
 
 	runLog := &db.TaskRunLog{
 		TaskID:    task.ID,

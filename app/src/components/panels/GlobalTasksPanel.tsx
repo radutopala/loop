@@ -403,10 +403,12 @@ export function GlobalTasksPanel({
             style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
           />
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            {!selectedTask.channel_worktree && (
             <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11, cursor: "pointer" }}>
               <input type="checkbox" checked={editWorktree} onChange={(e) => setEditWorktree(e.target.checked)} />
               Worktree
             </label>
+            )}
             {editWorktree && (
               <>
                 <input

@@ -39,6 +39,8 @@ type Store interface {
 	UpdateScheduledTaskEnabled(ctx context.Context, id int64, enabled bool) error
 	UpdateScheduledTaskThreadID(ctx context.Context, id int64, threadID string) error
 	UpdateScheduledTaskOriginBranch(ctx context.Context, id int64, branch string) error
+	ClaimScheduledTaskRunning(ctx context.Context, id int64) (bool, error)
+	ReleaseScheduledTaskRunning(ctx context.Context, id int64) error
 	GetScheduledTask(ctx context.Context, id int64) (*ScheduledTask, error)
 	GetScheduledTaskByTemplateName(ctx context.Context, channelID, templateName string) (*ScheduledTask, error)
 	ListChannels(ctx context.Context) ([]*Channel, error)
@@ -407,7 +409,7 @@ func (s *SQLiteStore) CreateScheduledTask(ctx context.Context, task *ScheduledTa
 
 func (s *SQLiteStore) GetDueTasks(ctx context.Context, now time.Time) ([]*ScheduledTask, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+taskColumns+` FROM scheduled_tasks WHERE enabled = 1 AND next_run_at <= ?`,
+		`SELECT `+taskColumns+` FROM scheduled_tasks WHERE enabled = 1 AND running = 0 AND next_run_at <= ?`,
 		now,
 	)
 	if err != nil {
@@ -419,8 +421,8 @@ func (s *SQLiteStore) GetDueTasks(ctx context.Context, now time.Time) ([]*Schedu
 
 func (s *SQLiteStore) UpdateScheduledTask(ctx context.Context, task *ScheduledTask) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE scheduled_tasks SET schedule = ?, type = ?, prompt = ?, enabled = ?, next_run_at = ?, updated_at = ?, auto_delete_sec = ?, thread_id = ?, worktree = ?, origin_branch = ?, update_before_run = ? WHERE id = ?`,
-		task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, s.nowFunc(), task.AutoDeleteSec, task.ThreadID, boolToInt(task.Worktree), task.OriginBranch, boolToInt(task.UpdateBeforeRun), task.ID,
+		`UPDATE scheduled_tasks SET schedule = ?, type = ?, prompt = ?, enabled = ?, next_run_at = ?, updated_at = ?, auto_delete_sec = ?, thread_id = ?, worktree = ?, origin_branch = ?, update_before_run = ?, running = ? WHERE id = ?`,
+		task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, s.nowFunc(), task.AutoDeleteSec, task.ThreadID, boolToInt(task.Worktree), task.OriginBranch, boolToInt(task.UpdateBeforeRun), boolToInt(task.Running), task.ID,
 	)
 	return err
 }
@@ -437,6 +439,29 @@ func (s *SQLiteStore) UpdateScheduledTaskOriginBranch(ctx context.Context, id in
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE scheduled_tasks SET origin_branch = ?, updated_at = ? WHERE id = ?`,
 		branch, s.nowFunc(), id,
+	)
+	return err
+}
+
+func (s *SQLiteStore) ClaimScheduledTaskRunning(ctx context.Context, id int64) (bool, error) {
+	result, err := s.db.ExecContext(ctx,
+		`UPDATE scheduled_tasks SET running = 1, updated_at = ? WHERE id = ? AND running = 0`,
+		s.nowFunc(), id,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+func (s *SQLiteStore) ReleaseScheduledTaskRunning(ctx context.Context, id int64) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE scheduled_tasks SET running = 0, updated_at = ? WHERE id = ?`,
+		s.nowFunc(), id,
 	)
 	return err
 }
@@ -483,7 +508,7 @@ func (s *SQLiteStore) UpdateScheduledTaskEnabled(ctx context.Context, id int64, 
 
 func (s *SQLiteStore) GetScheduledTask(ctx context.Context, id int64) (*ScheduledTask, error) {
 	task := &ScheduledTask{}
-	var enabled, worktree, updateBeforeRun int
+	var enabled, worktree, updateBeforeRun, running int
 	var taskType string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT `+taskColumns+` FROM scheduled_tasks WHERE id = ?`,
@@ -491,7 +516,7 @@ func (s *SQLiteStore) GetScheduledTask(ctx context.Context, id int64) (*Schedule
 	).Scan(&task.ID, &task.ChannelID, &task.GuildID, &task.Schedule,
 		&taskType, &task.Prompt, &enabled, &task.NextRunAt,
 		&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID, &worktree,
-		&task.OriginBranch, &updateBeforeRun)
+		&task.OriginBranch, &updateBeforeRun, &running)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -502,12 +527,13 @@ func (s *SQLiteStore) GetScheduledTask(ctx context.Context, id int64) (*Schedule
 	task.Enabled = enabled == 1
 	task.Worktree = worktree == 1
 	task.UpdateBeforeRun = updateBeforeRun == 1
+	task.Running = running == 1
 	return task, nil
 }
 
 func (s *SQLiteStore) GetScheduledTaskByTemplateName(ctx context.Context, channelID, templateName string) (*ScheduledTask, error) {
 	task := &ScheduledTask{}
-	var enabled, worktree, updateBeforeRun int
+	var enabled, worktree, updateBeforeRun, running int
 	var taskType string
 	err := s.db.QueryRowContext(ctx,
 		`SELECT `+taskColumns+` FROM scheduled_tasks WHERE channel_id = ? AND template_name = ?`,
@@ -515,7 +541,7 @@ func (s *SQLiteStore) GetScheduledTaskByTemplateName(ctx context.Context, channe
 	).Scan(&task.ID, &task.ChannelID, &task.GuildID, &task.Schedule,
 		&taskType, &task.Prompt, &enabled, &task.NextRunAt,
 		&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID, &worktree,
-		&task.OriginBranch, &updateBeforeRun)
+		&task.OriginBranch, &updateBeforeRun, &running)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -526,6 +552,7 @@ func (s *SQLiteStore) GetScheduledTaskByTemplateName(ctx context.Context, channe
 	task.Enabled = enabled == 1
 	task.Worktree = worktree == 1
 	task.UpdateBeforeRun = updateBeforeRun == 1
+	task.Running = running == 1
 	return task, nil
 }
 
@@ -653,7 +680,7 @@ func (s *SQLiteStore) ListDistinctMemoryFilePaths(ctx context.Context, dirPath s
 // Column lists for SELECT queries.
 const (
 	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at`
-	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run`
+	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running`
 )
 
 // helpers
@@ -725,13 +752,13 @@ func scanScheduledTasks(rows *sql.Rows) ([]*ScheduledTask, error) {
 	var tasks []*ScheduledTask
 	for rows.Next() {
 		task := &ScheduledTask{}
-		var enabled, worktree, updateBeforeRun int
+		var enabled, worktree, updateBeforeRun, running int
 		var taskType string
 		if err := rows.Scan(
 			&task.ID, &task.ChannelID, &task.GuildID, &task.Schedule,
 			&taskType, &task.Prompt, &enabled, &task.NextRunAt,
 			&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID, &worktree,
-			&task.OriginBranch, &updateBeforeRun,
+			&task.OriginBranch, &updateBeforeRun, &running,
 		); err != nil {
 			return nil, err
 		}
@@ -739,6 +766,7 @@ func scanScheduledTasks(rows *sql.Rows) ([]*ScheduledTask, error) {
 		task.Enabled = enabled == 1
 		task.Worktree = worktree == 1
 		task.UpdateBeforeRun = updateBeforeRun == 1
+		task.Running = running == 1
 		tasks = append(tasks, task)
 	}
 	return tasks, rows.Err()

@@ -347,6 +347,16 @@ func (s *MCPServerSuite) TestListTasksWithWorktreeFields() {
 	require.Contains(s.T(), text, "update_before_run: true")
 }
 
+func (s *MCPServerSuite) TestListTasksWithRunning() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `[{"id":1,"schedule":"0 9 * * *","type":"cron","prompt":"busy task","enabled":true,"next_run_at":"2025-01-01T09:00:00Z","running":true}]`), nil
+	}
+
+	text, isError := s.callTool("list_tasks", map[string]any{})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "running: true")
+}
+
 func (s *MCPServerSuite) TestListTasksEmpty() {
 	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
 		return jsonResponse(http.StatusOK, `[]`), nil
@@ -422,6 +432,16 @@ func (s *MCPServerSuite) TestShowTaskWithWorktreeFields() {
 	require.False(s.T(), isError)
 	require.Contains(s.T(), text, "Origin branch: develop")
 	require.Contains(s.T(), text, "Update before run: true")
+}
+
+func (s *MCPServerSuite) TestShowTaskRunning() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"id":42,"schedule":"0 9 * * *","type":"cron","prompt":"busy task","enabled":true,"next_run_at":"2025-01-01T09:00:00Z","running":true}`), nil
+	}
+
+	text, isError := s.callTool("show_task", map[string]any{"task_id": float64(42)})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "Running: true")
 }
 
 func (s *MCPServerSuite) TestShowTaskDisabled() {

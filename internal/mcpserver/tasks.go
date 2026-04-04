@@ -109,6 +109,7 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 		Worktree        bool   `json:"worktree"`
 		OriginBranch    string `json:"origin_branch"`
 		UpdateBeforeRun bool   `json:"update_before_run"`
+		Running         bool   `json:"running"`
 	}
 	tasks, errResult, err := doAPICall[[]taskEntry](s, "GET", fmt.Sprintf("%s/api/tasks?channel_id=%s", s.apiURL, s.channelID), http.StatusOK, nil)
 	if errResult != nil || err != nil {
@@ -133,6 +134,9 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 		}
 		if t.AutoDeleteSec > 0 {
 			fmt.Fprintf(&text, ", auto_delete: %ds", t.AutoDeleteSec)
+		}
+		if t.Running {
+			text.WriteString(", running: true")
 		}
 		if t.Worktree {
 			text.WriteString(", worktree: true")
@@ -168,6 +172,7 @@ func (s *Server) handleShowTask(_ context.Context, _ *mcp.CallToolRequest, input
 		Worktree        bool   `json:"worktree"`
 		OriginBranch    string `json:"origin_branch"`
 		UpdateBeforeRun bool   `json:"update_before_run"`
+		Running         bool   `json:"running"`
 	}
 	task, errResult, err := doAPICall[taskEntry](s, "GET", fmt.Sprintf("%s/api/tasks/%d", s.apiURL, input.TaskID), http.StatusOK, nil)
 	if errResult != nil || err != nil {
@@ -190,6 +195,9 @@ func (s *Server) handleShowTask(_ context.Context, _ *mcp.CallToolRequest, input
 	}
 	if task.AutoDeleteSec > 0 {
 		fmt.Fprintf(&text, "Auto-delete: %ds\n", task.AutoDeleteSec)
+	}
+	if task.Running {
+		fmt.Fprintf(&text, "Running: true\n")
 	}
 	fmt.Fprintf(&text, "Worktree: %v\n", task.Worktree)
 	if task.OriginBranch != "" {

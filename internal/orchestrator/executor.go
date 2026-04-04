@@ -144,9 +144,18 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		systemPrompt += "\nIf you have nothing meaningful to report, start your response with [EPHEMERAL]. Otherwise respond normally."
 	}
 	// Track parent dir for worktree config inheritance (model, etc.).
+	// Two cases:
+	// 1. task.Worktree=true → executor creates a worktree; parentDirPath = parent channel's DirPath.
+	// 2. task.Worktree=false but channel itself is a worktree → look up the
+	//    parent channel's DirPath so the runner uses the full merge chain
+	//    (global → parent → worktree) and inherits settings like claude_model.
 	parentDirPath := ""
 	if task.Worktree && channel != nil {
 		parentDirPath = channel.DirPath
+	} else if channel != nil && channel.Worktree && channel.ParentID != "" {
+		if parentCh, err := e.store.GetChannel(ctx, channel.ParentID); err == nil && parentCh != nil {
+			parentDirPath = parentCh.DirPath
+		}
 	}
 
 	// Prepend git update instructions to the user prompt when enabled.

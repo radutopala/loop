@@ -1879,6 +1879,59 @@ func (s *TaskExecutorSuite) TestNonWorktreeTaskNoParentDirPath() {
 	require.Equal(s.T(), "ok", resp)
 }
 
+func (s *TaskExecutorSuite) TestNonWorktreeTaskOnWorktreeChannelSetsParentDirPath() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "wt-ch", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: false,
+	}
+
+	// The task's channel is itself a worktree channel.
+	s.store.On("GetChannel", s.ctx, "wt-ch").Return(&db.Channel{
+		ChannelID: "wt-ch", DirPath: "/proj/.worktrees/wt-1", ParentID: "parent-ch", Worktree: true,
+	}, nil)
+	// Parent channel lookup returns the original project dir.
+	s.store.On("GetChannel", s.ctx, "parent-ch").Return(&db.Channel{
+		ChannelID: "parent-ch", DirPath: "/proj",
+	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{ID: 10, Type: db.TaskTypeCron}, nil)
+	s.allowBotInserts()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.ParentDirPath == "/proj" && req.DirPath == "/proj/.worktrees/wt-1"
+	})).Return(&agent.AgentResponse{Response: "ok", SessionID: "s6"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "wt-ch", "s6").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp)
+}
+
+func (s *TaskExecutorSuite) TestNonWorktreeTaskOnWorktreeChannelParentLookupError() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "wt-ch", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: false,
+	}
+
+	s.store.On("GetChannel", s.ctx, "wt-ch").Return(&db.Channel{
+		ChannelID: "wt-ch", DirPath: "/proj/.worktrees/wt-1", ParentID: "parent-ch", Worktree: true,
+	}, nil)
+	// Parent lookup fails — parentDirPath stays empty (graceful fallback).
+	s.store.On("GetChannel", s.ctx, "parent-ch").Return(nil, errors.New("db error"))
+	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{ID: 10, Type: db.TaskTypeCron}, nil)
+	s.allowBotInserts()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return req.ParentDirPath == "" && req.DirPath == "/proj/.worktrees/wt-1"
+	})).Return(&agent.AgentResponse{Response: "ok", SessionID: "s7"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "wt-ch", "s7").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "ok", resp)
+}
+
 func (s *TaskExecutorSuite) TestWorktreeFirstRunWithOriginBranch() {
 	task := &db.ScheduledTask{
 		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,

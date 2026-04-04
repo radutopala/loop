@@ -76,13 +76,17 @@ On creation:
 The scheduler runs a polling loop at a configurable interval (default 30 seconds, set via `poll_interval_sec`).
 
 Each tick:
-1. Queries the database for tasks where `next_run_at <= now AND enabled = true`.
+1. Queries the database for tasks where `next_run_at <= now AND enabled = true AND running = 0`.
 2. Executes each due task sequentially.
+
+Tasks that are already executing (`running = 1`) are excluded from the query, preventing the scheduler from re-triggering a long-running task.
 
 ### 3. Execute
 
 For each due task:
-1. A `TaskRunLog` record is inserted with status `"running"`.
+1. The task is atomically claimed via `UPDATE ... SET running = 1 WHERE id = ? AND running = 0`. If `RowsAffected = 0`, another execution (e.g. a concurrent "Run Now") already claimed it and execution is skipped. This prevents concurrent runs even under race conditions.
+2. A deferred release (`running = 0`) is registered so the flag is always cleared when execution finishes.
+3. A `TaskRunLog` record is inserted with status `"running"`.
 2. The task executor retrieves the channel from the database to get the session ID and work directory.
 3. If the task has `worktree = true`, a git worktree is created (see [Worktree Isolation](#worktree-isolation) below).
 4. An `AgentRequest` is built with:
@@ -174,11 +178,22 @@ Tasks with `worktree = true` run the agent in an isolated git worktree so change
 - The channel's `dir_path` must be a git repository. If `git rev-parse` fails (e.g., the directory is not a git repo), the task fails with a descriptive error.
 - Detached HEAD is supported -- the executor falls back to the commit hash when `rev-parse --abbrev-ref HEAD` returns `"HEAD"`.
 
+### Config Inheritance
+
+Tasks running in a worktree directory use a three-layer config merge: **global → parent project → worktree**. This ensures settings like `claude_model`, `mounts`, and `mcp_servers` configured in the parent project's `.loop/config.json` are inherited automatically.
+
+This applies in two cases:
+- **`worktree = true` tasks**: The executor sets the parent channel's `dir_path` as the config parent.
+- **Tasks scheduled from a worktree channel** (even with `worktree = false`): The executor resolves the worktree channel's parent and uses its `dir_path` for config inheritance.
+
+Without this, a task on a worktree channel would only load `global → worktree`, and since worktree configs typically only contain `extra_dirs`, settings like `claude_model` from the parent project would be lost.
+
 ### UI Restrictions
 
 The worktree checkbox in the Tasks panel is only shown when:
 - The channel is **not** itself a worktree thread (worktree threads already run in isolation).
 - The channel has a **git repository** (non-empty branch detected).
+- In the **Global Tasks** panel, the worktree checkbox is hidden for tasks belonging to worktree channels.
 
 ---
 

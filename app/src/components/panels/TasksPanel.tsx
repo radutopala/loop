@@ -14,6 +14,7 @@ import type { ScheduledTask, TaskRunLog } from "../../api/loopApi";
 interface TasksPanelProps {
   channelId: string;
   allowWorktree?: boolean;
+  onSelectChannel?: (channelId: string) => void;
 }
 
 function timeAgo(dateStr: string): string {
@@ -48,7 +49,7 @@ const TYPE_COLORS: Record<string, string> = {
   once: "#fbbf24",
 };
 
-export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
+export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [tasks, setTasks] = useState<ScheduledTask[]>([]);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -172,6 +173,7 @@ export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
       setRunningNow(true);
       try {
         await runTaskNow(taskId);
+        setTasks((prev) => prev.map((t) => (t.id === taskId ? { ...t, running: true } : t)));
         loadRuns(taskId);
       } catch {
         /* error will appear in run history */
@@ -360,6 +362,7 @@ export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
             <span title="Runs in worktree" style={{ fontSize: 11, flexShrink: 0 }}>wt</span>
           )}
           <div style={{ flex: 1 }} />
+          <span style={{ color: colors.textLight, fontSize: 10, flexShrink: 0 }}>#{task.id}</span>
           <button
             onClick={(e) => { e.stopPropagation(); handleToggle(task); }}
             title={task.enabled ? "Disable" : "Enable"}
@@ -481,13 +484,22 @@ export function TasksPanel({ channelId, allowWorktree }: TasksPanelProps) {
               <span style={{ fontSize: 11, color: colors.textDim, border: `1px solid ${colors.border}`, borderRadius: 3, padding: "0 4px" }}>worktree</span>
             )}
             <div style={{ flex: 1 }} />
-            <button
-              onClick={() => handleRunNow(selectedTask.id)}
-              disabled={runningNow}
-              style={{ ...btnStyle, opacity: runningNow ? 0.5 : 1 }}
-            >
-              {runningNow ? "Running..." : "\u25B6 Run Now"}
-            </button>
+            {selectedTask.running && selectedTask.thread_id ? (
+              <button
+                onClick={() => onSelectChannel?.(selectedTask.thread_id!)}
+                style={{ ...btnStyle, background: colors.warning ?? "#eab308" }}
+              >
+                Running...
+              </button>
+            ) : (
+              <button
+                onClick={() => handleRunNow(selectedTask.id)}
+                disabled={runningNow || selectedTask.running}
+                style={{ ...btnStyle, opacity: runningNow || selectedTask.running ? 0.5 : 1 }}
+              >
+                {selectedTask.running ? "Running..." : runningNow ? "Starting..." : "\u25B6 Run Now"}
+              </button>
+            )}
             <button onClick={() => handleToggle(selectedTask)} style={{ ...btnSecondaryStyle, color: selectedTask.enabled ? (colors.warning ?? "#eab308") : colors.active }}>
               {selectedTask.enabled ? "Disable" : "Enable"}
             </button>
