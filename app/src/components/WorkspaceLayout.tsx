@@ -695,7 +695,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           display: "flex",
           alignItems: "center",
           paddingLeft: !sidebarOpen ? 76 : 4,
-          // @ts-expect-error: WebKit-specific CSS property for Electron drag region
           WebkitAppRegion: "drag",
         }}
       >
@@ -712,7 +711,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             borderRadius: 4,
             display: "flex",
             alignItems: "center",
-            // @ts-expect-error: WebKit-specific CSS property
             WebkitAppRegion: "no-drag",
           }}
         >
@@ -742,7 +740,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             fontSize: 11,
             fontFamily: fonts.mono,
             marginLeft: 6,
-            // @ts-expect-error: WebKit-specific CSS property
             WebkitAppRegion: "no-drag",
           }}
         >
@@ -766,7 +763,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                 minWidth: 0,
                 marginLeft: 12,
                 cursor: "default",
-                // @ts-expect-error: WebKit-specific CSS property
                 WebkitAppRegion: "no-drag",
               }}
             >
@@ -780,7 +776,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                   onDoubleClick={(e) => { navigator.clipboard.writeText(channel.session_id); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
                   title={`Session: ${channel.session_id}\nDouble-click to copy`}
                   style={{ fontSize: 11, color: colors.textDim, fontFamily: fonts.mono, flexShrink: 0, cursor: "default",
-                    // @ts-expect-error: WebKit-specific CSS property
                     WebkitAppRegion: "no-drag",
                   }}
                 >
@@ -802,7 +797,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                     fontFamily: fonts.mono,
                     flexShrink: 0,
                     cursor: "default",
-                    // @ts-expect-error: WebKit-specific CSS property
                     WebkitAppRegion: "no-drag",
                   }}
                 >
@@ -818,7 +812,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                     onDoubleClick={(e) => { navigator.clipboard.writeText(branch); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
                     title="Double-click to copy branch name"
                     style={{ fontSize: 11, color: colors.active, fontFamily: fonts.mono, flexShrink: 0, cursor: "default",
-                      // @ts-expect-error: WebKit-specific CSS property
                       WebkitAppRegion: "no-drag",
                     }}
                   >

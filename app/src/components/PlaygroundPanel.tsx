@@ -3,6 +3,7 @@ import { useTheme } from "../ThemeContext";
 import { fetchPlayground, fetchPlaygroundItems, getApiUrl, type PlaygroundItem } from "../api/loopApi";
 import { useEventStream } from "../hooks/useEventStream";
 import type { WSEvent } from "../types";
+import { storageGetJSON, storageSetJSON } from "../utils/storage";
 
 interface PlaygroundCode {
   html: string;
@@ -41,12 +42,12 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
   itemsRef.current = items;
   const storageKey = `playground-active:${channelId}`;
   const [activeItem, setActiveItem] = useState<string>(() => {
-    try { return JSON.parse(localStorage.getItem(storageKey) || "{}").name || ""; } catch { return ""; }
+    return storageGetJSON<{ name?: string }>(storageKey)?.name || "";
   });
   const activeItemRef = useRef("");
   activeItemRef.current = activeItem;
   const [activeScope, setActiveScope] = useState<"global" | "project">(() => {
-    try { return JSON.parse(localStorage.getItem(storageKey) || "{}").scope || "global"; } catch { return "global"; }
+    return storageGetJSON<{ scope?: "global" | "project" }>(storageKey)?.scope || "global";
   });
   const activeScopeRef = useRef<"global" | "project">("global");
   activeScopeRef.current = activeScope;
@@ -55,7 +56,7 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
     setActiveItem(name);
     const resolved = scope ?? itemsRef.current.find((i) => i.name === name)?.scope ?? "global";
     setActiveScope(resolved);
-    try { localStorage.setItem(storageKey, JSON.stringify({ name, scope: resolved })); } catch {}
+    storageSetJSON(storageKey, { name, scope: resolved });
   }, [storageKey]);
 
   // Load items list on mount.

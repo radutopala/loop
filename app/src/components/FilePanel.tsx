@@ -4,26 +4,23 @@ import { fonts } from "../theme";
 import type { ColorPalette } from "../theme";
 import { useTheme } from "../ThemeContext";
 import { fetchReadme } from "../api/loopApi";
+import { storageGet, storageSet } from "../utils/storage";
 
 const MIN_WIDTH = 280;
 const MAX_WIDTH_PERCENT = 0.6;
 const WIDTH_STORAGE_KEY = "loop-file-panel-width";
 
 function loadWidth(): number {
-  try {
-    const stored = localStorage.getItem(WIDTH_STORAGE_KEY);
-    if (stored) {
-      const w = parseInt(stored, 10);
-      if (w >= MIN_WIDTH) return w;
-    }
-  } catch { /* ignore */ }
+  const stored = storageGet(WIDTH_STORAGE_KEY);
+  if (stored) {
+    const w = parseInt(stored, 10);
+    if (w >= MIN_WIDTH) return w;
+  }
   return Math.floor(window.innerWidth * MAX_WIDTH_PERCENT);
 }
 
 function saveWidth(w: number) {
-  try {
-    localStorage.setItem(WIDTH_STORAGE_KEY, String(w));
-  } catch { /* ignore */ }
+  storageSet(WIDTH_STORAGE_KEY, String(w));
 }
 
 function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
@@ -158,7 +155,6 @@ export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPa
           display: "flex",
           alignItems: "center",
           paddingLeft: maximized && !sidebarOpen ? 76 : maximized ? 4 : 0,
-          // @ts-expect-error: WebKit-specific CSS property for Electron drag region
           WebkitAppRegion: "drag",
         }}
       >
@@ -176,7 +172,6 @@ export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPa
               borderRadius: 4,
               display: "flex",
               alignItems: "center",
-              // @ts-expect-error: WebKit-specific CSS property
               WebkitAppRegion: "no-drag",
             }}
           >
@@ -208,7 +203,6 @@ export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPa
               fontSize: 11,
               fontFamily: fonts.mono,
               marginLeft: 6,
-              // @ts-expect-error: WebKit-specific CSS property
               WebkitAppRegion: "no-drag",
             }}
           >

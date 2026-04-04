@@ -1,6 +1,7 @@
 import { fonts } from "../theme";
 import { useTheme } from "../ThemeContext";
 import type { FileEntry } from "../api/loopApi";
+import { storageGet, storageSet } from "../utils/storage";
 
 // ── Multi-root path key helpers ──
 // Internal path keys use "{rootIndex}:{relativePath}" to disambiguate across roots.
@@ -26,18 +27,16 @@ export const TREE_DEFAULT_WIDTH = 280;
 const TREE_WIDTH_KEY = "loop-editor-tree-width";
 
 export function loadTreeWidth(): number {
-  try {
-    const stored = localStorage.getItem(TREE_WIDTH_KEY);
-    if (stored) {
-      const w = parseInt(stored, 10);
-      if (w >= TREE_MIN_WIDTH && w <= TREE_MAX_WIDTH) return w;
-    }
-  } catch { /* ignore */ }
+  const stored = storageGet(TREE_WIDTH_KEY);
+  if (stored) {
+    const w = parseInt(stored, 10);
+    if (w >= TREE_MIN_WIDTH && w <= TREE_MAX_WIDTH) return w;
+  }
   return TREE_DEFAULT_WIDTH;
 }
 
 export function saveTreeWidth(width: number): void {
-  try { localStorage.setItem(TREE_WIDTH_KEY, String(width)); } catch { /* ignore */ }
+  storageSet(TREE_WIDTH_KEY, String(width));
 }
 
 // ── File Icons ──

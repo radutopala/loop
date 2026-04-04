@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTheme } from "../ThemeContext";
 import { switchBrowserMode } from "../api/loopApi";
 import { useBrowserWs, type TabInfo } from "../hooks/useBrowserWs";
+import { storageGet, storageSet } from "../utils/storage";
 
 interface BrowserPanelProps {
   channelId: string;
@@ -19,7 +20,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
   const [hoveredTab, setHoveredTab] = useState<string | null>(null);
   const [browserMode, setBrowserMode] = useState<"docker" | "host">(() => {
     if (fixedMode) return fixedMode;
-    const saved = localStorage.getItem(`browserMode:${channelId}`);
+    const saved = storageGet(`browserMode:${channelId}`);
     return saved === "host" ? "host" : "docker";
   });
 
@@ -104,7 +105,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
       if (res.mode) {
         const mode = res.mode as "docker" | "host";
         setBrowserMode(mode);
-        localStorage.setItem(`browserMode:${channelId}`, mode);
+        storageSet(`browserMode:${channelId}`, mode);
         // Restart browser with new provider after a brief delay for cleanup.
         setTimeout(() => startBrowser(newMode), 500);
       }

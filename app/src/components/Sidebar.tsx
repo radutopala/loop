@@ -6,6 +6,7 @@ import type { MenuItem } from "./ContextMenu";
 import { SidebarHeader } from "./SidebarHeader";
 import { ChannelList } from "./ChannelList";
 import { SidebarFooter } from "./SidebarFooter";
+import { storageGetJSON, storageSetJSON } from "../utils/storage";
 
 const MIN_WIDTH = 180;
 const MAX_WIDTH_PERCENT = 0.25;
@@ -13,17 +14,11 @@ const DEFAULT_WIDTH = 280;
 const ORDER_STORAGE_KEY = "loop-channel-order";
 
 function loadOrder(): string[] {
-  try {
-    const stored = localStorage.getItem(ORDER_STORAGE_KEY);
-    if (stored) return JSON.parse(stored);
-  } catch { /* ignore */ }
-  return [];
+  return storageGetJSON<string[]>(ORDER_STORAGE_KEY) ?? [];
 }
 
 function saveOrder(ids: string[]) {
-  try {
-    localStorage.setItem(ORDER_STORAGE_KEY, JSON.stringify(ids));
-  } catch { /* ignore */ }
+  storageSetJSON(ORDER_STORAGE_KEY, ids);
 }
 
 function sortByOrder(channels: Channel[], order: string[]): Channel[] {
@@ -292,7 +287,6 @@ export function Sidebar({
         style={{
           height: 38,
           flexShrink: 0,
-          // @ts-expect-error: WebKit-specific CSS property for Electron drag region
           WebkitAppRegion: "drag",
         }}
       />

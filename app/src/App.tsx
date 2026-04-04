@@ -15,6 +15,7 @@ import { ContainersPanel, type ContainersPanelHandle } from "./components/Contai
 import { GlobalTasksPanel } from "./components/GlobalTasksPanel";
 import { useChatStateStore, type ActiveChatState } from "./hooks/useChatStateStore";
 import { useAppPanelState } from "./hooks/useAppPanelState";
+import { storageGet, storageSet, storageRemove } from "./utils/storage";
 
 const LAST_CHANNEL_KEY = "loop-last-channel";
 
@@ -22,7 +23,7 @@ function getHashChannelId(): string | null {
   const hash = window.location.hash.slice(1);
   if (hash) return hash;
   // Restore last selected channel (Electron loses hash on restart).
-  try { return localStorage.getItem(LAST_CHANNEL_KEY); } catch { return null; }
+  return storageGet(LAST_CHANNEL_KEY);
 }
 
 export default function App() {
@@ -109,10 +110,8 @@ function AppInner() {
   // Sync hash and localStorage with selected channel.
   useEffect(() => {
     window.location.hash = selectedId ? selectedId : "";
-    try {
-      if (selectedId) localStorage.setItem(LAST_CHANNEL_KEY, selectedId);
-      else localStorage.removeItem(LAST_CHANNEL_KEY);
-    } catch { /* ignore */ }
+    if (selectedId) storageSet(LAST_CHANNEL_KEY, selectedId);
+    else storageRemove(LAST_CHANNEL_KEY);
   }, [selectedId]);
 
   // Handle back/forward navigation.
@@ -479,7 +478,6 @@ function AppInner() {
           right: 12,
           zIndex: 10,
           pointerEvents: "none",
-          // @ts-expect-error: WebKit-specific CSS property for Electron drag region
           WebkitAppRegion: "drag",
         }}
       />

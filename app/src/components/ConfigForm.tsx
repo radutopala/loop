@@ -8,6 +8,15 @@ import type { ConfigSchema, SchemaProperty, ConfigResponse } from "../api/config
 // Types
 // ---------------------------------------------------------------------------
 
+/** Leaf value that a single config field can hold. */
+type FieldValue = string | number | boolean | string[] | Record<string, string>;
+
+/** Recursive config data — objects can nest arbitrarily. */
+type ConfigData = { [key: string]: ConfigData | FieldValue | ConfigData[] | undefined };
+
+/** Value accepted by the object-array / object-map item sub-fields. */
+type ItemFieldValue = string | number | string[] | Record<string, string>;
+
 interface FieldDef {
   key: string;
   label: string;
@@ -19,7 +28,7 @@ interface FieldDef {
   step?: number;
   itemProperties?: Record<string, SchemaProperty>; // for objectarray and objectmap (additionalProperties.properties)
   widget?: string;
-  defaultValue?: any;
+  defaultValue?: FieldValue;
 }
 
 export interface ConfigFormProps {
@@ -125,32 +134,33 @@ const PlusIcon = () => (
 // Value helpers
 // ---------------------------------------------------------------------------
 
-function getNestedValue(obj: Record<string, any>, path: string): any {
-  let cur: any = obj;
+function getNestedValue(obj: ConfigData, path: string): ConfigData | FieldValue | ConfigData[] | undefined {
+  let cur: ConfigData | FieldValue | ConfigData[] | undefined = obj;
   for (const p of path.split(".")) {
-    if (cur == null || typeof cur !== "object") return undefined;
+    if (cur == null || typeof cur !== "object" || Array.isArray(cur)) return undefined;
     cur = cur[p];
   }
   return cur;
 }
 
-function setNestedValue(obj: Record<string, any>, path: string, value: any): Record<string, any> {
+function setNestedValue(obj: ConfigData, path: string, value: ConfigData | FieldValue | ConfigData[] | undefined): ConfigData {
   const idx = path.indexOf(".");
-  const clone = { ...obj };
+  const clone: ConfigData = { ...obj };
   if (idx === -1) { clone[path] = value; return clone; }
   const key = path.slice(0, idx);
   const rest = path.slice(idx + 1);
-  clone[key] = setNestedValue(typeof clone[key] === "object" && clone[key] !== null ? { ...clone[key] } : {}, rest, value);
+  const child = clone[key];
+  clone[key] = setNestedValue(typeof child === "object" && child !== null && !Array.isArray(child) ? { ...child } : {}, rest, value);
   return clone;
 }
 
-function cleanForSerialize(obj: any): any {
+function cleanForSerialize(obj: ConfigData | FieldValue | ConfigData[] | undefined | null): ConfigData | FieldValue | ConfigData[] | undefined {
   if (obj === null || obj === undefined) return undefined;
-  if (Array.isArray(obj)) { const f = obj.filter((v) => v != null && v !== ""); return f.length ? f : undefined; }
+  if (Array.isArray(obj)) { const f = obj.filter((v) => v != null && v !== ""); return f.length ? f as FieldValue | ConfigData[] : undefined; }
   if (typeof obj === "object") {
-    const r: Record<string, any> = {};
+    const r: ConfigData = {};
     let has = false;
-    for (const [k, v] of Object.entries(obj)) { const c = cleanForSerialize(v); if (c !== undefined) { r[k] = c; has = true; } }
+    for (const [k, v] of Object.entries(obj)) { const c = cleanForSerialize(v as ConfigData | FieldValue | ConfigData[] | undefined); if (c !== undefined) { r[k] = c; has = true; } }
     return has ? r : undefined;
   }
   return obj === "" ? undefined : obj;
@@ -213,7 +223,7 @@ export interface ConfigFormHandle {
 
 export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function ConfigForm({ schema, config, onSave, isGlobal, title, colors, onDirtyChange, visibleSection, jsonOnly }: ConfigFormProps, ref) {
   const [viewMode, setViewMode] = useState<"form" | "json">(jsonOnly ? "json" : "form");
-  const [formData, setFormData] = useState<Record<string, any>>({});
+  const [formData, setFormData] = useState<ConfigData>({});
   const [jsonDraft, setJsonDraft] = useState("");
   const [, setDirtyRaw] = useState(false);
   const [, setSaving] = useState(false);
@@ -224,7 +234,7 @@ export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function
 
   useEffect(() => {
     if (!config) { setFormData({}); setJsonDraft("{\n  \n}\n"); setDirty(false); return; }
-    const parsed = config.content ?? {};
+    const parsed = (config.content ?? {}) as ConfigData;
     setFormData(parsed);
     setJsonDraft(config.raw ?? JSON.stringify(parsed, null, 2) + "\n");
     setDirty(false); setError(null);
@@ -234,13 +244,13 @@ export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function
     if (mode === viewMode) return;
     if (viewMode === "form") { setJsonDraft(JSON.stringify(cleanForSerialize(formData) ?? {}, null, 2) + "\n"); }
     else {
-      try { setFormData(JSON.parse(jsonDraft)); setError(null); }
-      catch (e: any) { setError("Invalid JSON: " + (e.message ?? "parse error")); return; }
+      try { setFormData(JSON.parse(jsonDraft) as ConfigData); setError(null); }
+      catch (e: unknown) { setError("Invalid JSON: " + (e instanceof Error ? e.message : "parse error")); return; }
     }
     setViewMode(mode);
   }, [viewMode, formData, jsonDraft]);
 
-  const handleFormChange = useCallback((key: string, value: any) => {
+  const handleFormChange = useCallback((key: string, value: ConfigData | FieldValue | ConfigData[] | undefined) => {
     setFormData((prev) => setNestedValue(prev, key, value));
     setDirty(true);
   }, []);
@@ -256,7 +266,7 @@ export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function
   const handleCancel = useCallback(() => {
     if (!config) { setFormData({}); setJsonDraft("{\n  \n}\n"); }
     else {
-      const parsed = config.content ?? {};
+      const parsed = (config.content ?? {}) as ConfigData;
       setFormData(parsed);
       setJsonDraft(config.raw ?? JSON.stringify(parsed, null, 2) + "\n");
     }
@@ -388,23 +398,34 @@ function JSONView({ colors, draft, onChange, textareaRef, onSave, error, fillHei
 // ---------------------------------------------------------------------------
 
 function FieldRenderer({ field, value, onChange, colors, inputStyle }: {
-  field: FieldDef; value: any; onChange: (v: any) => void; colors: ColorPalette; inputStyle: React.CSSProperties;
+  field: FieldDef; value: ConfigData | FieldValue | ConfigData[] | undefined; onChange: (v: ConfigData | FieldValue | ConfigData[] | undefined) => void; colors: ColorPalette; inputStyle: React.CSSProperties;
 }) {
+  // Narrow onChange callbacks for sub-components — safe because the field.type discriminator
+  // guarantees the runtime value will match the narrower type at each call site.
+  const onStr = onChange as (v: string) => void;
+  const onNum = onChange as (v: number | undefined) => void;
+  const onBool = onChange as (v: boolean) => void;
+  const onStrArr = onChange as (v: string[]) => void;
+  const onObjArr = onChange as (v: Record<string, ItemFieldValue>[]) => void;
+  const onKV = onChange as (v: Record<string, string>) => void;
+  const onObjMap = onChange as (v: Record<string, Record<string, ItemFieldValue>>) => void;
+  const onStepper = onChange as (v: number) => void;
+
   // Custom widget overrides
-  if (field.widget === "theme-picker") return <ThemePickerFieldRow field={field} value={value ?? ""} onChange={onChange} colors={colors} />;
-  if (field.widget === "stepper") return <StepperFieldRow field={field} value={value} onChange={onChange} colors={colors} />;
+  if (field.widget === "theme-picker") return <ThemePickerFieldRow field={field} value={(value ?? "") as string} onChange={onStr} colors={colors} />;
+  if (field.widget === "stepper") return <StepperFieldRow field={field} value={value as number | undefined} onChange={onStepper} colors={colors} />;
 
   switch (field.type) {
-    case "text": return <TextFieldRow field={field} value={value ?? ""} onChange={onChange} colors={colors} inputStyle={inputStyle} />;
-    case "password": return <PasswordFieldRow field={field} value={value ?? ""} onChange={onChange} colors={colors} inputStyle={inputStyle} />;
-    case "number": return <NumberFieldRow field={field} value={value} onChange={onChange} colors={colors} inputStyle={inputStyle} />;
-    case "toggle": return <ToggleFieldRow field={field} value={!!(value ?? field.defaultValue)} onChange={onChange} colors={colors} />;
-    case "dropdown": return <DropdownFieldRow field={field} value={value ?? ""} onChange={onChange} colors={colors} inputStyle={inputStyle} />;
-    case "array": return <ArrayFieldRow field={field} value={value ?? []} onChange={onChange} colors={colors} inputStyle={inputStyle} />;
-    case "multiselect": return <MultiSelectFieldRow field={field} value={value ?? []} onChange={onChange} colors={colors} />;
-    case "objectarray": return <ObjectArrayFieldRow field={field} value={value ?? []} onChange={onChange} colors={colors} inputStyle={inputStyle} />;
-    case "keyvalue": return <KeyValueFieldRow field={field} value={value ?? {}} onChange={onChange} colors={colors} inputStyle={inputStyle} />;
-    case "objectmap": return <ObjectMapFieldRow field={field} value={value ?? {}} onChange={onChange} colors={colors} inputStyle={inputStyle} />;
+    case "text": return <TextFieldRow field={field} value={(value ?? "") as string} onChange={onStr} colors={colors} inputStyle={inputStyle} />;
+    case "password": return <PasswordFieldRow field={field} value={(value ?? "") as string} onChange={onStr} colors={colors} inputStyle={inputStyle} />;
+    case "number": return <NumberFieldRow field={field} value={value as number | undefined} onChange={onNum} colors={colors} inputStyle={inputStyle} />;
+    case "toggle": return <ToggleFieldRow field={field} value={!!(value ?? field.defaultValue)} onChange={onBool} colors={colors} />;
+    case "dropdown": return <DropdownFieldRow field={field} value={(value ?? "") as string} onChange={onStr} colors={colors} inputStyle={inputStyle} />;
+    case "array": return <ArrayFieldRow field={field} value={(value ?? []) as string[]} onChange={onStrArr} colors={colors} inputStyle={inputStyle} />;
+    case "multiselect": return <MultiSelectFieldRow field={field} value={(value ?? []) as string[]} onChange={onStrArr} colors={colors} />;
+    case "objectarray": return <ObjectArrayFieldRow field={field} value={(value ?? []) as Record<string, ItemFieldValue>[]} onChange={onObjArr} colors={colors} inputStyle={inputStyle} />;
+    case "keyvalue": return <KeyValueFieldRow field={field} value={(value ?? {}) as Record<string, string>} onChange={onKV} colors={colors} inputStyle={inputStyle} />;
+    case "objectmap": return <ObjectMapFieldRow field={field} value={(value ?? {}) as Record<string, Record<string, ItemFieldValue>>} onChange={onObjMap} colors={colors} inputStyle={inputStyle} />;
     default: return null;
   }
 }
@@ -461,7 +482,7 @@ function PasswordFieldRow({ field, value, onChange, colors, inputStyle }: {
 // ---------------------------------------------------------------------------
 
 function NumberFieldRow({ field, value, onChange, colors, inputStyle }: {
-  field: FieldDef; value: any; onChange: (v: any) => void; colors: ColorPalette; inputStyle: React.CSSProperties;
+  field: FieldDef; value: number | undefined; onChange: (v: number | undefined) => void; colors: ColorPalette; inputStyle: React.CSSProperties;
 }) {
   return (
     <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, padding: "8px 12px", ...rowBorder(colors) }}>
@@ -539,14 +560,14 @@ function MultiSelectFieldRow({ field, value, onChange, colors }: {
 }
 
 function ObjectArrayFieldRow({ field, value, onChange, colors, inputStyle }: {
-  field: FieldDef; value: any[]; onChange: (v: any[]) => void; colors: ColorPalette; inputStyle: React.CSSProperties;
+  field: FieldDef; value: Record<string, ItemFieldValue>[]; onChange: (v: Record<string, ItemFieldValue>[]) => void; colors: ColorPalette; inputStyle: React.CSSProperties;
 }) {
-  const items: Record<string, any>[] = Array.isArray(value) ? value : [];
+  const items: Record<string, ItemFieldValue>[] = Array.isArray(value) ? value : [];
   const props = field.itemProperties ?? {};
   const propKeys = Object.entries(props).sort(([, a], [, b]) => (a["x-order"] ?? 999) - (b["x-order"] ?? 999));
 
   const addItem = () => {
-    const empty: Record<string, any> = {};
+    const empty: Record<string, ItemFieldValue> = {};
     for (const [k, p] of propKeys) {
       if (p.type === "string") empty[k] = "";
       else if (p.type === "integer" || p.type === "number") empty[k] = 0;
@@ -554,7 +575,7 @@ function ObjectArrayFieldRow({ field, value, onChange, colors, inputStyle }: {
     onChange([...items, empty]);
   };
 
-  const updateItem = (idx: number, key: string, val: any) => {
+  const updateItem = (idx: number, key: string, val: ItemFieldValue) => {
     const next = items.map((item, i) => i === idx ? { ...item, [key]: val } : item);
     onChange(next);
   };
@@ -572,10 +593,10 @@ function ObjectArrayFieldRow({ field, value, onChange, colors, inputStyle }: {
               return (
                 <div key={k} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "3px 0" }}>
                   <span style={{ fontSize: 12, color: colors.textDim, minWidth: 80 }}>{p.title ?? k}</span>
-                  <select value={item[k] ?? ""} onChange={(e) => updateItem(idx, k, e.target.value)}
+                  <select value={(item[k] ?? "") as string} onChange={(e) => updateItem(idx, k, e.target.value)}
                     style={{ ...inputStyle, flex: 1, maxWidth: 200 }}>
                     <option value="">—</option>
-                    {p.enum.map((v: any) => <option key={String(v)} value={String(v)}>{String(v)}</option>)}
+                    {p.enum.map((v: string | number | boolean) => <option key={String(v)} value={String(v)}>{String(v)}</option>)}
                   </select>
                 </div>
               );
@@ -583,7 +604,7 @@ function ObjectArrayFieldRow({ field, value, onChange, colors, inputStyle }: {
             return (
               <div key={k} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "3px 0" }}>
                 <span style={{ fontSize: 12, color: colors.textDim, minWidth: 80 }}>{p.title ?? k}</span>
-                <input type={p.type === "integer" ? "number" : "text"} value={item[k] ?? ""}
+                <input type={p.type === "integer" ? "number" : "text"} value={(item[k] ?? "") as string | number}
                   onChange={(e) => updateItem(idx, k, p.type === "integer" ? Number(e.target.value) : e.target.value)}
                   placeholder={p["x-placeholder"] ?? ""} style={{ ...inputStyle, flex: 1 }} />
               </div>
@@ -599,7 +620,7 @@ function ObjectArrayFieldRow({ field, value, onChange, colors, inputStyle }: {
 }
 
 function ArrayFieldRow({ field, value, onChange, colors, inputStyle }: {
-  field: FieldDef; value: any[]; onChange: (v: any[]) => void; colors: ColorPalette; inputStyle: React.CSSProperties;
+  field: FieldDef; value: string[]; onChange: (v: string[]) => void; colors: ColorPalette; inputStyle: React.CSSProperties;
 }) {
   const [draft, setDraft] = useState("");
   const items: string[] = Array.isArray(value) ? value : [];
@@ -683,7 +704,7 @@ function KeyValueFieldRow({ field, value, onChange, colors, inputStyle }: {
 // ---------------------------------------------------------------------------
 
 function ObjectMapFieldRow({ field, value, onChange, colors, inputStyle }: {
-  field: FieldDef; value: Record<string, any>; onChange: (v: Record<string, any>) => void; colors: ColorPalette; inputStyle: React.CSSProperties;
+  field: FieldDef; value: Record<string, Record<string, ItemFieldValue>>; onChange: (v: Record<string, Record<string, ItemFieldValue>>) => void; colors: ColorPalette; inputStyle: React.CSSProperties;
 }) {
   const [newKey, setNewKey] = useState("");
   const entries = Object.entries(value ?? {});
@@ -693,7 +714,7 @@ function ObjectMapFieldRow({ field, value, onChange, colors, inputStyle }: {
   const addEntry = () => {
     const k = newKey.trim();
     if (!k || value[k] !== undefined) return;
-    const empty: Record<string, any> = {};
+    const empty: Record<string, ItemFieldValue> = {};
     for (const [pk, p] of propKeys) {
       if (p.type === "string") empty[pk] = "";
       else if (p.type === "array") empty[pk] = [];
@@ -703,7 +724,7 @@ function ObjectMapFieldRow({ field, value, onChange, colors, inputStyle }: {
     setNewKey("");
   };
 
-  const updateEntry = (entryKey: string, propKey: string, val: any) => {
+  const updateEntry = (entryKey: string, propKey: string, val: ItemFieldValue) => {
     onChange({ ...value, [entryKey]: { ...value[entryKey], [propKey]: val } });
   };
 
@@ -725,15 +746,15 @@ function ObjectMapFieldRow({ field, value, onChange, colors, inputStyle }: {
           {propKeys.map(([pk, p]) => {
             const v = entryVal?.[pk];
             if (p.type === "array" && p.items?.type === "string") {
-              return <ObjectMapArrayProp key={pk} label={p.title ?? pk} value={v ?? []} onChange={(nv) => updateEntry(entryKey, pk, nv)} colors={colors} inputStyle={inputStyle} />;
+              return <ObjectMapArrayProp key={pk} label={p.title ?? pk} value={(v ?? []) as string[]} onChange={(nv) => updateEntry(entryKey, pk, nv)} colors={colors} inputStyle={inputStyle} />;
             }
             if (p.type === "object" && p.additionalProperties?.type === "string") {
-              return <ObjectMapKVProp key={pk} label={p.title ?? pk} value={v ?? {}} onChange={(nv) => updateEntry(entryKey, pk, nv)} colors={colors} inputStyle={inputStyle} />;
+              return <ObjectMapKVProp key={pk} label={p.title ?? pk} value={(v ?? {}) as Record<string, string>} onChange={(nv) => updateEntry(entryKey, pk, nv)} colors={colors} inputStyle={inputStyle} />;
             }
             return (
               <div key={pk} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "3px 0" }}>
                 <span style={{ fontSize: 12, color: colors.textDim, minWidth: 80 }}>{p.title ?? pk}</span>
-                <input type="text" value={v ?? ""} onChange={(e) => updateEntry(entryKey, pk, e.target.value)}
+                <input type="text" value={(v ?? "") as string} onChange={(e) => updateEntry(entryKey, pk, e.target.value)}
                   placeholder={p["x-placeholder"] ?? ""} style={{ ...inputStyle, flex: 1 }} />
               </div>
             );
@@ -880,9 +901,9 @@ function ThemePickerFieldRow({ field, value, onChange, colors }: {
 // ---------------------------------------------------------------------------
 
 function StepperFieldRow({ field, value, onChange, colors }: {
-  field: FieldDef; value: any; onChange: (v: any) => void; colors: ColorPalette;
+  field: FieldDef; value: number | undefined; onChange: (v: number) => void; colors: ColorPalette;
 }) {
-  const current = typeof value === "number" ? value : (field.defaultValue ?? 13);
+  const current = typeof value === "number" ? value : (typeof field.defaultValue === "number" ? field.defaultValue : 13);
   const btnStyle: React.CSSProperties = {
     width: 24, height: 24, border: `1px solid ${colors.border}`, borderRadius: 4,
     backgroundColor: colors.surface, color: colors.text, cursor: "pointer",

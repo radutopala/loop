@@ -579,7 +579,6 @@ export function GlobalTasksPanel({
           display: "flex",
           alignItems: "center",
           paddingLeft: sidebarOpen === false ? 76 : 4,
-          // @ts-expect-error: WebKit-specific CSS property for Electron drag region
           WebkitAppRegion: "drag",
         }}
       >
@@ -597,7 +596,6 @@ export function GlobalTasksPanel({
               borderRadius: 4,
               display: "flex",
               alignItems: "center",
-              // @ts-expect-error: WebKit-specific CSS property
               WebkitAppRegion: "no-drag",
             }}
           >
@@ -629,7 +627,6 @@ export function GlobalTasksPanel({
               fontSize: 11,
               fontFamily: fonts.mono,
               marginLeft: 6,
-              // @ts-expect-error: WebKit-specific CSS property
               WebkitAppRegion: "no-drag",
             }}
           >

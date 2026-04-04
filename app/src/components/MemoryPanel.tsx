@@ -6,6 +6,7 @@ import { fetchGlobalConfig } from "../api/configApi";
 import { FilePanel } from "./FilePanel";
 import { MemoryFileList, type TreeNode } from "./MemoryFileList";
 import { MemoryFileViewer } from "./MemoryFileViewer";
+import { storageGet, storageSet, storageGetJSON, storageSetJSON } from "../utils/storage";
 
 const TREE_MIN_WIDTH = 120;
 const TREE_MAX_WIDTH = 400;
@@ -14,42 +15,32 @@ const TREE_WIDTH_KEY = "loop-memory-tree-width";
 const TABS_KEY = "loop-memory-tabs";
 
 function loadTreeWidth(): number {
-  try {
-    const stored = localStorage.getItem(TREE_WIDTH_KEY);
-    if (stored) {
-      const w = parseInt(stored, 10);
-      if (w >= TREE_MIN_WIDTH && w <= TREE_MAX_WIDTH) return w;
-    }
-  } catch { /* ignore */ }
+  const stored = storageGet(TREE_WIDTH_KEY);
+  if (stored) {
+    const w = parseInt(stored, 10);
+    if (w >= TREE_MIN_WIDTH && w <= TREE_MAX_WIDTH) return w;
+  }
   return TREE_DEFAULT_WIDTH;
 }
 
 interface TabsState { tabs: string[]; selected: string | null; }
 
 function loadTabs(channelId: string): TabsState {
-  try {
-    const stored = localStorage.getItem(TABS_KEY);
-    if (stored) {
-      const all = JSON.parse(stored);
-      if (typeof all === "object" && all !== null && all[channelId]) {
-        return all[channelId];
-      }
-    }
-  } catch { /* ignore */ }
+  const all = storageGetJSON<Record<string, TabsState>>(TABS_KEY);
+  if (all && typeof all === "object" && all[channelId]) {
+    return all[channelId];
+  }
   return { tabs: [], selected: null };
 }
 
 function saveTabs(channelId: string, state: TabsState) {
-  try {
-    const stored = localStorage.getItem(TABS_KEY);
-    const all = stored ? JSON.parse(stored) : {};
-    if (state.tabs.length > 0) {
-      all[channelId] = state;
-    } else {
-      delete all[channelId];
-    }
-    localStorage.setItem(TABS_KEY, JSON.stringify(all));
-  } catch { /* ignore */ }
+  const all = storageGetJSON<Record<string, TabsState>>(TABS_KEY) ?? {};
+  if (state.tabs.length > 0) {
+    all[channelId] = state;
+  } else {
+    delete all[channelId];
+  }
+  storageSetJSON(TABS_KEY, all);
 }
 
 interface MemoryPanelProps {
@@ -308,7 +299,7 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
 
     const onMouseUp = () => {
       setTreeResizing(false);
-      try { localStorage.setItem(TREE_WIDTH_KEY, String(lastWidth)); } catch { /* ignore */ }
+      storageSet(TREE_WIDTH_KEY, String(lastWidth));
       document.removeEventListener("mousemove", onMouseMove);
       document.removeEventListener("mouseup", onMouseUp);
     };

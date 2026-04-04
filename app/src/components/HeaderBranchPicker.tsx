@@ -73,7 +73,6 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
           color: colors.active,
           fontFamily: fonts.mono,
           flexShrink: 0,
-          // @ts-expect-error: WebKit-specific CSS property
           WebkitAppRegion: "no-drag",
         }}
         onMouseEnter={(e) => { e.currentTarget.style.opacity = "0.8"; }}

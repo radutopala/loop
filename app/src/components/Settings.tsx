@@ -215,7 +215,6 @@ export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggl
           display: "flex",
           alignItems: "center",
           paddingLeft: sidebarOpen === false ? 76 : 4,
-          // @ts-expect-error: WebKit-specific CSS property for Electron drag region
           WebkitAppRegion: "drag",
         }}
       >
@@ -233,7 +232,6 @@ export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggl
               borderRadius: 4,
               display: "flex",
               alignItems: "center",
-              // @ts-expect-error: WebKit-specific CSS property
               WebkitAppRegion: "no-drag",
             }}
           >
@@ -265,7 +263,6 @@ export function Settings({ open, projectDirPath, channelId, sidebarOpen, onToggl
               fontSize: 11,
               fontFamily: fonts.mono,
               marginLeft: 6,
-              // @ts-expect-error: WebKit-specific CSS property
               WebkitAppRegion: "no-drag",
             }}
           >

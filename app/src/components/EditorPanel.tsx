@@ -8,6 +8,7 @@ import { FilePanel } from "./FilePanel";
 import { ContextMenu, type MenuItem } from "./ContextMenu";
 import { FileTree, FileIcon, makePathKey, parsePathKey, TREE_MIN_WIDTH, TREE_MAX_WIDTH, loadTreeWidth, saveTreeWidth } from "./EditorFileTree";
 import { CodeEditor, isMarkdownFile, type CodeEditorHandle } from "./CodeEditor";
+import { storageGetJSON, storageSetJSON } from "../utils/storage";
 
 interface EditorPanelProps {
   channelId: string;
@@ -29,29 +30,21 @@ const EDITOR_TABS_KEY = "loop-editor-tabs";
 interface EditorTabsState { tabs: string[]; selected: string | null; }
 
 function loadEditorTabs(channelId: string, key = EDITOR_TABS_KEY): EditorTabsState {
-  try {
-    const stored = localStorage.getItem(key);
-    if (stored) {
-      const all = JSON.parse(stored);
-      if (typeof all === "object" && all !== null && all[channelId]) {
-        return all[channelId];
-      }
-    }
-  } catch { /* ignore */ }
+  const all = storageGetJSON<Record<string, EditorTabsState>>(key);
+  if (all && typeof all === "object" && all[channelId]) {
+    return all[channelId];
+  }
   return { tabs: [], selected: null };
 }
 
 function saveEditorTabs(channelId: string, state: EditorTabsState, key = EDITOR_TABS_KEY) {
-  try {
-    const stored = localStorage.getItem(key);
-    const all = stored ? JSON.parse(stored) : {};
-    if (state.tabs.length > 0) {
-      all[channelId] = state;
-    } else {
-      delete all[channelId];
-    }
-    localStorage.setItem(key, JSON.stringify(all));
-  } catch { /* ignore */ }
+  const all = storageGetJSON<Record<string, EditorTabsState>>(key) ?? {};
+  if (state.tabs.length > 0) {
+    all[channelId] = state;
+  } else {
+    delete all[channelId];
+  }
+  storageSetJSON(key, all);
 }
 
 export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageKey, ...panelProps }: EditorPanelProps) {

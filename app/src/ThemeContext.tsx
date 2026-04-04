@@ -1,5 +1,6 @@
 import { createContext, useContext, useState, useEffect, type ReactNode } from "react";
 import { builtinThemes, darkColors, type ColorPalette } from "./theme";
+import { storageSet } from "./utils/storage";
 
 export interface FontSizes {
   sidebar: number;
@@ -68,13 +69,13 @@ export function ThemeProvider({ children, initialTheme, initialFontSizes, initia
   // Wrap setThemeName to also persist to localStorage
   const setThemeName = (name: string) => {
     setThemeNameState(name);
-    try { localStorage.setItem("loop-theme", name); } catch { /* ignore */ }
+    storageSet("loop-theme", name);
   };
 
   // On initial mount, persist the initial theme + islands to localStorage
   useEffect(() => {
-    try { localStorage.setItem("loop-theme", themeName); } catch { /* ignore */ }
-    try { localStorage.setItem("loop-islands", islands ? "1" : "0"); } catch { /* ignore */ }
+    storageSet("loop-theme", themeName);
+    storageSet("loop-islands", islands ? "1" : "0");
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Update scrollbar & body background via injected <style>, update meta theme-color

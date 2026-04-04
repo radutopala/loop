@@ -4,29 +4,24 @@ import { sendCommand, sendMessage } from "../api/loopApi";
 import { fonts } from "../theme";
 import type { ColorPalette } from "../theme";
 import { useTheme } from "../ThemeContext";
+import { storageGetJSON, storageSetJSON } from "../utils/storage";
 
 // Draft text per channel — persisted to localStorage across app restarts.
 const DRAFT_KEY = "loop-chat-drafts";
 const draftText = {
   get(channelId: string): string | undefined {
-    try {
-      const drafts = JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}");
-      return drafts[channelId];
-    } catch { return undefined; }
+    const drafts = storageGetJSON<Record<string, string>>(DRAFT_KEY);
+    return drafts?.[channelId];
   },
   set(channelId: string, text: string) {
-    try {
-      const drafts = JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}");
-      drafts[channelId] = text;
-      localStorage.setItem(DRAFT_KEY, JSON.stringify(drafts));
-    } catch { /* ignore */ }
+    const drafts = storageGetJSON<Record<string, string>>(DRAFT_KEY) ?? {};
+    drafts[channelId] = text;
+    storageSetJSON(DRAFT_KEY, drafts);
   },
   delete(channelId: string) {
-    try {
-      const drafts = JSON.parse(localStorage.getItem(DRAFT_KEY) || "{}");
-      delete drafts[channelId];
-      localStorage.setItem(DRAFT_KEY, JSON.stringify(drafts));
-    } catch { /* ignore */ }
+    const drafts = storageGetJSON<Record<string, string>>(DRAFT_KEY) ?? {};
+    delete drafts[channelId];
+    storageSetJSON(DRAFT_KEY, drafts);
   },
 };
 
