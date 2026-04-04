@@ -65,6 +65,7 @@ type taskResponse struct {
 	OriginBranch    string    `json:"origin_branch,omitempty"`
 	UpdateBeforeRun bool      `json:"update_before_run"`
 	Running         bool      `json:"running"`
+	ThreadID        string    `json:"thread_id,omitempty"`
 	ChannelName     string    `json:"channel_name,omitempty"`
 	DirPath         string    `json:"dir_path,omitempty"`
 	ChannelWorktree bool      `json:"channel_worktree,omitempty"`
@@ -184,6 +185,7 @@ func toTaskResponse(t *db.ScheduledTask) taskResponse {
 		OriginBranch:    t.OriginBranch,
 		UpdateBeforeRun: t.UpdateBeforeRun,
 		Running:         t.Running,
+		ThreadID:        t.ThreadID,
 	}
 }
 

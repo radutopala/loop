@@ -657,6 +657,7 @@ func (s *ServerSuite) TestGetTaskWithWorktree() {
 	task := &db.ScheduledTask{
 		ID: 43, ChannelID: "ch1", Schedule: "0 9 * * *", Type: db.TaskTypeCron,
 		Prompt: "wt task", Enabled: true, NextRunAt: now, Worktree: true,
+		ThreadID: "thread-abc",
 	}
 	s.scheduler.On("GetTask", mock.Anything, int64(43)).Return(task, nil)
 
@@ -667,6 +668,7 @@ func (s *ServerSuite) TestGetTaskWithWorktree() {
 	var resp taskResponse
 	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
 	require.True(s.T(), resp.Worktree)
+	require.Equal(s.T(), "thread-abc", resp.ThreadID)
 	s.scheduler.AssertExpectations(s.T())
 }
 
