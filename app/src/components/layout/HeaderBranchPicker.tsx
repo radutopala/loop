@@ -61,6 +61,7 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
     <div ref={ref} style={{ position: "relative", display: "flex", alignItems: "center" }}>
       <button
         onClick={handleOpen}
+        title="Branch"
         style={{
           display: "flex",
           alignItems: "center",
@@ -91,6 +92,7 @@ export function HeaderBranchPicker({ channelId, branch, onBranchChanged, onCreat
       </button>
       {open && (
         <div
+          data-testid="branch-picker"
           style={{
             position: "absolute",
             top: "100%",

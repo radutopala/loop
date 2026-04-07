@@ -325,6 +325,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
     return (
       <div
         key={task.id}
+        data-testid={`task-row-${task.id}`}
         onClick={() => { setSelectedId(task.id); setEditing(false); }}
         style={{
           padding: "6px 8px",
@@ -600,7 +601,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
   };
 
   return (
-    <div style={{ display: "flex", flex: 1, height: "100%", overflow: "hidden", zoom: fontSizes.panels / 12 }}>
+    <div data-testid="tasks-panel" style={{ display: "flex", flex: 1, height: "100%", overflow: "hidden", zoom: fontSizes.panels / 12 }}>
       {/* Left: task list */}
       <div
         style={{

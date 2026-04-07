@@ -162,7 +162,7 @@ export function NotesPanel({ channelId }: NotesPanelProps) {
     : "";
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12 }}>
+    <div data-testid="notes-panel" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12 }}>
       <div style={{
         height: 22,
         display: "flex",

@@ -541,7 +541,7 @@ export function EditorPanel({ channelId, dirPath, branch, embedded, tabsStorageK
   }, []);
 
   return (
-    <FilePanel title="Editor" dirPath={dirPath} branch={branch} noPadding embedded={embedded} {...panelProps}>
+    <FilePanel title="Editor" dirPath={dirPath} branch={branch} noPadding embedded={embedded} dataTestId="editor-panel" {...panelProps}>
       <div style={{ display: "flex", height: "100%", userSelect: treeResizing ? "none" : undefined }}>
         {/* File tree */}
         <div

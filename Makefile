@@ -1,4 +1,4 @@
-.PHONY: help build install test test-integration test-component lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-install app-build-binary app-dist-linux app-icons
+.PHONY: help build install test test-integration test-component test-runner-build test-runner-push lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-install app-build-binary app-dist-linux app-icons
 .DEFAULT_GOAL := help
 
 help: ## Show available targets
@@ -25,12 +25,39 @@ test: ## Run all tests
 test-integration: ## Run integration tests (requires tokens in ~/.loop/config.integration.json)
 	go test -v -tags integration -race -count=1 -timeout 10m ./internal/slack/ ./internal/discord/
 
-test-component: ## Run component performance tests (via Docker on host, natively in CI)
-	@if [ "$$CI" = "true" ] || [ -f /.dockerenv ]; then \
-		bash scripts/test-component.sh; \
+test-component-bdd: ## Run BDD component tests (via Docker on host, natively in CI)
+	@if [ "$$CI" = "true" ] || ([ -f /.dockerenv ] && command -v apt-get >/dev/null 2>&1); then \
+		TEST_RUN=$${TEST_RUN:-"TestBDDBackendFeatures|TestBDDFrontendFeatures"} bash scripts/test-component.sh; \
 	else \
-		docker run --rm -v "$$(pwd)":/app -w /app golang:1.26 bash scripts/test-component.sh; \
+		docker rm -f loop-bdd 2>/dev/null; \
+		docker run --name loop-bdd -v "$$(pwd)":/app -w /app \
+			-v loop-gomod:/go/pkg/mod -v loop-gocache:/root/.cache/go-build \
+			-e TEST_RUN="$${TEST_RUN:-TestBDDBackendFeatures|TestBDDFrontendFeatures}" \
+			$(if $(GODOG_TAGS),-e GODOG_TAGS="$(GODOG_TAGS)") \
+			$(if $(GODOG_CONCURRENCY),-e GODOG_CONCURRENCY="$(GODOG_CONCURRENCY)") \
+			ghcr.io/radutopala/loop/test-runner:latest bash scripts/test-component.sh; \
 	fi
+
+test-component-perf: ## Run API performance tests (via Docker on host, natively in CI)
+	@if [ "$$CI" = "true" ] || ([ -f /.dockerenv ] && command -v apt-get >/dev/null 2>&1); then \
+		TEST_RUN=TestAPIPerfTestSuite bash scripts/test-component.sh; \
+	else \
+		docker run --rm -v "$$(pwd)":/app -w /app \
+			-v loop-gomod:/go/pkg/mod -v loop-gocache:/root/.cache/go-build \
+			-e TEST_RUN=TestAPIPerfTestSuite \
+			ghcr.io/radutopala/loop/test-runner:latest bash scripts/test-component.sh; \
+	fi
+
+test-component-bdd-host: ## Run frontend BDD tests against host Chrome browser (no Docker)
+	CHROME_CDP_URL=$${CHROME_CDP_URL:-auto} TEST_RUN=$${TEST_RUN:-TestBDDFrontendFeatures} GODOG_CONCURRENCY=1 bash scripts/test-component.sh
+
+TEST_RUNNER_IMAGE := ghcr.io/radutopala/loop/test-runner:latest
+
+test-runner-build: ## Build the test-runner Docker image
+	docker build -t $(TEST_RUNNER_IMAGE) -f scripts/test-runner.Dockerfile scripts/
+
+test-runner-push: test-runner-build ## Build and push the test-runner Docker image
+	docker push $(TEST_RUNNER_IMAGE)
 
 lint: ## Run golangci-lint (with auto-fix)
 	docker run --rm --name loop-lint -v "$$(pwd)":/app -v /app/app/node_modules -w /app golangci/golangci-lint:v2.11.4 golangci-lint run -v --fix ./...

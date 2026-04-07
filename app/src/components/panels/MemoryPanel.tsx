@@ -361,7 +361,7 @@ export function MemoryPanel({ channelId, dirPath, branch, embedded, openMemoryFi
   }, []);
 
   return (
-    <FilePanel title="Memory" dirPath={dirPath} branch={branch} noPadding={!loading && files.length > 0} embedded={embedded} {...panelProps}>
+    <FilePanel title="Memory" dirPath={dirPath} branch={branch} noPadding={!loading && files.length > 0} embedded={embedded} dataTestId="memory-panel" {...panelProps}>
       {listError && (
         <div style={{ color: colors.error, fontSize: 13 }}>{listError}</div>
       )}

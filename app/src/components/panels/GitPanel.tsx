@@ -100,7 +100,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
         const all = new Set(info.branches);
         if (info.current) all.add(info.current);
         // Also include worktree branches.
-        for (const wt of info.worktrees) {
+        for (const wt of info.worktrees ?? []) {
           if (wt.branch) all.add(wt.branch);
         }
         const sorted = [...all].sort();
@@ -404,7 +404,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
 
   if (embedded) {
     return (
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12 }}>
+      <div data-testid="git-panel" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12 }}>
         {gitToolbar}
         {gitMode === "commits" ? commitsContent : diffContent}
         {contextMenuOverlay}
@@ -414,6 +414,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
 
   return (
     <div
+      data-testid="git-panel"
       ref={panelRef}
       style={{
         width: maximized ? "100%" : width,

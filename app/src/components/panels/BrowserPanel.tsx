@@ -184,6 +184,7 @@ export function BrowserPanel({ channelId, fixedMode }: BrowserPanelProps) {
 
   return (
     <div
+      data-testid="browser-panel"
       style={{
         flex: 1,
         display: "flex",

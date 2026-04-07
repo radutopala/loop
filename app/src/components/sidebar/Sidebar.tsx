@@ -262,6 +262,7 @@ export function Sidebar({
 
   return (
     <div
+      data-testid="sidebar"
       ref={sidebarRef}
       style={{
         width,

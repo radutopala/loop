@@ -1,10 +1,14 @@
 let apiUrl = "http://localhost:8222";
 
-// When running in a browser (not Electron), probe host.docker.internal first
-// so the app works from Docker container browsers, then fall back to localhost.
+// When running in a browser (not Electron), probe for the API server.
+// Try same-origin first (works when Vite proxies /api), then external URLs.
 async function probeApiUrl(): Promise<void> {
   if (typeof window === "undefined") return;
-  const candidates = ["http://host.docker.internal:8222", "http://localhost:8222"];
+  const candidates = [
+    window.location.origin, // same-origin (Vite proxy or co-located server)
+    "http://host.docker.internal:8222",
+    "http://localhost:8222",
+  ];
   for (const url of candidates) {
     try {
       const res = await fetch(`${url}/api/health`, { signal: AbortSignal.timeout(1000) });

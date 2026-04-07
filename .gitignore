@@ -48,3 +48,6 @@ memory/
 !internal/memory/
 tickets/
 .worktrees/
+
+# Component test artifacts
+test/component/screenshots/

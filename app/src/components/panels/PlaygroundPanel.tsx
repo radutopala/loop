@@ -144,7 +144,7 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
   // Empty state — no item selected.
   if (!activeItem) {
     return (
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", backgroundColor: colors.bg, gap: 12 }}>
+      <div data-testid="playground-panel" style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", backgroundColor: colors.bg, gap: 12 }}>
         <div style={{ color: colors.textDim, fontSize: 13 }}>
           {items.length > 0 ? "Select a playground" : "No playgrounds yet — ask an agent to create one, or run onboard:global to install examples"}
         </div>
@@ -156,7 +156,7 @@ export function PlaygroundPanel({ channelId }: PlaygroundPanelProps) {
   }
 
   return (
-    <div style={{ flex: 1, display: "flex", flexDirection: "column", backgroundColor: colors.bg, overflow: "hidden", zoom: fontSizes.panels / 12 }}>
+    <div data-testid="playground-panel" style={{ flex: 1, display: "flex", flexDirection: "column", backgroundColor: colors.bg, overflow: "hidden", zoom: fontSizes.panels / 12 }}>
       {/* Toolbar */}
       <div
         style={{

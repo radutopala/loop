@@ -1,0 +1,39 @@
+@frontend
+Feature: Smoke & Navigation Journey
+  End-to-end journey verifying app loads, sidebar, footer, settings,
+  global tasks panel, channel chat, and git panel modes.
+
+  Scenario: App load through sidebar, settings, global tasks, chat, and git panel
+    Given I open the app in a browser
+    Then I wait for text "Settings" to appear
+    And the page should contain text "Tasks"
+    And the page should contain text "Containers"
+    And the page should contain text "README"
+    And I wait for text "dm" to appear
+
+    # Navigate to Settings
+    When I click on "Settings" in the sidebar
+    Then I wait for text "Settings" to appear
+
+    # Open and close global tasks panel
+    When I open the global tasks panel
+    And I click on the button with title "Close panel"
+    Then I wait for text "TASKS (" to disappear
+
+    # Set up channel, verify chat and modes
+    Given I set up a test channel via API for directory "/tmp/bdd-mega-smoke"
+    And I open the app in a browser
+    And I wait for text "bdd-mega-smoke" to appear
+    And I click on "bdd-mega-smoke" in the sidebar
+    Then I wait for "textarea" to be visible
+    And the page should contain text "Agent"
+    And the page should contain text "Plan"
+
+    # Git panel tabs
+    And I wait for text "UNCOMMITTED" to appear
+    And the page should contain text "BRANCHES"
+    And the page should contain text "COMMITS"
+    When I click on the button with text "BRANCHES"
+    Then the page should contain text "BRANCHES"
+    When I click on the button with text "COMMITS"
+    Then the page should contain text "COMMITS"

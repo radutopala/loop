@@ -48,6 +48,7 @@ interface FilePanelProps {
   noPadding?: boolean;
   /** When true, suppress outer chrome (resize, drag region, header) and render only children. */
   embedded?: boolean;
+  dataTestId?: string;
   onToggleSidebar?: () => void;
   onOpenPalette?: () => void;
   onToggleMaximize?: () => void;
@@ -55,7 +56,7 @@ interface FilePanelProps {
   children: ReactNode;
 }
 
-export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPadding, embedded, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose, children }: FilePanelProps) {
+export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPadding, embedded, dataTestId, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose, children }: FilePanelProps) {
   const { colors, fontSizes } = useTheme();
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
@@ -72,7 +73,7 @@ export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPa
 
   if (embedded) {
     return (
-      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12, borderRadius: colors.islandRadius, boxShadow: colors.islandShadow, border: colors.islandBorder }}>
+      <div data-testid={dataTestId} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12, borderRadius: colors.islandRadius, boxShadow: colors.islandShadow, border: colors.islandBorder }}>
         <div style={{ flex: 1, overflow: "auto", padding: noPadding ? 0 : "12px 16px" }}>
           {children}
         </div>
@@ -110,6 +111,7 @@ export function FilePanel({ title, dirPath, branch, maximized, sidebarOpen, noPa
 
   return (
     <div
+      data-testid={dataTestId}
       style={{
         width: maximized ? "100%" : width,
         minWidth: maximized ? 0 : MIN_WIDTH,
@@ -354,7 +356,7 @@ export function MarkdownFilePanel({ dirPath, branch, ...props }: MarkdownFilePan
   }, [content]);
 
   return (
-    <FilePanel title="README" dirPath={dirPath} branch={branch} {...props}>
+    <FilePanel title="README" dirPath={dirPath} branch={branch} dataTestId="file-panel" {...props}>
       {error && (
         <div style={{ color: colors.error, fontSize: 13 }}>{error}</div>
       )}

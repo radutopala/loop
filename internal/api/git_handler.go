@@ -62,7 +62,7 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var branches []string
+	branches := []string{}
 	for _, line := range strings.Split(strings.TrimSpace(string(branchOut)), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
@@ -124,7 +124,7 @@ func parseWorktrees(output, mainDir string) []worktreeEntry {
 	if err != nil {
 		realMain = mainDir
 	}
-	var worktrees []worktreeEntry
+	worktrees := []worktreeEntry{}
 	var current worktreeEntry
 	for _, line := range strings.Split(output, "\n") {
 		if strings.HasPrefix(line, "worktree ") {

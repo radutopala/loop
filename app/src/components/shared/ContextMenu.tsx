@@ -60,6 +60,7 @@ export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
         }}
       />
       <div
+        data-testid="context-menu"
         ref={menuRef}
         onContextMenu={(e) => e.preventDefault()}
         style={{

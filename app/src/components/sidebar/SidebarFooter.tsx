@@ -136,6 +136,7 @@ export function SidebarFooter({
         Settings
       </button>
       <button
+        data-testid="sidebar-tasks-btn"
         onClick={onOpenTasks}
         style={footerBtnStyle}
         onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}

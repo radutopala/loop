@@ -133,6 +133,7 @@ export const ContainersPanel = forwardRef<ContainersPanelHandle, ContainersPanel
 
   return (
     <div
+      data-testid="containers-panel"
       style={{
         flex: 1,
         backgroundColor: colors.sidebar,

@@ -397,10 +397,8 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
           state.toolActivity = null;
           state.agentActivity = null;
           state.triggerContent = null;
-          // Clear todos only if all are completed; otherwise persist so the user sees remaining work.
-          if (state.todos && state.todos.todos.every((t) => t.status === "completed")) {
-            state.todos = null;
-          }
+          // Clear todos when the agent turn ends.
+          state.todos = null;
         }
         if (
           data.status === "completed" &&

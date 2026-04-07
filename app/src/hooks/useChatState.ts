@@ -189,8 +189,8 @@ export function useChatState(
             setToolActivity(null);
             setAgentActivity(null);
             setTriggerContent(null);
-            // Clear todos only if all are completed; otherwise persist so the user sees remaining work.
-            setTodos((prev) => prev && prev.todos.every((t) => t.status === "completed") ? null : prev);
+            // Clear todos when the agent turn ends.
+            setTodos(null);
           }
           // Don't clear askUserQuestions/exitPlanRequest on stop — they persist
           // until the user submits answers or approves the plan.

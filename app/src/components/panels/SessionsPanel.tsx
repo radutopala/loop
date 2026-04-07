@@ -161,7 +161,7 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
   };
 
   return (
-    <div style={{ display: "flex", flex: 1, height: "100%", overflow: "hidden", zoom: fontSizes.panels / 12 }}>
+    <div data-testid="sessions-panel" style={{ display: "flex", flex: 1, height: "100%", overflow: "hidden", zoom: fontSizes.panels / 12 }}>
       {/* Left: session list */}
       <div
         style={{

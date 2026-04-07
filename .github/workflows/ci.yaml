@@ -9,6 +9,7 @@ on:
 
 permissions:
   contents: read
+  packages: write
 
 jobs:
   test:
@@ -73,15 +74,50 @@ jobs:
       - name: Run Windows terminal tests
         run: go test -race -count=1 -v ./internal/terminal/
 
-  perf:
+  ensure-test-runner:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: actions/setup-go@v5
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
         with:
-          go-version: "1.26"
-      - name: Run component performance tests
-        run: make test-component
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Pull or build test-runner image
+        run: |
+          IMAGE=ghcr.io/radutopala/loop/test-runner
+          HASH=$(sha256sum scripts/test-runner.Dockerfile | cut -c1-12)
+          TAG="df-${HASH}"
+          if docker pull "${IMAGE}:${TAG}" 2>/dev/null; then
+            echo "Image up-to-date (${TAG})"
+          else
+            echo "Dockerfile changed or image missing, building..."
+            docker build -t "${IMAGE}:${TAG}" -t "${IMAGE}:latest" \
+              -f scripts/test-runner.Dockerfile scripts/
+            docker push "${IMAGE}:${TAG}"
+            docker push "${IMAGE}:latest"
+          fi
+
+  component-bdd:
+    needs: ensure-test-runner
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/radutopala/loop/test-runner:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run BDD component tests
+        run: make test-component-bdd
+
+  component-perf:
+    needs: ensure-test-runner
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/radutopala/loop/test-runner:latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run API performance tests
+        run: make test-component-perf
 
   electron-typecheck:
     runs-on: ubuntu-latest

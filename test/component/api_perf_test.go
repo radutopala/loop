@@ -50,7 +50,7 @@ type PerfConfig struct {
 
 func configFromEnv() PerfConfig {
 	return PerfConfig{
-		BaseURL:         getEnvOrDefault("LOOP_BASE_URL", "http://localhost:18222"),
+		BaseURL:         getEnvOrDefault("LOOP_BASE_URL", "http://localhost:8222"),
 		Duration:        getDurationEnv("PERF_DURATION", 10*time.Second),
 		Workers:         getIntEnv("PERF_WORKERS", 5),
 		MaxP99LatencyMs: getFloatEnv("PERF_MAX_P99_LATENCY_MS", 100),
@@ -618,12 +618,6 @@ func pct(part, total int64) float64 {
 	return float64(part) / float64(total) * 100
 }
 
-func getEnvOrDefault(key, def string) string {
-	if v := os.Getenv(key); v != "" {
-		return v
-	}
-	return def
-}
 
 func getDurationEnv(key string, def time.Duration) time.Duration {
 	if v := os.Getenv(key); v != "" {

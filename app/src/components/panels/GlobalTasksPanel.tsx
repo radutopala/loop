@@ -272,6 +272,7 @@ export function GlobalTasksPanel({
     return (
       <div
         key={task.id}
+        data-testid={`task-row-${task.id}`}
         onClick={() => { setSelectedId(task.id); setEditing(false); }}
         style={{
           padding: "6px 8px",
@@ -598,6 +599,7 @@ export function GlobalTasksPanel({
 
   return (
     <div
+      data-testid="global-tasks-panel"
       style={{
         flex: 1,
         backgroundColor: colors.sidebar,
