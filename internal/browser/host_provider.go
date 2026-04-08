@@ -56,7 +56,11 @@ func (h *HostProvider) devToolsActivePort() (wsEndpoint string, port int, err er
 // DiscoverWSEndpoint discovers the Chrome CDP WebSocket endpoint by reading
 // the DevToolsActivePort file. Returns an error if the file is not available.
 func DiscoverWSEndpoint() (string, error) {
-	wsEndpoint, _, err := parseDevToolsActivePort(os.ReadFile, os.UserHomeDir)
+	return discoverWSEndpoint(os.ReadFile, os.UserHomeDir)
+}
+
+func discoverWSEndpoint(readFile func(string) ([]byte, error), userHomeDir func() (string, error)) (string, error) {
+	wsEndpoint, _, err := parseDevToolsActivePort(readFile, userHomeDir)
 	if err != nil {
 		return "", err
 	}

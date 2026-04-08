@@ -96,7 +96,8 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 			"container_keep_alive_sec": 120,
 			"poll_interval_sec": 60,
 			"api_addr": ":9999",
-			"claude_bin_path": "/custom/claude"
+			"claude_bin_path": "/custom/claude",
+			"desktop": {"auto_save_on_blur": true}
 		}`), nil
 	}
 
@@ -118,6 +119,7 @@ func (s *ConfigSuite) TestLoadCustomValues() {
 	require.Equal(s.T(), 60*time.Second, cfg.PollInterval)
 	require.Equal(s.T(), ":9999", cfg.APIAddr)
 	require.Equal(s.T(), "/custom/claude", cfg.ClaudeBinPath)
+	require.True(s.T(), cfg.Desktop.AutoSaveOnBlur)
 }
 
 func (s *ConfigSuite) TestLoadStreamingEnabledExplicitFalse() {

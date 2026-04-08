@@ -26,6 +26,8 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
   const [importedIds, setImportedIds] = useState<Set<string>>(new Set());
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [filter, setFilter] = useState("");
+  const [startingNew, setStartingNew] = useState(false);
+  const [newSessionKey, setNewSessionKey] = useState("");
   const [listWidth, setListWidth] = useState(380);
   const draggingRef = useRef(false);
 
@@ -84,7 +86,7 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
     return (
       <div
         key={s.session_id}
-        onClick={() => setSelectedId(s.session_id)}
+        onClick={() => { setSelectedId(s.session_id); setStartingNew(false); }}
         style={{
           padding: "6px 8px",
           cursor: "pointer",
@@ -173,14 +175,14 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
           background: colors.bg,
         }}
       >
-        <div style={{ padding: "6px 8px", borderBottom: `1px solid ${colors.border}` }}>
+        <div style={{ padding: "6px 8px", borderBottom: `1px solid ${colors.border}`, display: "flex", gap: 6, alignItems: "center" }}>
           <input
             type="text"
             placeholder="Filter sessions..."
             value={filter}
             onChange={(e) => setFilter(e.target.value)}
             style={{
-              width: "100%",
+              flex: 1,
               padding: "4px 8px",
               background: colors.surface,
               border: `1px solid ${colors.border}`,
@@ -191,6 +193,44 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
               boxSizing: "border-box",
             }}
           />
+          <button
+            onClick={() => loadSessions()}
+            title="Refresh sessions"
+            style={{
+              background: "none",
+              border: `1px solid ${colors.border}`,
+              borderRadius: 3,
+              color: colors.textDim,
+              cursor: "pointer",
+              padding: "2px 6px",
+              fontSize: 11,
+              lineHeight: 1,
+              flexShrink: 0,
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = colors.text)}
+            onMouseLeave={(e) => (e.currentTarget.style.color = colors.textDim)}
+          >
+            &#x21bb;
+          </button>
+          <button
+            onClick={() => { setStartingNew(true); setSelectedId(null); setNewSessionKey(`new-${Date.now()}`); }}
+            title="Start a new session"
+            style={{
+              background: "none",
+              border: `1px solid ${colors.border}`,
+              borderRadius: 3,
+              color: colors.textDim,
+              cursor: "pointer",
+              padding: "2px 8px",
+              fontSize: 11,
+              lineHeight: 1,
+              flexShrink: 0,
+            }}
+            onMouseEnter={(e) => (e.currentTarget.style.color = colors.text)}
+            onMouseLeave={(e) => (e.currentTarget.style.color = colors.textDim)}
+          >
+            + New
+          </button>
         </div>
         <div style={{ flex: 1, overflowY: "auto" }}>
           {availableSessions.length > 0 && (
@@ -232,9 +272,19 @@ export function SessionsPanel({ channelId, onStatusChange }: SessionsPanelProps)
         }}
       />
 
-      {/* Right: terminal preview */}
+      {/* Right: terminal preview or new session */}
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
-        {selectedId ? (
+        {startingNew ? (
+          <Terminal
+            key={newSessionKey}
+            channelId={channelId}
+            target="agent"
+            instanceId={newSessionKey}
+            newSession
+            onStatusChange={onStatusChange}
+            onSessionEnd={() => { setStartingNew(false); loadSessions(); }}
+          />
+        ) : selectedId ? (
           <Terminal
             key={`session-${selectedId}`}
             channelId={channelId}

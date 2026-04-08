@@ -2148,3 +2148,8 @@ func (s *BotSuite) TestHandleEventInteractiveType() {
 		s.Fail("timeout waiting for interaction")
 	}
 }
+
+func (s *BotSuite) TestHandleIncomingMessageNoop() {
+	// HandleIncomingMessage is a no-op stub — just verify it doesn't panic.
+	s.bot.HandleIncomingMessage(context.Background(), "", "", "", "")
+}

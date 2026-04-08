@@ -4210,3 +4210,17 @@ func (s *MainSuite) TestDumpPlaygroundExamplesReadFileError() {
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "reading playground file myexample/index.html")
 }
+
+func (s *MainSuite) TestMainCallsOsExit() {
+	var exitCode int
+	origExit := osExit
+	osExit = func(code int) { exitCode = code }
+	defer func() { osExit = origExit }()
+
+	origArgs := os.Args
+	os.Args = []string{"loop", "--help"}
+	defer func() { os.Args = origArgs }()
+
+	main()
+	require.Equal(s.T(), 0, exitCode)
+}

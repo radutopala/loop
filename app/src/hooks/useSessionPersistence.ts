@@ -28,6 +28,8 @@ export function useSessionPersistence(
   instanceId?: string,
   /** Claude Code session ID to resume (overrides the channel's stored session). */
   claudeSessionId?: string,
+  /** Start a fresh session, ignoring the channel's stored session. */
+  newSession?: boolean,
 ) {
   const key = channelId ? sessionKey(channelId, target, instanceId) : null;
   const sessionIdRef = useRef<string | null>(
@@ -75,10 +77,10 @@ export function useSessionPersistence(
         );
       } else if (channelId && !killedRef.current) {
         const size = getTerminalSizeRef?.current?.();
-        ws.send(JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...size }));
+        ws.send(JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...size }));
       }
     },
-    [channelId, target, instanceId, claudeSessionId, getTerminalSizeRef],
+    [channelId, target, instanceId, claudeSessionId, newSession, getTerminalSizeRef],
   );
 
   return { sessionIdRef, killedRef, setSessionId, handleOpen, markKilled, getStartTime };

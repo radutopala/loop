@@ -506,6 +506,7 @@ function AppInner() {
         imageBuildStatus={imageBuildStatus}
         imageUpdateAvailable={imageUpdateAvailable}
         onRebuildImage={handleRebuildImage}
+        onToggleSidebar={() => setSidebarOpen((v) => !v)}
       />
       {selectedId && selectedChannel ? (
         <>

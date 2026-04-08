@@ -37,3 +37,12 @@ Feature: Smoke & Navigation Journey
     Then the page should contain text "BRANCHES"
     When I click on the button with text "COMMITS"
     Then the page should contain text "COMMITS"
+
+    # Sessions panel: open, verify empty state, refresh, new session button
+    When I add a "Sessions" panel
+    Then I wait for text "No sessions found" to appear
+    And the page should contain text "Select a session to resume"
+    When I click on the button with title "Refresh sessions"
+    Then the page should contain text "No sessions found"
+    When I click on the button with text "+ New"
+    Then I wait for text "Select a session to resume" to disappear

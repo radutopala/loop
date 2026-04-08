@@ -72,6 +72,7 @@ type wsControlMessage struct {
 	Rows        uint     `json:"rows,omitempty"`
 	Cols        uint     `json:"cols,omitempty"`
 	Target      string   `json:"target,omitempty"` // "host" or "agent" (default)
+	NewSession  bool     `json:"new_session,omitempty"`
 }
 
 // wsStatusMessage represents a JSON status message sent to the client.
@@ -361,21 +362,27 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 		if t.store != nil {
 			if ch, err := t.store.GetChannel(ctx, msg.ChannelID); err == nil && ch != nil {
 				dirPath = ch.DirPath
-				claudeSessionID = ch.SessionID
-				// For threads still using the parent's session, fork so the thread
-				// gets its own session while inheriting the parent's context.
-				if ch.ParentID != "" {
-					if parent, err := t.store.GetChannel(ctx, ch.ParentID); err == nil && parent != nil && parent.SessionID != "" {
-						if claudeSessionID == "" || claudeSessionID == parent.SessionID {
-							claudeSessionID = parent.SessionID
-							forkSession = true
+				if msg.NewSession {
+					// Client explicitly requested a fresh session — skip all
+					// session inheritance (channel, parent thread, agent fork).
+					claudeSessionID = ""
+				} else {
+					claudeSessionID = ch.SessionID
+					// For threads still using the parent's session, fork so the thread
+					// gets its own session while inheriting the parent's context.
+					if ch.ParentID != "" {
+						if parent, err := t.store.GetChannel(ctx, ch.ParentID); err == nil && parent != nil && parent.SessionID != "" {
+							if claudeSessionID == "" || claudeSessionID == parent.SessionID {
+								claudeSessionID = parent.SessionID
+								forkSession = true
+							}
 						}
 					}
-				}
-				// Agent terminals fork from the channel session so each agent
-				// gets its own session while inheriting the shared context.
-				if msg.AgentID != "" && claudeSessionID != "" {
-					forkSession = true
+					// Agent terminals fork from the channel session so each agent
+					// gets its own session while inheriting the shared context.
+					if msg.AgentID != "" && claudeSessionID != "" {
+						forkSession = true
+					}
 				}
 			}
 		}

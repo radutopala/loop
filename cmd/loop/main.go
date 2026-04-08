@@ -209,8 +209,10 @@ func newApp() *app {
 	return a
 }
 
+var osExit = os.Exit
+
 func main() {
-	os.Exit(newApp().run())
+	osExit(newApp().run())
 }
 
 func (a *app) run() int {

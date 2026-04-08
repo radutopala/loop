@@ -10,6 +10,8 @@ interface UseTerminalWsOptions {
   instanceId?: string;
   /** Claude Code session ID to resume (overrides the channel's stored session). */
   claudeSessionId?: string;
+  /** Start a fresh session, ignoring the channel's stored session. */
+  newSession?: boolean;
   onData: (data: ArrayBuffer) => void;
   onStatus: (status: SessionStatus) => void;
   onError: (message: string) => void;
@@ -22,6 +24,7 @@ export function useTerminalWs({
   target = "agent",
   instanceId,
   claudeSessionId,
+  newSession,
   onData,
   onStatus,
   onError,
@@ -30,7 +33,7 @@ export function useTerminalWs({
   const getTerminalSizeRef = useRef(getTerminalSize);
   getTerminalSizeRef.current = getTerminalSize;
 
-  const { sessionIdRef, setSessionId, killedRef, handleOpen, markKilled, getStartTime } = useSessionPersistence(channelId, target, getTerminalSizeRef, instanceId, claudeSessionId);
+  const { sessionIdRef, setSessionId, killedRef, handleOpen, markKilled, getStartTime } = useSessionPersistence(channelId, target, getTerminalSizeRef, instanceId, claudeSessionId, newSession);
 
   // Use a ref for send to break the circular dependency between
   // handleMessage (needs onSessionFailed) and send (needs handleMessage).
@@ -44,10 +47,10 @@ export function useTerminalWs({
       retriedRef.current = true;
       const size = getTerminalSizeRef.current?.();
       sendRef.current(
-        JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...size }),
+        JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...size }),
       );
     }
-  }, [channelId, target, claudeSessionId, killedRef]);
+  }, [channelId, target, claudeSessionId, newSession, killedRef]);
 
   /** When a session is confirmed, send the current terminal dimensions.
    *  This handles the race where xterm wasn't ready when the create message was sent. */
@@ -111,8 +114,8 @@ export function useTerminalWs({
     if (!channelId) return;
     killedRef.current = false;
     const size = getTerminalSizeRef.current?.();
-    send(JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...size }));
-  }, [channelId, target, instanceId, claudeSessionId, send, killedRef]);
+    send(JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...size }));
+  }, [channelId, target, instanceId, claudeSessionId, newSession, send, killedRef]);
 
   /** Close: stop the exec session but keep the container alive.
    *  Does NOT set killedRef — only explicit Kill should prevent auto-create. */

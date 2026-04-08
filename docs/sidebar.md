@@ -10,7 +10,7 @@ Related docs: [Desktop App](desktop-app.md) | [Layouts](layouts.md) | [Settings]
 
 The sidebar is a vertical column on the left side of the app with the following sections, top to bottom:
 
-1. **Drag region** (38px) -- empty area for macOS window dragging (traffic lights area)
+1. **Drag region** (38px) -- macOS window dragging area with a collapse button at the top-right
 2. **Header bar** -- "CHANNELS" label with Select and "+ new" buttons
 3. **Search box** -- filter channels and threads
 4. **New channel input** -- inline text field (shown when creating)
@@ -36,7 +36,7 @@ The width is adjusted via a 4px-wide resize handle on the right edge:
 - A 1px border-right (`colors.border`) is always visible
 - `user-select: none` is applied during drag to prevent text selection
 
-When collapsed (`sidebarOpen === false`), the entire sidebar is hidden (returns `null`).
+When collapsed (`sidebarOpen === false`), the entire sidebar is hidden (returns `null`). An expand button appears in the workspace layout's top drag region to restore the sidebar.
 
 ---
 

@@ -19,6 +19,8 @@ interface TerminalProps {
   instanceId?: string;
   /** Claude Code session ID to resume (overrides the channel's stored session). */
   claudeSessionId?: string;
+  /** Start a fresh session, ignoring the channel's stored session. */
+  newSession?: boolean;
   /** Hide Kill/Restart from the toolbar (used when a parent provides these). */
   hideActions?: boolean;
   /** Incrementing this value triggers sendKill from the parent. */
@@ -29,7 +31,7 @@ interface TerminalProps {
   onSessionEnd?: () => void;
 }
 
-export function Terminal({ channelId, target = "agent", instanceId, claudeSessionId, hideActions, killSignal, onStatusChange, onPaneStatus, onSessionEnd }: TerminalProps) {
+export function Terminal({ channelId, target = "agent", instanceId, claudeSessionId, newSession, hideActions, killSignal, onStatusChange, onPaneStatus, onSessionEnd }: TerminalProps) {
   const { colors, fontSizes } = useTheme();
   const terminalRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<SessionStatus>("connecting");
@@ -77,6 +79,7 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
     target,
     instanceId,
     claudeSessionId,
+    newSession,
     onData,
     onStatus,
     onError,

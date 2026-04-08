@@ -2406,6 +2406,53 @@ func (s *TerminalHandlerSuite) TestAgentTerminalForksChannelSession() {
 	close(doneCh)
 }
 
+func (s *TerminalHandlerSuite) TestNewSessionSkipsChannelSession() {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", SessionID: "sess-main"}, nil)
+	s.srv.store = store
+
+	finder := new(mockContainerManager)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-1", mock.Anything).Return("ctr-1", nil)
+	s.srv.containerRegistry = finder
+
+	builder := new(MockInteractiveCmdBuilder)
+	// new_session=true → empty sessionID, forkSession=false even though channel has a session.
+	builder.On("BuildInteractiveCmd", "ch-1", "", "", "agent-0", false, mock.Anything).
+		Return("claude --dangerously-skip-permissions")
+	s.srv.SetInteractiveCmdBuilder(builder)
+
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-1", []string(nil)).
+		Return("sid-1", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	inputSent := onSendInputCalled(s.terminal, "sid-1", []byte("claude --dangerously-skip-permissions\n"))
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.terminal.On("SendInput", "sid-1", []byte("\r")).Return(nil).Maybe()
+
+	ws, ts := s.dialWS()
+	defer ts.Close()
+	defer ws.Close()
+
+	sendControl(s.T(), ws, wsControlMessage{
+		Type:       "create",
+		ChannelID:  "ch-1",
+		AgentID:    "agent-0",
+		NewSession: true,
+	})
+	msg := readStatusMsg(s.T(), ws)
+	require.Equal(s.T(), wsStatusCreated, msg.Type)
+
+	select {
+	case <-inputSent:
+	case <-time.After(time.Second):
+		s.T().Fatal("timed out waiting for new-session SendInput")
+	}
+	builder.AssertExpectations(s.T())
+
+	close(doneCh)
+}
+
 func (s *TerminalHandlerSuite) TestAutoAcceptScansOutput() {
 	s.terminal.On("SendInput", "sid-1", []byte("\r")).Return(nil)
 

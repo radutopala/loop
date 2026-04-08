@@ -1647,6 +1647,45 @@ func (s *TaskExecutorSuite) TestWorktreeFirstRun() {
 	require.Equal(s.T(), "done", resp)
 }
 
+func (s *TaskExecutorSuite) TestWorktreeFirstRunOriginBranchPersistError() {
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: true,
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: "/proj", SessionID: "sess-1", Platform: types.PlatformLocal,
+	}, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{ID: 10, Type: db.TaskTypeCron}, nil)
+	s.allowBotInserts()
+
+	s.executor.SetWorktreeCreator(&worktree.Creator{
+		Sys: &mockWorktreeSys{},
+		Run: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			if name == "git" && len(args) > 0 && args[0] == "rev-parse" {
+				if args[1] == "--abbrev-ref" {
+					return []byte("main\n"), nil
+				}
+			}
+			return nil, nil
+		},
+	})
+
+	// Error persisting origin branch — should log but continue.
+	s.store.On("UpdateScheduledTaskOriginBranch", s.ctx, int64(10), "main").Return(errors.New("db error"))
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		return strings.Contains(req.DirPath, ".worktrees/task-10-")
+	})).Return(&agent.AgentResponse{Response: "done", SessionID: "s2"}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "s2").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "done", resp)
+}
+
 func (s *TaskExecutorSuite) TestWorktreeSubsequentRun() {
 	task := &db.ScheduledTask{
 		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,

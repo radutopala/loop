@@ -921,6 +921,24 @@ func (s *ServerSuite) TestRunTaskGetTaskError() {
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
 
+func (s *ServerSuite) TestRunTaskRunNowError() {
+	task := &db.ScheduledTask{ID: 42, ChannelID: "ch1"}
+	s.scheduler.On("GetTask", mock.Anything, int64(42)).Return(task, nil)
+	called := make(chan struct{})
+	s.scheduler.On("RunNow", mock.Anything, int64(42)).Return(errors.New("run error")).Run(func(_ mock.Arguments) {
+		close(called)
+	})
+
+	rec := s.testRequest("POST", "/api/tasks/42/run", "")
+
+	require.Equal(s.T(), http.StatusAccepted, rec.Code)
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		s.T().Fatal("timed out waiting for RunNow goroutine")
+	}
+}
+
 // --- Start / Stop tests ---
 
 func (s *ServerSuite) TestStartAndStop() {

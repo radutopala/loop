@@ -2097,3 +2097,8 @@ func (s *BotSuite) TestSendStopButtonCustomID() {
 func (s *BotSuite) TestBotInterfaceCompliance() {
 	var _ Bot = (*DiscordBot)(nil)
 }
+
+func (s *BotSuite) TestHandleIncomingMessageNoop() {
+	// HandleIncomingMessage is a no-op stub — just verify it doesn't panic.
+	s.bot.HandleIncomingMessage(context.Background(), "", "", "", "")
+}

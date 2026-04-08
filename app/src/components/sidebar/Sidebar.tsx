@@ -64,6 +64,7 @@ interface SidebarProps {
   imageBuildStatus?: ImageBuildStatusData | null;
   imageUpdateAvailable?: ImageUpdateAvailableData | null;
   onRebuildImage?: () => void;
+  onToggleSidebar?: () => void;
 }
 
 export function Sidebar({
@@ -91,6 +92,7 @@ export function Sidebar({
   imageBuildStatus,
   imageUpdateAvailable,
   onRebuildImage,
+  onToggleSidebar,
 }: SidebarProps) {
   const { colors, fontSizes } = useTheme();
   const [width, setWidth] = useState(DEFAULT_WIDTH);
@@ -289,8 +291,37 @@ export function Sidebar({
           height: 38,
           flexShrink: 0,
           WebkitAppRegion: "drag",
+          position: "relative",
         }}
-      />
+      >
+        {onToggleSidebar && (
+          <button
+            onClick={onToggleSidebar}
+            title="Collapse sidebar"
+            style={{
+              position: "absolute",
+              right: 4,
+              top: 10,
+              background: "none",
+              border: "none",
+              color: colors.textDim,
+              cursor: "pointer",
+              padding: "2px 4px",
+              lineHeight: 1,
+              borderRadius: 4,
+              display: "flex",
+              alignItems: "center",
+              WebkitAppRegion: "no-drag",
+            }}
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+              <rect x="3" y="3" width="18" height="18" rx="3" />
+              <line x1="9" y1="3" x2="9" y2="21" />
+              <polyline points="15,9 12,12 15,15" />
+            </svg>
+          </button>
+        )}
+      </div>
       <SidebarHeader
         searchQuery={searchQuery}
         onSearchQueryChange={setSearchQuery}

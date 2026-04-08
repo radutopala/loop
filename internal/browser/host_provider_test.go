@@ -328,32 +328,18 @@ func (s *HostProviderSuite) TestDiscoverWSEndpointError() {
 }
 
 func (s *HostProviderSuite) TestDiscoverWSEndpointSuccess() {
-	// Write a real DevToolsActivePort file at the path DiscoverWSEndpoint will
-	// look for (based on os.UserHomeDir + runtime.GOOS), start a TCP listener,
-	// then verify the success path returns the correct endpoint.
-	home, err := os.UserHomeDir()
-	require.NoError(s.T(), err)
-
-	dataDir := chromeUserDataDirForOS(func() (string, error) { return home, nil }, runtime.GOOS)
+	// Use a temp dir as fake home so we don't need write access to the real
+	// Chrome data directory (which may not be writable in CI/sandbox).
+	fakeHome := s.T().TempDir()
+	dataDir := chromeUserDataDirForOS(func() (string, error) { return fakeHome, nil }, runtime.GOOS)
 	require.NotEmpty(s.T(), dataDir, "unsupported OS for this test")
-
-	portFile := filepath.Join(dataDir, "DevToolsActivePort")
-
-	// Save existing file (if any) so we can restore it after the test.
-	origData, origErr := os.ReadFile(portFile)
-	defer func() {
-		if origErr == nil {
-			_ = os.WriteFile(portFile, origData, 0o644)
-		} else {
-			_ = os.Remove(portFile)
-		}
-	}()
 
 	ln, listenErr := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(s.T(), listenErr)
 	defer ln.Close()
 	port := ln.Addr().(*net.TCPAddr).Port
 
+	portFile := filepath.Join(dataDir, "DevToolsActivePort")
 	require.NoError(s.T(), os.MkdirAll(dataDir, 0o755))
 	require.NoError(s.T(), os.WriteFile(
 		portFile,
@@ -361,7 +347,14 @@ func (s *HostProviderSuite) TestDiscoverWSEndpointSuccess() {
 		0o644,
 	))
 
-	wsEndpoint, discoverErr := DiscoverWSEndpoint()
-	require.NoError(s.T(), discoverErr)
+	fakeHomeDir := func() (string, error) { return fakeHome, nil }
+
+	wsEndpoint, _, parseErr := parseDevToolsActivePort(os.ReadFile, fakeHomeDir)
+	require.NoError(s.T(), parseErr)
 	require.Equal(s.T(), fmt.Sprintf("ws://127.0.0.1:%d/devtools/browser/test-guid", port), wsEndpoint)
+
+	// Also exercise discoverWSEndpoint to cover the public wrapper's success path.
+	ws2, discoverErr := discoverWSEndpoint(os.ReadFile, fakeHomeDir)
+	require.NoError(s.T(), discoverErr)
+	require.Equal(s.T(), wsEndpoint, ws2)
 }
