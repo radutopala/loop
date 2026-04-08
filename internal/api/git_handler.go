@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -575,56 +576,49 @@ func (s *Server) handleImportWorktree(w http.ResponseWriter, r *http.Request) {
 
 // handleDeleteWorktree permanently removes a git worktree: deletes the Loop
 // thread, runs `git worktree remove --force`, and prunes stale metadata.
-func (s *Server) handleDeleteWorktree(w http.ResponseWriter, r *http.Request) {
+// handleRemoveWorktree removes a git worktree from disk and optionally deletes
+// the associated thread record. Works for both imported (has thread_id) and
+// non-imported (disk-only) worktrees.
+//
+// Body: { channel_id, worktree_path, thread_id? }
+func (s *Server) handleRemoveWorktree(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.store, "channel store not configured") {
 		return
 	}
-	if !requireConfigured(w, s.threads, "thread deletion not configured") {
+
+	var body struct {
+		ChannelID    string `json:"channel_id"`
+		WorktreePath string `json:"worktree_path"`
+		ThreadID     string `json:"thread_id"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ChannelID == "" || body.WorktreePath == "" {
+		http.Error(w, "channel_id and worktree_path required", http.StatusBadRequest)
 		return
 	}
 
-	threadID := r.PathValue("id")
-
-	// Load the worktree channel to get its dir_path.
-	ch, err := s.store.GetChannel(r.Context(), threadID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-	if ch == nil {
-		http.Error(w, "worktree thread not found", http.StatusNotFound)
-		return
-	}
-	if !ch.Worktree {
-		http.Error(w, "channel is not a worktree", http.StatusBadRequest)
+	ch, err := s.store.GetChannel(r.Context(), body.ChannelID)
+	if err != nil || ch == nil || ch.DirPath == "" {
+		http.Error(w, "channel not found or has no dir_path", http.StatusBadRequest)
 		return
 	}
 
-	worktreePath := ch.DirPath
-	parentID := ch.ParentID
-
-	// Find the parent channel to get the main repo dir.
-	parent, err := s.store.GetChannel(r.Context(), parentID)
-	if err != nil || parent == nil || parent.DirPath == "" {
-		http.Error(w, "parent channel not found or has no dir_path", http.StatusBadRequest)
-		return
-	}
-
-	// Remove the git worktree from disk and prune.
-	if s.worktreeCreator != nil && worktreePath != "" {
-		if err := s.worktreeCreator.Remove(r.Context(), parent.DirPath, worktreePath); err != nil {
-			s.logger.Warn("git worktree remove failed (continuing with thread deletion)", "error", err, "path", worktreePath)
+	// Remove the git worktree from disk.
+	if s.worktreeCreator != nil {
+		if err := s.worktreeCreator.Remove(r.Context(), ch.DirPath, body.WorktreePath); err != nil {
+			http.Error(w, fmt.Sprintf("failed to remove worktree: %v", err), http.StatusInternalServerError)
+			return
 		}
 	}
 
-	// Delete the thread record from the database.
-	if err := s.threads.DeleteThread(r.Context(), threadID); err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	if s.eventsHub != nil {
-		s.eventsHub.BroadcastChannelDeleted(threadID)
+	// If this worktree was imported as a thread, delete the thread record too.
+	if body.ThreadID != "" && s.threads != nil {
+		if err := s.threads.DeleteThread(r.Context(), body.ThreadID); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if s.eventsHub != nil {
+			s.eventsHub.BroadcastChannelDeleted(body.ThreadID)
+		}
 	}
 
 	w.WriteHeader(http.StatusNoContent)

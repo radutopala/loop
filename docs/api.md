@@ -928,26 +928,26 @@ Import an existing git worktree as a thread. Unlike `POST /api/worktrees` which 
 
 ---
 
-### `DELETE /api/worktrees/{id}`
+### `POST /api/worktrees/remove`
 
-Delete a worktree thread, remove the git worktree from disk, and prune stale metadata.
+Remove a git worktree from disk and optionally delete its associated thread.
 
-**Path Parameters:**
+**Request Body:**
 
-| Param | Type   | Description |
-|-------|--------|-------------|
-| `id`  | string | Thread ID of the worktree to delete |
+| Field           | Type   | Required | Description |
+|-----------------|--------|----------|-------------|
+| `channel_id`    | string | yes      | Parent channel ID that owns the worktree |
+| `worktree_path` | string | yes      | Absolute path to the worktree directory |
+| `thread_id`     | string | no       | Thread ID to delete (if the worktree was imported as a thread) |
 
 **Response:** `204 No Content` on success.
 
 **Behavior notes:**
-- Validates the thread exists and is a worktree channel (`worktree` flag is true).
 - Runs `git worktree remove --force` on the worktree path, then `git worktree prune`.
-- Deletes the thread record from the database.
-- Broadcasts a `channel.deleted` event via WebSocket.
-- If the git worktree removal fails (e.g. path already gone), the thread is still deleted.
+- If `thread_id` is provided, also deletes the thread record from the database and broadcasts a `channel.deleted` event.
+- If the git worktree removal fails (e.g. path already gone), returns `500`.
 
-**Errors:** `404` if thread not found. `400` if channel is not a worktree or parent not found.
+**Errors:** `400` if `channel_id` or `worktree_path` is missing, or if the channel is not found.
 
 ---
 

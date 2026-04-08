@@ -29,12 +29,14 @@ type TestContext struct {
 
 	// Entity tracking for cleanup
 	ChannelID         string
+	ChannelDir        string // git repo directory for the current channel
 	TaskID            string
 	CreatedChannelIDs []string
 	CreatedThreadIDs  []string
 	CreatedTaskIDs    []string
 	CreatedDirs       []string
 	WorktreeThreadID     string
+	WorktreePath         string
 	CreatedShortcutNames []string
 
 	// Frontend (lazily initialized)
@@ -60,7 +62,7 @@ func (tc *TestContext) doRequest(method, path string, body string) error {
 
 	var bodyReader io.Reader
 	if body != "" {
-		bodyReader = strings.NewReader(body)
+		bodyReader = strings.NewReader(tc.resolvePlaceholders(body))
 	}
 
 	req, err := http.NewRequest(method, url, bodyReader)
@@ -96,6 +98,7 @@ func (tc *TestContext) resolvePlaceholders(path string) string {
 	path = strings.ReplaceAll(path, "{channel_id}", tc.ChannelID)
 	path = strings.ReplaceAll(path, "{task_id}", tc.TaskID)
 	path = strings.ReplaceAll(path, "{worktree_thread_id}", tc.WorktreeThreadID)
+	path = strings.ReplaceAll(path, "{worktree_path}", tc.WorktreePath)
 	return path
 }
 

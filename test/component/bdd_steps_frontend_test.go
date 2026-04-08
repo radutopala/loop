@@ -148,6 +148,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I click button "([^"]*)" in the tasks panel$`, tc.clickButtonInTasksPanel)
 	ctx.Step(`^I click on "([^"]*)" in the worktrees panel$`, tc.clickInWorktreesPanel)
 	ctx.Step(`^I click button "([^"]*)" in the worktrees panel$`, tc.clickButtonInWorktreesPanel)
+	ctx.Step(`^I click button "([^"]*)" in the git panel$`, tc.clickButtonInGitPanel)
 	ctx.Step(`^I trigger Run Now for the visible task$`, tc.triggerRunNowForVisibleTask)
 	ctx.Step(`^I capture the visible task ID$`, tc.captureVisibleTaskID)
 	ctx.Step(`^I click on the button with title "([^"]*)"$`, tc.clickButtonWithTitle)
@@ -400,6 +401,10 @@ func (tc *TestContext) clickInWorktreesPanel(text string) error {
 
 func (tc *TestContext) clickButtonInWorktreesPanel(text string) error {
 	return tc.clickButtonInRegion(text, "worktrees-panel")
+}
+
+func (tc *TestContext) clickButtonInGitPanel(text string) error {
+	return tc.clickButtonInRegion(text, "git-panel")
 }
 
 // triggerRunNowForVisibleTask extracts the task ID from the detail view

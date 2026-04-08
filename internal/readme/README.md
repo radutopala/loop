@@ -911,7 +911,7 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 - **Chat** — send messages, stream agent responses in real-time, search messages (Cmd+K), copy-on-select, persistent drafts across channel switches, message history navigation (ArrowUp/ArrowDown), prompt shortcuts (`#` picker)
 - **Terminal** — interactive xterm.js terminals for agent containers and host shells, with horizontal/vertical splits
 - **File editor** — CodeMirror-powered editor with syntax highlighting, markdown preview, in-file search, context menus, auto-save, and directory creation/deletion
-- **Git panel** — git changes with per-file addition/deletion stats, maximizable to full width, expandable context rows between hunks (GitLab-style "load more"), branch-to-branch diff mode for comparing any two branches, renamed file support with `{old => new}` notation, commit history view with branch selector and lazy pagination
+- **Git panel** — git changes with per-file addition/deletion stats, maximizable to full width, expandable context rows between hunks (GitLab-style "load more"), branch-to-branch diff mode for comparing any two branches, renamed file support with `{old => new}` notation, commit history view with branch selector and lazy pagination, worktrees tab for managing git worktrees (import, navigate, delete)
 - **Containers panel** — global view of all Docker containers (agent, shell, chrome) with real-time status lifecycle (running → stopped → pending-removal), type labels, scheduled removal countdown, and live updates via WebSocket events
 - **Memory panel** — browse and search semantic memory files
 - **Custom layouts** — named split-pane workspaces with drag-to-resize, saved per channel. Create, rename, delete, and restore default layouts from the tab bar
@@ -921,7 +921,6 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 - **Auto-update** — checks for new releases every 30 minutes, download and install with one click
 - **Deep links** — `loop://channel/<id>` opens the app directly to a channel
 - **Branch picker** — switch branches from the header bar, create worktree threads, import existing worktrees. Threads show branches only; parent channels show branches + worktrees in a 50/50 split. Double-click a branch name to copy it
-- **Worktrees panel** — singleton panel listing all git worktrees for a channel. Import untracked worktrees as threads, navigate to existing worktree threads, or delete worktrees (removes from disk and deletes the thread). Only shown in parent channels, not in threads or worktree threads
 - **Browser** — live Chrome screencast via WebSocket, click/type/navigate directly in the browser pane. Two panel types: Docker Browser (headless container) and Host Browser (local Chrome via CDP), mutually exclusive per layout
 - **Playground** — live interactive sandbox where agents generate HTML/CSS/JS and it renders in a sandboxed iframe. Multiple named playgrounds with two scopes: global (`~/.loop/playground/`, shared across channels) and project (`.loop/playground/` in the channel's working directory). Multi-instance panels, hot-reloads on updates, console capture, import maps, multi-file support with relative imports. Agents use `playground` + `playground_file` MCP tools
 - **Settings** — schema-driven config form with typed controls (toggles, dropdowns, number inputs, password fields, arrays, key-value editors) plus a raw JSON editor, with Form/JSON toggle and unsaved changes confirmation
@@ -978,7 +977,7 @@ make app-install
 | `POST` | `/api/channels/{id}/branches/create` | Create and checkout a new branch |
 | `POST` | `/api/worktrees` | Create a git worktree as a new thread |
 | `POST` | `/api/worktrees/import` | Import an existing worktree as a thread |
-| `DELETE` | `/api/worktrees/{id}` | Delete a worktree thread and remove the git worktree from disk |
+| `POST` | `/api/worktrees/remove` | Remove a git worktree from disk and optionally delete its thread |
 | `GET` | `/api/channels/{id}/roots` | List all root directories (primary + extra from project config) |
 | `GET` | `/api/channels/{id}/diff` | Get git diff (working changes, or `?source=X&target=Y` for branch diff) |
 | `GET` | `/api/channels/{id}/messages` | List messages with cursor-based pagination |

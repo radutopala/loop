@@ -76,11 +76,15 @@ export async function deleteThread(threadId: string): Promise<void> {
   if (!res.ok) throw new Error(`Failed to delete thread: ${res.statusText}`);
 }
 
-export async function deleteWorktree(threadId: string): Promise<void> {
-  const res = await fetch(`${getApiUrl()}/api/worktrees/${threadId}`, {
-    method: "DELETE",
+export async function removeWorktree(channelId: string, worktreePath: string, threadId?: string): Promise<void> {
+  const body: Record<string, string> = { channel_id: channelId, worktree_path: worktreePath };
+  if (threadId) body.thread_id = threadId;
+  const res = await fetch(`${getApiUrl()}/api/worktrees/remove`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
   });
-  if (!res.ok) throw new Error(`Failed to delete worktree: ${res.statusText}`);
+  if (!res.ok) throw new Error(`Failed to remove worktree: ${res.statusText}`);
 }
 
 export async function deleteChannel(channelId: string): Promise<void> {

@@ -42,6 +42,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I set up a test task via API with type "([^"]*)" prompt "([^"]*)" and schedule "([^"]*)"$`, tc.setupTaskViaAPIWithType)
 	ctx.Step(`^I trigger Run Now via API for the current task$`, tc.triggerRunNowViaAPI)
 	ctx.Step(`^I set up a worktree "([^"]*)" on branch "([^"]*)" under the current channel via API$`, tc.setupWorktreeViaAPI)
+	ctx.Step(`^I create a disk-only git worktree "([^"]*)" on branch "([^"]*)"$`, tc.createDiskOnlyWorktree)
 
 	// Shortcut setup steps
 	ctx.Step(`^I add a prompt shortcut "([^"]*)" with prompt "([^"]*)" via API$`, tc.addShortcutViaAPI)
@@ -285,6 +286,7 @@ func (tc *TestContext) setupChannelViaAPIForGitRepo(name string) error {
 		}
 	}
 
+	tc.ChannelDir = dir
 	return tc.setupChannelViaAPI(dir)
 }
 
@@ -316,6 +318,23 @@ func (tc *TestContext) setupWorktreeViaAPI(name, branch string) error {
 			tc.WorktreeThreadID = id
 			tc.CreatedThreadIDs = append(tc.CreatedThreadIDs, id)
 		}
+		if wp, ok := tc.LastJSON["worktree_path"].(string); ok {
+			tc.WorktreePath = wp
+		}
+	}
+	return nil
+}
+
+// createDiskOnlyWorktree creates a raw git worktree on disk without importing
+// it through the Loop API, so it appears as a non-imported entry in the panel.
+func (tc *TestContext) createDiskOnlyWorktree(name, branch string) error {
+	if tc.ChannelDir == "" {
+		return fmt.Errorf("no channel dir set; use 'I set up a test channel via API for git repo' step first")
+	}
+	wtPath := filepath.Join(tc.ChannelDir, ".worktrees", name)
+	out, err := exec.Command("git", "-C", tc.ChannelDir, "worktree", "add", wtPath, "-b", name, branch).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("creating git worktree: %s: %w", out, err)
 	}
 	return nil
 }

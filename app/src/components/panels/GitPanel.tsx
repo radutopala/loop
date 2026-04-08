@@ -9,6 +9,7 @@ import { ContextMenu } from "../shared/ContextMenu";
 import { DiffViewer, parseUnifiedDiff } from "./DiffViewer";
 import type { ParsedFile } from "./DiffViewer";
 import { CommitHistory } from "./CommitHistory";
+import { WorktreesPanel } from "./WorktreesPanel";
 import { storageGet, storageSet } from "../../utils/storage";
 
 const MIN_WIDTH = 280;
@@ -38,9 +39,13 @@ interface GitPanelProps {
   sidebarOpen?: boolean;
   tabBar?: React.ReactNode;
   embedded?: boolean;
+  isWorktree?: boolean;
+  hasBranch?: boolean;
   onToggleSidebar?: () => void;
   onOpenPalette?: () => void;
   onToggleMaximize?: () => void;
+  onImportWorktree?: (channelId: string, worktreePath: string) => Promise<void>;
+  onSelectThread?: (threadId: string) => void;
   onClose: () => void;
 }
 
@@ -58,7 +63,7 @@ function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   };
 }
 
-export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, tabBar, embedded, onToggleSidebar, onOpenPalette, onToggleMaximize, onClose }: GitPanelProps) {
+export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, tabBar, embedded, isWorktree, hasBranch, onToggleSidebar, onOpenPalette, onToggleMaximize, onImportWorktree, onSelectThread, onClose }: GitPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
@@ -68,7 +73,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
   const [loading, setLoading] = useState(false);
   const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
   // Mode state
-  type GitMode = "uncommitted" | "branches" | "commits";
+  type GitMode = "uncommitted" | "branches" | "commits" | "worktrees";
   const [gitMode, setGitMode] = useState<GitMode>("uncommitted");
   const [branches, setBranches] = useState<string[]>([]);
   const [sourceBranch, setSourceBranch] = useState<string>("");
@@ -306,8 +311,9 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
           <button style={modeTabStyle(gitMode === "uncommitted")} onClick={() => setGitMode("uncommitted")}>Uncommitted</button>
           <button style={modeTabStyle(gitMode === "branches")} onClick={() => setGitMode("branches")}>Branches</button>
           <button style={modeTabStyle(gitMode === "commits")} onClick={() => setGitMode("commits")}>Commits</button>
-          {gitMode !== "commits" && totalFiles > 0 && <span style={{ fontSize: 10, color: colors.textDim }}>{totalFiles}</span>}
-          {gitMode !== "commits" && (totalAdd > 0 || totalDel > 0) && (
+          {hasBranch && <button style={modeTabStyle(gitMode === "worktrees")} onClick={() => setGitMode("worktrees")}>Worktrees</button>}
+          {gitMode !== "commits" && gitMode !== "worktrees" && totalFiles > 0 && <span style={{ fontSize: 10, color: colors.textDim }}>{totalFiles}</span>}
+          {gitMode !== "commits" && gitMode !== "worktrees" && (totalAdd > 0 || totalDel > 0) && (
             <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
               <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>{" "}
               <span style={{ color: colors.diffDelText }}>-{totalDel}</span>
@@ -315,7 +321,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
           )}
         </span>
         <div style={{ flex: 1 }} />
-        {gitMode !== "commits" && totalFiles > 0 && (
+        {gitMode !== "commits" && gitMode !== "worktrees" && totalFiles > 0 && (
           <>
             <button onClick={expandAll} title="Expand all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,8 12,13 17,8" /><polyline points="7,14 12,19 17,14" /></svg>
@@ -325,9 +331,11 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
             </button>
           </>
         )}
-        <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7" /><polyline points="21,3 21,9 15,9" /></svg>
-        </button>
+        {gitMode !== "worktrees" && (
+          <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7" /><polyline points="21,3 21,9 15,9" /></svg>
+          </button>
+        )}
       </div>
       {gitMode === "branches" && (
         <div style={{ display: "flex", alignItems: "center", gap: 6, padding: "3px 8px", fontSize: 11, color: colors.textDim }}>
@@ -390,6 +398,16 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     />
   );
 
+  const worktreesContent = channelId ? (
+    <WorktreesPanel
+      channelId={channelId}
+      isWorktree={isWorktree ?? false}
+      hasBranch={hasBranch ?? false}
+      onImportWorktree={onImportWorktree}
+      onSelectThread={onSelectThread}
+    />
+  ) : null;
+
   const contextMenuOverlay = fileContextMenu && (
     <ContextMenu
       x={fileContextMenu.x}
@@ -406,7 +424,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     return (
       <div data-testid="git-panel" style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12 }}>
         {gitToolbar}
-        {gitMode === "commits" ? commitsContent : diffContent}
+        {gitMode === "worktrees" ? worktreesContent : gitMode === "commits" ? commitsContent : diffContent}
         {contextMenuOverlay}
       </div>
     );
@@ -579,12 +597,13 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
               <button style={modeTabStyle(gitMode === "uncommitted")} onClick={() => setGitMode("uncommitted")}>Uncommitted</button>
               <button style={modeTabStyle(gitMode === "branches")} onClick={() => setGitMode("branches")}>Branches</button>
               <button style={modeTabStyle(gitMode === "commits")} onClick={() => setGitMode("commits")}>Commits</button>
-              {gitMode !== "commits" && totalFiles > 0 && (
+              {hasBranch && <button style={modeTabStyle(gitMode === "worktrees")} onClick={() => setGitMode("worktrees")}>Worktrees</button>}
+              {gitMode !== "commits" && gitMode !== "worktrees" && totalFiles > 0 && (
                 <span style={{ fontSize: 10, color: colors.textDim }}>
                   {totalFiles}
                 </span>
               )}
-              {gitMode !== "commits" && (totalAdd > 0 || totalDel > 0) && (
+              {gitMode !== "commits" && gitMode !== "worktrees" && (totalAdd > 0 || totalDel > 0) && (
                 <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
                   <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>
                   {" "}
@@ -600,12 +619,13 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
               <button style={modeTabStyle(gitMode === "uncommitted")} onClick={() => setGitMode("uncommitted")}>Uncommitted</button>
               <button style={modeTabStyle(gitMode === "branches")} onClick={() => setGitMode("branches")}>Branches</button>
               <button style={modeTabStyle(gitMode === "commits")} onClick={() => setGitMode("commits")}>Commits</button>
-              {gitMode !== "commits" && totalFiles > 0 && (
+              {hasBranch && <button style={modeTabStyle(gitMode === "worktrees")} onClick={() => setGitMode("worktrees")}>Worktrees</button>}
+              {gitMode !== "commits" && gitMode !== "worktrees" && totalFiles > 0 && (
                 <span style={{ fontSize: 10, color: colors.textDim }}>
                   {totalFiles}
                 </span>
               )}
-              {gitMode !== "commits" && (totalAdd > 0 || totalDel > 0) && (
+              {gitMode !== "commits" && gitMode !== "worktrees" && (totalAdd > 0 || totalDel > 0) && (
                 <span style={{ fontSize: 10, fontFamily: fonts.mono }}>
                   <span style={{ color: colors.diffAddText }}>+{totalAdd}</span>
                   {" "}
@@ -614,7 +634,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
               )}
             </span>
           )}
-          {gitMode !== "commits" && totalFiles > 0 && (
+          {gitMode !== "commits" && gitMode !== "worktrees" && totalFiles > 0 && (
             <>
               <button onClick={expandAll} title="Expand all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -630,12 +650,14 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
               </button>
             </>
           )}
-          <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
+          {gitMode !== "worktrees" && (
+            <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M21 12a9 9 0 1 1-3-6.7" />
                 <polyline points="21,3 21,9 15,9" />
               </svg>
             </button>
+          )}
           {onToggleMaximize && (
             <button onClick={onToggleMaximize} title={maximized ? "Restore panel" : "Maximize panel"} style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
               {maximized ? (
@@ -700,8 +722,8 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
       )}
       </div>
 
-      {/* File list + diffs / Commits */}
-      {gitMode === "commits" ? commitsContent : diffContent}
+      {/* File list + diffs / Commits / Worktrees */}
+      {gitMode === "worktrees" ? worktreesContent : gitMode === "commits" ? commitsContent : diffContent}
       {contextMenuOverlay}
     </div>
   );

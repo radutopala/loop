@@ -80,14 +80,6 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
       <path d="M16 3.13a4 4 0 0 1 0 .74" />
     </svg>
   ),
-  worktrees: (
-    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-      <line x1="6" y1="3" x2="6" y2="15" />
-      <circle cx="18" cy="6" r="3" />
-      <circle cx="6" cy="18" r="3" />
-      <path d="M18 9a9 9 0 0 1-9 9" />
-    </svg>
-  ),
 };
 
 const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
@@ -103,7 +95,6 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   playground: "Live interactive code sandbox",
   notes: "Quick scratch notes (Markdown)",
   tasks: "Manage scheduled tasks",
-  worktrees: "Manage git worktrees",
 };
 
 /** Centered picker for when layout is empty (no tree). */

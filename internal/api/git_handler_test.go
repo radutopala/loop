@@ -3,6 +3,7 @@ package api
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1091,9 +1092,30 @@ func (s *ServerSuite) TestImportWorktree_ConfigAlreadyExists() {
 
 // ── deleteWorktree ──
 
-func (s *ServerSuite) TestDeleteWorktree_Success() {
+// ── removeWorktree ──
+
+func (s *ServerSuite) TestRemoveWorktree_DiskOnly() {
 	dir := initGitRepo(s.T())
-	// Create a worktree on disk so git worktree remove can work.
+	cmd := exec.Command("git", "branch", "feature/rm-test")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+	wtPath := filepath.Join(dir, ".worktrees", "rm-test")
+	cmd = exec.Command("git", "worktree", "add", wtPath, "feature/rm-test")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: dir,
+	}, nil)
+
+	body := fmt.Sprintf(`{"channel_id":"ch1","worktree_path":%q}`, wtPath)
+	rec := s.testRequest("POST", "/api/worktrees/remove", body)
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	require.NoDirExists(s.T(), wtPath)
+}
+
+func (s *ServerSuite) TestRemoveWorktree_WithThread() {
+	dir := initGitRepo(s.T())
 	cmd := exec.Command("git", "branch", "feature/del-test")
 	cmd.Dir = dir
 	require.NoError(s.T(), cmd.Run())
@@ -1102,97 +1124,78 @@ func (s *ServerSuite) TestDeleteWorktree_Success() {
 	cmd.Dir = dir
 	require.NoError(s.T(), cmd.Run())
 
-	s.store.On("GetChannel", mock.Anything, "wt-thread-1").Return(&db.Channel{
-		ChannelID: "wt-thread-1", DirPath: wtPath, ParentID: "ch1", Worktree: true,
-	}, nil)
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
 		ChannelID: "ch1", DirPath: dir,
 	}, nil)
 	s.threads.On("DeleteThread", mock.Anything, "wt-thread-1").Return(nil)
-
 	s.srv.eventsHub = NewEventsHub(testLogger())
 
-	rec := s.testRequest("DELETE", "/api/worktrees/wt-thread-1", "")
+	body := fmt.Sprintf(`{"channel_id":"ch1","worktree_path":%q,"thread_id":"wt-thread-1"}`, wtPath)
+	rec := s.testRequest("POST", "/api/worktrees/remove", body)
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
-
-	// Verify worktree directory was removed.
 	require.NoDirExists(s.T(), wtPath)
+	s.threads.AssertCalled(s.T(), "DeleteThread", mock.Anything, "wt-thread-1")
 }
 
-func (s *ServerSuite) TestDeleteWorktree_NotAWorktree() {
-	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
-		ChannelID: "ch1", DirPath: "/some/path", Worktree: false,
-	}, nil)
-
-	rec := s.testRequest("DELETE", "/api/worktrees/ch1", "")
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
-	require.Contains(s.T(), rec.Body.String(), "not a worktree")
-}
-
-func (s *ServerSuite) TestDeleteWorktree_GetChannelError() {
-	s.store.On("GetChannel", mock.Anything, "err-ch").Return((*db.Channel)(nil), errors.New("db error"))
-
-	rec := s.testRequest("DELETE", "/api/worktrees/err-ch", "")
-	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
-	require.Contains(s.T(), rec.Body.String(), "db error")
-}
-
-func (s *ServerSuite) TestDeleteWorktree_NotFound() {
-	s.store.On("GetChannel", mock.Anything, "missing").Return((*db.Channel)(nil), nil)
-
-	rec := s.testRequest("DELETE", "/api/worktrees/missing", "")
-	require.Equal(s.T(), http.StatusNotFound, rec.Code)
-}
-
-func (s *ServerSuite) TestDeleteWorktree_ParentNotFound() {
-	s.store.On("GetChannel", mock.Anything, "wt-1").Return(&db.Channel{
-		ChannelID: "wt-1", DirPath: "/wt/path", ParentID: "missing-parent", Worktree: true,
-	}, nil)
-	s.store.On("GetChannel", mock.Anything, "missing-parent").Return((*db.Channel)(nil), nil)
-
-	rec := s.testRequest("DELETE", "/api/worktrees/wt-1", "")
-	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
-	require.Contains(s.T(), rec.Body.String(), "parent channel not found")
-}
-
-func (s *ServerSuite) TestDeleteWorktree_DeleteThreadError() {
+func (s *ServerSuite) TestRemoveWorktree_DeleteThreadError() {
 	dir := initGitRepo(s.T())
-	s.store.On("GetChannel", mock.Anything, "wt-1").Return(&db.Channel{
-		ChannelID: "wt-1", DirPath: "/nonexistent", ParentID: "ch1", Worktree: true,
-	}, nil)
+	cmd := exec.Command("git", "branch", "feature/dt-err")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+	wtPath := filepath.Join(dir, ".worktrees", "dt-err")
+	cmd = exec.Command("git", "worktree", "add", wtPath, "feature/dt-err")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
 		ChannelID: "ch1", DirPath: dir,
 	}, nil)
 	s.threads.On("DeleteThread", mock.Anything, "wt-1").Return(errors.New("db error"))
 
-	rec := s.testRequest("DELETE", "/api/worktrees/wt-1", "")
+	body := fmt.Sprintf(`{"channel_id":"ch1","worktree_path":%q,"thread_id":"wt-1"}`, wtPath)
+	rec := s.testRequest("POST", "/api/worktrees/remove", body)
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 }
 
-func (s *ServerSuite) TestDeleteWorktree_StoreNotConfigured() {
+func (s *ServerSuite) TestRemoveWorktree_MissingFields() {
+	rec := s.testRequest("POST", "/api/worktrees/remove", `{"channel_id":"ch1"}`)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "channel_id and worktree_path required")
+}
+
+func (s *ServerSuite) TestRemoveWorktree_InvalidJSON() {
+	rec := s.testRequest("POST", "/api/worktrees/remove", `{invalid}`)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestRemoveWorktree_ChannelNotFound() {
+	s.store.On("GetChannel", mock.Anything, "missing").Return((*db.Channel)(nil), nil)
+
+	rec := s.testRequest("POST", "/api/worktrees/remove", `{"channel_id":"missing","worktree_path":"/tmp/wt"}`)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "channel not found")
+}
+
+func (s *ServerSuite) TestRemoveWorktree_StoreNotConfigured() {
 	srv := NewServer(nil, nil, nil, nil, nil, testLogger())
 	mux := http.NewServeMux()
-	mux.HandleFunc("DELETE /api/worktrees/{id}", srv.handleDeleteWorktree)
+	mux.HandleFunc("POST /api/worktrees/remove", srv.handleRemoveWorktree)
 
-	req := httptest.NewRequest("DELETE", "/api/worktrees/wt-1", nil)
+	req := httptest.NewRequest("POST", "/api/worktrees/remove", strings.NewReader(`{"channel_id":"ch1","worktree_path":"/tmp/wt"}`))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
 }
 
-func (s *ServerSuite) TestDeleteWorktree_ThreadsNotConfigured() {
-	srv := NewServer(nil, nil, nil, s.store, nil, testLogger())
-	mux := http.NewServeMux()
-	mux.HandleFunc("DELETE /api/worktrees/{id}", srv.handleDeleteWorktree)
-
-	s.store.On("GetChannel", mock.Anything, "wt-1").Return(&db.Channel{
-		ChannelID: "wt-1", DirPath: "/wt/path", ParentID: "ch1", Worktree: true,
+func (s *ServerSuite) TestRemoveWorktree_RemoveError() {
+	dir := initGitRepo(s.T())
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: dir,
 	}, nil)
 
-	req := httptest.NewRequest("DELETE", "/api/worktrees/wt-1", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+	rec := s.testRequest("POST", "/api/worktrees/remove", `{"channel_id":"ch1","worktree_path":"/nonexistent/worktree"}`)
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "failed to remove worktree")
 }
 
 // ── listCommits ──

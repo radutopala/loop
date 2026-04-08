@@ -213,7 +213,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("POST /api/channels/{id}/branches/create", s.srv.handleCreateBranch)
 	s.mux.HandleFunc("POST /api/worktrees", s.srv.handleCreateWorktree)
 	s.mux.HandleFunc("POST /api/worktrees/import", s.srv.handleImportWorktree)
-	s.mux.HandleFunc("DELETE /api/worktrees/{id}", s.srv.handleDeleteWorktree)
+	s.mux.HandleFunc("POST /api/worktrees/remove", s.srv.handleRemoveWorktree)
 	s.mux.HandleFunc("POST /api/agents", s.srv.handleRegisterAgent)
 	s.mux.HandleFunc("GET /api/agents", s.srv.handleListAgents)
 	s.mux.HandleFunc("PATCH /api/agents/{id}", s.srv.handleUpdateAgent)

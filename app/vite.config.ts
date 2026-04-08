@@ -31,6 +31,13 @@ export default defineConfig({
   base: "./",
   server: {
     allowedHosts: ["host.docker.internal"],
+    proxy: {
+      "/api": {
+        target: process.env.LOOP_API_URL || "http://localhost:8222",
+        changeOrigin: true,
+        ws: true,
+      },
+    },
   },
   build: {
     outDir: "dist",
