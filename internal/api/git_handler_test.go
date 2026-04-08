@@ -261,10 +261,9 @@ func (s *ServerSuite) TestDeleteBranch_Success() {
 func (s *ServerSuite) TestDeleteBranch_CurrentBranch() {
 	dir := initGitRepo(s.T())
 	// Current branch is main (or master) — try to delete it.
-	current := "main"
 	out, err := exec.Command("git", "-C", dir, "branch", "--show-current").Output()
 	require.NoError(s.T(), err)
-	current = strings.TrimSpace(string(out))
+	current := strings.TrimSpace(string(out))
 
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: dir}, nil)
 
