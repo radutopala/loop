@@ -30,11 +30,11 @@ Feature: Smoke & Navigation Journey
     And the page should contain text "Plan"
 
     # Git panel tabs
-    And I wait for text "UNCOMMITTED" to appear
-    And the page should contain text "BRANCHES"
+    And I wait for text "UNCOMMITTED DIFF" to appear
+    And the page should contain text "BRANCHES DIFF"
     And the page should contain text "COMMITS"
-    When I click on the button with text "BRANCHES"
-    Then the page should contain text "BRANCHES"
+    When I click on the button with text "BRANCHES DIFF"
+    Then the page should contain text "BRANCHES DIFF"
     When I click on the button with text "COMMITS"
     Then the page should contain text "COMMITS"
 

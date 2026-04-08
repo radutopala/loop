@@ -977,7 +977,7 @@ make app-install
 | `POST` | `/api/channels/{id}/branches/create` | Create and checkout a new branch |
 | `POST` | `/api/worktrees` | Create a git worktree as a new thread |
 | `POST` | `/api/worktrees/import` | Import an existing worktree as a thread |
-| `POST` | `/api/worktrees/remove` | Remove a git worktree from disk and optionally delete its thread |
+| `DELETE` | `/api/worktrees` | Remove a git worktree from disk and optionally delete its thread |
 | `GET` | `/api/channels/{id}/roots` | List all root directories (primary + extra from project config) |
 | `GET` | `/api/channels/{id}/diff` | Get git diff (working changes, or `?source=X&target=Y` for branch diff) |
 | `GET` | `/api/channels/{id}/messages` | List messages with cursor-based pagination |

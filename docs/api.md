@@ -928,7 +928,7 @@ Import an existing git worktree as a thread. Unlike `POST /api/worktrees` which 
 
 ---
 
-### `POST /api/worktrees/remove`
+### `DELETE /api/worktrees`
 
 Remove a git worktree from disk and optionally delete its associated thread.
 

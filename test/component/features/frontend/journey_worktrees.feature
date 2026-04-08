@@ -117,3 +117,33 @@ Feature: Worktrees Journey
     # Delete task
     When I click button "Delete" in the tasks panel
     Then I wait for text "0 tasks" to appear
+
+  Scenario: Branches panel lists branches and deletes with confirmation
+    Given I set up a test channel via API for git repo "bdd-branches-del"
+    And I create a branch "feature/bdd-del-target" via API
+    And I open the app in a browser
+    And I wait for text "bdd-branches-del" to appear
+
+    # Navigate to channel and open Git panel → Branches tab
+    # After creating branch, current is "feature/bdd-del-target"; "main" is non-current
+    When I click on "bdd-branches-del" in the sidebar
+    And I wait for "textarea" to be visible
+    When I add a "Git" panel
+    And I click button "Branches" in the git panel
+    Then I wait for text "main" to appear
+    And I wait for text "Go" to appear
+
+    # Delete "main" — confirmation popover appears
+    When I click button "Delete" in the branches panel
+    Then I wait for text "Delete?" to appear
+
+    # Dismiss with No
+    When I click on the button with text "No"
+    Then I wait for text "Delete?" to disappear
+    And the page should contain text "main"
+
+    # Delete again and confirm with Yes — "main" removed
+    When I click button "Delete" in the branches panel
+    Then I wait for text "Delete?" to appear
+    When I click on the button with text "Yes"
+    Then I wait up to "10s" for text "main" to disappear

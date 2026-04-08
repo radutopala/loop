@@ -148,6 +148,8 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I click button "([^"]*)" in the tasks panel$`, tc.clickButtonInTasksPanel)
 	ctx.Step(`^I click on "([^"]*)" in the worktrees panel$`, tc.clickInWorktreesPanel)
 	ctx.Step(`^I click button "([^"]*)" in the worktrees panel$`, tc.clickButtonInWorktreesPanel)
+	ctx.Step(`^I click on "([^"]*)" in the branches panel$`, tc.clickInBranchesPanel)
+	ctx.Step(`^I click button "([^"]*)" in the branches panel$`, tc.clickButtonInBranchesPanel)
 	ctx.Step(`^I click button "([^"]*)" in the git panel$`, tc.clickButtonInGitPanel)
 	ctx.Step(`^I trigger Run Now for the visible task$`, tc.triggerRunNowForVisibleTask)
 	ctx.Step(`^I capture the visible task ID$`, tc.captureVisibleTaskID)
@@ -403,8 +405,31 @@ func (tc *TestContext) clickButtonInWorktreesPanel(text string) error {
 	return tc.clickButtonInRegion(text, "worktrees-panel")
 }
 
+func (tc *TestContext) clickInBranchesPanel(text string) error {
+	return tc.clickInRegion(text, "branches-panel")
+}
+
+func (tc *TestContext) clickButtonInBranchesPanel(text string) error {
+	return tc.clickButtonInRegion(text, "branches-panel")
+}
+
 func (tc *TestContext) clickButtonInGitPanel(text string) error {
-	return tc.clickButtonInRegion(text, "git-panel")
+	// Prefer exact match to avoid "Branches" matching "Branches Diff".
+	exactXPath := fmt.Sprintf(`(//*[@data-testid='git-panel']//button[normalize-space()='%s'])[1]`, text)
+	containsXPath := fmt.Sprintf(`(//*[@data-testid='git-panel']//button[contains(., '%s')])[1]`, text)
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			// Try exact match first.
+			if err := chromedp.WaitVisible(exactXPath).Do(ctx); err == nil {
+				return chromedp.Click(exactXPath).Do(ctx)
+			}
+			// Fallback to contains match.
+			if err := chromedp.WaitVisible(containsXPath).Do(ctx); err != nil {
+				return err
+			}
+			return chromedp.Click(containsXPath).Do(ctx)
+		}),
+	)
 }
 
 // triggerRunNowForVisibleTask extracts the task ID from the detail view

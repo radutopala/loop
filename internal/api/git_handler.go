@@ -347,6 +347,55 @@ func (s *Server) handleCreateBranch(w http.ResponseWriter, r *http.Request) {
 	writeHTTPJSON(w, http.StatusOK, writeFileResponse{OK: true}, s.logger)
 }
 
+type deleteBranchRequest struct {
+	Branch string `json:"branch"`
+}
+
+func (s *Server) handleDeleteBranch(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel listing not configured") {
+		return
+	}
+
+	var req deleteBranchRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	if req.Branch == "" {
+		http.Error(w, "branch is required", http.StatusBadRequest)
+		return
+	}
+
+	branch, ok := sanitizeBranch(req.Branch)
+	if !ok {
+		http.Error(w, "invalid branch name", http.StatusBadRequest)
+		return
+	}
+
+	channelID := r.PathValue("id")
+	dirPath, err := s.resolveDirPath(r.Context(), "", channelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	// Prevent deleting the current branch.
+	current := gitBranch(r.Context(), dirPath)
+	if branch == current {
+		http.Error(w, "cannot delete the currently checked-out branch", http.StatusBadRequest)
+		return
+	}
+
+	cmd := exec.CommandContext(r.Context(), "git", "branch", "-D", branch)
+	cmd.Dir = dirPath
+	if out, err := cmd.CombinedOutput(); err != nil {
+		http.Error(w, "git branch -D failed: "+strings.TrimSpace(string(out)), http.StatusInternalServerError)
+		return
+	}
+
+	writeHTTPJSON(w, http.StatusOK, writeFileResponse{OK: true}, s.logger)
+}
+
 // ── Worktrees ──
 
 type createWorktreeRequest struct {

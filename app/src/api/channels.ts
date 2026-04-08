@@ -79,8 +79,8 @@ export async function deleteThread(threadId: string): Promise<void> {
 export async function removeWorktree(channelId: string, worktreePath: string, threadId?: string): Promise<void> {
   const body: Record<string, string> = { channel_id: channelId, worktree_path: worktreePath };
   if (threadId) body.thread_id = threadId;
-  const res = await fetch(`${getApiUrl()}/api/worktrees/remove`, {
-    method: "POST",
+  const res = await fetch(`${getApiUrl()}/api/worktrees`, {
+    method: "DELETE",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });

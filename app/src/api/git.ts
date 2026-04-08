@@ -29,6 +29,15 @@ export async function switchBranch(channelId: string, branch: string): Promise<v
   if (!res.ok) throw new Error(await res.text());
 }
 
+export async function deleteBranch(channelId: string, branch: string): Promise<void> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/branches`, {
+    method: "DELETE",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ branch }),
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
 export async function createBranch(channelId: string, name: string, from?: string): Promise<void> {
   const body: Record<string, string> = { name };
   if (from) body.from = from;

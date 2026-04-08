@@ -21,6 +21,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I send a GET request to "([^"]*)"$`, tc.sendGET)
 	ctx.Step(`^I send a POST request to "([^"]*)" with body:$`, tc.sendPOST)
 	ctx.Step(`^I send a PATCH request to "([^"]*)" with body:$`, tc.sendPATCH)
+	ctx.Step(`^I send a DELETE request to "([^"]*)" with body:$`, tc.sendDELETEWithBody)
 	ctx.Step(`^I send a DELETE request to "([^"]*)"$`, tc.sendDELETE)
 
 	// Response assertion steps
@@ -43,6 +44,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I trigger Run Now via API for the current task$`, tc.triggerRunNowViaAPI)
 	ctx.Step(`^I set up a worktree "([^"]*)" on branch "([^"]*)" under the current channel via API$`, tc.setupWorktreeViaAPI)
 	ctx.Step(`^I create a disk-only git worktree "([^"]*)" on branch "([^"]*)"$`, tc.createDiskOnlyWorktree)
+	ctx.Step(`^I create a branch "([^"]*)" via API$`, tc.createBranchViaAPI)
 
 	// Shortcut setup steps
 	ctx.Step(`^I add a prompt shortcut "([^"]*)" with prompt "([^"]*)" via API$`, tc.addShortcutViaAPI)
@@ -74,6 +76,10 @@ func (tc *TestContext) sendPOST(path string, body *godog.DocString) error {
 
 func (tc *TestContext) sendPATCH(path string, body *godog.DocString) error {
 	return tc.doRequest(http.MethodPatch, path, body.Content)
+}
+
+func (tc *TestContext) sendDELETEWithBody(path string, body *godog.DocString) error {
+	return tc.doRequest(http.MethodDelete, path, body.Content)
 }
 
 func (tc *TestContext) sendDELETE(path string) error {
@@ -321,6 +327,21 @@ func (tc *TestContext) setupWorktreeViaAPI(name, branch string) error {
 		if wp, ok := tc.LastJSON["worktree_path"].(string); ok {
 			tc.WorktreePath = wp
 		}
+	}
+	return nil
+}
+
+func (tc *TestContext) createBranchViaAPI(name string) error {
+	if tc.ChannelID == "" {
+		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
+	}
+	payload := map[string]any{"name": name}
+	b, _ := json.Marshal(payload)
+	if err := tc.doRequest(http.MethodPost, fmt.Sprintf("/api/channels/%s/branches/create", tc.ChannelID), string(b)); err != nil {
+		return err
+	}
+	if tc.LastStatus != http.StatusOK {
+		return fmt.Errorf("failed to create branch: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
 	}
 	return nil
 }
