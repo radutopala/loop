@@ -353,6 +353,7 @@ This does four things:
 | `copy_files` | `["~/.claude.json"]` | Files copied (not mounted) into each container |
 | `mcp` | `{}` | MCP server configurations |
 | `task_templates` | `[]` | Reusable task templates |
+| `prompt_shortcuts` | `[]` | Quick-access prompt shortcuts (triggered via `#` in chat) |
 | `memory` | `{}` | Semantic memory search configuration (see below) |
 | `permissions` | `{}` | RBAC permissions: owners and members (see below) |
 
@@ -476,6 +477,7 @@ Project config overrides specific global settings. Only these fields are allowed
 | `copy_files` | **Replaces** global copy_files entirely |
 | `mcp` | **Merged** with global; project servers take precedence |
 | `task_templates` | **Merged** with global; project overrides by name |
+| `prompt_shortcuts` | **Merged** with global; project overrides by name |
 | `claude_model` | **Overrides** global model |
 | `claude_bin_path` | **Overrides** global binary path |
 | `claude_code_oauth_token` | **Overrides** global auth (clears API key) |
@@ -868,13 +870,45 @@ Project configs (`.loop/config.json`) can define their own `task_templates` that
 }
 ```
 
+### Prompt Shortcuts
+
+The `prompt_shortcuts` array defines quick-access prompts that users can trigger by typing `#` in the chat input. Each shortcut has a name, optional description, and either an inline prompt or a path to a prompt file.
+
+```jsonc
+{
+  "prompt_shortcuts": [
+    {
+      "name": "coverage",
+      "description": "Run coverage check",
+      "prompt": "Run make coverage-check and report results"
+    },
+    {
+      "name": "review",
+      "description": "Review uncommitted and branch changes",
+      "prompt_path": "review-code.md"  // loaded from ~/.loop/shortcuts/review-code.md
+    }
+  ]
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | Unique shortcut identifier. Shown in the `#` picker. |
+| `description` | `string` | Human-readable description shown below the name. |
+| `prompt` | `string` | Inline prompt text. Mutually exclusive with `prompt_path`. |
+| `prompt_path` | `string` | Path to a prompt file, resolved as `~/.loop/shortcuts/{prompt_path}` (global) or `.loop/shortcuts/{prompt_path}` (project). Mutually exclusive with `prompt`. |
+
+Project configs (`.loop/config.json`) can define their own `prompt_shortcuts` that merge with global shortcuts. Project shortcuts override global ones by name, and new shortcuts are appended.
+
+Agents can manage shortcuts via the `prompt_shortcut` MCP tool — list, add, update, or delete shortcuts in either global or project scope.
+
 ## Desktop App
 
 Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built with Electron + React. Download from [Releases](https://github.com/radutopala/loop/releases/latest) or build from source.
 
 ### Features
 
-- **Chat** — send messages, stream agent responses in real-time, search messages (Cmd+K), copy-on-select, persistent drafts across channel switches, message history navigation (ArrowUp/ArrowDown)
+- **Chat** — send messages, stream agent responses in real-time, search messages (Cmd+K), copy-on-select, persistent drafts across channel switches, message history navigation (ArrowUp/ArrowDown), prompt shortcuts (`#` picker)
 - **Terminal** — interactive xterm.js terminals for agent containers and host shells, with horizontal/vertical splits
 - **File editor** — CodeMirror-powered editor with syntax highlighting, markdown preview, in-file search, context menus, auto-save, and directory creation/deletion
 - **Git panel** — git changes with per-file addition/deletion stats, maximizable to full width, expandable context rows between hunks (GitLab-style "load more"), branch-to-branch diff mode for comparing any two branches, renamed file support with `{old => new}` notation, commit history view with branch selector and lazy pagination
@@ -960,6 +994,8 @@ make app-install
 | `GET` | `/api/playground/files?name=...` | List files in a playground |
 | `POST` | `/api/browser/action` | Browser automation (navigate, tabs, screenshot, input, etc.) |
 | `POST` | `/api/browser/mode` | Switch browser mode (docker/host) |
+| `GET` | `/api/shortcuts` | List resolved prompt shortcuts (optional `channel_id` for project merge) |
+| `POST` | `/api/shortcuts` | Add, update, or delete a prompt shortcut (global or project scope) |
 | `GET` | `/api/config/schema` | JSON Schema for all config fields |
 | `GET` | `/api/config` | Get global config (parsed + raw HJSON) |
 | `PUT` | `/api/config` | Save global config |

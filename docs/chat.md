@@ -236,6 +236,41 @@ Accepting a command fills the textarea with `/loop <command> ` (with trailing sp
 
 ---
 
+## Prompt Shortcuts
+
+Typing `#` in the chat input triggers a shortcut picker. Shortcuts are defined in the `prompt_shortcuts` config array (global or per-project). See [Configuration: Prompt Shortcuts](configuration.md#prompt-shortcuts).
+
+### Trigger Logic
+
+1. If the text starts with `#`, show all available shortcuts.
+2. If the text starts with `#` followed by characters, filter shortcuts by name prefix.
+3. If there are no matching shortcuts, hide the picker.
+
+### Shortcut Button
+
+When shortcuts are available, a `#` button appears to the left of the mode toggle. Clicking it opens the full shortcut list.
+
+### Accepting a Shortcut
+
+Selecting a shortcut (via click, `Tab`, or `Enter`) clears the input and immediately sends the shortcut's resolved prompt as a message. The placeholder text changes to "Ask Loop anything, / for commands, # for shortcuts" when shortcuts are loaded.
+
+### Dropdown UI
+
+- Same styling as command autocomplete: dark background, border, shadow
+- Each item shows: shortcut name (bold), description (dimmed)
+- Selected item: `colors.selectedBg` background
+
+### Navigation
+
+| Key | Action |
+|-----|--------|
+| `ArrowDown` | Move selection down |
+| `ArrowUp` | Move selection up |
+| `Tab` / `Enter` | Accept selected shortcut |
+| `Escape` | Close dropdown |
+
+---
+
 ## @Mention Autocomplete
 
 Typing `@` followed by a partial match for "LoopBot" triggers mention autocomplete.

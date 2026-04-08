@@ -114,7 +114,7 @@ func (s *MCPServerSuite) TestMCPServer() {
 func (s *MCPServerSuite) TestListTools() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 14) // 12 base + 2 playground
+	require.Len(s.T(), res.Tools, 15) // 12 base + 2 playground + 1 shortcut
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -134,6 +134,7 @@ func (s *MCPServerSuite) TestListTools() {
 	require.True(s.T(), names["get_readme"])
 	require.True(s.T(), names["playground"])
 	require.True(s.T(), names["playground_file"])
+	require.True(s.T(), names["prompt_shortcut"])
 }
 
 // --- schedule_task ---
@@ -1104,7 +1105,7 @@ func (s *MCPMemorySuite) callTool(name string, args map[string]any) (string, boo
 func (s *MCPMemorySuite) TestListToolsIncludesMemory() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 16) // 12 base + 2 memory + 2 playground
+	require.Len(s.T(), res.Tools, 17) // 12 base + 2 memory + 2 playground + 1 shortcut
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -1300,7 +1301,7 @@ func (s *MCPMemoryChannelIDSuite) TestMemoryEnabledWithEmptyDirPath() {
 func (s *MCPMemoryChannelIDSuite) TestListToolsIncludesMemory() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 16)
+	require.Len(s.T(), res.Tools, 17)
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {

@@ -14,6 +14,7 @@ import (
 
 	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/browser"
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/scheduler"
@@ -93,6 +94,9 @@ type Server struct {
 	agentWSWriteJSON      func(v any) error // injectable for testing agent-channel WS write errors
 	worktreeCreator       *worktree.Creator
 	sys                   serverSystem
+	loadConfig            func() (*config.Config, error)                       // injectable for testing
+	loadProjectConfig     func(string, *config.Config) (*config.Config, error) // injectable for testing
+	readFile              func(string) ([]byte, error)                         // injectable for testing
 }
 
 // SetEventsHub configures the events hub for the /api/ws endpoint.
@@ -200,6 +204,8 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("PATCH /api/tasks/{id}", s.handleUpdateTask)
 	mux.HandleFunc("GET /api/tasks/{id}/runs", s.handleListTaskRuns)
 	mux.HandleFunc("POST /api/tasks/{id}/run", s.handleRunTask)
+	mux.HandleFunc("GET /api/shortcuts", s.handleListShortcuts)
+	mux.HandleFunc("POST /api/shortcuts", s.handleModifyShortcut)
 	mux.HandleFunc("GET /api/channels/{id}/sessions", s.handleListSessions)
 	mux.HandleFunc("GET /api/channels/{id}/messages", s.handleListMessages)
 	mux.HandleFunc("GET /api/messages/search", s.handleSearchMessages)

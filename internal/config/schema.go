@@ -382,6 +382,22 @@ func buildSchema() *ConfigSchema {
 				},
 			},
 
+			// ── Prompt Shortcuts section ──
+			"prompt_shortcuts": {
+				Type:     "array",
+				Title:    "Prompt Shortcuts",
+				XSection: "Prompt Shortcuts",
+				Items: &SchemaProperty{
+					Type: "object",
+					Properties: map[string]*SchemaProperty{
+						"name":        {Type: "string", Title: "Name"},
+						"description": {Type: "string", Title: "Description"},
+						"prompt":      {Type: "string", Title: "Prompt", XWidget: "textarea"},
+						"prompt_path": {Type: "string", Title: "Prompt Path", Description: "Relative to ~/.loop/shortcuts/"},
+					},
+				},
+			},
+
 			// ── Desktop section (Electron app preferences) ──
 			"desktop": {
 				Type:        "object",

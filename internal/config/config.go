@@ -40,19 +40,40 @@ type TaskTemplate struct {
 // If PromptPath is set, the file is read from {loopDir}/templates/{prompt_path}.
 // Exactly one of Prompt or PromptPath must be set.
 func (t *TaskTemplate) ResolvePrompt(loopDir string, readFile func(string) ([]byte, error)) (string, error) {
-	if t.Prompt != "" && t.PromptPath != "" {
-		return "", fmt.Errorf("template %q: prompt and prompt_path are mutually exclusive", t.Name)
+	return resolvePromptField(t.Name, t.Prompt, t.PromptPath, filepath.Join(loopDir, "templates"), readFile)
+}
+
+// PromptShortcut defines a reusable prompt that auto-sends in the chat UI.
+type PromptShortcut struct {
+	Name        string `json:"name"`
+	Description string `json:"description"`
+	Prompt      string `json:"prompt"`
+	PromptPath  string `json:"prompt_path"`
+}
+
+// ResolvePrompt returns the prompt text for the shortcut.
+// If Prompt is set, it is returned directly.
+// If PromptPath is set, the file is read from {loopDir}/shortcuts/{prompt_path}.
+func (s *PromptShortcut) ResolvePrompt(loopDir string, readFile func(string) ([]byte, error)) (string, error) {
+	return resolvePromptField(s.Name, s.Prompt, s.PromptPath, filepath.Join(loopDir, "shortcuts"), readFile)
+}
+
+// resolvePromptField resolves a prompt from either an inline value or a file path.
+// Exactly one of prompt or promptPath must be set.
+func resolvePromptField(name, prompt, promptPath, baseDir string, readFile func(string) ([]byte, error)) (string, error) {
+	if prompt != "" && promptPath != "" {
+		return "", fmt.Errorf("%q: prompt and prompt_path are mutually exclusive", name)
 	}
-	if t.Prompt == "" && t.PromptPath == "" {
-		return "", fmt.Errorf("template %q: one of prompt or prompt_path is required", t.Name)
+	if prompt == "" && promptPath == "" {
+		return "", fmt.Errorf("%q: one of prompt or prompt_path is required", name)
 	}
-	if t.Prompt != "" {
-		return t.Prompt, nil
+	if prompt != "" {
+		return prompt, nil
 	}
-	path := filepath.Join(loopDir, "templates", t.PromptPath)
+	path := filepath.Join(baseDir, promptPath)
 	data, err := readFile(path)
 	if err != nil {
-		return "", fmt.Errorf("reading prompt file for template %q: %w", t.Name, err)
+		return "", fmt.Errorf("reading prompt file for %q: %w", name, err)
 	}
 	return string(data), nil
 }
@@ -106,6 +127,7 @@ type Config struct {
 	LoopDir              string
 	MCPServers           map[string]MCPServerConfig
 	TaskTemplates        []TaskTemplate
+	PromptShortcuts      []PromptShortcut
 	Mounts               []string
 	CopyFiles            []string
 	Envs                 map[string]string
@@ -172,6 +194,7 @@ type jsonConfig struct {
 	APIAddr               string                 `json:"api_addr"`
 	MCP                   *jsonMCPConfig         `json:"mcp"`
 	TaskTemplates         []TaskTemplate         `json:"task_templates"`
+	PromptShortcuts       []PromptShortcut       `json:"prompt_shortcuts"`
 	Mounts                []string               `json:"mounts"`
 	CopyFiles             []string               `json:"copy_files"`
 	Envs                  map[string]any         `json:"envs"`
@@ -332,6 +355,7 @@ func (l *Loader) parse() (*Config, error) {
 	}
 
 	cfg.TaskTemplates = jc.TaskTemplates
+	cfg.PromptShortcuts = jc.PromptShortcuts
 	cfg.Mounts = jc.Mounts
 	cfg.CopyFiles = sliceDefault(jc.CopyFiles, []string{"~/.claude.json"})
 	cfg.Envs = stringifyEnvs(jc.Envs)
@@ -467,6 +491,7 @@ type projectConfig struct {
 	KeepMCPConfigs       *bool                  `json:"keep_mcp_configs"`
 	Browser              *jsonBrowserConfig     `json:"browser"`
 	TaskTemplates        []TaskTemplate         `json:"task_templates"`
+	PromptShortcuts      []PromptShortcut       `json:"prompt_shortcuts"`
 	Memory               *jsonMemoryConfig      `json:"memory"`
 	Permissions          *jsonPermissionsConfig `json:"permissions"`
 	ExtraDirs            []string               `json:"extra_dirs"`
@@ -678,6 +703,24 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 			}
 		}
 		merged.TaskTemplates = mergedTemplates
+	}
+
+	// Merge prompt shortcuts: project shortcuts override global by name
+	if len(pc.PromptShortcuts) > 0 {
+		byName := make(map[string]int, len(merged.PromptShortcuts))
+		mergedShortcuts := make([]PromptShortcut, len(merged.PromptShortcuts))
+		copy(mergedShortcuts, merged.PromptShortcuts)
+		for i, s := range mergedShortcuts {
+			byName[s.Name] = i
+		}
+		for _, ps := range pc.PromptShortcuts {
+			if idx, ok := byName[ps.Name]; ok {
+				mergedShortcuts[idx] = ps
+			} else {
+				mergedShortcuts = append(mergedShortcuts, ps)
+			}
+		}
+		merged.PromptShortcuts = mergedShortcuts
 	}
 
 	// ExtraDirs: project replaces global when set.

@@ -174,5 +174,16 @@
       "type": "interval",
       "prompt_path": "heartbeat.md"
     }
+  ],
+
+  // Prompt shortcuts — quick-access prompts triggered via # in the chat input.
+  // Each shortcut must have either "prompt" (inline) or "prompt_path" (loads from ~/.loop/shortcuts/<path>), but not both.
+  // Project-level configs can override global shortcuts by name.
+  "prompt_shortcuts": [
+    {
+      "name": "review",
+      "description": "Review uncommitted and branch changes",
+      "prompt_path": "review-code.md"
+    }
   ]
 }

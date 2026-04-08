@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../../types";
 import { sendCommand, sendMessage } from "../../api/loopApi";
+import { fetchShortcuts, type PromptShortcut } from "../../api/configApi";
 import { fonts } from "../../theme";
 import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
@@ -214,8 +215,13 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
   const [showCommands, setShowCommands] = useState(false);
   const [filteredCommands, setFilteredCommands] = useState<CommandDef[]>([]);
   const [cmdSelectedIdx, setCmdSelectedIdx] = useState(0);
+  const [shortcuts, setShortcuts] = useState<PromptShortcut[]>([]);
+  const [showShortcuts, setShowShortcuts] = useState(false);
+  const [filteredShortcuts, setFilteredShortcuts] = useState<PromptShortcut[]>([]);
+  const [shortcutSelectedIdx, setShortcutSelectedIdx] = useState(0);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const cmdDropdownRef = useRef<HTMLDivElement>(null);
+  const shortcutDropdownRef = useRef<HTMLDivElement>(null);
 
   // ── Message history (ArrowUp / ArrowDown) ──
   // Stores user-sent message contents for this channel; -1 = composing new text.
@@ -253,6 +259,19 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
     const item = container.children[cmdSelectedIdx] as HTMLElement | undefined;
     item?.scrollIntoView({ block: "nearest" });
   }, [cmdSelectedIdx, showCommands]);
+
+  // Fetch prompt shortcuts when channel changes.
+  useEffect(() => {
+    fetchShortcuts(channelId).then(setShortcuts).catch(() => setShortcuts([]));
+  }, [channelId]);
+
+  // Scroll selected shortcut item into view.
+  useEffect(() => {
+    const container = shortcutDropdownRef.current;
+    if (!container || !showShortcuts) return;
+    const item = container.children[shortcutSelectedIdx] as HTMLElement | undefined;
+    item?.scrollIntoView({ block: "nearest" });
+  }, [shortcutSelectedIdx, showShortcuts]);
 
   const isLoopCommand = useCallback((t: string) => t.trimStart().startsWith("/loop"), []);
 
@@ -326,6 +345,39 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
     setShowCommands(matches.length > 0);
   }, []);
 
+  const updateShortcutDropdown = useCallback((val: string) => {
+    const trimmed = val.trimStart();
+    if (!trimmed.startsWith("#") || shortcuts.length === 0) {
+      setShowShortcuts(false);
+      return;
+    }
+    const query = trimmed.slice(1).toLowerCase();
+    const matches = query
+      ? shortcuts.filter((s) => s.name.toLowerCase().startsWith(query))
+      : shortcuts;
+    setFilteredShortcuts(matches);
+    setShortcutSelectedIdx(0);
+    setShowShortcuts(matches.length > 0);
+  }, [shortcuts]);
+
+  const acceptShortcut = useCallback(async (shortcut: PromptShortcut) => {
+    setShowShortcuts(false);
+    setText("");
+    draftText.delete(channelId);
+    setSending(true);
+    try {
+      await sendMessage(channelId, shortcut.prompt, mode);
+      historyRef.current.push(shortcut.prompt);
+      historyIdxRef.current = -1;
+      draftRef.current = "";
+      onDismissCards?.();
+      onSent?.();
+    } finally {
+      setSending(false);
+      requestAnimationFrame(() => inputRef.current?.focus());
+    }
+  }, [channelId, mode, onDismissCards, onSent]);
+
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
       const val = e.target.value;
@@ -335,6 +387,9 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
 
       // Check for command autocomplete.
       updateCommandDropdown(val);
+
+      // Check for shortcut autocomplete.
+      updateShortcutDropdown(val);
 
       // Check for @mention autocomplete.
       const pos = e.target.selectionStart;
@@ -350,7 +405,7 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
       }
       setShowMention(false);
     },
-    [updateCommandDropdown],
+    [updateCommandDropdown, updateShortcutDropdown],
   );
 
   const acceptCommand = useCallback((cmd: CommandDef) => {
@@ -409,6 +464,29 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
           return;
         }
       }
+      // Shortcut picker navigation.
+      if (showShortcuts && filteredShortcuts.length > 0) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setShortcutSelectedIdx((i) => Math.min(i + 1, filteredShortcuts.length - 1));
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setShortcutSelectedIdx((i) => Math.max(i - 1, 0));
+          return;
+        }
+        if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+          e.preventDefault();
+          const sc = filteredShortcuts[shortcutSelectedIdx];
+          if (sc) acceptShortcut(sc);
+          return;
+        }
+        if (e.key === "Escape") {
+          setShowShortcuts(false);
+          return;
+        }
+      }
       // Mention picker.
       if (showMention && (e.key === "Tab" || e.key === "Enter")) {
         e.preventDefault();
@@ -420,7 +498,7 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
         return;
       }
       // Message history navigation.
-      if (e.key === "ArrowUp" && !showCommands && !showMention) {
+      if (e.key === "ArrowUp" && !showCommands && !showShortcuts && !showMention) {
         const el = inputRef.current;
         if (el && el.selectionStart === 0 && el.selectionEnd === 0) {
           const hist = historyRef.current;
@@ -442,7 +520,7 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
           return;
         }
       }
-      if (e.key === "ArrowDown" && !showCommands && !showMention) {
+      if (e.key === "ArrowDown" && !showCommands && !showShortcuts && !showMention) {
         const el = inputRef.current;
         if (el && el.selectionStart === el.value.length && el.selectionEnd === el.value.length && historyIdxRef.current !== -1) {
           e.preventDefault();
@@ -471,7 +549,7 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
         handleSend();
       }
     },
-    [handleSend, text, channelId, showMention, acceptMention, showCommands, filteredCommands, cmdSelectedIdx, acceptCommand],
+    [handleSend, text, channelId, showMention, acceptMention, showCommands, filteredCommands, cmdSelectedIdx, acceptCommand, showShortcuts, filteredShortcuts, shortcutSelectedIdx, acceptShortcut],
   );
 
   return (
@@ -497,6 +575,26 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
           </div>
         </div>
       )}
+      {showShortcuts && filteredShortcuts.length > 0 && (
+        <div style={commandStyles.dropdown}>
+          <div ref={shortcutDropdownRef} style={commandStyles.scrollArea}>
+            {filteredShortcuts.map((sc, i) => (
+              <div
+                key={sc.name}
+                style={{
+                  ...commandStyles.item,
+                  backgroundColor: i === shortcutSelectedIdx ? colors.selectedBg : "transparent",
+                }}
+                onMouseDown={(e) => { e.preventDefault(); acceptShortcut(sc); }}
+                onMouseEnter={() => setShortcutSelectedIdx(i)}
+              >
+                <div style={commandStyles.name}>#{sc.name}</div>
+                <div style={commandStyles.desc}>{sc.description}</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {showMention && (
         <div style={mentionStyles.dropdown} onMouseDown={(e) => { e.preventDefault(); acceptMention(); }}>
           <div style={mentionStyles.item}>
@@ -510,10 +608,43 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
         value={text}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
-        placeholder="Ask Loop anything, / for commands"
+        placeholder={shortcuts.length > 0 ? "Ask Loop anything, / for commands, # for shortcuts" : "Ask Loop anything, / for commands"}
         rows={3}
         disabled={sending}
       />
+      {shortcuts.length > 0 && (
+        <button
+          style={{
+            width: 28,
+            height: 28,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            background: "transparent",
+            border: `1px solid ${colors.border}`,
+            borderRadius: 8,
+            color: colors.textDim,
+            cursor: "pointer",
+            flexShrink: 0,
+            fontFamily: fonts.mono,
+            fontSize: 14,
+            fontWeight: 600,
+          }}
+          title="Prompt shortcuts"
+          onClick={() => {
+            if (showShortcuts) {
+              setShowShortcuts(false);
+            } else {
+              setFilteredShortcuts(shortcuts);
+              setShortcutSelectedIdx(0);
+              setShowShortcuts(true);
+              inputRef.current?.focus();
+            }
+          }}
+        >
+          #
+        </button>
+      )}
       <div style={modeStyles.pill}>
         <button
           style={{

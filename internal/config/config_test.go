@@ -3,6 +3,7 @@ package config
 import (
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -1752,6 +1753,56 @@ func (s *ConfigSuite) TestParseReadError() {
 	_, err := s.loader.parse()
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "reading config file")
+}
+
+func (s *ConfigSuite) TestPromptShortcutResolveInline() {
+	sc := &PromptShortcut{Name: "review", Prompt: "Review this code"}
+	prompt, err := sc.ResolvePrompt("/loop", s.loader.readFile)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Review this code", prompt)
+}
+
+func (s *ConfigSuite) TestPromptShortcutResolveFromFile() {
+	s.loader.readFile = func(path string) ([]byte, error) {
+		if path == "/loop/shortcuts/review.md" {
+			return []byte("file-based prompt"), nil
+		}
+		return nil, errors.New("not found")
+	}
+	sc := &PromptShortcut{Name: "review", PromptPath: "review.md"}
+	prompt, err := sc.ResolvePrompt("/loop", s.loader.readFile)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "file-based prompt", prompt)
+}
+
+func (s *ConfigSuite) TestLoadProjectConfigShortcutsMerge() {
+	s.loader.readFile = func(path string) ([]byte, error) {
+		if strings.HasSuffix(path, "config.json") {
+			return s.minimalJSON(), nil
+		}
+		return nil, os.ErrNotExist
+	}
+	base, err := s.loader.load()
+	require.NoError(s.T(), err)
+	base.PromptShortcuts = []PromptShortcut{
+		{Name: "global", Prompt: "global prompt"},
+		{Name: "override-me", Prompt: "old prompt"},
+	}
+
+	s.setupProjectReadFile(`{
+		"prompt_shortcuts": [
+			{"name": "override-me", "description": "updated", "prompt": "new prompt"},
+			{"name": "local-only", "prompt": "local prompt"}
+		]
+	}`)
+
+	merged, err := s.loader.loadProjectConfig("/project", base)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), merged.PromptShortcuts, 3)
+	require.Equal(s.T(), "global", merged.PromptShortcuts[0].Name)
+	require.Equal(s.T(), "override-me", merged.PromptShortcuts[1].Name)
+	require.Equal(s.T(), "new prompt", merged.PromptShortcuts[1].Prompt)
+	require.Equal(s.T(), "local-only", merged.PromptShortcuts[2].Name)
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigExtraDirs() {

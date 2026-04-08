@@ -90,5 +90,15 @@
   //    // Or use prompt_path to load prompt from ~/.loop/templates/<file>:
   //    //"prompt_path": "daily-summary.md"
   //  }
+  //],
+
+  // Prompt shortcuts specific to this project (merged with global; project overrides by name)
+  // Each shortcut must have either "prompt" (inline) or "prompt_path" (loads from .loop/shortcuts/<path>), but not both.
+  //"prompt_shortcuts": [
+  //  {
+  //    "name": "lint",
+  //    "description": "Run linter and fix issues",
+  //    "prompt": "Run make lint and fix any issues found"
+  //  }
   //]
 }

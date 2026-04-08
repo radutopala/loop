@@ -627,7 +627,7 @@ func (s *MainSuite) TestRunMCPWithInMemoryTransport() {
 
 	res, err := session.ListTools(context.Background(), nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 14) // 12 base + 2 playground
+	require.Len(s.T(), res.Tools, 15) // 12 base + 2 playground + 1 shortcut
 }
 
 func (s *MainSuite) TestEnsureChannelSuccess() {
@@ -2354,6 +2354,7 @@ func (s *MainSuite) TestOnboardGlobalMkdirErrors() {
 		{"loop directory", 1, "creating loop directory"},
 		{"container directory", 2, "creating container directory"},
 		{"templates directory", 3, "creating templates directory"},
+		{"shortcuts directory", 4, "creating shortcuts directory"},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
@@ -2569,6 +2570,18 @@ func (s *MainSuite) TestDumpPlaygroundExamplesExampleMkdirError() {
 	err := s.app.dumpPlaygroundExamples(dir)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating playground example")
+}
+
+func (s *MainSuite) TestOnboardGlobalShortcutsDumpError() {
+	tmpDir := s.T().TempDir()
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("UserHomeDir").Return(tmpDir, nil)
+	s.app.shortcutsFS = brokenShortcutsReadDirFS{}
+
+	err := s.app.onboardGlobal(false, "")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading embedded shortcuts")
 }
 
 func (s *MainSuite) TestOnboardGlobalPlaygroundDumpError() {
@@ -3106,6 +3119,49 @@ func (s *MainSuite) TestOnboardLocalTemplatesDirCreated() {
 	// Verify templates directory was created
 	templatesDir := filepath.Join(tmpDir, ".loop", "templates")
 	info, err := os.Stat(templatesDir)
+	require.NoError(s.T(), err)
+	require.True(s.T(), info.IsDir())
+}
+
+func (s *MainSuite) TestOnboardLocalShortcutsDirError() {
+	tmpDir := s.T().TempDir()
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	mkdirCall := sys.Override("MkdirAll", mock.Anything, mock.Anything).Maybe().Return(nil)
+	mkdirCalls := 0
+	mkdirCall.RunFn = func(args mock.Arguments) {
+		mkdirCalls++
+		if mkdirCalls == 3 { // Third mkdir is shortcuts dir (after .loop dir and templates dir)
+			mkdirCall.ReturnArguments = mock.Arguments{errors.New("shortcuts mkdir error")}
+			return
+		}
+		mkdirCall.ReturnArguments = mock.Arguments{os.MkdirAll(args.String(0), args.Get(1).(os.FileMode))}
+	}
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
+		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
+	}
+
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating shortcuts directory")
+}
+
+func (s *MainSuite) TestOnboardLocalShortcutsDirCreated() {
+	tmpDir := s.T().TempDir()
+	sys := newPassthroughMock()
+	s.app.sys = sys
+	sys.Override("Getwd").Return(tmpDir, nil)
+	s.app.ensureAllChannelsFn = func(_, _ string) ([]ensureResult, error) {
+		return []ensureResult{{Platform: "local", ChannelID: "ch-test", Created: true}}, nil
+	}
+
+	err := s.app.onboardLocal("http://localhost:8222", "", "")
+	require.NoError(s.T(), err)
+
+	// Verify shortcuts directory was created
+	shortcutsDir := filepath.Join(tmpDir, ".loop", "shortcuts")
+	info, err := os.Stat(shortcutsDir)
 	require.NoError(s.T(), err)
 	require.True(s.T(), info.IsDir())
 }
@@ -4209,6 +4265,81 @@ func (s *MainSuite) TestDumpPlaygroundExamplesReadFileError() {
 	err := s.app.dumpPlaygroundExamples(s.T().TempDir())
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "reading playground file myexample/index.html")
+}
+
+// --- dumpShortcuts ---
+
+type brokenShortcutsReadDirFS struct{}
+
+func (brokenShortcutsReadDirFS) Open(string) (fs.File, error)    { return nil, errors.New("broken") }
+func (brokenShortcutsReadDirFS) ReadFile(string) ([]byte, error) { return nil, errors.New("broken") }
+
+type brokenShortcutsReadFileFS struct{ brokenShortcutsReadDirFS }
+
+func (brokenShortcutsReadFileFS) Open(name string) (fs.File, error) {
+	if name == "shortcuts" {
+		return &fakeDirFile{entries: []fs.DirEntry{&fakeEntry{name: "test.md"}}}, nil
+	}
+	return nil, errors.New("broken")
+}
+
+type shortcutsDirEntryFS struct{}
+
+func (shortcutsDirEntryFS) Open(name string) (fs.File, error) {
+	if name == "shortcuts" {
+		return &fakeDirFile{entries: []fs.DirEntry{&fakeDirEntry{name: "subdir"}}}, nil
+	}
+	return nil, errors.New("not found")
+}
+
+func (shortcutsDirEntryFS) ReadFile(string) ([]byte, error) {
+	return nil, errors.New("should not be called")
+}
+
+func (s *MainSuite) TestDumpShortcutsReadDirError() {
+	s.app.shortcutsFS = brokenShortcutsReadDirFS{}
+
+	err := s.app.dumpShortcuts(s.T().TempDir())
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading embedded shortcuts")
+}
+
+func (s *MainSuite) TestDumpShortcutsReadFileError() {
+	s.app.shortcutsFS = brokenShortcutsReadFileFS{}
+
+	err := s.app.dumpShortcuts(s.T().TempDir())
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading embedded shortcut test.md")
+}
+
+func (s *MainSuite) TestDumpShortcutsSkipsDirectories() {
+	s.app.shortcutsFS = &shortcutsDirEntryFS{}
+
+	err := s.app.dumpShortcuts(s.T().TempDir())
+	require.NoError(s.T(), err)
+}
+
+func (s *MainSuite) TestDumpShortcutsSkipIfExist() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "review-code.md"), []byte("custom"), 0644))
+
+	s.app.sys = newPassthroughMock()
+	err := s.app.dumpShortcuts(tmpDir)
+	require.NoError(s.T(), err)
+
+	data, err := os.ReadFile(filepath.Join(tmpDir, "review-code.md"))
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "custom", string(data))
+}
+
+func (s *MainSuite) TestDumpShortcutsWriteError() {
+	sys := newPassthroughMock()
+	sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("disk full"))
+	s.app.sys = sys
+
+	err := s.app.dumpShortcuts(s.T().TempDir())
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "writing shortcut")
 }
 
 func (s *MainSuite) TestMainCallsOsExit() {

@@ -61,6 +61,21 @@ export async function fetchProjectConfig(channelId: string): Promise<ConfigRespo
   return res.json();
 }
 
+// ── Prompt Shortcuts ──
+
+export interface PromptShortcut {
+  name: string;
+  description: string;
+  prompt: string;
+}
+
+export async function fetchShortcuts(channelId?: string): Promise<PromptShortcut[]> {
+  const params = channelId ? `?channel_id=${encodeURIComponent(channelId)}` : "";
+  const res = await fetch(`${getApiUrl()}/api/shortcuts${params}`);
+  if (!res.ok) return [];
+  return res.json();
+}
+
 export async function saveProjectConfig(channelId: string, content: string): Promise<void> {
   const params = new URLSearchParams({ channel_id: channelId });
   const res = await fetch(`${getApiUrl()}/api/config/project?${params}`, {

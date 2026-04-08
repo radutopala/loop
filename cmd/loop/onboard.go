@@ -139,6 +139,15 @@ func (a *app) onboardGlobal(force bool, ownerID string) error {
 		return err
 	}
 
+	// Dump embedded shortcuts directory
+	shortcutsDir := filepath.Join(loopDir, "shortcuts")
+	if err := a.sys.MkdirAll(shortcutsDir, 0755); err != nil {
+		return fmt.Errorf("creating shortcuts directory: %w", err)
+	}
+	if err := a.dumpShortcuts(shortcutsDir); err != nil {
+		return err
+	}
+
 	// Dump embedded playground examples
 	playgroundDir := filepath.Join(loopDir, "playground")
 	if err := a.dumpPlaygroundExamples(playgroundDir); err != nil {
@@ -158,9 +167,21 @@ func (a *app) onboardGlobal(force bool, ownerID string) error {
 // dumpTemplates writes all embedded template files to the target directory,
 // skipping files that already exist (so user edits are preserved).
 func (a *app) dumpTemplates(dir string) error {
-	entries, err := fs.ReadDir(a.templatesFS, "templates")
+	return a.dumpEmbeddedFiles(a.templatesFS, "templates", dir, "template")
+}
+
+// dumpShortcuts writes all embedded shortcut files to the target directory,
+// skipping files that already exist (so user edits are preserved).
+func (a *app) dumpShortcuts(dir string) error {
+	return a.dumpEmbeddedFiles(a.shortcutsFS, "shortcuts", dir, "shortcut")
+}
+
+// dumpEmbeddedFiles copies files from an embedded FS subdirectory to a target
+// directory on disk, skipping files that already exist.
+func (a *app) dumpEmbeddedFiles(fsys fs.ReadFileFS, subdir, dir, label string) error {
+	entries, err := fs.ReadDir(fsys, subdir)
 	if err != nil {
-		return fmt.Errorf("reading embedded templates: %w", err)
+		return fmt.Errorf("reading embedded %ss: %w", label, err)
 	}
 	for _, e := range entries {
 		if e.IsDir() {
@@ -170,12 +191,12 @@ func (a *app) dumpTemplates(dir string) error {
 		if _, err := a.sys.Stat(dst); err == nil {
 			continue // don't overwrite existing
 		}
-		data, err := a.templatesFS.ReadFile("templates/" + e.Name())
+		data, err := fsys.ReadFile(subdir + "/" + e.Name())
 		if err != nil {
-			return fmt.Errorf("reading embedded template %s: %w", e.Name(), err)
+			return fmt.Errorf("reading embedded %s %s: %w", label, e.Name(), err)
 		}
 		if err := a.sys.WriteFile(dst, data, 0644); err != nil {
-			return fmt.Errorf("writing template %s: %w", e.Name(), err)
+			return fmt.Errorf("writing %s %s: %w", label, e.Name(), err)
 		}
 	}
 	return nil
@@ -299,6 +320,12 @@ func (a *app) onboardLocal(apiURL, ownerID, platform string) error {
 	templatesDir := filepath.Join(loopDir, "templates")
 	if err := a.sys.MkdirAll(templatesDir, 0755); err != nil {
 		return fmt.Errorf("creating templates directory: %w", err)
+	}
+
+	// Create shortcuts directory for project-level prompt_path shortcuts
+	shortcutsDir := filepath.Join(loopDir, "shortcuts")
+	if err := a.sys.MkdirAll(shortcutsDir, 0755); err != nil {
+		return fmt.Errorf("creating shortcuts directory: %w", err)
 	}
 
 	// Register channels — single platform or all configured platforms

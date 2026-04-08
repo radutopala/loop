@@ -1435,6 +1435,62 @@ Same shape as `GET /api/config`. If no project config file exists, `config` is a
 
 ---
 
+### `GET /api/shortcuts`
+
+Returns prompt shortcuts with resolved prompt text. When a `channel_id` is provided, project-level shortcuts are merged on top of global ones (project overrides global by name).
+
+**Query Parameters:**
+
+| Param        | Type   | Required | Description |
+|--------------|--------|----------|-------------|
+| `channel_id` | string | no       | Channel ID to merge project-level shortcuts |
+
+**Response (200):**
+```json
+[
+  {
+    "name": "coverage",
+    "description": "Run coverage check",
+    "prompt": "Run make coverage-check and report results"
+  }
+]
+```
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Shortcut identifier |
+| `description` | string | Human-readable description |
+| `prompt` | string | Resolved prompt text (inline or loaded from file) |
+
+Shortcuts with unresolvable prompts (e.g. missing file) are silently skipped.
+
+---
+
+### `POST /api/shortcuts`
+
+Add, update, or delete a prompt shortcut in the global or project config file.
+
+**Request Body:**
+
+| Field         | Type   | Required | Description |
+|---------------|--------|----------|-------------|
+| `action`      | string | yes      | `add`, `update`, or `delete` |
+| `name`        | string | yes      | Shortcut name |
+| `scope`       | string | no       | `global` (default) or `project` |
+| `channel_id`  | string | conditional | Required when scope is `project` |
+| `description` | string | no       | Human-readable description (add/update) |
+| `prompt`      | string | conditional | Inline prompt text (required for add/update unless `prompt_path` is set) |
+| `prompt_path` | string | conditional | Path to prompt file relative to `shortcuts/` dir (mutually exclusive with `prompt`) |
+
+**Response:** `204 No Content` on success.
+
+**Errors:**
+- `400` — missing name, invalid action, missing prompt, mutually exclusive fields, or missing channel_id for project scope
+- `404` — shortcut not found (update/delete)
+- `409` — duplicate name (add)
+
+---
+
 ### `PUT /api/config/project`
 
 Save project config for a channel.

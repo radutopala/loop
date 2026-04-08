@@ -34,7 +34,8 @@ type TestContext struct {
 	CreatedThreadIDs  []string
 	CreatedTaskIDs    []string
 	CreatedDirs       []string
-	WorktreeThreadID  string
+	WorktreeThreadID     string
+	CreatedShortcutNames []string
 
 	// Frontend (lazily initialized)
 	chromeTab *chromeTab
@@ -100,6 +101,14 @@ func (tc *TestContext) resolvePlaceholders(path string) string {
 // cleanup deletes entities created during the scenario.
 // Deletion order: tasks → threads → channels (reverse dependency order).
 func (tc *TestContext) cleanup() {
+	// Delete all tracked shortcuts.
+	for _, name := range tc.CreatedShortcutNames {
+		body := fmt.Sprintf(`{"action":"delete","name":%q}`, name)
+		req, _ := http.NewRequest("POST", tc.BaseURL+"/api/shortcuts", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		tc.HTTPClient.Do(req) //nolint:errcheck
+	}
+
 	// Delete all tracked tasks.
 	for _, id := range tc.CreatedTaskIDs {
 		req, _ := http.NewRequest("DELETE", tc.BaseURL+"/api/tasks/"+id, nil)

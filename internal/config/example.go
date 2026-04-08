@@ -15,3 +15,6 @@ var SlackManifest []byte
 
 //go:embed templates
 var Templates embed.FS
+
+//go:embed shortcuts
+var Shortcuts embed.FS

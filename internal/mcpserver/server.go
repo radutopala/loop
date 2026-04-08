@@ -157,6 +157,11 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "prompt_shortcut",
+		Description: "Manage prompt shortcuts — quick-access prompts triggered via # in the chat input. Actions: list (show all shortcuts), add (create new), update (modify existing), delete (remove by name). Scope: 'global' (default, ~/.loop/config.json) or 'project' (project .loop/config.json).",
+	}, s.handlePromptShortcut)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "playground",
 		Description: "Manage playgrounds — live interactive sandboxes for HTML/CSS/JS that render in the user's Playground panel. Actions: create (new playground with html + title + description), update (modify html/title/description), delete (remove entirely). After creating, use playground_file to add script.js, style.css, and other files. JS runs as ES module — use import for npm packages via esm.sh CDN.",
 	}, s.handlePlayground)

@@ -85,6 +85,7 @@ type appSystem interface {
 type app struct {
 	sys         appSystem
 	templatesFS fs.ReadFileFS
+	shortcutsFS fs.ReadFileFS
 
 	// Build info (set from package-level ldflags vars)
 	version string
@@ -135,6 +136,7 @@ func newApp() *app {
 	a := &app{
 		sys:                  osutil.RealSystem{},
 		templatesFS:          config.Templates,
+		shortcutsFS:          config.Shortcuts,
 		playgroundExamplesFS: playground.Examples,
 		version:              version,
 		commit:               commit,

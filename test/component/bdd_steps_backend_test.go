@@ -43,6 +43,9 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I trigger Run Now via API for the current task$`, tc.triggerRunNowViaAPI)
 	ctx.Step(`^I set up a worktree "([^"]*)" on branch "([^"]*)" under the current channel via API$`, tc.setupWorktreeViaAPI)
 
+	// Shortcut setup steps
+	ctx.Step(`^I add a prompt shortcut "([^"]*)" with prompt "([^"]*)" via API$`, tc.addShortcutViaAPI)
+
 	// WebSocket steps
 	ctx.Step(`^I connect to the events WebSocket$`, tc.connectEventsWS)
 	ctx.Step(`^the WebSocket connection should be established$`, tc.assertWSConnected)
@@ -314,6 +317,24 @@ func (tc *TestContext) setupWorktreeViaAPI(name, branch string) error {
 			tc.CreatedThreadIDs = append(tc.CreatedThreadIDs, id)
 		}
 	}
+	return nil
+}
+
+func (tc *TestContext) addShortcutViaAPI(name, prompt string) error {
+	payload := map[string]string{
+		"action":      "add",
+		"name":        name,
+		"description": name,
+		"prompt":      prompt,
+	}
+	b, _ := json.Marshal(payload)
+	if err := tc.doRequest(http.MethodPost, "/api/shortcuts", string(b)); err != nil {
+		return err
+	}
+	if tc.LastStatus != http.StatusNoContent {
+		return fmt.Errorf("failed to add shortcut: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
+	}
+	tc.CreatedShortcutNames = append(tc.CreatedShortcutNames, name)
 	return nil
 }
 

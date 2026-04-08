@@ -192,6 +192,32 @@ A built-in `"loop"` server is always added unless the user defines one with the 
 
 See [Task Scheduling](scheduling.md) for full details.
 
+#### Prompt Shortcuts
+
+```jsonc
+"prompt_shortcuts": [
+  {
+    "name": "coverage",
+    "description": "Run coverage check",
+    "prompt": "Run make coverage-check and report results"
+  },
+  {
+    "name": "review",
+    "description": "Review uncommitted and branch changes",
+    "prompt_path": "review-code.md"
+  }
+]
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | Unique shortcut identifier. Shown in the `#` picker in chat. |
+| `description` | `string` | Human-readable description shown below the name. |
+| `prompt` | `string` | Inline prompt text. Mutually exclusive with `prompt_path`. |
+| `prompt_path` | `string` | Path to a prompt file, resolved as `~/.loop/shortcuts/{prompt_path}` (global) or `.loop/shortcuts/{prompt_path}` (project). Mutually exclusive with `prompt`. |
+
+Shortcuts appear in the chat input when the user types `#`. Selecting a shortcut sends its resolved prompt as a message. The API endpoint `GET /api/shortcuts` returns all shortcuts with resolved prompts; pass `?channel_id=<id>` to merge project-level shortcuts. Agents can manage shortcuts via the `prompt_shortcut` MCP tool or the `POST /api/shortcuts` endpoint — add, update, or delete shortcuts in either global or project scope.
+
 #### Memory
 
 ```jsonc
@@ -297,6 +323,7 @@ Not all global fields are available in project configs. The following fields can
 | `memory.embeddings` | **Overrides** global embeddings config entirely when set. |
 | `permissions` | **Replaces** global permissions entirely when set. |
 | `task_templates` | **Merged** by name. Project templates override global templates with the same name; new names are appended. |
+| `prompt_shortcuts` | **Merged** by name. Project shortcuts override global shortcuts with the same name; new names are appended. |
 | `browser.enabled` | **Overrides** global value when set. |
 | `browser.chrome_image` | **Overrides** global value when set. |
 | `browser.host_cdp_port` | **Overrides** global value when set. |
@@ -434,6 +461,20 @@ The merge follows these principles:
       "prompt_path": "heartbeat.md",
       "auto_delete_sec": 60
     }
+  ],
+
+  // Prompt shortcuts (triggered via # in chat)
+  "prompt_shortcuts": [
+    {
+      "name": "coverage",
+      "description": "Run coverage check",
+      "prompt": "Run make coverage-check and report the results"
+    },
+    {
+      "name": "review",
+      "description": "Review uncommitted and branch changes",
+      "prompt_path": "review-code.md"
+    }
   ]
 }
 ```
@@ -513,6 +554,15 @@ The merge follows these principles:
   //    "schedule": "0 18 * * *",
   //    "type": "cron",
   //    "prompt": "Summarize today's project activity"
+  //  }
+  //],
+
+  // Prompt shortcuts (merged by name; project overrides global shortcuts with same name)
+  //"prompt_shortcuts": [
+  //  {
+  //    "name": "lint",
+  //    "description": "Run linter",
+  //    "prompt": "Run make lint and fix any issues"
   //  }
   //]
 }
