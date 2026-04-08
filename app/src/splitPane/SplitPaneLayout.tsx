@@ -26,9 +26,10 @@ interface SplitPaneLayoutProps {
   onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void;
   onMaximize?: (leafId: string) => void;
   onToggleMinimize?: (leafId: string) => void;
+  hiddenPanels?: PanelType[];
 }
 
-export function SplitPaneLayout({ tree, renderLeaf, agentInfoMap, minimizedLeaves, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf, onMaximize, onToggleMinimize }: SplitPaneLayoutProps) {
+export function SplitPaneLayout({ tree, renderLeaf, agentInfoMap, minimizedLeaves, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf, onMaximize, onToggleMinimize, hiddenPanels }: SplitPaneLayoutProps) {
   const usedSingletons = collectPanelTypes(tree);
   return (
     <PaneTree
@@ -44,6 +45,7 @@ export function SplitPaneLayout({ tree, renderLeaf, agentInfoMap, minimizedLeave
       onSplitLeaf={onSplitLeaf}
       onMaximize={onMaximize}
       onToggleMinimize={onToggleMinimize}
+      hiddenPanels={hiddenPanels}
     />
   );
 }
@@ -65,9 +67,10 @@ interface PaneTreeProps {
   onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void;
   onMaximize?: (leafId: string) => void;
   onToggleMinimize?: (leafId: string) => void;
+  hiddenPanels?: PanelType[];
 }
 
-function PaneTree({ node, path, usedSingletons, renderLeaf, agentInfoMap, minimizedLeaves, flexOverride, parentDirection, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf, onMaximize, onToggleMinimize }: PaneTreeProps) {
+function PaneTree({ node, path, usedSingletons, renderLeaf, agentInfoMap, minimizedLeaves, flexOverride, parentDirection, onUpdateFlex, onDrop, onRemoveLeaf, onSplitLeaf, onMaximize, onToggleMinimize, hiddenPanels }: PaneTreeProps) {
   const { colors } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
 
@@ -126,6 +129,7 @@ function PaneTree({ node, path, usedSingletons, renderLeaf, agentInfoMap, minimi
           panel={node.panel}
           usedSingletons={usedSingletons}
           isMinimized={isMinimized}
+          hiddenPanels={hiddenPanels}
           agentInfo={node.panel === "agent" ? agentInfoMap?.get(node.id) : undefined}
           onRemove={() => onRemoveLeaf(node.id)}
           onDrop={onDrop}
@@ -216,6 +220,7 @@ function PaneTree({ node, path, usedSingletons, renderLeaf, agentInfoMap, minimi
             onSplitLeaf={onSplitLeaf}
             onMaximize={onMaximize}
             onToggleMinimize={onToggleMinimize}
+            hiddenPanels={hiddenPanels}
           />
         </Fragment>
       ))}

@@ -72,6 +72,21 @@ func (c *Creator) Create(ctx context.Context, dirPath, branch, name, sessionID s
 	}, nil
 }
 
+// Remove removes a git worktree directory and prunes stale worktree metadata.
+// parentDir is the main repository directory (not the worktree itself).
+// worktreePath is the absolute path of the worktree to remove.
+func (c *Creator) Remove(ctx context.Context, parentDir, worktreePath string) error {
+	out, err := c.Run(ctx, parentDir, "git", "worktree", "remove", "--force", worktreePath)
+	if err != nil {
+		return fmt.Errorf("git worktree remove failed: %s", strings.TrimSpace(string(out)))
+	}
+	out, err = c.Run(ctx, parentDir, "git", "worktree", "prune")
+	if err != nil {
+		return fmt.Errorf("git worktree prune failed: %s", strings.TrimSpace(string(out)))
+	}
+	return nil
+}
+
 func (c *Creator) copySessionFile(parentDirPath, worktreeDirPath, sessionID string) error {
 	sessionID = filepath.Base(sessionID)
 	if sessionID == "." || sessionID == ".." || sessionID == "" {

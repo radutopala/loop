@@ -202,3 +202,39 @@ func (s *CreatorSuite) TestCreateSessionCopyMkdirDstError() {
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), result)
 }
+
+func (s *CreatorSuite) TestRemoveSuccess() {
+	err := s.creator.Remove(context.Background(), "/proj", "/proj/.worktrees/wt-abc")
+
+	require.NoError(s.T(), err)
+	require.Len(s.T(), s.runArgs, 2)
+	require.Equal(s.T(), []string{"/proj", "git", "worktree", "remove", "--force", "/proj/.worktrees/wt-abc"}, s.runArgs[0])
+	require.Equal(s.T(), []string{"/proj", "git", "worktree", "prune"}, s.runArgs[1])
+}
+
+func (s *CreatorSuite) TestRemoveGitError() {
+	s.runErr = fmt.Errorf("exit status 1")
+	s.runOut = []byte("fatal: not a worktree")
+
+	err := s.creator.Remove(context.Background(), "/proj", "/proj/.worktrees/wt-abc")
+
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "fatal: not a worktree")
+}
+
+func (s *CreatorSuite) TestRemovePruneError() {
+	callCount := 0
+	s.creator.Run = func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+		s.runArgs = append(s.runArgs, append([]string{dir, name}, args...))
+		callCount++
+		if callCount == 2 {
+			return []byte("prune failed"), fmt.Errorf("exit status 1")
+		}
+		return nil, nil
+	}
+
+	err := s.creator.Remove(context.Background(), "/proj", "/proj/.worktrees/wt-abc")
+
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "prune failed")
+}

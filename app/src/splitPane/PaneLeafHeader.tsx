@@ -44,6 +44,7 @@ interface PaneLeafHeaderProps {
   usedSingletons: Set<PanelType>;
   isMaximized?: boolean;
   isMinimized?: boolean;
+  hiddenPanels?: PanelType[];
   agentInfo?: AgentInfo;
   onRemove: () => void;
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
@@ -52,7 +53,7 @@ interface PaneLeafHeaderProps {
   onToggleMinimize?: () => void;
 }
 
-export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, isMinimized, agentInfo, onRemove, onDrop, onSplitLeaf, onToggleMaximize, onToggleMinimize }: PaneLeafHeaderProps) {
+export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, isMinimized, hiddenPanels, agentInfo, onRemove, onDrop, onSplitLeaf, onToggleMaximize, onToggleMinimize }: PaneLeafHeaderProps) {
   const { colors } = useTheme();
   const isAgent = panel === "agent";
   const label = isAgent ? (agentInfo?.name || leafId) : PANEL_LABELS[panel];
@@ -137,7 +138,7 @@ export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, isM
         {label}
       </span>
       <span style={{ width: 1, height: 10, backgroundColor: colors.border, flexShrink: 0, marginLeft: 2, marginRight: 2 }} />
-      <PaneSplitMenu leafId={leafId} usedSingletons={usedSingletons} onSplitLeaf={onSplitLeaf} />
+      <PaneSplitMenu leafId={leafId} usedSingletons={usedSingletons} onSplitLeaf={onSplitLeaf} hiddenPanels={hiddenPanels} />
       {onToggleMinimize && (
         <button
           onClick={onToggleMinimize}
@@ -193,7 +194,7 @@ export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, isM
   );
 }
 
-function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf }: { leafId: string; usedSingletons: Set<PanelType>; onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void }) {
+function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf, hiddenPanels }: { leafId: string; usedSingletons: Set<PanelType>; onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void; hiddenPanels?: PanelType[] }) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
@@ -255,7 +256,7 @@ function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf }: { leafId: string
           gridTemplateColumns: "auto auto",
           gap: 2,
         }}>
-          {PANEL_OPTIONS.map(({ panel: p, label: l }) => {
+          {PANEL_OPTIONS.filter(({ panel: p }) => !hiddenPanels?.includes(p)).map(({ panel: p, label: l }) => {
             const disabled = (SINGLETON_PANELS.includes(p) && usedSingletons.has(p))
               || EXCLUSIVE_PANELS.some((g) => g.includes(p) && g.some((x) => x !== p && usedSingletons.has(x)));
             return (

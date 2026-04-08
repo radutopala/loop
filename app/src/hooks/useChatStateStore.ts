@@ -222,7 +222,9 @@ export function useChatStateStore({
       }
 
       // Forward selected channel + global events to App-level handler.
-      if (!channelId || stateTarget === selectedIdRef.current) {
+      // Channel created/deleted are always forwarded so the sidebar refreshes
+      // regardless of which channel is currently selected.
+      if (!channelId || stateTarget === selectedIdRef.current || wsEvent.type === "channel.created" || wsEvent.type === "channel.deleted") {
         onAppEventRef.current(wsEvent);
       }
     }, []),

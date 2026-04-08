@@ -95,6 +95,7 @@ func (tc *TestContext) doRequest(method, path string, body string) error {
 func (tc *TestContext) resolvePlaceholders(path string) string {
 	path = strings.ReplaceAll(path, "{channel_id}", tc.ChannelID)
 	path = strings.ReplaceAll(path, "{task_id}", tc.TaskID)
+	path = strings.ReplaceAll(path, "{worktree_thread_id}", tc.WorktreeThreadID)
 	return path
 }
 

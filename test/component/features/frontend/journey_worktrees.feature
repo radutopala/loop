@@ -20,6 +20,33 @@ Feature: Worktrees Journey
     When I click on "+wt" in the branch picker
     Then I wait up to "15s" for text "worktree" to appear
 
+  Scenario: Worktrees panel shows entries and delete confirms before removing
+    Given I set up a test channel via API for git repo "bdd-wt-panel"
+    And I set up a worktree "panel-wt" on branch "main" under the current channel via API
+    And I open the app in a browser
+    And I wait for text "bdd-wt-panel" to appear
+
+    # Navigate to parent channel and open Worktrees panel
+    When I click on "bdd-wt-panel" in the sidebar
+    And I wait for "textarea" to be visible
+    When I add a "Worktrees" panel
+    Then I wait for text "panel-wt" to appear
+
+    # Click Delete — confirmation popover should appear
+    When I click button "Delete" in the worktrees panel
+    Then I wait for text "Delete?" to appear
+
+    # Dismiss with No
+    When I click on the button with text "No"
+    Then I wait for text "Delete?" to disappear
+    And the page should contain text "panel-wt"
+
+    # Click Delete again and confirm with Yes
+    When I click button "Delete" in the worktrees panel
+    Then I wait for text "Delete?" to appear
+    When I click on the button with text "Yes"
+    Then I wait up to "10s" for text "No worktrees" to appear
+
   Scenario: Worktree task lifecycle – create, global panel, Run Now, and delete
     Given I set up a test channel via API for git repo "bdd-wt-prompt-alphas"
     And I set up a worktree "mega-wt-test" on branch "main" under the current channel via API

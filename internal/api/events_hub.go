@@ -161,20 +161,22 @@ func (h *EventsHub) BroadcastMessageStreaming(channelID string, data events.Mess
 	})
 }
 
-// BroadcastChannelCreated sends a channel.created event to the parent channel.
+// BroadcastChannelCreated sends a channel.created event to all subscribers.
 func (h *EventsHub) BroadcastChannelCreated(parentChannelID, channelID string) {
 	h.Broadcast(Event{
 		Type:      EventChannelCreated,
 		ChannelID: parentChannelID,
 		Data:      map[string]string{"channel_id": channelID},
+		Global:    true,
 	})
 }
 
-// BroadcastChannelDeleted sends a channel.deleted event.
+// BroadcastChannelDeleted sends a channel.deleted event to all subscribers.
 func (h *EventsHub) BroadcastChannelDeleted(channelID string) {
 	h.Broadcast(Event{
 		Type:      EventChannelDeleted,
 		ChannelID: channelID,
+		Global:    true,
 	})
 }
 

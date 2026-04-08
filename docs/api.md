@@ -928,6 +928,29 @@ Import an existing git worktree as a thread. Unlike `POST /api/worktrees` which 
 
 ---
 
+### `DELETE /api/worktrees/{id}`
+
+Delete a worktree thread, remove the git worktree from disk, and prune stale metadata.
+
+**Path Parameters:**
+
+| Param | Type   | Description |
+|-------|--------|-------------|
+| `id`  | string | Thread ID of the worktree to delete |
+
+**Response:** `204 No Content` on success.
+
+**Behavior notes:**
+- Validates the thread exists and is a worktree channel (`worktree` flag is true).
+- Runs `git worktree remove --force` on the worktree path, then `git worktree prune`.
+- Deletes the thread record from the database.
+- Broadcasts a `channel.deleted` event via WebSocket.
+- If the git worktree removal fails (e.g. path already gone), the thread is still deleted.
+
+**Errors:** `404` if thread not found. `400` if channel is not a worktree or parent not found.
+
+---
+
 ## Memory
 
 See [Memory System](memory.md) for the full architecture.

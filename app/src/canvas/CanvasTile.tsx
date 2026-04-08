@@ -26,9 +26,10 @@ interface CanvasTileProps {
   isMaximized?: boolean;
   /** Current viewport zoom — used to scale mouse deltas. */
   zoom?: number;
+  hiddenPanels?: PanelType[];
 }
 
-export function CanvasTile({ tile, renderLeaf, agentInfo, onMove, onResize, onBringToFront, onClose, onAddTile, usedSingletons, onToggleMaximize, isMaximized, zoom = 1 }: CanvasTileProps) {
+export function CanvasTile({ tile, renderLeaf, agentInfo, onMove, onResize, onBringToFront, onClose, onAddTile, usedSingletons, onToggleMaximize, isMaximized, zoom = 1, hiddenPanels }: CanvasTileProps) {
   const { colors } = useTheme();
   const containerRef = useRef<HTMLDivElement>(null);
   const [dragging, setDragging] = useState(false);
@@ -188,7 +189,7 @@ export function CanvasTile({ tile, renderLeaf, agentInfo, onMove, onResize, onBr
               }}
               onMouseDown={(e) => e.stopPropagation()}
             >
-              {PANEL_OPTIONS.map((opt) => {
+              {PANEL_OPTIONS.filter((opt) => !hiddenPanels?.includes(opt.panel)).map((opt) => {
                 const disabled = !!usedSingletons?.has(opt.panel);
                 return (
                   <button

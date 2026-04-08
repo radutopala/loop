@@ -15,10 +15,11 @@ interface CanvasLayoutProps {
   renderLeaf: (leaf: LeafNode) => React.ReactNode;
   agentInfoMap?: Map<string, AgentInfo>;
   onCanvasChange: (canvas: CanvasNode) => void;
+  hiddenPanels?: PanelType[];
 }
 
 /** Free-form canvas layout with draggable/resizable tiles, pan & zoom. */
-export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, onCanvasChange }: CanvasLayoutProps) {
+export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, onCanvasChange, hiddenPanels }: CanvasLayoutProps) {
   const { colors } = useTheme();
   const [showAddMenu, setShowAddMenu] = useState<{ x: number; y: number } | null>(null);
   const [maximizedId, setMaximizedId] = useState<string | null>(null);
@@ -262,7 +263,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, onCanvasChange 
       {/* Empty state */}
       {canvas.tiles.length === 0 && !showAddMenu && (
         <div style={{ position: "absolute", inset: 0, display: "flex" }}>
-          <EmptyLayoutPicker onAdd={(panel) => handleAddTile(panel)} />
+          <EmptyLayoutPicker onAdd={(panel) => handleAddTile(panel)} hiddenPanels={hiddenPanels} />
         </div>
       )}
 
@@ -291,6 +292,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, onCanvasChange 
               onToggleMaximize={handleToggleMaximize}
               isMaximized={maximizedId === tile.id}
               zoom={vp.zoom}
+              hiddenPanels={hiddenPanels}
             />
           </div>
         ))}
@@ -311,7 +313,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, onCanvasChange 
             boxShadow: "0 4px 12px rgba(0,0,0,0.2)",
           }}
         >
-          {PANEL_OPTIONS.map((opt) => {
+          {PANEL_OPTIONS.filter((opt) => !hiddenPanels?.includes(opt.panel)).map((opt) => {
             const disabled = usedSingletons.has(opt.panel);
             return (
               <button
@@ -381,6 +383,7 @@ const PANEL_COLORS: Record<PanelType, string> = {
   playground: "#10b981",
   notes: "#f9a8d4",
   tasks: "#f59e0b",
+  worktrees: "#6ee7b7",
 };
 
 function CanvasMinimap({ tiles, viewport: vp, containerRef, onPan, onZoom }: {

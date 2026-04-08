@@ -22,6 +22,7 @@ import { SessionsPanel } from "../panels/SessionsPanel";
 import { PlaygroundPanel } from "../panels/PlaygroundPanel";
 import { NotesPanel } from "../panels/NotesPanel";
 import { TasksPanel } from "../panels/TasksPanel";
+import { WorktreesPanel } from "../panels/WorktreesPanel";
 import { killAgentContainer } from "../../api/loopApi";
 import { HeaderBranchPicker } from "./HeaderBranchPicker";
 import { useChatState } from "../../hooks/useChatState";
@@ -57,7 +58,7 @@ function initIdCounter(channelId: string, tree: PaneNode) {
 }
 
 function leafIdForPanel(channelId: string, panel: PanelType): string {
-  if (panel === "chat" || panel === "editor" || panel === "memory" || panel === "git" || panel === "sessions" || panel === "notes") {
+  if (panel === "chat" || panel === "editor" || panel === "memory" || panel === "git" || panel === "sessions" || panel === "notes" || panel === "worktrees") {
     return panel;
   }
   return nextId(channelId, panel);
@@ -158,6 +159,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   useCopyOnSelect();
   const { agents: agentInfoMap } = useAgentRegistry(channelId);
   const [branchError, setBranchError] = useState<string | null>(null);
+
+  // Hide worktrees panel in threads and worktree threads (only show in parent channels).
+  const hiddenPanels: PanelType[] | undefined = channel.parent_id ? ["worktrees"] : undefined;
 
   // --- Named layouts state ---
   const [layoutNames, setLayoutNames] = useState<string[]>(() => {
@@ -670,6 +674,17 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               onSelectChannel={onSelectThread}
             />
           );
+        case "worktrees":
+          return (
+            <WorktreesPanel
+              key={`layout-worktrees-${channelId}`}
+              channelId={channelId}
+              isWorktree={channel.worktree}
+              hasBranch={!!channel.branch}
+              onImportWorktree={onImportWorktree}
+              onSelectThread={onSelectThread}
+            />
+          );
         default:
           return null;
       }
@@ -1067,9 +1082,10 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             renderLeaf={renderLeaf}
             agentInfoMap={agentInfoMap}
             onCanvasChange={(c) => { setCanvasState(c); }}
+            hiddenPanels={hiddenPanels}
           />
         ) : !tree ? (
-          <EmptyLayoutPicker onAdd={handleEmptyAdd} />
+          <EmptyLayoutPicker onAdd={handleEmptyAdd} hiddenPanels={hiddenPanels} />
         ) : maximizedLeafId && findLeafById(tree, maximizedLeafId) ? (
           (() => {
             const leaf = findLeafById(tree, maximizedLeafId)!;
@@ -1080,6 +1096,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                   leafId={leaf.id}
                   panel={leaf.panel}
                   usedSingletons={usedSingletons}
+                  hiddenPanels={hiddenPanels}
                   agentInfo={leaf.panel === "agent" ? agentInfoMap.get(leaf.id) : undefined}
                   isMaximized
                   onRemove={() => { setMaximizedLeafId(null); handleRemoveLeaf(leaf.id); }}
@@ -1099,6 +1116,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             renderLeaf={renderLeaf}
             agentInfoMap={agentInfoMap}
             minimizedLeaves={minimizedLeaves}
+            hiddenPanels={hiddenPanels}
             onUpdateFlex={handleUpdateFlex}
             onDrop={handleDrop}
             onRemoveLeaf={handleRemoveLeaf}
