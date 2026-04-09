@@ -355,12 +355,18 @@ func (tc *TestContext) clickTaskRow(text, testID string) error {
 }
 
 func (tc *TestContext) openGlobalTasksPanel() error {
+	// Poll-click: keep clicking the sidebar Tasks button until the global
+	// panel opens.  In CI the React hydration can lag behind the DOM being
+	// visible, so a single click may fire before the handler is attached.
 	sel := `[data-testid="sidebar-tasks-btn"]`
 	return chromedp.Run(tc.chromeTab.ctx,
 		chromedp.WaitVisible(sel, chromedp.ByQuery),
-		chromedp.Click(sel, chromedp.ByQuery),
-		chromedp.Poll(`document.body.innerText.includes("TASKS (")`,
-			nil, chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Poll(`(() => {
+			if (document.body.innerText.includes("TASKS (")) return true;
+			const btn = document.querySelector('[data-testid="sidebar-tasks-btn"]');
+			if (btn) btn.click();
+			return false;
+		})()`, nil, chromedp.WithPollingTimeout(15*time.Second)),
 	)
 }
 

@@ -28,7 +28,7 @@ func runBDD(t *testing.T, path string) {
 			Format:      "pretty",
 			Paths:       []string{path},
 			Tags:        os.Getenv("GODOG_TAGS"),
-			Concurrency: envInt("GODOG_CONCURRENCY", 4),
+			Concurrency: envInt("GODOG_CONCURRENCY", 1),
 			TestingT:    t,
 		},
 	}

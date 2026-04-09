@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { DiffFile } from "../../api/loopApi";
 import { fetchFileContent } from "../../api/loopApi";
 import { fonts } from "../../theme";
@@ -247,6 +247,73 @@ export function DiffViewer({
   const { colors } = useTheme();
   const fileContentCache = useRef<Map<string, string[]>>(new Map());
   const [expandedGaps, setExpandedGaps] = useState<Map<string, Map<string, { fromTop: number; fromBottom: number }>>>(new Map());
+  const [focusedFileIndex, setFocusedFileIndex] = useState(0);
+  const fileRefs = useRef<Map<number, HTMLDivElement>>(new Map());
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const isNavigatingRef = useRef(false);
+
+  // Reset focused index to first file when file list changes
+  const fileKeys = files.map((f) => f.path).join("\n");
+  useEffect(() => {
+    setFocusedFileIndex(0);
+  }, [fileKeys]);
+
+  // Update focused file when the user manually scrolls.
+  // Only depends on fileKeys (not expandedFiles) so expand/collapse doesn't
+  // recreate the observer. A scroll-event gate ensures only real user
+  // scrolling triggers focus changes, not layout shifts from expand/collapse.
+  const userScrollingRef = useRef(false);
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => {
+    const scrollEl = scrollRef.current;
+    if (!scrollEl || files.length === 0) return;
+    const onScroll = () => {
+      if (isNavigatingRef.current) return;
+      userScrollingRef.current = true;
+      clearTimeout(scrollTimerRef.current);
+      scrollTimerRef.current = setTimeout(() => { userScrollingRef.current = false; }, 150);
+    };
+    scrollEl.addEventListener("scroll", onScroll, { passive: true });
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (!userScrollingRef.current || isNavigatingRef.current) return;
+        // Pick the topmost intersecting entry (closest to scroll top)
+        let topIdx = -1;
+        let topY = Infinity;
+        for (const entry of entries) {
+          if (entry.isIntersecting) {
+            const y = entry.boundingClientRect.top;
+            if (y < topY) {
+              topY = y;
+              const idx = Number(entry.target.getAttribute("data-file-idx"));
+              if (!isNaN(idx)) topIdx = idx;
+            }
+          }
+        }
+        if (topIdx >= 0) setFocusedFileIndex(topIdx);
+      },
+      { root: scrollEl, threshold: [0.5], rootMargin: "-32px 0px 0px 0px" },
+    );
+    fileRefs.current.forEach((el) => observer.observe(el));
+    return () => {
+      observer.disconnect();
+      scrollEl.removeEventListener("scroll", onScroll);
+      clearTimeout(scrollTimerRef.current);
+    };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fileKeys]);
+
+  const navigateToFile = useCallback((index: number) => {
+    if (index < 0 || index >= files.length) return;
+    isNavigatingRef.current = true;
+    setFocusedFileIndex(index);
+    const file = files[index]!;
+    if (!expandedFiles.has(file.path)) onToggleFile(file.path);
+    requestAnimationFrame(() => {
+      fileRefs.current.get(index)?.scrollIntoView({ behavior: "smooth", block: "start" });
+      setTimeout(() => { isNavigatingRef.current = false; }, 500);
+    });
+  }, [files, expandedFiles, onToggleFile]);
 
   const builtLineColors = buildLineColors(colors);
   const lineColors = {
@@ -396,73 +463,121 @@ export function DiffViewer({
     );
   };
 
+  const navBtnStyle: React.CSSProperties = {
+    display: "flex", alignItems: "center", justifyContent: "center",
+    width: 24, height: 24, border: `1px solid ${colors.border}`, borderRadius: 4,
+    background: "transparent", color: colors.textMuted, cursor: "pointer", fontSize: 14, lineHeight: 1,
+  };
+
+  const clampedIndex = Math.min(focusedFileIndex, Math.max(files.length - 1, 0));
+  const focusedPath = files[clampedIndex]?.path ?? "";
+
   return (
-    <div style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
-      {loading && !hasData && (
-        <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>Loading...</div>
+    <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
+      {/* File navigation bar */}
+      {files.length > 0 && (
+        <div style={{
+          display: "flex", alignItems: "center", gap: 8, padding: "4px 12px",
+          background: colors.surface, borderBottom: `1px solid ${colors.border}`,
+          minHeight: 32, flexShrink: 0,
+        }}>
+          <button
+            style={{ ...navBtnStyle, opacity: clampedIndex <= 0 ? 0.3 : 1, cursor: clampedIndex <= 0 ? "default" : "pointer" }}
+            disabled={clampedIndex <= 0}
+            onClick={() => navigateToFile(clampedIndex - 1)}
+            title="Previous file"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 6.5L5 3.5L7.5 6.5" /></svg>
+          </button>
+          <button
+            style={{ ...navBtnStyle, opacity: clampedIndex >= files.length - 1 ? 0.3 : 1, cursor: clampedIndex >= files.length - 1 ? "default" : "pointer" }}
+            disabled={clampedIndex >= files.length - 1}
+            onClick={() => navigateToFile(clampedIndex + 1)}
+            title="Next file"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"><path d="M2.5 3.5L5 6.5L7.5 3.5" /></svg>
+          </button>
+          <span style={{ flex: 1, fontFamily: fonts.mono, fontSize: 12, color: colors.textLight, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+            {focusedPath}
+          </span>
+          <span style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textDim, flexShrink: 0 }}>
+            {clampedIndex + 1} / {files.length}
+          </span>
+        </div>
       )}
-      {hasData && totalFiles === 0 && (
-        <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>No changes</div>
-      )}
-      {files.map((file) => {
-        const expanded = expandedFiles.has(file.path);
-        const parsed = parsedFiles.find((pf) => pf.path === file.path);
-        const cachedLines = fileContentCache.current.get(file.path);
-        const segments = parsed ? computeSegments(parsed, cachedLines?.length) : [];
-        return (
-          <div key={file.path}>
-            <button
-              onClick={() => onToggleFile(file.path)}
-              onContextMenu={(e) => { e.preventDefault(); onFileContextMenu(e, file.path); }}
-              style={{
-                display: "flex", alignItems: "center", gap: 6, width: "100%",
-                padding: "4px 12px", border: "none",
-                background: expanded ? colors.hoverBg : "transparent",
-                color: colors.textLight, fontSize: 12, fontFamily: fonts.mono,
-                textAlign: "left", cursor: "pointer",
-              }}
-              onMouseEnter={(e) => { if (!expanded) e.currentTarget.style.background = colors.hoverBg; }}
-              onMouseLeave={(e) => { if (!expanded) e.currentTarget.style.background = "transparent"; }}
+      <div ref={scrollRef} style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
+        {loading && !hasData && (
+          <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>Loading...</div>
+        )}
+        {hasData && totalFiles === 0 && (
+          <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>No changes</div>
+        )}
+        {files.map((file, fileIndex) => {
+          const expanded = expandedFiles.has(file.path);
+          const focused = fileIndex === clampedIndex;
+          const parsed = parsedFiles.find((pf) => pf.path === file.path);
+          const cachedLines = fileContentCache.current.get(file.path);
+          const segments = parsed ? computeSegments(parsed, cachedLines?.length) : [];
+          return (
+            <div
+              key={file.path}
+              data-file-idx={fileIndex}
+              ref={(el) => { if (el) fileRefs.current.set(fileIndex, el); else fileRefs.current.delete(fileIndex); }}
+              style={{ borderLeft: `3px solid ${focused ? colors.active : "transparent"}`, transition: "border-color 0.15s ease" }}
             >
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
-                style={{ transition: "transform 0.15s ease", transform: expanded ? "rotate(0deg)" : "rotate(-90deg)", flexShrink: 0, color: colors.textDim }}>
-                <path d="M2.5 3.5L5 6.5L7.5 3.5" />
-              </svg>
-              <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", direction: "rtl", textAlign: "left" }}>
-                <bdi>{file.old_path ? formatRenamePath(file.old_path, file.path) : file.path}</bdi>
-              </span>
-              <span style={{ flexShrink: 0, fontSize: 11 }}>
-                {file.binary ? (
-                  <span style={{ color: colors.textDim }}>binary</span>
-                ) : (
-                  <><span style={{ color: colors.diffAddText }}>+{file.additions}</span>{" "}<span style={{ color: colors.diffDelText }}>-{file.deletions}</span></>
-                )}
-              </span>
-            </button>
-            {expanded && parsed && (
-              <div style={{ borderBottom: `1px solid ${colors.border}`, overflow: "hidden" }}>
-                {segments.map((seg, si) => (
-                  <div key={si}>
-                    {seg.kind === "hunk" ? (
-                      <>
-                        <div style={{ padding: "2px 12px", fontSize: 11, fontFamily: fonts.mono, color: colors.textDim, backgroundColor: colors.diffHunkBg, whiteSpace: "pre", overflow: "hidden", textOverflow: "ellipsis" }}>
-                          {seg.hunk.header}
-                        </div>
-                        {renderLines(seg.hunk.lines)}
-                      </>
-                    ) : (
-                      renderGapSegment(file.path, seg.gap, seg.position)
-                    )}
-                  </div>
-                ))}
-                {file.binary && (
-                  <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>Binary file — no content preview</div>
-                )}
-              </div>
-            )}
-          </div>
-        );
-      })}
+              <button
+                onClick={() => onToggleFile(file.path)}
+                onContextMenu={(e) => { e.preventDefault(); onFileContextMenu(e, file.path); }}
+                style={{
+                  display: "flex", alignItems: "center", gap: 6, width: "100%",
+                  padding: "4px 12px", border: "none",
+                  background: expanded ? colors.hoverBg : "transparent",
+                  color: colors.textLight, fontSize: 12, fontFamily: fonts.mono,
+                  textAlign: "left", cursor: "pointer",
+                }}
+                onMouseEnter={(e) => { if (!expanded) e.currentTarget.style.background = colors.hoverBg; }}
+                onMouseLeave={(e) => { if (!expanded) e.currentTarget.style.background = "transparent"; }}
+              >
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"
+                  style={{ transition: "transform 0.15s ease", transform: expanded ? "rotate(0deg)" : "rotate(-90deg)", flexShrink: 0, color: colors.textDim }}>
+                  <path d="M2.5 3.5L5 6.5L7.5 3.5" />
+                </svg>
+                <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", direction: "rtl", textAlign: "left" }}>
+                  <bdi>{file.old_path ? formatRenamePath(file.old_path, file.path) : file.path}</bdi>
+                </span>
+                <span style={{ flexShrink: 0, fontSize: 11 }}>
+                  {file.binary ? (
+                    <span style={{ color: colors.textDim }}>binary</span>
+                  ) : (
+                    <><span style={{ color: colors.diffAddText }}>+{file.additions}</span>{" "}<span style={{ color: colors.diffDelText }}>-{file.deletions}</span></>
+                  )}
+                </span>
+              </button>
+              {expanded && parsed && (
+                <div style={{ borderBottom: `1px solid ${colors.border}`, overflow: "hidden" }}>
+                  {segments.map((seg, si) => (
+                    <div key={si}>
+                      {seg.kind === "hunk" ? (
+                        <>
+                          <div style={{ padding: "2px 12px", fontSize: 11, fontFamily: fonts.mono, color: colors.textDim, backgroundColor: colors.diffHunkBg, whiteSpace: "pre", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {seg.hunk.header}
+                          </div>
+                          {renderLines(seg.hunk.lines)}
+                        </>
+                      ) : (
+                        renderGapSegment(file.path, seg.gap, seg.position)
+                      )}
+                    </div>
+                  ))}
+                  {file.binary && (
+                    <div style={{ padding: "8px 12px", color: colors.textDim, fontSize: 12 }}>Binary file — no content preview</div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

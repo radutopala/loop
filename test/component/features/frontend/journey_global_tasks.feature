@@ -12,6 +12,7 @@ Feature: Global Tasks Panel Journey
     And I set up a test task via API with type "cron" prompt "mega-global-beta" and schedule "*/5 * * * *"
     And I open the app in a browser
     And I wait for text "Settings" to appear
+    And I wait for text "bdd-mega-global-a" to appear
 
     # Open global panel, verify both tasks and channel names
     When I open the global tasks panel
