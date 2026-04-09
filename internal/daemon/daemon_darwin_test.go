@@ -21,6 +21,7 @@ func (s *DaemonSuite) TestStartSuccess() {
 	sys.On("MkdirAll", "/home/test/Library/LaunchAgents", os.FileMode(0o755)).Return(nil)
 	sys.On("MkdirAll", "/home/test/.loop", os.FileMode(0o755)).Return(nil)
 	sys.On("Getenv", mock.Anything).Return("")
+	sys.On("RunCommand", "/bin/zsh", mock.Anything).Return([]byte(""), errors.New("not set"))
 	sys.On("WriteFile", "/home/test/Library/LaunchAgents/com.loop.agent.plist", mock.Anything, os.FileMode(0o644)).Return(nil)
 	sys.On("GetUID").Return(501)
 	sys.On("RunCommand", "launchctl", []string{"bootout", "gui/501", "/home/test/Library/LaunchAgents/com.loop.agent.plist"}).
@@ -42,6 +43,7 @@ func (s *DaemonSuite) TestStartWithProxyEnv() {
 	sys.On("Getenv", "HTTP_PROXY").Return("http://127.0.0.1:3128")
 	sys.On("Getenv", "HTTPS_PROXY").Return("http://127.0.0.1:3128")
 	sys.On("Getenv", mock.Anything).Return("")
+	sys.On("RunCommand", "/bin/zsh", mock.Anything).Return([]byte(""), errors.New("not set"))
 	sys.On("WriteFile", "/home/test/Library/LaunchAgents/com.loop.agent.plist", mock.MatchedBy(func(data []byte) bool {
 		s := string(data)
 		return strings.Contains(s, "<key>HTTP_PROXY</key>") &&
@@ -64,6 +66,7 @@ func (s *DaemonSuite) TestStartWithShellEnv() {
 	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
 	sys.On("Getenv", "SHELL").Return("/bin/zsh")
 	sys.On("Getenv", mock.Anything).Return("")
+	sys.On("RunCommand", "/bin/zsh", mock.Anything).Return([]byte(""), errors.New("not set"))
 	sys.On("WriteFile", "/home/test/Library/LaunchAgents/com.loop.agent.plist", mock.MatchedBy(func(data []byte) bool {
 		s := string(data)
 		return strings.Contains(s, "<key>SHELL</key>") &&
@@ -75,6 +78,78 @@ func (s *DaemonSuite) TestStartWithShellEnv() {
 	err := Start(sys, "/home/test/.loop/loop.log")
 	require.NoError(s.T(), err)
 	sys.AssertExpectations(s.T())
+}
+
+func (s *DaemonSuite) TestStartProxyFromLoginShell() {
+	sys := new(mockSystem)
+	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
+	sys.On("UserHomeDir").Return("/home/test", nil)
+	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("Getenv", mock.Anything).Return("") // no env vars set (Desktop app context)
+	// Login shell has HTTP_PROXY and HTTPS_PROXY set in .zshrc
+	sys.On("RunCommand", "/bin/zsh", []string{"-l", "-c", "printenv HTTP_PROXY"}).
+		Return([]byte("http://proxy:3128\n"), nil)
+	sys.On("RunCommand", "/bin/zsh", []string{"-l", "-c", "printenv HTTPS_PROXY"}).
+		Return([]byte("http://proxy:3128\n"), nil)
+	sys.On("RunCommand", "/bin/zsh", mock.Anything).Return([]byte(""), errors.New("not set"))
+	sys.On("WriteFile", "/home/test/Library/LaunchAgents/com.loop.agent.plist", mock.MatchedBy(func(data []byte) bool {
+		s := string(data)
+		return strings.Contains(s, "<key>HTTP_PROXY</key>") &&
+			strings.Contains(s, "<string>http://proxy:3128</string>") &&
+			strings.Contains(s, "<key>HTTPS_PROXY</key>")
+	}), os.FileMode(0o644)).Return(nil)
+	sys.On("GetUID").Return(501)
+	sys.On("RunCommand", "launchctl", mock.Anything).Return([]byte(""), nil)
+
+	err := Start(sys, "/home/test/.loop/loop.log")
+	require.NoError(s.T(), err)
+	sys.AssertExpectations(s.T())
+}
+
+func (s *DaemonSuite) TestStartProxyFromLoginShellWithCustomShell() {
+	sys := new(mockSystem)
+	sys.On("Executable").Return("/usr/local/bin/loop", nil)
+	sys.On("EvalSymlinks", "/usr/local/bin/loop").Return("/usr/local/bin/loop", nil)
+	sys.On("UserHomeDir").Return("/home/test", nil)
+	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("Getenv", "SHELL").Return("/bin/bash")
+	sys.On("Getenv", mock.Anything).Return("")
+	// Login shell has HTTP_PROXY set in .bashrc
+	sys.On("RunCommand", "/bin/bash", []string{"-l", "-c", "printenv HTTP_PROXY"}).
+		Return([]byte("http://proxy:3128\n"), nil)
+	sys.On("RunCommand", "/bin/bash", mock.Anything).Return([]byte(""), errors.New("not set"))
+	sys.On("WriteFile", "/home/test/Library/LaunchAgents/com.loop.agent.plist", mock.MatchedBy(func(data []byte) bool {
+		s := string(data)
+		return strings.Contains(s, "<key>HTTP_PROXY</key>") &&
+			strings.Contains(s, "<string>http://proxy:3128</string>") &&
+			strings.Contains(s, "<key>SHELL</key>") &&
+			strings.Contains(s, "<string>/bin/bash</string>")
+	}), os.FileMode(0o644)).Return(nil)
+	sys.On("GetUID").Return(501)
+	sys.On("RunCommand", "launchctl", mock.Anything).Return([]byte(""), nil)
+
+	err := Start(sys, "/home/test/.loop/loop.log")
+	require.NoError(s.T(), err)
+	sys.AssertExpectations(s.T())
+}
+
+func (s *DaemonSuite) TestShellGetenv() {
+	sys := new(mockSystem)
+	sys.On("RunCommand", "/bin/zsh", []string{"-l", "-c", "printenv HTTP_PROXY"}).
+		Return([]byte("http://proxy:3128\n"), nil)
+
+	val := shellGetenv(sys, "/bin/zsh", "HTTP_PROXY")
+	require.Equal(s.T(), "http://proxy:3128", val)
+}
+
+func (s *DaemonSuite) TestShellGetenvError() {
+	sys := new(mockSystem)
+	sys.On("RunCommand", "/bin/zsh", []string{"-l", "-c", "printenv HTTP_PROXY"}).
+		Return([]byte(""), errors.New("not set"))
+
+	val := shellGetenv(sys, "/bin/zsh", "HTTP_PROXY")
+	require.Empty(s.T(), val)
 }
 
 func (s *DaemonSuite) TestStartExecutableError() {
@@ -139,6 +214,7 @@ func (s *DaemonSuite) TestStartWriteError() {
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
 	sys.On("Getenv", mock.Anything).Return("")
+	sys.On("RunCommand", "/bin/zsh", mock.Anything).Return([]byte(""), errors.New("not set"))
 	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(errors.New("write fail"))
 
 	err := Start(sys, "/home/test/.loop/loop.log")
@@ -153,6 +229,7 @@ func (s *DaemonSuite) TestStartLaunchctlError() {
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
 	sys.On("Getenv", mock.Anything).Return("")
+	sys.On("RunCommand", "/bin/zsh", mock.Anything).Return([]byte(""), errors.New("not set"))
 	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	sys.On("GetUID").Return(501)
 	sys.On("RunCommand", "launchctl", mock.Anything).
@@ -170,6 +247,7 @@ func (s *DaemonSuite) TestStartAlreadyBootstrapped() {
 	sys.On("UserHomeDir").Return("/home/test", nil)
 	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
 	sys.On("Getenv", mock.Anything).Return("")
+	sys.On("RunCommand", "/bin/zsh", mock.Anything).Return([]byte(""), errors.New("not set"))
 	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	sys.On("GetUID").Return(501)
 	sys.On("RunCommand", "launchctl", mock.Anything).
