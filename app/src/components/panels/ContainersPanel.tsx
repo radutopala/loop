@@ -1,10 +1,11 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import type { WSEvent } from "../../types";
+import type { Channel, WSEvent } from "../../types";
 import type { ContainerInfo } from "../../api/loopApi";
 import { fetchContainers } from "../../api/loopApi";
 import { fonts } from "../../theme";
 import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
+import { ChannelHeaderInfo } from "../layout/ChannelHeaderInfo";
 
 function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   return {
@@ -46,13 +47,14 @@ export interface ContainersPanelHandle {
 }
 
 interface ContainersPanelProps {
+  channel?: Channel;
   sidebarOpen?: boolean;
   onToggleSidebar?: () => void;
   onOpenPalette?: () => void;
   onClose: () => void;
 }
 
-export const ContainersPanel = forwardRef<ContainersPanelHandle, ContainersPanelProps>(function ContainersPanel({ sidebarOpen, onToggleSidebar, onOpenPalette, onClose }, ref) {
+export const ContainersPanel = forwardRef<ContainersPanelHandle, ContainersPanelProps>(function ContainersPanel({ channel, sidebarOpen, onOpenPalette, onClose }, ref) {
   const { colors, fontSizes } = useTheme();
   const [containers, setContainers] = useState<ContainerInfo[]>([]);
   const containersRef = useRef(containers);
@@ -157,33 +159,6 @@ export const ContainersPanel = forwardRef<ContainersPanelHandle, ContainersPanel
           WebkitAppRegion: "drag",
         }}
       >
-        {onToggleSidebar && (
-          <button
-            onClick={onToggleSidebar}
-            title="Toggle sidebar"
-            style={{
-              background: "none",
-              border: "none",
-              color: colors.textDim,
-              cursor: "pointer",
-              padding: "2px 4px",
-              lineHeight: 1,
-              borderRadius: 4,
-              display: "flex",
-              alignItems: "center",
-              WebkitAppRegion: "no-drag",
-            }}
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-              <rect x="3" y="3" width="18" height="18" rx="3" />
-              <line x1="9" y1="3" x2="9" y2="21" />
-              {sidebarOpen
-                ? <polyline points="15,9 12,12 15,15" />
-                : <polyline points="13,9 16,12 13,15" />
-              }
-            </svg>
-          </button>
-        )}
         {onOpenPalette && (
           <button
             onClick={onOpenPalette}
@@ -212,6 +187,7 @@ export const ContainersPanel = forwardRef<ContainersPanelHandle, ContainersPanel
             <span style={{ opacity: 0.7 }}>{navigator.platform.includes("Mac") ? "\u2318K" : "Ctrl+K"}</span>
           </button>
         )}
+        {channel && <ChannelHeaderInfo channel={channel} colors={colors} />}
         <div style={{ flex: 1 }} />
       </div>
 

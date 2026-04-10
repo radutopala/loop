@@ -1,6 +1,8 @@
+import { useState } from "react";
 import type { SessionStatus } from "../../types";
 import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
+import { fonts } from "../../theme";
 
 function statusColor(status: SessionStatus, colors: ColorPalette): string {
   switch (status) {
@@ -13,13 +15,26 @@ function statusColor(status: SessionStatus, colors: ColorPalette): string {
 
 interface StatusBadgeProps {
   status: SessionStatus;
+  elapsed?: number;
 }
 
-export function StatusBadge({ status }: StatusBadgeProps) {
+function formatElapsed(s: number): string {
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(sec).padStart(2, "0")}`;
+}
+
+export function StatusBadge({ status, elapsed }: StatusBadgeProps) {
   const { colors } = useTheme();
+  const [hovered, setHovered] = useState(false);
+  const showElapsed = hovered && elapsed != null && elapsed > 0;
   return (
     <span
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
+        position: "relative",
         display: "inline-flex",
         alignItems: "center",
         gap: 6,
@@ -42,6 +57,30 @@ export function StatusBadge({ status }: StatusBadgeProps) {
         }}
       />
       {status}
+      {showElapsed && (
+        <span
+          style={{
+            position: "absolute",
+            left: "50%",
+            top: "calc(100% + 6px)",
+            transform: "translateX(-50%)",
+            padding: "3px 8px",
+            borderRadius: 4,
+            fontSize: 11,
+            fontFamily: fonts.mono,
+            fontWeight: 400,
+            color: colors.text,
+            backgroundColor: colors.surface,
+            border: `1px solid ${colors.border}`,
+            whiteSpace: "nowrap",
+            pointerEvents: "none",
+            zIndex: 1000,
+            textTransform: "none",
+          }}
+        >
+          {formatElapsed(elapsed!)}
+        </span>
+      )}
     </span>
   );
 }

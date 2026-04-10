@@ -1,7 +1,6 @@
 import type { SessionStatus } from "../../types";
 import { useTheme } from "../../ThemeContext";
 import { StatusBadge } from "../shared/StatusBadge";
-import { ElapsedTimer } from "../shared/ElapsedTimer";
 
 interface TerminalToolbarProps {
   status: SessionStatus;
@@ -28,7 +27,7 @@ export function TerminalToolbar({ status, elapsed, onKill, onRestart, killLabel 
         backgroundColor: colors.surface,
       }}
     >
-      <StatusBadge status={status} />
+      <StatusBadge status={status} elapsed={elapsed} />
       {isDead && onRestart ? (
         <button
           onClick={onRestart}
@@ -63,7 +62,6 @@ export function TerminalToolbar({ status, elapsed, onKill, onRestart, killLabel 
           {killLabel}
         </button>
       ) : null}
-      <ElapsedTimer seconds={elapsed} />
     </div>
   );
 }

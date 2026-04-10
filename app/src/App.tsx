@@ -449,10 +449,11 @@ function AppInner() {
   const selectedDirPath = selectedChannel?.dir_path || "";
   const selectedBranch = selectedChannel?.branch || "";
 
-  // Derive channel ID for Settings when opened from a channel's config button.
-  const settingsChannelId = settingsDirPath
-    ? channels.find((c) => c.dir_path === settingsDirPath && !c.parent_id)?.id ?? null
+  // Derive channel ID/object for Settings when opened from a channel's config button.
+  const settingsChannel = settingsDirPath
+    ? channels.find((c) => c.dir_path === settingsDirPath && !c.parent_id) ?? null
     : null;
+  const settingsChannelId = settingsChannel?.id ?? null;
 
   return (
     <div
@@ -539,6 +540,7 @@ function AppInner() {
             <MarkdownFilePanel
               dirPath={selectedDirPath}
               branch={selectedBranch}
+              channel={selectedChannel}
               maximized
               sidebarOpen={sidebarOpen}
               onToggleSidebar={() => setSidebarOpen((v) => !v)}
@@ -551,6 +553,7 @@ function AppInner() {
               open={settingsOpen}
               projectDirPath={settingsDirPath}
               channelId={settingsChannelId}
+              channel={settingsChannel || selectedChannel}
               sidebarOpen={sidebarOpen}
               onToggleSidebar={() => setSidebarOpen((v) => !v)}
               onOpenPalette={() => setPaletteOpen(true)}
@@ -565,6 +568,7 @@ function AppInner() {
           {containersOpen && (
             <ContainersPanel
               ref={containersPanelRef}
+              channel={selectedChannel}
               sidebarOpen={sidebarOpen}
               onToggleSidebar={() => setSidebarOpen((v) => !v)}
               onOpenPalette={() => setPaletteOpen(true)}
@@ -573,6 +577,7 @@ function AppInner() {
           )}
           {tasksOpen && (
             <GlobalTasksPanel
+              channel={selectedChannel}
               sidebarOpen={sidebarOpen}
               onToggleSidebar={() => setSidebarOpen((v) => !v)}
               onOpenPalette={() => setPaletteOpen(true)}

@@ -29,6 +29,7 @@ interface FieldDef {
   itemProperties?: Record<string, SchemaProperty>; // for objectarray and objectmap (additionalProperties.properties)
   widget?: string;
   defaultValue?: FieldValue;
+  autoSave?: boolean;
 }
 
 export interface ConfigFormProps {
@@ -62,7 +63,7 @@ export function getSections(schema: ConfigSchema | null, isGlobal: boolean): str
 function schemaToFields(schema: ConfigSchema, isGlobal: boolean): FieldDef[] {
   const fields: FieldDef[] = [];
 
-  function processProperties(props: Record<string, SchemaProperty>, prefix: string, parentSection?: string, parentTitle?: string) {
+  function processProperties(props: Record<string, SchemaProperty>, prefix: string, parentSection?: string, parentTitle?: string, parentAutoSave?: boolean) {
     const entries = Object.entries(props).sort(
       ([, a], [, b]) => (a["x-order"] ?? 999) - (b["x-order"] ?? 999)
     );
@@ -70,13 +71,14 @@ function schemaToFields(schema: ConfigSchema, isGlobal: boolean): FieldDef[] {
     for (const [key, prop] of entries) {
       const fullKey = prefix ? `${prefix}.${key}` : key;
       const section = prop["x-section"] ?? parentSection ?? "General";
+      const autoSave = prop["x-auto-save"] ?? parentAutoSave;
 
       // Skip global-only fields in project config
       if (!isGlobal && prop["x-global-only"]) continue;
 
       // Recurse into nested objects that have properties (but not additionalProperties — those are key-value maps)
       if (prop.type === "object" && prop.properties && !prop.additionalProperties) {
-        processProperties(prop.properties, fullKey, section, prop.title);
+        processProperties(prop.properties, fullKey, section, prop.title, autoSave);
         continue;
       }
 
@@ -93,6 +95,7 @@ function schemaToFields(schema: ConfigSchema, isGlobal: boolean): FieldDef[] {
         itemProperties: prop.items?.properties ?? prop.additionalProperties?.properties,
         widget: prop["x-widget"],
         defaultValue: prop.default,
+        autoSave,
       });
     }
   }
@@ -250,11 +253,6 @@ export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function
     setViewMode(mode);
   }, [viewMode, formData, jsonDraft]);
 
-  const handleFormChange = useCallback((key: string, value: ConfigData | FieldValue | ConfigData[] | undefined) => {
-    setFormData((prev) => setNestedValue(prev, key, value));
-    setDirty(true);
-  }, []);
-
   const handleSave = useCallback(async () => {
     setSaving(true); setError(null);
     const content = viewMode === "json" ? jsonDraft : JSON.stringify(cleanForSerialize(formData) ?? {}, null, 2) + "\n";
@@ -262,6 +260,28 @@ export const ConfigForm = forwardRef<ConfigFormHandle, ConfigFormProps>(function
     setSaving(false);
     if (err) setError(err); else setDirty(false);
   }, [viewMode, formData, jsonDraft, onSave]);
+
+  // Auto-save: enabled when all visible fields have the x-auto-save flag set in the schema.
+  const allFields = schema ? schemaToFields(schema, isGlobal) : [];
+  const visibleAutoSaveFields = visibleSection
+    ? allFields.filter((f) => f.section === visibleSection)
+    : allFields;
+  const autoSave = visibleAutoSaveFields.length > 0 && visibleAutoSaveFields.every((f) => f.autoSave);
+
+  const handleSaveRef = useRef(handleSave);
+  handleSaveRef.current = handleSave;
+  const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
+  useEffect(() => () => clearTimeout(autoSaveTimerRef.current), []);
+
+  const handleFormChange = useCallback((key: string, value: ConfigData | FieldValue | ConfigData[] | undefined) => {
+    setFormData((prev) => setNestedValue(prev, key, value));
+    if (autoSave) {
+      clearTimeout(autoSaveTimerRef.current);
+      autoSaveTimerRef.current = setTimeout(() => handleSaveRef.current(), 100);
+    } else {
+      setDirty(true);
+    }
+  }, [autoSave]);
 
   const handleCancel = useCallback(() => {
     if (!config) { setFormData({}); setJsonDraft("{\n  \n}\n"); }

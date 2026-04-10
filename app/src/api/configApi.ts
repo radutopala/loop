@@ -23,6 +23,7 @@ export interface SchemaProperty {
   "x-step"?: number;
   "x-placeholder"?: string;
   "x-widget"?: string;
+  "x-auto-save"?: boolean;
 }
 
 export interface ConfigResponse {

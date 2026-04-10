@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"net/http"
 	"os/exec"
 	"path/filepath"
@@ -44,6 +45,8 @@ type channelResponse struct {
 	Branch           string `json:"branch,omitempty"`
 	Commit           string `json:"commit,omitempty"`
 	Worktree         bool   `json:"worktree"`
+	DiffAdditions    int    `json:"diff_additions,omitempty"`
+	DiffDeletions    int    `json:"diff_deletions,omitempty"`
 }
 
 func (s *Server) handleEnsureChannel(w http.ResponseWriter, r *http.Request) {
@@ -134,6 +137,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 		if dirPath == "" && s.loopDir != "" {
 			dirPath = filepath.Join(s.loopDir, ch.ChannelID, "work")
 		}
+		diffAdd, diffDel := gitDiffStats(r.Context(), dirPath)
 		resp = append(resp, channelResponse{
 			ChannelID:        ch.ChannelID,
 			Name:             ch.Name,
@@ -146,6 +150,8 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			Branch:           gitBranch(r.Context(), dirPath),
 			Commit:           gitCommit(r.Context(), dirPath),
 			Worktree:         ch.Worktree,
+			DiffAdditions:    diffAdd,
+			DiffDeletions:    diffDel,
 		})
 	}
 
@@ -178,6 +184,50 @@ func gitCommit(ctx context.Context, dir string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
+}
+
+// gitDiffStats returns the total additions and deletions for uncommitted changes,
+// including untracked files (counted as additions).
+func gitDiffStats(ctx context.Context, dir string) (add, del int) {
+	if dir == "" {
+		return 0, 0
+	}
+
+	// Tracked changes.
+	cmd := exec.CommandContext(ctx, "git", "diff", "--shortstat")
+	cmd.Dir = dir
+	if out, err := cmd.Output(); err == nil {
+		for _, part := range strings.Split(strings.TrimSpace(string(out)), ",") {
+			part = strings.TrimSpace(part)
+			if strings.Contains(part, "insertion") {
+				_, _ = fmt.Sscanf(part, "%d", &add)
+			} else if strings.Contains(part, "deletion") {
+				_, _ = fmt.Sscanf(part, "%d", &del)
+			}
+		}
+	}
+
+	// Untracked files: count total lines as additions.
+	lsCmd := exec.CommandContext(ctx, "git", "ls-files", "--others", "--exclude-standard")
+	lsCmd.Dir = dir
+	if lsOut, err := lsCmd.Output(); err == nil {
+		files := strings.TrimSpace(string(lsOut))
+		if files != "" {
+			args := append([]string{"-l"}, strings.Split(files, "\n")...)
+			wcCmd := exec.CommandContext(ctx, "wc", args...)
+			wcCmd.Dir = dir
+			if wcOut, err := wcCmd.Output(); err == nil {
+				// wc -l with multiple files prints a "total" line last; with one file just the count.
+				lines := strings.Split(strings.TrimSpace(string(wcOut)), "\n")
+				lastLine := strings.TrimSpace(lines[len(lines)-1])
+				var n int
+				_, _ = fmt.Sscanf(lastLine, "%d", &n)
+				add += n
+			}
+		}
+	}
+
+	return add, del
 }
 
 func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {

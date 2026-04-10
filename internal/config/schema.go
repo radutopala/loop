@@ -19,6 +19,7 @@ type SchemaProperty struct {
 	XStep                float64                    `json:"x-step,omitempty"`
 	XPlaceholder         string                     `json:"x-placeholder,omitempty"`
 	XWidget              string                     `json:"x-widget,omitempty"`
+	XAutoSave            bool                       `json:"x-auto-save,omitempty"`
 }
 
 // ConfigSchema is the top-level JSON schema for the config file.
@@ -403,6 +404,7 @@ func buildSchema() *ConfigSchema {
 				Type:        "object",
 				XSection:    "Desktop",
 				XGlobalOnly: true,
+				XAutoSave:   true,
 				XOrder:      -100,
 				Properties: map[string]*SchemaProperty{
 					"stop_daemon_on_quit": {

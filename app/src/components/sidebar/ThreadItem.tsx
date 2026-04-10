@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Channel } from "../../types";
+import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
 
 interface ThreadItemProps {
@@ -139,6 +140,13 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
       >
         {displayName}
       </span>
+      {(thread.diff_additions > 0 || thread.diff_deletions > 0) && (
+        <span style={{ flexShrink: 0, fontSize: 9, fontFamily: fonts.mono, marginLeft: "auto" }}>
+          {thread.diff_additions > 0 && <span style={{ color: colors.diffAddText }}>+{thread.diff_additions}</span>}
+          {thread.diff_additions > 0 && thread.diff_deletions > 0 && " "}
+          {thread.diff_deletions > 0 && <span style={{ color: colors.diffDelText }}>-{thread.diff_deletions}</span>}
+        </span>
+      )}
       {isUnread && !selected && (
         <span
           style={{
@@ -147,7 +155,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
             borderRadius: "50%",
             backgroundColor: "#5b9cf5",
             flexShrink: 0,
-            marginLeft: "auto",
+            marginLeft: (thread.diff_additions > 0 || thread.diff_deletions > 0) ? 4 : "auto",
           }}
         />
       )}
@@ -159,7 +167,7 @@ export function ThreadItem({ thread, subThreads, threadsByParent, selected, sele
             borderRadius: "50%",
             backgroundColor: colors.active,
             flexShrink: 0,
-            marginLeft: isUnread ? 4 : "auto",
+            marginLeft: (isUnread || thread.diff_additions > 0 || thread.diff_deletions > 0) ? 4 : "auto",
           }}
         />
       )}

@@ -230,6 +230,8 @@ interface DiffViewerProps {
   hasData: boolean;
   totalFiles: number;
   onToggleFile: (path: string) => void;
+  onExpandAll: () => void;
+  onCollapseAll: () => void;
   onFileContextMenu: (e: React.MouseEvent, path: string) => void;
 }
 
@@ -242,6 +244,8 @@ export function DiffViewer({
   hasData,
   totalFiles,
   onToggleFile,
+  onExpandAll,
+  onCollapseAll,
   onFileContextMenu,
 }: DiffViewerProps) {
   const { colors } = useTheme();
@@ -258,50 +262,11 @@ export function DiffViewer({
     setFocusedFileIndex(0);
   }, [fileKeys]);
 
-  // Update focused file when the user manually scrolls.
-  // Only depends on fileKeys (not expandedFiles) so expand/collapse doesn't
-  // recreate the observer. A scroll-event gate ensures only real user
-  // scrolling triggers focus changes, not layout shifts from expand/collapse.
-  const userScrollingRef = useRef(false);
-  const scrollTimerRef = useRef<ReturnType<typeof setTimeout>>(undefined);
-  useEffect(() => {
-    const scrollEl = scrollRef.current;
-    if (!scrollEl || files.length === 0) return;
-    const onScroll = () => {
-      if (isNavigatingRef.current) return;
-      userScrollingRef.current = true;
-      clearTimeout(scrollTimerRef.current);
-      scrollTimerRef.current = setTimeout(() => { userScrollingRef.current = false; }, 150);
-    };
-    scrollEl.addEventListener("scroll", onScroll, { passive: true });
-    const observer = new IntersectionObserver(
-      (entries) => {
-        if (!userScrollingRef.current || isNavigatingRef.current) return;
-        // Pick the topmost intersecting entry (closest to scroll top)
-        let topIdx = -1;
-        let topY = Infinity;
-        for (const entry of entries) {
-          if (entry.isIntersecting) {
-            const y = entry.boundingClientRect.top;
-            if (y < topY) {
-              topY = y;
-              const idx = Number(entry.target.getAttribute("data-file-idx"));
-              if (!isNaN(idx)) topIdx = idx;
-            }
-          }
-        }
-        if (topIdx >= 0) setFocusedFileIndex(topIdx);
-      },
-      { root: scrollEl, threshold: [0.5], rootMargin: "-32px 0px 0px 0px" },
-    );
-    fileRefs.current.forEach((el) => observer.observe(el));
-    return () => {
-      observer.disconnect();
-      scrollEl.removeEventListener("scroll", onScroll);
-      clearTimeout(scrollTimerRef.current);
-    };
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fileKeys]);
+  // Update focused file on mouse hover over file sections.
+  const handleFileMouseEnter = useCallback((fileIndex: number) => {
+    if (isNavigatingRef.current) return;
+    setFocusedFileIndex(fileIndex);
+  }, []);
 
   const navigateToFile = useCallback((index: number) => {
     if (index < 0 || index >= files.length) return;
@@ -469,8 +434,9 @@ export function DiffViewer({
     background: "transparent", color: colors.textMuted, cursor: "pointer", fontSize: 14, lineHeight: 1,
   };
 
-  const clampedIndex = Math.min(focusedFileIndex, Math.max(files.length - 1, 0));
-  const focusedPath = files[clampedIndex]?.path ?? "";
+  const anyExpanded = expandedFiles.size > 0;
+  const clampedIndex = anyExpanded ? Math.min(focusedFileIndex, Math.max(files.length - 1, 0)) : 0;
+  const focusedPath = anyExpanded ? (files[clampedIndex]?.path ?? "") : "";
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0 }}>
@@ -503,6 +469,16 @@ export function DiffViewer({
           <span style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textDim, flexShrink: 0 }}>
             {clampedIndex + 1} / {files.length}
           </span>
+          <button onClick={onExpandAll} title="Expand all" style={navBtnStyle}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textDim; e.currentTarget.style.color = colors.textLight; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = colors.textMuted; }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,8 12,13 17,8" /><polyline points="7,14 12,19 17,14" /></svg>
+          </button>
+          <button onClick={onCollapseAll} title="Collapse all" style={navBtnStyle}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textDim; e.currentTarget.style.color = colors.textLight; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = colors.textMuted; }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,14 12,9 17,14" /><polyline points="7,20 12,15 17,20" /></svg>
+          </button>
         </div>
       )}
       <div ref={scrollRef} style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
@@ -514,7 +490,7 @@ export function DiffViewer({
         )}
         {files.map((file, fileIndex) => {
           const expanded = expandedFiles.has(file.path);
-          const focused = fileIndex === clampedIndex;
+          const focused = expandedFiles.size > 0 && fileIndex === clampedIndex;
           const parsed = parsedFiles.find((pf) => pf.path === file.path);
           const cachedLines = fileContentCache.current.get(file.path);
           const segments = parsed ? computeSegments(parsed, cachedLines?.length) : [];
@@ -523,10 +499,11 @@ export function DiffViewer({
               key={file.path}
               data-file-idx={fileIndex}
               ref={(el) => { if (el) fileRefs.current.set(fileIndex, el); else fileRefs.current.delete(fileIndex); }}
+              onMouseEnter={() => handleFileMouseEnter(fileIndex)}
               style={{ borderLeft: `3px solid ${focused ? colors.active : "transparent"}`, transition: "border-color 0.15s ease" }}
             >
               <button
-                onClick={() => onToggleFile(file.path)}
+                onClick={() => { setFocusedFileIndex(fileIndex); onToggleFile(file.path); }}
                 onContextMenu={(e) => { e.preventDefault(); onFileContextMenu(e, file.path); }}
                 style={{
                   display: "flex", alignItems: "center", gap: 6, width: "100%",

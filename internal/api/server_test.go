@@ -2545,6 +2545,48 @@ func (s *ServerSuite) TestSearchChannelsBranch() {
 	require.NotEmpty(s.T(), resp[0].Branch)
 }
 
+func (s *ServerSuite) TestSearchChannelsDiffStats() {
+	// Create a temp git repo with a committed file, then modify it and add an untracked file.
+	dir := s.T().TempDir()
+	for _, args := range [][]string{
+		{"git", "init"},
+		{"git", "config", "user.email", "t@t.com"},
+		{"git", "config", "user.name", "T"},
+	} {
+		cmd := exec.Command(args[0], args[1:]...)
+		cmd.Dir = dir
+		require.NoError(s.T(), cmd.Run())
+	}
+	// Commit an initial file.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("line1\nline2\n"), 0o644))
+	add := exec.Command("git", "add", ".")
+	add.Dir = dir
+	require.NoError(s.T(), add.Run())
+	ci := exec.Command("git", "commit", "-m", "init")
+	ci.Dir = dir
+	require.NoError(s.T(), ci.Run())
+
+	// Modify tracked file (1 insertion, 1 deletion).
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "tracked.txt"), []byte("line1\nchanged\n"), 0o644))
+	// Create an untracked file with 3 lines.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("a\nb\nc\n"), 0o644))
+
+	channels := []*db.Channel{
+		{ChannelID: "ch-diff", Name: "with-diff", DirPath: dir, Active: true, Platform: types.PlatformLocal},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+
+	rec := s.testRequest("GET", "/api/channels", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 1)
+	// Tracked: 1 insertion + 1 deletion; Untracked: 3 lines counted as additions.
+	require.Equal(s.T(), 4, resp[0].DiffAdditions, "expected 1 tracked insertion + 3 untracked lines")
+	require.Equal(s.T(), 1, resp[0].DiffDeletions, "expected 1 tracked deletion")
+}
+
 // --- SendMessage tests ---
 
 func (s *ServerSuite) TestSendMessageSuccess() {

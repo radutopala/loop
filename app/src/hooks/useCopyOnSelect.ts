@@ -40,7 +40,7 @@ export function useCopyOnSelect(): void {
       if (text) {
         const anchor = sel?.anchorNode;
         const el = anchor instanceof HTMLElement ? anchor : anchor?.parentElement;
-        if (!el?.closest("textarea, input")) {
+        if (!el?.closest("textarea, input, .cm-editor")) {
           copyText(text);
           return;
         }

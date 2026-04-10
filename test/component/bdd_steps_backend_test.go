@@ -45,6 +45,7 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I set up a worktree "([^"]*)" on branch "([^"]*)" under the current channel via API$`, tc.setupWorktreeViaAPI)
 	ctx.Step(`^I create a disk-only git worktree "([^"]*)" on branch "([^"]*)"$`, tc.createDiskOnlyWorktree)
 	ctx.Step(`^I create a branch "([^"]*)" via API$`, tc.createBranchViaAPI)
+	ctx.Step(`^I create uncommitted files "([^"]*)" in the repo$`, tc.createUncommittedFiles)
 
 	// Shortcut setup steps
 	ctx.Step(`^I add a prompt shortcut "([^"]*)" with prompt "([^"]*)" via API$`, tc.addShortcutViaAPI)
@@ -342,6 +343,26 @@ func (tc *TestContext) createBranchViaAPI(name string) error {
 	}
 	if tc.LastStatus != http.StatusOK {
 		return fmt.Errorf("failed to create branch: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
+	}
+	return nil
+}
+
+func (tc *TestContext) createUncommittedFiles(namesCsv string) error {
+	if tc.ChannelDir == "" {
+		return fmt.Errorf("no channel dir set; use 'I set up a test channel via API for git repo' step first")
+	}
+	for _, name := range strings.Split(namesCsv, ",") {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		fpath := filepath.Join(tc.ChannelDir, name)
+		if err := os.MkdirAll(filepath.Dir(fpath), 0o755); err != nil {
+			return fmt.Errorf("creating dirs for %s: %w", name, err)
+		}
+		if err := os.WriteFile(fpath, []byte("// "+name+"\n"), 0o644); err != nil {
+			return fmt.Errorf("writing %s: %w", name, err)
+		}
 	}
 	return nil
 }

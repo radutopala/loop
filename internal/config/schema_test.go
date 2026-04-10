@@ -44,6 +44,7 @@ func (s *SchemaSuite) TestTopLevelProperties() {
 		"envs",
 		"log_level", "log_format", "log_file",
 		"api_addr", "db_path", "poll_interval_sec",
+		"desktop",
 	}
 	for _, key := range expectedKeys {
 		s.Run(key, func() {
@@ -186,6 +187,18 @@ func (s *SchemaSuite) TestLogLevelEnum() {
 	require.NotNil(s.T(), prop)
 	require.Equal(s.T(), "string", prop.Type)
 	require.Equal(s.T(), []any{"info", "debug", "warn", "error"}, prop.Enum)
+}
+
+func (s *SchemaSuite) TestDesktopNestedObject() {
+	prop := GlobalConfigSchema().Properties["desktop"]
+	require.NotNil(s.T(), prop)
+	require.Equal(s.T(), "object", prop.Type)
+	require.True(s.T(), prop.XGlobalOnly, "desktop should be global-only")
+	require.True(s.T(), prop.XAutoSave, "desktop should have x-auto-save")
+	require.Equal(s.T(), "Desktop", prop.XSection)
+	require.Contains(s.T(), prop.Properties, "theme")
+	require.Contains(s.T(), prop.Properties, "font_sizes")
+	require.Contains(s.T(), prop.Properties, "stop_daemon_on_quit")
 }
 
 func (s *SchemaSuite) TestSectionAssignment() {

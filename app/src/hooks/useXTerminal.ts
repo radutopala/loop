@@ -18,13 +18,34 @@ function injectScrollbarStyle() {
 }
 
 function buildXTermTheme(colors: ColorPalette) {
-  return {
+  const base = {
     background: colors.sidebar,
     foreground: colors.text,
     cursor: colors.cursor,
     cursorAccent: colors.isDark ? "#000000" : "#ffffff",
     selectionBackground: colors.isDark ? "#214283" : "#a6d2ff",
     selectionForeground: colors.isDark ? undefined : "#000000",
+  };
+  if (colors.isDark) return base;
+  // Light theme: override ANSI palette so colors are readable on a light background.
+  return {
+    ...base,
+    black: "#000000",
+    red: "#cd3131",
+    green: "#00864b",
+    yellow: "#795e00",
+    blue: "#0451a5",
+    magenta: "#bc05bc",
+    cyan: "#0598bc",
+    white: "#555555",
+    brightBlack: "#666666",
+    brightRed: "#cd3131",
+    brightGreen: "#14a860",
+    brightYellow: "#b5a200",
+    brightBlue: "#0451a5",
+    brightMagenta: "#bc05bc",
+    brightCyan: "#0598bc",
+    brightWhite: "#333333",
   };
 }
 
@@ -257,9 +278,22 @@ export function useXTerminal({
   }, [containerRef, onInput, onResize]); // colors excluded — handled by effect below
 
   // Update xterm theme at runtime when palette changes (no terminal re-creation).
+  // Also override .xterm-bg-0 for light themes: the theme `black` must stay dark
+  // for foreground text (\x1b[30m), but as a background (\x1b[40m) it should
+  // blend with the light terminal background instead of rendering harsh black blocks.
+  const bgStyleRef = useRef<HTMLStyleElement | null>(null);
   useEffect(() => {
     if (xtermRef.current) {
       xtermRef.current.options.theme = buildXTermTheme(colors);
+    }
+    if (!colors.isDark) {
+      if (!bgStyleRef.current) {
+        bgStyleRef.current = document.createElement("style");
+        document.head.appendChild(bgStyleRef.current);
+      }
+      bgStyleRef.current.textContent = `.xterm-bg-0 { background-color: ${colors.sidebar} !important; }`;
+    } else if (bgStyleRef.current) {
+      bgStyleRef.current.textContent = "";
     }
   }, [colors]);
 

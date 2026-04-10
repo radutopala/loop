@@ -13,6 +13,8 @@ export interface Channel {
   branch: string;
   commit: string;
   worktree: boolean;
+  diff_additions: number;
+  diff_deletions: number;
 }
 
 export interface Message {

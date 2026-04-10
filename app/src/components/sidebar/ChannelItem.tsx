@@ -1,5 +1,6 @@
 import { useState } from "react";
 import type { Channel } from "../../types";
+import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
 import { ThreadItem } from "./ThreadItem";
 import { NewThreadInput } from "./NewThreadInput";
@@ -186,6 +187,13 @@ export function ChannelItem({
                 flexShrink: 0,
               }}
             />
+          )}
+          {(channel.diff_additions > 0 || channel.diff_deletions > 0) && (
+            <span style={{ flexShrink: 0, fontSize: 9, fontFamily: fonts.mono, marginLeft: "auto" }}>
+              {channel.diff_additions > 0 && <span style={{ color: colors.diffAddText }}>+{channel.diff_additions}</span>}
+              {channel.diff_additions > 0 && channel.diff_deletions > 0 && " "}
+              {channel.diff_deletions > 0 && <span style={{ color: colors.diffDelText }}>-{channel.diff_deletions}</span>}
+            </span>
           )}
         </button>
         <div style={{ display: "flex", alignItems: "center", gap: 2, opacity: hovered ? 1 : 0, marginRight: 4, flexShrink: 0 }}>

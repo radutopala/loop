@@ -47,6 +47,7 @@ interface GitPanelProps {
   onToggleMaximize?: () => void;
   onImportWorktree?: (channelId: string, worktreePath: string) => Promise<void>;
   onSelectThread?: (threadId: string) => void;
+  onStatusChange?: () => void;
   onClose: () => void;
 }
 
@@ -64,7 +65,7 @@ function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   };
 }
 
-export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, tabBar, embedded, isWorktree, hasBranch, onToggleSidebar, onOpenPalette, onToggleMaximize, onImportWorktree, onSelectThread, onClose }: GitPanelProps) {
+export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, tabBar, embedded, isWorktree, hasBranch, onToggleSidebar, onOpenPalette, onToggleMaximize, onImportWorktree, onSelectThread, onStatusChange, onClose }: GitPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [width, setWidth] = useState(loadWidth);
   const [resizing, setResizing] = useState(false);
@@ -323,16 +324,6 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
           )}
         </span>
         <div style={{ flex: 1 }} />
-        {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && totalFiles > 0 && (
-          <>
-            <button onClick={expandAll} title="Expand all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,8 12,13 17,8" /><polyline points="7,14 12,19 17,14" /></svg>
-            </button>
-            <button onClick={collapseAll} title="Collapse all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,14 12,9 17,14" /><polyline points="7,20 12,15 17,20" /></svg>
-            </button>
-          </>
-        )}
         {gitMode !== "worktrees" && gitMode !== "branchlist" && (
           <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7" /><polyline points="21,3 21,9 15,9" /></svg>
@@ -388,6 +379,8 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
       hasData={data !== null}
       totalFiles={totalFiles}
       onToggleFile={toggleFile}
+      onExpandAll={expandAll}
+      onCollapseAll={collapseAll}
       onFileContextMenu={handleFileContextMenu}
     />
   );
@@ -416,6 +409,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
       isWorktree={isWorktree ?? false}
       hasBranch={hasBranch ?? false}
       onSelectThread={onSelectThread}
+      onBranchChanged={onStatusChange}
     />
   ) : null;
 
@@ -646,22 +640,6 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
                 </span>
               )}
             </span>
-          )}
-          {gitMode !== "commits" && gitMode !== "worktrees" && gitMode !== "branchlist" && totalFiles > 0 && (
-            <>
-              <button onClick={expandAll} title="Expand all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="7,8 12,13 17,8" />
-                  <polyline points="7,14 12,19 17,14" />
-                </svg>
-              </button>
-              <button onClick={collapseAll} title="Collapse all" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <polyline points="7,14 12,9 17,14" />
-                  <polyline points="7,20 12,15 17,20" />
-                </svg>
-              </button>
-            </>
           )}
           {gitMode !== "worktrees" && (
             <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>

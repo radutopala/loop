@@ -10,9 +10,10 @@ interface BranchesPanelProps {
   isWorktree: boolean;
   hasBranch: boolean;
   onSelectThread?: (threadId: string) => void;
+  onBranchChanged?: () => void;
 }
 
-export function BranchesPanel({ channelId, isWorktree, hasBranch, onSelectThread }: BranchesPanelProps) {
+export function BranchesPanel({ channelId, isWorktree, hasBranch, onSelectThread, onBranchChanged }: BranchesPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [branches, setBranches] = useState<string[]>([]);
   const [current, setCurrent] = useState("");
@@ -66,6 +67,7 @@ export function BranchesPanel({ channelId, isWorktree, hasBranch, onSelectThread
     try {
       await switchBranch(channelId, branch);
       await loadBranches();
+      onBranchChanged?.();
     } catch {
       // ignore
     } finally {
@@ -140,7 +142,7 @@ export function BranchesPanel({ channelId, isWorktree, hasBranch, onSelectThread
     border: `1px solid ${colors.border}`,
     borderRadius: 4,
     background: "transparent",
-    color: colors.textDim,
+    color: colors.textLight,
     cursor: "pointer",
     textAlign: "center",
   };
@@ -177,8 +179,10 @@ export function BranchesPanel({ channelId, isWorktree, hasBranch, onSelectThread
                   onClick={() => handleSwitch(branch)}
                   disabled={isSwitching}
                   title="Switch to this branch"
+                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textLight; e.currentTarget.style.color = colors.white; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = colors.textLight; }}
                 >
-                  {isSwitching ? "..." : "Go"}
+                  {isSwitching ? "..." : "Switch"}
                 </button>
               )}
               <button
@@ -186,6 +190,8 @@ export function BranchesPanel({ channelId, isWorktree, hasBranch, onSelectThread
                 onClick={() => handleCreateWorktree(branch)}
                 disabled={isCreating}
                 title="Create worktree from this branch"
+                onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textLight; e.currentTarget.style.color = colors.white; }}
+                onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = colors.textLight; }}
               >
                 {isCreating ? "..." : "+wt"}
               </button>
@@ -195,6 +201,8 @@ export function BranchesPanel({ channelId, isWorktree, hasBranch, onSelectThread
                   onClick={() => setConfirmingBranch(branch)}
                   disabled={isDeleting}
                   title="Delete this branch"
+                  onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textLight; e.currentTarget.style.color = colors.dangerText; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = "#ef4444"; }}
                 >
                   {isDeleting ? "..." : "Delete"}
                 </button>

@@ -124,7 +124,7 @@ function LoopInfinityIcon({ color, animated, isDark = true }: { color?: string; 
 
     const COLORS = isDark
       ? [[34, 197, 94], [134, 239, 172], [245, 158, 11], [251, 191, 36], [34, 197, 94]]
-      : [[22, 163, 74], [21, 128, 61], [217, 119, 6], [202, 138, 4], [22, 163, 74]];
+      : [[60, 60, 60], [120, 120, 120], [80, 80, 80], [140, 140, 140], [60, 60, 60]];
     function colorAt(p: number) {
       const idx = p * (COLORS.length - 1);
       const lo = Math.floor(idx);
@@ -168,20 +168,20 @@ function LoopInfinityIcon({ color, animated, isDark = true }: { color?: string; 
       {animated ? (
         <defs>
           <linearGradient ref={gradRef} id={id} gradientUnits="userSpaceOnUse" x1="-215" y1="0" x2="215" y2="0">
-            <stop offset="0%" stopColor="#22c55e" />
-            <stop offset="30%" stopColor="#86efac" />
-            <stop offset="50%" stopColor="#f59e0b" />
-            <stop offset="70%" stopColor="#fbbf24" />
-            <stop offset="100%" stopColor="#22c55e" />
+            <stop offset="0%" stopColor={isDark ? "#22c55e" : "#3c3c3c"} />
+            <stop offset="30%" stopColor={isDark ? "#86efac" : "#787878"} />
+            <stop offset="50%" stopColor={isDark ? "#f59e0b" : "#505050"} />
+            <stop offset="70%" stopColor={isDark ? "#fbbf24" : "#8c8c8c"} />
+            <stop offset="100%" stopColor={isDark ? "#22c55e" : "#3c3c3c"} />
           </linearGradient>
         </defs>
       ) : null}
       <path ref={pathRef} fill="none" stroke="none" d={d} />
       {animated ? (
         <>
-          <path fill="none" stroke={isDark ? "rgba(34,197,94,0.15)" : "rgba(22,163,74,0.35)"} strokeWidth="28" strokeLinecap="round" strokeLinejoin="round" d={d} />
+          <path fill="none" stroke={isDark ? "rgba(34,197,94,0.15)" : "rgba(0,0,0,0.1)"} strokeWidth="28" strokeLinecap="round" strokeLinejoin="round" d={d} />
           <path ref={trailRef} fill="none" stroke={`url(#${id})`} strokeWidth="28" strokeLinecap="round" strokeLinejoin="round" d={d} />
-          <circle ref={headRef} r="16" fill="#22c55e" />
+          <circle ref={headRef} r="16" fill={isDark ? "#22c55e" : "#3c3c3c"} />
         </>
       ) : (
         <path fill="none" stroke={color || "currentColor"} strokeWidth="28" strokeLinecap="round" strokeLinejoin="round" d={d} />

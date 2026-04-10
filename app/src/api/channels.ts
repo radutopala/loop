@@ -27,6 +27,8 @@ interface ChannelAPIResponse {
   branch?: string;
   commit?: string;
   worktree?: boolean;
+  diff_additions?: number;
+  diff_deletions?: number;
 }
 
 export async function fetchChannels(): Promise<Channel[]> {
@@ -45,6 +47,8 @@ export async function fetchChannels(): Promise<Channel[]> {
     branch: c.branch || "",
     commit: c.commit || "",
     worktree: c.worktree ?? false,
+    diff_additions: c.diff_additions ?? 0,
+    diff_deletions: c.diff_deletions ?? 0,
   }));
 }
 
@@ -114,6 +118,8 @@ export async function ensureChannel(dirPath: string): Promise<Channel> {
     branch: data.branch || "",
     commit: data.commit || "",
     worktree: data.worktree ?? false,
+    diff_additions: data.diff_additions ?? 0,
+    diff_deletions: data.diff_deletions ?? 0,
   };
 }
 

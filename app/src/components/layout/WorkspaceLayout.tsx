@@ -23,6 +23,7 @@ import { PlaygroundPanel } from "../panels/PlaygroundPanel";
 import { NotesPanel } from "../panels/NotesPanel";
 import { TasksPanel } from "../panels/TasksPanel";
 import { killAgentContainer } from "../../api/loopApi";
+import { ChannelHeaderInfo } from "./ChannelHeaderInfo";
 import { HeaderBranchPicker } from "./HeaderBranchPicker";
 import { useChatState } from "../../hooks/useChatState";
 import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStateStore";
@@ -547,7 +548,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
   const dirPath = channel.dir_path || "";
   const branch = channel.branch || "";
-  const commit = channel.commit || "";
 
   const renderLeaf = useCallback(
     (leaf: LeafNode): React.ReactNode => {
@@ -598,6 +598,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               hasBranch={!channel.parent_id && !!channel.branch}
               onImportWorktree={onImportWorktree}
               onSelectThread={onSelectThread}
+              onStatusChange={onStatusChange}
               onClose={() => handleRemoveLeaf(leaf.id)}
             />
           );
@@ -755,81 +756,11 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         </button>
         {dirPath && (
           <>
-            <span
-              onDoubleClick={(e) => { navigator.clipboard.writeText(dirPath); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
-              title="Double-click to copy path"
-              style={{
-                fontSize: 12,
-                color: colors.textDim,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                minWidth: 0,
-                marginLeft: 12,
-                cursor: "default",
-                WebkitAppRegion: "no-drag",
-              }}
-            >
-              {dirPath}
-            </span>
-            {/* Session ID — read-only for both channels and threads */}
-            <>
-              <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px 0 12px" }}>|</span>
-              {channel.session_id ? (
-                <span
-                  onDoubleClick={(e) => { navigator.clipboard.writeText(channel.session_id); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
-                  title={`Session: ${channel.session_id}\nDouble-click to copy`}
-                  style={{ fontSize: 11, color: colors.textDim, fontFamily: fonts.mono, flexShrink: 0, cursor: "default",
-                    WebkitAppRegion: "no-drag",
-                  }}
-                >
-                  {channel.session_id}
-                </span>
-              ) : (
-                <span style={{ fontSize: 11, color: colors.textDim, fontFamily: fonts.mono, flexShrink: 0 }}>no session</span>
-              )}
-            </>
-            {commit && (
-              <>
-                <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px 0 12px" }}>|</span>
-                <span
-                  onDoubleClick={(e) => { navigator.clipboard.writeText(commit); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
-                  title="Double-click to copy commit hash"
-                  style={{
-                    fontSize: 11,
-                    color: colors.textDim,
-                    fontFamily: fonts.mono,
-                    flexShrink: 0,
-                    cursor: "default",
-                    WebkitAppRegion: "no-drag",
-                  }}
-                >
-                  {commit}
-                </span>
-              </>
-            )}
-            {branch && (
+            <ChannelHeaderInfo channel={channel} colors={colors} hideBranch={!channel.worktree && !parentIsWorktree} />
+            {branch && !channel.worktree && !parentIsWorktree && (
               <>
                 <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px" }}>|</span>
-                {channel.worktree || parentIsWorktree ? (
-                  <span
-                    onDoubleClick={(e) => { navigator.clipboard.writeText(branch); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
-                    title="Double-click to copy branch name"
-                    style={{ fontSize: 11, color: colors.active, fontFamily: fonts.mono, flexShrink: 0, cursor: "default",
-                      WebkitAppRegion: "no-drag",
-                    }}
-                  >
-                    <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" style={{ marginRight: 2, verticalAlign: -1 }}>
-                      <line x1="6" y1="3" x2="6" y2="15" />
-                      <circle cx="18" cy="6" r="3" />
-                      <circle cx="6" cy="18" r="3" />
-                      <path d="M18 9a9 9 0 0 1-9 9" />
-                    </svg>
-                    {branch}
-                  </span>
-                ) : (
-                  <HeaderBranchPicker channelId={channelId} branch={branch} onBranchChanged={onStatusChange} onCreateWorktree={channel.parent_id ? undefined : onCreateWorktree} onImportWorktree={channel.parent_id ? undefined : onImportWorktree} onSelectThread={channel.parent_id ? undefined : onSelectThread} onError={setBranchError} />
-                )}
+                <HeaderBranchPicker channelId={channelId} branch={branch} onBranchChanged={onStatusChange} onCreateWorktree={channel.parent_id ? undefined : onCreateWorktree} onImportWorktree={channel.parent_id ? undefined : onImportWorktree} onSelectThread={channel.parent_id ? undefined : onSelectThread} onError={setBranchError} />
               </>
             )}
           </>

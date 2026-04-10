@@ -131,7 +131,7 @@ Feature: Worktrees Journey
     When I add a "Git" panel
     And I click button "Branches" in the git panel
     Then I wait for text "main" to appear
-    And I wait for text "Go" to appear
+    And I wait for text "Switch" to appear
 
     # Delete "main" — confirmation popover appears
     When I click button "Delete" in the branches panel
@@ -147,3 +147,24 @@ Feature: Worktrees Journey
     Then I wait for text "Delete?" to appear
     When I click on the button with text "Yes"
     Then I wait up to "10s" for text "main" to disappear
+
+  Scenario: Switch branch from branches panel updates header
+    Given I set up a test channel via API for git repo "bdd-branches-switch"
+    And I create a branch "feature/switch-target" via API
+    And I open the app in a browser
+    And I wait for text "bdd-branches-switch" to appear
+
+    # Navigate to channel — header shows current branch
+    When I click on "bdd-branches-switch" in the sidebar
+    And I wait for "textarea" to be visible
+    Then I wait for text "feature/switch-target" to appear
+
+    # Open Git panel → Branches tab
+    When I add a "Git" panel
+    And I click button "Branches" in the git panel
+    Then I wait for text "main" to appear
+    And I wait for text "Switch" to appear
+
+    # Click Switch on "main" — header should update immediately
+    When I click button "Switch" in the branches panel
+    Then I wait up to "10s" for text "feature/switch-target *" to disappear
