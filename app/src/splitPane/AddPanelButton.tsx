@@ -80,6 +80,13 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
       <path d="M16 3.13a4 4 0 0 1 0 .74" />
     </svg>
   ),
+  kanban: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="5" height="18" rx="1" />
+      <rect x="10" y="3" width="5" height="12" rx="1" />
+      <rect x="17" y="3" width="5" height="15" rx="1" />
+    </svg>
+  ),
 };
 
 const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
@@ -95,6 +102,7 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   playground: "Live interactive code sandbox",
   notes: "Quick scratch notes (Markdown)",
   tasks: "Manage scheduled tasks",
+  kanban: "Kanban board for tickets",
 };
 
 /** Centered picker for when layout is empty (no tree). */

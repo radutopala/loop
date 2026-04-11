@@ -383,6 +383,7 @@ const PANEL_COLORS: Record<PanelType, string> = {
   playground: "#10b981",
   notes: "#f9a8d4",
   tasks: "#f59e0b",
+  kanban: "#8b5cf6",
 };
 
 function CanvasMinimap({ tiles, viewport: vp, containerRef, onPan, onZoom }: {

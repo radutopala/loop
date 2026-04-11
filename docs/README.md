@@ -33,6 +33,7 @@ Comprehensive documentation for every feature of the Loop platform.
 - [**Chat**](chat.md) — Chat view, message rendering, streaming, agent activity, input with autocomplete, prompt shortcuts, message history
 - [**Editor**](editor.md) — CodeMirror editor, file tree, tabs, dirty tracking, auto-save, directory create/delete
 - [**Sidebar**](sidebar.md) — Channel/thread navigation, ordering, search, batch operations
+- [**Kanban**](kanban.md) — Ticket board panel, filesystem-backed tickets, worktree assignment, `tk` CLI integration
 - [**Playground**](playground.md) — Live interactive code sandbox, agent-driven HTML/CSS/JS rendering, global and project scopes
 - [**Settings**](settings.md) — Settings panel, command palette (Cmd+K), daemon management
 

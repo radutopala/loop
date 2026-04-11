@@ -31,11 +31,11 @@ func (m *mockContainerBroadcaster) BroadcastContainerStatusChanged(data Containe
 }
 
 type callbackShellCreator struct {
-	fn func(ctx context.Context, channelID, dirPath string) (string, error)
+	fn func(ctx context.Context, channelID, dirPath, parentDirPath string) (string, error)
 }
 
-func (c *callbackShellCreator) CreateShellContainer(ctx context.Context, channelID, dirPath string) (string, error) {
-	return c.fn(ctx, channelID, dirPath)
+func (c *callbackShellCreator) CreateShellContainer(ctx context.Context, channelID, dirPath, parentDirPath string) (string, error) {
+	return c.fn(ctx, channelID, dirPath, parentDirPath)
 }
 
 type ContainerRegistrySuite struct {
@@ -847,8 +847,8 @@ type mockCreator struct {
 	mock.Mock
 }
 
-func (m *mockCreator) CreateShellContainer(ctx context.Context, channelID, dirPath string) (string, error) {
-	args := m.Called(ctx, channelID, dirPath)
+func (m *mockCreator) CreateShellContainer(ctx context.Context, channelID, dirPath, parentDirPath string) (string, error) {
+	args := m.Called(ctx, channelID, dirPath, parentDirPath)
 	return args.String(0), args.Error(1)
 }
 
@@ -860,35 +860,35 @@ func (s *ContainerRegistrySuite) TestFindOrCreateShellExisting() {
 	creator := new(mockCreator)
 	s.reg.SetShellCreator(creator)
 
-	id, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "")
+	id, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "existing-123", id)
-	creator.AssertNotCalled(s.T(), "CreateShellContainer", mock.Anything, mock.Anything, mock.Anything)
+	creator.AssertNotCalled(s.T(), "CreateShellContainer", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *ContainerRegistrySuite) TestFindOrCreateShellCreate() {
 	creator := new(mockCreator)
-	creator.On("CreateShellContainer", mock.Anything, "ch-1", "/projects/app").Return("new-456", nil)
+	creator.On("CreateShellContainer", mock.Anything, "ch-1", "/projects/app", "").Return("new-456", nil)
 	s.reg.SetShellCreator(creator)
 
-	id, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "/projects/app")
+	id, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "/projects/app", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "new-456", id)
-	creator.AssertCalled(s.T(), "CreateShellContainer", mock.Anything, "ch-1", "/projects/app")
+	creator.AssertCalled(s.T(), "CreateShellContainer", mock.Anything, "ch-1", "/projects/app", "")
 }
 
 func (s *ContainerRegistrySuite) TestFindOrCreateShellCreateError() {
 	creator := new(mockCreator)
-	creator.On("CreateShellContainer", mock.Anything, "ch-1", "").Return("", fmt.Errorf("create failed"))
+	creator.On("CreateShellContainer", mock.Anything, "ch-1", "", "").Return("", fmt.Errorf("create failed"))
 	s.reg.SetShellCreator(creator)
 
-	_, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "")
+	_, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "create failed")
 }
 
 func (s *ContainerRegistrySuite) TestFindOrCreateShellNoCreator() {
-	_, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "")
+	_, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "shell creator not configured")
 }
@@ -899,10 +899,10 @@ func (s *ContainerRegistrySuite) TestFindOrCreateShellIgnoresAgentContainers() {
 	s.reg.Register(&ContainerInfo{ContainerID: "agent-1", ChannelID: "ch-1", Type: ContainerTypeAgent})
 
 	creator := new(mockCreator)
-	creator.On("CreateShellContainer", mock.Anything, "ch-1", "").Return("new-shell", nil)
+	creator.On("CreateShellContainer", mock.Anything, "ch-1", "", "").Return("new-shell", nil)
 	s.reg.SetShellCreator(creator)
 
-	id, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "")
+	id, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "new-shell", id)
 }
@@ -915,10 +915,10 @@ func (s *ContainerRegistrySuite) TestFindOrCreateShellIgnoresPendingRemoval() {
 	s.reg.UpdateStatus("old-shell", ContainerStatusPendingRemoval)
 
 	creator := new(mockCreator)
-	creator.On("CreateShellContainer", mock.Anything, "ch-1", "").Return("new-shell", nil)
+	creator.On("CreateShellContainer", mock.Anything, "ch-1", "", "").Return("new-shell", nil)
 	s.reg.SetShellCreator(creator)
 
-	id, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "")
+	id, err := s.reg.FindOrCreateShell(context.Background(), "ch-1", "", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "new-shell", id)
 }
@@ -931,7 +931,7 @@ func (s *ContainerRegistrySuite) TestFindOrCreateShellConcurrent() {
 	var createCount int32
 
 	creator := &callbackShellCreator{
-		fn: func(_ context.Context, channelID, _ string) (string, error) {
+		fn: func(_ context.Context, channelID, _, _ string) (string, error) {
 			atomic.AddInt32(&createCount, 1)
 			close(creatorStarted)
 			<-creatorDone
@@ -946,7 +946,7 @@ func (s *ContainerRegistrySuite) TestFindOrCreateShellConcurrent() {
 	var err1 error
 	done1 := make(chan struct{})
 	go func() {
-		id1, err1 = s.reg.FindOrCreateShell(context.Background(), "ch-1", "")
+		id1, err1 = s.reg.FindOrCreateShell(context.Background(), "ch-1", "", "")
 		close(done1)
 	}()
 
@@ -957,7 +957,7 @@ func (s *ContainerRegistrySuite) TestFindOrCreateShellConcurrent() {
 	var id2 string
 	var err2 error
 	go func() {
-		id2, err2 = s.reg.FindOrCreateShell(context.Background(), "ch-1", "")
+		id2, err2 = s.reg.FindOrCreateShell(context.Background(), "ch-1", "", "")
 		close(done2)
 	}()
 

@@ -4,7 +4,7 @@ import type { LayoutRoot } from "../canvas/types";
 const LAYOUT_KEY = "loop-workspace-layout";
 
 /** Default layout names — these are the "fixed" buttons in the header. */
-export const DEFAULT_LAYOUT_NAMES = ["Chat", "Editor", "Memory", "Terminal", "Git", "Browser Chat", "Sessions", "Swarm", "Canvas", "Playground"] as const;
+export const DEFAULT_LAYOUT_NAMES = ["Chat", "Editor", "Memory", "Terminal", "Git", "Browser Chat", "Sessions", "Swarm", "Canvas", "Playground", "Kanban"] as const;
 
 export type LayoutType = "split" | "canvas";
 
@@ -31,7 +31,7 @@ export const DEFAULT_LAYOUT_TYPES: Record<string, LayoutType> = {
 // ---------------------------------------------------------------------------
 
 /** Current schema version. Bump when adding a new migration. */
-const CURRENT_VERSION = 8;
+const CURRENT_VERSION = 9;
 
 /**
  * Each migration transforms a ChannelLayouts from version N-1 to N.
@@ -116,6 +116,9 @@ const migrations: Record<number, (ch: ChannelLayouts) => void> = {
       migrateDiffPanel(layout);
     }
   },
+
+  // v9: Add "Kanban" default layout (ensureDefaultLayouts handles insertion).
+  9: () => {},
 };
 
 /** Run all pending migrations on a channel's layouts. Returns true if any ran. */
@@ -261,7 +264,7 @@ export function getLayoutNames(channelId: string): string[] {
 export function createDefaultLayouts(): ChannelLayouts {
   return {
     active: "Chat",
-    order: ["Chat", "Editor", "Memory", "Terminal", "Git", "Browser Chat", "Sessions", "Swarm", "Canvas", "Playground"],
+    order: ["Chat", "Editor", "Memory", "Terminal", "Git", "Browser Chat", "Sessions", "Swarm", "Canvas", "Playground", "Kanban"],
     types: { Canvas: "canvas" },
     version: CURRENT_VERSION,
     layouts: {
@@ -274,6 +277,7 @@ export function createDefaultLayouts(): ChannelLayouts {
       Swarm: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "agent-0", panel: "agent", flex: 40 }, { type: "split", direction: "vertical", flex: 60, children: [{ type: "leaf", id: "agent-1", panel: "agent", flex: 1 }, { type: "leaf", id: "agent-2", panel: "agent", flex: 1 }] }] },
       Canvas: { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [{ id: "agent-0", panel: "agent", x: 0, y: 0, width: 550, height: 800, zIndex: 0 }, { id: "agent-1", panel: "agent", x: 570, y: 0, width: 500, height: 390, zIndex: 0 }, { id: "agent-2", panel: "agent", x: 570, y: 410, width: 500, height: 390, zIndex: 0 }, { id: "git", panel: "git", x: 1090, y: 0, width: 600, height: 400, zIndex: 0 }, { id: "playground", panel: "playground", x: 1090, y: 420, width: 600, height: 380, zIndex: 0 }, { id: "memory", panel: "memory", x: 1710, y: 0, width: 800, height: 800, zIndex: 0 }] },
       Playground: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 40 }, { type: "leaf", id: "playground", panel: "playground", flex: 60 }] },
+      Kanban: { type: "leaf", id: "kanban", panel: "kanban", flex: 1 },
     },
   };
 }

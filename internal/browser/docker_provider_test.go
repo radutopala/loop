@@ -641,7 +641,7 @@ func (m *mockContainerRegistry) RemoveContainer(ctx context.Context, containerID
 	return m.Called(ctx, containerID).Error(0)
 }
 func (m *mockContainerRegistry) ScheduleRemove(string, time.Duration) {}
-func (m *mockContainerRegistry) FindOrCreateShell(context.Context, string, string) (string, error) {
+func (m *mockContainerRegistry) FindOrCreateShell(context.Context, string, string, string) (string, error) {
 	return "", nil
 }
 

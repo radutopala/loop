@@ -38,6 +38,9 @@ const (
 	EventTaskUpdated               = "task.updated"
 	EventTaskDeleted               = "task.deleted"
 	EventTaskRunCompleted          = "task.run_completed"
+	EventTicketCreated             = "ticket.created"
+	EventTicketUpdated             = "ticket.updated"
+	EventTicketDeleted             = "ticket.deleted"
 )
 
 // Event represents a server-sent event to WebSocket clients.
@@ -341,6 +344,15 @@ func (h *EventsHub) BroadcastTaskRunCompleted(data events.TaskRunEventData) {
 	h.Broadcast(Event{
 		Type:   EventTaskRunCompleted,
 		Data:   data,
+		Global: true,
+	})
+}
+
+// BroadcastTicketEvent sends a global ticket event (created or updated).
+func (h *EventsHub) BroadcastTicketEvent(eventType, ticketID string) {
+	h.Broadcast(Event{
+		Type:   eventType,
+		Data:   map[string]string{"ticket_id": ticketID},
 		Global: true,
 	})
 }

@@ -1,6 +1,6 @@
 module github.com/radutopala/loop
 
-go 1.26
+go 1.26.0
 
 require (
 	github.com/DATA-DOG/go-sqlmock v1.5.2
@@ -19,6 +19,7 @@ require (
 	github.com/moby/docker-image-spec v1.3.1
 	github.com/modelcontextprotocol/go-sdk v1.4.1
 	github.com/opencontainers/image-spec v1.1.1
+	github.com/radutopala/ticket v0.4.0
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/slack-go/slack v0.17.3
 	github.com/spf13/cobra v1.10.2

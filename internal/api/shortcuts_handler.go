@@ -10,6 +10,12 @@ import (
 	"github.com/tailscale/hujson"
 )
 
+// Overridable for testing unreachable error paths.
+var (
+	jsonUnmarshalFn   = json.Unmarshal
+	jsonMarshalIndent = json.MarshalIndent
+)
+
 type shortcutResponse struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -169,7 +175,7 @@ func (s *Server) handleModifyShortcut(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var configMap map[string]any
-	if err := json.Unmarshal(standardized, &configMap); err != nil {
+	if err := jsonUnmarshalFn(standardized, &configMap); err != nil {
 		http.Error(w, "config file contains invalid JSON", http.StatusInternalServerError)
 		return
 	}
@@ -251,7 +257,7 @@ func (s *Server) handleModifyShortcut(w http.ResponseWriter, r *http.Request) {
 
 	// Write back.
 	configMap["prompt_shortcuts"] = shortcuts
-	out, err := json.MarshalIndent(configMap, "", "  ")
+	out, err := jsonMarshalIndent(configMap, "", "  ")
 	if err != nil {
 		http.Error(w, "failed to serialize config", http.StatusInternalServerError)
 		return

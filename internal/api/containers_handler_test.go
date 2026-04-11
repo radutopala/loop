@@ -40,8 +40,8 @@ func (m *mockContainerManager) ScheduleRemove(containerID string, delay time.Dur
 	m.Called(containerID, delay)
 }
 
-func (m *mockContainerManager) FindOrCreateShell(ctx context.Context, channelID, dirPath string) (string, error) {
-	args := m.Called(ctx, channelID, dirPath)
+func (m *mockContainerManager) FindOrCreateShell(ctx context.Context, channelID, dirPath, parentDirPath string) (string, error) {
+	args := m.Called(ctx, channelID, dirPath, parentDirPath)
 	return args.String(0), args.Error(1)
 }
 

@@ -85,7 +85,7 @@ type wsStatusMessage struct {
 
 // InteractiveCmdBuilder builds the interactive Claude command for a terminal session.
 type InteractiveCmdBuilder interface {
-	BuildInteractiveCmd(channelID, dirPath, sessionID, agentID string, forkSession bool) string
+	BuildInteractiveCmd(channelID, dirPath, parentDirPath, sessionID, agentID string, forkSession bool) string
 }
 
 // terminalWSConn manages a single WebSocket terminal connection.
@@ -355,7 +355,7 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 	}
 
 	// Resolve channel_id to container_id via ContainerFinder.
-	var dirPath, claudeSessionID string
+	var dirPath, parentDirPath, claudeSessionID string
 	var forkSession bool
 	if msg.ContainerID == "" && msg.ChannelID != "" && t.containerRegistry != nil {
 		// Look up channel's dir_path and session_id for the interactive command.
@@ -384,9 +384,16 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 						forkSession = true
 					}
 				}
+				// For worktree channels, resolve the parent project dir so
+				// the shell container gets parent config mounts merged in.
+				if ch.Worktree && ch.ParentID != "" {
+					if parent, err := t.store.GetChannel(ctx, ch.ParentID); err == nil && parent != nil {
+						parentDirPath = parent.DirPath
+					}
+				}
 			}
 		}
-		containerID, err := t.containerRegistry.FindOrCreateShell(ctx, msg.ChannelID, dirPath)
+		containerID, err := t.containerRegistry.FindOrCreateShell(ctx, msg.ChannelID, dirPath, parentDirPath)
 		if err != nil {
 			t.sendError("no running container for channel: "+err.Error(), wsErrCodeSessionFailed)
 			return
@@ -439,7 +446,7 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 			forkSession = false
 			t.stopOnClose = true
 		}
-		cmd := t.cmdBuilder.BuildInteractiveCmd(msg.ChannelID, dirPath, claudeSessionID, msg.AgentID, forkSession)
+		cmd := t.cmdBuilder.BuildInteractiveCmd(msg.ChannelID, dirPath, parentDirPath, claudeSessionID, msg.AgentID, forkSession)
 		if err := t.manager.SendInput(sid, []byte(cmd+"\n")); err != nil {
 			t.logger.Warn("terminal ws: failed to send interactive cmd", "session_id", sid, "error", err)
 		}

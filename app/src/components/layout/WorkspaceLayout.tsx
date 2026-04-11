@@ -2,6 +2,7 @@ import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useSta
 import type { Channel } from "../../types";
 import type { SessionStatus } from "../../types";
 import type { PaneNode, LeafNode, PanelType } from "../../types/panels";
+import { CHANNEL_ONLY_PANELS } from "../../types/panels";
 import type { SplitDirection, DropPosition } from "../../splitPane/types";
 import { makeLeaf, findLeafById, splitLeaf, removeLeaf, updateFlex, swapLeavesInTree, moveLeaf, leafCount, collectLeaves, canAddPanel, hasAgentLeaf, collectPanelTypes } from "../../splitPane/treeOps";
 import { saveLayout, clearLayout, saveActiveLayout, saveLayoutType, deleteLayout, renameLayout, loadChannelLayouts, ensureDefaultLayouts, createDefaultLayouts, restoreDefaultLayouts, DEFAULT_LAYOUT_NAMES, DEFAULT_LAYOUT_TYPES } from "../../layouts/persistence";
@@ -22,6 +23,7 @@ import { SessionsPanel } from "../panels/SessionsPanel";
 import { PlaygroundPanel } from "../panels/PlaygroundPanel";
 import { NotesPanel } from "../panels/NotesPanel";
 import { TasksPanel } from "../panels/TasksPanel";
+import { KanbanPanel } from "../panels/KanbanPanel";
 import { killAgentContainer } from "../../api/loopApi";
 import { ChannelHeaderInfo } from "./ChannelHeaderInfo";
 import { HeaderBranchPicker } from "./HeaderBranchPicker";
@@ -548,6 +550,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
   const dirPath = channel.dir_path || "";
   const branch = channel.branch || "";
+  const hiddenPanels = channel.parent_id ? CHANNEL_ONLY_PANELS : undefined;
 
   const renderLeaf = useCallback(
     (leaf: LeafNode): React.ReactNode => {
@@ -672,6 +675,16 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               key={`layout-tasks-${channelId}`}
               channelId={channelId}
               allowWorktree={!channel.worktree && !!channel.branch}
+              onSelectChannel={onSelectThread}
+            />
+          );
+        case "kanban":
+          return (
+            <KanbanPanel
+              key={`layout-kanban-${channelId}`}
+              channelId={channelId}
+              dirPath={dirPath}
+              allowWorktree={!channel.worktree && !!dirPath}
               onSelectChannel={onSelectThread}
             />
           );
@@ -828,7 +841,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           Layouts
         </span>
         {layoutNames
-          .filter((name) => !(channel.parent_id && name === "Sessions"))
+          .filter((name) => !(channel.parent_id && (name === "Sessions" || name === "Kanban")))
           .map((name) => (
           <LayoutTab
             key={name}
@@ -1002,10 +1015,10 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             renderLeaf={renderLeaf}
             agentInfoMap={agentInfoMap}
             onCanvasChange={(c) => { setCanvasState(c); }}
-            hiddenPanels={undefined}
+            hiddenPanels={hiddenPanels}
           />
         ) : !tree ? (
-          <EmptyLayoutPicker onAdd={handleEmptyAdd} hiddenPanels={undefined} />
+          <EmptyLayoutPicker onAdd={handleEmptyAdd} hiddenPanels={hiddenPanels} />
         ) : maximizedLeafId && findLeafById(tree, maximizedLeafId) ? (
           (() => {
             const leaf = findLeafById(tree, maximizedLeafId)!;
@@ -1016,7 +1029,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                   leafId={leaf.id}
                   panel={leaf.panel}
                   usedSingletons={usedSingletons}
-                  hiddenPanels={undefined}
+                  hiddenPanels={hiddenPanels}
                   agentInfo={leaf.panel === "agent" ? agentInfoMap.get(leaf.id) : undefined}
                   isMaximized
                   onRemove={() => { setMaximizedLeafId(null); handleRemoveLeaf(leaf.id); }}
@@ -1036,7 +1049,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             renderLeaf={renderLeaf}
             agentInfoMap={agentInfoMap}
             minimizedLeaves={minimizedLeaves}
-            hiddenPanels={undefined}
+            hiddenPanels={hiddenPanels}
             onUpdateFlex={handleUpdateFlex}
             onDrop={handleDrop}
             onRemoveLeaf={handleRemoveLeaf}

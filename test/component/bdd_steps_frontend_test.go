@@ -150,9 +150,12 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I click button "([^"]*)" in the worktrees panel$`, tc.clickButtonInWorktreesPanel)
 	ctx.Step(`^I click on "([^"]*)" in the branches panel$`, tc.clickInBranchesPanel)
 	ctx.Step(`^I click button "([^"]*)" in the branches panel$`, tc.clickButtonInBranchesPanel)
+	ctx.Step(`^I click on "([^"]*)" in the kanban panel$`, tc.clickInKanbanPanel)
+	ctx.Step(`^I click button "([^"]*)" in the kanban panel$`, tc.clickButtonInKanbanPanel)
 	ctx.Step(`^I click button "([^"]*)" in the git panel$`, tc.clickButtonInGitPanel)
 	ctx.Step(`^I trigger Run Now for the visible task$`, tc.triggerRunNowForVisibleTask)
 	ctx.Step(`^I capture the visible task ID$`, tc.captureVisibleTaskID)
+	ctx.Step(`^I click on the element with text "([^"]*)"$`, tc.clickElementWithText)
 	ctx.Step(`^I click on the button with title "([^"]*)"$`, tc.clickButtonWithTitle)
 	ctx.Step(`^I hover over the element with text "([^"]*)"$`, tc.hoverElementWithText)
 	ctx.Step(`^I hover over "([^"]*)" in the sidebar$`, tc.hoverInSidebar)
@@ -302,6 +305,14 @@ func (tc *TestContext) assertElementContainsText(selector, expected string) erro
 
 // --- Text-based interaction steps ---
 
+func (tc *TestContext) clickElementWithText(text string) error {
+	xpath := fmt.Sprintf(`(//*[normalize-space()='%s'])[1]`, text)
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.WaitVisible(xpath),
+		chromedp.Click(xpath),
+	)
+}
+
 func (tc *TestContext) clickButtonWithText(text string) error {
 	pollJS := fmt.Sprintf(
 		`!!(Array.from(document.querySelectorAll('button')).find(b => b.innerText.trim() === %q) || Array.from(document.querySelectorAll('button')).find(b => b.innerText.includes(%q)))`,
@@ -417,6 +428,14 @@ func (tc *TestContext) clickInBranchesPanel(text string) error {
 
 func (tc *TestContext) clickButtonInBranchesPanel(text string) error {
 	return tc.clickButtonInRegion(text, "branches-panel")
+}
+
+func (tc *TestContext) clickInKanbanPanel(text string) error {
+	return tc.clickInRegion(text, "kanban-panel")
+}
+
+func (tc *TestContext) clickButtonInKanbanPanel(text string) error {
+	return tc.clickButtonInRegion(text, "kanban-panel")
 }
 
 func (tc *TestContext) clickButtonInGitPanel(text string) error {

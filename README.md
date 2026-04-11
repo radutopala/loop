@@ -684,6 +684,8 @@ The agent will use `search_channels` to find the backend channel, then `send_mes
 
 Loop ships with a ticket-driven workflow that lets you split work across multiple parallel threads, each working in its own git worktree. A dispatcher automatically creates worker threads and chains merge tickets so branches are merged back into main in order.
 
+The **Kanban panel** in the desktop app provides a visual interface for the same ticket system — see all tickets by status, create/edit/delete, and assign worktrees with one click. The CLI (`tk`) and Kanban UI share the same `.tickets/` directory, so changes from either side are reflected everywhere. See [Kanban docs](docs/kanban.md) for the full UI reference.
+
 #### How it works
 
 1. **You ask the bot** to break a task into work tickets:
@@ -912,6 +914,7 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 - **Terminal** — interactive xterm.js terminals for agent containers and host shells, with horizontal/vertical splits
 - **File editor** — CodeMirror-powered editor with syntax highlighting, markdown preview, in-file search, context menus, auto-save, and directory creation/deletion
 - **Git panel** — git changes with per-file addition/deletion stats, maximizable to full width, expandable context rows between hunks (GitLab-style "load more"), branch-to-branch diff mode for comparing any two branches, renamed file support with `{old => new}` notation, commit history view with branch selector and lazy pagination, worktrees tab for managing git worktrees (import, navigate, delete)
+- **Kanban panel** — visual ticket board with Open / In Progress / Closed columns backed by filesystem-based `tk` tickets (`.tickets/` directory). Create, edit, delete tickets with full metadata (priority, type, assignee, tags, dependencies, design notes, acceptance criteria). One-click "Assign Worktree" atomically claims a ticket, creates a git worktree, spawns a thread, and auto-starts an agent. Live updates via WebSocket. See [Kanban](docs/kanban.md)
 - **Containers panel** — global view of all Docker containers (agent, shell, chrome) with real-time status lifecycle (running → stopped → pending-removal), type labels, scheduled removal countdown, and live updates via WebSocket events
 - **Memory panel** — browse and search semantic memory files
 - **Custom layouts** — named split-pane workspaces with drag-to-resize, saved per channel. Create, rename, delete, and restore default layouts from the tab bar
@@ -995,6 +998,12 @@ make app-install
 | `GET` | `/api/playground/files?name=...` | List files in a playground |
 | `POST` | `/api/browser/action` | Browser automation (navigate, tabs, screenshot, input, etc.) |
 | `POST` | `/api/browser/mode` | Switch browser mode (docker/host) |
+| `GET` | `/api/tickets` | List tickets for a project directory (filter by status, tag, assignee, type) |
+| `POST` | `/api/tickets` | Create a ticket |
+| `GET` | `/api/tickets/{id}` | Get a single ticket by ID |
+| `PATCH` | `/api/tickets/{id}` | Update ticket fields (status, title, description, deps, etc.) |
+| `DELETE` | `/api/tickets/{id}` | Delete a ticket |
+| `POST` | `/api/tickets/{id}/assign` | Assign a worktree to a ticket (claim, create worktree, start agent) |
 | `GET` | `/api/shortcuts` | List resolved prompt shortcuts (optional `channel_id` for project merge) |
 | `POST` | `/api/shortcuts` | Add, update, or delete a prompt shortcut (global or project scope) |
 | `GET` | `/api/config/schema` | JSON Schema for all config fields |

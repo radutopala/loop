@@ -221,6 +221,12 @@ Only shown when `updateStatus?.available` is true. The button text and behavior 
 
 The button includes a download icon (arrow into tray).
 
+### Kanban Button
+
+- Board icon + "Kanban" text
+- Click opens the [Kanban panel](kanban.md) as an overlay
+- `colors.textDim` text, brightens on hover
+
 ### Settings Button
 
 - Gear icon + "Settings" text

@@ -74,7 +74,7 @@ type ContainerRegistry interface {
 	RunningChannelIDs(ctx context.Context) map[string]struct{}
 	RemoveContainer(ctx context.Context, containerID string) error
 	ScheduleRemove(containerID string, delay time.Duration)
-	FindOrCreateShell(ctx context.Context, channelID, dirPath string) (string, error)
+	FindOrCreateShell(ctx context.Context, channelID, dirPath, parentDirPath string) (string, error)
 }
 
 // singletonTypes are container types that allow at most one running
@@ -91,7 +91,7 @@ type containerRemover interface {
 
 // shellCreator creates shell containers on-demand for terminal access.
 type shellCreator interface {
-	CreateShellContainer(ctx context.Context, channelID, dirPath string) (string, error)
+	CreateShellContainer(ctx context.Context, channelID, dirPath, parentDirPath string) (string, error)
 }
 
 // Registry is a thread-safe, in-memory container registry.
@@ -461,7 +461,7 @@ func (r *Registry) cancelTimer(containerID string) {
 // If no shell container exists, a new one is created automatically.
 // Uses a per-channel mutex to prevent duplicate containers when multiple
 // terminal panes connect simultaneously.
-func (r *Registry) FindOrCreateShell(ctx context.Context, channelID, dirPath string) (string, error) {
+func (r *Registry) FindOrCreateShell(ctx context.Context, channelID, dirPath, parentDirPath string) (string, error) {
 	// Fast path: check for an existing shell container.
 	if info := r.FindByChannelAndType(channelID, ContainerTypeShell); info != nil {
 		return info.ContainerID, nil
@@ -489,7 +489,7 @@ func (r *Registry) FindOrCreateShell(ctx context.Context, channelID, dirPath str
 		return info.ContainerID, nil
 	}
 
-	id, err := r.creator.CreateShellContainer(ctx, channelID, dirPath)
+	id, err := r.creator.CreateShellContainer(ctx, channelID, dirPath, parentDirPath)
 	if err != nil {
 		return "", fmt.Errorf("creating shell container: %w", err)
 	}

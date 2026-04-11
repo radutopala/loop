@@ -155,7 +155,7 @@ func (m *MockContainerRegistry) RemoveContainer(ctx context.Context, containerID
 func (m *MockContainerRegistry) ScheduleRemove(containerID string, delay time.Duration) {
 	m.Called(containerID, delay)
 }
-func (m *MockContainerRegistry) FindOrCreateShell(context.Context, string, string) (string, error) {
+func (m *MockContainerRegistry) FindOrCreateShell(context.Context, string, string, string) (string, error) {
 	return "", nil
 }
 
@@ -3019,7 +3019,7 @@ func (s *RunnerSuite) TestCreateShellContainerHappyPath() {
 	}), testContainerName).Return(testContainerID, nil)
 	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
 
-	id, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	id, err := s.runner.CreateShellContainer(ctx, "ch-1", "", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), testContainerID, id)
 	s.client.AssertExpectations(s.T())
@@ -3029,7 +3029,7 @@ func (s *RunnerSuite) TestCreateShellContainerMkdirError() {
 	ctx := context.Background()
 	s.sys.Override("MkdirAll", mock.Anything, mock.Anything).Return(errors.New("mkdir failed"))
 
-	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating work dir")
 }
@@ -3039,7 +3039,7 @@ func (s *RunnerSuite) TestCreateShellContainerCreateError() {
 
 	s.client.On("ContainerCreate", ctx, mock.Anything, mock.Anything).Return("", errors.New("create failed"))
 
-	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating container")
 }
@@ -3048,7 +3048,7 @@ func (s *RunnerSuite) TestCreateShellContainerEnvError() {
 	ctx := context.Background()
 	s.sys.Override("UserHomeDir").Return("", errors.New("no home"))
 
-	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "getting home directory")
 }
@@ -3059,7 +3059,7 @@ func (s *RunnerSuite) TestCreateShellContainerStartError() {
 	s.client.On("ContainerCreate", ctx, mock.Anything, testContainerName).Return(testContainerID, nil)
 	s.client.On("ContainerStart", ctx, testContainerID).Return(errors.New("start failed"))
 
-	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "starting container")
 }
@@ -3071,7 +3071,7 @@ func (s *RunnerSuite) TestCreateShellContainerProjectConfigError() {
 		return nil, errors.New("permission denied")
 	}
 
-	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "loading project config")
 }
@@ -3147,10 +3147,10 @@ func (s *RunnerSuite) TestBuildBaseClaudeCmdPlanMode() {
 	require.NotContains(s.T(), got, "--permission-mode")
 	require.NotContains(s.T(), got, "--dangerously-load-development-channels")
 
-	// With plan mode: should contain --permission-mode plan but not --dangerously-skip-permissions.
+	// With plan mode: should contain both --dangerously-skip-permissions and --permission-mode plan.
 	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, true, nil)
 	got = strings.Join(cmd, " ")
-	require.NotContains(s.T(), got, "--dangerously-skip-permissions")
+	require.Contains(s.T(), got, "--dangerously-skip-permissions")
 	require.Contains(s.T(), got, "--permission-mode plan")
 
 	// With agent ID: should contain --dangerously-load-development-channels server:loop.
@@ -3176,7 +3176,7 @@ func (s *RunnerSuite) TestBuildClaudeCmdPlanMode() {
 	req.PlanMode = true
 	cmd = buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
 	got = strings.Join(cmd, " ")
-	require.NotContains(s.T(), got, "--dangerously-skip-permissions")
+	require.Contains(s.T(), got, "--dangerously-skip-permissions")
 	require.Contains(s.T(), got, "--permission-mode plan")
 }
 
@@ -3232,7 +3232,7 @@ func (s *RunnerSuite) TestClaudeCmdBuilder() {
 				LoopDir:       tc.loopDir,
 			}
 			builder := NewClaudeCmdBuilder(cfg, nil)
-			got := builder.BuildInteractiveCmd(tc.channelID, tc.dirPath, tc.sessionID, "", tc.forkSession)
+			got := builder.BuildInteractiveCmd(tc.channelID, tc.dirPath, "", tc.sessionID, "", tc.forkSession)
 			expectedMCP := tc.wantDir + "/.loop/mcp-" + tc.channelID + ".json"
 			require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --dangerously-skip-permissions"+tc.wantExtra, got)
 		})
@@ -3256,7 +3256,7 @@ func (s *RunnerSuite) TestClaudeCmdBuilderProjectConfigModel() {
 		LoopDir:       "/home/user/.loop",
 	}
 	builder := NewClaudeCmdBuilder(cfg, nil)
-	got := builder.BuildInteractiveCmd("ch-1", tmpDir, "", "", false)
+	got := builder.BuildInteractiveCmd("ch-1", tmpDir, "", "", "", false)
 
 	// Project config's claude_model should override the global one.
 	expectedMCP := tmpDir + "/.loop/mcp-ch-1.json"
@@ -3275,7 +3275,7 @@ func (s *RunnerSuite) TestClaudeCmdBuilderWritesAgentMCPConfig() {
 		Memory:        config.MemoryConfig{Enabled: true},
 	}
 	builder := NewClaudeCmdBuilder(cfg, nil)
-	got := builder.BuildInteractiveCmd("ch-1", tmpDir, "", "agent-0", false)
+	got := builder.BuildInteractiveCmd("ch-1", tmpDir, "", "", "agent-0", false)
 
 	// Command should reference the per-agent MCP config.
 	expectedMCP := tmpDir + "/.loop/mcp-ch-1-agent-0.json"
@@ -3300,8 +3300,37 @@ func (s *RunnerSuite) TestClaudeCmdBuilderNoAgentSkipsMCPWrite() {
 		writeCalled = true
 		return nil
 	}
-	builder.BuildInteractiveCmd("ch-1", "/projects/app", "", "", false)
+	builder.BuildInteractiveCmd("ch-1", "/projects/app", "", "", "", false)
 	require.False(s.T(), writeCalled, "should not write MCP config when agentID is empty")
+}
+
+func (s *RunnerSuite) TestClaudeCmdBuilderWorktreeProjectConfig() {
+	// Create parent project dir with a .loop/config.json setting claude_model.
+	parentDir := s.T().TempDir()
+	parentLoopDir := filepath.Join(parentDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(parentLoopDir, 0755))
+	require.NoError(s.T(), os.WriteFile(
+		filepath.Join(parentLoopDir, "config.json"),
+		[]byte(`{"claude_model": "claude-opus-4-6"}`),
+		0644,
+	))
+
+	// worktreeDir has no config of its own.
+	worktreeDir := s.T().TempDir()
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(worktreeDir, ".loop"), 0755))
+
+	cfg := &config.Config{
+		ClaudeBinPath: "claude",
+		ClaudeModel:   "claude-sonnet-4-5-20250929",
+		LoopDir:       "/home/user/.loop",
+	}
+	builder := NewClaudeCmdBuilder(cfg, nil)
+	// Pass parentDirPath — should use loadWorktreeProjectConfig which
+	// merges parent project config, picking up the model override.
+	got := builder.BuildInteractiveCmd("ch-1", worktreeDir, parentDir, "", "", false)
+
+	expectedMCP := worktreeDir + "/.loop/mcp-ch-1.json"
+	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config "+expectedMCP+" --model claude-opus-4-6 --dangerously-skip-permissions", got)
 }
 
 func (s *RunnerSuite) TestCreateShellContainerWithCopyFiles() {
@@ -3314,7 +3343,7 @@ func (s *RunnerSuite) TestCreateShellContainerWithCopyFiles() {
 	}), testContainerName).Return(testContainerID, nil)
 	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
 
-	id, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	id, err := s.runner.CreateShellContainer(ctx, "ch-1", "", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), testContainerID, id)
 }
@@ -3498,6 +3527,17 @@ func (s *RunnerSuite) TestBuildContainerMountsExternalWorktree() {
 	require.Equal(s.T(), 1, count, "parent dir should be mounted exactly once")
 }
 
+func (s *RunnerSuite) TestBuildContainerMountsExtraDirTildeExpansion() {
+	workDir := "/home/user/project"
+	extraDirs := []string{"~/lib", "/absolute/path"}
+
+	binds, _ := s.runner.buildContainerMounts(nil, workDir, "", extraDirs)
+
+	// ~ should be expanded to the home directory.
+	require.Contains(s.T(), binds, "/home/testuser/lib:/home/testuser/lib")
+	require.Contains(s.T(), binds, "/absolute/path:/absolute/path")
+}
+
 // --- buildBaseClaudeCmd extra dirs tests ---
 
 func (s *RunnerSuite) TestBuildBaseClaudeCmdWithExtraDirs() {
@@ -3574,7 +3614,7 @@ func (s *RunnerSuite) TestCreateShellContainerRegistersContainer() {
 	s.client.On("ContainerCreate", ctx, mock.Anything, testContainerName).Return(testContainerID, nil)
 	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
 
-	id, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	id, err := s.runner.CreateShellContainer(ctx, "ch-1", "", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), testContainerID, id)
 
@@ -3616,7 +3656,7 @@ func (s *RunnerSuite) TestCreateShellContainerNoRegistryOnError() {
 
 	s.client.On("ContainerCreate", ctx, mock.Anything, mock.Anything).Return("", errors.New("create failed"))
 
-	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "")
+	_, err := s.runner.CreateShellContainer(ctx, "ch-1", "", "")
 	require.Error(s.T(), err)
 
 	// Registry.Register should NOT be called on error.

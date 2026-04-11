@@ -707,13 +707,18 @@ func (r *DockerRunner) buildContainerMounts(mounts []string, workDir, parentDirP
 		}
 	}
 	for _, dir := range extraDirs {
-		if dir == workDir || dir == parentDirPath || mounted[dir] {
+		expanded, err := r.expandPath(dir)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: skipping extra dir %s: %v\n", dir, err)
 			continue
 		}
-		if parentDirPath != "" && strings.HasPrefix(dir, parentDirPath+"/") {
+		if expanded == workDir || expanded == parentDirPath || mounted[expanded] {
 			continue
 		}
-		binds = append(binds, dir+":"+dir)
+		if parentDirPath != "" && strings.HasPrefix(expanded, parentDirPath+"/") {
+			continue
+		}
+		binds = append(binds, expanded+":"+expanded)
 	}
 
 	return binds, chownPaths
@@ -726,10 +731,9 @@ func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID st
 	if cfg.ClaudeModel != "" {
 		cmd = append(cmd, "--model", cfg.ClaudeModel)
 	}
+	cmd = append(cmd, "--dangerously-skip-permissions")
 	if planMode {
 		cmd = append(cmd, "--permission-mode", "plan")
-	} else {
-		cmd = append(cmd, "--dangerously-skip-permissions")
 	}
 	if sessionID != "" {
 		cmd = append(cmd, "--resume", sessionID)
@@ -777,20 +781,22 @@ func BuildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID
 // ClaudeCmdBuilder builds the interactive Claude command for terminal sessions.
 // It implements api.InteractiveCmdBuilder.
 type ClaudeCmdBuilder struct {
-	cfg               atomic.Pointer[config.Config]
-	configLoad        func() (*config.Config, error)
-	loadProjectConfig func(string, *config.Config) (*config.Config, error)
-	writeFile         func(string, []byte, os.FileMode) error
-	mkdirAll          func(string, os.FileMode) error
+	cfg                       atomic.Pointer[config.Config]
+	configLoad                func() (*config.Config, error)
+	loadProjectConfig         func(string, *config.Config) (*config.Config, error)
+	loadWorktreeProjectConfig func(string, string, *config.Config) (*config.Config, error)
+	writeFile                 func(string, []byte, os.FileMode) error
+	mkdirAll                  func(string, os.FileMode) error
 }
 
 // NewClaudeCmdBuilder creates a builder that uses the given config.
 func NewClaudeCmdBuilder(cfg *config.Config, configLoad func() (*config.Config, error)) *ClaudeCmdBuilder {
 	b := &ClaudeCmdBuilder{
-		configLoad:        configLoad,
-		loadProjectConfig: config.LoadProjectConfig,
-		writeFile:         os.WriteFile,
-		mkdirAll:          os.MkdirAll,
+		configLoad:                configLoad,
+		loadProjectConfig:         config.LoadProjectConfig,
+		loadWorktreeProjectConfig: config.LoadWorktreeProjectConfig,
+		writeFile:                 os.WriteFile,
+		mkdirAll:                  os.MkdirAll,
 	}
 	b.cfg.Store(cfg)
 	return b
@@ -815,14 +821,18 @@ func (b *ClaudeCmdBuilder) currentConfig() *config.Config {
 // such as claude_model before building the command.
 // When agentID is set, a per-agent MCP config is written with --agent-id so
 // the agent can identify itself via the MCP tools.
-func (b *ClaudeCmdBuilder) BuildInteractiveCmd(channelID, dirPath, sessionID, agentID string, forkSession bool) string {
+func (b *ClaudeCmdBuilder) BuildInteractiveCmd(channelID, dirPath, parentDirPath, sessionID, agentID string, forkSession bool) string {
 	baseCfg := b.currentConfig()
 	workDir := dirPath
 	if workDir == "" {
 		workDir = filepath.Join(baseCfg.LoopDir, channelID, "work")
 	}
 	cfg := baseCfg
-	if merged, err := b.loadProjectConfig(workDir, baseCfg); err == nil {
+	if parentDirPath != "" {
+		if merged, err := b.loadWorktreeProjectConfig(workDir, parentDirPath, baseCfg); err == nil {
+			cfg = merged
+		}
+	} else if merged, err := b.loadProjectConfig(workDir, baseCfg); err == nil {
 		cfg = merged
 	}
 	if agentID != "" {
@@ -1255,8 +1265,8 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 // CreateShellContainer creates a long-lived shell container for terminal access.
 // Unlike Run, the container runs "sleep infinity" instead of Claude CLI and is
 // not auto-removed — it persists until explicitly stopped.
-func (r *DockerRunner) CreateShellContainer(ctx context.Context, channelID, dirPath string) (string, error) {
-	containerID, ctrName, _, _, err := r.createAndStartContainer(ctx, channelID, dirPath, "", "", "",
+func (r *DockerRunner) CreateShellContainer(ctx context.Context, channelID, dirPath, parentDirPath string) (string, error) {
+	containerID, ctrName, _, _, err := r.createAndStartContainer(ctx, channelID, dirPath, "", parentDirPath, "",
 		ContainerTypeShell,
 		func(*config.Config, string) []string {
 			return []string{"sleep", "infinity"}

@@ -29,7 +29,7 @@ type ContainerManager interface {
 	RunningChannelIDs(ctx context.Context) map[string]struct{}
 	RemoveContainer(ctx context.Context, containerID string) error
 	ScheduleRemove(containerID string, delay time.Duration)
-	FindOrCreateShell(ctx context.Context, channelID, dirPath string) (string, error)
+	FindOrCreateShell(ctx context.Context, channelID, dirPath, parentDirPath string) (string, error)
 }
 
 // ActiveChatLister returns channel IDs with active chat agent runs.
@@ -229,6 +229,12 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/channels/{id}/branches/switch", s.handleSwitchBranch)
 	mux.HandleFunc("POST /api/channels/{id}/branches/create", s.handleCreateBranch)
 	mux.HandleFunc("DELETE /api/channels/{id}/branches", s.handleDeleteBranch)
+	mux.HandleFunc("GET /api/tickets", s.handleListTickets)
+	mux.HandleFunc("GET /api/tickets/{id}", s.handleGetTicket)
+	mux.HandleFunc("POST /api/tickets", s.handleCreateTicket)
+	mux.HandleFunc("PATCH /api/tickets/{id}", s.handleUpdateTicket)
+	mux.HandleFunc("DELETE /api/tickets/{id}", s.handleDeleteTicket)
+	mux.HandleFunc("POST /api/tickets/{id}/assign", s.handleAssignTicket)
 	mux.HandleFunc("POST /api/worktrees", s.handleCreateWorktree)
 	mux.HandleFunc("POST /api/worktrees/import", s.handleImportWorktree)
 	mux.HandleFunc("DELETE /api/worktrees", s.handleRemoveWorktree)

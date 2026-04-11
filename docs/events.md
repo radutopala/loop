@@ -425,6 +425,26 @@ A container was unregistered from the registry (removed from Docker or reconcile
 
 ---
 
+### `ticket.created` / `ticket.updated` / `ticket.deleted`
+
+Ticket lifecycle events from the [Tickets API](api.md#tickets). The Kanban panel subscribes to these to refresh the board.
+
+**Payload schema:**
+
+```json
+{
+  "ticket_id": "tic-a1b2c3d4"
+}
+```
+
+| Field       | Type   | Description |
+|-------------|--------|-------------|
+| `ticket_id` | string | The ticket ID that was affected |
+
+**Scope:** Global (no channel filtering).
+
+---
+
 ## Broadcast Flow
 
 1. **Event source** calls a typed broadcast method (e.g., `BroadcastMessageCreated`).
@@ -466,6 +486,7 @@ A container was unregistered from the registry (removed from Docker or reconcile
 | `BroadcastTaskUpdated` | `task.updated` | `TaskEventData` | Global |
 | `BroadcastTaskDeleted` | `task.deleted` | `TaskEventData` | Global |
 | `BroadcastTaskRunCompleted` | `task.run_completed` | `TaskRunEventData` | Global |
+| `BroadcastTicketEvent` | `ticket.created` / `ticket.updated` / `ticket.deleted` | `map[string]any` | Global |
 
 ---
 

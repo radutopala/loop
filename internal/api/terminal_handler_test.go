@@ -83,8 +83,8 @@ type MockInteractiveCmdBuilder struct {
 	mock.Mock
 }
 
-func (m *MockInteractiveCmdBuilder) BuildInteractiveCmd(channelID, dirPath, sessionID, agentID string, forkSession bool) string {
-	return m.Called(channelID, dirPath, sessionID, agentID, forkSession).String(0)
+func (m *MockInteractiveCmdBuilder) BuildInteractiveCmd(channelID, dirPath, parentDirPath, sessionID, agentID string, forkSession bool) string {
+	return m.Called(channelID, dirPath, parentDirPath, sessionID, agentID, forkSession).String(0)
 }
 
 type TerminalHandlerSuite struct {
@@ -305,7 +305,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionWithChannelID() {
 	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	finder := new(mockContainerManager)
-	finder.On("FindOrCreateShell", mock.Anything, "ch-42", mock.Anything).Return("resolved-container-123", nil)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-42", mock.Anything, mock.Anything).Return("resolved-container-123", nil)
 	s.srv.containerRegistry = finder
 
 	conn, ts := s.dialWS()
@@ -333,7 +333,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionWithChannelIDResolvesDirPath() {
 	s.srv.store = store
 
 	finder := new(mockContainerManager)
-	finder.On("FindOrCreateShell", mock.Anything, "ch-proj", "/home/user/dev/loop").Return("resolved-container-456", nil)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-proj", "/home/user/dev/loop", "").Return("resolved-container-456", nil)
 	s.srv.containerRegistry = finder
 
 	conn, ts := s.dialWS()
@@ -351,7 +351,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionWithChannelIDResolvesDirPath() {
 
 func (s *TerminalHandlerSuite) TestCreateSessionWithChannelIDNotFound() {
 	finder := new(mockContainerManager)
-	finder.On("FindOrCreateShell", mock.Anything, "ch-missing", mock.Anything).
+	finder.On("FindOrCreateShell", mock.Anything, "ch-missing", mock.Anything, mock.Anything).
 		Return("", errors.New("no container found"))
 	s.srv.containerRegistry = finder
 
@@ -392,11 +392,11 @@ func (s *TerminalHandlerSuite) TestCreateSessionSendsInteractiveCmd() {
 	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	finder := new(mockContainerManager)
-	finder.On("FindOrCreateShell", mock.Anything, "ch-99", mock.Anything).Return("resolved-ctr", nil)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-99", mock.Anything, mock.Anything).Return("resolved-ctr", nil)
 	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-99", "", "", "", false).Return("claude --dangerously-skip-permissions")
+	builder.On("BuildInteractiveCmd", "ch-99", "", "", "", "", false).Return("claude --dangerously-skip-permissions")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
 	conn, ts := s.dialWS()
@@ -430,11 +430,11 @@ func (s *TerminalHandlerSuite) TestCreateSessionSendsInteractiveCmdWithDirPath()
 	s.srv.store = store
 
 	finder := new(mockContainerManager)
-	finder.On("FindOrCreateShell", mock.Anything, "ch-dir", "/projects/app").Return("resolved-ctr-dir", nil)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-dir", "/projects/app", "").Return("resolved-ctr-dir", nil)
 	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-dir", "/projects/app", "", "", false).Return("claude --mcp-config /projects/app/.loop/mcp-ch-dir.json")
+	builder.On("BuildInteractiveCmd", "ch-dir", "/projects/app", "", "", "", false).Return("claude --mcp-config /projects/app/.loop/mcp-ch-dir.json")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
 	conn, ts := s.dialWS()
@@ -454,6 +454,51 @@ func (s *TerminalHandlerSuite) TestCreateSessionSendsInteractiveCmdWithDirPath()
 	builder.AssertExpectations(s.T())
 }
 
+func (s *TerminalHandlerSuite) TestCreateSessionWorktreePassesParentDirPath() {
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "resolved-ctr-wt", []string(nil)).
+		Return("sess-wt", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	inputSent := onSendInputCalled(s.terminal, "sess-wt", []byte("claude --worktree-cmd\n"))
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	store := new(MockChannelLister)
+	// The worktree channel has Worktree=true and a ParentID.
+	store.On("GetChannel", mock.Anything, "wt-ch").
+		Return(&db.Channel{ChannelID: "wt-ch", DirPath: "/worktrees/wt-1", ParentID: "parent-ch", Worktree: true}, nil)
+	// The parent channel provides the project dir.
+	store.On("GetChannel", mock.Anything, "parent-ch").
+		Return(&db.Channel{ChannelID: "parent-ch", DirPath: "/projects/app", SessionID: "sess-parent"}, nil)
+	s.srv.store = store
+
+	finder := new(mockContainerManager)
+	// parentDirPath should be the parent's DirPath.
+	finder.On("FindOrCreateShell", mock.Anything, "wt-ch", "/worktrees/wt-1", "/projects/app").Return("resolved-ctr-wt", nil)
+	s.srv.containerRegistry = finder
+
+	builder := new(MockInteractiveCmdBuilder)
+	// BuildInteractiveCmd should receive parentDirPath="/projects/app".
+	builder.On("BuildInteractiveCmd", "wt-ch", "/worktrees/wt-1", "/projects/app", "sess-parent", "", true).Return("claude --worktree-cmd")
+	s.srv.SetInteractiveCmdBuilder(builder)
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ChannelID: "wt-ch"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	require.Equal(s.T(), "sess-wt", msg.SessionID)
+	select {
+	case <-inputSent:
+	case <-time.After(time.Second):
+		s.T().Fatal("timed out waiting for SendInput")
+	}
+	finder.AssertExpectations(s.T())
+	builder.AssertExpectations(s.T())
+}
+
 func (s *TerminalHandlerSuite) TestCreateSessionResumesChannelSession() {
 	outCh := make(chan []byte, 1)
 	doneCh := make(chan struct{})
@@ -468,11 +513,11 @@ func (s *TerminalHandlerSuite) TestCreateSessionResumesChannelSession() {
 	s.srv.store = store
 
 	finder := new(mockContainerManager)
-	finder.On("FindOrCreateShell", mock.Anything, "ch-resume", mock.Anything).Return("resolved-ctr", nil)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-resume", mock.Anything, mock.Anything).Return("resolved-ctr", nil)
 	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-resume", "", "sess-existing", "", false, mock.Anything).
+	builder.On("BuildInteractiveCmd", "ch-resume", "", "", "sess-existing", "", false, mock.Anything).
 		Return("claude --dangerously-skip-permissions --resume sess-existing")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -513,11 +558,11 @@ func (s *TerminalHandlerSuite) TestCreateSessionOverridesWithMsgSessionID() {
 	s.srv.store = store
 
 	finder := new(mockContainerManager)
-	finder.On("FindOrCreateShell", mock.Anything, "ch-sess", mock.Anything).Return("resolved-ctr", nil)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-sess", mock.Anything, mock.Anything).Return("resolved-ctr", nil)
 	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false, mock.Anything).
+	builder.On("BuildInteractiveCmd", "ch-sess", "", "", "sess-picked", "", false, mock.Anything).
 		Return("claude --dangerously-skip-permissions --resume sess-picked")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -557,11 +602,11 @@ func (s *TerminalHandlerSuite) TestCreateSessionForksThreadFromParent() {
 	s.srv.store = store
 
 	finder := new(mockContainerManager)
-	finder.On("FindOrCreateShell", mock.Anything, "thread-1", mock.Anything).Return("resolved-ctr", nil)
+	finder.On("FindOrCreateShell", mock.Anything, "thread-1", mock.Anything, mock.Anything).Return("resolved-ctr", nil)
 	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "thread-1", "", "sess-parent", "", true, mock.Anything).
+	builder.On("BuildInteractiveCmd", "thread-1", "", "", "sess-parent", "", true, mock.Anything).
 		Return("claude --dangerously-skip-permissions --resume sess-parent --fork-session")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -600,12 +645,12 @@ func (s *TerminalHandlerSuite) TestCreateSessionThreadWithOwnSession() {
 	s.srv.store = store
 
 	finder := new(mockContainerManager)
-	finder.On("FindOrCreateShell", mock.Anything, "thread-2", mock.Anything).Return("resolved-ctr", nil)
+	finder.On("FindOrCreateShell", mock.Anything, "thread-2", mock.Anything, mock.Anything).Return("resolved-ctr", nil)
 	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
 	// Has its own session — uses resume, not fork.
-	builder.On("BuildInteractiveCmd", "thread-2", "", "sess-thread-own", "", false, mock.Anything).
+	builder.On("BuildInteractiveCmd", "thread-2", "", "", "sess-thread-own", "", false, mock.Anything).
 		Return("claude --dangerously-skip-permissions --resume sess-thread-own")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -634,11 +679,11 @@ func (s *TerminalHandlerSuite) TestCreateSessionInteractiveCmdSendInputError() {
 	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	finder := new(mockContainerManager)
-	finder.On("FindOrCreateShell", mock.Anything, "ch-err", mock.Anything).Return("resolved-ctr", nil)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-err", mock.Anything, mock.Anything).Return("resolved-ctr", nil)
 	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-err", "", "", "", false).Return("claude --dangerously-skip-permissions")
+	builder.On("BuildInteractiveCmd", "ch-err", "", "", "", "", false).Return("claude --dangerously-skip-permissions")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
 	conn, ts := s.dialWS()
@@ -662,7 +707,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionExplicitCmdSkipsInteractiveCmd()
 	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	finder := new(mockContainerManager)
-	finder.On("FindOrCreateShell", mock.Anything, "ch-explicit", mock.Anything).Return("resolved-ctr", nil)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-explicit", mock.Anything, mock.Anything).Return("resolved-ctr", nil)
 	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
@@ -676,7 +721,7 @@ func (s *TerminalHandlerSuite) TestCreateSessionExplicitCmdSkipsInteractiveCmd()
 
 	msg := readStatusMsg(s.T(), conn)
 	require.Equal(s.T(), "created", msg.Type)
-	builder.AssertNotCalled(s.T(), "BuildInteractiveCmd", mock.Anything, mock.Anything, mock.Anything)
+	builder.AssertNotCalled(s.T(), "BuildInteractiveCmd", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
 }
 
@@ -1263,11 +1308,11 @@ func (s *TerminalHandlerSuite) TestStopOnCloseWhenSessionIDOverride() {
 	s.srv.store = store
 
 	finder := new(mockContainerManager)
-	finder.On("FindOrCreateShell", mock.Anything, "ch-sess", mock.Anything).Return("resolved-ctr", nil)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-sess", mock.Anything, mock.Anything).Return("resolved-ctr", nil)
 	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false, mock.Anything).
+	builder.On("BuildInteractiveCmd", "ch-sess", "", "", "sess-picked", "", false, mock.Anything).
 		Return("claude --dangerously-skip-permissions --resume sess-picked")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -1318,11 +1363,11 @@ func (s *TerminalHandlerSuite) TestStopOnCloseKillProcessGroupError() {
 	s.srv.store = store
 
 	finder := new(mockContainerManager)
-	finder.On("FindOrCreateShell", mock.Anything, "ch-sess", mock.Anything).Return("resolved-ctr", nil)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-sess", mock.Anything, mock.Anything).Return("resolved-ctr", nil)
 	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false, mock.Anything).
+	builder.On("BuildInteractiveCmd", "ch-sess", "", "", "sess-picked", "", false, mock.Anything).
 		Return("claude --dangerously-skip-permissions --resume sess-picked")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -1373,11 +1418,11 @@ func (s *TerminalHandlerSuite) TestStopOnCloseStopSessionError() {
 	s.srv.store = store
 
 	finder := new(mockContainerManager)
-	finder.On("FindOrCreateShell", mock.Anything, "ch-sess", mock.Anything).Return("resolved-ctr", nil)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-sess", mock.Anything, mock.Anything).Return("resolved-ctr", nil)
 	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-sess", "", "sess-picked", "", false, mock.Anything).
+	builder.On("BuildInteractiveCmd", "ch-sess", "", "", "sess-picked", "", false, mock.Anything).
 		Return("claude --dangerously-skip-permissions --resume sess-picked")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -1764,7 +1809,7 @@ func (s *TerminalHandlerSuite) TestCreateHostSessionNoAutoCmd() {
 	require.Equal(s.T(), "created", msg.Type)
 
 	time.Sleep(50 * time.Millisecond)
-	builder.AssertNotCalled(s.T(), "BuildInteractiveCmd", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	builder.AssertNotCalled(s.T(), "BuildInteractiveCmd", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 	hostMgr.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
 	close(doneCh)
 }
@@ -2322,10 +2367,10 @@ func (s *TerminalHandlerSuite) TestWriteMessageError() {
 func (s *TerminalHandlerSuite) TestCreateSessionWithAgentIDTriggersAutoAccept() {
 	finder := new(mockContainerManager)
 	s.srv.containerRegistry = finder
-	finder.On("FindOrCreateShell", mock.Anything, "ch-1", "").Return("ctr-1", nil)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-1", "", "").Return("ctr-1", nil)
 
 	builder := new(MockInteractiveCmdBuilder)
-	builder.On("BuildInteractiveCmd", "ch-1", "", "", "agent-0", false).Return("claude --dangerously-skip-permissions")
+	builder.On("BuildInteractiveCmd", "ch-1", "", "", "", "agent-0", false).Return("claude --dangerously-skip-permissions")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
 	outCh := make(chan []byte, 1)
@@ -2367,12 +2412,12 @@ func (s *TerminalHandlerSuite) TestAgentTerminalForksChannelSession() {
 	s.srv.store = store
 
 	finder := new(mockContainerManager)
-	finder.On("FindOrCreateShell", mock.Anything, "ch-1", mock.Anything).Return("ctr-1", nil)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-1", mock.Anything, mock.Anything).Return("ctr-1", nil)
 	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
 	// forkSession=true because agentID is set and channel has a session.
-	builder.On("BuildInteractiveCmd", "ch-1", "", "sess-main", "agent-0", true, mock.Anything).
+	builder.On("BuildInteractiveCmd", "ch-1", "", "", "sess-main", "agent-0", true, mock.Anything).
 		Return("claude --resume sess-main --fork-session")
 	s.srv.SetInteractiveCmdBuilder(builder)
 
@@ -2413,12 +2458,12 @@ func (s *TerminalHandlerSuite) TestNewSessionSkipsChannelSession() {
 	s.srv.store = store
 
 	finder := new(mockContainerManager)
-	finder.On("FindOrCreateShell", mock.Anything, "ch-1", mock.Anything).Return("ctr-1", nil)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-1", mock.Anything, mock.Anything).Return("ctr-1", nil)
 	s.srv.containerRegistry = finder
 
 	builder := new(MockInteractiveCmdBuilder)
 	// new_session=true → empty sessionID, forkSession=false even though channel has a session.
-	builder.On("BuildInteractiveCmd", "ch-1", "", "", "agent-0", false, mock.Anything).
+	builder.On("BuildInteractiveCmd", "ch-1", "", "", "", "agent-0", false, mock.Anything).
 		Return("claude --dangerously-skip-permissions")
 	s.srv.SetInteractiveCmdBuilder(builder)
 

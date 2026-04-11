@@ -1,8 +1,8 @@
 # HTTP API Reference
 
-Loop exposes a lightweight HTTP API for managing channels, threads, messages, tasks, files, memory, and real-time events. All endpoints are prefixed with `/api/`.
+Loop exposes a lightweight HTTP API for managing channels, threads, messages, tasks, tickets, files, memory, and real-time events. All endpoints are prefixed with `/api/`.
 
-**Related docs:** [Terminal WebSocket](terminal.md) | [Events System](events.md) | [Memory System](memory.md)
+**Related docs:** [Terminal WebSocket](terminal.md) | [Events System](events.md) | [Memory System](memory.md) | [Kanban Panel](kanban.md)
 
 ## General
 
@@ -1644,3 +1644,166 @@ Serve a global playground as a standalone HTML page (used as iframe `src`).
 ### `GET /api/playground/serve-project/{channel_id}/{name}/`
 
 Serve a project-scoped playground as a standalone HTML page. Uses path-based routing instead of query parameters so that relative sub-resource URLs (style.css, script.js) resolve correctly via the `<base>` tag.
+
+---
+
+## Tickets
+
+The ticket API manages filesystem-backed tickets stored in `.tickets/` within a project directory. Tickets are powered by the [`github.com/radutopala/ticket`](https://github.com/radutopala/ticket) library. See [Kanban Panel](kanban.md) for the frontend UI.
+
+All ticket endpoints require a `dir` query parameter specifying the project directory path.
+
+### `GET /api/tickets`
+
+List tickets for a project directory.
+
+**Query Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `dir` | string | **(required)** Project directory path |
+| `status` | string | Filter by status (`open`, `in_progress`, `closed`) |
+| `tag` | string | Filter by tag |
+| `assignee` | string | Filter by assignee |
+| `type` | string | Filter by type (`task`, `bug`, `feature`, `epic`, `chore`) |
+| `sort` | string | Sort field (default: `priority`) |
+| `reverse` | bool | Reverse sort order |
+
+**Response (200):**
+```json
+[
+  {
+    "id": "tic-a1b2c3d4",
+    "title": "Fix login bug",
+    "description": "Users can't log in with SSO",
+    "status": "open",
+    "type": "bug",
+    "priority": 1,
+    "assignee": "",
+    "tags": ["auth", "urgent"],
+    "deps": [],
+    "parent": "",
+    "external_ref": "JIRA-1234",
+    "design": "",
+    "acceptance": "SSO login works for all providers",
+    "created": "2026-04-10T10:00:00Z",
+    "updated": "2026-04-10T10:00:00Z"
+  }
+]
+```
+
+---
+
+### `POST /api/tickets`
+
+Create a new ticket.
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `dir` | string | yes | Project directory path |
+| `title` | string | yes | Ticket title |
+| `description` | string | no | Markdown description |
+| `type` | string | no | `task` (default), `bug`, `feature`, `epic`, `chore` |
+| `priority` | int | no | 0–4 (default: 2) |
+| `assignee` | string | no | Assignee name |
+| `tags` | string[] | no | Tags |
+| `parent` | string | no | Parent ticket ID |
+| `external_ref` | string | no | External issue reference |
+| `design` | string | no | Design notes |
+| `acceptance` | string | no | Acceptance criteria |
+
+**Response (201):** The created ticket object.
+
+---
+
+### `GET /api/tickets/{id}`
+
+Get a single ticket by ID (supports short ID prefix matching).
+
+**Query Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `dir` | string | **(required)** Project directory path |
+
+**Response (200):** The ticket object.
+
+**Errors:** `404` if no ticket matches the ID.
+
+---
+
+### `PATCH /api/tickets/{id}`
+
+Update ticket fields. Only provided fields are modified.
+
+**Request Body:**
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `dir` | string | **(required)** Project directory path |
+| `status` | string | New status |
+| `title` | string | New title |
+| `description` | string | New description |
+| `type` | string | New type |
+| `priority` | int | New priority (0–4) |
+| `assignee` | string | New assignee |
+| `tags` | string[] | Replace tags |
+| `deps` | string[] | Replace dependency list |
+| `parent` | string | New parent ticket ID |
+| `external_ref` | string | New external reference |
+| `design` | string | New design notes |
+| `acceptance` | string | New acceptance criteria |
+
+**Response:** `204 No Content` on success.
+
+**Errors:** `404` if ticket not found; `400` for invalid status/type/priority.
+
+Broadcasts `ticket.updated` WebSocket event.
+
+---
+
+### `DELETE /api/tickets/{id}`
+
+Delete a ticket.
+
+**Query Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `dir` | string | **(required)** Project directory path |
+
+**Response:** `204 No Content` on success.
+
+Broadcasts `ticket.deleted` WebSocket event.
+
+---
+
+### `POST /api/tickets/{id}/assign`
+
+Assign a worktree to a ticket. This performs an atomic multi-step operation:
+
+1. Claims the ticket (`open` → `in_progress`) with file locking
+2. Detects the current branch of the parent project
+3. Creates a git worktree on branch `tk-<ticket-id>`
+4. Creates a thread named after the ticket title
+5. Sets the ticket's assignee to the thread name
+6. Optionally auto-starts an agent with the ticket description
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `dir` | string | yes | Project directory path |
+| `channel_id` | string | yes | Parent channel ID |
+
+**Response (200):**
+```json
+{
+  "thread_id": "thread-abc123",
+  "worktree_path": "/path/to/worktrees/tk-a1b2c3d4"
+}
+```
+
+**Errors:** `409` if the ticket is not in `open` status (already claimed).

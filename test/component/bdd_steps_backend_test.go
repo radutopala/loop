@@ -47,6 +47,9 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I create a branch "([^"]*)" via API$`, tc.createBranchViaAPI)
 	ctx.Step(`^I create uncommitted files "([^"]*)" in the repo$`, tc.createUncommittedFiles)
 
+	// Ticket setup steps
+	ctx.Step(`^I create a ticket "([^"]*)" with type "([^"]*)" via API$`, tc.createTicketViaAPI)
+
 	// Shortcut setup steps
 	ctx.Step(`^I add a prompt shortcut "([^"]*)" with prompt "([^"]*)" via API$`, tc.addShortcutViaAPI)
 
@@ -396,6 +399,27 @@ func (tc *TestContext) addShortcutViaAPI(name, prompt string) error {
 		return fmt.Errorf("failed to add shortcut: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
 	}
 	tc.CreatedShortcutNames = append(tc.CreatedShortcutNames, name)
+	return nil
+}
+
+// --- Ticket steps ---
+
+func (tc *TestContext) createTicketViaAPI(title, ticketType string) error {
+	if tc.ChannelDir == "" {
+		return fmt.Errorf("no channel dir set; use 'I set up a test channel via API for git repo' step first")
+	}
+	payload := map[string]any{
+		"dir":   tc.ChannelDir,
+		"title": title,
+		"type":  ticketType,
+	}
+	b, _ := json.Marshal(payload)
+	if err := tc.doRequest(http.MethodPost, "/api/tickets", string(b)); err != nil {
+		return err
+	}
+	if tc.LastStatus != http.StatusCreated {
+		return fmt.Errorf("failed to create ticket: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
+	}
 	return nil
 }
 
