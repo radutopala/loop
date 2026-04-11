@@ -253,6 +253,7 @@ func (s *RunnerSuite) SetupTest() {
 	s.cfg.Browser.Enabled = true
 	s.runner = NewDockerRunner(s.client, s.cfg, nil)
 	s.runner.sys = s.sys
+	s.runner.instanceID = "test-instance"
 	s.runner.osRandRead = func(b []byte) (int, error) {
 		copy(b, []byte{0xaa, 0xbb, 0xcc})
 		return len(b), nil
@@ -992,7 +993,7 @@ func (s *RunnerSuite) TestRunConfigEnvsExpandError() {
 func (s *RunnerSuite) TestCleanup() {
 	ctx := context.Background()
 
-	s.client.On("ContainerList", ctx, "app", ContainerLabel).Return([]string{"c1", "c2"}, nil)
+	s.client.On("ContainerList", ctx, InstanceLabelKey, "test-instance").Return([]string{"c1", "c2"}, nil)
 	s.client.On("ContainerRemove", ctx, "c1").Return(nil)
 	s.client.On("ContainerRemove", ctx, "c2").Return(nil)
 
@@ -1005,7 +1006,7 @@ func (s *RunnerSuite) TestCleanup() {
 func (s *RunnerSuite) TestCleanupListError() {
 	ctx := context.Background()
 
-	s.client.On("ContainerList", ctx, "app", ContainerLabel).Return([]string(nil), errors.New("list error"))
+	s.client.On("ContainerList", ctx, InstanceLabelKey, "test-instance").Return([]string(nil), errors.New("list error"))
 
 	err := s.runner.Cleanup(ctx)
 	require.Error(s.T(), err)
@@ -1017,7 +1018,7 @@ func (s *RunnerSuite) TestCleanupListError() {
 func (s *RunnerSuite) TestCleanupRemoveError() {
 	ctx := context.Background()
 
-	s.client.On("ContainerList", ctx, "app", ContainerLabel).Return([]string{"c1", "c2"}, nil)
+	s.client.On("ContainerList", ctx, InstanceLabelKey, "test-instance").Return([]string{"c1", "c2"}, nil)
 	s.client.On("ContainerRemove", ctx, "c1").Return(errors.New("remove failed"))
 	s.client.On("ContainerRemove", ctx, "c2").Return(nil)
 
@@ -1031,7 +1032,7 @@ func (s *RunnerSuite) TestCleanupRemoveError() {
 func (s *RunnerSuite) TestCleanupNoContainers() {
 	ctx := context.Background()
 
-	s.client.On("ContainerList", ctx, "app", ContainerLabel).Return([]string{}, nil)
+	s.client.On("ContainerList", ctx, InstanceLabelKey, "test-instance").Return([]string{}, nil)
 
 	err := s.runner.Cleanup(ctx)
 	require.NoError(s.T(), err)
@@ -3538,6 +3539,21 @@ func (s *RunnerSuite) TestBuildContainerMountsExtraDirTildeExpansion() {
 	require.Contains(s.T(), binds, "/absolute/path:/absolute/path")
 }
 
+func (s *RunnerSuite) TestBuildContainerMountsExtraDirExpandError() {
+	s.sys.Override("UserHomeDir").Return("", errors.New("no home"))
+
+	workDir := "/home/user/project"
+	extraDirs := []string{"~/broken", "/absolute/path"}
+
+	binds, _ := s.runner.buildContainerMounts(nil, workDir, "", extraDirs)
+
+	// ~/broken should be skipped because expandPath fails, /absolute/path should still appear.
+	require.Contains(s.T(), binds, "/absolute/path:/absolute/path")
+	for _, b := range binds {
+		require.NotContains(s.T(), b, "broken")
+	}
+}
+
 // --- buildBaseClaudeCmd extra dirs tests ---
 
 func (s *RunnerSuite) TestBuildBaseClaudeCmdWithExtraDirs() {
@@ -3574,7 +3590,7 @@ func (s *RunnerSuite) TestCleanupRegistryRemoveContainer() {
 	reg := new(MockContainerRegistry)
 	s.runner.SetContainerRegistry(reg)
 
-	s.client.On("ContainerList", ctx, "app", ContainerLabel).Return([]string{"c1", "c2"}, nil)
+	s.client.On("ContainerList", ctx, InstanceLabelKey, "test-instance").Return([]string{"c1", "c2"}, nil)
 	reg.On("RemoveContainer", ctx, "c1").Return(nil).Once()
 	reg.On("RemoveContainer", ctx, "c2").Return(nil).Once()
 
@@ -3590,7 +3606,7 @@ func (s *RunnerSuite) TestCleanupRegistryRemoveContainerError() {
 	reg := new(MockContainerRegistry)
 	s.runner.SetContainerRegistry(reg)
 
-	s.client.On("ContainerList", ctx, "app", ContainerLabel).Return([]string{"c1"}, nil)
+	s.client.On("ContainerList", ctx, InstanceLabelKey, "test-instance").Return([]string{"c1"}, nil)
 	reg.On("RemoveContainer", ctx, "c1").Return(errors.New("remove failed")).Once()
 
 	err := s.runner.Cleanup(ctx)
@@ -3694,6 +3710,171 @@ func (s *RunnerSuite) TestCurrentConfigNilLoader() {
 	// configLoad is nil by default from SetupTest.
 	cfg := s.runner.currentConfig()
 	require.Equal(s.T(), s.cfg, cfg)
+}
+
+func (s *RunnerSuite) TestRunBashHappyPath() {
+	ctx := context.Background()
+
+	reg := new(MockContainerRegistry)
+	s.runner.SetContainerRegistry(reg)
+	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return slices.Contains(cfg.Cmd, "/bin/sh") &&
+			slices.Contains(cfg.Cmd, "-c") &&
+			slices.Contains(cfg.Cmd, "echo hello")
+	}), testContainerName).Return(testContainerID, nil)
+	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
+	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerLogs", ctx, testContainerID).Return(strings.NewReader("hello\n"), nil)
+
+	output, err := s.runner.RunBash(ctx, "echo hello", "ch-1", "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "hello\n", output)
+
+	s.client.AssertExpectations(s.T())
+	reg.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunBashCreateFails() {
+	ctx := context.Background()
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), testContainerName).Return("", errors.New("docker create failed"))
+
+	output, err := s.runner.RunBash(ctx, "echo hello", "ch-1", "")
+	require.Error(s.T(), err)
+	require.Empty(s.T(), output)
+	require.Contains(s.T(), err.Error(), "creating container")
+
+	s.client.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunBashWaitError() {
+	ctx := context.Background()
+
+	reg := new(MockContainerRegistry)
+	s.runner.SetContainerRegistry(reg)
+	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
+
+	waitCh := make(chan WaitResponse, 1)
+	errCh := make(chan error, 1)
+	errCh <- errors.New("wait error")
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), testContainerName).Return(testContainerID, nil)
+	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
+	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+
+	output, err := s.runner.RunBash(ctx, "echo hello", "ch-1", "")
+	require.Error(s.T(), err)
+	require.Empty(s.T(), output)
+	require.Contains(s.T(), err.Error(), "waiting for container")
+
+	s.client.AssertExpectations(s.T())
+	reg.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunBashNonZeroExit() {
+	ctx := context.Background()
+
+	reg := new(MockContainerRegistry)
+	s.runner.SetContainerRegistry(reg)
+	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 1}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), testContainerName).Return(testContainerID, nil)
+	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
+	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerLogs", ctx, testContainerID).Return(strings.NewReader("some output\n"), nil)
+
+	output, err := s.runner.RunBash(ctx, "exit 1", "ch-1", "")
+	require.Error(s.T(), err)
+	require.Equal(s.T(), "some output\n", output)
+	require.Contains(s.T(), err.Error(), "script exited with status 1")
+
+	s.client.AssertExpectations(s.T())
+	reg.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunBashLogsFails() {
+	ctx := context.Background()
+
+	reg := new(MockContainerRegistry)
+	s.runner.SetContainerRegistry(reg)
+	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 0}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), testContainerName).Return(testContainerID, nil)
+	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
+	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+	s.client.On("ContainerLogs", ctx, testContainerID).Return(nil, errors.New("logs failed"))
+
+	output, err := s.runner.RunBash(ctx, "echo hello", "ch-1", "")
+	require.Error(s.T(), err)
+	require.Empty(s.T(), output)
+	require.Contains(s.T(), err.Error(), "reading container logs")
+
+	s.client.AssertExpectations(s.T())
+	reg.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunBashContextCancelled() {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	reg := new(MockContainerRegistry)
+	s.runner.SetContainerRegistry(reg)
+	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
+
+	waitCh := make(chan WaitResponse) // never written to
+	errCh := make(chan error)         // never written to
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), testContainerName).Return(testContainerID, nil)
+	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
+	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+
+	// Cancel context before waiting can complete.
+	cancel()
+
+	output, err := s.runner.RunBash(ctx, "sleep 999", "ch-1", "")
+	require.Error(s.T(), err)
+	require.Empty(s.T(), output)
+	require.ErrorIs(s.T(), err, context.Canceled)
+
+	s.client.AssertExpectations(s.T())
+	reg.AssertExpectations(s.T())
+}
+
+func (s *RunnerSuite) TestRunBashContainerError() {
+	ctx := context.Background()
+
+	reg := new(MockContainerRegistry)
+	s.runner.SetContainerRegistry(reg)
+	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
+
+	waitCh := make(chan WaitResponse, 1)
+	waitCh <- WaitResponse{StatusCode: 1, Error: errors.New("OOM killed")}
+	errCh := make(chan error, 1)
+
+	s.client.On("ContainerCreate", ctx, mock.AnythingOfType("*container.ContainerConfig"), testContainerName).Return(testContainerID, nil)
+	s.client.On("ContainerStart", ctx, testContainerID).Return(nil)
+	s.client.On("ContainerWait", ctx, testContainerID).Return((<-chan WaitResponse)(waitCh), (<-chan error)(errCh))
+
+	output, err := s.runner.RunBash(ctx, "stress --vm 1", "ch-1", "")
+	require.Error(s.T(), err)
+	require.Empty(s.T(), output)
+	require.Contains(s.T(), err.Error(), "container error")
+
+	s.client.AssertExpectations(s.T())
+	reg.AssertExpectations(s.T())
 }
 
 func TestClaudeCmdBuilderCurrentConfigReloads(t *testing.T) {

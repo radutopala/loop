@@ -496,6 +496,82 @@ func (s *ConfigSuite) TestTaskTemplatesEmpty() {
 	require.Empty(s.T(), cfg.TaskTemplates)
 }
 
+func (s *ConfigSuite) TestWorkflowsLoaded() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "tok",
+			"discord_app_id": "app",
+			"workflows": [
+				{
+					"name": "code-review",
+					"description": "Review changes",
+					"nodes": [
+						{"id": "diff", "type": "bash", "script": "git diff main...HEAD"},
+						{"id": "review", "type": "prompt", "depends_on": ["diff"], "prompt": "Review: {{.NodeOutputs.diff}}"}
+					]
+				},
+				{
+					"name": "validate",
+					"description": "Run tests in parallel",
+					"inputs": {"branch": {"description": "Branch name", "required": true}},
+					"nodes": [
+						{"id": "test", "type": "bash", "script": "make test"},
+						{"id": "lint", "type": "bash", "script": "make lint"},
+						{"id": "report", "type": "prompt", "depends_on": ["test", "lint"], "prompt": "Summarize"}
+					]
+				}
+			]
+		}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.Len(s.T(), cfg.Workflows, 2)
+
+	wf1 := cfg.Workflows[0]
+	require.Equal(s.T(), "code-review", wf1.Name)
+	require.Equal(s.T(), "Review changes", wf1.Description)
+	require.Len(s.T(), wf1.Nodes, 2)
+	require.Equal(s.T(), "diff", wf1.Nodes[0].ID)
+	require.Equal(s.T(), NodeTypeBash, wf1.Nodes[0].Type)
+	require.Equal(s.T(), "git diff main...HEAD", wf1.Nodes[0].Script)
+	require.Equal(s.T(), "review", wf1.Nodes[1].ID)
+	require.Equal(s.T(), NodeTypePrompt, wf1.Nodes[1].Type)
+	require.Equal(s.T(), []string{"diff"}, wf1.Nodes[1].DependsOn)
+
+	wf2 := cfg.Workflows[1]
+	require.Equal(s.T(), "validate", wf2.Name)
+	require.Len(s.T(), wf2.Inputs, 1)
+	require.True(s.T(), wf2.Inputs["branch"].Required)
+	require.Len(s.T(), wf2.Nodes, 3)
+}
+
+func (s *ConfigSuite) TestWorkflowsAbsent() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return s.minimalJSON(), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), cfg.Workflows)
+}
+
+func (s *ConfigSuite) TestWorkflowsEmpty() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "tok",
+			"discord_app_id": "app",
+			"workflows": []
+		}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), cfg.Workflows)
+}
+
 func (s *ConfigSuite) TestExampleConfigEmbedded() {
 	// Verify the embedded ExampleConfig is not empty
 	require.NotEmpty(s.T(), ExampleConfig)
@@ -1171,6 +1247,85 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 				require.True(s.T(), merged.KeepMCPConfigs)
 			},
 		},
+		{
+			name: "Workflows/Merge",
+			projectJSON: `{
+				"workflows": [
+					{
+						"name": "code-review",
+						"description": "Overridden review",
+						"nodes": [{"id": "diff", "type": "bash", "script": "git diff"}]
+					},
+					{
+						"name": "project-only",
+						"description": "Project workflow",
+						"nodes": [{"id": "run", "type": "bash", "script": "make run"}]
+					}
+				]
+			}`,
+			mainCfg: &Config{
+				Workflows: []WorkflowDef{
+					{Name: "code-review", Description: "Global review", Nodes: []NodeDef{{ID: "diff", Type: NodeTypeBash, Script: "git diff main"}}},
+					{Name: "global-only", Description: "Global workflow", Nodes: []NodeDef{{ID: "test", Type: NodeTypeBash, Script: "make test"}}},
+				},
+			},
+			assert: func(merged, main *Config) {
+				require.Len(s.T(), merged.Workflows, 3)
+				require.Equal(s.T(), "code-review", merged.Workflows[0].Name)
+				require.Equal(s.T(), "Overridden review", merged.Workflows[0].Description)
+				require.Equal(s.T(), "git diff", merged.Workflows[0].Nodes[0].Script)
+				require.Equal(s.T(), "global-only", merged.Workflows[1].Name)
+				require.Equal(s.T(), "project-only", merged.Workflows[2].Name)
+				require.Len(s.T(), main.Workflows, 2)
+				require.Equal(s.T(), "git diff main", main.Workflows[0].Nodes[0].Script)
+			},
+		},
+		{
+			name:        "Workflows/Empty",
+			projectJSON: `{}`,
+			mainCfg: &Config{
+				Workflows: []WorkflowDef{
+					{Name: "global", Description: "Global", Nodes: []NodeDef{{ID: "test", Type: NodeTypeBash, Script: "make test"}}},
+				},
+			},
+			assert: func(merged, _ *Config) {
+				require.Len(s.T(), merged.Workflows, 1)
+				require.Equal(s.T(), "global", merged.Workflows[0].Name)
+			},
+		},
+		{
+			name:        "WorkflowConcurrency/Override",
+			projectJSON: `{"workflow_concurrency": {"max_concurrent_runs": 3, "max_concurrent_nodes": 8}}`,
+			mainCfg: &Config{
+				WorkflowConcurrency: WorkflowConcurrency{MaxConcurrentRuns: 5, MaxConcurrentNodes: 10},
+			},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), 3, merged.WorkflowConcurrency.MaxConcurrentRuns)
+				require.Equal(s.T(), 8, merged.WorkflowConcurrency.MaxConcurrentNodes)
+			},
+		},
+		{
+			name:        "WorkflowConcurrency/PartialOverride",
+			projectJSON: `{"workflow_concurrency": {"max_concurrent_runs": 2}}`,
+			mainCfg: &Config{
+				WorkflowConcurrency: WorkflowConcurrency{MaxConcurrentRuns: 5, MaxConcurrentNodes: 10},
+			},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), 2, merged.WorkflowConcurrency.MaxConcurrentRuns)
+				require.Equal(s.T(), 10, merged.WorkflowConcurrency.MaxConcurrentNodes)
+			},
+		},
+		{
+			name:        "WorkflowConcurrency/NoOverride",
+			projectJSON: `{}`,
+			mainCfg: &Config{
+				WorkflowConcurrency: WorkflowConcurrency{MaxConcurrentRuns: 5, MaxConcurrentNodes: 10},
+			},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), 5, merged.WorkflowConcurrency.MaxConcurrentRuns)
+				require.Equal(s.T(), 10, merged.WorkflowConcurrency.MaxConcurrentNodes)
+			},
+		},
 	}
 
 	for _, tt := range tests {
@@ -1737,6 +1892,17 @@ func (s *ConfigSuite) TestParseReturnsDefaults() {
 	require.Equal(s.T(), "/home/testuser/.loop", cfg.LoopDir)
 }
 
+func (s *ConfigSuite) TestParseWorkflowConcurrency() {
+	// parse() populates WorkflowConcurrency when present in JSON.
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{"workflow_concurrency": {"max_concurrent_runs": 3, "max_concurrent_nodes": 8}}`), nil
+	}
+	cfg, err := s.loader.parse()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 3, cfg.WorkflowConcurrency.MaxConcurrentRuns)
+	require.Equal(s.T(), 8, cfg.WorkflowConcurrency.MaxConcurrentNodes)
+}
+
 func (s *ConfigSuite) TestParseHomeDirError() {
 	s.loader.userHomeDir = func() (string, error) {
 		return "", errors.New("no home")
@@ -1843,4 +2009,52 @@ func (s *ConfigSuite) TestLoadWorktreeProjectConfigPublicWrapper() {
 	cfg, err := LoadWorktreeProjectConfig(worktree, parent, base)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), base.Platforms, cfg.Platforms)
+}
+
+// Tests for NodeDef.ResolvePrompt (line 93 in config.go).
+
+func (s *ConfigSuite) TestNodeDefResolvePromptInline() {
+	node := &NodeDef{ID: "my-node", Prompt: "do the thing"}
+	prompt, err := node.ResolvePrompt("/loop", s.loader.readFile)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "do the thing", prompt)
+}
+
+func (s *ConfigSuite) TestNodeDefResolvePromptFromFile() {
+	s.loader.readFile = func(path string) ([]byte, error) {
+		if path == "/loop/workflows/review.md" {
+			return []byte("workflow file prompt"), nil
+		}
+		return nil, errors.New("unexpected path: " + path)
+	}
+
+	node := &NodeDef{ID: "my-node", PromptPath: "review.md"}
+	prompt, err := node.ResolvePrompt("/loop", s.loader.readFile)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "workflow file prompt", prompt)
+}
+
+func (s *ConfigSuite) TestNodeDefResolvePromptFileReadError() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return nil, errors.New("permission denied")
+	}
+
+	node := &NodeDef{ID: "my-node", PromptPath: "missing.md"}
+	_, err := node.ResolvePrompt("/loop", s.loader.readFile)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "reading prompt file")
+}
+
+func (s *ConfigSuite) TestNodeDefResolvePromptBothSet() {
+	node := &NodeDef{ID: "my-node", Prompt: "inline", PromptPath: "file.md"}
+	_, err := node.ResolvePrompt("/loop", s.loader.readFile)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "mutually exclusive")
+}
+
+func (s *ConfigSuite) TestNodeDefResolvePromptNeitherSet() {
+	node := &NodeDef{ID: "my-node"}
+	_, err := node.ResolvePrompt("/loop", s.loader.readFile)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "one of prompt or prompt_path is required")
 }

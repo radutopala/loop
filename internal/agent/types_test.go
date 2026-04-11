@@ -39,6 +39,13 @@ func (s *TypesSuite) TestBuildPromptEmptyMessages() {
 	require.Equal(s.T(), "", req.BuildPrompt())
 }
 
+func (s *TypesSuite) TestBuildPromptWithPromptFieldNoSession() {
+	req := &AgentRequest{
+		Prompt: "summarize the results",
+	}
+	require.Equal(s.T(), "summarize the results", req.BuildPrompt())
+}
+
 func (s *TypesSuite) TestBuildPromptSessionWithPrompt() {
 	req := &AgentRequest{
 		SessionID: "sess-1",

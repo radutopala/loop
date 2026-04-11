@@ -146,6 +146,42 @@ func (s *Server) resolveProjectConfigDirPath(ctx context.Context, channelID stri
 	return ch.DirPath, nil
 }
 
+// resolveWorkflowConfigPaths returns dirPath and parentDirPath for workflow
+// config resolution. For worktree channels, parentDirPath is set to the parent
+// channel's dir so that three-layer merging (global → parent → worktree) can
+// be performed. For regular channels/threads, parentDirPath is empty.
+func (s *Server) resolveWorkflowConfigPaths(ctx context.Context, channelID string) (dirPath, parentDirPath string, err error) {
+	if channelID == "" {
+		return "", "", fmt.Errorf("channel_id is required")
+	}
+	if s.store == nil {
+		return "", "", fmt.Errorf("channel lookup not configured")
+	}
+	ch, err := s.store.GetChannel(ctx, channelID)
+	if err != nil {
+		return "", "", fmt.Errorf("looking up channel: %w", err)
+	}
+	if ch == nil {
+		return "", "", fmt.Errorf("channel %s not found", channelID)
+	}
+	if ch.Worktree && ch.ParentID != "" {
+		parent, err := s.store.GetChannel(ctx, ch.ParentID)
+		if err != nil {
+			return ch.DirPath, "", nil
+		}
+		if parent != nil && parent.DirPath != "" {
+			return ch.DirPath, parent.DirPath, nil
+		}
+	}
+	if ch.DirPath == "" {
+		if s.loopDir != "" {
+			return filepath.Join(s.loopDir, channelID, "work"), "", nil
+		}
+		return "", "", fmt.Errorf("channel %s has no dir_path", channelID)
+	}
+	return ch.DirPath, "", nil
+}
+
 // readConfigFile reads a config file and returns a configResponse.
 // If the file does not exist, it returns a response with nil content and empty raw.
 func readConfigFile(sys serverSystem, path string) configResponse {

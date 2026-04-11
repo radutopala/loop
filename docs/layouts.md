@@ -90,11 +90,12 @@ interface SplitNode {
 | Notes | `notes` | `"notes"` | Yes | Freeform text notes (CodeMirror-based) |
 | Tasks | `tasks` | `"tasks"` | Yes | Scheduled task management UI (see [scheduling.md](scheduling.md)) |
 | Kanban | `kanban` | `"kanban"` | Yes | Ticket board with status columns (see [kanban.md](kanban.md)) |
+| Workflows | `workflows` | `"workflows"` | Yes | DAG workflow runs with interactive graph visualization (see [workflows.md](workflows.md)) |
 | Playground | `playground` | `"playground-N"` | No | Live interactive code sandbox (HTML/CSS/JS) |
 | Agent | `agent` | `"agent-N"` | No | Docker-isolated terminal session |
 | Shell | `shell` | `"shell-N"` | No | Local machine shell session |
 
-**Singleton panels** (chat, editor, memory, diff, docker-browser, host-browser, sessions, notes, tasks) can appear at most once in a layout tree. The `canAddPanel()` function enforces this: if the panel type is in `SINGLETON_PANELS` and already present in the tree, the add operation is rejected.
+**Singleton panels** (chat, editor, memory, git, docker-browser, host-browser, sessions, notes, tasks, kanban, workflows) can appear at most once in a layout tree. The `canAddPanel()` function enforces this: if the panel type is in `SINGLETON_PANELS` and already present in the tree, the add operation is rejected.
 
 **Channel-only panels**: The Sessions and Kanban panels are only available for channels (not threads or worktrees). Their tabs are hidden from the layout tab bar when viewing a thread or worktree.
 
@@ -264,7 +265,7 @@ The `canAddPanel()` function prevents adding duplicate singleton panels and mutu
 
 ```typescript
 // In app/src/types/panels.ts
-const SINGLETON_PANELS: PanelType[] = ["chat", "editor", "memory", "git", "docker-browser", "host-browser", "sessions", "notes", "tasks", "kanban"];
+const SINGLETON_PANELS: PanelType[] = ["chat", "editor", "memory", "git", "docker-browser", "host-browser", "sessions", "notes", "tasks", "kanban", "workflows"];
 const EXCLUSIVE_PANELS: PanelType[][] = [["docker-browser", "host-browser"]];
 
 function canAddPanel(tree: PaneNode | null, panel: PanelType): boolean {

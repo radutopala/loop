@@ -45,8 +45,17 @@ if [ -d "app" ] && [ -z "$LOOP_APP_URL" ]; then
     fi
 fi
 
-# Create temp directory for isolated config + DB
-TMPDIR=$(mktemp -d)
+# Create temp directory for isolated config + DB.
+# When running inside a container with the host Docker socket mounted, use a
+# fixed path so sibling containers spawned via the socket can bind-mount the
+# same files from the host.
+if [ -f /.dockerenv ] && [ -S /var/run/docker.sock ]; then
+    TMPDIR=/tmp/loop-bdd-data
+    rm -rf "$TMPDIR"/* 2>/dev/null || true
+    mkdir -p "$TMPDIR"
+else
+    TMPDIR=$(mktemp -d)
+fi
 LOOP_HOME="$TMPDIR"
 LOOP_DIR="$LOOP_HOME/.loop"
 mkdir -p "$LOOP_DIR"
@@ -59,24 +68,48 @@ cat > "$LOOP_DIR/config.json" <<EOF
   "api_addr": ":8222",
   "log_level": "warn",
   "memory": { "enabled": false },
-  "browser": { "enabled": false }
+  "browser": { "enabled": false },
+  "workflow_bash_local": true,
+  "workflows": [
+    {
+      "name": "bdd-test-workflow",
+      "description": "Simple test workflow for BDD scenarios",
+      "inputs": {
+        "message": { "description": "A test message", "required": false, "default": "hello" }
+      },
+      "nodes": [
+        { "id": "greet", "type": "bash", "script": "echo {{.Inputs.message}}" }
+      ]
+    }
+  ]
 }
 EOF
 
 echo -e "${YELLOW}Starting loop (HOME=$LOOP_HOME)...${NC}"
-HOME="$LOOP_HOME" bin/loop serve 2>/dev/null &
+LOOP_STDERR="$LOOP_DIR/serve-stderr.log"
+HOME="$LOOP_HOME" bin/loop serve 2>"$LOOP_STDERR" &
 LOOP_PID=$!
 echo "loop started with PID: $LOOP_PID"
 
 cleanup() {
     echo -e "\n${YELLOW}Shutting down...${NC}"
+    # Always dump server log tail for debugging CI failures.
+    if [ -s "$LOOP_STDERR" ]; then
+        echo -e "${YELLOW}=== Loop server stderr (last 100 lines) ===${NC}"
+        tail -100 "$LOOP_STDERR"
+        echo -e "${YELLOW}=== End server stderr ===${NC}"
+    fi
     kill "$LOOP_PID" 2>/dev/null || true
     wait "$LOOP_PID" 2>/dev/null || true
     if [ -n "$VITE_PID" ]; then
         kill "$VITE_PID" 2>/dev/null || true
         wait "$VITE_PID" 2>/dev/null || true
     fi
-    rm -rf "$TMPDIR"
+    # Remove containers spawned by workflow bash nodes during the test run.
+    if command -v docker &> /dev/null; then
+        docker ps -aq --filter "name=loop-bdd-" | xargs -r docker rm -f 2>/dev/null || true
+    fi
+    rm -rf "$TMPDIR" 2>/dev/null || rm -rf "$TMPDIR"/* 2>/dev/null || true
     echo -e "${GREEN}Cleanup done${NC}"
 }
 trap cleanup EXIT

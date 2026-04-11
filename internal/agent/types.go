@@ -54,6 +54,9 @@ func (r *AgentRequest) BuildPrompt() string {
 	case r.SessionID != "" && len(r.Messages) > 0:
 		return r.Messages[len(r.Messages)-1].Content
 	default:
+		if len(r.Messages) == 0 {
+			return r.Prompt
+		}
 		var prompt string
 		for _, msg := range r.Messages {
 			prompt += fmt.Sprintf("%s: %s\n", msg.Role, msg.Content)

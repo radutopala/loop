@@ -692,7 +692,7 @@ func (s *ClientSuite) TestListContainerInfos() {
 		{
 			ID:      "agent-1",
 			Names:   []string{"/loop-abc"},
-			Labels:  map[string]string{ChannelLabelKey: "ch-1", ContainerTypeKey: "agent"},
+			Labels:  map[string]string{ChannelLabelKey: "ch-1", ContainerTypeKey: "agent", InstanceLabelKey: "abc123"},
 			State:   "running",
 			Created: 1700000000,
 		},
@@ -742,6 +742,7 @@ func (s *ClientSuite) TestListContainerInfos() {
 	require.Equal(s.T(), ContainerTypeAgent, infos[0].Type)
 	require.Equal(s.T(), ContainerStatusRunning, infos[0].Status)
 	require.Equal(s.T(), "loop-abc", infos[0].ContainerName)
+	require.Equal(s.T(), "abc123", infos[0].InstanceID)
 
 	// Verify shell container (exited → stopped).
 	require.Equal(s.T(), "shell-1", infos[1].ContainerID)

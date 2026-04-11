@@ -13,6 +13,7 @@ import { CommandPalette } from "./components/shared/CommandPalette";
 import { Settings } from "./components/shared/Settings";
 import { ContainersPanel, type ContainersPanelHandle } from "./components/panels/ContainersPanel";
 import { GlobalTasksPanel } from "./components/panels/GlobalTasksPanel";
+import { WorkflowsGlobalPanel, type WorkflowsGlobalPanelHandle } from "./components/panels/WorkflowsGlobalPanel";
 import { useChatStateStore, type ActiveChatState } from "./hooks/useChatStateStore";
 import { useAppPanelState } from "./hooks/useAppPanelState";
 import { storageGet, storageSet, storageRemove } from "./utils/storage";
@@ -61,7 +62,7 @@ function AppInner() {
   const [diffStats, setDiffStats] = useState<{ add: number; del: number }>({ add: 0, del: 0 });
   const [paletteOpen, setPaletteOpen] = useState(false);
   const {
-    settingsOpen, readmeOpen, containersOpen, tasksOpen,
+    settingsOpen, readmeOpen, containersOpen, tasksOpen, workflowsOpen,
     settingsDirPath, configDirty, pendingSelectId,
     setConfigDirty, setPendingSelectId,
     togglePanel, openConfig,
@@ -70,6 +71,7 @@ function AppInner() {
   } = useAppPanelState();
   const [scrollToMessageId, setScrollToMessageId] = useState<number | null>(null);
   const containersPanelRef = useRef<ContainersPanelHandle | null>(null);
+  const workflowsPanelRef = useRef<WorkflowsGlobalPanelHandle | null>(null);
   const [openMemoryFile, setOpenMemoryFile] = useState<string | null>(null);
   const [updateStatus, setUpdateStatus] = useState<UpdateStatus | null>(null);
   const [imageBuildStatus, setImageBuildStatus] = useState<ImageBuildStatusData | null>(null);
@@ -228,6 +230,10 @@ function AppInner() {
     }
     if (event.type.startsWith("container.")) {
       containersPanelRef.current?.handleContainerEvent(event);
+      return;
+    }
+    if (event.type.startsWith("workflow.")) {
+      workflowsPanelRef.current?.handleWorkflowEvent(event);
       return;
     }
     if (debounceRef.current) clearTimeout(debounceRef.current);
@@ -497,6 +503,7 @@ function AppInner() {
         onOpenReadme={() => togglePanel("readme")}
         onOpenContainers={() => togglePanel("containers")}
         onOpenTasks={() => togglePanel("tasks")}
+        onOpenWorkflows={() => togglePanel("workflows")}
         updateStatus={updateStatus}
         onDownloadUpdate={handleDownloadUpdate}
         onInstallUpdate={handleInstallUpdate}
@@ -517,7 +524,7 @@ function AppInner() {
             channelId={selectedId}
             channel={selectedChannel}
             sidebarOpen={sidebarOpen}
-            style={readmeOpen || settingsOpen || containersOpen || tasksOpen ? { display: "none" } : undefined}
+            style={readmeOpen || settingsOpen || containersOpen || tasksOpen || workflowsOpen ? { display: "none" } : undefined}
             onToggleSidebar={() => setSidebarOpen((v) => !v)}
             onOpenPalette={() => setPaletteOpen(true)}
             scrollToMessageId={scrollToMessageId}
@@ -585,6 +592,15 @@ function AppInner() {
               onSelectChannel={(id) => { closePanel("tasks"); handleSelect(id); }}
             />
           )}
+          {workflowsOpen && (
+            <WorkflowsGlobalPanel
+              ref={workflowsPanelRef}
+              channel={selectedChannel}
+              sidebarOpen={sidebarOpen}
+              onOpenPalette={() => setPaletteOpen(true)}
+              onClose={() => closePanel("workflows")}
+            />
+          )}
         </>
       ) : (
         <>
@@ -618,6 +634,13 @@ function AppInner() {
               onOpenPalette={() => setPaletteOpen(true)}
               onClose={() => closePanel("tasks")}
               onSelectChannel={(id) => { closePanel("tasks"); handleSelect(id); }}
+            />
+          ) : workflowsOpen ? (
+            <WorkflowsGlobalPanel
+              ref={workflowsPanelRef}
+              sidebarOpen={sidebarOpen}
+              onOpenPalette={() => setPaletteOpen(true)}
+              onClose={() => closePanel("workflows")}
             />
           ) : (
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>

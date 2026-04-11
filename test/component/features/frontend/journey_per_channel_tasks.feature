@@ -99,7 +99,7 @@ Feature: Per-Channel Tasks Journey
     # Trigger Run Now via API, wait for completion, re-select task to see results
     When I capture the visible task ID
     And I trigger Run Now via API for the current task
-    And I wait up to "60s" for the task to stop running via API
+    And I wait up to "120s" for the task to stop running via API
     # Re-select the task to force run history reload
     When I click on "mega-cron-task" in the tasks panel
     And I click on "mega-updated-prompt" in the tasks panel

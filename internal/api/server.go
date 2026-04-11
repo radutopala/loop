@@ -92,11 +92,13 @@ type Server struct {
 	listener              net.Listener
 	stopErr               error             // if set, Stop returns this error (for testing)
 	agentWSWriteJSON      func(v any) error // injectable for testing agent-channel WS write errors
+	workflowEngine        WorkflowEngine
 	worktreeCreator       *worktree.Creator
 	sys                   serverSystem
 	loadConfig            func() (*config.Config, error)                       // injectable for testing
 	loadProjectConfig     func(string, *config.Config) (*config.Config, error) // injectable for testing
 	readFile              func(string) ([]byte, error)                         // injectable for testing
+	ticketStoreOpener     func(dir string) TicketStore                         // injectable for testing
 }
 
 // SetEventsHub configures the events hub for the /api/ws endpoint.
@@ -267,6 +269,15 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/config/project", s.handleGetProjectConfig)
 	mux.HandleFunc("PUT /api/config/project", s.handleSaveProjectConfig)
 	mux.HandleFunc("GET /api/containers", s.handleListContainers)
+	mux.HandleFunc("POST /api/workflows/runs", s.handleStartWorkflowRun)
+	mux.HandleFunc("GET /api/workflows/runs", s.handleListWorkflowRuns)
+	mux.HandleFunc("GET /api/workflows/runs/{id}", s.handleGetWorkflowRun)
+	mux.HandleFunc("POST /api/workflows/runs/{id}/cancel", s.handleCancelWorkflowRun)
+	mux.HandleFunc("DELETE /api/workflows/runs/{id}", s.handleDeleteWorkflowRun)
+	mux.HandleFunc("POST /api/workflows/runs/{id}/retry", s.handleRetryWorkflowRun)
+	mux.HandleFunc("POST /api/workflows/runs/{id}/resume", s.handleResumeWorkflowRun)
+	mux.HandleFunc("GET /api/workflows", s.handleListWorkflows)
+	mux.HandleFunc("POST /api/workflows", s.handleModifyWorkflow)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
 	mux.HandleFunc("GET /api/ws/browser", s.handleBrowserWS)

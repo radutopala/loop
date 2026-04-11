@@ -107,14 +107,29 @@ type assignTicketResponse struct {
 // generateID is the ticket ID generator, overridable for testing.
 var generateID = tk.GenerateID
 
+// TicketStore abstracts ticket CRUD operations so handlers can be tested
+// with a mock store (e.g. to simulate write failures regardless of OS user).
+type TicketStore interface {
+	List() ([]*tk.Ticket, error)
+	ResolveID(partial string) (string, error)
+	Read(id string) (*tk.Ticket, error)
+	EnsureDir() error
+	Write(ticket *tk.Ticket) error
+	Delete(id string) error
+	AtomicClaim(id string) (*tk.Ticket, error)
+}
+
 // ── Helpers ──
 
 // openTicketStore opens a ticket store for the given directory.
 // dir must be the project root (parent of .tickets/).
-func openTicketStore(w http.ResponseWriter, dir string) *tk.Store {
+func (s *Server) openTicketStore(w http.ResponseWriter, dir string) TicketStore {
 	if dir == "" {
 		http.Error(w, "dir is required", http.StatusBadRequest)
 		return nil
+	}
+	if s.ticketStoreOpener != nil {
+		return s.ticketStoreOpener(dir)
 	}
 	return tk.Open(dir)
 }
@@ -124,7 +139,7 @@ func openTicketStore(w http.ResponseWriter, dir string) *tk.Store {
 func (s *Server) handleListTickets(w http.ResponseWriter, r *http.Request) {
 	q := r.URL.Query()
 	dir := q.Get("dir")
-	store := openTicketStore(w, dir)
+	store := s.openTicketStore(w, dir)
 	if store == nil {
 		return
 	}
@@ -154,7 +169,7 @@ func (s *Server) handleListTickets(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleGetTicket(w http.ResponseWriter, r *http.Request) {
 	dir := r.URL.Query().Get("dir")
-	store := openTicketStore(w, dir)
+	store := s.openTicketStore(w, dir)
 	if store == nil {
 		return
 	}
@@ -181,7 +196,7 @@ func (s *Server) handleCreateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	store := openTicketStore(w, req.Dir)
+	store := s.openTicketStore(w, req.Dir)
 	if store == nil {
 		return
 	}
@@ -255,7 +270,7 @@ func (s *Server) handleUpdateTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	store := openTicketStore(w, req.Dir)
+	store := s.openTicketStore(w, req.Dir)
 	if store == nil {
 		return
 	}
@@ -342,7 +357,7 @@ func (s *Server) handleUpdateTicket(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleDeleteTicket(w http.ResponseWriter, r *http.Request) {
 	dir := r.URL.Query().Get("dir")
-	store := openTicketStore(w, dir)
+	store := s.openTicketStore(w, dir)
 	if store == nil {
 		return
 	}
@@ -379,7 +394,7 @@ func (s *Server) handleAssignTicket(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	store := openTicketStore(w, req.Dir)
+	store := s.openTicketStore(w, req.Dir)
 	if store == nil {
 		return
 	}

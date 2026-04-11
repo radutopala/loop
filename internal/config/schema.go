@@ -383,6 +383,84 @@ func buildSchema() *ConfigSchema {
 				},
 			},
 
+			// ── Workflows section ──
+			"workflows": {
+				Type:     "array",
+				Title:    "Workflows",
+				XSection: "Workflows",
+				Items: &SchemaProperty{
+					Type: "object",
+					Properties: map[string]*SchemaProperty{
+						"name":        {Type: "string", Title: "Name"},
+						"description": {Type: "string", Title: "Description"},
+						"timeout":     {Type: "string", Title: "Timeout"},
+						"inputs": {
+							Type:  "object",
+							Title: "Inputs",
+							AdditionalProperties: &SchemaProperty{
+								Type: "object",
+								Properties: map[string]*SchemaProperty{
+									"description": {Type: "string", Title: "Description"},
+									"required":    {Type: "boolean", Title: "Required"},
+									"default":     {Type: "string", Title: "Default"},
+								},
+							},
+						},
+						"nodes": {
+							Type:  "array",
+							Title: "Nodes",
+							Items: &SchemaProperty{
+								Type: "object",
+								Properties: map[string]*SchemaProperty{
+									"id":             {Type: "string", Title: "ID"},
+									"type":           {Type: "string", Title: "Type", Enum: []any{"prompt", "bash", "loop", "approval"}},
+									"depends_on":     {Type: "array", Title: "Depends On", Items: &SchemaProperty{Type: "string"}},
+									"when":           {Type: "string", Title: "When Condition"},
+									"trigger_rule":   {Type: "string", Title: "Trigger Rule", Enum: []any{"all_success", "all_done", "one_success"}},
+									"prompt":         {Type: "string", Title: "Prompt", XWidget: "textarea"},
+									"prompt_path":    {Type: "string", Title: "Prompt Path", Description: "Relative to ~/.loop/workflows/"},
+									"system_prompt":  {Type: "string", Title: "System Prompt", XWidget: "textarea"},
+									"model":          {Type: "string", Title: "Model"},
+									"script":         {Type: "string", Title: "Script", XWidget: "textarea"},
+									"max_iterations": {Type: "integer", Title: "Max Iterations"},
+									"condition":      {Type: "string", Title: "Loop Condition"},
+									"message":        {Type: "string", Title: "Approval Message"},
+									"timeout":        {Type: "string", Title: "Timeout"},
+									"retry": {
+										Type:  "object",
+										Title: "Retry",
+										Properties: map[string]*SchemaProperty{
+											"max_retries":  {Type: "integer", Title: "Max Retries"},
+											"backoff_base": {Type: "string", Title: "Backoff Base"},
+											"backoff_max":  {Type: "string", Title: "Backoff Max"},
+										},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
+
+			"workflow_bash_local": {
+				Type:        "boolean",
+				Title:       "Workflow Local Bash",
+				Description: "Execute workflow bash nodes locally instead of in Docker containers",
+				XSection:    "Workflows",
+				XGlobalOnly: true,
+			},
+
+			// ── Workflow Concurrency section ──
+			"workflow_concurrency": {
+				Type:     "object",
+				Title:    "Workflow Concurrency",
+				XSection: "Workflows",
+				Properties: map[string]*SchemaProperty{
+					"max_concurrent_runs":  {Type: "integer", Title: "Max Concurrent Runs", Description: "Maximum number of workflow runs executing in parallel (0 = unlimited)"},
+					"max_concurrent_nodes": {Type: "integer", Title: "Max Concurrent Nodes", Description: "Maximum number of workflow nodes executing in parallel across all runs (0 = unlimited)"},
+				},
+			},
+
 			// ── Prompt Shortcuts section ──
 			"prompt_shortcuts": {
 				Type:     "array",

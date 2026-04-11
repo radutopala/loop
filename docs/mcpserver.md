@@ -27,7 +27,7 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 
 ## Registered Tools
 
-### Always Available (14 tools)
+### Always Available (18 tools)
 
 #### Task Management
 
@@ -78,6 +78,21 @@ When `--agent-id` is set, the server also:
 - Sets instructions telling Claude how to use agent tools and respond to channel messages
 - Starts a push receiver goroutine (WebSocket to `/api/ws/agent-channel`) that forwards messages as `notifications/claude/channel` JSON-RPC notifications to stdout
 
+### Workflow Tools (always available)
+
+| Tool | Description |
+|------|-------------|
+| `run_workflow` | Start a workflow run by name. Pass `inputs` for required/optional workflow inputs. Uses `list_workflows` to discover available workflows. |
+| `get_workflow_run` | Get the status and node outputs of a workflow run by its run ID |
+| `list_workflows` | List all available workflow definitions with names, descriptions, and input schemas |
+| `list_workflow_runs` | List recent workflow runs, optionally filtered by `channel_id` |
+| `cancel_workflow_run` | Cancel a running workflow by its run ID |
+| `resume_workflow_run` | Resume a paused workflow (e.g. after an approval node) with an optional response |
+| `save_workflow` | Create or update a workflow definition in global or project config. Pass `action` (`add`/`update`) and the full workflow JSON |
+| `delete_workflow` | Delete a workflow definition by name from global or project config |
+| `delete_workflow_run` | Delete a workflow run by ID (cancels first if active) |
+| `retry_workflow_run` | Retry a completed/failed/cancelled workflow run by ID |
+
 ### Memory Tools (when `--memory` enabled)
 
 | Tool | Description |
@@ -91,6 +106,7 @@ When `--agent-id` is set, the server also:
 server := mcpserver.New(channelID, apiURL, authorID, httpClient, logger,
     mcpserver.WithMemoryAPI(dirPath),       // optional: enables memory tools
     mcpserver.WithAgentTools("agent-0"),    // optional: enables inter-agent tools
+    mcpserver.WithWorkflowAPI(),            // enables workflow tools (always added)
 )
 server.Run(ctx, transport)
 server.UnregisterAgent() // graceful cleanup after Run returns
@@ -115,3 +131,4 @@ After `Run()` returns, the caller invokes `UnregisterAgent()` which sends `DELET
 - [Containers](containers.md) — Container MCP config setup
 - [Memory](memory.md) — Semantic search and Ollama embeddings
 - [Scheduling](scheduling.md) — Task types and templates
+- [Workflows](workflows.md) — DAG-based workflow engine

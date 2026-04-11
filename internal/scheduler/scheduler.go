@@ -28,7 +28,7 @@ type Scheduler interface {
 	GetTask(ctx context.Context, taskID int64) (*db.ScheduledTask, error)
 	SetTaskEnabled(ctx context.Context, taskID int64, enabled bool) error
 	ToggleTask(ctx context.Context, taskID int64) (bool, error)
-	EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int, worktree *bool, originBranch *string, updateBeforeRun *bool) error
+	EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int, worktree *bool, originBranch *string, updateBeforeRun *bool, workflowName *string, workflowInputs *string) error
 	RunNow(ctx context.Context, taskID int64) error
 }
 
@@ -129,8 +129,8 @@ func (s *TaskScheduler) ToggleTask(ctx context.Context, taskID int64) (bool, err
 	return newEnabled, nil
 }
 
-// EditTask updates a scheduled task's schedule, type, prompt, auto_delete_sec, and/or worktree flag.
-func (s *TaskScheduler) EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int, worktree *bool, originBranch *string, updateBeforeRun *bool) error {
+// EditTask updates a scheduled task's schedule, type, prompt, auto_delete_sec, worktree flag, and/or workflow fields.
+func (s *TaskScheduler) EditTask(ctx context.Context, taskID int64, schedule, taskType, prompt *string, autoDeleteSec *int, worktree *bool, originBranch *string, updateBeforeRun *bool, workflowName *string, workflowInputs *string) error {
 	task, err := s.store.GetScheduledTask(ctx, taskID)
 	if err != nil {
 		return fmt.Errorf("getting task: %w", err)
@@ -159,6 +159,12 @@ func (s *TaskScheduler) EditTask(ctx context.Context, taskID int64, schedule, ta
 	}
 	if updateBeforeRun != nil {
 		task.UpdateBeforeRun = *updateBeforeRun
+	}
+	if workflowName != nil {
+		task.WorkflowName = *workflowName
+	}
+	if workflowInputs != nil {
+		task.WorkflowInputs = *workflowInputs
 	}
 
 	if schedule != nil || taskType != nil {

@@ -157,6 +157,44 @@ var migrations = []migration{
 	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN origin_branch TEXT NOT NULL DEFAULT ''`),
 	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN update_before_run INTEGER NOT NULL DEFAULT 0`),
 	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN running INTEGER NOT NULL DEFAULT 0`),
+	// Workflow runs table.
+	sqlMigration(`CREATE TABLE IF NOT EXISTS workflow_runs (
+		id             TEXT PRIMARY KEY,
+		workflow_name  TEXT NOT NULL,
+		channel_id     TEXT NOT NULL DEFAULT '',
+		dir_path       TEXT NOT NULL DEFAULT '',
+		worktree_path  TEXT NOT NULL DEFAULT '',
+		status         TEXT NOT NULL DEFAULT 'running',
+		inputs         TEXT NOT NULL DEFAULT '{}',
+		paused_node_id TEXT NOT NULL DEFAULT '',
+		error_text     TEXT NOT NULL DEFAULT '',
+		started_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		finished_at    TIMESTAMP
+	)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_workflow_runs_channel_id ON workflow_runs(channel_id)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_workflow_runs_status ON workflow_runs(status)`),
+	// Workflow node runs table.
+	sqlMigration(`CREATE TABLE IF NOT EXISTS workflow_node_runs (
+		id          INTEGER PRIMARY KEY AUTOINCREMENT,
+		run_id      TEXT NOT NULL,
+		node_id     TEXT NOT NULL,
+		status      TEXT NOT NULL DEFAULT 'pending',
+		output      TEXT NOT NULL DEFAULT '',
+		error_text  TEXT NOT NULL DEFAULT '',
+		attempt     INTEGER NOT NULL DEFAULT 1,
+		started_at  TIMESTAMP,
+		finished_at TIMESTAMP,
+		FOREIGN KEY (run_id) REFERENCES workflow_runs(id),
+		UNIQUE(run_id, node_id)
+	)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_workflow_node_runs_run_id ON workflow_node_runs(run_id)`),
+	// Heartbeat tracking for running workflow nodes.
+	sqlMigration(`ALTER TABLE workflow_node_runs ADD COLUMN last_heartbeat_at TIMESTAMP`),
+	// Version-pin the workflow definition at run start time.
+	sqlMigration(`ALTER TABLE workflow_runs ADD COLUMN workflow_def TEXT NOT NULL DEFAULT ''`),
+	// Scheduled workflow runs: a task can start a workflow instead of an agent prompt.
+	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN workflow_name TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN workflow_inputs TEXT NOT NULL DEFAULT '{}'`),
 }
 
 // RunMigrations executes all pending schema migrations.

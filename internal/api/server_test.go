@@ -23,6 +23,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	tk "github.com/radutopala/ticket/pkg/ticket"
+
 	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/config"
@@ -137,6 +139,48 @@ func (m *MockInteractionHandler) HandleInteraction(ctx context.Context, inter *b
 	}
 }
 
+type MockTicketStore struct {
+	mock.Mock
+}
+
+func (m *MockTicketStore) List() ([]*tk.Ticket, error) {
+	args := m.Called()
+	return args.Get(0).([]*tk.Ticket), args.Error(1)
+}
+
+func (m *MockTicketStore) ResolveID(partial string) (string, error) {
+	args := m.Called(partial)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockTicketStore) Read(id string) (*tk.Ticket, error) {
+	args := m.Called(id)
+	if t := args.Get(0); t != nil {
+		return t.(*tk.Ticket), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
+func (m *MockTicketStore) EnsureDir() error {
+	return m.Called().Error(0)
+}
+
+func (m *MockTicketStore) Write(ticket *tk.Ticket) error {
+	return m.Called(ticket).Error(0)
+}
+
+func (m *MockTicketStore) Delete(id string) error {
+	return m.Called(id).Error(0)
+}
+
+func (m *MockTicketStore) AtomicClaim(id string) (*tk.Ticket, error) {
+	args := m.Called(id)
+	if t := args.Get(0); t != nil {
+		return t.(*tk.Ticket), args.Error(1)
+	}
+	return nil, args.Error(1)
+}
+
 type ServerSuite struct {
 	suite.Suite
 	scheduler *testutil.MockScheduler
@@ -243,6 +287,15 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("GET /api/playground/serve/{name}", s.srv.handlePlaygroundServe)
 	s.mux.HandleFunc("GET /api/playground/serve/{name}/{path...}", s.srv.handlePlaygroundServeFile)
 	s.mux.HandleFunc("GET /api/containers", s.srv.handleListContainers)
+	s.mux.HandleFunc("POST /api/workflows/runs", s.srv.handleStartWorkflowRun)
+	s.mux.HandleFunc("GET /api/workflows/runs", s.srv.handleListWorkflowRuns)
+	s.mux.HandleFunc("GET /api/workflows/runs/{id}", s.srv.handleGetWorkflowRun)
+	s.mux.HandleFunc("POST /api/workflows/runs/{id}/cancel", s.srv.handleCancelWorkflowRun)
+	s.mux.HandleFunc("DELETE /api/workflows/runs/{id}", s.srv.handleDeleteWorkflowRun)
+	s.mux.HandleFunc("POST /api/workflows/runs/{id}/retry", s.srv.handleRetryWorkflowRun)
+	s.mux.HandleFunc("POST /api/workflows/runs/{id}/resume", s.srv.handleResumeWorkflowRun)
+	s.mux.HandleFunc("GET /api/workflows", s.srv.handleListWorkflows)
+	s.mux.HandleFunc("POST /api/workflows", s.srv.handleModifyWorkflow)
 	s.mux.HandleFunc("GET /api/health", handleHealth)
 	s.mux.HandleFunc("GET /api/ws/terminal", s.srv.handleTerminalWS)
 	s.mux.HandleFunc("GET /api/ws", s.srv.handleEventsWS)
@@ -781,7 +834,7 @@ func (s *ServerSuite) TestUpdateTaskNoFields() {
 func (s *ServerSuite) TestUpdateTaskEditPrompt() {
 	s.scheduler.On("EditTask", mock.Anything, int64(42), (*string)(nil), (*string)(nil), mock.MatchedBy(func(p *string) bool {
 		return p != nil && *p == "new prompt"
-	}), (*int)(nil), (*bool)(nil), (*string)(nil), (*bool)(nil)).Return(nil)
+	}), (*int)(nil), (*bool)(nil), (*string)(nil), (*bool)(nil), (*string)(nil), (*string)(nil)).Return(nil)
 
 	rec := s.testRequest("PATCH", "/api/tasks/42", `{"prompt":"new prompt"}`)
 
@@ -790,7 +843,7 @@ func (s *ServerSuite) TestUpdateTaskEditPrompt() {
 }
 
 func (s *ServerSuite) TestUpdateTaskEditSchedulerError() {
-	s.scheduler.On("EditTask", mock.Anything, int64(42), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("edit error"))
+	s.scheduler.On("EditTask", mock.Anything, int64(42), mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything).Return(errors.New("edit error"))
 
 	rec := s.testRequest("PATCH", "/api/tasks/42", `{"prompt":"new"}`)
 
@@ -801,7 +854,7 @@ func (s *ServerSuite) TestUpdateTaskEditSchedulerError() {
 func (s *ServerSuite) TestUpdateTaskEditWorktree() {
 	s.scheduler.On("EditTask", mock.Anything, int64(42), (*string)(nil), (*string)(nil), (*string)(nil), (*int)(nil), mock.MatchedBy(func(w *bool) bool {
 		return w != nil && *w
-	}), (*string)(nil), (*bool)(nil)).Return(nil)
+	}), (*string)(nil), (*bool)(nil), (*string)(nil), (*string)(nil)).Return(nil)
 
 	rec := s.testRequest("PATCH", "/api/tasks/42", `{"worktree":true}`)
 
@@ -812,7 +865,7 @@ func (s *ServerSuite) TestUpdateTaskEditWorktree() {
 func (s *ServerSuite) TestUpdateTaskEditOriginBranch() {
 	s.scheduler.On("EditTask", mock.Anything, int64(42), (*string)(nil), (*string)(nil), (*string)(nil), (*int)(nil), (*bool)(nil), mock.MatchedBy(func(ob *string) bool {
 		return ob != nil && *ob == "develop"
-	}), (*bool)(nil)).Return(nil)
+	}), (*bool)(nil), (*string)(nil), (*string)(nil)).Return(nil)
 
 	rec := s.testRequest("PATCH", "/api/tasks/42", `{"origin_branch":"develop"}`)
 
@@ -823,7 +876,7 @@ func (s *ServerSuite) TestUpdateTaskEditOriginBranch() {
 func (s *ServerSuite) TestUpdateTaskEditUpdateBeforeRun() {
 	s.scheduler.On("EditTask", mock.Anything, int64(42), (*string)(nil), (*string)(nil), (*string)(nil), (*int)(nil), (*bool)(nil), (*string)(nil), mock.MatchedBy(func(ubr *bool) bool {
 		return ubr != nil && *ubr
-	})).Return(nil)
+	}), (*string)(nil), (*string)(nil)).Return(nil)
 
 	rec := s.testRequest("PATCH", "/api/tasks/42", `{"update_before_run":true}`)
 
@@ -1273,6 +1326,18 @@ func (s *ServerSuite) TestModifyShortcutProjectScopeMissingChannel() {
 
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), "channel_id is required")
+}
+
+func (s *ServerSuite) TestModifyShortcutInvalidScope() {
+	rec := s.testRequest("POST", "/api/shortcuts", `{
+		"action": "add",
+		"scope": "bogus",
+		"name": "test",
+		"prompt": "run tests"
+	}`)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "scope must be")
 }
 
 func (s *ServerSuite) TestModifyShortcutMissingName() {

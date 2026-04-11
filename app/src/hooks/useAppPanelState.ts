@@ -1,12 +1,13 @@
 import { useCallback, useState } from "react";
 
-type PanelName = "settings" | "readme" | "containers" | "tasks";
+type PanelName = "settings" | "readme" | "containers" | "tasks" | "workflows";
 
 export interface AppPanelState {
   settingsOpen: boolean;
   readmeOpen: boolean;
   containersOpen: boolean;
   tasksOpen: boolean;
+  workflowsOpen: boolean;
   settingsDirPath: string | null;
   configDirty: boolean;
   pendingSelectId: string | null;
@@ -44,6 +45,7 @@ export function useAppPanelState(): AppPanelState {
   const [readmeOpen, setReadmeOpen] = useState(false);
   const [containersOpen, setContainersOpen] = useState(false);
   const [tasksOpen, setTasksOpen] = useState(false);
+  const [workflowsOpen, setWorkflowsOpen] = useState(false);
   const [settingsDirPath, setSettingsDirPath] = useState<string | null>(null);
   const [configDirty, setConfigDirty] = useState(false);
   const [pendingSelectId, setPendingSelectId] = useState<string | null>(null);
@@ -53,6 +55,7 @@ export function useAppPanelState(): AppPanelState {
     setReadmeOpen(panel === "readme" ? (v) => !v : false);
     setContainersOpen(panel === "containers" ? (v) => !v : false);
     setTasksOpen(panel === "tasks" ? (v) => !v : false);
+    setWorkflowsOpen(panel === "workflows" ? (v) => !v : false);
     if (panel === "settings") {
       setSettingsDirPath(null);
     }
@@ -62,6 +65,7 @@ export function useAppPanelState(): AppPanelState {
     setReadmeOpen(false);
     setContainersOpen(false);
     setTasksOpen(false);
+    setWorkflowsOpen(false);
     setSettingsOpen((v) => !v);
     setSettingsDirPath(dirPath ?? null);
   }, []);
@@ -70,6 +74,7 @@ export function useAppPanelState(): AppPanelState {
     setReadmeOpen(false);
     setContainersOpen(false);
     setTasksOpen(false);
+    setWorkflowsOpen(false);
     setSettingsOpen((v) => {
       if (v && settingsDirPath === dirPath) return false;
       setSettingsDirPath(dirPath);
@@ -79,7 +84,7 @@ export function useAppPanelState(): AppPanelState {
 
   const toggleSettingsKeyboard = useCallback(() => {
     setSettingsOpen((v) => {
-      if (!v) { setReadmeOpen(false); setContainersOpen(false); }
+      if (!v) { setReadmeOpen(false); setContainersOpen(false); setTasksOpen(false); setWorkflowsOpen(false); }
       return !v;
     });
     setSettingsDirPath(null);
@@ -89,6 +94,7 @@ export function useAppPanelState(): AppPanelState {
     setReadmeOpen(false);
     setContainersOpen(false);
     setTasksOpen(false);
+    setWorkflowsOpen(false);
     setSettingsOpen(true);
     setSettingsDirPath(null);
   }, []);
@@ -99,6 +105,7 @@ export function useAppPanelState(): AppPanelState {
       case "readme": setReadmeOpen(false); break;
       case "containers": setContainersOpen(false); break;
       case "tasks": setTasksOpen(false); break;
+      case "workflows": setWorkflowsOpen(false); break;
     }
   }, []);
 
@@ -107,6 +114,7 @@ export function useAppPanelState(): AppPanelState {
     setSettingsOpen(false);
     setContainersOpen(false);
     setTasksOpen(false);
+    setWorkflowsOpen(false);
     setConfigDirty(false);
   }, []);
 
@@ -115,6 +123,7 @@ export function useAppPanelState(): AppPanelState {
     readmeOpen,
     containersOpen,
     tasksOpen,
+    workflowsOpen,
     settingsDirPath,
     configDirty,
     pendingSelectId,

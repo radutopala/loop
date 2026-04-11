@@ -11,3 +11,4 @@ export * from "./playground";
 export * from "./image";
 export * from "./search";
 export * from "./tickets";
+export * from "./workflows";

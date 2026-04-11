@@ -41,6 +41,11 @@ const (
 	EventTicketCreated             = "ticket.created"
 	EventTicketUpdated             = "ticket.updated"
 	EventTicketDeleted             = "ticket.deleted"
+	EventWorkflowRunStarted        = "workflow.run_started"
+	EventWorkflowRunCompleted      = "workflow.run_completed"
+	EventWorkflowRunPaused         = "workflow.run_paused"
+	EventWorkflowNodeStarted       = "workflow.node_started"
+	EventWorkflowNodeCompleted     = "workflow.node_completed"
 )
 
 // Event represents a server-sent event to WebSocket clients.
@@ -353,6 +358,51 @@ func (h *EventsHub) BroadcastTicketEvent(eventType, ticketID string) {
 	h.Broadcast(Event{
 		Type:   eventType,
 		Data:   map[string]string{"ticket_id": ticketID},
+		Global: true,
+	})
+}
+
+// BroadcastWorkflowRunStarted sends a global workflow.run_started event.
+func (h *EventsHub) BroadcastWorkflowRunStarted(data events.WorkflowRunEventData) {
+	h.Broadcast(Event{
+		Type:   EventWorkflowRunStarted,
+		Data:   data,
+		Global: true,
+	})
+}
+
+// BroadcastWorkflowRunPaused sends a global workflow.run_paused event.
+func (h *EventsHub) BroadcastWorkflowRunPaused(data events.WorkflowRunEventData) {
+	h.Broadcast(Event{
+		Type:   EventWorkflowRunPaused,
+		Data:   data,
+		Global: true,
+	})
+}
+
+// BroadcastWorkflowRunCompleted sends a global workflow.run_completed event.
+func (h *EventsHub) BroadcastWorkflowRunCompleted(data events.WorkflowRunEventData) {
+	h.Broadcast(Event{
+		Type:   EventWorkflowRunCompleted,
+		Data:   data,
+		Global: true,
+	})
+}
+
+// BroadcastWorkflowNodeStarted sends a global workflow.node_started event.
+func (h *EventsHub) BroadcastWorkflowNodeStarted(data events.WorkflowNodeEventData) {
+	h.Broadcast(Event{
+		Type:   EventWorkflowNodeStarted,
+		Data:   data,
+		Global: true,
+	})
+}
+
+// BroadcastWorkflowNodeCompleted sends a global workflow.node_completed event.
+func (h *EventsHub) BroadcastWorkflowNodeCompleted(data events.WorkflowNodeEventData) {
+	h.Broadcast(Event{
+		Type:   EventWorkflowNodeCompleted,
+		Data:   data,
 		Global: true,
 	})
 }

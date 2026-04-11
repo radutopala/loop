@@ -13,6 +13,7 @@ import (
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/readme"
 	"github.com/radutopala/loop/internal/types"
+	"github.com/radutopala/loop/internal/workflow"
 )
 
 // sendReply sends a simple text message to the interaction's channel.
@@ -89,6 +90,22 @@ func (o *Orchestrator) HandleInteraction(ctx context.Context, inter *bot.Interac
 		o.handlePermissionUpdate(ctx, inter, ch, "user", false)
 	case "deny_role":
 		o.handlePermissionUpdate(ctx, inter, ch, "role", false)
+	case "shortcuts":
+		o.handleShortcutsInteraction(ctx, inter, ch)
+	case "shortcut":
+		o.handleShortcutInteraction(ctx, inter, ch)
+	case "workflows":
+		o.handleWorkflowsInteraction(ctx, inter, ch)
+	case "workflow-run":
+		o.handleWorkflowRunInteraction(ctx, inter, ch)
+	case "workflow-cancel":
+		o.handleWorkflowCancelInteraction(ctx, inter)
+	case "workflow-delete":
+		o.handleWorkflowDeleteInteraction(ctx, inter)
+	case "workflow-retry":
+		o.handleWorkflowRetryInteraction(ctx, inter)
+	case "workflow-runs":
+		o.handleWorkflowRunsInteraction(ctx, inter)
 	case "iamtheowner":
 		o.handleIAmTheOwner(ctx, inter, ch, cfgPerms, dbPerms)
 	default:
@@ -288,7 +305,7 @@ func (o *Orchestrator) handleEditInteraction(ctx context.Context, inter *bot.Int
 		return
 	}
 
-	if err := o.scheduler.EditTask(ctx, taskID, schedule, taskType, prompt, nil, nil, nil, nil); err != nil {
+	if err := o.scheduler.EditTask(ctx, taskID, schedule, taskType, prompt, nil, nil, nil, nil, nil, nil); err != nil {
 		o.logger.Error("editing task", "error", err, "channel_id", inter.ChannelID)
 		o.sendReply(ctx, inter.ChannelID, "Failed to edit task.")
 		return
@@ -460,4 +477,217 @@ func (o *Orchestrator) handleIAmTheOwner(ctx context.Context, inter *bot.Interac
 		return
 	}
 	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("✅ <@%s> is now the owner of this channel.", inter.AuthorID))
+}
+
+// channelConfig returns the config merged with project-level overrides for the given channel.
+func (o *Orchestrator) channelConfig(ch *db.Channel) *config.Config {
+	cfg := o.currentConfig()
+	if ch != nil && ch.DirPath != "" && o.loadProjectConfig != nil {
+		if merged, err := o.loadProjectConfig(ch.DirPath, cfg); err == nil {
+			return merged
+		}
+	}
+	return cfg
+}
+
+func (o *Orchestrator) handleShortcutsInteraction(ctx context.Context, inter *bot.Interaction, ch *db.Channel) {
+	cfg := o.channelConfig(ch)
+	if len(cfg.PromptShortcuts) == 0 {
+		o.sendReply(ctx, inter.ChannelID, "No prompt shortcuts configured.")
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Available shortcuts:\n")
+	for _, s := range cfg.PromptShortcuts {
+		desc := s.Description
+		if desc == "" {
+			desc = types.TruncateString(s.Prompt, 60)
+		}
+		fmt.Fprintf(&sb, "- **%s** — %s\n", s.Name, desc)
+	}
+	o.sendReply(ctx, inter.ChannelID, sb.String())
+}
+
+func (o *Orchestrator) handleShortcutInteraction(ctx context.Context, inter *bot.Interaction, ch *db.Channel) {
+	name := inter.Options["name"]
+	if name == "" {
+		o.sendReply(ctx, inter.ChannelID, "Usage: `/loop shortcut <name>`")
+		return
+	}
+
+	cfg := o.channelConfig(ch)
+	var found *config.PromptShortcut
+	for i := range cfg.PromptShortcuts {
+		if cfg.PromptShortcuts[i].Name == name {
+			found = &cfg.PromptShortcuts[i]
+			break
+		}
+	}
+	if found == nil {
+		o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Unknown shortcut: %s", name))
+		return
+	}
+
+	prompt, err := found.ResolvePrompt(cfg.LoopDir, os.ReadFile)
+	if err != nil {
+		o.logger.Error("resolving shortcut prompt", "error", err, "shortcut", name)
+		o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Failed to resolve shortcut prompt: %v", err))
+		return
+	}
+
+	// Send the prompt as a regular message from the user.
+	o.bot.HandleIncomingMessage(ctx, inter.ChannelID, inter.AuthorID, prompt, "")
+}
+
+func (o *Orchestrator) handleWorkflowsInteraction(ctx context.Context, inter *bot.Interaction, ch *db.Channel) {
+	if o.workflowEngine == nil {
+		o.sendReply(ctx, inter.ChannelID, "Workflow engine not configured.")
+		return
+	}
+
+	dirPath := ""
+	parentDirPath := ""
+	if ch != nil {
+		dirPath = ch.DirPath
+		if ch.ParentID != "" {
+			if parent, err := o.store.GetChannel(ctx, ch.ParentID); err == nil && parent != nil {
+				parentDirPath = parent.DirPath
+			}
+		}
+	}
+
+	workflows, err := o.workflowEngine.ListWorkflows(ctx, dirPath, parentDirPath)
+	if err != nil {
+		o.logger.Error("listing workflows", "error", err)
+		o.sendReply(ctx, inter.ChannelID, "Failed to list workflows.")
+		return
+	}
+	if len(workflows) == 0 {
+		o.sendReply(ctx, inter.ChannelID, "No workflows configured.")
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Available workflows:\n")
+	for _, wf := range workflows {
+		desc := wf.Description
+		if desc == "" {
+			desc = fmt.Sprintf("%d nodes", len(wf.Nodes))
+		}
+		fmt.Fprintf(&sb, "- **%s** — %s\n", wf.Name, desc)
+	}
+	o.sendReply(ctx, inter.ChannelID, sb.String())
+}
+
+func (o *Orchestrator) handleWorkflowRunInteraction(ctx context.Context, inter *bot.Interaction, ch *db.Channel) {
+	if o.workflowEngine == nil {
+		o.sendReply(ctx, inter.ChannelID, "Workflow engine not configured.")
+		return
+	}
+
+	name := inter.Options["name"]
+	if name == "" {
+		o.sendReply(ctx, inter.ChannelID, "Usage: `/loop workflow run <name>`")
+		return
+	}
+
+	dirPath := ""
+	if ch != nil {
+		dirPath = ch.DirPath
+	}
+
+	runID, err := o.workflowEngine.StartRun(ctx, workflow.StartRunOptions{
+		WorkflowName: name,
+		ChannelID:    inter.ChannelID,
+		DirPath:      dirPath,
+	})
+	if err != nil {
+		o.logger.Error("starting workflow", "error", err, "workflow", name)
+		o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Failed to start workflow: %v", err))
+		return
+	}
+
+	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Workflow %q started (run ID: %s).", name, runID))
+}
+
+func (o *Orchestrator) handleWorkflowCancelInteraction(ctx context.Context, inter *bot.Interaction) {
+	o.handleWorkflowRunAction(ctx, inter, "cancel", "cancelled", func(ctx context.Context, runID string) error {
+		return o.workflowEngine.CancelRun(ctx, runID)
+	})
+}
+
+func (o *Orchestrator) handleWorkflowDeleteInteraction(ctx context.Context, inter *bot.Interaction) {
+	o.handleWorkflowRunAction(ctx, inter, "delete", "deleted", func(ctx context.Context, runID string) error {
+		return o.workflowEngine.DeleteRun(ctx, runID)
+	})
+}
+
+func (o *Orchestrator) handleWorkflowRunAction(ctx context.Context, inter *bot.Interaction, action, pastTense string, fn func(context.Context, string) error) {
+	if o.workflowEngine == nil {
+		o.sendReply(ctx, inter.ChannelID, "Workflow engine not configured.")
+		return
+	}
+
+	runID := inter.Options["run_id"]
+	if runID == "" {
+		o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Usage: `/loop workflow %s <run_id>`", action))
+		return
+	}
+
+	if err := fn(ctx, runID); err != nil {
+		o.logger.Error(action+" workflow run", "error", err, "run_id", runID)
+		o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Failed to %s workflow run: %v", action, err))
+		return
+	}
+
+	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Workflow run %s %s.", runID, pastTense))
+}
+
+func (o *Orchestrator) handleWorkflowRetryInteraction(ctx context.Context, inter *bot.Interaction) {
+	if o.workflowEngine == nil {
+		o.sendReply(ctx, inter.ChannelID, "Workflow engine not configured.")
+		return
+	}
+
+	runID := inter.Options["run_id"]
+	if runID == "" {
+		o.sendReply(ctx, inter.ChannelID, "Usage: `/loop workflow retry <run_id>`")
+		return
+	}
+
+	newRunID, err := o.workflowEngine.RetryRun(ctx, runID)
+	if err != nil {
+		o.logger.Error("retrying workflow run", "error", err, "run_id", runID)
+		o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Failed to retry workflow run: %v", err))
+		return
+	}
+
+	o.sendReply(ctx, inter.ChannelID, fmt.Sprintf("Workflow run retried (new run ID: %s).", newRunID))
+}
+
+func (o *Orchestrator) handleWorkflowRunsInteraction(ctx context.Context, inter *bot.Interaction) {
+	if o.workflowEngine == nil {
+		o.sendReply(ctx, inter.ChannelID, "Workflow engine not configured.")
+		return
+	}
+
+	runs, err := o.workflowEngine.ListRuns(ctx, "", 10)
+	if err != nil {
+		o.logger.Error("listing workflow runs", "error", err)
+		o.sendReply(ctx, inter.ChannelID, "Failed to list workflow runs.")
+		return
+	}
+	if len(runs) == 0 {
+		o.sendReply(ctx, inter.ChannelID, "No recent workflow runs.")
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Recent workflow runs:\n")
+	for _, r := range runs {
+		ago := formatDuration(time.Since(r.StartedAt))
+		fmt.Fprintf(&sb, "- **%s** [%s] `%s` — %s ago\n", r.WorkflowName, r.Status, r.ID, ago)
+	}
+	o.sendReply(ctx, inter.ChannelID, sb.String())
 }

@@ -32,6 +32,7 @@ import (
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/terminal"
 	"github.com/radutopala/loop/internal/types"
+	"github.com/radutopala/loop/internal/workflow"
 	"github.com/radutopala/loop/internal/worktree"
 )
 
@@ -408,13 +409,24 @@ func (a *app) serve() error {
 	runner.SetContainerRegistry(containerReg)
 
 	// Restore registry from running Docker containers (survives daemon restarts).
+	// Skip running containers owned by a different daemon instance — they are
+	// actively managed by another daemon sharing the same Docker socket.
+	// Stopped containers from any instance are restored (orphaned after crash/restart).
 	if infos, restoreErr := dockerClient.ListContainerInfos(ctx); restoreErr != nil {
 		logger.Warn("failed to restore container registry", "error", restoreErr)
 	} else if len(infos) > 0 {
-		containerReg.Restore(infos)
-		logger.Info("restored container registry", "count", len(infos))
-		// Schedule removal for containers that are already stopped.
+		instanceID := runner.InstanceID()
+		var ownInfos []*container.ContainerInfo
 		for _, info := range infos {
+			foreignRunning := info.InstanceID != "" && info.InstanceID != instanceID && info.Status == container.ContainerStatusRunning
+			if !foreignRunning {
+				ownInfos = append(ownInfos, info)
+			}
+		}
+		containerReg.Restore(ownInfos)
+		logger.Info("restored container registry", "count", len(ownInfos))
+		// Schedule removal for containers that are already stopped.
+		for _, info := range ownInfos {
 			if info.Status == container.ContainerStatusStopped {
 				containerReg.ScheduleRemove(info.ContainerID, cfg.ContainerKeepAlive)
 			}
@@ -493,6 +505,20 @@ func (a *app) serve() error {
 	executor.SetEventBroadcaster(eventsHub)
 	sched.SetEventBroadcaster(eventsHub)
 
+	// Workflow engine: uses the same runner for prompt nodes; for bash nodes,
+	// optionally fall back to local shell execution when Docker is unavailable.
+	var bashRunner workflow.BashRunner = runner
+	if cfg.WorkflowBashLocal {
+		bashRunner = &workflow.LocalBashRunner{}
+		logger.Info("workflow bash nodes will execute locally (workflow_bash_local=true)")
+	}
+	wfEngine := workflow.NewEngine(store, runner, bashRunner, eventsHub, workflowsFromConfig(cfg, config.Reload), cfg.LoopDir, cfg.WorkflowConcurrency, logger)
+	if err := wfEngine.RecoverRuns(ctx); err != nil {
+		logger.Error("failed to recover workflow runs", "error", err)
+	}
+	apiSrv.SetWorkflowEngine(wfEngine)
+	executor.SetWorkflowEngine(wfEngine)
+
 	screenshotDir := filepath.Join(cfg.LoopDir, "screenshots")
 	_ = os.MkdirAll(screenshotDir, 0o755)
 	apiSrv.SetScreenshotDir(screenshotDir)
@@ -503,6 +529,7 @@ func (a *app) serve() error {
 
 	orch := orchestrator.New(store, chatBot, runner, sched, logger, *cfg, config.Reload)
 	orch.SetEventBroadcaster(eventsHub)
+	orch.SetWorkflowEngine(wfEngine)
 	executor.SetActiveRuns(orch.ActiveRunsMap())
 	apiSrv.SetIncomingMessageHandler(chatBot)
 	apiSrv.SetInteractionHandler(orch)
@@ -534,4 +561,30 @@ func (a *app) serve() error {
 	}
 
 	return nil
+}
+
+// workflowsFromConfig returns a function that loads workflows from the
+// latest config, merging project-level config when dirPath is provided.
+// When parentDirPath is set (worktree channels), uses three-layer merging:
+// global → parent project → worktree project.
+// Falls back to the initial config on reload error.
+func workflowsFromConfig(cfg *config.Config, reload func() (*config.Config, error)) func(dirPath, parentDirPath string) []config.WorkflowDef {
+	return func(dirPath, parentDirPath string) []config.WorkflowDef {
+		base := cfg
+		if fresh, err := reload(); err == nil {
+			base = fresh
+		}
+		if parentDirPath != "" && dirPath != "" {
+			// Worktree channel: global → parent project → worktree project
+			if merged, err := config.LoadWorktreeProjectConfig(dirPath, parentDirPath, base); err == nil {
+				return merged.Workflows
+			}
+		} else if dirPath != "" {
+			// Regular channel/thread: global → project
+			if merged, err := config.LoadProjectConfig(dirPath, base); err == nil {
+				return merged.Workflows
+			}
+		}
+		return base.Workflows
+	}
 }

@@ -57,7 +57,8 @@ AI agents powered by Claude, running in Docker containers. Use the **desktop app
 - **Orchestrator** coordinates message handling, channel registration, session management, and scheduled tasks
 - **DockerRunner** mounts the channel's `dir_path` (falling back to `~/.loop/<channelID>/work`) at its original path inside the container, then runs `claude --print`
 - **Scheduler** polls for due tasks (cron, interval, once) and executes them via DockerRunner
-- **MCP Server** (inside the container) gives Claude tools to schedule/manage tasks — calls loop back through the API server
+- **Workflow Engine** runs declarative DAG pipelines — parallel fan-out of prompt and bash nodes with dependency tracking, trigger rules, and real-time status events
+- **MCP Server** (inside the container) gives Claude tools to schedule/manage tasks and run workflows — calls loop back through the API server
 - **Browser** supports Docker mode (headless Chrome container per channel) and Host mode (user's local Chrome via CDP). The desktop app toggles modes per channel; `loop mcp-host-browser` runs standalone without Docker
 - **API Server** exposes REST endpoints for task and channel management
 - **SQLite** stores channels, messages, scheduled tasks, run logs, and memory file embeddings
@@ -354,6 +355,8 @@ This does four things:
 | `mcp` | `{}` | MCP server configurations |
 | `task_templates` | `[]` | Reusable task templates |
 | `prompt_shortcuts` | `[]` | Quick-access prompt shortcuts (triggered via `#` in chat) |
+| `workflows` | `[]` | Declarative DAG-based workflow definitions (see [Workflows](#workflows)) |
+| `workflow_concurrency` | `{}` | Max concurrent runs and nodes (`max_concurrent_runs`, `max_concurrent_nodes`; 0 = unlimited) |
 | `memory` | `{}` | Semantic memory search configuration (see below) |
 | `permissions` | `{}` | RBAC permissions: owners and members (see below) |
 
@@ -478,6 +481,8 @@ Project config overrides specific global settings. Only these fields are allowed
 | `mcp` | **Merged** with global; project servers take precedence |
 | `task_templates` | **Merged** with global; project overrides by name |
 | `prompt_shortcuts` | **Merged** with global; project overrides by name |
+| `workflows` | **Merged** with global; project overrides by name |
+| `workflow_concurrency` | **Overrides** global values when > 0 |
 | `claude_model` | **Overrides** global model |
 | `claude_bin_path` | **Overrides** global binary path |
 | `claude_code_oauth_token` | **Overrides** global auth (clears API key) |
@@ -904,6 +909,35 @@ Project configs (`.loop/config.json`) can define their own `prompt_shortcuts` th
 
 Agents can manage shortcuts via the `prompt_shortcut` MCP tool — list, add, update, or delete shortcuts in either global or project scope.
 
+### Workflows
+
+Workflows are declarative DAG-based pipelines of prompt and bash nodes. They provide repeatable, structured execution with parallel fan-out, dependency tracking, and real-time status events. Defined in the `workflows` array in config, using the same merge-by-name system as `task_templates`.
+
+```jsonc
+{
+  "workflows": [
+    {
+      "name": "fix-issue",
+      "description": "Analyze a GitHub issue, implement, test, and create a PR",
+      "inputs": {
+        "issue_url": { "description": "GitHub issue URL", "required": true }
+      },
+      "nodes": [
+        { "id": "analyze", "type": "bash", "script": "gh issue view {{.Inputs.issue_url}} --json title,body,labels" },
+        { "id": "plan", "type": "prompt", "depends_on": ["analyze"], "prompt": "Create a plan:\n\n{{.NodeOutputs.analyze}}" },
+        { "id": "implement", "type": "prompt", "depends_on": ["plan"], "prompt": "Implement:\n\n{{.NodeOutputs.plan}}" },
+        { "id": "test", "type": "bash", "depends_on": ["implement"], "script": "make test 2>&1" },
+        { "id": "pr", "type": "prompt", "depends_on": ["test"], "prompt": "Create a PR. Tests:\n{{.NodeOutputs.test}}" }
+      ]
+    }
+  ]
+}
+```
+
+Nodes support four types: `prompt` (AI agent), `bash` (shell script), `loop` (iterative prompt), and `approval` (human gate). Independent nodes execute in parallel. Templates use Go `text/template` syntax with access to `{{.Inputs.name}}` and `{{.NodeOutputs.node_id}}`. Use `workflow_concurrency` to limit parallel runs and nodes. Both workflows and individual nodes support enforced `timeout` deadlines (Go duration strings like `"30m"` or `"5m"`).
+
+Agents can start workflows via the `run_workflow` MCP tool, and the Workflows panel in the desktop app provides an interactive DAG graph visualization for monitoring runs with per-node status, output, and real-time updates. Available as both a global overlay and an embedded per-channel split panel. See [Workflows docs](docs/workflows.md) for the full reference.
+
 ## Desktop App
 
 Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built with Electron + React. Download from [Releases](https://github.com/radutopala/loop/releases/latest) or build from source.
@@ -915,6 +949,7 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 - **File editor** — CodeMirror-powered editor with syntax highlighting, markdown preview, in-file search, context menus, auto-save, and directory creation/deletion
 - **Git panel** — git changes with per-file addition/deletion stats, maximizable to full width, expandable context rows between hunks (GitLab-style "load more"), branch-to-branch diff mode for comparing any two branches, renamed file support with `{old => new}` notation, commit history view with branch selector and lazy pagination, worktrees tab for managing git worktrees (import, navigate, delete)
 - **Kanban panel** — visual ticket board with Open / In Progress / Closed columns backed by filesystem-based `tk` tickets (`.tickets/` directory). Create, edit, delete tickets with full metadata (priority, type, assignee, tags, dependencies, design notes, acceptance criteria). One-click "Assign Worktree" atomically claims a ticket, creates a git worktree, spawns a thread, and auto-starts an agent. Live updates via WebSocket. See [Kanban](docs/kanban.md)
+- **Workflows panel** — start, monitor, and manage DAG-based workflow runs. Available as both a global overlay panel and an embedded split panel per channel. Two-pane layout with run list and interactive DAG graph visualization — nodes are rendered on an SVG canvas with a dot grid background, pan/zoom (scroll + Ctrl+Scroll), cursor-anchored zoom, minimap with draggable viewport, and zoom controls. Nodes show status (pending, running, success, failed, skipped, paused), type badges, retry counts, and elapsed time with connected dependency edges. Click a node to expand its output in a 50/50 split below the graph. Approval widget for paused runs. Real-time updates via WebSocket events. See [Workflows](docs/workflows.md)
 - **Containers panel** — global view of all Docker containers (agent, shell, chrome) with real-time status lifecycle (running → stopped → pending-removal), type labels, scheduled removal countdown, and live updates via WebSocket events
 - **Memory panel** — browse and search semantic memory files
 - **Custom layouts** — named split-pane workspaces with drag-to-resize, saved per channel. Create, rename, delete, and restore default layouts from the tab bar
@@ -1004,6 +1039,14 @@ make app-install
 | `PATCH` | `/api/tickets/{id}` | Update ticket fields (status, title, description, deps, etc.) |
 | `DELETE` | `/api/tickets/{id}` | Delete a ticket |
 | `POST` | `/api/tickets/{id}/assign` | Assign a worktree to a ticket (claim, create worktree, start agent) |
+| `GET` | `/api/workflows` | List workflow definitions from merged config |
+| `POST` | `/api/workflows/runs` | Start a new workflow run |
+| `GET` | `/api/workflows/runs` | List workflow runs (optional `channel_id`, `limit`) |
+| `GET` | `/api/workflows/runs/{id}` | Get run detail with node statuses |
+| `POST` | `/api/workflows/runs/{id}/resume` | Resume a paused workflow (body: `{"response": "..."}`) |
+| `POST` | `/api/workflows/runs/{id}/cancel` | Cancel a running workflow |
+| `DELETE` | `/api/workflows/runs/{id}` | Permanently delete a workflow run from the database |
+| `POST` | `/api/workflows/runs/{id}/retry` | Retry a completed/failed workflow run (creates a new run) |
 | `GET` | `/api/shortcuts` | List resolved prompt shortcuts (optional `channel_id` for project merge) |
 | `POST` | `/api/shortcuts` | Add, update, or delete a prompt shortcut (global or project scope) |
 | `GET` | `/api/config/schema` | JSON Schema for all config fields |
@@ -1035,6 +1078,14 @@ make app-install
 | `get_readme` | Get the full Loop README documentation |
 | `playground` | Manage playgrounds (create/update/delete) |
 | `playground_file` | Manage files within a playground (create/update/read/delete/list) |
+| `prompt_shortcut` | Manage prompt shortcuts (list, add, update, delete) in global or project scope |
+| | **Workflows** |
+| `run_workflow` | Start a workflow run by name with optional inputs |
+| `get_workflow_run` | Get run status and node outputs |
+| `list_workflows` | List available workflow definitions |
+| `list_workflow_runs` | List recent workflow runs |
+| `cancel_workflow_run` | Cancel a running workflow |
+| `resume_workflow_run` | Resume a paused workflow with an optional response |
 | | **Browser Automation** |
 | `navigate` | Navigate the browser to a URL |
 | `read_page` | Get the accessibility tree of interactive elements |

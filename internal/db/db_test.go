@@ -44,7 +44,7 @@ func newMockChannelRows() *sqlmock.Rows {
 }
 
 func newMockTaskRows() *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "schedule", "type", "prompt", "enabled", "next_run_at", "created_at", "updated_at", "template_name", "auto_delete_sec", "thread_id", "worktree", "origin_branch", "update_before_run", "running"})
+	return sqlmock.NewRows([]string{"id", "channel_id", "guild_id", "schedule", "type", "prompt", "enabled", "next_run_at", "created_at", "updated_at", "template_name", "auto_delete_sec", "thread_id", "worktree", "origin_branch", "update_before_run", "running", "workflow_name", "workflow_inputs"})
 }
 
 func newMockMessageRows() *sqlmock.Rows {
@@ -624,7 +624,7 @@ func (s *StoreSuite) TestCreateScheduledTask() {
 		NextRunAt: time.Now().UTC(),
 	}
 	s.mock.ExpectExec(`INSERT INTO scheduled_tasks`).
-		WithArgs(task.ChannelID, task.GuildID, task.Schedule, "cron", task.Prompt, 1, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "", 0, 0, "", 0).
+		WithArgs(task.ChannelID, task.GuildID, task.Schedule, "cron", task.Prompt, 1, sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), "", 0, 0, "", 0, "", "").
 		WillReturnResult(sqlmock.NewResult(5, 1))
 
 	id, err := s.store.CreateScheduledTask(context.Background(), task)
@@ -634,7 +634,7 @@ func (s *StoreSuite) TestCreateScheduledTask() {
 }
 
 func (s *StoreSuite) TestCreateScheduledTaskErrors() {
-	anyArgs := []driver.Value{sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()}
+	anyArgs := []driver.Value{sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()}
 	s.mock.ExpectExec(`INSERT INTO scheduled_tasks`).WithArgs(anyArgs...).WillReturnError(sql.ErrConnDone)
 	id, err := s.store.CreateScheduledTask(context.Background(), &ScheduledTask{ChannelID: "ch1", Type: TaskTypeCron, NextRunAt: time.Now().UTC()})
 	require.Error(s.T(), err)
@@ -649,7 +649,7 @@ func (s *StoreSuite) TestCreateScheduledTaskErrors() {
 func (s *StoreSuite) TestGetDueTasks() {
 	now := time.Now().UTC()
 	rows := newMockTaskRows().
-		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "", 0, "", 0, "", 0, 0)
+		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "", 0, "", 0, "", 0, 0, "", "{}")
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE enabled = 1 AND running = 0 AND next_run_at`).
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnRows(rows)
@@ -669,7 +669,7 @@ func (s *StoreSuite) TestGetDueTasksErrors() {
 	require.Nil(s.T(), tasks)
 
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE enabled = 1 AND running = 0`).WithArgs(sqlmock.AnyArg()).WillReturnRows(
-		newMockTaskRows().AddRow("bad", "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "", 0, "", 0, "", 0, 0))
+		newMockTaskRows().AddRow("bad", "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "", 0, "", 0, "", 0, 0, "", "{}"))
 	tasks, err = s.store.GetDueTasks(context.Background(), now)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), tasks)
@@ -681,7 +681,7 @@ func (s *StoreSuite) TestUpdateScheduledTask() {
 		Prompt: "updated prompt", Enabled: false, NextRunAt: time.Now().UTC(),
 	}
 	s.mock.ExpectExec(`UPDATE scheduled_tasks SET`).
-		WithArgs(task.Schedule, "interval", task.Prompt, 0, sqlmock.AnyArg(), sqlmock.AnyArg(), 0, "", 0, "", 0, 0, task.ID).
+		WithArgs(task.Schedule, "interval", task.Prompt, 0, sqlmock.AnyArg(), sqlmock.AnyArg(), 0, "", 0, "", 0, 0, "", "", task.ID).
 		WillReturnResult(sqlmock.NewResult(0, 1))
 
 	err := s.store.UpdateScheduledTask(context.Background(), task)
@@ -690,7 +690,7 @@ func (s *StoreSuite) TestUpdateScheduledTask() {
 
 func (s *StoreSuite) TestUpdateScheduledTaskError() {
 	s.mock.ExpectExec(`UPDATE scheduled_tasks SET`).
-		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
 	require.Error(s.T(), s.store.UpdateScheduledTask(context.Background(), &ScheduledTask{ID: 1, Type: TaskTypeCron, NextRunAt: time.Now().UTC()}))
 }
@@ -721,8 +721,8 @@ func (s *StoreSuite) TestDeleteScheduledTaskErrors() {
 func (s *StoreSuite) TestListScheduledTasks() {
 	now := time.Now().UTC()
 	rows := newMockTaskRows().
-		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check", 1, now, now, now, "", 0, "", 0, "", 0, 0).
-		AddRow(2, "ch1", "g1", "30m", "interval", "ping", 0, now.Add(time.Hour), now, now, "", 0, "", 0, "", 0, 0)
+		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check", 1, now, now, now, "", 0, "", 0, "", 0, 0, "", "{}").
+		AddRow(2, "ch1", "g1", "30m", "interval", "ping", 0, now.Add(time.Hour), now, now, "", 0, "", 0, "", 0, 0, "", "{}")
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE channel_id`).
 		WithArgs("ch1", sqlmock.AnyArg()).
 		WillReturnRows(rows)
@@ -744,8 +744,8 @@ func (s *StoreSuite) TestListScheduledTasksError() {
 func (s *StoreSuite) TestListAllScheduledTasks() {
 	now := time.Now().UTC()
 	rows := newMockTaskRows().
-		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check", 1, now, now, now, "", 0, "", 0, "", 0, 0).
-		AddRow(2, "ch2", "g1", "1h", "interval", "deploy", 1, now.Add(time.Hour), now, now, "", 0, "", 0, "", 0, 0)
+		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check", 1, now, now, now, "", 0, "", 0, "", 0, 0, "", "{}").
+		AddRow(2, "ch2", "g1", "1h", "interval", "deploy", 1, now.Add(time.Hour), now, now, "", 0, "", 0, "", 0, 0, "", "{}")
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE`).
 		WithArgs(sqlmock.AnyArg()).
 		WillReturnRows(rows)
@@ -773,7 +773,7 @@ func (s *StoreSuite) TestUpdateScheduledTaskEnabled() {
 func (s *StoreSuite) TestGetScheduledTask() {
 	now := time.Now().UTC()
 	rows := newMockTaskRows().
-		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "", 0, "", 0, "", 0, 0)
+		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "", 0, "", 0, "", 0, 0, "", "{}")
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE id`).
 		WithArgs(int64(1)).
 		WillReturnRows(rows)
@@ -1250,7 +1250,7 @@ func (s *StoreSuite) TestBoolToInt() {
 func (s *StoreSuite) TestGetScheduledTaskByTemplateName() {
 	now := time.Now().UTC()
 	rows := newMockTaskRows().
-		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "my-template", 0, "", 0, "", 0, 0)
+		AddRow(1, "ch1", "g1", "*/5 * * * *", "cron", "check news", 1, now, now, now, "my-template", 0, "", 0, "", 0, 0, "", "{}")
 	s.mock.ExpectQuery(`SELECT .+ FROM scheduled_tasks WHERE channel_id .+ AND template_name`).
 		WithArgs("ch1", "my-template").
 		WillReturnRows(rows)
@@ -1467,11 +1467,448 @@ func (s *StoreSuite) TestNowFuncUsedInCreateScheduledTask() {
 		Prompt: "test", Enabled: true, NextRunAt: fixedTime,
 	}
 	s.mock.ExpectExec(`INSERT INTO scheduled_tasks`).
-		WithArgs("ch1", "", "0 9 * * *", "cron", "test", 1, fixedTime, fixedTime, fixedTime, "", 0, 0, "", 0).
+		WithArgs("ch1", "", "0 9 * * *", "cron", "test", 1, fixedTime, fixedTime, fixedTime, "", 0, 0, "", 0, "", "").
 		WillReturnResult(sqlmock.NewResult(1, 1))
 
 	id, err := s.store.CreateScheduledTask(context.Background(), task)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), int64(1), id)
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+// --- WorkflowRun tests ---
+
+func newMockWorkflowRunRows() *sqlmock.Rows {
+	return sqlmock.NewRows([]string{
+		"id", "workflow_name", "channel_id", "dir_path", "worktree_path",
+		"status", "inputs", "paused_node_id", "error_text", "workflow_def", "started_at", "finished_at",
+	})
+}
+
+func newMockNodeRunRows() *sqlmock.Rows {
+	return sqlmock.NewRows([]string{
+		"id", "run_id", "node_id", "status", "output", "error_text", "attempt", "started_at", "finished_at", "last_heartbeat_at",
+	})
+}
+
+func (s *StoreSuite) TestCreateWorkflowRun() {
+	now := time.Now().UTC()
+	run := &WorkflowRun{
+		ID:           "run-1",
+		WorkflowName: "deploy",
+		ChannelID:    "ch1",
+		DirPath:      "/project",
+		WorktreePath: "/worktree",
+		Status:       WorkflowRunStatusRunning,
+		Inputs:       `{"env":"prod"}`,
+		PausedNodeID: "",
+		ErrorText:    "",
+		StartedAt:    now,
+	}
+
+	s.mock.ExpectExec(`INSERT INTO workflow_runs`).
+		WithArgs(run.ID, run.WorkflowName, run.ChannelID, run.DirPath, run.WorktreePath,
+			string(run.Status), run.Inputs, run.PausedNodeID, run.ErrorText, run.WorkflowDef, run.StartedAt).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err := s.store.CreateWorkflowRun(context.Background(), run)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestCreateWorkflowRunError() {
+	now := time.Now().UTC()
+	run := &WorkflowRun{ID: "run-1", WorkflowName: "deploy", Status: WorkflowRunStatusRunning, StartedAt: now}
+
+	s.mock.ExpectExec(`INSERT INTO workflow_runs`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnError(sql.ErrConnDone)
+
+	err := s.store.CreateWorkflowRun(context.Background(), run)
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestGetWorkflowRun() {
+	now := time.Now().UTC()
+	finishedAt := now.Add(time.Minute)
+	rows := newMockWorkflowRunRows().
+		AddRow("run-1", "deploy", "ch1", "/project", "/worktree", "completed", `{"env":"prod"}`, "", "", `{"name":"deploy"}`, now, &finishedAt)
+
+	s.mock.ExpectQuery(`FROM workflow_runs WHERE id`).
+		WithArgs("run-1").
+		WillReturnRows(rows)
+
+	run, err := s.store.GetWorkflowRun(context.Background(), "run-1")
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), run)
+	require.Equal(s.T(), "run-1", run.ID)
+	require.Equal(s.T(), "deploy", run.WorkflowName)
+	require.Equal(s.T(), "ch1", run.ChannelID)
+	require.Equal(s.T(), WorkflowRunStatusCompleted, run.Status)
+	require.Equal(s.T(), `{"name":"deploy"}`, run.WorkflowDef)
+	require.NotNil(s.T(), run.FinishedAt)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestGetWorkflowRunNotFoundAndError() {
+	// Not found: empty rows causes sql.ErrNoRows on Scan.
+	s.mock.ExpectQuery(`FROM workflow_runs WHERE id`).
+		WithArgs("run-missing").
+		WillReturnRows(newMockWorkflowRunRows())
+
+	run, err := s.store.GetWorkflowRun(context.Background(), "run-missing")
+	require.NoError(s.T(), err)
+	require.Nil(s.T(), run)
+
+	// Query-level error: function returns (zero-value-run, err).
+	s.mock.ExpectQuery(`FROM workflow_runs WHERE id`).
+		WithArgs("run-missing").
+		WillReturnError(sql.ErrConnDone)
+
+	run, err = s.store.GetWorkflowRun(context.Background(), "run-missing")
+	require.Error(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+	_ = run
+}
+
+func (s *StoreSuite) TestUpdateWorkflowRun() {
+	finishedAt := time.Now().UTC()
+	run := &WorkflowRun{
+		ID:           "run-1",
+		Status:       WorkflowRunStatusCompleted,
+		PausedNodeID: "",
+		ErrorText:    "",
+		FinishedAt:   &finishedAt,
+	}
+
+	s.mock.ExpectExec(`UPDATE workflow_runs SET status`).
+		WithArgs(string(run.Status), run.PausedNodeID, run.ErrorText, run.FinishedAt, run.ID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := s.store.UpdateWorkflowRun(context.Background(), run)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestUpdateWorkflowRunFailed() {
+	run := &WorkflowRun{
+		ID:        "run-1",
+		Status:    WorkflowRunStatusFailed,
+		ErrorText: "something went wrong",
+	}
+
+	s.mock.ExpectExec(`UPDATE workflow_runs SET status`).
+		WithArgs(string(run.Status), run.PausedNodeID, run.ErrorText, run.FinishedAt, run.ID).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := s.store.UpdateWorkflowRun(context.Background(), run)
+	require.NoError(s.T(), err)
+}
+
+func (s *StoreSuite) TestUpdateWorkflowRunError() {
+	run := &WorkflowRun{ID: "run-1", Status: WorkflowRunStatusFailed}
+
+	s.mock.ExpectExec(`UPDATE workflow_runs SET status`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnError(sql.ErrConnDone)
+
+	err := s.store.UpdateWorkflowRun(context.Background(), run)
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestListWorkflowRuns() {
+	now := time.Now().UTC()
+	finishedAt := now.Add(time.Minute)
+	rows := newMockWorkflowRunRows().
+		AddRow("run-2", "build", "ch1", "/proj2", "", "completed", "", "", "", "", now, &finishedAt).
+		AddRow("run-1", "deploy", "ch1", "/proj1", "/wt", "running", `{"k":"v"}`, "", "", "", now.Add(-time.Hour), nil)
+
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs WHERE channel_id .+ ORDER BY started_at DESC LIMIT`).
+		WithArgs("ch1", 50).
+		WillReturnRows(rows)
+
+	runs, err := s.store.ListWorkflowRuns(context.Background(), "ch1", 50)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), runs, 2)
+	require.Equal(s.T(), "run-2", runs[0].ID)
+	require.Equal(s.T(), WorkflowRunStatusCompleted, runs[0].Status)
+	require.NotNil(s.T(), runs[0].FinishedAt)
+	require.Equal(s.T(), "run-1", runs[1].ID)
+	require.Equal(s.T(), WorkflowRunStatusRunning, runs[1].Status)
+	require.Nil(s.T(), runs[1].FinishedAt)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestListWorkflowRunsWithoutChannelFilter() {
+	now := time.Now().UTC()
+	rows := newMockWorkflowRunRows().
+		AddRow("run-3", "test", "ch2", "/proj3", "", "failed", "", "", "timeout", "", now, nil).
+		AddRow("run-1", "deploy", "ch1", "/proj1", "", "running", "", "", "", "", now.Add(-time.Hour), nil)
+
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs ORDER BY started_at DESC LIMIT`).
+		WithArgs(10).
+		WillReturnRows(rows)
+
+	runs, err := s.store.ListWorkflowRuns(context.Background(), "", 10)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), runs, 2)
+	require.Equal(s.T(), "run-3", runs[0].ID)
+	require.Equal(s.T(), "ch2", runs[0].ChannelID)
+	require.Equal(s.T(), WorkflowRunStatusFailed, runs[0].Status)
+	require.Equal(s.T(), "run-1", runs[1].ID)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestListWorkflowRunsEmpty() {
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs WHERE channel_id .+ ORDER BY started_at DESC LIMIT`).
+		WithArgs("ch-empty", 10).
+		WillReturnRows(newMockWorkflowRunRows())
+
+	runs, err := s.store.ListWorkflowRuns(context.Background(), "ch-empty", 10)
+	require.NoError(s.T(), err)
+	require.Nil(s.T(), runs)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestListWorkflowRunsError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs WHERE channel_id .+ ORDER BY started_at DESC LIMIT`).
+		WithArgs("ch1", 10).
+		WillReturnError(sql.ErrConnDone)
+
+	runs, err := s.store.ListWorkflowRuns(context.Background(), "ch1", 10)
+	require.Error(s.T(), err)
+	require.Nil(s.T(), runs)
+
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs ORDER BY started_at DESC LIMIT`).
+		WithArgs(10).
+		WillReturnError(sql.ErrConnDone)
+
+	runs, err = s.store.ListWorkflowRuns(context.Background(), "", 10)
+	require.Error(s.T(), err)
+	require.Nil(s.T(), runs)
+}
+
+func (s *StoreSuite) TestListWorkflowRunsScanError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs WHERE channel_id .+ ORDER BY started_at DESC LIMIT`).
+		WithArgs("ch1", 10).
+		WillReturnRows(newMockWorkflowRunRows().AddRow("bad-id", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil))
+
+	runs, err := s.store.ListWorkflowRuns(context.Background(), "ch1", 10)
+	require.Error(s.T(), err)
+	require.Nil(s.T(), runs)
+}
+
+func (s *StoreSuite) TestListWorkflowRunsByStatus() {
+	now := time.Now().UTC()
+	rows := newMockWorkflowRunRows().
+		AddRow("run-1", "wf1", "ch1", "/p", "", "running", "{}", "", "", "", now, nil).
+		AddRow("run-2", "wf2", "ch2", "/p", "", "paused", "{}", "approve", "", "", now, nil)
+
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs WHERE status IN`).
+		WithArgs("running", "paused").
+		WillReturnRows(rows)
+
+	runs, err := s.store.ListWorkflowRunsByStatus(context.Background(), []WorkflowRunStatus{
+		WorkflowRunStatusRunning, WorkflowRunStatusPaused,
+	})
+	require.NoError(s.T(), err)
+	require.Len(s.T(), runs, 2)
+	require.Equal(s.T(), WorkflowRunStatusRunning, runs[0].Status)
+	require.Equal(s.T(), WorkflowRunStatusPaused, runs[1].Status)
+	require.Equal(s.T(), "approve", runs[1].PausedNodeID)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestListWorkflowRunsByStatusEmpty() {
+	runs, err := s.store.ListWorkflowRunsByStatus(context.Background(), nil)
+	require.NoError(s.T(), err)
+	require.Nil(s.T(), runs)
+}
+
+func (s *StoreSuite) TestListWorkflowRunsByStatusError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs WHERE status IN`).
+		WithArgs("running").
+		WillReturnError(sql.ErrConnDone)
+
+	runs, err := s.store.ListWorkflowRunsByStatus(context.Background(), []WorkflowRunStatus{WorkflowRunStatusRunning})
+	require.Error(s.T(), err)
+	require.Nil(s.T(), runs)
+}
+
+func (s *StoreSuite) TestListWorkflowRunsByStatusScanError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs WHERE status IN`).
+		WithArgs("paused").
+		WillReturnRows(newMockWorkflowRunRows().AddRow("bad", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil))
+
+	runs, err := s.store.ListWorkflowRunsByStatus(context.Background(), []WorkflowRunStatus{WorkflowRunStatusPaused})
+	require.Error(s.T(), err)
+	require.Nil(s.T(), runs)
+}
+
+func (s *StoreSuite) TestUpsertNodeRunInsert() {
+	now := time.Now().UTC()
+	nr := &NodeRun{
+		RunID:     "run-1",
+		NodeID:    "node-a",
+		Status:    NodeRunStatusRunning,
+		Output:    "",
+		ErrorText: "",
+		Attempt:   1,
+		StartedAt: &now,
+	}
+
+	s.mock.ExpectExec(`INSERT INTO workflow_node_runs`).
+		WithArgs(nr.RunID, nr.NodeID, string(nr.Status), nr.Output, nr.ErrorText, nr.Attempt, nr.StartedAt, nr.FinishedAt, nr.LastHeartbeatAt).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+
+	err := s.store.UpsertNodeRun(context.Background(), nr)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestUpsertNodeRunUpdate() {
+	startedAt := time.Now().UTC()
+	finishedAt := startedAt.Add(time.Second * 30)
+	nr := &NodeRun{
+		RunID:      "run-1",
+		NodeID:     "node-a",
+		Status:     NodeRunStatusSuccess,
+		Output:     "build passed",
+		ErrorText:  "",
+		Attempt:    1,
+		StartedAt:  &startedAt,
+		FinishedAt: &finishedAt,
+	}
+
+	// Second upsert simulates ON CONFLICT update path (same exec signature).
+	s.mock.ExpectExec(`INSERT INTO workflow_node_runs`).
+		WithArgs(nr.RunID, nr.NodeID, string(nr.Status), nr.Output, nr.ErrorText, nr.Attempt, nr.StartedAt, nr.FinishedAt, nr.LastHeartbeatAt).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := s.store.UpsertNodeRun(context.Background(), nr)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestUpsertNodeRunError() {
+	nr := &NodeRun{RunID: "run-1", NodeID: "node-a", Status: NodeRunStatusPending, Attempt: 1}
+
+	s.mock.ExpectExec(`INSERT INTO workflow_node_runs`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnError(sql.ErrConnDone)
+
+	err := s.store.UpsertNodeRun(context.Background(), nr)
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestListNodeRuns() {
+	startedAt := time.Now().UTC()
+	finishedAt := startedAt.Add(time.Second)
+	rows := newMockNodeRunRows().
+		AddRow(1, "run-1", "node-a", "success", "output-a", "", 1, &startedAt, &finishedAt, nil).
+		AddRow(2, "run-1", "node-b", "running", "", "", 1, &startedAt, nil, &startedAt)
+
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_node_runs WHERE run_id .+ ORDER BY id ASC`).
+		WithArgs("run-1").
+		WillReturnRows(rows)
+
+	nodeRuns, err := s.store.ListNodeRuns(context.Background(), "run-1")
+	require.NoError(s.T(), err)
+	require.Len(s.T(), nodeRuns, 2)
+	require.Equal(s.T(), int64(1), nodeRuns[0].ID)
+	require.Equal(s.T(), "run-1", nodeRuns[0].RunID)
+	require.Equal(s.T(), "node-a", nodeRuns[0].NodeID)
+	require.Equal(s.T(), NodeRunStatusSuccess, nodeRuns[0].Status)
+	require.Equal(s.T(), "output-a", nodeRuns[0].Output)
+	require.NotNil(s.T(), nodeRuns[0].FinishedAt)
+	require.Equal(s.T(), "node-b", nodeRuns[1].NodeID)
+	require.Equal(s.T(), NodeRunStatusRunning, nodeRuns[1].Status)
+	require.Nil(s.T(), nodeRuns[1].FinishedAt)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestListNodeRunsEmpty() {
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_node_runs WHERE run_id .+ ORDER BY id ASC`).
+		WithArgs("run-empty").
+		WillReturnRows(newMockNodeRunRows())
+
+	nodeRuns, err := s.store.ListNodeRuns(context.Background(), "run-empty")
+	require.NoError(s.T(), err)
+	require.Nil(s.T(), nodeRuns)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestListNodeRunsError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_node_runs WHERE run_id .+ ORDER BY id ASC`).
+		WithArgs("run-1").
+		WillReturnError(sql.ErrConnDone)
+
+	nodeRuns, err := s.store.ListNodeRuns(context.Background(), "run-1")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), nodeRuns)
+}
+
+func (s *StoreSuite) TestListNodeRunsScanError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_node_runs WHERE run_id .+ ORDER BY id ASC`).
+		WithArgs("run-1").
+		WillReturnRows(newMockNodeRunRows().AddRow("bad-id", nil, nil, nil, nil, nil, nil, nil, nil, nil))
+
+	nodeRuns, err := s.store.ListNodeRuns(context.Background(), "run-1")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), nodeRuns)
+}
+
+func (s *StoreSuite) TestUpdateNodeHeartbeat() {
+	s.mock.ExpectExec(`UPDATE workflow_node_runs SET last_heartbeat_at`).
+		WithArgs(sqlmock.AnyArg(), "run-1", "node-a").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := s.store.UpdateNodeHeartbeat(context.Background(), "run-1", "node-a")
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestUpdateNodeHeartbeatError() {
+	s.mock.ExpectExec(`UPDATE workflow_node_runs SET last_heartbeat_at`).
+		WithArgs(sqlmock.AnyArg(), "run-1", "node-a").
+		WillReturnError(sql.ErrConnDone)
+
+	err := s.store.UpdateNodeHeartbeat(context.Background(), "run-1", "node-a")
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestDeleteWorkflowRun() {
+	s.mock.ExpectExec(`DELETE FROM workflow_node_runs WHERE run_id`).
+		WithArgs("run-1").
+		WillReturnResult(sqlmock.NewResult(0, 3))
+	s.mock.ExpectExec(`DELETE FROM workflow_runs WHERE id`).
+		WithArgs("run-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	err := s.store.DeleteWorkflowRun(context.Background(), "run-1")
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestDeleteWorkflowRunErrors() {
+	// First exec (delete node runs) fails.
+	s.mock.ExpectExec(`DELETE FROM workflow_node_runs WHERE run_id`).
+		WithArgs("run-1").
+		WillReturnError(sql.ErrConnDone)
+
+	err := s.store.DeleteWorkflowRun(context.Background(), "run-1")
+	require.Error(s.T(), err)
+
+	// First exec succeeds, second (delete workflow run) fails.
+	s.mock.ExpectExec(`DELETE FROM workflow_node_runs WHERE run_id`).
+		WithArgs("run-1").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	s.mock.ExpectExec(`DELETE FROM workflow_runs WHERE id`).
+		WithArgs("run-1").
+		WillReturnError(sql.ErrConnDone)
+
+	err = s.store.DeleteWorkflowRun(context.Background(), "run-1")
+	require.Error(s.T(), err)
 }

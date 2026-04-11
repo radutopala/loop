@@ -190,6 +190,12 @@ const LOOP_COMMANDS: CommandDef[] = [
   { name: "allow_user", description: "Grant user access", usage: "<user_id> [owner|member]" },
   { name: "deny_user", description: "Revoke user access", usage: "<user_id>" },
   { name: "iamtheowner", description: "Claim channel ownership" },
+  { name: "workflows", description: "List available workflows" },
+  { name: "workflow-run", description: "Run a workflow", usage: "<name>" },
+  { name: "workflow-runs", description: "List recent workflow runs" },
+  { name: "workflow-cancel", description: "Cancel a workflow run", usage: "<run_id>" },
+  { name: "workflow-retry", description: "Retry a workflow run", usage: "<run_id>" },
+  { name: "workflow-delete", description: "Delete a workflow run", usage: "<run_id>" },
 ];
 
 export interface ChatInputProps {

@@ -73,7 +73,7 @@ func parseCommand(command, channelID, authorID string) *bot.Interaction {
 	}
 
 	switch cmdName {
-	case "tasks", "status", "readme", "template-list", "iamtheowner":
+	case "tasks", "status", "readme", "template-list", "iamtheowner", "shortcuts", "workflows", "workflow-runs":
 		// No arguments needed.
 	case "task", "cancel", "toggle":
 		// Single positional: task_id.
@@ -89,6 +89,16 @@ func parseCommand(command, channelID, authorID string) *bot.Interaction {
 		// Single positional: name.
 		if len(args) > 0 {
 			inter.Options["name"] = args[0]
+		}
+	case "shortcut", "workflow-run":
+		// Single positional: name.
+		if len(args) > 0 {
+			inter.Options["name"] = args[0]
+		}
+	case "workflow-cancel", "workflow-delete", "workflow-retry":
+		// Single positional: run_id.
+		if len(args) > 0 {
+			inter.Options["run_id"] = args[0]
 		}
 	case "schedule":
 		// All key=value: type, schedule, prompt.

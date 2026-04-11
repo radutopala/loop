@@ -445,6 +445,62 @@ Ticket lifecycle events from the [Tickets API](api.md#tickets). The Kanban panel
 
 ---
 
+### `workflow.run_started` / `workflow.run_completed` / `workflow.run_paused`
+
+Workflow run lifecycle events. Broadcast when a workflow begins execution, when it reaches a terminal state (completed, failed, or cancelled), or when an approval node pauses the run for human input.
+
+**Payload schema:**
+
+```json
+{
+  "run_id": "wfr-a1b2c3d4e5f67890",
+  "workflow_name": "code-review",
+  "channel_id": "chan_a",
+  "status": "paused",
+  "paused_node_id": "approve",
+  "error": ""
+}
+```
+
+| Field            | Type   | Description |
+|------------------|--------|-------------|
+| `run_id`         | string | Workflow run ID |
+| `workflow_name`  | string | Name of the workflow definition |
+| `channel_id`     | string | Channel context (may be empty) |
+| `status`         | string | `"running"`, `"paused"`, `"completed"`, `"failed"`, or `"cancelled"` |
+| `paused_node_id` | string | Node ID that caused the pause (only on `"paused"` status) |
+| `error`          | string | Error message (only on `"failed"` status) |
+
+**Scope:** Global.
+
+---
+
+### `workflow.node_started` / `workflow.node_completed`
+
+Individual node lifecycle events within a workflow run.
+
+**Payload schema:**
+
+```json
+{
+  "run_id": "wfr-a1b2c3d4e5f67890",
+  "node_id": "diff",
+  "status": "success",
+  "output": "+added line"
+}
+```
+
+| Field     | Type   | Description |
+|-----------|--------|-------------|
+| `run_id`  | string | Parent workflow run ID |
+| `node_id` | string | Node identifier within the workflow |
+| `status`  | string | `"running"`, `"success"`, `"failed"`, or `"skipped"` |
+| `output`  | string | Node output text (truncated to 1000 chars, only on completion) |
+
+**Scope:** Global.
+
+---
+
 ## Broadcast Flow
 
 1. **Event source** calls a typed broadcast method (e.g., `BroadcastMessageCreated`).
@@ -487,6 +543,11 @@ Ticket lifecycle events from the [Tickets API](api.md#tickets). The Kanban panel
 | `BroadcastTaskDeleted` | `task.deleted` | `TaskEventData` | Global |
 | `BroadcastTaskRunCompleted` | `task.run_completed` | `TaskRunEventData` | Global |
 | `BroadcastTicketEvent` | `ticket.created` / `ticket.updated` / `ticket.deleted` | `map[string]any` | Global |
+| `BroadcastWorkflowRunStarted` | `workflow.run_started` | `WorkflowRunEventData` | Global |
+| `BroadcastWorkflowRunCompleted` | `workflow.run_completed` | `WorkflowRunEventData` | Global |
+| `BroadcastWorkflowRunPaused` | `workflow.run_paused` | `WorkflowRunEventData` | Global |
+| `BroadcastWorkflowNodeStarted` | `workflow.node_started` | `WorkflowNodeEventData` | Global |
+| `BroadcastWorkflowNodeCompleted` | `workflow.node_completed` | `WorkflowNodeEventData` | Global |
 
 ---
 
@@ -522,6 +583,11 @@ type Broadcaster interface {
     BroadcastAgentInstanceMetadata(channelID string, data AgentInstanceEventData)
     BroadcastImageBuildStatus(data ImageBuildStatusData)
     BroadcastImageUpdateAvailable(data ImageUpdateAvailableData)
+    BroadcastWorkflowRunStarted(data WorkflowRunEventData)
+    BroadcastWorkflowRunCompleted(data WorkflowRunEventData)
+    BroadcastWorkflowRunPaused(data WorkflowRunEventData)
+    BroadcastWorkflowNodeStarted(data WorkflowNodeEventData)
+    BroadcastWorkflowNodeCompleted(data WorkflowNodeEventData)
 }
 ```
 

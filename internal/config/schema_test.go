@@ -44,7 +44,7 @@ func (s *SchemaSuite) TestTopLevelProperties() {
 		"envs",
 		"log_level", "log_format", "log_file",
 		"api_addr", "db_path", "poll_interval_sec",
-		"desktop",
+		"desktop", "workflow_bash_local",
 	}
 	for _, key := range expectedKeys {
 		s.Run(key, func() {

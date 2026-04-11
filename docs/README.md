@@ -17,6 +17,7 @@ Comprehensive documentation for every feature of the Loop platform.
 - [**MCP Server**](mcpserver.md) — MCP tools for task scheduling, communication, and memory search
 - [**Browser**](browser.md) — Chrome sidecar containers, CDP client, screencast, input dispatch, tabs
 - [**Scheduling**](scheduling.md) — Task types (cron/interval/once), templates, auto-deletion, thread creation, worktree isolation, Tasks panel
+- [**Workflows**](workflows.md) — Declarative DAG-based pipelines with prompt, bash, loop, and approval nodes; parallel execution, retry, trigger rules
 - [**Daemon**](daemon.md) — Cross-platform service management (launchd, systemd, Windows SCM)
 
 ## API & Data

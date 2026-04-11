@@ -389,7 +389,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
             whiteSpace: "nowrap",
           }}
         >
-          {task.prompt}
+          {task.workflow_name ? `workflow: ${task.workflow_name}` : task.prompt}
         </div>
         {task.enabled && (
           <div style={{ color: colors.textDim, fontSize: 10 }}>
@@ -515,9 +515,22 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
           <div style={{ color: colors.textLight, fontSize: 12, fontFamily: "monospace" }}>
             {selectedTask.schedule}
           </div>
-          <div style={{ color: colors.text, fontSize: 12, whiteSpace: "pre-wrap" }}>
-            {selectedTask.prompt}
-          </div>
+          {selectedTask.workflow_name ? (
+            <>
+              <div style={{ color: colors.text, fontSize: 12 }}>
+                <span style={{ color: colors.active, fontWeight: 600 }}>Workflow:</span> {selectedTask.workflow_name}
+              </div>
+              {selectedTask.workflow_inputs && selectedTask.workflow_inputs !== "{}" && (
+                <div style={{ color: colors.textDim, fontSize: 11, fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
+                  Inputs: {selectedTask.workflow_inputs}
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ color: colors.text, fontSize: 12, whiteSpace: "pre-wrap" }}>
+              {selectedTask.prompt}
+            </div>
+          )}
           {selectedTask.enabled && (
             <div style={{ color: colors.textDim, fontSize: 11 }}>
               Next run: {nextRunLabel(selectedTask.next_run_at)}

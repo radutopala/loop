@@ -399,12 +399,14 @@ Create a new scheduled task.
 | `channel_id`       | string | yes      | Channel to run the task in |
 | `schedule`         | string | yes      | Cron expression, Go duration, or RFC3339 timestamp |
 | `type`             | string | yes      | `cron`, `interval`, or `once` |
-| `prompt`           | string | yes      | Prompt text for the agent |
+| `prompt`           | string | no       | Prompt text for the agent (required unless `workflow_name` is set) |
 | `template_name`    | string | no       | Template identifier for deduplication |
 | `auto_delete_sec`  | int    | no       | Auto-delete thread after N seconds |
 | `worktree`         | bool   | no       | Run the agent in an isolated git worktree |
 | `origin_branch`    | string | no       | Base branch for worktree tasks. Auto-detected on first run if omitted. |
 | `update_before_run`| bool   | no       | Prepend git fetch/rebase instructions to the prompt before each run |
+| `workflow_name`    | string | no       | Name of a workflow to run on schedule (mutually exclusive with `prompt`) |
+| `workflow_inputs`  | string | no       | JSON object of inputs to pass to the workflow |
 
 **Response (201):**
 ```json
@@ -440,12 +442,14 @@ List tasks for a channel.
     "origin_branch": "main",
     "update_before_run": true,
     "running": false,
-    "thread_id": "thread_abc123"
+    "thread_id": "thread_abc123",
+    "workflow_name": "",
+    "workflow_inputs": ""
   }
 ]
 ```
 
-The `running` field indicates whether the task is currently being executed. It is set atomically when execution begins and cleared when it finishes.
+The `running` field indicates whether the task is currently being executed. It is set atomically when execution begins and cleared when it finishes. When `workflow_name` is set, the task triggers a workflow run instead of an agent prompt.
 
 **Errors:** `400` if `channel_id` is missing.
 
@@ -491,11 +495,13 @@ Update one or more fields of a scheduled task. At least one field must be provid
   "auto_delete_sec": 7200,
   "worktree": true,
   "origin_branch": "develop",
-  "update_before_run": true
+  "update_before_run": true,
+  "workflow_name": "validate",
+  "workflow_inputs": "{}"
 }
 ```
 
-All fields are optional (use JSON `null` or omit). When `enabled` is provided, it is applied separately via `SetTaskEnabled`. Other fields are applied via `EditTask`.
+All fields are optional (use JSON `null` or omit). When `enabled` is provided, it is applied separately via `SetTaskEnabled`. Other fields are applied via `EditTask`. Set `workflow_name` to convert a prompt task into a workflow task (or clear it with an empty string to revert).
 
 **Response:** `200 OK` (empty body)
 
@@ -1807,3 +1813,182 @@ Assign a worktree to a ticket. This performs an atomic multi-step operation:
 ```
 
 **Errors:** `409` if the ticket is not in `open` status (already claimed).
+
+## Workflows
+
+Declarative DAG-based workflow execution. See [Workflows](workflows.md) for architecture details.
+
+### `GET /api/workflows`
+
+List all available workflow definitions from the merged config.
+
+**Query Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `dir_path` | string | Optional project directory for project-level config merge |
+| `channel_id` | string | Optional channel ID — resolves `dir_path` and parent from DB for three-layer config merge (global → parent → worktree) |
+
+**Response (200):**
+```json
+[
+  {
+    "name": "code-review",
+    "description": "Review branch changes",
+    "inputs": {},
+    "nodes": [
+      { "id": "diff", "type": "bash", "script": "git diff main...HEAD" },
+      { "id": "review", "type": "prompt", "depends_on": ["diff"], "prompt": "Review:\n\n{{.NodeOutputs.diff}}" }
+    ]
+  }
+]
+```
+
+**Errors:** `501` if the workflow engine is not configured.
+
+### `POST /api/workflows`
+
+Add, update, or delete a workflow definition in the global or project config file.
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `action` | string | Yes | `"add"`, `"update"`, or `"delete"` |
+| `scope` | string | No | `"global"` (default) or `"project"` |
+| `channel_id` | string | For project scope | Channel ID to resolve project directory |
+| `workflow` | object | For add/update | Full workflow definition (`name`, `description`, `nodes`, `inputs`) |
+| `name` | string | For delete | Workflow name to delete |
+
+**Response:** `204 No Content`
+
+**Errors:** `400` invalid request, `404` workflow not found (update/delete), `409` duplicate name (add).
+
+### `POST /api/workflows/runs`
+
+Start a new workflow run.
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `workflow_name` | string | yes | Name of the workflow to run |
+| `channel_id` | string | no | Channel context for prompt nodes |
+| `dir_path` | string | no | Project directory for bash/prompt nodes |
+| `inputs` | object | no | Input values keyed by input name |
+
+**Response (201):**
+```json
+{
+  "run_id": "wfr-a1b2c3d4e5f67890"
+}
+```
+
+**Errors:** `400` if `workflow_name` is missing or request body is invalid JSON. `500` on engine errors (workflow not found, missing required inputs, etc.). `501` if the workflow engine is not configured.
+
+### `GET /api/workflows/runs`
+
+List workflow runs.
+
+**Query Parameters:**
+
+| Param | Type | Description |
+|-------|------|-------------|
+| `channel_id` | string | Optional filter by channel |
+| `limit` | int | Max results (default 50, capped at 1000) |
+
+**Response (200):**
+```json
+[
+  {
+    "id": "wfr-a1b2c3d4e5f67890",
+    "workflow_name": "code-review",
+    "channel_id": "",
+    "status": "completed",
+    "started_at": "2026-04-11T10:00:00Z",
+    "finished_at": "2026-04-11T10:02:30Z"
+  }
+]
+```
+
+**Errors:** `501` if the workflow engine is not configured.
+
+### `GET /api/workflows/runs/{id}`
+
+Get a workflow run with all node statuses and outputs.
+
+**Response (200):**
+```json
+{
+  "run": {
+    "id": "wfr-a1b2c3d4e5f67890",
+    "workflow_name": "code-review",
+    "status": "completed",
+    "inputs": "{\"issue_url\":\"https://...\"}",
+    "workflow_def": "{\"name\":\"code-review\",\"nodes\":[...]}",
+    "started_at": "2026-04-11T10:00:00Z",
+    "finished_at": "2026-04-11T10:02:30Z"
+  },
+  "node_runs": [
+    {
+      "run_id": "wfr-a1b2c3d4e5f67890",
+      "node_id": "diff",
+      "status": "success",
+      "output": "+added line\n-removed line",
+      "attempt": 1,
+      "started_at": "2026-04-11T10:00:00Z",
+      "finished_at": "2026-04-11T10:00:05Z",
+      "last_heartbeat_at": "2026-04-11T10:00:04Z"
+    }
+  ]
+}
+```
+
+**Errors:** `404` if the run does not exist. `501` if the workflow engine is not configured.
+
+### `POST /api/workflows/runs/{id}/resume`
+
+Resume a paused workflow run (e.g. after an approval node). The response text becomes the approval node's output.
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `response` | string | no | Response text for the approval node (defaults to `"approved"` if empty) |
+
+```json
+{ "response": "approved" }
+```
+
+**Response:** `204` No Content on success.
+
+**Errors:** `400` if request body is invalid JSON. `500` if no pending approval exists for the run. `501` if the workflow engine is not configured.
+
+### `POST /api/workflows/runs/{id}/cancel`
+
+Cancel a running workflow. Cancels the context for all active nodes.
+
+**Response:** `204` No Content on success.
+
+**Errors:** `500` on engine errors. `501` if the workflow engine is not configured.
+
+### `POST /api/workflows/runs/{id}/retry`
+
+Retry a completed, failed, or cancelled workflow run. Creates a new run with the same workflow definition and inputs.
+
+**Response (201):**
+```json
+{
+  "run_id": "wfr-b2c3d4e5f6a78901"
+}
+```
+
+**Errors:** `500` on engine errors (run not found, run still active, workflow definition not found, etc.). `501` if the workflow engine is not configured.
+
+### `DELETE /api/workflows/runs/{id}`
+
+Delete a workflow run. If the run is active (running or paused), it is cancelled first.
+
+**Response:** `204` No Content on success.
+
+**Errors:** `500` on engine errors. `501` if the workflow engine is not configured.

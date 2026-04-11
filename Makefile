@@ -20,7 +20,7 @@ install: ## Install loop to GOPATH/bin
 
 test: ## Run all tests
 	go generate ./internal/readme/
-	go test -race -count=1 -timeout 60s ./...
+	go test -race -count=1 -timeout 90s ./...
 
 test-integration: ## Run integration tests (requires tokens in ~/.loop/config.integration.json)
 	go test -v -tags integration -race -count=1 -timeout 10m ./internal/slack/ ./internal/discord/
@@ -30,12 +30,16 @@ test-component-bdd: ## Run BDD component tests (via Docker on host, natively in 
 		TEST_RUN=$${TEST_RUN:-"TestBDDBackendFeatures|TestBDDFrontendFeatures"} bash scripts/test-component.sh; \
 	else \
 		docker rm -f loop-bdd 2>/dev/null; \
+		rm -rf /tmp/loop-bdd-data && mkdir -p /tmp/loop-bdd-data; \
 		docker run --name loop-bdd -v "$$(pwd)":/app -w /app \
+			-v /var/run/docker.sock:/var/run/docker.sock \
+			-v /tmp/loop-bdd-data:/tmp/loop-bdd-data \
 			-v loop-gomod:/go/pkg/mod -v loop-gocache:/root/.cache/go-build \
 			-e TEST_RUN="$${TEST_RUN:-TestBDDBackendFeatures|TestBDDFrontendFeatures}" \
 			$(if $(GODOG_TAGS),-e GODOG_TAGS="$(GODOG_TAGS)") \
 			$(if $(GODOG_CONCURRENCY),-e GODOG_CONCURRENCY="$(GODOG_CONCURRENCY)") \
 			ghcr.io/radutopala/loop/test-runner:latest bash scripts/test-component.sh; \
+		rc=$$?; docker ps -aq --filter "name=loop-bdd-" | xargs -r docker rm -f 2>/dev/null || true; exit $$rc; \
 	fi
 
 test-component-perf: ## Run API performance tests (via Docker on host, natively in CI)
@@ -70,7 +74,7 @@ coverage: ## Generate HTML coverage report
 
 _coverage-check-run:
 	go generate ./internal/readme/
-	go test -race -count=1 -timeout 60s -coverpkg=./... -coverprofile=coverage.out ./...
+	go test -race -count=1 -timeout 90s -coverpkg=./... -coverprofile=coverage.out ./...
 	@go tool cover -func=coverage.out 2>/dev/null | grep total | awk '{print $$3}' | sed 's/%//' | \
 		awk '{if ($$1 < 100.0) {print "Coverage is " $$1 "%, required 100%"; exit 1} else {print "Coverage: " $$1 "%"}}'
 

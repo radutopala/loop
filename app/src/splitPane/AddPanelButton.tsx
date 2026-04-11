@@ -87,6 +87,17 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
       <rect x="17" y="3" width="5" height="15" rx="1" />
     </svg>
   ),
+  workflows: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="5" cy="6" r="2" />
+      <circle cx="12" cy="6" r="2" />
+      <circle cx="12" cy="18" r="2" />
+      <circle cx="19" cy="12" r="2" />
+      <line x1="7" y1="6" x2="10" y2="6" />
+      <line x1="14" y1="6" x2="17" y2="10.5" />
+      <line x1="14" y1="18" x2="17" y2="13.5" />
+    </svg>
+  ),
 };
 
 const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
@@ -103,6 +114,7 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   notes: "Quick scratch notes (Markdown)",
   tasks: "Manage scheduled tasks",
   kanban: "Kanban board for tickets",
+  workflows: "Workflow runs and status",
 };
 
 /** Centered picker for when layout is empty (no tree). */

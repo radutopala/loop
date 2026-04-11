@@ -34,6 +34,8 @@ type createTaskRequest struct {
 	Worktree        bool   `json:"worktree"`
 	OriginBranch    string `json:"origin_branch,omitempty"`
 	UpdateBeforeRun bool   `json:"update_before_run"`
+	WorkflowName    string `json:"workflow_name,omitempty"`
+	WorkflowInputs  string `json:"workflow_inputs,omitempty"`
 }
 
 type createTaskResponse struct {
@@ -49,6 +51,8 @@ type updateTaskRequest struct {
 	Worktree        *bool   `json:"worktree"`
 	OriginBranch    *string `json:"origin_branch"`
 	UpdateBeforeRun *bool   `json:"update_before_run"`
+	WorkflowName    *string `json:"workflow_name"`
+	WorkflowInputs  *string `json:"workflow_inputs"`
 }
 
 type taskResponse struct {
@@ -69,6 +73,8 @@ type taskResponse struct {
 	ChannelName     string    `json:"channel_name,omitempty"`
 	DirPath         string    `json:"dir_path,omitempty"`
 	ChannelWorktree bool      `json:"channel_worktree,omitempty"`
+	WorkflowName    string    `json:"workflow_name,omitempty"`
+	WorkflowInputs  string    `json:"workflow_inputs,omitempty"`
 }
 
 func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
@@ -88,6 +94,8 @@ func (s *Server) handleCreateTask(w http.ResponseWriter, r *http.Request) {
 		Worktree:        req.Worktree,
 		OriginBranch:    req.OriginBranch,
 		UpdateBeforeRun: req.UpdateBeforeRun,
+		WorkflowName:    req.WorkflowName,
+		WorkflowInputs:  req.WorkflowInputs,
 	}
 
 	id, err := s.scheduler.AddTask(r.Context(), task)
@@ -186,6 +194,8 @@ func toTaskResponse(t *db.ScheduledTask) taskResponse {
 		UpdateBeforeRun: t.UpdateBeforeRun,
 		Running:         t.Running,
 		ThreadID:        t.ThreadID,
+		WorkflowName:    t.WorkflowName,
+		WorkflowInputs:  t.WorkflowInputs,
 	}
 }
 
@@ -218,7 +228,7 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if req.Enabled == nil && req.Schedule == nil && req.Type == nil && req.Prompt == nil && req.AutoDeleteSec == nil && req.Worktree == nil && req.OriginBranch == nil && req.UpdateBeforeRun == nil {
+	if req.Enabled == nil && req.Schedule == nil && req.Type == nil && req.Prompt == nil && req.AutoDeleteSec == nil && req.Worktree == nil && req.OriginBranch == nil && req.UpdateBeforeRun == nil && req.WorkflowName == nil && req.WorkflowInputs == nil {
 		http.Error(w, "at least one field is required", http.StatusBadRequest)
 		return
 	}
@@ -230,8 +240,8 @@ func (s *Server) handleUpdateTask(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	if req.Schedule != nil || req.Type != nil || req.Prompt != nil || req.AutoDeleteSec != nil || req.Worktree != nil || req.OriginBranch != nil || req.UpdateBeforeRun != nil {
-		if err := s.scheduler.EditTask(r.Context(), taskID, req.Schedule, req.Type, req.Prompt, req.AutoDeleteSec, req.Worktree, req.OriginBranch, req.UpdateBeforeRun); err != nil {
+	if req.Schedule != nil || req.Type != nil || req.Prompt != nil || req.AutoDeleteSec != nil || req.Worktree != nil || req.OriginBranch != nil || req.UpdateBeforeRun != nil || req.WorkflowName != nil || req.WorkflowInputs != nil {
+		if err := s.scheduler.EditTask(r.Context(), taskID, req.Schedule, req.Type, req.Prompt, req.AutoDeleteSec, req.Worktree, req.OriginBranch, req.UpdateBeforeRun, req.WorkflowName, req.WorkflowInputs); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}

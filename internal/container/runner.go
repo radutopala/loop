@@ -233,10 +233,13 @@ type DockerRunner struct {
 	osRandRead                func([]byte) (int, error)
 	osTimeLocalName           func() string
 	registry                  ContainerRegistry
+	instanceID                string // unique per daemon, used to scope Cleanup
 }
 
 // NewDockerRunner creates a new DockerRunner with the given Docker client and config.
 func NewDockerRunner(client DockerClient, cfg *config.Config, configLoad func() (*config.Config, error)) *DockerRunner {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
 	r := &DockerRunner{
 		client:                    client,
 		configLoad:                configLoad,
@@ -245,6 +248,7 @@ func NewDockerRunner(client DockerClient, cfg *config.Config, configLoad func() 
 		loadWorktreeProjectConfig: config.LoadWorktreeProjectConfig,
 		osRandRead:                rand.Read,
 		osTimeLocalName:           func() string { return time.Now().Location().String() },
+		instanceID:                hex.EncodeToString(b),
 	}
 	r.cfg.Store(cfg)
 	return r
@@ -267,6 +271,12 @@ func (r *DockerRunner) currentConfig() *config.Config {
 // SetContainerRegistry configures the container registry for lifecycle tracking.
 func (r *DockerRunner) SetContainerRegistry(reg ContainerRegistry) {
 	r.registry = reg
+}
+
+// InstanceID returns the unique identifier for this daemon instance,
+// used to scope container cleanup via the loop-instance Docker label.
+func (r *DockerRunner) InstanceID() string {
+	return r.instanceID
 }
 
 const (
@@ -365,6 +375,54 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 		return nil, err
 	}
 	return retryResp, nil
+}
+
+// RunBash executes a shell script in a Docker container and returns stdout.
+// Uses the same container configuration (mounts, env) as agent runs.
+func (r *DockerRunner) RunBash(ctx context.Context, script, channelID, dirPath string) (string, error) {
+	containerID, _, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, channelID, dirPath, "", "", "",
+		ContainerTypeAgent,
+		func(_ *config.Config, _ string) []string {
+			return []string{"/bin/sh", "-c", script}
+		},
+	)
+	if mcpConfigPath != "" && !keepMCP {
+		defer func() { _ = r.sys.Remove(mcpConfigPath) }()
+	}
+	if containerID != "" {
+		defer func() {
+			if r.registry != nil {
+				r.registry.ScheduleRemove(containerID, r.cfg.Load().ContainerKeepAlive)
+			}
+		}()
+	}
+	if err != nil {
+		return "", err
+	}
+
+	// Wait for the container to finish.
+	waitCh, errCh := r.client.ContainerWait(ctx, containerID)
+	select {
+	case <-ctx.Done():
+		return "", ctx.Err()
+	case err := <-errCh:
+		return "", fmt.Errorf("waiting for container: %w", err)
+	case wr := <-waitCh:
+		if wr.Error != nil {
+			return "", fmt.Errorf("container error: %w", wr.Error)
+		}
+		// Read raw stdout.
+		reader, logErr := r.client.ContainerLogs(ctx, containerID)
+		if logErr != nil {
+			return "", fmt.Errorf("reading container logs: %w", logErr)
+		}
+		data, _ := io.ReadAll(reader)
+		output := string(data)
+		if wr.StatusCode != 0 {
+			return output, fmt.Errorf("script exited with status %d", wr.StatusCode)
+		}
+		return output, nil
+	}
 }
 
 // buildMCPConfig creates the merged MCP config with the built-in loop
@@ -996,7 +1054,7 @@ func (r *DockerRunner) createAndStartContainer(
 		Cmd:        cmd,
 		Binds:      binds,
 		WorkingDir: workDir,
-		Labels:     map[string]string{ChannelLabelKey: channelID, ContainerTypeKey: string(cType)},
+		Labels:     map[string]string{ChannelLabelKey: channelID, ContainerTypeKey: string(cType), InstanceLabelKey: r.instanceID},
 	}
 
 	containerName = r.containerName(channelID, dirPath)
@@ -1282,9 +1340,12 @@ func (r *DockerRunner) CreateShellContainer(ctx context.Context, channelID, dirP
 	return containerID, err
 }
 
-// Cleanup removes any lingering containers with the loop-agent label.
+// Cleanup removes containers created by this daemon instance.
+// Each daemon stamps its containers with a unique loop-instance label,
+// so cleanup only affects containers this process created — not containers
+// managed by other daemons sharing the same Docker socket.
 func (r *DockerRunner) Cleanup(ctx context.Context) error {
-	containers, err := r.client.ContainerList(ctx, "app", ContainerLabel)
+	containers, err := r.client.ContainerList(ctx, InstanceLabelKey, r.instanceID)
 	if err != nil {
 		return fmt.Errorf("listing containers: %w", err)
 	}

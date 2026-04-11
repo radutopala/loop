@@ -143,7 +143,7 @@ export function useXTerminal({
         onResize(cols, rows);
       });
 
-      // Attach selection getter to the .xterm element so useCopyOnSelect can
+      // Attach selection getter to the .xterm element so external consumers can
       // read the selection on mouseup without a module-level singleton.
       const xtermEl = containerRef.current!.querySelector(".xterm") as
         | (Element & { _xtermGetSelection?: () => string })
@@ -230,7 +230,7 @@ export function useXTerminal({
       };
 
       container.addEventListener("mousedown", onDragMouseDown);
-      // Capture phase so this fires before useCopyOnSelect's mouseup handler,
+      // Capture phase so this fires before any mouseup handler,
       // ensuring dragSel is populated when _xtermGetSelection is called.
       document.addEventListener("mouseup", onDragMouseUp, true);
 

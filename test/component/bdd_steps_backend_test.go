@@ -64,6 +64,10 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// Polling steps
 	ctx.Step(`^I wait up to "([^"]*)" for the task to stop running via API$`, tc.waitForTaskStopRunning)
 
+	// Workflow task setup
+	ctx.Step(`^I set up a workflow task via API with workflow "([^"]*)" and schedule "([^"]*)"$`, tc.setupWorkflowTaskViaAPINoInputs)
+	ctx.Step(`^I set up a workflow task via API with workflow "([^"]*)" and schedule "([^"]*)" with inputs:$`, tc.setupWorkflowTaskViaAPIWithInputs)
+
 	// Worktree task setup
 	ctx.Step(`^I set up a worktree task via API with prompt "([^"]*)" and schedule "([^"]*)"$`, tc.setupWorktreeTaskViaAPI)
 }
@@ -518,19 +522,83 @@ func (tc *TestContext) waitForTaskStopRunning(timeout string) error {
 		return fmt.Errorf("invalid timeout %q: %w", timeout, err)
 	}
 	deadline := time.Now().Add(dur)
+
+	// Poll until the task is no longer running. The task may complete before we
+	// ever observe running=true (fast failures), so we also accept run log
+	// entries as evidence the task ran and finished.
+	sawRunning := false
 	for time.Now().Before(deadline) {
 		if err := tc.doRequest(http.MethodGet, "/api/tasks/"+tc.TaskID, ""); err != nil {
 			return err
 		}
-		if running, ok := tc.LastJSON["running"].(bool); ok && !running {
-			return nil
+		running, ok := tc.LastJSON["running"].(bool)
+		if ok && running {
+			sawRunning = true
 		}
-		time.Sleep(500 * time.Millisecond)
+		if ok && !running {
+			if sawRunning {
+				return nil
+			}
+			// Task may have completed before we first polled.
+			if tc.taskHasRunLogs() {
+				return nil
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
 	}
 	return fmt.Errorf("task %s still running after %s", tc.TaskID, timeout)
 }
 
+// taskHasRunLogs checks if the current task has any run log entries, indicating
+// that the task ran and completed (possibly before polling could observe running=true).
+func (tc *TestContext) taskHasRunLogs() bool {
+	if err := tc.doRequest(http.MethodGet, "/api/tasks/"+tc.TaskID+"/runs", ""); err != nil {
+		return false
+	}
+	var runs []any
+	if err := json.Unmarshal(tc.LastBody, &runs); err != nil {
+		return false
+	}
+	return len(runs) > 0
+}
+
 // --- Worktree task setup ---
+
+func (tc *TestContext) setupWorkflowTaskViaAPINoInputs(workflowName, schedule string) error {
+	return tc.createWorkflowTask(workflowName, "{}", schedule)
+}
+
+func (tc *TestContext) setupWorkflowTaskViaAPIWithInputs(workflowName, schedule string, body *godog.DocString) error {
+	return tc.createWorkflowTask(workflowName, strings.TrimSpace(body.Content), schedule)
+}
+
+func (tc *TestContext) createWorkflowTask(workflowName, inputs, schedule string) error {
+	if tc.ChannelID == "" {
+		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
+	}
+	payload := map[string]any{
+		"channel_id":      tc.ChannelID,
+		"schedule":        schedule,
+		"type":            "interval",
+		"prompt":          "",
+		"workflow_name":   workflowName,
+		"workflow_inputs": inputs,
+	}
+	b, _ := json.Marshal(payload)
+	if err := tc.doRequest(http.MethodPost, "/api/tasks", string(b)); err != nil {
+		return err
+	}
+	if tc.LastStatus != http.StatusOK && tc.LastStatus != http.StatusCreated {
+		return fmt.Errorf("failed to create workflow task: status %d, body: %s", tc.LastStatus, string(tc.LastBody))
+	}
+	if tc.LastJSON != nil {
+		if id, ok := tc.LastJSON["id"]; ok {
+			tc.TaskID = fmt.Sprintf("%v", id)
+			tc.CreatedTaskIDs = append(tc.CreatedTaskIDs, tc.TaskID)
+		}
+	}
+	return nil
+}
 
 func (tc *TestContext) setupWorktreeTaskViaAPI(prompt, schedule string) error {
 	if tc.ChannelID == "" {

@@ -100,5 +100,12 @@
   //    "description": "Run linter and fix issues",
   //    "prompt": "Run make lint and fix any issues found"
   //  }
-  //]
+  //],
+
+  // Workflow concurrency limits for this project (overrides global values)
+  // 0 means unlimited
+  //"workflow_concurrency": {
+  //  "max_concurrent_runs": 5,
+  //  "max_concurrent_nodes": 10
+  //}
 }

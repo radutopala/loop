@@ -20,9 +20,10 @@ const (
 
 // Docker label keys and values used to identify and classify Loop containers.
 const (
-	ContainerLabel   = "loop-agent"   // label value identifying agent containers (app=loop-agent)
-	ContainerTypeKey = "loop-type"    // label key for container type (agent, shell, chrome)
-	ChannelLabelKey  = "loop-channel" // label key associating containers with channels
+	ContainerLabel   = "loop-agent"    // label value identifying agent containers (app=loop-agent)
+	ContainerTypeKey = "loop-type"     // label key for container type (agent, shell, chrome)
+	ChannelLabelKey  = "loop-channel"  // label key associating containers with channels
+	InstanceLabelKey = "loop-instance" // label key scoping containers to a daemon instance
 )
 
 // ContainerStatus represents the lifecycle state of a container.
@@ -41,6 +42,7 @@ type ContainerInfo struct {
 	Type          ContainerType   `json:"type"`
 	Status        ContainerStatus `json:"status"`
 	ContainerName string          `json:"container_name,omitempty"`
+	InstanceID    string          `json:"instance_id,omitempty"`
 	CreatedAt     time.Time       `json:"created_at"`
 	UpdatedAt     time.Time       `json:"updated_at"`
 	RemoveAt      *time.Time      `json:"remove_at,omitempty"`

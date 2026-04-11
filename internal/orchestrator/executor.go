@@ -17,6 +17,7 @@ import (
 	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/randutil"
 	"github.com/radutopala/loop/internal/types"
+	"github.com/radutopala/loop/internal/workflow"
 	"github.com/radutopala/loop/internal/worktree"
 )
 
@@ -33,6 +34,7 @@ type TaskExecutor struct {
 	events           events.Broadcaster
 	timeAfterFunc    func(time.Duration, func()) *time.Timer
 	worktreeCreator  *worktree.Creator
+	workflowEngine   workflow.Engine
 	activeRuns       *sync.Map // shared with Orchestrator for stop button support
 }
 
@@ -67,6 +69,11 @@ func (e *TaskExecutor) SetWorktreeCreator(wc *worktree.Creator) {
 	e.worktreeCreator = wc
 }
 
+// SetWorkflowEngine sets the workflow engine for executing scheduled workflow tasks.
+func (e *TaskExecutor) SetWorkflowEngine(we workflow.Engine) {
+	e.workflowEngine = we
+}
+
 // SetActiveRuns sets the shared activeRuns map so task runs can be stopped
 // via the stop button. The map is shared with the Orchestrator.
 func (e *TaskExecutor) SetActiveRuns(m *sync.Map) {
@@ -85,6 +92,11 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	dirPath := ""
 	if channel != nil {
 		dirPath = channel.DirPath
+	}
+
+	// Workflow tasks: start a workflow run instead of an agent prompt.
+	if task.WorkflowName != "" {
+		return e.executeWorkflowTask(ctx, task, dirPath)
 	}
 
 	// Worktree: on first run, create a git worktree; on subsequent runs, reuse
@@ -481,6 +493,33 @@ func (e *TaskExecutor) getCurrentBranch(ctx context.Context, dirPath string) (st
 		branch = strings.TrimSpace(string(out))
 	}
 	return branch, nil
+}
+
+// executeWorkflowTask starts a workflow run for a scheduled task that has
+// workflow_name set. Returns the run ID as the response string.
+func (e *TaskExecutor) executeWorkflowTask(ctx context.Context, task *db.ScheduledTask, dirPath string) (string, error) {
+	if e.workflowEngine == nil {
+		return "", fmt.Errorf("workflow engine not configured")
+	}
+
+	var inputs map[string]string
+	if task.WorkflowInputs != "" && task.WorkflowInputs != "{}" {
+		if err := json.Unmarshal([]byte(task.WorkflowInputs), &inputs); err != nil {
+			return "", fmt.Errorf("parsing workflow inputs: %w", err)
+		}
+	}
+
+	runID, err := e.workflowEngine.StartRun(ctx, workflow.StartRunOptions{
+		WorkflowName: task.WorkflowName,
+		ChannelID:    task.ChannelID,
+		DirPath:      dirPath,
+		Inputs:       inputs,
+	})
+	if err != nil {
+		return "", fmt.Errorf("starting workflow %q: %w", task.WorkflowName, err)
+	}
+
+	return fmt.Sprintf("workflow run started: %s", runID), nil
 }
 
 // invitePermissionUsers invites all RBAC owner and member users to a thread.

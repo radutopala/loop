@@ -56,6 +56,8 @@ type ScheduledTask struct {
 	OriginBranch    string    `json:"origin_branch"`
 	UpdateBeforeRun bool      `json:"update_before_run"`
 	Running         bool      `json:"running"`
+	WorkflowName    string    `json:"workflow_name"`
+	WorkflowInputs  string    `json:"workflow_inputs"`
 }
 
 // TaskType represents the type of scheduled task.
@@ -86,6 +88,58 @@ const (
 	RunStatusSuccess RunStatus = "success"
 	RunStatusFailed  RunStatus = "failed"
 )
+
+// WorkflowRunStatus represents the status of a workflow run.
+type WorkflowRunStatus string
+
+const (
+	WorkflowRunStatusRunning   WorkflowRunStatus = "running"
+	WorkflowRunStatusCompleted WorkflowRunStatus = "completed"
+	WorkflowRunStatusFailed    WorkflowRunStatus = "failed"
+	WorkflowRunStatusPaused    WorkflowRunStatus = "paused"
+	WorkflowRunStatusCancelled WorkflowRunStatus = "cancelled"
+)
+
+// NodeRunStatus represents the status of a workflow node run.
+type NodeRunStatus string
+
+const (
+	NodeRunStatusPending NodeRunStatus = "pending"
+	NodeRunStatusRunning NodeRunStatus = "running"
+	NodeRunStatusSuccess NodeRunStatus = "success"
+	NodeRunStatusFailed  NodeRunStatus = "failed"
+	NodeRunStatusSkipped NodeRunStatus = "skipped"
+)
+
+// WorkflowRun records the execution of a workflow.
+type WorkflowRun struct {
+	ID           string            `json:"id"`
+	WorkflowName string            `json:"workflow_name"`
+	ChannelID    string            `json:"channel_id"`
+	DirPath      string            `json:"dir_path"`
+	WorktreePath string            `json:"worktree_path"`
+	Status       WorkflowRunStatus `json:"status"`
+	Inputs       string            `json:"inputs"`
+	PausedNodeID string            `json:"paused_node_id"`
+	ErrorText    string            `json:"error_text"`
+	WorkflowDef  string            `json:"workflow_def,omitempty"` // JSON snapshot of definition at start
+	StartedAt    time.Time         `json:"started_at"`
+	FinishedAt   *time.Time        `json:"finished_at"`
+}
+
+// NodeRun records the execution of a single workflow node.
+type NodeRun struct {
+	ID              int64         `json:"id"`
+	RunID           string        `json:"run_id"`
+	NodeID          string        `json:"node_id"`
+	Status          NodeRunStatus `json:"status"`
+	Output          string        `json:"output"`
+	ErrorText       string        `json:"error_text"`
+	Attempt         int           `json:"attempt"`
+	StartedAt       *time.Time    `json:"started_at"`
+	FinishedAt      *time.Time    `json:"finished_at"`
+	LastHeartbeatAt *time.Time    `json:"last_heartbeat_at,omitempty"`
+}
 
 // MemoryFileInfo holds a distinct file_path + dir_path pair from the memory_files table.
 type MemoryFileInfo struct {

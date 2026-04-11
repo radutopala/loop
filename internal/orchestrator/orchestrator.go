@@ -17,6 +17,7 @@ import (
 	"github.com/radutopala/loop/internal/randutil"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/types"
+	"github.com/radutopala/loop/internal/workflow"
 )
 
 // Bot represents the chat platform bot interface (Discord or Slack).
@@ -54,6 +55,16 @@ type Runner interface {
 	Cleanup(ctx context.Context) error
 }
 
+// WorkflowEngine is the subset of workflow.Engine used by the orchestrator for chat commands.
+type WorkflowEngine interface {
+	StartRun(ctx context.Context, opts workflow.StartRunOptions) (string, error)
+	CancelRun(ctx context.Context, runID string) error
+	DeleteRun(ctx context.Context, runID string) error
+	RetryRun(ctx context.Context, runID string) (string, error)
+	ListRuns(ctx context.Context, channelID string, limit int) ([]*db.WorkflowRun, error)
+	ListWorkflows(ctx context.Context, dirPath, parentDirPath string) ([]config.WorkflowDef, error)
+}
+
 // Orchestrator coordinates all components of the loop bot.
 type Orchestrator struct {
 	store             db.Store
@@ -61,6 +72,7 @@ type Orchestrator struct {
 	runner            Runner
 	scheduler         scheduler.Scheduler
 	events            events.Broadcaster
+	workflowEngine    WorkflowEngine
 	queue             *ChannelQueue
 	activeRuns        sync.Map // map[channelID]context.CancelFunc
 	logger            *slog.Logger
@@ -129,6 +141,11 @@ func (o *Orchestrator) ActiveRunsMap() *sync.Map {
 // SetEventBroadcaster configures the event broadcaster for real-time event streaming.
 func (o *Orchestrator) SetEventBroadcaster(eb events.Broadcaster) {
 	o.events = eb
+}
+
+// SetWorkflowEngine configures the workflow engine for chat commands.
+func (o *Orchestrator) SetWorkflowEngine(we WorkflowEngine) {
+	o.workflowEngine = we
 }
 
 // Start registers handlers, slash commands, and starts the bot and scheduler.

@@ -25,6 +25,7 @@ type Server struct {
 	agentID          string
 	dirPath          string
 	memoryEnabled    bool
+	workflowsEnabled bool
 	mcpServer        *mcp.Server
 	httpClient       HTTPClient
 	logger           *slog.Logger
@@ -40,6 +41,13 @@ func WithMemoryAPI(dirPath string) MemoryOption {
 	return func(s *Server) {
 		s.memoryEnabled = true
 		s.dirPath = dirPath
+	}
+}
+
+// WithWorkflowAPI enables workflow-related MCP tools.
+func WithWorkflowAPI() MemoryOption {
+	return func(s *Server) {
+		s.workflowsEnabled = true
 	}
 }
 
@@ -170,6 +178,10 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 		Name:        "playground_file",
 		Description: "Manage files within a playground. Actions: create/update (write a file), read (get content), delete (remove a file), list (show all files). Use for script.js, style.css, importmap.json, lib/utils.js, assets, etc. Files are served at relative URLs — use import './lib/utils.js' between JS modules.",
 	}, s.handlePlaygroundFile)
+
+	if s.workflowsEnabled {
+		s.registerWorkflowTools()
+	}
 
 	// Register agent tools after mcpServer is created.
 	if s.agentID != "" {

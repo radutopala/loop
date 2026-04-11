@@ -24,6 +24,7 @@ import { PlaygroundPanel } from "../panels/PlaygroundPanel";
 import { NotesPanel } from "../panels/NotesPanel";
 import { TasksPanel } from "../panels/TasksPanel";
 import { KanbanPanel } from "../panels/KanbanPanel";
+import { WorkflowsLayoutPanel } from "../panels/WorkflowsLayoutPanel";
 import { killAgentContainer } from "../../api/loopApi";
 import { ChannelHeaderInfo } from "./ChannelHeaderInfo";
 import { HeaderBranchPicker } from "./HeaderBranchPicker";
@@ -32,7 +33,6 @@ import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStat
 import { fonts } from "../../theme";
 import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
-import { useCopyOnSelect } from "../../hooks/useCopyOnSelect";
 
 type AgentState = "running" | "stopped" | "none";
 
@@ -158,7 +158,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   subscribeChatEvents,
 }, ref) {
   const { colors } = useTheme();
-  useCopyOnSelect();
   const { agents: agentInfoMap } = useAgentRegistry(channelId);
   const [branchError, setBranchError] = useState<string | null>(null);
 
@@ -688,6 +687,13 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               onSelectChannel={onSelectThread}
             />
           );
+        case "workflows":
+          return (
+            <WorkflowsLayoutPanel
+              key={`layout-workflows-${channelId}`}
+              channelId={channelId}
+            />
+          );
         default:
           return null;
       }
@@ -1110,6 +1116,7 @@ function LayoutTab({ name, active, canDelete, onSelect, onRename, onDelete }: {
 
   return (
     <div
+      data-testid={`layout-tab-${name}`}
       onClick={onSelect}
       style={{
         ...buildTabButtonStyle(colors, active),

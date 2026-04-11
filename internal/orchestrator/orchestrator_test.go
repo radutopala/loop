@@ -1750,7 +1750,7 @@ func (s *OrchestratorSuite) TestHandleInteractionToggleError() {
 
 func (s *OrchestratorSuite) TestHandleInteractionEditSuccess() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.scheduler.On("EditTask", s.ctx, int64(42), new("0 9 * * *"), (*string)(nil), (*string)(nil), (*int)(nil), (*bool)(nil), (*string)(nil), (*bool)(nil)).Return(nil)
+	s.scheduler.On("EditTask", s.ctx, int64(42), new("0 9 * * *"), (*string)(nil), (*string)(nil), (*int)(nil), (*bool)(nil), (*string)(nil), (*bool)(nil), (*string)(nil), (*string)(nil)).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Task 42 updated."
 	})).Return(nil)
@@ -1767,7 +1767,7 @@ func (s *OrchestratorSuite) TestHandleInteractionEditSuccess() {
 
 func (s *OrchestratorSuite) TestHandleInteractionEditWithTypeAndPrompt() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.scheduler.On("EditTask", s.ctx, int64(10), (*string)(nil), new("interval"), new("new prompt"), (*int)(nil), (*bool)(nil), (*string)(nil), (*bool)(nil)).Return(nil)
+	s.scheduler.On("EditTask", s.ctx, int64(10), (*string)(nil), new("interval"), new("new prompt"), (*int)(nil), (*bool)(nil), (*string)(nil), (*bool)(nil), (*string)(nil), (*string)(nil)).Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Task 10 updated."
 	})).Return(nil)
@@ -1814,7 +1814,7 @@ func (s *OrchestratorSuite) TestHandleInteractionEditNoFields() {
 
 func (s *OrchestratorSuite) TestHandleInteractionEditError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
-	s.scheduler.On("EditTask", s.ctx, int64(42), (*string)(nil), (*string)(nil), new("new"), (*int)(nil), (*bool)(nil), (*string)(nil), (*bool)(nil)).Return(errors.New("edit err"))
+	s.scheduler.On("EditTask", s.ctx, int64(42), (*string)(nil), (*string)(nil), new("new"), (*int)(nil), (*bool)(nil), (*string)(nil), (*bool)(nil), (*string)(nil), (*string)(nil)).Return(errors.New("edit err"))
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Failed to edit task."
 	})).Return(nil)

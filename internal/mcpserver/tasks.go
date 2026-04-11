@@ -16,12 +16,14 @@ import (
 type scheduleTaskInput struct {
 	Schedule        string `json:"schedule" jsonschema:"Cron expression (e.g. 0 9 * * *), Go time.Duration (e.g. 5m, 1h), or RFC3339 timestamp (e.g. 2026-02-09T14:30:00Z) for once type"`
 	Type            string `json:"type" jsonschema:"Task type: cron, interval, or once"`
-	Prompt          string `json:"prompt" jsonschema:"The prompt to execute on schedule"`
+	Prompt          string `json:"prompt,omitempty" jsonschema:"The prompt to execute on schedule (required unless workflow_name is set)"`
 	TemplateName    string `json:"template_name,omitempty" jsonschema:"Optional template name to associate with this task (for identification and deduplication)"`
 	AutoDeleteSec   int    `json:"auto_delete_sec,omitempty" jsonschema:"Seconds after execution to auto-delete the thread (0 = disabled)"`
 	Worktree        bool   `json:"worktree,omitempty" jsonschema:"If true, run the task in an isolated git worktree instead of the parent channel directory"`
 	OriginBranch    string `json:"origin_branch,omitempty" jsonschema:"Git branch to base the worktree on (default: auto-detect from parent HEAD)"`
 	UpdateBeforeRun bool   `json:"update_before_run,omitempty" jsonschema:"If true, instruct the agent to update the worktree to latest origin branch before each run"`
+	WorkflowName    string `json:"workflow_name,omitempty" jsonschema:"Name of the workflow to run on schedule (mutually exclusive with prompt)"`
+	WorkflowInputs  string `json:"workflow_inputs,omitempty" jsonschema:"JSON object of inputs to pass to the workflow (e.g. {\"issue_url\": \"...\"})"`
 }
 
 type cancelTaskInput struct {
@@ -42,6 +44,8 @@ type editTaskInput struct {
 	Worktree        *bool   `json:"worktree,omitempty" jsonschema:"If true, run the task in an isolated git worktree instead of the parent channel directory"`
 	OriginBranch    *string `json:"origin_branch,omitempty" jsonschema:"Git branch to base the worktree on"`
 	UpdateBeforeRun *bool   `json:"update_before_run,omitempty" jsonschema:"If true, instruct the agent to update the worktree to latest origin branch before each run"`
+	WorkflowName    *string `json:"workflow_name,omitempty" jsonschema:"Name of the workflow to run on schedule"`
+	WorkflowInputs  *string `json:"workflow_inputs,omitempty" jsonschema:"JSON object of inputs to pass to the workflow"`
 }
 
 type showTaskInput struct {
@@ -77,6 +81,12 @@ func (s *Server) handleScheduleTask(_ context.Context, _ *mcp.CallToolRequest, i
 	if input.TemplateName != "" {
 		body["template_name"] = input.TemplateName
 	}
+	if input.WorkflowName != "" {
+		body["workflow_name"] = input.WorkflowName
+	}
+	if input.WorkflowInputs != "" {
+		body["workflow_inputs"] = input.WorkflowInputs
+	}
 	data, _ := json.Marshal(body)
 
 	type taskResult struct {
@@ -110,6 +120,8 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 		OriginBranch    string `json:"origin_branch"`
 		UpdateBeforeRun bool   `json:"update_before_run"`
 		Running         bool   `json:"running"`
+		WorkflowName    string `json:"workflow_name"`
+		WorkflowInputs  string `json:"workflow_inputs"`
 	}
 	tasks, errResult, err := doAPICall[[]taskEntry](s, "GET", fmt.Sprintf("%s/api/tasks?channel_id=%s", s.apiURL, s.channelID), http.StatusOK, nil)
 	if errResult != nil || err != nil {
@@ -126,11 +138,18 @@ func (s *Server) handleListTasks(_ context.Context, _ *mcp.CallToolRequest, _ li
 
 	var text strings.Builder
 	for _, t := range *tasks {
-		prompt := types.TruncateString(t.Prompt, 80)
-		if t.TemplateName != "" {
-			fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v, template_name: %s", t.ID, prompt, t.Schedule, t.Type, t.Enabled, t.TemplateName)
+		if t.WorkflowName != "" {
+			fmt.Fprintf(&text, "- ID %d: workflow:%s (schedule: %s, type: %s, enabled: %v", t.ID, t.WorkflowName, t.Schedule, t.Type, t.Enabled)
+			if t.WorkflowInputs != "" && t.WorkflowInputs != "{}" {
+				fmt.Fprintf(&text, ", inputs: %s", t.WorkflowInputs)
+			}
 		} else {
-			fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v", t.ID, prompt, t.Schedule, t.Type, t.Enabled)
+			prompt := types.TruncateString(t.Prompt, 80)
+			if t.TemplateName != "" {
+				fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v, template_name: %s", t.ID, prompt, t.Schedule, t.Type, t.Enabled, t.TemplateName)
+			} else {
+				fmt.Fprintf(&text, "- ID %d: %s (schedule: %s, type: %s, enabled: %v", t.ID, prompt, t.Schedule, t.Type, t.Enabled)
+			}
 		}
 		if t.AutoDeleteSec > 0 {
 			fmt.Fprintf(&text, ", auto_delete: %ds", t.AutoDeleteSec)
@@ -173,6 +192,8 @@ func (s *Server) handleShowTask(_ context.Context, _ *mcp.CallToolRequest, input
 		OriginBranch    string `json:"origin_branch"`
 		UpdateBeforeRun bool   `json:"update_before_run"`
 		Running         bool   `json:"running"`
+		WorkflowName    string `json:"workflow_name"`
+		WorkflowInputs  string `json:"workflow_inputs"`
 	}
 	task, errResult, err := doAPICall[taskEntry](s, "GET", fmt.Sprintf("%s/api/tasks/%d", s.apiURL, input.TaskID), http.StatusOK, nil)
 	if errResult != nil || err != nil {
@@ -206,7 +227,15 @@ func (s *Server) handleShowTask(_ context.Context, _ *mcp.CallToolRequest, input
 	if task.UpdateBeforeRun {
 		fmt.Fprintf(&text, "Update before run: true\n")
 	}
-	fmt.Fprintf(&text, "\nPrompt:\n%s", task.Prompt)
+	if task.WorkflowName != "" {
+		fmt.Fprintf(&text, "Workflow: %s\n", task.WorkflowName)
+		if task.WorkflowInputs != "" && task.WorkflowInputs != "{}" {
+			fmt.Fprintf(&text, "Workflow inputs: %s\n", task.WorkflowInputs)
+		}
+	}
+	if task.Prompt != "" {
+		fmt.Fprintf(&text, "\nPrompt:\n%s", task.Prompt)
+	}
 
 	return &mcp.CallToolResult{
 		Content: []mcp.Content{
@@ -254,9 +283,15 @@ func (s *Server) handleEditTask(_ context.Context, _ *mcp.CallToolRequest, input
 	if input.UpdateBeforeRun != nil {
 		body["update_before_run"] = *input.UpdateBeforeRun
 	}
+	if input.WorkflowName != nil {
+		body["workflow_name"] = *input.WorkflowName
+	}
+	if input.WorkflowInputs != nil {
+		body["workflow_inputs"] = *input.WorkflowInputs
+	}
 
 	if len(body) == 0 {
-		return errorResult("at least one of schedule, type, prompt, auto_delete_sec, worktree, origin_branch, or update_before_run is required"), nil, nil
+		return errorResult("at least one field is required"), nil, nil
 	}
 
 	// Validate schedule when editing to once/interval type with a schedule

@@ -362,7 +362,7 @@ export function GlobalTasksPanel({
               flex: 1,
             }}
           >
-            {task.prompt}
+            {task.workflow_name ? `workflow: ${task.workflow_name}` : task.prompt}
           </span>
         </div>
         {task.dir_path && (
@@ -515,9 +515,22 @@ export function GlobalTasksPanel({
               {selectedTask.dir_path}
             </div>
           )}
-          <div style={{ color: colors.text, fontSize: 12, whiteSpace: "pre-wrap" }}>
-            {selectedTask.prompt}
-          </div>
+          {selectedTask.workflow_name ? (
+            <>
+              <div style={{ color: colors.text, fontSize: 12 }}>
+                <span style={{ color: colors.active, fontWeight: 600 }}>Workflow:</span> {selectedTask.workflow_name}
+              </div>
+              {selectedTask.workflow_inputs && selectedTask.workflow_inputs !== "{}" && (
+                <div style={{ color: colors.textDim, fontSize: 11, fontFamily: "monospace", whiteSpace: "pre-wrap" }}>
+                  Inputs: {selectedTask.workflow_inputs}
+                </div>
+              )}
+            </>
+          ) : (
+            <div style={{ color: colors.text, fontSize: 12, whiteSpace: "pre-wrap" }}>
+              {selectedTask.prompt}
+            </div>
+          )}
           {selectedTask.enabled && (
             <div style={{ color: colors.textDim, fontSize: 11 }}>
               Next run: {nextRunLabel(selectedTask.next_run_at)}

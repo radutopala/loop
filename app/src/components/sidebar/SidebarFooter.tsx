@@ -12,6 +12,7 @@ interface SidebarFooterProps {
   onOpenTasks?: () => void;
   onOpenContainers?: () => void;
   onOpenReadme?: () => void;
+  onOpenWorkflows?: () => void;
 }
 
 export function SidebarFooter({
@@ -25,6 +26,7 @@ export function SidebarFooter({
   onOpenTasks,
   onOpenContainers,
   onOpenReadme,
+  onOpenWorkflows,
 }: SidebarFooterProps) {
   const { colors } = useTheme();
 
@@ -147,6 +149,24 @@ export function SidebarFooter({
           <polyline points="12 6 12 12 16 14" />
         </svg>
         Tasks
+      </button>
+      <button
+        data-testid="sidebar-workflows-btn"
+        onClick={onOpenWorkflows}
+        style={footerBtnStyle}
+        onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.hoverBg; e.currentTarget.style.color = colors.textLight; }}
+        onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.textDim; }}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="5" cy="6" r="2" />
+          <circle cx="12" cy="12" r="2" />
+          <circle cx="19" cy="6" r="2" />
+          <circle cx="12" cy="18" r="2" />
+          <line x1="5" y1="8" x2="12" y2="10" />
+          <line x1="19" y1="8" x2="12" y2="10" />
+          <line x1="12" y1="14" x2="12" y2="16" />
+        </svg>
+        Workflows
       </button>
       <button
         onClick={onOpenContainers}

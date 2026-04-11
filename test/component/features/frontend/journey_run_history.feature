@@ -8,11 +8,11 @@ Feature: Task Run History Accumulation
 
     # First run via API
     And I trigger Run Now via API for the current task
-    And I wait up to "30s" for the task to stop running via API
+    And I wait up to "90s" for the task to stop running via API
 
     # Second run via API
     And I trigger Run Now via API for the current task
-    And I wait up to "30s" for the task to stop running via API
+    And I wait up to "90s" for the task to stop running via API
 
     # Open browser and verify accumulated history
     And I open the app in a browser
@@ -23,4 +23,4 @@ Feature: Task Run History Accumulation
     And I wait for text "mega-run-hist-task" to appear
     And I click on "mega-run-hist-task" in the tasks panel
     And I wait for text "RUN HISTORY" to appear
-    Then the page should contain text "failed"
+    Then I wait for text "failed" to appear

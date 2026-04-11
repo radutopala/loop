@@ -16,6 +16,39 @@ var (
 	jsonMarshalIndent = json.MarshalIndent
 )
 
+// resolveConfigPath returns the config file path for the given scope and
+// channel. It writes an HTTP error and returns ("", false) on failure.
+func (s *Server) resolveConfigPath(w http.ResponseWriter, r *http.Request, scope, channelID string) (string, bool) {
+	switch scope {
+	case "project":
+		if channelID == "" {
+			http.Error(w, "channel_id is required for project scope", http.StatusBadRequest)
+			return "", false
+		}
+		dirPath, err := s.resolveProjectConfigDirPath(r.Context(), channelID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return "", false
+		}
+		loopDir := filepath.Join(dirPath, ".loop")
+		if err := s.sys.MkdirAll(loopDir, 0755); err != nil {
+			http.Error(w, "failed to create .loop directory", http.StatusInternalServerError)
+			return "", false
+		}
+		return filepath.Join(loopDir, "config.json"), true
+	case "global", "":
+		home, err := s.sys.UserHomeDir()
+		if err != nil {
+			http.Error(w, "cannot determine home directory", http.StatusInternalServerError)
+			return "", false
+		}
+		return filepath.Join(home, ".loop", "config.json"), true
+	default:
+		http.Error(w, "scope must be 'global' or 'project'", http.StatusBadRequest)
+		return "", false
+	}
+}
+
 type shortcutResponse struct {
 	Name        string `json:"name"`
 	Description string `json:"description"`
@@ -131,31 +164,9 @@ func (s *Server) handleModifyShortcut(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Resolve the config file path based on scope.
-	var configPath string
-	switch req.Scope {
-	case "project":
-		if req.ChannelID == "" {
-			http.Error(w, "channel_id is required for project scope", http.StatusBadRequest)
-			return
-		}
-		dirPath, err := s.resolveProjectConfigDirPath(r.Context(), req.ChannelID)
-		if err != nil {
-			http.Error(w, err.Error(), http.StatusBadRequest)
-			return
-		}
-		loopDir := filepath.Join(dirPath, ".loop")
-		if err := s.sys.MkdirAll(loopDir, 0755); err != nil {
-			http.Error(w, "failed to create .loop directory", http.StatusInternalServerError)
-			return
-		}
-		configPath = filepath.Join(loopDir, "config.json")
-	default: // "global" or empty
-		home, err := s.sys.UserHomeDir()
-		if err != nil {
-			http.Error(w, "cannot determine home directory", http.StatusInternalServerError)
-			return
-		}
-		configPath = filepath.Join(home, ".loop", "config.json")
+	configPath, ok := s.resolveConfigPath(w, r, req.Scope, req.ChannelID)
+	if !ok {
+		return
 	}
 
 	// Read existing config.

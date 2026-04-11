@@ -43,6 +43,72 @@ func (t *TaskTemplate) ResolvePrompt(loopDir string, readFile func(string) ([]by
 	return resolvePromptField(t.Name, t.Prompt, t.PromptPath, filepath.Join(loopDir, "templates"), readFile)
 }
 
+// NodeType represents the type of workflow node.
+type NodeType string
+
+const (
+	NodeTypePrompt   NodeType = "prompt"
+	NodeTypeBash     NodeType = "bash"
+	NodeTypeLoop     NodeType = "loop"
+	NodeTypeApproval NodeType = "approval"
+)
+
+// WorkflowInput defines a workflow input parameter.
+type WorkflowInput struct {
+	Description string `json:"description"`
+	Required    bool   `json:"required,omitempty"`
+	Default     string `json:"default,omitempty"`
+}
+
+// RetryConfig controls per-node retry behavior.
+type RetryConfig struct {
+	MaxRetries  int    `json:"max_retries"`
+	BackoffBase string `json:"backoff_base,omitempty"` // Go duration, e.g. "5s"
+	BackoffMax  string `json:"backoff_max,omitempty"`  // Go duration, e.g. "5m"
+}
+
+// NodeDef defines a single node in a workflow DAG.
+type NodeDef struct {
+	ID            string       `json:"id"`
+	Type          NodeType     `json:"type"`
+	DependsOn     []string     `json:"depends_on,omitempty"`
+	When          string       `json:"when,omitempty"`
+	TriggerRule   string       `json:"trigger_rule,omitempty"` // "all_success", "all_done", "one_success"
+	Prompt        string       `json:"prompt,omitempty"`
+	PromptPath    string       `json:"prompt_path,omitempty"`
+	SystemPrompt  string       `json:"system_prompt,omitempty"`
+	Model         string       `json:"model,omitempty"`
+	Script        string       `json:"script,omitempty"`
+	MaxIterations int          `json:"max_iterations,omitempty"`
+	Condition     string       `json:"condition,omitempty"`
+	Message       string       `json:"message,omitempty"`
+	Timeout       string       `json:"timeout,omitempty"` // Go duration
+	Retry         *RetryConfig `json:"retry,omitempty"`
+}
+
+// ResolvePrompt returns the prompt text for the node.
+// If Prompt is set, it is returned directly.
+// If PromptPath is set, the file is read from {loopDir}/workflows/{prompt_path}.
+// For prompt/loop nodes, exactly one of Prompt or PromptPath must be set.
+func (n *NodeDef) ResolvePrompt(loopDir string, readFile func(string) ([]byte, error)) (string, error) {
+	return resolvePromptField(n.ID, n.Prompt, n.PromptPath, filepath.Join(loopDir, "workflows"), readFile)
+}
+
+// WorkflowConcurrency controls how many workflows and nodes run in parallel.
+type WorkflowConcurrency struct {
+	MaxConcurrentRuns  int `json:"max_concurrent_runs"`
+	MaxConcurrentNodes int `json:"max_concurrent_nodes"`
+}
+
+// WorkflowDef defines a declarative workflow as a DAG of nodes.
+type WorkflowDef struct {
+	Name        string                   `json:"name"`
+	Description string                   `json:"description"`
+	Timeout     string                   `json:"timeout,omitempty"` // Go duration (e.g. "30m"); caps entire DAG execution
+	Inputs      map[string]WorkflowInput `json:"inputs,omitempty"`
+	Nodes       []NodeDef                `json:"nodes"`
+}
+
 // PromptShortcut defines a reusable prompt that auto-sends in the chat UI.
 type PromptShortcut struct {
 	Name        string `json:"name"`
@@ -127,6 +193,8 @@ type Config struct {
 	LoopDir              string
 	MCPServers           map[string]MCPServerConfig
 	TaskTemplates        []TaskTemplate
+	Workflows            []WorkflowDef
+	WorkflowConcurrency  WorkflowConcurrency
 	PromptShortcuts      []PromptShortcut
 	Mounts               []string
 	CopyFiles            []string
@@ -134,6 +202,7 @@ type Config struct {
 	ClaudeModel          string
 	StreamingEnabled     bool
 	KeepMCPConfigs       bool
+	WorkflowBashLocal    bool
 	Browser              BrowserConfig
 	Memory               MemoryConfig
 	Permissions          types.Permissions
@@ -194,6 +263,8 @@ type jsonConfig struct {
 	APIAddr               string                 `json:"api_addr"`
 	MCP                   *jsonMCPConfig         `json:"mcp"`
 	TaskTemplates         []TaskTemplate         `json:"task_templates"`
+	Workflows             []WorkflowDef          `json:"workflows"`
+	WorkflowConcurrency   *WorkflowConcurrency   `json:"workflow_concurrency"`
 	PromptShortcuts       []PromptShortcut       `json:"prompt_shortcuts"`
 	Mounts                []string               `json:"mounts"`
 	CopyFiles             []string               `json:"copy_files"`
@@ -202,6 +273,7 @@ type jsonConfig struct {
 	ClaudeBinPath         string                 `json:"claude_bin_path"`
 	StreamingEnabled      *bool                  `json:"streaming_enabled"`
 	KeepMCPConfigs        *bool                  `json:"keep_mcp_configs"`
+	WorkflowBashLocal     *bool                  `json:"workflow_bash_local"`
 	Browser               *jsonBrowserConfig     `json:"browser"`
 	Memory                *jsonMemoryConfig      `json:"memory"`
 	Permissions           *jsonPermissionsConfig `json:"permissions"`
@@ -330,6 +402,7 @@ func (l *Loader) parse() (*Config, error) {
 		ClaudeModel:          jc.ClaudeModel,
 		StreamingEnabled:     ptrDefault(jc.StreamingEnabled, true),
 		KeepMCPConfigs:       ptrDefault(jc.KeepMCPConfigs, false),
+		WorkflowBashLocal:    ptrDefault(jc.WorkflowBashLocal, false),
 	}
 
 	// Browser config: nested struct with defaults.
@@ -355,6 +428,10 @@ func (l *Loader) parse() (*Config, error) {
 	}
 
 	cfg.TaskTemplates = jc.TaskTemplates
+	cfg.Workflows = jc.Workflows
+	if jc.WorkflowConcurrency != nil {
+		cfg.WorkflowConcurrency = *jc.WorkflowConcurrency
+	}
 	cfg.PromptShortcuts = jc.PromptShortcuts
 	cfg.Mounts = jc.Mounts
 	cfg.CopyFiles = sliceDefault(jc.CopyFiles, []string{"~/.claude.json"})
@@ -491,6 +568,8 @@ type projectConfig struct {
 	KeepMCPConfigs       *bool                  `json:"keep_mcp_configs"`
 	Browser              *jsonBrowserConfig     `json:"browser"`
 	TaskTemplates        []TaskTemplate         `json:"task_templates"`
+	Workflows            []WorkflowDef          `json:"workflows"`
+	WorkflowConcurrency  *WorkflowConcurrency   `json:"workflow_concurrency"`
 	PromptShortcuts      []PromptShortcut       `json:"prompt_shortcuts"`
 	Memory               *jsonMemoryConfig      `json:"memory"`
 	Permissions          *jsonPermissionsConfig `json:"permissions"`
@@ -703,6 +782,33 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 			}
 		}
 		merged.TaskTemplates = mergedTemplates
+	}
+
+	// Merge workflows: project workflows override global by name
+	if len(pc.Workflows) > 0 {
+		byName := make(map[string]int, len(merged.Workflows))
+		mergedWorkflows := make([]WorkflowDef, len(merged.Workflows))
+		copy(mergedWorkflows, merged.Workflows)
+		for i, w := range mergedWorkflows {
+			byName[w.Name] = i
+		}
+		for _, pw := range pc.Workflows {
+			if idx, ok := byName[pw.Name]; ok {
+				mergedWorkflows[idx] = pw
+			} else {
+				mergedWorkflows = append(mergedWorkflows, pw)
+			}
+		}
+		merged.Workflows = mergedWorkflows
+	}
+
+	if pc.WorkflowConcurrency != nil {
+		if pc.WorkflowConcurrency.MaxConcurrentRuns > 0 {
+			merged.WorkflowConcurrency.MaxConcurrentRuns = pc.WorkflowConcurrency.MaxConcurrentRuns
+		}
+		if pc.WorkflowConcurrency.MaxConcurrentNodes > 0 {
+			merged.WorkflowConcurrency.MaxConcurrentNodes = pc.WorkflowConcurrency.MaxConcurrentNodes
+		}
 	}
 
 	// Merge prompt shortcuts: project shortcuts override global by name

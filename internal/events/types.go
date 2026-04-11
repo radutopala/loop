@@ -140,3 +140,21 @@ type TaskRunEventData struct {
 	Status    string `json:"status"`
 	ChannelID string `json:"channel_id"`
 }
+
+// WorkflowRunEventData is the payload for workflow.run.* events.
+type WorkflowRunEventData struct {
+	RunID        string `json:"run_id"`
+	WorkflowName string `json:"workflow_name"`
+	ChannelID    string `json:"channel_id"`
+	Status       string `json:"status"`
+	PausedNodeID string `json:"paused_node_id,omitempty"`
+	Error        string `json:"error,omitempty"`
+}
+
+// WorkflowNodeEventData is the payload for workflow.node.* events.
+type WorkflowNodeEventData struct {
+	RunID  string `json:"run_id"`
+	NodeID string `json:"node_id"`
+	Status string `json:"status"`
+	Output string `json:"output,omitempty"`
+}

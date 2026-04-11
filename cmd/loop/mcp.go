@@ -72,6 +72,7 @@ func (a *app) runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, ag
 	if agentID != "" {
 		memOpts = append(memOpts, mcpserver.WithAgentTools(agentID))
 	}
+	memOpts = append(memOpts, mcpserver.WithWorkflowAPI())
 
 	srv := a.newMCPServer(channelID, apiURL, authorID, http.DefaultClient, logger, memOpts...)
 	srv.RegisterAgent()

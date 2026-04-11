@@ -1349,6 +1349,23 @@ func (s *BotSuite) TestParseSlashCommand() {
 		{"template_no_args", "template", "", nil, "Usage:"},
 		{"template_unknown_sub", "template foo", "", nil, "Usage:"},
 		{"template_add_no_name", "template add", "", nil, "Usage:"},
+		// shortcuts / shortcut
+		{"shortcuts", "shortcuts", "shortcuts", nil, ""},
+		{"shortcut_name", "shortcut my-shortcut", "shortcut", map[string]string{"name": "my-shortcut"}, ""},
+		{"shortcut_no_args", "shortcut", "", nil, "Usage:"},
+		// workflow
+		{"workflow_list", "workflow list", "workflows", nil, ""},
+		{"workflow_runs", "workflow runs", "workflow-runs", nil, ""},
+		{"workflow_run", "workflow run my-flow", "workflow-run", map[string]string{"name": "my-flow"}, ""},
+		{"workflow_cancel", "workflow cancel run-42", "workflow-cancel", map[string]string{"run_id": "run-42"}, ""},
+		{"workflow_delete", "workflow delete run-42", "workflow-delete", map[string]string{"run_id": "run-42"}, ""},
+		{"workflow_retry", "workflow retry run-42", "workflow-retry", map[string]string{"run_id": "run-42"}, ""},
+		{"workflow_no_args", "workflow", "", nil, "Usage:"},
+		{"workflow_run_no_name", "workflow run", "", nil, "Usage:"},
+		{"workflow_cancel_no_id", "workflow cancel", "", nil, "Usage:"},
+		{"workflow_delete_no_id", "workflow delete", "", nil, "Usage:"},
+		{"workflow_retry_no_id", "workflow retry", "", nil, "Usage:"},
+		{"workflow_unknown_sub", "workflow foo", "", nil, "Usage:"},
 		// errors
 		{"empty", "", "", nil, "Available commands"},
 		{"unknown", "foo", "", nil, "Unknown subcommand: foo"},
@@ -1951,6 +1968,155 @@ func (s *BotSuite) TestExtractUserID() {
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
 			require.Equal(s.T(), tt.expect, extractUserID(tt.input))
+		})
+	}
+}
+
+// --- parseShortcut ---
+
+func (s *BotSuite) TestParseShortcut() {
+	tests := []struct {
+		name       string
+		args       []string
+		wantCmd    string
+		wantOpts   map[string]string
+		wantErrSub string
+	}{
+		{
+			name:     "valid_name",
+			args:     []string{"my-shortcut"},
+			wantCmd:  "shortcut",
+			wantOpts: map[string]string{"name": "my-shortcut"},
+		},
+		{
+			name:     "extra_args_uses_first",
+			args:     []string{"deploy-prod", "ignored"},
+			wantCmd:  "shortcut",
+			wantOpts: map[string]string{"name": "deploy-prod"},
+		},
+		{
+			name:       "no_args",
+			args:       []string{},
+			wantErrSub: "Usage:",
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			inter := &bot.Interaction{
+				ChannelID: "C123",
+				GuildID:   "T123",
+				Options:   make(map[string]string),
+			}
+			result, errText := parseShortcut(inter, tt.args)
+			if tt.wantErrSub != "" {
+				require.Contains(s.T(), errText, tt.wantErrSub)
+				require.Nil(s.T(), result)
+				return
+			}
+			require.Empty(s.T(), errText)
+			require.NotNil(s.T(), result)
+			require.Equal(s.T(), tt.wantCmd, result.CommandName)
+			for k, v := range tt.wantOpts {
+				require.Equal(s.T(), v, result.Options[k], "option %s", k)
+			}
+		})
+	}
+}
+
+// --- parseWorkflow ---
+
+func (s *BotSuite) TestParseWorkflow() {
+	tests := []struct {
+		name       string
+		args       []string
+		wantCmd    string
+		wantOpts   map[string]string
+		wantErrSub string
+	}{
+		{
+			name:    "list",
+			args:    []string{"list"},
+			wantCmd: "workflows",
+		},
+		{
+			name:    "runs",
+			args:    []string{"runs"},
+			wantCmd: "workflow-runs",
+		},
+		{
+			name:     "run_with_name",
+			args:     []string{"run", "my-flow"},
+			wantCmd:  "workflow-run",
+			wantOpts: map[string]string{"name": "my-flow"},
+		},
+		{
+			name:       "run_no_name",
+			args:       []string{"run"},
+			wantErrSub: "Usage:",
+		},
+		{
+			name:     "cancel_with_id",
+			args:     []string{"cancel", "run-99"},
+			wantCmd:  "workflow-cancel",
+			wantOpts: map[string]string{"run_id": "run-99"},
+		},
+		{
+			name:       "cancel_no_id",
+			args:       []string{"cancel"},
+			wantErrSub: "Usage:",
+		},
+		{
+			name:     "delete_with_id",
+			args:     []string{"delete", "run-42"},
+			wantCmd:  "workflow-delete",
+			wantOpts: map[string]string{"run_id": "run-42"},
+		},
+		{
+			name:       "delete_no_id",
+			args:       []string{"delete"},
+			wantErrSub: "Usage:",
+		},
+		{
+			name:     "retry_with_id",
+			args:     []string{"retry", "run-7"},
+			wantCmd:  "workflow-retry",
+			wantOpts: map[string]string{"run_id": "run-7"},
+		},
+		{
+			name:       "retry_no_id",
+			args:       []string{"retry"},
+			wantErrSub: "Usage:",
+		},
+		{
+			name:       "no_args",
+			args:       []string{},
+			wantErrSub: "Usage:",
+		},
+		{
+			name:       "unknown_subcommand",
+			args:       []string{"pause"},
+			wantErrSub: "Usage:",
+		},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			inter := &bot.Interaction{
+				ChannelID: "C123",
+				GuildID:   "T123",
+				Options:   make(map[string]string),
+			}
+			result, errText := parseWorkflow(inter, tt.args)
+			if tt.wantErrSub != "" {
+				require.Contains(s.T(), errText, tt.wantErrSub)
+				require.Nil(s.T(), result)
+				return
+			}
+			require.Empty(s.T(), errText)
+			require.NotNil(s.T(), result)
+			require.Equal(s.T(), tt.wantCmd, result.CommandName)
+			for k, v := range tt.wantOpts {
+				require.Equal(s.T(), v, result.Options[k], "option %s", k)
+			}
 		})
 	}
 }

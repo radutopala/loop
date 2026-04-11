@@ -466,38 +466,44 @@ func (s *ServerSuite) TestCreateTicket_GenerateIDError() {
 }
 
 func (s *ServerSuite) TestCreateTicket_WriteError() {
-	dir := createTicketsDir(s.T())
-	// Make .tickets read-only so Write fails
-	require.NoError(s.T(), os.Chmod(filepath.Join(dir, ".tickets"), 0555))
-	s.T().Cleanup(func() { _ = os.Chmod(filepath.Join(dir, ".tickets"), 0755) })
+	ms := new(MockTicketStore)
+	ms.On("EnsureDir").Return(nil)
+	ms.On("Write", mock.Anything).Return(fmt.Errorf("disk full"))
+	s.srv.ticketStoreOpener = func(string) TicketStore { return ms }
+	s.T().Cleanup(func() { s.srv.ticketStoreOpener = nil })
 
-	body := fmt.Sprintf(`{"dir": %q, "title": "Will fail"}`, dir)
+	body := `{"dir": "/any", "title": "Will fail"}`
 	rec := s.testRequest("POST", "/api/tickets", body)
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "disk full")
 }
 
 func (s *ServerSuite) TestUpdateTicket_WriteError() {
-	dir := createTicketsDir(s.T())
-	writeTestTicket(s.T(), dir, "tic-wrfl", "Write fail", tk.StatusOpen)
-	// Make ticket file read-only so Write fails
-	ticketFile := filepath.Join(dir, ".tickets", "tic-wrfl.md")
-	require.NoError(s.T(), os.Chmod(ticketFile, 0444))
-	s.T().Cleanup(func() { _ = os.Chmod(ticketFile, 0644) })
+	ms := new(MockTicketStore)
+	ms.On("ResolveID", "tic-wrfl").Return("tic-wrfl", nil)
+	ms.On("Read", "tic-wrfl").Return(&tk.Ticket{
+		ID: "tic-wrfl", Title: "Write fail", Status: tk.StatusOpen, Type: tk.TypeTask,
+	}, nil)
+	ms.On("Write", mock.Anything).Return(fmt.Errorf("disk full"))
+	s.srv.ticketStoreOpener = func(string) TicketStore { return ms }
+	s.T().Cleanup(func() { s.srv.ticketStoreOpener = nil })
 
-	body := fmt.Sprintf(`{"dir": %q, "status": "closed"}`, dir)
+	body := `{"dir": "/any", "status": "closed"}`
 	rec := s.testRequest("PATCH", "/api/tickets/tic-wrfl", body)
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "disk full")
 }
 
 func (s *ServerSuite) TestDeleteTicket_DeleteError() {
-	dir := createTicketsDir(s.T())
-	writeTestTicket(s.T(), dir, "tic-dlfl", "Delete fail", tk.StatusOpen)
-	// Make .tickets read-only so Delete (os.Remove) fails
-	require.NoError(s.T(), os.Chmod(filepath.Join(dir, ".tickets"), 0555))
-	s.T().Cleanup(func() { _ = os.Chmod(filepath.Join(dir, ".tickets"), 0755) })
+	ms := new(MockTicketStore)
+	ms.On("ResolveID", "tic-dlfl").Return("tic-dlfl", nil)
+	ms.On("Delete", "tic-dlfl").Return(fmt.Errorf("permission denied"))
+	s.srv.ticketStoreOpener = func(string) TicketStore { return ms }
+	s.T().Cleanup(func() { s.srv.ticketStoreOpener = nil })
 
-	rec := s.testRequest("DELETE", "/api/tickets/tic-dlfl?dir="+dir, "")
+	rec := s.testRequest("DELETE", "/api/tickets/tic-dlfl?dir=/any", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "permission denied")
 }
 
 // ── Assign ticket tests ──

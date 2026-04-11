@@ -664,7 +664,7 @@ func (s *SchedulerSuite) TestEditTaskPromptOnly() {
 	})).Return(nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 1, nil, nil, new("new prompt"), nil, nil, nil, nil)
+	err := ts.EditTask(context.Background(), 1, nil, nil, new("new prompt"), nil, nil, nil, nil, nil, nil)
 
 	require.NoError(s.T(), err)
 	s.store.AssertExpectations(s.T())
@@ -681,7 +681,7 @@ func (s *SchedulerSuite) TestEditTaskScheduleChange() {
 	})).Return(nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 1, new("0 9 * * *"), nil, nil, nil, nil, nil, nil)
+	err := ts.EditTask(context.Background(), 1, new("0 9 * * *"), nil, nil, nil, nil, nil, nil, nil, nil)
 
 	require.NoError(s.T(), err)
 	s.store.AssertExpectations(s.T())
@@ -698,7 +698,7 @@ func (s *SchedulerSuite) TestEditTaskAutoDeleteSec() {
 	})).Return(nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 1, nil, nil, nil, new(300), nil, nil, nil)
+	err := ts.EditTask(context.Background(), 1, nil, nil, nil, new(300), nil, nil, nil, nil, nil)
 
 	require.NoError(s.T(), err)
 	s.store.AssertExpectations(s.T())
@@ -708,7 +708,7 @@ func (s *SchedulerSuite) TestEditTaskNotFound() {
 	s.store.On("GetScheduledTask", mock.Anything, int64(99)).Return(nil, nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 99, nil, nil, nil, nil, nil, nil, nil)
+	err := ts.EditTask(context.Background(), 99, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "not found")
@@ -719,7 +719,7 @@ func (s *SchedulerSuite) TestEditTaskGetError() {
 	s.store.On("GetScheduledTask", mock.Anything, int64(1)).Return(nil, errors.New("db error"))
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 1, nil, nil, nil, nil, nil, nil, nil)
+	err := ts.EditTask(context.Background(), 1, nil, nil, nil, nil, nil, nil, nil, nil, nil)
 
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "getting task")
@@ -734,7 +734,7 @@ func (s *SchedulerSuite) TestEditTaskInvalidSchedule() {
 	s.store.On("GetScheduledTask", mock.Anything, int64(1)).Return(task, nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 1, new("invalid"), nil, nil, nil, nil, nil, nil)
+	err := ts.EditTask(context.Background(), 1, new("invalid"), nil, nil, nil, nil, nil, nil, nil, nil)
 
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "calculating next run")
@@ -752,7 +752,7 @@ func (s *SchedulerSuite) TestEditTaskTypeChange() {
 	})).Return(nil)
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 1, nil, new(string(db.TaskTypeOnce)), nil, nil, nil, nil, nil)
+	err := ts.EditTask(context.Background(), 1, nil, new(string(db.TaskTypeOnce)), nil, nil, nil, nil, nil, nil, nil)
 
 	require.NoError(s.T(), err)
 	s.store.AssertExpectations(s.T())
@@ -767,7 +767,7 @@ func (s *SchedulerSuite) TestEditTaskUpdateError() {
 	s.store.On("UpdateScheduledTask", mock.Anything, mock.Anything).Return(errors.New("update error"))
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 1, nil, nil, new("new"), nil, nil, nil, nil)
+	err := ts.EditTask(context.Background(), 1, nil, nil, new("new"), nil, nil, nil, nil, nil, nil)
 
 	require.Error(s.T(), err)
 	require.Equal(s.T(), "update error", err.Error())
@@ -786,7 +786,7 @@ func (s *SchedulerSuite) TestEditTaskWorktree() {
 
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
 	wt := true
-	err := ts.EditTask(context.Background(), 1, nil, nil, nil, nil, &wt, nil, nil)
+	err := ts.EditTask(context.Background(), 1, nil, nil, nil, nil, &wt, nil, nil, nil, nil)
 
 	require.NoError(s.T(), err)
 	s.store.AssertExpectations(s.T())
@@ -804,7 +804,7 @@ func (s *SchedulerSuite) TestEditTaskOriginBranch() {
 
 	ptrStr := func(s string) *string { return &s }
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 1, nil, nil, nil, nil, nil, ptrStr("main"), nil)
+	err := ts.EditTask(context.Background(), 1, nil, nil, nil, nil, nil, ptrStr("main"), nil, nil, nil)
 
 	require.NoError(s.T(), err)
 	s.store.AssertExpectations(s.T())
@@ -822,7 +822,25 @@ func (s *SchedulerSuite) TestEditTaskUpdateBeforeRun() {
 
 	ptrBool := func(b bool) *bool { return &b }
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
-	err := ts.EditTask(context.Background(), 1, nil, nil, nil, nil, nil, nil, ptrBool(true))
+	err := ts.EditTask(context.Background(), 1, nil, nil, nil, nil, nil, nil, ptrBool(true), nil, nil)
+
+	require.NoError(s.T(), err)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *SchedulerSuite) TestEditTaskWorkflowFields() {
+	task := &db.ScheduledTask{
+		ID: 1, ChannelID: "ch1", Schedule: "*/5 * * * *",
+		Type: db.TaskTypeCron, Prompt: "prompt", Enabled: true,
+	}
+	s.store.On("GetScheduledTask", mock.Anything, int64(1)).Return(task, nil)
+	s.store.On("UpdateScheduledTask", mock.Anything, mock.MatchedBy(func(t *db.ScheduledTask) bool {
+		return t.WorkflowName == "validate" && t.WorkflowInputs == `{"branch":"main"}`
+	})).Return(nil)
+
+	ptrStr := func(s string) *string { return &s }
+	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
+	err := ts.EditTask(context.Background(), 1, nil, nil, nil, nil, nil, nil, nil, ptrStr("validate"), ptrStr(`{"branch":"main"}`))
 
 	require.NoError(s.T(), err)
 	s.store.AssertExpectations(s.T())

@@ -243,3 +243,55 @@ func (m *MockStore) ReleaseScheduledTaskRunning(ctx context.Context, id int64) e
 func (m *MockStore) UpdateChannelPermissions(ctx context.Context, channelID string, perms types.Permissions) error {
 	return m.Called(ctx, channelID, perms).Error(0)
 }
+
+func (m *MockStore) CreateWorkflowRun(ctx context.Context, run *db.WorkflowRun) error {
+	return m.Called(ctx, run).Error(0)
+}
+
+func (m *MockStore) GetWorkflowRun(ctx context.Context, id string) (*db.WorkflowRun, error) {
+	args := m.Called(ctx, id)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*db.WorkflowRun), args.Error(1)
+}
+
+func (m *MockStore) UpdateWorkflowRun(ctx context.Context, run *db.WorkflowRun) error {
+	return m.Called(ctx, run).Error(0)
+}
+
+func (m *MockStore) ListWorkflowRuns(ctx context.Context, channelID string, limit int) ([]*db.WorkflowRun, error) {
+	args := m.Called(ctx, channelID, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.WorkflowRun), args.Error(1)
+}
+
+func (m *MockStore) ListWorkflowRunsByStatus(ctx context.Context, statuses []db.WorkflowRunStatus) ([]*db.WorkflowRun, error) {
+	args := m.Called(ctx, statuses)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.WorkflowRun), args.Error(1)
+}
+
+func (m *MockStore) UpsertNodeRun(ctx context.Context, nr *db.NodeRun) error {
+	return m.Called(ctx, nr).Error(0)
+}
+
+func (m *MockStore) ListNodeRuns(ctx context.Context, runID string) ([]*db.NodeRun, error) {
+	args := m.Called(ctx, runID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.NodeRun), args.Error(1)
+}
+
+func (m *MockStore) UpdateNodeHeartbeat(ctx context.Context, runID, nodeID string) error {
+	return m.Called(ctx, runID, nodeID).Error(0)
+}
+
+func (m *MockStore) DeleteWorkflowRun(ctx context.Context, id string) error {
+	return m.Called(ctx, id).Error(0)
+}

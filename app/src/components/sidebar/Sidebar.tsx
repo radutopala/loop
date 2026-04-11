@@ -52,6 +52,7 @@ interface SidebarProps {
   onOpenReadme?: () => void;
   onOpenContainers?: () => void;
   onOpenTasks?: () => void;
+  onOpenWorkflows?: () => void;
   updateStatus?: UpdateStatus | null;
   onDownloadUpdate?: () => void;
   onInstallUpdate?: () => void;
@@ -82,6 +83,7 @@ export function Sidebar({
   onOpenReadme,
   onOpenContainers,
   onOpenTasks,
+  onOpenWorkflows,
   updateStatus,
   onDownloadUpdate,
   onInstallUpdate,
@@ -386,6 +388,7 @@ export function Sidebar({
         onRebuildImage={onRebuildImage}
         onOpenSettings={onOpenSettings}
         onOpenTasks={onOpenTasks}
+        onOpenWorkflows={onOpenWorkflows}
         onOpenContainers={onOpenContainers}
         onOpenReadme={onOpenReadme}
       />

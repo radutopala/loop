@@ -123,6 +123,61 @@ func (s *CommandsSuite) TestParseCommand() {
 			name: "deny_user", command: "deny_user user-1",
 			wantCmd: "deny_user", wantOpt: map[string]string{"target_id": "user-1"},
 		},
+		// No-argument commands added with shortcuts/workflows support.
+		{
+			name: "shortcuts", command: "shortcuts",
+			wantCmd: "shortcuts", wantOpt: map[string]string{},
+		},
+		{
+			name: "workflows", command: "workflows",
+			wantCmd: "workflows", wantOpt: map[string]string{},
+		},
+		{
+			name: "workflow-runs", command: "workflow-runs",
+			wantCmd: "workflow-runs", wantOpt: map[string]string{},
+		},
+		// Shortcut/workflow commands with a name positional argument.
+		{
+			name: "shortcut with name", command: "shortcut my-shortcut",
+			wantCmd: "shortcut", wantOpt: map[string]string{"name": "my-shortcut"},
+		},
+		{
+			name: "shortcut without name", command: "shortcut",
+			wantCmd: "shortcut", wantOpt: map[string]string{},
+		},
+		{
+			name: "workflow-run with name", command: "workflow-run my-workflow",
+			wantCmd: "workflow-run", wantOpt: map[string]string{"name": "my-workflow"},
+		},
+		{
+			name: "workflow-run without name", command: "workflow-run",
+			wantCmd: "workflow-run", wantOpt: map[string]string{},
+		},
+		// Workflow run management commands with a run_id positional argument.
+		{
+			name: "workflow-cancel with run_id", command: "workflow-cancel run-abc",
+			wantCmd: "workflow-cancel", wantOpt: map[string]string{"run_id": "run-abc"},
+		},
+		{
+			name: "workflow-cancel without run_id", command: "workflow-cancel",
+			wantCmd: "workflow-cancel", wantOpt: map[string]string{},
+		},
+		{
+			name: "workflow-delete with run_id", command: "workflow-delete run-abc",
+			wantCmd: "workflow-delete", wantOpt: map[string]string{"run_id": "run-abc"},
+		},
+		{
+			name: "workflow-delete without run_id", command: "workflow-delete",
+			wantCmd: "workflow-delete", wantOpt: map[string]string{},
+		},
+		{
+			name: "workflow-retry with run_id", command: "workflow-retry run-abc",
+			wantCmd: "workflow-retry", wantOpt: map[string]string{"run_id": "run-abc"},
+		},
+		{
+			name: "workflow-retry without run_id", command: "workflow-retry",
+			wantCmd: "workflow-retry", wantOpt: map[string]string{},
+		},
 		{
 			name: "unknown command", command: "foobar",
 			wantNil: true,

@@ -7,6 +7,7 @@ Feature: Smoke & Navigation Journey
     Given I open the app in a browser
     Then I wait for text "Settings" to appear
     And the page should contain text "Tasks"
+    And the page should contain text "Workflows"
     And the page should contain text "Containers"
     And the page should contain text "README"
     And I wait for text "dm" to appear

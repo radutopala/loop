@@ -18,6 +18,8 @@ export interface ScheduledTask {
   channel_name?: string;
   dir_path?: string;
   channel_worktree?: boolean;
+  workflow_name?: string;
+  workflow_inputs?: string;
 }
 
 export interface TaskRunLog {

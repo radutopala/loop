@@ -1,6 +1,6 @@
 # Task Scheduling
 
-Loop includes a built-in task scheduler that executes agent prompts on a recurring or one-time basis. Tasks are stored in the database, polled on a timer, and executed inside Docker containers.
+Loop includes a built-in task scheduler that executes agent prompts or workflow runs on a recurring or one-time basis. Tasks are stored in the database, polled on a timer, and executed inside Docker containers.
 
 See also: [Configuration Reference](configuration.md) for `poll_interval_sec` and `task_templates` config fields. [Docker Container Lifecycle](containers.md) for how task containers are created.
 
@@ -107,6 +107,45 @@ After execution, the next run is determined by task type:
 | `cron` | `next_run_at` set to the next matching time via the cron parser. |
 | `interval` | `next_run_at` set to `now + duration`. |
 | `once` | Task is disabled (`enabled = false`). No further runs. |
+
+---
+
+## Scheduled Workflows
+
+Instead of an agent prompt, a task can trigger a workflow run by setting `workflow_name` on the scheduled task. When the scheduler fires such a task, it delegates to `workflow.Engine.StartRun` instead of launching an agent in a Docker container.
+
+### Creating a Workflow Task
+
+Use the same scheduling API/MCP tools as regular tasks, but provide `workflow_name` instead of (or in addition to) `prompt`:
+
+```jsonc
+// Via MCP tool
+schedule_task({
+  "schedule": "0 9 * * MON-FRI",
+  "type": "cron",
+  "workflow_name": "validate",
+  "workflow_inputs": "{\"branch\": \"main\"}"
+})
+```
+
+| Field | Description |
+|---|---|
+| `workflow_name` | Name matching a `workflows[]` entry in config. When set, the task runs the workflow instead of an agent prompt. |
+| `workflow_inputs` | JSON object of inputs passed to `StartRun`. Must match the workflow's `inputs` definition. |
+
+### Execution
+
+When a workflow task fires:
+
+1. The executor detects `workflow_name != ""` and branches early, skipping agent setup (worktree, session, streaming).
+2. If `workflow_inputs` is set and not `"{}"`, it is parsed as `map[string]string`.
+3. `workflow.Engine.StartRun` is called with the workflow name, channel ID, directory path, and inputs.
+4. The returned run ID is recorded as the task run log's response text (e.g. `"workflow run started: wfr-abc123"`).
+5. The workflow run executes asynchronously — the scheduler does not wait for workflow completion.
+
+The task can be edited to change `workflow_name` or `workflow_inputs` via `edit_task` MCP tool or `PATCH /api/tasks/{id}`.
+
+See also: [Workflows](workflows.md) for the full workflow engine documentation.
 
 ---
 

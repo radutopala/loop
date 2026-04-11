@@ -153,6 +153,11 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I click on "([^"]*)" in the kanban panel$`, tc.clickInKanbanPanel)
 	ctx.Step(`^I click button "([^"]*)" in the kanban panel$`, tc.clickButtonInKanbanPanel)
 	ctx.Step(`^I click button "([^"]*)" in the git panel$`, tc.clickButtonInGitPanel)
+	ctx.Step(`^I open the workflows panel$`, tc.openWorkflowsPanel)
+	ctx.Step(`^I click on "([^"]*)" in the workflows panel$`, tc.clickInWorkflowsPanel)
+	ctx.Step(`^I click button "([^"]*)" in the workflows panel$`, tc.clickButtonInWorkflowsPanel)
+	ctx.Step(`^I click on "([^"]*)" in the workflows split panel$`, tc.clickInWorkflowsSplitPanel)
+	ctx.Step(`^I click button "([^"]*)" in the workflows split panel$`, tc.clickButtonInWorkflowsSplitPanel)
 	ctx.Step(`^I trigger Run Now for the visible task$`, tc.triggerRunNowForVisibleTask)
 	ctx.Step(`^I capture the visible task ID$`, tc.captureVisibleTaskID)
 	ctx.Step(`^I click on the element with text "([^"]*)"$`, tc.clickElementWithText)
@@ -257,8 +262,16 @@ func (tc *TestContext) clickOn(selector string) error {
 }
 
 func (tc *TestContext) typeInto(text, selector string) error {
+	// Use Poll to actively check for the element, avoiding races where
+	// chromedp's event-driven WaitVisible misses a briefly-visible element.
+	js := fmt.Sprintf(`(() => {
+		const el = document.querySelector(%q);
+		if (!el) return false;
+		const r = el.getBoundingClientRect();
+		return r.width > 0 && r.height > 0;
+	})()`, selector)
 	return chromedp.Run(tc.chromeTab.ctx,
-		chromedp.WaitVisible(selector, chromedp.ByQuery),
+		chromedp.Poll(js, nil, chromedp.WithPollingTimeout(15*time.Second)),
 		chromedp.SendKeys(selector, text, chromedp.ByQuery),
 	)
 }
@@ -341,12 +354,49 @@ func (tc *TestContext) clickButtonWithText(text string) error {
 }
 
 // clickInRegion clicks the first visible element containing text within a
-// data-testid region. chromedp.Click internally calls scrollIntoViewIfNeeded.
+// data-testid region. Uses JS polling + .click() for reliability — CDP
+// coordinate-based clicks can miss elements inside overflow or zoom
+// containers.
 func (tc *TestContext) clickInRegion(text, testID string) error {
-	xpath := fmt.Sprintf(`(//*[@data-testid='%s']//*[contains(text(), '%s')])[1]`, testID, text)
+	js := fmt.Sprintf(`(() => {
+		const root = document.querySelector('[data-testid=%q]');
+		if (!root) return false;
+		const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+		while (walker.nextNode()) {
+			if (walker.currentNode.textContent.includes(%q)) {
+				const el = walker.currentNode.parentElement;
+				if (el && el.offsetWidth > 0 && el.offsetHeight > 0) return true;
+			}
+		}
+		return false;
+	})()`, testID, text)
+	clickJS := fmt.Sprintf(`(() => {
+		const root = document.querySelector('[data-testid=%q]');
+		if (!root) return false;
+		const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+		while (walker.nextNode()) {
+			if (walker.currentNode.textContent.includes(%q)) {
+				const el = walker.currentNode.parentElement;
+				if (el && el.offsetWidth > 0 && el.offsetHeight > 0) {
+					el.dispatchEvent(new MouseEvent('mousedown', {bubbles: true, cancelable: true}));
+					el.dispatchEvent(new MouseEvent('mouseup', {bubbles: true, cancelable: true}));
+					el.click();
+					return true;
+				}
+			}
+		}
+		return false;
+	})()`, testID, text)
+	var clicked bool
 	return chromedp.Run(tc.chromeTab.ctx,
-		chromedp.WaitVisible(xpath),
-		chromedp.Click(xpath),
+		chromedp.Poll(js, nil, chromedp.WithPollingTimeout(15*time.Second)),
+		chromedp.Evaluate(clickJS, &clicked),
+		chromedp.ActionFunc(func(ctx context.Context) error {
+			if !clicked {
+				return fmt.Errorf("no visible element with text %q found in [data-testid=%q]", text, testID)
+			}
+			return nil
+		}),
 	)
 }
 
@@ -403,10 +453,24 @@ func (tc *TestContext) clickInBranchPicker(text string) error {
 
 // clickButtonInRegion clicks a button whose text matches within a data-testid region.
 func (tc *TestContext) clickButtonInRegion(text, testID string) error {
-	xpath := fmt.Sprintf(`(//*[@data-testid='%s']//button[contains(., '%s')])[1]`, testID, text)
+	pollJS := fmt.Sprintf(`(() => {
+		const region = document.querySelector('[data-testid="%s"]');
+		if (!region) return false;
+		const btn = Array.from(region.querySelectorAll('button')).find(b => b.innerText.includes(%q));
+		return !!btn;
+	})()`, testID, text)
+	clickJS := fmt.Sprintf(`(() => {
+		const region = document.querySelector('[data-testid="%s"]');
+		if (!region) return false;
+		const btn = Array.from(region.querySelectorAll('button')).find(b => b.innerText.includes(%q));
+		if (!btn) return false;
+		btn.click();
+		return true;
+	})()`, testID, text)
+	var clicked bool
 	return chromedp.Run(tc.chromeTab.ctx,
-		chromedp.WaitVisible(xpath),
-		chromedp.Click(xpath),
+		chromedp.Poll(pollJS, nil, chromedp.WithPollingTimeout(10*time.Second)),
+		chromedp.Evaluate(clickJS, &clicked),
 	)
 }
 
@@ -436,6 +500,35 @@ func (tc *TestContext) clickInKanbanPanel(text string) error {
 
 func (tc *TestContext) clickButtonInKanbanPanel(text string) error {
 	return tc.clickButtonInRegion(text, "kanban-panel")
+}
+
+func (tc *TestContext) openWorkflowsPanel() error {
+	sel := `[data-testid="sidebar-workflows-btn"]`
+	return chromedp.Run(tc.chromeTab.ctx,
+		chromedp.WaitVisible(sel, chromedp.ByQuery),
+		chromedp.Poll(`(() => {
+			if (document.querySelector('[data-testid="workflows-panel"]')) return true;
+			const btn = document.querySelector('[data-testid="sidebar-workflows-btn"]');
+			if (btn) btn.click();
+			return false;
+		})()`, nil, chromedp.WithPollingTimeout(15*time.Second)),
+	)
+}
+
+func (tc *TestContext) clickInWorkflowsPanel(text string) error {
+	return tc.clickInRegion(text, "workflows-panel")
+}
+
+func (tc *TestContext) clickButtonInWorkflowsPanel(text string) error {
+	return tc.clickButtonInRegion(text, "workflows-panel")
+}
+
+func (tc *TestContext) clickInWorkflowsSplitPanel(text string) error {
+	return tc.clickInRegion(text, "workflows-split-panel")
+}
+
+func (tc *TestContext) clickButtonInWorkflowsSplitPanel(text string) error {
+	return tc.clickButtonInRegion(text, "workflows-split-panel")
 }
 
 func (tc *TestContext) clickButtonInGitPanel(text string) error {

@@ -218,6 +218,71 @@ See [Task Scheduling](scheduling.md) for full details.
 
 Shortcuts appear in the chat input when the user types `#`. Selecting a shortcut sends its resolved prompt as a message. The API endpoint `GET /api/shortcuts` returns all shortcuts with resolved prompts; pass `?channel_id=<id>` to merge project-level shortcuts. Agents can manage shortcuts via the `prompt_shortcut` MCP tool or the `POST /api/shortcuts` endpoint — add, update, or delete shortcuts in either global or project scope.
 
+#### Workflows
+
+```jsonc
+"workflows": [
+  {
+    "name": "fix-issue",
+    "description": "Analyze an issue, plan, implement, and create a PR",
+    "inputs": {
+      "issue_url": { "description": "Issue URL", "required": true }
+    },
+    "nodes": [
+      { "id": "analyze", "type": "bash", "script": "gh issue view {{.Inputs.issue_url}} --json title,body,labels" },
+      { "id": "plan", "type": "prompt", "depends_on": ["analyze"], "prompt": "Create a plan:\n\n{{.NodeOutputs.analyze}}" },
+      { "id": "implement", "type": "prompt", "depends_on": ["plan"], "prompt": "Implement:\n\n{{.NodeOutputs.plan}}" },
+      { "id": "pr", "type": "prompt", "depends_on": ["implement"], "prompt": "Commit and create a PR" }
+    ]
+  }
+]
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `name` | `string` | Unique workflow identifier. |
+| `description` | `string` | Human-readable description. |
+| `timeout` | `string` | Go duration (e.g. `"30m"`) that caps total DAG execution time. Run fails with `"workflow timeout exceeded"` on expiry. |
+| `inputs` | `map[string]WorkflowInput` | Named inputs with `description`, `required`, and `default` fields. |
+| `nodes` | `NodeDef[]` | Ordered list of DAG nodes. |
+
+**Node fields:**
+
+| Field | Type | Description |
+|---|---|---|
+| `id` | `string` | Unique node identifier within the workflow. |
+| `type` | `string` | `"prompt"`, `"bash"`, `"loop"`, or `"approval"`. |
+| `depends_on` | `string[]` | IDs of nodes that must complete before this one starts. |
+| `prompt` | `string` | Prompt text for `prompt`/`loop` nodes. Supports Go `text/template`. Mutually exclusive with `prompt_path`. |
+| `prompt_path` | `string` | Path to a prompt file, resolved as `{loopDir}/workflows/{prompt_path}`. Mutually exclusive with `prompt`. |
+| `system_prompt` | `string` | Optional system prompt for `prompt` nodes. Supports templates. |
+| `script` | `string` | Shell script for `bash` nodes. Supports templates. |
+| `max_iterations` | `int` | Max iterations for `loop` nodes (default: 10). |
+| `condition` | `string` | Template for `loop` nodes; stops when it renders `"true"`. |
+| `message` | `string` | Approval message for `approval` nodes. Supports templates. |
+| `timeout` | `string` | Go duration (e.g. `"5m"`, `"1h"`). For `approval` nodes: deadline for human response. For `prompt`/`bash`/`loop` nodes: enforced execution deadline via context cancellation. |
+| `retry` | `RetryConfig` | Optional retry with `max_retries`, `backoff_base`, `backoff_max`. |
+| `when` | `string` | Template that must evaluate to `"true"` for the node to run. Skipped otherwise. |
+| `trigger_rule` | `string` | `"all_success"` (default), `"all_done"`, or `"one_success"`. Controls how dependency failures affect this node. |
+
+See [Workflows](workflows.md) for architecture details and the DAG execution model.
+
+#### Workflow Concurrency
+
+```jsonc
+"workflow_concurrency": {
+  "max_concurrent_runs": 5,
+  "max_concurrent_nodes": 10
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `max_concurrent_runs` | `int` | Maximum workflow runs executing in parallel. `0` = unlimited. Default: `0`. |
+| `max_concurrent_nodes` | `int` | Maximum node goroutines across all active runs. `0` = unlimited. Default: `0`. |
+
+Available at both global and project level. Project values override global values when > 0.
+
 #### Memory
 
 ```jsonc
@@ -324,6 +389,9 @@ Not all global fields are available in project configs. The following fields can
 | `permissions` | **Replaces** global permissions entirely when set. |
 | `task_templates` | **Merged** by name. Project templates override global templates with the same name; new names are appended. |
 | `prompt_shortcuts` | **Merged** by name. Project shortcuts override global shortcuts with the same name; new names are appended. |
+| `workflows` | **Merged** by name. Project workflows override global workflows with the same name; new names are appended. |
+| `workflow_concurrency.max_concurrent_runs` | **Overrides** global value when > 0. |
+| `workflow_concurrency.max_concurrent_nodes` | **Overrides** global value when > 0. |
 | `browser.enabled` | **Overrides** global value when set. |
 | `browser.chrome_image` | **Overrides** global value when set. |
 | `browser.host_cdp_port` | **Overrides** global value when set. |
@@ -333,7 +401,7 @@ Not all global fields are available in project configs. The following fields can
 The merge follows these principles:
 
 - **Replace**: The project value completely replaces the global value (mounts, copy_files, permissions).
-- **Merge**: Both global and project values are combined, with project taking precedence on conflicts (MCP servers, envs, task templates).
+- **Merge**: Both global and project values are combined, with project taking precedence on conflicts (MCP servers, envs, task templates, workflows).
 - **Append**: Project values are added to the global list (memory paths).
 - **Override**: A single scalar value replaces the global one (claude_model, container_image, etc.).
 - **Absent = inherit**: If a field is not set in the project config, the global value is used unchanged.
@@ -475,7 +543,16 @@ The merge follows these principles:
       "description": "Review uncommitted and branch changes",
       "prompt_path": "review-code.md"
     }
-  ]
+  ],
+
+  // Workflows — declarative DAG pipelines
+  "workflows": [],
+
+  // Workflow concurrency limits (0 = unlimited)
+  "workflow_concurrency": {
+    "max_concurrent_runs": 0,
+    "max_concurrent_nodes": 0
+  }
 }
 ```
 
@@ -564,6 +641,24 @@ The merge follows these principles:
   //    "description": "Run linter",
   //    "prompt": "Run make lint and fix any issues"
   //  }
-  //]
+  //],
+
+  // Workflows (merged by name; project overrides global workflows with same name)
+  //"workflows": [
+  //  {
+  //    "name": "code-review",
+  //    "description": "Review branch changes",
+  //    "nodes": [
+  //      { "id": "diff", "type": "bash", "script": "git diff main...HEAD" },
+  //      { "id": "review", "type": "prompt", "depends_on": ["diff"], "prompt": "Review:\n\n{{.NodeOutputs.diff}}" }
+  //    ]
+  //  }
+  //],
+
+  // Workflow concurrency limits (overrides global values)
+  //"workflow_concurrency": {
+  //  "max_concurrent_runs": 5,
+  //  "max_concurrent_nodes": 10
+  //}
 }
 ```

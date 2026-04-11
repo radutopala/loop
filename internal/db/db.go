@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -52,6 +53,15 @@ type Store interface {
 	GetMemoryFileHash(ctx context.Context, filePath, dirPath string) (string, error)
 	DeleteMemoryFile(ctx context.Context, filePath, dirPath string) error
 	ListDistinctMemoryFilePaths(ctx context.Context, dirPath string) ([]MemoryFileInfo, error)
+	CreateWorkflowRun(ctx context.Context, run *WorkflowRun) error
+	GetWorkflowRun(ctx context.Context, id string) (*WorkflowRun, error)
+	UpdateWorkflowRun(ctx context.Context, run *WorkflowRun) error
+	ListWorkflowRuns(ctx context.Context, channelID string, limit int) ([]*WorkflowRun, error)
+	ListWorkflowRunsByStatus(ctx context.Context, statuses []WorkflowRunStatus) ([]*WorkflowRun, error)
+	UpsertNodeRun(ctx context.Context, nr *NodeRun) error
+	ListNodeRuns(ctx context.Context, runID string) ([]*NodeRun, error)
+	UpdateNodeHeartbeat(ctx context.Context, runID, nodeID string) error
+	DeleteWorkflowRun(ctx context.Context, id string) error
 	Close() error
 }
 
@@ -392,9 +402,9 @@ func (s *SQLiteStore) GetMessagesAround(ctx context.Context, channelID string, m
 func (s *SQLiteStore) CreateScheduledTask(ctx context.Context, task *ScheduledTask) (int64, error) {
 	now := s.nowFunc()
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO scheduled_tasks (channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, worktree, origin_branch, update_before_run)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		task.ChannelID, task.GuildID, task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, now, now, task.TemplateName, task.AutoDeleteSec, boolToInt(task.Worktree), task.OriginBranch, boolToInt(task.UpdateBeforeRun),
+		`INSERT INTO scheduled_tasks (channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, worktree, origin_branch, update_before_run, workflow_name, workflow_inputs)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		task.ChannelID, task.GuildID, task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, now, now, task.TemplateName, task.AutoDeleteSec, boolToInt(task.Worktree), task.OriginBranch, boolToInt(task.UpdateBeforeRun), task.WorkflowName, task.WorkflowInputs,
 	)
 	if err != nil {
 		return 0, err
@@ -421,8 +431,8 @@ func (s *SQLiteStore) GetDueTasks(ctx context.Context, now time.Time) ([]*Schedu
 
 func (s *SQLiteStore) UpdateScheduledTask(ctx context.Context, task *ScheduledTask) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE scheduled_tasks SET schedule = ?, type = ?, prompt = ?, enabled = ?, next_run_at = ?, updated_at = ?, auto_delete_sec = ?, thread_id = ?, worktree = ?, origin_branch = ?, update_before_run = ?, running = ? WHERE id = ?`,
-		task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, s.nowFunc(), task.AutoDeleteSec, task.ThreadID, boolToInt(task.Worktree), task.OriginBranch, boolToInt(task.UpdateBeforeRun), boolToInt(task.Running), task.ID,
+		`UPDATE scheduled_tasks SET schedule = ?, type = ?, prompt = ?, enabled = ?, next_run_at = ?, updated_at = ?, auto_delete_sec = ?, thread_id = ?, worktree = ?, origin_branch = ?, update_before_run = ?, running = ?, workflow_name = ?, workflow_inputs = ? WHERE id = ?`,
+		task.Schedule, string(task.Type), task.Prompt, boolToInt(task.Enabled), task.NextRunAt, s.nowFunc(), task.AutoDeleteSec, task.ThreadID, boolToInt(task.Worktree), task.OriginBranch, boolToInt(task.UpdateBeforeRun), boolToInt(task.Running), task.WorkflowName, task.WorkflowInputs, task.ID,
 	)
 	return err
 }
@@ -516,7 +526,8 @@ func (s *SQLiteStore) GetScheduledTask(ctx context.Context, id int64) (*Schedule
 	).Scan(&task.ID, &task.ChannelID, &task.GuildID, &task.Schedule,
 		&taskType, &task.Prompt, &enabled, &task.NextRunAt,
 		&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID, &worktree,
-		&task.OriginBranch, &updateBeforeRun, &running)
+		&task.OriginBranch, &updateBeforeRun, &running,
+		&task.WorkflowName, &task.WorkflowInputs)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -541,7 +552,8 @@ func (s *SQLiteStore) GetScheduledTaskByTemplateName(ctx context.Context, channe
 	).Scan(&task.ID, &task.ChannelID, &task.GuildID, &task.Schedule,
 		&taskType, &task.Prompt, &enabled, &task.NextRunAt,
 		&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID, &worktree,
-		&task.OriginBranch, &updateBeforeRun, &running)
+		&task.OriginBranch, &updateBeforeRun, &running,
+		&task.WorkflowName, &task.WorkflowInputs)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}
@@ -617,7 +629,7 @@ func (s *SQLiteStore) UpsertMemoryFile(ctx context.Context, file *MemoryFile) er
 	return err
 }
 
-func (s *SQLiteStore) GetMemoryFilesByDirPath(ctx context.Context, dirPath string) ([]*MemoryFile, error) {
+func (s *SQLiteStore) GetMemoryFilesByDirPath(ctx context.Context, dirPath string) ([]*MemoryFile, error) { //nolint:dupl
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT id, file_path, chunk_index, content, content_hash, embedding, dimensions, dir_path, updated_at
 		 FROM memory_files WHERE (dir_path = ? OR dir_path = '') AND dimensions > 0`,
@@ -677,10 +689,150 @@ func (s *SQLiteStore) ListDistinctMemoryFilePaths(ctx context.Context, dirPath s
 	return files, rows.Err()
 }
 
+func (s *SQLiteStore) CreateWorkflowRun(ctx context.Context, run *WorkflowRun) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO workflow_runs (id, workflow_name, channel_id, dir_path, worktree_path, status, inputs, paused_node_id, error_text, workflow_def, started_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		run.ID, run.WorkflowName, run.ChannelID, run.DirPath, run.WorktreePath, string(run.Status), run.Inputs, run.PausedNodeID, run.ErrorText, run.WorkflowDef, run.StartedAt,
+	)
+	return err
+}
+
+func (s *SQLiteStore) GetWorkflowRun(ctx context.Context, id string) (*WorkflowRun, error) {
+	row := s.db.QueryRowContext(ctx,
+		`SELECT id, workflow_name, channel_id, dir_path, worktree_path, status, inputs, paused_node_id, error_text, workflow_def, started_at, finished_at
+		 FROM workflow_runs WHERE id = ?`, id,
+	)
+	run := &WorkflowRun{}
+	err := row.Scan(&run.ID, &run.WorkflowName, &run.ChannelID, &run.DirPath, &run.WorktreePath, &run.Status, &run.Inputs, &run.PausedNodeID, &run.ErrorText, &run.WorkflowDef, &run.StartedAt, &run.FinishedAt)
+	if err == sql.ErrNoRows {
+		return nil, nil
+	}
+	return run, err
+}
+
+func (s *SQLiteStore) UpdateWorkflowRun(ctx context.Context, run *WorkflowRun) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE workflow_runs SET status = ?, paused_node_id = ?, error_text = ?, finished_at = ? WHERE id = ?`,
+		string(run.Status), run.PausedNodeID, run.ErrorText, run.FinishedAt, run.ID,
+	)
+	return err
+}
+
+func (s *SQLiteStore) ListWorkflowRuns(ctx context.Context, channelID string, limit int) ([]*WorkflowRun, error) {
+	var rows *sql.Rows
+	var err error
+	if channelID != "" {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT id, workflow_name, channel_id, dir_path, worktree_path, status, inputs, paused_node_id, error_text, workflow_def, started_at, finished_at
+			 FROM workflow_runs WHERE channel_id = ? ORDER BY started_at DESC LIMIT ?`, channelID, limit)
+	} else {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT id, workflow_name, channel_id, dir_path, worktree_path, status, inputs, paused_node_id, error_text, workflow_def, started_at, finished_at
+			 FROM workflow_runs ORDER BY started_at DESC LIMIT ?`, limit)
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var runs []*WorkflowRun
+	for rows.Next() {
+		run := &WorkflowRun{}
+		if err := rows.Scan(&run.ID, &run.WorkflowName, &run.ChannelID, &run.DirPath, &run.WorktreePath, &run.Status, &run.Inputs, &run.PausedNodeID, &run.ErrorText, &run.WorkflowDef, &run.StartedAt, &run.FinishedAt); err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
+func (s *SQLiteStore) ListWorkflowRunsByStatus(ctx context.Context, statuses []WorkflowRunStatus) ([]*WorkflowRun, error) {
+	if len(statuses) == 0 {
+		return nil, nil
+	}
+	placeholders := make([]string, len(statuses))
+	args := make([]any, len(statuses))
+	for i, st := range statuses {
+		placeholders[i] = "?"
+		args[i] = string(st)
+	}
+	query := `SELECT id, workflow_name, channel_id, dir_path, worktree_path, status, inputs, paused_node_id, error_text, workflow_def, started_at, finished_at
+		 FROM workflow_runs WHERE status IN (` + strings.Join(placeholders, ",") + `) ORDER BY started_at ASC`
+	rows, err := s.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var runs []*WorkflowRun
+	for rows.Next() {
+		run := &WorkflowRun{}
+		if err := rows.Scan(&run.ID, &run.WorkflowName, &run.ChannelID, &run.DirPath, &run.WorktreePath, &run.Status, &run.Inputs, &run.PausedNodeID, &run.ErrorText, &run.WorkflowDef, &run.StartedAt, &run.FinishedAt); err != nil {
+			return nil, err
+		}
+		runs = append(runs, run)
+	}
+	return runs, rows.Err()
+}
+
+func (s *SQLiteStore) UpsertNodeRun(ctx context.Context, nr *NodeRun) error {
+	_, err := s.db.ExecContext(ctx,
+		`INSERT INTO workflow_node_runs (run_id, node_id, status, output, error_text, attempt, started_at, finished_at, last_heartbeat_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(run_id, node_id) DO UPDATE SET
+		   status = excluded.status,
+		   output = excluded.output,
+		   error_text = excluded.error_text,
+		   attempt = excluded.attempt,
+		   started_at = COALESCE(excluded.started_at, workflow_node_runs.started_at),
+		   finished_at = excluded.finished_at,
+		   last_heartbeat_at = COALESCE(excluded.last_heartbeat_at, workflow_node_runs.last_heartbeat_at)`,
+		nr.RunID, nr.NodeID, string(nr.Status), nr.Output, nr.ErrorText, nr.Attempt, nr.StartedAt, nr.FinishedAt, nr.LastHeartbeatAt,
+	)
+	return err
+}
+
+func (s *SQLiteStore) ListNodeRuns(ctx context.Context, runID string) ([]*NodeRun, error) { //nolint:dupl
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, run_id, node_id, status, output, error_text, attempt, started_at, finished_at, last_heartbeat_at
+		 FROM workflow_node_runs WHERE run_id = ? ORDER BY id ASC`, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var nodeRuns []*NodeRun
+	for rows.Next() {
+		nr := &NodeRun{}
+		if err := rows.Scan(&nr.ID, &nr.RunID, &nr.NodeID, &nr.Status, &nr.Output, &nr.ErrorText, &nr.Attempt, &nr.StartedAt, &nr.FinishedAt, &nr.LastHeartbeatAt); err != nil {
+			return nil, err
+		}
+		nodeRuns = append(nodeRuns, nr)
+	}
+	return nodeRuns, rows.Err()
+}
+
+func (s *SQLiteStore) UpdateNodeHeartbeat(ctx context.Context, runID, nodeID string) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE workflow_node_runs SET last_heartbeat_at = ? WHERE run_id = ? AND node_id = ?`,
+		s.nowFunc(), runID, nodeID,
+	)
+	return err
+}
+
+func (s *SQLiteStore) DeleteWorkflowRun(ctx context.Context, id string) error {
+	// Delete in order: node runs first, then the run itself.
+	// Both use the same serialised writer connection, so the window for
+	// orphan rows on crash is minimal (single-writer WAL mode).
+	if _, err := s.db.ExecContext(ctx, `DELETE FROM workflow_node_runs WHERE run_id = ?`, id); err != nil {
+		return err
+	}
+	_, err := s.db.ExecContext(ctx, `DELETE FROM workflow_runs WHERE id = ?`, id)
+	return err
+}
+
 // Column lists for SELECT queries.
 const (
 	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at`
-	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running`
+	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running, workflow_name, workflow_inputs`
 )
 
 // helpers
@@ -759,6 +911,7 @@ func scanScheduledTasks(rows *sql.Rows) ([]*ScheduledTask, error) {
 			&taskType, &task.Prompt, &enabled, &task.NextRunAt,
 			&task.CreatedAt, &task.UpdatedAt, &task.TemplateName, &task.AutoDeleteSec, &task.ThreadID, &worktree,
 			&task.OriginBranch, &updateBeforeRun, &running,
+			&task.WorkflowName, &task.WorkflowInputs,
 		); err != nil {
 			return nil, err
 		}

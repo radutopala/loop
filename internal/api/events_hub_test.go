@@ -885,3 +885,168 @@ func (s *EventsHubSuite) TestBroadcastTaskRunCompleted() {
 	require.NoError(s.T(), json.Unmarshal(msg, &evt))
 	require.Equal(s.T(), EventTaskRunCompleted, evt.Type)
 }
+
+func (s *EventsHubSuite) TestBroadcastWorkflowRunStarted() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastWorkflowRunStarted(events.WorkflowRunEventData{
+		RunID:        "run-1",
+		WorkflowName: "my-workflow",
+		ChannelID:    "ch-1",
+		Status:       "running",
+	})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventWorkflowRunStarted, evt.Type)
+}
+
+func (s *EventsHubSuite) TestBroadcastWorkflowRunCompleted() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastWorkflowRunCompleted(events.WorkflowRunEventData{
+		RunID:        "run-2",
+		WorkflowName: "my-workflow",
+		ChannelID:    "ch-2",
+		Status:       "completed",
+	})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventWorkflowRunCompleted, evt.Type)
+}
+
+func (s *EventsHubSuite) TestBroadcastWorkflowRunPaused() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastWorkflowRunPaused(events.WorkflowRunEventData{
+		RunID:        "run-3",
+		WorkflowName: "approval-workflow",
+		ChannelID:    "ch-3",
+		Status:       "paused",
+		PausedNodeID: "approve-step",
+	})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventWorkflowRunPaused, evt.Type)
+}
+
+func (s *EventsHubSuite) TestBroadcastWorkflowNodeStarted() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastWorkflowNodeStarted(events.WorkflowNodeEventData{
+		RunID:  "run-1",
+		NodeID: "node-a",
+		Status: "running",
+	})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventWorkflowNodeStarted, evt.Type)
+}
+
+func (s *EventsHubSuite) TestBroadcastWorkflowNodeCompleted() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastWorkflowNodeCompleted(events.WorkflowNodeEventData{
+		RunID:  "run-1",
+		NodeID: "node-a",
+		Status: "completed",
+		Output: "node output",
+	})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventWorkflowNodeCompleted, evt.Type)
+}

@@ -307,6 +307,25 @@ func (s *MCPServerSuite) TestScheduleTaskErrors() {
 	}
 }
 
+func (s *MCPServerSuite) TestScheduleTaskWithWorkflow() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "POST", req.Method)
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"workflow_name":"validate"`)
+		require.Contains(s.T(), string(body), `"workflow_inputs":"{\"branch\":\"main\"}"`)
+		return jsonResponse(http.StatusCreated, `{"id":99}`), nil
+	}
+
+	text, isError := s.callTool("schedule_task", map[string]any{
+		"schedule":        "0 9 * * *",
+		"type":            "cron",
+		"workflow_name":   "validate",
+		"workflow_inputs": `{"branch":"main"}`,
+	})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "ID: 99")
+}
+
 // --- list_tasks ---
 
 func (s *MCPServerSuite) TestListTasksSuccess() {
@@ -346,6 +365,17 @@ func (s *MCPServerSuite) TestListTasksWithWorktreeFields() {
 	require.False(s.T(), isError)
 	require.Contains(s.T(), text, "branch: develop")
 	require.Contains(s.T(), text, "update_before_run: true")
+}
+
+func (s *MCPServerSuite) TestListTasksWithWorkflow() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `[{"id":1,"schedule":"0 9 * * *","type":"cron","prompt":"","enabled":true,"next_run_at":"2025-01-01T09:00:00Z","workflow_name":"validate","workflow_inputs":"{\"branch\":\"main\"}"}]`), nil
+	}
+
+	text, isError := s.callTool("list_tasks", map[string]any{})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "workflow:validate")
+	require.Contains(s.T(), text, "inputs:")
 }
 
 func (s *MCPServerSuite) TestListTasksWithRunning() {
@@ -443,6 +473,18 @@ func (s *MCPServerSuite) TestShowTaskRunning() {
 	text, isError := s.callTool("show_task", map[string]any{"task_id": float64(42)})
 	require.False(s.T(), isError)
 	require.Contains(s.T(), text, "Running: true")
+}
+
+func (s *MCPServerSuite) TestShowTaskWithWorkflow() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"id":42,"schedule":"0 9 * * *","type":"cron","prompt":"","enabled":true,"next_run_at":"2025-01-01T09:00:00Z","workflow_name":"validate","workflow_inputs":"{\"branch\":\"main\"}"}`), nil
+	}
+
+	text, isError := s.callTool("show_task", map[string]any{"task_id": float64(42)})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "Workflow: validate")
+	require.Contains(s.T(), text, "Workflow inputs:")
+	require.NotContains(s.T(), text, "Prompt:")
 }
 
 func (s *MCPServerSuite) TestShowTaskDisabled() {
@@ -599,6 +641,25 @@ func (s *MCPServerSuite) TestEditTaskWithUpdateBeforeRun() {
 	text, isError := s.callTool("edit_task", map[string]any{"task_id": float64(42), "update_before_run": true})
 	require.False(s.T(), isError)
 	require.Contains(s.T(), text, "Task 42 updated")
+}
+
+func (s *MCPServerSuite) TestEditTaskWithWorkflow() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		var payload map[string]any
+		require.NoError(s.T(), json.Unmarshal(body, &payload))
+		require.Equal(s.T(), "validate", payload["workflow_name"])
+		require.Equal(s.T(), `{"branch":"main"}`, payload["workflow_inputs"])
+		return noContentResponse(http.StatusOK), nil
+	}
+
+	text, isError := s.callTool("edit_task", map[string]any{
+		"task_id":         float64(42),
+		"workflow_name":   "validate",
+		"workflow_inputs": `{"branch":"main"}`,
+	})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "updated")
 }
 
 func (s *MCPServerSuite) TestEditTaskScheduleValidation() {

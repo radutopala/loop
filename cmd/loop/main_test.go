@@ -431,6 +431,7 @@ func (s *MainSuite) setupServeMocks() *serveMocks {
 		cfg:          testConfig(),
 	}
 	m.store.On("Close").Return(nil)
+	m.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 	m.dockerClient.On("LatestClaudeVersion").Return("1.0.0").Maybe()
 	m.dockerClient.On("ListContainerInfos", mock.Anything).Return([]*container.ContainerInfo{}, nil).Maybe()
 	s.app.configLoad = func() (*config.Config, error) { return m.cfg, nil }
@@ -455,6 +456,7 @@ func (m *serveMocks) setupHappyBot() {
 	m.bot.On("Start", mock.Anything).Return(nil)
 	m.bot.On("Stop").Return(nil)
 	m.dockerClient.On("ContainerList", mock.Anything, "app", "loop-agent").Return([]string{}, nil)
+	m.dockerClient.On("ContainerList", mock.Anything, "loop-instance", mock.Anything).Return([]string{}, nil).Maybe()
 }
 
 // filterExpected removes mock expectations for the given method name.
@@ -1479,17 +1481,16 @@ func (s *MainSuite) TestRunMCPWithMemoryEnabled() {
 		return "resolved-ch", nil
 	}
 
-	memoryOptReceived := false
+	var optCount int
 	s.app.newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
 		require.Equal(s.T(), "resolved-ch", channelID)
-		if len(opts) > 0 {
-			memoryOptReceived = true
-		}
+		optCount = len(opts)
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
 	}
 
 	_ = s.app.runMCP("", "http://localhost:8222", "/home/user/dev/loop", logPath, "", "local", "", false)
-	require.True(s.T(), memoryOptReceived)
+	// WithMemoryAPI + WithWorkflowAPI
+	require.Equal(s.T(), 2, optCount, "expected WithMemoryAPI + WithWorkflowAPI when config memory is enabled")
 }
 
 func (s *MainSuite) TestRunMCPWithMemoryEnabledChannelIDMode() {
@@ -1509,16 +1510,15 @@ func (s *MainSuite) TestRunMCPWithMemoryEnabledChannelIDMode() {
 		}, nil
 	}
 
-	memoryOptReceived := false
+	var optCount int
 	s.app.newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
-		if len(opts) > 0 {
-			memoryOptReceived = true
-		}
+		optCount = len(opts)
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
 	}
 
 	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", "", false)
-	require.True(s.T(), memoryOptReceived)
+	// WithMemoryAPI + WithWorkflowAPI
+	require.Equal(s.T(), 2, optCount, "expected WithMemoryAPI + WithWorkflowAPI when config memory is enabled in channel-id mode")
 }
 
 func (s *MainSuite) TestRunMCPWithMemoryNotEnabled() {
@@ -1532,11 +1532,9 @@ func (s *MainSuite) TestRunMCPWithMemoryNotEnabled() {
 		}, nil
 	}
 
-	memoryOptReceived := false
+	var optCount int
 	s.app.newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
-		if len(opts) > 0 {
-			memoryOptReceived = true
-		}
+		optCount = len(opts)
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger)
 	}
 
@@ -1545,7 +1543,8 @@ func (s *MainSuite) TestRunMCPWithMemoryNotEnabled() {
 	}
 
 	_ = s.app.runMCP("", "http://localhost:8222", "/path", logPath, "", "local", "", false)
-	require.False(s.T(), memoryOptReceived)
+	// Only WithWorkflowAPI should be passed; no memory option
+	require.Equal(s.T(), 1, optCount, "expected only WithWorkflowAPI when memory is disabled")
 }
 
 func (s *MainSuite) TestRunMCPWithMemoryFlag() {
@@ -1559,16 +1558,15 @@ func (s *MainSuite) TestRunMCPWithMemoryFlag() {
 		}, nil
 	}
 
-	memoryOptReceived := false
+	var optCount int
 	s.app.newMCPServer = func(channelID, apiURL, authorID string, httpClient mcpserver.HTTPClient, logger *slog.Logger, opts ...mcpserver.MemoryOption) *mcpserver.Server {
-		if len(opts) > 0 {
-			memoryOptReceived = true
-		}
+		optCount = len(opts)
 		return mcpserver.New(channelID, apiURL, authorID, httpClient, logger, opts...)
 	}
 
 	_ = s.app.runMCP("ch1", "http://localhost:8222", "", logPath, "", "local", "", true)
-	require.True(s.T(), memoryOptReceived)
+	// WithMemoryAPI + WithWorkflowAPI
+	require.Equal(s.T(), 2, optCount, "expected WithMemoryAPI + WithWorkflowAPI when memory flag is true")
 }
 
 // --- serve() error cases ---
@@ -1714,6 +1712,24 @@ func (s *MainSuite) TestServeOrchestratorStartError() {
 	require.Contains(s.T(), err.Error(), "starting orchestrator")
 	m.store.AssertExpectations(s.T())
 	m.bot.AssertExpectations(s.T())
+}
+
+func (s *MainSuite) TestServeRecoverWorkflowRunsError() {
+	m := s.setupServeMocks()
+	m.bot.On("OnMessage", mock.Anything).Return()
+	m.bot.On("OnInteraction", mock.Anything).Return()
+	m.bot.On("OnChannelDelete", mock.Anything).Return()
+	m.bot.On("OnChannelJoin", mock.Anything).Return()
+	m.bot.On("RegisterCommands", mock.Anything).Return(errors.New("fail early"))
+
+	// Override the default Maybe() mock to return an error.
+	m.store.ExpectedCalls = filterExpected(m.store.ExpectedCalls, "ListWorkflowRunsByStatus")
+	m.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return(nil, errors.New("db unavailable"))
+
+	// serve() continues past recovery error (logs it) but fails at orchestrator.
+	err := s.app.serve()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "starting orchestrator")
 }
 
 func (s *MainSuite) TestServeHappyPathShutdown() {
@@ -3722,6 +3738,7 @@ func (s *MainSuite) TestServeLocalPlatformHappyPath() {
 		return local.NewBot(store, logger)
 	}
 	m.dockerClient.On("ContainerList", mock.Anything, "app", "loop-agent").Return([]string{}, nil)
+	m.dockerClient.On("ContainerList", mock.Anything, "loop-instance", mock.Anything).Return([]string{}, nil).Maybe()
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
@@ -3851,7 +3868,9 @@ func (s *MainSuite) TestServeRegistryRestoreWithData() {
 		{ContainerID: "existing-1", ChannelID: "ch-1", Type: container.ContainerTypeAgent},
 		{ContainerID: "stopped-1", ChannelID: "ch-2", Type: container.ContainerTypeAgent, Status: container.ContainerStatusStopped},
 	}, nil)
-	// ScheduleRemove fires immediately (ContainerKeepAlive=0) and calls ContainerRemove.
+	// ScheduleRemove fires immediately (ContainerKeepAlive=0) and calls ContainerRemove
+	// for the stopped container. Cleanup scoped by loop-instance label won't match
+	// restored containers since they were created by a different daemon instance.
 	m.dockerClient.On("ContainerRemove", mock.Anything, "stopped-1").Return(nil).Maybe()
 
 	errCh := make(chan error, 1)
@@ -3878,6 +3897,27 @@ func (s *MainSuite) TestServeWithBrowserProviderError() {
 	s.app.newBrowserProvider = func(_ string, _ *slog.Logger) (api.BrowserProvider, error) {
 		return nil, errors.New("no docker")
 	}
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.app.serve() }()
+
+	time.Sleep(100 * time.Millisecond)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+}
+
+func (s *MainSuite) TestServeWithWorkflowBashLocal() {
+	m := s.setupServeMocks()
+	m.setupHappyBot()
+	m.cfg.WorkflowBashLocal = true
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
@@ -4354,4 +4394,140 @@ func (s *MainSuite) TestMainCallsOsExit() {
 
 	main()
 	require.Equal(s.T(), 0, exitCode)
+}
+
+func (s *MainSuite) TestWorkflowsFromConfigReloadSuccess() {
+	cfg := &config.Config{
+		Workflows: []config.WorkflowDef{{Name: "initial"}},
+	}
+	reload := func() (*config.Config, error) {
+		return &config.Config{
+			Workflows: []config.WorkflowDef{{Name: "reloaded"}},
+		}, nil
+	}
+
+	fn := workflowsFromConfig(cfg, reload)
+	wfs := fn("", "")
+	require.Len(s.T(), wfs, 1)
+	require.Equal(s.T(), "reloaded", wfs[0].Name)
+}
+
+func (s *MainSuite) TestWorkflowsFromConfigReloadError() {
+	cfg := &config.Config{
+		Workflows: []config.WorkflowDef{{Name: "fallback"}},
+	}
+	reload := func() (*config.Config, error) {
+		return nil, errors.New("config error")
+	}
+
+	fn := workflowsFromConfig(cfg, reload)
+	wfs := fn("", "")
+	require.Len(s.T(), wfs, 1)
+	require.Equal(s.T(), "fallback", wfs[0].Name)
+}
+
+func (s *MainSuite) TestWorkflowsFromConfigWithDirPath() {
+	// Create a temp dir with a project config that adds a project-specific workflow
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(loopDir, "config.json"), []byte(`{
+		"workflows": [
+			{"name": "project-wf", "description": "project workflow", "nodes": []}
+		]
+	}`), 0o644))
+
+	cfg := &config.Config{
+		Workflows: []config.WorkflowDef{{Name: "global-wf", Description: "global workflow"}},
+	}
+	reload := func() (*config.Config, error) {
+		return cfg, nil
+	}
+
+	fn := workflowsFromConfig(cfg, reload)
+
+	// Without dirPath, only global workflow is returned
+	wfs := fn("", "")
+	require.Len(s.T(), wfs, 1)
+	require.Equal(s.T(), "global-wf", wfs[0].Name)
+
+	// With dirPath, project workflow is merged in
+	wfs = fn(tmpDir, "")
+	require.Len(s.T(), wfs, 2)
+	names := map[string]bool{}
+	for _, wf := range wfs {
+		names[wf.Name] = true
+	}
+	require.True(s.T(), names["global-wf"])
+	require.True(s.T(), names["project-wf"])
+}
+
+func (s *MainSuite) TestWorkflowsFromConfigDirPathOverridesGlobal() {
+	// Project config overrides a global workflow by name
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(loopDir, "config.json"), []byte(`{
+		"workflows": [
+			{"name": "validate", "description": "project validate", "nodes": [{"id":"lint","type":"bash","script":"make lint"}]}
+		]
+	}`), 0o644))
+
+	cfg := &config.Config{
+		Workflows: []config.WorkflowDef{{Name: "validate", Description: "global validate"}},
+	}
+	reload := func() (*config.Config, error) {
+		return cfg, nil
+	}
+
+	fn := workflowsFromConfig(cfg, reload)
+	wfs := fn(tmpDir, "")
+	require.Len(s.T(), wfs, 1)
+	require.Equal(s.T(), "validate", wfs[0].Name)
+	require.Equal(s.T(), "project validate", wfs[0].Description)
+}
+
+func (s *MainSuite) TestWorkflowsFromConfigWorktreeThreeLayerMerge() {
+	// Set up parent project dir with a workflow
+	parentDir := s.T().TempDir()
+	parentLoopDir := filepath.Join(parentDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(parentLoopDir, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(parentLoopDir, "config.json"), []byte(`{
+		"workflows": [
+			{"name": "parent-wf", "description": "parent workflow", "nodes": []},
+			{"name": "shared-wf", "description": "parent shared", "nodes": []}
+		]
+	}`), 0o644))
+
+	// Set up worktree dir with its own workflow that also overrides one
+	worktreeDir := s.T().TempDir()
+	wtLoopDir := filepath.Join(worktreeDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(wtLoopDir, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(wtLoopDir, "config.json"), []byte(`{
+		"workflows": [
+			{"name": "worktree-wf", "description": "worktree only", "nodes": []},
+			{"name": "shared-wf", "description": "worktree override", "nodes": []}
+		]
+	}`), 0o644))
+
+	cfg := &config.Config{
+		Workflows: []config.WorkflowDef{{Name: "global-wf", Description: "global workflow"}},
+	}
+	reload := func() (*config.Config, error) {
+		return cfg, nil
+	}
+
+	fn := workflowsFromConfig(cfg, reload)
+
+	// Three-layer merge: global → parent → worktree
+	wfs := fn(worktreeDir, parentDir)
+	names := map[string]string{}
+	for _, wf := range wfs {
+		names[wf.Name] = wf.Description
+	}
+	require.Len(s.T(), wfs, 4)
+	require.Equal(s.T(), "global workflow", names["global-wf"])
+	require.Equal(s.T(), "parent workflow", names["parent-wf"])
+	require.Equal(s.T(), "worktree only", names["worktree-wf"])
+	require.Equal(s.T(), "worktree override", names["shared-wf"]) // worktree wins
 }

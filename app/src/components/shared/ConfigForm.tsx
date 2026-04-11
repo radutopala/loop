@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import React, { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
 import { fonts, builtinThemes } from "../../theme";
 import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
@@ -15,7 +15,7 @@ type FieldValue = string | number | boolean | string[] | Record<string, string>;
 type ConfigData = { [key: string]: ConfigData | FieldValue | ConfigData[] | undefined };
 
 /** Value accepted by the object-array / object-map item sub-fields. */
-type ItemFieldValue = string | number | string[] | Record<string, string>;
+type ItemFieldValue = string | number | boolean | string[] | Record<string, any>[] | Record<string, any>;
 
 interface FieldDef {
   key: string;
@@ -591,6 +591,9 @@ function ObjectArrayFieldRow({ field, value, onChange, colors, inputStyle }: {
     for (const [k, p] of propKeys) {
       if (p.type === "string") empty[k] = "";
       else if (p.type === "integer" || p.type === "number") empty[k] = 0;
+      else if (p.type === "boolean") empty[k] = false;
+      else if (p.type === "array") empty[k] = [];
+      else if (p.type === "object") empty[k] = {};
     }
     onChange([...items, empty]);
   };
@@ -604,7 +607,9 @@ function ObjectArrayFieldRow({ field, value, onChange, colors, inputStyle }: {
     <div style={{ padding: "8px 12px", ...rowBorder(colors) }}>
       <FieldLabel field={field} colors={colors} />
       {items.map((item, idx) => (
-        <div key={idx} style={{ backgroundColor: colors.bg, borderRadius: 8, padding: "8px 10px", marginTop: 8, position: "relative" }}>
+        <React.Fragment key={idx}>
+        {idx > 0 && <div style={{ height: 1, background: colors.border, margin: "10px 0 2px" }} />}
+        <div style={{ backgroundColor: colors.bg, borderRadius: 8, padding: "8px 10px", marginTop: 8, position: "relative" }}>
           <div style={{ position: "absolute", top: 4, right: 4 }}>
             <RemoveBtn onClick={() => onChange(items.filter((_, i) => i !== idx))} colors={colors} />
           </div>
@@ -621,6 +626,64 @@ function ObjectArrayFieldRow({ field, value, onChange, colors, inputStyle }: {
                 </div>
               );
             }
+            if (p.type === "boolean") {
+              return (
+                <div key={k} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "3px 0" }}>
+                  <span style={{ fontSize: 12, color: colors.textDim, minWidth: 80 }}>{p.title ?? k}</span>
+                  <input type="checkbox" checked={!!(item[k])} onChange={(e) => updateItem(idx, k, e.target.checked)} />
+                </div>
+              );
+            }
+            if (p["x-widget"] === "textarea") {
+              return (
+                <div key={k} style={{ padding: "3px 0" }}>
+                  <span style={{ fontSize: 12, color: colors.textDim }}>{p.title ?? k}</span>
+                  <textarea value={(item[k] ?? "") as string} onChange={(e) => updateItem(idx, k, e.target.value)}
+                    placeholder={p["x-placeholder"] ?? ""} rows={3}
+                    style={{ ...inputStyle, width: "100%", marginTop: 4, resize: "vertical", fontFamily: fonts.mono, fontSize: 12, lineHeight: 1.5 }} />
+                </div>
+              );
+            }
+            if (p.type === "array" && p.items?.type === "string") {
+              return <ObjectMapArrayProp key={k} label={p.title ?? k} value={((item[k] ?? []) as string[])} onChange={(v) => updateItem(idx, k, v)} colors={colors} inputStyle={inputStyle} />;
+            }
+            if (p.type === "array" && p.items?.type === "object" && p.items?.properties) {
+              const nestedField: FieldDef = { key: k, label: p.title ?? k, type: "objectarray", section: "", itemProperties: p.items.properties };
+              return (
+                <div key={k} style={{ padding: "3px 0" }}>
+                  <ObjectArrayFieldRow field={nestedField} value={((item[k] ?? []) as Record<string, ItemFieldValue>[])}
+                    onChange={(v) => updateItem(idx, k, v)} colors={colors} inputStyle={inputStyle} />
+                </div>
+              );
+            }
+            if (p.type === "object" && p.additionalProperties?.properties) {
+              const nestedField: FieldDef = { key: k, label: p.title ?? k, type: "objectmap", section: "", itemProperties: p.additionalProperties.properties };
+              return (
+                <div key={k} style={{ padding: "3px 0" }}>
+                  <ObjectMapFieldRow field={nestedField} value={((item[k] ?? {}) as Record<string, Record<string, ItemFieldValue>>)}
+                    onChange={(v) => updateItem(idx, k, v)} colors={colors} inputStyle={inputStyle} />
+                </div>
+              );
+            }
+            if (p.type === "object" && p.properties) {
+              const nestedProps = Object.entries(p.properties).sort(([, a], [, b]) => (a["x-order"] ?? 999) - (b["x-order"] ?? 999));
+              const obj = (item[k] ?? {}) as Record<string, any>;
+              return (
+                <div key={k} style={{ padding: "3px 0" }}>
+                  <span style={{ fontSize: 12, color: colors.textDim }}>{p.title ?? k}</span>
+                  <div style={{ paddingLeft: 12, marginTop: 4 }}>
+                    {nestedProps.map(([nk, np]) => (
+                      <div key={nk} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "3px 0" }}>
+                        <span style={{ fontSize: 12, color: colors.textDim, minWidth: 80 }}>{np.title ?? nk}</span>
+                        <input type={np.type === "integer" ? "number" : "text"} value={(obj[nk] ?? "") as string | number}
+                          onChange={(e) => updateItem(idx, k, { ...obj, [nk]: np.type === "integer" ? Number(e.target.value) : e.target.value })}
+                          placeholder={np["x-placeholder"] ?? ""} style={{ ...inputStyle, flex: 1 }} />
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            }
             return (
               <div key={k} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "3px 0" }}>
                 <span style={{ fontSize: 12, color: colors.textDim, minWidth: 80 }}>{p.title ?? k}</span>
@@ -631,6 +694,7 @@ function ObjectArrayFieldRow({ field, value, onChange, colors, inputStyle }: {
             );
           })}
         </div>
+        </React.Fragment>
       ))}
       <div style={{ marginTop: 8 }}>
         <AddBtn onClick={addItem} colors={colors} />
@@ -784,7 +848,7 @@ function ObjectMapFieldRow({ field, value, onChange, colors, inputStyle }: {
       <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 8 }}>
         <input type="text" value={newKey} onChange={(e) => setNewKey(e.target.value)}
           onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); addEntry(); } }}
-          placeholder="Server name..." style={{ ...inputStyle, flex: 1 }} />
+          placeholder={`Add ${field.label.toLowerCase()}...`} style={{ ...inputStyle, flex: 1 }} />
         <AddBtn onClick={addEntry} colors={colors} />
       </div>
     </div>

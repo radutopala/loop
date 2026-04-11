@@ -482,6 +482,7 @@ func (c *Client) ListContainerInfos(ctx context.Context) ([]*ContainerInfo, erro
 			Type:          cType,
 			Status:        dockerStateToStatus(ctr.State),
 			ContainerName: name,
+			InstanceID:    ctr.Labels[InstanceLabelKey],
 			CreatedAt:     time.Unix(ctr.Created, 0),
 		})
 	}

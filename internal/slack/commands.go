@@ -64,6 +64,13 @@ func parseSlashCommand(channelID, teamID, text string) (*bot.Interaction, string
 	case "readme":
 		inter.CommandName = "readme"
 		return inter, ""
+	case "shortcuts":
+		inter.CommandName = "shortcuts"
+		return inter, ""
+	case "shortcut":
+		return parseShortcut(inter, args)
+	case "workflow":
+		return parseWorkflow(inter, args)
 	case "template":
 		return parseTemplate(inter, args)
 	case "allow":
@@ -272,6 +279,62 @@ func parseDeny(inter *bot.Interaction, args []string) (*bot.Interaction, string)
 	}
 }
 
+// parseShortcut parses: shortcut <name>
+func parseShortcut(inter *bot.Interaction, args []string) (*bot.Interaction, string) {
+	if len(args) < 1 {
+		return nil, "Usage: `/loop shortcut <name>`"
+	}
+	inter.CommandName = "shortcut"
+	inter.Options["name"] = args[0]
+	return inter, ""
+}
+
+// parseWorkflow parses: workflow <subcommand> [args]
+func parseWorkflow(inter *bot.Interaction, args []string) (*bot.Interaction, string) {
+	if len(args) < 1 {
+		return nil, "Usage: `/loop workflow list|runs|run <name>|cancel <run_id>|delete <run_id>|retry <run_id>`"
+	}
+	subCmd := strings.ToLower(args[0])
+	switch subCmd {
+	case "list":
+		inter.CommandName = "workflows"
+		return inter, ""
+	case "runs":
+		inter.CommandName = "workflow-runs"
+		return inter, ""
+	case "run":
+		if len(args) < 2 {
+			return nil, "Usage: `/loop workflow run <name>`"
+		}
+		inter.CommandName = "workflow-run"
+		inter.Options["name"] = args[1]
+		return inter, ""
+	case "cancel":
+		if len(args) < 2 {
+			return nil, "Usage: `/loop workflow cancel <run_id>`"
+		}
+		inter.CommandName = "workflow-cancel"
+		inter.Options["run_id"] = args[1]
+		return inter, ""
+	case "delete":
+		if len(args) < 2 {
+			return nil, "Usage: `/loop workflow delete <run_id>`"
+		}
+		inter.CommandName = "workflow-delete"
+		inter.Options["run_id"] = args[1]
+		return inter, ""
+	case "retry":
+		if len(args) < 2 {
+			return nil, "Usage: `/loop workflow retry <run_id>`"
+		}
+		inter.CommandName = "workflow-retry"
+		inter.Options["run_id"] = args[1]
+		return inter, ""
+	default:
+		return nil, "Usage: `/loop workflow list|runs|run <name>|cancel <run_id>|delete <run_id>|retry <run_id>`"
+	}
+}
+
 // extractUserID extracts a Slack user ID from a mention like <@U123456> or <@U123456|username>.
 func extractUserID(s string) string {
 	s = strings.TrimSpace(s)
@@ -294,6 +357,14 @@ func helpText() string {
 		"  `/loop cancel <task_id>` - Cancel a scheduled task\n" +
 		"  `/loop toggle <task_id>` - Toggle a task on/off\n" +
 		"  `/loop edit <task_id> [--schedule X] [--type Y] [--prompt Z]` - Edit a task\n" +
+		"  `/loop shortcuts` - List available prompt shortcuts\n" +
+		"  `/loop shortcut <name>` - Execute a prompt shortcut\n" +
+		"  `/loop workflow list` - List available workflows\n" +
+		"  `/loop workflow runs` - List recent workflow runs\n" +
+		"  `/loop workflow run <name>` - Start a workflow\n" +
+		"  `/loop workflow cancel <run_id>` - Cancel a workflow run\n" +
+		"  `/loop workflow delete <run_id>` - Delete a workflow run\n" +
+		"  `/loop workflow retry <run_id>` - Retry a workflow run\n" +
 		"  `/loop status` - Show bot status\n" +
 		"  `/loop stop` - Stop the currently running agent\n" +
 		"  `/loop readme` - Show the README documentation\n" +
