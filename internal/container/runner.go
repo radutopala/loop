@@ -1154,7 +1154,7 @@ func (r *DockerRunner) waitForExit(ctx context.Context, containerID string) (int
 // ensureNoProxy ensures host.docker.internal (and any extra hosts) are in
 // NO_PROXY and no_proxy so the container's API calls bypass the proxy.
 func ensureNoProxy(env []string, extraHosts ...string) []string {
-	hosts := append([]string{"host.docker.internal"}, extraHosts...)
+	hosts := append([]string{"host.docker.internal", "localhost", "127.0.0.1", "::1"}, extraHosts...)
 	found := false
 	for i, e := range env {
 		for _, key := range []string{"NO_PROXY=", "no_proxy="} {
