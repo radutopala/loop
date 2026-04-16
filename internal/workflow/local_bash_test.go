@@ -39,6 +39,13 @@ func (s *LocalBashSuite) TestRunBashWithNonExistentDir() {
 	require.Equal(s.T(), "works\n", output)
 }
 
+func (s *LocalBashSuite) TestRunBashRelativePathIgnored() {
+	// Relative paths (e.g. path traversal) should be ignored — only absolute paths are used.
+	output, err := s.runner.RunBash(context.Background(), "echo safe", "", "../../../etc")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "safe\n", output)
+}
+
 func (s *LocalBashSuite) TestRunBashFailure() {
 	output, err := s.runner.RunBash(context.Background(), "exit 1", "", "")
 	require.Error(s.T(), err)

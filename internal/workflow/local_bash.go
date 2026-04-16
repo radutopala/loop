@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
 
 // LocalBashRunner executes bash scripts on the host without Docker.
@@ -15,8 +16,11 @@ type LocalBashRunner struct{}
 func (r *LocalBashRunner) RunBash(ctx context.Context, script, channelID, dirPath string) (string, error) {
 	cmd := exec.CommandContext(ctx, "/bin/sh", "-c", script)
 	if dirPath != "" {
-		if info, err := os.Stat(dirPath); err == nil && info.IsDir() {
-			cmd.Dir = dirPath
+		clean := filepath.Clean(dirPath)
+		if filepath.IsAbs(clean) {
+			if info, err := os.Stat(clean); err == nil && info.IsDir() {
+				cmd.Dir = clean
+			}
 		}
 	}
 	output, err := cmd.CombinedOutput()
