@@ -253,7 +253,10 @@ func (m *MockStore) GetWorkflowRun(ctx context.Context, id string) (*db.Workflow
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
-	return args.Get(0).(*db.WorkflowRun), args.Error(1)
+	// Return a shallow copy so concurrent callers don't race on the same pointer.
+	orig := args.Get(0).(*db.WorkflowRun)
+	cp := *orig
+	return &cp, args.Error(1)
 }
 
 func (m *MockStore) UpdateWorkflowRun(ctx context.Context, run *db.WorkflowRun) error {

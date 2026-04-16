@@ -2416,6 +2416,62 @@ func (s *EngineSuite) TestNodeSlotCancelledDuringDAG() {
 	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo never", mock.Anything, mock.Anything)
 }
 
+func (s *EngineSuite) TestFinalizeDAGAlreadyTerminal() {
+	// When finalizeDAG reads a run that has already been marked terminal
+	// (e.g. by CancelRun), it should use the DB's status for the broadcast
+	// instead of overwriting it. This covers the "default" branch in finalizeDAG.
+	s.workflows = []config.WorkflowDef{
+		{Name: "wf", Nodes: []config.NodeDef{
+			{ID: "fast", Type: config.NodeTypeBash, Script: "echo done"},
+		}},
+	}
+
+	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.bashRunner.On("RunBash", mock.Anything, "echo done", mock.Anything, mock.Anything).Return("done", nil)
+
+	// Override default GetWorkflowRun to return "cancelled" — simulating
+	// CancelRun having already written a terminal status before finalizeDAG runs.
+	for i, call := range s.store.ExpectedCalls {
+		if call.Method == "GetWorkflowRun" {
+			s.store.ExpectedCalls = append(s.store.ExpectedCalls[:i], s.store.ExpectedCalls[i+1:]...)
+			break
+		}
+	}
+	s.store.On("GetWorkflowRun", mock.Anything, mock.Anything).Return(
+		&db.WorkflowRun{Status: db.WorkflowRunStatusCancelled, ErrorText: "cancelled by user"}, nil,
+	).Maybe()
+
+	// finalizeDAG will skip UpdateWorkflowRun (already terminal), so signal
+	// completion via the BroadcastWorkflowRunCompleted event instead.
+	completedCh := make(chan string, 1)
+	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		run := args.Get(1).(*db.WorkflowRun)
+		if run.Status != db.WorkflowRunStatusRunning {
+			select {
+			case completedCh <- string(run.Status):
+			default:
+			}
+		}
+	}).Return(nil)
+
+	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "wf"})
+	require.NoError(s.T(), err)
+
+	// Wait for the broadcast — finalizeDAG emits BroadcastWorkflowRunCompleted
+	// even when it skips the DB write.
+	require.Eventually(s.T(), func() bool {
+		s.broadcaster.mu.Lock()
+		defer s.broadcaster.mu.Unlock()
+		for _, ev := range s.broadcaster.events {
+			if data, ok := ev.(events.WorkflowRunEventData); ok && data.Status == string(db.WorkflowRunStatusCancelled) {
+				return true
+			}
+		}
+		return false
+	}, 5*time.Second, 10*time.Millisecond, "expected cancelled broadcast from finalizeDAG")
+}
+
 func (s *EngineSuite) TestApprovalNodeResumeStatusWriteError() {
 	// If updateRunStatus fails when restoring running status after resume,
 	// the approval node should return an error and the run should fail.
