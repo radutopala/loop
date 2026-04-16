@@ -5,7 +5,7 @@ RUN go install golang.org/x/tools/gopls@latest
 
 FROM golang:1.26-alpine
 ENV GOTOOLCHAIN=auto
-RUN apk add --no-cache bash ca-certificates curl git make nodejs npm docker-cli docker-cli-compose su-exec aws-cli libgcc libstdc++ ripgrep uv gcc musl-dev openssh-client
+RUN apk add --no-cache bash ca-certificates curl git make nodejs npm docker-cli docker-cli-compose su-exec aws-cli libgcc libstdc++ ripgrep uv gcc musl-dev openssh-client python3 py3-pip
 ENV USE_BUILTIN_RIPGREP=0
 ARG LOOP_VERSION=main
 RUN ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/amd64/') && \
