@@ -1,4 +1,4 @@
-.PHONY: help build install test test-integration test-component test-runner-build test-runner-push lint coverage coverage-check docker-build run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-install app-build-binary app-dist-linux app-icons
+.PHONY: help build install test test-integration test-component test-runner-build test-runner-push lint coverage coverage-check codeql-download codeql docker-build run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-install app-build-binary app-dist-linux app-icons
 .DEFAULT_GOAL := help
 
 help: ## Show available targets
@@ -171,6 +171,36 @@ app-icons: ## Regenerate app icons from SVG sources (requires rsvg-convert, icon
 	@rsvg-convert -w 512 -h 512 app/build/icon.svg -o app/public/loop-macos.png
 	@rsvg-convert -w 512 -h 512 app/build/icon-transparent.svg -o app/public/loop.png
 	@echo "Generated: app/build/icon.icns, app/public/loop-macos.png, app/public/loop.png"
+
+CODEQL_VERSION ?= v2.25.2
+
+codeql-download: ## Download CodeQL bundle into Docker volume (one-time)
+	@echo "==> Downloading CodeQL $(CODEQL_VERSION) (linux64)..."
+	@curl -fsSL "https://github.com/github/codeql-action/releases/download/codeql-bundle-$(CODEQL_VERSION)/codeql-bundle-linux64.tar.gz" \
+		| docker run --rm -i --platform linux/amd64 -v loop-codeql:/opt/codeql golang:1.26 tar xz -C /opt/codeql
+	@echo "==> Cached in volume loop-codeql"
+
+codeql: ## Run CodeQL security analysis locally (via Docker)
+	@docker rm -f loop-codeql 2>/dev/null || true
+	docker run --rm --name loop-codeql --platform linux/amd64 \
+		-v "$$(pwd)":/src:ro -v /src/app/node_modules \
+		-v loop-codeql:/opt/codeql \
+		-v loop-codeql-db:/db \
+		-w /src \
+		golang:1.26 bash -c '\
+		set -e; \
+		if [ ! -x /opt/codeql/codeql/codeql ]; then \
+			echo "CodeQL not cached — run: make codeql-download" >&2; exit 1; \
+		fi; \
+		echo "==> Creating database..."; \
+		/opt/codeql/codeql/codeql database create /db/loop --language=go --source-root=/src --overwrite \
+			--command="go build -buildvcs=false -o /tmp/loop ./cmd/loop/"; \
+		echo "==> Analyzing..."; \
+		/opt/codeql/codeql/codeql database analyze /db/loop go-security-and-quality \
+			--format=sarifv2.1.0 --output=/db/results.sarif; \
+		echo "==> Results:"; \
+		python3 -c "import json,sys; d=json.load(open(\"/db/results.sarif\")); rs=d.get(\"runs\",[{}])[0].get(\"results\",[]); [print(\"  \"+r[\"ruleId\"]+\" \"+r[\"locations\"][0][\"physicalLocation\"][\"artifactLocation\"][\"uri\"]+\":\"+str(r[\"locations\"][0][\"physicalLocation\"][\"region\"][\"startLine\"])+\" - \"+r[\"message\"][\"text\"]) for r in rs] or print(\"  No issues found.\"); sys.exit(len(rs))"; \
+		'
 
 clean: ## Remove build artifacts
 	rm -rf bin/ app/resources/ coverage.out coverage.html
