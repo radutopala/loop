@@ -44,6 +44,11 @@ type IncomingMessageHandler interface {
 	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }
 
+// RunCanceller cancels the active agent run for a channel.
+type RunCanceller interface {
+	CancelActiveRun(channelID string) bool
+}
+
 // serverSystem abstracts OS operations needed by Server.
 type serverSystem interface {
 	Stat(name string) (os.FileInfo, error)
@@ -80,6 +85,7 @@ type Server struct {
 	containerRegistry     ContainerManager
 	activeChatLister      ActiveChatLister
 	msgHandler            IncomingMessageHandler
+	runCanceller          RunCanceller
 	interactionHandler    InteractionHandler
 	agentRegistry         *agentregistry.Registry
 	eventsHub             *EventsHub
@@ -109,6 +115,11 @@ func (s *Server) SetEventsHub(hub *EventsHub) {
 // EventsHub returns the configured events hub, or nil if not set.
 func (s *Server) EventsHub() *EventsHub {
 	return s.eventsHub
+}
+
+// SetRunCanceller configures the run canceller for interrupt-mode sends.
+func (s *Server) SetRunCanceller(rc RunCanceller) {
+	s.runCanceller = rc
 }
 
 // SetMemoryIndexer configures the memory indexer for the /api/memory/* endpoints.

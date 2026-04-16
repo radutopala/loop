@@ -532,6 +532,7 @@ func (a *app) serve() error {
 	orch.SetWorkflowEngine(wfEngine)
 	executor.SetActiveRuns(orch.ActiveRunsMap())
 	apiSrv.SetIncomingMessageHandler(chatBot)
+	apiSrv.SetRunCanceller(orch)
 	apiSrv.SetInteractionHandler(orch)
 	apiSrv.SetActiveChatLister(orch)
 

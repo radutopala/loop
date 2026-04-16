@@ -198,6 +198,9 @@ const LOOP_COMMANDS: CommandDef[] = [
   { name: "workflow-delete", description: "Delete a workflow run", usage: "<run_id>" },
 ];
 
+export type SendMode = "queue" | "interrupt";
+const SEND_MODE_KEY = "loop-send-mode";
+
 export interface ChatInputProps {
   channelId: string;
   messages: Message[];
@@ -206,9 +209,15 @@ export interface ChatInputProps {
   setMode: (m: "agent" | "plan") => void;
   onDismissCards?: () => void;
   onSent?: () => void;
+  quotedMessage?: Message | null;
+  onClearQuote?: () => void;
 }
 
-export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDismissCards, onSent }: ChatInputProps) {
+function buildQuotePrefix(msg: Message): string {
+  return msg.content.split("\n").map(l => `> ${l}`).join("\n") + "\n\n";
+}
+
+export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDismissCards, onSent, quotedMessage, onClearQuote }: ChatInputProps) {
   const { colors } = useTheme();
   const styles = buildInputStyles(colors);
   const modeStyles = buildModeStyles(colors);
@@ -225,6 +234,17 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
   const [showShortcuts, setShowShortcuts] = useState(false);
   const [filteredShortcuts, setFilteredShortcuts] = useState<PromptShortcut[]>([]);
   const [shortcutSelectedIdx, setShortcutSelectedIdx] = useState(0);
+  const [sendMode, setSendMode] = useState<SendMode>(() => (storageGetJSON<string>(SEND_MODE_KEY) as SendMode) || "queue");
+  const [showSendMenu, setShowSendMenu] = useState(false);
+  // Optimistic stop: flip to true on stop press, so the UI updates instantly
+  // without waiting for the backend round-trip. Reset when isRunning prop changes.
+  const [stoppedOptimistic, setStoppedOptimistic] = useState(false);
+  const prevIsRunning = useRef(isRunning);
+  if (prevIsRunning.current !== isRunning) {
+    prevIsRunning.current = isRunning;
+    if (stoppedOptimistic) setStoppedOptimistic(false);
+  }
+  const effectiveIsRunning = isRunning && !stoppedOptimistic;
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const cmdDropdownRef = useRef<HTMLDivElement>(null);
   const shortcutDropdownRef = useRef<HTMLDivElement>(null);
@@ -279,9 +299,21 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
     item?.scrollIntoView({ block: "nearest" });
   }, [shortcutSelectedIdx, showShortcuts]);
 
+  // Focus textarea when a quote is set.
+  useEffect(() => {
+    if (quotedMessage) inputRef.current?.focus();
+  }, [quotedMessage]);
+
+  const changeSendMode = useCallback((m: SendMode) => {
+    setSendMode(m);
+    storageSetJSON(SEND_MODE_KEY, m);
+    setShowSendMenu(false);
+  }, []);
+
   const isLoopCommand = useCallback((t: string) => t.trimStart().startsWith("/loop"), []);
 
   const handleStop = useCallback(async () => {
+    setStoppedOptimistic(true);
     await sendCommand(channelId, "stop");
   }, [channelId]);
 
@@ -296,7 +328,9 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
           await sendCommand(channelId, cmdText);
         }
       } else {
-        await sendMessage(channelId, trimmed, mode);
+        const content = quotedMessage ? buildQuotePrefix(quotedMessage) + trimmed : trimmed;
+        const interrupt = effectiveIsRunning && sendMode === "interrupt";
+        await sendMessage(channelId, content, mode, interrupt || undefined);
       }
       // Push to history.
       historyRef.current.push(trimmed);
@@ -305,6 +339,7 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
 
       setText("");
       draftText.delete(channelId);
+      onClearQuote?.();
       onDismissCards?.();
       onSent?.();
     } finally {
@@ -312,7 +347,7 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
       // Re-focus after React re-enables the textarea on the next render.
       requestAnimationFrame(() => inputRef.current?.focus());
     }
-  }, [channelId, text, sending, mode, isLoopCommand, onDismissCards]);
+  }, [channelId, text, sending, mode, isLoopCommand, effectiveIsRunning, sendMode, quotedMessage, onClearQuote, onDismissCards]);
 
   const updateCommandDropdown = useCallback((val: string) => {
     const trimmed = val.trimStart();
@@ -559,7 +594,32 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
   );
 
   return (
-    <div style={{ position: "relative", ...styles.inputWrapper }}>
+    <div style={{ position: "relative", ...styles.inputWrapper, flexDirection: "column" }}>
+      {quotedMessage && (
+        <div style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          width: "100%",
+          padding: "4px 0 8px",
+          borderBottom: `1px solid ${colors.border}`,
+          marginBottom: 8,
+          fontSize: 12,
+          color: colors.textMuted,
+          fontFamily: fonts.sans,
+        }}>
+          <div style={{ borderLeft: `3px solid ${colors.border}`, paddingLeft: 8, flex: 1, overflow: "hidden", whiteSpace: "nowrap", textOverflow: "ellipsis" }}>
+            {quotedMessage.content.length > 120 ? quotedMessage.content.slice(0, 120) + "\u2026" : quotedMessage.content}
+          </div>
+          <button
+            onClick={onClearQuote}
+            style={{ background: "none", border: "none", color: colors.textDim, cursor: "pointer", padding: "0 2px", fontSize: 14, lineHeight: 1, flexShrink: 0 }}
+            title="Remove quote"
+          >
+            &times;
+          </button>
+        </div>
+      )}
       {showCommands && filteredCommands.length > 0 && (
         <div style={commandStyles.dropdown}>
           <div ref={cmdDropdownRef} style={commandStyles.scrollArea}>
@@ -610,7 +670,7 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
       )}
       <textarea
         ref={inputRef}
-        style={styles.textarea}
+        style={{ ...styles.textarea, width: "100%" }}
         value={text}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
@@ -618,6 +678,7 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
         rows={3}
         disabled={sending}
       />
+      <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%" }}>
       {shortcuts.length > 0 && (
         <button
           style={{
@@ -651,6 +712,7 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
           #
         </button>
       )}
+      <div style={{ flex: 1 }} />
       <div style={modeStyles.pill}>
         <button
           style={{
@@ -673,30 +735,108 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
           Plan
         </button>
       </div>
-      {isRunning ? (
-        <button
-          style={{ ...styles.sendButton, background: "transparent", border: `1px solid ${colors.textDim}`, color: colors.textDim }}
-          onClick={handleStop}
-          title="Stop"
-        >
-          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-            <rect width="10" height="10" rx="2" fill="currentColor"/>
-          </svg>
-        </button>
-      ) : (
+      <div style={{ position: "relative", display: "flex", alignItems: "center", flexShrink: 0 }}>
+        {effectiveIsRunning ? (
+          <button
+            style={{ ...styles.sendButton, background: "transparent", border: `1px solid ${colors.textDim}`, color: colors.textDim, borderRadius: "8px 0 0 8px" }}
+            onClick={handleStop}
+            title="Stop"
+          >
+            <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+              <rect width="10" height="10" rx="2" fill="currentColor"/>
+            </svg>
+          </button>
+        ) : (
+          <button
+            style={{
+              ...styles.sendButton,
+              borderRadius: "8px 0 0 8px",
+              opacity: text.trim() && !sending ? 1 : 0.4,
+            }}
+            onClick={handleSend}
+            disabled={!text.trim() || sending}
+            title={sendMode === "interrupt" ? "Send (interrupt)" : "Send (queue)"}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
+              <path d="M8 14V2M8 2L3 7M8 2L13 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+            </svg>
+          </button>
+        )}
         <button
           style={{
-            ...styles.sendButton,
-            opacity: text.trim() && !sending ? 1 : 0.4,
+            height: 28,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 2,
+            background: effectiveIsRunning ? "transparent" : colors.pillActiveBg,
+            border: effectiveIsRunning ? `1px solid ${colors.textDim}` : "none",
+            borderLeft: effectiveIsRunning ? "none" : `1px solid ${colors.pillActiveText}33`,
+            borderRadius: "0 8px 8px 0",
+            color: effectiveIsRunning ? colors.textDim : colors.pillActiveText,
+            cursor: "pointer",
+            flexShrink: 0,
+            padding: "0 6px 0 4px",
+            fontFamily: fonts.mono,
+            fontSize: 9,
+            fontWeight: 600,
+            letterSpacing: 0.3,
           }}
-          onClick={handleSend}
-          disabled={!text.trim() || sending}
+          onClick={() => setShowSendMenu(prev => !prev)}
+          title="Send mode"
         >
-          <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
-            <path d="M8 14V2M8 2L3 7M8 2L13 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
+          {sendMode === "interrupt" ? "INT" : "Q"}
+          <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+            <path d="M1.5 3L4 5.5L6.5 3" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
           </svg>
         </button>
-      )}
+        {showSendMenu && (
+          <>
+            <div style={{ position: "fixed", inset: 0, zIndex: 999 }} onMouseDown={() => setShowSendMenu(false)} />
+            <div style={{
+              position: "absolute",
+              bottom: "calc(100% + 4px)",
+              right: 0,
+              backgroundColor: colors.surface,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 6,
+              padding: 4,
+              minWidth: 140,
+              zIndex: 1000,
+              boxShadow: `0 4px 12px ${colors.shadow}`,
+              fontFamily: fonts.sans,
+            }}>
+              {([["queue", "Queue", "Messages wait for the agent to finish"], ["interrupt", "Interrupt", "Stop the agent, then send"]] as const).map(([key, label, desc]) => (
+                <button
+                  key={key}
+                  onClick={() => changeSendMode(key)}
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 1,
+                    width: "100%",
+                    padding: "5px 8px",
+                    border: "none",
+                    background: sendMode === key ? colors.selectedBg : "transparent",
+                    color: colors.textLight,
+                    fontSize: 11,
+                    textAlign: "left",
+                    cursor: "pointer",
+                    borderRadius: 4,
+                    fontFamily: fonts.sans,
+                  }}
+                  onMouseEnter={(e) => { if (sendMode !== key) e.currentTarget.style.backgroundColor = "rgba(255,255,255,0.08)"; }}
+                  onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = sendMode === key ? colors.selectedBg : "transparent"; }}
+                >
+                  <span style={{ fontWeight: 600 }}>{label}{sendMode === key ? " \u2713" : ""}</span>
+                  <span style={{ fontSize: 10, color: colors.textDim }}>{desc}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+      </div>
     </div>
   );
 }

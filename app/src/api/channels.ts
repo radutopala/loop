@@ -138,9 +138,11 @@ export async function sendMessage(
   channelId: string,
   content: string,
   mode?: "agent" | "plan",
+  interrupt?: boolean,
 ): Promise<void> {
-  const body: Record<string, string> = { channel_id: channelId, content };
+  const body: Record<string, string | boolean> = { channel_id: channelId, content };
   if (mode && mode !== "agent") body.mode = mode;
+  if (interrupt) body.interrupt = true;
   const res = await fetch(`${getApiUrl()}/api/messages`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

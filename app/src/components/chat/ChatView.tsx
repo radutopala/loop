@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { ChatState } from "../../hooks/useChatState";
+import type { Message } from "../../types";
 import { fonts } from "../../theme";
 import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
@@ -56,6 +57,8 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
   const { messages, loading, isRunning } = chatState;
   const dismissCards = useCallback(() => { chatState.clearAskUser(); chatState.clearExitPlan(); }, [chatState]);
   const messagesRef = useRef<ChatMessagesHandle>(null);
+  const [quotedMessage, setQuotedMessage] = useState<Message | null>(null);
+  const clearQuote = useCallback(() => setQuotedMessage(null), []);
 
   const scrollToBottom = useCallback(() => {
     messagesRef.current?.scrollToBottom();
@@ -79,7 +82,7 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
           <WelcomeScreen />
         </div>
         <div style={styles.inputBar}>
-          <ChatInput channelId={channelId} messages={messages} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} />
+          <ChatInput channelId={channelId} messages={messages} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} quotedMessage={quotedMessage} onClearQuote={clearQuote} />
         </div>
 
         <div style={styles.isolationLabel}>
@@ -92,9 +95,9 @@ export function ChatView({ channelId, chatState, scrollToMessageId, onScrollComp
 
   return (
     <div style={{ ...styles.container, zoom: fontSizes.chat / 13 }}>
-      <ChatMessages ref={messagesRef} channelId={channelId} chatState={chatState} scrollToMessageId={scrollToMessageId} onScrollComplete={onScrollComplete} />
+      <ChatMessages ref={messagesRef} channelId={channelId} chatState={chatState} scrollToMessageId={scrollToMessageId} onScrollComplete={onScrollComplete} onQuote={setQuotedMessage} />
       <div style={styles.inputBar}>
-        <ChatInput channelId={channelId} messages={messages} isRunning={isRunning} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} />
+        <ChatInput channelId={channelId} messages={messages} isRunning={isRunning} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} quotedMessage={quotedMessage} onClearQuote={clearQuote} />
       </div>
       <div style={styles.isolationLabel}>
         <LoopInfinityIcon color={isRunning ? undefined : colors.textDim} animated={isRunning} isDark={colors.isDark} />

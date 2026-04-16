@@ -13,6 +13,7 @@ type sendMessageRequest struct {
 	ChannelID string `json:"channel_id"`
 	Content   string `json:"content"`
 	Mode      string `json:"mode,omitempty"`
+	Interrupt bool   `json:"interrupt,omitempty"`
 }
 
 func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
@@ -32,6 +33,9 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Route through the orchestrator when available.
 	if s.msgHandler != nil {
+		if req.Interrupt && s.runCanceller != nil {
+			s.runCanceller.CancelActiveRun(req.ChannelID)
+		}
 		// Use a detached context — r.Context() is cancelled when the HTTP response is sent.
 		go s.msgHandler.HandleIncomingMessage(context.Background(), req.ChannelID, "", req.Content, req.Mode)
 		w.WriteHeader(http.StatusNoContent)

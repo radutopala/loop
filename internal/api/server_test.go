@@ -181,6 +181,15 @@ func (m *MockTicketStore) AtomicClaim(id string) (*tk.Ticket, error) {
 	return nil, args.Error(1)
 }
 
+type MockRunCanceller struct {
+	mock.Mock
+}
+
+func (m *MockRunCanceller) CancelActiveRun(channelID string) bool {
+	args := m.Called(channelID)
+	return args.Bool(0)
+}
+
 type ServerSuite struct {
 	suite.Suite
 	scheduler *testutil.MockScheduler
@@ -2786,6 +2795,78 @@ func (s *ServerSuite) TestSendMessageViaHandlerPlanMode() {
 	}
 
 	handler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSendMessageInterrupt() {
+	handler := new(MockIncomingMessageHandler)
+	canceller := new(MockRunCanceller)
+	s.srv.SetIncomingMessageHandler(handler)
+	s.srv.SetRunCanceller(canceller)
+
+	canceller.On("CancelActiveRun", "ch-1").Return(true)
+	called := make(chan struct{}, 1)
+	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "stop and go", "").
+		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
+
+	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"stop and go","interrupt":true}`)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		s.T().Fatal("HandleIncomingMessage was not called within 1s")
+	}
+
+	canceller.AssertExpectations(s.T())
+	handler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSendMessageInterruptNoCanceller() {
+	handler := new(MockIncomingMessageHandler)
+	s.srv.SetIncomingMessageHandler(handler)
+	// runCanceller is nil — should not panic.
+
+	called := make(chan struct{}, 1)
+	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "hello", "").
+		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
+
+	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"hello","interrupt":true}`)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		s.T().Fatal("HandleIncomingMessage was not called within 1s")
+	}
+
+	handler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSendMessageNoInterrupt() {
+	handler := new(MockIncomingMessageHandler)
+	canceller := new(MockRunCanceller)
+	s.srv.SetIncomingMessageHandler(handler)
+	s.srv.SetRunCanceller(canceller)
+
+	called := make(chan struct{}, 1)
+	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "normal msg", "").
+		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
+
+	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"normal msg"}`)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		s.T().Fatal("HandleIncomingMessage was not called within 1s")
+	}
+
+	handler.AssertExpectations(s.T())
+	// CancelActiveRun must NOT be called when interrupt is false/absent.
+	canceller.AssertNotCalled(s.T(), "CancelActiveRun")
 }
 
 func (s *ServerSuite) TestSetIncomingMessageHandler() {

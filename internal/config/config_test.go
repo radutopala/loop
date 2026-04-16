@@ -896,7 +896,7 @@ func (s *ConfigSuite) TestClaudeModelAbsent() {
 
 	cfg, err := s.loader.load()
 	require.NoError(s.T(), err)
-	require.Empty(s.T(), cfg.ClaudeModel)
+	require.Equal(s.T(), "claude-opus-4-7", cfg.ClaudeModel)
 }
 
 func (s *ConfigSuite) TestLoadProjectConfigOverrides() {

@@ -2362,15 +2362,14 @@ func (s *EngineSuite) TestStartRunSemaphoreContextCancelled() {
 }
 
 func (s *EngineSuite) TestNodeSlotCancelledDuringDAG() {
-	// With MaxConcurrentNodes=1, if a context is cancelled before a node
-	// acquires the slot, the goroutine should exit without executing the node.
-	// Use a dependency chain so "blocked" is only dispatched after "slow"
-	// completes (keeping the timing deterministic).
+	// When a child node is dispatched AFTER the context is cancelled (via its
+	// parent finishing on cancel), its goroutine hits the fast-path in
+	// acquireNodeSlot and exits via the ctx.Done branch deterministically —
+	// covering the "acquireNodeSlot returned false" return in dag.go.
 	s.workflows = []config.WorkflowDef{
 		{Name: "wf", Nodes: []config.NodeDef{
 			{ID: "slow", Type: config.NodeTypeBash, Script: "sleep 10"},
-			{ID: "also-slow", Type: config.NodeTypeBash, Script: "sleep 10"},
-			{ID: "blocked", Type: config.NodeTypeBash, Script: "echo never", DependsOn: []string{"slow", "also-slow"}},
+			{ID: "child", Type: config.NodeTypeBash, Script: "echo never", DependsOn: []string{"slow"}},
 		}},
 	}
 
@@ -2381,16 +2380,10 @@ func (s *EngineSuite) TestNodeSlotCancelledDuringDAG() {
 	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 
-	// Both slow nodes block until context is cancelled.
-	// Use a channel to synchronize: cancel only after at least one RunBash call
-	// has started, avoiding a race under high CPU load.
-	bashStarted := make(chan struct{}, 2)
+	bashStarted := make(chan struct{}, 1)
 	s.bashRunner.On("RunBash", mock.Anything, "sleep 10", mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) {
-			select {
-			case bashStarted <- struct{}{}:
-			default:
-			}
+			bashStarted <- struct{}{}
 			<-args.Get(0).(context.Context).Done()
 		}).
 		Return("", context.Canceled)
@@ -2400,7 +2393,6 @@ func (s *EngineSuite) TestNodeSlotCancelledDuringDAG() {
 	runID, err := e.StartRun(context.Background(), StartRunOptions{WorkflowName: "wf"})
 	require.NoError(s.T(), err)
 
-	// Wait for at least one bash node to start before cancelling.
 	<-bashStarted
 	err = e.CancelRun(context.Background(), runID)
 	require.NoError(s.T(), err)
@@ -2411,8 +2403,86 @@ func (s *EngineSuite) TestNodeSlotCancelledDuringDAG() {
 		s.T().Fatal("timeout — run should have been cancelled")
 	}
 
-	// "blocked" should never have run — its dependencies complete only after
-	// cancellation, and by then acquireNodeSlot returns false.
+	// child's goroutine is dispatched after slow finishes (post-cancel) and
+	// must exit at acquireNodeSlot without calling RunBash.
+	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo never", mock.Anything, mock.Anything)
+}
+
+func (s *EngineSuite) TestNodeSlotCancelledDuringCheckpoint() {
+	// Covers the same acquireNodeSlot-cancelled branch, but on the
+	// executeDAGFromCheckpoint (resume) path: a paused approval node is
+	// recovered and then cancelled, causing its dependent child to be
+	// dispatched after cancel — the child exits via the ctx.Done fast-path
+	// in acquireNodeSlot, covering the return branch in dag.go.
+	s.workflows = []config.WorkflowDef{
+		{Name: "ck-wf", Nodes: []config.NodeDef{
+			{ID: "approve", Type: config.NodeTypeApproval, Message: "ok?", Timeout: "1h"},
+			{ID: "child", Type: config.NodeTypeBash, Script: "echo never", DependsOn: []string{"approve"}},
+		}},
+	}
+
+	e := NewEngine(s.store, s.runner, s.bashRunner, s.broadcaster, func(_, _ string) []config.WorkflowDef {
+		return s.workflows
+	}, "", config.WorkflowConcurrency{MaxConcurrentNodes: 1}, slog.Default())
+
+	pausedRun := &db.WorkflowRun{
+		ID:           "wfr-ck",
+		WorkflowName: "ck-wf",
+		ChannelID:    "ch1",
+		Status:       db.WorkflowRunStatusPaused,
+		PausedNodeID: "approve",
+		Inputs:       `{}`,
+	}
+	nodeRuns := []*db.NodeRun{
+		{RunID: "wfr-ck", NodeID: "approve", Status: db.NodeRunStatusRunning},
+		{RunID: "wfr-ck", NodeID: "child", Status: db.NodeRunStatusPending},
+	}
+
+	s.store.ExpectedCalls = nil
+	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
+	s.store.On("ListNodeRuns", mock.Anything, "wfr-ck").Return(nodeRuns, nil)
+	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("GetWorkflowRun", mock.Anything, "wfr-ck").Return(
+		&db.WorkflowRun{ID: "wfr-ck", Status: db.WorkflowRunStatusRunning, PausedNodeID: "approve", WorkflowName: "ck-wf", ChannelID: "ch1"}, nil,
+	)
+
+	paused := make(chan struct{}, 1)
+	terminal := make(chan db.WorkflowRunStatus, 1)
+	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		run := args.Get(1).(*db.WorkflowRun)
+		switch run.Status {
+		case db.WorkflowRunStatusPaused:
+			select {
+			case paused <- struct{}{}:
+			default:
+			}
+		case db.WorkflowRunStatusCompleted, db.WorkflowRunStatusFailed, db.WorkflowRunStatusCancelled:
+			select {
+			case terminal <- run.Status:
+			default:
+			}
+		}
+	}).Return(nil)
+
+	err := e.RecoverRuns(context.Background())
+	require.NoError(s.T(), err)
+
+	select {
+	case <-paused:
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("timeout waiting for recovered approval node to pause")
+	}
+
+	err = e.CancelRun(context.Background(), "wfr-ck")
+	require.NoError(s.T(), err)
+
+	select {
+	case <-terminal:
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("timeout waiting for cancelled run to finalize")
+	}
+
 	s.bashRunner.AssertNotCalled(s.T(), "RunBash", mock.Anything, "echo never", mock.Anything, mock.Anything)
 }
 

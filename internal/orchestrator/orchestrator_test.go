@@ -4034,6 +4034,25 @@ func (s *OrchestratorSuite) TestActiveRunsMapReturnsSharedMap() {
 	m.Delete("test-ch")
 }
 
+func (s *OrchestratorSuite) TestCancelActiveRunActive() {
+	cancelled := false
+	cancel := context.CancelFunc(func() { cancelled = true })
+	s.orch.activeRuns.Store("ch-cancel", cancel)
+
+	ok := s.orch.CancelActiveRun("ch-cancel")
+	require.True(s.T(), ok)
+	require.True(s.T(), cancelled)
+
+	// Entry should be deleted.
+	_, loaded := s.orch.activeRuns.Load("ch-cancel")
+	require.False(s.T(), loaded)
+}
+
+func (s *OrchestratorSuite) TestCancelActiveRunNoRun() {
+	ok := s.orch.CancelActiveRun("ch-nonexistent")
+	require.False(s.T(), ok)
+}
+
 func (s *OrchestratorSuite) TestCurrentConfigReloads() {
 	s.orch.cfg.Store(&config.Config{KeepMCPConfigs: false})
 	s.orch.configLoad = func() (*config.Config, error) {

@@ -5,6 +5,8 @@ import { sendMessage } from "../../api/loopApi";
 import { fonts } from "../../theme";
 import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
+import { ContextMenu } from "../shared/ContextMenu";
+import type { MenuItem } from "../shared/ContextMenu";
 
 function buildMessageStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
   return {
@@ -76,6 +78,14 @@ function buildMessageStyles(colors: ColorPalette): Record<string, React.CSSPrope
       fontFamily: fonts.mono,
       fontSize: 13,
     },
+    blockquote: {
+      borderLeft: `3px solid ${colors.border}`,
+      paddingLeft: 12,
+      margin: "6px 0",
+      color: colors.textMuted,
+      fontSize: 13,
+      lineHeight: 1.5,
+    },
   };
 }
 
@@ -97,13 +107,14 @@ export interface ChatMessagesProps {
   chatState: ChatState;
   scrollToMessageId?: number | null;
   onScrollComplete?: () => void;
+  onQuote?: (msg: Message) => void;
 }
 
 export interface ChatMessagesHandle {
   scrollToBottom: () => void;
 }
 
-export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(function ChatMessages({ channelId, chatState, scrollToMessageId, onScrollComplete }, ref) {
+export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(function ChatMessages({ channelId, chatState, scrollToMessageId, onScrollComplete, onQuote }, ref) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
   const { messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, todos, completionInfo, triggerContent } = chatState;
@@ -182,6 +193,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
               showProcessing={isRunning && !msg.is_bot && msg.msg_id === firstUnprocessedUserMsgId}
               showQueued={!msg.is_bot && !msg.is_processed && !(isRunning && msg.msg_id === firstUnprocessedUserMsgId)}
               highlighted={msg.id === highlightedMsgId}
+              onQuote={onQuote}
             />
           ))}
           {showTriggerQuote && (
@@ -215,7 +227,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   );
 });
 
-function MessageBubble({ message, showProcessing, showQueued, highlighted }: { message: Message; showProcessing?: boolean; showQueued?: boolean; highlighted?: boolean }) {
+function MessageBubble({ message, showProcessing, showQueued, highlighted, onQuote }: { message: Message; showProcessing?: boolean; showQueued?: boolean; highlighted?: boolean; onQuote?: (msg: Message) => void }) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
   const isUser = !message.is_bot;
@@ -223,10 +235,22 @@ function MessageBubble({ message, showProcessing, showQueued, highlighted }: { m
     hour: "2-digit",
     minute: "2-digit",
   });
+  const [ctxMenu, setCtxMenu] = useState<{ x: number; y: number; items: MenuItem[] } | null>(null);
+
+  const handleContextMenu = useCallback((e: React.MouseEvent) => {
+    if (!onQuote) return;
+    e.preventDefault();
+    setCtxMenu({
+      x: e.clientX,
+      y: e.clientY,
+      items: [{ label: "Quote reply", onClick: () => onQuote(message) }],
+    });
+  }, [onQuote, message]);
 
   return (
     <div
       data-msg-id={message.id}
+      onContextMenu={handleContextMenu}
       style={{
         display: "flex",
         flexDirection: "column",
@@ -238,6 +262,7 @@ function MessageBubble({ message, showProcessing, showQueued, highlighted }: { m
         padding: highlighted ? "4px 8px" : 0,
       }}
     >
+      {ctxMenu && <ContextMenu x={ctxMenu.x} y={ctxMenu.y} items={ctxMenu.items} onClose={() => setCtxMenu(null)} />}
       <div
         style={{
           ...styles.bubble,
@@ -477,6 +502,24 @@ function parseMarkdown(text: string, s: Record<string, React.CSSProperties>): Re
           {lang && <div style={s.codeLang}>{lang}</div>}
           <code>{codeLines.join("\n")}</code>
         </pre>,
+      );
+      continue;
+    }
+
+    // Blockquote: collect consecutive `> ` lines.
+    if (line.startsWith("> ") || line === ">") {
+      const quoteLines: string[] = [];
+      while (i < lines.length && ((lines[i] ?? "").startsWith("> ") || (lines[i] ?? "") === ">")) {
+        const ql = lines[i] ?? "";
+        quoteLines.push(ql === ">" ? "" : ql.slice(2));
+        i++;
+      }
+      nodes.push(
+        <blockquote key={nodes.length} style={s.blockquote}>
+          {quoteLines.map((ql, qi) => (
+            <p key={qi} style={s.paragraph}>{ql ? formatInline(ql, s) : <br />}</p>
+          ))}
+        </blockquote>,
       );
       continue;
     }

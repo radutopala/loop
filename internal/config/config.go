@@ -399,7 +399,7 @@ func (l *Loader) parse() (*Config, error) {
 		PollInterval:         time.Duration(ptrDefault(jc.PollIntervalSec, 30)) * time.Second,
 		APIAddr:              stringDefault(jc.APIAddr, ":8222"),
 		LoopDir:              loopDir,
-		ClaudeModel:          jc.ClaudeModel,
+		ClaudeModel:          stringDefault(jc.ClaudeModel, "claude-opus-4-7"),
 		StreamingEnabled:     ptrDefault(jc.StreamingEnabled, true),
 		KeepMCPConfigs:       ptrDefault(jc.KeepMCPConfigs, false),
 		WorkflowBashLocal:    ptrDefault(jc.WorkflowBashLocal, false),

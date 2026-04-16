@@ -138,6 +138,19 @@ func (o *Orchestrator) ActiveRunsMap() *sync.Map {
 	return &o.activeRuns
 }
 
+// CancelActiveRun cancels the active agent run for a channel, if any.
+// Returns true if a run was cancelled.
+func (o *Orchestrator) CancelActiveRun(channelID string) bool {
+	val, ok := o.activeRuns.LoadAndDelete(channelID)
+	if !ok {
+		return false
+	}
+	cancel := val.(context.CancelFunc)
+	cancel()
+	o.logger.Info("active run cancelled via interrupt", "channel_id", channelID)
+	return true
+}
+
 // SetEventBroadcaster configures the event broadcaster for real-time event streaming.
 func (o *Orchestrator) SetEventBroadcaster(eb events.Broadcaster) {
 	o.events = eb
