@@ -509,7 +509,7 @@ func (a *app) serve() error {
 	// optionally fall back to local shell execution when Docker is unavailable.
 	var bashRunner workflow.BashRunner = runner
 	if cfg.WorkflowBashLocal {
-		bashRunner = &workflow.LocalBashRunner{}
+		bashRunner = &workflow.LocalBashRunner{SafeDir: cfg.LoopDir}
 		logger.Info("workflow bash nodes will execute locally (workflow_bash_local=true)")
 	}
 	wfEngine := workflow.NewEngine(store, runner, bashRunner, eventsHub, workflowsFromConfig(cfg, config.Reload), cfg.LoopDir, cfg.WorkflowConcurrency, logger)

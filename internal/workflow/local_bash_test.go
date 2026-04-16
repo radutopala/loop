@@ -39,9 +39,26 @@ func (s *LocalBashSuite) TestRunBashWithNonExistentDir() {
 	require.Equal(s.T(), "works\n", output)
 }
 
-func (s *LocalBashSuite) TestRunBashRelativePathIgnored() {
-	// Relative paths (e.g. path traversal) should be ignored — only absolute paths are used.
-	output, err := s.runner.RunBash(context.Background(), "echo safe", "", "../../../etc")
+func (s *LocalBashSuite) TestRunBashSafeDirRejectsOutsidePath() {
+	// When SafeDir is set, paths outside it should be rejected.
+	r := &LocalBashRunner{SafeDir: "/tmp"}
+	output, err := r.RunBash(context.Background(), "echo safe", "", "/etc")
+	require.NoError(s.T(), err)
+	// /etc is outside /tmp so it should be ignored — script runs without a working dir.
+	require.Equal(s.T(), "safe\n", output)
+}
+
+func (s *LocalBashSuite) TestRunBashSafeDirAllowsInsidePath() {
+	r := &LocalBashRunner{SafeDir: "/tmp"}
+	output, err := r.RunBash(context.Background(), "pwd", "", "/tmp")
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), output, "/tmp")
+}
+
+func (s *LocalBashSuite) TestRunBashSafeDirRejectsTraversal() {
+	// Path traversal via ../ should be rejected when it escapes SafeDir.
+	r := &LocalBashRunner{SafeDir: "/tmp"}
+	output, err := r.RunBash(context.Background(), "echo safe", "", "/tmp/../etc")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "safe\n", output)
 }
