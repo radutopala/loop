@@ -1724,6 +1724,50 @@ func (s *TaskExecutorSuite) TestWorktreeSubsequentRun() {
 	require.Equal(s.T(), "done2", resp)
 }
 
+func (s *TaskExecutorSuite) TestWorktreeDanglingThreadCreatesNewWorktree() {
+	// Task has ThreadID pointing at a channel that no longer exists (e.g. the
+	// thread was deleted from the UI without clearing the task's thread_id).
+	// The executor must fall back to first-run behavior: create a new worktree
+	// instead of reusing the parent channel's dirPath (which would cause a
+	// duplicate Docker mount because dirPath == parentDirPath).
+	task := &db.ScheduledTask{
+		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,
+		Schedule: "0 * * * *", Worktree: true, ThreadID: "stale-thread",
+	}
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{
+		ChannelID: "ch1", DirPath: "/proj", SessionID: "sess-1", Platform: types.PlatformLocal,
+	}, nil)
+	// Dangling ThreadID — channel lookup returns nil.
+	s.store.On("GetChannel", s.ctx, "stale-thread").Return(nil, nil)
+	s.store.On("GetScheduledTask", s.ctx, int64(10)).Return(&db.ScheduledTask{ID: 10, Type: db.TaskTypeCron}, nil)
+	s.allowBotInserts()
+
+	s.executor.SetWorktreeCreator(&worktree.Creator{
+		Sys: &mockWorktreeSys{},
+		Run: func(ctx context.Context, dir, name string, args ...string) ([]byte, error) {
+			if name == "git" && len(args) > 0 && args[0] == "rev-parse" && len(args) > 1 && args[1] == "--abbrev-ref" {
+				return []byte("main\n"), nil
+			}
+			return nil, nil
+		},
+	})
+
+	s.store.On("UpdateScheduledTaskOriginBranch", s.ctx, int64(10), "main").Return(nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		// DirPath must be the NEW worktree, not the parent channel's path.
+		return strings.Contains(req.DirPath, ".worktrees/task-10-") && req.DirPath != "/proj"
+	})).Return(&agent.AgentResponse{Response: "done", SessionID: "s2"}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "s2").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "done", resp)
+}
+
 func (s *TaskExecutorSuite) TestWorktreeCreationError() {
 	task := &db.ScheduledTask{
 		ID: 10, ChannelID: "ch1", Prompt: "build", Type: db.TaskTypeCron,

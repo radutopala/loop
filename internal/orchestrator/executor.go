@@ -103,8 +103,23 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	// the thread's DirPath which already points to the worktree.
 	worktreeCreated := false
 	if task.Worktree && e.worktreeCreator != nil && dirPath != "" {
+		// If ThreadID points to a deleted thread (no channel row, or row
+		// with empty DirPath), treat this run as a first run and create a
+		// fresh worktree — otherwise dirPath would stay at the parent's
+		// path and collide with parentDirPath downstream.
+		if task.ThreadID != "" {
+			threadCh, err := e.store.GetChannel(ctx, task.ThreadID)
+			if err != nil || threadCh == nil || threadCh.DirPath == "" {
+				e.logger.Warn("thread channel missing for worktree task — creating new worktree",
+					"task_id", task.ID, "thread_id", task.ThreadID)
+				task.ThreadID = ""
+			} else {
+				dirPath = threadCh.DirPath
+			}
+		}
 		if task.ThreadID == "" {
-			// First run — create worktree using explicit or auto-detected branch.
+			// First run (or thread was deleted) — create worktree using
+			// explicit or auto-detected branch.
 			branch := task.OriginBranch
 			if branch == "" {
 				detectedBranch, branchErr := e.getCurrentBranch(ctx, dirPath)
@@ -129,11 +144,6 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			dirPath = result.WorktreePath
 			worktreeCreated = true
 			e.logger.Info("created worktree for task", "task_id", task.ID, "worktree_path", dirPath)
-		} else {
-			// Subsequent runs — reuse thread's DirPath
-			if threadCh, err := e.store.GetChannel(ctx, task.ThreadID); err == nil && threadCh != nil && threadCh.DirPath != "" {
-				dirPath = threadCh.DirPath
-			}
 		}
 	}
 

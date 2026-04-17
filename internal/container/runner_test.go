@@ -3528,6 +3528,24 @@ func (s *RunnerSuite) TestBuildContainerMountsExternalWorktree() {
 	require.Equal(s.T(), 1, count, "parent dir should be mounted exactly once")
 }
 
+func (s *RunnerSuite) TestBuildContainerMountsParentEqualsWorkDir() {
+	// Defensive: if parentDirPath == workDir (e.g. a worktree task whose
+	// thread was deleted), only one bind must be emitted — Docker rejects
+	// duplicate mount targets.
+	workDir := "/Users/user/dev/loop"
+	parentDirPath := workDir
+
+	binds, _ := s.runner.buildContainerMounts(nil, workDir, parentDirPath, nil)
+
+	count := 0
+	for _, b := range binds {
+		if b == workDir+":"+workDir {
+			count++
+		}
+	}
+	require.Equal(s.T(), 1, count, "workDir should be mounted exactly once when it equals parentDirPath")
+}
+
 func (s *RunnerSuite) TestBuildContainerMountsExtraDirTildeExpansion() {
 	workDir := "/home/user/project"
 	extraDirs := []string{"~/lib", "/absolute/path"}

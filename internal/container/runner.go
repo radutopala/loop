@@ -751,7 +751,9 @@ func (r *DockerRunner) buildContainerMounts(mounts []string, workDir, parentDirP
 	} else {
 		binds = append(binds, workDir+":"+workDir)
 		// External worktree (outside parent dir): mount parent separately for .git access.
-		if parentDirPath != "" {
+		// Skip when parent == workDir (e.g. a worktree task whose thread was
+		// deleted mid-flight) — Docker rejects duplicate mount targets.
+		if parentDirPath != "" && parentDirPath != workDir {
 			binds = append(binds, parentDirPath+":"+parentDirPath)
 		}
 	}
