@@ -123,6 +123,7 @@ type app struct {
 	newHostExecClient      func() terminal.ExecClient
 	newBrowserProvider     func(string, *slog.Logger) (api.BrowserProvider, error)
 	discoverWSEndpoint     func() (string, error)
+	openLogFile            func(string) (*os.File, error)
 
 	// Update dependencies
 	httpGet            func(string) (*http.Response, error)
@@ -187,6 +188,9 @@ func newApp() *app {
 
 		// MCP host browser
 		discoverWSEndpoint: browser.DiscoverWSEndpoint,
+		openLogFile: func(path string) (*os.File, error) {
+			return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+		},
 
 		// Update dependencies
 		httpGet: http.Get,

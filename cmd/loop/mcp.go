@@ -13,6 +13,18 @@ import (
 	"github.com/radutopala/loop/internal/mcpserver"
 )
 
+// closeLogFile closes f and merges any close error into existingErr. If
+// existingErr is non-nil, it wins; otherwise a close failure is wrapped with
+// component for context. This is the single point where the deferred close of
+// a writable MCP log file is handled.
+func closeLogFile(f *os.File, component string, existingErr error) error {
+	cerr := f.Close()
+	if cerr != nil && existingErr == nil {
+		return fmt.Errorf("closing %s log: %w", component, cerr)
+	}
+	return existingErr
+}
+
 func (a *app) newMCPCmd() *cobra.Command {
 	var channelID, apiURL, logPath, dirPath, authorID, platform, agentID string
 	var memoryEnabled bool
@@ -41,20 +53,20 @@ func (a *app) newMCPCmd() *cobra.Command {
 	return cmd
 }
 
-func (a *app) runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, agentID string, memoryEnabled bool) error {
+func (a *app) runMCP(channelID, apiURL, dirPath, logPath, authorID, platform, agentID string, memoryEnabled bool) (err error) {
 	if dirPath != "" {
-		resolved, err := a.ensureChannelFn(apiURL, dirPath, platform)
-		if err != nil {
-			return fmt.Errorf("ensuring channel for dir %s: %w", dirPath, err)
+		resolved, rerr := a.ensureChannelFn(apiURL, dirPath, platform)
+		if rerr != nil {
+			return fmt.Errorf("ensuring channel for dir %s: %w", dirPath, rerr)
 		}
 		channelID = resolved
 	}
 
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	f, err := a.openLogFile(logPath)
 	if err != nil {
 		return fmt.Errorf("opening mcp log: %w", err)
 	}
-	defer f.Close()
+	defer func() { err = closeLogFile(f, "mcp", err) }()
 
 	logLevel, logFormat := "info", "text"
 	cfg, cfgErr := a.configLoad()

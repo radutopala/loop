@@ -96,6 +96,36 @@ func (s *RealSystemSuite) TestMkdirAll() {
 	require.True(s.T(), info.IsDir())
 }
 
+func (s *RealSystemSuite) TestStatTraversal() {
+	_, err := s.sys.Stat("../passwd")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "disallowed traversal")
+}
+
+func (s *RealSystemSuite) TestReadFileTraversal() {
+	_, err := s.sys.ReadFile("../passwd")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "disallowed traversal")
+}
+
+func (s *RealSystemSuite) TestWriteFileTraversal() {
+	err := s.sys.WriteFile("../passwd", []byte("x"), 0o644)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "disallowed traversal")
+}
+
+func (s *RealSystemSuite) TestReadDirTraversal() {
+	_, err := s.sys.ReadDir("../secret")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "disallowed traversal")
+}
+
+func (s *RealSystemSuite) TestMkdirAllTraversal() {
+	err := s.sys.MkdirAll("../evil", 0o755)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "disallowed traversal")
+}
+
 func (s *RealSystemSuite) TestReadlink() {
 	target := filepath.Join(s.dir, "target.txt")
 	require.NoError(s.T(), os.WriteFile(target, nil, 0o644))

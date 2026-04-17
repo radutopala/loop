@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/spf13/cobra"
@@ -29,12 +28,12 @@ func (a *app) newMCPHostBrowserCmd() *cobra.Command {
 	return cmd
 }
 
-func (a *app) runMCPHostBrowser(logPath string, newServer func(string, *slog.Logger) *mcpbrowser.Server) error {
-	f, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+func (a *app) runMCPHostBrowser(logPath string, newServer func(string, *slog.Logger) *mcpbrowser.Server) (err error) {
+	f, err := a.openLogFile(logPath)
 	if err != nil {
 		return fmt.Errorf("opening mcp-host-browser log: %w", err)
 	}
-	defer f.Close()
+	defer func() { err = closeLogFile(f, "mcp-host-browser", err) }()
 
 	logLevel, logFormat := "info", "text"
 	cfg, cfgErr := a.configLoad()

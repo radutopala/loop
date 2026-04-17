@@ -4531,3 +4531,26 @@ func (s *MainSuite) TestWorkflowsFromConfigWorktreeThreeLayerMerge() {
 	require.Equal(s.T(), "worktree only", names["worktree-wf"])
 	require.Equal(s.T(), "worktree override", names["shared-wf"]) // worktree wins
 }
+
+func (s *MainSuite) TestCloseLogFileOK() {
+	f, err := os.CreateTemp(s.T().TempDir(), "closeok-*")
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), closeLogFile(f, "mcp", nil))
+}
+
+func (s *MainSuite) TestCloseLogFilePreservesExistingErr() {
+	f, err := os.CreateTemp(s.T().TempDir(), "preserve-*")
+	require.NoError(s.T(), err)
+	prior := errors.New("prior failure")
+	got := closeLogFile(f, "mcp", prior)
+	require.Same(s.T(), prior, got)
+}
+
+func (s *MainSuite) TestCloseLogFileCloseError() {
+	f, err := os.CreateTemp(s.T().TempDir(), "closeerr-*")
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), f.Close()) // pre-close so the deferred Close returns an error
+	got := closeLogFile(f, "mcp", nil)
+	require.Error(s.T(), got)
+	require.Contains(s.T(), got.Error(), "closing mcp log")
+}
