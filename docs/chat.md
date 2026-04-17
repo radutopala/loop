@@ -415,6 +415,15 @@ When the agent is processing a message and there are queued messages (or there w
 
 The trigger quote persists across channel switches via the chat state store and remains visible until all messages in the batch are processed.
 
+### Queued Messages Popup
+
+A `QueuedMessagesPopup` component (`src/components/chat/QueuedMessagesPopup.tsx`) renders above the chat input whenever there are two or more unprocessed user messages — the first is "processing" and the rest are the popup's contents. It is hidden when the queue is empty.
+
+- **Collapsible header** — shows `N queued` with a chevron. Click to expand the list.
+- **Row layout** — one line per message, truncated with ellipsis. Clicking a row toggles an inline expanded view (full content, pre-wrapped).
+- **Delete button** — a `×` button on each row calls `DELETE /api/messages/{msg_id}?channel_id=...` via the `deleteQueuedMessage` API client. The row dims while the request is in flight; the server broadcasts a `message.deleted` WebSocket event and `useChatState` removes the message from local state.
+- **Safety** — only waiting messages (past the first unprocessed one) appear in the popup. The currently-processing message is excluded — use the existing stop button to cancel an in-flight run.
+
 ---
 
 ## Docker Isolation Label

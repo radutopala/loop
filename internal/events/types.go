@@ -11,6 +11,7 @@ type Broadcaster interface {
 	BroadcastExitPlan(channelID string, data ExitPlanModeEventData)
 	BroadcastTodoWrite(channelID string, data TodoWriteEventData)
 	BroadcastMessagesProcessed(channelID string, data MessagesProcessedData)
+	BroadcastMessageDeleted(channelID string, data MessageDeletedData)
 	BroadcastChannelCreated(parentChannelID, channelID string)
 	BroadcastChannelDeleted(channelID string)
 	BroadcastAgentInstanceRegistered(channelID string, data AgentInstanceEventData)
@@ -33,6 +34,11 @@ type MessageEventData struct {
 // MessagesProcessedData is the payload for messages.processed events.
 type MessagesProcessedData struct {
 	MsgIDs []string `json:"msg_ids"`
+}
+
+// MessageDeletedData is the payload for message.deleted events.
+type MessageDeletedData struct {
+	MsgID string `json:"msg_id"`
 }
 
 // MessageStreamingData is the payload for message.streaming events (partial bot response).

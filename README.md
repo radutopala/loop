@@ -962,9 +962,9 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 - **Browser** — live Chrome screencast via WebSocket, click/type/navigate directly in the browser pane. Two panel types: Docker Browser (headless container) and Host Browser (local Chrome via CDP), mutually exclusive per layout
 - **Playground** — live interactive sandbox where agents generate HTML/CSS/JS and it renders in a sandboxed iframe. Multiple named playgrounds with two scopes: global (`~/.loop/playground/`, shared across channels) and project (`.loop/playground/` in the channel's working directory). Multi-instance panels, hot-reloads on updates, console capture, import maps, multi-file support with relative imports. Agents use `playground` + `playground_file` MCP tools
 - **Settings** — schema-driven config form with typed controls (toggles, dropdowns, number inputs, password fields, arrays, key-value editors) plus a raw JSON editor, with Form/JSON toggle and unsaved changes confirmation
-- **Plan mode** — run agents in read-only preview mode (`--permission-mode plan`)
+- **Plan mode** — run agents in read-only preview mode via Claude Code's `EnterPlanMode` tool
 - **Agent activity** — see model info, tool use, and completion summaries in the chat view
-- **Message queue** — processing indicators and trigger quote showing which message is being handled, with timestamp
+- **Message queue** — processing indicators and trigger quote showing which message is being handled, with timestamp. A collapsible popup above the input surfaces waiting messages and lets you remove them from the queue before the agent picks them up
 
 ### Platforms
 

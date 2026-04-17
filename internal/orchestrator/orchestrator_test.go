@@ -154,6 +154,10 @@ func (m *MockEventBroadcaster) BroadcastMessagesProcessed(channelID string, data
 	m.Called(channelID, data)
 }
 
+func (m *MockEventBroadcaster) BroadcastMessageDeleted(channelID string, data events.MessageDeletedData) {
+	m.Called(channelID, data)
+}
+
 func (m *MockEventBroadcaster) BroadcastMessageStreaming(channelID string, data events.MessageStreamingData) {
 	m.Called(channelID, data)
 }
@@ -2010,6 +2014,35 @@ func (s *OrchestratorSuite) TestHandleMessageRunCanceledByStopButton() {
 	s.bot.AssertCalled(s.T(), "SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out.Content == "Run stopped."
 	}))
+}
+
+func (s *OrchestratorSuite) TestHandleMessageQueuedMessageDeletedBeforeDispatch() {
+	msg := &bot.IncomingMessage{
+		ChannelID:    "ch1",
+		GuildID:      "g1",
+		AuthorName:   "Alice",
+		Content:      "hello",
+		MessageID:    "msg-deleted",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+
+	// recent has history but does NOT contain msg-deleted — simulates the case
+	// where the user deleted the queued message while it was waiting.
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{
+		{ID: 10, ChannelID: "ch1", MsgID: "other-1", Content: "prior", CreatedAt: time.Now().UTC()},
+	}, nil)
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	// Runner must NOT be invoked for a deleted message.
+	s.runner.AssertNotCalled(s.T(), "Run", mock.Anything, mock.Anything)
+	// SendStopButton must NOT be called — the guard aborts before the button appears.
+	s.bot.AssertNotCalled(s.T(), "SendStopButton", mock.Anything, mock.Anything, mock.Anything)
 }
 
 // --- Readme interaction tests ---

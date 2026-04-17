@@ -160,6 +160,24 @@ Partial bot response during streaming. The client should update the in-progress 
 
 ---
 
+### `message.deleted`
+
+A queued user message was removed from the channel's message queue via `DELETE /api/messages/{id}`. Emitted only when the delete actually removed a row (the query is scoped to `is_bot = 0 AND is_processed = 0`, so bot replies and already-processed history can never trigger it).
+
+**Payload schema:**
+
+```json
+{
+  "msg_id": "discord_msg_id_or_internal_id"
+}
+```
+
+| Field    | Type   | Description |
+|----------|--------|-------------|
+| `msg_id` | string | Platform-specific message ID of the deleted message |
+
+---
+
 ### `agent.status`
 
 Agent lifecycle status change (running, completed, errored).
@@ -522,6 +540,7 @@ Individual node lifecycle events within a workflow run.
 | `BroadcastMessageCreated` | `message.created` | `MessageEventData` | Channel |
 | `BroadcastMessageStreaming` | `message.streaming` | `MessageStreamingData` | Channel |
 | `BroadcastMessagesProcessed` | `messages.processed` | `MessagesProcessedData` | Channel |
+| `BroadcastMessageDeleted` | `message.deleted` | `MessageDeletedData` | Channel |
 | `BroadcastAgentStatus` | `agent.status` | `AgentStatusEventData` | Channel (global when `ThreadID` is set) |
 | `BroadcastToolUse` | `tool.use` | `ToolUseEventData` | Channel |
 | `BroadcastAgentActivity` | `agent.activity` | `AgentActivityEventData` | Channel |

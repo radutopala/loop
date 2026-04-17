@@ -484,6 +484,46 @@ func (s *StoreSuite) TestMarkMessagesProcessedEmpty() {
 	require.NoError(s.T(), err)
 }
 
+func (s *StoreSuite) TestDeleteQueuedMessage() {
+	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id = \? AND msg_id = \? AND is_bot = 0 AND is_processed = 0`).
+		WithArgs("ch1", "msg-queued").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	ok, err := s.store.DeleteQueuedMessage(context.Background(), "ch1", "msg-queued")
+	require.NoError(s.T(), err)
+	require.True(s.T(), ok)
+}
+
+func (s *StoreSuite) TestDeleteQueuedMessageNotFound() {
+	s.mock.ExpectExec(`DELETE FROM messages`).
+		WithArgs("ch1", "missing").
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	ok, err := s.store.DeleteQueuedMessage(context.Background(), "ch1", "missing")
+	require.NoError(s.T(), err)
+	require.False(s.T(), ok)
+}
+
+func (s *StoreSuite) TestDeleteQueuedMessageExecError() {
+	s.mock.ExpectExec(`DELETE FROM messages`).
+		WithArgs("ch1", "msg1").
+		WillReturnError(sql.ErrConnDone)
+
+	ok, err := s.store.DeleteQueuedMessage(context.Background(), "ch1", "msg1")
+	require.Error(s.T(), err)
+	require.False(s.T(), ok)
+}
+
+func (s *StoreSuite) TestDeleteQueuedMessageRowsAffectedError() {
+	s.mock.ExpectExec(`DELETE FROM messages`).
+		WithArgs("ch1", "msg1").
+		WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
+
+	ok, err := s.store.DeleteQueuedMessage(context.Background(), "ch1", "msg1")
+	require.Error(s.T(), err)
+	require.False(s.T(), ok)
+}
+
 func (s *StoreSuite) TestGetRecentMessages() {
 	now := time.Now().UTC()
 	rows := newMockMessageRows().

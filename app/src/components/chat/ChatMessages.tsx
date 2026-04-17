@@ -7,6 +7,7 @@ import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
 import { ContextMenu } from "../shared/ContextMenu";
 import type { MenuItem } from "../shared/ContextMenu";
+import { QueuedMessagesPopup } from "./QueuedMessagesPopup";
 
 function buildMessageStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
   return {
@@ -169,6 +170,8 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   const unprocessedUserMsgs = messages.filter((m) => !m.is_bot && !m.is_processed);
   const firstUnprocessedUserMsgId = unprocessedUserMsgs[0]?.msg_id ?? null;
   const hasQueuedMessages = unprocessedUserMsgs.length > 1;
+  // Messages waiting behind the currently-processing one; deletable from the popup.
+  const queuedMessages = unprocessedUserMsgs.slice(1);
 
   // Track whether we ever had queued messages in this batch, so the trigger
   // quote persists even when processing the last message of a multi-message batch.
@@ -222,6 +225,9 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
       </div>
       {todos && (
         <TodoChecklist todos={todos.todos} />
+      )}
+      {queuedMessages.length > 0 && (
+        <QueuedMessagesPopup messages={queuedMessages} channelId={channelId} />
       )}
     </>
   );

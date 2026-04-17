@@ -231,6 +231,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("POST /api/channels/create", s.srv.handleCreateChannel)
 	s.mux.HandleFunc("POST /api/channels/ensure-all", s.srv.handleEnsureAllChannels)
 	s.mux.HandleFunc("POST /api/messages", s.srv.handleSendMessage)
+	s.mux.HandleFunc("DELETE /api/messages/{id}", s.srv.handleDeleteQueuedMessage)
 	s.mux.HandleFunc("POST /api/threads", s.srv.handleCreateThread)
 	s.mux.HandleFunc("DELETE /api/threads/{id}", s.srv.handleDeleteThread)
 	s.mux.HandleFunc("DELETE /api/channels/{id}", s.srv.handleDeleteChannel)
@@ -438,6 +439,7 @@ func (s *ServerSuite) TestNilDependencyReturns501() {
 		{"DeleteThread", "DELETE", "DELETE /api/threads/{id}", "/api/threads/thread-1", ""},
 		{"SearchChannels", "GET", "GET /api/channels", "/api/channels", ""},
 		{"SendMessage", "POST", "POST /api/messages", "/api/messages", `{"channel_id":"ch-1","content":"hello"}`},
+		{"DeleteQueuedMessage", "DELETE", "DELETE /api/messages/{id}", "/api/messages/msg-1?channel_id=ch-1", ""},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
@@ -457,6 +459,8 @@ func (s *ServerSuite) TestNilDependencyReturns501() {
 				mux.HandleFunc(tt.pattern, srv.handleSearchChannels)
 			case "SendMessage":
 				mux.HandleFunc(tt.pattern, srv.handleSendMessage)
+			case "DeleteQueuedMessage":
+				mux.HandleFunc(tt.pattern, srv.handleDeleteQueuedMessage)
 			}
 
 			var req *http.Request
@@ -2867,6 +2871,40 @@ func (s *ServerSuite) TestSendMessageNoInterrupt() {
 	handler.AssertExpectations(s.T())
 	// CancelActiveRun must NOT be called when interrupt is false/absent.
 	canceller.AssertNotCalled(s.T(), "CancelActiveRun")
+}
+
+func (s *ServerSuite) TestDeleteQueuedMessageSuccess() {
+	s.store.On("DeleteQueuedMessage", mock.Anything, "ch-1", "msg-queued").Return(true, nil)
+
+	hub := NewEventsHub(slog.Default())
+	s.srv.SetEventsHub(hub)
+	defer func() { s.srv.eventsHub = nil }()
+
+	rec := s.testRequest("DELETE", "/api/messages/msg-queued?channel_id=ch-1", "")
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestDeleteQueuedMessageMissingChannelID() {
+	rec := s.testRequest("DELETE", "/api/messages/msg-queued", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestDeleteQueuedMessageNotFound() {
+	s.store.On("DeleteQueuedMessage", mock.Anything, "ch-1", "missing").Return(false, nil)
+
+	rec := s.testRequest("DELETE", "/api/messages/missing?channel_id=ch-1", "")
+	require.Equal(s.T(), http.StatusNotFound, rec.Code)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestDeleteQueuedMessageError() {
+	s.store.On("DeleteQueuedMessage", mock.Anything, "ch-1", "msg-1").Return(false, errors.New("boom"))
+
+	rec := s.testRequest("DELETE", "/api/messages/msg-1?channel_id=ch-1", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	s.store.AssertExpectations(s.T())
 }
 
 func (s *ServerSuite) TestSetIncomingMessageHandler() {

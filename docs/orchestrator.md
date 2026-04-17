@@ -88,16 +88,25 @@ This is the core execution path:
 ```go
 func (o *Orchestrator) processTriggeredMessage(ctx, msg) {
     1. queue.Acquire(channelID)           // Block until channel slot is free
-    2. bot.SendStopButton(channelID)      // Send interactive stop button
-    3. defer queue.Release(channelID)     // Release slot on exit
-    4. defer activeRuns.Delete(channelID) // Clean up cancel func
-    5. defer bot.RemoveStopButton(...)    // Remove stop button
-    6. Start typing indicator goroutine   // Refreshes every 8 seconds
-    7. prepareAgentRequest(msg)           // Fetch recent messages, build request
-    8. executeAgentRun(msg, req)          // Run agent in container
-    9. deliverResponse(msg, resp)         // Send response, store, mark processed
+    2. defer queue.Release(channelID)     // Release slot on exit
+    3. prepareAgentRequest(msg)           // Fetch recent messages, build request
+    4. Race guard: if msg was deleted     // Abort before any side effects
+       from the queue while waiting,
+       return early
+    5. bot.SendStopButton(channelID)      // Send interactive stop button
+    6. defer bot.RemoveStopButton(...)    // Remove stop button
+    7. defer activeRuns.Delete(channelID) // Clean up cancel func
+    8. Start typing indicator goroutine   // Refreshes every 8 seconds
+    9. executeAgentRun(msg, req)          // Run agent in container
+   10. deliverResponse(msg, resp)         // Send response, store, mark processed
 }
 ```
+
+### Queued-message deletion race guard
+
+Between the moment a message is enqueued and the moment its goroutine wins the channel slot, the user may have deleted the message from the queue (via the popup above the chat input — see [Chat View - Queued Messages Popup](chat.md#queued-messages-popup)). The goroutine still holds the original `msg` in memory, so without a guard it would blindly run the agent against a message that no longer exists in the database.
+
+After `prepareAgentRequest` returns the `recent` slice, the orchestrator scans it for `msg.MessageID`. If at least one row in `recent` carries a `MsgID` but the trigger's `MsgID` is not among them, the message was deleted during the wait and `processTriggeredMessage` returns early — before sending the stop button, starting the typing indicator, or invoking the runner. The `hasAnyMsgID` check avoids false positives when `recent` is empty or when legacy rows lack `MsgID` values.
 
 ## Channel Queue
 
@@ -122,7 +131,7 @@ This prevents race conditions where multiple messages in rapid succession could 
 
 5. **Worktree parent** -- If the channel is a worktree thread (`Worktree: true`), look up the parent channel's `DirPath` and set `ParentDirPath` on the request. The runner uses this to mount the parent project directory so the container sees the main `.git` directory.
 
-6. **Plan mode** -- If the incoming message has `Mode: "plan"`, set `PlanMode: true` on the request, which passes `--permission-mode plan` to Claude CLI instead of `--dangerously-skip-permissions`.
+6. **Plan mode** -- If the incoming message has `Mode: "plan"`, set `PlanMode: true` on the request. This appends a system prompt instructing the agent to call `EnterPlanMode` before doing anything else; the tool flips the session's permission context to `plan`, and Claude Code's per-turn attachment loop then injects the full plan-mode instructions (with a computed `planFilePath` and read-only restrictions) on subsequent turns.
 
 ## Agent Execution
 
@@ -189,6 +198,7 @@ This prevents duplicate messages: without dedup, the user would see the last str
 For the Electron app, streaming events are broadcast via the `EventsHub`:
 
 - `message.created` -- New message (user or bot)
+- `message.deleted` -- A queued user message was removed from the queue (via `DELETE /api/messages/{id}`)
 - `agent.status` -- Status changes (running, completed, error) with metadata (duration, turns, model, run_id)
 - `tool.use` -- Tool invocations with name and input summary
 - `agent.activity` -- Model detection and subagent progress

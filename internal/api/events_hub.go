@@ -17,6 +17,7 @@ const (
 	EventMessageCreated            = "message.created"
 	EventMessageStreaming          = "message.streaming"
 	EventMessagesProcessed         = "messages.processed"
+	EventMessageDeleted            = "message.deleted"
 	EventAgentStatus               = "agent.status"
 	EventToolUse                   = "tool.use"
 	EventAgentActivity             = "agent.activity"
@@ -155,6 +156,15 @@ func (h *EventsHub) BroadcastMessageCreated(channelID string, data events.Messag
 func (h *EventsHub) BroadcastMessagesProcessed(channelID string, data events.MessagesProcessedData) {
 	h.Broadcast(Event{
 		Type:      EventMessagesProcessed,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastMessageDeleted sends a message.deleted event for a queued message that was removed.
+func (h *EventsHub) BroadcastMessageDeleted(channelID string, data events.MessageDeletedData) {
+	h.Broadcast(Event{
+		Type:      EventMessageDeleted,
 		ChannelID: channelID,
 		Data:      data,
 	})

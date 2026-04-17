@@ -264,6 +264,33 @@ Send a message to a channel. When an orchestrator is configured, routes through 
 
 ---
 
+### `DELETE /api/messages/{id}`
+
+Remove a waiting user message from a channel's queue before the orchestrator dispatches it.
+
+**Path Parameters:**
+
+| Param | Type   | Description |
+|-------|--------|-------------|
+| `id`  | string | `msg_id` of the message to delete (platform-specific message ID) |
+
+**Query Parameters:**
+
+| Param        | Type   | Required | Description |
+|--------------|--------|----------|-------------|
+| `channel_id` | string | yes      | Channel owning the message (`msg_id` is unique per channel, not globally) |
+
+**Response:** `204 No Content`
+
+**Behavior notes:**
+- Only deletes rows where `is_bot = 0 AND is_processed = 0` — bot replies and already-processed history can never be removed through this endpoint.
+- On success, broadcasts a [`message.deleted`](events.md#messagedeleted) WebSocket event so connected clients remove the message from their local state.
+- The orchestrator's `processTriggeredMessage` has a race guard that aborts before any side effects (stop button, typing indicator, agent run) if the trigger message is no longer present in the channel's recent history — see [Orchestrator - Queued-message deletion race guard](orchestrator.md#queued-message-deletion-race-guard).
+
+**Errors:** `400` if `channel_id` is missing. `404` if no matching deletable row exists (message missing, already processed, or is a bot message). `500` on database error. `501` if message deletion is not configured.
+
+---
+
 ### `GET /api/channels/{id}/sessions`
 
 List Claude Code session JSONL files for a channel's project directory.

@@ -159,6 +159,22 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *bot.Inc
 	o.queue.Acquire(msg.ChannelID)
 	defer o.queue.Release(msg.ChannelID)
 
+	req, recent, err := o.prepareAgentRequest(ctx, msg)
+	if err != nil {
+		return
+	}
+
+	// If the queued trigger message was deleted while waiting in the queue,
+	// skip dispatch. The DB row is gone and the frontend already removed it
+	// via the message.deleted WS event. Only trust MsgID-based matching when
+	// recent actually carries MsgIDs — otherwise the check can't distinguish
+	// deletion from legacy rows and we fall through.
+	if msg.MessageID != "" && hasAnyMsgID(recent) && !containsMsgID(recent, msg.MessageID) {
+		o.logger.Info("queued message deleted before dispatch; skipping run",
+			"channel_id", msg.ChannelID, "msg_id", msg.MessageID)
+		return
+	}
+
 	// Send stop button (non-fatal if it fails)
 	stopMsgID, stopErr := o.bot.SendStopButton(ctx, msg.ChannelID, msg.ChannelID)
 	if stopErr != nil {
@@ -177,11 +193,6 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *bot.Inc
 	defer stopTyping()
 	go o.refreshTyping(typingCtx, msg.ChannelID)
 
-	req, recent, err := o.prepareAgentRequest(ctx, msg)
-	if err != nil {
-		return
-	}
-
 	resp, lastStreamedText, runID, err := o.executeAgentRun(ctx, msg, req)
 	if err != nil {
 		// Mark the trigger message as processed even on error/stop so the
@@ -192,6 +203,26 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *bot.Inc
 	}
 
 	o.deliverResponse(ctx, msg, resp, recent, lastStreamedText, runID)
+}
+
+// containsMsgID reports whether any message in recent has the given MsgID.
+func containsMsgID(recent []*db.Message, msgID string) bool {
+	for _, m := range recent {
+		if m.MsgID == msgID {
+			return true
+		}
+	}
+	return false
+}
+
+// hasAnyMsgID reports whether any message in recent has a non-empty MsgID.
+func hasAnyMsgID(recent []*db.Message) bool {
+	for _, m := range recent {
+		if m.MsgID != "" {
+			return true
+		}
+	}
+	return false
 }
 
 // prepareAgentRequest fetches recent messages and channel data, then builds an AgentRequest.

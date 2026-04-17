@@ -53,7 +53,7 @@ export function useChatState(
 ): ChatState {
   const { initialState, onUnmount, subscribeChatEvents } = options ?? {};
 
-  const { messages, loading, loadMore, hasMore, addMessage, markProcessed } = useMessages(channelId);
+  const { messages, loading, loadMore, hasMore, addMessage, markProcessed, removeMessage } = useMessages(channelId);
   const [streamingContent, setStreamingContent] = useState<string | null>(initialState?.streamingContent ?? null);
   const [isRunning, setIsRunning] = useState(initialState?.isRunning ?? initialRunningBot ?? false);
   const [runId, setRunId] = useState<string | null>(initialState?.runId ?? null);
@@ -141,6 +141,11 @@ export function useChatState(
       if (event.type === "messages.processed") {
         const data = event.data as MessagesProcessedData;
         markProcessed(data.msg_ids);
+        return;
+      }
+      if (event.type === "message.deleted") {
+        const data = event.data as { msg_id: string };
+        removeMessage(data.msg_id);
         return;
       }
       if (event.type === "tool.use") {

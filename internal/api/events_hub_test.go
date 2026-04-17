@@ -538,6 +538,36 @@ func (s *EventsHubSuite) TestBroadcastMessagesProcessed() {
 	require.Equal(s.T(), "ch-1", evt.ChannelID)
 }
 
+func (s *EventsHubSuite) TestBroadcastMessageDeleted() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastMessageDeleted("ch-1", events.MessageDeletedData{MsgID: "msg-q"})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), "message.deleted", evt.Type)
+	require.Equal(s.T(), "ch-1", evt.ChannelID)
+}
+
 func (s *EventsHubSuite) TestBroadcastMarshalError() {
 	hub := NewEventsHub(testLogger())
 

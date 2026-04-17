@@ -60,6 +60,11 @@ func (m *MockStore) MarkMessagesProcessed(ctx context.Context, ids []int64) erro
 	return m.Called(ctx, ids).Error(0)
 }
 
+func (m *MockStore) DeleteQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error) {
+	args := m.Called(ctx, channelID, msgID)
+	return args.Bool(0), args.Error(1)
+}
+
 func (m *MockStore) GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*db.Message, error) {
 	args := m.Called(ctx, channelID, limit)
 	if args.Get(0) == nil {

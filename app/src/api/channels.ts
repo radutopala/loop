@@ -151,6 +151,15 @@ export async function sendMessage(
   if (!res.ok) throw new Error(`Failed to send message: ${res.statusText}`);
 }
 
+export async function deleteQueuedMessage(
+  channelId: string,
+  msgId: string,
+): Promise<void> {
+  const url = `${getApiUrl()}/api/messages/${encodeURIComponent(msgId)}?channel_id=${encodeURIComponent(channelId)}`;
+  const res = await fetch(url, { method: "DELETE" });
+  if (!res.ok) throw new Error(`Failed to delete queued message: ${res.statusText}`);
+}
+
 export async function sendCommand(
   channelId: string,
   command: string,

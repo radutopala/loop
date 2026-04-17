@@ -27,6 +27,7 @@ type Store interface {
 	ListChannelIDsByParentID(ctx context.Context, parentID string) ([]string, error)
 	InsertMessage(ctx context.Context, msg *Message) error
 	MarkMessagesProcessed(ctx context.Context, ids []int64) error
+	DeleteQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error)
 	GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*Message, error)
 	GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*Message, error)
 	SearchMessages(ctx context.Context, query string, limit int) ([]*Message, error)
@@ -333,6 +334,24 @@ func (s *SQLiteStore) MarkMessagesProcessed(ctx context.Context, ids []int64) er
 		}
 	}
 	return nil
+}
+
+// DeleteQueuedMessage removes a waiting (not-yet-processed, non-bot) user message
+// from the queue. Returns true when a row was deleted, false when no matching row
+// exists (already processed, wrong channel, bot message, or never existed).
+func (s *SQLiteStore) DeleteQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error) {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM messages WHERE channel_id = ? AND msg_id = ? AND is_bot = 0 AND is_processed = 0`,
+		channelID, msgID,
+	)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
 }
 
 func (s *SQLiteStore) GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*Message, error) {

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/events"
 )
 
 type sendMessageRequest struct {
@@ -51,6 +52,33 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	w.WriteHeader(http.StatusNoContent)
+}
+
+func (s *Server) handleDeleteQueuedMessage(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "message deletion not configured") {
+		return
+	}
+
+	msgID := r.PathValue("id")
+	channelID := strings.TrimSpace(r.URL.Query().Get("channel_id"))
+	if channelID == "" {
+		http.Error(w, "channel_id is required", http.StatusBadRequest)
+		return
+	}
+
+	deleted, err := s.store.DeleteQueuedMessage(r.Context(), channelID, msgID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !deleted {
+		http.Error(w, "not found or not deletable", http.StatusNotFound)
+		return
+	}
+	if s.eventsHub != nil {
+		s.eventsHub.BroadcastMessageDeleted(channelID, events.MessageDeletedData{MsgID: msgID})
+	}
 	w.WriteHeader(http.StatusNoContent)
 }
 

@@ -11,6 +11,7 @@ interface UseMessagesResult {
   hasMore: boolean;
   addMessage: (msg: Message) => void;
   markProcessed: (msgIds: string[]) => void;
+  removeMessage: (msgId: string) => void;
 }
 
 export function useMessages(channelId: string | null, aroundMessageId?: number | null): UseMessagesResult {
@@ -117,5 +118,12 @@ export function useMessages(channelId: string | null, aroundMessageId?: number |
     });
   }, []);
 
-  return { messages, loading, loadMore, hasMore, addMessage, markProcessed };
+  const removeMessage = useCallback((msgId: string) => {
+    setMessages((prev) => {
+      if (!prev.some((m) => m.msg_id === msgId)) return prev;
+      return prev.filter((m) => m.msg_id !== msgId);
+    });
+  }, []);
+
+  return { messages, loading, loadMore, hasMore, addMessage, markProcessed, removeMessage };
 }

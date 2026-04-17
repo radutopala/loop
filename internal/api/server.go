@@ -207,6 +207,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/channels/create", s.handleCreateChannel)
 	mux.HandleFunc("POST /api/channels/ensure-all", s.handleEnsureAllChannels)
 	mux.HandleFunc("POST /api/messages", s.handleSendMessage)
+	mux.HandleFunc("DELETE /api/messages/{id}", s.handleDeleteQueuedMessage)
 	mux.HandleFunc("POST /api/threads", s.handleCreateThread)
 	mux.HandleFunc("DELETE /api/threads/{id}", s.handleDeleteThread)
 	mux.HandleFunc("DELETE /api/channels/{id}", s.handleDeleteChannel)
