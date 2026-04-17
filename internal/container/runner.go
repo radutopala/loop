@@ -786,15 +786,12 @@ func (r *DockerRunner) buildContainerMounts(mounts []string, workDir, parentDirP
 
 // buildBaseClaudeCmd returns the common Claude CLI flags shared by both
 // batch and interactive modes.
-func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID string, forkSession, planMode bool, extraDirs []string) []string {
+func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID string, forkSession bool, extraDirs []string) []string {
 	cmd := []string{cfg.ClaudeBinPath, "--mcp-config", mcpConfigPath}
 	if cfg.ClaudeModel != "" {
 		cmd = append(cmd, "--model", cfg.ClaudeModel)
 	}
 	cmd = append(cmd, "--dangerously-skip-permissions")
-	if planMode {
-		cmd = append(cmd, "--permission-mode", "plan")
-	}
 	if sessionID != "" {
 		cmd = append(cmd, "--resume", sessionID)
 		if forkSession {
@@ -812,14 +809,25 @@ func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID st
 	return cmd
 }
 
+// planModePromptPrefix is prepended to the user's prompt when req.PlanMode is
+// true. Calling EnterPlanMode flips the session's permission context to
+// "plan", which causes Claude Code's per-turn attachment loop to inject the
+// full pair-planning prompt (with a computed planFilePath and read-only
+// restrictions) from the next turn onward.
+const planModePromptPrefix = "Call the EnterPlanMode tool before doing anything else, then follow the plan-mode instructions that follow.\n\n"
+
 // buildClaudeCmd assembles the Claude CLI command with all flags for batch mode.
 func buildClaudeCmd(cfg *config.Config, mcpConfigPath string, req *agent.AgentRequest) []string {
-	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.AgentID, req.ForkSession, req.PlanMode, cfg.ExtraDirs)
+	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, req.SessionID, req.AgentID, req.ForkSession, cfg.ExtraDirs)
 	cmd = append(cmd, "--print", "--verbose", "--output-format", "stream-json")
 	if req.SystemPrompt != "" {
 		cmd = append(cmd, "--append-system-prompt", req.SystemPrompt)
 	}
-	return append(cmd, req.BuildPrompt())
+	prompt := req.BuildPrompt()
+	if req.PlanMode {
+		prompt = planModePromptPrefix + prompt
+	}
+	return append(cmd, prompt)
 }
 
 // mcpConfigPathForAgent returns the MCP config file path. When agentID is set,
@@ -835,7 +843,7 @@ func mcpConfigPathForAgent(workDir, channelID, agentID string) string {
 // terminal sessions (no --print, --verbose, --output-format flags).
 func BuildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID, agentID string, forkSession bool) string {
 	mcpConfigPath := mcpConfigPathForAgent(workDir, channelID, agentID)
-	return "CLAUDE_CODE_NO_FLICKER=1 " + strings.Join(buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, agentID, forkSession, false, cfg.ExtraDirs), " ")
+	return "CLAUDE_CODE_NO_FLICKER=1 " + strings.Join(buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, agentID, forkSession, cfg.ExtraDirs), " ")
 }
 
 // ClaudeCmdBuilder builds the interactive Claude command for terminal sessions.

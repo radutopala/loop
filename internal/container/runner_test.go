@@ -3138,24 +3138,19 @@ func (s *RunnerSuite) TestBuildInteractiveClaudeCmdWithAgentID() {
 	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1-agent-0.json --dangerously-skip-permissions --dangerously-load-development-channels server:loop", got)
 }
 
-func (s *RunnerSuite) TestBuildBaseClaudeCmdPlanMode() {
+func (s *RunnerSuite) TestBuildBaseClaudeCmdFlags() {
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 
-	// Without plan mode: should contain --dangerously-skip-permissions but not --permission-mode.
-	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, false, nil)
+	// Baseline: --dangerously-skip-permissions, no --permission-mode,
+	// no --dangerously-load-development-channels.
+	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, nil)
 	got := strings.Join(cmd, " ")
 	require.Contains(s.T(), got, "--dangerously-skip-permissions")
 	require.NotContains(s.T(), got, "--permission-mode")
 	require.NotContains(s.T(), got, "--dangerously-load-development-channels")
 
-	// With plan mode: should contain both --dangerously-skip-permissions and --permission-mode plan.
-	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, true, nil)
-	got = strings.Join(cmd, " ")
-	require.Contains(s.T(), got, "--dangerously-skip-permissions")
-	require.Contains(s.T(), got, "--permission-mode plan")
-
-	// With agent ID: should contain --dangerously-load-development-channels server:loop.
-	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "agent-0", false, false, nil)
+	// With agent ID: --dangerously-load-development-channels server:loop is added.
+	cmd = buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "agent-0", false, nil)
 	got = strings.Join(cmd, " ")
 	require.Contains(s.T(), got, "--dangerously-load-development-channels server:loop")
 }
@@ -3163,7 +3158,8 @@ func (s *RunnerSuite) TestBuildBaseClaudeCmdPlanMode() {
 func (s *RunnerSuite) TestBuildClaudeCmdPlanMode() {
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 
-	// Without plan mode.
+	// Without plan mode: no --append-system-prompt, no --permission-mode, no
+	// plan-mode prefix on the prompt — the last argument is the raw prompt.
 	req := &agent.AgentRequest{
 		ChannelID: "ch-1",
 		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
@@ -3172,13 +3168,32 @@ func (s *RunnerSuite) TestBuildClaudeCmdPlanMode() {
 	got := strings.Join(cmd, " ")
 	require.Contains(s.T(), got, "--dangerously-skip-permissions")
 	require.NotContains(s.T(), got, "--permission-mode")
+	require.NotContains(s.T(), got, "--append-system-prompt")
+	require.NotContains(s.T(), got, "EnterPlanMode")
+	require.Equal(s.T(), "user: hello\n", cmd[len(cmd)-1])
 
-	// With plan mode.
+	// With plan mode: the prompt is prefixed with the EnterPlanMode instruction;
+	// no --append-system-prompt, no --permission-mode plan — EnterPlanMode
+	// flips the session state, which triggers the harness's own plan-mode
+	// attachment injection.
 	req.PlanMode = true
 	cmd = buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
 	got = strings.Join(cmd, " ")
 	require.Contains(s.T(), got, "--dangerously-skip-permissions")
-	require.Contains(s.T(), got, "--permission-mode plan")
+	require.NotContains(s.T(), got, "--permission-mode")
+	require.NotContains(s.T(), got, "--append-system-prompt")
+	promptArg := cmd[len(cmd)-1]
+	require.True(s.T(), strings.HasPrefix(promptArg, "Call the EnterPlanMode tool"),
+		"prompt should be prefixed with EnterPlanMode instruction, got: %q", promptArg)
+	require.Contains(s.T(), promptArg, "user: hello")
+
+	// Plan mode does not interfere with an explicit system prompt — it still
+	// flows through --append-system-prompt unchanged.
+	req.SystemPrompt = "Existing rules."
+	cmd = buildClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", req)
+	got = strings.Join(cmd, " ")
+	require.Contains(s.T(), got, "--append-system-prompt Existing rules.")
+	require.True(s.T(), strings.HasPrefix(cmd[len(cmd)-1], "Call the EnterPlanMode tool"))
 }
 
 func (s *RunnerSuite) TestClaudeCmdBuilder() {
@@ -3578,7 +3593,7 @@ func (s *RunnerSuite) TestBuildBaseClaudeCmdWithExtraDirs() {
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 	extraDirs := []string{"/home/user/lib", "/home/user/common"}
 
-	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, false, extraDirs)
+	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, extraDirs)
 	got := strings.Join(cmd, " ")
 
 	require.Contains(s.T(), got, "--add-dir /home/user/lib")
@@ -3588,7 +3603,7 @@ func (s *RunnerSuite) TestBuildBaseClaudeCmdWithExtraDirs() {
 func (s *RunnerSuite) TestBuildBaseClaudeCmdNoExtraDirs() {
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 
-	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, false, nil)
+	cmd := buildBaseClaudeCmd(cfg, "/work/.loop/mcp-ch-1.json", "", "", false, nil)
 	got := strings.Join(cmd, " ")
 
 	require.NotContains(s.T(), got, "--add-dir")
