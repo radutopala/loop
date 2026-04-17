@@ -215,6 +215,7 @@ declare global {
       downloadUpdate?: () => Promise<void>;
       installUpdate?: () => Promise<void>;
       onUpdateStatus?: (callback: (status: UpdateStatus) => void) => void;
+      notifyTurnEnd?: () => void;
     };
   }
 }

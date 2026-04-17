@@ -607,6 +607,16 @@ app.on("activate", () => {
   }
 });
 
+ipcMain.on("turn-ended", () => {
+  const wins = BrowserWindow.getAllWindows();
+  if (wins.some((w) => w.isFocused())) return;
+  if (process.platform === "darwin") {
+    app.dock?.bounce("informational");
+  } else {
+    for (const w of wins) w.flashFrame(true);
+  }
+});
+
 ipcMain.handle("get-update-status", () => updateStatus);
 
 ipcMain.handle("download-update", async () => {

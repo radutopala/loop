@@ -210,6 +210,7 @@ export function useChatStateStore({
                 : `Error: ${data.error ?? "unknown"}`;
             new Notification(`Loop — ${name}`, { body });
           }
+          window.loopAPI?.notifyTurnEnd?.();
         }
       }
 
