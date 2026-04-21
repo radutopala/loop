@@ -43,7 +43,7 @@ Exactly one of these should be set. OAuth takes precedence if both are provided.
 | Field | Type | Default | Description |
 |---|---|---|---|
 | `claude_bin_path` | `string` | `"claude"` | Path to the Claude CLI binary inside containers. |
-| `claude_model` | `string` | `""` | Claude model to use. Defaults to Sonnet. Options: `"claude-opus-4-6"`, `"claude-sonnet-4-6"`. |
+| `claude_model` | `string` | `"claude-sonnet-4-6"` | Claude model to use. Options: `"claude-opus-4-7"`, `"claude-opus-4-6[1m]"`, `"claude-opus-4-6"`, `"claude-sonnet-4-6"`. |
 | `streaming_enabled` | `bool` | `true` | Stream intermediate Claude turns to chat as they happen. |
 | `keep_mcp_configs` | `bool` | `false` | When true, preserves MCP config JSON files after container runs. Useful for debugging MCP server configuration. |
 

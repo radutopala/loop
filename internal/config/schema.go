@@ -52,7 +52,7 @@ func buildSchema() *ConfigSchema {
 				Title:       "Model",
 				Description: "Claude model override",
 				Enum:        []any{"", "claude-opus-4-7", "claude-opus-4-6[1m]", "claude-opus-4-6", "claude-sonnet-4-6"},
-				Default:     "claude-opus-4-7",
+				Default:     "claude-sonnet-4-6",
 				XSection:    "Claude",
 				XOrder:      1,
 			},

@@ -348,7 +348,7 @@ This does four things:
 | `browser.chrome_image` | `"loop-chrome:latest"` | Docker image for Chrome sidecar containers |
 | `browser.host_cdp_port` | `9222` | CDP port for Host mode (requires `chrome://inspect/#remote-debugging` in Chrome) |
 | `poll_interval_sec` | `30` | Task scheduler poll interval |
-| `claude_model` | `""` | Override Claude model (e.g. `"claude-sonnet-4-6"`) |
+| `claude_model` | `"claude-sonnet-4-6"` | Override Claude model (e.g. `"claude-opus-4-7"`) |
 | `claude_bin_path` | `"claude"` | Path to Claude Code binary |
 | `mounts` | `[]` | Host directories to mount into containers |
 | `copy_files` | `["~/.claude.json"]` | Files copied (not mounted) into each container |
