@@ -8,6 +8,7 @@ import (
 	"net/url"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+	"github.com/radutopala/loop/internal/config"
 )
 
 // registerWorkflowTools adds workflow-related MCP tools to the server.
@@ -285,9 +286,9 @@ func (s *Server) handleRetryWorkflowRunMCP(_ context.Context, _ *mcp.CallToolReq
 }
 
 type saveWorkflowInput struct {
-	Action   string         `json:"action" jsonschema:"required,Action: 'add' (create new) or 'update' (modify existing)"`
-	Workflow map[string]any `json:"workflow" jsonschema:"required,Full workflow definition with name, description, and nodes"`
-	Scope    string         `json:"scope,omitempty" jsonschema:"Storage scope: 'global' (default) or 'project'. Requires channel context for project scope."`
+	Action   string             `json:"action" jsonschema:"required,Action: 'add' (create new) or 'update' (modify existing)"`
+	Workflow config.WorkflowDef `json:"workflow" jsonschema:"required,Full workflow definition with name, description, inputs, and nodes"`
+	Scope    string             `json:"scope,omitempty" jsonschema:"Storage scope: 'global' (default) or 'project'. Requires channel context for project scope."`
 }
 
 func (s *Server) handleSaveWorkflow(_ context.Context, _ *mcp.CallToolRequest, input saveWorkflowInput) (*mcp.CallToolResult, any, error) {
@@ -319,7 +320,7 @@ func (s *Server) handleSaveWorkflow(_ context.Context, _ *mcp.CallToolRequest, i
 		return errResult, nil, err
 	}
 
-	name, _ := input.Workflow["name"].(string)
+	name := input.Workflow.Name
 	scope := "global"
 	if input.Scope == "project" {
 		scope = "project"

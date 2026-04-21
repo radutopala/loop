@@ -55,35 +55,35 @@ const (
 
 // WorkflowInput defines a workflow input parameter.
 type WorkflowInput struct {
-	Description string `json:"description"`
-	Required    bool   `json:"required,omitempty"`
-	Default     string `json:"default,omitempty"`
+	Description string `json:"description" jsonschema:"Human-readable description of the input parameter"`
+	Required    bool   `json:"required,omitempty" jsonschema:"If true, the workflow cannot start without this input"`
+	Default     string `json:"default,omitempty" jsonschema:"Default value when the input is not provided"`
 }
 
 // RetryConfig controls per-node retry behavior.
 type RetryConfig struct {
-	MaxRetries  int    `json:"max_retries"`
-	BackoffBase string `json:"backoff_base,omitempty"` // Go duration, e.g. "5s"
-	BackoffMax  string `json:"backoff_max,omitempty"`  // Go duration, e.g. "5m"
+	MaxRetries  int    `json:"max_retries" jsonschema:"Maximum number of retry attempts after the first failure"`
+	BackoffBase string `json:"backoff_base,omitempty" jsonschema:"Base backoff duration (Go time.Duration e.g. '5s'); retries double from this up to backoff_max"`
+	BackoffMax  string `json:"backoff_max,omitempty" jsonschema:"Maximum backoff duration between retries (Go time.Duration e.g. '5m')"`
 }
 
 // NodeDef defines a single node in a workflow DAG.
 type NodeDef struct {
-	ID            string       `json:"id"`
-	Type          NodeType     `json:"type"`
-	DependsOn     []string     `json:"depends_on,omitempty"`
-	When          string       `json:"when,omitempty"`
-	TriggerRule   string       `json:"trigger_rule,omitempty"` // "all_success", "all_done", "one_success"
-	Prompt        string       `json:"prompt,omitempty"`
-	PromptPath    string       `json:"prompt_path,omitempty"`
-	SystemPrompt  string       `json:"system_prompt,omitempty"`
-	Model         string       `json:"model,omitempty"`
-	Script        string       `json:"script,omitempty"`
-	MaxIterations int          `json:"max_iterations,omitempty"`
-	Condition     string       `json:"condition,omitempty"`
-	Message       string       `json:"message,omitempty"`
-	Timeout       string       `json:"timeout,omitempty"` // Go duration
-	Retry         *RetryConfig `json:"retry,omitempty"`
+	ID            string       `json:"id" jsonschema:"required,Unique node identifier within the workflow"`
+	Type          NodeType     `json:"type" jsonschema:"required,Node type: 'prompt' (AI agent), 'bash' (shell script), 'loop' (prompt repeated until condition), or 'approval' (human decision)"`
+	DependsOn     []string     `json:"depends_on,omitempty" jsonschema:"IDs of nodes that must complete before this one starts"`
+	When          string       `json:"when,omitempty" jsonschema:"Go template expression; node is skipped when it renders 'false'"`
+	TriggerRule   string       `json:"trigger_rule,omitempty" jsonschema:"How dependencies gate this node: 'all_success' (default), 'all_done', or 'one_success'"`
+	Prompt        string       `json:"prompt,omitempty" jsonschema:"Inline prompt text for 'prompt'/'loop' nodes. Supports Go text/template. Mutually exclusive with prompt_path."`
+	PromptPath    string       `json:"prompt_path,omitempty" jsonschema:"Path to a prompt file, resolved as {loopDir}/workflows/{prompt_path}. Mutually exclusive with prompt."`
+	SystemPrompt  string       `json:"system_prompt,omitempty" jsonschema:"Optional system prompt for 'prompt' nodes; supports templates"`
+	Model         string       `json:"model,omitempty" jsonschema:"Optional Claude model override (e.g. 'claude-sonnet-4-6')"`
+	Script        string       `json:"script,omitempty" jsonschema:"Shell command(s) for 'bash' nodes, passed to /bin/sh -c. Any sh-compatible content works: a one-liner, a multi-line script, pipelines, heredocs. To execute a script file on disk, just invoke it (e.g. 'bash workflows/build.sh') — the bash container shares the same mounts as agent containers. Supports Go text/template rendering against workflow inputs and upstream node outputs."`
+	MaxIterations int          `json:"max_iterations,omitempty" jsonschema:"Maximum iterations for 'loop' nodes (default 10)"`
+	Condition     string       `json:"condition,omitempty" jsonschema:"Go template evaluated after each 'loop' iteration; stops when it renders 'true'"`
+	Message       string       `json:"message,omitempty" jsonschema:"Approval message shown to the human for 'approval' nodes; supports templates"`
+	Timeout       string       `json:"timeout,omitempty" jsonschema:"Per-node timeout as a Go time.Duration (e.g. '5m'). For 'approval' nodes: deadline for human response."`
+	Retry         *RetryConfig `json:"retry,omitempty" jsonschema:"Optional retry policy for transient failures"`
 }
 
 // ResolvePrompt returns the prompt text for the node.
@@ -102,11 +102,11 @@ type WorkflowConcurrency struct {
 
 // WorkflowDef defines a declarative workflow as a DAG of nodes.
 type WorkflowDef struct {
-	Name        string                   `json:"name"`
-	Description string                   `json:"description"`
-	Timeout     string                   `json:"timeout,omitempty"` // Go duration (e.g. "30m"); caps entire DAG execution
-	Inputs      map[string]WorkflowInput `json:"inputs,omitempty"`
-	Nodes       []NodeDef                `json:"nodes"`
+	Name        string                   `json:"name" jsonschema:"required,Workflow name (unique within its scope)"`
+	Description string                   `json:"description,omitempty" jsonschema:"Human-readable description of what the workflow does"`
+	Timeout     string                   `json:"timeout,omitempty" jsonschema:"Optional whole-DAG timeout as a Go time.Duration (e.g. '30m')"`
+	Inputs      map[string]WorkflowInput `json:"inputs,omitempty" jsonschema:"Named input parameters the workflow expects at run time"`
+	Nodes       []NodeDef                `json:"nodes" jsonschema:"required,Ordered list of DAG nodes; execution order is derived from depends_on"`
 }
 
 // PromptShortcut defines a reusable prompt that auto-sends in the chat UI.

@@ -109,7 +109,7 @@ Runs a shell script in a Docker container using the same mounts and environment 
 
 | Field | Description |
 |---|---|
-| `script` | Template-rendered shell script executed via `/bin/sh -c` |
+| `script` | Shell command(s) passed to `/bin/sh -c`. Accepts any sh-compatible content — a one-liner, multi-line scripts, pipelines, heredocs. To execute a script file on disk, just invoke it (e.g. `bash workflows/build.sh`); the bash container shares the same mounts as agent containers. Supports Go `text/template` rendering against workflow inputs and upstream node outputs. |
 
 Stdout becomes the node output. A non-zero exit code fails the node.
 

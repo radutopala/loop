@@ -2,6 +2,7 @@ package mcpserver
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"testing"
@@ -568,6 +569,32 @@ func (s *WorkflowsSuite) TestResumeWorkflowRunErrors() {
 }
 
 // --- save_workflow ---
+
+func (s *WorkflowsSuite) TestSaveWorkflowAdvertisedSchemaIncludesNodeFields() {
+	res, err := s.session.ListTools(s.ctx, nil)
+	require.NoError(s.T(), err)
+
+	var saveTool *mcp.Tool
+	for _, tool := range res.Tools {
+		if tool.Name == "save_workflow" {
+			saveTool = tool
+			break
+		}
+	}
+	require.NotNil(s.T(), saveTool, "save_workflow tool missing")
+	require.NotNil(s.T(), saveTool.InputSchema)
+
+	// Re-serialize to JSON so we can do string-based assertions without
+	// traversing the nested schema struct by hand.
+	raw, err := json.Marshal(saveTool.InputSchema)
+	require.NoError(s.T(), err)
+	schema := string(raw)
+
+	require.Contains(s.T(), schema, `"script"`)
+	require.Contains(s.T(), schema, `"prompt"`)
+	require.Contains(s.T(), schema, `"prompt_path"`)
+	require.Contains(s.T(), schema, `"depends_on"`)
+}
 
 func (s *WorkflowsSuite) TestSaveWorkflowAddSuccess() {
 	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {

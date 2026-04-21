@@ -256,7 +256,7 @@ Shortcuts appear in the chat input when the user types `#`. Selecting a shortcut
 | `prompt` | `string` | Prompt text for `prompt`/`loop` nodes. Supports Go `text/template`. Mutually exclusive with `prompt_path`. |
 | `prompt_path` | `string` | Path to a prompt file, resolved as `{loopDir}/workflows/{prompt_path}`. Mutually exclusive with `prompt`. |
 | `system_prompt` | `string` | Optional system prompt for `prompt` nodes. Supports templates. |
-| `script` | `string` | Shell script for `bash` nodes. Supports templates. |
+| `script` | `string` | Shell command(s) for `bash` nodes, passed to `/bin/sh -c`. Any sh-compatible content — one-liners, multi-line scripts, pipelines, heredocs. To run a script file on disk, just invoke it (e.g. `bash workflows/build.sh`); the bash container shares the same mounts as agent containers. Supports templates. |
 | `max_iterations` | `int` | Max iterations for `loop` nodes (default: 10). |
 | `condition` | `string` | Template for `loop` nodes; stops when it renders `"true"`. |
 | `message` | `string` | Approval message for `approval` nodes. Supports templates. |
