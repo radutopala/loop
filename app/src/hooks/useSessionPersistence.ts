@@ -30,6 +30,8 @@ export function useSessionPersistence(
   claudeSessionId?: string,
   /** Start a fresh session, ignoring the channel's stored session. */
   newSession?: boolean,
+  /** Explicit command to run instead of the interactive Claude bootstrap. */
+  cmd?: string[],
 ) {
   const key = channelId ? sessionKey(channelId, target, instanceId) : null;
   const sessionIdRef = useRef<string | null>(
@@ -77,10 +79,10 @@ export function useSessionPersistence(
         );
       } else if (channelId && !killedRef.current) {
         const size = getTerminalSizeRef?.current?.();
-        ws.send(JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...size }));
+        ws.send(JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...(cmd && cmd.length > 0 ? { cmd } : {}), ...size }));
       }
     },
-    [channelId, target, instanceId, claudeSessionId, newSession, getTerminalSizeRef],
+    [channelId, target, instanceId, claudeSessionId, newSession, cmd, getTerminalSizeRef],
   );
 
   return { sessionIdRef, killedRef, setSessionId, handleOpen, markKilled, getStartTime };

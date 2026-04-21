@@ -1273,7 +1273,7 @@ List active agents for a channel.
 ```json
 [
   {
-    "agent_id": "agent-0",
+    "agent_id": "docker-agent-0",
     "channel_id": "ch-1",
     "session_id": "sid-abc",
     "name": "Worker",
@@ -1327,7 +1327,7 @@ Unregister an agent from the registry. Called by the MCP server on graceful shut
 
 | Param | Type   | Description |
 |-------|--------|-------------|
-| `id`  | string | Agent ID (e.g. `"agent-0"`) |
+| `id`  | string | Agent ID (e.g. `"docker-agent-0"`) |
 
 **Query Parameters:**
 
@@ -1352,7 +1352,7 @@ Send a push message to an agent's mailbox.
 ```json
 {
   "channel_id": "ch-1",
-  "from_agent_id": "agent-0",
+  "from_agent_id": "docker-agent-0",
   "content": "I finished the API, you can start tests"
 }
 ```
@@ -1383,7 +1383,7 @@ Messages are forwarded as JSON:
 
 ```json
 {
-  "from_agent_id": "agent-0",
+  "from_agent_id": "docker-agent-0",
   "content": "task completed",
   "timestamp": "2026-03-25T10:05:00Z"
 }

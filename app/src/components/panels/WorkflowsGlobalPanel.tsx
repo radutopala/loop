@@ -35,7 +35,7 @@ export const WorkflowsGlobalPanel = forwardRef<WorkflowsGlobalPanelHandle, Workf
   ) {
     const { colors, fontSizes } = useTheme();
     const wf = useWorkflowState({
-      channelId: channel?.id,
+      channelId: undefined,
       initialListWidth: 380,
       listWidthMin: 240,
       listWidthMax: 600,

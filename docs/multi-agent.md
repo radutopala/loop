@@ -8,11 +8,11 @@ Multiple agents share one Docker container per channel (each runs as a separate 
 
 ```
 Channel "my-project" → 1 Docker container
-  ├── chat:    batch run → claude (Chat pane, AgentID "chat")
-  ├── agent-0: docker exec → bash → claude (Swarm/Canvas pane)
-  ├── agent-1: docker exec → bash → claude (Swarm/Canvas pane)
-  ├── agent-2: docker exec → bash → claude (Swarm/Canvas pane)
-  └── agent-3: docker exec → bash → claude (Swarm/Canvas pane)
+  ├── chat:             batch run → claude (Chat pane, AgentID "chat")
+  ├── docker-agent-0:   docker exec → bash → claude (Swarm/Canvas pane)
+  ├── docker-agent-1:   docker exec → bash → claude (Swarm/Canvas pane)
+  ├── docker-agent-2:   docker exec → bash → claude (Swarm/Canvas pane)
+  └── docker-agent-3:   docker exec → bash → claude (Swarm/Canvas pane)
 ```
 
 The chat agent registers as AgentID `"chat"` so all 5 agents (1 chat + 4 terminal) can discover each other and communicate via MCP Channels.
@@ -37,7 +37,7 @@ The backend tracks active agents per channel in an in-memory registry (`internal
 
 ```go
 type AgentInfo struct {
-    AgentID     string    // matches terminal pane ID, e.g. "agent-0"
+    AgentID     string    // matches terminal pane ID, e.g. "docker-agent-0"
     ChannelID   string
     SessionID   string    // terminal session ID
     Name        string    // user-assigned or auto-generated
@@ -108,13 +108,13 @@ The MCP server declares `capabilities.experimental["claude/channel"]` during ini
 
 ```
 Agent A calls send_agent_message tool
-  → HTTP POST /api/agents/agent-1/message
-  → Backend pushes to agent-1's mailbox channel
+  → HTTP POST /api/agents/docker-agent-1/message
+  → Backend pushes to docker-agent-1's mailbox channel
   → Agent B's MCP server reads from WebSocket (startPushReceiver)
   → channelTransport.WriteNotification() writes to stdout:
     {"jsonrpc":"2.0","method":"notifications/claude/channel",
-     "params":{"content":"...","meta":{"from_agent":"agent-0"}}}
-  → Claude B sees: <channel source="loop" from_agent="agent-0">message</channel>
+     "params":{"content":"...","meta":{"from_agent":"docker-agent-0"}}}
+  → Claude B sees: <channel source="loop" from_agent="docker-agent-0">message</channel>
 ```
 
 ### Push Receiver Resilience

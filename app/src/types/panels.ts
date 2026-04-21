@@ -1,7 +1,7 @@
 // Panel types: chat/editor/memory/git are singletons (max 1 each).
 // docker-browser/host-browser are mutually exclusive (only one browser type per layout).
-// agent/shell/playground are multi-instance (multiple allowed, distinguished by id).
-export type PanelType = "chat" | "editor" | "memory" | "git" | "agent" | "shell" | "docker-browser" | "host-browser" | "sessions" | "playground" | "notes" | "tasks" | "kanban" | "workflows";
+// docker-agent/host-shell/docker-shell/playground are multi-instance (multiple allowed, distinguished by id).
+export type PanelType = "chat" | "editor" | "memory" | "git" | "docker-agent" | "host-shell" | "docker-shell" | "docker-browser" | "host-browser" | "sessions" | "playground" | "notes" | "tasks" | "kanban" | "workflows";
 export const SINGLETON_PANELS: PanelType[] = ["chat", "editor", "memory", "git", "docker-browser", "host-browser", "sessions", "notes", "tasks", "kanban", "workflows"];
 
 /** Panels that exclude each other -- if one is present, the others in the same group are blocked. */
@@ -18,8 +18,9 @@ export const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "editor", label: "Editor" },
   { panel: "memory", label: "Memory" },
   { panel: "git", label: "Git" },
-  { panel: "agent", label: "Agent" },
-  { panel: "shell", label: "Shell" },
+  { panel: "docker-agent", label: "Docker Agent" },
+  { panel: "host-shell", label: "Host Shell" },
+  { panel: "docker-shell", label: "Docker Shell" },
   { panel: "docker-browser", label: "Docker Browser" },
   { panel: "host-browser", label: "Host Browser" },
   { panel: "sessions", label: "Sessions" },
@@ -37,7 +38,7 @@ export const PANEL_LABELS: Record<PanelType, string> = Object.fromEntries(
 
 export interface LeafNode {
   type: "leaf";
-  id: string;       // unique per leaf (e.g. "chat", "editor", "agent-0", "shell-1")
+  id: string;       // unique per leaf (e.g. "chat", "editor", "docker-agent-0", "host-shell-1")
   panel: PanelType; // determines what component to render
   flex: number;
 }

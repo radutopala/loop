@@ -223,12 +223,12 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   const computeAgentState = useCallback((): AgentState => {
     const current = treeRef.current;
     if (!current) return "none";
-    const terminalLeaves = collectLeaves(current).filter((l) => l.panel === "agent" || l.panel === "shell");
+    const terminalLeaves = collectLeaves(current).filter((l) => l.panel === "docker-agent" || l.panel === "host-shell" || l.panel === "docker-shell");
     if (terminalLeaves.length === 0) return "none";
     const terminalStatuses = [...statusMapRef.current.entries()]
       .filter(([leafId]) => {
         const p = findLeafById(current, leafId)?.panel;
-        return p === "agent" || p === "shell";
+        return p === "docker-agent" || p === "host-shell" || p === "docker-shell";
       });
     if (terminalStatuses.length === 0) return "running"; // terminal leaves exist but no status yet
     const allDead = terminalStatuses.every(([, s]) => s === "completed" || s === "failed");
@@ -376,8 +376,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       const current = treeRef.current;
       if (current) {
         for (const leaf of collectLeaves(current)) {
-          if (leaf.panel === "agent" || leaf.panel === "shell") {
-            const target = leaf.panel === "agent" ? "agent" : "host";
+          if (leaf.panel === "docker-agent" || leaf.panel === "host-shell" || leaf.panel === "docker-shell") {
+            const target = leaf.panel === "host-shell" ? "host" : "agent";
             const closeKey = `${target}:${channelId}:${leaf.id}`;
             getCloseForInstance(closeKey)?.();
           }
@@ -433,9 +433,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       const current = treeRef.current;
       if (!current) return;
       const leaf = findLeafById(current, id);
-      const wasAgent = leaf?.panel === "agent";
-      if (leaf && (leaf.panel === "agent" || leaf.panel === "shell")) {
-        const target = leaf.panel === "agent" ? "agent" : "host";
+      const wasAgent = leaf?.panel === "docker-agent";
+      if (leaf && (leaf.panel === "docker-agent" || leaf.panel === "host-shell" || leaf.panel === "docker-shell")) {
+        const target = leaf.panel === "host-shell" ? "host" : "agent";
         const closeKey = `${target}:${channelId}:${id}`;
         getCloseForInstance(closeKey)?.();
       }
@@ -491,8 +491,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     const current = treeRef.current;
     if (current) {
       for (const leaf of collectLeaves(current)) {
-        if (leaf.panel === "agent" || leaf.panel === "shell") {
-          const target = leaf.panel === "agent" ? "agent" : "host";
+        if (leaf.panel === "docker-agent" || leaf.panel === "host-shell" || leaf.panel === "docker-shell") {
+          const target = leaf.panel === "host-shell" ? "host" : "agent";
           const closeKey = `${target}:${channelId}:${leaf.id}`;
           getCloseForInstance(closeKey)?.();
         }
@@ -514,8 +514,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     const current = treeRef.current;
     if (current) {
       for (const leaf of collectLeaves(current)) {
-        if (leaf.panel === "agent" || leaf.panel === "shell") {
-          const target = leaf.panel === "agent" ? "agent" : "host";
+        if (leaf.panel === "docker-agent" || leaf.panel === "host-shell" || leaf.panel === "docker-shell") {
+          const target = leaf.panel === "host-shell" ? "host" : "agent";
           const closeKey = `${target}:${channelId}:${leaf.id}`;
           getCloseForInstance(closeKey)?.();
         }
@@ -604,9 +604,9 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               onClose={() => handleRemoveLeaf(leaf.id)}
             />
           );
-        case "agent":
+        case "docker-agent":
           return (
-            <div key={`layout-agent-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", backgroundColor: colors.sidebar }}>
+            <div key={`layout-docker-agent-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", backgroundColor: colors.sidebar }}>
               <Terminal
                 channelId={channelId}
                 target="agent"
@@ -617,12 +617,26 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               />
             </div>
           );
-        case "shell":
+        case "host-shell":
           return (
-            <div key={`layout-shell-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", backgroundColor: colors.sidebar }}>
+            <div key={`layout-host-shell-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", backgroundColor: colors.sidebar }}>
               <Terminal
                 channelId={channelId}
                 target="host"
+                instanceId={leaf.id}
+                hideActions
+                onStatusChange={onStatusChange}
+                onPaneStatus={(status) => handlePaneStatus(leaf.id, status)}
+              />
+            </div>
+          );
+        case "docker-shell":
+          return (
+            <div key={`layout-docker-shell-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", backgroundColor: colors.sidebar }}>
+              <Terminal
+                channelId={channelId}
+                target="agent"
+                cmd={["/bin/bash"]}
                 instanceId={leaf.id}
                 hideActions
                 onStatusChange={onStatusChange}
@@ -1036,7 +1050,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                   panel={leaf.panel}
                   usedSingletons={usedSingletons}
                   hiddenPanels={hiddenPanels}
-                  agentInfo={leaf.panel === "agent" ? agentInfoMap.get(leaf.id) : undefined}
+                  agentInfo={leaf.panel === "docker-agent" ? agentInfoMap.get(leaf.id) : undefined}
                   isMaximized
                   onRemove={() => { setMaximizedLeafId(null); handleRemoveLeaf(leaf.id); }}
                   onDrop={handleDrop}

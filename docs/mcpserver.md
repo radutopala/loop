@@ -105,7 +105,7 @@ When `--agent-id` is set, the server also:
 ```go
 server := mcpserver.New(channelID, apiURL, authorID, httpClient, logger,
     mcpserver.WithMemoryAPI(dirPath),       // optional: enables memory tools
-    mcpserver.WithAgentTools("agent-0"),    // optional: enables inter-agent tools
+    mcpserver.WithAgentTools("docker-agent-0"), // optional: enables inter-agent tools
     mcpserver.WithWorkflowAPI(),            // enables workflow tools (always added)
 )
 server.Run(ctx, transport)

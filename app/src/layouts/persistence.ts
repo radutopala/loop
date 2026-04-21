@@ -31,7 +31,7 @@ export const DEFAULT_LAYOUT_TYPES: Record<string, LayoutType> = {
 // ---------------------------------------------------------------------------
 
 /** Current schema version. Bump when adding a new migration. */
-const CURRENT_VERSION = 10;
+const CURRENT_VERSION = 11;
 
 /**
  * Each migration transforms a ChannelLayouts from version N-1 to N.
@@ -122,6 +122,13 @@ const migrations: Record<number, (ch: ChannelLayouts) => void> = {
 
   // v10: Add "Workflows" default layout (ensureDefaultLayouts handles insertion).
   10: () => {},
+
+  // v11: Rename panel keys "agent" → "docker-agent" and "shell" → "host-shell".
+  11: (ch) => {
+    for (const layout of Object.values(ch.layouts)) {
+      migrateAgentShellPanels(layout);
+    }
+  },
 };
 
 /** Run all pending migrations on a channel's layouts. Returns true if any ran. */
@@ -272,13 +279,13 @@ export function createDefaultLayouts(): ChannelLayouts {
     version: CURRENT_VERSION,
     layouts: {
       Chat: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "leaf", id: "git", panel: "git", flex: 50 }] },
-      Editor: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "split", direction: "vertical", flex: 65, children: [{ type: "leaf", id: "editor", panel: "editor", flex: 70 }, { type: "leaf", id: "shell-0", panel: "shell", flex: 30 }] }, { type: "leaf", id: "chat", panel: "chat", flex: 35 }] },
+      Editor: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "split", direction: "vertical", flex: 65, children: [{ type: "leaf", id: "editor", panel: "editor", flex: 70 }, { type: "leaf", id: "host-shell-0", panel: "host-shell", flex: 30 }] }, { type: "leaf", id: "chat", panel: "chat", flex: 35 }] },
       Memory: { type: "leaf", id: "memory", panel: "memory", flex: 1 },
       Git: { type: "leaf", id: "git", panel: "git", flex: 1 },
       "Browser Chat": { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "split", direction: "vertical", flex: 50, children: [{ type: "leaf", id: "docker-browser", panel: "docker-browser", flex: 70 }, { type: "leaf", id: "git", panel: "git", flex: 30 }] }] },
       Sessions: { type: "leaf", id: "sessions", panel: "sessions", flex: 1 },
-      Swarm: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "agent-0", panel: "agent", flex: 40 }, { type: "split", direction: "vertical", flex: 60, children: [{ type: "leaf", id: "agent-1", panel: "agent", flex: 1 }, { type: "leaf", id: "agent-2", panel: "agent", flex: 1 }] }] },
-      Canvas: { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [{ id: "agent-0", panel: "agent", x: 0, y: 0, width: 550, height: 800, zIndex: 0 }, { id: "agent-1", panel: "agent", x: 570, y: 0, width: 500, height: 390, zIndex: 0 }, { id: "agent-2", panel: "agent", x: 570, y: 410, width: 500, height: 390, zIndex: 0 }, { id: "git", panel: "git", x: 1090, y: 0, width: 600, height: 400, zIndex: 0 }, { id: "playground", panel: "playground", x: 1090, y: 420, width: 600, height: 380, zIndex: 0 }, { id: "memory", panel: "memory", x: 1710, y: 0, width: 800, height: 800, zIndex: 0 }] },
+      Swarm: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "docker-agent-0", panel: "docker-agent", flex: 40 }, { type: "split", direction: "vertical", flex: 60, children: [{ type: "leaf", id: "docker-agent-1", panel: "docker-agent", flex: 1 }, { type: "leaf", id: "docker-agent-2", panel: "docker-agent", flex: 1 }] }] },
+      Canvas: { type: "canvas", viewport: { x: 0, y: 0, zoom: 1 }, tiles: [{ id: "docker-agent-0", panel: "docker-agent", x: 0, y: 0, width: 550, height: 800, zIndex: 0 }, { id: "docker-agent-1", panel: "docker-agent", x: 570, y: 0, width: 500, height: 390, zIndex: 0 }, { id: "docker-agent-2", panel: "docker-agent", x: 570, y: 410, width: 500, height: 390, zIndex: 0 }, { id: "git", panel: "git", x: 1090, y: 0, width: 600, height: 400, zIndex: 0 }, { id: "playground", panel: "playground", x: 1090, y: 420, width: 600, height: 380, zIndex: 0 }, { id: "memory", panel: "memory", x: 1710, y: 0, width: 800, height: 800, zIndex: 0 }] },
       Playground: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 40 }, { type: "leaf", id: "playground", panel: "playground", flex: 60 }] },
       Kanban: { type: "leaf", id: "kanban", panel: "kanban", flex: 1 },
       Workflows: { type: "leaf", id: "workflows", panel: "workflows", flex: 1 },
@@ -407,6 +414,37 @@ function migrateBrowserPanel(node: any): void {
   if (Array.isArray(node.children)) {
     for (const child of node.children) {
       migrateBrowserPanel(child);
+    }
+  }
+}
+
+/** Recursively rename panel keys "agent" → "docker-agent" and "shell" → "host-shell". */
+function migrateAgentShellPanels(node: any): void {
+  if (!node) return;
+  const renameEntry = (entry: { panel?: string; id?: string }) => {
+    if (entry.panel === "agent") {
+      entry.panel = "docker-agent";
+      if (typeof entry.id === "string" && entry.id.startsWith("agent-")) {
+        entry.id = `docker-${entry.id}`;
+      }
+    } else if (entry.panel === "shell") {
+      entry.panel = "host-shell";
+      if (typeof entry.id === "string" && entry.id.startsWith("shell-")) {
+        entry.id = `host-${entry.id}`;
+      }
+    }
+  };
+  if (node.type === "leaf") {
+    renameEntry(node);
+  }
+  if (node.type === "canvas" && Array.isArray(node.tiles)) {
+    for (const tile of node.tiles) {
+      renameEntry(tile);
+    }
+  }
+  if (Array.isArray(node.children)) {
+    for (const child of node.children) {
+      migrateAgentShellPanels(child);
     }
   }
 }

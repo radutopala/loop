@@ -46,7 +46,7 @@ export function CanvasTile({ tile, renderLeaf, agentInfo, onMove, onResize, onBr
     return () => document.removeEventListener("mousedown", handler);
   }, [showAddMenu]);
 
-  const isAgent = tile.panel === "agent";
+  const isAgent = tile.panel === "docker-agent";
   const label = isAgent ? (agentInfo?.name || tile.id) : PANEL_LABELS[tile.panel];
 
   // --- Drag (reports deltas in world coords) ---

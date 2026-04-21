@@ -282,7 +282,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, onCanvasChange,
             <CanvasTile
               tile={tile}
               renderLeaf={renderLeaf}
-              agentInfo={tile.panel === "agent" ? agentInfoMap?.get(tile.id) : undefined}
+              agentInfo={tile.panel === "docker-agent" ? agentInfoMap?.get(tile.id) : undefined}
               onMove={handleMoveTile}
               onResize={handleResizeTile}
               onBringToFront={handleBringToFront}
@@ -375,8 +375,9 @@ const PANEL_COLORS: Record<PanelType, string> = {
   editor: "#a78bfa",
   memory: "#34d399",
   git: "#fbbf24",
-  agent: "#f87171",
-  shell: "#94a3b8",
+  "docker-agent": "#f87171",
+  "host-shell": "#94a3b8",
+  "docker-shell": "#64748b",
   "docker-browser": "#fb923c",
   "host-browser": "#38bdf8",
   sessions: "#c084fc",

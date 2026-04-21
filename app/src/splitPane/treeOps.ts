@@ -148,6 +148,6 @@ export function canAddPanel(tree: PaneNode | null, panel: PanelType): boolean {
 }
 
 export function hasAgentLeaf(node: PaneNode): boolean {
-  if (node.type === "leaf") return node.panel === "agent";
+  if (node.type === "leaf") return node.panel === "docker-agent" || node.panel === "docker-shell";
   return node.children.some(hasAgentLeaf);
 }

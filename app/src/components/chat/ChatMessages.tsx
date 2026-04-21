@@ -211,7 +211,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
           {askUserQuestions && !isRunning && channelId && (
             <AskUserQuestionCard questions={askUserQuestions.questions} channelId={channelId} onSent={() => { chatState.clearAskUser(); scrollToBottom(); }} />
           )}
-          {exitPlanRequest && !isRunning && channelId && (
+          {exitPlanRequest && !askUserQuestions && !isRunning && channelId && (
             <ExitPlanCard plan={exitPlanRequest} channelId={channelId} setMode={chatState.setMode} onSent={() => { chatState.clearExitPlan(); scrollToBottom(); }} />
           )}
           {streamingContent && (

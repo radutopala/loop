@@ -53,7 +53,7 @@ A terminal node that renders a single panel.
 ```typescript
 interface LeafNode {
   type: "leaf";
-  id: string;        // unique identifier (e.g., "chat", "editor", "agent-0", "shell-1")
+  id: string;        // unique identifier (e.g., "chat", "editor", "docker-agent-0", "host-shell-1")
   panel: PanelType;  // determines which component to render
   flex: number;       // relative size weight within parent split
 }
@@ -92,14 +92,17 @@ interface SplitNode {
 | Kanban | `kanban` | `"kanban"` | Yes | Ticket board with status columns (see [kanban.md](kanban.md)) |
 | Workflows | `workflows` | `"workflows"` | Yes | DAG workflow runs with interactive graph visualization (see [workflows.md](workflows.md)) |
 | Playground | `playground` | `"playground-N"` | No | Live interactive code sandbox (HTML/CSS/JS) |
-| Agent | `agent` | `"agent-N"` | No | Docker-isolated terminal session |
-| Shell | `shell` | `"shell-N"` | No | Local machine shell session |
+| Docker Agent | `docker-agent` | `"docker-agent-N"` | No | Docker-isolated terminal running Claude Code |
+| Host Shell | `host-shell` | `"host-shell-N"` | No | Local machine shell session |
+| Docker Shell | `docker-shell` | `"docker-shell-N"` | No | Plain bash shell inside the Docker container (no Claude) |
 
 **Singleton panels** (chat, editor, memory, git, docker-browser, host-browser, sessions, notes, tasks, kanban, workflows) can appear at most once in a layout tree. The `canAddPanel()` function enforces this: if the panel type is in `SINGLETON_PANELS` and already present in the tree, the add operation is rejected.
 
 **Channel-only panels**: The Sessions and Kanban panels are only available for channels (not threads or worktrees). Their tabs are hidden from the layout tab bar when viewing a thread or worktree.
 
-**Multi-instance panels** (agent, shell, playground) can appear multiple times. Each instance gets a unique numbered ID (e.g., `agent-0`, `shell-1`, `playground-0`) from a per-channel counter.
+**Multi-instance panels** (docker-agent, host-shell, docker-shell, playground) can appear multiple times. Each instance gets a unique numbered ID (e.g., `docker-agent-0`, `host-shell-1`, `docker-shell-0`, `playground-0`) from a per-channel counter.
+
+**Docker Agent vs Docker Shell**: Both connect to the same docker container (`target: "agent"`), so files and processes are shared. Docker Agent launches Claude Code on connect; Docker Shell sends `cmd: ["/bin/bash"]` to bypass the Claude bootstrap and land on a plain bash prompt. Either pane type keeps the container alive — `hasAgentLeaf()` returns true for both.
 
 **Exclusive panels** are singleton panels that are mutually exclusive -- only one from each exclusive group can exist in a layout at a time. If one is present, the others in the same group are greyed out and disabled in the split menu.
 
@@ -124,12 +127,12 @@ Default layouts are created for every new channel:
 | Name | Structure | Notes |
 |------|-----------|-------|
 | **Chat** | Horizontal split: Chat (50%) + Git (50%) | |
-| **Editor** | Horizontal split: (Editor + Shell stacked, 65%) + Chat (35%) | |
+| **Editor** | Horizontal split: (Editor + Host Shell stacked, 65%) + Chat (35%) | |
 | **Memory** | Single leaf: Memory | |
 | **Git** | Single leaf: Git | |
 | **Browser Chat** | Horizontal split: Chat (50%) + (Docker Browser + Git stacked) | |
 | **Sessions** | Single leaf: Sessions | Channels only — hidden for threads |
-| **Swarm** | Three Agent panels in a split | |
+| **Swarm** | Three Docker Agent panels in a split | |
 
 The "Chat" layout is the initial active layout.
 
@@ -156,7 +159,7 @@ All layout state is stored in `localStorage` under the key `loop-workspace-layou
 
 ```typescript
 Record<channelId, {
-  version: number;                   // migration version (current: 8)
+  version: number;                   // migration version (current: 11)
   active: string;                    // name of the active layout
   layouts: Record<string, PaneNode>; // layout name -> tree (split layouts)
   order: string[];                   // tab display order
@@ -176,11 +179,14 @@ const migrations: Record<number, (data: ChannelData) => ChannelData> = {
   1: removeDefaultLayout,
   2: renameBrowserToBrowserChat,
   3: addTypesMap,
-  4: migrateBrowserToDockerBrowser, // "browser" panel type -> "docker-browser"
+  4: migrateBrowserToDockerBrowser,   // "browser" panel type -> "docker-browser"
   5: addSessionsLayout,
-  6: updateEditorLayout,            // Editor + Shell + Chat pane
+  6: updateEditorLayout,              // Editor + Host Shell + Chat pane
   7: addPlaygroundLayout,
-  8: renameDiffToGit,               // "Diff" tab -> "Git", panel:"diff" -> "git"
+  8: renameDiffToGit,                 // "Diff" tab -> "Git", panel:"diff" -> "git"
+  9: addKanbanLayout,
+  10: addWorkflowsLayout,
+  11: renameAgentShellPanels,         // panel:"agent" -> "docker-agent", "shell" -> "host-shell" (rewrites leaf IDs too)
 };
 ```
 
@@ -249,11 +255,11 @@ All operations are immutable -- they return new tree objects.
 | `collectLeaves` | `(node) -> LeafNode[]` | Flatten all leaves in the tree |
 | `leafCount` | `(node) -> number` | Count total leaves |
 | `canAddPanel` | `(tree, panel) -> boolean` | Check singleton and exclusive constraints |
-| `hasAgentLeaf` | `(node) -> boolean` | Check if any leaf has `panel === "agent"` |
+| `hasAgentLeaf` | `(node) -> boolean` | Check if any leaf has `panel === "docker-agent"` or `panel === "docker-shell"` (either keeps the container alive) |
 
 ### Panel ID Allocation
 
-Multi-instance panels (agent, shell) get IDs from a per-channel counter stored in `idCounters` (a `Map<string, number>`). The counter key is `layout-<channelId>`. When loading a layout from storage, `initIdCounter()` scans all leaf IDs to set the counter above the maximum existing numeric suffix.
+Multi-instance panels (docker-agent, host-shell, docker-shell, playground) get IDs from a per-channel counter stored in `idCounters` (a `Map<string, number>`). The counter key is `layout-<channelId>`. When loading a layout from storage, `initIdCounter()` scans all leaf IDs to set the counter above the maximum existing numeric suffix.
 
 Singleton panels always use their panel type as the ID (e.g., `"chat"`, `"editor"`).
 

@@ -130,7 +130,7 @@ function PaneTree({ node, path, usedSingletons, renderLeaf, agentInfoMap, minimi
           usedSingletons={usedSingletons}
           isMinimized={isMinimized}
           hiddenPanels={hiddenPanels}
-          agentInfo={node.panel === "agent" ? agentInfoMap?.get(node.id) : undefined}
+          agentInfo={node.panel === "docker-agent" ? agentInfoMap?.get(node.id) : undefined}
           onRemove={() => onRemoveLeaf(node.id)}
           onDrop={onDrop}
           onSplitLeaf={onSplitLeaf}

@@ -55,7 +55,7 @@ interface PaneLeafHeaderProps {
 
 export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, isMinimized, hiddenPanels, agentInfo, onRemove, onDrop, onSplitLeaf, onToggleMaximize, onToggleMinimize }: PaneLeafHeaderProps) {
   const { colors } = useTheme();
-  const isAgent = panel === "agent";
+  const isAgent = panel === "docker-agent";
   const label = isAgent ? (agentInfo?.name || leafId) : PANEL_LABELS[panel];
 
   const btnStyle = buildBtnStyle(colors);
@@ -118,7 +118,7 @@ export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, isM
           borderRadius: 3,
           fontSize: 10,
           fontWeight: 500,
-          color: isAgent ? colors.active : panel === "shell" ? colors.textDim : colors.textLight,
+          color: isAgent ? colors.active : panel === "host-shell" ? colors.textDim : colors.textLight,
           backgroundColor: isAgent ? colors.dirSelectedBg : colors.panelLabelBg,
         }}
       >

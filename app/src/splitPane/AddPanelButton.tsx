@@ -26,16 +26,23 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
       <polyline points="19 12 12 19 5 12" />
     </svg>
   ),
-  agent: (
+  "docker-agent": (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <rect x="4" y="4" width="16" height="16" rx="2" />
       <path d="M9 9h6M9 13h4" />
     </svg>
   ),
-  shell: (
+  "host-shell": (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <polyline points="4 17 10 11 4 5" />
       <line x1="12" y1="19" x2="20" y2="19" />
+    </svg>
+  ),
+  "docker-shell": (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <rect x="3" y="3" width="18" height="18" rx="2" />
+      <polyline points="7 15 11 11 7 7" />
+      <line x1="13" y1="15" x2="17" y2="15" />
     </svg>
   ),
   "docker-browser": (
@@ -105,8 +112,9 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   editor: "Browse and edit files",
   memory: "Agent memory explorer",
   git: "Git diff viewer",
-  agent: "Docker isolated terminal",
-  shell: "Local machine shell",
+  "docker-agent": "Docker isolated terminal",
+  "host-shell": "Local machine shell",
+  "docker-shell": "Shell inside the Docker container",
   "docker-browser": "Browser in Docker container",
   "host-browser": "Browser on host machine",
   sessions: "Browse and resume Claude sessions",
