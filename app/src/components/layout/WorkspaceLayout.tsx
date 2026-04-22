@@ -936,7 +936,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
         {(agentState === "running" || channel.container_running) && (
           <button
             onClick={handleKillAgents}
-            title="Kill agent containers"
+            title="Stop all shells and container"
             style={{
               background: "none",
               border: `1px solid ${colors.error}`,
@@ -954,7 +954,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             onMouseEnter={(e) => { e.currentTarget.style.backgroundColor = colors.error; e.currentTarget.style.color = colors.textLight; }}
             onMouseLeave={(e) => { e.currentTarget.style.backgroundColor = "transparent"; e.currentTarget.style.color = colors.error; }}
           >
-            Kill
+            Stop
           </button>
         )}
         {(hasMissingDefaults || isDefaultLayout) && <div style={{ position: "relative" }}>

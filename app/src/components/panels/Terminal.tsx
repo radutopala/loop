@@ -5,6 +5,7 @@ import { useTerminalWs } from "../../hooks/useTerminalWs";
 import { useElapsedTimer } from "../../hooks/useElapsedTimer";
 import { useXTerminal } from "../../hooks/useXTerminal";
 import { TerminalToolbar } from "./TerminalToolbar";
+import { PaneHeaderStatus } from "./PaneHeaderStatus";
 
 /** Module-level registry so TerminalPanes can call sendClose for a specific instance. */
 const closeRegistry = new Map<string, () => void>();
@@ -153,14 +154,18 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
 
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden" }}>
-      <TerminalToolbar
-        status={status}
-        elapsed={elapsed}
-        onKill={hideActions ? undefined : sendKill}
-        onRestart={hideActions ? undefined : handleRestart}
-        killLabel={target === "host" ? "Close" : "Kill"}
-        killTitle={target === "host" ? "Close shell session" : "Kill session and remove container"}
-      />
+      {hideActions && instanceId ? (
+        <PaneHeaderStatus leafId={instanceId} status={status} elapsed={elapsed} />
+      ) : (
+        <TerminalToolbar
+          status={status}
+          elapsed={elapsed}
+          onKill={sendKill}
+          onRestart={handleRestart}
+          killLabel={target === "host" ? "Close" : "Stop"}
+          killTitle={target === "host" ? "Close shell session" : "Stop container and end session"}
+        />
+      )}
       <div style={{ flex: 1, position: "relative", overflow: "hidden", minHeight: 0 }}>
         <div style={{ padding: "8px 0 8px 12px", width: "100%", height: "100%", boxSizing: "border-box" }}>
           <div ref={terminalRef} style={{ width: "100%", height: "100%" }} />

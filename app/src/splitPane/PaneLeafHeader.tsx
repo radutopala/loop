@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { SplitDirection, DropPosition } from "./types";
 import { SINGLETON_PANELS, EXCLUSIVE_PANELS, PANEL_OPTIONS, PANEL_LABELS, type PanelType } from "../types/panels";
 import { emitLayoutDragStart, emitLayoutDragEnd, DRAG_MIME } from "./DropZoneOverlay";
@@ -190,6 +191,7 @@ export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, isM
         </svg>
       </button>
       <div style={{ flex: 1 }} />
+      <div id={`pane-header-slot-${leafId}`} style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }} />
     </div>
   );
 }
@@ -197,7 +199,9 @@ export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, isM
 function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf, hiddenPanels }: { leafId: string; usedSingletons: Set<PanelType>; onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void; hiddenPanels?: PanelType[] }) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number }>({ top: 0, left: 0 });
 
   const btnStyle = buildBtnStyle(colors);
   const menuItemStyle = buildMenuItemStyle(colors);
@@ -217,18 +221,28 @@ function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf, hiddenPanels }: { 
     e.currentTarget.style.backgroundColor = "transparent";
   };
 
+  useLayoutEffect(() => {
+    if (!open || !btnRef.current) return;
+    const r = btnRef.current.getBoundingClientRect();
+    setMenuPos({ top: r.bottom + 2, left: r.left });
+  }, [open]);
+
   useEffect(() => {
     if (!open) return;
     const handler = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false);
+      const target = e.target as Node;
+      if (btnRef.current?.contains(target)) return;
+      if (menuRef.current?.contains(target)) return;
+      setOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
   }, [open]);
 
   return (
-    <div ref={ref} style={{ position: "relative" }}>
+    <>
       <button
+        ref={btnRef}
         onClick={() => setOpen((v) => !v)}
         title="Add panel"
         style={btnStyle}
@@ -240,18 +254,17 @@ function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf, hiddenPanels }: { 
           <line x1="5" y1="12" x2="19" y2="12" />
         </svg>
       </button>
-      {open && (
-        <div style={{
-          position: "absolute",
-          top: "100%",
-          left: 0,
-          zIndex: 100,
+      {open && createPortal(
+        <div ref={menuRef} style={{
+          position: "fixed",
+          top: menuPos.top,
+          left: menuPos.left,
+          zIndex: 1000,
           backgroundColor: colors.surface,
           border: `1px solid ${colors.border}`,
           borderRadius: 6,
           padding: 4,
           boxShadow: `0 4px 12px ${colors.shadow}`,
-          marginTop: 2,
           display: "grid",
           gridTemplateColumns: "auto auto",
           gap: 2,
@@ -286,8 +299,9 @@ function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf, hiddenPanels }: { 
               </>
             );
           })}
-        </div>
+        </div>,
+        document.body
       )}
-    </div>
+    </>
   );
 }

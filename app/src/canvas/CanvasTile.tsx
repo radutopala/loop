@@ -254,6 +254,7 @@ export function CanvasTile({ tile, renderLeaf, agentInfo, onMove, onResize, onBr
           ×
         </button>
         <div style={{ flex: 1 }} />
+        <div id={`pane-header-slot-${tile.id}`} style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }} />
       </div>
 
       {/* Content */}
