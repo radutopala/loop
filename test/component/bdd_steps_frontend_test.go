@@ -771,22 +771,9 @@ func (tc *TestContext) addPanel(panelName string) error {
 			// Wait a tick for React to render the dropdown.
 			return new Promise(resolve => {
 				setTimeout(() => {
-					// Find the dropdown: it's a position:absolute div near the button.
-					const parent = addBtn.closest('div[style*="position"]') || addBtn.parentElement;
-					if (!parent) { resolve("no parent container"); return; }
-					const dropdown = parent.querySelector('div[style*="position: absolute"]');
-					if (!dropdown) {
-						// Fallback: find any recently rendered absolute-positioned dropdown
-						const all = document.querySelectorAll('div[style*="position: absolute"]');
-						for (const d of all) {
-							const btn = Array.from(d.querySelectorAll('button')).find(
-								b => b.textContent.includes('%s')
-							);
-							if (btn) { btn.click(); resolve("ok"); return; }
-						}
-						resolve("no dropdown found");
-						return;
-					}
+					// The menu is portaled to document.body with data-testid="add-panel-menu".
+					const dropdown = document.querySelector('[data-testid="add-panel-menu"]');
+					if (!dropdown) { resolve("no dropdown found"); return; }
 					const btn = Array.from(dropdown.querySelectorAll('button')).find(
 						b => b.textContent.includes('%s')
 					);
@@ -795,7 +782,7 @@ func (tc *TestContext) addPanel(panelName string) error {
 				}, 300);
 			});
 		})()
-	`, panelName, panelName)
+	`, panelName)
 	var result string
 	if err := chromedp.Run(tc.chromeTab.ctx,
 		chromedp.Evaluate(js, &result, func(ep *runtime.EvaluateParams) *runtime.EvaluateParams {

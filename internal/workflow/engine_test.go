@@ -620,10 +620,14 @@ func (s *EngineSuite) TestBroadcasterEventsEmitted() {
 		s.T().Fatal("timeout waiting for run completion")
 	}
 
-	s.broadcaster.mu.Lock()
-	defer s.broadcaster.mu.Unlock()
 	// Expect: run_started, node_started, node_completed, run_completed = 4 events.
-	require.GreaterOrEqual(s.T(), len(s.broadcaster.events), 4)
+	// BroadcastWorkflowRunCompleted runs after the terminal UpdateWorkflowRun that
+	// unblocks `done`, so poll until all 4 are observed rather than reading once.
+	require.Eventually(s.T(), func() bool {
+		s.broadcaster.mu.Lock()
+		defer s.broadcaster.mu.Unlock()
+		return len(s.broadcaster.events) >= 4
+	}, 2*time.Second, 10*time.Millisecond)
 }
 
 func (s *EngineSuite) TestUnsupportedNodeType() {

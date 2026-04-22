@@ -255,7 +255,7 @@ function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf, hiddenPanels }: { 
         </svg>
       </button>
       {open && createPortal(
-        <div ref={menuRef} style={{
+        <div ref={menuRef} data-testid="add-panel-menu" style={{
           position: "fixed",
           top: menuPos.top,
           left: menuPos.left,

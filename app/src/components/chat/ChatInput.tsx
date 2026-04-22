@@ -317,7 +317,7 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
     await sendCommand(channelId, "stop");
   }, [channelId]);
 
-  const handleSend = useCallback(async () => {
+  const handleSend = useCallback(async (overrideMode?: SendMode) => {
     const trimmed = text.trim();
     if (!trimmed || sending) return;
     setSending(true);
@@ -329,7 +329,8 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
         }
       } else {
         const content = quotedMessage ? buildQuotePrefix(quotedMessage) + trimmed : trimmed;
-        const interrupt = effectiveIsRunning && sendMode === "interrupt";
+        const effectiveMode = overrideMode ?? sendMode;
+        const interrupt = effectiveIsRunning && effectiveMode === "interrupt";
         await sendMessage(channelId, content, mode, interrupt || undefined);
       }
       // Push to history.
@@ -587,10 +588,14 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
       }
       if (e.key === "Enter" && !e.shiftKey) {
         e.preventDefault();
-        handleSend();
+        if (e.metaKey || e.ctrlKey) {
+          handleSend(sendMode === "interrupt" ? "queue" : "interrupt");
+        } else {
+          handleSend();
+        }
       }
     },
-    [handleSend, text, channelId, showMention, acceptMention, showCommands, filteredCommands, cmdSelectedIdx, acceptCommand, showShortcuts, filteredShortcuts, shortcutSelectedIdx, acceptShortcut],
+    [handleSend, sendMode, text, channelId, showMention, acceptMention, showCommands, filteredCommands, cmdSelectedIdx, acceptCommand, showShortcuts, filteredShortcuts, shortcutSelectedIdx, acceptShortcut],
   );
 
   return (
@@ -674,7 +679,7 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
         value={text}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
-        placeholder={shortcuts.length > 0 ? "Ask Loop anything, / for commands, # for shortcuts" : "Ask Loop anything, / for commands"}
+        placeholder={`Ask Loop anything, / for commands${shortcuts.length > 0 ? ", # for shortcuts" : ""} — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter to ${sendMode === "interrupt" ? "queue" : "interrupt"}`}
         rows={3}
         disabled={sending}
       />
@@ -753,9 +758,9 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
               borderRadius: "8px 0 0 8px",
               opacity: text.trim() && !sending ? 1 : 0.4,
             }}
-            onClick={handleSend}
+            onClick={() => handleSend()}
             disabled={!text.trim() || sending}
-            title={sendMode === "interrupt" ? "Send (interrupt)" : "Send (queue)"}
+            title={`${sendMode === "interrupt" ? "Send (interrupt)" : "Send (queue)"} — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter to ${sendMode === "interrupt" ? "queue" : "interrupt"}`}
           >
             <svg width="14" height="14" viewBox="0 0 16 16" fill="none">
               <path d="M8 14V2M8 2L3 7M8 2L13 7" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"/>
@@ -783,7 +788,7 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
             letterSpacing: 0.3,
           }}
           onClick={() => setShowSendMenu(prev => !prev)}
-          title="Send mode"
+          title={`Send mode — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter sends with the other mode once`}
         >
           {sendMode === "interrupt" ? "INT" : "Q"}
           <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
@@ -832,6 +837,9 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
                   <span style={{ fontSize: 10, color: colors.textDim }}>{desc}</span>
                 </button>
               ))}
+              <div style={{ padding: "4px 8px 2px", fontSize: 10, color: colors.textDim, borderTop: `1px solid ${colors.border}`, marginTop: 2 }}>
+                {navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter flips mode for one send
+              </div>
             </div>
           </>
         )}
