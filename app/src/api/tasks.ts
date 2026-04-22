@@ -54,6 +54,8 @@ export async function createTask(data: {
   worktree?: boolean;
   origin_branch?: string;
   update_before_run?: boolean;
+  workflow_name?: string;
+  workflow_inputs?: string;
 }): Promise<{ id: number }> {
   const res = await fetch(`${getApiUrl()}/api/tasks`, {
     method: "POST",
@@ -75,6 +77,8 @@ export async function updateTask(
     worktree?: boolean;
     origin_branch?: string;
     update_before_run?: boolean;
+    workflow_name?: string;
+    workflow_inputs?: string;
   },
 ): Promise<void> {
   const res = await fetch(`${getApiUrl()}/api/tasks/${taskId}`, {

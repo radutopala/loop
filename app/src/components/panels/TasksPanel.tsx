@@ -8,8 +8,9 @@ import {
   deleteTask,
   fetchTaskRuns,
   runTaskNow,
+  fetchWorkflows,
 } from "../../api/loopApi";
-import type { ScheduledTask, TaskRunLog } from "../../api/loopApi";
+import type { ScheduledTask, TaskRunLog, WorkflowDef } from "../../api/loopApi";
 
 interface TasksPanelProps {
   channelId: string;
@@ -59,10 +60,16 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
   const [editing, setEditing] = useState(false);
   const draggingRef = useRef(false);
 
+  // Workflow definitions (loaded once for both create and edit forms).
+  const [workflows, setWorkflows] = useState<WorkflowDef[]>([]);
+
   // Create form state
   const [newSchedule, setNewSchedule] = useState("*/30 * * * *");
   const [newType, setNewType] = useState<"cron" | "interval" | "once">("cron");
+  const [newMode, setNewMode] = useState<"prompt" | "workflow">("prompt");
   const [newPrompt, setNewPrompt] = useState("");
+  const [newWorkflowName, setNewWorkflowName] = useState("");
+  const [newWorkflowInputs, setNewWorkflowInputs] = useState<Record<string, string>>({});
   const [newWorktree, setNewWorktree] = useState(false);
   const [newOriginBranch, setNewOriginBranch] = useState("");
   const [newUpdateBeforeRun, setNewUpdateBeforeRun] = useState(false);
@@ -71,7 +78,10 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
   // Edit form state
   const [editSchedule, setEditSchedule] = useState("");
   const [editType, setEditType] = useState<"cron" | "interval" | "once">("cron");
+  const [editMode, setEditMode] = useState<"prompt" | "workflow">("prompt");
   const [editPrompt, setEditPrompt] = useState("");
+  const [editWorkflowName, setEditWorkflowName] = useState("");
+  const [editWorkflowInputs, setEditWorkflowInputs] = useState<Record<string, string>>({});
   const [editWorktree, setEditWorktree] = useState(false);
   const [editOriginBranch, setEditOriginBranch] = useState("");
   const [editUpdateBeforeRun, setEditUpdateBeforeRun] = useState(false);
@@ -101,6 +111,10 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
   }, [loadTasks]);
 
   useEffect(() => {
+    fetchWorkflows(channelId).then(setWorkflows).catch(() => { /* ignore */ });
+  }, [channelId]);
+
+  useEffect(() => {
     if (selectedId != null) loadRuns(selectedId);
   }, [selectedId, loadRuns]);
 
@@ -127,7 +141,9 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
         channel_id: channelId,
         schedule: newSchedule,
         type: newType,
-        prompt: newPrompt,
+        prompt: newMode === "workflow" ? "" : newPrompt,
+        workflow_name: newMode === "workflow" ? newWorkflowName : "",
+        workflow_inputs: newMode === "workflow" ? JSON.stringify(newWorkflowInputs) : "",
         worktree: newWorktree,
         origin_branch: newOriginBranch || undefined,
         update_before_run: newUpdateBeforeRun,
@@ -135,13 +151,16 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
       });
       setShowCreate(false);
       setNewPrompt("");
+      setNewWorkflowName("");
+      setNewWorkflowInputs({});
+      setNewMode("prompt");
       setNewOriginBranch("");
       setNewUpdateBeforeRun(false);
       loadTasks();
     } catch {
       /* ignore */
     }
-  }, [channelId, newSchedule, newType, newPrompt, newWorktree, newOriginBranch, newUpdateBeforeRun, newAutoDelete, loadTasks]);
+  }, [channelId, newSchedule, newType, newMode, newPrompt, newWorkflowName, newWorkflowInputs, newWorktree, newOriginBranch, newUpdateBeforeRun, newAutoDelete, loadTasks]);
 
   const handleToggle = useCallback(
     async (task: ScheduledTask) => {
@@ -188,6 +207,14 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
     setEditSchedule(task.schedule);
     setEditType(task.type);
     setEditPrompt(task.prompt);
+    const isWorkflow = !!task.workflow_name;
+    setEditMode(isWorkflow ? "workflow" : "prompt");
+    setEditWorkflowName(task.workflow_name || "");
+    let parsedInputs: Record<string, string> = {};
+    if (task.workflow_inputs) {
+      try { parsedInputs = JSON.parse(task.workflow_inputs); } catch { /* ignore */ }
+    }
+    setEditWorkflowInputs(parsedInputs);
     setEditWorktree(task.worktree);
     setEditOriginBranch(task.origin_branch || "");
     setEditUpdateBeforeRun(task.update_before_run);
@@ -201,7 +228,9 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
       await updateTask(selectedId, {
         schedule: editSchedule,
         type: editType,
-        prompt: editPrompt,
+        prompt: editMode === "workflow" ? "" : editPrompt,
+        workflow_name: editMode === "workflow" ? editWorkflowName : "",
+        workflow_inputs: editMode === "workflow" ? JSON.stringify(editWorkflowInputs) : "",
         worktree: editWorktree,
         origin_branch: editOriginBranch || undefined,
         update_before_run: editUpdateBeforeRun,
@@ -212,7 +241,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
     } catch {
       /* ignore */
     }
-  }, [selectedId, editSchedule, editType, editPrompt, editWorktree, editOriginBranch, editUpdateBeforeRun, editAutoDelete, loadTasks]);
+  }, [selectedId, editSchedule, editType, editMode, editPrompt, editWorkflowName, editWorkflowInputs, editWorktree, editOriginBranch, editUpdateBeforeRun, editAutoDelete, loadTasks]);
 
   // Resizable divider
   const onMouseDown = useCallback(() => {
@@ -264,6 +293,21 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
     color: colors.text,
   };
 
+  const selectedNewWorkflow = workflows.find((w) => w.name === newWorkflowName);
+  const newCanSubmit = newMode === "workflow" ? !!newWorkflowName : !!newPrompt.trim();
+
+  const onSelectNewWorkflow = (name: string) => {
+    setNewWorkflowName(name);
+    const def = workflows.find((w) => w.name === name);
+    const seeded: Record<string, string> = {};
+    if (def?.inputs) {
+      for (const [k, v] of Object.entries(def.inputs)) {
+        seeded[k] = v.default ?? "";
+      }
+    }
+    setNewWorkflowInputs(seeded);
+  };
+
   const renderCreateForm = () => (
     <div style={{ padding: 8, borderBottom: `1px solid ${colors.border}`, display: "flex", flexDirection: "column", gap: 6 }}>
       <div style={{ display: "flex", gap: 6 }}>
@@ -280,13 +324,54 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
           style={{ ...inputStyle, flex: 2 }}
         />
       </div>
-      <textarea
-        placeholder="Task prompt..."
-        value={newPrompt}
-        onChange={(e) => setNewPrompt(e.target.value)}
-        rows={3}
-        style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
-      />
+      <div style={{ display: "flex", gap: 4 }}>
+        <button
+          onClick={() => setNewMode("prompt")}
+          style={{ ...btnSecondaryStyle, padding: "2px 8px", fontSize: 11, background: newMode === "prompt" ? colors.surface : "transparent", color: newMode === "prompt" ? colors.text : colors.textDim }}
+        >
+          Prompt
+        </button>
+        <button
+          onClick={() => setNewMode("workflow")}
+          disabled={workflows.length === 0}
+          title={workflows.length === 0 ? "No workflows defined" : ""}
+          style={{ ...btnSecondaryStyle, padding: "2px 8px", fontSize: 11, background: newMode === "workflow" ? colors.surface : "transparent", color: newMode === "workflow" ? colors.text : colors.textDim, opacity: workflows.length === 0 ? 0.5 : 1 }}
+        >
+          Workflow
+        </button>
+      </div>
+      {newMode === "prompt" ? (
+        <textarea
+          placeholder="Task prompt..."
+          value={newPrompt}
+          onChange={(e) => setNewPrompt(e.target.value)}
+          rows={3}
+          style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+        />
+      ) : (
+        <>
+          <select
+            value={newWorkflowName}
+            onChange={(e) => onSelectNewWorkflow(e.target.value)}
+            style={selectStyle}
+          >
+            <option value="">Select workflow...</option>
+            {workflows.map((w) => (
+              <option key={w.name} value={w.name}>{w.name}</option>
+            ))}
+          </select>
+          {selectedNewWorkflow?.inputs && Object.entries(selectedNewWorkflow.inputs).map(([key, def]) => (
+            <input
+              key={key}
+              type="text"
+              placeholder={def.description ? `${key} — ${def.description}` : key}
+              value={newWorkflowInputs[key] ?? ""}
+              onChange={(e) => setNewWorkflowInputs((prev) => ({ ...prev, [key]: e.target.value }))}
+              style={inputStyle}
+            />
+          ))}
+        </>
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         {allowWorktree && (
           <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11, cursor: "pointer" }}>
@@ -315,7 +400,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
         </label>
         <div style={{ flex: 1 }} />
         <button onClick={() => setShowCreate(false)} style={btnSecondaryStyle}>Cancel</button>
-        <button onClick={handleCreate} disabled={!newPrompt.trim()} style={{ ...btnStyle, opacity: newPrompt.trim() ? 1 : 0.5 }}>Create</button>
+        <button onClick={handleCreate} disabled={!newCanSubmit} style={{ ...btnStyle, opacity: newCanSubmit ? 1 : 0.5 }}>Create</button>
       </div>
     </div>
   );
@@ -410,6 +495,18 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
     }
 
     if (editing) {
+      const selectedEditWorkflow = workflows.find((w) => w.name === editWorkflowName);
+      const onSelectEditWorkflow = (name: string) => {
+        setEditWorkflowName(name);
+        const def = workflows.find((w) => w.name === name);
+        const seeded: Record<string, string> = {};
+        if (def?.inputs) {
+          for (const [k, v] of Object.entries(def.inputs)) {
+            seeded[k] = editWorkflowInputs[k] ?? v.default ?? "";
+          }
+        }
+        setEditWorkflowInputs(seeded);
+      };
       return (
         <div style={{ flex: 1, overflowY: "auto", padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
           <div style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>Edit Task #{selectedTask.id}</div>
@@ -421,12 +518,53 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
             </select>
             <input value={editSchedule} onChange={(e) => setEditSchedule(e.target.value)} style={{ ...inputStyle, flex: 2 }} />
           </div>
-          <textarea
-            value={editPrompt}
-            onChange={(e) => setEditPrompt(e.target.value)}
-            rows={5}
-            style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
-          />
+          <div style={{ display: "flex", gap: 4 }}>
+            <button
+              onClick={() => setEditMode("prompt")}
+              style={{ ...btnSecondaryStyle, padding: "2px 8px", fontSize: 11, background: editMode === "prompt" ? colors.surface : "transparent", color: editMode === "prompt" ? colors.text : colors.textDim }}
+            >
+              Prompt
+            </button>
+            <button
+              onClick={() => setEditMode("workflow")}
+              disabled={workflows.length === 0}
+              title={workflows.length === 0 ? "No workflows defined" : ""}
+              style={{ ...btnSecondaryStyle, padding: "2px 8px", fontSize: 11, background: editMode === "workflow" ? colors.surface : "transparent", color: editMode === "workflow" ? colors.text : colors.textDim, opacity: workflows.length === 0 ? 0.5 : 1 }}
+            >
+              Workflow
+            </button>
+          </div>
+          {editMode === "prompt" ? (
+            <textarea
+              value={editPrompt}
+              onChange={(e) => setEditPrompt(e.target.value)}
+              rows={5}
+              style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
+            />
+          ) : (
+            <>
+              <select
+                value={editWorkflowName}
+                onChange={(e) => onSelectEditWorkflow(e.target.value)}
+                style={selectStyle}
+              >
+                <option value="">Select workflow...</option>
+                {workflows.map((w) => (
+                  <option key={w.name} value={w.name}>{w.name}</option>
+                ))}
+              </select>
+              {selectedEditWorkflow?.inputs && Object.entries(selectedEditWorkflow.inputs).map(([key, def]) => (
+                <input
+                  key={key}
+                  type="text"
+                  placeholder={def.description ? `${key} — ${def.description}` : key}
+                  value={editWorkflowInputs[key] ?? ""}
+                  onChange={(e) => setEditWorkflowInputs((prev) => ({ ...prev, [key]: e.target.value }))}
+                  style={inputStyle}
+                />
+              ))}
+            </>
+          )}
           <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
             {allowWorktree && (
               <label style={{ display: "flex", alignItems: "center", gap: 4, color: colors.textDim, fontSize: 11, cursor: "pointer" }}>

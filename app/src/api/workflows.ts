@@ -59,8 +59,9 @@ export interface WorkflowRunDetail {
   node_runs: WorkflowNodeRun[];
 }
 
-export async function fetchWorkflows(): Promise<WorkflowDef[]> {
-  const res = await fetch(`${getApiUrl()}/api/workflows`);
+export async function fetchWorkflows(channelId?: string): Promise<WorkflowDef[]> {
+  const qs = channelId ? `?channel_id=${encodeURIComponent(channelId)}` : "";
+  const res = await fetch(`${getApiUrl()}/api/workflows${qs}`);
   if (!res.ok) throw new Error(`Failed to fetch workflows: ${res.statusText}`);
   return (await res.json()) ?? [];
 }

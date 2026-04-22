@@ -77,10 +77,10 @@ export function useWorkflowState({
 
   const loadDefinitions = useCallback(async () => {
     try {
-      const data = await fetchWorkflows();
+      const data = await fetchWorkflows(channelId);
       setDefinitions(data);
     } catch { /* ignore */ }
-  }, []);
+  }, [channelId]);
 
   const loadRunDetail = useCallback(async (runId: string) => {
     try {
