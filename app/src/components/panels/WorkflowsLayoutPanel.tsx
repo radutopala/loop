@@ -58,7 +58,15 @@ export function WorkflowsLayoutPanel({ channelId }: WorkflowsLayoutPanelProps) {
             </button>
           )}
         </div>
-        <div style={{ flex: 1, overflowY: "auto" }}>
+        <div
+          style={{ flex: 1, overflowY: "auto" }}
+          onScroll={(e) => {
+            const el = e.currentTarget;
+            if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
+              wf.loadMore();
+            }
+          }}
+        >
           {wf.sortedRuns.map((r) => (
             <WorkflowRunRow
               key={r.id}
@@ -69,6 +77,12 @@ export function WorkflowsLayoutPanel({ channelId }: WorkflowsLayoutPanelProps) {
               testId={`workflow-run-row-${r.id}`}
             />
           ))}
+          {wf.loadingMore && (
+            <div style={{ padding: 12, color: colors.textDim, fontSize: 11, textAlign: "center" }}>Loading more…</div>
+          )}
+          {!wf.hasMore && wf.runs.length > 0 && (
+            <div style={{ padding: 12, color: colors.textDim, fontSize: 11, textAlign: "center", opacity: 0.6 }}>End of history</div>
+          )}
           {wf.runs.length === 0 && (
             <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>No workflow runs</div>
           )}

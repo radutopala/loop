@@ -672,7 +672,7 @@ func (o *Orchestrator) handleWorkflowRunsInteraction(ctx context.Context, inter 
 		return
 	}
 
-	runs, err := o.workflowEngine.ListRuns(ctx, "", 10)
+	runs, err := o.workflowEngine.ListRuns(ctx, "", 10, 0)
 	if err != nil {
 		o.logger.Error("listing workflow runs", "error", err)
 		o.sendReply(ctx, inter.ChannelID, "Failed to list workflow runs.")

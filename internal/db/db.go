@@ -57,7 +57,7 @@ type Store interface {
 	CreateWorkflowRun(ctx context.Context, run *WorkflowRun) error
 	GetWorkflowRun(ctx context.Context, id string) (*WorkflowRun, error)
 	UpdateWorkflowRun(ctx context.Context, run *WorkflowRun) error
-	ListWorkflowRuns(ctx context.Context, channelID string, limit int) ([]*WorkflowRun, error)
+	ListWorkflowRuns(ctx context.Context, channelID string, limit, offset int) ([]*WorkflowRun, error)
 	ListWorkflowRunsByStatus(ctx context.Context, statuses []WorkflowRunStatus) ([]*WorkflowRun, error)
 	UpsertNodeRun(ctx context.Context, nr *NodeRun) error
 	ListNodeRuns(ctx context.Context, runID string) ([]*NodeRun, error)
@@ -738,7 +738,10 @@ func (s *SQLiteStore) UpdateWorkflowRun(ctx context.Context, run *WorkflowRun) e
 	return err
 }
 
-func (s *SQLiteStore) ListWorkflowRuns(ctx context.Context, channelID string, limit int) ([]*WorkflowRun, error) {
+func (s *SQLiteStore) ListWorkflowRuns(ctx context.Context, channelID string, limit, offset int) ([]*WorkflowRun, error) {
+	if offset < 0 {
+		offset = 0
+	}
 	var rows *sql.Rows
 	var err error
 	if channelID != "" {
@@ -757,11 +760,11 @@ func (s *SQLiteStore) ListWorkflowRuns(ctx context.Context, channelID string, li
 			 WHERE channel_id = ?
 			    OR channel_id IN (SELECT channel_id FROM channels WHERE parent_id = ?)
 			    OR channel_id IN (SELECT thread_id FROM scheduled_tasks WHERE channel_id = ? AND thread_id != '')
-			 ORDER BY started_at DESC LIMIT ?`, channelID, channelID, channelID, limit)
+			 ORDER BY started_at DESC LIMIT ? OFFSET ?`, channelID, channelID, channelID, limit, offset)
 	} else {
 		rows, err = s.db.QueryContext(ctx,
 			`SELECT id, workflow_name, channel_id, dir_path, worktree_path, status, inputs, paused_node_id, error_text, workflow_def, started_at, finished_at
-			 FROM workflow_runs ORDER BY started_at DESC LIMIT ?`, limit)
+			 FROM workflow_runs ORDER BY started_at DESC LIMIT ? OFFSET ?`, limit, offset)
 	}
 	if err != nil {
 		return nil, err

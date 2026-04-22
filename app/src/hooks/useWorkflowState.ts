@@ -21,6 +21,7 @@ export interface UseWorkflowStateOptions {
   initialListWidth: number;
   listWidthMin: number;
   listWidthMax: number;
+  listLimit?: number;
 }
 
 export function useWorkflowState({
@@ -28,6 +29,7 @@ export function useWorkflowState({
   initialListWidth,
   listWidthMin,
   listWidthMax,
+  listLimit = 50,
 }: UseWorkflowStateOptions) {
   const [definitions, setDefinitions] = useState<WorkflowDef[]>([]);
   const [runs, setRuns] = useState<WorkflowRun[]>([]);
@@ -35,12 +37,20 @@ export function useWorkflowState({
   const [nodeRuns, setNodeRuns] = useState<WorkflowNodeRun[]>([]);
   const [expandedNodeId, setExpandedNodeId] = useState<string | null>(null);
   const [listWidth, setListWidth] = useState(initialListWidth);
+  const [hasMore, setHasMore] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
   const draggingRef = useRef(false);
 
   // Ref for selectedRunId so polling/WS callbacks always read latest value
   // without being in useCallback dependency arrays.
   const selectedRunIdRef = useRef(selectedRunId);
   selectedRunIdRef.current = selectedRunId;
+
+  // Ref for runs so loadMore reads current length without re-triggering on every append.
+  const runsRef = useRef(runs);
+  runsRef.current = runs;
+  const loadingMoreRef = useRef(false);
+  loadingMoreRef.current = loadingMore;
 
   // Start workflow dialog state.
   const [showStartDialog, setShowStartDialog] = useState(false);
@@ -70,10 +80,36 @@ export function useWorkflowState({
 
   const loadRuns = useCallback(async () => {
     try {
-      const data = await fetchWorkflowRuns(channelId, 50);
+      // Refresh the full currently-loaded window so already-paginated rows stay
+      // visible across polling/WS updates, without re-fetching page-by-page.
+      const fetchLimit = Math.max(listLimit, runsRef.current.length);
+      const data = await fetchWorkflowRuns(channelId, fetchLimit, 0);
       setRuns(data);
+      setHasMore(data.length >= fetchLimit);
     } catch { /* ignore */ }
-  }, [channelId]);
+  }, [channelId, listLimit]);
+
+  const loadMore = useCallback(async () => {
+    if (loadingMoreRef.current || !hasMore) return;
+    setLoadingMore(true);
+    try {
+      const offset = runsRef.current.length;
+      const data = await fetchWorkflowRuns(channelId, listLimit, offset);
+      if (data.length === 0) {
+        setHasMore(false);
+      } else {
+        setRuns((prev) => {
+          const existing = new Set(prev.map((r) => r.id));
+          const merged = data.filter((r) => !existing.has(r.id));
+          return [...prev, ...merged];
+        });
+        setHasMore(data.length === listLimit);
+      }
+    } catch { /* ignore */
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [channelId, listLimit, hasMore]);
 
   const loadDefinitions = useCallback(async () => {
     try {
@@ -310,5 +346,8 @@ export function useWorkflowState({
     handleWorkflowEvent,
     loadRuns,
     loadRunDetail,
+    loadMore,
+    hasMore,
+    loadingMore,
   };
 }

@@ -468,19 +468,28 @@ func (s *EngineSuite) TestGetRunNotFound() {
 
 func (s *EngineSuite) TestListRuns() {
 	runs := []*db.WorkflowRun{{ID: "r1"}, {ID: "r2"}}
-	s.store.On("ListWorkflowRuns", mock.Anything, "ch1", 20).Return(runs, nil)
+	s.store.On("ListWorkflowRuns", mock.Anything, "ch1", 20, 0).Return(runs, nil)
 
-	got, err := s.engine.ListRuns(context.Background(), "ch1", 20)
+	got, err := s.engine.ListRuns(context.Background(), "ch1", 20, 0)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), got, 2)
 }
 
 func (s *EngineSuite) TestListRunsDefaultLimit() {
-	s.store.On("ListWorkflowRuns", mock.Anything, "", 50).Return(nil, nil)
+	s.store.On("ListWorkflowRuns", mock.Anything, "", 50, 0).Return(nil, nil)
 
-	_, err := s.engine.ListRuns(context.Background(), "", 0)
+	_, err := s.engine.ListRuns(context.Background(), "", 0, 0)
 	require.NoError(s.T(), err)
-	s.store.AssertCalled(s.T(), "ListWorkflowRuns", mock.Anything, "", 50)
+	s.store.AssertCalled(s.T(), "ListWorkflowRuns", mock.Anything, "", 50, 0)
+}
+
+func (s *EngineSuite) TestListRunsWithOffset() {
+	runs := []*db.WorkflowRun{{ID: "r3"}}
+	s.store.On("ListWorkflowRuns", mock.Anything, "ch1", 20, 40).Return(runs, nil)
+
+	got, err := s.engine.ListRuns(context.Background(), "ch1", 20, 40)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), got, 1)
 }
 
 func (s *EngineSuite) TestListWorkflows() {

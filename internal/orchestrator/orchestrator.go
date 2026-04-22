@@ -61,7 +61,7 @@ type WorkflowEngine interface {
 	CancelRun(ctx context.Context, runID string) error
 	DeleteRun(ctx context.Context, runID string) error
 	RetryRun(ctx context.Context, runID string) (string, error)
-	ListRuns(ctx context.Context, channelID string, limit int) ([]*db.WorkflowRun, error)
+	ListRuns(ctx context.Context, channelID string, limit, offset int) ([]*db.WorkflowRun, error)
 	ListWorkflows(ctx context.Context, dirPath, parentDirPath string) ([]config.WorkflowDef, error)
 }
 

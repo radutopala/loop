@@ -1664,11 +1664,11 @@ func (s *StoreSuite) TestListWorkflowRuns() {
 		AddRow("run-2", "build", "ch1", "/proj2", "", "completed", "", "", "", "", now, &finishedAt).
 		AddRow("run-1", "deploy", "ch1", "/proj1", "/wt", "running", `{"k":"v"}`, "", "", "", now.Add(-time.Hour), nil)
 
-	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs\s+WHERE channel_id = \? .+ ORDER BY started_at DESC LIMIT`).
-		WithArgs("ch1", "ch1", "ch1", 50).
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs\s+WHERE channel_id = \? .+ ORDER BY started_at DESC LIMIT \? OFFSET \?`).
+		WithArgs("ch1", "ch1", "ch1", 50, 0).
 		WillReturnRows(rows)
 
-	runs, err := s.store.ListWorkflowRuns(context.Background(), "ch1", 50)
+	runs, err := s.store.ListWorkflowRuns(context.Background(), "ch1", 50, 0)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), runs, 2)
 	require.Equal(s.T(), "run-2", runs[0].ID)
@@ -1693,10 +1693,10 @@ func (s *StoreSuite) TestListWorkflowRunsIncludesChildChannelRuns() {
 		AddRow("run-direct", "deploy", "dm", "/proj", "", "running", "", "", "", "", now.Add(-time.Hour), nil)
 
 	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs\s+WHERE channel_id = \?\s+OR channel_id IN \(SELECT channel_id FROM channels WHERE parent_id = \?\)\s+OR channel_id IN \(SELECT thread_id FROM scheduled_tasks WHERE channel_id = \? AND thread_id != ''\)`).
-		WithArgs("dm", "dm", "dm", 50).
+		WithArgs("dm", "dm", "dm", 50, 0).
 		WillReturnRows(rows)
 
-	runs, err := s.store.ListWorkflowRuns(context.Background(), "dm", 50)
+	runs, err := s.store.ListWorkflowRuns(context.Background(), "dm", 50, 0)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), runs, 3)
 	require.Equal(s.T(), "run-ghost", runs[0].ID)
@@ -1714,11 +1714,11 @@ func (s *StoreSuite) TestListWorkflowRunsWithoutChannelFilter() {
 		AddRow("run-3", "test", "ch2", "/proj3", "", "failed", "", "", "timeout", "", now, nil).
 		AddRow("run-1", "deploy", "ch1", "/proj1", "", "running", "", "", "", "", now.Add(-time.Hour), nil)
 
-	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs ORDER BY started_at DESC LIMIT`).
-		WithArgs(10).
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs ORDER BY started_at DESC LIMIT \? OFFSET \?`).
+		WithArgs(10, 0).
 		WillReturnRows(rows)
 
-	runs, err := s.store.ListWorkflowRuns(context.Background(), "", 10)
+	runs, err := s.store.ListWorkflowRuns(context.Background(), "", 10, 0)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), runs, 2)
 	require.Equal(s.T(), "run-3", runs[0].ID)
@@ -1729,42 +1729,69 @@ func (s *StoreSuite) TestListWorkflowRunsWithoutChannelFilter() {
 }
 
 func (s *StoreSuite) TestListWorkflowRunsEmpty() {
-	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs\s+WHERE channel_id = \? .+ ORDER BY started_at DESC LIMIT`).
-		WithArgs("ch-empty", "ch-empty", "ch-empty", 10).
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs\s+WHERE channel_id = \? .+ ORDER BY started_at DESC LIMIT \? OFFSET \?`).
+		WithArgs("ch-empty", "ch-empty", "ch-empty", 10, 0).
 		WillReturnRows(newMockWorkflowRunRows())
 
-	runs, err := s.store.ListWorkflowRuns(context.Background(), "ch-empty", 10)
+	runs, err := s.store.ListWorkflowRuns(context.Background(), "ch-empty", 10, 0)
 	require.NoError(s.T(), err)
 	require.Nil(s.T(), runs)
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
 func (s *StoreSuite) TestListWorkflowRunsError() {
-	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs\s+WHERE channel_id = \? .+ ORDER BY started_at DESC LIMIT`).
-		WithArgs("ch1", "ch1", "ch1", 10).
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs\s+WHERE channel_id = \? .+ ORDER BY started_at DESC LIMIT \? OFFSET \?`).
+		WithArgs("ch1", "ch1", "ch1", 10, 0).
 		WillReturnError(sql.ErrConnDone)
 
-	runs, err := s.store.ListWorkflowRuns(context.Background(), "ch1", 10)
+	runs, err := s.store.ListWorkflowRuns(context.Background(), "ch1", 10, 0)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), runs)
 
-	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs ORDER BY started_at DESC LIMIT`).
-		WithArgs(10).
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs ORDER BY started_at DESC LIMIT \? OFFSET \?`).
+		WithArgs(10, 0).
 		WillReturnError(sql.ErrConnDone)
 
-	runs, err = s.store.ListWorkflowRuns(context.Background(), "", 10)
+	runs, err = s.store.ListWorkflowRuns(context.Background(), "", 10, 0)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), runs)
 }
 
 func (s *StoreSuite) TestListWorkflowRunsScanError() {
-	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs\s+WHERE channel_id = \? .+ ORDER BY started_at DESC LIMIT`).
-		WithArgs("ch1", "ch1", "ch1", 10).
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs\s+WHERE channel_id = \? .+ ORDER BY started_at DESC LIMIT \? OFFSET \?`).
+		WithArgs("ch1", "ch1", "ch1", 10, 0).
 		WillReturnRows(newMockWorkflowRunRows().AddRow("bad-id", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil))
 
-	runs, err := s.store.ListWorkflowRuns(context.Background(), "ch1", 10)
+	runs, err := s.store.ListWorkflowRuns(context.Background(), "ch1", 10, 0)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), runs)
+}
+
+func (s *StoreSuite) TestListWorkflowRunsWithOffset() {
+	now := time.Now().UTC()
+	rows := newMockWorkflowRunRows().
+		AddRow("run-paged", "deploy", "ch1", "/proj", "", "completed", "", "", "", "", now, nil)
+
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs\s+WHERE channel_id = \? .+ ORDER BY started_at DESC LIMIT \? OFFSET \?`).
+		WithArgs("ch1", "ch1", "ch1", 50, 50).
+		WillReturnRows(rows)
+
+	runs, err := s.store.ListWorkflowRuns(context.Background(), "ch1", 50, 50)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), runs, 1)
+	require.Equal(s.T(), "run-paged", runs[0].ID)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestListWorkflowRunsNegativeOffsetClamped() {
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs ORDER BY started_at DESC LIMIT \? OFFSET \?`).
+		WithArgs(10, 0).
+		WillReturnRows(newMockWorkflowRunRows())
+
+	runs, err := s.store.ListWorkflowRuns(context.Background(), "", 10, -5)
+	require.NoError(s.T(), err)
+	require.Nil(s.T(), runs)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
 func (s *StoreSuite) TestListWorkflowRunsByStatus() {

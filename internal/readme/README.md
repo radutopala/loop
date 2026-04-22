@@ -1041,7 +1041,7 @@ make app-install
 | `POST` | `/api/tickets/{id}/assign` | Assign a worktree to a ticket (claim, create worktree, start agent) |
 | `GET` | `/api/workflows` | List workflow definitions from merged config |
 | `POST` | `/api/workflows/runs` | Start a new workflow run |
-| `GET` | `/api/workflows/runs` | List workflow runs (optional `channel_id`, `limit`) |
+| `GET` | `/api/workflows/runs` | List workflow runs (optional `channel_id`, `limit`, `offset` for pagination) |
 | `GET` | `/api/workflows/runs/{id}` | Get run detail with node statuses |
 | `POST` | `/api/workflows/runs/{id}/resume` | Resume a paused workflow (body: `{"response": "..."}`) |
 | `POST` | `/api/workflows/runs/{id}/cancel` | Cancel a running workflow |

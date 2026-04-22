@@ -8,10 +8,11 @@ interface WorkflowRunRowProps {
   isSelected: boolean;
   colors: ColorPalette;
   onClick: () => void;
+  onSelectChannel?: (channelId: string) => void;
   testId?: string;
 }
 
-export function WorkflowRunRow({ run, isSelected, colors, onClick, testId }: WorkflowRunRowProps) {
+export function WorkflowRunRow({ run, isSelected, colors, onClick, onSelectChannel, testId }: WorkflowRunRowProps) {
   const statusColor = STATUS_COLORS[run.status] ?? colors.textDim;
   return (
     <div
@@ -37,6 +38,36 @@ export function WorkflowRunRow({ run, isSelected, colors, onClick, testId }: Wor
         </span>
         <span style={{ color: colors.textDim, fontSize: 10, flexShrink: 0 }}>{timeAgo(run.started_at)}</span>
       </div>
+      {run.channel_id && (
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span
+            onClick={(e) => {
+              e.stopPropagation();
+              onSelectChannel?.(run.channel_id);
+            }}
+            title="Go to channel"
+            style={{
+              fontSize: 10,
+              color: colors.active,
+              cursor: onSelectChannel ? "pointer" : "default",
+              padding: "0 4px",
+              borderRadius: 3,
+              background: `${colors.active}18`,
+              flexShrink: 0,
+            }}
+          >
+            {`#${run.channel_name ?? run.channel_id.slice(0, 8)}`}
+          </span>
+          {run.channel_worktree && (
+            <span title="Channel is a worktree" style={{ fontSize: 10, color: colors.textDim, border: `1px solid ${colors.border}`, borderRadius: 3, padding: "0 3px", flexShrink: 0 }}>wt</span>
+          )}
+        </div>
+      )}
+      {run.dir_path && (
+        <div style={{ color: colors.textDim, fontSize: 10, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          {run.dir_path}
+        </div>
+      )}
       <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
         <span style={{
           padding: "1px 5px", borderRadius: 3, fontSize: 10, fontWeight: 600,

@@ -599,6 +599,7 @@ function AppInner() {
               sidebarOpen={sidebarOpen}
               onOpenPalette={() => setPaletteOpen(true)}
               onClose={() => closePanel("workflows")}
+              onSelectChannel={(id) => { closePanel("workflows"); handleSelect(id); }}
             />
           )}
         </>
@@ -641,6 +642,7 @@ function AppInner() {
               sidebarOpen={sidebarOpen}
               onOpenPalette={() => setPaletteOpen(true)}
               onClose={() => closePanel("workflows")}
+              onSelectChannel={(id) => { closePanel("workflows"); handleSelect(id); }}
             />
           ) : (
             <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center" }}>

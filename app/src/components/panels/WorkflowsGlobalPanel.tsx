@@ -24,13 +24,14 @@ interface WorkflowsGlobalPanelProps {
   sidebarOpen?: boolean;
   onOpenPalette?: () => void;
   onClose: () => void;
+  onSelectChannel?: (channelId: string) => void;
 }
 
 // --- component ---
 
 export const WorkflowsGlobalPanel = forwardRef<WorkflowsGlobalPanelHandle, WorkflowsGlobalPanelProps>(
   function WorkflowsGlobalPanel(
-    { channel, sidebarOpen, onOpenPalette, onClose },
+    { channel, sidebarOpen, onOpenPalette, onClose, onSelectChannel },
     ref,
   ) {
     const { colors, fontSizes } = useTheme();
@@ -178,7 +179,15 @@ export const WorkflowsGlobalPanel = forwardRef<WorkflowsGlobalPanelHandle, Workf
               background: colors.bg,
             }}
           >
-            <div style={{ flex: 1, overflowY: "auto" }}>
+            <div
+              style={{ flex: 1, overflowY: "auto" }}
+              onScroll={(e) => {
+                const el = e.currentTarget;
+                if (el.scrollHeight - el.scrollTop - el.clientHeight < 200) {
+                  wf.loadMore();
+                }
+              }}
+            >
               {wf.sortedRuns.map((r) => (
                 <WorkflowRunRow
                   key={r.id}
@@ -186,9 +195,20 @@ export const WorkflowsGlobalPanel = forwardRef<WorkflowsGlobalPanelHandle, Workf
                   isSelected={r.id === wf.selectedRunId}
                   colors={colors}
                   onClick={() => wf.selectRun(r.id)}
+                  onSelectChannel={onSelectChannel}
                   testId={`workflow-run-row-${r.id}`}
                 />
               ))}
+              {wf.loadingMore && (
+                <div style={{ padding: 12, color: colors.textDim, fontSize: 11, textAlign: "center" }}>
+                  Loading more…
+                </div>
+              )}
+              {!wf.hasMore && wf.runs.length > 0 && (
+                <div style={{ padding: 12, color: colors.textDim, fontSize: 11, textAlign: "center", opacity: 0.6 }}>
+                  End of history
+                </div>
+              )}
               {wf.runs.length === 0 && (
                 <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>
                   No workflow runs

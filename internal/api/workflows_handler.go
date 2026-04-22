@@ -5,7 +5,9 @@ import (
 	"net/http"
 	"os"
 	"strconv"
+	"time"
 
+	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/workflow"
 	"github.com/tailscale/hujson"
 )
@@ -98,6 +100,45 @@ func (s *Server) handleGetWorkflowRun(w http.ResponseWriter, r *http.Request) {
 	}, s.logger)
 }
 
+type workflowRunResponse struct {
+	ID              string               `json:"id"`
+	WorkflowName    string               `json:"workflow_name"`
+	ChannelID       string               `json:"channel_id"`
+	DirPath         string               `json:"dir_path"`
+	WorktreePath    string               `json:"worktree_path"`
+	Status          db.WorkflowRunStatus `json:"status"`
+	Inputs          string               `json:"inputs"`
+	PausedNodeID    string               `json:"paused_node_id"`
+	ErrorText       string               `json:"error_text"`
+	WorkflowDef     string               `json:"workflow_def,omitempty"`
+	StartedAt       time.Time            `json:"started_at"`
+	FinishedAt      *time.Time           `json:"finished_at"`
+	ChannelName     string               `json:"channel_name,omitempty"`
+	ChannelWorktree bool                 `json:"channel_worktree,omitempty"`
+}
+
+func toWorkflowRunResponse(run *db.WorkflowRun, ch *db.Channel) workflowRunResponse {
+	resp := workflowRunResponse{
+		ID:           run.ID,
+		WorkflowName: run.WorkflowName,
+		ChannelID:    run.ChannelID,
+		DirPath:      run.DirPath,
+		WorktreePath: run.WorktreePath,
+		Status:       run.Status,
+		Inputs:       run.Inputs,
+		PausedNodeID: run.PausedNodeID,
+		ErrorText:    run.ErrorText,
+		WorkflowDef:  run.WorkflowDef,
+		StartedAt:    run.StartedAt,
+		FinishedAt:   run.FinishedAt,
+	}
+	if ch != nil {
+		resp.ChannelName = ch.Name
+		resp.ChannelWorktree = ch.Worktree
+	}
+	return resp
+}
+
 func (s *Server) handleListWorkflowRuns(w http.ResponseWriter, r *http.Request) {
 	if !requireConfigured(w, s.workflowEngine, "workflow engine not configured") {
 		return
@@ -113,14 +154,57 @@ func (s *Server) handleListWorkflowRuns(w http.ResponseWriter, r *http.Request) 
 	if limit > 1000 {
 		limit = 1000
 	}
+	offset := 0
+	if o := r.URL.Query().Get("offset"); o != "" {
+		if parsed, err := strconv.Atoi(o); err == nil && parsed > 0 {
+			offset = parsed
+		}
+	}
 
-	runs, err := s.workflowEngine.ListRuns(r.Context(), channelID, limit)
+	runs, err := s.workflowEngine.ListRuns(r.Context(), channelID, limit, offset)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	writeHTTPJSON(w, http.StatusOK, runs, s.logger)
+	// For the global listing (no channel filter), enrich with channel info so
+	// the UI can show a clickable channel/thread pill per run.
+	var channelMap map[string]*db.Channel
+	if channelID == "" && s.store != nil {
+		if channels, chErr := s.store.ListChannels(r.Context()); chErr == nil {
+			channelMap = make(map[string]*db.Channel, len(channels))
+			for _, ch := range channels {
+				channelMap[ch.ChannelID] = ch
+			}
+		}
+	}
+
+	resp := make([]workflowRunResponse, 0, len(runs))
+	for _, run := range runs {
+		var ch *db.Channel
+		if channelMap != nil {
+			ch = resolveNamedChannel(channelMap, run.ChannelID)
+		}
+		resp = append(resp, toWorkflowRunResponse(run, ch))
+	}
+
+	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
+}
+
+// resolveNamedChannel walks up the parent chain from channelID to find the
+// nearest ancestor with a non-empty Name. Workflows can be started on threads
+// whose Name may be empty or an auto-generated hash; showing the nearest named
+// ancestor gives a more useful label in the global workflows listing.
+func resolveNamedChannel(channelMap map[string]*db.Channel, channelID string) *db.Channel {
+	ch := channelMap[channelID]
+	if ch == nil {
+		return nil
+	}
+	// Cap traversal to avoid cycles in malformed data.
+	for i := 0; i < 8 && ch != nil && ch.Name == "" && ch.ParentID != ""; i++ {
+		ch = channelMap[ch.ParentID]
+	}
+	return ch
 }
 
 func (s *Server) handleCancelWorkflowRun(w http.ResponseWriter, r *http.Request) {

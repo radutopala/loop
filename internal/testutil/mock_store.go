@@ -268,8 +268,8 @@ func (m *MockStore) UpdateWorkflowRun(ctx context.Context, run *db.WorkflowRun) 
 	return m.Called(ctx, run).Error(0)
 }
 
-func (m *MockStore) ListWorkflowRuns(ctx context.Context, channelID string, limit int) ([]*db.WorkflowRun, error) {
-	args := m.Called(ctx, channelID, limit)
+func (m *MockStore) ListWorkflowRuns(ctx context.Context, channelID string, limit, offset int) ([]*db.WorkflowRun, error) {
+	args := m.Called(ctx, channelID, limit, offset)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}

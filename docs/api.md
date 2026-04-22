@@ -1922,7 +1922,10 @@ List workflow runs.
 | Param | Type | Description |
 |-------|------|-------------|
 | `channel_id` | string | Optional filter by channel |
-| `limit` | int | Max results (default 50, capped at 1000) |
+| `limit` | int | Max results per page (default 50, capped at 1000) |
+| `offset` | int | Number of rows to skip for pagination (default 0; non-positive values are treated as 0) |
+
+When no `channel_id` is provided, each run is enriched with `channel_name` and `channel_worktree` resolved by walking up the parent chain to the nearest named ancestor — the global Workflows panel uses this to label unnamed threads. The list view paginates via infinite scroll (see [Workflows](workflows.md)).
 
 **Response (200):**
 ```json
@@ -1933,7 +1936,9 @@ List workflow runs.
     "channel_id": "",
     "status": "completed",
     "started_at": "2026-04-11T10:00:00Z",
-    "finished_at": "2026-04-11T10:02:30Z"
+    "finished_at": "2026-04-11T10:02:30Z",
+    "channel_name": "dm",
+    "channel_worktree": false
   }
 ]
 ```

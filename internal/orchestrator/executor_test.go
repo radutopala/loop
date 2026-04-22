@@ -2288,8 +2288,8 @@ func (m *mockWorkflowEngine) GetRun(ctx context.Context, runID string) (*db.Work
 	return run, nodes, args.Error(2)
 }
 
-func (m *mockWorkflowEngine) ListRuns(ctx context.Context, channelID string, limit int) ([]*db.WorkflowRun, error) {
-	args := m.Called(ctx, channelID, limit)
+func (m *mockWorkflowEngine) ListRuns(ctx context.Context, channelID string, limit, offset int) ([]*db.WorkflowRun, error) {
+	args := m.Called(ctx, channelID, limit, offset)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -2943,7 +2943,7 @@ func (s *OrchestratorCommandsSuite) TestHandleWorkflowRunsInteractionNoEngine() 
 func (s *OrchestratorCommandsSuite) TestHandleWorkflowRunsInteractionListError() {
 	wfe := new(mockWorkflowEngine)
 	s.orch.SetWorkflowEngine(wfe)
-	wfe.On("ListRuns", s.ctx, "", 10).Return(nil, errors.New("db error"))
+	wfe.On("ListRuns", s.ctx, "", 10, 0).Return(nil, errors.New("db error"))
 	s.bot.On("SendMessage", s.ctx, sendMessageContains("Failed to list workflow runs.")).Return(nil)
 
 	s.orch.handleWorkflowRunsInteraction(s.ctx, &bot.Interaction{ChannelID: "ch1"})
@@ -2955,7 +2955,7 @@ func (s *OrchestratorCommandsSuite) TestHandleWorkflowRunsInteractionListError()
 func (s *OrchestratorCommandsSuite) TestHandleWorkflowRunsInteractionEmpty() {
 	wfe := new(mockWorkflowEngine)
 	s.orch.SetWorkflowEngine(wfe)
-	wfe.On("ListRuns", s.ctx, "", 10).Return([]*db.WorkflowRun{}, nil)
+	wfe.On("ListRuns", s.ctx, "", 10, 0).Return([]*db.WorkflowRun{}, nil)
 	s.bot.On("SendMessage", s.ctx, sendMessageContains("No recent workflow runs.")).Return(nil)
 
 	s.orch.handleWorkflowRunsInteraction(s.ctx, &bot.Interaction{ChannelID: "ch1"})
@@ -2967,7 +2967,7 @@ func (s *OrchestratorCommandsSuite) TestHandleWorkflowRunsInteractionEmpty() {
 func (s *OrchestratorCommandsSuite) TestHandleWorkflowRunsInteractionListsRuns() {
 	wfe := new(mockWorkflowEngine)
 	s.orch.SetWorkflowEngine(wfe)
-	wfe.On("ListRuns", s.ctx, "", 10).Return([]*db.WorkflowRun{
+	wfe.On("ListRuns", s.ctx, "", 10, 0).Return([]*db.WorkflowRun{
 		{ID: "run-abc", WorkflowName: "fix-issue", Status: "completed", StartedAt: time.Now().Add(-5 * time.Minute)},
 		{ID: "run-def", WorkflowName: "validate", Status: "running", StartedAt: time.Now().Add(-1 * time.Minute)},
 	}, nil)
@@ -3137,7 +3137,7 @@ func (s *OrchestratorCommandsSuite) TestHandleInteractionWorkflowRuns() {
 
 	wfe := new(mockWorkflowEngine)
 	s.orch.SetWorkflowEngine(wfe)
-	wfe.On("ListRuns", s.ctx, "", 10).Return([]*db.WorkflowRun{
+	wfe.On("ListRuns", s.ctx, "", 10, 0).Return([]*db.WorkflowRun{
 		{ID: "run-1", WorkflowName: "build", Status: "completed", StartedAt: time.Now().Add(-10 * time.Minute)},
 	}, nil)
 	s.bot.On("SendMessage", s.ctx, sendMessageContains("**build**")).Return(nil)

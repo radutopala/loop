@@ -219,6 +219,32 @@ Feature: Workflows
     Then I wait for text "No workflow runs" to appear
     And the page should contain text "0 runs"
 
+  Scenario: Global panel — rows show channel pill and dir_path; pill links to channel
+    Given I set up a test channel via API for directory "/tmp/bdd-wf-global"
+    And I open the app in a browser
+    And I wait for text "bdd-wf-global" to appear
+
+    # Seed a completed run via the split panel so the global panel has data to show
+    When I click on "bdd-wf-global" in the sidebar
+    And I wait for "textarea" to be visible
+    And I add a "Workflows" panel
+    And I click button "+" in the workflows split panel
+    And I wait for text "Start Workflow" to appear
+    And I click on the button with text "Start"
+    Then I wait for text "Start Workflow" to disappear
+    And I wait for text "bdd-test-workflow" to appear
+    And I wait up to "90s" for text "COMPLETED" to appear
+
+    # Open the global workflows panel — the row is enriched with channel pill and dir_path
+    When I open the workflows panel
+    Then I wait for text "#bdd-wf-global" to appear
+    And the page should contain text "/tmp/bdd-wf-global"
+
+    # Clicking the channel pill closes the global panel and focuses the channel
+    When I click on "#bdd-wf-global" in the workflows panel
+    Then the element "[data-testid=workflows-panel]" should not exist
+    And the element "[data-testid=workflows-split-panel]" should be visible
+
   Scenario: Slash command autocomplete shows workflow commands
     Given I set up a test channel via API for directory "/tmp/bdd-wf-cmd"
     And I open the app in a browser

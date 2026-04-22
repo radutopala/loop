@@ -55,8 +55,8 @@ func (m *MockWorkflowEngine) GetRun(ctx context.Context, runID string) (*db.Work
 	return run, nodes, args.Error(2)
 }
 
-func (m *MockWorkflowEngine) ListRuns(ctx context.Context, channelID string, limit int) ([]*db.WorkflowRun, error) {
-	args := m.Called(ctx, channelID, limit)
+func (m *MockWorkflowEngine) ListRuns(ctx context.Context, channelID string, limit, offset int) ([]*db.WorkflowRun, error) {
+	args := m.Called(ctx, channelID, limit, offset)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
@@ -162,12 +162,13 @@ func (s *ServerSuite) TestListWorkflowRuns_Success() {
 	defer func() { s.srv.workflowEngine = nil }()
 
 	runs := []*db.WorkflowRun{{ID: "wfr-1"}, {ID: "wfr-2"}}
-	wfe.On("ListRuns", mock.Anything, "", 50).Return(runs, nil)
+	wfe.On("ListRuns", mock.Anything, "", 50, 0).Return(runs, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil)
 
 	rec := s.testRequest("GET", "/api/workflows/runs", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
-	var resp []*db.WorkflowRun
+	var resp []workflowRunResponse
 	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
 	require.Len(s.T(), resp, 2)
 }
@@ -177,10 +178,110 @@ func (s *ServerSuite) TestListWorkflowRuns_WithFilter() {
 	s.srv.SetWorkflowEngine(wfe)
 	defer func() { s.srv.workflowEngine = nil }()
 
-	wfe.On("ListRuns", mock.Anything, "ch1", 10).Return([]*db.WorkflowRun{}, nil)
+	wfe.On("ListRuns", mock.Anything, "ch1", 10, 0).Return([]*db.WorkflowRun{}, nil)
 
 	rec := s.testRequest("GET", "/api/workflows/runs?channel_id=ch1&limit=10", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
+}
+
+func (s *ServerSuite) TestListWorkflowRuns_WithOffset() {
+	wfe := new(MockWorkflowEngine)
+	s.srv.SetWorkflowEngine(wfe)
+	defer func() { s.srv.workflowEngine = nil }()
+
+	wfe.On("ListRuns", mock.Anything, "", 50, 100).Return([]*db.WorkflowRun{}, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil).Maybe()
+
+	rec := s.testRequest("GET", "/api/workflows/runs?offset=100", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+}
+
+func (s *ServerSuite) TestListWorkflowRuns_InvalidOffsetIgnored() {
+	wfe := new(MockWorkflowEngine)
+	s.srv.SetWorkflowEngine(wfe)
+	defer func() { s.srv.workflowEngine = nil }()
+
+	// Non-numeric and negative offsets both fall back to 0.
+	wfe.On("ListRuns", mock.Anything, "", 50, 0).Return([]*db.WorkflowRun{}, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil).Maybe()
+
+	rec := s.testRequest("GET", "/api/workflows/runs?offset=notanumber", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	rec = s.testRequest("GET", "/api/workflows/runs?offset=-5", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+}
+
+func (s *ServerSuite) TestListWorkflowRuns_EnrichesChannelInfo() {
+	wfe := new(MockWorkflowEngine)
+	s.srv.SetWorkflowEngine(wfe)
+	defer func() { s.srv.workflowEngine = nil }()
+
+	runs := []*db.WorkflowRun{
+		{ID: "wfr-1", ChannelID: "ch-a"},
+		{ID: "wfr-2", ChannelID: "ch-b"},
+		{ID: "wfr-3", ChannelID: "ch-missing"},
+	}
+	wfe.On("ListRuns", mock.Anything, "", 50, 0).Return(runs, nil)
+	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{
+		{ChannelID: "ch-a", Name: "alpha"},
+		{ChannelID: "ch-b", Name: "beta", Worktree: true},
+	}, nil)
+
+	rec := s.testRequest("GET", "/api/workflows/runs", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []workflowRunResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 3)
+	require.Equal(s.T(), "alpha", resp[0].ChannelName)
+	require.False(s.T(), resp[0].ChannelWorktree)
+	require.Equal(s.T(), "beta", resp[1].ChannelName)
+	require.True(s.T(), resp[1].ChannelWorktree)
+	require.Empty(s.T(), resp[2].ChannelName)
+	require.False(s.T(), resp[2].ChannelWorktree)
+}
+
+func (s *ServerSuite) TestListWorkflowRuns_ResolvesNamedAncestor() {
+	wfe := new(MockWorkflowEngine)
+	s.srv.SetWorkflowEngine(wfe)
+	defer func() { s.srv.workflowEngine = nil }()
+
+	// Run is on an unnamed thread whose parent is also unnamed; the top-level
+	// channel has the real name "dm". We expect that name to be shown.
+	runs := []*db.WorkflowRun{{ID: "wfr-1", ChannelID: "thread-hash"}}
+	wfe.On("ListRuns", mock.Anything, "", 50, 0).Return(runs, nil)
+	s.store.On("ListChannels", mock.Anything).Return([]*db.Channel{
+		{ChannelID: "thread-hash", Name: "", ParentID: "mid-thread"},
+		{ChannelID: "mid-thread", Name: "", ParentID: "top-dm"},
+		{ChannelID: "top-dm", Name: "dm", Worktree: false},
+	}, nil)
+
+	rec := s.testRequest("GET", "/api/workflows/runs", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []workflowRunResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 1)
+	require.Equal(s.T(), "dm", resp[0].ChannelName)
+}
+
+func (s *ServerSuite) TestListWorkflowRuns_ListChannelsError() {
+	wfe := new(MockWorkflowEngine)
+	s.srv.SetWorkflowEngine(wfe)
+	defer func() { s.srv.workflowEngine = nil }()
+
+	runs := []*db.WorkflowRun{{ID: "wfr-1", ChannelID: "ch-a"}}
+	wfe.On("ListRuns", mock.Anything, "", 50, 0).Return(runs, nil)
+	s.store.On("ListChannels", mock.Anything).Return(nil, errors.New("db error"))
+
+	rec := s.testRequest("GET", "/api/workflows/runs", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp []workflowRunResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 1)
+	require.Empty(s.T(), resp[0].ChannelName)
 }
 
 func (s *ServerSuite) TestCancelWorkflowRun_Success() {
@@ -262,7 +363,7 @@ func (s *ServerSuite) TestListWorkflowRuns_EngineError() {
 	s.srv.SetWorkflowEngine(wfe)
 	defer func() { s.srv.workflowEngine = nil }()
 
-	wfe.On("ListRuns", mock.Anything, "", 50).Return(nil, errors.New("db error"))
+	wfe.On("ListRuns", mock.Anything, "", 50, 0).Return(nil, errors.New("db error"))
 
 	rec := s.testRequest("GET", "/api/workflows/runs", "")
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
@@ -832,7 +933,8 @@ func (s *ServerSuite) TestListWorkflowRuns_LimitCapped() {
 	defer func() { s.srv.workflowEngine = nil }()
 
 	// Request limit=999999, expect it to be capped to 1000.
-	wfe.On("ListRuns", mock.Anything, "", 1000).Return([]*db.WorkflowRun{}, nil)
+	wfe.On("ListRuns", mock.Anything, "", 1000, 0).Return([]*db.WorkflowRun{}, nil)
+	s.store.On("ListChannels", mock.Anything).Return(([]*db.Channel)(nil), nil).Maybe()
 
 	rec := s.testRequest("GET", "/api/workflows/runs?limit=999999", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)

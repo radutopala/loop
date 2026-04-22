@@ -44,7 +44,7 @@ type Engine interface {
 	DeleteRun(ctx context.Context, runID string) error
 	RetryRun(ctx context.Context, runID string) (string, error)
 	GetRun(ctx context.Context, runID string) (*db.WorkflowRun, []*db.NodeRun, error)
-	ListRuns(ctx context.Context, channelID string, limit int) ([]*db.WorkflowRun, error)
+	ListRuns(ctx context.Context, channelID string, limit, offset int) ([]*db.WorkflowRun, error)
 	ListWorkflows(ctx context.Context, dirPath, parentDirPath string) ([]config.WorkflowDef, error)
 	RecoverRuns(ctx context.Context) error
 }
@@ -320,11 +320,11 @@ func (e *defaultEngine) GetRun(ctx context.Context, runID string) (*db.WorkflowR
 	return run, nodeRuns, nil
 }
 
-func (e *defaultEngine) ListRuns(ctx context.Context, channelID string, limit int) ([]*db.WorkflowRun, error) {
+func (e *defaultEngine) ListRuns(ctx context.Context, channelID string, limit, offset int) ([]*db.WorkflowRun, error) {
 	if limit <= 0 {
 		limit = 50
 	}
-	return e.store.ListWorkflowRuns(ctx, channelID, limit)
+	return e.store.ListWorkflowRuns(ctx, channelID, limit, offset)
 }
 
 func (e *defaultEngine) ListWorkflows(_ context.Context, dirPath, parentDirPath string) ([]config.WorkflowDef, error) {

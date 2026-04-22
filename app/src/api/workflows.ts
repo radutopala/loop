@@ -39,6 +39,8 @@ export interface WorkflowRun {
   workflow_def?: string;
   started_at: string;
   finished_at: string | null;
+  channel_name?: string;
+  channel_worktree?: boolean;
 }
 
 export interface WorkflowNodeRun {
@@ -66,10 +68,15 @@ export async function fetchWorkflows(channelId?: string): Promise<WorkflowDef[]>
   return (await res.json()) ?? [];
 }
 
-export async function fetchWorkflowRuns(channelId?: string, limit?: number): Promise<WorkflowRun[]> {
+export async function fetchWorkflowRuns(
+  channelId?: string,
+  limit?: number,
+  offset?: number,
+): Promise<WorkflowRun[]> {
   const params = new URLSearchParams();
   if (channelId) params.set("channel_id", channelId);
   if (limit !== undefined) params.set("limit", String(limit));
+  if (offset !== undefined && offset > 0) params.set("offset", String(offset));
   const qs = params.toString();
   const res = await fetch(`${getApiUrl()}/api/workflows/runs${qs ? `?${qs}` : ""}`);
   if (!res.ok) throw new Error(`Failed to fetch workflow runs: ${res.statusText}`);

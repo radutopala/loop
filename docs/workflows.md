@@ -360,7 +360,7 @@ When `workflow_name` is set, the `prompt` field is ignored. The task still suppo
 | `GET` | `/api/workflows` | List workflow definitions |
 | `POST` | `/api/workflows` | Add, update, or delete a workflow definition |
 | `POST` | `/api/workflows/runs` | Start a new workflow run |
-| `GET` | `/api/workflows/runs` | List workflow runs |
+| `GET` | `/api/workflows/runs` | List workflow runs (supports `channel_id`, `limit`, `offset`) |
 | `GET` | `/api/workflows/runs/{id}` | Get run detail with node statuses |
 | `POST` | `/api/workflows/runs/{id}/resume` | Resume a paused workflow (body: `{"response": "..."}`) |
 | `POST` | `/api/workflows/runs/{id}/cancel` | Cancel a running workflow |
@@ -410,10 +410,10 @@ See [Events: Workflow Events](events.md#workflowrun_started--workflowrun_complet
 
 The Workflows panel is available in two variants:
 
-- **Global panel** — overlay panel accessible from the sidebar, showing runs across all channels. Start workflows via the `+ Run` button.
+- **Global panel** — overlay panel accessible from the sidebar, showing runs across all channels. Start workflows via the `+ Run` button. Each row shows a clickable channel/thread pill (resolved to the nearest named ancestor) and the run's `dir_path` — clicking the pill jumps to that channel.
 - **Embedded split panel** — per-channel panel added from the split-pane `+` menu. Start workflows via the `+` button. This is a singleton panel (one per layout).
 
-Both variants share the same two-pane layout: a resizable run list on the left and a detail view on the right.
+Both variants share the same two-pane layout: a resizable run list on the left and a detail view on the right. The run list paginates via infinite scroll — pages of 50 runs are fetched as you scroll within 200 px of the bottom, and polling/WebSocket refreshes preserve the currently-loaded window so already-paginated rows stay visible.
 
 ### DAG Graph Visualization
 
@@ -487,7 +487,7 @@ type Engine interface {
     ResumeRun(ctx context.Context, runID, response string) error
     CancelRun(ctx context.Context, runID string) error
     GetRun(ctx context.Context, runID string) (*db.WorkflowRun, []*db.NodeRun, error)
-    ListRuns(ctx context.Context, channelID string, limit int) ([]*db.WorkflowRun, error)
+    ListRuns(ctx context.Context, channelID string, limit, offset int) ([]*db.WorkflowRun, error)
     ListWorkflows(ctx context.Context, dirPath string) ([]config.WorkflowDef, error)
     RecoverRuns(ctx context.Context) error
 }
