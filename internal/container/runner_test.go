@@ -3750,6 +3750,12 @@ func (s *RunnerSuite) TestRunBashHappyPath() {
 
 	reg := new(MockContainerRegistry)
 	s.runner.SetContainerRegistry(reg)
+	reg.On("Register", mock.MatchedBy(func(info *ContainerInfo) bool {
+		return info.ContainerID == testContainerID &&
+			info.ChannelID == "ch-1" &&
+			info.Type == ContainerTypeAgent &&
+			info.ContainerName == testContainerName
+	})).Once()
 	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
 
 	waitCh := make(chan WaitResponse, 1)
@@ -3791,6 +3797,12 @@ func (s *RunnerSuite) TestRunBashWaitError() {
 
 	reg := new(MockContainerRegistry)
 	s.runner.SetContainerRegistry(reg)
+	reg.On("Register", mock.MatchedBy(func(info *ContainerInfo) bool {
+		return info.ContainerID == testContainerID &&
+			info.ChannelID == "ch-1" &&
+			info.Type == ContainerTypeAgent &&
+			info.ContainerName == testContainerName
+	})).Once()
 	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
 
 	waitCh := make(chan WaitResponse, 1)
@@ -3815,6 +3827,12 @@ func (s *RunnerSuite) TestRunBashNonZeroExit() {
 
 	reg := new(MockContainerRegistry)
 	s.runner.SetContainerRegistry(reg)
+	reg.On("Register", mock.MatchedBy(func(info *ContainerInfo) bool {
+		return info.ContainerID == testContainerID &&
+			info.ChannelID == "ch-1" &&
+			info.Type == ContainerTypeAgent &&
+			info.ContainerName == testContainerName
+	})).Once()
 	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
 
 	waitCh := make(chan WaitResponse, 1)
@@ -3840,6 +3858,12 @@ func (s *RunnerSuite) TestRunBashLogsFails() {
 
 	reg := new(MockContainerRegistry)
 	s.runner.SetContainerRegistry(reg)
+	reg.On("Register", mock.MatchedBy(func(info *ContainerInfo) bool {
+		return info.ContainerID == testContainerID &&
+			info.ChannelID == "ch-1" &&
+			info.Type == ContainerTypeAgent &&
+			info.ContainerName == testContainerName
+	})).Once()
 	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
 
 	waitCh := make(chan WaitResponse, 1)
@@ -3865,6 +3889,12 @@ func (s *RunnerSuite) TestRunBashContextCancelled() {
 
 	reg := new(MockContainerRegistry)
 	s.runner.SetContainerRegistry(reg)
+	reg.On("Register", mock.MatchedBy(func(info *ContainerInfo) bool {
+		return info.ContainerID == testContainerID &&
+			info.ChannelID == "ch-1" &&
+			info.Type == ContainerTypeAgent &&
+			info.ContainerName == testContainerName
+	})).Once()
 	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
 
 	waitCh := make(chan WaitResponse) // never written to
@@ -3891,6 +3921,12 @@ func (s *RunnerSuite) TestRunBashContainerError() {
 
 	reg := new(MockContainerRegistry)
 	s.runner.SetContainerRegistry(reg)
+	reg.On("Register", mock.MatchedBy(func(info *ContainerInfo) bool {
+		return info.ContainerID == testContainerID &&
+			info.ChannelID == "ch-1" &&
+			info.Type == ContainerTypeAgent &&
+			info.ContainerName == testContainerName
+	})).Once()
 	reg.On("ScheduleRemove", testContainerID, 5*time.Minute).Once()
 
 	waitCh := make(chan WaitResponse, 1)

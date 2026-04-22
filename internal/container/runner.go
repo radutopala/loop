@@ -380,7 +380,7 @@ func (r *DockerRunner) Run(ctx context.Context, req *agent.AgentRequest) (*agent
 // RunBash executes a shell script in a Docker container and returns stdout.
 // Uses the same container configuration (mounts, env) as agent runs.
 func (r *DockerRunner) RunBash(ctx context.Context, script, channelID, dirPath string) (string, error) {
-	containerID, _, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, channelID, dirPath, "", "", "",
+	containerID, ctrName, mcpConfigPath, keepMCP, err := r.createAndStartContainer(ctx, channelID, dirPath, "", "", "",
 		ContainerTypeAgent,
 		func(_ *config.Config, _ string) []string {
 			return []string{"/bin/sh", "-c", script}
@@ -390,6 +390,14 @@ func (r *DockerRunner) RunBash(ctx context.Context, script, channelID, dirPath s
 		defer func() { _ = r.sys.Remove(mcpConfigPath) }()
 	}
 	if containerID != "" {
+		if r.registry != nil {
+			r.registry.Register(&ContainerInfo{
+				ContainerID:   containerID,
+				ChannelID:     channelID,
+				Type:          ContainerTypeAgent,
+				ContainerName: ctrName,
+			})
+		}
 		defer func() {
 			if r.registry != nil {
 				r.registry.ScheduleRemove(containerID, r.cfg.Load().ContainerKeepAlive)
