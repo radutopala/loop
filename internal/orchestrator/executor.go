@@ -215,6 +215,19 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			task.ThreadID = fresh.ThreadID
 		}
 	}
+	// If ThreadID points to a channel that no longer exists (e.g. the user
+	// deleted the thread from the UI without clearing the task's thread_id),
+	// fall back to first-run behavior so the streaming tracker creates a
+	// fresh replacement thread. Without this, output would be sent to a dead
+	// channel ID and no new thread would ever be created.
+	if task.ThreadID != "" && task.Type != db.TaskTypeOnce {
+		threadCh, chErr := e.store.GetChannel(ctx, task.ThreadID)
+		if chErr != nil || threadCh == nil {
+			e.logger.Warn("thread channel missing for task — creating new thread",
+				"task_id", task.ID, "thread_id", task.ThreadID)
+			task.ThreadID = ""
+		}
+	}
 	if task.ThreadID != "" && task.Type != db.TaskTypeOnce {
 		threadID = task.ThreadID
 	}

@@ -528,6 +528,52 @@ func (s *TaskExecutorSuite) TestStreamingLocalPlatformReusesThreadID() {
 	s.bot.AssertNotCalled(s.T(), "CreateSimpleThread", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
 }
 
+func (s *TaskExecutorSuite) TestStreamingDanglingThreadCreatesReplacement() {
+	// Task has ThreadID pointing at a channel that no longer exists (e.g. the
+	// thread was deleted from the UI without clearing the task's thread_id).
+	// The executor must fall back to first-run behavior and create a new
+	// replacement thread instead of streaming output to the dead ID.
+	s.executor.streamingEnabled.Store(true)
+
+	task := &db.ScheduledTask{
+		ID:        33,
+		ChannelID: "ch-dangling",
+		Prompt:    "recurring task",
+		Type:      db.TaskTypeInterval,
+		Schedule:  "5m",
+		ThreadID:  "deleted-thread",
+	}
+
+	localChannel := &db.Channel{ChannelID: "ch-dangling", Platform: types.PlatformLocal, DirPath: "/work"}
+	s.store.On("GetChannel", mock.Anything, "ch-dangling").Return(localChannel, nil)
+	// Dangling: deleted-thread no longer exists in the channels table.
+	s.store.On("GetChannel", mock.Anything, "deleted-thread").Return(nil, nil)
+	// DB still has the stale thread_id; refresh restores it.
+	s.store.On("GetScheduledTask", s.ctx, int64(33)).Return(&db.ScheduledTask{ID: 33, ThreadID: "deleted-thread", Type: db.TaskTypeInterval}, nil)
+	s.allowBotInserts()
+
+	// Should create a new replacement thread.
+	s.bot.On("CreateSimpleThread", s.ctx, "ch-dangling", mock.Anything, mock.Anything).Return("new-thread", nil).Once()
+	s.store.On("UpsertChannel", mock.Anything, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "new-thread" && ch.ParentID == "ch-dangling"
+	})).Return(nil)
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(33), "new-thread").Return(nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Update")
+		return true
+	})).Return(&agent.AgentResponse{Response: "Update", SessionID: "s2"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "new-thread", "s2").Return(nil)
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Update", resp)
+	s.store.AssertCalled(s.T(), "UpdateScheduledTaskThreadID", s.ctx, int64(33), "new-thread")
+}
+
 func (s *TaskExecutorSuite) TestStreamingDiscordReusesThread() {
 	s.executor.streamingEnabled.Store(true)
 
