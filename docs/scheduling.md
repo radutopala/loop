@@ -128,6 +128,8 @@ schedule_task({
 })
 ```
 
+In the UI, the task create/edit form has a **Prompt | Workflow** mode toggle. Workflow mode is enabled when the channel has at least one workflow visible (merged global → parent → channel); the picker lists those workflows and renders inputs declared in the workflow definition, seeded with their defaults.
+
 | Field | Description |
 |---|---|
 | `workflow_name` | Name matching a `workflows[]` entry in config. When set, the task runs the workflow instead of an agent prompt. |
