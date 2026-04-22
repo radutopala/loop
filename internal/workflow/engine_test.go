@@ -3813,3 +3813,115 @@ func (s *EngineSuite) TestRetryRunWorkflowNotFound() {
 	_, err := s.engine.RetryRun(context.Background(), "r-gone")
 	require.ErrorContains(s.T(), err, "workflow not found")
 }
+
+// TestAcquireNodeSlotCancelledWhileBlocked covers the second ctx.Done branch in
+// acquireNodeSlot: the semaphore is full, the goroutine enters the blocking
+// select, and the context is cancelled while it waits.
+func TestAcquireNodeSlotCancelledWhileBlocked(t *testing.T) {
+	e := &defaultEngine{nodeSem: make(chan struct{}, 1)}
+	// Fill the semaphore so the next acquire must wait on the second select.
+	e.nodeSem <- struct{}{}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	done := make(chan bool, 1)
+	go func() {
+		done <- e.acquireNodeSlot(ctx)
+	}()
+
+	// Give the goroutine time to reach the blocking select.
+	time.Sleep(20 * time.Millisecond)
+	cancel()
+
+	select {
+	case ok := <-done:
+		require.False(t, ok)
+	case <-time.After(time.Second):
+		t.Fatal("acquireNodeSlot did not return after context cancel")
+	}
+}
+
+// TestPromptNodeResolvePromptError covers the ResolvePrompt error path in
+// executePromptNode: neither prompt nor prompt_path set — ResolvePrompt fails.
+func (s *EngineSuite) TestPromptNodeResolvePromptError() {
+	s.workflows = []config.WorkflowDef{
+		{
+			Name:  "unresolvable-prompt",
+			Nodes: []config.NodeDef{{ID: "ask", Type: config.NodeTypePrompt}},
+		},
+	}
+
+	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	done := s.waitForRunStatus()
+
+	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "unresolvable-prompt"})
+	require.NoError(s.T(), err)
+
+	select {
+	case status := <-done:
+		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("timeout — run should have failed because prompt could not be resolved")
+	}
+}
+
+// TestRecoverRunsCheckpointUpdateStatusError covers the updateRunStatus error
+// path in executeDAGFromCheckpoint: during recovery of a paused run, the
+// "restore to running" write fails and finalizeDAG is invoked with that error.
+func (s *EngineSuite) TestRecoverRunsCheckpointUpdateStatusError() {
+	s.workflows = []config.WorkflowDef{
+		{
+			Name: "cp-fail",
+			Nodes: []config.NodeDef{
+				{ID: "gate", Type: config.NodeTypeApproval, Message: "Go?", Timeout: "10s"},
+			},
+		},
+	}
+
+	pausedRun := &db.WorkflowRun{
+		ID:           "wfr-cpfail",
+		WorkflowName: "cp-fail",
+		ChannelID:    "ch1",
+		Status:       db.WorkflowRunStatusPaused,
+		PausedNodeID: "gate",
+		Inputs:       `{}`,
+	}
+
+	s.store.ExpectedCalls = nil
+	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
+	s.store.On("ListNodeRuns", mock.Anything, "wfr-cpfail").Return([]*db.NodeRun{
+		{RunID: "wfr-cpfail", NodeID: "gate", Status: db.NodeRunStatusRunning},
+	}, nil)
+	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	// GetWorkflowRun: first call inside updateRunStatus (success path reads it),
+	// second call inside finalizeDAG reads a fresh copy for the terminal write.
+	s.store.On("GetWorkflowRun", mock.Anything, "wfr-cpfail").Return(
+		&db.WorkflowRun{ID: "wfr-cpfail", WorkflowName: "cp-fail", ChannelID: "ch1", Status: db.WorkflowRunStatusPaused, PausedNodeID: "gate"}, nil,
+	)
+
+	// First UpdateWorkflowRun (the restore-to-running write) fails.
+	// Subsequent UpdateWorkflowRun calls (the finalize write) succeed and signal done.
+	done := make(chan db.WorkflowRunStatus, 1)
+	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(fmt.Errorf("db write failed")).Once()
+	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+		run := args.Get(1).(*db.WorkflowRun)
+		select {
+		case done <- run.Status:
+		default:
+		}
+	}).Return(nil)
+
+	err := s.engine.RecoverRuns(context.Background())
+	require.NoError(s.T(), err)
+
+	select {
+	case status := <-done:
+		require.Equal(s.T(), db.WorkflowRunStatusFailed, status)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("timeout — recovery should have finalized after updateRunStatus error")
+	}
+}

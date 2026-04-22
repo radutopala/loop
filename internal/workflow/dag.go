@@ -219,7 +219,10 @@ func (e *defaultEngine) executeDAGFromCheckpoint(
 
 	// Restore running status before enqueueing nodes.
 	if err := e.updateRunStatus(ctx, run.ID, db.WorkflowRunStatusRunning, ""); err != nil {
-		e.finalizeDAG(ctx, run, nil)
+		errCh := make(chan error, 1)
+		errCh <- err
+		close(errCh)
+		e.finalizeDAG(ctx, run, errCh)
 		return
 	}
 
