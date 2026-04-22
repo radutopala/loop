@@ -1664,8 +1664,8 @@ func (s *StoreSuite) TestListWorkflowRuns() {
 		AddRow("run-2", "build", "ch1", "/proj2", "", "completed", "", "", "", "", now, &finishedAt).
 		AddRow("run-1", "deploy", "ch1", "/proj1", "/wt", "running", `{"k":"v"}`, "", "", "", now.Add(-time.Hour), nil)
 
-	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs WHERE channel_id .+ ORDER BY started_at DESC LIMIT`).
-		WithArgs("ch1", 50).
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs\s+WHERE channel_id = \? .+ ORDER BY started_at DESC LIMIT`).
+		WithArgs("ch1", "ch1", "ch1", 50).
 		WillReturnRows(rows)
 
 	runs, err := s.store.ListWorkflowRuns(context.Background(), "ch1", 50)
@@ -1677,6 +1677,34 @@ func (s *StoreSuite) TestListWorkflowRuns() {
 	require.Equal(s.T(), "run-1", runs[1].ID)
 	require.Equal(s.T(), WorkflowRunStatusRunning, runs[1].Status)
 	require.Nil(s.T(), runs[1].FinishedAt)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestListWorkflowRunsIncludesChildChannelRuns() {
+	now := time.Now().UTC()
+	// Three sources of runs that should all appear when listing for "dm":
+	//   - run-direct: stored under "dm" itself (manual or direct task run)
+	//   - run-child:  stored under "thread-real" whose parent is "dm"
+	//   - run-ghost:  stored under "thread-ghost" — no channel row, but a
+	//                 scheduled task on "dm" has thread_id="thread-ghost"
+	rows := newMockWorkflowRunRows().
+		AddRow("run-ghost", "build", "thread-ghost", "/proj", "", "completed", "", "", "", "", now, nil).
+		AddRow("run-child", "test", "thread-real", "/proj", "", "completed", "", "", "", "", now.Add(-time.Minute), nil).
+		AddRow("run-direct", "deploy", "dm", "/proj", "", "running", "", "", "", "", now.Add(-time.Hour), nil)
+
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs\s+WHERE channel_id = \?\s+OR channel_id IN \(SELECT channel_id FROM channels WHERE parent_id = \?\)\s+OR channel_id IN \(SELECT thread_id FROM scheduled_tasks WHERE channel_id = \? AND thread_id != ''\)`).
+		WithArgs("dm", "dm", "dm", 50).
+		WillReturnRows(rows)
+
+	runs, err := s.store.ListWorkflowRuns(context.Background(), "dm", 50)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), runs, 3)
+	require.Equal(s.T(), "run-ghost", runs[0].ID)
+	require.Equal(s.T(), "thread-ghost", runs[0].ChannelID)
+	require.Equal(s.T(), "run-child", runs[1].ID)
+	require.Equal(s.T(), "thread-real", runs[1].ChannelID)
+	require.Equal(s.T(), "run-direct", runs[2].ID)
+	require.Equal(s.T(), "dm", runs[2].ChannelID)
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
@@ -1701,8 +1729,8 @@ func (s *StoreSuite) TestListWorkflowRunsWithoutChannelFilter() {
 }
 
 func (s *StoreSuite) TestListWorkflowRunsEmpty() {
-	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs WHERE channel_id .+ ORDER BY started_at DESC LIMIT`).
-		WithArgs("ch-empty", 10).
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs\s+WHERE channel_id = \? .+ ORDER BY started_at DESC LIMIT`).
+		WithArgs("ch-empty", "ch-empty", "ch-empty", 10).
 		WillReturnRows(newMockWorkflowRunRows())
 
 	runs, err := s.store.ListWorkflowRuns(context.Background(), "ch-empty", 10)
@@ -1712,8 +1740,8 @@ func (s *StoreSuite) TestListWorkflowRunsEmpty() {
 }
 
 func (s *StoreSuite) TestListWorkflowRunsError() {
-	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs WHERE channel_id .+ ORDER BY started_at DESC LIMIT`).
-		WithArgs("ch1", 10).
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs\s+WHERE channel_id = \? .+ ORDER BY started_at DESC LIMIT`).
+		WithArgs("ch1", "ch1", "ch1", 10).
 		WillReturnError(sql.ErrConnDone)
 
 	runs, err := s.store.ListWorkflowRuns(context.Background(), "ch1", 10)
@@ -1730,8 +1758,8 @@ func (s *StoreSuite) TestListWorkflowRunsError() {
 }
 
 func (s *StoreSuite) TestListWorkflowRunsScanError() {
-	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs WHERE channel_id .+ ORDER BY started_at DESC LIMIT`).
-		WithArgs("ch1", 10).
+	s.mock.ExpectQuery(`SELECT .+ FROM workflow_runs\s+WHERE channel_id = \? .+ ORDER BY started_at DESC LIMIT`).
+		WithArgs("ch1", "ch1", "ch1", 10).
 		WillReturnRows(newMockWorkflowRunRows().AddRow("bad-id", nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil))
 
 	runs, err := s.store.ListWorkflowRuns(context.Background(), "ch1", 10)

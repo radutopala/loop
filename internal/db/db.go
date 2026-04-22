@@ -742,9 +742,22 @@ func (s *SQLiteStore) ListWorkflowRuns(ctx context.Context, channelID string, li
 	var rows *sql.Rows
 	var err error
 	if channelID != "" {
+		// Include runs whose channel is the requested channel OR a child
+		// channel of it. Two sources of "child":
+		//   1. channels.parent_id == channelID — real persisted threads.
+		//   2. scheduled_tasks.thread_id where task.channel_id == channelID
+		//      — ghost threads (e.g. local-platform tasks) where the MCP
+		//      server's channelID is the thread_id but no channel row exists.
+		// Scheduled tasks that fire inside such a thread store the workflow
+		// run under the thread's channel ID; the user expects to see those
+		// when viewing the parent channel.
 		rows, err = s.db.QueryContext(ctx,
 			`SELECT id, workflow_name, channel_id, dir_path, worktree_path, status, inputs, paused_node_id, error_text, workflow_def, started_at, finished_at
-			 FROM workflow_runs WHERE channel_id = ? ORDER BY started_at DESC LIMIT ?`, channelID, limit)
+			 FROM workflow_runs
+			 WHERE channel_id = ?
+			    OR channel_id IN (SELECT channel_id FROM channels WHERE parent_id = ?)
+			    OR channel_id IN (SELECT thread_id FROM scheduled_tasks WHERE channel_id = ? AND thread_id != '')
+			 ORDER BY started_at DESC LIMIT ?`, channelID, channelID, channelID, limit)
 	} else {
 		rows, err = s.db.QueryContext(ctx,
 			`SELECT id, workflow_name, channel_id, dir_path, worktree_path, status, inputs, paused_node_id, error_text, workflow_def, started_at, finished_at
