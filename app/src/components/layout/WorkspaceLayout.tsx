@@ -25,6 +25,7 @@ import { NotesPanel } from "../panels/NotesPanel";
 import { TasksPanel } from "../panels/TasksPanel";
 import { KanbanPanel } from "../panels/KanbanPanel";
 import { WorkflowsLayoutPanel } from "../panels/WorkflowsLayoutPanel";
+import { AuditPanel } from "../panels/AuditPanel";
 import { killAgentContainer } from "../../api/loopApi";
 import { ChannelHeaderInfo } from "./ChannelHeaderInfo";
 import { HeaderBranchPicker } from "./HeaderBranchPicker";
@@ -60,7 +61,7 @@ function initIdCounter(channelId: string, tree: PaneNode) {
 }
 
 function leafIdForPanel(channelId: string, panel: PanelType): string {
-  if (panel === "chat" || panel === "editor" || panel === "memory" || panel === "git" || panel === "sessions" || panel === "notes") {
+  if (panel === "chat" || panel === "editor" || panel === "memory" || panel === "git" || panel === "sessions" || panel === "notes" || panel === "audit") {
     return panel;
   }
   return nextId(channelId, panel);
@@ -614,6 +615,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                 hideActions
                 onStatusChange={onStatusChange}
                 onPaneStatus={(status) => handlePaneStatus(leaf.id, status)}
+                gateApproval={chatState.gateApproval}
+                onGateApprovalResolved={chatState.clearGateApproval}
               />
             </div>
           );
@@ -705,6 +708,13 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           return (
             <WorkflowsLayoutPanel
               key={`layout-workflows-${channelId}`}
+              channelId={channelId}
+            />
+          );
+        case "audit":
+          return (
+            <AuditPanel
+              key={`layout-audit-${channelId}`}
               channelId={channelId}
             />
           );

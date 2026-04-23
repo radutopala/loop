@@ -264,6 +264,15 @@ func (m *mockBot) RemoveStopButton(ctx context.Context, channelID, messageID str
 	return m.Called(ctx, channelID, messageID).Error(0)
 }
 
+func (m *mockBot) SendApproval(ctx context.Context, channelID string, prompt bot.ApprovalPrompt) (string, error) {
+	args := m.Called(ctx, channelID, prompt)
+	return args.String(0), args.Error(1)
+}
+
+func (m *mockBot) RemoveApproval(ctx context.Context, channelID, messageID string) error {
+	return m.Called(ctx, channelID, messageID).Error(0)
+}
+
 type closableDockerClient struct {
 	*mockDockerClient
 	closeFn func() error
@@ -1918,6 +1927,99 @@ func (s *MainSuite) TestServeDockerClientCloserCalled() {
 	err := s.app.serve()
 	require.Error(s.T(), err)
 	require.True(s.T(), closeCalled, "docker client Close() should be called via io.Closer")
+}
+
+// approverMockBot wraps mockBot and advertises the SetApprovalResolver and
+// SetGateBroadcaster shapes that serve() type-asserts when cfg.Gates.Agentgate.Enabled
+// is true. Counts non-nil calls so tests can assert wiring happened.
+type approverMockBot struct {
+	*mockBot
+	approvalResolverSet atomic.Int32
+	gateBroadcasterSet  atomic.Int32
+}
+
+func (a *approverMockBot) SetApprovalResolver(r bot.ApprovalResolver) {
+	if r != nil {
+		a.approvalResolverSet.Add(1)
+	}
+}
+
+func (a *approverMockBot) SetGateBroadcaster(g local.GateBroadcaster) {
+	if g != nil {
+		a.gateBroadcasterSet.Add(1)
+	}
+}
+
+func (s *MainSuite) TestServeGateEnabledWiresApprovalResolverAndBroadcaster() {
+	m := s.setupServeMocks()
+	m.cfg.Gates.Agentgate.Enabled = true
+	m.setupHappyBot()
+
+	approver := &approverMockBot{mockBot: m.bot}
+	s.app.newDiscordBot = func(_, _, _ string, _ *slog.Logger) (orchestrator.Bot, error) { return approver, nil }
+	s.app.newLocalBot = func(_ db.Store, _ *slog.Logger) orchestrator.Bot { return approver }
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.app.serve() }()
+
+	time.Sleep(150 * time.Millisecond)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+
+	require.GreaterOrEqual(s.T(), int(approver.approvalResolverSet.Load()), 1,
+		"SetApprovalResolver should be called on bots implementing it when gate is enabled")
+	require.GreaterOrEqual(s.T(), int(approver.gateBroadcasterSet.Load()), 1,
+		"SetGateBroadcaster should be called on localBot when gate is enabled")
+}
+
+// TestServePolicyDirMkdirError covers the failure branch when serve() cannot
+// create the per-container policy directory under cfg.LoopDir. Putting LoopDir
+// under a regular file makes os.MkdirAll fail with ENOTDIR.
+func (s *MainSuite) TestServePolicyDirMkdirError() {
+	m := s.setupServeMocks()
+	m.cfg.Gates.Agentgate.Enabled = true
+	m.setupHappyBot()
+
+	// A regular file cannot contain subdirectories; LoopDir/run MkdirAll must fail.
+	tmp := s.T().TempDir()
+	blocker := filepath.Join(tmp, "blocker")
+	require.NoError(s.T(), os.WriteFile(blocker, []byte("x"), 0o600))
+	m.cfg.LoopDir = blocker
+
+	err := s.app.serve()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating policy dir")
+}
+
+func (s *MainSuite) TestServeGateEnabledBotWithoutSettersIsIgnored() {
+	// Bots that don't implement SetApprovalResolver / SetGateBroadcaster
+	// (plain mockBot) must be skipped without panic when gate is enabled.
+	m := s.setupServeMocks()
+	m.cfg.Gates.Agentgate.Enabled = true
+	m.setupHappyBot()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.app.serve() }()
+
+	time.Sleep(150 * time.Millisecond)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
 }
 
 // --- main() ---
@@ -3724,6 +3826,57 @@ func (s *MainSuite) TestReadmeOutput() {
 	cmd.SetArgs([]string{})
 	err := cmd.Execute()
 	require.NoError(s.T(), err)
+}
+
+// --- newDockerproxyCmd ---
+
+func (s *MainSuite) TestNewDockerproxyCmdRunEInvokesRunAndExits() {
+	var gotCode int
+	var ran bool
+	s.app.osExit = func(code int) { gotCode = code }
+	s.app.dockerproxyRun = func(_ io.Writer, _ io.Writer) int {
+		ran = true
+		return 7
+	}
+
+	cmd := s.app.newDockerproxyCmd()
+	require.Equal(s.T(), "dockerproxy", cmd.Use)
+	require.True(s.T(), cmd.Hidden)
+
+	cmd.SetArgs([]string{})
+	require.NoError(s.T(), cmd.Execute())
+	require.True(s.T(), ran)
+	require.Equal(s.T(), 7, gotCode)
+}
+
+// --- newSyscallwrapCmd ---
+
+// TestRunSyscallwrapProdDelegatesToSyscallwrapRun covers the package-level
+// runSyscallwrap helper (Linux build). No target args → parseArgs errors →
+// runMain returns 1.
+func (s *MainSuite) TestRunSyscallwrapProdDelegatesToSyscallwrapRun() {
+	code := runSyscallwrap(nil, []string{"loop", "syscallwrap"})
+	require.Equal(s.T(), 1, code)
+}
+
+func (s *MainSuite) TestNewSyscallwrapCmdRunEForwardsArgs() {
+	var gotForward []string
+	var gotCode int
+	s.app.osExit = func(code int) { gotCode = code }
+	s.app.syscallwrapRun = func(forward, _ []string) int {
+		gotForward = forward
+		return 3
+	}
+
+	cmd := s.app.newSyscallwrapCmd()
+	require.Equal(s.T(), "syscallwrap [--] <cmd> [args...]", cmd.Use)
+	require.True(s.T(), cmd.Hidden)
+	require.True(s.T(), cmd.DisableFlagParsing)
+
+	cmd.SetArgs([]string{"--", "claude", "-p"})
+	require.NoError(s.T(), cmd.Execute())
+	require.Equal(s.T(), []string{"--", "claude", "-p"}, gotForward)
+	require.Equal(s.T(), 3, gotCode)
 }
 
 func (s *MainSuite) TestServeLocalPlatformHappyPath() {

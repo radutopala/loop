@@ -26,8 +26,10 @@ interface ChatState {
   askUserQuestions: AskUserQuestionData | null;
   exitPlanRequest: ExitPlanModeData | null;
   todos: TodoWriteData | null;
+  gateApproval: GateApprovalRequestedData | null;
   clearAskUser: () => void;
   clearExitPlan: () => void;
+  clearGateApproval: () => void;
   mode: "agent" | "plan";
   setMode: (mode: "agent" | "plan") => void;
   completionInfo: { duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null;
@@ -145,6 +147,34 @@ After the agent finishes a run, a completion summary is displayed:
   - Stop reason (e.g., "end_turn")
 
 The summary is only shown when the agent is not running and completion info is available.
+
+---
+
+## Gate Approval Card
+
+When the agent container hits a gate rule with `decision: approve`, the backend broadcasts a [`gate.approval_requested`](events.md#gateapproval_requested) WebSocket event. The chat state stores the payload on `gateApproval` and `ChatMessages` renders an `ApprovalCard` between the last message and the streaming bubble.
+
+### Card Content
+
+- **Header:** `Gate · {KIND}` where kind is `CONNECT`, `EXECVE`, or `DOCKER-HTTP`.
+- **Target:** the full target string (socket path, command line, or `METHOD /path`) in a monospace style.
+- **Message:** the matching rule's `message` field, shown as a second-line caption when non-empty.
+- **Buttons:** three monospace pills, left-to-right:
+  - `Allow once` — primary accent, lets this one syscall through.
+  - `Allow for session` — secondary outline, caches the allow for the container's lifetime.
+  - `Deny` — warning accent, rejects the syscall.
+
+While a button is busy it shows a dim "…" label; failures are rendered below the buttons in the warning color so the user can retry.
+
+### Resolution
+
+Clicking a button calls `resolveGateApproval(reqId, decision)` which `POST`s to [`/api/gate/approvals/{id}`](api.md#post-apigateapprovalsid) with `{decision}`. On success the component calls its `onResolved` callback, which clears `gateApproval` on the chat state and scrolls to the bottom.
+
+The backend also broadcasts [`gate.approval_resolved`](events.md#gateapproval_resolved) so any other connected client dismisses the card. Because the desktop doesn't send `author_id`, the server records the decision under `local.DefaultAuthorID`.
+
+### Terminal-panel overlay variant
+
+The same `ApprovalCard` component (extracted to `src/components/chat/ApprovalCard.tsx`) is also rendered as a dimmed, centered overlay inside each Docker Agent `Terminal` panel. When a layout has no Chat panel visible (for example, a Swarm layout with three Docker Agents side-by-side), the panel's own terminal gets the approval prompt layered on top of the xterm so the operator can decide without switching layouts. The overlay sits in the Terminal's `position: relative` content region, uses a `rgba(0,0,0,0.55)` backdrop, and renders the card with its default margin reset (`style={{ margin: 0 }}`) so it fits the 520-px-wide popover. Resolution uses the same `POST /api/gate/approvals/{id}` path; `clearGateApproval` is passed as `onGateApprovalResolved` so dismissing from one surface dismisses on all of them.
 
 ---
 

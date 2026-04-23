@@ -62,6 +62,13 @@ The following environment variables are set on every container:
 | `TZ` | IANA timezone (e.g. `Europe/Bucharest`) | Detected from `$TZ`, `time.Now().Location()`, `/etc/timezone`, or `/etc/localtime` symlink; falls back to `UTC` |
 | `PATH` | `$HOME/.local/bin:$HOME/bin:$HOME/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin` | Standard PATH with user-local bin and Go directories |
 | `CHOWN_PATHS` | Colon-separated paths | Named volume mount targets and copy-file targets that need ownership adjustment by the container entrypoint |
+| `LOOP_CHANNEL_ID` | Channel ID | Set when the security gate or docker proxy is enabled. Routed to the bot prompt via `MultiManagerResolver.ByToken` on every in-container approval call |
+| `LOOP_GATE_TOKEN` | 32-byte hex | Set when the security gate or docker proxy is enabled. Per-container bearer token authenticating HTTP callbacks to `POST /api/gate/container-approval` |
+| `LOOP_GATE_ENABLED` | `1` | Set when the security gate is enabled. Entrypoint flips on this to `exec /usr/local/bin/loop syscallwrap -- "$@"` as root instead of plain `su-exec "$AGENT_USER" "$@"` |
+| `LOOP_GATE_POLICY_FILE` | `/etc/loop/gate-policy.json` | Set when the security gate is enabled. Path inside the container to the gate's policy JSON (bind-mounted read-only from `{policyDir}/{CID}/gate-policy.json` on the host). Read by `loop syscallwrap` parent before installing the filter |
+| `LOOP_DOCKERPROXY_ENABLED` | `1` | Set when the Docker HTTP proxy is enabled. Entrypoint starts `loop dockerproxy &` as root before any privilege drop |
+| `LOOP_DOCKERPROXY_POLICY_FILE` | `/etc/loop/proxy-policy.json` | Path inside the container to the proxy's policy JSON (bind-mounted read-only). Read by `loop dockerproxy` at startup |
+| `LOOP_DOCKERPROXY_UPSTREAM` | `/var/run/docker.sock.host` | Path inside the container to the real daemon socket (bind-mounted `:ro` from the host's `/var/run/docker.sock`). The proxy listens on `/var/run/docker.sock` (tmpfs) and reverse-proxies to this |
 
 ### Authentication
 
@@ -115,6 +122,53 @@ Mounts are specified in the config as `host_path:container_path[:mode]` strings.
   "~/.gitconfig:~/.gitconfig:ro" // Host path, read-only
 ]
 ```
+
+---
+
+## Security Gate
+
+When the config's `gates.agentgate.enabled` flag is true (the default), the runner wires a per-container seccomp gate into the spawn pipeline. The seccomp filter and the `agentgate.Server` notify loop both live **inside the container** — no notify fd or host-side unix socket crosses the container boundary. See [Configuration: Security Gate](configuration.md#security-gate) for the rule model and [Gates: Runtime wiring](gates.md#runtime-wiring) for the full lifecycle.
+
+### Per-Container Policy File
+
+Before `ContainerCreate`, the runner calls `writeGatePolicyFile` which:
+
+1. Creates a host directory `{policyDir}/{containerID}/`. The serve command computes `policyDir` as `{cfg.LoopDir}/run` (typically `~/.loop/run`) and passes it into the runner via `SetGatePolicy` and `SetDockerProxyDeps`. The directory lives under the user's home rather than `/run/loop` because macOS `/run` is on the read-only system volume; the same path works on Linux so there's one code path for both OSes.
+2. Marshals the gate rule subset (`default_decision`, `path_rules`, `command_rules`, `file_rules`) to `{policyDir}/{containerID}/gate-policy.json` with mode `0640`. The on-disk wire format is snake_case throughout, matching `~/.loop/config.json`.
+3. Adds a bind-mount `{hostPolicyPath}:/etc/loop/gate-policy.json:ro` and sets `LOOP_GATE_ENABLED=1`, `LOOP_GATE_POLICY_FILE=/etc/loop/gate-policy.json`, `LOOP_CHANNEL_ID={channelID}`, and `LOOP_GATE_TOKEN={32-hex}` on the container env. The bearer token is shared with the docker proxy layer when both are enabled.
+
+The file is written before the container starts so the first in-container read always succeeds. On container removal, the runner calls `gateResolver.Remove(containerID)` which frees the Manager + token. Policy files are left on disk (overwritten next spawn with the same cid).
+
+### Entrypoint Branch
+
+`internal/container/image/entrypoint.sh` checks for `$LOOP_GATE_ENABLED` after user setup and, when present, execs the `loop syscallwrap` subcommand **as root** — no `su-exec` wrapper:
+
+```sh
+if [ "$LOOP_GATE_ENABLED" = "1" ] && [ -x /usr/local/bin/loop ]; then
+    exec /usr/local/bin/loop syscallwrap -- "$@"
+fi
+exec su-exec "$AGENT_USER" "$@"
+```
+
+The `loop syscallwrap` parent process stays as uid 0 so the agent (running under `$AGENT_USER`) cannot signal it with `kill(2)` — different-uid `kill` is `EPERM`. Privilege drop to the agent uid happens in the **child** process (see below), so claude itself still runs unprivileged.
+
+### Fork / Handshake
+
+`loop syscallwrap` parent (root):
+
+1. Loads the gate policy from `LOOP_GATE_POLICY_FILE`.
+2. Builds an `httpapprover.Approver` against `$API_URL` + `$LOOP_GATE_TOKEN` — approval clicks round-trip to loop-server over HTTP.
+3. Creates a `socketpair(AF_UNIX, SOCK_STREAM, 0)` and re-execs `/proc/self/exe` with `LOOP_SYSCALLWRAP_MODE=child`, `ExtraFiles=[child-end]`, `SysProcAttr.Credential={uid, gid}` (looked up from `$HOST_USER`), and `SysProcAttr.Pdeathsig=SIGKILL`.
+4. Receives the handshake (channel id + notify fd via SCM_RIGHTS) on the parent-end of the socketpair, acks with a single `0x01` byte, and runs `agentgate.Server` against the notify fd until the child exits.
+
+`loop syscallwrap` child (agent user):
+
+1. `runtime.LockOSThread` pins the thread so the filter is installed on a predictable OS thread.
+2. `prctl(PR_SET_PDEATHSIG, SIGKILL)` ensures the kernel SIGKILLs the child (and transitively claude) if the parent ever dies — belt-and-braces alongside the value the parent already set in `SysProcAttr`.
+3. Installs the seccomp filter with `SECCOMP_SET_MODE_FILTER | SECCOMP_FILTER_FLAG_NEW_LISTENER | SECCOMP_FILTER_FLAG_TSYNC`.
+4. Sends the notify fd + `$LOOP_CHANNEL_ID` over fd 3 via SCM_RIGHTS, reads the ack, and `syscall.Exec`s the target command (claude).
+
+The filter is inherited by every descendant. An agent cannot disable the gate by unsetting its own env — the filter is already installed on its parent by the time claude starts.
 
 ---
 

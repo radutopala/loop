@@ -142,6 +142,15 @@ func (m *MockBot) RemoveStopButton(ctx context.Context, channelID, messageID str
 	return m.Called(ctx, channelID, messageID).Error(0)
 }
 
+func (m *MockBot) SendApproval(ctx context.Context, channelID string, prompt bot.ApprovalPrompt) (string, error) {
+	args := m.Called(ctx, channelID, prompt)
+	return args.String(0), args.Error(1)
+}
+
+func (m *MockBot) RemoveApproval(ctx context.Context, channelID, messageID string) error {
+	return m.Called(ctx, channelID, messageID).Error(0)
+}
+
 type MockEventBroadcaster struct {
 	mock.Mock
 }
@@ -212,6 +221,14 @@ func (m *MockEventBroadcaster) BroadcastImageBuildStatus(data events.ImageBuildS
 
 func (m *MockEventBroadcaster) BroadcastImageUpdateAvailable(data events.ImageUpdateAvailableData) {
 	m.Called(data)
+}
+
+func (m *MockEventBroadcaster) BroadcastGateApprovalRequested(channelID string, data events.GateApprovalEventData) {
+	m.Called(channelID, data)
+}
+
+func (m *MockEventBroadcaster) BroadcastGateApprovalResolved(channelID string, data events.GateApprovalResolvedData) {
+	m.Called(channelID, data)
 }
 
 type MockRunner struct {

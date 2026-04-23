@@ -108,6 +108,20 @@ export interface TodoWriteData {
   todos: TodoItem[];
 }
 
+export interface GateApprovalRequestedData {
+  req_id: string;
+  kind: string;
+  target: string;
+  message?: string;
+  details?: Record<string, string>;
+}
+
+export interface GateApprovalResolvedData {
+  req_id: string;
+  decision?: string;
+  actor?: string;
+}
+
 // UI-level session status (mapped from server message types).
 export type SessionStatus = "connecting" | "running" | "completed" | "failed";
 

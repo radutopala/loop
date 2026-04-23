@@ -245,6 +245,8 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("GET /api/shortcuts", s.srv.handleListShortcuts)
 	s.mux.HandleFunc("POST /api/shortcuts", s.srv.handleModifyShortcut)
 	s.mux.HandleFunc("GET /api/channels/{id}/sessions", s.srv.handleListSessions)
+	s.mux.HandleFunc("GET /api/channels/{id}/audit", s.srv.handleListAuditFiles)
+	s.mux.HandleFunc("DELETE /api/channels/{id}/audit/{date}", s.srv.handleDeleteAuditFile)
 	s.mux.HandleFunc("GET /api/channels/{id}/messages", s.srv.handleListMessages)
 	s.mux.HandleFunc("GET /api/messages/search", s.srv.handleSearchMessages)
 	s.mux.HandleFunc("POST /api/commands", s.srv.handleCommand)
@@ -304,6 +306,8 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("DELETE /api/workflows/runs/{id}", s.srv.handleDeleteWorkflowRun)
 	s.mux.HandleFunc("POST /api/workflows/runs/{id}/retry", s.srv.handleRetryWorkflowRun)
 	s.mux.HandleFunc("POST /api/workflows/runs/{id}/resume", s.srv.handleResumeWorkflowRun)
+	s.mux.HandleFunc("POST /api/gate/approvals/{id}", s.srv.handleResolveGateApproval)
+	s.mux.HandleFunc("POST /api/gate/container-approval", s.srv.handleContainerApproval)
 	s.mux.HandleFunc("GET /api/workflows", s.srv.handleListWorkflows)
 	s.mux.HandleFunc("POST /api/workflows", s.srv.handleModifyWorkflow)
 	s.mux.HandleFunc("GET /api/health", handleHealth)
@@ -346,6 +350,14 @@ func (s *ServerSuite) TestSetImageManager() {
 	srv := nilServer()
 	require.Nil(s.T(), srv.imageManager)
 	srv.SetImageManager(nil) // just exercises the setter
+}
+
+func (s *ServerSuite) TestSetApprovalResolver() {
+	srv := nilServer()
+	require.Nil(s.T(), srv.approvalResolver)
+	r := &fakeGateResolver{}
+	srv.SetApprovalResolver(r)
+	require.Same(s.T(), r, srv.approvalResolver)
 }
 
 func (s *ServerSuite) TestCleanupBrowsersWithProvider() {

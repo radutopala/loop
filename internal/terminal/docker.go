@@ -43,10 +43,13 @@ func newDockerExecClientWith(apiFactory func() (dockerExecAPI, error)) (*DockerE
 	return &DockerExecClient{api: api, osGetenv: os.Getenv}, nil
 }
 
-// DefaultShellCmd returns a /bin/sh command that writes its PID to pidFile
-// for reliable process group cleanup inside the container.
+// DefaultShellCmd returns a /bin/bash command that writes its PID to pidFile
+// for reliable process group cleanup inside the container. Bash is started
+// with an explicit --rcfile so image-baked aliases (e.g. `claude` →
+// `loop syscallwrap -- claude`) load even when the user's own ~/.bashrc
+// overrides the default; the rcfile itself sources ~/.bashrc first.
 func (c *DockerExecClient) DefaultShellCmd(pidFile string) []string {
-	return []string{"/bin/sh", "-c", fmt.Sprintf("echo $$ > %s; exec /bin/sh", pidFile)}
+	return []string{"/bin/bash", "-c", fmt.Sprintf("echo $$ > %s; exec /bin/bash --rcfile /etc/loop/bashrc -i", pidFile)}
 }
 
 // ExecCreate creates a new exec process in the container with the

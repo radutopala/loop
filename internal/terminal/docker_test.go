@@ -312,7 +312,7 @@ func (s *DockerSuite) TestExecInspectPidError() {
 func (s *DockerSuite) TestDefaultShellCmd() {
 	c := &DockerExecClient{}
 	cmd := c.DefaultShellCmd("/tmp/.loop-exec-abc.pid")
-	require.Equal(s.T(), []string{"/bin/sh", "-c", "echo $$ > /tmp/.loop-exec-abc.pid; exec /bin/sh"}, cmd)
+	require.Equal(s.T(), []string{"/bin/bash", "-c", "echo $$ > /tmp/.loop-exec-abc.pid; exec /bin/bash --rcfile /etc/loop/bashrc -i"}, cmd)
 }
 
 func (s *DockerSuite) TestExecCreateNoTTY() {

@@ -168,6 +168,35 @@ type MemoryConfig struct {
 	Embeddings         EmbeddingsConfig
 }
 
+// GatesConfig groups all approval-based enforcement layers: the kernel
+// syscall gate ("agentgate") and the Docker HTTP proxy gate. They share a
+// single per-container Manager, bearer token, and approval endpoint — so
+// settings that belong to both (RateLimits, Audit) live at the umbrella
+// level rather than being duplicated per layer.
+type GatesConfig struct {
+	RateLimits  types.RateLimits
+	Audit       types.AuditConfig
+	Agentgate   AgentgateConfig
+	DockerProxy DockerProxyConfig
+}
+
+// AgentgateConfig groups the kernel seccomp-gate layer settings.
+type AgentgateConfig struct {
+	Enabled         bool                `json:"enabled"`
+	DefaultDecision types.Decision      `json:"default_decision"`
+	PathRules       []types.PathRule    `json:"path_rules"`
+	CommandRules    []types.CommandRule `json:"command_rules"`
+	FileRules       []types.FileRule    `json:"file_rules"`
+}
+
+// DockerProxyConfig groups the Docker HTTP proxy gate layer settings.
+type DockerProxyConfig struct {
+	Enabled         bool                    `json:"enabled"`
+	DefaultDecision types.Decision          `json:"default_decision"`
+	HTTPRules       []types.HTTPServiceRule `json:"http_rules"`
+	BodyRules       []types.BodyRule        `json:"body_rules"`
+}
+
 // Config holds all application configuration loaded from config.json.
 type Config struct {
 	Platforms            []types.Platform
@@ -208,6 +237,7 @@ type Config struct {
 	Permissions          types.Permissions
 	ExtraDirs            []string
 	Desktop              DesktopConfig
+	Gates                GatesConfig
 }
 
 // DesktopConfig holds Electron desktop app preferences.
@@ -278,6 +308,7 @@ type jsonConfig struct {
 	Memory                *jsonMemoryConfig      `json:"memory"`
 	Permissions           *jsonPermissionsConfig `json:"permissions"`
 	Desktop               *DesktopConfig         `json:"desktop"`
+	Gates                 *jsonGatesConfig       `json:"gates"`
 }
 
 // jsonMemoryConfig is the JSON representation of the memory block.
@@ -295,6 +326,32 @@ type jsonBrowserConfig struct {
 	ChromeImage string `json:"chrome_image"`
 	Mode        string `json:"mode"`
 	HostCDPPort *int   `json:"host_cdp_port"`
+}
+
+// jsonGatesConfig is the JSON representation of the gates block — the umbrella
+// that groups agentgate + docker_proxy and the settings they share.
+type jsonGatesConfig struct {
+	RateLimits  *types.RateLimits      `json:"rate_limits"`
+	Audit       *types.AuditConfig     `json:"audit"`
+	Agentgate   *jsonAgentgateConfig   `json:"agentgate"`
+	DockerProxy *jsonDockerProxyConfig `json:"docker_proxy"`
+}
+
+// jsonAgentgateConfig is the JSON representation of the agentgate block.
+type jsonAgentgateConfig struct {
+	Enabled         *bool               `json:"enabled"`
+	DefaultDecision string              `json:"default_decision"`
+	PathRules       []types.PathRule    `json:"path_rules"`
+	CommandRules    []types.CommandRule `json:"command_rules"`
+	FileRules       []types.FileRule    `json:"file_rules"`
+}
+
+// jsonDockerProxyConfig is the JSON representation of the docker_proxy block.
+type jsonDockerProxyConfig struct {
+	Enabled         *bool                   `json:"enabled"`
+	DefaultDecision string                  `json:"default_decision"`
+	HTTPRules       []types.HTTPServiceRule `json:"http_rules"`
+	BodyRules       []types.BodyRule        `json:"body_rules"`
 }
 
 type jsonMCPConfig struct {
@@ -421,6 +478,64 @@ func (l *Loader) parse() (*Config, error) {
 			cfg.Browser.Mode = jc.Browser.Mode
 		}
 		cfg.Browser.HostCDPPort = ptrDefault(jc.Browser.HostCDPPort, 9222)
+	}
+
+	// Gates umbrella: agentgate + docker_proxy share a Manager, bearer token,
+	// and approval endpoint. Shared settings (RateLimits, Audit) live at the
+	// umbrella level. Both layers default to on.
+	cfg.Gates = GatesConfig{
+		RateLimits: types.RateLimits{Pending: 30, PerMinute: 60, Total: 500},
+		Audit:      types.AuditConfig{RetentionDays: 30},
+		Agentgate: AgentgateConfig{
+			Enabled:         true,
+			DefaultDecision: types.DecisionAllow,
+			PathRules:       DefaultGatePathRules(),
+			CommandRules:    DefaultGateCommandRules(),
+			FileRules:       DefaultGateFileRules(),
+		},
+		DockerProxy: DockerProxyConfig{
+			Enabled: true,
+			// Allow unmatched routes by default. The explicit Approve list in
+			// DefaultDockerProxyHTTPRules covers the lateral-movement ops
+			// (exec/attach-start, docker cp); the Deny list covers swarm/
+			// secrets/plugins; body rules on create/update hard-block escape
+			// primitives. Anything else (wait, resize, rename, attach, …) is
+			// safe to pass silently.
+			DefaultDecision: types.DecisionAllow,
+			HTTPRules:       DefaultDockerProxyHTTPRules(),
+			BodyRules:       DefaultDockerProxyBodyRules(),
+		},
+	}
+	if jc.Gates != nil {
+		if jc.Gates.RateLimits != nil {
+			cfg.Gates.RateLimits = *jc.Gates.RateLimits
+		}
+		if jc.Gates.Audit != nil {
+			cfg.Gates.Audit = *jc.Gates.Audit
+		}
+		if jc.Gates.Agentgate != nil {
+			ag := jc.Gates.Agentgate
+			cfg.Gates.Agentgate.Enabled = ptrDefault(ag.Enabled, true)
+			if ag.DefaultDecision != "" {
+				cfg.Gates.Agentgate.DefaultDecision = types.Decision(ag.DefaultDecision)
+			}
+			cfg.Gates.Agentgate.PathRules = sliceDefault(ag.PathRules, cfg.Gates.Agentgate.PathRules)
+			cfg.Gates.Agentgate.CommandRules = sliceDefault(ag.CommandRules, cfg.Gates.Agentgate.CommandRules)
+			cfg.Gates.Agentgate.FileRules = sliceDefault(ag.FileRules, cfg.Gates.Agentgate.FileRules)
+		}
+		// Docker proxy defaults to the agentgate's enabled state — so disabling
+		// agentgate transitively disables the proxy unless project config is
+		// explicit.
+		cfg.Gates.DockerProxy.Enabled = cfg.Gates.Agentgate.Enabled
+		if jc.Gates.DockerProxy != nil {
+			dp := jc.Gates.DockerProxy
+			cfg.Gates.DockerProxy.Enabled = ptrDefault(dp.Enabled, cfg.Gates.Agentgate.Enabled)
+			if dp.DefaultDecision != "" {
+				cfg.Gates.DockerProxy.DefaultDecision = types.Decision(dp.DefaultDecision)
+			}
+			cfg.Gates.DockerProxy.HTTPRules = sliceDefault(dp.HTTPRules, cfg.Gates.DockerProxy.HTTPRules)
+			cfg.Gates.DockerProxy.BodyRules = sliceDefault(dp.BodyRules, cfg.Gates.DockerProxy.BodyRules)
+		}
 	}
 
 	if jc.MCP != nil && len(jc.MCP.Servers) > 0 {
@@ -574,6 +689,7 @@ type projectConfig struct {
 	Memory               *jsonMemoryConfig      `json:"memory"`
 	Permissions          *jsonPermissionsConfig `json:"permissions"`
 	ExtraDirs            []string               `json:"extra_dirs"`
+	Gates                *jsonGatesConfig       `json:"gates"`
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
@@ -763,6 +879,45 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		if pc.Permissions.Members != nil {
 			merged.Permissions.Members.Users = pc.Permissions.Members.Users
 			merged.Permissions.Members.Roles = pc.Permissions.Members.Roles
+		}
+	}
+
+	// Gates: project config has the same rule-authoring surface as global —
+	// it can prepend rules with any decision (allow/deny/approve) so projects
+	// can punch surgical holes (e.g. allow a specific bind-mount) without
+	// turning a whole layer off.
+	//   - Enabled: project can disable, but cannot re-enable if global is off (kill-switch).
+	//   - DefaultDecision: ignored (global wins).
+	//   - Rules: prepended; first-match-wins so project rules apply before global.
+	//   - RateLimits / Audit: ignored (they live at the Gates umbrella; global wins).
+	if pc.Gates != nil {
+		if ag := pc.Gates.Agentgate; ag != nil {
+			if ag.Enabled != nil && !*ag.Enabled && merged.Gates.Agentgate.Enabled {
+				merged.Gates.Agentgate.Enabled = false
+				// Transitive disable: docker proxy only runs when agentgate is on.
+				merged.Gates.DockerProxy.Enabled = false
+			}
+			if len(ag.PathRules) > 0 {
+				merged.Gates.Agentgate.PathRules = append(append([]types.PathRule{}, ag.PathRules...), merged.Gates.Agentgate.PathRules...)
+			}
+			if len(ag.CommandRules) > 0 {
+				merged.Gates.Agentgate.CommandRules = append(append([]types.CommandRule{}, ag.CommandRules...), merged.Gates.Agentgate.CommandRules...)
+			}
+			if len(ag.FileRules) > 0 {
+				merged.Gates.Agentgate.FileRules = append(append([]types.FileRule{}, ag.FileRules...), merged.Gates.Agentgate.FileRules...)
+			}
+		}
+
+		if dp := pc.Gates.DockerProxy; dp != nil {
+			if dp.Enabled != nil && !*dp.Enabled && merged.Gates.DockerProxy.Enabled {
+				merged.Gates.DockerProxy.Enabled = false
+			}
+			if len(dp.HTTPRules) > 0 {
+				merged.Gates.DockerProxy.HTTPRules = append(append([]types.HTTPServiceRule{}, dp.HTTPRules...), merged.Gates.DockerProxy.HTTPRules...)
+			}
+			if len(dp.BodyRules) > 0 {
+				merged.Gates.DockerProxy.BodyRules = append(append([]types.BodyRule{}, dp.BodyRules...), merged.Gates.DockerProxy.BodyRules...)
+			}
 		}
 	}
 

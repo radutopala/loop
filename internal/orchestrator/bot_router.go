@@ -151,6 +151,22 @@ func (r *BotRouter) RemoveStopButton(ctx context.Context, channelID, messageID s
 	return b.RemoveStopButton(ctx, channelID, messageID)
 }
 
+func (r *BotRouter) SendApproval(ctx context.Context, channelID string, prompt bot.ApprovalPrompt) (string, error) {
+	b, err := r.withBot(ctx, channelID, "SendApproval")
+	if err != nil {
+		return "", err
+	}
+	return b.SendApproval(ctx, channelID, prompt)
+}
+
+func (r *BotRouter) RemoveApproval(ctx context.Context, channelID, messageID string) error {
+	b, err := r.withBot(ctx, channelID, "RemoveApproval")
+	if err != nil {
+		return err
+	}
+	return b.RemoveApproval(ctx, channelID, messageID)
+}
+
 func (r *BotRouter) SetChannelTopic(ctx context.Context, channelID, topic string) error {
 	b, err := r.withBot(ctx, channelID, "SetChannelTopic")
 	if err != nil {

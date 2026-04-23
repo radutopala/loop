@@ -1,6 +1,14 @@
 .PHONY: help build install test test-integration test-component test-runner-build test-runner-push lint coverage coverage-check codeql-download codeql docker-build run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-install app-build-binary app-dist-linux app-icons
 .DEFAULT_GOAL := help
 
+# Strip gate-child env inheritance when invoking make from inside a
+# loop-syscallwrap'd shell: those vars tell test code it's running as the
+# seccomp-gate child process (fd 3 is the live handshake socket, etc.) and
+# cause child_test.go:TestDefaultParentConnHappyOnSocketpair to skip, which
+# drops coverage below 100%. Tests need the clean-shell environment.
+unexport LOOP_SYSCALLWRAP_MODE
+unexport LOOP_GATE_ENABLED
+
 help: ## Show available targets
 	@grep -E '^[a-zA-Z_-]+:.*##' $(MAKEFILE_LIST) | awk -F ':.*## ' '{printf "  %-18s %s\n", $$1, $$2}'
 
@@ -64,6 +72,10 @@ test-runner-push: test-runner-build ## Build and push the test-runner Docker ima
 	docker push $(TEST_RUNNER_IMAGE)
 
 lint: ## Run golangci-lint (with auto-fix)
+	@if [ -n "$$(docker ps --filter name=^loop-lint$$ --quiet)" ]; then \
+		echo "error: another loop-lint container is already running; aborting" >&2; \
+		exit 1; \
+	fi
 	docker run --rm --name loop-lint -v "$$(pwd)":/app -v /app/app/node_modules -w /app golangci/golangci-lint:v2.11.4 golangci-lint run -v --fix ./...
 
 coverage: ## Generate HTML coverage report

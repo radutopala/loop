@@ -25,6 +25,7 @@ import (
 	"github.com/radutopala/loop/internal/daemon"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/discord"
+	"github.com/radutopala/loop/internal/dockerproxy"
 	"github.com/radutopala/loop/internal/embeddings"
 	"github.com/radutopala/loop/internal/local"
 	"github.com/radutopala/loop/internal/mcpserver"
@@ -131,6 +132,12 @@ type app struct {
 
 	// Embedded FS for playground examples (overridable for testing)
 	playgroundExamplesFS fs.FS
+
+	// In-container subcommand wrappers. Injected so tests can observe the
+	// exit code without actually exiting the test process.
+	osExit         func(int)
+	dockerproxyRun func(stdout, stderr io.Writer) int
+	syscallwrapRun func(forwardArgs, selfArgv []string) int
 }
 
 func newApp() *app {
@@ -194,6 +201,11 @@ func newApp() *app {
 
 		// Update dependencies
 		httpGet: http.Get,
+
+		// In-container subcommand wrappers
+		osExit:         os.Exit,
+		dockerproxyRun: dockerproxy.Run,
+		syscallwrapRun: runSyscallwrap,
 	}
 	// Wire up functions that reference methods on a.
 	a.newDiscordBot = func(token, appID, guildID string, logger *slog.Logger) (orchestrator.Bot, error) {
@@ -248,6 +260,8 @@ func (a *app) newRootCmd() *cobra.Command {
 	root.AddCommand(a.newImageStatusCmd())
 	root.AddCommand(a.newMCPBrowserCmd())
 	root.AddCommand(a.newMCPHostBrowserCmd())
+	root.AddCommand(a.newSyscallwrapCmd())
+	root.AddCommand(a.newDockerproxyCmd())
 	root.SetHelpTemplate(helpTemplate)
 	return root
 }

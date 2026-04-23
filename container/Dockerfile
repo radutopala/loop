@@ -4,7 +4,8 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go generate ./internal/readme/ && go build -o /loop ./cmd/loop
+RUN go generate ./internal/readme/ && \
+    go build -o /loop ./cmd/loop
 RUN go install github.com/radutopala/ticket/cmd/tk@latest
 RUN go install golang.org/x/tools/gopls@latest
 
@@ -23,6 +24,7 @@ COPY --from=builder /go/bin/gopls /usr/local/bin/gopls
 COPY internal/container/image/setup.sh .loop/setup.s[h] /usr/local/bin/
 RUN --mount=type=secret,id=gitconfig,target=/root/.gitconfig chmod +x /usr/local/bin/setup.sh && /usr/local/bin/setup.sh
 COPY internal/container/image/entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY internal/container/image/agent-bashrc /etc/loop/bashrc
 RUN chmod +x /usr/local/bin/entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["claude"]

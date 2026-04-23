@@ -204,6 +204,7 @@ func (s *ClientSuite) TestContainerCreate() {
 		Labels:       map[string]string{"app": "loop-agent"},
 		Env:          []string{"FOO=bar"},
 	}
+	initTrue := true
 	expectedHostConfig := &containertypes.HostConfig{
 		Resources: containertypes.Resources{
 			Memory:    512 * 1024 * 1024,
@@ -212,6 +213,7 @@ func (s *ClientSuite) TestContainerCreate() {
 		},
 		Binds:      nil,
 		ExtraHosts: []string{"host.docker.internal:host-gateway"},
+		Init:       &initTrue,
 	}
 
 	s.api.On("ContainerCreate", ctx, expectedConfig, expectedHostConfig, (*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "my-container").
@@ -221,6 +223,30 @@ func (s *ClientSuite) TestContainerCreate() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "abc123", id)
 	s.api.AssertExpectations(s.T())
+}
+
+// TestContainerCreateAlwaysSetsInit pins the unconditional HostConfig.Init=true
+// wiring. tini-as-PID-1 reaps orphaned grandchildren that loop-syscallwrap (or
+// claude pre-gate) would otherwise leave as zombies.
+func (s *ClientSuite) TestContainerCreateAlwaysSetsInit() {
+	ctx := context.Background()
+	cfg := &ContainerConfig{Image: "img:latest", MemoryMB: 64, CPUs: 0.25}
+
+	var capturedHost *containertypes.HostConfig
+	s.api.On("ContainerCreate", ctx,
+		mock.AnythingOfType("*container.Config"),
+		mock.MatchedBy(func(h *containertypes.HostConfig) bool {
+			capturedHost = h
+			return true
+		}),
+		(*network.NetworkingConfig)(nil), (*ocispec.Platform)(nil), "init-test").
+		Return(containertypes.CreateResponse{ID: "id"}, nil)
+
+	_, err := s.client.ContainerCreate(ctx, cfg, "init-test")
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), capturedHost)
+	require.NotNil(s.T(), capturedHost.Init, "HostConfig.Init must be set")
+	require.True(s.T(), *capturedHost.Init, "HostConfig.Init must be true")
 }
 
 func (s *ClientSuite) TestContainerCreateEmptyName() {

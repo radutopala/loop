@@ -78,6 +78,33 @@
   //  "members": { "users": [], "roles": [] }
   //},
 
+  // Security gates override for this project.
+  // Project config can: (a) disable a gate layer for this project only,
+  //                     (b) prepend rules with any decision (allow/deny/approve) — first-match-wins.
+  // Project config CANNOT: loosen default_decision, re-enable a globally-disabled gate,
+  //                       adjust rate limits or audit settings.
+  //"gates": {
+  //  //"agentgate": {
+  //  //  "enabled": false,   // disable for this project only (cannot re-enable if global is false)
+  //  //  // Rules prepend to global — first-match-wins, so project rules apply before baseline.
+  //  //  //"command_rules": [ { "commands": ["npm"], "args_patterns": ["^publish"], "decision": "deny" } ],
+  //  //  //"file_rules":    [ { "paths": ["./secret-vault/**"], "operations": ["read"], "decision": "deny" } ]
+  //  //},
+  //
+  //  // Docker proxy override — project rules prepend to global.
+  //  // Example: punch a hole in the baseline binds-deny for a specific socket.
+  //  //"docker_proxy": {
+  //  //  //"body_rules": [
+  //  //  //  {
+  //  //  //    "applies_to": "POST ^/containers/create$",
+  //  //  //    "json_checks": [ { "path": "HostConfig.Binds[*]", "op": "source_path_in", "values": ["^/var/run/docker\\.sock$"] } ],
+  //  //  //    "decision": "allow"
+  //  //  //  }
+  //  //  //],
+  //  //  //"http_rules": [ { "methods": ["POST"], "paths": ["^/my/route$"], "decision": "deny" } ]
+  //  //}
+  //},
+
   // Task templates specific to this project (merged with global; project overrides by name)
   // Each template must have either "prompt" (inline) or "prompt_path" (loads from ~/.loop/templates/<path>), but not both.
   //"task_templates": [

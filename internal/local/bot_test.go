@@ -14,8 +14,33 @@ import (
 
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/types"
 )
+
+type gateRequestedCall struct {
+	channelID string
+	data      events.GateApprovalEventData
+}
+
+type gateResolvedCall struct {
+	channelID string
+	data      events.GateApprovalResolvedData
+}
+
+// recordingGateBroadcaster captures gate broadcast calls for assertion.
+type recordingGateBroadcaster struct {
+	requested []gateRequestedCall
+	resolved  []gateResolvedCall
+}
+
+func (r *recordingGateBroadcaster) BroadcastGateApprovalRequested(channelID string, data events.GateApprovalEventData) {
+	r.requested = append(r.requested, gateRequestedCall{channelID: channelID, data: data})
+}
+
+func (r *recordingGateBroadcaster) BroadcastGateApprovalResolved(channelID string, data events.GateApprovalResolvedData) {
+	r.resolved = append(r.resolved, gateResolvedCall{channelID: channelID, data: data})
+}
 
 type MockLocalStore struct {
 	mock.Mock
@@ -107,6 +132,50 @@ func (s *BotSuite) TestSendStopButton() {
 
 func (s *BotSuite) TestRemoveStopButton() {
 	require.NoError(s.T(), s.bot.RemoveStopButton(context.Background(), "ch", "msg"))
+}
+
+func (s *BotSuite) TestSendApprovalWithoutBroadcasterIsNoop() {
+	id, err := s.bot.SendApproval(context.Background(), "ch", bot.ApprovalPrompt{ID: "r1"})
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), id)
+}
+
+func (s *BotSuite) TestRemoveApprovalWithoutBroadcasterIsNoop() {
+	require.NoError(s.T(), s.bot.RemoveApproval(context.Background(), "ch", "msg"))
+}
+
+func (s *BotSuite) TestSendApprovalBroadcastsEvent() {
+	g := &recordingGateBroadcaster{}
+	s.bot.SetGateBroadcaster(g)
+
+	id, err := s.bot.SendApproval(context.Background(), "ch-7", bot.ApprovalPrompt{
+		ID:      "req-42",
+		Kind:    "execve",
+		Target:  "git push origin main",
+		Message: "git write-side operation",
+		Details: map[string]string{"image": "alpine"},
+	})
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "req-42", id)
+
+	require.Len(s.T(), g.requested, 1)
+	require.Equal(s.T(), "ch-7", g.requested[0].channelID)
+	require.Equal(s.T(), "req-42", g.requested[0].data.ReqID)
+	require.Equal(s.T(), "execve", g.requested[0].data.Kind)
+	require.Equal(s.T(), "git push origin main", g.requested[0].data.Target)
+	require.Equal(s.T(), "git write-side operation", g.requested[0].data.Message)
+	require.Equal(s.T(), map[string]string{"image": "alpine"}, g.requested[0].data.Details)
+	require.Empty(s.T(), g.resolved)
+}
+
+func (s *BotSuite) TestRemoveApprovalBroadcastsEvent() {
+	g := &recordingGateBroadcaster{}
+	s.bot.SetGateBroadcaster(g)
+
+	require.NoError(s.T(), s.bot.RemoveApproval(context.Background(), "ch-9", "req-99"))
+	require.Len(s.T(), g.resolved, 1)
+	require.Equal(s.T(), "ch-9", g.resolved[0].channelID)
+	require.Equal(s.T(), "req-99", g.resolved[0].data.ReqID)
 }
 
 // --- DB-backed: GetChannelParentID ---

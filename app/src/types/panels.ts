@@ -1,8 +1,8 @@
 // Panel types: chat/editor/memory/git are singletons (max 1 each).
 // docker-browser/host-browser are mutually exclusive (only one browser type per layout).
 // docker-agent/host-shell/docker-shell/playground are multi-instance (multiple allowed, distinguished by id).
-export type PanelType = "chat" | "editor" | "memory" | "git" | "docker-agent" | "host-shell" | "docker-shell" | "docker-browser" | "host-browser" | "sessions" | "playground" | "notes" | "tasks" | "kanban" | "workflows";
-export const SINGLETON_PANELS: PanelType[] = ["chat", "editor", "memory", "git", "docker-browser", "host-browser", "sessions", "notes", "tasks", "kanban", "workflows"];
+export type PanelType = "chat" | "editor" | "memory" | "git" | "docker-agent" | "host-shell" | "docker-shell" | "docker-browser" | "host-browser" | "sessions" | "playground" | "notes" | "tasks" | "kanban" | "workflows" | "audit";
+export const SINGLETON_PANELS: PanelType[] = ["chat", "editor", "memory", "git", "docker-browser", "host-browser", "sessions", "notes", "tasks", "kanban", "workflows", "audit"];
 
 /** Panels that exclude each other -- if one is present, the others in the same group are blocked. */
 export const EXCLUSIVE_PANELS: PanelType[][] = [
@@ -29,6 +29,7 @@ export const PANEL_OPTIONS: { panel: PanelType; label: string }[] = [
   { panel: "tasks", label: "Tasks" },
   { panel: "kanban", label: "Kanban" },
   { panel: "workflows", label: "Workflows" },
+  { panel: "audit", label: "Audit" },
 ];
 
 /** Display labels for panel headers and tiles. */

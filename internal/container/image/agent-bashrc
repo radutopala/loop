@@ -1,0 +1,15 @@
+# Loop agent bashrc — sourced by interactive bash shells spawned via
+# docker exec (e.g. the terminal panel in the web UI).
+#
+# The main claude process is started by entrypoint.sh via
+# `loop syscallwrap -- claude`, which does not go through bash — so the
+# alias below only affects ad-hoc invocations from interactive shells.
+
+# Load the user's own bashrc first (bind-mounted by the host if present).
+[ -r "$HOME/.bashrc" ] && . "$HOME/.bashrc"
+
+# Route interactive `claude` invocations through the seccomp gate so they
+# are subject to the same approval rules as the main agent process.
+if [ "$LOOP_GATE_ENABLED" = "1" ]; then
+    alias claude='loop syscallwrap -- claude'
+fi

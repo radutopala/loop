@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { SessionStatus, TerminalTarget } from "../../types";
+import type { GateApprovalRequestedData, SessionStatus, TerminalTarget } from "../../types";
 import { useTheme } from "../../ThemeContext";
 import { useTerminalWs } from "../../hooks/useTerminalWs";
 import { useElapsedTimer } from "../../hooks/useElapsedTimer";
 import { useXTerminal } from "../../hooks/useXTerminal";
 import { TerminalToolbar } from "./TerminalToolbar";
 import { PaneHeaderStatus } from "./PaneHeaderStatus";
+import { ApprovalCard } from "../chat/ApprovalCard";
 
 /** Module-level registry so TerminalPanes can call sendClose for a specific instance. */
 const closeRegistry = new Map<string, () => void>();
@@ -32,9 +33,13 @@ interface TerminalProps {
   /** Reports session status changes to the parent (e.g. for aggregate Kill/Restart). */
   onPaneStatus?: (status: SessionStatus) => void;
   onSessionEnd?: () => void;
+  /** When set, overlays the chat's ApprovalCard on top of the terminal content. */
+  gateApproval?: GateApprovalRequestedData | null;
+  /** Called after the user clicks Allow/Deny so the parent can clear gateApproval. */
+  onGateApprovalResolved?: () => void;
 }
 
-export function Terminal({ channelId, target = "agent", instanceId, claudeSessionId, newSession, cmd, hideActions, killSignal, onStatusChange, onPaneStatus, onSessionEnd }: TerminalProps) {
+export function Terminal({ channelId, target = "agent", instanceId, claudeSessionId, newSession, cmd, hideActions, killSignal, onStatusChange, onPaneStatus, onSessionEnd, gateApproval, onGateApprovalResolved }: TerminalProps) {
   const { colors, fontSizes } = useTheme();
   const terminalRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<SessionStatus>("connecting");
@@ -170,6 +175,22 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
         <div style={{ padding: "8px 0 8px 12px", width: "100%", height: "100%", boxSizing: "border-box" }}>
           <div ref={terminalRef} style={{ width: "100%", height: "100%" }} />
         </div>
+        {gateApproval && (
+          <div style={{
+            position: "absolute",
+            inset: 0,
+            backgroundColor: "rgba(0, 0, 0, 0.55)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            padding: 16,
+            zIndex: 10,
+          }}>
+            <div style={{ width: "100%", maxWidth: 520, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", borderRadius: 8 }}>
+              <ApprovalCard data={gateApproval} onResolved={onGateApprovalResolved} style={{ margin: 0 }} />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );

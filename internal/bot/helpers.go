@@ -5,8 +5,34 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 )
+
+// FormatApprovalDetails renders a key/value summary as quoted markdown lines.
+// Keys are sorted for stable display. Returns "" when details is empty so
+// callers can `if s := FormatApprovalDetails(...); s != ""` and concatenate
+// without trailing whitespace. Backticks are stripped from values defensively
+// (Discord and Slack both treat them as code-fence markers).
+func FormatApprovalDetails(details map[string]string) string {
+	if len(details) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(details))
+	for k := range details {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	var sb strings.Builder
+	for i, k := range keys {
+		if i > 0 {
+			sb.WriteByte('\n')
+		}
+		v := strings.ReplaceAll(details[k], "`", "'")
+		fmt.Fprintf(&sb, "> `%s`: %s", k, v)
+	}
+	return sb.String()
+}
 
 // RemoveMCPConfig removes the per-channel MCP config file for the given channel.
 // It silently ignores os.ErrNotExist (the file may not exist if the agent never ran).

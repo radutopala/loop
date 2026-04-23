@@ -28,6 +28,8 @@ type Bot interface {
 	SendTyping(ctx context.Context, channelID string) error
 	SendStopButton(ctx context.Context, channelID, runID string) (messageID string, err error)
 	RemoveStopButton(ctx context.Context, channelID, messageID string) error
+	SendApproval(ctx context.Context, channelID string, prompt bot.ApprovalPrompt) (messageID string, err error)
+	RemoveApproval(ctx context.Context, channelID, messageID string) error
 	RegisterCommands(ctx context.Context) error
 	RemoveCommands(ctx context.Context) error
 	OnMessage(handler func(ctx context.Context, msg *bot.IncomingMessage))

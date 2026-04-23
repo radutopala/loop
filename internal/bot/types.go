@@ -7,6 +7,30 @@ import (
 	"github.com/radutopala/loop/internal/types"
 )
 
+// ApprovalPrompt is the bot-facing payload for a gate approval prompt.
+// Kind is a short label ("connect", "execve", "docker-http", ...), Target is
+// the human-readable action being approved, Message is the matching rule's
+// message (may be empty). Details holds optional structured key/value pairs
+// (e.g. image, binds, privileged for a docker create) the bot can render
+// alongside Target. The bot implementation renders three buttons whose
+// identifiers follow "gate:<ID>:<decision>" where decision is one of
+// "once" | "session" | "deny".
+type ApprovalPrompt struct {
+	ID      string
+	Kind    string
+	Target  string
+	Message string
+	Details map[string]string
+}
+
+// ApprovalResolver receives a user's decision on an agentgate approval prompt
+// and routes it to the Manager holding the pending request. Typically backed
+// by agentgate.MultiManagerResolver so a single bot can dispatch clicks to
+// any of the running per-container Managers.
+type ApprovalResolver interface {
+	Resolve(reqID, decision, actorID string) error
+}
+
 // IncomingMessage from the chat platform.
 type IncomingMessage struct {
 	ChannelID    string

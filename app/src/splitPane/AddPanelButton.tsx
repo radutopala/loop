@@ -105,6 +105,12 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
       <line x1="14" y1="18" x2="17" y2="13.5" />
     </svg>
   ),
+  audit: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M9 12h6M9 16h6M9 8h6" />
+      <rect x="5" y="3" width="14" height="18" rx="2" />
+    </svg>
+  ),
 };
 
 const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
@@ -123,6 +129,7 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   tasks: "Manage scheduled tasks",
   kanban: "Kanban board for tickets",
   workflows: "Workflow runs and status",
+  audit: "Agent gate audit logs",
 };
 
 /** Centered picker for when layout is empty (no tree). */

@@ -124,15 +124,24 @@ func (c *Client) ContainerCreate(ctx context.Context, cfg *ContainerConfig, name
 		WorkingDir:   cfg.WorkingDir,
 	}
 
+	// Init=true gives every container a tiny tini PID 1 that reaps orphaned
+	// grandchildren. Without it, processes whose parent dies before wait()ing
+	// (e.g. a `git` reparented when its caller exits) accumulate as zombies
+	// under loop-syscallwrap (or claude pre-gate), neither of which is a
+	// reaper. Pre-existing for the agent image; flipped here unconditionally.
+	initTrue := true
 	hostCfg := &containertypes.HostConfig{
 		Resources: containertypes.Resources{
 			Memory:    cfg.MemoryMB * 1024 * 1024,
 			CPUQuota:  int64(cfg.CPUs * 100000),
 			CPUPeriod: 100000,
 		},
-		Binds:      cfg.Binds,
-		GroupAdd:   cfg.GroupAdd,
-		ExtraHosts: []string{"host.docker.internal:host-gateway"},
+		Binds:       cfg.Binds,
+		GroupAdd:    cfg.GroupAdd,
+		ExtraHosts:  []string{"host.docker.internal:host-gateway"},
+		SecurityOpt: cfg.SecurityOpt,
+		CapAdd:      cfg.CapAdd,
+		Init:        &initTrue,
 	}
 
 	var netCfg *network.NetworkingConfig

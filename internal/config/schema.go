@@ -553,6 +553,134 @@ func buildSchema() *ConfigSchema {
 					},
 				},
 			},
+
+			// ── Gates section (nested object) ──
+			// Two enforcement layers — the seccomp-based agentgate and the
+			// Docker HTTP proxy — share rate limits, audit config, and a
+			// per-container approval Manager. Decision values across all
+			// rules: "allow" (silent), "deny" (silent block), "approve"
+			// (prompt user).
+			"gates": {
+				Type:     "object",
+				XSection: "Gates",
+				Properties: map[string]*SchemaProperty{
+					"rate_limits": {
+						Type:  "object",
+						Title: "Rate Limits",
+						Properties: map[string]*SchemaProperty{
+							"pending":    {Type: "integer", Title: "Pending", Description: "Maximum approvals queued at once per container"},
+							"per_minute": {Type: "integer", Title: "Per Minute", Description: "Approvals allowed per minute per container"},
+							"total":      {Type: "integer", Title: "Total", Description: "Lifetime approval cap per container"},
+						},
+					},
+					"audit": {
+						Type:  "object",
+						Title: "Audit",
+						Properties: map[string]*SchemaProperty{
+							"retention_days": {Type: "integer", Title: "Retention Days", Description: "Days to keep gate decision logs"},
+							"verbose":        {Type: "boolean", Title: "Verbose", Description: "Log every decision (including silent allows and cache hits)"},
+						},
+					},
+					"agentgate": {
+						Type:  "object",
+						Title: "Agentgate (seccomp)",
+						Properties: map[string]*SchemaProperty{
+							"enabled":          {Type: "boolean", Title: "Enabled"},
+							"default_decision": {Type: "string", Title: "Default Decision", Enum: []any{"allow", "deny", "approve"}},
+							"path_rules": {
+								Type:        "array",
+								Title:       "Path Rules",
+								Description: "Match unix-socket connect targets by absolute path",
+								Items: &SchemaProperty{
+									Type: "object",
+									Properties: map[string]*SchemaProperty{
+										"pattern":  {Type: "string", Title: "Pattern"},
+										"decision": {Type: "string", Title: "Decision", Enum: []any{"allow", "deny", "approve"}},
+										"message":  {Type: "string", Title: "Message"},
+									},
+								},
+							},
+							"command_rules": {
+								Type:        "array",
+								Title:       "Command Rules",
+								Description: "Match exec calls by basename and argv pattern",
+								Items: &SchemaProperty{
+									Type: "object",
+									Properties: map[string]*SchemaProperty{
+										"commands":      {Type: "array", Title: "Commands", Items: &SchemaProperty{Type: "string"}},
+										"args_patterns": {Type: "array", Title: "Args Patterns", Items: &SchemaProperty{Type: "string"}},
+										"decision":      {Type: "string", Title: "Decision", Enum: []any{"allow", "deny", "approve"}},
+										"message":       {Type: "string", Title: "Message"},
+									},
+								},
+							},
+							"file_rules": {
+								Type:        "array",
+								Title:       "File Rules",
+								Description: "Match openat/renameat/unlinkat by resolved path and operation",
+								Items: &SchemaProperty{
+									Type: "object",
+									Properties: map[string]*SchemaProperty{
+										"paths":      {Type: "array", Title: "Paths", Items: &SchemaProperty{Type: "string"}},
+										"operations": {Type: "array", Title: "Operations", Items: &SchemaProperty{Type: "string"}},
+										"decision":   {Type: "string", Title: "Decision", Enum: []any{"allow", "deny", "approve"}},
+										"message":    {Type: "string", Title: "Message"},
+									},
+								},
+							},
+						},
+					},
+					"docker_proxy": {
+						Type:  "object",
+						Title: "Docker Proxy",
+						Properties: map[string]*SchemaProperty{
+							"enabled":          {Type: "boolean", Title: "Enabled"},
+							"default_decision": {Type: "string", Title: "Default Decision", Enum: []any{"allow", "deny", "approve"}},
+							"http_rules": {
+								Type:        "array",
+								Title:       "HTTP Rules",
+								Description: "Match Docker HTTP requests by method and path regex",
+								Items: &SchemaProperty{
+									Type: "object",
+									Properties: map[string]*SchemaProperty{
+										"methods":  {Type: "array", Title: "Methods", Items: &SchemaProperty{Type: "string"}},
+										"paths":    {Type: "array", Title: "Paths", Items: &SchemaProperty{Type: "string"}},
+										"decision": {Type: "string", Title: "Decision", Enum: []any{"allow", "deny", "approve"}},
+										"message":  {Type: "string", Title: "Message"},
+									},
+								},
+							},
+							"body_rules": {
+								Type:        "array",
+								Title:       "Body Rules",
+								Description: "Inspect JSON bodies of Docker requests for container-escape shapes",
+								Items: &SchemaProperty{
+									Type: "object",
+									Properties: map[string]*SchemaProperty{
+										"applies_to":     {Type: "string", Title: "Applies To", Description: "Method + path regex (e.g. \"POST ^/containers/create$\")"},
+										"content_types":  {Type: "array", Title: "Content Types", Items: &SchemaProperty{Type: "string"}},
+										"max_body_bytes": {Type: "integer", Title: "Max Body Bytes"},
+										"json_checks": {
+											Type:  "array",
+											Title: "JSON Checks",
+											Items: &SchemaProperty{
+												Type: "object",
+												Properties: map[string]*SchemaProperty{
+													"path":   {Type: "string", Title: "Path", Description: "JSON path (e.g. \"HostConfig.Binds[*]\")"},
+													"op":     {Type: "string", Title: "Op", Enum: []any{"source_path_in", "equals", "contains_any", "starts_with_any", "present", "empty_array"}},
+													"values": {Type: "array", Title: "Values", Items: &SchemaProperty{Type: "string"}},
+												},
+											},
+										},
+										"decision": {Type: "string", Title: "Decision", Enum: []any{"allow", "deny", "approve"}},
+										"message":  {Type: "string", Title: "Message"},
+									},
+								},
+							},
+						},
+					},
+				},
+			},
 		},
 	}
 }

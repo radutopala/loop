@@ -76,6 +76,16 @@ type DiscordBot struct {
 	removeHandlers        []func()
 	typingInterval        time.Duration
 	pendingInteractions   map[string]*discordgo.Interaction
+	approvalResolver      bot.ApprovalResolver
+}
+
+// SetApprovalResolver wires the agentgate approval resolver. Clicks on
+// gate approval buttons dispatch through the resolver. Safe to leave unset
+// when the gate is disabled.
+func (b *DiscordBot) SetApprovalResolver(r bot.ApprovalResolver) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.approvalResolver = r
 }
 
 // NewBot creates a new DiscordBot with the given session, app ID, guild ID, and logger.
@@ -240,6 +250,56 @@ func (b *DiscordBot) SendStopButton(_ context.Context, channelID, runID string) 
 func (b *DiscordBot) RemoveStopButton(_ context.Context, channelID, messageID string) error {
 	if err := b.session.ChannelMessageDelete(channelID, messageID); err != nil {
 		return fmt.Errorf("discord remove stop button: %w", err)
+	}
+	return nil
+}
+
+// SendApproval renders a three-button prompt (Allow once / Allow for session /
+// Deny) and returns the created message ID. The button identifiers follow
+// "gate:<promptID>:<decision>" so handleComponentInteraction can dispatch
+// clicks to the approval resolver.
+func (b *DiscordBot) SendApproval(_ context.Context, channelID string, prompt bot.ApprovalPrompt) (string, error) {
+	content := "**Agent wants to:** " + prompt.Target
+	if prompt.Message != "" {
+		content += "\n" + prompt.Message
+	}
+	if details := bot.FormatApprovalDetails(prompt.Details); details != "" {
+		content += "\n" + details
+	}
+	msg, err := b.session.ChannelMessageSendComplex(channelID, &discordgo.MessageSend{
+		Content: content,
+		Components: []discordgo.MessageComponent{
+			discordgo.ActionsRow{
+				Components: []discordgo.MessageComponent{
+					discordgo.Button{
+						Label:    "Allow once",
+						Style:    discordgo.PrimaryButton,
+						CustomID: "gate:" + prompt.ID + ":once",
+					},
+					discordgo.Button{
+						Label:    "Allow for session",
+						Style:    discordgo.SecondaryButton,
+						CustomID: "gate:" + prompt.ID + ":session",
+					},
+					discordgo.Button{
+						Label:    "Deny",
+						Style:    discordgo.DangerButton,
+						CustomID: "gate:" + prompt.ID + ":deny",
+					},
+				},
+			},
+		},
+	})
+	if err != nil {
+		return "", fmt.Errorf("discord send approval: %w", err)
+	}
+	return msg.ID, nil
+}
+
+// RemoveApproval deletes the approval prompt message.
+func (b *DiscordBot) RemoveApproval(_ context.Context, channelID, messageID string) error {
+	if err := b.session.ChannelMessageDelete(channelID, messageID); err != nil {
+		return fmt.Errorf("discord remove approval: %w", err)
 	}
 	return nil
 }
@@ -636,6 +696,11 @@ func (b *DiscordBot) handleComponentInteraction(i *discordgo.InteractionCreate) 
 		b.logger.Error("acknowledging component interaction", "error", err)
 	}
 
+	if strings.HasPrefix(data.CustomID, "gate:") {
+		b.handleGateComponent(i, data.CustomID)
+		return
+	}
+
 	if !strings.HasPrefix(data.CustomID, "stop:") {
 		return
 	}
@@ -666,6 +731,37 @@ func (b *DiscordBot) handleComponentInteraction(i *discordgo.InteractionCreate) 
 func (b *DiscordBot) dispatchInteraction(inter *bot.Interaction) {
 	for _, h := range bot.CopyHandlers(&b.mu, b.interactionHandlers) {
 		go h(context.Background(), inter)
+	}
+}
+
+// handleGateComponent parses "gate:<reqID>:<decision>" and routes the click
+// to the configured ApprovalResolver. Unknown decisions or a missing
+// resolver are logged and otherwise ignored — the kernel notify side will
+// fall back to its context-cancel deny path.
+func (b *DiscordBot) handleGateComponent(i *discordgo.InteractionCreate, customID string) {
+	parts := strings.SplitN(customID, ":", 3)
+	if len(parts) != 3 {
+		b.logger.Warn("malformed gate custom id", "custom_id", customID)
+		return
+	}
+	reqID, decision := parts[1], parts[2]
+
+	var actorID string
+	if i.Member != nil && i.Member.User != nil {
+		actorID = i.Member.User.ID
+	} else if i.User != nil {
+		actorID = i.User.ID
+	}
+
+	b.mu.RLock()
+	resolver := b.approvalResolver
+	b.mu.RUnlock()
+	if resolver == nil {
+		b.logger.Warn("gate click received but no resolver wired", "req_id", reqID)
+		return
+	}
+	if err := resolver.Resolve(reqID, decision, actorID); err != nil {
+		b.logger.Warn("resolving gate approval", "error", err, "req_id", reqID, "decision", decision)
 	}
 }
 

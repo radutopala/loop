@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentActivityData, AgentStatusData, AskUserQuestionData, ExitPlanModeData, Message, MessageCreatedData, MessagesProcessedData, MessageStreamingData, TodoWriteData, ToolUseData, WSEvent } from "../types";
+import type { AgentActivityData, AgentStatusData, AskUserQuestionData, ExitPlanModeData, GateApprovalRequestedData, GateApprovalResolvedData, Message, MessageCreatedData, MessagesProcessedData, MessageStreamingData, TodoWriteData, ToolUseData, WSEvent } from "../types";
 import type { ActiveChatState, ChatEventListener } from "./useChatStateStore";
 import { useMessages } from "./useMessages";
 
@@ -22,6 +22,8 @@ export interface ChatState {
   setMode: (mode: "agent" | "plan") => void;
   completionInfo: { duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null;
   triggerContent: string | null;
+  gateApproval: GateApprovalRequestedData | null;
+  clearGateApproval: () => void;
 }
 
 interface UseChatStateOptions {
@@ -65,6 +67,7 @@ export function useChatState(
   const [mode, setMode] = useState<"agent" | "plan">(initialState?.mode ?? "agent");
   const [completionInfo, setCompletionInfo] = useState<{ duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null>(initialState?.completionInfo ?? null);
   const [triggerContent, setTriggerContent] = useState<string | null>(initialState?.triggerContent ?? null);
+  const [gateApproval, setGateApproval] = useState<GateApprovalRequestedData | null>(initialState?.gateApproval ?? null);
 
   // Refs tracking latest values for the onUnmount snapshot.
   const streamingRef = useRef(streamingContent);
@@ -89,6 +92,8 @@ export function useChatState(
   completionRef.current = completionInfo;
   const triggerRef = useRef(triggerContent);
   triggerRef.current = triggerContent;
+  const gateApprovalRef = useRef(gateApproval);
+  gateApprovalRef.current = gateApproval;
 
   const onUnmountRef = useRef(onUnmount);
   onUnmountRef.current = onUnmount;
@@ -108,6 +113,7 @@ export function useChatState(
         mode: modeRef.current,
         completionInfo: completionRef.current,
         triggerContent: triggerRef.current,
+        gateApproval: gateApprovalRef.current,
       };
       onUnmountRef.current?.(snapshot);
     };
@@ -175,6 +181,15 @@ export function useChatState(
       if (event.type === "agent.todos") {
         const data = event.data as TodoWriteData;
         setTodos(data);
+        return;
+      }
+      if (event.type === "gate.approval_requested") {
+        setGateApproval(event.data as GateApprovalRequestedData);
+        return;
+      }
+      if (event.type === "gate.approval_resolved") {
+        const data = event.data as GateApprovalResolvedData;
+        setGateApproval((prev) => (prev && prev.req_id === data.req_id ? null : prev));
         return;
       }
       if (event.type === "agent.status") {
@@ -245,5 +260,7 @@ export function useChatState(
     setMode,
     completionInfo,
     triggerContent,
+    gateApproval,
+    clearGateApproval: useCallback(() => setGateApproval(null), []),
   };
 }

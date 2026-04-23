@@ -777,8 +777,15 @@ func (tc *TestContext) addPanel(panelName string) error {
 					const btn = Array.from(dropdown.querySelectorAll('button')).find(
 						b => b.textContent.includes('%s')
 					);
-					if (btn) { btn.click(); resolve("ok"); }
-					else { resolve("panel option not found in dropdown"); }
+					if (!btn) { resolve("panel option not found in dropdown"); return; }
+					// Singleton panels (Tasks, Git, Memory, ...) render the option
+					// disabled when one is already open. Treat as a no-op so the
+					// step is idempotent across navigation back to a channel whose
+					// saved layout already contains the panel; close the dropdown
+					// by re-clicking the toggle so it doesn't block later clicks.
+					if (btn.disabled) { addBtn.click(); resolve("ok"); return; }
+					btn.click();
+					resolve("ok");
 				}, 300);
 			});
 		})()

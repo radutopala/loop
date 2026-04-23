@@ -133,7 +133,7 @@ Each config field renders as a typed control based on its schema:
 | `array` of `string` | Editable list (add/remove items) |
 | `object` (key-value) | Key-value editor rows |
 
-Nested objects (e.g. `browser`, `memory`, `mcp`) render as collapsible groups.
+Nested objects (e.g. `browser`, `memory`, `mcp`, `gates`) render as collapsible groups. `gates` is the deepest-nested example: it contains `agentgate` and `docker_proxy` sub-objects, each with arrays of rules whose items are themselves objects (and `body_rules` items contain a nested `json_checks` array of objects) — all rendered without custom widgets via the generic object-array row.
 
 #### JSON View
 

@@ -62,6 +62,7 @@ AI agents powered by Claude, running in Docker containers. Use the **desktop app
 - **Browser** supports Docker mode (headless Chrome container per channel) and Host mode (user's local Chrome via CDP). The desktop app toggles modes per channel; `loop mcp-host-browser` runs standalone without Docker
 - **API Server** exposes REST endpoints for task and channel management
 - **SQLite** stores channels, messages, scheduled tasks, run logs, and memory file embeddings
+- **Security Gate** — a seccomp `RET_USER_NOTIF` filter installed in every agent container (works on Linux, macOS, and Windows hosts — the filter + notify-loop server both run inside the container) traps sensitive syscalls (`connect`, `execve`/`execveat`, `openat*`, `renameat2`, `unlinkat`, …) and routes `approve`-rule hits to the chat as a three-button card. An in-container Docker HTTP proxy replaces the raw `docker.sock` bind and enforces method/path/body rules. Enabled by default; see [Configuration: Security Gate](docs/configuration.md#security-gate)
 
 ## Prerequisites
 
@@ -359,6 +360,10 @@ This does four things:
 | `workflow_concurrency` | `{}` | Max concurrent runs and nodes (`max_concurrent_runs`, `max_concurrent_nodes`; 0 = unlimited) |
 | `memory` | `{}` | Semantic memory search configuration (see below) |
 | `permissions` | `{}` | RBAC permissions: owners and members (see below) |
+| `gates.agentgate` | `{enabled: true, default_decision: "allow", ...baseline rules}` | Seccomp security gate for agent containers. Enabled by default; ships with a baseline of 2 path / 2 command / 8 file rules (see [Configuration: Security Gate](docs/configuration.md#security-gate)) |
+| `gates.docker_proxy` | mirrors `gates.agentgate.enabled` | In-container Docker HTTP proxy. Agents talk to `/var/run/docker.sock` (tmpfs, owned by `loop dockerproxy`); that process reverse-proxies to the real daemon socket at `/var/run/docker.sock.host`. Ships with 15 method/path rules and 2 JSON body-inspection rules that block container-escape shapes |
+| `gates.rate_limits` | `{pending: 30, per_minute: 60, total: 500}` | Shared approval rate limits across both gate layers |
+| `gates.audit` | `{retention_days: 30, verbose: false}` | Shared audit-log retention and verbosity for approval decisions. `verbose: false` (default) drops silent policy-allow and cache-hit allow entries so the trail focuses on every deny plus every user-clicked decision; set `verbose: true` when debugging rules or exporting a full trace |
 
 ### Permissions
 
@@ -494,6 +499,9 @@ Project config overrides specific global settings. Only these fields are allowed
 | `browser.enabled` | **Overrides** global value when set |
 | `browser.chrome_image` | **Overrides** global value when set |
 | `browser.host_cdp_port` | **Overrides** global value when set |
+| `gates.agentgate` | **Narrow merge** — project may disable the gate (not re-enable); rules prepend to global; rules with `decision: "allow"` are rejected at load time; `default_decision` is ignored |
+| `gates.docker_proxy` | Same narrow merge as `gates.agentgate`; rules prepend; `allow` rejected; `default_decision` ignored |
+| `gates.rate_limits` / `gates.audit` | Ignored at project scope — configured globally only |
 
 **Worktree threads** inherit their parent project's config unless the worktree directory has its own `.loop/config.json`. This means you only need to configure mounts, MCP servers, and model once in the parent project — all worktree threads will use the same settings automatically.
 
@@ -964,6 +972,8 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 - **Settings** — schema-driven config form with typed controls (toggles, dropdowns, number inputs, password fields, arrays, key-value editors) plus a raw JSON editor, with Form/JSON toggle and unsaved changes confirmation
 - **Plan mode** — run agents in read-only preview mode via Claude Code's `EnterPlanMode` tool
 - **Agent activity** — see model info, tool use, and completion summaries in the chat view
+- **Security gate approvals** — when an agent container trips a rule with `decision: approve`, an inline `ApprovalCard` appears in chat with three buttons (Allow once / Allow for session / Deny). The same card is also rendered as a centered, dimmed overlay inside Docker Agent terminal panels, so operators working in a layout without a Chat panel (e.g. Swarm) can approve without switching layouts. Resolves via WebSocket — same decision is also reflected in Discord/Slack cards on those surfaces
+- **Audit panel** — singleton panel showing the agent-gate JSONL files per channel. Left pane lists files newest-first (size, last-modified, delete); right pane opens a fresh `tail -f -n 100` xterm via docker exec against `/var/log/loop-gate/agentgate-<date>.jsonl`. Same files exposed over HTTP at `GET/DELETE /api/channels/{id}/audit[/{date}]` for SIEM or tooling
 - **Message queue** — processing indicators and trigger quote showing which message is being handled, with timestamp. A collapsible popup above the input surfaces waiting messages and lets you remove them from the queue before the agent picks them up
 
 ### Platforms
@@ -1047,6 +1057,10 @@ make app-install
 | `POST` | `/api/workflows/runs/{id}/cancel` | Cancel a running workflow |
 | `DELETE` | `/api/workflows/runs/{id}` | Permanently delete a workflow run from the database |
 | `POST` | `/api/workflows/runs/{id}/retry` | Retry a completed/failed workflow run (creates a new run) |
+| `POST` | `/api/gate/approvals/{id}` | Resolve a pending security-gate approval (body: `{"decision": "once"\|"session"\|"deny", "author_id"?: "..."}`) |
+| `POST` | `/api/gate/container-approval` | In-container callback (used by `loop dockerproxy` and `loop syscallwrap`) — authenticated via per-container `Authorization: Bearer <LOOP_GATE_TOKEN>`; blocks until the user clicks in chat |
+| `GET` | `/api/channels/{id}/audit` | List agent-gate audit files for a channel (paginated, newest-first) |
+| `DELETE` | `/api/channels/{id}/audit/{date}` | Delete one audit file |
 | `GET` | `/api/shortcuts` | List resolved prompt shortcuts (optional `channel_id` for project merge) |
 | `POST` | `/api/shortcuts` | Add, update, or delete a prompt shortcut (global or project scope) |
 | `GET` | `/api/config/schema` | JSON Schema for all config fields |

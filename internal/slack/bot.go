@@ -64,8 +64,17 @@ type SlackBot struct {
 	channelJoinHandlers   []bot.ChannelJoinHandler
 	mu                    sync.RWMutex
 	cancel                context.CancelFunc
+	approvalResolver      bot.ApprovalResolver
 	// lastMessageRef tracks the latest message per channel for emoji reactions.
 	lastMessageRef sync.Map // map[string]goslack.ItemRef
+}
+
+// SetApprovalResolver wires the agentgate approval resolver. Clicks on
+// "gate:<reqID>:<decision>" buttons are forwarded to the resolver.
+func (b *SlackBot) SetApprovalResolver(r bot.ApprovalResolver) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.approvalResolver = r
 }
 
 // NewBot creates a new SlackBot with the given session, socket mode client, and logger.
@@ -195,6 +204,65 @@ func (b *SlackBot) RemoveStopButton(_ context.Context, channelID, messageID stri
 	_, _, err := b.session.DeleteMessage(chID, messageID)
 	if err != nil {
 		return fmt.Errorf("slack remove stop button: %w", err)
+	}
+	return nil
+}
+
+// SendApproval renders a three-button action block (Allow once / Allow for
+// session / Deny) and returns the message timestamp. The button ActionIDs
+// follow "gate:<promptID>:<decision>" so handleInteractive can dispatch
+// clicks to the approval resolver.
+func (b *SlackBot) SendApproval(_ context.Context, channelID string, prompt bot.ApprovalPrompt) (string, error) {
+	chID, threadTS := parseCompositeID(channelID)
+
+	header := "*Agent wants to:* " + prompt.Target
+	if prompt.Message != "" {
+		header += "\n" + prompt.Message
+	}
+	if details := bot.FormatApprovalDetails(prompt.Details); details != "" {
+		header += "\n" + details
+	}
+	headerBlock := goslack.NewSectionBlock(
+		goslack.NewTextBlockObject("mrkdwn", header, false, false),
+		nil, nil,
+	)
+
+	onceBtn := goslack.NewButtonBlockElement(
+		"gate:"+prompt.ID+":once", "once",
+		goslack.NewTextBlockObject("plain_text", "Allow once", false, false),
+	)
+	onceBtn.Style = goslack.StylePrimary
+
+	sessionBtn := goslack.NewButtonBlockElement(
+		"gate:"+prompt.ID+":session", "session",
+		goslack.NewTextBlockObject("plain_text", "Allow for session", false, false),
+	)
+
+	denyBtn := goslack.NewButtonBlockElement(
+		"gate:"+prompt.ID+":deny", "deny",
+		goslack.NewTextBlockObject("plain_text", "Deny", false, false),
+	)
+	denyBtn.Style = goslack.StyleDanger
+
+	actionBlock := goslack.NewActionBlock("gate_actions:"+prompt.ID, onceBtn, sessionBtn, denyBtn)
+
+	opts := []goslack.MsgOption{goslack.MsgOptionBlocks(headerBlock, actionBlock)}
+	if threadTS != "" {
+		opts = append(opts, goslack.MsgOptionTS(threadTS))
+	}
+
+	_, ts, err := b.session.PostMessage(chID, opts...)
+	if err != nil {
+		return "", fmt.Errorf("slack send approval: %w", err)
+	}
+	return ts, nil
+}
+
+// RemoveApproval deletes a previously-sent approval prompt by message ts.
+func (b *SlackBot) RemoveApproval(_ context.Context, channelID, messageID string) error {
+	chID, _ := parseCompositeID(channelID)
+	if _, _, err := b.session.DeleteMessage(chID, messageID); err != nil {
+		return fmt.Errorf("slack remove approval: %w", err)
 	}
 	return nil
 }
@@ -670,6 +738,10 @@ func (b *SlackBot) handleInteractive(evt socketmode.Event) {
 	}
 
 	for _, action := range callback.ActionCallback.BlockActions {
+		if strings.HasPrefix(action.ActionID, "gate:") {
+			b.handleGateAction(action.ActionID, callback.User.ID)
+			continue
+		}
 		if !strings.HasPrefix(action.ActionID, "stop:") {
 			continue
 		}
@@ -685,6 +757,30 @@ func (b *SlackBot) handleInteractive(evt socketmode.Event) {
 		}
 
 		b.dispatchInteraction(inter)
+	}
+}
+
+// handleGateAction parses "gate:<reqID>:<decision>" and forwards the click
+// to the configured ApprovalResolver. A malformed ID or missing resolver is
+// logged and otherwise ignored — the kernel notify side falls back to its
+// context-cancel deny path.
+func (b *SlackBot) handleGateAction(actionID, actorID string) {
+	parts := strings.SplitN(actionID, ":", 3)
+	if len(parts) != 3 {
+		b.logger.Warn("malformed gate action id", "action_id", actionID)
+		return
+	}
+	reqID, decision := parts[1], parts[2]
+
+	b.mu.RLock()
+	resolver := b.approvalResolver
+	b.mu.RUnlock()
+	if resolver == nil {
+		b.logger.Warn("gate click received but no resolver wired", "req_id", reqID)
+		return
+	}
+	if err := resolver.Resolve(reqID, decision, actorID); err != nil {
+		b.logger.Warn("resolving gate approval", "error", err, "req_id", reqID, "decision", decision)
 	}
 }
 

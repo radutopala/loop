@@ -519,6 +519,56 @@ Individual node lifecycle events within a workflow run.
 
 ---
 
+### `gate.approval_requested`
+
+A seccomp gate trap matched a rule with `decision: approve` and is blocked waiting for a human decision. The UI should render an approval card and POST the outcome to [`POST /api/gate/approvals/{id}`](api.md#post-apigateapprovalsid).
+
+**Payload schema:**
+
+```json
+{
+  "req_id": "gate-req-8f1c...",
+  "kind": "connect",
+  "target": "/var/run/docker.sock",
+  "message": "agent wants to use docker"
+}
+```
+
+| Field     | Type   | Description |
+|-----------|--------|-------------|
+| `req_id`  | string | Gate-server-assigned correlation id; echoed back on the resolve POST |
+| `kind`    | string | `"connect"`, `"execve"`, or `"docker-http"` — selects how the UI renders the target |
+| `target`  | string | Human-readable summary (socket path, command line, or `METHOD /path`) |
+| `message` | string | Matching rule's `message` field, shown as extra context |
+
+**Scope:** Channel (the container's channel).
+
+---
+
+### `gate.approval_resolved`
+
+A previously-broadcast approval was resolved (either through the UI, a Discord/Slack button click, or timeout). The UI should dismiss the matching approval card.
+
+**Payload schema:**
+
+```json
+{
+  "req_id": "gate-req-8f1c...",
+  "decision": "once",
+  "actor": "U01ABCD2EF"
+}
+```
+
+| Field      | Type   | Description |
+|------------|--------|-------------|
+| `req_id`   | string | Correlation id of the resolved request |
+| `decision` | string | `"once"`, `"session"`, or `"deny"` |
+| `actor`    | string | User id that made the decision (platform user id on Discord/Slack; `local.DefaultAuthorID` on the desktop when unset) |
+
+**Scope:** Channel (the container's channel).
+
+---
+
 ## Broadcast Flow
 
 1. **Event source** calls a typed broadcast method (e.g., `BroadcastMessageCreated`).
@@ -567,6 +617,8 @@ Individual node lifecycle events within a workflow run.
 | `BroadcastWorkflowRunPaused` | `workflow.run_paused` | `WorkflowRunEventData` | Global |
 | `BroadcastWorkflowNodeStarted` | `workflow.node_started` | `WorkflowNodeEventData` | Global |
 | `BroadcastWorkflowNodeCompleted` | `workflow.node_completed` | `WorkflowNodeEventData` | Global |
+| `BroadcastGateApprovalRequested` | `gate.approval_requested` | `GateApprovalEventData` | Channel |
+| `BroadcastGateApprovalResolved` | `gate.approval_resolved` | `GateApprovalResolvedData` | Channel |
 
 ---
 
@@ -607,6 +659,8 @@ type Broadcaster interface {
     BroadcastWorkflowRunPaused(data WorkflowRunEventData)
     BroadcastWorkflowNodeStarted(data WorkflowNodeEventData)
     BroadcastWorkflowNodeCompleted(data WorkflowNodeEventData)
+    BroadcastGateApprovalRequested(channelID string, data GateApprovalEventData)
+    BroadcastGateApprovalResolved(channelID string, data GateApprovalResolvedData)
 }
 ```
 

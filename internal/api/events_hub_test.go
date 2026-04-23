@@ -1080,3 +1080,70 @@ func (s *EventsHubSuite) TestBroadcastWorkflowNodeCompleted() {
 	require.NoError(s.T(), json.Unmarshal(msg, &evt))
 	require.Equal(s.T(), EventWorkflowNodeCompleted, evt.Type)
 }
+
+func (s *EventsHubSuite) TestBroadcastGateApprovalRequested() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, []string{"ch-1"})
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastGateApprovalRequested("ch-1", events.GateApprovalEventData{
+		ReqID:   "req-1",
+		Kind:    "execve",
+		Target:  "git push",
+		Message: "git write-side operation",
+	})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventGateApprovalRequested, evt.Type)
+	require.Equal(s.T(), "ch-1", evt.ChannelID)
+}
+
+func (s *EventsHubSuite) TestBroadcastGateApprovalResolved() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, []string{"ch-1"})
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastGateApprovalResolved("ch-1", events.GateApprovalResolvedData{
+		ReqID:    "req-1",
+		Decision: "once",
+		Actor:    "user-7",
+	})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventGateApprovalResolved, evt.Type)
+	require.Equal(s.T(), "ch-1", evt.ChannelID)
+}

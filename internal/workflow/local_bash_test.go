@@ -2,6 +2,7 @@ package workflow
 
 import (
 	"context"
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -63,6 +64,25 @@ func (s *LocalBashSuite) TestRunBashFailure() {
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "local bash:")
 	require.Empty(s.T(), output)
+}
+
+// TestSafePathAbsErrorReturnsFalse triggers filepath.Abs's rare error path
+// by chdir-ing into a removed directory — the kernel's getwd(2) then fails
+// and filepath.Abs on a relative path returns that error.
+func (s *LocalBashSuite) TestSafePathAbsErrorReturnsFalse() {
+	orig, err := os.Getwd()
+	require.NoError(s.T(), err)
+	s.T().Cleanup(func() { _ = os.Chdir(orig) })
+
+	tmp, err := os.MkdirTemp("", "safepath-abs-*")
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), os.Chdir(tmp))
+	require.NoError(s.T(), os.Remove(tmp))
+
+	r := &LocalBashRunner{SafeDir: "/tmp"}
+	abs, ok := r.safePath("relative")
+	require.False(s.T(), ok)
+	require.Empty(s.T(), abs)
 }
 
 func (s *LocalBashSuite) TestRunBashContextCancel() {

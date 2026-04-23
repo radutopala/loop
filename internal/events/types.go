@@ -19,6 +19,8 @@ type Broadcaster interface {
 	BroadcastAgentInstanceMetadata(channelID string, data AgentInstanceEventData)
 	BroadcastImageBuildStatus(data ImageBuildStatusData)
 	BroadcastImageUpdateAvailable(data ImageUpdateAvailableData)
+	BroadcastGateApprovalRequested(channelID string, data GateApprovalEventData)
+	BroadcastGateApprovalResolved(channelID string, data GateApprovalResolvedData)
 }
 
 // MessageEventData is the payload for message.created events.
@@ -155,6 +157,27 @@ type WorkflowRunEventData struct {
 	Status       string `json:"status"`
 	PausedNodeID string `json:"paused_node_id,omitempty"`
 	Error        string `json:"error,omitempty"`
+}
+
+// GateApprovalEventData is the payload for gate.approval_requested events.
+// ReqID is the gate-server-assigned correlation id; the frontend echoes it
+// back on its resolve POST so the Manager can route the decision. Details
+// are optional structured key/value pairs (e.g. image, binds, privileged
+// for a docker create) the UI can render alongside Target.
+type GateApprovalEventData struct {
+	ReqID   string            `json:"req_id"`
+	Kind    string            `json:"kind"`
+	Target  string            `json:"target"`
+	Message string            `json:"message,omitempty"`
+	Details map[string]string `json:"details,omitempty"`
+}
+
+// GateApprovalResolvedData is the payload for gate.approval_resolved events.
+// Broadcast after a decision is recorded so the UI can dismiss the card.
+type GateApprovalResolvedData struct {
+	ReqID    string `json:"req_id"`
+	Decision string `json:"decision,omitempty"`
+	Actor    string `json:"actor,omitempty"`
 }
 
 // WorkflowNodeEventData is the payload for workflow.node.* events.

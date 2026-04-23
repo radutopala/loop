@@ -320,6 +320,63 @@ Sessions are sorted by modification time (newest first). `last_message` is extra
 
 ---
 
+### `GET /api/channels/{id}/audit`
+
+List the agent-gate audit files accumulated for a channel. The files are rotating JSONL (`agentgate-YYYY-MM-DD.jsonl`) written by `FileAuditor` inside the container and kept on the host under `{policyDir}/<channel>/audit/`. See [Security Gate: Known gaps](gates.md#known-gaps) for the record schema and the `verbose` flag.
+
+**Path Parameters:**
+
+| Param | Type   | Description |
+|-------|--------|-------------|
+| `id`  | string | Channel ID  |
+
+**Query Parameters:**
+
+| Param    | Type | Default | Max | Description |
+|----------|------|---------|-----|-------------|
+| `offset` | int  | 0       | --  | Skip the first N files (files are returned newest-first by date) |
+| `limit`  | int  | 50      | 500 | Number of files to return |
+
+**Response (200):**
+```json
+{
+  "files": [
+    {
+      "date": "2026-04-24",
+      "size": 12456,
+      "last_modified": "2026-04-24T18:02:11Z"
+    }
+  ],
+  "total": 1
+}
+```
+
+**Behavior notes:**
+- `date` is parsed out of the filename and validated against `YYYY-MM-DD`; anything else is skipped.
+- Files are sorted newest-first by date for infinite-scroll pagination.
+- When the audit directory does not yet exist (container never spawned or gate disabled), the endpoint returns `{"files": []}` with `200` rather than `404`.
+
+**Errors:** `501` if the audit-dir resolver is not configured.
+
+---
+
+### `DELETE /api/channels/{id}/audit/{date}`
+
+Remove one audit file from disk.
+
+**Path Parameters:**
+
+| Param  | Type   | Description |
+|--------|--------|-------------|
+| `id`   | string | Channel ID |
+| `date` | string | `YYYY-MM-DD` |
+
+**Response:** `204 No Content` on success.
+
+**Errors:** `400` if `date` is not `YYYY-MM-DD`. `500` if the unlink fails. `501` if the audit-dir resolver is not configured.
+
+---
+
 ### `GET /api/channels/{id}/messages`
 
 List messages for a channel. Supports two modes: **cursor-based pagination** (default) and **around mode**.
@@ -1840,6 +1897,63 @@ Assign a worktree to a ticket. This performs an atomic multi-step operation:
 ```
 
 **Errors:** `409` if the ticket is not in `open` status (already claimed).
+
+## Gate Approvals
+
+When the security gate is enabled, agent containers that trip an `approve` rule block waiting for a human decision. The gate broadcasts `gate.approval_requested` on WebSocket; the UI resolves it back with this endpoint. See [Security Gate](configuration.md#security-gate) for the rule model.
+
+### `POST /api/gate/approvals/{id}`
+
+Resolve a pending gate approval by request id. The `id` is the `req_id` from the `gate.approval_requested` event.
+
+**Request Body:**
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `decision` | string | yes | One of `"once"`, `"session"`, or `"deny"`. `once` lets the current syscall through; `session` caches the allow for the container lifetime; `deny` rejects the syscall |
+| `author_id` | string | no | Clicking user's id. Falls back to `local.DefaultAuthorID` when empty — Discord/Slack handlers pass the platform user id; the local desktop omits it |
+
+```json
+{ "decision": "once" }
+```
+
+**Response:** `204` No Content on success. The gate broadcasts `gate.approval_resolved` with the decision and actor so the UI can dismiss the card.
+
+**Errors:** `400` if the path id is missing, the body isn't valid JSON, or `decision` is empty. `404` if no pending request matches the id (already resolved, expired, or never existed). `501` if the gate approval resolver is not configured.
+
+### `POST /api/gate/container-approval`
+
+Inbound call from the in-container docker proxy (`loop dockerproxy`) or seccomp-gate parent (`loop syscallwrap`) when a rule matches `approve`. The server looks up the owning per-container `Manager` by the bearer token, renders an approval prompt on the associated chat channel, and blocks until the user clicks. Not intended to be called by UI clients — the click resolve path is [`POST /api/gate/approvals/{id}`](#post-apigateapprovalsid).
+
+**Headers:**
+
+| Header | Value |
+|---|---|
+| `Authorization` | `Bearer <LOOP_GATE_TOKEN>` — the 32-byte-hex bearer the runner minted for this container. Compared in constant time |
+| `Content-Type` | `application/json` |
+
+**Request Body:**
+
+| Field | Type | Description |
+|---|---|---|
+| `kind` | string | `"docker-http"` / `"docker-body"` for the proxy; gate-trap categories (`"connect"`, `"execve"`, `"file"`) for the seccomp path |
+| `target` | string | Human-readable target of the operation (`"GET /containers/json"`, `"/etc/passwd"`, etc.) |
+| `message` | string | Rule's `message` field — shown to the user verbatim |
+| `cache_key` | string | Key the `Manager` uses when the user picks "Allow for session" |
+
+**Response (200):**
+
+```json
+{ "decision": "allow", "actor": "u-42", "reason": "cache-hit" }
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `decision` | string | `"allow"` or `"deny"` |
+| `actor` | string | Clicking user's id (empty on local desktop) |
+| `reason` | string | Free-form tag (e.g. `"cache-hit"`, `"rate-limited"`) |
+
+**Errors:** `401` if the `Authorization` header is missing, malformed, or the token doesn't match any live container. `400` if the body isn't valid JSON. `503` if `cfg.Gates.Agentgate.Enabled` and `cfg.Gates.DockerProxy.Enabled` are both false (no `ContainerApprovalRouter` is constructed — neither enforcement layer is running, so no legitimate caller should hit this endpoint).
 
 ## Workflows
 

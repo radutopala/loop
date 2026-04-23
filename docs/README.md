@@ -14,6 +14,7 @@ Comprehensive documentation for every feature of the Loop platform.
 
 - [**Agent**](agent.md) — Agent request/response types, session management, streaming callbacks
 - [**Containers**](containers.md) — Docker container lifecycle, container registry with status tracking, environment, mounts, MCP config, scheduled removal
+- [**Security Gate**](gates.md) — Seccomp filter + Docker HTTP proxy for agent containers, default policy, approval UI, project-merge semantics
 - [**MCP Server**](mcpserver.md) — MCP tools for task scheduling, communication, and memory search
 - [**Browser**](browser.md) — Chrome sidecar containers, CDP client, screencast, input dispatch, tabs
 - [**Scheduling**](scheduling.md) — Task types (cron/interval/once), templates, auto-deletion, thread creation, worktree isolation, Tasks panel

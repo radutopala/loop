@@ -335,6 +335,28 @@ func (s *HelpersSuite) TestSplitMessage() {
 	}
 }
 
+// --- FormatApprovalDetails ---
+
+func (s *HelpersSuite) TestFormatApprovalDetailsEmpty() {
+	require.Equal(s.T(), "", FormatApprovalDetails(nil))
+	require.Equal(s.T(), "", FormatApprovalDetails(map[string]string{}))
+}
+
+func (s *HelpersSuite) TestFormatApprovalDetailsSortsKeys() {
+	got := FormatApprovalDetails(map[string]string{
+		"privileged": "true",
+		"image":      "alpine",
+		"binds":      "/etc:/host-etc:ro",
+	})
+	want := "> `binds`: /etc:/host-etc:ro\n> `image`: alpine\n> `privileged`: true"
+	require.Equal(s.T(), want, got)
+}
+
+func (s *HelpersSuite) TestFormatApprovalDetailsStripsBackticks() {
+	got := FormatApprovalDetails(map[string]string{"cmd": "echo `whoami`"})
+	require.Equal(s.T(), "> `cmd`: echo 'whoami'", got)
+}
+
 // --- FindCutPoint ---
 
 func (s *HelpersSuite) TestFindCutPoint() {

@@ -16,8 +16,10 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/tailscale/hujson"
 
+	"github.com/radutopala/loop/internal/agentgate"
 	"github.com/radutopala/loop/internal/agentregistry"
 	"github.com/radutopala/loop/internal/api"
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
@@ -25,6 +27,7 @@ import (
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/embeddings"
 	"github.com/radutopala/loop/internal/events"
+	"github.com/radutopala/loop/internal/local"
 	"github.com/radutopala/loop/internal/logging"
 	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/orchestrator"
@@ -348,6 +351,15 @@ func (a *app) serve() error {
 
 	localBot := a.newLocalBot(store, logger)
 
+	// Agentgate stage-2 resolver: a single multiplexer that routes approval
+	// clicks from any platform (Discord / Slack / Local) to the per-container
+	// Manager that created the request. Constructed once, shared by every
+	// bot's SetApprovalResolver call below and by the HTTP /api/gate handler.
+	var gateResolver *agentgate.MultiManagerResolver
+	if cfg.Gates.Agentgate.Enabled || cfg.Gates.DockerProxy.Enabled {
+		gateResolver = agentgate.NewMultiManagerResolver()
+	}
+
 	bots := make(map[types.Platform]orchestrator.Bot)
 	for _, p := range cfg.Platforms {
 		switch p {
@@ -366,6 +378,11 @@ func (a *app) serve() error {
 			}
 			bots[p] = discordBot
 		}
+		if gateResolver != nil {
+			if r, ok := bots[p].(interface{ SetApprovalResolver(bot.ApprovalResolver) }); ok {
+				r.SetApprovalResolver(gateResolver)
+			}
+		}
 	}
 
 	chatBot := orchestrator.NewBotRouter(bots, store, logger)
@@ -383,6 +400,27 @@ func (a *app) serve() error {
 	defer cancel()
 
 	runner := container.NewDockerRunner(dockerClient, cfg, config.Reload)
+	// Per-container policy files live under ~/.loop/run/<cid>/ (not
+	// /run/loop/<cid>/) because macOS /run is on the read-only system
+	// volume. Linux hosts could use /run/loop but we keep one path for both
+	// OSes so the bind-mount code paths stay identical.
+	policyDir := filepath.Join(cfg.LoopDir, "run")
+	if cfg.Gates.Agentgate.Enabled || cfg.Gates.DockerProxy.Enabled {
+		if err := os.MkdirAll(policyDir, 0o750); err != nil {
+			return fmt.Errorf("creating policy dir: %w", err)
+		}
+	}
+	if gateResolver != nil {
+		runner.SetGateDeps(gateResolver, &orchestrator.GateBotRouter{Bot: chatBot}, cfg.Gates.RateLimits)
+	}
+	runner.SetDockerProxyDeps(policyDir, "")
+
+	// Compile the shared seccomp policy once per daemon. The compiled form
+	// stays on the host for sanity checking at startup; the runner writes
+	// the JSON form into each container's policyDir and loop-syscallwrap
+	// recompiles it inside the container. Compile here primarily to fail
+	// fast on a broken user config before any container spawn.
+	a.wireGatePolicy(cfg, runner, policyDir, logger)
 
 	agentReg := agentregistry.New()
 
@@ -404,7 +442,10 @@ func (a *app) serve() error {
 
 	containerReg := container.NewRegistry(nil)
 	containerReg.SetLogger(logger)
-	containerReg.SetContainerRemover(dockerClient)
+	// Remove via runner so the per-container docker proxy (stage 2 of
+	// agentgate) is torn down on the same code path as docker removal.
+	// Runner delegates to dockerClient for the actual container remove.
+	containerReg.SetContainerRemover(runner)
 	containerReg.SetShellCreator(runner)
 	runner.SetContainerRegistry(containerReg)
 
@@ -437,6 +478,11 @@ func (a *app) serve() error {
 	apiSrv.SetLoopDir(cfg.LoopDir)
 	apiSrv.SetContainerRegistry(containerReg)
 	apiSrv.SetAgentRegistry(agentReg)
+	apiSrv.SetAuditDirResolver(runner)
+	if gateResolver != nil {
+		apiSrv.SetApprovalResolver(gateResolver)
+		apiSrv.SetContainerApprovalRouter(containerApprovalAdapter{gateResolver})
+	}
 
 	execClient, err := a.newDockerExecClient()
 	if err != nil {
@@ -489,6 +535,13 @@ func (a *app) serve() error {
 	eventsHub := api.NewEventsHub(logger)
 	apiSrv.SetEventsHub(eventsHub)
 	containerReg.SetBroadcaster(eventsHub)
+	if gateResolver != nil {
+		if gb, ok := localBot.(interface {
+			SetGateBroadcaster(local.GateBroadcaster)
+		}); ok {
+			gb.SetGateBroadcaster(eventsHub)
+		}
+	}
 
 	containerDir := filepath.Join(cfg.LoopDir, "container")
 	lifecycleMgr := container.NewImageLifecycleManager(
@@ -564,6 +617,34 @@ func (a *app) serve() error {
 	return nil
 }
 
+// wireGatePolicy compiles the shared seccomp policy and hands it to the
+// runner. Compilation happens once at startup so a broken user config fails
+// fast; the runner serialises the policy to JSON per-container and
+// loop-syscallwrap recompiles it inside the container before installing the
+// filter. Compile failure logs a warning and disables the gate (runner leaves
+// LOOP_GATE_ENABLED unset, entrypoint.sh skips loop-syscallwrap).
+func (a *app) wireGatePolicy(
+	cfg *config.Config,
+	runner *container.DockerRunner,
+	policyDir string,
+	logger *slog.Logger,
+) {
+	if !cfg.Gates.Agentgate.Enabled {
+		return
+	}
+	policy, err := agentgate.CompilePolicy(
+		cfg.Gates.Agentgate.DefaultDecision,
+		cfg.Gates.Agentgate.PathRules,
+		cfg.Gates.Agentgate.CommandRules,
+		cfg.Gates.Agentgate.FileRules,
+	)
+	if err != nil {
+		logger.Warn("gate policy compile failed; gate disabled", "error", err)
+		return
+	}
+	runner.SetGatePolicy(policy, policyDir)
+}
+
 // workflowsFromConfig returns a function that loads workflows from the
 // latest config, merging project-level config when dirPath is provided.
 // When parentDirPath is set (worktree channels), uses three-layer merging:
@@ -588,4 +669,20 @@ func workflowsFromConfig(cfg *config.Config, reload func() (*config.Config, erro
 		}
 		return base.Workflows
 	}
+}
+
+// containerApprovalAdapter bridges *agentgate.MultiManagerResolver to
+// api.ContainerApprovalRouter. The resolver's ByToken returns *agentgate.Manager
+// concretely; the api interface uses a narrower ContainerApprovalManager so test
+// doubles can skip the full Manager shape.
+type containerApprovalAdapter struct {
+	r *agentgate.MultiManagerResolver
+}
+
+func (a containerApprovalAdapter) ByToken(token string) (string, api.ContainerApprovalManager, string, bool) {
+	cid, mgr, channelID, ok := a.r.ByToken(token)
+	if !ok {
+		return "", nil, "", false
+	}
+	return cid, mgr, channelID, true
 }

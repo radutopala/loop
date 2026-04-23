@@ -32,6 +32,7 @@ COPY --from=builder /go/bin/gopls /usr/local/bin/gopls
 COPY setup.sh /usr/local/bin/setup.sh
 RUN --mount=type=secret,id=gitconfig,target=/root/.gitconfig chmod +x /usr/local/bin/setup.sh && /usr/local/bin/setup.sh
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY agent-bashrc /etc/loop/bashrc
 RUN chmod +x /usr/local/bin/entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]
 CMD ["claude"]

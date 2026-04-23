@@ -18,8 +18,10 @@ import (
 	"time"
 
 	"github.com/radutopala/loop/internal/agent"
+	"github.com/radutopala/loop/internal/agentgate"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/osutil"
+	"github.com/radutopala/loop/internal/types"
 )
 
 // mcpConfig represents the MCP config structure written to .loop/mcp.json.
@@ -168,6 +170,8 @@ type ContainerConfig struct {
 	Labels      map[string]string
 	NetworkName string // Docker network to attach to
 	Hostname    string // container hostname on the network
+	SecurityOpt []string
+	CapAdd      []string
 }
 
 // WaitResponse represents the result of waiting for a container to finish.
@@ -234,6 +238,41 @@ type DockerRunner struct {
 	osTimeLocalName           func() string
 	registry                  ContainerRegistry
 	instanceID                string // unique per daemon, used to scope Cleanup
+
+	// Docker HTTP proxy (stage 2 of agentgate). When cfg.Gates.DockerProxy.Enabled,
+	// the runner writes proxy-policy.json into policyDir/<channel>/ and mounts it
+	// read-only into the container; loop-dockerproxy inside the container
+	// reads the file, binds /var/run/docker.sock (tmpfs) and reverse-proxies
+	// to /var/run/docker.sock.host (the real daemon, bind-mounted read-only).
+	// Approvals are round-tripped back to loop-server via HTTP (see
+	// POST /api/gate/container-approval).
+	hostDockerSock string // "" -> "/var/run/docker.sock"
+
+	// Gate approval wiring (stage 2 of agentgate). When both fields below are
+	// set, the runner constructs a per-container agentgate.Manager, registers
+	// it in gateResolver under the real container ID with a per-container
+	// bearer token, and the in-container dockerproxy/syscallwrap processes
+	// call back through the HTTP approval endpoint authenticated by that
+	// token. Clicks arriving via any bot are routed to the right Manager by
+	// gateResolver.
+	gateResolver   *agentgate.MultiManagerResolver
+	gateBotRouter  agentgate.BotRouter
+	gateRateLimits types.RateLimits
+
+	// Gate seccomp wiring (stage 1 of agentgate). When cfg.Gates.Agentgate.Enabled, the
+	// runner writes gate-policy.json into policyDir/<channel>/ and mounts it
+	// read-only into the container; loop-syscallwrap parent (running as root
+	// in-container) reads the file, installs the filter in its child (dropped
+	// to the agent user), and runs agentgate.Server in-process against the
+	// notify fd. No notify fd crosses the container boundary.
+	gatePolicy *agentgate.Policy
+
+	// policyDir is the shared host dir where per-container policy JSON files
+	// (proxy-policy.json, gate-policy.json) are written; the container mounts
+	// them read-only under /etc/loop/. Defaults to "" which disables policy-
+	// file writes (tests that don't need the files can skip the filesystem
+	// setup).
+	policyDir string
 }
 
 // NewDockerRunner creates a new DockerRunner with the given Docker client and config.
@@ -252,6 +291,74 @@ func NewDockerRunner(client DockerClient, cfg *config.Config, configLoad func() 
 	}
 	r.cfg.Store(cfg)
 	return r
+}
+
+// SetDockerProxyDeps wires the host dir for per-container policy files and
+// the host-side docker daemon socket path. hostSock defaults to
+// "/var/run/docker.sock" when empty — the runner bind-mounts this into the
+// container at /var/run/docker.sock.host (read-only) so loop-dockerproxy can
+// reverse-proxy to it. policyDir is where proxy-policy.json is written;
+// empty falls back to no file writes (used by tests that disable the proxy).
+func (r *DockerRunner) SetDockerProxyDeps(policyDir, hostSock string) {
+	r.policyDir = policyDir
+	r.hostDockerSock = hostSock
+}
+
+// PolicyDir returns the host dir where per-container policy files are
+// written. Exposed for integration tests that verify serve.go plumbs
+// ~/.loop/run all the way through.
+func (r *DockerRunner) PolicyDir() string {
+	return r.policyDir
+}
+
+// AuditDir returns the host dir that backs the in-container
+// /var/log/loop-gate bind for the given channel. Returns "" when policyDir
+// is unset (gate + proxy both disabled). The directory may not exist yet —
+// it is created lazily on first container spawn. Read-only resolver used
+// by the API server to list / read jsonl audit files.
+func (r *DockerRunner) AuditDir(channelID string) string {
+	if r.policyDir == "" {
+		return ""
+	}
+	return filepath.Join(r.policyDir, policyChannelKey(channelID), "audit")
+}
+
+// SetGateDeps wires the per-daemon approval resolver and the bot router used
+// to render prompts. When both resolver and botRouter are non-nil, each
+// container gets a fresh agentgate.Manager that acts as the HTTP approval
+// target for the in-container proxy + seccomp gate; clicks on any surface
+// (Discord / Slack / Local) are routed to the right Manager by the resolver.
+// Zero-valued limits disable the respective rate-limit caps.
+func (r *DockerRunner) SetGateDeps(resolver *agentgate.MultiManagerResolver, botRouter agentgate.BotRouter, limits types.RateLimits) {
+	r.gateResolver = resolver
+	r.gateBotRouter = botRouter
+	r.gateRateLimits = limits
+}
+
+// SetGatePolicy wires the shared seccomp policy used by the in-container
+// gate (loop-syscallwrap). The runner writes the policy as JSON into
+// {policyDir}/<channel>/gate-policy.json and bind-mounts it read-only into
+// the container. Nil policy means the gate does not spawn even when
+// cfg.Gates.Agentgate.Enabled is true.
+func (r *DockerRunner) SetGatePolicy(policy *agentgate.Policy, policyDir string) {
+	r.gatePolicy = policy
+	if policyDir != "" {
+		r.policyDir = policyDir
+	}
+}
+
+// ContainerRemove deregisters the per-container agentgate.Manager (freeing the
+// bearer token on the resolver so stale requests get 401) and delegates to the
+// underlying DockerClient. Implements the containerRemover interface consumed
+// by the ContainerRegistry so scheduled-remove paths clean up the same way as
+// synchronous removal. Policy files under {policyDir}/<channel>/ are intentionally
+// left on disk — they're tiny, survive a daemon restart, and are overwritten
+// on next spawn for the same channel (idempotent — derived from global config).
+func (r *DockerRunner) ContainerRemove(ctx context.Context, containerID string) error {
+	if r.gateResolver != nil {
+		r.gateResolver.Remove(containerID)
+	}
+	return r.client.ContainerRemove(ctx, containerID)
 }
 
 // currentConfig returns a fresh config by calling configLoad, falling back
@@ -514,6 +621,26 @@ func (m mountSpec) String() string {
 		s += ":" + m.Mode
 	}
 	return s
+}
+
+// filterProxySockConflicts removes binds whose container target is
+// /var/run/docker.sock. The in-container docker proxy needs that path free
+// so it can listen there; a user-configured mount there would shadow the
+// listener with a bind to the host socket. Each skipped entry is logged to
+// stderr so the user can remove it from their config.
+func filterProxySockConflicts(binds []string) []string {
+	out := make([]string, 0, len(binds))
+	for _, b := range binds {
+		if ms, err := parseMountSpec(b); err == nil && ms.Container == "/var/run/docker.sock" {
+			fmt.Fprintf(os.Stderr,
+				"Warning: dropping mount %q: docker proxy listens on /var/run/docker.sock; remove this entry from your config.mounts\n",
+				b,
+			)
+			continue
+		}
+		out = append(out, b)
+	}
+	return out
 }
 
 // processMount processes a single mount specification and returns the expanded bind string.
@@ -849,9 +976,20 @@ func mcpConfigPathForAgent(workDir, channelID, agentID string) string {
 
 // BuildInteractiveClaudeCmd assembles the Claude CLI shell command for interactive
 // terminal sessions (no --print, --verbose, --output-format flags).
+//
+// When the seccomp gate is enabled, the command is wrapped in
+// `loop syscallwrap --` so the interactive claude runs under the same filter
+// the agent-mode (stream) path gets via entrypoint.sh. docker-exec'ing into the
+// running shell container does NOT inherit the shell's seccomp state (setns(2)
+// is per-namespace, but seccomp is per-process), so without this wrapper a
+// user typing `claude` at the terminal would bypass the gate entirely.
 func BuildInteractiveClaudeCmd(cfg *config.Config, channelID, workDir, sessionID, agentID string, forkSession bool) string {
 	mcpConfigPath := mcpConfigPathForAgent(workDir, channelID, agentID)
-	return "CLAUDE_CODE_NO_FLICKER=1 " + strings.Join(buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, agentID, forkSession, cfg.ExtraDirs), " ")
+	cmd := buildBaseClaudeCmd(cfg, mcpConfigPath, sessionID, agentID, forkSession, cfg.ExtraDirs)
+	if cfg.Gates.Agentgate.Enabled {
+		cmd = append([]string{"loop", "syscallwrap", "--"}, cmd...)
+	}
+	return "CLAUDE_CODE_NO_FLICKER=1 " + strings.Join(cmd, " ")
 }
 
 // ClaudeCmdBuilder builds the interactive Claude command for terminal sessions.
@@ -1043,6 +1181,100 @@ func (r *DockerRunner) createAndStartContainer(
 	playgroundDir := filepath.Join(baseCfg.LoopDir, "playground")
 	binds = append(binds, playgroundDir+":"+playgroundDir)
 
+	containerName = r.containerName(channelID, dirPath)
+
+	// Per-container bearer token authenticates HTTP callbacks from the
+	// in-container docker proxy + seccomp-gate parent into loop-server.
+	// Generated once per spawn; shared by both layers via env var.
+	gateToken, err := r.newGateToken()
+	if err != nil {
+		return "", "", "", false, fmt.Errorf("generating gate token: %w", err)
+	}
+
+	// Build the per-container agentgate.Manager that will receive HTTP
+	// approval requests. Registered with the resolver (keyed by the real
+	// container ID + token) once ContainerCreate returns a cid.
+	var gateMgr *agentgate.Manager
+	if (cfg.Gates.DockerProxy.Enabled || cfg.Gates.Agentgate.Enabled) && r.gateResolver != nil && r.gateBotRouter != nil {
+		gateMgr = agentgate.NewManager(r.gateBotRouter, r.gateRateLimits)
+	}
+
+	// Write the per-container docker-proxy policy file. loop-dockerproxy
+	// reads it inside the container; the bind-mount below mounts it read-
+	// only under /etc/loop/proxy-policy.json.
+	proxyPolicyHostPath, err := r.writeProxyPolicyFile(cfg, channelID)
+	if err != nil {
+		return "", "", "", false, err
+	}
+	if proxyPolicyHostPath != "" {
+		hostSock := r.hostDockerSock
+		if hostSock == "" {
+			hostSock = "/var/run/docker.sock"
+		}
+		// The proxy listens on /var/run/docker.sock inside the container; any
+		// user mount targeting that path collides with the listener and the
+		// socket file can't be unlinked since it's a bind. Strip the conflict
+		// and warn so the user removes it from their config.
+		binds = filterProxySockConflicts(binds)
+		binds = append(binds,
+			hostSock+":/var/run/docker.sock.host:ro",
+			proxyPolicyHostPath+":/etc/loop/proxy-policy.json:ro",
+		)
+		env = append(env,
+			"LOOP_DOCKERPROXY_ENABLED=1",
+			"LOOP_DOCKERPROXY_POLICY_FILE=/etc/loop/proxy-policy.json",
+			"LOOP_DOCKERPROXY_UPSTREAM=/var/run/docker.sock.host",
+		)
+	}
+
+	// Write the per-container seccomp-gate policy file. loop-syscallwrap
+	// parent reads it inside the container; mounted read-only at
+	// /etc/loop/gate-policy.json.
+	gatePolicyHostPath, err := r.writeGatePolicyFile(cfg, channelID, workDir, parentDirPath)
+	if err != nil {
+		return "", "", "", false, err
+	}
+	if gatePolicyHostPath != "" {
+		binds = append(binds, gatePolicyHostPath+":/etc/loop/gate-policy.json:ro")
+		env = append(env,
+			"LOOP_GATE_ENABLED=1",
+			"LOOP_GATE_POLICY_FILE=/etc/loop/gate-policy.json",
+		)
+		// Per-channel audit sink: rotating jsonl written by the
+		// in-container gate parent (root). Bound rw; retention is
+		// applied by FileAuditor on each rotation. Keyed by channel/
+		// thread so the same dir is reused across container restarts.
+		auditHostPath, err := r.ensureGateAuditDir(channelID, dirPath)
+		if err != nil {
+			return "", "", "", false, err
+		}
+		if auditHostPath != "" {
+			binds = append(binds, auditHostPath+":/var/log/loop-gate:rw")
+			env = append(env,
+				"LOOP_GATE_AUDIT_DIR=/var/log/loop-gate",
+				fmt.Sprintf("LOOP_GATE_AUDIT_RETENTION_DAYS=%d", cfg.Gates.Audit.RetentionDays),
+			)
+			if cfg.Gates.Audit.Verbose {
+				env = append(env, "LOOP_GATE_AUDIT_VERBOSE=1")
+			}
+		}
+	}
+
+	// Both the proxy and the gate authenticate HTTP callbacks with the same
+	// per-container bearer token. The channel id is how loop-server knows
+	// which chat surface to prompt when a trap fires. LOOP_CONTAINER_ID is
+	// required by loop-dockerproxy's Server constructor — the docker daemon
+	// only hands us the real cid after ContainerCreate, but the container
+	// name is stable and unique so we use it as the CID the proxy stamps on
+	// approval events.
+	if proxyPolicyHostPath != "" || gatePolicyHostPath != "" {
+		env = append(env,
+			"LOOP_CHANNEL_ID="+channelID,
+			"LOOP_GATE_TOKEN="+gateToken,
+			"LOOP_CONTAINER_ID="+containerName,
+		)
+	}
+
 	if len(chownPaths) > 0 {
 		env = append(env, "CHOWN_PATHS="+strings.Join(chownPaths, ":"))
 	}
@@ -1064,21 +1296,41 @@ func (r *DockerRunner) createAndStartContainer(
 
 	cmd := buildCmd(cfg, mcpConfigPath)
 
-	containerCfg := &ContainerConfig{
-		Image:      cfg.ContainerImage,
-		MemoryMB:   cfg.ContainerMemoryMB,
-		CPUs:       cfg.ContainerCPUs,
-		Env:        env,
-		Cmd:        cmd,
-		Binds:      binds,
-		WorkingDir: workDir,
-		Labels:     map[string]string{ChannelLabelKey: channelID, ContainerTypeKey: string(cType), InstanceLabelKey: r.instanceID},
+	// The seccomp gate needs two things Docker's default sandbox denies:
+	//   - seccomp=unconfined: the gate calls seccomp(2) with NEW_LISTENER,
+	//     which the default outer profile gates behind CAP_SYS_ADMIN. Drop
+	//     the outer profile so the install can run; the inner gate is the
+	//     real defense once it's up.
+	//   - CAP_SYS_PTRACE: the gate-server (root) reads the traced child's
+	//     memory via process_vm_readv to inspect argv / paths before making
+	//     a decision. Default caps lack SYS_PTRACE, and the child's dumpable
+	//     bit is cleared by the setuid drop, so without this cap every trap
+	//     fails closed with EPERM — which bubbles back out of execve.
+	var securityOpt, capAdd []string
+	if cfg.Gates.Agentgate.Enabled {
+		securityOpt = []string{"seccomp=unconfined"}
+		capAdd = []string{"SYS_PTRACE"}
 	}
 
-	containerName = r.containerName(channelID, dirPath)
+	containerCfg := &ContainerConfig{
+		Image:       cfg.ContainerImage,
+		MemoryMB:    cfg.ContainerMemoryMB,
+		CPUs:        cfg.ContainerCPUs,
+		Env:         env,
+		Cmd:         cmd,
+		Binds:       binds,
+		WorkingDir:  workDir,
+		Labels:      map[string]string{ChannelLabelKey: channelID, ContainerTypeKey: string(cType), InstanceLabelKey: r.instanceID},
+		SecurityOpt: securityOpt,
+		CapAdd:      capAdd,
+	}
+
 	containerID, err = r.client.ContainerCreate(ctx, containerCfg, containerName)
 	if err != nil {
 		return "", "", mcpConfigPath, keepMCPConfig, fmt.Errorf("creating container: %w", err)
+	}
+	if gateMgr != nil && r.gateResolver != nil {
+		r.gateResolver.AddWithToken(containerID, gateToken, gateMgr, channelID)
 	}
 
 	if err := r.copyFiles(ctx, containerID, r.filterMountedCopyFiles(cfg.CopyFiles, binds)); err != nil {
@@ -1090,6 +1342,167 @@ func (r *DockerRunner) createAndStartContainer(
 	}
 
 	return containerID, containerName, mcpConfigPath, keepMCPConfig, nil
+}
+
+// newGateToken returns 32 bytes of crypto/rand hex. Per-container bearer
+// token used to authenticate HTTP callbacks from in-container loop-
+// dockerproxy + loop-syscallwrap parent. Uses osRandRead so tests can
+// inject a deterministic value.
+func (r *DockerRunner) newGateToken() (string, error) {
+	b := make([]byte, 32)
+	if _, err := r.osRandRead(b); err != nil {
+		return "", err
+	}
+	return hex.EncodeToString(b), nil
+}
+
+// writeProxyPolicyFile serialises cfg.DockerProxy to JSON at
+// {policyDir}/<channel>/proxy-policy.json and returns the host path. Returns
+// ("", nil) when the proxy is disabled OR when policyDir is unset (tests).
+// loop-dockerproxy reads the same JSON shape.
+//
+// Keyed by channel (not cid) so all per-channel artifacts — policy files and
+// audit logs — share one tree. Concurrent same-channel spawns are safe: the
+// payload is derived from global config, so overwrites are idempotent.
+func (r *DockerRunner) writeProxyPolicyFile(cfg *config.Config, channelID string) (string, error) {
+	if !cfg.Gates.DockerProxy.Enabled {
+		return "", nil
+	}
+	if r.policyDir == "" {
+		return "", nil
+	}
+	dir := filepath.Join(r.policyDir, policyChannelKey(channelID))
+	if err := r.sys.MkdirAll(dir, 0o750); err != nil {
+		return "", fmt.Errorf("creating policy dir: %w", err)
+	}
+	raw, _ := json.Marshal(cfg.Gates.DockerProxy)
+	path := filepath.Join(dir, "proxy-policy.json")
+	if err := r.sys.WriteFile(path, raw, 0o640); err != nil {
+		return "", fmt.Errorf("writing proxy policy: %w", err)
+	}
+	return path, nil
+}
+
+// gatePolicyJSON mirrors the subset of config.AgentgateConfig that
+// loop-syscallwrap parent reads. Keeping it here (rather than
+// serialising the whole AgentgateConfig) makes the wire format
+// explicit and avoids leaking the Enabled flag into the container.
+type gatePolicyJSON struct {
+	DefaultDecision types.Decision      `json:"default_decision"`
+	PathRules       []types.PathRule    `json:"path_rules"`
+	CommandRules    []types.CommandRule `json:"command_rules"`
+	FileRules       []types.FileRule    `json:"file_rules"`
+}
+
+// writeGatePolicyFile serialises the subset of cfg.Gates.Agentgate that the
+// in-container seccomp gate needs and writes it to
+// {policyDir}/<channel>/gate-policy.json. Returns ("", nil) when the gate is
+// disabled OR when policyDir is unset.
+//
+// Keyed by channel (shared with proxy policy + audit) so all per-channel
+// artifacts live under one tree. Concurrent same-channel spawns are safe:
+// the payload derives from global config and the channel's stable workDir,
+// so overwrites are idempotent.
+//
+// workDir/parentDirPath come from the per-channel mount setup — the workspace
+// allow rule is injected here (not in the static defaults) because the real
+// workspace path is the host bind-mount path, not a fixed /work.
+func (r *DockerRunner) writeGatePolicyFile(cfg *config.Config, channelID, workDir, parentDirPath string) (string, error) {
+	if !cfg.Gates.Agentgate.Enabled {
+		return "", nil
+	}
+	if r.policyDir == "" {
+		return "", nil
+	}
+	dir := filepath.Join(r.policyDir, policyChannelKey(channelID))
+	if err := r.sys.MkdirAll(dir, 0o750); err != nil {
+		return "", fmt.Errorf("creating policy dir: %w", err)
+	}
+	payload := gatePolicyJSON{
+		DefaultDecision: cfg.Gates.Agentgate.DefaultDecision,
+		PathRules:       cfg.Gates.Agentgate.PathRules,
+		CommandRules:    cfg.Gates.Agentgate.CommandRules,
+		FileRules:       injectWorkspaceRule(cfg.Gates.Agentgate.FileRules, workDir, parentDirPath),
+	}
+	raw, _ := json.Marshal(payload)
+	path := filepath.Join(dir, "gate-policy.json")
+	if err := r.sys.WriteFile(path, raw, 0o640); err != nil {
+		return "", fmt.Errorf("writing gate policy: %w", err)
+	}
+	return path, nil
+}
+
+// policyChannelKey returns the sanitized channel-directory name used as the
+// per-channel root under policyDir. Falls back to "unkeyed" when channelID
+// is empty (ad-hoc one-shot runs) so the path is always well-formed.
+func policyChannelKey(channelID string) string {
+	if channelID == "" {
+		return "unkeyed"
+	}
+	return SanitizeName(channelID)
+}
+
+// ensureGateAuditDir creates the host dir that backs the in-container
+// /var/log/loop-gate bind. Returns ("", nil) when policyDir is unset (tests).
+//
+// Keyed by channel/thread, NOT by container: every restart of the same
+// channel reuses the same dir, so the rotating jsonl files accumulate one
+// ongoing history instead of fragmenting across thousands of per-spawn
+// dirs. Path: {policyDir}/<sanitized-channel>/audit/ — channel is the
+// primary key so all per-channel artifacts (policy file, audit log, future
+// per-channel state) live under one tree. Falls back to the dirPath
+// basename when channelID is empty (ad-hoc one-shot runs).
+//
+// The dir is created 0o770 so the in-container parent (uid 0) can write
+// into it; host owner is whoever runs the loop daemon.
+func (r *DockerRunner) ensureGateAuditDir(channelID, dirPath string) (string, error) {
+	if r.policyDir == "" {
+		return "", nil
+	}
+	base := channelID
+	if base == "" {
+		base = filepath.Base(dirPath)
+	}
+	if base == "" || base == "." || base == "/" {
+		base = ""
+	}
+	dir := filepath.Join(r.policyDir, policyChannelKey(base), "audit")
+	if err := r.sys.MkdirAll(dir, 0o770); err != nil {
+		return "", fmt.Errorf("creating audit dir: %w", err)
+	}
+	return dir, nil
+}
+
+// injectWorkspaceRule inserts a workspace fast-path Allow rule into the file
+// rules list at the first position following any Deny/Approve rules. This
+// keeps generic denies (**/.ssh/**, etc.) and Approve markers (approve-me*)
+// matching first, while granting blanket access to the real workspace path.
+func injectWorkspaceRule(rules []types.FileRule, workDir, parentDirPath string) []types.FileRule {
+	if workDir == "" {
+		return rules
+	}
+	paths := []string{workDir + "/**"}
+	if parentDirPath != "" && parentDirPath != workDir {
+		paths = append(paths, parentDirPath+"/**")
+	}
+	ws := types.FileRule{
+		Paths:      paths,
+		Operations: []string{"read", "write", "create", "delete", "stat", "list", "chmod", "chown", "link"},
+		Decision:   types.DecisionAllow,
+		Message:    "workspace fast-path",
+	}
+	insertAt := len(rules)
+	for i, r := range rules {
+		if r.Decision == types.DecisionAllow {
+			insertAt = i
+			break
+		}
+	}
+	out := make([]types.FileRule, 0, len(rules)+1)
+	out = append(out, rules[:insertAt]...)
+	out = append(out, ws)
+	out = append(out, rules[insertAt:]...)
+	return out
 }
 
 // collectOutput reads container logs (streaming or batch) and waits for exit.

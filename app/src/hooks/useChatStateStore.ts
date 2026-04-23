@@ -4,6 +4,8 @@ import type {
   AgentStatusData,
   AskUserQuestionData,
   ExitPlanModeData,
+  GateApprovalRequestedData,
+  GateApprovalResolvedData,
   MessageCreatedData,
   MessageStreamingData,
   TodoWriteData,
@@ -30,6 +32,7 @@ export interface ActiveChatState {
     model?: string;
   } | null;
   triggerContent: string | null;
+  gateApproval: GateApprovalRequestedData | null;
 }
 
 /** Callback type for chat event listeners registered by useChatState. */
@@ -328,6 +331,7 @@ function createEmptyState(): ActiveChatState {
     mode: "agent",
     completionInfo: null,
     triggerContent: null,
+    gateApproval: null,
   };
 }
 
@@ -340,6 +344,7 @@ function isRunningEvent(event: WSEvent): boolean {
     "agent.exit_plan",
     "agent.todos",
     "agent.status",
+    "gate.approval_requested",
   ].includes(event.type);
 }
 
@@ -379,6 +384,17 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
     }
     case "agent.todos": {
       state.todos = event.data as TodoWriteData;
+      break;
+    }
+    case "gate.approval_requested": {
+      state.gateApproval = event.data as GateApprovalRequestedData;
+      break;
+    }
+    case "gate.approval_resolved": {
+      const data = event.data as GateApprovalResolvedData;
+      if (state.gateApproval && state.gateApproval.req_id === data.req_id) {
+        state.gateApproval = null;
+      }
       break;
     }
     case "agent.status": {

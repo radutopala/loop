@@ -12,3 +12,5 @@ export * from "./image";
 export * from "./search";
 export * from "./tickets";
 export * from "./workflows";
+export * from "./gate";
+export * from "./audit";

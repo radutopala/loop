@@ -294,6 +294,28 @@ func (s *BotRouterSuite) TestRemoveStopButton() {
 	require.NoError(s.T(), err)
 }
 
+func (s *BotRouterSuite) TestSendApproval() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(
+		&db.Channel{ChannelID: "ch-1", Platform: types.PlatformLocal}, nil,
+	)
+	prompt := bot.ApprovalPrompt{ID: "req-1", Kind: "execve", Target: "git push"}
+	s.localBot.On("SendApproval", mock.Anything, "ch-1", prompt).Return("msg-1", nil)
+
+	msgID, err := s.router.SendApproval(context.Background(), "ch-1", prompt)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "msg-1", msgID)
+}
+
+func (s *BotRouterSuite) TestRemoveApproval() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(
+		&db.Channel{ChannelID: "ch-1", Platform: types.PlatformDiscord}, nil,
+	)
+	s.discordBot.On("RemoveApproval", mock.Anything, "ch-1", "msg-1").Return(nil)
+
+	err := s.router.RemoveApproval(context.Background(), "ch-1", "msg-1")
+	require.NoError(s.T(), err)
+}
+
 func (s *BotRouterSuite) TestSetChannelTopic() {
 	s.store.On("GetChannel", mock.Anything, "ch-1").Return(
 		&db.Channel{ChannelID: "ch-1", Platform: types.PlatformDiscord}, nil,
@@ -407,6 +429,12 @@ func (s *BotRouterSuite) TestChannelMethodsReturnErrorWhenNoBotFound() {
 	require.ErrorContains(s.T(), err, "no bot found")
 
 	err = s.router.RemoveStopButton(ctx, "unknown", "msg-1")
+	require.ErrorContains(s.T(), err, "no bot found")
+
+	_, err = s.router.SendApproval(ctx, "unknown", bot.ApprovalPrompt{})
+	require.ErrorContains(s.T(), err, "no bot found")
+
+	err = s.router.RemoveApproval(ctx, "unknown", "msg-1")
 	require.ErrorContains(s.T(), err, "no bot found")
 
 	err = s.router.SetChannelTopic(ctx, "unknown", "topic")

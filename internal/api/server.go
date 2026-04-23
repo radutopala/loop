@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/radutopala/loop/internal/agentregistry"
+	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
@@ -65,46 +66,57 @@ type serverSystem interface {
 
 // Server exposes a lightweight HTTP API for task CRUD operations.
 type Server struct {
-	scheduler             scheduler.Scheduler
-	channels              ChannelEnsurer
-	threads               ThreadEnsurer
-	store                 ChannelLister
-	messages              MessageSender
-	memoryIndexer         MemoryIndexer
-	termManager           TerminalManager
-	hostTermManager       TerminalManager
-	dockerBrowserProvider BrowserProvider
-	hostBrowserProvider   BrowserProvider                // for host Chrome mode
-	activeBrowserMode     map[string]string              // channelID -> "docker"|"host"; nil defaults to docker
-	browserModeMu         sync.Mutex                     // protects activeBrowserMode
-	cdpManagers           map[string]*browser.CDPManager // "channelID|mode" -> CDPManager
-	cdpManagersMu         sync.Mutex
-	browserCaptures       map[string]*browser.CaptureState // channelID -> state
-	browserCapturesMu     sync.Mutex
-	cmdBuilder            InteractiveCmdBuilder
-	containerRegistry     ContainerManager
-	activeChatLister      ActiveChatLister
-	msgHandler            IncomingMessageHandler
-	runCanceller          RunCanceller
-	interactionHandler    InteractionHandler
-	agentRegistry         *agentregistry.Registry
-	eventsHub             *EventsHub
-	imageManager          ImageManager
-	browserKeepAlive      time.Duration // delay before removing idle browser containers
-	loopDir               string
-	screenshotDir         string // if set, write screenshots to this dir instead of base64
-	logger                *slog.Logger
-	server                *http.Server
-	listener              net.Listener
-	stopErr               error             // if set, Stop returns this error (for testing)
-	agentWSWriteJSON      func(v any) error // injectable for testing agent-channel WS write errors
-	workflowEngine        WorkflowEngine
-	worktreeCreator       *worktree.Creator
-	sys                   serverSystem
-	loadConfig            func() (*config.Config, error)                       // injectable for testing
-	loadProjectConfig     func(string, *config.Config) (*config.Config, error) // injectable for testing
-	readFile              func(string) ([]byte, error)                         // injectable for testing
-	ticketStoreOpener     func(dir string) TicketStore                         // injectable for testing
+	scheduler               scheduler.Scheduler
+	channels                ChannelEnsurer
+	threads                 ThreadEnsurer
+	store                   ChannelLister
+	messages                MessageSender
+	memoryIndexer           MemoryIndexer
+	termManager             TerminalManager
+	hostTermManager         TerminalManager
+	dockerBrowserProvider   BrowserProvider
+	hostBrowserProvider     BrowserProvider                // for host Chrome mode
+	activeBrowserMode       map[string]string              // channelID -> "docker"|"host"; nil defaults to docker
+	browserModeMu           sync.Mutex                     // protects activeBrowserMode
+	cdpManagers             map[string]*browser.CDPManager // "channelID|mode" -> CDPManager
+	cdpManagersMu           sync.Mutex
+	browserCaptures         map[string]*browser.CaptureState // channelID -> state
+	browserCapturesMu       sync.Mutex
+	cmdBuilder              InteractiveCmdBuilder
+	containerRegistry       ContainerManager
+	activeChatLister        ActiveChatLister
+	msgHandler              IncomingMessageHandler
+	runCanceller            RunCanceller
+	interactionHandler      InteractionHandler
+	agentRegistry           *agentregistry.Registry
+	eventsHub               *EventsHub
+	imageManager            ImageManager
+	browserKeepAlive        time.Duration // delay before removing idle browser containers
+	loopDir                 string
+	screenshotDir           string // if set, write screenshots to this dir instead of base64
+	logger                  *slog.Logger
+	server                  *http.Server
+	listener                net.Listener
+	stopErr                 error             // if set, Stop returns this error (for testing)
+	agentWSWriteJSON        func(v any) error // injectable for testing agent-channel WS write errors
+	workflowEngine          WorkflowEngine
+	worktreeCreator         *worktree.Creator
+	sys                     serverSystem
+	loadConfig              func() (*config.Config, error)                       // injectable for testing
+	loadProjectConfig       func(string, *config.Config) (*config.Config, error) // injectable for testing
+	readFile                func(string) ([]byte, error)                         // injectable for testing
+	ticketStoreOpener       func(dir string) TicketStore                         // injectable for testing
+	approvalResolver        bot.ApprovalResolver                                 // gate approval dispatcher
+	containerApprovalRouter ContainerApprovalRouter                              // per-container bearer-token → Manager lookup
+	auditDirResolver        AuditDirResolver                                     // per-channel host path to the gate audit jsonl dir
+}
+
+// AuditDirResolver maps a channel ID to the host directory that backs the
+// in-container /var/log/loop-gate bind — where the agentgate FileAuditor
+// writes its rotating jsonl files. Returns "" when the gate is disabled
+// (no audit dir yet). Typically satisfied by *container.DockerRunner.
+type AuditDirResolver interface {
+	AuditDir(channelID string) string
 }
 
 // SetEventsHub configures the events hub for the /api/ws endpoint.
@@ -180,6 +192,27 @@ func (s *Server) SetImageManager(im ImageManager) {
 	s.imageManager = im
 }
 
+// SetApprovalResolver wires the gate approval resolver used by the local
+// /api/gate/approvals/{id} endpoint. Typically backed by
+// agentgate.MultiManagerResolver so a single resolver multiplexes clicks
+// across all per-container Managers.
+func (s *Server) SetApprovalResolver(r bot.ApprovalResolver) {
+	s.approvalResolver = r
+}
+
+// SetContainerApprovalRouter wires the bearer-token → Manager router used by
+// the /api/gate/container-approval endpoint. Typically backed by
+// agentgate.MultiManagerResolver.
+func (s *Server) SetContainerApprovalRouter(r ContainerApprovalRouter) {
+	s.containerApprovalRouter = r
+}
+
+// SetAuditDirResolver wires the per-channel gate-audit-dir resolver used by
+// /api/channels/{id}/audit endpoints. Typically backed by *container.DockerRunner.
+func (s *Server) SetAuditDirResolver(r AuditDirResolver) {
+	s.auditDirResolver = r
+}
+
 // NewServer creates a new API server. The channels, threads, store, and messages
 // parameters may be nil if those features are not configured.
 func NewServer(sched scheduler.Scheduler, channels ChannelEnsurer, threads ThreadEnsurer, store ChannelLister, messages MessageSender, logger *slog.Logger) *Server {
@@ -221,6 +254,8 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/shortcuts", s.handleListShortcuts)
 	mux.HandleFunc("POST /api/shortcuts", s.handleModifyShortcut)
 	mux.HandleFunc("GET /api/channels/{id}/sessions", s.handleListSessions)
+	mux.HandleFunc("GET /api/channels/{id}/audit", s.handleListAuditFiles)
+	mux.HandleFunc("DELETE /api/channels/{id}/audit/{date}", s.handleDeleteAuditFile)
 	mux.HandleFunc("GET /api/channels/{id}/messages", s.handleListMessages)
 	mux.HandleFunc("GET /api/messages/search", s.handleSearchMessages)
 	mux.HandleFunc("POST /api/commands", s.handleCommand)
@@ -288,6 +323,8 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/workflows/runs/{id}", s.handleDeleteWorkflowRun)
 	mux.HandleFunc("POST /api/workflows/runs/{id}/retry", s.handleRetryWorkflowRun)
 	mux.HandleFunc("POST /api/workflows/runs/{id}/resume", s.handleResumeWorkflowRun)
+	mux.HandleFunc("POST /api/gate/approvals/{id}", s.handleResolveGateApproval)
+	mux.HandleFunc("POST /api/gate/container-approval", s.handleContainerApproval)
 	mux.HandleFunc("GET /api/workflows", s.handleListWorkflows)
 	mux.HandleFunc("POST /api/workflows", s.handleModifyWorkflow)
 	mux.HandleFunc("GET /api/health", handleHealth)

@@ -47,6 +47,8 @@ const (
 	EventWorkflowRunPaused         = "workflow.run_paused"
 	EventWorkflowNodeStarted       = "workflow.node_started"
 	EventWorkflowNodeCompleted     = "workflow.node_completed"
+	EventGateApprovalRequested     = "gate.approval_requested"
+	EventGateApprovalResolved      = "gate.approval_resolved"
 )
 
 // Event represents a server-sent event to WebSocket clients.
@@ -414,5 +416,26 @@ func (h *EventsHub) BroadcastWorkflowNodeCompleted(data events.WorkflowNodeEvent
 		Type:   EventWorkflowNodeCompleted,
 		Data:   data,
 		Global: true,
+	})
+}
+
+// BroadcastGateApprovalRequested sends a gate.approval_requested event to
+// subscribers of the approving channel; the React ApprovalCard listens on
+// this and renders the three gate decision buttons.
+func (h *EventsHub) BroadcastGateApprovalRequested(channelID string, data events.GateApprovalEventData) {
+	h.Broadcast(Event{
+		Type:      EventGateApprovalRequested,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastGateApprovalResolved sends a gate.approval_resolved event after a
+// decision is recorded, so any pending ApprovalCard can dismiss itself.
+func (h *EventsHub) BroadcastGateApprovalResolved(channelID string, data events.GateApprovalResolvedData) {
+	h.Broadcast(Event{
+		Type:      EventGateApprovalResolved,
+		ChannelID: channelID,
+		Data:      data,
 	})
 }

@@ -69,6 +69,44 @@
     }
   },
 
+  // Security gates umbrella: both enforcement layers share the same approval backend, rate
+  // limits, and audit sink. Enabled by default. See docs/gates.md for the threat model.
+  // Omit this block entirely to accept all defaults.
+  //"gates": {
+  //  //"rate_limits": { "pending": 30, "per_minute": 60, "total": 500 },
+  //  //"audit":       { "retention_days": 30 },
+  //
+  //  // Kernel-level seccomp gate (agentgate).
+  //  //"agentgate": {
+  //  //  "enabled": true,                  // set false to disable the gate entirely
+  //  //  "default_decision": "allow",      // "allow" | "approve"; fallback when no rule matches
+  //  //  // path_rules / command_rules / file_rules: additional rules appended to the built-in baseline.
+  //  //  // Built-in baseline (always active unless agentgate.enabled=false):
+  //  //  //   path_rules:    [ docker.sock -> approve ]
+  //  //  //   command_rules: [ rm under /tmp -> allow, rm -rf /... -> deny,
+  //  //  //                    git push|remote-add|config-global|clean-fdx -> approve ]
+  //  //  //   file_rules:    denies for /proc/{mem,kcore}-reads, /etc/shadow, ~/.ssh/**, ~/.aws/**,
+  //  //  //                  ~/.claude/settings{,.local}.json-writes, ~/.bashrc-writes,
+  //  //  //                  ~/.{docker/config.json,npmrc}-writes (reads allowed for tooling),
+  //  //  //                  /etc/**-writes, /usr/**-writes; allows for /work/**, /tmp/**, /proc/**-reads.
+  //  //  //"path_rules":    [ { "pattern": "/custom/socket", "decision": "deny", "message": "internal socket" } ],
+  //  //  //"command_rules": [ { "commands": ["curl"], "args_patterns": ["evil\\.com"], "decision": "deny" } ],
+  //  //  //"file_rules":    [ { "paths": ["/project-secret/**"], "operations": ["read","write"], "decision": "deny" } ]
+  //  //},
+  //
+  //  // Docker HTTP proxy: per-method / per-path rules for container -> docker.sock traffic.
+  //  // Automatically enabled when agentgate.enabled is true. Disable only if you also disable the gate.
+  //  //"docker_proxy": {
+  //  //  "enabled": true,
+  //  //  "default_decision": "approve",  // "allow" | "approve" | "deny"; "approve" surfaces unknown routes as prompts
+  //  //  // http_rules / body_rules: append to the shipped baseline.
+  //  //  // Built-in baseline denies: swarm/secrets/plugins, /containers/create with host-mount or --privileged,
+  //  //  //                          container updates that add CapAdd/Privileged.
+  //  //  //"http_rules": [ { "methods": ["POST"], "paths": ["^/my/route$"], "decision": "deny" } ],
+  //  //  //"body_rules": [ /* see docs/gates.md */ ]
+  //  //}
+  //},
+
   // MCP server configurations. Each entry defines a separate MCP server that agents can connect to.
   // The key is an arbitrary name for the server, and the value specifies how to start the server.
   // Project-level configs can override or add servers with the same structure.

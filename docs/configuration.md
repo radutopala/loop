@@ -327,6 +327,69 @@ Available at both global and project level. Project values override global value
 
 If all config and DB permissions are empty, everyone is treated as an owner (bootstrap mode).
 
+#### Security Gate
+
+The gate runs a seccomp `RET_USER_NOTIF` filter inside each agent container and forwards approve-rule traps to Discord / Slack / the desktop. See [HTTP API: Gate Approvals](api.md#gate-approvals) for the resolve endpoint and [Events: gate.approval_requested](events.md#gateapproval_requested) for the WebSocket payload.
+
+```jsonc
+"gates": {
+  "rate_limits": { "pending": 30, "per_minute": 60, "total": 500 },
+  "audit":       { "retention_days": 30, "verbose": false },
+
+  "agentgate": {
+    "enabled": true,
+    "default_decision": "allow",
+    "path_rules":    [ /* unix-socket connect rules */ ],
+    "command_rules": [ /* execve/execveat rules */ ],
+    "file_rules":    [ /* openat/renameat2/unlinkat rules */ ]
+  },
+
+  "docker_proxy": {
+    "enabled": true,
+    "default_decision": "approve",
+    "http_rules": [ /* per-method/path rules */ ],
+    "body_rules": [ /* JSON-body inspection for container-create etc. */ ]
+  }
+}
+```
+
+`gates` is the single umbrella for both enforcement layers — the kernel-level `agentgate` (seccomp) and the application-level `docker_proxy` (Docker HTTP). Shared resources (`rate_limits`, `audit`) live at the umbrella level because both layers feed into the same `agentgate.Manager` for approvals.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `gates.rate_limits.pending` | `int` | `30` | Max simultaneously-pending prompts per container; new requests over this auto-deny. Shared across both gate layers. |
+| `gates.rate_limits.per_minute` | `int` | `60` | Max distinct-target prompts per minute per container. |
+| `gates.rate_limits.total` | `int` | `500` | Per-container lifetime cap; exceeded = deny-by-default for the rest of the run. |
+| `gates.audit.retention_days` | `int` | `30` | Days of gate decision logs to retain on disk. `FileAuditor` prunes older `agentgate-YYYY-MM-DD.jsonl` files on each rotation; `0` or negative disables pruning. Surfaced into the container as `LOOP_GATE_AUDIT_RETENTION_DAYS`. |
+| `gates.audit.verbose` | `bool` | `false` | When `false` (default), `FileAuditor` drops silent allows (policy said allow, nobody was prompted) and cache-hit allows — only denies (silent or prompted) and user-clicked decisions are logged, keeping the trail focused on events operators actually want to review. When `true`, every decision is logged, including silent allows and cache hits — use for debugging rule authoring or exporting a full trace to a SIEM. Surfaced into the container as `LOOP_GATE_AUDIT_VERBOSE=1`. |
+| `gates.agentgate.enabled` | `bool` | `true` | Master switch for the seccomp gate. When false, no filter is installed and no gate policy file is bind-mounted. Transitively disables `gates.docker_proxy` unless explicitly overridden. |
+| `gates.agentgate.default_decision` | `string` | `"allow"` | `"allow"` or `"approve"`. Fallback when no rule matches. |
+| `gates.agentgate.path_rules` | `[]PathRule` | 1 rule (docker.sock → approve) | Rules for unix-socket connects, matched by absolute socket path. User rules are appended to the shipped baseline. |
+| `gates.agentgate.command_rules` | `[]CommandRule` | 2 rules (rm -rf / deny, git push etc. approve) | Rules for `execve`/`execveat`, matched by basename glob and argv regex. User rules are appended to the baseline. |
+| `gates.agentgate.file_rules` | `[]FileRule` | 8 rules | Rules for file ops (`openat`, `renameat2`, `unlinkat`, `linkat`, `symlinkat`, `fchmodat`, `fchownat`, `mkdirat`), matched by doublestar path glob × operation set. User rules are appended. |
+
+**Rule field shapes:**
+
+```jsonc
+// PathRule
+{ "pattern": "/var/run/docker.sock", "decision": "approve", "message": "agent wants to use docker" }
+
+// CommandRule — empty commands or args_patterns means "match any"
+{ "commands": ["git"], "args_patterns": ["^(push|remote add|reset --hard) .*"], "decision": "approve", "message": "git write op" }
+
+// FileRule — empty paths or operations means "match any"
+{ "paths": ["**/.ssh/**"], "operations": ["read","write","create","delete","chmod"], "decision": "deny", "message": "credentials blocked" }
+```
+
+`decision` is one of `"allow"`, `"deny"`, or `"approve"`. `approve` blocks the syscall and broadcasts a `gate.approval_requested` event; the UI's three-button card resolves it via [`POST /api/gate/approvals/{id}`](api.md#post-apigateapprovalsid).
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `gates.docker_proxy.enabled` | `bool` | mirrors `gates.agentgate.enabled` | Replaces the container's direct `/var/run/docker.sock` bind with an in-container HTTP proxy (`loop dockerproxy`) that listens on `/var/run/docker.sock` (tmpfs) and reverse-proxies to the real daemon socket at `/var/run/docker.sock.host` while enforcing `http_rules` + `body_rules`. |
+| `gates.docker_proxy.default_decision` | `string` | `"approve"` | Fallback when no `http_rules` entry matches. `"allow"`, `"approve"`, or `"deny"`. |
+| `gates.docker_proxy.http_rules` | `[]HTTPServiceRule` | 15 rules | Method × path-regex rules. User rules are appended to the baseline (GET reads allowed; POST create/start/exec/update approved; swarm/secrets/plugins denied). |
+| `gates.docker_proxy.body_rules` | `[]BodyRule` | 2 rules | JSON-body inspection rules on `POST /containers/create` and `/update`. Baseline denies root-level bind-mounts (`/`, `/etc`, `/root`, `/proc`, `/sys`, `/dev`, `/var/run/docker.sock`), `Privileged`, host-namespace flags, dangerous `CapAdd`, `--security-opt=*unconfined`, `Devices`/`VolumesFrom`, and `MaskedPaths: []`. Body-rule decisions follow the same semantics as `http_rules`: `deny` returns 403 with no prompt, `approve` blocks and prompts the user, `allow` passes through silently. |
+
 #### Desktop (Electron App)
 
 ```jsonc
@@ -395,6 +458,13 @@ Not all global fields are available in project configs. The following fields can
 | `browser.enabled` | **Overrides** global value when set. |
 | `browser.chrome_image` | **Overrides** global value when set. |
 | `browser.host_cdp_port` | **Overrides** global value when set. |
+| `gates.agentgate.enabled` | **Narrows only**: project may set `false` to disable the gate for this project; it **cannot** re-enable the gate when global `gates.agentgate.enabled` is `false`. Transitively disables `gates.docker_proxy.enabled` when the project turns the gate off. |
+| `gates.agentgate.path_rules` / `command_rules` / `file_rules` | **Prepended** to the merged global rules (first-match-wins applies project rules first). **Rules with `decision: "allow"` are rejected at load time** — project configs may only tighten the policy, not loosen it. |
+| `gates.agentgate.default_decision` | **Ignored** — global wins unconditionally. |
+| `gates.docker_proxy.enabled` | Same narrow rule as `gates.agentgate.enabled`: project can disable (not re-enable). |
+| `gates.docker_proxy.http_rules` / `body_rules` | **Prepended** to the merged global rules. Rules with `decision: "allow"` are rejected at load time. |
+| `gates.docker_proxy.default_decision` | **Ignored** — global wins. |
+| `gates.rate_limits` / `gates.audit` | **Ignored** — global wins unconditionally. |
 
 ### Project Config Merge Rules
 
@@ -404,6 +474,7 @@ The merge follows these principles:
 - **Merge**: Both global and project values are combined, with project taking precedence on conflicts (MCP servers, envs, task templates, workflows).
 - **Append**: Project values are added to the global list (memory paths).
 - **Override**: A single scalar value replaces the global one (claude_model, container_image, etc.).
+- **Narrow merge**: Security-sensitive fields under `gates` (`agentgate`, `docker_proxy`) have a locked-down merge: project rules prepend, `allow` rules are rejected at load, and `default_decision` / `rate_limits` / `audit` are ignored so a compromised project file cannot loosen global policy.
 - **Absent = inherit**: If a field is not set in the project config, the global value is used unchanged.
 
 ---
@@ -552,7 +623,32 @@ The merge follows these principles:
   "workflow_concurrency": {
     "max_concurrent_runs": 0,
     "max_concurrent_nodes": 0
-  }
+  },
+
+  // Security gates umbrella. Both layers enabled by default with a baseline
+  // deny-list; uncomment to extend. User rules append to the shipped baseline.
+  //"gates": {
+  //  //"rate_limits": { "pending": 30, "per_minute": 60, "total": 500 },
+  //  //"audit":       { "retention_days": 30, "verbose": false },
+  //
+  //  // Kernel-level seccomp gate.
+  //  //"agentgate": {
+  //  //  "enabled": true,
+  //  //  "default_decision": "allow",
+  //  //  //"path_rules":    [ { "pattern": "/custom/socket", "decision": "deny" } ],
+  //  //  //"command_rules": [ { "commands": ["curl"], "args_patterns": ["evil\\.com"], "decision": "deny" } ],
+  //  //  //"file_rules":    [ { "paths": ["/project-secret/**"], "operations": ["read","write"], "decision": "deny" } ]
+  //  //},
+  //
+  //  // Docker HTTP proxy (enabled automatically when agentgate.enabled). Replaces the
+  //  // direct docker.sock bind with an in-container proxy that enforces per-method
+  //  // and body-level rules.
+  //  //"docker_proxy": {
+  //  //  "enabled": true,
+  //  //  "default_decision": "approve"
+  //  //  //"http_rules": [ { "methods": ["POST"], "paths": ["^/my/route$"], "decision": "deny" } ]
+  //  //}
+  //}
 }
 ```
 
@@ -659,6 +755,21 @@ The merge follows these principles:
   //"workflow_concurrency": {
   //  "max_concurrent_runs": 5,
   //  "max_concurrent_nodes": 10
+  //},
+
+  // Security gates override for this project only. Can disable (not re-enable);
+  // rules prepend to global and must use decision: "deny" or "approve"
+  // ("allow" is rejected at load time).
+  //"gates": {
+  //  //"agentgate": {
+  //  //  "enabled": false,
+  //  //  //"command_rules": [ { "commands": ["npm"], "args_patterns": ["^publish"], "decision": "deny" } ],
+  //  //  //"file_rules":    [ { "paths": ["./secret-vault/**"], "operations": ["read"], "decision": "deny" } ]
+  //  //},
+  //
+  //  //"docker_proxy": {
+  //  //  //"http_rules": [ /* project-specific Docker API restrictions */ ]
+  //  //}
   //}
 }
 ```

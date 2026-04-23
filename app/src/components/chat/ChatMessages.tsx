@@ -8,6 +8,7 @@ import { useTheme } from "../../ThemeContext";
 import { ContextMenu } from "../shared/ContextMenu";
 import type { MenuItem } from "../shared/ContextMenu";
 import { QueuedMessagesPopup } from "./QueuedMessagesPopup";
+import { ApprovalCard } from "./ApprovalCard";
 
 function buildMessageStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
   return {
@@ -118,7 +119,7 @@ export interface ChatMessagesHandle {
 export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(function ChatMessages({ channelId, chatState, scrollToMessageId, onScrollComplete, onQuote }, ref) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
-  const { messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, todos, completionInfo, triggerContent } = chatState;
+  const { messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, todos, completionInfo, triggerContent, gateApproval } = chatState;
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -136,7 +137,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     if (autoScrollRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages, streamingContent, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, todos]);
+  }, [messages, streamingContent, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, todos, gateApproval]);
 
   // Scroll to a specific message (from search) and highlight it.
   useEffect(() => {
@@ -207,6 +208,9 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
           )}
           {toolActivity && !streamingContent && isRunning && (
             <ToolActivityIndicator toolName={toolActivity.tool_name} input={toolActivity.input} />
+          )}
+          {gateApproval && (
+            <ApprovalCard data={gateApproval} onResolved={() => { chatState.clearGateApproval(); scrollToBottom(); }} />
           )}
           {askUserQuestions && !isRunning && channelId && (
             <AskUserQuestionCard questions={askUserQuestions.questions} channelId={channelId} onSent={() => { chatState.clearAskUser(); scrollToBottom(); }} />
@@ -875,3 +879,4 @@ function ExitPlanCard({ plan, channelId, setMode, onSent }: { plan: ExitPlanMode
     </div>
   );
 }
+

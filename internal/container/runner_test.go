@@ -3138,6 +3138,27 @@ func (s *RunnerSuite) TestBuildInteractiveClaudeCmdWithAgentID() {
 	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1-agent-0.json --dangerously-skip-permissions --dangerously-load-development-channels server:loop", got)
 }
 
+// TestBuildInteractiveClaudeCmdGateEnabled proves the gate-on branch prepends
+// `loop syscallwrap --` so an interactive claude launched from a docker-exec
+// shell runs under the same seccomp filter the stream-mode path installs via
+// entrypoint.sh.
+func (s *RunnerSuite) TestBuildInteractiveClaudeCmdGateEnabled() {
+	cfg := &config.Config{ClaudeBinPath: "claude"}
+	cfg.Gates.Agentgate.Enabled = true
+	got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "", false)
+	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 loop syscallwrap -- claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions", got)
+}
+
+// TestBuildInteractiveClaudeCmdGateDisabled confirms the baseline (no prefix)
+// when the gate is explicitly off.
+func (s *RunnerSuite) TestBuildInteractiveClaudeCmdGateDisabled() {
+	cfg := &config.Config{ClaudeBinPath: "claude"}
+	cfg.Gates.Agentgate.Enabled = false
+	got := BuildInteractiveClaudeCmd(cfg, "ch-1", "/work", "", "", false)
+	require.NotContains(s.T(), got, "loop syscallwrap")
+	require.Equal(s.T(), "CLAUDE_CODE_NO_FLICKER=1 claude --mcp-config /work/.loop/mcp-ch-1.json --dangerously-skip-permissions", got)
+}
+
 func (s *RunnerSuite) TestBuildBaseClaudeCmdFlags() {
 	cfg := &config.Config{ClaudeBinPath: "claude"}
 

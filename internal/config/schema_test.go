@@ -45,6 +45,7 @@ func (s *SchemaSuite) TestTopLevelProperties() {
 		"log_level", "log_format", "log_file",
 		"api_addr", "db_path", "poll_interval_sec",
 		"desktop", "workflow_bash_local",
+		"gates",
 	}
 	for _, key := range expectedKeys {
 		s.Run(key, func() {
@@ -201,6 +202,80 @@ func (s *SchemaSuite) TestDesktopNestedObject() {
 	require.Contains(s.T(), prop.Properties, "stop_daemon_on_quit")
 }
 
+func (s *SchemaSuite) TestGatesNestedObject() {
+	prop := GlobalConfigSchema().Properties["gates"]
+	require.NotNil(s.T(), prop)
+	require.Equal(s.T(), "object", prop.Type)
+	require.Equal(s.T(), "Gates", prop.XSection)
+
+	require.Contains(s.T(), prop.Properties, "rate_limits")
+	require.Contains(s.T(), prop.Properties, "audit")
+	require.Contains(s.T(), prop.Properties, "agentgate")
+	require.Contains(s.T(), prop.Properties, "docker_proxy")
+
+	rate := prop.Properties["rate_limits"]
+	require.Equal(s.T(), "object", rate.Type)
+	require.Contains(s.T(), rate.Properties, "pending")
+	require.Contains(s.T(), rate.Properties, "per_minute")
+	require.Contains(s.T(), rate.Properties, "total")
+	require.Equal(s.T(), "integer", rate.Properties["per_minute"].Type)
+
+	audit := prop.Properties["audit"]
+	require.Equal(s.T(), "object", audit.Type)
+	require.Equal(s.T(), "integer", audit.Properties["retention_days"].Type)
+	require.Equal(s.T(), "boolean", audit.Properties["verbose"].Type)
+
+	ag := prop.Properties["agentgate"]
+	require.Equal(s.T(), "object", ag.Type)
+	require.Equal(s.T(), "boolean", ag.Properties["enabled"].Type)
+	require.Equal(s.T(), []any{"allow", "deny", "approve"}, ag.Properties["default_decision"].Enum)
+
+	pathRules := ag.Properties["path_rules"]
+	require.Equal(s.T(), "array", pathRules.Type)
+	require.NotNil(s.T(), pathRules.Items)
+	require.Equal(s.T(), "object", pathRules.Items.Type)
+	require.Contains(s.T(), pathRules.Items.Properties, "pattern")
+	require.Equal(s.T(), []any{"allow", "deny", "approve"}, pathRules.Items.Properties["decision"].Enum)
+
+	cmdRules := ag.Properties["command_rules"]
+	require.Equal(s.T(), "array", cmdRules.Type)
+	require.Equal(s.T(), "array", cmdRules.Items.Properties["commands"].Type)
+	require.Equal(s.T(), "string", cmdRules.Items.Properties["commands"].Items.Type)
+	require.Equal(s.T(), "array", cmdRules.Items.Properties["args_patterns"].Type)
+
+	fileRules := ag.Properties["file_rules"]
+	require.Equal(s.T(), "array", fileRules.Type)
+	require.Contains(s.T(), fileRules.Items.Properties, "paths")
+	require.Contains(s.T(), fileRules.Items.Properties, "operations")
+
+	dp := prop.Properties["docker_proxy"]
+	require.Equal(s.T(), "object", dp.Type)
+	require.Equal(s.T(), "boolean", dp.Properties["enabled"].Type)
+	require.Equal(s.T(), []any{"allow", "deny", "approve"}, dp.Properties["default_decision"].Enum)
+
+	httpRules := dp.Properties["http_rules"]
+	require.Equal(s.T(), "array", httpRules.Type)
+	require.Contains(s.T(), httpRules.Items.Properties, "methods")
+	require.Contains(s.T(), httpRules.Items.Properties, "paths")
+	require.Equal(s.T(), []any{"allow", "deny", "approve"}, httpRules.Items.Properties["decision"].Enum)
+
+	bodyRules := dp.Properties["body_rules"]
+	require.Equal(s.T(), "array", bodyRules.Type)
+	require.Contains(s.T(), bodyRules.Items.Properties, "applies_to")
+	require.Contains(s.T(), bodyRules.Items.Properties, "content_types")
+	require.Equal(s.T(), "integer", bodyRules.Items.Properties["max_body_bytes"].Type)
+	require.Equal(s.T(), []any{"allow", "deny", "approve"}, bodyRules.Items.Properties["decision"].Enum)
+
+	jsonChecks := bodyRules.Items.Properties["json_checks"]
+	require.Equal(s.T(), "array", jsonChecks.Type)
+	require.NotNil(s.T(), jsonChecks.Items)
+	require.Equal(s.T(), "object", jsonChecks.Items.Type)
+	require.Contains(s.T(), jsonChecks.Items.Properties, "path")
+	require.Equal(s.T(), []any{"source_path_in", "equals", "contains_any", "starts_with_any", "present", "empty_array"}, jsonChecks.Items.Properties["op"].Enum)
+	require.Equal(s.T(), "array", jsonChecks.Items.Properties["values"].Type)
+	require.Equal(s.T(), "string", jsonChecks.Items.Properties["values"].Items.Type)
+}
+
 func (s *SchemaSuite) TestSectionAssignment() {
 	schema := GlobalConfigSchema()
 	sectionChecks := map[string]string{
@@ -216,6 +291,7 @@ func (s *SchemaSuite) TestSectionAssignment() {
 		"envs":                    "Environment",
 		"log_level":               "Logging",
 		"api_addr":                "API",
+		"gates":                   "Gates",
 	}
 	for key, expectedSection := range sectionChecks {
 		s.Run(key, func() {

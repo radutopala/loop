@@ -4,13 +4,24 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/radutopala/loop/internal/bot"
 	"github.com/radutopala/loop/internal/db"
+	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/randutil"
 	"github.com/radutopala/loop/internal/types"
 )
+
+// GateBroadcaster is the subset of events.Broadcaster needed by Bot for
+// approval prompts. The local platform has no chat-message surface for
+// buttons; approvals ride the WebSocket event stream and are rendered as
+// React cards in the desktop app.
+type GateBroadcaster interface {
+	BroadcastGateApprovalRequested(channelID string, data events.GateApprovalEventData)
+	BroadcastGateApprovalResolved(channelID string, data events.GateApprovalResolvedData)
+}
 
 const (
 	// BotUserID is the user ID for the local bot.
@@ -43,6 +54,9 @@ type Bot struct {
 	interactionHandler   bot.InteractionHandler
 	channelDeleteHandler bot.ChannelDeleteHandler
 	channelJoinHandler   bot.ChannelJoinHandler
+
+	mu              sync.RWMutex
+	gateBroadcaster GateBroadcaster
 }
 
 // NewBot creates a new local platform Bot.
@@ -79,6 +93,54 @@ func (b *Bot) PostMessage(_ context.Context, _, _ string) error            { ret
 
 func (b *Bot) SendStopButton(_ context.Context, _, _ string) (string, error) { return "", nil }
 func (b *Bot) RemoveStopButton(_ context.Context, _, _ string) error         { return nil }
+
+// --- Approval prompts (WS event to React ApprovalCard) ---
+
+// SetGateBroadcaster wires the events broadcaster used to fan approval
+// prompts out to the desktop app over the existing WebSocket.
+func (b *Bot) SetGateBroadcaster(g GateBroadcaster) {
+	b.mu.Lock()
+	b.gateBroadcaster = g
+	b.mu.Unlock()
+}
+
+// SendApproval broadcasts a gate.approval_requested event for the channel.
+// The returned messageID is the approval request ID; the frontend echoes it
+// back when POSTing the user's decision so the Manager can route correctly.
+// If no broadcaster is wired (e.g. fresh bot before app startup), the prompt
+// is dropped and an empty ID is returned — the gate Manager's pending entry
+// will time out via the caller's context, not hang forever.
+func (b *Bot) SendApproval(_ context.Context, channelID string, prompt bot.ApprovalPrompt) (string, error) {
+	b.mu.RLock()
+	g := b.gateBroadcaster
+	b.mu.RUnlock()
+	if g == nil {
+		return "", nil
+	}
+	g.BroadcastGateApprovalRequested(channelID, events.GateApprovalEventData{
+		ReqID:   prompt.ID,
+		Kind:    prompt.Kind,
+		Target:  prompt.Target,
+		Message: prompt.Message,
+		Details: prompt.Details,
+	})
+	return prompt.ID, nil
+}
+
+// RemoveApproval broadcasts a gate.approval_resolved event so the card
+// dismisses itself once a decision is recorded.
+func (b *Bot) RemoveApproval(_ context.Context, channelID, reqID string) error {
+	b.mu.RLock()
+	g := b.gateBroadcaster
+	b.mu.RUnlock()
+	if g == nil {
+		return nil
+	}
+	g.BroadcastGateApprovalResolved(channelID, events.GateApprovalResolvedData{
+		ReqID: reqID,
+	})
+	return nil
+}
 
 // --- DB-backed channel/thread methods ---
 
