@@ -18,3 +18,6 @@ var Entrypoint []byte
 
 //go:embed setup.sh
 var Setup []byte
+
+//go:embed agent-bashrc
+var AgentBashrc []byte

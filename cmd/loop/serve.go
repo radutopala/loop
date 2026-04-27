@@ -87,6 +87,9 @@ func (a *app) defaultEnsureImage(ctx context.Context, client container.DockerCli
 		if err := a.sys.WriteFile(filepath.Join(containerDir, "setup.sh"), containerimage.Setup, 0644); err != nil {
 			return fmt.Errorf("writing setup script: %w", err)
 		}
+		if err := a.sys.WriteFile(filepath.Join(containerDir, "agent-bashrc"), containerimage.AgentBashrc, 0644); err != nil {
+			return fmt.Errorf("writing agent-bashrc: %w", err)
+		}
 	}
 
 	// Ensure chrome.Dockerfile and chrome-entrypoint.sh exist

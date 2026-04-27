@@ -118,6 +118,9 @@ func (a *app) onboardGlobal(force bool, ownerID string) error {
 	if err := a.sys.WriteFile(filepath.Join(containerDir, "entrypoint.sh"), containerimage.Entrypoint, 0644); err != nil {
 		return fmt.Errorf("writing container entrypoint: %w", err)
 	}
+	if err := a.sys.WriteFile(filepath.Join(containerDir, "agent-bashrc"), containerimage.AgentBashrc, 0644); err != nil {
+		return fmt.Errorf("writing container agent-bashrc: %w", err)
+	}
 	setupPath := filepath.Join(containerDir, "setup.sh")
 	if _, err := a.sys.Stat(setupPath); err != nil {
 		if err := a.sys.WriteFile(setupPath, containerimage.Setup, 0644); err != nil {

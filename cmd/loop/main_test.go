@@ -2570,9 +2570,10 @@ func (s *MainSuite) TestOnboardGlobalWriteErrors() {
 		{"chrome Dockerfile", 4, "writing chrome Dockerfile"},
 		{"chrome entrypoint", 5, "writing chrome entrypoint"},
 		{"entrypoint", 6, "writing container entrypoint"},
-		{"setup script", 7, "writing container setup script"},
-		{"Slack manifest", 8, "writing Slack manifest"},
-		{"template", 9, "writing template"},
+		{"agent-bashrc", 7, "writing container agent-bashrc"},
+		{"setup script", 8, "writing container setup script"},
+		{"Slack manifest", 9, "writing Slack manifest"},
+		{"template", 10, "writing template"},
 	}
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
