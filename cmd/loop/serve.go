@@ -13,6 +13,8 @@ import (
 	"syscall"
 	"time"
 
+	"database/sql"
+
 	"github.com/spf13/cobra"
 	"github.com/tailscale/hujson"
 
@@ -23,10 +25,10 @@ import (
 	"github.com/radutopala/loop/internal/browser"
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
-	containerimage "github.com/radutopala/loop/internal/container/image"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/embeddings"
 	"github.com/radutopala/loop/internal/events"
+	"github.com/radutopala/loop/internal/fsmigrate"
 	"github.com/radutopala/loop/internal/local"
 	"github.com/radutopala/loop/internal/logging"
 	"github.com/radutopala/loop/internal/memory"
@@ -71,37 +73,9 @@ func (a *app) ensureImageWithBroadcast(ctx context.Context, client container.Doc
 }
 
 func (a *app) defaultEnsureImage(ctx context.Context, client container.DockerClient, cfg *config.Config) error {
+	// container/ files are populated by fsmigrate.Run earlier in serve(),
+	// so we only need to manage the docker images here.
 	containerDir := filepath.Join(cfg.LoopDir, "container")
-
-	dockerfilePath := filepath.Join(containerDir, "Dockerfile")
-	if _, err := a.sys.Stat(dockerfilePath); os.IsNotExist(err) {
-		if err := a.sys.MkdirAll(containerDir, 0755); err != nil {
-			return fmt.Errorf("creating container directory: %w", err)
-		}
-		if err := a.sys.WriteFile(dockerfilePath, containerimage.Dockerfile, 0644); err != nil {
-			return fmt.Errorf("writing Dockerfile: %w", err)
-		}
-		if err := a.sys.WriteFile(filepath.Join(containerDir, "entrypoint.sh"), containerimage.Entrypoint, 0644); err != nil {
-			return fmt.Errorf("writing entrypoint: %w", err)
-		}
-		if err := a.sys.WriteFile(filepath.Join(containerDir, "setup.sh"), containerimage.Setup, 0644); err != nil {
-			return fmt.Errorf("writing setup script: %w", err)
-		}
-		if err := a.sys.WriteFile(filepath.Join(containerDir, "agent-bashrc"), containerimage.AgentBashrc, 0644); err != nil {
-			return fmt.Errorf("writing agent-bashrc: %w", err)
-		}
-	}
-
-	// Ensure chrome.Dockerfile and chrome-entrypoint.sh exist
-	chromeDockerfilePath := filepath.Join(containerDir, "chrome.Dockerfile")
-	if _, err := a.sys.Stat(chromeDockerfilePath); os.IsNotExist(err) {
-		if err := a.sys.WriteFile(chromeDockerfilePath, containerimage.ChromeDockerfile, 0644); err != nil {
-			return fmt.Errorf("writing chrome Dockerfile: %w", err)
-		}
-		if err := a.sys.WriteFile(filepath.Join(containerDir, "chrome-entrypoint.sh"), containerimage.ChromeEntrypoint, 0644); err != nil {
-			return fmt.Errorf("writing chrome entrypoint: %w", err)
-		}
-	}
 
 	// Build agent image if missing or if Loop version changed.
 	ids, err := client.ImageList(ctx, cfg.ContainerImage)
@@ -351,6 +325,20 @@ func (a *app) serve() error {
 		return fmt.Errorf("opening database: %w", err)
 	}
 	defer store.Close()
+
+	// Run filesystem migrations once the DB writer is available. State is
+	// tracked in the fs_migrations table alongside schema_migrations.
+	if w, ok := store.(interface{ WriterDB() *sql.DB }); ok {
+		if writer := w.WriterDB(); writer != nil {
+			if err := a.fsMigrateRun(context.Background(), writer, &fsmigrate.Ctx{
+				Sys:     a.sys,
+				LoopDir: cfg.LoopDir,
+				Version: a.version,
+			}); err != nil {
+				return fmt.Errorf("running fs migrations: %w", err)
+			}
+		}
+	}
 
 	localBot := a.newLocalBot(store, logger)
 

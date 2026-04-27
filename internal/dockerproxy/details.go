@@ -6,6 +6,22 @@ import (
 	"strings"
 )
 
+// detailsBodyCap returns a body-decode cap (in bytes) for paths that have a
+// details extractor but no body rule of their own. evaluateBody takes the
+// max of this and the policy's MaxBodyBytes so the operator gets cmd / user /
+// privileged / … on the approval card even on endpoints (exec, network /
+// volume create) that aren't gated by JSON checks.
+func detailsBodyCap(method, canonicalPath string) int64 {
+	switch {
+	case method == "POST" && canonicalPath == "/containers/create",
+		method == "POST" && execCreateRe.MatchString(canonicalPath),
+		method == "POST" && canonicalPath == "/networks/create",
+		method == "POST" && canonicalPath == "/volumes/create":
+		return 1 << 20 // 1 MiB
+	}
+	return 0
+}
+
 // extractApprovalDetails returns a small key/value summary of the docker
 // request body the user is being asked to approve. Returns nil when the
 // endpoint isn't recognised or the body has nothing useful to surface — the

@@ -770,6 +770,33 @@ func (s *ServerSuite) TestRunExitsOnContextCanceledBeforeRecv() {
 	s.Require().Empty(transport.sent)
 }
 
+// TestServerCloseDelegatesToTransport: Server.Close is the gate's shutdown
+// lever — it must reach into Transport.Close so the parent can release the
+// notify fd when the child exits. Bug repro: without this, runParent hangs
+// waiting on Run to observe a ctx cancel that the kernel ioctl can't see.
+func (s *ServerSuite) TestServerCloseDelegatesToTransport() {
+	transport := &scriptedTransport{}
+	srv := &Server{Transport: transport}
+	s.Require().NoError(srv.Close())
+	s.Require().Equal(1, transport.closed)
+}
+
+// TestServerCloseForwardsTransportError: a Close error must surface so the
+// caller can log it; we don't swallow ENOSPC / EBADF / etc. on shutdown.
+func (s *ServerSuite) TestServerCloseForwardsTransportError() {
+	boom := errors.New("close-boom")
+	transport := &scriptedTransport{closeErr: boom}
+	srv := &Server{Transport: transport}
+	s.Require().ErrorIs(srv.Close(), boom)
+}
+
+// TestServerCloseNilTransportIsNoop: a Server constructed without a
+// Transport (e.g. partial test wiring) must not panic on Close.
+func (s *ServerSuite) TestServerCloseNilTransportIsNoop() {
+	srv := &Server{}
+	s.Require().NoError(srv.Close())
+}
+
 // --- evalErrTracee (used by one test above) ---
 
 // evalErrTracee delegates to an inner Tracee for everything except EvalSymlinks,

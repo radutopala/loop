@@ -307,6 +307,9 @@ func (s *Server) evaluateBody(r *http.Request, canonicalPath string) (BodyCheckR
 	}
 	cap := s.policy.MaxBodyBytes(r.Method, canonicalPath)
 	if cap == 0 {
+		cap = detailsBodyCap(r.Method, canonicalPath)
+	}
+	if cap == 0 {
 		return BodyCheckResult{}, nil, nil
 	}
 	// Read up to cap+1 bytes so we can tell when the body exceeded the cap.

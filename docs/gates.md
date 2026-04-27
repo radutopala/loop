@@ -260,6 +260,21 @@ Discord renders an `ActionsRow` with three buttons; Slack renders a `NewActionBl
 
 **Rate limits (`gates.rate_limits`, per container, shared across both gate layers):** `pending: 30`, `per_minute: 60`, `total: 500`. Tripping a cap returns `Outcome{RateLimited: true}` to the requester (which surfaces as a deny at the syscall); the agent sees `EACCES` on the blocked call.
 
+### Body details surfaced in the prompt
+
+For Docker-HTTP approvals, the proxy decodes the request body and attaches a small `Details` map to `ApprovalRequest` (`internal/dockerproxy/details.go`) so the operator sees what is actually being asked for, not just `POST /containers/abc/exec`. The card renders the keys sorted; long values are truncated with `…`. Only fields meaningful to a human-in-the-loop decision are extracted:
+
+| Endpoint | Keys |
+|---|---|
+| `POST /containers/create` | `image`, `cmd`, `entrypoint`, `user`, `working_dir`, `binds`, `privileged`, `network_mode`, `pid_mode`, `ipc_mode`, `userns_mode`, `cap_add`, `devices`, `security_opt` |
+| `POST /containers/{id}/exec` | `cmd`, `user`, `privileged`, `attach_stdin`, `tty` |
+| `POST /networks/create` | `name`, `driver`, `internal`, `attachable` |
+| `POST /volumes/create` | `name`, `driver` |
+
+Default-valued / absent fields are omitted (e.g. `Privileged: false` → no `privileged` key, `NetworkMode: "default"` → no `network_mode` key) so the prompt only highlights non-default values. `POST /exec/{id}/start` carries no useful body, so its prompt falls back to `Target` only — the relevant detail (the `Cmd`) was approved at the preceding `POST /containers/{id}/exec`. Bodies larger than `MaxBodyBytes` (1 MiB) skip detail extraction along with body-rule evaluation.
+
+The same map flows through `agentgate.ApprovalRequest.Details` to every renderer: the desktop `ApprovalCard`, Discord embeds, and Slack section blocks (see [Chat: Gate Approval Card](chat.md#gate-approval-card)).
+
 ---
 
 ## Runtime wiring

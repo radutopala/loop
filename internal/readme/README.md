@@ -316,6 +316,8 @@ This does four things:
 - `~/.loop/container/entrypoint.sh` — container entrypoint script
 - `~/.loop/container/setup.sh` — custom build-time setup script
 
+On startup, `loop serve` keeps the versioned container files (`Dockerfile`, `entrypoint.sh`, `agent-bashrc`, `chrome.Dockerfile`, `chrome-entrypoint.sh`) in sync with the binary it ships with. If you've edited any of them, the previous contents are preserved as `<name>.bkp` before being overwritten, so local changes can be re-applied. `setup.sh` is treated as user-editable and is never overwritten.
+
 ### Finding your user ID
 
 **Slack:** Click your profile picture → **Profile** → click the **⋯** menu → **Copy member ID** (looks like `U01ABCDEF`).
@@ -361,7 +363,7 @@ This does four things:
 | `memory` | `{}` | Semantic memory search configuration (see below) |
 | `permissions` | `{}` | RBAC permissions: owners and members (see below) |
 | `gates.agentgate` | `{enabled: true, default_decision: "allow", ...baseline rules}` | Seccomp security gate for agent containers. Enabled by default; ships with a baseline of 2 path / 2 command / 8 file rules (see [Configuration: Security Gate](docs/configuration.md#security-gate)) |
-| `gates.docker_proxy` | mirrors `gates.agentgate.enabled` | In-container Docker HTTP proxy. Agents talk to `/var/run/docker.sock` (tmpfs, owned by `loop dockerproxy`); that process reverse-proxies to the real daemon socket at `/var/run/docker.sock.host`. Ships with 15 method/path rules and 2 JSON body-inspection rules that block container-escape shapes |
+| `gates.docker_proxy` | mirrors `gates.agentgate.enabled` | In-container Docker HTTP proxy. Agents talk to `/var/run/docker.sock` (tmpfs, owned by `loop dockerproxy`); that process reverse-proxies to the real daemon socket at `/var/run/docker.sock.host`. Ships with 15 method/path rules and 2 JSON body-inspection rules. Body rules support `deny` (hard 403, no prompt), `approve` (block + user prompt) and `allow` (silent pass-through) — same decision set as the HTTP rules |
 | `gates.rate_limits` | `{pending: 30, per_minute: 60, total: 500}` | Shared approval rate limits across both gate layers |
 | `gates.audit` | `{retention_days: 30, verbose: false}` | Shared audit-log retention and verbosity for approval decisions. `verbose: false` (default) drops silent policy-allow and cache-hit allow entries so the trail focuses on every deny plus every user-clicked decision; set `verbose: true` when debugging rules or exporting a full trace |
 
@@ -528,7 +530,7 @@ Relative paths in project mounts (e.g., `./data`) are resolved relative to the p
 
 ### Container Image
 
-The agent Docker image is auto-built on first `loop serve` / `loop daemon:start` if it doesn't exist. The Dockerfile and entrypoint are embedded in the binary and written to `~/.loop/container/` during `loop onboard:global`.
+The agent Docker image is auto-built on first `loop serve` / `loop daemon:start` if it doesn't exist. The Dockerfile and entrypoint are embedded in the binary: `loop onboard:global` writes the initial baseline to `~/.loop/container/`, and each `loop serve` startup refreshes the versioned files so they track the running binary. Local edits are preserved as `<name>.bkp` before any overwrite (see [Global onboard details](#global-onboard-details)).
 
 The default image ships with Go 1.26, Node.js, and common development tools. You can build any custom Dockerfile to suit your stack — edit `~/.loop/container/Dockerfile`, then `docker rmi loop-agent:latest` and restart.
 

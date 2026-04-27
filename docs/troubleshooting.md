@@ -58,4 +58,4 @@ This occurs on corporate networks where a proxy or firewall (e.g. Palo Alto, Zsc
 
 3. **Retry** `loop serve`.
 
-> **Note:** If Loop regenerates `~/.loop/container/Dockerfile` (e.g. after an update), you will need to re-export the certificates and re-apply the patch.
+> **Note:** When `loop serve` ships a new version of the embedded container files, your edited `~/.loop/container/Dockerfile` (and `chrome.Dockerfile`) is preserved as `Dockerfile.bkp` (and `chrome.Dockerfile.bkp`) before being overwritten. Diff the `.bkp` against the refreshed file to re-apply your local changes.

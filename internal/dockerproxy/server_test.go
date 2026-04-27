@@ -800,6 +800,40 @@ func (s *ServerSuite) TestApproveContainerCreateAttachesDetails() {
 	require.Contains(s.T(), d["binds"], "/etc:/host-etc:ro")
 }
 
+// TestApproveContainerExecAttachesDetails verifies that POST /containers/{id}/exec
+// — which has no body rule of its own — still gets its body decoded so the
+// approval prompt can show cmd / user / privileged. detailsBodyCap is what
+// keeps this path from producing a bare-Target prompt with no payload context.
+func (s *ServerSuite) TestApproveContainerExecAttachesDetails() {
+	sock, stop := upstreamUnix(s.T(), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer stop()
+	policy, err := CompilePolicy(types.DecisionAllow,
+		[]types.HTTPServiceRule{
+			{Methods: []string{"POST"}, Paths: []string{"^/containers/[^/]+/exec$"}, Decision: types.DecisionApprove},
+		}, nil)
+	require.NoError(s.T(), err)
+	ap := &fakeApprover{outcome: agentgate.Outcome{Decision: types.DecisionAllow}}
+	srv := s.newServer(policy, ap, sock, nil)
+
+	body := `{"Cmd":["bash","-c","whoami"],"User":"root","Privileged":true,"AttachStdin":true,"Tty":true}`
+	req := httptest.NewRequest(http.MethodPost, "/containers/abc123def456/exec", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+	require.Equal(s.T(), http.StatusCreated, rr.Code)
+
+	require.Len(s.T(), ap.calls, 1)
+	d := ap.calls[0].Details
+	require.NotNil(s.T(), d)
+	require.Equal(s.T(), "bash, -c, whoami", d["cmd"])
+	require.Equal(s.T(), "root", d["user"])
+	require.Equal(s.T(), "true", d["privileged"])
+	require.Equal(s.T(), "true", d["attach_stdin"])
+	require.Equal(s.T(), "true", d["tty"])
+}
+
 // TestApproveWithoutBodyHasNilDetails covers the cache-key-only path: when
 // no body rule applies (cap == 0) the approver receives no Details.
 func (s *ServerSuite) TestApproveWithoutBodyHasNilDetails() {

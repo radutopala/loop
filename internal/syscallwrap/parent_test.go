@@ -54,6 +54,7 @@ type stubServer struct {
 	runErr       error
 	returnOnCall bool // if true, Run returns immediately instead of waiting on ctx
 	started      chan struct{}
+	closeCalls   int32
 }
 
 func (s *stubServer) Run(ctx context.Context) error {
@@ -68,6 +69,36 @@ func (s *stubServer) Run(ctx context.Context) error {
 		return s.runErr
 	}
 	return ctx.Err()
+}
+
+func (s *stubServer) Close() error {
+	atomic.AddInt32(&s.closeCalls, 1)
+	return nil
+}
+
+// closeOnlyServer simulates the production failure mode: Run is wedged in a
+// kernel ioctl and only unblocks when the transport is closed. Used by the
+// regression test for the "child exited but Run is hung" hang.
+type closeOnlyServer struct {
+	released chan struct{}
+}
+
+func newCloseOnlyServer() *closeOnlyServer {
+	return &closeOnlyServer{released: make(chan struct{})}
+}
+
+func (s *closeOnlyServer) Run(_ context.Context) error {
+	<-s.released
+	return nil
+}
+
+func (s *closeOnlyServer) Close() error {
+	select {
+	case <-s.released:
+	default:
+		close(s.released)
+	}
+	return nil
 }
 
 type stubApprover struct{}
@@ -115,7 +146,7 @@ type fakeParentDeps struct {
 	gateServerAuditor   agentgate.Auditor
 	gateServerChannelID string
 	gateServerNotifyFD  int
-	gateServerReturned  *stubServer
+	gateServerReturned  gateServer
 
 	openAuditorDir       string
 	openAuditorRetention int
@@ -412,6 +443,33 @@ func (s *ParentSuite) TestRunParentChildExitsWithCode42() {
 
 	s.Require().NoError(f.wire().runParent())
 	s.Require().Equal(42, f.exitCodeGot)
+}
+
+// TestRunParentChildExitClosesGateServer is the regression test for the
+// production hang where srv.Run was blocked deep in
+// SECCOMP_IOCTL_NOTIF_RECV. The kernel ioctl can't observe ctx
+// cancellation, so the child-exit branch must close the transport so Run
+// can return — otherwise runParent waits forever on a serverErr that
+// never arrives. closeOnlyServer's Run only unblocks on Close: with the
+// fix this test completes; without it the test deadlocks.
+func (s *ParentSuite) TestRunParentChildExitClosesGateServer() {
+	f := newFakeParentDeps(s.T())
+	f.defaultEnv()
+	srv := newCloseOnlyServer()
+	f.gateServerReturned = srv
+	f.waitChildCode = 0
+
+	done := make(chan struct{})
+	go func() {
+		s.Require().NoError(f.wire().runParent())
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		s.FailNow("runParent did not return after child exit — gateServer not closed")
+	}
+	s.Require().Equal(0, f.exitCodeGot)
 }
 
 // TestRunParentServerErrorTriggersKill: stubServer returns an error

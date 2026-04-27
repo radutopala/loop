@@ -13,7 +13,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime/debug"
-	"strings"
 	"sync/atomic"
 	"syscall"
 	"testing"
@@ -3408,43 +3407,6 @@ func (s *MainSuite) TestEnsureImageWithBroadcastError() {
 	s.app.ensureImageWithBroadcast(ctx, dc, testConfig(), hub, mgr, slog.New(slog.NewTextHandler(io.Discard, nil)))
 }
 
-func (s *MainSuite) TestEnsureImageWritesEmbeddedFiles() {
-	dockerClient := new(mockDockerClient)
-	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:abc"}, nil)
-	dockerClient.On("ImageList", mock.Anything, "loop-chrome:latest").Return([]string{"sha256:def"}, nil)
-
-	cfg := &config.Config{
-		LoopDir:        s.T().TempDir(),
-		ContainerImage: "loop-agent:latest",
-		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
-	}
-
-	s.app.sys = newPassthroughMock()
-
-	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
-	require.NoError(s.T(), err)
-
-	// Verify embedded files were written
-	containerDir := filepath.Join(cfg.LoopDir, "container")
-	dockerfileData, err := os.ReadFile(filepath.Join(containerDir, "Dockerfile"))
-	require.NoError(s.T(), err)
-	require.Contains(s.T(), string(dockerfileData), "FROM golang:")
-
-	chromeData, err := os.ReadFile(filepath.Join(containerDir, "chrome.Dockerfile"))
-	require.NoError(s.T(), err)
-	require.Contains(s.T(), string(chromeData), "chromium")
-
-	entrypointData, err := os.ReadFile(filepath.Join(containerDir, "entrypoint.sh"))
-	require.NoError(s.T(), err)
-	require.Contains(s.T(), string(entrypointData), `su-exec "$AGENT_USER" "$@"`)
-
-	setupData, err := os.ReadFile(filepath.Join(containerDir, "setup.sh"))
-	require.NoError(s.T(), err)
-	require.Contains(s.T(), string(setupData), "#!/bin/sh")
-
-	dockerClient.AssertExpectations(s.T())
-}
-
 func (s *MainSuite) TestEnsureImageListError() {
 	dockerClient := new(mockDockerClient)
 	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return(nil, errors.New("list error"))
@@ -3464,62 +3426,6 @@ func (s *MainSuite) TestEnsureImageListError() {
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "listing images")
 	dockerClient.AssertExpectations(s.T())
-}
-
-func (s *MainSuite) TestEnsureImageMkdirError() {
-	dockerClient := new(mockDockerClient)
-
-	cfg := &config.Config{
-		LoopDir:        s.T().TempDir(),
-		ContainerImage: "loop-agent:latest",
-		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
-	}
-
-	sys := newPassthroughMock()
-	s.app.sys = sys
-	sys.Override("MkdirAll", mock.Anything, mock.Anything).Return(errors.New("mkdir error"))
-
-	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "creating container directory")
-}
-
-func (s *MainSuite) TestEnsureImageWriteErrors() {
-	tests := []struct {
-		name      string
-		failCallN int
-		wantErr   string
-	}{
-		{"Dockerfile", 1, "writing Dockerfile"},
-		{"entrypoint", 2, "writing entrypoint"},
-		{"setup script", 3, "writing setup script"},
-	}
-	for _, tt := range tests {
-		s.Run(tt.name, func() {
-			dockerClient := new(mockDockerClient)
-			cfg := &config.Config{
-				LoopDir:        s.T().TempDir(),
-				ContainerImage: "loop-agent:latest",
-				Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
-			}
-			sys := newPassthroughMock()
-			s.app.sys = sys
-			writeCall := sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
-			calls := 0
-			writeCall.RunFn = func(args mock.Arguments) {
-				calls++
-				if calls == tt.failCallN {
-					writeCall.ReturnArguments = mock.Arguments{errors.New("write error")}
-					return
-				}
-				writeCall.ReturnArguments = mock.Arguments{os.WriteFile(args.String(0), args.Get(1).([]byte), args.Get(2).(os.FileMode))}
-			}
-
-			err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
-			require.Error(s.T(), err)
-			require.Contains(s.T(), err.Error(), tt.wantErr)
-		})
-	}
 }
 
 func (s *MainSuite) TestEnsureImageAgentBuildError() {
@@ -3584,91 +3490,6 @@ func (s *MainSuite) TestEnsureImageChromeBuildError() {
 	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "chrome build failed")
-}
-
-func (s *MainSuite) TestEnsureImageChromeDockerfileWriteError() {
-	dockerClient := new(mockDockerClient)
-
-	cfg := &config.Config{
-		LoopDir:        s.T().TempDir(),
-		ContainerImage: "loop-agent:latest",
-		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
-	}
-	// Create container dir with Dockerfile only (no chrome.Dockerfile triggers write)
-	containerDir := filepath.Join(cfg.LoopDir, "container")
-	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
-	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
-
-	sys := newPassthroughMock()
-	s.app.sys = sys
-	// First WriteFile call (chrome.Dockerfile) should fail
-	writeCall := sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
-	writeCall.RunFn = func(args mock.Arguments) {
-		path := args.String(0)
-		if strings.Contains(path, "chrome.Dockerfile") {
-			writeCall.ReturnArguments = mock.Arguments{errors.New("write error")}
-			return
-		}
-		writeCall.ReturnArguments = mock.Arguments{os.WriteFile(path, args.Get(1).([]byte), args.Get(2).(os.FileMode))}
-	}
-
-	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "writing chrome Dockerfile")
-}
-
-func (s *MainSuite) TestEnsureImageChromeEntrypointWriteError() {
-	dockerClient := new(mockDockerClient)
-
-	cfg := &config.Config{
-		LoopDir:        s.T().TempDir(),
-		ContainerImage: "loop-agent:latest",
-		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
-	}
-	containerDir := filepath.Join(cfg.LoopDir, "container")
-	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
-	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
-
-	sys := newPassthroughMock()
-	s.app.sys = sys
-	writeCall := sys.Override("WriteFile", mock.Anything, mock.Anything, mock.Anything).Maybe().Return(nil)
-	writeCall.RunFn = func(args mock.Arguments) {
-		path := args.String(0)
-		if strings.Contains(path, "chrome-entrypoint") {
-			writeCall.ReturnArguments = mock.Arguments{errors.New("write error")}
-			return
-		}
-		writeCall.ReturnArguments = mock.Arguments{os.WriteFile(path, args.Get(1).([]byte), args.Get(2).(os.FileMode))}
-	}
-
-	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "writing chrome entrypoint")
-}
-
-func (s *MainSuite) TestEnsureImageChromeDockerfileWrite() {
-	dockerClient := new(mockDockerClient)
-	dockerClient.On("ImageList", mock.Anything, "loop-agent:latest").Return([]string{"sha256:abc"}, nil)
-	dockerClient.On("ImageList", mock.Anything, "loop-chrome:latest").Return([]string{"sha256:def"}, nil)
-
-	cfg := &config.Config{
-		LoopDir:        s.T().TempDir(),
-		ContainerImage: "loop-agent:latest",
-		Browser:        config.BrowserConfig{ChromeImage: "loop-chrome:latest"},
-	}
-	// Create container dir with Dockerfile but NOT chrome.Dockerfile — triggers write
-	containerDir := filepath.Join(cfg.LoopDir, "container")
-	require.NoError(s.T(), os.MkdirAll(containerDir, 0755))
-	require.NoError(s.T(), os.WriteFile(filepath.Join(containerDir, "Dockerfile"), []byte("FROM alpine"), 0644))
-
-	s.app.sys = newPassthroughMock()
-	err := s.app.defaultEnsureImage(context.Background(), dockerClient, cfg)
-	require.NoError(s.T(), err)
-
-	// Verify chrome.Dockerfile was written
-	data, err := os.ReadFile(filepath.Join(containerDir, "chrome.Dockerfile"))
-	require.NoError(s.T(), err)
-	require.Contains(s.T(), string(data), "chromium")
 }
 
 func (s *MainSuite) TestEnsureImageRebuildsOnVersionMismatch() {

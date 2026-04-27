@@ -528,18 +528,24 @@ A seccomp gate trap matched a rule with `decision: approve` and is blocked waiti
 ```json
 {
   "req_id": "gate-req-8f1c...",
-  "kind": "connect",
-  "target": "/var/run/docker.sock",
-  "message": "agent wants to use docker"
+  "kind": "docker-http",
+  "target": "POST /containers/abc123/exec",
+  "message": "agent wants to exec into a container",
+  "details": {
+    "cmd": "bash, -c, whoami",
+    "user": "root",
+    "privileged": "true"
+  }
 }
 ```
 
-| Field     | Type   | Description |
-|-----------|--------|-------------|
-| `req_id`  | string | Gate-server-assigned correlation id; echoed back on the resolve POST |
-| `kind`    | string | `"connect"`, `"execve"`, or `"docker-http"` — selects how the UI renders the target |
-| `target`  | string | Human-readable summary (socket path, command line, or `METHOD /path`) |
-| `message` | string | Matching rule's `message` field, shown as extra context |
+| Field     | Type              | Description |
+|-----------|-------------------|-------------|
+| `req_id`  | string            | Gate-server-assigned correlation id; echoed back on the resolve POST |
+| `kind`    | string            | `"connect"`, `"execve"`, or `"docker-http"` — selects how the UI renders the target |
+| `target`  | string            | Human-readable summary (socket path, command line, or `METHOD /path`) |
+| `message` | string            | Matching rule's `message` field, shown as extra context |
+| `details` | object (optional) | Structured key/value summary of the request body for `docker-http` prompts on `/containers/create`, `/containers/{id}/exec`, `/networks/create`, and `/volumes/create`. Renderers should sort keys for stable display. See [Gates: Body details surfaced in the prompt](gates.md#body-details-surfaced-in-the-prompt) for the per-endpoint key set |
 
 **Scope:** Channel (the container's channel).
 

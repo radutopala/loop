@@ -54,3 +54,16 @@ func (s *EmbedSuite) TestSetupNotEmpty() {
 	require.NotEmpty(s.T(), Setup)
 	require.Contains(s.T(), string(Setup), "#!/bin/sh")
 }
+
+func (s *EmbedSuite) TestMustReadReturnsEmbeddedFile() {
+	data := MustRead("Dockerfile")
+	require.Equal(s.T(), Dockerfile, data)
+}
+
+func (s *EmbedSuite) TestMustReadPanicsOnMissing() {
+	require.PanicsWithValue(
+		s.T(),
+		`containerimage: missing embedded file "missing.txt": open missing.txt: file does not exist`,
+		func() { MustRead("missing.txt") },
+	)
+}

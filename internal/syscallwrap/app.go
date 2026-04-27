@@ -55,9 +55,12 @@ const (
 )
 
 // gateServer is the subset of *agentgate.Server the parent drives. Exposed as
-// an interface so runParent is unit-testable with a stub.
+// an interface so runParent is unit-testable with a stub. Close releases the
+// notify transport on shutdown — needed because Run can wedge in a kernel
+// ioctl that ctx cancellation alone won't interrupt.
 type gateServer interface {
 	Run(ctx context.Context) error
+	Close() error
 }
 
 // app holds injectable dependencies. Production wiring in newApp points each

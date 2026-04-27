@@ -106,6 +106,7 @@ func (s *splitDB) Close() error {
 // SQLiteStore implements Store using SQLite.
 type SQLiteStore struct {
 	db      dbConn
+	writer  *sql.DB
 	nowFunc func() time.Time
 }
 
@@ -134,8 +135,14 @@ func newSQLiteStoreWith(openFunc func(string, string) (*sql.DB, error), dsn stri
 	}
 
 	db := &splitDB{writer: writer, reader: reader}
-	return &SQLiteStore{db: db, nowFunc: func() time.Time { return time.Now().UTC() }}, nil
+	return &SQLiteStore{db: db, writer: writer, nowFunc: func() time.Time { return time.Now().UTC() }}, nil
 }
+
+// WriterDB returns the underlying writer connection. This is used by
+// auxiliary migration runners (e.g. internal/fsmigrate) that track applied
+// versions in the same SQLite database. Returns nil for stores constructed
+// via NewSQLiteStoreFromDB without a *sql.DB writer.
+func (s *SQLiteStore) WriterDB() *sql.DB { return s.writer }
 
 // initDB configures pragmas and runs migrations on an open database connection.
 func initDB(sqlDB *sql.DB) error {
@@ -160,7 +167,7 @@ func initDB(sqlDB *sql.DB) error {
 
 // NewSQLiteStoreFromDB creates a SQLiteStore from an existing *sql.DB connection.
 func NewSQLiteStoreFromDB(sqlDB *sql.DB) *SQLiteStore {
-	return &SQLiteStore{db: sqlDB, nowFunc: func() time.Time { return time.Now().UTC() }}
+	return &SQLiteStore{db: sqlDB, writer: sqlDB, nowFunc: func() time.Time { return time.Now().UTC() }}
 }
 
 func (s *SQLiteStore) Close() error {

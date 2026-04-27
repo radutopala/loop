@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -27,6 +28,7 @@ import (
 	"github.com/radutopala/loop/internal/discord"
 	"github.com/radutopala/loop/internal/dockerproxy"
 	"github.com/radutopala/loop/internal/embeddings"
+	"github.com/radutopala/loop/internal/fsmigrate"
 	"github.com/radutopala/loop/internal/local"
 	"github.com/radutopala/loop/internal/mcpserver"
 	"github.com/radutopala/loop/internal/orchestrator"
@@ -96,6 +98,7 @@ type app struct {
 	// Config & DB
 	configLoad     func() (*config.Config, error)
 	newSQLiteStore func(string) (db.Store, error)
+	fsMigrateRun   func(ctx context.Context, sqlDB *sql.DB, c *fsmigrate.Ctx) error
 
 	// Bots
 	discordgoNew  func(string) (*discordgo.Session, error)
@@ -155,6 +158,7 @@ func newApp() *app {
 		newSQLiteStore: func(path string) (db.Store, error) {
 			return db.NewSQLiteStore(path)
 		},
+		fsMigrateRun: fsmigrate.Run,
 
 		// Bots
 		discordgoNew: discordgo.New,

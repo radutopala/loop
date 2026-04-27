@@ -1,8 +1,24 @@
 package image
 
 import (
-	_ "embed"
+	"embed"
+	"fmt"
 )
+
+//go:embed Dockerfile chrome.Dockerfile chrome-entrypoint.sh entrypoint.sh setup.sh agent-bashrc
+var FS embed.FS
+
+// MustRead returns the embedded file with the given name. It panics if the
+// file is not in the embedded FS — used by callers (e.g. fsmigrate) that
+// only ever look up filenames known at compile time, so a missing file
+// indicates a build-time error rather than a runtime condition.
+func MustRead(name string) []byte {
+	data, err := FS.ReadFile(name)
+	if err != nil {
+		panic(fmt.Sprintf("containerimage: missing embedded file %q: %v", name, err))
+	}
+	return data
+}
 
 //go:embed Dockerfile
 var Dockerfile []byte

@@ -60,6 +60,18 @@ type Server struct {
 	ChannelID string
 }
 
+// Close releases the notify transport. After Close, an in-flight Run iteration
+// either sees io.EOF on its next Recv (clean shutdown) or returns through the
+// caller's process-exit path. Close is the parent's shutdown lever — without
+// it, a Run blocked deep in SECCOMP_IOCTL_NOTIF_RECV won't observe ctx
+// cancellation, since the kernel waiter doesn't poll Go context state.
+func (s *Server) Close() error {
+	if s.Transport == nil {
+		return nil
+	}
+	return s.Transport.Close()
+}
+
 // Run drives Transport.Recv → Dispatch → Transport.Send until ctx is canceled
 // or Transport.Recv returns io.EOF. Per-trap errors during dispatch collapse
 // to a Deny TrapResponse (fail-closed); only a Send-side error stops the loop.

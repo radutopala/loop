@@ -156,6 +156,20 @@ func (s *DetailsSuite) TestVolumeCreateEmptyReturnsNil() {
 	require.Nil(s.T(), extractApprovalDetails("POST", "/volumes/create", body))
 }
 
+func (s *DetailsSuite) TestDetailsBodyCapKnownPaths() {
+	const oneMiB = int64(1) << 20
+	require.Equal(s.T(), oneMiB, detailsBodyCap("POST", "/containers/create"))
+	require.Equal(s.T(), oneMiB, detailsBodyCap("POST", "/containers/abc123/exec"))
+	require.Equal(s.T(), oneMiB, detailsBodyCap("POST", "/networks/create"))
+	require.Equal(s.T(), oneMiB, detailsBodyCap("POST", "/volumes/create"))
+}
+
+func (s *DetailsSuite) TestDetailsBodyCapZeroForUnknownPaths() {
+	require.Zero(s.T(), detailsBodyCap("POST", "/something/else"))
+	require.Zero(s.T(), detailsBodyCap("GET", "/containers/create"))
+	require.Zero(s.T(), detailsBodyCap("POST", "/exec/abc/start"))
+}
+
 func (s *DetailsSuite) TestTruncateMultibyteShorterThanByteLen() {
 	// "é" is 2 bytes but 1 rune. The string fits comfortably below max in
 	// rune-count even though byte-len exceeds max, so truncate must NOT clip.

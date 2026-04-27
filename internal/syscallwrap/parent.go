@@ -165,7 +165,7 @@ func (a *app) runParent() error {
 	defer stop()
 
 	// Run Server + child.Wait concurrently. Whichever returns first wins:
-	//   - child exits (claude quit, or died): cancel Server, exit with
+	//   - child exits (claude quit, or died): close Server, exit with
 	//     the child's code
 	//   - signal / Server error: kill child, wait, exit
 	childExit := make(chan int, 1)
@@ -183,8 +183,17 @@ func (a *app) runParent() error {
 	var runErr error
 	select {
 	case code := <-childExit:
-		stop() // cancel ctx so Server.Run returns
-		<-serverErr
+		// Child is gone — no more traps will arrive, but srv.Run is
+		// likely blocked deep in SECCOMP_IOCTL_NOTIF_RECV which ctx
+		// cancellation can't interrupt. Close the transport so the
+		// kernel-side filter can drop, cancel ctx for any
+		// post-recv work, and don't wait for serverErr: a.exitCode
+		// (os.Exit in production) tears the blocked goroutine down.
+		// Drain serverErr in a goroutine so tests with a fake
+		// exitCode don't leak it.
+		_ = srv.Close()
+		stop()
+		go func() { <-serverErr }()
 		_ = uc.Close()
 		exitCode = code
 	case err := <-serverErr:
@@ -192,6 +201,7 @@ func (a *app) runParent() error {
 		// Child is still running — SIGTERM it, then reap.
 		_ = proc.Signal(syscall.SIGTERM)
 		exitCode = <-childExit
+		_ = srv.Close()
 		_ = uc.Close()
 	}
 

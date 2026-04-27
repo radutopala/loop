@@ -1,4 +1,4 @@
-.PHONY: help build install test test-integration test-component test-runner-build test-runner-push lint coverage coverage-check codeql-download codeql docker-build run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-install app-build-binary app-dist-linux app-icons
+.PHONY: help build install test test-integration test-component test-runner-build test-runner-push lint coverage coverage-check codeql-download codeql docker-build run clean restart docker-shell docker-snapshot app-dev app-dev-docker app-install app-build-binary app-dist-linux app-icons _sync-loop-overrides
 .DEFAULT_GOAL := help
 
 # Strip gate-child env inheritance when invoking make from inside a
@@ -106,7 +106,18 @@ docker-build: ## Build the Docker container images (agent + chrome)
 run: build ## Build and run the bot
 	./bin/loop serve
 
-restart: install docker-build ## Install, stop and start the daemon
+_sync-loop-overrides:
+	@MAIN=$$(git worktree list --porcelain 2>/dev/null | awk '/^worktree /{print $$2; exit}'); \
+	HERE=$$(pwd); \
+	if [ -n "$$MAIN" ] && [ "$$MAIN" != "$$HERE" ] && [ -f "$$MAIN/.loop/setup.sh" ]; then \
+		mkdir -p .loop; \
+		if [ ! -f .loop/setup.sh ] || ! cmp -s "$$MAIN/.loop/setup.sh" .loop/setup.sh; then \
+			cp "$$MAIN/.loop/setup.sh" .loop/setup.sh; \
+			echo "Synced .loop/setup.sh from $$MAIN"; \
+		fi; \
+	fi
+
+restart: install _sync-loop-overrides docker-build ## Install, stop and start the daemon
 	@echo "Claude CLI version: $(CLAUDE_VERSION)"
 	$(shell go env GOPATH)/bin/loop daemon:stop || true
 	#docker volume rm -f loop-npmcache loop-uvcache loop-cache loop-gocache
