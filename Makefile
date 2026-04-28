@@ -34,7 +34,7 @@ test-integration: ## Run integration tests (requires tokens in ~/.loop/config.in
 	go test -v -tags integration -race -count=1 -timeout 10m ./internal/slack/ ./internal/discord/
 
 test-component-bdd: ## Run BDD component tests (via Docker on host, natively in CI)
-	@if [ "$$CI" = "true" ] || ([ -f /.dockerenv ] && command -v apt-get >/dev/null 2>&1); then \
+	@if [ "$$CI" = "true" ] || ([ -f /.dockerenv ] && [ "$$(id -u)" = "0" ] && command -v apt-get >/dev/null 2>&1); then \
 		TEST_RUN=$${TEST_RUN:-"TestBDDBackendFeatures|TestBDDFrontendFeatures"} bash scripts/test-component.sh; \
 	else \
 		docker rm -f loop-bdd 2>/dev/null; \
@@ -51,7 +51,7 @@ test-component-bdd: ## Run BDD component tests (via Docker on host, natively in 
 	fi
 
 test-component-perf: ## Run API performance tests (via Docker on host, natively in CI)
-	@if [ "$$CI" = "true" ] || ([ -f /.dockerenv ] && command -v apt-get >/dev/null 2>&1); then \
+	@if [ "$$CI" = "true" ] || ([ -f /.dockerenv ] && [ "$$(id -u)" = "0" ] && command -v apt-get >/dev/null 2>&1); then \
 		TEST_RUN=TestAPIPerfTestSuite bash scripts/test-component.sh; \
 	else \
 		docker run --rm -v "$$(pwd)":/app -w /app \
