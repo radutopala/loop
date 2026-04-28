@@ -2261,6 +2261,11 @@ func (s *ConfigSuite) TestDefaultGateFileRulesShellRcfileNarrowScope() {
 // **readable**. docker CLI and npm read these on every invocation; a read-deny
 // surfaces as EPERM and breaks routine commands. Writes are what plant creds,
 // not reads.
+//
+// Also guards scope: the rule must enumerate /root/, /home/*/, /Users/*/ — a
+// filename-anywhere `**/.npmrc` glob caught nodeenv's extraction of npm's
+// bundled .npmrc template inside ~/.cache/pre-commit/, breaking pre-commit
+// hooks. Same shape as the shell-rcfile rule.
 func (s *ConfigSuite) TestDefaultGateFileRulesRegistryCredsReadAllowed() {
 	rules := DefaultGateFileRules()
 
@@ -2268,7 +2273,7 @@ func (s *ConfigSuite) TestDefaultGateFileRulesRegistryCredsReadAllowed() {
 	var credsRule *types.FileRule
 	for i := range rules {
 		for _, p := range rules[i].Paths {
-			if p == "**/.docker/config.json" {
+			if p == "/root/.docker/config.json" {
 				registryRule = &rules[i]
 			}
 			if p == "**/.ssh/**" {
@@ -2285,13 +2290,28 @@ func (s *ConfigSuite) TestDefaultGateFileRulesRegistryCredsReadAllowed() {
 		require.Contains(s.T(), registryRule.Operations, want,
 			"registry creds write-class op %q must stay denied (cred-plant defense)", want)
 	}
-	for _, p := range []string{"**/.docker/config.json", "**/.npmrc"} {
-		require.Contains(s.T(), registryRule.Paths, p,
-			"%s must be in the registry-creds (write-only) rule", p)
+
+	// Must cover both filenames under every home-dir layout we support:
+	// /root (root user), /home/* (Linux per-user), /Users/* (macOS host-home
+	// bind-mounted into Docker Desktop containers).
+	for _, name := range []string{".docker/config.json", ".npmrc"} {
+		require.Contains(s.T(), registryRule.Paths, "/root/"+name,
+			"registry-creds deny missing /root/%s", name)
+		require.Contains(s.T(), registryRule.Paths, "/home/*/"+name,
+			"registry-creds deny missing /home/*/%s", name)
+		require.Contains(s.T(), registryRule.Paths, "/Users/*/"+name,
+			"registry-creds deny missing /Users/*/%s (macOS host-home bind-mount layout)", name)
 	}
 
-	// Regression guard: the broader credentials rule must no longer list these —
-	// that was the source of the read-deny noise.
+	// Must NOT use a `**/.<name>` filename-anywhere glob — that caught
+	// nodeenv's extracted npm/.npmrc and made pre-commit's cache un-cleanable.
+	for _, p := range registryRule.Paths {
+		require.False(s.T(), strings.HasPrefix(p, "**/"),
+			"registry-creds deny path %q uses filename-anywhere glob; scope to home-dir layouts instead", p)
+	}
+
+	// Regression guard: the broader credentials rule must not re-list these
+	// filenames either (would re-introduce the same read-deny / nodeenv noise).
 	require.NotNil(s.T(), credsRule, "credentials deny rule must exist")
 	for _, p := range []string{"**/.docker/config.json", "**/.npmrc"} {
 		require.NotContains(s.T(), credsRule.Paths, p,

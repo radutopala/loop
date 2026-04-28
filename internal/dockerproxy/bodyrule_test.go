@@ -215,6 +215,22 @@ func (s *BodyRuleSuite) TestSourcePathInResolveFailureFiresDeny() {
 	require.True(s.T(), c.match(map[string]any{"Binds": []any{"/workdir/missing:/x"}}))
 }
 
+func (s *BodyRuleSuite) TestSourcePathInNamedVolumeSkipsResolver() {
+	// Compose v2 sends short-syntax binds (incl. named volumes) via
+	// HostConfig.Binds. A named-volume entry like "myvol:/target:rw" extracts
+	// to source "myvol" — not a host path. Must not invoke the resolver and
+	// must not fire the deny via the resolve-failure branch.
+	called := false
+	c := s.compileOne(types.JSONCheck{Path: "Binds[*]", Op: "source_path_in", Values: []string{`^/etc(/|$)`}})
+	c.parentDecision = types.DecisionDeny
+	c.resolveSymlinks = func(string) (string, error) {
+		called = true
+		return "", errors.New("must not be called for volume name")
+	}
+	require.False(s.T(), c.match(map[string]any{"Binds": []any{"myvol:/target:rw"}}))
+	require.False(s.T(), called)
+}
+
 func (s *BodyRuleSuite) TestSourcePathInResolveFailureDoesNotFireAllow() {
 	// Allow rules with source_path_in must NOT fire on resolve failure —
 	// otherwise a missing path would be auto-allowed.

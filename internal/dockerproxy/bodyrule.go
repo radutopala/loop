@@ -89,6 +89,16 @@ func evalAtLeaf(c compiledJSONCheck, value any) bool {
 					return true
 				}
 			}
+			// Docker's HostConfig.Binds[] overloads the "<source>:<target>[:mode]"
+			// string for named volumes — `myvolume:/target:rw` extracts to a
+			// source of `myvolume`, which is not a host path. Such strings
+			// can never match the deny regexes (all anchored absolute paths
+			// like `^/etc(/|$)`) and would predictably fail symlink resolution
+			// below, falsely firing the deny via the resolve-failure branch.
+			// Skip the symlink fallback for non-absolute sources.
+			if !strings.HasPrefix(src, "/") {
+				return false
+			}
 			if c.resolveSymlinks == nil {
 				return false
 			}

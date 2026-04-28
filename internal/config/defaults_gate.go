@@ -105,9 +105,21 @@ func DefaultGateFileRules() []types.FileRule {
 			// that the host file holds only registry/proxy config (operators
 			// who keep auth tokens here should not bind-mount their host home
 			// into agent containers).
+			//
+			// Scope to actual user-home layouts (same enumeration as the
+			// shell-rcfile rule below). A `**/.npmrc` glob caught the npm
+			// package's bundled .npmrc template that nodeenv extracts into
+			// ~/.cache/pre-commit/.../node_modules/npm/.npmrc — EPERM there
+			// broke pre-commit's nodeenv install, and even cleanup (rm/unlink)
+			// was blocked because the same rule denies delete on the same
+			// filename. Filename-anywhere is too broad for cred protection.
 			Paths: []string{
-				"**/.docker/config.json",
-				"**/.npmrc",
+				"/root/.docker/config.json",
+				"/root/.npmrc",
+				"/home/*/.docker/config.json",
+				"/home/*/.npmrc",
+				"/Users/*/.docker/config.json",
+				"/Users/*/.npmrc",
 			},
 			Operations: []string{"write", "create", "delete", "chmod"},
 			Decision:   types.DecisionDeny,
@@ -232,6 +244,28 @@ func DefaultDockerProxyHTTPRules() []types.HTTPServiceRule {
 	}
 }
 
+// dangerousBindSourceRegexes lists host paths that must never appear as the
+// source side of a bind mount the agent creates in another container —
+// covering the legacy `HostConfig.Binds` (short -v syntax) and the long-form
+// `HostConfig.Mounts` (used by docker-compose v2 and `docker run --mount`).
+// Keep in sync between the two checks; the only difference is which JSONPath
+// they read.
+var dangerousBindSourceRegexes = []string{
+	"^/$",
+	"^/etc(/|$)",
+	"^/root(/|$)",
+	"^/home(/|$)",
+	"^/boot(/|$)",
+	"^/usr(/|$)",
+	"^/lib(/|$)",
+	"^/lib64(/|$)",
+	"^/proc(/|$)",
+	"^/sys(/|$)",
+	"^/dev(/|$)",
+	`^/var/run/docker\.sock$`,
+	"^/run/loop/",
+}
+
 // DefaultDockerProxyBodyRules returns the baseline container-escape defense body rules.
 func DefaultDockerProxyBodyRules() []types.BodyRule {
 	return []types.BodyRule{
@@ -241,31 +275,18 @@ func DefaultDockerProxyBodyRules() []types.BodyRule {
 			MaxBodyBytes: 1048576,
 			JSONChecks: []types.JSONCheck{
 				{
-					Path: "HostConfig.Binds[*]",
-					Op:   "source_path_in",
-					Values: []string{
-						"^/$",
-						"^/etc(/|$)",
-						"^/root(/|$)",
-						"^/home(/|$)",
-						"^/boot(/|$)",
-						"^/usr(/|$)",
-						"^/lib(/|$)",
-						"^/lib64(/|$)",
-						"^/proc(/|$)",
-						"^/sys(/|$)",
-						"^/dev(/|$)",
-						`^/var/run/docker\.sock$`,
-						"^/run/loop/",
-					},
+					Path:   "HostConfig.Binds[*]",
+					Op:     "source_path_in",
+					Values: append([]string(nil), dangerousBindSourceRegexes...),
 				},
 				{
-					Path: "HostConfig.Mounts[*].Source",
-					Op:   "starts_with_any",
-					Values: []string{
-						"/", "/etc", "/root", "/home", "/boot", "/usr", "/lib", "/lib64",
-						"/proc", "/sys", "/dev", "/var/run/docker.sock", "/run/loop/",
-					},
+					// Same regex set as Binds — compose v2 and `--mount` send
+					// long-form mounts here. A previous version used
+					// starts_with_any with a literal "/" entry, which silently
+					// matched every absolute path and blanket-denied compose v2.
+					Path:   "HostConfig.Mounts[*].Source",
+					Op:     "source_path_in",
+					Values: append([]string(nil), dangerousBindSourceRegexes...),
 				},
 				{Path: "HostConfig.Privileged", Op: "equals", Values: []string{"true"}},
 				{Path: "HostConfig.PidMode", Op: "equals", Values: []string{"host"}},
