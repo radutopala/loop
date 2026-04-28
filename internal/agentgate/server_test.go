@@ -651,6 +651,128 @@ func (s *ServerSuite) TestDispatchFileUnlinkatDenies() {
 	s.Require().False(got.Allow)
 }
 
+func (s *ServerSuite) TestDispatchFileUnlinkatLeafLinkNotResolved() {
+	// Regression: a venv symlink at /Users/u/.cache/.../bin/python3 →
+	// /usr/bin/python3.13. The kernel removes the cache-side directory
+	// entry on unlinkat; it never touches the target. Resolving the leaf
+	// would trip the system-path deny rule and break pre-commit cleanup.
+	tr := &FakeTracee{
+		Strings: map[uintptr]string{
+			0x100: "/Users/u/.cache/pre-commit/abc/py_env-python3.12/bin/python3",
+		},
+		Symlinks: map[string]string{
+			"/Users/u/.cache/pre-commit/abc/py_env-python3.12/bin/python3": "/usr/bin/python3.13",
+		},
+	}
+	policy := s.mustPolicy(types.DecisionAllow, nil, nil, []types.FileRule{
+		{Paths: []string{"/usr/**"}, Operations: []string{OpDelete}, Decision: types.DecisionDeny},
+	})
+	srv := s.newServer(tr, nil, NewFileHandler(policy, nil, 8), nil)
+	got := srv.Dispatch(context.Background(), Trap{
+		ID: 70, Syscall: syscallUnlinkat,
+		Args: [6]uint64{atFdcwd, 0x100, 0, 0},
+	})
+	s.Require().True(got.Allow, "unlinkat on a cache-side symlink must not be denied based on the link target")
+}
+
+func (s *ServerSuite) TestDispatchFileUnlinkatParentLinkResolved() {
+	// Parent components are still dereferenced — only the leaf is opaque.
+	// Here /opt/cache is a symlink to /etc; the unlinkat path resolves to
+	// /etc/passwd which the system-path rule denies.
+	tr := &FakeTracee{
+		Strings: map[uintptr]string{0x100: "/opt/cache/passwd"},
+		Symlinks: map[string]string{
+			"/opt/cache": "/etc",
+		},
+	}
+	policy := s.mustPolicy(types.DecisionAllow, nil, nil, []types.FileRule{
+		{Paths: []string{"/etc/**"}, Operations: []string{OpDelete}, Decision: types.DecisionDeny},
+	})
+	srv := s.newServer(tr, nil, NewFileHandler(policy, nil, 8), nil)
+	got := srv.Dispatch(context.Background(), Trap{
+		ID: 71, Syscall: syscallUnlinkat,
+		Args: [6]uint64{atFdcwd, 0x100, 0, 0},
+	})
+	s.Require().False(got.Allow, "parent symlink resolution must still surface the canonical path to policy")
+}
+
+func (s *ServerSuite) TestDispatchFileRenameat2LeafLinksNotResolved() {
+	// Both source and destination of renameat2 are link operations — the
+	// kernel renames the directory entry, not the target. A venv symlink
+	// being renamed during cleanup must not trip /usr/** deny.
+	tr := &FakeTracee{
+		Strings: map[uintptr]string{
+			0x100: "/Users/u/.cache/pre-commit/abc/py_env/bin/python3",
+			0x300: "/Users/u/.cache/pre-commit/abc/py_env/bin/python3.bak",
+		},
+		Symlinks: map[string]string{
+			"/Users/u/.cache/pre-commit/abc/py_env/bin/python3":     "/usr/bin/python3.13",
+			"/Users/u/.cache/pre-commit/abc/py_env/bin/python3.bak": "/usr/bin/python3.13",
+		},
+	}
+	policy := s.mustPolicy(types.DecisionAllow, nil, nil, []types.FileRule{
+		{Paths: []string{"/usr/**"}, Operations: []string{OpDelete, OpCreate}, Decision: types.DecisionDeny},
+	})
+	srv := s.newServer(tr, nil, NewFileHandler(policy, nil, 8), nil)
+	got := srv.Dispatch(context.Background(), Trap{
+		ID: 72, Syscall: syscallRenameat2,
+		Args: [6]uint64{atFdcwd, 0x100, atFdcwd, 0x300, 0},
+	})
+	s.Require().True(got.Allow, "renameat2 on cache-side symlinks must not be denied based on link targets")
+}
+
+func (s *ServerSuite) TestDispatchFileFchmodatLeafLinkResolved() {
+	// chmod is the counterpoint to the no-follow-leaf rule: the Linux
+	// kernel always follows the leaf for fchmodat (AT_SYMLINK_NOFOLLOW is
+	// unimplemented), so the gate must too — otherwise the gate would
+	// allow what the kernel will then attempt against the target.
+	tr := &FakeTracee{
+		Strings: map[uintptr]string{0x100: "/Users/u/.cache/pre-commit/abc/py_env/bin/python3"},
+		Symlinks: map[string]string{
+			"/Users/u/.cache/pre-commit/abc/py_env/bin/python3": "/usr/bin/python3.13",
+		},
+	}
+	policy := s.mustPolicy(types.DecisionAllow, nil, nil, []types.FileRule{
+		{Paths: []string{"/usr/**"}, Operations: []string{OpChmod}, Decision: types.DecisionDeny},
+	})
+	srv := s.newServer(tr, nil, NewFileHandler(policy, nil, 8), nil)
+	got := srv.Dispatch(context.Background(), Trap{
+		ID: 73, Syscall: syscallFchmodat,
+		Args: [6]uint64{atFdcwd, 0x100, 0, 0, 0},
+	})
+	s.Require().False(got.Allow, "fchmodat must keep resolving the leaf because the kernel follows it")
+}
+
+func (s *ServerSuite) TestDispatchFileUnlinkatRootPathHandled() {
+	// Edge: an unlinkat path that cleans to "/" has no leaf to preserve.
+	// Verify the resolver doesn't choke on the empty-leaf split.
+	tr := &FakeTracee{Strings: map[uintptr]string{0x100: "/"}}
+	srv := s.newServer(tr, nil, NewFileHandler(s.mustPolicy(types.DecisionAllow, nil, nil, nil), nil, 8), nil)
+	got := srv.Dispatch(context.Background(), Trap{
+		ID: 74, Syscall: syscallUnlinkat,
+		Args: [6]uint64{atFdcwd, 0x100, 0, 0},
+	})
+	s.Require().True(got.Allow)
+}
+
+func (s *ServerSuite) TestDispatchFileUnlinkatParentEvalSymlinksFailFallsBack() {
+	// EvalSymlinks failure on the parent must not fail closed; we evaluate
+	// against the cleaned abs path so the kernel still gets to surface
+	// ENOENT/ELOOP for the leaf if that's what would actually happen.
+	sentinel := errors.New("eval boom parent")
+	base := &FakeTracee{Strings: map[uintptr]string{0x100: "/some/parent/leaf"}}
+	wrapped := &selectiveEvalErrTracee{Tracee: base, failFor: "/some/parent", err: sentinel}
+	srv := &Server{
+		Factory: func(_ int) Tracee { return wrapped },
+		File:    NewFileHandler(s.mustPolicy(types.DecisionAllow, nil, nil, nil), nil, 8),
+	}
+	got := srv.Dispatch(context.Background(), Trap{
+		ID: 75, Syscall: syscallUnlinkat,
+		Args: [6]uint64{atFdcwd, 0x100, 0, 0},
+	})
+	s.Require().True(got.Allow)
+}
+
 // Walk through the remaining outer-switch cases. Each only needs to confirm
 // the syscall name routes into dispatchFile (the per-spec arg layout is tested
 // exhaustively in file_syscalls.go's companion tests).

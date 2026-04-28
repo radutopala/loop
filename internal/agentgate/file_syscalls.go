@@ -54,6 +54,14 @@ type SyscallSpec struct {
 	SecondaryOp    string // non-empty for two-path syscalls (renameat2 → delete+create)
 	SecondPathIdx  int    // argv index of the secondary path; -1 if none
 	SecondDirfdIdx int    // argv index of the secondary dirfd; -1 if none
+
+	// NoFollowLeaf: the kernel operates on the directory entry (the link
+	// itself), not the symlink target. Resolver must dereference parent
+	// components but leave the leaf unresolved — otherwise a symlink in a
+	// writable cache pointing at /usr/bin/foo would trip the system-path
+	// deny rule even though unlinkat would only remove the link.
+	// True for unlinkat (removes the link) and renameat2 (renames the link).
+	NoFollowLeaf bool
 }
 
 // syscallTable is the classifier's lookup. First hit wins; the dispatcher
@@ -75,16 +83,20 @@ var syscallTable = map[string]SyscallSpec{
 	},
 	// renameat2(olddirfd, oldpath, newdirfd, newpath, flags)
 	// primary = delete on oldpath; secondary = create on newpath.
+	// Kernel renames the directory entry, never dereferences the leaf.
 	syscallRenameat2: {
 		Name: syscallRenameat2, PrimaryOp: OpDelete,
 		PathArgIdx: 1, DirfdArgIdx: 0, FlagsArgIdx: 4,
 		SecondaryOp: OpCreate, SecondPathIdx: 3, SecondDirfdIdx: 2,
+		NoFollowLeaf: true,
 	},
 	// unlinkat(dirfd, path, flags) — AT_REMOVEDIR flips delete→delete (dir), same op.
+	// Kernel removes the directory entry (link), never the symlink target.
 	syscallUnlinkat: {
 		Name: syscallUnlinkat, PrimaryOp: OpDelete,
 		PathArgIdx: 1, DirfdArgIdx: 0, FlagsArgIdx: 2,
 		SecondPathIdx: -1, SecondDirfdIdx: -1,
+		NoFollowLeaf: true,
 	},
 	// linkat(olddirfd, oldpath, newdirfd, newpath, flags) — policy matches newpath.
 	syscallLinkat: {

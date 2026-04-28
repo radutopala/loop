@@ -271,11 +271,7 @@ func (s *Server) resolveFilePath(spec SyscallSpec, trap Trap, tracee Tracee) (st
 	if err != nil {
 		return "", "", err
 	}
-	resolved, err := tracee.EvalSymlinks(abs)
-	if err != nil {
-		resolved = abs
-	}
-	return op, filepath.Clean(resolved), nil
+	return op, resolveSymlinks(abs, spec.NoFollowLeaf, tracee), nil
 }
 
 func (s *Server) resolveSecondaryPath(spec SyscallSpec, trap Trap, tracee Tracee) (string, error) {
@@ -287,11 +283,37 @@ func (s *Server) resolveSecondaryPath(spec SyscallSpec, trap Trap, tracee Tracee
 	if err != nil {
 		return "", err
 	}
-	resolved, err := tracee.EvalSymlinks(abs)
-	if err != nil {
-		resolved = abs
+	return resolveSymlinks(abs, spec.NoFollowLeaf, tracee), nil
+}
+
+// resolveSymlinks dereferences symlinks in abs. When noFollowLeaf is true the
+// final path component is left as-is — for unlinkat/renameat2 the kernel acts
+// on the directory entry, not the link target, so resolving the leaf would
+// over-deny (e.g. removing a venv's `python3` symlink that points at
+// /usr/bin/python3.13 would trip the system-path deny rule even though the
+// kernel would only unlink the cache-side directory entry).
+//
+// Falls back to the cleaned abs on any EvalSymlinks error so the kernel can
+// surface its native errno (ENOENT/ELOOP/…) rather than the gate's EPERM.
+func resolveSymlinks(abs string, noFollowLeaf bool, tracee Tracee) string {
+	if !noFollowLeaf {
+		resolved, err := tracee.EvalSymlinks(abs)
+		if err != nil {
+			resolved = abs
+		}
+		return filepath.Clean(resolved)
 	}
-	return filepath.Clean(resolved), nil
+	cleaned := filepath.Clean(abs)
+	dir, leaf := filepath.Split(cleaned)
+	if leaf == "" || dir == "" {
+		// "/" or single-component — nothing to resolve.
+		return cleaned
+	}
+	dirResolved, err := tracee.EvalSymlinks(filepath.Clean(dir))
+	if err != nil {
+		return cleaned
+	}
+	return filepath.Join(dirResolved, leaf)
 }
 
 // readOpenatFlags fetches the flags word for openat/openat2 traps.
