@@ -22,7 +22,18 @@ if [ -n "$HOST_UID" ]; then
     USERADD_ARGS="$USERADD_ARGS --uid $HOST_UID --non-unique"
 fi
 useradd $USERADD_ARGS "$AGENT_USER" 2>/dev/null || true
-chown "$AGENT_USER":"$AGENT_USER" "$AGENT_HOME" 2>/dev/null || true
+
+# Use numeric IDs for chown. When $HOST_GID matches a stock Debian group
+# (e.g. macOS gid 20 = dialout), the groupadd above is skipped, so no group
+# named $AGENT_USER exists — and "$AGENT_USER:$AGENT_USER" is then an
+# invalid spec that silently fails (2>/dev/null || true), leaving named
+# volumes owned by whatever uid wrote them previously (typically 1000).
+if [ -n "$HOST_UID" ] && [ -n "$HOST_GID" ]; then
+    CHOWN_OWNER="$HOST_UID:$HOST_GID"
+else
+    CHOWN_OWNER="$AGENT_USER:$AGENT_USER"
+fi
+chown "$CHOWN_OWNER" "$AGENT_HOME" 2>/dev/null || true
 
 # Fix ownership of paths that need to be writable by the agent user
 # (named volumes created as root, files copied via CopyToContainer, etc.).
@@ -31,9 +42,9 @@ if [ -n "$CHOWN_PATHS" ]; then
     IFS=:
     for path in $CHOWN_PATHS; do
         if [ -d "$path" ]; then
-            chown -R "$AGENT_USER":"$AGENT_USER" "$path" 2>/dev/null || true
+            chown -R "$CHOWN_OWNER" "$path" 2>/dev/null || true
         elif [ -f "$path" ]; then
-            chown "$AGENT_USER":"$AGENT_USER" "$path" 2>/dev/null || true
+            chown "$CHOWN_OWNER" "$path" 2>/dev/null || true
         fi
     done
     unset IFS

@@ -25,6 +25,10 @@ var migrations = []Migration{
 		Description: "refresh container/ files for Debian base switch",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		Description: "refresh container/ files: HOST_UID/HOST_GID pinning + chrome alpine revert",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a
