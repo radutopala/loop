@@ -50,8 +50,14 @@ func newDockerExecClientWith(apiFactory func() (dockerExecAPI, error)) (*DockerE
 // bypass runc's /etc/passwd lookup at exec creation, which would otherwise
 // race against the entrypoint's useradd and fail with
 // "unable to find user X: no matching entries in passwd file".
+// On Windows, os.Getuid/os.Getgid return -1; Docker Desktop maps file
+// permissions transparently, so fall back to the container's root user.
 func defaultExecUser() string {
-	return fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
+	uid, gid := os.Getuid(), os.Getgid()
+	if uid < 0 || gid < 0 {
+		return "0:0"
+	}
+	return fmt.Sprintf("%d:%d", uid, gid)
 }
 
 // DefaultShellCmd returns a /bin/bash command that writes its PID to pidFile
