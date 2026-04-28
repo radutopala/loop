@@ -51,12 +51,16 @@ export async function createBranch(channelId: string, name: string, from?: strin
 
 // ── Diff & Commits ──
 
+export type DiffFileStatus = "staged" | "unstaged" | "untracked";
+
 export interface DiffFile {
   path: string;
   old_path?: string; // set when file was renamed
   additions: number;
   deletions: number;
   binary: boolean;
+  // Absent for branch-to-branch diff entries.
+  status?: DiffFileStatus;
 }
 
 export interface DiffResponse {

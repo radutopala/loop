@@ -140,7 +140,138 @@ func (s *ServerSuite) TestGitDiffWithChanges() {
 	require.Equal(s.T(), http.StatusOK, w.Code)
 	body := w.Body.String()
 	require.Contains(s.T(), body, `"hello.txt"`)
+	require.Contains(s.T(), body, `"status":"unstaged"`)
 	require.Contains(s.T(), body, `"total_additions":1`)
+}
+
+func (s *ServerSuite) TestGitDiffWithStagedFiles() {
+	// Repo with one staged-modified file, one unstaged-modified file, and
+	// one untracked file. Verifies all three statuses appear distinctly.
+	dir := s.T().TempDir()
+	cmds := [][]string{
+		{"git", "init"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+	}
+	for _, c := range cmds {
+		cmd := exec.Command(c[0], c[1:]...)
+		cmd.Dir = dir
+		require.NoError(s.T(), cmd.Run())
+	}
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "stage_me.txt"), []byte("orig\n"), 0o644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "modify_me.txt"), []byte("orig\n"), 0o644))
+	gitRun(s.T(), dir, "add", ".")
+	gitRun(s.T(), dir, "commit", "-m", "init")
+
+	// stage_me.txt: modify and stage.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "stage_me.txt"), []byte("staged\n"), 0o644))
+	gitRun(s.T(), dir, "add", "stage_me.txt")
+
+	// modify_me.txt: modify but do not stage.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "modify_me.txt"), []byte("modified\n"), 0o644))
+
+	// untracked.txt: new file, never added.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "untracked.txt"), []byte("new\n"), 0o644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-staged").
+		Return(&db.Channel{ChannelID: "ch-staged", DirPath: dir}, nil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/diff", s.srv.handleGitDiff)
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-staged/diff", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	body := w.Body.String()
+	require.Contains(s.T(), body, `"stage_me.txt"`)
+	require.Contains(s.T(), body, `"status":"staged"`)
+	require.Contains(s.T(), body, `"modify_me.txt"`)
+	require.Contains(s.T(), body, `"status":"unstaged"`)
+	require.Contains(s.T(), body, `"untracked.txt"`)
+	require.Contains(s.T(), body, `"status":"untracked"`)
+}
+
+func (s *ServerSuite) TestGitDiffPartiallyStaged() {
+	// Same path, both staged and unstaged: stage one version, then modify
+	// the worktree without re-staging. Expect two adjacent rows for the
+	// same path with staged before unstaged.
+	dir := s.T().TempDir()
+	cmds := [][]string{
+		{"git", "init"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+	}
+	for _, c := range cmds {
+		cmd := exec.Command(c[0], c[1:]...)
+		cmd.Dir = dir
+		require.NoError(s.T(), cmd.Run())
+	}
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "split.txt"), []byte("v1\n"), 0o644))
+	gitRun(s.T(), dir, "add", ".")
+	gitRun(s.T(), dir, "commit", "-m", "init")
+
+	// Stage v2.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "split.txt"), []byte("v2\n"), 0o644))
+	gitRun(s.T(), dir, "add", "split.txt")
+	// Then write v3 without staging.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "split.txt"), []byte("v3\n"), 0o644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-partial").
+		Return(&db.Channel{ChannelID: "ch-partial", DirPath: dir}, nil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/diff", s.srv.handleGitDiff)
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-partial/diff", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	body := w.Body.String()
+	// Both statuses must appear in the response.
+	require.Contains(s.T(), body, `"status":"staged"`)
+	require.Contains(s.T(), body, `"status":"unstaged"`)
+	// Staged row precedes unstaged row in the JSON output.
+	stagedIdx := strings.Index(body, `"status":"staged"`)
+	unstagedIdx := strings.Index(body, `"status":"unstaged"`)
+	require.Less(s.T(), stagedIdx, unstagedIdx, "staged entry should sort before unstaged for the same path")
+}
+
+func (s *ServerSuite) TestGitDiffEmptyRepoNoHead() {
+	// Brand-new repo with no commits — `git diff --cached` returns a
+	// non-zero exit. Handler should not error; it should return any
+	// unstaged/untracked entries (here: one untracked file) with empty
+	// staged set.
+	dir := s.T().TempDir()
+	cmds := [][]string{
+		{"git", "init"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+	}
+	for _, c := range cmds {
+		cmd := exec.Command(c[0], c[1:]...)
+		cmd.Dir = dir
+		require.NoError(s.T(), cmd.Run())
+	}
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "fresh.txt"), []byte("hi\n"), 0o644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-fresh").
+		Return(&db.Channel{ChannelID: "ch-fresh", DirPath: dir}, nil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/diff", s.srv.handleGitDiff)
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-fresh/diff", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	body := w.Body.String()
+	require.Contains(s.T(), body, `"fresh.txt"`)
+	require.Contains(s.T(), body, `"status":"untracked"`)
+	require.NotContains(s.T(), body, `"status":"staged"`)
 }
 
 func (s *ServerSuite) TestGitDiffWithUntrackedFiles() {
@@ -424,6 +555,26 @@ func TestBuildUntrackedEntry_ReadError(t *testing.T) {
 	entry, patch := buildUntrackedEntry("/nonexistent", "missing.txt")
 	require.Nil(t, entry)
 	require.Empty(t, patch)
+}
+
+func TestStampStatus(t *testing.T) {
+	entries := []diffFileEntry{
+		{Path: "a", Additions: 1},
+		{Path: "b", Deletions: 2},
+	}
+	stampStatus(entries, statusStaged)
+	require.Equal(t, statusStaged, entries[0].Status)
+	require.Equal(t, statusStaged, entries[1].Status)
+	// Stamping an empty slice is a no-op.
+	stampStatus(nil, statusStaged)
+}
+
+func TestStatusPriority(t *testing.T) {
+	require.Equal(t, 0, statusPriority(statusStaged))
+	require.Equal(t, 1, statusPriority(statusUnstaged))
+	require.Equal(t, 2, statusPriority(statusUntracked))
+	require.Equal(t, 3, statusPriority(""))
+	require.Equal(t, 3, statusPriority("unknown"))
 }
 
 func TestParseNumstat(t *testing.T) {

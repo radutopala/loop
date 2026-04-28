@@ -18,6 +18,39 @@ type diffFileEntry struct {
 	Additions int    `json:"additions"`
 	Deletions int    `json:"deletions"`
 	Binary    bool   `json:"binary"`
+	// Status is "staged" (in the index), "unstaged" (modified worktree),
+	// or "untracked" (new file). Empty for branch-to-branch diff entries
+	// where the staged/unstaged distinction does not apply.
+	Status string `json:"status,omitempty"`
+}
+
+const (
+	statusStaged    = "staged"
+	statusUnstaged  = "unstaged"
+	statusUntracked = "untracked"
+)
+
+// statusPriority orders entries within a single path so that, when a file is
+// partially staged, the staged row precedes the unstaged row in the output.
+func statusPriority(status string) int {
+	switch status {
+	case statusStaged:
+		return 0
+	case statusUnstaged:
+		return 1
+	case statusUntracked:
+		return 2
+	default:
+		return 3
+	}
+}
+
+// stampStatus sets Status on every entry in place, preserving zero values
+// elsewhere on the struct.
+func stampStatus(entries []diffFileEntry, status string) {
+	for i := range entries {
+		entries[i].Status = status
+	}
 }
 
 type diffResponse struct {
@@ -60,7 +93,24 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Run git diff --numstat for file-level stats.
+	// Staged changes: index vs HEAD. May fail in a brand-new repo with no
+	// commits — treat that as "no staged entries" rather than erroring.
+	stagedCmd := exec.CommandContext(r.Context(), "git", "diff", "--cached", "--numstat", "-z")
+	stagedCmd.Dir = dirPath
+	stagedNumstatOut, stagedErr := stagedCmd.Output()
+	var stagedFiles []diffFileEntry
+	var stagedDiffText string
+	if stagedErr == nil {
+		stagedFiles = parseNumstat(string(stagedNumstatOut))
+		stampStatus(stagedFiles, statusStaged)
+
+		stagedDiffCmd := exec.CommandContext(r.Context(), "git", "diff", "--cached")
+		stagedDiffCmd.Dir = dirPath
+		stagedDiffOut, _ := stagedDiffCmd.Output()
+		stagedDiffText = string(stagedDiffOut)
+	}
+
+	// Unstaged changes: worktree vs index.
 	numstatCmd := exec.CommandContext(r.Context(), "git", "diff", "--numstat", "-z")
 	numstatCmd.Dir = dirPath
 	numstatOut, err := numstatCmd.Output()
@@ -70,13 +120,18 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	files := parseNumstat(string(numstatOut))
+	unstagedFiles := parseNumstat(string(numstatOut))
+	stampStatus(unstagedFiles, statusUnstaged)
 
-	// Run git diff for the unified diff text.
 	diffCmd := exec.CommandContext(r.Context(), "git", "diff")
 	diffCmd.Dir = dirPath
 	diffOut, _ := diffCmd.Output()
-	diffText := string(diffOut)
+	unstagedDiffText := string(diffOut)
+
+	files := make([]diffFileEntry, 0, len(stagedFiles)+len(unstagedFiles))
+	files = append(files, stagedFiles...)
+	files = append(files, unstagedFiles...)
+	diffText := stagedDiffText + unstagedDiffText
 
 	// Include untracked files.
 	untrackedCmd := exec.CommandContext(r.Context(), "git", "ls-files", "--others", "--exclude-standard")
@@ -85,14 +140,18 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 		for _, uf := range splitLines(string(untrackedOut)) {
 			entry, patch := buildUntrackedEntry(dirPath, uf)
 			if entry != nil {
+				entry.Status = statusUntracked
 				files = append(files, *entry)
 				diffText += patch
 			}
 		}
 	}
 
-	sort.Slice(files, func(i, j int) bool {
-		return files[i].Path < files[j].Path
+	sort.SliceStable(files, func(i, j int) bool {
+		if files[i].Path != files[j].Path {
+			return files[i].Path < files[j].Path
+		}
+		return statusPriority(files[i].Status) < statusPriority(files[j].Status)
 	})
 
 	var totalAdd, totalDel int

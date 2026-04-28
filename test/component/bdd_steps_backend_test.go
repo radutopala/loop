@@ -46,6 +46,8 @@ func registerBackendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	ctx.Step(`^I create a disk-only git worktree "([^"]*)" on branch "([^"]*)"$`, tc.createDiskOnlyWorktree)
 	ctx.Step(`^I create a branch "([^"]*)" via API$`, tc.createBranchViaAPI)
 	ctx.Step(`^I create uncommitted files "([^"]*)" in the repo$`, tc.createUncommittedFiles)
+	ctx.Step(`^I stage a new file "([^"]*)" in the repo$`, tc.stageNewFile)
+	ctx.Step(`^I modify "([^"]*)" without staging$`, tc.modifyWithoutStaging)
 
 	// Ticket setup steps
 	ctx.Step(`^I create a ticket "([^"]*)" with type "([^"]*)" via API$`, tc.createTicketViaAPI)
@@ -370,6 +372,39 @@ func (tc *TestContext) createUncommittedFiles(namesCsv string) error {
 		if err := os.WriteFile(fpath, []byte("// "+name+"\n"), 0o644); err != nil {
 			return fmt.Errorf("writing %s: %w", name, err)
 		}
+	}
+	return nil
+}
+
+// stageNewFile writes a fresh file into the channel's repo and `git add`s
+// it so the diff handler reports it as status=staged rather than untracked.
+func (tc *TestContext) stageNewFile(name string) error {
+	if tc.ChannelDir == "" {
+		return fmt.Errorf("no channel dir set; use 'I set up a test channel via API for git repo' step first")
+	}
+	fpath := filepath.Join(tc.ChannelDir, name)
+	if err := os.MkdirAll(filepath.Dir(fpath), 0o755); err != nil {
+		return fmt.Errorf("creating dirs for %s: %w", name, err)
+	}
+	if err := os.WriteFile(fpath, []byte("// "+name+"\n"), 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", name, err)
+	}
+	out, err := exec.Command("git", "-C", tc.ChannelDir, "add", name).CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("git add %s: %s: %w", name, out, err)
+	}
+	return nil
+}
+
+// modifyWithoutStaging overwrites a tracked file but does not stage,
+// producing a status=unstaged entry.
+func (tc *TestContext) modifyWithoutStaging(name string) error {
+	if tc.ChannelDir == "" {
+		return fmt.Errorf("no channel dir set; use 'I set up a test channel via API for git repo' step first")
+	}
+	fpath := filepath.Join(tc.ChannelDir, name)
+	if err := os.WriteFile(fpath, []byte("// unstaged "+name+"\n"), 0o644); err != nil {
+		return fmt.Errorf("writing %s: %w", name, err)
 	}
 	return nil
 }

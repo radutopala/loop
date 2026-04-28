@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { DiffFile } from "../../api/loopApi";
+import type { DiffFile, DiffFileStatus } from "../../api/loopApi";
 import { fetchFileContent } from "../../api/loopApi";
 import { fonts } from "../../theme";
 import type { ColorPalette } from "../../theme";
@@ -212,6 +212,18 @@ function buildLineColors(colors: ColorPalette) {
     add: { bg: colors.diffAddBg, numBg: colors.diffAddNumBg, text: colors.diffAddText },
     del: { bg: colors.diffDelBg, numBg: colors.diffDelNumBg, text: colors.diffDelText },
   };
+}
+
+function statusBadgeColor(status: DiffFileStatus, colors: ColorPalette): string {
+  switch (status) {
+    case "staged":   return colors.active;
+    case "unstaged": return colors.warning;
+    case "untracked": return colors.textDim;
+  }
+}
+
+function statusBadgeLabel(status: DiffFileStatus): string {
+  return status === "untracked" ? "new" : status;
 }
 
 // ── Constants ──
@@ -447,6 +459,16 @@ export function DiffViewer({
           background: colors.surface, borderBottom: `1px solid ${colors.border}`,
           minHeight: 32, flexShrink: 0,
         }}>
+          <button onClick={onExpandAll} title="Expand all" style={navBtnStyle}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textDim; e.currentTarget.style.color = colors.textLight; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = colors.textMuted; }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,8 12,13 17,8" /><polyline points="7,14 12,19 17,14" /></svg>
+          </button>
+          <button onClick={onCollapseAll} title="Collapse all" style={navBtnStyle}
+            onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textDim; e.currentTarget.style.color = colors.textLight; }}
+            onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = colors.textMuted; }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,14 12,9 17,14" /><polyline points="7,20 12,15 17,20" /></svg>
+          </button>
           <button
             style={{ ...navBtnStyle, opacity: clampedIndex <= 0 ? 0.3 : 1, cursor: clampedIndex <= 0 ? "default" : "pointer" }}
             disabled={clampedIndex <= 0}
@@ -469,16 +491,6 @@ export function DiffViewer({
           <span style={{ fontFamily: fonts.mono, fontSize: 11, color: colors.textDim, flexShrink: 0 }}>
             {clampedIndex + 1} / {files.length}
           </span>
-          <button onClick={onExpandAll} title="Expand all" style={navBtnStyle}
-            onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textDim; e.currentTarget.style.color = colors.textLight; }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = colors.textMuted; }}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,8 12,13 17,8" /><polyline points="7,14 12,19 17,14" /></svg>
-          </button>
-          <button onClick={onCollapseAll} title="Collapse all" style={navBtnStyle}
-            onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textDim; e.currentTarget.style.color = colors.textLight; }}
-            onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = colors.textMuted; }}>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="7,14 12,9 17,14" /><polyline points="7,20 12,15 17,20" /></svg>
-          </button>
         </div>
       )}
       <div ref={scrollRef} style={{ flex: 1, overflow: "auto", minHeight: 0 }}>
@@ -496,7 +508,7 @@ export function DiffViewer({
           const segments = parsed ? computeSegments(parsed, cachedLines?.length) : [];
           return (
             <div
-              key={file.path}
+              key={`${file.path}:${file.status ?? ""}:${fileIndex}`}
               data-file-idx={fileIndex}
               ref={(el) => { if (el) fileRefs.current.set(fileIndex, el); else fileRefs.current.delete(fileIndex); }}
               onMouseEnter={() => handleFileMouseEnter(fileIndex)}
@@ -522,7 +534,20 @@ export function DiffViewer({
                 <span style={{ flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", direction: "rtl", textAlign: "left" }}>
                   <bdi>{file.old_path ? formatRenamePath(file.old_path, file.path) : file.path}</bdi>
                 </span>
-                <span style={{ flexShrink: 0, fontSize: 11 }}>
+                <span style={{ flexShrink: 0, width: 70, textAlign: "left" }}>
+                  {file.status && (
+                    <span style={{
+                      display: "inline-block", fontSize: 10, fontFamily: fonts.mono,
+                      padding: "1px 5px", borderRadius: 3,
+                      color: statusBadgeColor(file.status, colors),
+                      border: `1px solid ${statusBadgeColor(file.status, colors)}`,
+                      textTransform: "lowercase",
+                    }}>
+                      {statusBadgeLabel(file.status)}
+                    </span>
+                  )}
+                </span>
+                <span style={{ flexShrink: 0, width: 80, fontSize: 11, textAlign: "right" }}>
                   {file.binary ? (
                     <span style={{ color: colors.textDim }}>binary</span>
                   ) : (
