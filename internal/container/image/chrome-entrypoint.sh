@@ -1,8 +1,8 @@
-#!/bin/sh
-# Chrome binds to 127.0.0.1 despite --remote-debugging-address=0.0.0.0 on Alpine.
+#!/bin/bash
+# Chrome binds to 127.0.0.1 despite --remote-debugging-address=0.0.0.0.
 # Use socat to proxy 0.0.0.0:9222 -> 127.0.0.1:9223 (Chrome on internal port).
 socat TCP-LISTEN:9222,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:9223 &
-exec chromium-browser \
+exec chromium \
     --no-sandbox \
     --disable-gpu \
     --headless=new \

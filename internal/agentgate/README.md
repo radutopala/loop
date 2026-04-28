@@ -6,7 +6,7 @@ family; routes each trap through a policy matcher and, for `approve`
 decisions, an approval UI on Discord, Slack, or the local desktop app.
 
 Filter install happens late (inside `loop-syscallwrap`, just before the
-target `syscall.Exec`), so the `entrypoint.sh → su-exec` chain runs
+target `syscall.Exec`), so the `entrypoint.sh → gosu` chain runs
 unfiltered and only the agent's process tree is gated.
 
 Design inspired by [agentsh](https://agentsh.org) — independent

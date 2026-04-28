@@ -2353,12 +2353,12 @@ func (s *MainSuite) TestOnboardGlobalSuccess() {
 	entrypointPath := filepath.Join(tmpDir, ".loop", "container", "entrypoint.sh")
 	entrypointData, err := os.ReadFile(entrypointPath)
 	require.NoError(s.T(), err)
-	require.Contains(s.T(), string(entrypointData), `su-exec "$AGENT_USER" "$@"`)
+	require.Contains(s.T(), string(entrypointData), `gosu "$AGENT_USER" "$@"`)
 
 	setupPath := filepath.Join(tmpDir, ".loop", "container", "setup.sh")
 	setupData, err := os.ReadFile(setupPath)
 	require.NoError(s.T(), err)
-	require.Contains(s.T(), string(setupData), "#!/bin/sh")
+	require.Contains(s.T(), string(setupData), "#!/bin/bash")
 
 	bashrcPath := filepath.Join(tmpDir, ".loop", ".bashrc")
 	bashrcData, err := os.ReadFile(bashrcPath)

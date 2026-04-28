@@ -24,8 +24,8 @@ func (s *EmbedSuite) TestDockerfileNotEmpty() {
 
 func (s *EmbedSuite) TestEntrypointNotEmpty() {
 	require.NotEmpty(s.T(), Entrypoint)
-	require.Contains(s.T(), string(Entrypoint), "#!/bin/sh")
-	require.Contains(s.T(), string(Entrypoint), `su-exec "$AGENT_USER" "$@"`)
+	require.Contains(s.T(), string(Entrypoint), "#!/bin/bash")
+	require.Contains(s.T(), string(Entrypoint), `gosu "$AGENT_USER" "$@"`)
 }
 
 func (s *EmbedSuite) TestEntrypointGateBranch() {
@@ -52,7 +52,7 @@ func (s *EmbedSuite) TestEntrypointDockerProxyBranch() {
 
 func (s *EmbedSuite) TestSetupNotEmpty() {
 	require.NotEmpty(s.T(), Setup)
-	require.Contains(s.T(), string(Setup), "#!/bin/sh")
+	require.Contains(s.T(), string(Setup), "#!/bin/bash")
 }
 
 func (s *EmbedSuite) TestMustReadReturnsEmbeddedFile() {

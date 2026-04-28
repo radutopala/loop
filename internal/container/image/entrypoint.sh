@@ -1,11 +1,11 @@
-#!/bin/sh
+#!/bin/bash
 set -e
 
 # Create container user matching host user (passed via env by runner)
 AGENT_USER="${HOST_USER:-agent}"
 AGENT_HOME="${HOME:-/home/$AGENT_USER}"
 mkdir -p "$AGENT_HOME"
-adduser -D -h "$AGENT_HOME" -H "$AGENT_USER" 2>/dev/null || true
+useradd -M -d "$AGENT_HOME" -s /bin/bash "$AGENT_USER" 2>/dev/null || true
 chown "$AGENT_USER":"$AGENT_USER" "$AGENT_HOME" 2>/dev/null || true
 
 # Fix ownership of paths that need to be writable by the agent user
@@ -24,7 +24,7 @@ if [ -n "$CHOWN_PATHS" ]; then
 fi
 
 # Start the in-container docker HTTP reverse-proxy if enabled by the host.
-# Runs as root (su-exec below drops to the agent user). Listens on
+# Runs as root (gosu below drops to the agent user). Listens on
 # /var/run/docker.sock (tmpfs inside the container) and reverse-proxies to
 # /var/run/docker.sock.host (the real daemon socket, bind-mounted :ro by
 # the host). The agent only ever sees the proxy socket — direct access to
@@ -57,10 +57,10 @@ if [ -S /var/run/docker.sock ]; then
     SOCK_GID=$(stat -c '%g' /var/run/docker.sock)
     GROUP_NAME=$(awk -F: -v gid="$SOCK_GID" '$3 == gid {print $1; exit}' /etc/group)
     if [ -z "$GROUP_NAME" ]; then
-        addgroup -S -g "$SOCK_GID" dockerhost
+        groupadd --system --gid "$SOCK_GID" dockerhost
         GROUP_NAME=dockerhost
     fi
-    addgroup "$AGENT_USER" "$GROUP_NAME" 2>/dev/null || true
+    usermod -aG "$GROUP_NAME" "$AGENT_USER" 2>/dev/null || true
 fi
 
 mkdir -p "$AGENT_HOME/.local/bin"
@@ -71,9 +71,9 @@ export PATH="$AGENT_HOME/.local/bin:$AGENT_HOME/bin:$PATH"
 # When LOOP_GATE_ENABLED=1, exec into the `loop syscallwrap` subcommand as
 # root. The parent retains root (so the agent can't signal it —
 # different-uid kill() is EPERM) and drops the child to $AGENT_USER via
-# SysProcAttr.Credential after installing the seccomp filter. No su-exec
+# SysProcAttr.Credential after installing the seccomp filter. No gosu
 # wrapper here.
 if [ "$LOOP_GATE_ENABLED" = "1" ] && [ -x /usr/local/bin/loop ]; then
     exec /usr/local/bin/loop syscallwrap -- "$@"
 fi
-exec su-exec "$AGENT_USER" "$@"
+exec gosu "$AGENT_USER" "$@"

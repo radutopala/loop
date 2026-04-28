@@ -1,12 +1,18 @@
-FROM golang:1.26-alpine AS builder
-RUN apk add --no-cache git
+FROM golang:1.26 AS builder
 ENV GOTOOLCHAIN=auto
 RUN go install golang.org/x/tools/gopls@latest
 
-FROM golang:1.26-alpine
+FROM golang:1.26
 ENV GOTOOLCHAIN=auto
-RUN apk add --no-cache bash ca-certificates curl git make nodejs npm docker-cli docker-cli-compose su-exec aws-cli libgcc libstdc++ ripgrep uv gcc musl-dev openssh-client python3 py3-pip
-RUN pip install --break-system-packages --no-cache-dir pre-commit
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        bash ca-certificates curl git make \
+        nodejs npm \
+        docker-cli docker-compose \
+        gosu ripgrep openssh-client \
+        python3 python3-pip python3-venv \
+        gcc libc6-dev \
+    && rm -rf /var/lib/apt/lists/*
+RUN pip install --break-system-packages --no-cache-dir pre-commit uv awscli
 ENV USE_BUILTIN_RIPGREP=0
 ARG LOOP_VERSION=main
 RUN ARCH=$(uname -m | sed 's/aarch64/arm64/' | sed 's/x86_64/amd64/') && \

@@ -26,7 +26,7 @@ func (a *app) runChild() error {
 	// execve(2) does not consult $PATH — without this, a bare `claude` (the
 	// default image CMD) turns into `execve("claude", ...)` which the kernel
 	// resolves relative to cwd only and returns ENOENT for. Without the gate,
-	// entrypoint.sh's `su-exec "$AGENT_USER" "$@"` did the PATH lookup via
+	// entrypoint.sh's `gosu "$AGENT_USER" "$@"` did the PATH lookup via
 	// execvp; we have to emulate that here. argv stays unchanged so the
 	// program sees its original argv[0].
 	binPath, err := resolveTarget(target[0], a.lookPath)
@@ -100,7 +100,7 @@ func (a *app) runChild() error {
 // resolveTarget mimics execvp: if name has a slash it's already an explicit
 // path (absolute or relative) and we pass it through; otherwise we run it
 // through the lookPath callback (exec.LookPath in production) to consult
-// $PATH. Matches su-exec's behavior in the non-gated code path.
+// $PATH. Matches gosu's behavior in the non-gated code path.
 func resolveTarget(name string, lookPath func(string) (string, error)) (string, error) {
 	if strings.ContainsRune(name, '/') {
 		return name, nil

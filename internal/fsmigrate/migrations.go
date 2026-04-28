@@ -21,6 +21,10 @@ var migrations = []Migration{
 		Description: "refresh embedded container/ files",
 		Apply:       refreshContainerFiles,
 	},
+	{
+		Description: "refresh container/ files for Debian base switch",
+		Apply:       refreshContainerFiles,
+	},
 }
 
 // versionedContainerFiles are tracked by the daemon: each release ships a

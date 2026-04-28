@@ -22,10 +22,8 @@ Then retry `loop daemon:start`.
 When running `loop serve`, the Docker image build may fail with:
 
 ```
-WARNING: fetching https://dl-cdn.alpinelinux.org/alpine/.../APKINDEX.tar.gz: TLS: server certificate not trusted
-ERROR: unable to select packages:
-  bash (no such package):
-    required by: world[bash]
+E: Failed to fetch https://deb.debian.org/debian/dists/.../Release.gpg  Server certificate verification failed. CAfile: ...
+E: Some index files failed to download.
 ```
 
 This occurs on corporate networks where a proxy or firewall (e.g. Palo Alto, Zscaler, Netskope) performs SSL inspection using a custom CA certificate that Docker containers don't trust.
@@ -38,23 +36,22 @@ This occurs on corporate networks where a proxy or firewall (e.g. Palo Alto, Zsc
    security find-certificate -a -p /Library/Keychains/System.keychain > ~/.loop/container/corporate-ca.pem
    ```
 
-2. **Patch `~/.loop/container/Dockerfile`** to inject the certificates before any network operations. Add these lines after each `FROM` line and before any `RUN apk` or `RUN curl` commands:
+2. **Patch `~/.loop/container/Dockerfile`** to inject the certificates before any network operations. Add these lines after each `FROM` line and before any `RUN apt-get` or `RUN curl` commands:
 
    ```dockerfile
    COPY corporate-ca.pem /usr/local/share/ca-certificates/corporate-ca.crt
-   RUN cat /usr/local/share/ca-certificates/corporate-ca.crt >> /etc/ssl/certs/ca-certificates.crt
+   RUN update-ca-certificates
    ```
 
    For example, the builder stage becomes:
 
    ```dockerfile
-   FROM golang:1.26-alpine AS builder
+   FROM golang:1.26 AS builder
    COPY corporate-ca.pem /usr/local/share/ca-certificates/corporate-ca.crt
-   RUN cat /usr/local/share/ca-certificates/corporate-ca.crt >> /etc/ssl/certs/ca-certificates.crt
-   RUN apk add --no-cache git
+   RUN update-ca-certificates
    ```
 
-   Apply the same pattern to the final stage and to `~/.loop/container/chrome.Dockerfile`.
+   Apply the same pattern to the final stage and to `~/.loop/container/chrome.Dockerfile` (note: `chrome.Dockerfile` is still Alpine — use the `cat … >> /etc/ssl/certs/ca-certificates.crt` form there).
 
 3. **Retry** `loop serve`.
 

@@ -64,7 +64,7 @@ The following environment variables are set on every container:
 | `CHOWN_PATHS` | Colon-separated paths | Named volume mount targets and copy-file targets that need ownership adjustment by the container entrypoint |
 | `LOOP_CHANNEL_ID` | Channel ID | Set when the security gate or docker proxy is enabled. Routed to the bot prompt via `MultiManagerResolver.ByToken` on every in-container approval call |
 | `LOOP_GATE_TOKEN` | 32-byte hex | Set when the security gate or docker proxy is enabled. Per-container bearer token authenticating HTTP callbacks to `POST /api/gate/container-approval` |
-| `LOOP_GATE_ENABLED` | `1` | Set when the security gate is enabled. Entrypoint flips on this to `exec /usr/local/bin/loop syscallwrap -- "$@"` as root instead of plain `su-exec "$AGENT_USER" "$@"` |
+| `LOOP_GATE_ENABLED` | `1` | Set when the security gate is enabled. Entrypoint flips on this to `exec /usr/local/bin/loop syscallwrap -- "$@"` as root instead of plain `gosu "$AGENT_USER" "$@"` |
 | `LOOP_GATE_POLICY_FILE` | `/etc/loop/gate-policy.json` | Set when the security gate is enabled. Path inside the container to the gate's policy JSON (bind-mounted read-only from `{policyDir}/{CID}/gate-policy.json` on the host). Read by `loop syscallwrap` parent before installing the filter |
 | `LOOP_DOCKERPROXY_ENABLED` | `1` | Set when the Docker HTTP proxy is enabled. Entrypoint starts `loop dockerproxy &` as root before any privilege drop |
 | `LOOP_DOCKERPROXY_POLICY_FILE` | `/etc/loop/proxy-policy.json` | Path inside the container to the proxy's policy JSON (bind-mounted read-only). Read by `loop dockerproxy` at startup |
@@ -141,13 +141,13 @@ The file is written before the container starts so the first in-container read a
 
 ### Entrypoint Branch
 
-`internal/container/image/entrypoint.sh` checks for `$LOOP_GATE_ENABLED` after user setup and, when present, execs the `loop syscallwrap` subcommand **as root** — no `su-exec` wrapper:
+`internal/container/image/entrypoint.sh` checks for `$LOOP_GATE_ENABLED` after user setup and, when present, execs the `loop syscallwrap` subcommand **as root** — no `gosu` wrapper:
 
 ```sh
 if [ "$LOOP_GATE_ENABLED" = "1" ] && [ -x /usr/local/bin/loop ]; then
     exec /usr/local/bin/loop syscallwrap -- "$@"
 fi
-exec su-exec "$AGENT_USER" "$@"
+exec gosu "$AGENT_USER" "$@"
 ```
 
 The `loop syscallwrap` parent process stays as uid 0 so the agent (running under `$AGENT_USER`) cannot signal it with `kill(2)` — different-uid `kill` is `EPERM`. Privilege drop to the agent uid happens in the **child** process (see below), so claude itself still runs unprivileged.
