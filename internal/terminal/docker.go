@@ -25,7 +25,7 @@ type dockerExecAPI interface {
 // handles container lifecycle (docker create/start/stop/rm).
 type DockerExecClient struct {
 	api      dockerExecAPI
-	osGetenv func(string) string
+	execUser func() string
 }
 
 // NewDockerExecClient creates a new DockerExecClient backed by the Docker SDK.
@@ -40,7 +40,18 @@ func newDockerExecClientWith(apiFactory func() (dockerExecAPI, error)) (*DockerE
 	if err != nil {
 		return nil, err
 	}
-	return &DockerExecClient{api: api, osGetenv: os.Getenv}, nil
+	return &DockerExecClient{
+		api:      api,
+		execUser: defaultExecUser,
+	}, nil
+}
+
+// defaultExecUser returns "<uid>:<gid>" of the current process. Numeric IDs
+// bypass runc's /etc/passwd lookup at exec creation, which would otherwise
+// race against the entrypoint's useradd and fail with
+// "unable to find user X: no matching entries in passwd file".
+func defaultExecUser() string {
+	return fmt.Sprintf("%d:%d", os.Getuid(), os.Getgid())
 }
 
 // DefaultShellCmd returns a /bin/bash command that writes its PID to pidFile
@@ -53,15 +64,17 @@ func (c *DockerExecClient) DefaultShellCmd(pidFile string) []string {
 }
 
 // ExecCreate creates a new exec process in the container with the
-// given command and TTY setting. The exec runs as the host user (matching the
-// container's non-root agent user created by the entrypoint).
+// given command and TTY setting. The exec runs as the host UID:GID (matching
+// the container's non-root agent user created by the entrypoint). Numeric
+// IDs avoid a name lookup in /etc/passwd, which would race against the
+// entrypoint's useradd.
 // If cmd is empty, defaults to /bin/sh.
 func (c *DockerExecClient) ExecCreate(ctx context.Context, containerID string, cmd []string, tty bool) (string, error) {
 	if len(cmd) == 0 {
 		cmd = []string{"/bin/sh"}
 	}
 	resp, err := c.api.ContainerExecCreate(ctx, containerID, containertypes.ExecOptions{
-		User:         c.osGetenv("USER"),
+		User:         c.execUser(),
 		Cmd:          cmd,
 		Tty:          tty,
 		AttachStdin:  true,

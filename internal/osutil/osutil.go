@@ -85,6 +85,8 @@ func (RealSystem) MkdirAll(path string, perm os.FileMode) error {
 func (RealSystem) Readlink(name string) (string, error)         { return os.Readlink(name) }
 func (RealSystem) UserHomeDir() (string, error)                 { return os.UserHomeDir() }
 func (RealSystem) Getenv(key string) string                     { return os.Getenv(key) }
+func (RealSystem) Getuid() int                                  { return os.Getuid() }
+func (RealSystem) Getgid() int                                  { return os.Getgid() }
 func (RealSystem) EvalSymlinks(path string) (string, error)     { return filepath.EvalSymlinks(path) }
 func (RealSystem) WalkDir(root string, fn fs.WalkDirFunc) error { return filepath.WalkDir(root, fn) }
 func (RealSystem) ExecCommandOutput(name string, args ...string) ([]byte, error) {

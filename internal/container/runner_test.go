@@ -267,6 +267,8 @@ func newDefaultMockSystem() *testutil.MockSystem {
 	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
 	sys.On("Getenv", "USER").Return("testuser")
 	sys.On("Getenv", mock.Anything).Return("")
+	sys.On("Getuid").Return(1000)
+	sys.On("Getgid").Return(1000)
 	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	sys.On("UserHomeDir").Return("/home/testuser", nil)
 	sys.On("Stat", mock.Anything).Return(nil, os.ErrNotExist)
@@ -325,10 +327,12 @@ func (s *RunnerSuite) TestRunHappyPath() {
 		hasBinds := slices.Contains(cfg.Binds, "/home/testuser/.loop/ch-1/work:/home/testuser/.loop/ch-1/work")
 		hasHome := slices.Contains(cfg.Env, "HOME=/home/testuser")
 		hasHostUser := slices.Contains(cfg.Env, "HOST_USER=testuser")
+		hasHostUID := slices.Contains(cfg.Env, "HOST_UID=1000")
+		hasHostGID := slices.Contains(cfg.Env, "HOST_GID=1000")
 		hasTZ := slices.ContainsFunc(cfg.Env, func(e string) bool {
 			return len(e) > 3 && e[:3] == "TZ="
 		})
-		return hasResume && hasBinds && hasHome && hasHostUser && hasTZ
+		return hasResume && hasBinds && hasHome && hasHostUser && hasHostUID && hasHostGID && hasTZ
 	}), testContainerName, `{"type":"result","result":"Hello! How can I help?","session_id":"sess-new-1","is_error":false}`)
 
 	resp, err := s.runner.Run(ctx, req)

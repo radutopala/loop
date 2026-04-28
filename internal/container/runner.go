@@ -224,6 +224,8 @@ type runnerSystem interface {
 	Readlink(name string) (string, error)
 	UserHomeDir() (string, error)
 	Getenv(key string) string
+	Getuid() int
+	Getgid() int
 	ExecCommandOutput(name string, args ...string) ([]byte, error)
 }
 
@@ -785,6 +787,8 @@ func (r *DockerRunner) buildContainerEnv(cfg *config.Config, channelID, apiURL s
 		"API_URL=" + apiURL,
 		"HOME=" + hostHome,
 		"HOST_USER=" + r.sys.Getenv("USER"),
+		fmt.Sprintf("HOST_UID=%d", r.sys.Getuid()),
+		fmt.Sprintf("HOST_GID=%d", r.sys.Getgid()),
 		"TZ=" + r.localTimezone(),
 		"PATH=" + hostHome + "/.local/bin:" + hostHome + "/bin:" + hostHome + "/go/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
 	}

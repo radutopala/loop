@@ -148,6 +148,11 @@ func (s *RealSystemSuite) TestGetenv() {
 	require.Empty(s.T(), s.sys.Getenv("OSUTIL_NONEXISTENT"))
 }
 
+func (s *RealSystemSuite) TestGetuidGetgid() {
+	require.Equal(s.T(), os.Getuid(), s.sys.Getuid())
+	require.Equal(s.T(), os.Getgid(), s.sys.Getgid())
+}
+
 func (s *RealSystemSuite) TestEvalSymlinks() {
 	p, err := s.sys.EvalSymlinks(s.dir)
 	require.NoError(s.T(), err)

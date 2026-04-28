@@ -6,7 +6,6 @@ import (
 	"errors"
 	"io"
 	"net"
-	"os"
 	"testing"
 
 	"github.com/docker/docker/api/types"
@@ -62,7 +61,8 @@ func (s *DockerSuite) TestNewDockerExecClientWithSuccess() {
 	})
 	require.NoError(s.T(), err)
 	require.NotNil(s.T(), c)
-	require.NotNil(s.T(), c.osGetenv)
+	require.NotNil(s.T(), c.execUser)
+	require.NotEmpty(s.T(), c.execUser())
 }
 
 func (s *DockerSuite) TestNewDockerExecClientWithError() {
@@ -76,10 +76,10 @@ func (s *DockerSuite) TestNewDockerExecClientWithError() {
 
 func (s *DockerSuite) TestExecCreate() {
 	api := new(mockDockerExecAPI)
-	c := &DockerExecClient{api: api, osGetenv: func(string) string { return "testuser" }}
+	c := &DockerExecClient{api: api, execUser: func() string { return "1000:1000" }}
 
 	expectedOpts := containertypes.ExecOptions{
-		User:         "testuser",
+		User:         "1000:1000",
 		Cmd:          []string{"/bin/sh"},
 		Tty:          true,
 		AttachStdin:  true,
@@ -99,10 +99,10 @@ func (s *DockerSuite) TestExecCreate() {
 
 func (s *DockerSuite) TestExecCreateDefaultCmd() {
 	api := new(mockDockerExecAPI)
-	c := &DockerExecClient{api: api, osGetenv: func(string) string { return "testuser" }}
+	c := &DockerExecClient{api: api, execUser: func() string { return "1000:1000" }}
 
 	expectedOpts := containertypes.ExecOptions{
-		User:         "testuser",
+		User:         "1000:1000",
 		Cmd:          []string{"/bin/sh"},
 		Tty:          true,
 		AttachStdin:  true,
@@ -122,7 +122,7 @@ func (s *DockerSuite) TestExecCreateDefaultCmd() {
 
 func (s *DockerSuite) TestExecCreateError() {
 	api := new(mockDockerExecAPI)
-	c := &DockerExecClient{api: api, osGetenv: func(string) string { return "" }}
+	c := &DockerExecClient{api: api, execUser: func() string { return "0:0" }}
 
 	api.On("ContainerExecCreate", mock.Anything, "ctr-1", mock.Anything).
 		Return(containertypes.ExecCreateResponse{}, errors.New("create failed"))
@@ -134,9 +134,14 @@ func (s *DockerSuite) TestExecCreateError() {
 	api.AssertExpectations(s.T())
 }
 
+func (s *DockerSuite) TestDefaultExecUserNumeric() {
+	u := defaultExecUser()
+	require.Regexp(s.T(), `^\d+:\d+$`, u)
+}
+
 func (s *DockerSuite) TestExecAttach() {
 	api := new(mockDockerExecAPI)
-	client := &DockerExecClient{api: api, osGetenv: os.Getenv}
+	client := &DockerExecClient{api: api, execUser: defaultExecUser}
 
 	serverConn, clientConn := net.Pipe()
 	defer serverConn.Close()
@@ -182,7 +187,7 @@ func (s *DockerSuite) TestExecAttach() {
 
 func (s *DockerSuite) TestExecAttachError() {
 	api := new(mockDockerExecAPI)
-	client := &DockerExecClient{api: api, osGetenv: os.Getenv}
+	client := &DockerExecClient{api: api, execUser: defaultExecUser}
 
 	api.On("ContainerExecAttach", mock.Anything, "exec-1", mock.Anything).
 		Return(types.HijackedResponse{}, errors.New("attach failed"))
@@ -196,7 +201,7 @@ func (s *DockerSuite) TestExecAttachError() {
 
 func (s *DockerSuite) TestExecResize() {
 	api := new(mockDockerExecAPI)
-	client := &DockerExecClient{api: api, osGetenv: os.Getenv}
+	client := &DockerExecClient{api: api, execUser: defaultExecUser}
 
 	api.On("ContainerExecResize", mock.Anything, "exec-1", containertypes.ResizeOptions{
 		Height: 24,
@@ -211,7 +216,7 @@ func (s *DockerSuite) TestExecResize() {
 
 func (s *DockerSuite) TestExecResizeError() {
 	api := new(mockDockerExecAPI)
-	client := &DockerExecClient{api: api, osGetenv: os.Getenv}
+	client := &DockerExecClient{api: api, execUser: defaultExecUser}
 
 	api.On("ContainerExecResize", mock.Anything, "exec-1", mock.Anything).
 		Return(errors.New("resize failed"))
@@ -282,7 +287,7 @@ func (s *DockerSuite) TestHijackedConnReadEOF() {
 
 func (s *DockerSuite) TestExecInspectPid() {
 	api := new(mockDockerExecAPI)
-	c := &DockerExecClient{api: api, osGetenv: os.Getenv}
+	c := &DockerExecClient{api: api, execUser: defaultExecUser}
 
 	api.On("ContainerExecInspect", mock.Anything, "exec-1").
 		Return(containertypes.ExecInspect{Pid: 12345}, nil)
@@ -296,7 +301,7 @@ func (s *DockerSuite) TestExecInspectPid() {
 
 func (s *DockerSuite) TestExecInspectPidError() {
 	api := new(mockDockerExecAPI)
-	c := &DockerExecClient{api: api, osGetenv: os.Getenv}
+	c := &DockerExecClient{api: api, execUser: defaultExecUser}
 
 	api.On("ContainerExecInspect", mock.Anything, "exec-1").
 		Return(containertypes.ExecInspect{}, errors.New("inspect failed"))
@@ -317,10 +322,10 @@ func (s *DockerSuite) TestDefaultShellCmd() {
 
 func (s *DockerSuite) TestExecCreateNoTTY() {
 	api := new(mockDockerExecAPI)
-	c := &DockerExecClient{api: api, osGetenv: func(string) string { return "testuser" }}
+	c := &DockerExecClient{api: api, execUser: func() string { return "1000:1000" }}
 
 	expectedOpts := containertypes.ExecOptions{
-		User:         "testuser",
+		User:         "1000:1000",
 		Cmd:          []string{"ls", "-la"},
 		Tty:          false,
 		AttachStdin:  true,

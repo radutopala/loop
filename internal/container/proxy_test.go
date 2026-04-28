@@ -337,6 +337,8 @@ func (s *ProxySuite) TestRunProxyPolicyWriteErrorFailsRun() {
 	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
 	sys.On("Getenv", "USER").Return("testuser")
 	sys.On("Getenv", mock.Anything).Return("")
+	sys.On("Getuid").Return(1000)
+	sys.On("Getgid").Return(1000)
 	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	sys.On("UserHomeDir").Return("/home/testuser", nil)
 	sys.On("Stat", mock.Anything).Return(nil, os.ErrNotExist)

@@ -76,6 +76,14 @@ func (m *MockSystem) Getenv(key string) string {
 	return m.Called(key).String(0)
 }
 
+func (m *MockSystem) Getuid() int {
+	return m.Called().Int(0)
+}
+
+func (m *MockSystem) Getgid() int {
+	return m.Called().Int(0)
+}
+
 func (m *MockSystem) EvalSymlinks(path string) (string, error) {
 	args := m.Called(path)
 	return args.String(0), args.Error(1)

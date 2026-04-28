@@ -1,11 +1,27 @@
 #!/bin/bash
 set -e
 
-# Create container user matching host user (passed via env by runner)
+# Create container user matching host user (passed via env by runner).
+# HOST_UID/HOST_GID pin the agent to the host's numeric IDs so that
+# `docker exec` from the host (which sends numeric UID:GID via runc to
+# avoid a /etc/passwd race against this useradd) lands on the same
+# /etc/passwd entry the entrypoint creates. Without the pin, useradd
+# auto-picks 1000 while a macOS host's UID is 501 — exec'd shells then
+# run as a UID with no name and bash falls back to "I have no name!".
 AGENT_USER="${HOST_USER:-agent}"
 AGENT_HOME="${HOME:-/home/$AGENT_USER}"
 mkdir -p "$AGENT_HOME"
-useradd -M -d "$AGENT_HOME" -s /bin/bash "$AGENT_USER" 2>/dev/null || true
+USERADD_ARGS="-M -d $AGENT_HOME -s /bin/bash"
+if [ -n "$HOST_GID" ]; then
+    if ! getent group "$HOST_GID" >/dev/null 2>&1; then
+        groupadd --gid "$HOST_GID" "$AGENT_USER" 2>/dev/null || true
+    fi
+    USERADD_ARGS="$USERADD_ARGS --gid $HOST_GID"
+fi
+if [ -n "$HOST_UID" ]; then
+    USERADD_ARGS="$USERADD_ARGS --uid $HOST_UID --non-unique"
+fi
+useradd $USERADD_ARGS "$AGENT_USER" 2>/dev/null || true
 chown "$AGENT_USER":"$AGENT_USER" "$AGENT_HOME" 2>/dev/null || true
 
 # Fix ownership of paths that need to be writable by the agent user
