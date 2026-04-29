@@ -23,7 +23,10 @@ export function removeLeaf(node: PaneNode, id: string): PaneNode | null {
     .map((c) => removeLeaf(c, id))
     .filter((c): c is PaneNode => c !== null);
   if (remaining.length === 0) return null;
-  if (remaining.length === 1) return { ...remaining[0]!, flex: node.flex };
+  // Keep single-child splits intact: collapsing them changes the React tree
+  // shape, which forces SplitPaneLayout's PaneTree to switch from its split
+  // branch to its leaf branch — unmounting the surviving leaf's component
+  // (e.g. EditorPanel) and dropping its in-flight state.
   return { ...node, children: remaining };
 }
 
