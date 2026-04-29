@@ -158,9 +158,7 @@ export function useChatState(
         const data = event.data as ToolUseData;
         setToolActivity({ tool_name: data.tool_name, input: data.input });
         if (data.tool_name === "EnterPlanMode") setMode("plan");
-        // Do not auto-flip to "agent" on ExitPlanMode. ExitPlanCard.handleAccept
-        // flips it when the user accepts; Request Changes keeps plan mode so the
-        // follow-up message is sent in plan context.
+        if (data.tool_name === "ExitPlanMode") setMode("agent");
         return;
       }
       if (event.type === "agent.activity") {

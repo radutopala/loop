@@ -213,7 +213,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
             <ApprovalCard data={gateApproval} onResolved={() => { chatState.clearGateApproval(); scrollToBottom(); }} />
           )}
           {askUserQuestions && !isRunning && channelId && (
-            <AskUserQuestionCard questions={askUserQuestions.questions} channelId={channelId} onSent={() => { chatState.clearAskUser(); scrollToBottom(); }} />
+            <AskUserQuestionCard questions={askUserQuestions.questions} channelId={channelId} mode={chatState.mode} onSent={() => { chatState.clearAskUser(); scrollToBottom(); }} />
           )}
           {exitPlanRequest && !askUserQuestions && !isRunning && channelId && (
             <ExitPlanCard plan={exitPlanRequest} channelId={channelId} setMode={chatState.setMode} onSent={() => { chatState.clearExitPlan(); scrollToBottom(); }} />
@@ -631,7 +631,7 @@ function formatInline(text: string, s: Record<string, React.CSSProperties>): Rea
 
 // ── AskUserQuestion Card ──
 
-function AskUserQuestionCard({ questions, channelId, onSent }: { questions: AskUserQuestion[]; channelId: string; onSent?: () => void }) {
+function AskUserQuestionCard({ questions, channelId, mode, onSent }: { questions: AskUserQuestion[]; channelId: string; mode: "agent" | "plan"; onSent?: () => void }) {
   const { colors } = useTheme();
   const [answers, setAnswers] = useState<Map<number, string>>(new Map());
   const [otherTexts, setOtherTexts] = useState<Map<number, string>>(new Map());
@@ -663,7 +663,7 @@ function AskUserQuestionCard({ questions, channelId, onSent }: { questions: AskU
       ? "Here are my answers:\n" + parts.map((p) => `- ${p}`).join("\n")
       : "No specific answers provided.";
     try {
-      await sendMessage(channelId, content);
+      await sendMessage(channelId, content, mode);
       onSent?.();
     } catch { /* ignore */ }
     setSending(false);
@@ -790,6 +790,8 @@ function ExitPlanCard({ plan, channelId, setMode, onSent }: { plan: ExitPlanMode
   const handleReject = async () => {
     setSending(true);
     try {
+      // ExitPlanMode auto-flipped the pill to "agent"; revert since the user wants more planning.
+      setMode("plan");
       await sendMessage(channelId, "I'd like changes to the plan. Let's discuss.", "plan");
       onSent?.();
     } catch { /* ignore */ }
