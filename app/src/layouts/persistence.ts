@@ -31,7 +31,7 @@ export const DEFAULT_LAYOUT_TYPES: Record<string, LayoutType> = {
 // ---------------------------------------------------------------------------
 
 /** Current schema version. Bump when adding a new migration. */
-const CURRENT_VERSION = 11;
+const CURRENT_VERSION = 12;
 
 /**
  * Each migration transforms a ChannelLayouts from version N-1 to N.
@@ -127,6 +127,20 @@ const migrations: Record<number, (ch: ChannelLayouts) => void> = {
   11: (ch) => {
     for (const layout of Object.values(ch.layouts)) {
       migrateAgentShellPanels(layout);
+    }
+  },
+
+  // v12: File tree split into its own panel. Wrap editor leaves in
+  // Split.h[file-tree, editor] so the default Editor layout still shows them
+  // side-by-side, and refresh the canonical Editor layout from defaults.
+  12: (ch) => {
+    for (const [name, layout] of Object.entries(ch.layouts)) {
+      if (!layout || (layout as any).type === "canvas") continue;
+      ch.layouts[name] = wrapEditorWithFileTree(layout as PaneNode);
+    }
+    const defaults = createDefaultLayouts();
+    if (defaults.layouts["Editor"] && ch.layouts["Editor"]) {
+      ch.layouts["Editor"] = defaults.layouts["Editor"];
     }
   },
 };
@@ -279,7 +293,7 @@ export function createDefaultLayouts(): ChannelLayouts {
     version: CURRENT_VERSION,
     layouts: {
       Chat: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "leaf", id: "git", panel: "git", flex: 50 }] },
-      Editor: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "split", direction: "vertical", flex: 65, children: [{ type: "leaf", id: "editor", panel: "editor", flex: 70 }, { type: "leaf", id: "host-shell-0", panel: "host-shell", flex: 30 }] }, { type: "leaf", id: "chat", panel: "chat", flex: 35 }] },
+      Editor: { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "file-tree", panel: "file-tree", flex: 18 }, { type: "split", direction: "vertical", flex: 52, children: [{ type: "leaf", id: "editor", panel: "editor", flex: 70 }, { type: "leaf", id: "host-shell-0", panel: "host-shell", flex: 30 }] }, { type: "leaf", id: "chat", panel: "chat", flex: 30 }] },
       Memory: { type: "leaf", id: "memory", panel: "memory", flex: 1 },
       Git: { type: "leaf", id: "git", panel: "git", flex: 1 },
       "Browser Chat": { type: "split", direction: "horizontal", flex: 1, children: [{ type: "leaf", id: "chat", panel: "chat", flex: 50 }, { type: "split", direction: "vertical", flex: 50, children: [{ type: "leaf", id: "docker-browser", panel: "docker-browser", flex: 70 }, { type: "leaf", id: "git", panel: "git", flex: 30 }] }] },
@@ -416,6 +430,37 @@ function migrateBrowserPanel(node: any): void {
       migrateBrowserPanel(child);
     }
   }
+}
+
+/** True if any leaf in this subtree is a file-tree panel. */
+function hasFileTreeLeaf(node: PaneNode): boolean {
+  if (node.type === "leaf") return node.panel === "file-tree";
+  return node.children.some(hasFileTreeLeaf);
+}
+
+/**
+ * Wrap any editor leaf in `Split.h[file-tree, editor]` (25/75) so the file
+ * tree shows side-by-side after v12. Skips a layout that already has a
+ * file-tree leaf anywhere in the tree.
+ */
+function wrapEditorWithFileTree(node: PaneNode): PaneNode {
+  if (hasFileTreeLeaf(node)) return node;
+  const transform = (n: PaneNode): PaneNode => {
+    if (n.type === "leaf") {
+      if (n.panel !== "editor") return n;
+      return {
+        type: "split",
+        direction: "horizontal",
+        flex: n.flex,
+        children: [
+          { type: "leaf", id: "file-tree", panel: "file-tree", flex: 25 },
+          { ...n, flex: 75 },
+        ],
+      };
+    }
+    return { ...n, children: n.children.map(transform) };
+  };
+  return transform(node);
 }
 
 /** Recursively rename panel keys "agent" → "docker-agent" and "shell" → "host-shell". */

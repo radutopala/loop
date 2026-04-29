@@ -16,6 +16,7 @@ import { EmptyLayoutPicker } from "../../splitPane/AddPanelButton";
 import { Terminal, getCloseForInstance } from "../panels/Terminal";
 import { ChatView } from "../chat/ChatView";
 import { EditorPanel } from "../panels/EditorPanel";
+import { FileTreePanel } from "../panels/FileTreePanel";
 import { MemoryPanel } from "../panels/MemoryPanel";
 import { GitPanel } from "../panels/GitPanel";
 import { BrowserPanel } from "../panels/BrowserPanel";
@@ -30,6 +31,7 @@ import { killAgentContainer } from "../../api/loopApi";
 import { ChannelHeaderInfo } from "./ChannelHeaderInfo";
 import { HeaderBranchPicker } from "./HeaderBranchPicker";
 import { useChatState } from "../../hooks/useChatState";
+import { useEditorState } from "../../hooks/useEditorState";
 import type { ActiveChatState, ChatEventListener } from "../../hooks/useChatStateStore";
 import { fonts } from "../../theme";
 import type { ColorPalette } from "../../theme";
@@ -202,6 +204,14 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
   const chatState = useChatState(channelId, channel.agent_running, {
     initialState: initialChatState,
     onUnmount: chatStateUnmount,
+    subscribeChatEvents,
+  });
+
+  // Editor + file-tree shared state. Hoisted here so both panels (rendered
+  // independently inside the layout) stay in sync, and so tab/cursor state
+  // survives layout switches.
+  const editorState = useEditorState(channelId, {
+    tabsStorageKey: "loop-layout-editor-tabs",
     subscribeChatEvents,
   });
 
@@ -573,7 +583,19 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               dirPath={dirPath}
               branch={branch}
               embedded
-              tabsStorageKey="loop-layout-editor-tabs"
+              editorState={editorState}
+              onClose={() => handleRemoveLeaf(leaf.id)}
+            />
+          );
+        case "file-tree":
+          return (
+            <FileTreePanel
+              key={`layout-file-tree-${channelId}`}
+              channelId={channelId}
+              dirPath={dirPath}
+              branch={branch}
+              embedded
+              editorState={editorState}
               onClose={() => handleRemoveLeaf(leaf.id)}
             />
           );
@@ -722,7 +744,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
           return null;
       }
     },
-    [channelId, chatState, dirPath, branch, scrollToMessageId, onScrollComplete, openMemoryFile, onStatusChange, handlePaneStatus, handleRemoveLeaf],
+    [channelId, chatState, editorState, dirPath, branch, scrollToMessageId, onScrollComplete, openMemoryFile, onStatusChange, handlePaneStatus, handleRemoveLeaf],
   );
 
   return (

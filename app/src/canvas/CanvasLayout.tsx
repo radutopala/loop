@@ -373,6 +373,7 @@ const MINIMAP_PADDING = 8;
 const PANEL_COLORS: Record<PanelType, string> = {
   chat: "#4a9eff",
   editor: "#a78bfa",
+  "file-tree": "#a78bfa",
   memory: "#34d399",
   git: "#fbbf24",
   "docker-agent": "#f87171",

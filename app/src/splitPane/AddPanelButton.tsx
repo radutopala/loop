@@ -13,6 +13,11 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
       <polyline points="13 2 13 9 20 9" />
     </svg>
   ),
+  "file-tree": (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z" />
+    </svg>
+  ),
   memory: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
       <circle cx="12" cy="12" r="10" />
@@ -115,7 +120,8 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
 
 const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   chat: "Chat with the agent",
-  editor: "Browse and edit files",
+  editor: "Edit open files in tabs",
+  "file-tree": "Workspace file tree",
   memory: "Agent memory explorer",
   git: "Git diff viewer",
   "docker-agent": "Docker isolated terminal",
