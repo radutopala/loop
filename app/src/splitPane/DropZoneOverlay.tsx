@@ -25,9 +25,13 @@ export function DropZoneOverlay({ leafId, headerHeight, onDrop }: DropZoneOverla
     const onEnd = () => { setIsDragging(false); setIsDragOver(false); setActiveZone(null); };
     document.addEventListener(DRAG_START_EVENT, onStart);
     document.addEventListener(DRAG_END_EVENT, onEnd);
+    document.addEventListener("dragend", onEnd);
+    document.addEventListener("drop", onEnd);
     return () => {
       document.removeEventListener(DRAG_START_EVENT, onStart);
       document.removeEventListener(DRAG_END_EVENT, onEnd);
+      document.removeEventListener("dragend", onEnd);
+      document.removeEventListener("drop", onEnd);
     };
   }, []);
 
@@ -64,6 +68,7 @@ export function DropZoneOverlay({ leafId, headerHeight, onDrop }: DropZoneOverla
     }
     setIsDragOver(false);
     setActiveZone(null);
+    emitLayoutDragEnd();
   }, [leafId, onDrop, getDropPosition]);
 
   const active = isDragging;

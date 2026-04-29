@@ -92,6 +92,7 @@ export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, isM
     if (dragId && dragId !== leafId) {
       onDrop(dragId, leafId, "center");
     }
+    emitLayoutDragEnd();
   }, [leafId, onDrop]);
 
   return (
