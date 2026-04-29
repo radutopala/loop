@@ -94,3 +94,19 @@ export async function createDir(channelId: string, path: string, root?: number):
   });
   if (!res.ok) throw new Error(`Failed to create directory: ${res.statusText}`);
 }
+
+// ── File search (for @file picker) ──
+
+export interface FileSearchResult {
+  root_index: number;
+  rel_path: string;
+  name: string;
+}
+
+export async function searchFiles(channelId: string, q: string, limit = 30): Promise<FileSearchResult[]> {
+  const params = new URLSearchParams({ q, limit: String(limit) });
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/files/search?${params}`);
+  if (!res.ok) return [];
+  const data: { results: FileSearchResult[] } = await res.json();
+  return data.results ?? [];
+}

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"fmt"
 	"io/fs"
 	"net/http"
@@ -259,6 +260,206 @@ func (s *ServerSuite) TestListFiles_MockReadDir() {
 	rec := s.testRequest("GET", "/api/channels/ch-1/files?path=.", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), `"name":"mock.go"`)
+}
+
+// ── handleSearchFiles ──
+
+func (s *ServerSuite) TestSearchFiles_Success() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(tmpDir, "src"), 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("package main"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "src", "app.go"), []byte("package src"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/files/search?q=app", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	require.Contains(s.T(), body, `"rel_path":"src/app.go"`)
+	require.Contains(s.T(), body, `"name":"app.go"`)
+	require.Contains(s.T(), body, `"root_index":0`)
+}
+
+func (s *ServerSuite) TestSearchFiles_EmptyQReturnsAll() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "a.txt"), []byte("a"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "b.txt"), []byte("b"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/files/search?q=", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	require.Contains(s.T(), body, `"rel_path":"a.txt"`)
+	require.Contains(s.T(), body, `"rel_path":"b.txt"`)
+}
+
+func (s *ServerSuite) TestSearchFiles_BasenamePrefixRanksFirst() {
+	tmpDir := s.T().TempDir()
+	// "main.go" — basename starts with "ma".
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("a"), 0644))
+	// "schema.go" — contains "ma" inside relPath but basename does not start with it.
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "schema.go"), []byte("b"), 0644))
+	// "marshall.go" — basename starts with "ma".
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "marshall.go"), []byte("c"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/files/search?q=ma", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	body := rec.Body.String()
+
+	// Basename-prefix matches should sort before contains-only.
+	mainIdx := indexOf(body, `"name":"main.go"`)
+	marshIdx := indexOf(body, `"name":"marshall.go"`)
+	schemaIdx := indexOf(body, `"name":"schema.go"`)
+	require.GreaterOrEqual(s.T(), schemaIdx, 0)
+	require.GreaterOrEqual(s.T(), mainIdx, 0)
+	require.GreaterOrEqual(s.T(), marshIdx, 0)
+	require.Less(s.T(), mainIdx, schemaIdx)
+	require.Less(s.T(), marshIdx, schemaIdx)
+}
+
+func (s *ServerSuite) TestSearchFiles_FuzzyMatch() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "matrix.go"), []byte("m"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	// "mtx" appears as subsequence in "matrix" but not as a substring.
+	rec := s.testRequest("GET", "/api/channels/ch-1/files/search?q=mtx", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), `"name":"matrix.go"`)
+}
+
+func (s *ServerSuite) TestSearchFiles_SkipsHardCodedDirs() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(tmpDir, "node_modules"), 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "node_modules", "secret.go"), []byte("x"), 0644))
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(tmpDir, ".git"), 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, ".git", "secret.go"), []byte("x"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "secret.go"), []byte("x"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/files/search?q=secret", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	// The root-level secret.go is included.
+	require.Contains(s.T(), body, `"rel_path":"secret.go"`)
+	// The node_modules/secret.go and .git/secret.go are skipped.
+	require.NotContains(s.T(), body, "node_modules")
+	require.NotContains(s.T(), body, ".git")
+}
+
+func (s *ServerSuite) TestSearchFiles_GitignoreFilter() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte("secret-*.txt\n"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "secret-token.txt"), []byte("ignored"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "public.txt"), []byte("ok"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/files/search?q=", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	require.Contains(s.T(), body, `"rel_path":"public.txt"`)
+	require.NotContains(s.T(), body, "secret-token.txt")
+}
+
+func (s *ServerSuite) TestSearchFiles_MultiRoot() {
+	primary := s.T().TempDir()
+	secondary := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(primary, "p.go"), []byte("a"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(secondary, "s.go"), []byte("b"), 0644))
+
+	// Project config in the primary dir adds the secondary as an extra root.
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(primary, ".loop"), 0755))
+	cfgJSON := fmt.Sprintf(`{"extra_dirs": [%q]}`, secondary)
+	require.NoError(s.T(), os.WriteFile(filepath.Join(primary, ".loop", "config.json"), []byte(cfgJSON), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: primary}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/files/search?q=", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	require.Contains(s.T(), body, `"rel_path":"p.go"`)
+	require.Contains(s.T(), body, `"rel_path":"s.go"`)
+	require.Contains(s.T(), body, `"root_index":0`)
+	require.Contains(s.T(), body, `"root_index":1`)
+}
+
+func (s *ServerSuite) TestSearchFiles_LimitCapped() {
+	tmpDir := s.T().TempDir()
+	for i := range 10 {
+		require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, fmt.Sprintf("f%02d.txt", i)), []byte("x"), 0644))
+	}
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/files/search?q=&limit=3", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp fileSearchResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(s.T(), resp.Results, 3)
+}
+
+func (s *ServerSuite) TestSearchFiles_InvalidLimit() {
+	tmpDir := s.T().TempDir()
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/files/search?limit=notanumber", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestSearchFiles_ChannelNotFound() {
+	s.store.On("GetChannel", mock.Anything, "missing").
+		Return((*db.Channel)(nil), nil)
+
+	rec := s.testRequest("GET", "/api/channels/missing/files/search?q=foo", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestSearchFiles_StoreNotConfigured() {
+	srv := nilServer()
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/files/search", srv.handleSearchFiles)
+
+	req, _ := http.NewRequest("GET", "/api/channels/ch-1/files/search?q=foo", nil)
+	w := newRecorder()
+	mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+// ── fuzzyMatchSeq ──
+
+func (s *ServerSuite) TestFuzzyMatchSeq() {
+	require.True(s.T(), fuzzyMatchSeq("", "anything"))
+	require.True(s.T(), fuzzyMatchSeq("abc", "aXbYcZ"))
+	require.True(s.T(), fuzzyMatchSeq("ABC", "axbycz"))
+	require.False(s.T(), fuzzyMatchSeq("abc", "acb"))
+	require.False(s.T(), fuzzyMatchSeq("abc", ""))
+}
+
+// ── gitignoreMatch ──
+
+func (s *ServerSuite) TestGitignoreMatch() {
+	patterns := []string{"*.log", "secret-*.txt"}
+	require.True(s.T(), gitignoreMatch(patterns, "debug.log"))
+	require.True(s.T(), gitignoreMatch(patterns, "logs/debug.log"))
+	require.True(s.T(), gitignoreMatch(patterns, "secret-token.txt"))
+	require.False(s.T(), gitignoreMatch(patterns, "main.go"))
+	require.False(s.T(), gitignoreMatch(nil, "anything.txt"))
 }
 
 // fakeDirEntry implements fs.DirEntry for testing.

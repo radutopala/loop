@@ -214,6 +214,185 @@ func listDir(readDir func(string) ([]fs.DirEntry, error), absPath string) ([]fil
 	return entries, nil
 }
 
+// fileSearchResult is a single match returned by handleSearchFiles.
+type fileSearchResult struct {
+	RootIndex int    `json:"root_index"`
+	RelPath   string `json:"rel_path"`
+	Name      string `json:"name"`
+}
+
+type fileSearchResponse struct {
+	Results []fileSearchResult `json:"results"`
+}
+
+// Directories that are always skipped during file search. Hard-coded; cheap and covers the common cases.
+var fileSearchSkipDirs = map[string]bool{
+	".git":         true,
+	"node_modules": true,
+	"vendor":       true,
+	".next":        true,
+	"dist":         true,
+	"build":        true,
+	"__pycache__":  true,
+}
+
+// fuzzyMatchSeq is a sequential, case-insensitive fuzzy match: every rune of q
+// must appear in s in order. Empty q always matches.
+func fuzzyMatchSeq(q, s string) bool {
+	if q == "" {
+		return true
+	}
+	qr := []rune(strings.ToLower(q))
+	i := 0
+	for _, c := range strings.ToLower(s) {
+		if c == qr[i] {
+			i++
+			if i == len(qr) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// loadGitignorePatterns reads <root>/.gitignore and returns the simple patterns
+// (skipping comments, blanks, and negations). Best-effort; nested .gitignore
+// files are not consulted.
+func loadGitignorePatterns(sys serverSystem, root string) []string {
+	data, err := sys.ReadFile(filepath.Join(root, ".gitignore"))
+	if err != nil {
+		return nil
+	}
+	var out []string
+	for line := range strings.SplitSeq(string(data), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "!") {
+			continue
+		}
+		// Trim leading "/" so simple patterns work with our basename matcher.
+		line = strings.TrimPrefix(line, "/")
+		// Trim trailing slash for directory-only patterns; we treat them the same.
+		line = strings.TrimSuffix(line, "/")
+		if line == "" {
+			continue
+		}
+		out = append(out, line)
+	}
+	return out
+}
+
+// gitignoreMatch checks whether relPath (or any ancestor segment) matches any
+// of the supplied patterns. We match the basename and the full relPath against
+// each pattern via filepath.Match.
+func gitignoreMatch(patterns []string, relPath string) bool {
+	if len(patterns) == 0 {
+		return false
+	}
+	base := filepath.Base(relPath)
+	for _, pat := range patterns {
+		if ok, _ := filepath.Match(pat, base); ok {
+			return true
+		}
+		if ok, _ := filepath.Match(pat, relPath); ok {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *Server) handleSearchFiles(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel listing not configured") {
+		return
+	}
+
+	channelID := r.PathValue("id")
+	limit, ok := parseQueryInt(w, r, "limit", 30, 100)
+	if !ok {
+		return
+	}
+	q := r.URL.Query().Get("q")
+
+	allPaths, err := s.allDirPaths(r.Context(), channelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	results := make([]fileSearchResult, 0, limit)
+	qLower := strings.ToLower(q)
+
+	for rootIdx, rootAbs := range allPaths {
+		if rootAbs == "" {
+			continue
+		}
+		patterns := loadGitignorePatterns(s.sys, rootAbs)
+		err := s.sys.WalkDir(rootAbs, func(path string, d fs.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				// Skip unreadable subtrees but keep walking siblings.
+				if d != nil && d.IsDir() {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if path == rootAbs {
+				return nil
+			}
+			rel, err := filepath.Rel(rootAbs, path)
+			if err != nil {
+				return nil
+			}
+			if d.IsDir() {
+				if fileSearchSkipDirs[d.Name()] {
+					return fs.SkipDir
+				}
+				if gitignoreMatch(patterns, rel) {
+					return fs.SkipDir
+				}
+				return nil
+			}
+			if gitignoreMatch(patterns, rel) {
+				return nil
+			}
+			if !fuzzyMatchSeq(q, rel) {
+				return nil
+			}
+			results = append(results, fileSearchResult{
+				RootIndex: rootIdx,
+				RelPath:   filepath.ToSlash(rel),
+				Name:      d.Name(),
+			})
+			return nil
+		})
+		if err != nil {
+			s.logger.Warn("file search walk error", "root", rootAbs, "err", err)
+		}
+	}
+
+	// Rank: (a) basename starts with q, (b) relPath contains q, (c) fuzzy-only.
+	sort.SliceStable(results, func(i, j int) bool {
+		return rankFileSearchResult(results[i], qLower) < rankFileSearchResult(results[j], qLower)
+	})
+	if len(results) > limit {
+		results = results[:limit]
+	}
+
+	writeHTTPJSON(w, http.StatusOK, fileSearchResponse{Results: results}, s.logger)
+}
+
+func rankFileSearchResult(r fileSearchResult, qLower string) int {
+	if qLower == "" {
+		return 2
+	}
+	nameLower := strings.ToLower(r.Name)
+	if strings.HasPrefix(nameLower, qLower) {
+		return 0
+	}
+	if strings.Contains(strings.ToLower(r.RelPath), qLower) {
+		return 1
+	}
+	return 2
+}
+
 const maxFileSize = 5 * 1024 * 1024 // 5MB
 
 func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {

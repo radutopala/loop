@@ -62,6 +62,7 @@ type serverSystem interface {
 	UserHomeDir() (string, error)
 	Open(name string) (*os.File, error)
 	EvalSymlinks(path string) (string, error)
+	WalkDir(root string, fn fs.WalkDirFunc) error
 }
 
 // Server exposes a lightweight HTTP API for task CRUD operations.
@@ -268,6 +269,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/readme", s.handleGetReadme)
 	mux.HandleFunc("GET /api/channels/{id}/roots", s.handleListRoots)
 	mux.HandleFunc("GET /api/channels/{id}/files", s.handleListFiles)
+	mux.HandleFunc("GET /api/channels/{id}/files/search", s.handleSearchFiles)
 	mux.HandleFunc("GET /api/channels/{id}/file", s.handleReadFile)
 	mux.HandleFunc("PUT /api/channels/{id}/file", s.handleWriteFile)
 	mux.HandleFunc("DELETE /api/channels/{id}/file", s.handleDeleteFile)

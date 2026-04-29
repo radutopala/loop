@@ -571,6 +571,7 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               key={`layout-chat-${channelId}`}
               channelId={channelId}
               chatState={chatState}
+              roots={editorState.roots}
               scrollToMessageId={scrollToMessageId}
               onScrollComplete={onScrollComplete}
             />

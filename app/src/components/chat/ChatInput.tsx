@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../../types";
 import { sendCommand, sendMessage } from "../../api/loopApi";
 import { fetchShortcuts, type PromptShortcut } from "../../api/configApi";
+import { searchFiles, type FileSearchResult, type RootEntry } from "../../api/files";
 import { fonts } from "../../theme";
 import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
@@ -204,6 +205,7 @@ const SEND_MODE_KEY = "loop-send-mode";
 export interface ChatInputProps {
   channelId: string;
   messages: Message[];
+  roots?: RootEntry[];
   isRunning?: boolean;
   mode: "agent" | "plan";
   setMode: (m: "agent" | "plan") => void;
@@ -217,7 +219,7 @@ function buildQuotePrefix(msg: Message): string {
   return msg.content.split("\n").map(l => `> ${l}`).join("\n") + "\n\n";
 }
 
-export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDismissCards, onSent, quotedMessage, onClearQuote }: ChatInputProps) {
+export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode, onDismissCards, onSent, quotedMessage, onClearQuote }: ChatInputProps) {
   const { colors } = useTheme();
   const styles = buildInputStyles(colors);
   const modeStyles = buildModeStyles(colors);
@@ -248,6 +250,15 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const cmdDropdownRef = useRef<HTMLDivElement>(null);
   const shortcutDropdownRef = useRef<HTMLDivElement>(null);
+
+  // File picker (`@<partial>`).
+  const [showFilePicker, setShowFilePicker] = useState(false);
+  const [filePickerResults, setFilePickerResults] = useState<FileSearchResult[]>([]);
+  const [filePickerIdx, setFilePickerIdx] = useState(0);
+  const [fileAtIdx, setFileAtIdx] = useState(-1);
+  const fileSearchTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const fileSearchSeqRef = useRef(0);
+  const filePickerDropdownRef = useRef<HTMLDivElement>(null);
 
   // ── Message history (ArrowUp / ArrowDown) ──
   // Stores user-sent message contents for this channel; -1 = composing new text.
@@ -298,6 +309,21 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
     const item = container.children[shortcutSelectedIdx] as HTMLElement | undefined;
     item?.scrollIntoView({ block: "nearest" });
   }, [shortcutSelectedIdx, showShortcuts]);
+
+  // Scroll selected file picker item into view.
+  useEffect(() => {
+    const container = filePickerDropdownRef.current;
+    if (!container || !showFilePicker) return;
+    const item = container.children[filePickerIdx] as HTMLElement | undefined;
+    item?.scrollIntoView({ block: "nearest" });
+  }, [filePickerIdx, showFilePicker]);
+
+  // Cancel any pending file-search debounce on unmount.
+  useEffect(() => {
+    return () => {
+      if (fileSearchTimerRef.current) clearTimeout(fileSearchTimerRef.current);
+    };
+  }, []);
 
   // Focus textarea when a quote is set.
   useEffect(() => {
@@ -433,21 +459,46 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
       // Check for shortcut autocomplete.
       updateShortcutDropdown(val);
 
-      // Check for @mention autocomplete.
+      // Check for @mention / @file autocomplete.
       const pos = e.target.selectionStart;
       const before = val.slice(0, pos);
       const atIdx = before.lastIndexOf("@");
       if (atIdx !== -1 && (atIdx === 0 || before[atIdx - 1] === " " || before[atIdx - 1] === "\n")) {
         const partial = before.slice(atIdx + 1);
-        if ("LoopBot".toLowerCase().startsWith(partial.toLowerCase()) && !partial.includes(" ")) {
-          setShowMention(true);
-          setMentionIdx(atIdx);
-          return;
+        if (!partial.includes(" ") && !partial.includes("\n")) {
+          const matchesLoopBot = "LoopBot".toLowerCase().startsWith(partial.toLowerCase());
+          if (!roots || roots.length === 0) {
+            if (matchesLoopBot) {
+              setShowMention(true);
+              setMentionIdx(atIdx);
+              setShowFilePicker(false);
+              return;
+            }
+          } else {
+            setFileAtIdx(atIdx);
+            if (fileSearchTimerRef.current) clearTimeout(fileSearchTimerRef.current);
+            const seq = ++fileSearchSeqRef.current;
+            fileSearchTimerRef.current = setTimeout(async () => {
+              const fileResults = await searchFiles(channelId, partial, 30);
+              if (seq !== fileSearchSeqRef.current) return;
+              const merged: FileSearchResult[] = [];
+              if (matchesLoopBot) {
+                merged.push({ root_index: -1, rel_path: "LoopBot", name: "@LoopBot mention" });
+              }
+              merged.push(...fileResults);
+              setFilePickerResults(merged);
+              setFilePickerIdx(0);
+              setShowFilePicker(merged.length > 0);
+            }, 120);
+            setShowMention(false);
+            return;
+          }
         }
       }
       setShowMention(false);
+      setShowFilePicker(false);
     },
-    [updateCommandDropdown, updateShortcutDropdown],
+    [updateCommandDropdown, updateShortcutDropdown, channelId, roots],
   );
 
   const acceptCommand = useCallback((cmd: CommandDef) => {
@@ -480,6 +531,32 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
       }
     });
   }, [mentionIdx, text]);
+
+  // Replace `@<partial>` with `@<rel-path>` for the primary root, or
+  // `@<root-name>/<rel-path>` for non-primary roots — Claude Code natively
+  // resolves `@<rel-path>` against its working directory (the primary root).
+  const acceptFile = useCallback((r: FileSearchResult) => {
+    if (fileAtIdx < 0) return;
+    const rootName = roots?.find((x) => x.index === r.root_index)?.name ?? "";
+    const token = r.root_index === -1
+      ? `@LoopBot `
+      : r.root_index === 0 || !rootName
+        ? `@${r.rel_path} `
+        : `@${rootName}/${r.rel_path} `;
+    const pos = inputRef.current?.selectionStart ?? text.length;
+    const newText = text.slice(0, fileAtIdx) + token + text.slice(pos);
+    setText(newText);
+    draftText.set(channelId, newText);
+    setShowFilePicker(false);
+    requestAnimationFrame(() => {
+      const el = inputRef.current;
+      if (el) {
+        const cursorPos = fileAtIdx + token.length;
+        el.focus();
+        el.setSelectionRange(cursorPos, cursorPos);
+      }
+    });
+  }, [fileAtIdx, text, channelId, roots]);
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -529,6 +606,29 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
           return;
         }
       }
+      // File picker (`@<partial>`) navigation.
+      if (showFilePicker && filePickerResults.length > 0) {
+        if (e.key === "ArrowDown") {
+          e.preventDefault();
+          setFilePickerIdx((i) => Math.min(i + 1, filePickerResults.length - 1));
+          return;
+        }
+        if (e.key === "ArrowUp") {
+          e.preventDefault();
+          setFilePickerIdx((i) => Math.max(i - 1, 0));
+          return;
+        }
+        if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+          e.preventDefault();
+          const r = filePickerResults[filePickerIdx];
+          if (r) acceptFile(r);
+          return;
+        }
+        if (e.key === "Escape") {
+          setShowFilePicker(false);
+          return;
+        }
+      }
       // Mention picker.
       if (showMention && (e.key === "Tab" || e.key === "Enter")) {
         e.preventDefault();
@@ -540,7 +640,7 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
         return;
       }
       // Message history navigation.
-      if (e.key === "ArrowUp" && !showCommands && !showShortcuts && !showMention) {
+      if (e.key === "ArrowUp" && !showCommands && !showShortcuts && !showMention && !showFilePicker) {
         const el = inputRef.current;
         if (el && el.selectionStart === 0 && el.selectionEnd === 0) {
           const hist = historyRef.current;
@@ -562,7 +662,7 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
           return;
         }
       }
-      if (e.key === "ArrowDown" && !showCommands && !showShortcuts && !showMention) {
+      if (e.key === "ArrowDown" && !showCommands && !showShortcuts && !showMention && !showFilePicker) {
         const el = inputRef.current;
         if (el && el.selectionStart === el.value.length && el.selectionEnd === el.value.length && historyIdxRef.current !== -1) {
           e.preventDefault();
@@ -595,7 +695,7 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
         }
       }
     },
-    [handleSend, sendMode, text, channelId, showMention, acceptMention, showCommands, filteredCommands, cmdSelectedIdx, acceptCommand, showShortcuts, filteredShortcuts, shortcutSelectedIdx, acceptShortcut],
+    [handleSend, sendMode, text, channelId, showMention, acceptMention, showCommands, filteredCommands, cmdSelectedIdx, acceptCommand, showShortcuts, filteredShortcuts, shortcutSelectedIdx, acceptShortcut, showFilePicker, filePickerResults, filePickerIdx, acceptFile],
   );
 
   return (
@@ -666,6 +766,34 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
           </div>
         </div>
       )}
+      {showFilePicker && filePickerResults.length > 0 && (
+        <div style={commandStyles.dropdown}>
+          <div ref={filePickerDropdownRef} style={commandStyles.scrollArea}>
+            {filePickerResults.map((r, i) => {
+              const rootName = roots?.find((x) => x.index === r.root_index)?.name ?? "";
+              const display = r.root_index === -1
+                ? `@LoopBot`
+                : r.root_index === 0 || !rootName
+                  ? `@${r.rel_path}`
+                  : `@${rootName}/${r.rel_path}`;
+              return (
+                <div
+                  key={`${r.root_index}:${r.rel_path}`}
+                  style={{
+                    ...commandStyles.item,
+                    backgroundColor: i === filePickerIdx ? colors.selectedBg : "transparent",
+                  }}
+                  onMouseDown={(e) => { e.preventDefault(); acceptFile(r); }}
+                  onMouseEnter={() => setFilePickerIdx(i)}
+                >
+                  <div style={commandStyles.name}>{display}</div>
+                  <div style={commandStyles.desc}>{r.name}</div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
       {showMention && (
         <div style={mentionStyles.dropdown} onMouseDown={(e) => { e.preventDefault(); acceptMention(); }}>
           <div style={mentionStyles.item}>
@@ -679,7 +807,7 @@ export function ChatInput({ channelId, messages, isRunning, mode, setMode, onDis
         value={text}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
-        placeholder={`Ask Loop anything, / for commands${shortcuts.length > 0 ? ", # for shortcuts" : ""} — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter to ${sendMode === "interrupt" ? "queue" : "interrupt"}`}
+        placeholder={`Ask Loop anything, / for commands, @ for files${shortcuts.length > 0 ? ", # for shortcuts" : ""} — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter to ${sendMode === "interrupt" ? "queue" : "interrupt"}`}
         rows={3}
         disabled={sending}
       />
