@@ -69,8 +69,9 @@ export function useChatStateStore({
   const unreadIdsRef = useRef(new Set<string>());
   const [unreadCount, setUnreadCount] = useState(0);
 
-  // Chat event listener registered by useChatState for the selected channel.
-  const chatListenerRef = useRef<ChatEventListener | null>(null);
+  // Chat event listeners registered by panels (useChatState, useEditorState, …)
+  // for the selected channel. A Set so multiple subscribers can coexist.
+  const chatListenersRef = useRef<Set<ChatEventListener>>(new Set());
 
   // Keep a ref to selectedId so the WS message handler always sees the latest.
   const selectedIdRef = useRef(selectedId);
@@ -222,7 +223,7 @@ export function useChatStateStore({
       // (not channelId) ensures that agent.status events routed to a
       // thread via thread_id don't set isRunning on the parent view.
       if (stateTarget && stateTarget === selectedIdRef.current) {
-        chatListenerRef.current?.(wsEvent);
+        for (const listener of chatListenersRef.current) listener(wsEvent);
       }
 
       // Forward selected channel + global events to App-level handler.
@@ -293,11 +294,9 @@ export function useChatStateStore({
    */
   const subscribeChatEvents = useCallback(
     (listener: ChatEventListener): (() => void) => {
-      chatListenerRef.current = listener;
+      chatListenersRef.current.add(listener);
       return () => {
-        if (chatListenerRef.current === listener) {
-          chatListenerRef.current = null;
-        }
+        chatListenersRef.current.delete(listener);
       };
     },
     [],
