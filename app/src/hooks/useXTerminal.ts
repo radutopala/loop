@@ -71,10 +71,18 @@ export function useXTerminal({
 }: UseXTerminalOptions) {
   const xtermRef = useRef<import("@xterm/xterm").Terminal | null>(null);
   const fitAddonRef = useRef<import("@xterm/addon-fit").FitAddon | null>(null);
+  // Writes that arrive before the dynamic xterm import resolves are queued
+  // here and flushed once the terminal is ready. Without this, a fast attach
+  // (re-mount → ws open → backend replays history) would drop the history
+  // buffer because xtermRef.current is still null.
+  const pendingWritesRef = useRef<(Uint8Array | string)[]>([]);
 
   const write = useCallback((data: Uint8Array | string) => {
     const term = xtermRef.current;
-    if (!term) return;
+    if (!term) {
+      pendingWritesRef.current.push(data);
+      return;
+    }
     term.write(data, () => {
       // Always scroll to bottom after write. Claude CLI uses cursor
       // positioning for its status line which can leave the viewport
@@ -129,6 +137,15 @@ export function useXTerminal({
       fitAddon.fit();
 
       xtermRef.current = term;
+
+      // Flush any writes that arrived before the dynamic import resolved.
+      if (pendingWritesRef.current.length > 0) {
+        for (const data of pendingWritesRef.current) {
+          term.write(data);
+        }
+        pendingWritesRef.current = [];
+        term.scrollToBottom();
+      }
 
       onResize(term.cols, term.rows);
 
