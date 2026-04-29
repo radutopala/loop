@@ -532,17 +532,14 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
     });
   }, [mentionIdx, text]);
 
-  // Replace `@<partial>` with `@<rel-path>` for the primary root, or
-  // `@<root-name>/<rel-path>` for non-primary roots — Claude Code natively
-  // resolves `@<rel-path>` against its working directory (the primary root).
+  // Replace `@<partial>` with `@<absolute-path>`. Workspaces can have multiple
+  // roots, so a relative path is ambiguous; the agent container mounts each
+  // root at its host path, so absolute paths resolve correctly inside it.
   const acceptFile = useCallback((r: FileSearchResult) => {
     if (fileAtIdx < 0) return;
-    const rootName = roots?.find((x) => x.index === r.root_index)?.name ?? "";
-    const token = r.root_index === -1
-      ? `@LoopBot `
-      : r.root_index === 0 || !rootName
-        ? `@${r.rel_path} `
-        : `@${rootName}/${r.rel_path} `;
+    const root = roots?.find((x) => x.index === r.root_index);
+    const absPath = root ? `${root.path.replace(/\/$/, "")}/${r.rel_path}` : r.rel_path;
+    const token = r.root_index === -1 ? `@LoopBot ` : `@${absPath} `;
     const pos = inputRef.current?.selectionStart ?? text.length;
     const newText = text.slice(0, fileAtIdx) + token + text.slice(pos);
     setText(newText);
