@@ -462,6 +462,129 @@ func (s *ServerSuite) TestGitignoreMatch() {
 	require.False(s.T(), gitignoreMatch(nil, "anything.txt"))
 }
 
+func (s *ServerSuite) TestGitignoreMatch_RelPathOnly() {
+	// Pattern with a path separator only matches relPath, not basename.
+	patterns := []string{"subdir/*.txt"}
+	require.True(s.T(), gitignoreMatch(patterns, "subdir/foo.txt"))
+	require.False(s.T(), gitignoreMatch(patterns, "foo.txt"))
+}
+
+// ── loadGitignorePatterns ──
+
+func (s *ServerSuite) TestLoadGitignorePatterns_EmptyAfterTrim() {
+	tmpDir := s.T().TempDir()
+	// Lines that become empty after trimming leading "/" and trailing "/"
+	// must be skipped (no panic, no empty pattern in output).
+	content := "/\n//\n*.log\n"
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte(content), 0644))
+	patterns := loadGitignorePatterns(s.srv.sys, tmpDir)
+	require.Equal(s.T(), []string{"*.log"}, patterns)
+}
+
+// ── handleSearchFiles edge cases ──
+
+func (s *ServerSuite) TestSearchFiles_FuzzyOnlyRanksLast() {
+	tmpDir := s.T().TempDir()
+	// "azbcz" fuzzy-matches "abz" (a→a, b→b, z→z) but neither starts with
+	// "abz" nor contains it as a contiguous substring → rank 2 (fuzzy-only).
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "abzfile.txt"), []byte("x"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "azbcz.txt"), []byte("x"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/files/search?q=abz", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp fileSearchResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(s.T(), resp.Results, 2)
+	// Basename-prefix wins over fuzzy-only.
+	require.Equal(s.T(), "abzfile.txt", resp.Results[0].RelPath)
+	require.Equal(s.T(), "azbcz.txt", resp.Results[1].RelPath)
+}
+
+func (s *ServerSuite) TestSearchFiles_DirGitignored() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(tmpDir, "secrets"), 0755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "secrets", "passwd.txt"), []byte("x"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "ok.txt"), []byte("x"), 0644))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, ".gitignore"), []byte("secrets\n"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/files/search?q=", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	require.Contains(s.T(), body, `"rel_path":"ok.txt"`)
+	require.NotContains(s.T(), body, "passwd.txt")
+}
+
+func (s *ServerSuite) TestSearchFiles_EmptyExtraDir() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(tmpDir, ".loop"), 0755))
+	// Project config with an empty extra_dirs entry — handler must skip the
+	// empty rootAbs without crashing.
+	require.NoError(s.T(), os.WriteFile(
+		filepath.Join(tmpDir, ".loop", "config.json"),
+		[]byte(`{"extra_dirs":[""]}`),
+		0644,
+	))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte("x"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/files/search?q=main", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "main.go")
+}
+
+func (s *ServerSuite) TestSearchFiles_WalkDirReturnsError() {
+	s.sys.Override("WalkDir", mock.Anything, mock.Anything).Return(fmt.Errorf("injected walk error"))
+	s.sys.Override("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
+	s.srv.sys = &realOpenSys{s.sys}
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: "/tmp/fake"}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/files/search?q=foo", "")
+	// Walk errors are logged but not surfaced; the response is still 200 with empty results.
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp fileSearchResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Empty(s.T(), resp.Results)
+}
+
+func (s *ServerSuite) TestSearchFiles_WalkCallbackErrorPaths() {
+	// Mock WalkDir to invoke fn three times: once with walkErr+dir (→ SkipDir),
+	// once with walkErr+file (→ nil), once with walkErr+nil (→ nil), and once
+	// with a non-absolute path so filepath.Rel returns an error.
+	call := s.sys.Override("WalkDir", mock.Anything, mock.Anything).Return(nil)
+	call.Run(func(args mock.Arguments) {
+		root := args.String(0)
+		fn := args.Get(1).(fs.WalkDirFunc)
+		injectedErr := fmt.Errorf("injected callback error")
+		_ = fn(filepath.Join(root, "subdir"), fakeDirEntry{name: "subdir", isDir: true}, injectedErr)
+		_ = fn(filepath.Join(root, "broken.txt"), fakeDirEntry{name: "broken.txt"}, injectedErr)
+		_ = fn(filepath.Join(root, "nilentry"), nil, injectedErr)
+		// Non-absolute path triggers filepath.Rel error.
+		_ = fn("relative/path.txt", fakeDirEntry{name: "path.txt"}, nil)
+	})
+	s.sys.Override("ReadFile", mock.Anything).Return(nil, os.ErrNotExist)
+	s.srv.sys = &realOpenSys{s.sys}
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: "/tmp/fake"}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/files/search?q=", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp fileSearchResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	// All callback invocations either errored or produced a Rel error → no results.
+	require.Empty(s.T(), resp.Results)
+}
+
 // fakeDirEntry implements fs.DirEntry for testing.
 type fakeDirEntry struct {
 	name  string

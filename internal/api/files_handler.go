@@ -318,7 +318,7 @@ func (s *Server) handleSearchFiles(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	results := make([]fileSearchResult, 0, limit)
+	results := make([]fileSearchResult, 0)
 	qLower := strings.ToLower(q)
 
 	for rootIdx, rootAbs := range allPaths {
