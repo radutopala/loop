@@ -41,21 +41,15 @@ func storeBotMessage(ctx context.Context, store db.Store, broadcaster events.Bro
 
 // storeAgentEvent inserts an agent-event row (thinking, tool_use, tool_result)
 // for a channel. The row is assigned a fresh chain_position atomically so
-// reload-time renders place it after every prior row in the channel. Errors
-// are logged via the provided log function but never propagated — broadcast
-// SSE happens regardless so the live UI is never blocked on DB writes.
-func storeAgentEvent(ctx context.Context, store db.Store, channelID string, evt *db.Message, logFn func(msg string, args ...any)) {
-	if store == nil {
+// reload-time renders place it after every prior row in the channel. The caller
+// must supply the numeric chatID (Channel.ID) so this hot path doesn't issue a
+// GetChannel per event. Errors are logged but never propagated — SSE broadcast
+// happens regardless so the live UI is never blocked on DB writes.
+func storeAgentEvent(ctx context.Context, store db.Store, chatID int64, channelID string, evt *db.Message, logFn func(msg string, args ...any)) {
+	if store == nil || chatID == 0 {
 		return
 	}
-	ch, err := store.GetChannel(ctx, channelID)
-	if err != nil || ch == nil {
-		if err != nil && logFn != nil {
-			logFn("looking up channel for agent event", "error", err, "channel_id", channelID)
-		}
-		return
-	}
-	evt.ChatID = ch.ID
+	evt.ChatID = chatID
 	evt.ChannelID = channelID
 	if evt.CreatedAt.IsZero() {
 		evt.CreatedAt = time.Now().UTC()

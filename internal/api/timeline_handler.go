@@ -47,11 +47,11 @@ func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cursorPosition, ok := parseQueryInt64(w, r, "cursor_position")
+	cursorPosition, ok := parseQueryInt64NonNeg(w, r, "cursor_position")
 	if !ok {
 		return
 	}
-	cursorID, ok := parseQueryInt64(w, r, "cursor_id")
+	cursorID, ok := parseQueryInt64NonNeg(w, r, "cursor_id")
 	if !ok {
 		return
 	}

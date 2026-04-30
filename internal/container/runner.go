@@ -1677,9 +1677,9 @@ type streamCallbacks struct {
 // non-image tool_result blocks (Read/Bash/Grep output) reach the chat.
 const userEventMaxBytes = 256 * 1024
 
-// toolResultMaxInline caps the live tool_result output we forward over SSE.
-// Anything above is truncated; the full content is still in the JSONL and
-// can be hydrated later by /timeline.
+// toolResultMaxInline caps the live tool_result output we forward over SSE
+// and persist via OnToolResult. Anything above is truncated at this boundary;
+// /timeline re-applies the same cap defensively when serving the row.
 const toolResultMaxInline = 8 * 1024
 
 // userMessage represents a "user" event from Claude's stream-json output, used

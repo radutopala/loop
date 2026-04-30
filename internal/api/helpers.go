@@ -80,6 +80,23 @@ func parseQueryInt64(w http.ResponseWriter, r *http.Request, name string) (int64
 	return v, true
 }
 
+// parseQueryInt64NonNeg parses an optional non-negative int64 query parameter.
+// Unlike parseQueryInt64 it accepts 0 as a meaningful value (used by the
+// timeline cursor where chain_position=0 represents legacy rows). Returns 0
+// if absent. On parse error or negative value it writes a 400 response.
+func parseQueryInt64NonNeg(w http.ResponseWriter, r *http.Request, name string) (int64, bool) {
+	s := r.URL.Query().Get(name)
+	if s == "" {
+		return 0, true
+	}
+	v, err := strconv.ParseInt(s, 10, 64)
+	if err != nil || v < 0 {
+		http.Error(w, fmt.Sprintf("invalid %s", name), http.StatusBadRequest)
+		return 0, false
+	}
+	return v, true
+}
+
 // writeHTTPJSON encodes data as JSON and writes it to w with the given status code.
 // It sets the Content-Type header and logs any encoding errors.
 func writeHTTPJSON(w http.ResponseWriter, status int, data any, logger *slog.Logger) {

@@ -141,7 +141,7 @@ export interface ChatMessagesHandle {
 export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(function ChatMessages({ channelId, chatState, scrollToMessageId, onScrollComplete, onQuote }, ref) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
-  const { items, liveTail, messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, todos, completionInfo, triggerContent, gateApproval } = chatState;
+  const { items, liveTail, messages, loading, loadMore, hasMore, streamingContent, isRunning, agentActivity, askUserQuestions, exitPlanRequest, todos, completionInfo, triggerContent, gateApproval } = chatState;
   // Pair tool_use with its tool_result by tool_use_id so the renderer can
   // collapse them into a single pill with output. Skip pairing when the
   // tool_use_id is empty (live events without a stable id).
@@ -170,12 +170,12 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
 
   useImperativeHandle(ref, () => ({ scrollToBottom }), [scrollToBottom]);
 
-  // Auto-scroll to bottom on new messages or streaming updates.
+  // Auto-scroll to bottom on new messages, timeline growth, or streaming updates.
   useEffect(() => {
     if (autoScrollRef.current) {
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
     }
-  }, [messages, streamingContent, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, todos, gateApproval]);
+  }, [messages, items, liveTail, streamingContent, agentActivity, askUserQuestions, exitPlanRequest, todos, gateApproval]);
 
   // Scroll to a specific message (from search) and highlight it.
   useEffect(() => {
@@ -228,52 +228,43 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
               {loading ? "Loading..." : "Load older messages"}
             </button>
           )}
-          {allItems.map((it) => {
-            if (it.kind === "message") {
-              const msg = it.data;
-              return (
-                <MessageBubble
-                  key={`m-${msg.msg_id}`}
-                  message={msg}
-                  showProcessing={isRunning && !msg.is_bot && msg.msg_id === firstUnprocessedUserMsgId}
-                  showQueued={!msg.is_bot && !msg.is_processed && !(isRunning && msg.msg_id === firstUnprocessedUserMsgId)}
-                  highlighted={msg.id === highlightedMsgId}
-                  onQuote={onQuote}
-                />
-              );
-            }
-            if (it.kind === "thinking") {
-              return <ThinkingBubble key={`t-${it.id}`} text={it.text} truncated={it.truncated ?? false} />;
-            }
-            if (it.kind === "tool_use") {
-              if (it.tool_use_id && skippedToolResultIDs.has(it.tool_use_id)) {
-                const result = resultsByToolUseID.get(it.tool_use_id)!;
+          {(() => {
+            const groups = groupTimelineItems(allItems);
+            const lastIdx = groups.length - 1;
+            return groups.map((g, idx) => {
+              if (g.kind === "message") {
+                const msg = g.data.data;
                 return (
-                  <ToolActivityIndicator
-                    key={`tu-${it.id}`}
-                    toolName={it.tool_name}
-                    input={it.tool_input}
-                    result={result}
+                  <MessageBubble
+                    key={`m-${msg.msg_id}`}
+                    message={msg}
+                    showProcessing={isRunning && !msg.is_bot && msg.msg_id === firstUnprocessedUserMsgId}
+                    showQueued={!msg.is_bot && !msg.is_processed && !(isRunning && msg.msg_id === firstUnprocessedUserMsgId)}
+                    highlighted={msg.id === highlightedMsgId}
+                    onQuote={onQuote}
                   />
                 );
               }
-              return <ToolActivityIndicator key={`tu-${it.id}`} toolName={it.tool_name} input={it.tool_input} />;
-            }
-            if (it.kind === "tool_result") {
-              if (it.tool_use_id && skippedToolResultIDs.has(it.tool_use_id)) {
-                return null; // already paired into the matching tool_use
+              const visible = g.items.filter((it) => !(it.kind === "tool_result" && it.tool_use_id && skippedToolResultIDs.has(it.tool_use_id)));
+              if (visible.length === 0) return null;
+              if (visible.length === 1) {
+                return (
+                  <div key={`g-${g.items[0]!.id}`}>
+                    {renderTimelineItem(visible[0]!, resultsByToolUseID, skippedToolResultIDs)}
+                  </div>
+                );
               }
               return (
-                <ToolActivityIndicator
-                  key={`tr-${it.id}`}
-                  toolName="result"
-                  input=""
-                  result={{ text: it.text, is_error: it.is_error ?? false, truncated: it.truncated ?? false }}
+                <ToolRunBlock
+                  key={`g-${g.items[0]!.id}`}
+                  items={visible}
+                  resultsByToolUseID={resultsByToolUseID}
+                  skippedToolResultIDs={skippedToolResultIDs}
+                  isActive={idx === lastIdx}
                 />
               );
-            }
-            return null;
-          })}
+            });
+          })()}
           {showTriggerQuote && (
             <TriggerQuote content={triggerContent} time={firstUnprocessedUserMsgId ? messages.find((m) => m.msg_id === firstUnprocessedUserMsgId)?.created_at : undefined} />
           )}
@@ -307,6 +298,129 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     </>
   );
 });
+
+type TimelineGroup =
+  | { kind: "message"; data: Extract<TimelineItem, { kind: "message" }> }
+  | { kind: "agent"; items: TimelineItem[] };
+
+function groupTimelineItems(items: TimelineItem[]): TimelineGroup[] {
+  const out: TimelineGroup[] = [];
+  let bucket: TimelineItem[] = [];
+  const flush = () => {
+    if (bucket.length) {
+      out.push({ kind: "agent", items: bucket });
+      bucket = [];
+    }
+  };
+  for (const it of items) {
+    if (it.kind === "message") {
+      flush();
+      out.push({ kind: "message", data: it });
+    } else {
+      bucket.push(it);
+    }
+  }
+  flush();
+  return out;
+}
+
+function renderTimelineItem(
+  it: TimelineItem,
+  resultsByToolUseID: Map<string, { text: string; is_error: boolean; truncated: boolean }>,
+  skippedToolResultIDs: Set<string>,
+): React.ReactNode {
+  if (it.kind === "thinking") {
+    return <ThinkingBubble key={`t-${it.id}`} text={it.text} truncated={it.truncated ?? false} />;
+  }
+  if (it.kind === "tool_use") {
+    if (it.tool_use_id && skippedToolResultIDs.has(it.tool_use_id)) {
+      const result = resultsByToolUseID.get(it.tool_use_id)!;
+      return <ToolActivityIndicator key={`tu-${it.id}`} toolName={it.tool_name} input={it.tool_input} result={result} />;
+    }
+    return <ToolActivityIndicator key={`tu-${it.id}`} toolName={it.tool_name} input={it.tool_input} />;
+  }
+  if (it.kind === "tool_result") {
+    if (it.tool_use_id && skippedToolResultIDs.has(it.tool_use_id)) return null;
+    return <ToolActivityIndicator key={`tr-${it.id}`} toolName="result" input="" result={{ text: it.text, is_error: it.is_error ?? false, truncated: it.truncated ?? false }} />;
+  }
+  return null;
+}
+
+function ToolRunBlock({ items, resultsByToolUseID, skippedToolResultIDs, isActive }: {
+  items: TimelineItem[];
+  resultsByToolUseID: Map<string, { text: string; is_error: boolean; truncated: boolean }>;
+  skippedToolResultIDs: Set<string>;
+  isActive: boolean;
+}) {
+  const { colors } = useTheme();
+  const [expanded, setExpanded] = useState(isActive);
+  const wasActiveRef = useRef(isActive);
+  // When the run is no longer the trailing one (a message arrived after it),
+  // auto-collapse. When it becomes trailing again (rare), auto-expand. The
+  // user can still toggle manually after the transition.
+  useEffect(() => {
+    if (wasActiveRef.current && !isActive) setExpanded(false);
+    if (!wasActiveRef.current && isActive) setExpanded(true);
+    wasActiveRef.current = isActive;
+  }, [isActive]);
+
+  const toolNames: string[] = [];
+  let thinkingCount = 0;
+  let errorCount = 0;
+  for (const it of items) {
+    if (it.kind === "thinking") thinkingCount++;
+    if (it.kind === "tool_use") {
+      if (!toolNames.includes(it.tool_name)) toolNames.push(it.tool_name);
+    }
+    if (it.kind === "tool_result" && it.is_error) errorCount++;
+  }
+  const summaryParts: string[] = [];
+  if (toolNames.length > 0) {
+    const shown = toolNames.slice(0, 4).join(", ");
+    summaryParts.push(toolNames.length > 4 ? `${shown}, +${toolNames.length - 4}` : shown);
+  }
+  if (thinkingCount > 0) summaryParts.push(`${thinkingCount} thought${thinkingCount === 1 ? "" : "s"}`);
+  const summary = summaryParts.join(" · ");
+
+  return (
+    <div style={{ marginBottom: 8 }}>
+      <div
+        onClick={() => setExpanded((v) => !v)}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          padding: "4px 8px",
+          marginBottom: 4,
+          borderRadius: 6,
+          border: `1px solid ${colors.border}`,
+          backgroundColor: colors.surface,
+          cursor: "pointer",
+          fontFamily: fonts.mono,
+          fontSize: 12,
+          color: colors.textMuted,
+          userSelect: "none",
+        }}
+      >
+        <span style={{ display: "inline-block", width: 10, transform: expanded ? "rotate(90deg)" : "none", transition: "transform 0.1s" }}>
+          &#9654;
+        </span>
+        <span style={{ fontWeight: 600 }}>{items.length} step{items.length === 1 ? "" : "s"}</span>
+        {summary && <span style={{ color: colors.textDim }}>· {summary}</span>}
+        {errorCount > 0 && (
+          <span style={{ marginLeft: "auto", color: colors.warning, fontSize: 11 }}>
+            {errorCount} error{errorCount === 1 ? "" : "s"}
+          </span>
+        )}
+      </div>
+      {expanded && (
+        <div style={{ paddingLeft: 12, borderLeft: `1px solid ${colors.border}`, marginLeft: 4 }}>
+          {items.map((it) => renderTimelineItem(it, resultsByToolUseID, skippedToolResultIDs))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function MessageBubble({ message, showProcessing, showQueued, highlighted, onQuote }: { message: Message; showProcessing?: boolean; showQueued?: boolean; highlighted?: boolean; onQuote?: (msg: Message) => void }) {
   const { colors } = useTheme();

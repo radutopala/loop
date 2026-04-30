@@ -79,6 +79,24 @@ func (s *ServerSuite) TestHandleTimelineInvalidLimit() {
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
+// cursor_position=0 is meaningful: it pages into legacy rows that all sit
+// at chain_position=0. Combined with cursor_id, the backend selects rows
+// older than the given id within the legacy band.
+func (s *ServerSuite) TestHandleTimelineCursorPositionZeroIsValid() {
+	s.store.On("GetTimeline", mock.Anything, "ch-1", int64(0), int64(42), 51).Return([]*db.Message{}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/timeline?cursor_position=0&cursor_id=42", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+}
+
+func (s *ServerSuite) TestHandleTimelineCursorRejectsNegative() {
+	rec := s.testRequest("GET", "/api/channels/ch-1/timeline?cursor_position=-1", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+
+	rec = s.testRequest("GET", "/api/channels/ch-1/timeline?cursor_id=-1", "")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
 func (s *ServerSuite) TestHandleTimelineLimitCap() {
 	s.store.On("GetTimeline", mock.Anything, "ch-1", int64(0), int64(0), 201).Return([]*db.Message{}, nil)
 

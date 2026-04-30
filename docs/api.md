@@ -423,8 +423,101 @@ List messages for a channel. Supports two modes: **cursor-based pagination** (de
 **Behavior notes:**
 - **Cursor mode:** Fetches `limit+1` messages to determine if more exist. If so, `next_cursor` is set to the last returned message's ID. Messages are ordered oldest-first.
 - **Around mode:** Uses a UNION ALL query (half before + half after the target message ID), ordered by `id ASC`. `next_cursor` is not set in around mode.
+- This endpoint returns chat-only rows (`kind = 'message'`); agent thinking and tool events are not included. Use [`/api/channels/{id}/timeline`](#get-apichannelsidtimeline) for an interleaved view.
 
 **Errors:** `400` if query params are invalid. `501` if message listing is not configured.
+
+---
+
+### `GET /api/channels/{id}/timeline`
+
+List the channel's interleaved timeline — chat messages plus persisted agent events (thinking blocks, tool calls, tool results) — in canonical chain order. Each row carries a `kind` discriminator and a per-channel `chain_position`.
+
+**Path Parameters:**
+
+| Param | Type   | Description |
+|-------|--------|-------------|
+| `id`  | string | Channel or thread ID |
+
+**Query Parameters:**
+
+| Param             | Type  | Default | Max | Description |
+|-------------------|-------|---------|-----|-------------|
+| `cursor_position` | int64 | 0       | --  | Fetch rows older than this `chain_position`. Pair with `cursor_id` for the second-key tiebreaker. `0` is a valid sentinel that pages into legacy rows. |
+| `cursor_id`       | int64 | 0       | --  | Tiebreaker `id` for rows that share `cursor_position` (in particular legacy rows where `chain_position = 0`). |
+| `limit`           | int   | 50      | 200 | Number of rows to return |
+
+**Response (200):**
+```json
+{
+  "items": [
+    {
+      "kind": "message",
+      "position": 12,
+      "id": 101,
+      "data": {
+        "id": 101,
+        "channel_id": "abc123",
+        "msg_id": "discord_msg_id",
+        "author_id": "user123",
+        "author_name": "Alice",
+        "content": "Refactor the auth middleware",
+        "is_bot": false,
+        "is_processed": true,
+        "created_at": "2026-04-30T08:00:00Z"
+      }
+    },
+    {
+      "kind": "thinking",
+      "position": 13,
+      "id": 102,
+      "text": "Let me check how the existing tests cover this path...",
+      "truncated": false
+    },
+    {
+      "kind": "tool_use",
+      "position": 14,
+      "id": 103,
+      "tool_use_id": "toolu_017fNc...",
+      "tool_name": "Read",
+      "tool_input": "{\"file_path\":\"/work/internal/api/auth.go\"}"
+    },
+    {
+      "kind": "tool_result",
+      "position": 15,
+      "id": 104,
+      "tool_use_id": "toolu_017fNc...",
+      "text": "package api\n\n// ...\n",
+      "is_error": false,
+      "truncated": true
+    }
+  ],
+  "next_cursor": { "position": 12, "id": 101 }
+}
+```
+
+| Field                    | Type     | Description |
+|--------------------------|----------|-------------|
+| `items[].kind`           | string   | One of `"message"`, `"thinking"`, `"tool_use"`, `"tool_result"` |
+| `items[].position`       | int64    | Per-channel monotonic chain position. `0` for legacy rows that pre-date the timeline feature. |
+| `items[].id`             | int64    | Row id; used as a stable tiebreaker for cursor pagination |
+| `items[].data`           | object   | Present when `kind == "message"`; same shape as `/messages` rows (`id`, `channel_id`, `msg_id`, `author_id`, `author_name`, `content`, `is_bot`, `is_processed`, `created_at`) |
+| `items[].text`           | string   | Present when `kind ∈ {"thinking", "tool_result"}`. Capped at 8 KiB inline; the full content was truncated server-side at the same cap when the run wrote it. |
+| `items[].truncated`      | bool     | `true` when the row's content was truncated to fit the inline cap |
+| `items[].tool_use_id`    | string   | Pairs `tool_use` rows with their matching `tool_result` row (and matching live `tool.use` / `tool.result` events) |
+| `items[].tool_name`      | string   | Present on `tool_use` rows |
+| `items[].tool_input`     | string   | Present on `tool_use` rows; serialised tool input (truncated to 8 KiB inline) |
+| `items[].is_error`       | bool     | Present on `tool_result` rows; `true` when the tool failed |
+| `next_cursor`            | object\|null | `{position, id}` to fetch the next page; `null` when there are no more rows |
+
+**Behavior notes:**
+- Rows are ordered by `(chain_position DESC, id DESC)` so the response runs newest → oldest.
+- The endpoint fetches `limit + 1` rows to determine whether a next page exists. If so, `next_cursor` is set to the `(chain_position, id)` of the row past the cap.
+- **Legacy rows** (chat from before this feature shipped) all carry `chain_position = 0` and are ordered by `id` within that bucket. Cursor pagination handles the boundary between backfilled rows (`chain_position > 0`) and legacy rows transparently.
+- Thinking, tool-use, and tool-result content are stored inline on the message row and **truncated at 8 KiB** when the docker stream writes them. The `truncated` flag tells the UI when a block was clipped.
+- Live `agent.thinking` / `tool.use` / `tool.result` SSE events fire alongside row inserts, so the desktop app can render them in real time and refetch the head of the timeline on run completion.
+
+**Errors:** `400` if cursor params are negative or non-numeric. `501` if the timeline service is not configured.
 
 ---
 

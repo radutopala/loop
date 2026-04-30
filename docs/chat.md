@@ -126,12 +126,21 @@ Activity text is truncated to **100 characters** maximum with "..." appended.
 
 ### Tool Use Indicator
 
-When the agent invokes a tool (`tool.use` event), a separate indicator shows:
+When the agent invokes a tool (`tool.use` event), an indicator is appended to the timeline:
 - Gear icon
 - Tool name in bold
-- Input summary (truncated to 80 characters)
+- Input summary (truncated for display)
 
-The tool indicator is only shown when there is no streaming content and the agent is running.
+When the matching `tool.result` event arrives (paired by `tool_use_id`), the indicator collapses into a `tool_use` + `tool_result` pair rendered together — the result is shown as a dimmed second line beneath the tool call. Tool calls and their results are persisted as timeline rows, so reloading the channel replays them in chain order alongside the surrounding messages.
+
+### Thinking Bubble
+
+When extended thinking is enabled and the agent emits a thinking block (`agent.thinking` event), the chat renders a collapsible `ThinkingBubble`:
+- Brain icon header with a dim background
+- Default collapsed; click to expand the full text
+- Persisted as a `kind: "thinking"` timeline row, so it survives reloads in its original chain position
+
+Each thinking and tool block is truncated server-side at 8 KiB; truncated rows render the prefix with a small "(truncated)" hint.
 
 ---
 
@@ -345,11 +354,11 @@ autoScrollRef.current = atBottom;
 
 ## Load More
 
-When the user scrolls to the top of the message list and more messages are available (`hasMore`), `loadMore()` is called automatically.
+When the user scrolls to the top of the message list and more rows are available (`hasMore`), `loadMore()` is called automatically.
 
 A "Load older messages" button is also shown above the message list as a fallback. While loading, the button text changes to "Loading...".
 
-The `loadMore` function uses cursor-based pagination via the `useMessages` hook.
+The `loadMore` function uses compound `(chain_position, id)` cursor pagination via the `useTimeline` hook against [`/api/channels/{id}/timeline`](api.md#get-apichannelsidtimeline). The endpoint returns interleaved messages, thinking blocks, and tool calls, so a single round-trip backfills both chat and the surrounding agent activity in canonical chain order. Legacy rows that pre-date timeline persistence carry `chain_position = 0` and fall through to id ordering, so older channels render exactly as before.
 
 ---
 

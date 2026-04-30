@@ -159,7 +159,7 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *bot.Inc
 	o.queue.Acquire(msg.ChannelID)
 	defer o.queue.Release(msg.ChannelID)
 
-	req, recent, err := o.prepareAgentRequest(ctx, msg)
+	req, recent, channel, err := o.prepareAgentRequest(ctx, msg)
 	if err != nil {
 		return
 	}
@@ -193,7 +193,7 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *bot.Inc
 	defer stopTyping()
 	go o.refreshTyping(typingCtx, msg.ChannelID)
 
-	resp, lastStreamedText, runID, err := o.executeAgentRun(ctx, msg, req)
+	resp, lastStreamedText, runID, err := o.executeAgentRun(ctx, msg, req, channel)
 	if err != nil {
 		// Mark the trigger message as processed even on error/stop so the
 		// frontend doesn't keep showing it as "processing" when the next
@@ -226,17 +226,17 @@ func hasAnyMsgID(recent []*db.Message) bool {
 }
 
 // prepareAgentRequest fetches recent messages and channel data, then builds an AgentRequest.
-func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.IncomingMessage) (*agent.AgentRequest, []*db.Message, error) {
+func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.IncomingMessage) (*agent.AgentRequest, []*db.Message, *db.Channel, error) {
 	recent, err := o.store.GetRecentMessages(ctx, msg.ChannelID, recentMessageLimit)
 	if err != nil {
 		o.logger.Error("getting recent messages", "error", err, "channel_id", msg.ChannelID)
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	channel, err := o.store.GetChannel(ctx, msg.ChannelID)
 	if err != nil {
 		o.logger.Error("getting channel", "error", err, "channel_id", msg.ChannelID)
-		return nil, nil, err
+		return nil, nil, nil, err
 	}
 
 	req := o.buildAgentRequest(msg.ChannelID, recent, channel)
@@ -269,13 +269,17 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 		req.Prompt = dirHint + "\n\n" + req.Prompt
 	}
 
-	return req, recent, nil
+	return req, recent, channel, nil
 }
 
 // executeAgentRun runs the agent with timeout, streaming, and stop-button cancellation.
 // Returns the agent response and the last streamed text (for dedup), or an error if the
 // run failed and the caller should abort.
-func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMessage, req *agent.AgentRequest) (*agent.AgentResponse, string, string, error) {
+func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMessage, req *agent.AgentRequest, channel *db.Channel) (*agent.AgentResponse, string, string, error) {
+	chatID := int64(0)
+	if channel != nil {
+		chatID = channel.ID
+	}
 	cfg := o.currentConfig()
 	runCtx, runCancel := context.WithTimeout(ctx, cfg.ContainerTimeout)
 	defer runCancel()
@@ -300,7 +304,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 		req.OnTurn = tracker.OnTurn
 		if o.events != nil {
 			req.OnToolUse = func(toolUseID, name, input string) {
-				storeAgentEvent(ctx, o.store, msg.ChannelID, &db.Message{
+				storeAgentEvent(ctx, o.store, chatID, msg.ChannelID, &db.Message{
 					Kind:      db.MessageKindToolUse,
 					ToolUseID: toolUseID,
 					ToolName:  name,
@@ -331,14 +335,14 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 				}
 			}
 			req.OnThinking = func(text string) {
-				storeAgentEvent(ctx, o.store, msg.ChannelID, &db.Message{
+				storeAgentEvent(ctx, o.store, chatID, msg.ChannelID, &db.Message{
 					Kind:    db.MessageKindThinking,
 					Content: text,
 				}, o.logger.Warn)
 				o.events.BroadcastAgentThinking(msg.ChannelID, events.AgentThinkingEventData{Text: text})
 			}
 			req.OnToolResult = func(toolUseID, output string, isError bool) {
-				storeAgentEvent(ctx, o.store, msg.ChannelID, &db.Message{
+				storeAgentEvent(ctx, o.store, chatID, msg.ChannelID, &db.Message{
 					Kind:      db.MessageKindToolResult,
 					ToolUseID: toolUseID,
 					Content:   output,

@@ -973,7 +973,7 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 - **Playground** — live interactive sandbox where agents generate HTML/CSS/JS and it renders in a sandboxed iframe. Multiple named playgrounds with two scopes: global (`~/.loop/playground/`, shared across channels) and project (`.loop/playground/` in the channel's working directory). Multi-instance panels, hot-reloads on updates, console capture, import maps, multi-file support with relative imports. Agents use `playground` + `playground_file` MCP tools
 - **Settings** — schema-driven config form with typed controls (toggles, dropdowns, number inputs, password fields, arrays, key-value editors) plus a raw JSON editor, with Form/JSON toggle and unsaved changes confirmation
 - **Plan mode** — run agents in read-only preview mode via Claude Code's `EnterPlanMode` tool
-- **Agent activity** — see model info, tool use, and completion summaries in the chat view
+- **Agent activity** — see model info, thinking blocks, tool calls with their results, and completion summaries in the chat view. Thinking and tool events are persisted alongside messages and replayed in chain order on reload, so the timeline survives page refreshes
 - **Security gate approvals** — when an agent container trips a rule with `decision: approve`, an inline `ApprovalCard` appears in chat with three buttons (Allow once / Allow for session / Deny). The same card is also rendered as a centered, dimmed overlay inside Docker Agent terminal panels, so operators working in a layout without a Chat panel (e.g. Swarm) can approve without switching layouts. Resolves via WebSocket — same decision is also reflected in Discord/Slack cards on those surfaces
 - **Audit panel** — singleton panel showing the agent-gate JSONL files per channel. Left pane lists files newest-first (size, last-modified, delete); right pane opens a fresh `tail -f -n 100` xterm via docker exec against `/var/log/loop-gate/agentgate-<date>.jsonl`. Same files exposed over HTTP at `GET/DELETE /api/channels/{id}/audit[/{date}]` for SIEM or tooling
 - **Message queue** — processing indicators and trigger quote showing which message is being handled, with timestamp. A collapsible popup above the input surfaces waiting messages and lets you remove them from the queue before the agent picks them up
@@ -1031,6 +1031,7 @@ make app-install
 | `GET` | `/api/channels/{id}/roots` | List all root directories (primary + extra from project config) |
 | `GET` | `/api/channels/{id}/diff` | Get git diff (working changes, or `?source=X&target=Y` for branch diff) |
 | `GET` | `/api/channels/{id}/messages` | List messages with cursor-based pagination |
+| `GET` | `/api/channels/{id}/timeline` | List interleaved messages, thinking blocks, and tool events with cursor-based pagination |
 | `POST` | `/api/commands` | Send a slash command to a channel |
 | `POST` | `/api/memory/search` | Semantic search across memory files |
 | `POST` | `/api/memory/index` | Re-index memory files |

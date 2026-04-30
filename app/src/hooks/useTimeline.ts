@@ -22,12 +22,6 @@ interface UseTimelineResult {
   refetchHead: () => void;
 }
 
-let liveCounter = 0;
-function nextLiveId(): number {
-  liveCounter -= 1;
-  return liveCounter;
-}
-
 /**
  * useTimeline mirrors useMessages but returns interleaved chat messages and
  * agent events fetched from /api/channels/{id}/timeline. Live SSE events are
@@ -43,6 +37,13 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
   const loadingRef = useRef(false);
   const itemsRef = useRef<TimelineItem[]>([]);
   itemsRef.current = items;
+  // Per-hook-instance counter producing strictly-decreasing synthetic ids for
+  // live-tail items. Negative so they never collide with backend row ids.
+  const liveCounterRef = useRef(0);
+  const nextLiveId = useCallback((): number => {
+    liveCounterRef.current -= 1;
+    return liveCounterRef.current;
+  }, []);
 
   // Reset and fetch first page when the channel changes.
   useEffect(() => {
@@ -109,14 +110,14 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
       if (prev.some((it) => it.kind === "message" && it.data.msg_id === msg.msg_id)) return prev;
       return [...prev, { kind: "message", position: 0, id: nextLiveId(), data: msg }];
     });
-  }, []);
+  }, [nextLiveId]);
 
   const appendLiveThinking = useCallback((text: string) => {
     setLiveTail((prev) => [
       ...prev,
       { kind: "thinking", position: 0, id: nextLiveId(), text, truncated: false },
     ]);
-  }, []);
+  }, [nextLiveId]);
 
   const appendLiveToolUse = useCallback(
     (toolUseID: string | undefined, toolName: string, input: string) => {
@@ -132,7 +133,7 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
         },
       ]);
     },
-    [],
+    [nextLiveId],
   );
 
   const appendLiveToolResult = useCallback(
@@ -149,7 +150,7 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
         },
       ]);
     },
-    [],
+    [nextLiveId],
   );
 
   const markProcessed = useCallback((msgIds: string[]) => {

@@ -229,8 +229,8 @@ export async function fetchTimeline(
 ): Promise<TimelineResponse> {
   const params = new URLSearchParams();
   if (opts?.limit) params.set("limit", String(opts.limit));
-  if (opts?.cursorPosition) params.set("cursor_position", String(opts.cursorPosition));
-  if (opts?.cursorId) params.set("cursor_id", String(opts.cursorId));
+  if (opts?.cursorPosition !== undefined) params.set("cursor_position", String(opts.cursorPosition));
+  if (opts?.cursorId !== undefined) params.set("cursor_id", String(opts.cursorId));
   const res = await fetch(
     `${getApiUrl()}/api/channels/${channelId}/timeline?${params}`,
   );

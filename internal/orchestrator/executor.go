@@ -210,6 +210,28 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		AgentID:       "chat",
 	}
 
+	// chatID resolution for storeAgentEvent: parent comes from the already-loaded
+	// `channel`; thread chatID is resolved lazily once the first OnTurn creates
+	// the thread, so the hot agent-event path doesn't issue a GetChannel per call.
+	parentChatID := int64(0)
+	if channel != nil {
+		parentChatID = channel.ID
+	}
+	var threadChatID int64
+	var threadChatIDResolved bool
+	resolveTargetChatID := func(targetID string) int64 {
+		if targetID == task.ChannelID {
+			return parentChatID
+		}
+		if !threadChatIDResolved {
+			threadChatIDResolved = true
+			if ch, err := e.store.GetChannel(ctx, targetID); err == nil && ch != nil {
+				threadChatID = ch.ID
+			}
+		}
+		return threadChatID
+	}
+
 	var tracker *streamTracker
 	var threadID string
 	var threadName string
@@ -336,7 +358,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				if targetID == "" {
 					targetID = task.ChannelID
 				}
-				storeAgentEvent(ctx, e.store, targetID, &db.Message{
+				storeAgentEvent(ctx, e.store, resolveTargetChatID(targetID), targetID, &db.Message{
 					Kind:      db.MessageKindToolUse,
 					ToolUseID: toolUseID,
 					ToolName:  name,
@@ -371,7 +393,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				if targetID == "" {
 					targetID = task.ChannelID
 				}
-				storeAgentEvent(ctx, e.store, targetID, &db.Message{
+				storeAgentEvent(ctx, e.store, resolveTargetChatID(targetID), targetID, &db.Message{
 					Kind:    db.MessageKindThinking,
 					Content: text,
 				}, e.logger.Warn)
@@ -382,7 +404,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				if targetID == "" {
 					targetID = task.ChannelID
 				}
-				storeAgentEvent(ctx, e.store, targetID, &db.Message{
+				storeAgentEvent(ctx, e.store, resolveTargetChatID(targetID), targetID, &db.Message{
 					Kind:      db.MessageKindToolResult,
 					ToolUseID: toolUseID,
 					Content:   output,

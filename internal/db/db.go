@@ -443,11 +443,7 @@ func (s *SQLiteStore) GetMessagesAround(ctx context.Context, channelID string, m
 // the MAX+1 subselect cannot race itself.
 func (s *SQLiteStore) InsertAgentEvent(ctx context.Context, evt *Message) error {
 	if evt.MsgID == "" {
-		if evt.EventUUID != "" {
-			evt.MsgID = evt.EventUUID
-		} else {
-			evt.MsgID = fmt.Sprintf("evt-%d-%s", s.nowFunc().UnixNano(), evt.ToolUseID)
-		}
+		evt.MsgID = fmt.Sprintf("evt-%d-%s", s.nowFunc().UnixNano(), evt.ToolUseID)
 	}
 	if evt.AuthorName == "" {
 		evt.AuthorName = "agent"
@@ -456,15 +452,15 @@ func (s *SQLiteStore) InsertAgentEvent(ctx context.Context, evt *Message) error 
 	evt.IsProcessed = true
 	result, err := s.db.ExecContext(ctx,
 		`INSERT INTO messages (chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at,
-		                       kind, event_uuid, parent_uuid, chain_position, tool_use_id, session_id, tool_name, is_error)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		                       kind, chain_position, tool_use_id, tool_name, is_error)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 		         COALESCE((SELECT MAX(chain_position) FROM messages WHERE channel_id = ?), 0) + 1,
-		         ?, ?, ?, ?)`,
+		         ?, ?, ?)`,
 		evt.ChatID, evt.ChannelID, evt.MsgID, evt.AuthorID, evt.AuthorName, evt.Content,
 		boolToInt(evt.IsBot), boolToInt(evt.IsProcessed), evt.CreatedAt,
-		string(evt.Kind), evt.EventUUID, evt.ParentUUID,
+		string(evt.Kind),
 		evt.ChannelID,
-		evt.ToolUseID, evt.SessionID, evt.ToolName, boolToInt(evt.IsError),
+		evt.ToolUseID, evt.ToolName, boolToInt(evt.IsError),
 	)
 	if err != nil {
 		return err
@@ -961,7 +957,7 @@ func (s *SQLiteStore) DeleteWorkflowRun(ctx context.Context, id string) error {
 
 // Column lists for SELECT queries.
 const (
-	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at, kind, event_uuid, parent_uuid, chain_position, tool_use_id, session_id, tool_name, is_error`
+	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at, kind, chain_position, tool_use_id, tool_name, is_error`
 	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running, workflow_name, workflow_inputs`
 )
 
@@ -1021,8 +1017,8 @@ func scanMessages(rows *sql.Rows) ([]*Message, error) {
 			&msg.ID, &msg.ChatID, &msg.ChannelID, &msg.MsgID,
 			&msg.AuthorID, &msg.AuthorName, &msg.Content,
 			&isBot, &isProcessed, &msg.CreatedAt,
-			&kind, &msg.EventUUID, &msg.ParentUUID, &msg.ChainPosition,
-			&msg.ToolUseID, &msg.SessionID, &msg.ToolName, &isError,
+			&kind, &msg.ChainPosition,
+			&msg.ToolUseID, &msg.ToolName, &isError,
 		); err != nil {
 			return nil, err
 		}

@@ -219,15 +219,57 @@ The agent is invoking a tool.
 
 ```json
 {
+  "tool_use_id": "toolu_017fNc...",
   "tool_name": "Bash",
   "input": "ls -la"
 }
 ```
 
-| Field       | Type   | Description |
-|-------------|--------|-------------|
-| `tool_name` | string | Name of the tool being called |
-| `input`     | string | Tool input (may be truncated for display) |
+| Field         | Type   | Description |
+|---------------|--------|-------------|
+| `tool_use_id` | string | Per-block id from the assistant message. Pairs this event with the eventual `tool.result` event carrying the same id, and with the matching `tool_use` / `tool_result` rows returned by [`/api/channels/{id}/timeline`](api.md#get-apichannelsidtimeline). |
+| `tool_name`   | string | Name of the tool being called |
+| `input`       | string | Tool input (may be truncated for display) |
+
+---
+
+### `agent.thinking`
+
+The agent emitted an extended-thinking block. Mirrors the persisted `kind: "thinking"` row served by `/timeline`, so live tail and reload render the same content.
+
+**Payload schema:**
+
+```json
+{
+  "text": "Let me check how the existing tests cover this path..."
+}
+```
+
+| Field  | Type   | Description |
+|--------|--------|-------------|
+| `text` | string | The thinking block's text. Already truncated at 8 KiB inline; the same value is persisted on the corresponding `kind: "thinking"` row. |
+
+---
+
+### `tool.result`
+
+A tool call finished. Pairs with the prior `tool.use` event by `tool_use_id`. Mirrors the persisted `kind: "tool_result"` row served by `/timeline`.
+
+**Payload schema:**
+
+```json
+{
+  "tool_use_id": "toolu_017fNc...",
+  "output": "package api\n\n// ...\n",
+  "is_error": false
+}
+```
+
+| Field         | Type   | Description |
+|---------------|--------|-------------|
+| `tool_use_id` | string | Pairs this event with the originating `tool.use` event (and with the persisted timeline rows). |
+| `output`      | string | Tool output, already truncated at 8 KiB by the runner. |
+| `is_error`    | bool   | `true` when the tool reported a failure. |
 
 ---
 
@@ -599,6 +641,8 @@ A previously-broadcast approval was resolved (either through the UI, a Discord/S
 | `BroadcastMessageDeleted` | `message.deleted` | `MessageDeletedData` | Channel |
 | `BroadcastAgentStatus` | `agent.status` | `AgentStatusEventData` | Channel (global when `ThreadID` is set) |
 | `BroadcastToolUse` | `tool.use` | `ToolUseEventData` | Channel |
+| `BroadcastAgentThinking` | `agent.thinking` | `AgentThinkingEventData` | Channel |
+| `BroadcastToolResult` | `tool.result` | `ToolResultEventData` | Channel |
 | `BroadcastAgentActivity` | `agent.activity` | `AgentActivityEventData` | Channel |
 | `BroadcastAskUser` | `agent.ask_user` | `AskUserQuestionEventData` | Channel |
 | `BroadcastExitPlan` | `agent.exit_plan` | `ExitPlanModeEventData` | Channel |
@@ -648,6 +692,8 @@ type Broadcaster interface {
     BroadcastMessageStreaming(channelID string, data MessageStreamingData)
     BroadcastAgentStatus(channelID string, data AgentStatusEventData)
     BroadcastToolUse(channelID string, data ToolUseEventData)
+    BroadcastAgentThinking(channelID string, data AgentThinkingEventData)
+    BroadcastToolResult(channelID string, data ToolResultEventData)
     BroadcastAgentActivity(channelID string, data AgentActivityEventData)
     BroadcastAskUser(channelID string, data AskUserQuestionEventData)
     BroadcastExitPlan(channelID string, data ExitPlanModeEventData)
