@@ -340,8 +340,9 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
 
   const handleStop = useCallback(async () => {
     setStoppedOptimistic(true);
+    onDismissCards?.();
     await sendCommand(channelId, "stop");
-  }, [channelId]);
+  }, [channelId, onDismissCards]);
 
   const handleSend = useCallback(async (overrideMode?: SendMode) => {
     const trimmed = text.trim();

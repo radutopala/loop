@@ -57,7 +57,7 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
   const { colors, fontSizes } = useTheme();
   const styles = buildStyles(colors);
   const { messages, loading, isRunning } = chatState;
-  const dismissCards = useCallback(() => { chatState.clearAskUser(); chatState.clearExitPlan(); }, [chatState]);
+  const dismissCards = useCallback(() => { chatState.clearAskUser(); chatState.clearExitPlan(); chatState.clearGateApproval(); }, [chatState]);
   const messagesRef = useRef<ChatMessagesHandle>(null);
   const [quotedMessage, setQuotedMessage] = useState<Message | null>(null);
   const clearQuote = useCallback(() => setQuotedMessage(null), []);
