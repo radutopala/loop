@@ -20,6 +20,8 @@ const (
 	EventMessageDeleted            = "message.deleted"
 	EventAgentStatus               = "agent.status"
 	EventToolUse                   = "tool.use"
+	EventToolResult                = "tool.result"
+	EventAgentThinking             = "agent.thinking"
 	EventAgentActivity             = "agent.activity"
 	EventAskUser                   = "agent.ask_user"
 	EventExitPlan                  = "agent.exit_plan"
@@ -252,6 +254,26 @@ func (h *EventsHub) BroadcastToolUse(channelID string, data events.ToolUseEventD
 func (h *EventsHub) BroadcastAgentActivity(channelID string, data events.AgentActivityEventData) {
 	h.Broadcast(Event{
 		Type:      EventAgentActivity,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastAgentThinking sends an agent.thinking event with the assistant's
+// extended-thinking content for the live UI.
+func (h *EventsHub) BroadcastAgentThinking(channelID string, data events.AgentThinkingEventData) {
+	h.Broadcast(Event{
+		Type:      EventAgentThinking,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastToolResult sends a tool.result event with the (already-truncated)
+// output of a single tool_result block.
+func (h *EventsHub) BroadcastToolResult(channelID string, data events.ToolResultEventData) {
+	h.Broadcast(Event{
+		Type:      EventToolResult,
 		ChannelID: channelID,
 		Data:      data,
 	})

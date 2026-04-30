@@ -462,6 +462,8 @@ func (s *TaskExecutorSuite) TestStreamingLocalPlatformPersistsThreadID() {
 
 	localChannel := &db.Channel{ChannelID: "ch-local", Platform: types.PlatformLocal, DirPath: "/work"}
 	s.store.On("GetChannel", mock.Anything, "ch-local").Return(localChannel, nil)
+	// Post-run JSONL ingest looks up the session-target channel for chat_id.
+	s.store.On("GetChannel", mock.Anything, "local-thread-1").Return(&db.Channel{ID: 9001, ChannelID: "local-thread-1"}, nil).Maybe()
 	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 	s.bot.On("CreateSimpleThread", s.ctx, "ch-local", mock.Anything, mock.Anything).Return("local-thread-1", nil).Once()
 	s.store.On("UpsertChannel", mock.Anything, mock.MatchedBy(func(ch *db.Channel) bool {
@@ -548,6 +550,8 @@ func (s *TaskExecutorSuite) TestStreamingDanglingThreadCreatesReplacement() {
 	s.store.On("GetChannel", mock.Anything, "ch-dangling").Return(localChannel, nil)
 	// Dangling: deleted-thread no longer exists in the channels table.
 	s.store.On("GetChannel", mock.Anything, "deleted-thread").Return(nil, nil)
+	// Post-run JSONL ingest looks up the session-target channel for chat_id.
+	s.store.On("GetChannel", mock.Anything, "new-thread").Return(&db.Channel{ID: 9002, ChannelID: "new-thread"}, nil).Maybe()
 	// DB still has the stale thread_id; refresh restores it.
 	s.store.On("GetScheduledTask", s.ctx, int64(33)).Return(&db.ScheduledTask{ID: 33, ThreadID: "deleted-thread", Type: db.TaskTypeInterval}, nil)
 	s.allowBotInserts()
@@ -933,6 +937,8 @@ func (s *TaskExecutorSuite) TestAutoDeleteEphemeralLocalPlatform() {
 
 	localCh := &db.Channel{ChannelID: "ch-local-eph", Platform: types.PlatformLocal, DirPath: "/work"}
 	s.store.On("GetChannel", mock.Anything, "ch-local-eph").Return(localCh, nil)
+	// Post-run JSONL ingest looks up the session-target channel for chat_id.
+	s.store.On("GetChannel", mock.Anything, "local-eph-thread").Return(&db.Channel{ID: 9003, ChannelID: "local-eph-thread"}, nil).Maybe()
 	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(40), "local-eph-thread").Return(nil)
@@ -1309,6 +1315,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcasts() {
 	}
 
 	s.store.On("GetChannel", mock.Anything, "ch25").Return(nil, nil)
+	s.store.On("GetChannel", mock.Anything, "thread-25").Return(nil, nil).Maybe()
 	s.store.On("GetScheduledTask", s.ctx, int64(25)).Return(&db.ScheduledTask{ID: 25, Type: db.TaskTypeCron}, nil)
 
 	s.bot.On("CreateSimpleThread", s.ctx, "ch25", mock.Anything, mock.Anything).Return("thread-25", nil).Once()
@@ -1320,7 +1327,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcasts() {
 		}
 		// OnToolUse should broadcast to thread once created
 		req.OnTurn("Turn 1") // creates thread
-		req.OnToolUse("Read", "/tmp/foo.go")
+		req.OnToolUse("toolu_a", "Read", "/tmp/foo.go")
 		return true
 	})).Return(&agent.AgentResponse{
 		Response: "Turn 1", SessionID: "sess-tu",
@@ -1354,6 +1361,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseAskUserQuestion() {
 	}
 
 	s.store.On("GetChannel", mock.Anything, "ch27").Return(nil, nil)
+	s.store.On("GetChannel", mock.Anything, "thread-27").Return(nil, nil).Maybe()
 	s.store.On("GetScheduledTask", s.ctx, int64(27)).Return(&db.ScheduledTask{ID: 27, Type: db.TaskTypeCron}, nil)
 	s.bot.On("CreateSimpleThread", s.ctx, "ch27", mock.Anything, mock.Anything).Return("thread-27", nil).Once()
 	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(27), "thread-27").Return(nil)
@@ -1364,7 +1372,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseAskUserQuestion() {
 			return false
 		}
 		req.OnTurn("Turn 1")
-		req.OnToolUse("AskUserQuestion", askInput)
+		req.OnToolUse("toolu_q", "AskUserQuestion", askInput)
 		return true
 	})).Return(&agent.AgentResponse{Response: "Turn 1", SessionID: "sess-ask"}, nil)
 
@@ -1395,6 +1403,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseExitPlanMode() {
 	}
 
 	s.store.On("GetChannel", mock.Anything, "ch28").Return(nil, nil)
+	s.store.On("GetChannel", mock.Anything, "thread-28").Return(nil, nil).Maybe()
 	s.store.On("GetScheduledTask", s.ctx, int64(28)).Return(&db.ScheduledTask{ID: 28, Type: db.TaskTypeCron}, nil)
 	s.bot.On("CreateSimpleThread", s.ctx, "ch28", mock.Anything, mock.Anything).Return("thread-28", nil).Once()
 	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(28), "thread-28").Return(nil)
@@ -1405,7 +1414,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseExitPlanMode() {
 			return false
 		}
 		req.OnTurn("Turn 1")
-		req.OnToolUse("ExitPlanMode", exitInput)
+		req.OnToolUse("toolu_p", "ExitPlanMode", exitInput)
 		return true
 	})).Return(&agent.AgentResponse{Response: "Turn 1", SessionID: "sess-exit"}, nil)
 
@@ -1436,6 +1445,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseTodoWrite() {
 	}
 
 	s.store.On("GetChannel", mock.Anything, "ch29").Return(nil, nil)
+	s.store.On("GetChannel", mock.Anything, "thread-29").Return(nil, nil).Maybe()
 	s.store.On("GetScheduledTask", s.ctx, int64(29)).Return(&db.ScheduledTask{ID: 29, Type: db.TaskTypeCron}, nil)
 	s.bot.On("CreateSimpleThread", s.ctx, "ch29", mock.Anything, mock.Anything).Return("thread-29", nil).Once()
 	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(29), "thread-29").Return(nil)
@@ -1446,7 +1456,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseTodoWrite() {
 			return false
 		}
 		req.OnTurn("Turn 1")
-		req.OnToolUse("TodoWrite", todoInput)
+		req.OnToolUse("toolu_t", "TodoWrite", todoInput)
 		return true
 	})).Return(&agent.AgentResponse{Response: "Turn 1", SessionID: "sess-todo"}, nil)
 
@@ -1487,7 +1497,7 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcastsBeforeThread() {
 			return false
 		}
 		// OnToolUse fires BEFORE any OnTurn — threadID is empty, uses task.ChannelID
-		req.OnToolUse("Bash", "ls")
+		req.OnToolUse("toolu_b", "Bash", "ls")
 		req.OnTurn("Turn 1")
 		return true
 	})).Return(&agent.AgentResponse{
@@ -1558,6 +1568,58 @@ func (s *TaskExecutorSuite) TestStreamingOnActivityBroadcasts() {
 	require.Equal(s.T(), "Turn 1", resp)
 
 	eb.AssertNumberOfCalls(s.T(), "BroadcastAgentActivity", 2)
+	eb.AssertExpectations(s.T())
+}
+
+func (s *TaskExecutorSuite) TestStreamingOnThinkingAndToolResultBroadcasts() {
+	s.executor.streamingEnabled.Store(true)
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+	allowStatusBroadcasts(eb)
+
+	task := &db.ScheduledTask{
+		ID: 28, ChannelID: "ch28", Prompt: "think + tool_result",
+		Type: db.TaskTypeCron, Schedule: "0 * * * *",
+	}
+
+	s.store.On("GetChannel", mock.Anything, "ch28").Return(nil, nil)
+	s.store.On("GetChannel", mock.Anything, "thread-28").Return(nil, nil).Maybe()
+	s.store.On("GetScheduledTask", s.ctx, int64(28)).Return(&db.ScheduledTask{ID: 28, Type: db.TaskTypeCron}, nil)
+
+	s.bot.On("CreateSimpleThread", s.ctx, "ch28", mock.Anything, mock.Anything).Return("thread-28", nil).Once()
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(28), "thread-28").Return(nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnThinking == nil || req.OnToolResult == nil {
+			return false
+		}
+		// Pre-thread fires use task.ChannelID
+		req.OnThinking("pre-thread plan")
+		req.OnToolResult("toolu_x", "pre-out", false)
+		req.OnTurn("Turn 1")
+		// Post-thread fires use threadID
+		req.OnThinking("post-thread plan")
+		req.OnToolResult("toolu_y", "post-out", true)
+		return true
+	})).Return(&agent.AgentResponse{
+		Response: "Turn 1", SessionID: "sess-think-tr",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "thread-28", "sess-think-tr").Return(nil)
+
+	eb.On("BroadcastChannelCreated", "ch28", "thread-28").Once()
+	eb.On("BroadcastMessageCreated", "thread-28", mock.Anything).Maybe()
+	eb.On("BroadcastAgentThinking", "ch28", events.AgentThinkingEventData{Text: "pre-thread plan"}).Once()
+	eb.On("BroadcastToolResult", "ch28", events.ToolResultEventData{ToolUseID: "toolu_x", Output: "pre-out"}).Once()
+	eb.On("BroadcastAgentThinking", "thread-28", events.AgentThinkingEventData{Text: "post-thread plan"}).Once()
+	eb.On("BroadcastToolResult", "thread-28", events.ToolResultEventData{ToolUseID: "toolu_y", Output: "post-out", IsError: true}).Once()
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Turn 1", resp)
+
+	eb.AssertNumberOfCalls(s.T(), "BroadcastAgentThinking", 2)
+	eb.AssertNumberOfCalls(s.T(), "BroadcastToolResult", 2)
 	eb.AssertExpectations(s.T())
 }
 

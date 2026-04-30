@@ -29,6 +29,26 @@ export interface Message {
   created_at: string;
 }
 
+// TimelineItem is the discriminated union returned by /api/channels/{id}/timeline.
+// Real chat messages and agent events (thinking, tool_use, tool_result) are
+// interleaved by chain_position so reload renders the same canonical order
+// the user saw live.
+export type TimelineItem =
+  | { kind: "message"; position: number; id: number; data: Message }
+  | { kind: "thinking"; position: number; id: number; text: string; truncated?: boolean }
+  | { kind: "tool_use"; position: number; id: number; tool_use_id: string; tool_name: string; tool_input: string; truncated?: boolean }
+  | { kind: "tool_result"; position: number; id: number; tool_use_id: string; text: string; is_error?: boolean; truncated?: boolean };
+
+export interface TimelineCursor {
+  position: number;
+  id: number;
+}
+
+export interface TimelineResponse {
+  items: TimelineItem[];
+  next_cursor: TimelineCursor | null;
+}
+
 // Event stream types from /api/ws
 export interface WSEvent {
   type: string;
@@ -67,8 +87,19 @@ export interface AgentStatusData {
 }
 
 export interface ToolUseData {
+  tool_use_id?: string;
   tool_name: string;
   input: string;
+}
+
+export interface AgentThinkingData {
+  text: string;
+}
+
+export interface ToolResultData {
+  tool_use_id?: string;
+  output: string;
+  is_error?: boolean;
 }
 
 export interface AgentActivityData {

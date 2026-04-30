@@ -23,18 +23,41 @@ type Channel struct {
 	UpdatedAt   time.Time         `json:"updated_at"`
 }
 
-// Message represents a chat message stored for context.
+// MessageKind discriminates real chat messages from JSONL-backed agent events
+// stored in the same table.
+type MessageKind string
+
+const (
+	MessageKindMessage    MessageKind = "message"
+	MessageKindThinking   MessageKind = "thinking"
+	MessageKindToolUse    MessageKind = "tool_use"
+	MessageKindToolResult MessageKind = "tool_result"
+)
+
+// Message represents either a chat message or an agent event row. Agent event
+// rows (kind != "message") carry inline content captured from the docker
+// stream at run time; ToolName / IsError add the metadata that doesn't fit in
+// Content. EventUUID / SessionID are kept for legacy rows backfilled from JSONL
+// before the live-write switch.
 type Message struct {
-	ID          int64     `json:"id"`
-	ChatID      int64     `json:"chat_id"`
-	ChannelID   string    `json:"channel_id"`
-	MsgID       string    `json:"msg_id"`
-	AuthorID    string    `json:"author_id"`
-	AuthorName  string    `json:"author_name"`
-	Content     string    `json:"content"`
-	IsBot       bool      `json:"is_bot"`
-	IsProcessed bool      `json:"is_processed"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID            int64       `json:"id"`
+	ChatID        int64       `json:"chat_id"`
+	ChannelID     string      `json:"channel_id"`
+	MsgID         string      `json:"msg_id"`
+	AuthorID      string      `json:"author_id"`
+	AuthorName    string      `json:"author_name"`
+	Content       string      `json:"content"`
+	IsBot         bool        `json:"is_bot"`
+	IsProcessed   bool        `json:"is_processed"`
+	CreatedAt     time.Time   `json:"created_at"`
+	Kind          MessageKind `json:"kind"`
+	EventUUID     string      `json:"event_uuid,omitempty"`
+	ParentUUID    string      `json:"parent_uuid,omitempty"`
+	ChainPosition int64       `json:"chain_position"`
+	ToolUseID     string      `json:"tool_use_id,omitempty"`
+	SessionID     string      `json:"session_id,omitempty"`
+	ToolName      string      `json:"tool_name,omitempty"`
+	IsError       bool        `json:"is_error,omitempty"`
 }
 
 // ScheduledTask represents a task scheduled for execution.

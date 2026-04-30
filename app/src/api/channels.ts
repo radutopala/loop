@@ -1,4 +1,4 @@
-import type { Channel, Message } from "../types";
+import type { Channel, Message, TimelineResponse } from "../types";
 import { getApiUrl, getWsUrl } from "./api";
 
 /** Open a one-shot WebSocket to send a kill message for a channel's agent container. */
@@ -220,6 +220,21 @@ export async function fetchMessages(
     `${getApiUrl()}/api/channels/${channelId}/messages?${params}`,
   );
   if (!res.ok) throw new Error(`Failed to fetch messages: ${res.statusText}`);
+  return res.json();
+}
+
+export async function fetchTimeline(
+  channelId: string,
+  opts?: { limit?: number; cursorPosition?: number; cursorId?: number },
+): Promise<TimelineResponse> {
+  const params = new URLSearchParams();
+  if (opts?.limit) params.set("limit", String(opts.limit));
+  if (opts?.cursorPosition) params.set("cursor_position", String(opts.cursorPosition));
+  if (opts?.cursorId) params.set("cursor_id", String(opts.cursorId));
+  const res = await fetch(
+    `${getApiUrl()}/api/channels/${channelId}/timeline?${params}`,
+  );
+  if (!res.ok) throw new Error(`Failed to fetch timeline: ${res.statusText}`);
   return res.json();
 }
 

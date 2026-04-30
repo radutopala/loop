@@ -6,6 +6,8 @@ type Broadcaster interface {
 	BroadcastMessageStreaming(channelID string, data MessageStreamingData)
 	BroadcastAgentStatus(channelID string, data AgentStatusEventData)
 	BroadcastToolUse(channelID string, data ToolUseEventData)
+	BroadcastAgentThinking(channelID string, data AgentThinkingEventData)
+	BroadcastToolResult(channelID string, data ToolResultEventData)
 	BroadcastAgentActivity(channelID string, data AgentActivityEventData)
 	BroadcastAskUser(channelID string, data AskUserQuestionEventData)
 	BroadcastExitPlan(channelID string, data ExitPlanModeEventData)
@@ -62,9 +64,26 @@ type AgentStatusEventData struct {
 }
 
 // ToolUseEventData is the payload for tool.use events.
+// ToolUseID is the per-block id from the assistant message; pairs with the
+// matching ToolResultEventData carrying the same id when the tool finishes.
 type ToolUseEventData struct {
-	ToolName string `json:"tool_name"`
-	Input    string `json:"input"`
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	ToolName  string `json:"tool_name"`
+	Input     string `json:"input"`
+}
+
+// AgentThinkingEventData is the payload for agent.thinking events.
+type AgentThinkingEventData struct {
+	Text string `json:"text"`
+}
+
+// ToolResultEventData is the payload for tool.result events. Output is already
+// truncated by the runner; full content remains in the JSONL and may be
+// hydrated later by /timeline.
+type ToolResultEventData struct {
+	ToolUseID string `json:"tool_use_id,omitempty"`
+	Output    string `json:"output"`
+	IsError   bool   `json:"is_error,omitempty"`
 }
 
 // AgentActivityEventData is the payload for agent.activity events.

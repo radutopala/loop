@@ -231,6 +231,74 @@ func (s *EventsHubSuite) TestBroadcastToolUse() {
 	require.Equal(s.T(), "ch-1", evt.ChannelID)
 }
 
+func (s *EventsHubSuite) TestBroadcastAgentThinking() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastAgentThinking("ch-1", events.AgentThinkingEventData{Text: "deep thoughts"})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventAgentThinking, evt.Type)
+	require.Equal(s.T(), "agent.thinking", evt.Type)
+	require.Equal(s.T(), "ch-1", evt.ChannelID)
+}
+
+func (s *EventsHubSuite) TestBroadcastToolResult() {
+	hub := NewEventsHub(testLogger())
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		hub.Register(conn, nil)
+		select {}
+	}))
+	defer srv.Close()
+
+	wsURL := "ws" + strings.TrimPrefix(srv.URL, "http")
+	conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+	require.NoError(s.T(), err)
+	defer conn.Close()
+
+	time.Sleep(50 * time.Millisecond)
+
+	hub.BroadcastToolResult("ch-1", events.ToolResultEventData{
+		ToolUseID: "toolu_1",
+		Output:    "file contents",
+		IsError:   false,
+	})
+
+	_, msg, err := conn.ReadMessage()
+	require.NoError(s.T(), err)
+
+	var evt Event
+	require.NoError(s.T(), json.Unmarshal(msg, &evt))
+	require.Equal(s.T(), EventToolResult, evt.Type)
+	require.Equal(s.T(), "tool.result", evt.Type)
+	require.Equal(s.T(), "ch-1", evt.ChannelID)
+}
+
 func (s *EventsHubSuite) TestBroadcastAgentActivity() {
 	hub := NewEventsHub(testLogger())
 

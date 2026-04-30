@@ -1,5 +1,5 @@
 import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
-import type { AgentActivityData, AskUserQuestion, ExitPlanModeData, Message, TodoItem } from "../../types";
+import type { AgentActivityData, AskUserQuestion, ExitPlanModeData, Message, TimelineItem, TodoItem } from "../../types";
 import type { ChatState } from "../../hooks/useChatState";
 import { sendMessage } from "../../api/loopApi";
 import { fonts } from "../../theme";
@@ -88,6 +88,28 @@ function buildMessageStyles(colors: ColorPalette): Record<string, React.CSSPrope
       fontSize: 13,
       lineHeight: 1.5,
     },
+    table: {
+      borderCollapse: "collapse" as const,
+      margin: "8px 0",
+      fontSize: 13,
+      lineHeight: 1.4,
+      display: "block",
+      maxWidth: "100%",
+      overflowX: "auto" as const,
+    },
+    tableHeaderCell: {
+      border: `1px solid ${colors.border}`,
+      padding: "6px 10px",
+      backgroundColor: colors.surface,
+      fontWeight: 600,
+      textAlign: "left" as const,
+      whiteSpace: "nowrap" as const,
+    },
+    tableCell: {
+      border: `1px solid ${colors.border}`,
+      padding: "6px 10px",
+      verticalAlign: "top" as const,
+    },
   };
 }
 
@@ -119,7 +141,23 @@ export interface ChatMessagesHandle {
 export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(function ChatMessages({ channelId, chatState, scrollToMessageId, onScrollComplete, onQuote }, ref) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
-  const { messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, todos, completionInfo, triggerContent, gateApproval } = chatState;
+  const { items, liveTail, messages, loading, loadMore, hasMore, streamingContent, isRunning, toolActivity, agentActivity, askUserQuestions, exitPlanRequest, todos, completionInfo, triggerContent, gateApproval } = chatState;
+  // Pair tool_use with its tool_result by tool_use_id so the renderer can
+  // collapse them into a single pill with output. Skip pairing when the
+  // tool_use_id is empty (live events without a stable id).
+  const allItems: TimelineItem[] = [...items, ...liveTail];
+  const resultsByToolUseID = new Map<string, { text: string; is_error: boolean; truncated: boolean }>();
+  for (const it of allItems) {
+    if (it.kind === "tool_result" && it.tool_use_id) {
+      resultsByToolUseID.set(it.tool_use_id, { text: it.text, is_error: it.is_error ?? false, truncated: it.truncated ?? false });
+    }
+  }
+  const skippedToolResultIDs = new Set<string>();
+  for (const it of allItems) {
+    if (it.kind === "tool_use" && it.tool_use_id && resultsByToolUseID.has(it.tool_use_id)) {
+      skippedToolResultIDs.add(it.tool_use_id);
+    }
+  }
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -190,24 +228,57 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
               {loading ? "Loading..." : "Load older messages"}
             </button>
           )}
-          {messages.map((msg) => (
-            <MessageBubble
-              key={msg.msg_id}
-              message={msg}
-              showProcessing={isRunning && !msg.is_bot && msg.msg_id === firstUnprocessedUserMsgId}
-              showQueued={!msg.is_bot && !msg.is_processed && !(isRunning && msg.msg_id === firstUnprocessedUserMsgId)}
-              highlighted={msg.id === highlightedMsgId}
-              onQuote={onQuote}
-            />
-          ))}
+          {allItems.map((it) => {
+            if (it.kind === "message") {
+              const msg = it.data;
+              return (
+                <MessageBubble
+                  key={`m-${msg.msg_id}`}
+                  message={msg}
+                  showProcessing={isRunning && !msg.is_bot && msg.msg_id === firstUnprocessedUserMsgId}
+                  showQueued={!msg.is_bot && !msg.is_processed && !(isRunning && msg.msg_id === firstUnprocessedUserMsgId)}
+                  highlighted={msg.id === highlightedMsgId}
+                  onQuote={onQuote}
+                />
+              );
+            }
+            if (it.kind === "thinking") {
+              return <ThinkingBubble key={`t-${it.id}`} text={it.text} truncated={it.truncated ?? false} />;
+            }
+            if (it.kind === "tool_use") {
+              if (it.tool_use_id && skippedToolResultIDs.has(it.tool_use_id)) {
+                const result = resultsByToolUseID.get(it.tool_use_id)!;
+                return (
+                  <ToolActivityIndicator
+                    key={`tu-${it.id}`}
+                    toolName={it.tool_name}
+                    input={it.tool_input}
+                    result={result}
+                  />
+                );
+              }
+              return <ToolActivityIndicator key={`tu-${it.id}`} toolName={it.tool_name} input={it.tool_input} />;
+            }
+            if (it.kind === "tool_result") {
+              if (it.tool_use_id && skippedToolResultIDs.has(it.tool_use_id)) {
+                return null; // already paired into the matching tool_use
+              }
+              return (
+                <ToolActivityIndicator
+                  key={`tr-${it.id}`}
+                  toolName="result"
+                  input=""
+                  result={{ text: it.text, is_error: it.is_error ?? false, truncated: it.truncated ?? false }}
+                />
+              );
+            }
+            return null;
+          })}
           {showTriggerQuote && (
             <TriggerQuote content={triggerContent} time={firstUnprocessedUserMsgId ? messages.find((m) => m.msg_id === firstUnprocessedUserMsgId)?.created_at : undefined} />
           )}
           {isRunning && agentActivity && (
             <AgentActivityIndicator activity={agentActivity} />
-          )}
-          {toolActivity && !streamingContent && isRunning && (
-            <ToolActivityIndicator toolName={toolActivity.tool_name} input={toolActivity.input} />
           )}
           {gateApproval && (
             <ApprovalCard data={gateApproval} onResolved={() => { chatState.clearGateApproval(); scrollToBottom(); }} />
@@ -425,15 +496,73 @@ function CompletionSummary({ info }: { info: { duration_ms?: number; num_turns?:
   );
 }
 
-function ToolActivityIndicator({ toolName, input }: { toolName: string; input: string }) {
+function ToolActivityIndicator({ toolName, input, result }: { toolName: string; input?: string; result?: { text: string; is_error: boolean; truncated: boolean } }) {
   const { colors } = useTheme();
   const activityStyle = buildActivityStyle(colors);
-  const summary = input.length > 80 ? input.slice(0, 80) + "..." : input;
+  const [expanded, setExpanded] = useState(false);
+  const safeInput = input ?? "";
+  const summary = safeInput.length > 80 ? safeInput.slice(0, 80) + "..." : safeInput;
+  const fullText = result?.text ?? "";
+  const previewText = fullText.length > 120 ? fullText.slice(0, 120) + "..." : fullText;
+  const hasResult = fullText !== "";
+  const canExpand = fullText.length > 120;
+  const resultColor = result?.is_error ? colors.warning : colors.textDim;
   return (
-    <div style={activityStyle}>
-      <span style={{ opacity: 0.5 }}>&#9881;</span>
-      <span style={{ color: colors.textMuted, fontWeight: 500 }}>{toolName}</span>
-      {summary && <span style={{ opacity: 0.7 }}>{summary}</span>}
+    <div style={{ ...activityStyle, flexDirection: "column", alignItems: "flex-start", gap: 2 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <span style={{ opacity: 0.5 }}>&#9881;</span>
+        <span style={{ color: colors.textMuted, fontWeight: 500 }}>{toolName}</span>
+        {summary && <span style={{ opacity: 0.7 }}>{summary}</span>}
+      </div>
+      {hasResult && (
+        <div
+          onClick={canExpand ? () => setExpanded((v) => !v) : undefined}
+          style={{
+            marginLeft: 22,
+            opacity: 0.6,
+            color: resultColor,
+            cursor: canExpand ? "pointer" : "default",
+            whiteSpace: expanded ? "pre-wrap" : "normal",
+            wordBreak: "break-word",
+            fontFamily: fonts.mono,
+          }}
+        >
+          {expanded ? fullText : previewText}
+          {result?.truncated && <span style={{ opacity: 0.5 }}> (truncated)</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ThinkingBubble({ text, truncated }: { text?: string; truncated: boolean }) {
+  const { colors } = useTheme();
+  const [expanded, setExpanded] = useState(false);
+  const safeText = text ?? "";
+  const preview = safeText.length > 200 ? safeText.slice(0, 200) + "..." : safeText;
+  return (
+    <div
+      onClick={() => setExpanded((v) => !v)}
+      style={{
+        marginBottom: 12,
+        padding: "8px 12px",
+        borderRadius: 8,
+        borderLeft: `2px solid ${colors.border}`,
+        backgroundColor: colors.surface,
+        fontFamily: fonts.mono,
+        fontSize: 12,
+        color: colors.textDim,
+        cursor: "pointer",
+        whiteSpace: "pre-wrap",
+        lineHeight: 1.5,
+        opacity: 0.85,
+      }}
+    >
+      <div style={{ fontSize: 10, fontWeight: 700, color: colors.textMuted, textTransform: "uppercase", letterSpacing: 1, marginBottom: 4 }}>
+        Thinking
+      </div>
+      <div>{expanded ? safeText : preview}</div>
+      {truncated && <div style={{ fontSize: 10, opacity: 0.5, marginTop: 4 }}>truncated</div>}
     </div>
   );
 }
@@ -516,6 +645,43 @@ function parseMarkdown(text: string, s: Record<string, React.CSSProperties>): Re
       continue;
     }
 
+    // GFM table: header row + separator (|---|---|) + body rows.
+    if (isTableRow(line) && i + 1 < lines.length && isTableSeparator(lines[i + 1] ?? "")) {
+      const aligns = parseTableAligns(lines[i + 1] ?? "");
+      const headers = splitTableRow(line);
+      i += 2;
+      const bodyRows: string[][] = [];
+      while (i < lines.length && isTableRow(lines[i] ?? "")) {
+        bodyRows.push(splitTableRow(lines[i] ?? ""));
+        i++;
+      }
+      nodes.push(
+        <table key={nodes.length} style={s.table}>
+          <thead>
+            <tr>
+              {headers.map((h, hi) => (
+                <th key={hi} style={{ ...s.tableHeaderCell, textAlign: aligns[hi] ?? "left" }}>
+                  {formatInline(h, s)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {bodyRows.map((row, ri) => (
+              <tr key={ri}>
+                {row.map((cell, ci) => (
+                  <td key={ci} style={{ ...s.tableCell, textAlign: aligns[ci] ?? "left" }}>
+                    {formatInline(cell, s)}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>,
+      );
+      continue;
+    }
+
     // Blockquote: collect consecutive `> ` lines.
     if (line.startsWith("> ") || line === ">") {
       const quoteLines: string[] = [];
@@ -548,6 +714,33 @@ function parseMarkdown(text: string, s: Record<string, React.CSSProperties>): Re
   }
 
   return nodes;
+}
+
+function isTableRow(line: string): boolean {
+  return line.includes("|") && line.trim().length > 0 && !line.trim().startsWith("```");
+}
+
+function isTableSeparator(line: string): boolean {
+  // |---|:---:|---:| with optional surrounding pipes/whitespace.
+  return /^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/.test(line);
+}
+
+function parseTableAligns(separator: string): ("left" | "center" | "right")[] {
+  return splitTableRow(separator).map((cell) => {
+    const t = cell.trim();
+    const left = t.startsWith(":");
+    const right = t.endsWith(":");
+    if (left && right) return "center";
+    if (right) return "right";
+    return "left";
+  });
+}
+
+function splitTableRow(line: string): string[] {
+  let s = line.trim();
+  if (s.startsWith("|")) s = s.slice(1);
+  if (s.endsWith("|")) s = s.slice(0, -1);
+  return s.split("|").map((c) => c.trim());
 }
 
 function linkifyText(text: string, keyBase: number): React.ReactNode[] {

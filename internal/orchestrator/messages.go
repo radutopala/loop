@@ -299,10 +299,17 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 		})
 		req.OnTurn = tracker.OnTurn
 		if o.events != nil {
-			req.OnToolUse = func(name, input string) {
+			req.OnToolUse = func(toolUseID, name, input string) {
+				storeAgentEvent(ctx, o.store, msg.ChannelID, &db.Message{
+					Kind:      db.MessageKindToolUse,
+					ToolUseID: toolUseID,
+					ToolName:  name,
+					Content:   input,
+				}, o.logger.Warn)
 				o.events.BroadcastToolUse(msg.ChannelID, events.ToolUseEventData{
-					ToolName: name,
-					Input:    input,
+					ToolUseID: toolUseID,
+					ToolName:  name,
+					Input:     input,
 				})
 				if name == "AskUserQuestion" {
 					var data events.AskUserQuestionEventData
@@ -322,6 +329,26 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 						o.events.BroadcastTodoWrite(msg.ChannelID, data)
 					}
 				}
+			}
+			req.OnThinking = func(text string) {
+				storeAgentEvent(ctx, o.store, msg.ChannelID, &db.Message{
+					Kind:    db.MessageKindThinking,
+					Content: text,
+				}, o.logger.Warn)
+				o.events.BroadcastAgentThinking(msg.ChannelID, events.AgentThinkingEventData{Text: text})
+			}
+			req.OnToolResult = func(toolUseID, output string, isError bool) {
+				storeAgentEvent(ctx, o.store, msg.ChannelID, &db.Message{
+					Kind:      db.MessageKindToolResult,
+					ToolUseID: toolUseID,
+					Content:   output,
+					IsError:   isError,
+				}, o.logger.Warn)
+				o.events.BroadcastToolResult(msg.ChannelID, events.ToolResultEventData{
+					ToolUseID: toolUseID,
+					Output:    output,
+					IsError:   isError,
+				})
 			}
 			req.OnActivity = func(activity, detail string) {
 				data := events.AgentActivityEventData{Activity: activity}

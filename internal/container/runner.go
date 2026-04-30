@@ -8,6 +8,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -49,18 +50,25 @@ type claudeResponse struct {
 	Model      string `json:"-"` // set by scanStreamJSON from assistant events
 }
 
+// assistantContentBlock is a single content block within an assistant message.
+// A block is one of: "text" (Text), "thinking" (Thinking), or "tool_use"
+// (ID + Name + Input). Other fields are zero on a given block.
+type assistantContentBlock struct {
+	Type     string          `json:"type"`
+	Text     string          `json:"text"`     // text blocks
+	Thinking string          `json:"thinking"` // thinking blocks
+	ID       string          `json:"id"`       // tool_use id
+	Name     string          `json:"name"`     // tool_use name
+	Input    json.RawMessage `json:"input"`    // tool_use input
+}
+
 // assistantMessage represents an "assistant" event from Claude's stream-json output.
 // Each assistant turn contains a message with content blocks.
 type assistantMessage struct {
 	Type    string `json:"type"`
 	Message struct {
-		Model   string `json:"model"`
-		Content []struct {
-			Type  string          `json:"type"`
-			Text  string          `json:"text"`
-			Name  string          `json:"name"`
-			Input json.RawMessage `json:"input"`
-		} `json:"content"`
+		Model   string                  `json:"model"`
+		Content []assistantContentBlock `json:"content"`
 	} `json:"message"`
 }
 
@@ -83,8 +91,20 @@ func (m *assistantMessage) extractText() string {
 	return strings.Join(texts, "\n")
 }
 
+// extractThinking joins all thinking content blocks from an assistant message.
+func (m *assistantMessage) extractThinking() string {
+	var parts []string
+	for _, c := range m.Message.Content {
+		if c.Type == "thinking" && c.Thinking != "" {
+			parts = append(parts, c.Thinking)
+		}
+	}
+	return strings.Join(parts, "\n")
+}
+
 // ToolUse represents a tool invocation extracted from an assistant message.
 type ToolUse struct {
+	ID    string // per-block tool_use id, pairs with the matching tool_result
 	Name  string
 	Input string // short summary of the input
 }
@@ -95,7 +115,7 @@ func (m *assistantMessage) extractToolUses() []ToolUse {
 	for _, c := range m.Message.Content {
 		if c.Type == "tool_use" && c.Name != "" {
 			summary := summarizeToolInput(c.Name, c.Input)
-			tools = append(tools, ToolUse{Name: c.Name, Input: summary})
+			tools = append(tools, ToolUse{ID: c.ID, Name: c.Name, Input: summary})
 		}
 	}
 	return tools
@@ -749,9 +769,11 @@ func (r *DockerRunner) runOnce(ctx context.Context, req *agent.AgentRequest) (*a
 	}
 
 	claudeResp, err := r.collectOutput(ctx, containerID, streamCallbacks{
-		onTurn:     req.OnTurn,
-		onToolUse:  req.OnToolUse,
-		onActivity: req.OnActivity,
+		onTurn:       req.OnTurn,
+		onToolUse:    req.OnToolUse,
+		onActivity:   req.OnActivity,
+		onThinking:   req.OnThinking,
+		onToolResult: req.OnToolResult,
 	})
 	if err != nil {
 		return nil, err
@@ -1512,7 +1534,7 @@ func injectWorkspaceRule(rules []types.FileRule, workDir, parentDirPath string) 
 // collectOutput reads container logs (streaming or batch) and waits for exit.
 // Returns the parsed Claude response or an error.
 func (r *DockerRunner) collectOutput(ctx context.Context, containerID string, cb streamCallbacks) (*claudeResponse, error) {
-	if cb.onTurn != nil {
+	if cb.onTurn != nil || cb.onThinking != nil || cb.onToolResult != nil {
 		return r.collectStreamingOutput(ctx, containerID, cb)
 	}
 	return r.collectBatchOutput(ctx, containerID)
@@ -1642,34 +1664,124 @@ func localhostToDockerHost(v string) string {
 
 // streamCallbacks holds optional callbacks for scanStreamJSON.
 type streamCallbacks struct {
-	onTurn     func(string)
-	onToolUse  func(name, input string)
-	onActivity func(activity, detail string)
+	onTurn       func(string)
+	onToolUse    func(toolUseID, name, input string)
+	onActivity   func(activity, detail string)
+	onThinking   func(text string)
+	onToolResult func(toolUseID, output string, isError bool)
 }
 
-// readLineOrSkip reads a line from the buffered reader. If the line starts
-// with a "user" type JSON event (tool results, which can be several MB for
-// screenshots), it skips the rest of the line without buffering it.
-// Returns the full line for events we care about, or nil for skipped lines.
+// userEventMaxBytes caps the size of "user" stream-json lines we will fully
+// read. Above this we drain the line (without buffering it) — this protects
+// against multi-MB screenshot tool_results. Below it, we parse the line so
+// non-image tool_result blocks (Read/Bash/Grep output) reach the chat.
+const userEventMaxBytes = 256 * 1024
+
+// toolResultMaxInline caps the live tool_result output we forward over SSE.
+// Anything above is truncated; the full content is still in the JSONL and
+// can be hydrated later by /timeline.
+const toolResultMaxInline = 8 * 1024
+
+// userMessage represents a "user" event from Claude's stream-json output, used
+// only to surface tool_result blocks live. The Message.Content is polymorphic:
+// each block's Content is either a plain string OR an array of {type, text|image}
+// blocks; both shapes are handled by parseToolResultContent.
+type userMessage struct {
+	Type    string `json:"type"`
+	Message struct {
+		Content []struct {
+			Type      string          `json:"type"`
+			ToolUseID string          `json:"tool_use_id"`
+			Content   json.RawMessage `json:"content"`
+			IsError   bool            `json:"is_error"`
+		} `json:"content"`
+	} `json:"message"`
+}
+
+// parseToolResultContent extracts the textual body of a tool_result content
+// field. The field is polymorphic: a plain string OR an array of {type, text}
+// or {type, image} blocks. Image blocks are dropped; text blocks are joined.
+func parseToolResultContent(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		return s
+	}
+	var blocks []struct {
+		Type string `json:"type"`
+		Text string `json:"text"`
+	}
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return ""
+	}
+	var sb strings.Builder
+	for _, b := range blocks {
+		if b.Type == "text" && b.Text != "" {
+			if sb.Len() > 0 {
+				sb.WriteByte('\n')
+			}
+			sb.WriteString(b.Text)
+		}
+	}
+	return sb.String()
+}
+
+// truncateInline trims s to maxBytes and reports whether it was truncated.
+func truncateInline(s string, maxBytes int) (string, bool) {
+	if len(s) <= maxBytes {
+		return s, false
+	}
+	return s[:maxBytes], true
+}
+
+// readLineOrSkip reads a line from the buffered reader. For "user" events
+// (tool results), it caps the buffered bytes at userEventMaxBytes — over the
+// cap, the rest of the line is drained without buffering and the function
+// returns nil (typically a screenshot). Under the cap, the full line is
+// returned so callers can dispatch tool_result blocks live. Non-user lines
+// are returned in full.
 func readLineOrSkip(br *bufio.Reader) ([]byte, error) {
 	// Peek at the first bytes to detect the event type without reading
-	// the entire line. Tool results (screenshots) can be several MB.
+	// the full line. Tool results (screenshots) can be several MB.
 	peek, peekErr := br.Peek(30)
 	if len(peek) == 0 && peekErr != nil {
 		return nil, peekErr // EOF or real error
 	}
+	isUser := strings.Contains(string(peek), `"type":"user"`)
 
-	// Check if this is a "user" event (tool results) — skip without reading fully.
-	if strings.Contains(string(peek), `"type":"user"`) {
-		// Discard the entire line without buffering it.
-		_, _ = br.ReadBytes('\n')
-		return nil, nil
+	var (
+		buf  []byte
+		over bool
+	)
+	for {
+		chunk, err := br.ReadSlice('\n')
+		if isUser && !over && len(buf)+len(chunk) > userEventMaxBytes {
+			// Over cap — stop buffering and start draining.
+			over = true
+			buf = nil
+		}
+		if !over {
+			buf = append(buf, chunk...)
+		}
+		switch {
+		case err == nil:
+			if over {
+				return nil, nil
+			}
+			return bytes.TrimSpace(buf), nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		case errors.Is(err, io.EOF):
+			if over {
+				return nil, nil
+			}
+			return bytes.TrimSpace(buf), nil
+		default:
+			return nil, err
+		}
 	}
-
-	// Read the full line for events we care about.
-	// ReadBytes may return data with EOF (last line without \n) — that's fine.
-	line, _ := br.ReadBytes('\n')
-	return bytes.TrimSpace(line), nil
 }
 
 // scanStreamJSON scans newline-delimited JSON events from Claude's stream-json output.
@@ -1718,10 +1830,31 @@ func scanStreamJSON(r io.Reader, cb streamCallbacks) (*claudeResponse, error) {
 					cb.onTurn(text)
 				}
 			}
+			if cb.onThinking != nil {
+				if text := msg.extractThinking(); text != "" {
+					cb.onThinking(text)
+				}
+			}
 			if cb.onToolUse != nil {
 				for _, tu := range msg.extractToolUses() {
-					cb.onToolUse(tu.Name, tu.Input)
+					cb.onToolUse(tu.ID, tu.Name, tu.Input)
 				}
+			}
+		case "user":
+			if cb.onToolResult == nil {
+				continue
+			}
+			var um userMessage
+			if err := json.Unmarshal(line, &um); err != nil {
+				continue
+			}
+			for _, blk := range um.Message.Content {
+				if blk.Type != "tool_result" {
+					continue
+				}
+				body := parseToolResultContent(blk.Content)
+				out, _ := truncateInline(body, toolResultMaxInline)
+				cb.onToolResult(blk.ToolUseID, out, blk.IsError)
 			}
 		case "system":
 			if cb.onActivity != nil {

@@ -48,7 +48,14 @@ func newMockTaskRows() *sqlmock.Rows {
 }
 
 func newMockMessageRows() *sqlmock.Rows {
-	return sqlmock.NewRows([]string{"id", "chat_id", "channel_id", "msg_id", "author_id", "author_name", "content", "is_bot", "is_processed", "created_at"})
+	return sqlmock.NewRows([]string{"id", "chat_id", "channel_id", "msg_id", "author_id", "author_name", "content", "is_bot", "is_processed", "created_at", "kind", "event_uuid", "parent_uuid", "chain_position", "tool_use_id", "session_id", "tool_name", "is_error"})
+}
+
+// addMessageRow appends a chat-row with default empty values for the new
+// timeline pointer columns, matching the pre-feature shape used across most
+// existing tests.
+func addMessageRow(rows *sqlmock.Rows, id, chatID int64, channelID, msgID, authorID, authorName, content string, isBot, isProcessed int, createdAt time.Time) *sqlmock.Rows {
+	return rows.AddRow(id, chatID, channelID, msgID, authorID, authorName, content, isBot, isProcessed, createdAt, "message", "", "", int64(0), "", "", "", 0)
 }
 
 func newMockMemoryRows() *sqlmock.Rows {
@@ -443,21 +450,31 @@ func (s *StoreSuite) TestInsertMessage() {
 		IsBot: false, IsProcessed: false, CreatedAt: time.Now().UTC(),
 	}
 	s.mock.ExpectExec(`INSERT INTO messages`).
-		WithArgs(msg.ChatID, msg.ChannelID, msg.MsgID, msg.AuthorID, msg.AuthorName, msg.Content, 0, 0, sqlmock.AnyArg()).
+		WithArgs(msg.ChatID, msg.ChannelID, msg.MsgID, msg.AuthorID, msg.AuthorName, msg.Content, 0, 0, sqlmock.AnyArg(), msg.ChannelID).
 		WillReturnResult(sqlmock.NewResult(42, 1))
+	s.mock.ExpectQuery(`SELECT chain_position FROM messages WHERE id`).
+		WithArgs(int64(42)).
+		WillReturnRows(sqlmock.NewRows([]string{"chain_position"}).AddRow(int64(1)))
 
 	err := s.store.InsertMessage(context.Background(), msg)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), int64(42), msg.ID)
+	require.Equal(s.T(), int64(1), msg.ChainPosition)
 }
 
 func (s *StoreSuite) TestInsertMessageErrors() {
-	anyArgs := []driver.Value{sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()}
+	anyArgs := []driver.Value{sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()}
 	s.mock.ExpectExec(`INSERT INTO messages`).WithArgs(anyArgs...).WillReturnError(sql.ErrConnDone)
 	err := s.store.InsertMessage(context.Background(), &Message{ChatID: 1, ChannelID: "ch1", MsgID: "msg1", AuthorID: "u1", CreatedAt: time.Now().UTC()})
 	require.Error(s.T(), err)
 
 	s.mock.ExpectExec(`INSERT INTO messages`).WithArgs(anyArgs...).WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
+	err = s.store.InsertMessage(context.Background(), &Message{ChatID: 1, ChannelID: "ch1", MsgID: "msg1", AuthorID: "u1", CreatedAt: time.Now().UTC()})
+	require.Error(s.T(), err)
+
+	// chain_position read-back failure path.
+	s.mock.ExpectExec(`INSERT INTO messages`).WithArgs(anyArgs...).WillReturnResult(sqlmock.NewResult(99, 1))
+	s.mock.ExpectQuery(`SELECT chain_position FROM messages WHERE id`).WithArgs(int64(99)).WillReturnError(sql.ErrConnDone)
 	err = s.store.InsertMessage(context.Background(), &Message{ChatID: 1, ChannelID: "ch1", MsgID: "msg1", AuthorID: "u1", CreatedAt: time.Now().UTC()})
 	require.Error(s.T(), err)
 }
@@ -526,8 +543,7 @@ func (s *StoreSuite) TestDeleteQueuedMessageRowsAffectedError() {
 
 func (s *StoreSuite) TestGetRecentMessages() {
 	now := time.Now().UTC()
-	rows := newMockMessageRows().
-		AddRow(1, 1, "ch1", "msg1", "u1", "user1", "hello", 0, 1, now)
+	rows := addMessageRow(newMockMessageRows(), 1, 1, "ch1", "msg1", "u1", "user1", "hello", 0, 1, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id .+ ORDER BY created_at DESC LIMIT`).
 		WithArgs("ch1", 10).
 		WillReturnRows(rows)
@@ -546,7 +562,7 @@ func (s *StoreSuite) TestGetRecentMessagesError() {
 
 	// Scan error inside scanMessages.
 	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id`).WithArgs("ch1", 10).WillReturnRows(
-		newMockMessageRows().AddRow("not-an-int", 1, "ch1", "msg1", "u1", "user1", "hello", 0, 0, time.Now().UTC()))
+		newMockMessageRows().AddRow("not-an-int", 1, "ch1", "msg1", "u1", "user1", "hello", 0, 0, time.Now().UTC(), "message", "", "", int64(0), "", "", "", 0))
 	msgs, err = s.store.GetRecentMessages(context.Background(), "ch1", 10)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), msgs)
@@ -554,8 +570,7 @@ func (s *StoreSuite) TestGetRecentMessagesError() {
 
 func (s *StoreSuite) TestGetMessagesCursor() {
 	now := time.Now().UTC()
-	rows := newMockMessageRows().
-		AddRow(5, 1, "ch1", "msg5", "u1", "user1", "five", 0, 0, now)
+	rows := addMessageRow(newMockMessageRows(), 5, 1, "ch1", "msg5", "u1", "user1", "five", 0, 0, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id .+ ORDER BY id DESC LIMIT`).
 		WithArgs("ch1", 10).
 		WillReturnRows(rows)
@@ -568,8 +583,7 @@ func (s *StoreSuite) TestGetMessagesCursor() {
 
 func (s *StoreSuite) TestGetMessagesCursorWithCursor() {
 	now := time.Now().UTC()
-	rows := newMockMessageRows().
-		AddRow(3, 1, "ch1", "msg3", "u1", "user1", "three", 0, 0, now)
+	rows := addMessageRow(newMockMessageRows(), 3, 1, "ch1", "msg3", "u1", "user1", "three", 0, 0, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id .+ AND id < .+ ORDER BY id DESC LIMIT`).
 		WithArgs("ch1", int64(5), 10).
 		WillReturnRows(rows)
@@ -598,10 +612,10 @@ func (s *StoreSuite) TestGetMessagesCursorWithCursorError() {
 
 func (s *StoreSuite) TestSearchMessages() {
 	now := time.Now().UTC()
-	rows := newMockMessageRows().
-		AddRow(10, 1, "ch1", "msg10", "u1", "alice", "hello world", 0, 0, now).
-		AddRow(5, 2, "ch2", "msg5", "bot", "assistant", "hello there", 1, 1, now)
-	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE content LIKE .+ ORDER BY created_at DESC LIMIT`).
+	rows := addMessageRow(addMessageRow(newMockMessageRows(),
+		10, 1, "ch1", "msg10", "u1", "alice", "hello world", 0, 0, now),
+		5, 2, "ch2", "msg5", "bot", "assistant", "hello there", 1, 1, now)
+	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE .+ content LIKE .+ ORDER BY created_at DESC LIMIT`).
 		WithArgs("%hello%", 20).
 		WillReturnRows(rows)
 
@@ -629,10 +643,10 @@ func (s *StoreSuite) TestSearchMessagesError() {
 
 func (s *StoreSuite) TestGetMessagesAround() {
 	now := time.Now().UTC()
-	rows := newMockMessageRows().
-		AddRow(8, 1, "ch1", "msg8", "u1", "alice", "before", 0, 0, now).
-		AddRow(10, 1, "ch1", "msg10", "u1", "alice", "target", 0, 0, now).
-		AddRow(11, 1, "ch1", "msg11", "bot", "assistant", "after", 1, 1, now)
+	rows := addMessageRow(addMessageRow(addMessageRow(newMockMessageRows(),
+		8, 1, "ch1", "msg8", "u1", "alice", "before", 0, 0, now),
+		10, 1, "ch1", "msg10", "u1", "alice", "target", 0, 0, now),
+		11, 1, "ch1", "msg11", "bot", "assistant", "after", 1, 1, now)
 	s.mock.ExpectQuery(`SELECT .+ FROM .+ UNION ALL .+ ORDER BY id ASC`).
 		WithArgs("ch1", int64(10), 25, "ch1", int64(10), 25).
 		WillReturnRows(rows)
@@ -653,6 +667,160 @@ func (s *StoreSuite) TestGetMessagesAroundError() {
 	msgs, err := s.store.GetMessagesAround(context.Background(), "ch1", 5, 50)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), msgs)
+}
+
+// --- Timeline pointer tests (peppy-mapping-pudding) ---
+
+func (s *StoreSuite) TestInsertAgentEvent() {
+	now := time.Now().UTC()
+	evt := &Message{
+		ChatID:        1,
+		ChannelID:     "ch1",
+		Kind:          MessageKindToolUse,
+		EventUUID:     "uuid-tu",
+		ParentUUID:    "uuid-parent",
+		ChainPosition: 5,
+		ToolUseID:     "toolu_42",
+		SessionID:     "sess-x",
+		CreatedAt:     now,
+	}
+	s.mock.ExpectExec(`INSERT INTO messages`).
+		WithArgs(int64(1), "ch1", "uuid-tu", "", "agent", "", 1, 1, now,
+			"tool_use", "uuid-tu", "uuid-parent", "ch1", "toolu_42", "sess-x", "", 0).
+		WillReturnResult(sqlmock.NewResult(123, 1))
+	s.mock.ExpectQuery(`SELECT chain_position FROM messages WHERE id = \?`).
+		WithArgs(int64(123)).
+		WillReturnRows(sqlmock.NewRows([]string{"chain_position"}).AddRow(int64(7)))
+
+	require.NoError(s.T(), s.store.InsertAgentEvent(context.Background(), evt))
+	require.Equal(s.T(), int64(123), evt.ID)
+	require.Equal(s.T(), int64(7), evt.ChainPosition)
+	// Defaults applied for empty fields.
+	require.Equal(s.T(), "uuid-tu", evt.MsgID)
+	require.Equal(s.T(), "agent", evt.AuthorName)
+	require.True(s.T(), evt.IsBot)
+	require.True(s.T(), evt.IsProcessed)
+}
+
+func (s *StoreSuite) TestInsertAgentEventExecError() {
+	anyArgs := []driver.Value{
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+	}
+	s.mock.ExpectExec(`INSERT INTO messages`).WithArgs(anyArgs...).WillReturnError(sql.ErrConnDone)
+
+	err := s.store.InsertAgentEvent(context.Background(), &Message{
+		ChannelID: "ch1", Kind: MessageKindThinking, EventUUID: "uuid-x", CreatedAt: time.Now().UTC(),
+	})
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestInsertAgentEventLastInsertIDError() {
+	anyArgs := []driver.Value{
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+	}
+	s.mock.ExpectExec(`INSERT INTO messages`).WithArgs(anyArgs...).WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
+
+	err := s.store.InsertAgentEvent(context.Background(), &Message{
+		ChannelID: "ch1", Kind: MessageKindThinking, EventUUID: "uuid-x", CreatedAt: time.Now().UTC(),
+	})
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestInsertAgentEventChainPositionReadbackError() {
+	anyArgs := []driver.Value{
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+	}
+	s.mock.ExpectExec(`INSERT INTO messages`).WithArgs(anyArgs...).WillReturnResult(sqlmock.NewResult(99, 1))
+	s.mock.ExpectQuery(`SELECT chain_position FROM messages WHERE id = \?`).
+		WithArgs(int64(99)).
+		WillReturnError(sql.ErrConnDone)
+
+	err := s.store.InsertAgentEvent(context.Background(), &Message{
+		ChannelID: "ch1", Kind: MessageKindThinking, EventUUID: "uuid-x", CreatedAt: time.Now().UTC(),
+	})
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestInsertAgentEventGeneratesSyntheticMsgID() {
+	fixedTime := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC)
+	s.store.nowFunc = func() time.Time { return fixedTime }
+	expectedMsgID := fmt.Sprintf("evt-%d-%s", fixedTime.UnixNano(), "toolu_synth")
+
+	evt := &Message{
+		ChannelID: "ch1",
+		Kind:      MessageKindToolResult,
+		ToolUseID: "toolu_synth",
+		CreatedAt: fixedTime,
+	}
+	s.mock.ExpectExec(`INSERT INTO messages`).
+		WithArgs(int64(0), "ch1", expectedMsgID, "", "agent", "", 1, 1, fixedTime,
+			"tool_result", "", "", "ch1", "toolu_synth", "", "", 0).
+		WillReturnResult(sqlmock.NewResult(55, 1))
+	s.mock.ExpectQuery(`SELECT chain_position FROM messages WHERE id = \?`).
+		WithArgs(int64(55)).
+		WillReturnRows(sqlmock.NewRows([]string{"chain_position"}).AddRow(int64(3)))
+
+	require.NoError(s.T(), s.store.InsertAgentEvent(context.Background(), evt))
+	require.Equal(s.T(), expectedMsgID, evt.MsgID)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestGetTimelineFirstPage() {
+	now := time.Now().UTC()
+	rows := addMessageRow(newMockMessageRows(), 1, 1, "ch1", "msg1", "u1", "user1", "hello", 0, 0, now)
+	rows.AddRow(int64(2), int64(1), "ch1", "uuid-think", "", "agent", "", 1, 1, now,
+		"thinking", "uuid-think", "uuid-parent", int64(7), "", "sess-1", "", 0)
+
+	s.mock.ExpectQuery(`SELECT .+ FROM messages\s+WHERE channel_id = \?\s+ORDER BY chain_position DESC, id DESC LIMIT`).
+		WithArgs("ch1", 50).
+		WillReturnRows(rows)
+
+	msgs, err := s.store.GetTimeline(context.Background(), "ch1", 0, 0, 50)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), msgs, 2)
+	require.Equal(s.T(), MessageKindMessage, msgs[0].Kind)
+	require.Equal(s.T(), MessageKindThinking, msgs[1].Kind)
+	require.Equal(s.T(), int64(7), msgs[1].ChainPosition)
+	require.Equal(s.T(), "sess-1", msgs[1].SessionID)
+}
+
+func (s *StoreSuite) TestGetTimelineWithCursor() {
+	now := time.Now().UTC()
+	rows := addMessageRow(newMockMessageRows(), 1, 1, "ch1", "msg1", "u1", "user1", "older", 0, 0, now)
+	s.mock.ExpectQuery(`SELECT .+ FROM messages\s+WHERE channel_id = \?\s+AND \(chain_position < \? OR \(chain_position = \? AND id < \?\)\)\s+ORDER BY chain_position DESC, id DESC LIMIT`).
+		WithArgs("ch1", int64(5), int64(5), int64(10), 50).
+		WillReturnRows(rows)
+
+	msgs, err := s.store.GetTimeline(context.Background(), "ch1", 5, 10, 50)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), msgs, 1)
+}
+
+func (s *StoreSuite) TestGetTimelineError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM messages`).
+		WithArgs("ch1", 50).
+		WillReturnError(sql.ErrConnDone)
+
+	_, err := s.store.GetTimeline(context.Background(), "ch1", 0, 0, 50)
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestGetTimelineWithCursorError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM messages`).
+		WithArgs("ch1", int64(5), int64(5), int64(10), 50).
+		WillReturnError(sql.ErrConnDone)
+
+	_, err := s.store.GetTimeline(context.Background(), "ch1", 5, 10, 50)
+	require.Error(s.T(), err)
 }
 
 // --- ScheduledTask tests ---

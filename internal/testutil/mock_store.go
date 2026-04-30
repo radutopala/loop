@@ -303,3 +303,15 @@ func (m *MockStore) UpdateNodeHeartbeat(ctx context.Context, runID, nodeID strin
 func (m *MockStore) DeleteWorkflowRun(ctx context.Context, id string) error {
 	return m.Called(ctx, id).Error(0)
 }
+
+func (m *MockStore) InsertAgentEvent(ctx context.Context, evt *db.Message) error {
+	return m.Called(ctx, evt).Error(0)
+}
+
+func (m *MockStore) GetTimeline(ctx context.Context, channelID string, cursorPosition, cursorID int64, limit int) ([]*db.Message, error) {
+	args := m.Called(ctx, channelID, cursorPosition, cursorID, limit)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.Message), args.Error(1)
+}

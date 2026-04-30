@@ -40,7 +40,14 @@ type TaskExecutor struct {
 
 // NewTaskExecutor creates a new TaskExecutor.
 func NewTaskExecutor(runner Runner, bot Bot, store db.Store, logger *slog.Logger, containerTimeout time.Duration, streamingEnabled bool, configLoad func() (*config.Config, error)) *TaskExecutor {
-	e := &TaskExecutor{runner: runner, bot: bot, store: store, logger: logger, configLoad: configLoad, timeAfterFunc: time.AfterFunc}
+	e := &TaskExecutor{
+		runner:        runner,
+		bot:           bot,
+		store:         store,
+		logger:        logger,
+		configLoad:    configLoad,
+		timeAfterFunc: time.AfterFunc,
+	}
 	e.containerTimeout.Store(int64(containerTimeout))
 	e.streamingEnabled.Store(streamingEnabled)
 	return e
@@ -324,14 +331,21 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			tracker.OnTurn(text)
 		}
 		if e.events != nil {
-			req.OnToolUse = func(name, input string) {
+			req.OnToolUse = func(toolUseID, name, input string) {
 				targetID := threadID
 				if targetID == "" {
 					targetID = task.ChannelID
 				}
+				storeAgentEvent(ctx, e.store, targetID, &db.Message{
+					Kind:      db.MessageKindToolUse,
+					ToolUseID: toolUseID,
+					ToolName:  name,
+					Content:   input,
+				}, e.logger.Warn)
 				e.events.BroadcastToolUse(targetID, events.ToolUseEventData{
-					ToolName: name,
-					Input:    input,
+					ToolUseID: toolUseID,
+					ToolName:  name,
+					Input:     input,
 				})
 				if name == "AskUserQuestion" {
 					var data events.AskUserQuestionEventData
@@ -351,6 +365,34 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 						e.events.BroadcastTodoWrite(targetID, data)
 					}
 				}
+			}
+			req.OnThinking = func(text string) {
+				targetID := threadID
+				if targetID == "" {
+					targetID = task.ChannelID
+				}
+				storeAgentEvent(ctx, e.store, targetID, &db.Message{
+					Kind:    db.MessageKindThinking,
+					Content: text,
+				}, e.logger.Warn)
+				e.events.BroadcastAgentThinking(targetID, events.AgentThinkingEventData{Text: text})
+			}
+			req.OnToolResult = func(toolUseID, output string, isError bool) {
+				targetID := threadID
+				if targetID == "" {
+					targetID = task.ChannelID
+				}
+				storeAgentEvent(ctx, e.store, targetID, &db.Message{
+					Kind:      db.MessageKindToolResult,
+					ToolUseID: toolUseID,
+					Content:   output,
+					IsError:   isError,
+				}, e.logger.Warn)
+				e.events.BroadcastToolResult(targetID, events.ToolResultEventData{
+					ToolUseID: toolUseID,
+					Output:    output,
+					IsError:   isError,
+				})
 			}
 			req.OnActivity = func(activity, detail string) {
 				targetID := threadID

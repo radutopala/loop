@@ -195,6 +195,21 @@ var migrations = []migration{
 	// Scheduled workflow runs: a task can start a workflow instead of an agent prompt.
 	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN workflow_name TEXT NOT NULL DEFAULT ''`),
 	sqlMigration(`ALTER TABLE scheduled_tasks ADD COLUMN workflow_inputs TEXT NOT NULL DEFAULT '{}'`),
+	// Timeline support: agent events (thinking, tool_use, tool_result) live in the
+	// messages table next to chat rows, distinguished by `kind`. Content is stored
+	// inline; tool_name labels tool_use rows; is_error flags failed tool_result rows.
+	sqlMigration(`ALTER TABLE messages ADD COLUMN kind TEXT NOT NULL DEFAULT 'message'`),
+	sqlMigration(`ALTER TABLE messages ADD COLUMN event_uuid TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE messages ADD COLUMN parent_uuid TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE messages ADD COLUMN chain_position INTEGER NOT NULL DEFAULT 0`),
+	sqlMigration(`ALTER TABLE messages ADD COLUMN tool_use_id TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE messages ADD COLUMN session_id TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE messages ADD COLUMN tool_name TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`ALTER TABLE messages ADD COLUMN is_error INTEGER NOT NULL DEFAULT 0`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_messages_chain ON messages(channel_id, chain_position)`),
+	// UNIQUE event_uuid only for agent-event rows; chat rows can share a uuid
+	// (queued user messages bundled into a single JSONL entry).
+	sqlMigration(`CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_event_uuid ON messages(event_uuid) WHERE event_uuid != '' AND kind != 'message'`),
 }
 
 // RunMigrations executes all pending schema migrations.

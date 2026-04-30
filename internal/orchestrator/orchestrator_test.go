@@ -179,6 +179,14 @@ func (m *MockEventBroadcaster) BroadcastToolUse(channelID string, data events.To
 	m.Called(channelID, data)
 }
 
+func (m *MockEventBroadcaster) BroadcastAgentThinking(channelID string, data events.AgentThinkingEventData) {
+	m.Called(channelID, data)
+}
+
+func (m *MockEventBroadcaster) BroadcastToolResult(channelID string, data events.ToolResultEventData) {
+	m.Called(channelID, data)
+}
+
 func (m *MockEventBroadcaster) BroadcastAgentActivity(channelID string, data events.AgentActivityEventData) {
 	m.Called(channelID, data)
 }
@@ -3679,7 +3687,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnToolUseBroadcasts() {
 
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Maybe()
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 
@@ -3687,7 +3697,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnToolUseBroadcasts() {
 		if req.OnToolUse == nil {
 			return false
 		}
-		req.OnToolUse("Bash", "go test ./...")
+		req.OnToolUse("toolu_b", "Bash", "go test ./...")
 		req.OnTurn("done")
 		return true
 	})).Return(&agent.AgentResponse{
@@ -3725,7 +3735,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingAskUserQuestion() {
 
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Maybe()
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 
@@ -3734,7 +3746,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingAskUserQuestion() {
 		if req.OnToolUse == nil {
 			return false
 		}
-		req.OnToolUse("AskUserQuestion", askInput)
+		req.OnToolUse("toolu_q", "AskUserQuestion", askInput)
 		req.OnTurn("done")
 		return true
 	})).Return(&agent.AgentResponse{Response: "done", SessionID: "sess-ask"}, nil)
@@ -3770,7 +3782,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
 
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Maybe()
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 
@@ -3779,7 +3793,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
 		if req.OnToolUse == nil {
 			return false
 		}
-		req.OnToolUse("ExitPlanMode", exitInput)
+		req.OnToolUse("toolu_p", "ExitPlanMode", exitInput)
 		req.OnTurn("done")
 		return true
 	})).Return(&agent.AgentResponse{Response: "done", SessionID: "sess-plan"}, nil)
@@ -3815,7 +3829,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingTodoWrite() {
 
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Maybe()
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
 
@@ -3824,7 +3840,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingTodoWrite() {
 		if req.OnToolUse == nil {
 			return false
 		}
-		req.OnToolUse("TodoWrite", todoInput)
+		req.OnToolUse("toolu_t", "TodoWrite", todoInput)
 		req.OnTurn("done")
 		return true
 	})).Return(&agent.AgentResponse{Response: "done", SessionID: "sess-todo"}, nil)
@@ -3907,6 +3923,67 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnActivityBroadcasts() {
 	eb.AssertCalled(s.T(), "BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
 		return d.Status == "completed" && d.DurationMs == 5000 && d.NumTurns == 2 && d.StopReason == "end_turn" && d.Model == "claude-opus-4-6"
 	}))
+	eb.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestHandleMessageStreamingOnThinkingAndToolResultBroadcasts() {
+	cfgStream := s.orch.cfg.Load()
+	cfgStream.StreamingEnabled = true
+	s.orch.cfg.Store(cfgStream)
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+
+	msg := &bot.IncomingMessage{
+		ChannelID:    "ch1",
+		GuildID:      "g1",
+		AuthorID:     "user1",
+		AuthorName:   "Alice",
+		Content:      "hello",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Maybe()
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnThinking == nil || req.OnToolResult == nil {
+			return false
+		}
+		req.OnThinking("planning a step")
+		req.OnToolResult("toolu_q", "ok-output", false)
+		req.OnToolResult("toolu_e", "boom", true)
+		req.OnTurn("done")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:   "done",
+		SessionID:  "sess-tk",
+		DurationMs: 1000,
+		NumTurns:   1,
+		StopReason: "end_turn",
+		Model:      "claude-opus-4-6",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-tk").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.Anything).Return()
+	eb.On("BroadcastAgentThinking", "ch1", events.AgentThinkingEventData{Text: "planning a step"}).Once()
+	eb.On("BroadcastToolResult", "ch1", events.ToolResultEventData{ToolUseID: "toolu_q", Output: "ok-output"}).Once()
+	eb.On("BroadcastToolResult", "ch1", events.ToolResultEventData{ToolUseID: "toolu_e", Output: "boom", IsError: true}).Once()
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	eb.AssertNumberOfCalls(s.T(), "BroadcastAgentThinking", 1)
+	eb.AssertNumberOfCalls(s.T(), "BroadcastToolResult", 2)
 	eb.AssertExpectations(s.T())
 }
 

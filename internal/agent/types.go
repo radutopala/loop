@@ -23,9 +23,18 @@ type AgentRequest struct {
 	// wait-then-read behavior.
 	OnTurn func(text string) `json:"-"`
 	// OnToolUse is called for each tool invocation in an assistant turn.
-	OnToolUse func(name, input string) `json:"-"`
+	// toolUseID is the per-block id from the assistant message; pairs with
+	// the toolUseID delivered by OnToolResult.
+	OnToolUse func(toolUseID, name, input string) `json:"-"`
 	// OnActivity is called for model detection and system events (subagent progress).
 	OnActivity func(activity, detail string) `json:"-"`
+	// OnThinking is called for each "thinking" content block emitted by the
+	// assistant (extended thinking). Empty blocks are not delivered.
+	OnThinking func(text string) `json:"-"`
+	// OnToolResult is called for each tool_result block emitted on a "user"
+	// stream-json line. output is already truncated by the runner; isError
+	// reflects the upstream is_error flag.
+	OnToolResult func(toolUseID, output string, isError bool) `json:"-"`
 }
 
 // AgentMessage represents a single message in the conversation context.

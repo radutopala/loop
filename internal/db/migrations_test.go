@@ -4,6 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"reflect"
+	"runtime"
+	"strings"
 	"testing"
 
 	"github.com/DATA-DOG/go-sqlmock"
@@ -23,17 +26,6 @@ func TestMigrationsSuite(t *testing.T) {
 	suite.Run(t, new(MigrationsSuite))
 }
 
-// funcMigrationIndices returns the indices of all func migrations in the migrations slice.
-func funcMigrationIndices() map[int]bool {
-	m := make(map[int]bool)
-	for i, mig := range migrations {
-		if mig.fn != nil {
-			m[i] = true
-		}
-	}
-	return m
-}
-
 // funcMigrationIndex returns the index of the first func migration in the migrations slice.
 func funcMigrationIndex() int {
 	for i, m := range migrations {
@@ -42,6 +34,14 @@ func funcMigrationIndex() int {
 		}
 	}
 	return -1
+}
+
+// funcMigrationName returns the runtime name of the func at migrations[i].
+func funcMigrationName(i int) string {
+	if migrations[i].fn == nil {
+		return ""
+	}
+	return runtime.FuncForPC(reflect.ValueOf(migrations[i].fn).Pointer()).Name()
 }
 
 func (s *MigrationsSuite) TestRunMigrationsAllNew() {
@@ -53,34 +53,31 @@ func (s *MigrationsSuite) TestRunMigrationsAllNew() {
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS schema_migrations`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
-	// For each subsequent migration, expect a check + execute + record
-	fnIndices := funcMigrationIndices()
-	// Find the backfill func migration (second func migration).
-	backfillIdx := -1
-	for i, m := range migrations {
-		if m.fn != nil && i != funcMigrationIndex() {
-			backfillIdx = i
-		}
-	}
+	// For each subsequent migration, expect a check + execute + record.
+	// Func migrations are identified by their runtime name so the test stays
+	// stable across migration list changes.
 	for i := 1; i < len(migrations); i++ {
 		mock.ExpectQuery(`SELECT COUNT`).
 			WithArgs(i).
 			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
 
-		switch {
-		case i == backfillIdx:
-			// migrateBackfillDirPath: two UPDATE statements
-			mock.ExpectExec(`UPDATE channels SET dir_path`).
-				WillReturnResult(sqlmock.NewResult(0, 0))
-			mock.ExpectExec(`UPDATE channels SET dir_path`).
-				WillReturnResult(sqlmock.NewResult(0, 0))
-		case fnIndices[i]:
-			// migrateTimestampsToUTC with empty tables
-			mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
-				WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}))
-			mock.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).
-				WillReturnRows(sqlmock.NewRows([]string{"id", "started_at", "finished_at"}))
-		default:
+		if migrations[i].fn != nil {
+			name := funcMigrationName(i)
+			switch {
+			case strings.Contains(name, "migrateTimestampsToUTC"):
+				mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}))
+				mock.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).
+					WillReturnRows(sqlmock.NewRows([]string{"id", "started_at", "finished_at"}))
+			case strings.Contains(name, "makeBackfillDirPath"):
+				mock.ExpectExec(`UPDATE channels SET dir_path`).
+					WillReturnResult(sqlmock.NewResult(0, 0))
+				mock.ExpectExec(`UPDATE channels SET dir_path`).
+					WillReturnResult(sqlmock.NewResult(0, 0))
+			default:
+				s.T().Fatalf("unhandled func migration %d (%s) in TestRunMigrationsAllNew", i, name)
+			}
+		} else {
 			mock.ExpectExec(`.+`).
 				WillReturnResult(sqlmock.NewResult(0, 0))
 		}

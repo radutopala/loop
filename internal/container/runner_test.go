@@ -2264,12 +2264,7 @@ func TestAssistantMessageExtractText(t *testing.T) {
 			name: "single text block",
 			msg: func() assistantMessage {
 				var m assistantMessage
-				m.Message.Content = append(m.Message.Content, struct {
-					Type  string          `json:"type"`
-					Text  string          `json:"text"`
-					Name  string          `json:"name"`
-					Input json.RawMessage `json:"input"`
-				}{Type: "text", Text: "Hello!"})
+				m.Message.Content = append(m.Message.Content, assistantContentBlock{Type: "text", Text: "Hello!"})
 				return m
 			}(),
 			expected: "Hello!",
@@ -2279,18 +2274,8 @@ func TestAssistantMessageExtractText(t *testing.T) {
 			msg: func() assistantMessage {
 				var m assistantMessage
 				m.Message.Content = append(m.Message.Content,
-					struct {
-						Type  string          `json:"type"`
-						Text  string          `json:"text"`
-						Name  string          `json:"name"`
-						Input json.RawMessage `json:"input"`
-					}{Type: "text", Text: "Line one"},
-					struct {
-						Type  string          `json:"type"`
-						Text  string          `json:"text"`
-						Name  string          `json:"name"`
-						Input json.RawMessage `json:"input"`
-					}{Type: "text", Text: "Line two"},
+					assistantContentBlock{Type: "text", Text: "Line one"},
+					assistantContentBlock{Type: "text", Text: "Line two"},
 				)
 				return m
 			}(),
@@ -2300,12 +2285,7 @@ func TestAssistantMessageExtractText(t *testing.T) {
 			name: "tool_use only returns empty",
 			msg: func() assistantMessage {
 				var m assistantMessage
-				m.Message.Content = append(m.Message.Content, struct {
-					Type  string          `json:"type"`
-					Text  string          `json:"text"`
-					Name  string          `json:"name"`
-					Input json.RawMessage `json:"input"`
-				}{Type: "tool_use", Text: ""})
+				m.Message.Content = append(m.Message.Content, assistantContentBlock{Type: "tool_use", Text: ""})
 				return m
 			}(),
 			expected: "",
@@ -2315,18 +2295,8 @@ func TestAssistantMessageExtractText(t *testing.T) {
 			msg: func() assistantMessage {
 				var m assistantMessage
 				m.Message.Content = append(m.Message.Content,
-					struct {
-						Type  string          `json:"type"`
-						Text  string          `json:"text"`
-						Name  string          `json:"name"`
-						Input json.RawMessage `json:"input"`
-					}{Type: "tool_use", Text: ""},
-					struct {
-						Type  string          `json:"type"`
-						Text  string          `json:"text"`
-						Name  string          `json:"name"`
-						Input json.RawMessage `json:"input"`
-					}{Type: "text", Text: "Result"},
+					assistantContentBlock{Type: "tool_use", Text: ""},
+					assistantContentBlock{Type: "text", Text: "Result"},
 				)
 				return m
 			}(),
@@ -2410,7 +2380,7 @@ func TestScanStreamJSONOnToolUse(t *testing.T) {
 `
 	var tools []string
 	cb := streamCallbacks{
-		onToolUse: func(name, input string) {
+		onToolUse: func(toolUseID, name, input string) {
 			tools = append(tools, name+":"+input)
 		},
 	}
@@ -3435,13 +3405,30 @@ func TestReadLineOrSkipReadError(t *testing.T) {
 	require.Error(t, err)
 }
 
-func TestReadLineOrSkipUserEventOnly(t *testing.T) {
-	// Only a user event — should be skipped, return nil.
+func TestReadLineOrSkipUserEventUnderCap(t *testing.T) {
+	// Small user event (well under userEventMaxBytes) — returned in full so
+	// scanStreamJSON can dispatch the tool_result block.
 	input := `{"type":"user","message":{"content":[{"type":"tool_result"}]}}` + "\n"
 	br := bufio.NewReaderSize(strings.NewReader(input), 64*1024)
 	line, err := readLineOrSkip(br)
 	require.NoError(t, err)
+	require.Equal(t, `{"type":"user","message":{"content":[{"type":"tool_result"}]}}`, string(line))
+}
+
+func TestReadLineOrSkipUserEventOverCap(t *testing.T) {
+	// Multi-MB user event (over userEventMaxBytes) — drained without buffering,
+	// returns nil so subsequent lines (e.g. result) still parse.
+	input := `{"type":"user","message":{"content":[{"type":"tool_result","content":"` +
+		strings.Repeat("x", userEventMaxBytes+1) + `"}]}}` + "\n" +
+		`{"type":"result","result":"OK","session_id":"s1","is_error":false}` + "\n"
+	br := bufio.NewReaderSize(strings.NewReader(input), 64*1024)
+	line, err := readLineOrSkip(br)
+	require.NoError(t, err)
 	require.Nil(t, line)
+	// Next call returns the result line in full.
+	next, err := readLineOrSkip(br)
+	require.NoError(t, err)
+	require.Contains(t, string(next), `"type":"result"`)
 }
 
 func TestReadLineOrSkipLastLineNoNewline(t *testing.T) {
@@ -3998,4 +3985,228 @@ func TestClaudeCmdBuilderCurrentConfigNilLoader(t *testing.T) {
 
 	cfg := b.currentConfig()
 	require.Equal(t, "frozen", cfg.ClaudeBinPath)
+}
+
+// --- Tests for thinking + tool_result extraction (peppy-mapping-pudding plan) ---
+
+func TestExtractThinking(t *testing.T) {
+	t.Run("single thinking block", func(t *testing.T) {
+		input := `{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"reasoning about the problem"}]}}`
+		var msg assistantMessage
+		require.NoError(t, json.Unmarshal([]byte(input), &msg))
+		require.Equal(t, "reasoning about the problem", msg.extractThinking())
+	})
+
+	t.Run("multiple thinking blocks joined", func(t *testing.T) {
+		input := `{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"first"},{"type":"thinking","thinking":"second"}]}}`
+		var msg assistantMessage
+		require.NoError(t, json.Unmarshal([]byte(input), &msg))
+		require.Equal(t, "first\nsecond", msg.extractThinking())
+	})
+
+	t.Run("mixed text + thinking returns only thinking", func(t *testing.T) {
+		input := `{"type":"assistant","message":{"content":[{"type":"text","text":"answer"},{"type":"thinking","thinking":"hidden"}]}}`
+		var msg assistantMessage
+		require.NoError(t, json.Unmarshal([]byte(input), &msg))
+		require.Equal(t, "hidden", msg.extractThinking())
+		require.Equal(t, "answer", msg.extractText())
+	})
+
+	t.Run("no thinking blocks returns empty", func(t *testing.T) {
+		input := `{"type":"assistant","message":{"content":[{"type":"text","text":"hi"}]}}`
+		var msg assistantMessage
+		require.NoError(t, json.Unmarshal([]byte(input), &msg))
+		require.Empty(t, msg.extractThinking())
+	})
+
+	t.Run("empty thinking string skipped", func(t *testing.T) {
+		input := `{"type":"assistant","message":{"content":[{"type":"thinking","thinking":""}]}}`
+		var msg assistantMessage
+		require.NoError(t, json.Unmarshal([]byte(input), &msg))
+		require.Empty(t, msg.extractThinking())
+	})
+}
+
+func TestExtractToolUsesIncludesID(t *testing.T) {
+	input := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_abc","name":"Read","input":{"file_path":"/x"}}]}}`
+	var msg assistantMessage
+	require.NoError(t, json.Unmarshal([]byte(input), &msg))
+	tools := msg.extractToolUses()
+	require.Len(t, tools, 1)
+	require.Equal(t, "toolu_abc", tools[0].ID)
+	require.Equal(t, "Read", tools[0].Name)
+	require.Equal(t, "/x", tools[0].Input)
+}
+
+func TestParseToolResultStringContent(t *testing.T) {
+	body := parseToolResultContent(json.RawMessage(`"plain string output"`))
+	require.Equal(t, "plain string output", body)
+}
+
+func TestParseToolResultMixedContent(t *testing.T) {
+	body := parseToolResultContent(json.RawMessage(`[{"type":"text","text":"first"},{"type":"image","source":{"type":"base64"}},{"type":"text","text":"second"}]`))
+	require.Equal(t, "first\nsecond", body)
+}
+
+func TestParseToolResultEmptyAndInvalid(t *testing.T) {
+	require.Empty(t, parseToolResultContent(nil))
+	require.Empty(t, parseToolResultContent(json.RawMessage(``)))
+	require.Empty(t, parseToolResultContent(json.RawMessage(`{not valid}`)))
+}
+
+func TestScanStreamJSONOnThinking(t *testing.T) {
+	input := `{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"deep thoughts"},{"type":"text","text":"answer"}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+	var turns, thinks []string
+	cb := streamCallbacks{
+		onTurn:     func(text string) { turns = append(turns, text) },
+		onThinking: func(text string) { thinks = append(thinks, text) },
+	}
+	resp, err := scanStreamJSON(strings.NewReader(input), cb)
+	require.NoError(t, err)
+	require.Equal(t, "OK", resp.Result)
+	require.Equal(t, []string{"answer"}, turns)
+	require.Equal(t, []string{"deep thoughts"}, thinks)
+}
+
+func TestScanStreamJSONOnToolResult(t *testing.T) {
+	input := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"/x"}}]}}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"file body"}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+	type capturedResult struct {
+		toolUseID string
+		output    string
+		isError   bool
+	}
+	var results []capturedResult
+	var tools []string
+	cb := streamCallbacks{
+		onToolUse: func(toolUseID, name, input string) {
+			tools = append(tools, toolUseID+":"+name)
+		},
+		onToolResult: func(toolUseID, output string, isError bool) {
+			results = append(results, capturedResult{toolUseID, output, isError})
+		},
+	}
+	resp, err := scanStreamJSON(strings.NewReader(input), cb)
+	require.NoError(t, err)
+	require.Equal(t, "OK", resp.Result)
+	require.Equal(t, []string{"toolu_1:Read"}, tools)
+	require.Equal(t, []capturedResult{{"toolu_1", "file body", false}}, results)
+}
+
+func TestScanStreamJSONOnToolResultIsError(t *testing.T) {
+	input := `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_2","content":"command failed","is_error":true}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+	var gotErr bool
+	cb := streamCallbacks{
+		onToolResult: func(toolUseID, output string, isError bool) {
+			gotErr = isError
+		},
+	}
+	_, err := scanStreamJSON(strings.NewReader(input), cb)
+	require.NoError(t, err)
+	require.True(t, gotErr)
+}
+
+func TestScanStreamJSONToolResultTruncated(t *testing.T) {
+	big := strings.Repeat("x", toolResultMaxInline*2)
+	input := `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"` + big + `"}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+	var output string
+	cb := streamCallbacks{
+		onToolResult: func(toolUseID, out string, isError bool) {
+			output = out
+		},
+	}
+	_, err := scanStreamJSON(strings.NewReader(input), cb)
+	require.NoError(t, err)
+	require.Len(t, output, toolResultMaxInline)
+}
+
+func TestScanStreamJSONOversizedUserEventStillCompletes(t *testing.T) {
+	// A user line that exceeds userEventMaxBytes is drained without dispatching
+	// onToolResult, but the surrounding result still parses.
+	input := `{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"` +
+		strings.Repeat("z", userEventMaxBytes+1) + `"}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+	var dispatched bool
+	cb := streamCallbacks{
+		onToolResult: func(string, string, bool) { dispatched = true },
+	}
+	resp, err := scanStreamJSON(strings.NewReader(input), cb)
+	require.NoError(t, err)
+	require.Equal(t, "OK", resp.Result)
+	require.False(t, dispatched, "oversized user event should be drained, not dispatched")
+}
+
+func TestScanStreamJSONOversizedUserEventNoTrailingNewline(t *testing.T) {
+	// Same drain path as the trailing-newline variant but the oversized user
+	// line ends with EOF directly — exercises the "over && EOF" return.
+	input := `{"type":"result","result":"OK","session_id":"s1","is_error":false}
+{"type":"user","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"` +
+		strings.Repeat("z", userEventMaxBytes+1) + `"}]}}`
+	var dispatched bool
+	cb := streamCallbacks{
+		onToolResult: func(string, string, bool) { dispatched = true },
+	}
+	resp, err := scanStreamJSON(strings.NewReader(input), cb)
+	require.NoError(t, err)
+	require.Equal(t, "OK", resp.Result)
+	require.False(t, dispatched, "oversized user event without trailing newline should still drain")
+}
+
+func TestScanStreamJSONUserMessageMalformed(t *testing.T) {
+	// type=user passes typeCheck but message field doesn't match userMessage
+	// shape → unmarshal fails, parser continues and surfaces the result.
+	input := `{"type":"user","message":42}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+	var dispatched bool
+	cb := streamCallbacks{
+		onToolResult: func(string, string, bool) { dispatched = true },
+	}
+	resp, err := scanStreamJSON(strings.NewReader(input), cb)
+	require.NoError(t, err)
+	require.Equal(t, "OK", resp.Result)
+	require.False(t, dispatched)
+}
+
+func TestScanStreamJSONUserNonToolResultBlocksSkipped(t *testing.T) {
+	// user content blocks that aren't tool_result are skipped without dispatch.
+	input := `{"type":"user","message":{"content":[{"type":"text","text":"hi"}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+	var dispatched bool
+	cb := streamCallbacks{
+		onToolResult: func(string, string, bool) { dispatched = true },
+	}
+	resp, err := scanStreamJSON(strings.NewReader(input), cb)
+	require.NoError(t, err)
+	require.Equal(t, "OK", resp.Result)
+	require.False(t, dispatched)
+}
+
+func TestScanStreamJSONInterleavedTextThinkingToolUse(t *testing.T) {
+	// Regression: text + thinking + tool_use in one assistant turn each fires
+	// the matching callback, in input order across turns.
+	input := `{"type":"assistant","message":{"content":[{"type":"thinking","thinking":"plan"}]}}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Read","input":{"file_path":"/x"}}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"done"}]}}
+{"type":"result","result":"OK","session_id":"s1","is_error":false}
+`
+	var calls []string
+	cb := streamCallbacks{
+		onTurn:     func(t string) { calls = append(calls, "text:"+t) },
+		onThinking: func(t string) { calls = append(calls, "think:"+t) },
+		onToolUse:  func(id, name, _ string) { calls = append(calls, "tool:"+id+":"+name) },
+	}
+	_, err := scanStreamJSON(strings.NewReader(input), cb)
+	require.NoError(t, err)
+	require.Equal(t, []string{"think:plan", "tool:toolu_1:Read", "text:done"}, calls)
 }

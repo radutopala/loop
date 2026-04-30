@@ -32,6 +32,8 @@ type Store interface {
 	GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*Message, error)
 	SearchMessages(ctx context.Context, query string, limit int) ([]*Message, error)
 	GetMessagesAround(ctx context.Context, channelID string, messageID int64, limit int) ([]*Message, error)
+	InsertAgentEvent(ctx context.Context, evt *Message) error
+	GetTimeline(ctx context.Context, channelID string, cursorPosition, cursorID int64, limit int) ([]*Message, error)
 	CreateScheduledTask(ctx context.Context, task *ScheduledTask) (int64, error)
 	GetDueTasks(ctx context.Context, now time.Time) ([]*ScheduledTask, error)
 	UpdateScheduledTask(ctx context.Context, task *ScheduledTask) error
@@ -318,10 +320,13 @@ func (s *SQLiteStore) ListChannels(ctx context.Context) ([]*Channel, error) {
 }
 
 func (s *SQLiteStore) InsertMessage(ctx context.Context, msg *Message) error {
+	// chain_position is assigned atomically as MAX+1 over the channel so the
+	// row sorts after every prior chat-or-event row. Single-writer SQLite
+	// serialises Exec calls, so this subselect can't race itself.
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO messages (chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		msg.ChatID, msg.ChannelID, msg.MsgID, msg.AuthorID, msg.AuthorName, msg.Content, boolToInt(msg.IsBot), boolToInt(msg.IsProcessed), msg.CreatedAt,
+		`INSERT INTO messages (chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at, chain_position)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MAX(chain_position) FROM messages WHERE channel_id = ?), 0) + 1)`,
+		msg.ChatID, msg.ChannelID, msg.MsgID, msg.AuthorID, msg.AuthorName, msg.Content, boolToInt(msg.IsBot), boolToInt(msg.IsProcessed), msg.CreatedAt, msg.ChannelID,
 	)
 	if err != nil {
 		return err
@@ -331,6 +336,9 @@ func (s *SQLiteStore) InsertMessage(ctx context.Context, msg *Message) error {
 		return err
 	}
 	msg.ID = id
+	if err := s.db.QueryRowContext(ctx, `SELECT chain_position FROM messages WHERE id = ?`, id).Scan(&msg.ChainPosition); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -348,7 +356,7 @@ func (s *SQLiteStore) MarkMessagesProcessed(ctx context.Context, ids []int64) er
 // exists (already processed, wrong channel, bot message, or never existed).
 func (s *SQLiteStore) DeleteQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error) {
 	res, err := s.db.ExecContext(ctx,
-		`DELETE FROM messages WHERE channel_id = ? AND msg_id = ? AND is_bot = 0 AND is_processed = 0`,
+		`DELETE FROM messages WHERE channel_id = ? AND msg_id = ? AND is_bot = 0 AND is_processed = 0 AND kind = 'message'`,
 		channelID, msgID,
 	)
 	if err != nil {
@@ -363,7 +371,7 @@ func (s *SQLiteStore) DeleteQueuedMessage(ctx context.Context, channelID, msgID 
 
 func (s *SQLiteStore) GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*Message, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+messageColumns+` FROM messages WHERE channel_id = ? ORDER BY created_at DESC LIMIT ?`,
+		`SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND kind = 'message' ORDER BY created_at DESC LIMIT ?`,
 		channelID, limit,
 	)
 	if err != nil {
@@ -378,12 +386,12 @@ func (s *SQLiteStore) GetMessagesCursor(ctx context.Context, channelID string, c
 	var err error
 	if cursor > 0 {
 		rows, err = s.db.QueryContext(ctx,
-			`SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND id < ? ORDER BY id DESC LIMIT ?`,
+			`SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND kind = 'message' AND id < ? ORDER BY id DESC LIMIT ?`,
 			channelID, cursor, limit,
 		)
 	} else {
 		rows, err = s.db.QueryContext(ctx,
-			`SELECT `+messageColumns+` FROM messages WHERE channel_id = ? ORDER BY id DESC LIMIT ?`,
+			`SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND kind = 'message' ORDER BY id DESC LIMIT ?`,
 			channelID, limit,
 		)
 	}
@@ -396,7 +404,7 @@ func (s *SQLiteStore) GetMessagesCursor(ctx context.Context, channelID string, c
 
 func (s *SQLiteStore) SearchMessages(ctx context.Context, query string, limit int) ([]*Message, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT `+messageColumns+` FROM messages WHERE content LIKE ? ORDER BY created_at DESC LIMIT ?`,
+		`SELECT `+messageColumns+` FROM messages WHERE kind = 'message' AND content LIKE ? ORDER BY created_at DESC LIMIT ?`,
 		"%"+query+"%", limit,
 	)
 	if err != nil {
@@ -410,14 +418,94 @@ func (s *SQLiteStore) GetMessagesAround(ctx context.Context, channelID string, m
 	half := limit / 2
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+messageColumns+` FROM (
-		   SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND id < ? ORDER BY id DESC LIMIT ?
+		   SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND kind = 'message' AND id < ? ORDER BY id DESC LIMIT ?
 		 ) UNION ALL
 		 SELECT `+messageColumns+` FROM (
-		   SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND id >= ? ORDER BY id ASC LIMIT ?
+		   SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND kind = 'message' AND id >= ? ORDER BY id ASC LIMIT ?
 		 ) ORDER BY id ASC`,
 		channelID, messageID, half,
 		channelID, messageID, limit-half,
 	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+// InsertAgentEvent inserts a new agent-event row (kind != "message") into the
+// messages table. Caller must populate Kind plus the kind-specific payload
+// fields (Content for thinking/tool_result, ToolName/Content for tool_use,
+// IsError for tool_result, etc.). chain_position is assigned atomically as
+// MAX+1 over the channel so the row sorts after every prior chat-or-event row
+// in the same channel. MsgID defaults to a synthetic id; AuthorName defaults
+// to "agent". The single-writer SQLite connection serialises Exec calls so
+// the MAX+1 subselect cannot race itself.
+func (s *SQLiteStore) InsertAgentEvent(ctx context.Context, evt *Message) error {
+	if evt.MsgID == "" {
+		if evt.EventUUID != "" {
+			evt.MsgID = evt.EventUUID
+		} else {
+			evt.MsgID = fmt.Sprintf("evt-%d-%s", s.nowFunc().UnixNano(), evt.ToolUseID)
+		}
+	}
+	if evt.AuthorName == "" {
+		evt.AuthorName = "agent"
+	}
+	evt.IsBot = true
+	evt.IsProcessed = true
+	result, err := s.db.ExecContext(ctx,
+		`INSERT INTO messages (chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at,
+		                       kind, event_uuid, parent_uuid, chain_position, tool_use_id, session_id, tool_name, is_error)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		         COALESCE((SELECT MAX(chain_position) FROM messages WHERE channel_id = ?), 0) + 1,
+		         ?, ?, ?, ?)`,
+		evt.ChatID, evt.ChannelID, evt.MsgID, evt.AuthorID, evt.AuthorName, evt.Content,
+		boolToInt(evt.IsBot), boolToInt(evt.IsProcessed), evt.CreatedAt,
+		string(evt.Kind), evt.EventUUID, evt.ParentUUID,
+		evt.ChannelID,
+		evt.ToolUseID, evt.SessionID, evt.ToolName, boolToInt(evt.IsError),
+	)
+	if err != nil {
+		return err
+	}
+	id, err := result.LastInsertId()
+	if err != nil {
+		return err
+	}
+	evt.ID = id
+	if err := s.db.QueryRowContext(ctx, `SELECT chain_position FROM messages WHERE id = ?`, id).Scan(&evt.ChainPosition); err != nil {
+		return err
+	}
+	return nil
+}
+
+// GetTimeline returns a page of timeline rows for a channel — both real messages
+// and agent events — ordered by (chain_position DESC, id DESC). Legacy rows
+// (chain_position=0) sort by id, matching today's chat-list behaviour.
+//
+// Cursor semantics: pass cursorPosition=0 + cursorID=0 for the first page; for
+// subsequent pages, pass the (chain_position, id) of the last item from the
+// previous page so the next page picks up strictly older rows.
+func (s *SQLiteStore) GetTimeline(ctx context.Context, channelID string, cursorPosition, cursorID int64, limit int) ([]*Message, error) {
+	var rows *sql.Rows
+	var err error
+	if cursorPosition > 0 || cursorID > 0 {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT `+messageColumns+` FROM messages
+			 WHERE channel_id = ?
+			   AND (chain_position < ? OR (chain_position = ? AND id < ?))
+			 ORDER BY chain_position DESC, id DESC LIMIT ?`,
+			channelID, cursorPosition, cursorPosition, cursorID, limit,
+		)
+	} else {
+		rows, err = s.db.QueryContext(ctx,
+			`SELECT `+messageColumns+` FROM messages
+			 WHERE channel_id = ?
+			 ORDER BY chain_position DESC, id DESC LIMIT ?`,
+			channelID, limit,
+		)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -873,7 +961,7 @@ func (s *SQLiteStore) DeleteWorkflowRun(ctx context.Context, id string) error {
 
 // Column lists for SELECT queries.
 const (
-	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at`
+	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at, kind, event_uuid, parent_uuid, chain_position, tool_use_id, session_id, tool_name, is_error`
 	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running, workflow_name, workflow_inputs`
 )
 
@@ -927,16 +1015,21 @@ func scanMessages(rows *sql.Rows) ([]*Message, error) {
 	var msgs []*Message
 	for rows.Next() {
 		msg := &Message{}
-		var isBot, isProcessed int
+		var isBot, isProcessed, isError int
+		var kind string
 		if err := rows.Scan(
 			&msg.ID, &msg.ChatID, &msg.ChannelID, &msg.MsgID,
 			&msg.AuthorID, &msg.AuthorName, &msg.Content,
 			&isBot, &isProcessed, &msg.CreatedAt,
+			&kind, &msg.EventUUID, &msg.ParentUUID, &msg.ChainPosition,
+			&msg.ToolUseID, &msg.SessionID, &msg.ToolName, &isError,
 		); err != nil {
 			return nil, err
 		}
 		msg.IsBot = isBot == 1
 		msg.IsProcessed = isProcessed == 1
+		msg.IsError = isError == 1
+		msg.Kind = MessageKind(kind)
 		msgs = append(msgs, msg)
 	}
 	return msgs, rows.Err()

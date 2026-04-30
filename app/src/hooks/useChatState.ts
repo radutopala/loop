@@ -1,14 +1,17 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { AgentActivityData, AgentStatusData, AskUserQuestionData, ExitPlanModeData, GateApprovalRequestedData, GateApprovalResolvedData, Message, MessageCreatedData, MessagesProcessedData, MessageStreamingData, TodoWriteData, ToolUseData, WSEvent } from "../types";
+import type { AgentActivityData, AgentStatusData, AgentThinkingData, AskUserQuestionData, ExitPlanModeData, GateApprovalRequestedData, GateApprovalResolvedData, Message, MessageCreatedData, MessagesProcessedData, MessageStreamingData, TimelineItem, TodoWriteData, ToolResultData, ToolUseData, WSEvent } from "../types";
 import type { ActiveChatState, ChatEventListener } from "./useChatStateStore";
-import { useMessages } from "./useMessages";
+import { useTimeline } from "./useTimeline";
 
 export interface ChatState {
+  items: TimelineItem[];
+  liveTail: TimelineItem[];
+  /** All messages from the timeline (kind=="message" only) — kept for callers
+   * that still iterate by message identity (queued popup, processing label). */
   messages: Message[];
   loading: boolean;
   loadMore: () => void;
   hasMore: boolean;
-  addMessage: (msg: Message) => void;
   streamingContent: string | null;
   isRunning: boolean;
   toolActivity: { tool_name: string; input: string } | null;
@@ -55,7 +58,20 @@ export function useChatState(
 ): ChatState {
   const { initialState, onUnmount, subscribeChatEvents } = options ?? {};
 
-  const { messages, loading, loadMore, hasMore, addMessage, markProcessed, removeMessage } = useMessages(channelId);
+  const {
+    items,
+    liveTail,
+    loading,
+    loadMore,
+    hasMore,
+    appendLiveMessage,
+    appendLiveThinking,
+    appendLiveToolUse,
+    appendLiveToolResult,
+    markProcessed,
+    removeMessage,
+    refetchHead,
+  } = useTimeline(channelId);
   const [streamingContent, setStreamingContent] = useState<string | null>(initialState?.streamingContent ?? null);
   const [isRunning, setIsRunning] = useState(initialState?.isRunning ?? initialRunningBot ?? false);
   const [runId, setRunId] = useState<string | null>(initialState?.runId ?? null);
@@ -131,7 +147,7 @@ export function useChatState(
         if (data.is_bot) {
           setStreamingContent(null);
         }
-        addMessage({
+        appendLiveMessage({
           id: event.timestamp,
           channel_id: event.channel_id,
           msg_id: data.msg_id,
@@ -157,8 +173,19 @@ export function useChatState(
       if (event.type === "tool.use") {
         const data = event.data as ToolUseData;
         setToolActivity({ tool_name: data.tool_name, input: data.input });
+        appendLiveToolUse(data.tool_use_id, data.tool_name, data.input);
         if (data.tool_name === "EnterPlanMode") setMode("plan");
         if (data.tool_name === "ExitPlanMode") setMode("agent");
+        return;
+      }
+      if (event.type === "agent.thinking") {
+        const data = event.data as AgentThinkingData;
+        appendLiveThinking(data.text);
+        return;
+      }
+      if (event.type === "tool.result") {
+        const data = event.data as ToolResultData;
+        appendLiveToolResult(data.tool_use_id, data.output, data.is_error ?? false);
         return;
       }
       if (event.type === "agent.activity") {
@@ -211,6 +238,9 @@ export function useChatState(
             setTriggerContent(null);
             // Clear todos when the agent turn ends.
             setTodos(null);
+            // Refetch the head — JSONL ingest now has chain_position values for
+            // the run's rows, so the persisted timeline supersedes the live tail.
+            refetchHead();
           }
           // Don't clear askUserQuestions/exitPlanRequest on stop — they persist
           // until the user submits answers or approves the plan.
@@ -226,7 +256,7 @@ export function useChatState(
         return;
       }
     },
-    [addMessage],
+    [appendLiveMessage, appendLiveThinking, appendLiveToolUse, appendLiveToolResult, refetchHead],
   );
 
   // Subscribe to chat events from the app-level store (single WS).
@@ -239,12 +269,19 @@ export function useChatState(
     return subscribeChatEvents(listener);
   }, [subscribeChatEvents]);
 
+  // Derive the flat Message[] view used by the queued-popup and processing-label
+  // logic. Includes both the persisted timeline messages and any live-tail ones.
+  const messages: Message[] = [];
+  for (const it of items) if (it.kind === "message") messages.push(it.data);
+  for (const it of liveTail) if (it.kind === "message") messages.push(it.data);
+
   return {
+    items,
+    liveTail,
     messages,
     loading,
     loadMore,
     hasMore,
-    addMessage,
     streamingContent,
     isRunning,
     toolActivity,
