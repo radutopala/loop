@@ -1059,6 +1059,72 @@ func (s *StoreSuite) TestUpdateScheduledTaskThreadIDError() {
 	require.Error(s.T(), s.store.UpdateScheduledTaskThreadID(context.Background(), 1, "t"))
 }
 
+func (s *StoreSuite) TestLinkTaskThread() {
+	ch := &Channel{ChannelID: "thread-1", GuildID: "g", Name: "n", ParentID: "ch-parent", Active: true}
+
+	s.mock.ExpectBegin()
+	s.mock.ExpectExec(`INSERT INTO channels`).
+		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", ch.ParentID, "", "", "", 1, 0, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mock.ExpectExec(`UPDATE scheduled_tasks SET thread_id`).
+		WithArgs("thread-1", sqlmock.AnyArg(), int64(7)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectCommit()
+
+	require.NoError(s.T(), s.store.LinkTaskThread(context.Background(), ch, 7, "thread-1"))
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestLinkTaskThreadWithPermissions() {
+	perms := types.Permissions{
+		Owners: types.RoleGrant{Users: []string{"U1"}},
+	}
+	ch := &Channel{ChannelID: "thread-2", Permissions: perms, Active: true}
+
+	s.mock.ExpectBegin()
+	s.mock.ExpectExec(`INSERT INTO channels`).
+		WithArgs("thread-2", "", "", "", "", "", "", `{"owners":{"users":["U1"],"roles":null},"members":{"users":null,"roles":null}}`, 1, 0, sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mock.ExpectExec(`UPDATE scheduled_tasks SET thread_id`).
+		WithArgs("thread-2", sqlmock.AnyArg(), int64(8)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectCommit()
+
+	require.NoError(s.T(), s.store.LinkTaskThread(context.Background(), ch, 8, "thread-2"))
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestLinkTaskThreadChannelInsertError() {
+	ch := &Channel{ChannelID: "thread-1", Active: true}
+
+	s.mock.ExpectBegin()
+	s.mock.ExpectExec(`INSERT INTO channels`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
+
+	require.Error(s.T(), s.store.LinkTaskThread(context.Background(), ch, 7, "thread-1"))
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestLinkTaskThreadTaskUpdateError() {
+	ch := &Channel{ChannelID: "thread-1", Active: true}
+
+	s.mock.ExpectBegin()
+	s.mock.ExpectExec(`INSERT INTO channels`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mock.ExpectExec(`UPDATE scheduled_tasks SET thread_id`).
+		WithArgs("thread-1", sqlmock.AnyArg(), int64(7)).
+		WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
+
+	require.Error(s.T(), s.store.LinkTaskThread(context.Background(), ch, 7, "thread-1"))
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
 func (s *StoreSuite) TestUpdateScheduledTaskOriginBranch() {
 	s.mock.ExpectExec(`UPDATE scheduled_tasks SET origin_branch`).
 		WithArgs("main", sqlmock.AnyArg(), int64(5)).

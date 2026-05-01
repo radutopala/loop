@@ -466,10 +466,9 @@ func (s *TaskExecutorSuite) TestStreamingLocalPlatformPersistsThreadID() {
 	s.store.On("GetChannel", mock.Anything, "local-thread-1").Return(&db.Channel{ID: 9001, ChannelID: "local-thread-1"}, nil).Maybe()
 	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 	s.bot.On("CreateSimpleThread", s.ctx, "ch-local", mock.Anything, mock.Anything).Return("local-thread-1", nil).Once()
-	s.store.On("UpsertChannel", mock.Anything, mock.MatchedBy(func(ch *db.Channel) bool {
+	s.store.On("LinkTaskThread", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "local-thread-1" && ch.ParentID == "ch-local"
-	})).Return(nil)
-	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(30), "local-thread-1").Return(nil).Once()
+	}), int64(30), "local-thread-1").Return(nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -483,7 +482,9 @@ func (s *TaskExecutorSuite) TestStreamingLocalPlatformPersistsThreadID() {
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Result", resp)
-	s.store.AssertCalled(s.T(), "UpdateScheduledTaskThreadID", s.ctx, int64(30), "local-thread-1")
+	s.store.AssertCalled(s.T(), "LinkTaskThread", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "local-thread-1" && ch.ParentID == "ch-local"
+	}), int64(30), "local-thread-1")
 }
 
 func (s *TaskExecutorSuite) TestStreamingLocalPlatformReusesThreadID() {
@@ -558,10 +559,9 @@ func (s *TaskExecutorSuite) TestStreamingDanglingThreadCreatesReplacement() {
 
 	// Should create a new replacement thread.
 	s.bot.On("CreateSimpleThread", s.ctx, "ch-dangling", mock.Anything, mock.Anything).Return("new-thread", nil).Once()
-	s.store.On("UpsertChannel", mock.Anything, mock.MatchedBy(func(ch *db.Channel) bool {
+	s.store.On("LinkTaskThread", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "new-thread" && ch.ParentID == "ch-dangling"
-	})).Return(nil)
-	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(33), "new-thread").Return(nil).Once()
+	}), int64(33), "new-thread").Return(nil).Once()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnTurn == nil {
@@ -575,7 +575,9 @@ func (s *TaskExecutorSuite) TestStreamingDanglingThreadCreatesReplacement() {
 	resp, err := s.executor.ExecuteTask(s.ctx, task)
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "Update", resp)
-	s.store.AssertCalled(s.T(), "UpdateScheduledTaskThreadID", s.ctx, int64(33), "new-thread")
+	s.store.AssertCalled(s.T(), "LinkTaskThread", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "new-thread" && ch.ParentID == "ch-dangling"
+	}), int64(33), "new-thread")
 }
 
 func (s *TaskExecutorSuite) TestStreamingDiscordReusesThread() {
@@ -940,8 +942,7 @@ func (s *TaskExecutorSuite) TestAutoDeleteEphemeralLocalPlatform() {
 	// Post-run JSONL ingest looks up the session-target channel for chat_id.
 	s.store.On("GetChannel", mock.Anything, "local-eph-thread").Return(&db.Channel{ID: 9003, ChannelID: "local-eph-thread"}, nil).Maybe()
 	s.store.On("GetScheduledTask", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
-	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(40), "local-eph-thread").Return(nil)
+	s.store.On("LinkTaskThread", s.ctx, mock.Anything, int64(40), "local-eph-thread").Return(nil)
 	s.allowBotInserts()
 
 	s.bot.On("CreateSimpleThread", s.ctx, "ch-local-eph", mock.Anything, mock.Anything).Return("local-eph-thread", nil).Once()
@@ -1246,10 +1247,9 @@ func (s *TaskExecutorSuite) TestStreamingThreadBroadcastsToThread() {
 
 	s.store.On("GetChannel", mock.Anything, mock.Anything).Return(&db.Channel{ID: 5, ChannelID: "ch20"}, nil)
 	s.store.On("GetScheduledTask", s.ctx, int64(20)).Return(&db.ScheduledTask{ID: 20, Type: db.TaskTypeCron}, nil)
-	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+	s.store.On("LinkTaskThread", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "thread-20" && ch.ParentID == "ch20"
-	})).Return(nil)
-	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(20), "thread-20").Return(nil)
+	}), int64(20), "thread-20").Return(nil)
 
 	// Thread creation succeeds
 	s.bot.On("CreateSimpleThread", s.ctx, "ch20",
@@ -1642,10 +1642,9 @@ func (s *TaskExecutorSuite) TestStreamingInvitesPermissionUsersToThread() {
 	s.store.On("GetScheduledTask", s.ctx, int64(21)).Return(&db.ScheduledTask{ID: 21, Type: db.TaskTypeCron}, nil)
 
 	s.bot.On("CreateSimpleThread", s.ctx, "ch21", mock.Anything, mock.Anything).Return("thread-21", nil).Once()
-	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+	s.store.On("LinkTaskThread", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "thread-21" && ch.ParentID == "ch21"
-	})).Return(nil)
-	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(21), "thread-21").Return(nil)
+	}), int64(21), "thread-21").Return(nil)
 	s.bot.On("InviteUserToChannel", s.ctx, "thread-21", "owner-1").Return(nil).Once()
 	s.bot.On("InviteUserToChannel", s.ctx, "thread-21", "member-1").Return(nil).Once()
 	s.bot.On("InviteUserToChannel", s.ctx, "thread-21", "member-2").Return(nil).Once()
@@ -1690,10 +1689,9 @@ func (s *TaskExecutorSuite) TestStreamingInviteErrorsAreLogged() {
 	s.store.On("GetScheduledTask", s.ctx, int64(22)).Return(&db.ScheduledTask{ID: 22, Type: db.TaskTypeCron}, nil)
 
 	s.bot.On("CreateSimpleThread", s.ctx, "ch22", mock.Anything, mock.Anything).Return("thread-22", nil).Once()
-	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+	s.store.On("LinkTaskThread", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
 		return ch.ChannelID == "thread-22" && ch.ParentID == "ch22"
-	})).Return(nil)
-	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(22), "thread-22").Return(nil)
+	}), int64(22), "thread-22").Return(nil)
 	s.bot.On("InviteUserToChannel", s.ctx, "thread-22", "owner-bad").Return(errors.New("invite failed")).Once()
 	s.bot.On("InviteUserToChannel", s.ctx, "thread-22", "member-bad").Return(errors.New("invite failed")).Once()
 

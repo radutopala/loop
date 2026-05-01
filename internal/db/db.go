@@ -42,6 +42,7 @@ type Store interface {
 	ListAllScheduledTasks(ctx context.Context) ([]*ScheduledTask, error)
 	UpdateScheduledTaskEnabled(ctx context.Context, id int64, enabled bool) error
 	UpdateScheduledTaskThreadID(ctx context.Context, id int64, threadID string) error
+	LinkTaskThread(ctx context.Context, ch *Channel, taskID int64, threadID string) error
 	UpdateScheduledTaskOriginBranch(ctx context.Context, id int64, branch string) error
 	ClaimScheduledTaskRunning(ctx context.Context, id int64) (bool, error)
 	ReleaseScheduledTaskRunning(ctx context.Context, id int64) error
@@ -596,6 +597,44 @@ func (s *SQLiteStore) UpdateScheduledTaskThreadID(ctx context.Context, id int64,
 		threadID, s.nowFunc(), id,
 	)
 	return err
+}
+
+// LinkTaskThread atomically registers a thread channel and stamps its ID on
+// a recurring scheduled task. Used the first time a task creates a thread so
+// a crash mid-update can never leave the scheduled task referencing a thread
+// channel that doesn't exist (or vice versa: a thread row no task points to,
+// causing the next run to spawn another thread and leak the old row).
+func (s *SQLiteStore) LinkTaskThread(ctx context.Context, ch *Channel, taskID int64, threadID string) error {
+	var permStr string
+	if !ch.Permissions.IsEmpty() {
+		data, _ := json.Marshal(ch.Permissions)
+		permStr = string(data)
+	}
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO channels (channel_id, guild_id, name, dir_path, parent_id, platform, session_id, permissions, active, worktree, updated_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			 ON CONFLICT(channel_id) DO UPDATE SET
+			   guild_id = excluded.guild_id,
+			   name = excluded.name,
+			   dir_path = CASE WHEN excluded.dir_path != '' THEN excluded.dir_path ELSE channels.dir_path END,
+			   parent_id = excluded.parent_id,
+			   platform = CASE WHEN excluded.platform != '' THEN excluded.platform ELSE channels.platform END,
+			   session_id = CASE WHEN excluded.session_id != '' THEN excluded.session_id ELSE channels.session_id END,
+			   permissions = CASE WHEN excluded.permissions != '' THEN excluded.permissions ELSE channels.permissions END,
+			   active = excluded.active,
+			   worktree = excluded.worktree,
+			   updated_at = excluded.updated_at`,
+			ch.ChannelID, ch.GuildID, ch.Name, ch.DirPath, ch.ParentID, ch.Platform, ch.SessionID, permStr, boolToInt(ch.Active), boolToInt(ch.Worktree), s.nowFunc(),
+		); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx,
+			`UPDATE scheduled_tasks SET thread_id = ?, updated_at = ? WHERE id = ?`,
+			threadID, s.nowFunc(), taskID,
+		)
+		return err
+	})
 }
 
 func (s *SQLiteStore) UpdateScheduledTaskOriginBranch(ctx context.Context, id int64, branch string) error {

@@ -295,7 +295,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				// Upsert thread channel inheriting from parent so botForChannel
 				// can resolve it for subsequent operations (rename, delete, etc.).
 				if channel != nil {
-					_ = e.store.UpsertChannel(ctx, &db.Channel{
+					threadChannel := &db.Channel{
 						ChannelID:   threadID,
 						GuildID:     channel.GuildID,
 						Name:        threadName,
@@ -306,13 +306,18 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 						Permissions: channel.Permissions,
 						Active:      true,
 						Worktree:    worktreeCreated,
-					})
+					}
+					if task.Type != db.TaskTypeOnce {
+						_ = e.store.LinkTaskThread(ctx, threadChannel, task.ID, threadID)
+					} else {
+						_ = e.store.UpsertChannel(ctx, threadChannel)
+					}
 					e.invitePermissionUsers(ctx, threadID, channel.Permissions)
+				} else if task.Type != db.TaskTypeOnce {
+					_ = e.store.UpdateScheduledTaskThreadID(ctx, task.ID, threadID)
 				}
-				// Persist thread ID so recurring tasks reuse the same thread.
 				if task.Type != db.TaskTypeOnce {
 					task.ThreadID = threadID
-					_ = e.store.UpdateScheduledTaskThreadID(ctx, task.ID, threadID)
 				}
 				// Notify the UI that a new thread was created so the
 				// sidebar refreshes immediately.
