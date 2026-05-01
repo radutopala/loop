@@ -249,8 +249,8 @@ func (m *MockStore) UpdateChannelPermissions(ctx context.Context, channelID stri
 	return m.Called(ctx, channelID, perms).Error(0)
 }
 
-func (m *MockStore) CreateWorkflowRun(ctx context.Context, run *db.WorkflowRun) error {
-	return m.Called(ctx, run).Error(0)
+func (m *MockStore) CreateWorkflowRunWithNodes(ctx context.Context, run *db.WorkflowRun, nodeIDs []string) error {
+	return m.Called(ctx, run, nodeIDs).Error(0)
 }
 
 func (m *MockStore) GetWorkflowRun(ctx context.Context, id string) (*db.WorkflowRun, error) {

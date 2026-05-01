@@ -171,7 +171,7 @@ func (s *EngineSuite) TestStartRunSingleBashNode() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -199,7 +199,7 @@ func (s *EngineSuite) TestStartRunSinglePromptNode() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -233,7 +233,7 @@ func (s *EngineSuite) TestStartRunLinearChain() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -269,7 +269,7 @@ func (s *EngineSuite) TestStartRunParallelFanOut() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -302,7 +302,7 @@ func (s *EngineSuite) TestStartRunBashNodeFailure() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -330,7 +330,7 @@ func (s *EngineSuite) TestStartRunInputDefaults() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -360,7 +360,7 @@ func (s *EngineSuite) TestStartRunInputOverridesDefault() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -390,7 +390,7 @@ func (s *EngineSuite) TestCancelRun() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 
@@ -515,7 +515,7 @@ func (s *EngineSuite) TestWhenConditionSkipsNode() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -546,7 +546,7 @@ func (s *EngineSuite) TestTriggerRuleAllDone() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -577,7 +577,7 @@ func (s *EngineSuite) TestTriggerRuleAllSuccessSkips() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -605,7 +605,7 @@ func (s *EngineSuite) TestBroadcasterEventsEmitted() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -638,7 +638,7 @@ func (s *EngineSuite) TestUnsupportedNodeType() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -661,7 +661,7 @@ func (s *EngineSuite) TestPromptNodeAgentError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -691,7 +691,7 @@ func (s *EngineSuite) TestPromptNodeWithSystemPrompt() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -728,7 +728,7 @@ func (s *EngineSuite) TestPromptNodeSystemPromptTemplateError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -751,7 +751,7 @@ func (s *EngineSuite) TestPromptNodeTemplateError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -774,7 +774,7 @@ func (s *EngineSuite) TestBashNodeScriptTemplateError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -801,7 +801,7 @@ func (s *EngineSuite) TestTriggerRuleOneSuccess() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -832,7 +832,7 @@ func (s *EngineSuite) TestWhenConditionTemplateError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -876,7 +876,7 @@ func (s *EngineSuite) TestStartRunCreateWorkflowRunError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(fmt.Errorf("db error"))
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(fmt.Errorf("db error"))
 
 	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "test"})
 	require.ErrorContains(s.T(), err, "creating workflow run")
@@ -898,7 +898,7 @@ func (s *EngineSuite) TestPromptNodeRunnerError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -927,7 +927,7 @@ func (s *EngineSuite) TestTriggerRuleOneSuccessNoneSucceeded() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -958,7 +958,7 @@ func (s *EngineSuite) TestTriggerRuleUnknown() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -1009,7 +1009,7 @@ func (s *EngineSuite) TestUpdateWorkflowRunErrorLogging() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 
 	// Make UpdateWorkflowRun fail.
@@ -1043,12 +1043,9 @@ func (s *EngineSuite) TestUpsertNodeRunErrorLogging() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
-	// Succeed on initial UpsertNodeRun (in StartRun), fail during DAG execution.
-	callCount := 0
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Run(func(_ mock.Arguments) {
-		callCount++
-	}).Return(nil).Once()
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	// Every UpsertNodeRun call during DAG execution fails — covers the
+	// error log paths in executeNode (running) and completeNode (terminal).
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(fmt.Errorf("db error"))
 
 	done := s.waitForRunStatus()
@@ -1069,21 +1066,6 @@ func (s *EngineSuite) TestDeleteWorkflowRunOnStore() {
 	s.store.On("DeleteWorkflowRun", mock.Anything, "r1").Return(nil)
 	err := s.store.DeleteWorkflowRun(context.Background(), "r1")
 	require.NoError(s.T(), err)
-}
-
-func (s *EngineSuite) TestStartRunUpsertNodeRunError() {
-	s.workflows = []config.WorkflowDef{
-		{
-			Name:  "upsert-err",
-			Nodes: []config.NodeDef{{ID: "n1", Type: config.NodeTypeBash, Script: "echo ok"}},
-		},
-	}
-
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(fmt.Errorf("db error"))
-
-	_, err := s.engine.StartRun(context.Background(), StartRunOptions{WorkflowName: "upsert-err"})
-	require.ErrorContains(s.T(), err, "creating node run")
 }
 
 // --- unit tests for helpers ---
@@ -1141,7 +1123,7 @@ func (s *EngineSuite) TestApprovalNodePauseAndResume() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 
@@ -1151,7 +1133,7 @@ func (s *EngineSuite) TestApprovalNodePauseAndResume() {
 	done := make(chan db.WorkflowRunStatus, 1)
 	updateCalls := 0
 	s.store.ExpectedCalls = nil // clear existing mocks
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	// GetWorkflowRun: used by updateRunStatus, executeDAG final write, and
@@ -1202,7 +1184,7 @@ func (s *EngineSuite) TestApprovalNodeTimeout() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForTerminalStatus()
 
@@ -1227,7 +1209,7 @@ func (s *EngineSuite) TestApprovalNodeMessageTemplateError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForTerminalStatus()
 
@@ -1252,7 +1234,7 @@ func (s *EngineSuite) TestApprovalNodeDefaultResponse() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForTerminalStatus()
 
@@ -1316,7 +1298,7 @@ func (s *EngineSuite) TestLoopNodeIterates() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -1348,7 +1330,7 @@ func (s *EngineSuite) TestLoopNodeStopsOnCondition() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -1381,7 +1363,7 @@ func (s *EngineSuite) TestLoopNodeDefaultMaxIterations() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -1413,7 +1395,7 @@ func (s *EngineSuite) TestLoopNodePromptError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -1440,7 +1422,7 @@ func (s *EngineSuite) TestLoopNodeConditionTemplateError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -1476,7 +1458,7 @@ func (s *EngineSuite) TestRetryBashNode() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -1509,7 +1491,7 @@ func (s *EngineSuite) TestRetryExhausted() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -1535,7 +1517,7 @@ func (s *EngineSuite) TestRetryNoConfig() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -1565,7 +1547,7 @@ func (s *EngineSuite) TestLoopNodeCancelledDuringIteration() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 
@@ -1615,7 +1597,7 @@ func (s *EngineSuite) TestApprovalNodeCancelledWhileWaiting() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 
@@ -1658,7 +1640,7 @@ func (s *EngineSuite) TestApprovalNodePauseStatusWriteError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
@@ -1729,7 +1711,7 @@ func (s *EngineSuite) TestRetryBackoffMaxCapped() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -1760,13 +1742,10 @@ func (s *EngineSuite) TestRetryUpsertNodeRunError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
-	// First 2 UpsertNodeRun calls succeed (initial creation + node start),
-	// then fail for the retry attempt update (covers the error log path).
-	var upsertCalls atomic.Int32
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Run(func(_ mock.Arguments) {
-		upsertCalls.Add(1)
-	}).Return(nil).Times(2)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	// First UpsertNodeRun (running attempt 1) succeeds; the retry-attempt
+	// update fails to cover the error log path in executeWithRetry.
+	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil).Once()
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(fmt.Errorf("upsert failed"))
 	done := s.waitForRunStatus()
 
@@ -1794,7 +1773,7 @@ func (s *EngineSuite) TestRetryCancelledDuringBackoff() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 
@@ -1868,7 +1847,7 @@ func (s *EngineSuite) TestExecuteDAGFinalWriteGetError() {
 	}
 
 	s.store.ExpectedCalls = nil
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	// GetWorkflowRun returns error — the final write in executeDAG will log it.
@@ -2237,7 +2216,7 @@ func (s *EngineSuite) TestRunConcurrencyLimit() {
 	s.bashRunner.On("RunBash", mock.Anything, mock.Anything, mock.Anything, mock.Anything).
 		Run(func(args mock.Arguments) { <-bashBlock }).
 		Return("ok", nil)
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 
@@ -2302,7 +2281,7 @@ func (s *EngineSuite) TestNodeConcurrencyLimit() {
 			concurrent.Add(-1)
 		}).
 		Return("ok", nil)
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 
 	done := s.waitForRunStatus()
@@ -2390,7 +2369,7 @@ func (s *EngineSuite) TestNodeSlotCancelledDuringDAG() {
 		return s.workflows
 	}, "", config.WorkflowConcurrency{MaxConcurrentNodes: 1}, slog.Default())
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 
 	bashStarted := make(chan struct{}, 1)
@@ -2509,7 +2488,7 @@ func (s *EngineSuite) TestFinalizeDAGAlreadyTerminal() {
 		}},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	s.bashRunner.On("RunBash", mock.Anything, "echo done", mock.Anything, mock.Anything).Return("done", nil)
 
@@ -2567,7 +2546,7 @@ func (s *EngineSuite) TestApprovalNodeResumeStatusWriteError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpdateNodeHeartbeat", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 
@@ -2660,7 +2639,7 @@ func (s *EngineSuite) TestStartRunSnapshotsWorkflowDef() {
 	}
 
 	var savedRun *db.WorkflowRun
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
 		savedRun = args.Get(1).(*db.WorkflowRun)
 	}).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
@@ -2730,7 +2709,7 @@ func (s *EngineSuite) TestHeartbeatFiresDuringNodeExecution() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -2894,7 +2873,7 @@ func (s *EngineSuite) TestHeartbeatErrorPaths() {
 	s.engine.(*defaultEngine).heartbeatInterval = 10 * time.Millisecond
 
 	s.store.ExpectedCalls = nil
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("GetWorkflowRun", mock.Anything, mock.Anything).Return(
 		&db.WorkflowRun{Status: db.WorkflowRunStatusRunning}, nil,
@@ -3321,7 +3300,7 @@ func (s *EngineSuite) TestNodeTimeoutBashNode() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForTerminalStatus()
 
@@ -3353,7 +3332,7 @@ func (s *EngineSuite) TestNodeTimeoutPromptNode() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForTerminalStatus()
 
@@ -3385,7 +3364,7 @@ func (s *EngineSuite) TestNodeTimeoutLoopNode() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForTerminalStatus()
 
@@ -3417,7 +3396,7 @@ func (s *EngineSuite) TestNodeTimeoutNotTriggeredWhenFast() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -3444,7 +3423,7 @@ func (s *EngineSuite) TestNodeTimeoutInvalidDurationIgnored() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -3472,7 +3451,7 @@ func (s *EngineSuite) TestWorkflowTimeout() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 
 	var capturedErr string
@@ -3519,7 +3498,7 @@ func (s *EngineSuite) TestWorkflowTimeoutNotTriggeredWhenFast() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 
@@ -3701,7 +3680,7 @@ func (s *EngineSuite) TestRetryRunHappyPath() {
 	s.store.On("GetWorkflowRun", mock.Anything, mock.Anything).Return(
 		&db.WorkflowRun{Status: db.WorkflowRunStatusRunning}, nil,
 	).Maybe()
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	// Accept UpdateWorkflowRun from the async DAG execution.
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
@@ -3789,7 +3768,7 @@ func (s *EngineSuite) TestRetryRunWithNoInputs() {
 	s.store.On("GetWorkflowRun", mock.Anything, mock.Anything).Return(
 		&db.WorkflowRun{Status: db.WorkflowRunStatusRunning}, nil,
 	).Maybe()
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 	s.bashRunner.On("RunBash", mock.Anything, "echo hi", "ch1", "").Return("hi", nil)
@@ -3856,7 +3835,7 @@ func (s *EngineSuite) TestPromptNodeResolvePromptError() {
 		},
 	}
 
-	s.store.On("CreateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("CreateWorkflowRunWithNodes", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
 	done := s.waitForRunStatus()
 

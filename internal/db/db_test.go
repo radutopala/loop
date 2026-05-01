@@ -506,19 +506,18 @@ func (s *StoreSuite) TestInsertMessageErrors() {
 }
 
 func (s *StoreSuite) TestMarkMessagesProcessed() {
-	s.mock.ExpectExec(`UPDATE messages SET is_processed = 1`).
-		WithArgs(int64(1)).
-		WillReturnResult(sqlmock.NewResult(0, 1))
-	s.mock.ExpectExec(`UPDATE messages SET is_processed = 1`).
-		WithArgs(int64(2)).
-		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectExec(`UPDATE messages SET is_processed = 1 WHERE id IN \(\?,\?\)`).
+		WithArgs(int64(1), int64(2)).
+		WillReturnResult(sqlmock.NewResult(0, 2))
 
 	err := s.store.MarkMessagesProcessed(context.Background(), []int64{1, 2})
 	require.NoError(s.T(), err)
 }
 
 func (s *StoreSuite) TestMarkMessagesProcessedError() {
-	s.mock.ExpectExec(`UPDATE messages SET is_processed = 1`).WithArgs(int64(1)).WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectExec(`UPDATE messages SET is_processed = 1 WHERE id IN`).
+		WithArgs(int64(1), int64(2)).
+		WillReturnError(sql.ErrConnDone)
 	require.Error(s.T(), s.store.MarkMessagesProcessed(context.Background(), []int64{1, 2}))
 }
 
@@ -1749,42 +1748,61 @@ func newMockNodeRunRows() *sqlmock.Rows {
 	})
 }
 
-func (s *StoreSuite) TestCreateWorkflowRun() {
+func (s *StoreSuite) TestCreateWorkflowRunWithNodes() {
 	now := time.Now().UTC()
-	run := &WorkflowRun{
-		ID:           "run-1",
-		WorkflowName: "deploy",
-		ChannelID:    "ch1",
-		DirPath:      "/project",
-		WorktreePath: "/worktree",
-		Status:       WorkflowRunStatusRunning,
-		Inputs:       `{"env":"prod"}`,
-		PausedNodeID: "",
-		ErrorText:    "",
-		StartedAt:    now,
-	}
+	run := &WorkflowRun{ID: "run-1", WorkflowName: "deploy", Status: WorkflowRunStatusRunning, StartedAt: now}
 
+	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`INSERT INTO workflow_runs`).
 		WithArgs(run.ID, run.WorkflowName, run.ChannelID, run.DirPath, run.WorktreePath,
 			string(run.Status), run.Inputs, run.PausedNodeID, run.ErrorText, run.WorkflowDef, run.StartedAt).
 		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mock.ExpectExec(`INSERT INTO workflow_node_runs`).
+		WithArgs(run.ID, "n1", string(NodeRunStatusPending)).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mock.ExpectExec(`INSERT INTO workflow_node_runs`).
+		WithArgs(run.ID, "n2", string(NodeRunStatusPending)).
+		WillReturnResult(sqlmock.NewResult(2, 1))
+	s.mock.ExpectCommit()
 
-	err := s.store.CreateWorkflowRun(context.Background(), run)
+	err := s.store.CreateWorkflowRunWithNodes(context.Background(), run, []string{"n1", "n2"})
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
-func (s *StoreSuite) TestCreateWorkflowRunError() {
+func (s *StoreSuite) TestCreateWorkflowRunWithNodesRunInsertError() {
 	now := time.Now().UTC()
 	run := &WorkflowRun{ID: "run-1", WorkflowName: "deploy", Status: WorkflowRunStatusRunning, StartedAt: now}
 
+	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`INSERT INTO workflow_runs`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
 			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
 
-	err := s.store.CreateWorkflowRun(context.Background(), run)
+	err := s.store.CreateWorkflowRunWithNodes(context.Background(), run, []string{"n1"})
 	require.Error(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestCreateWorkflowRunWithNodesNodeInsertError() {
+	now := time.Now().UTC()
+	run := &WorkflowRun{ID: "run-1", WorkflowName: "deploy", Status: WorkflowRunStatusRunning, StartedAt: now}
+
+	s.mock.ExpectBegin()
+	s.mock.ExpectExec(`INSERT INTO workflow_runs`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	s.mock.ExpectExec(`INSERT INTO workflow_node_runs`).
+		WithArgs(run.ID, "n1", string(NodeRunStatusPending)).
+		WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
+
+	err := s.store.CreateWorkflowRunWithNodes(context.Background(), run, []string{"n1"})
+	require.Error(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
 func (s *StoreSuite) TestGetWorkflowRun() {

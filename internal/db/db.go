@@ -56,7 +56,7 @@ type Store interface {
 	GetMemoryFileHash(ctx context.Context, filePath, dirPath string) (string, error)
 	DeleteMemoryFile(ctx context.Context, filePath, dirPath string) error
 	ListDistinctMemoryFilePaths(ctx context.Context, dirPath string) ([]MemoryFileInfo, error)
-	CreateWorkflowRun(ctx context.Context, run *WorkflowRun) error
+	CreateWorkflowRunWithNodes(ctx context.Context, run *WorkflowRun, nodeIDs []string) error
 	GetWorkflowRun(ctx context.Context, id string) (*WorkflowRun, error)
 	UpdateWorkflowRun(ctx context.Context, run *WorkflowRun) error
 	ListWorkflowRuns(ctx context.Context, channelID string, limit, offset int) ([]*WorkflowRun, error)
@@ -377,12 +377,20 @@ func (s *SQLiteStore) InsertMessage(ctx context.Context, msg *Message) error {
 }
 
 func (s *SQLiteStore) MarkMessagesProcessed(ctx context.Context, ids []int64) error {
-	for _, id := range ids {
-		if _, err := s.db.ExecContext(ctx, `UPDATE messages SET is_processed = 1 WHERE id = ?`, id); err != nil {
-			return err
-		}
+	if len(ids) == 0 {
+		return nil
 	}
-	return nil
+	placeholders := make([]string, len(ids))
+	args := make([]any, len(ids))
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args[i] = id
+	}
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE messages SET is_processed = 1 WHERE id IN (`+strings.Join(placeholders, ",")+`)`,
+		args...,
+	)
+	return err
 }
 
 // DeleteQueuedMessage removes a waiting (not-yet-processed, non-bot) user message
@@ -837,13 +845,29 @@ func (s *SQLiteStore) ListDistinctMemoryFilePaths(ctx context.Context, dirPath s
 	return files, rows.Err()
 }
 
-func (s *SQLiteStore) CreateWorkflowRun(ctx context.Context, run *WorkflowRun) error {
-	_, err := s.db.ExecContext(ctx,
-		`INSERT INTO workflow_runs (id, workflow_name, channel_id, dir_path, worktree_path, status, inputs, paused_node_id, error_text, workflow_def, started_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		run.ID, run.WorkflowName, run.ChannelID, run.DirPath, run.WorktreePath, string(run.Status), run.Inputs, run.PausedNodeID, run.ErrorText, run.WorkflowDef, run.StartedAt,
-	)
-	return err
+// CreateWorkflowRunWithNodes inserts the workflow run and seeds initial pending
+// node runs in a single transaction so a partial failure can never leave a run
+// without its node rows.
+func (s *SQLiteStore) CreateWorkflowRunWithNodes(ctx context.Context, run *WorkflowRun, nodeIDs []string) error {
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO workflow_runs (id, workflow_name, channel_id, dir_path, worktree_path, status, inputs, paused_node_id, error_text, workflow_def, started_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			run.ID, run.WorkflowName, run.ChannelID, run.DirPath, run.WorktreePath, string(run.Status), run.Inputs, run.PausedNodeID, run.ErrorText, run.WorkflowDef, run.StartedAt,
+		); err != nil {
+			return err
+		}
+		for _, nodeID := range nodeIDs {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO workflow_node_runs (run_id, node_id, status, output, error_text, attempt, started_at, finished_at, last_heartbeat_at)
+				 VALUES (?, ?, ?, '', '', 0, NULL, NULL, NULL)`,
+				run.ID, nodeID, string(NodeRunStatusPending),
+			); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
 }
 
 func (s *SQLiteStore) GetWorkflowRun(ctx context.Context, id string) (*WorkflowRun, error) {

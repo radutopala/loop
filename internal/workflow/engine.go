@@ -156,22 +156,13 @@ func (e *defaultEngine) StartRun(ctx context.Context, opts StartRunOptions) (str
 		WorkflowDef:  string(wfDefJSON),
 		StartedAt:    now,
 	}
-	if err := e.store.CreateWorkflowRun(ctx, run); err != nil {
+	nodeIDs := make([]string, len(wfDef.Nodes))
+	for i, node := range wfDef.Nodes {
+		nodeIDs[i] = node.ID
+	}
+	if err := e.store.CreateWorkflowRunWithNodes(ctx, run, nodeIDs); err != nil {
 		e.releaseRunSlot()
 		return "", fmt.Errorf("creating workflow run: %w", err)
-	}
-
-	// Create initial node runs.
-	for _, node := range wfDef.Nodes {
-		nr := &db.NodeRun{
-			RunID:  runID,
-			NodeID: node.ID,
-			Status: db.NodeRunStatusPending,
-		}
-		if err := e.store.UpsertNodeRun(ctx, nr); err != nil {
-			e.releaseRunSlot()
-			return "", fmt.Errorf("creating node run for %s: %w", node.ID, err)
-		}
 	}
 
 	if e.broadcaster != nil {
