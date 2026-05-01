@@ -1883,7 +1883,8 @@ func (s *EngineSuite) TestRecoverRunsListError() {
 }
 
 func (s *EngineSuite) TestRecoverRunsFailStaleRunning() {
-	// A running workflow should be marked as failed on recovery.
+	// A running workflow whose definition is gone should be marked as failed on
+	// recovery via failStaleRun (single transactional Store call).
 	staleRun := &db.WorkflowRun{
 		ID:           "wfr-stale",
 		WorkflowName: "test",
@@ -1892,44 +1893,13 @@ func (s *EngineSuite) TestRecoverRunsFailStaleRunning() {
 		Inputs:       `{}`,
 	}
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{staleRun}, nil)
-
-	// failStaleRun updates the run and its node runs.
-	var capturedRun *db.WorkflowRun
-	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-		capturedRun = args.Get(1).(*db.WorkflowRun)
-	}).Return(nil)
-
-	pendingNode := &db.NodeRun{RunID: "wfr-stale", NodeID: "n1", Status: db.NodeRunStatusPending}
-	runningNode := &db.NodeRun{RunID: "wfr-stale", NodeID: "n2", Status: db.NodeRunStatusRunning}
-	doneNode := &db.NodeRun{RunID: "wfr-stale", NodeID: "n3", Status: db.NodeRunStatusSuccess}
-	s.store.On("ListNodeRuns", mock.Anything, "wfr-stale").Return([]*db.NodeRun{pendingNode, runningNode, doneNode}, nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
+	s.store.On("MarkRunFailedWithStaleNodes", mock.Anything, "wfr-stale",
+		"server restarted while workflow was running", "server restarted", mock.Anything).Return(nil)
 
 	err := s.engine.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
-
-	require.NotNil(s.T(), capturedRun)
-	require.Equal(s.T(), db.WorkflowRunStatusFailed, capturedRun.Status)
-	require.Equal(s.T(), "server restarted while workflow was running", capturedRun.ErrorText)
-	require.NotNil(s.T(), capturedRun.FinishedAt)
-
-	// Verify pending and running nodes were failed, but success node was not touched.
-	s.store.AssertNumberOfCalls(s.T(), "UpsertNodeRun", 2)
-}
-
-func (s *EngineSuite) TestRecoverRunsFailStaleListNodeError() {
-	staleRun := &db.WorkflowRun{
-		ID:           "wfr-stale2",
-		WorkflowName: "test",
-		Status:       db.WorkflowRunStatusRunning,
-	}
-	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{staleRun}, nil)
-	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("ListNodeRuns", mock.Anything, "wfr-stale2").Return(nil, fmt.Errorf("node list error"))
-
-	err := s.engine.RecoverRuns(context.Background())
-	require.NoError(s.T(), err)
-	// Should still succeed — node list error is logged, not returned.
+	s.store.AssertCalled(s.T(), "MarkRunFailedWithStaleNodes",
+		mock.Anything, "wfr-stale", "server restarted while workflow was running", "server restarted", mock.Anything)
 }
 
 func (s *EngineSuite) TestRecoverRunsPausedWorkflowNotFound() {
@@ -1942,17 +1912,13 @@ func (s *EngineSuite) TestRecoverRunsPausedWorkflowNotFound() {
 		Inputs:       `{}`,
 	}
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
-	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("ListNodeRuns", mock.Anything, "wfr-paused-nf").Return(nil, nil)
+	s.store.On("MarkRunFailedWithStaleNodes", mock.Anything, "wfr-paused-nf", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	s.workflows = nil // no workflows defined
 
 	err := s.engine.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
-	// Should have fallen back to failStaleRun.
-	s.store.AssertCalled(s.T(), "UpdateWorkflowRun", mock.Anything, mock.MatchedBy(func(r *db.WorkflowRun) bool {
-		return r.ID == "wfr-paused-nf" && r.Status == db.WorkflowRunStatusFailed
-	}))
+	s.store.AssertCalled(s.T(), "MarkRunFailedWithStaleNodes", mock.Anything, "wfr-paused-nf", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *EngineSuite) TestRecoverRunsPausedNodeRunListError() {
@@ -1965,8 +1931,8 @@ func (s *EngineSuite) TestRecoverRunsPausedNodeRunListError() {
 		Inputs:       `{}`,
 	}
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
-	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-paused-nle").Return(nil, fmt.Errorf("node list error"))
+	s.store.On("MarkRunFailedWithStaleNodes", mock.Anything, "wfr-paused-nle", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	s.workflows = []config.WorkflowDef{
 		{
@@ -1977,9 +1943,7 @@ func (s *EngineSuite) TestRecoverRunsPausedNodeRunListError() {
 
 	err := s.engine.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
-	s.store.AssertCalled(s.T(), "UpdateWorkflowRun", mock.Anything, mock.MatchedBy(func(r *db.WorkflowRun) bool {
-		return r.ID == "wfr-paused-nle" && r.Status == db.WorkflowRunStatusFailed
-	}))
+	s.store.AssertCalled(s.T(), "MarkRunFailedWithStaleNodes", mock.Anything, "wfr-paused-nle", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *EngineSuite) TestRecoverRunsPausedBadInputs() {
@@ -1992,8 +1956,8 @@ func (s *EngineSuite) TestRecoverRunsPausedBadInputs() {
 		Inputs:       `{INVALID`,
 	}
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{pausedRun}, nil)
-	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-paused-bad").Return(nil, nil)
+	s.store.On("MarkRunFailedWithStaleNodes", mock.Anything, "wfr-paused-bad", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	s.workflows = []config.WorkflowDef{
 		{
@@ -2004,9 +1968,7 @@ func (s *EngineSuite) TestRecoverRunsPausedBadInputs() {
 
 	err := s.engine.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
-	s.store.AssertCalled(s.T(), "UpdateWorkflowRun", mock.Anything, mock.MatchedBy(func(r *db.WorkflowRun) bool {
-		return r.ID == "wfr-paused-bad" && r.Status == db.WorkflowRunStatusFailed
-	}))
+	s.store.AssertCalled(s.T(), "MarkRunFailedWithStaleNodes", mock.Anything, "wfr-paused-bad", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *EngineSuite) TestRecoverRunsPausedResumeApproval() {
@@ -2084,30 +2046,14 @@ func (s *EngineSuite) TestRecoverRunsPausedResumeApproval() {
 	s.bashRunner.AssertCalled(s.T(), "RunBash", mock.Anything, "echo deploying", "ch1", "")
 }
 
-func (s *EngineSuite) TestFailStaleRunUpdateError() {
-	// UpdateWorkflowRun error is logged, not fatal.
+func (s *EngineSuite) TestFailStaleRunStoreError() {
+	// MarkRunFailedWithStaleNodes error is logged, not fatal.
 	s.store.ExpectedCalls = nil
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{
 		{ID: "wfr-err", WorkflowName: "wf", Status: db.WorkflowRunStatusRunning},
 	}, nil)
-	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(fmt.Errorf("update failed"))
-	s.store.On("ListNodeRuns", mock.Anything, "wfr-err").Return(nil, nil)
-
-	err := s.engine.RecoverRuns(context.Background())
-	require.NoError(s.T(), err)
-}
-
-func (s *EngineSuite) TestFailStaleRunUpsertNodeError() {
-	// UpsertNodeRun error is logged, not fatal.
-	s.store.ExpectedCalls = nil
-	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{
-		{ID: "wfr-nrerr", WorkflowName: "wf", Status: db.WorkflowRunStatusRunning},
-	}, nil)
-	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("ListNodeRuns", mock.Anything, "wfr-nrerr").Return([]*db.NodeRun{
-		{RunID: "wfr-nrerr", NodeID: "n1", Status: db.NodeRunStatusPending},
-	}, nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(fmt.Errorf("upsert failed"))
+	s.store.On("MarkRunFailedWithStaleNodes", mock.Anything, "wfr-err", mock.Anything, mock.Anything, mock.Anything).
+		Return(fmt.Errorf("mark failed"))
 
 	err := s.engine.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
@@ -2194,8 +2140,7 @@ func (s *EngineSuite) TestFailStaleRunNilBroadcaster() {
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{
 		{ID: "wfr-nobc", WorkflowName: "wf", Status: db.WorkflowRunStatusRunning},
 	}, nil)
-	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
-	s.store.On("ListNodeRuns", mock.Anything, "wfr-nobc").Return(nil, nil)
+	s.store.On("MarkRunFailedWithStaleNodes", mock.Anything, "wfr-nobc", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	err := e.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
@@ -2319,16 +2264,14 @@ func (s *EngineSuite) TestRecoverPausedRunSemaphoreFull() {
 	s.store.On("GetWorkflowRun", mock.Anything, "wfr-paused").Return(
 		&db.WorkflowRun{ID: "wfr-paused", WorkflowName: "wf", Status: db.WorkflowRunStatusPaused}, nil,
 	)
-	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Return(nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-paused").Return(nil, nil)
+	s.store.On("MarkRunFailedWithStaleNodes", mock.Anything, "wfr-paused", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	err := e.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
 
-	// Verify the run was failed, not recovered.
-	s.store.AssertCalled(s.T(), "UpdateWorkflowRun", mock.Anything, mock.MatchedBy(func(run *db.WorkflowRun) bool {
-		return run.ID == "wfr-paused" && run.Status == db.WorkflowRunStatusFailed
-	}))
+	// Verify the run was failed via the atomic helper, not recovered.
+	s.store.AssertCalled(s.T(), "MarkRunFailedWithStaleNodes", mock.Anything, "wfr-paused", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *EngineSuite) TestStartRunSemaphoreContextCancelled() {
@@ -3204,17 +3147,11 @@ func (s *EngineSuite) TestRecoverRunningRunBadInputsFallsBack() {
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-bad-inp").Return([]*db.NodeRun{
 		{RunID: "wfr-bad-inp", NodeID: "a", Status: db.NodeRunStatusPending},
 	}, nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-
-	var capturedStatus db.WorkflowRunStatus
-	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-		run := args.Get(1).(*db.WorkflowRun)
-		capturedStatus = run.Status
-	}).Return(nil)
+	s.store.On("MarkRunFailedWithStaleNodes", mock.Anything, "wfr-bad-inp", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	err := s.engine.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), db.WorkflowRunStatusFailed, capturedStatus)
+	s.store.AssertCalled(s.T(), "MarkRunFailedWithStaleNodes", mock.Anything, "wfr-bad-inp", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *EngineSuite) TestRecoverRunningRunNodeListErrorFallsBack() {
@@ -3233,17 +3170,11 @@ func (s *EngineSuite) TestRecoverRunningRunNodeListErrorFallsBack() {
 	s.store.ExpectedCalls = nil
 	s.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return([]*db.WorkflowRun{runningRun}, nil)
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-nle").Return(nil, fmt.Errorf("db error"))
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-
-	var capturedStatus db.WorkflowRunStatus
-	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-		run := args.Get(1).(*db.WorkflowRun)
-		capturedStatus = run.Status
-	}).Return(nil)
+	s.store.On("MarkRunFailedWithStaleNodes", mock.Anything, "wfr-nle", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	err := s.engine.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), db.WorkflowRunStatusFailed, capturedStatus)
+	s.store.AssertCalled(s.T(), "MarkRunFailedWithStaleNodes", mock.Anything, "wfr-nle", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *EngineSuite) TestRecoverRunningRunSemaphoreFullFallsBack() {
@@ -3272,17 +3203,11 @@ func (s *EngineSuite) TestRecoverRunningRunSemaphoreFullFallsBack() {
 	s.store.On("ListNodeRuns", mock.Anything, "wfr-sem").Return([]*db.NodeRun{
 		{RunID: "wfr-sem", NodeID: "a", Status: db.NodeRunStatusPending},
 	}, nil)
-	s.store.On("UpsertNodeRun", mock.Anything, mock.Anything).Return(nil)
-
-	var capturedStatus db.WorkflowRunStatus
-	s.store.On("UpdateWorkflowRun", mock.Anything, mock.Anything).Run(func(args mock.Arguments) {
-		run := args.Get(1).(*db.WorkflowRun)
-		capturedStatus = run.Status
-	}).Return(nil)
+	s.store.On("MarkRunFailedWithStaleNodes", mock.Anything, "wfr-sem", mock.Anything, mock.Anything, mock.Anything).Return(nil)
 
 	err := e.RecoverRuns(context.Background())
 	require.NoError(s.T(), err)
-	require.Equal(s.T(), db.WorkflowRunStatusFailed, capturedStatus)
+	s.store.AssertCalled(s.T(), "MarkRunFailedWithStaleNodes", mock.Anything, "wfr-sem", mock.Anything, mock.Anything, mock.Anything)
 
 	// Clean up: drain semaphore.
 	<-de.runSem

@@ -561,24 +561,8 @@ func (e *defaultEngine) failStaleRun(ctx context.Context, run *db.WorkflowRun) {
 	run.Status = db.WorkflowRunStatusFailed
 	run.ErrorText = "server restarted while workflow was running"
 	run.FinishedAt = &now
-	if err := e.store.UpdateWorkflowRun(ctx, run); err != nil {
+	if err := e.store.MarkRunFailedWithStaleNodes(ctx, run.ID, run.ErrorText, "server restarted", now); err != nil {
 		e.logger.Error("workflow: failed to mark stale run as failed", "run_id", run.ID, "error", err)
-	}
-
-	nodeRuns, err := e.store.ListNodeRuns(ctx, run.ID)
-	if err != nil {
-		e.logger.Error("workflow: failed to list node runs for stale run", "run_id", run.ID, "error", err)
-		return
-	}
-	for _, nr := range nodeRuns {
-		if nr.Status == db.NodeRunStatusPending || nr.Status == db.NodeRunStatusRunning {
-			nr.Status = db.NodeRunStatusFailed
-			nr.ErrorText = "server restarted"
-			nr.FinishedAt = &now
-			if err := e.store.UpsertNodeRun(ctx, nr); err != nil {
-				e.logger.Error("workflow: failed to mark stale node as failed", "run_id", run.ID, "node_id", nr.NodeID, "error", err)
-			}
-		}
 	}
 
 	if e.broadcaster != nil {

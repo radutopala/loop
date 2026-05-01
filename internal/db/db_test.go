@@ -1893,6 +1893,56 @@ func (s *StoreSuite) TestUpdateWorkflowRunError() {
 	require.Error(s.T(), err)
 }
 
+func (s *StoreSuite) TestMarkRunFailedWithStaleNodes() {
+	finishedAt := time.Now().UTC()
+
+	s.mock.ExpectBegin()
+	s.mock.ExpectExec(`UPDATE workflow_runs SET status = \?, error_text = \?, finished_at = \? WHERE id = \?`).
+		WithArgs(string(WorkflowRunStatusFailed), "boom", finishedAt, "run-1").
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectExec(`UPDATE workflow_node_runs SET status = \?, error_text = \?, finished_at = \?\s+WHERE run_id = \? AND status IN \(\?, \?\)`).
+		WithArgs(string(NodeRunStatusFailed), "node boom", finishedAt, "run-1",
+			string(NodeRunStatusPending), string(NodeRunStatusRunning)).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	s.mock.ExpectCommit()
+
+	err := s.store.MarkRunFailedWithStaleNodes(context.Background(), "run-1", "boom", "node boom", finishedAt)
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestMarkRunFailedWithStaleNodesRunUpdateError() {
+	finishedAt := time.Now().UTC()
+
+	s.mock.ExpectBegin()
+	s.mock.ExpectExec(`UPDATE workflow_runs SET status`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
+
+	err := s.store.MarkRunFailedWithStaleNodes(context.Background(), "run-1", "boom", "node boom", finishedAt)
+	require.Error(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
+func (s *StoreSuite) TestMarkRunFailedWithStaleNodesNodesUpdateError() {
+	finishedAt := time.Now().UTC()
+
+	s.mock.ExpectBegin()
+	s.mock.ExpectExec(`UPDATE workflow_runs SET status`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectExec(`UPDATE workflow_node_runs SET status`).
+		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+			sqlmock.AnyArg(), sqlmock.AnyArg()).
+		WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
+
+	err := s.store.MarkRunFailedWithStaleNodes(context.Background(), "run-1", "boom", "node boom", finishedAt)
+	require.Error(s.T(), err)
+	require.NoError(s.T(), s.mock.ExpectationsWereMet())
+}
+
 func (s *StoreSuite) TestListWorkflowRuns() {
 	now := time.Now().UTC()
 	finishedAt := now.Add(time.Minute)

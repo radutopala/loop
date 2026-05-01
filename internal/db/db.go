@@ -59,6 +59,7 @@ type Store interface {
 	CreateWorkflowRunWithNodes(ctx context.Context, run *WorkflowRun, nodeIDs []string) error
 	GetWorkflowRun(ctx context.Context, id string) (*WorkflowRun, error)
 	UpdateWorkflowRun(ctx context.Context, run *WorkflowRun) error
+	MarkRunFailedWithStaleNodes(ctx context.Context, runID, errorText, nodeErrorText string, finishedAt time.Time) error
 	ListWorkflowRuns(ctx context.Context, channelID string, limit, offset int) ([]*WorkflowRun, error)
 	ListWorkflowRunsByStatus(ctx context.Context, statuses []WorkflowRunStatus) ([]*WorkflowRun, error)
 	UpsertNodeRun(ctx context.Context, nr *NodeRun) error
@@ -889,6 +890,30 @@ func (s *SQLiteStore) UpdateWorkflowRun(ctx context.Context, run *WorkflowRun) e
 		string(run.Status), run.PausedNodeID, run.ErrorText, run.FinishedAt, run.ID,
 	)
 	return err
+}
+
+// MarkRunFailedWithStaleNodes marks a running workflow as failed and bulk-updates
+// all of its still-pending/running node rows to failed in a single transaction.
+// Used by recovery on startup so a crash mid-update can never leave a failed run
+// with zombie pending/running nodes that the next restart would re-execute.
+func (s *SQLiteStore) MarkRunFailedWithStaleNodes(ctx context.Context, runID, errorText, nodeErrorText string, finishedAt time.Time) error {
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE workflow_runs SET status = ?, error_text = ?, finished_at = ? WHERE id = ?`,
+			string(WorkflowRunStatusFailed), errorText, finishedAt, runID,
+		); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE workflow_node_runs SET status = ?, error_text = ?, finished_at = ?
+			 WHERE run_id = ? AND status IN (?, ?)`,
+			string(NodeRunStatusFailed), nodeErrorText, finishedAt, runID,
+			string(NodeRunStatusPending), string(NodeRunStatusRunning),
+		); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (s *SQLiteStore) ListWorkflowRuns(ctx context.Context, channelID string, limit, offset int) ([]*WorkflowRun, error) {

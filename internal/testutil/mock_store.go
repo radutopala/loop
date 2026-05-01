@@ -253,6 +253,10 @@ func (m *MockStore) CreateWorkflowRunWithNodes(ctx context.Context, run *db.Work
 	return m.Called(ctx, run, nodeIDs).Error(0)
 }
 
+func (m *MockStore) MarkRunFailedWithStaleNodes(ctx context.Context, runID, errorText, nodeErrorText string, finishedAt time.Time) error {
+	return m.Called(ctx, runID, errorText, nodeErrorText, finishedAt).Error(0)
+}
+
 func (m *MockStore) GetWorkflowRun(ctx context.Context, id string) (*db.WorkflowRun, error) {
 	args := m.Called(ctx, id)
 	if args.Get(0) == nil {
