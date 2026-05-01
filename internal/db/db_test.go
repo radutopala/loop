@@ -1220,6 +1220,8 @@ func (s *StoreSuite) TestInitDBSuccess() {
 	mock.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`PRAGMA busy_timeout=5000`).WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`PRAGMA synchronous=NORMAL`).WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`PRAGMA cache_size=-32768`).WillReturnResult(sqlmock.NewResult(0, 0))
 	// schema_migrations creation
 	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS schema_migrations`).WillReturnResult(sqlmock.NewResult(0, 0))
 	// Each migration check (already applied)
@@ -1250,10 +1252,25 @@ func (s *StoreSuite) TestInitDBErrors() {
 			m.ExpectExec(`PRAGMA busy_timeout=5000`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnError(sql.ErrConnDone)
 		}, "enabling foreign keys"},
+		{"synchronous error", func(m sqlmock.Sqlmock) {
+			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA busy_timeout=5000`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA synchronous=NORMAL`).WillReturnError(sql.ErrConnDone)
+		}, "setting synchronous mode"},
+		{"cache size error", func(m sqlmock.Sqlmock) {
+			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA busy_timeout=5000`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA synchronous=NORMAL`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA cache_size=-32768`).WillReturnError(sql.ErrConnDone)
+		}, "setting cache size"},
 		{"migrations error", func(m sqlmock.Sqlmock) {
 			m.ExpectExec(`PRAGMA journal_mode=WAL`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA busy_timeout=5000`).WillReturnResult(ok)
 			m.ExpectExec(`PRAGMA foreign_keys=ON`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA synchronous=NORMAL`).WillReturnResult(ok)
+			m.ExpectExec(`PRAGMA cache_size=-32768`).WillReturnResult(ok)
 			m.ExpectExec(`CREATE TABLE IF NOT EXISTS schema_migrations`).WillReturnError(sql.ErrConnDone)
 		}, "running migrations"},
 	}

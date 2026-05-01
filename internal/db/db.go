@@ -160,6 +160,19 @@ func initDB(sqlDB *sql.DB) error {
 		return fmt.Errorf("enabling foreign keys: %w", err)
 	}
 
+	// synchronous=NORMAL is the SQLite-recommended setting under WAL: durability
+	// still survives process crashes; only OS-level power loss between the WAL
+	// flush and disk fsync risks data loss. Cuts write latency materially.
+	if _, err := sqlDB.Exec("PRAGMA synchronous=NORMAL"); err != nil {
+		return fmt.Errorf("setting synchronous mode: %w", err)
+	}
+
+	// cache_size negative = KB; -32768 = 32 MB page cache (default ~2 MB) keeps
+	// more of the working set hot for read-heavy timeline / channel listings.
+	if _, err := sqlDB.Exec("PRAGMA cache_size=-32768"); err != nil {
+		return fmt.Errorf("setting cache size: %w", err)
+	}
+
 	if err := RunMigrations(context.Background(), sqlDB); err != nil {
 		return fmt.Errorf("running migrations: %w", err)
 	}
