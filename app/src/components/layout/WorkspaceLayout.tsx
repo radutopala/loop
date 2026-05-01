@@ -69,6 +69,26 @@ function leafIdForPanel(channelId: string, panel: PanelType): string {
   return nextId(channelId, panel);
 }
 
+function withDefaultFileTreeForEditor(tree: PaneNode, editorLeafId: string, fileTreeLeafId: string): PaneNode {
+  if (!canAddPanel(tree, "file-tree")) return tree;
+  const transform = (n: PaneNode): PaneNode => {
+    if (n.type === "leaf") {
+      if (n.id !== editorLeafId) return n;
+      return {
+        type: "split",
+        direction: "horizontal",
+        flex: n.flex,
+        children: [
+          { type: "leaf", id: fileTreeLeafId, panel: "file-tree", flex: 25 },
+          { ...n, flex: 75 },
+        ],
+      };
+    }
+    return { ...n, children: n.children.map(transform) };
+  };
+  return transform(tree);
+}
+
 function buildLayoutMenuItemStyle(colors: ColorPalette): React.CSSProperties {
   return {
     display: "flex",
@@ -478,7 +498,12 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
       setTree((prev) => {
         if (!prev) return prev;
         if (!canAddPanel(prev, panel)) return prev;
-        return splitLeaf(prev, leafId, direction, makeLeaf(leafIdForPanel(channelId, panel), panel));
+        const newLeafId = leafIdForPanel(channelId, panel);
+        let result = splitLeaf(prev, leafId, direction, makeLeaf(newLeafId, panel));
+        if (panel === "editor") {
+          result = withDefaultFileTreeForEditor(result, newLeafId, leafIdForPanel(channelId, "file-tree"));
+        }
+        return result;
       });
     },
     [channelId],
@@ -486,7 +511,11 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
   const handleEmptyAdd = useCallback(
     (panel: PanelType) => {
-      const newTree = makeLeaf(leafIdForPanel(channelId, panel), panel);
+      const newLeafId = leafIdForPanel(channelId, panel);
+      let newTree: PaneNode = makeLeaf(newLeafId, panel);
+      if (panel === "editor") {
+        newTree = withDefaultFileTreeForEditor(newTree, newLeafId, leafIdForPanel(channelId, "file-tree"));
+      }
       setTree(newTree);
       // If this is the first panel in a new layout, ensure it's persisted with a name
       if (!layoutNames.includes(activeName)) {

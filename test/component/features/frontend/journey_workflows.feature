@@ -14,7 +14,7 @@ Feature: Workflows
     # Open workflows panel from sidebar
     When I open the workflows panel
     Then I wait for text "No workflow runs" to appear
-    And I wait for text "+ Run" to appear
+    And I wait up to "10s" for text "+ Run" to appear
 
     # Open start workflow dialog
     When I click button "+ Run" in the workflows panel

@@ -160,9 +160,23 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, onCanvasChange,
       height: tileH,
       zIndex: maxZ + 1,
     };
+    const newTiles: CanvasTileType[] = [newTile];
+    if (panel === "editor" && !canvas.tiles.some((t) => t.panel === "file-tree")) {
+      const { w: ftW, h: ftH } = DEFAULT_TILE_SIZES["file-tree"] ?? { w: 500, h: 400 };
+      const ftPreferred = findNonOverlappingPosition(adjusted.x - ftW - 20, adjusted.y, ftW, ftH, [...canvas.tiles, newTile]);
+      newTiles.push({
+        id: `file-tree-${Date.now()}`,
+        panel: "file-tree",
+        x: ftPreferred.x,
+        y: ftPreferred.y,
+        width: ftW,
+        height: ftH,
+        zIndex: maxZ + 2,
+      });
+    }
     onCanvasChange({
       ...canvas,
-      tiles: [...canvas.tiles, newTile],
+      tiles: [...canvas.tiles, ...newTiles],
     });
     setShowAddMenu(null);
   }, [canvas, showAddMenu, onCanvasChange, screenToWorld]);
