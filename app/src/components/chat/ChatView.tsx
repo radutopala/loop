@@ -56,7 +56,7 @@ interface ChatViewProps {
 export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScrollComplete }: ChatViewProps) {
   const { colors, fontSizes } = useTheme();
   const styles = buildStyles(colors);
-  const { messages, loading, isRunning } = chatState;
+  const { items, liveTail, messages, loading, isRunning } = chatState;
   const dismissCards = useCallback(() => { chatState.clearAskUser(); chatState.clearExitPlan(); chatState.clearGateApproval(); }, [chatState]);
   const messagesRef = useRef<ChatMessagesHandle>(null);
   const [quotedMessage, setQuotedMessage] = useState<Message | null>(null);
@@ -66,7 +66,7 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
     messagesRef.current?.scrollToBottom();
   }, []);
 
-  const isEmpty = messages.length === 0 && !loading;
+  const isEmpty = items.length === 0 && liveTail.length === 0 && !loading;
 
   if (!channelId) {
     return (
