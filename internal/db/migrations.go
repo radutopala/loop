@@ -204,6 +204,21 @@ var migrations = []migration{
 	sqlMigration(`ALTER TABLE messages ADD COLUMN tool_name TEXT NOT NULL DEFAULT ''`),
 	sqlMigration(`ALTER TABLE messages ADD COLUMN is_error INTEGER NOT NULL DEFAULT 0`),
 	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_messages_chain ON messages(channel_id, chain_position)`),
+	// Index covers GetRecentMessages: filtered by channel_id + kind, ordered by created_at DESC.
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_messages_channel_kind_created ON messages(channel_id, kind, created_at DESC)`),
+	// Index for memory.Indexer.Search → GetMemoryFilesByDirPath.
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_memory_files_dir_path ON memory_files(dir_path)`),
+	// Indexes for ListWorkflowRuns correlated subqueries.
+	// idx_channels_parent_id is unconditional: callers pass parent_id as a bound
+	// parameter so the planner can't prove "!= ''" at plan time, and a partial
+	// index would be skipped.
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_channels_parent_id ON channels(parent_id)`),
+	// idx_scheduled_tasks_channel_thread can stay partial: the only call site
+	// adds AND thread_id != '' so the planner picks the partial index.
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_channel_thread ON scheduled_tasks(channel_id) WHERE thread_id != ''`),
+	// Replace mis-ordered idx_scheduled_tasks_type_next_run: GetDueTasks filters by enabled+running, not type.
+	sqlMigration(`DROP INDEX IF EXISTS idx_scheduled_tasks_type_next_run`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_due ON scheduled_tasks(next_run_at) WHERE enabled = 1 AND running = 0`),
 }
 
 // RunMigrations executes all pending schema migrations.
