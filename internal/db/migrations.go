@@ -241,20 +241,47 @@ func RunMigrations(ctx context.Context, sqlDB *sql.DB) error {
 
 		m := migrations[i]
 		if m.fn != nil {
+			// Func migrations run outside a transaction (they may issue
+			// multiple statements across queries that would deadlock the
+			// writer connection if held by an outer tx). They must be
+			// idempotent so a crash between the func and the marker INSERT
+			// is safe to replay.
 			if err := m.fn(ctx, sqlDB); err != nil {
 				return fmt.Errorf("executing migration %d: %w", version, err)
 			}
-		} else {
-			if _, err := sqlDB.ExecContext(ctx, m.sql); err != nil {
-				return fmt.Errorf("executing migration %d: %w", version, err)
+			if _, err := sqlDB.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES (?)", version); err != nil {
+				return fmt.Errorf("recording migration %d: %w", version, err)
 			}
+			continue
 		}
-
-		if _, err := sqlDB.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES (?)", version); err != nil {
-			return fmt.Errorf("recording migration %d: %w", version, err)
+		if err := runSQLMigration(ctx, sqlDB, version, m.sql); err != nil {
+			return err
 		}
 	}
 
+	return nil
+}
+
+// runSQLMigration executes a single SQL migration and records the version
+// atomically in one transaction. A crash between the DDL and the marker
+// INSERT today leaves schema_migrations out of sync with the actual schema;
+// the transaction ensures both apply or neither does.
+func runSQLMigration(ctx context.Context, sqlDB *sql.DB, version int, query string) error {
+	tx, err := sqlDB.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning tx for migration %d: %w", version, err)
+	}
+	if _, err := tx.ExecContext(ctx, query); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("executing migration %d: %w", version, err)
+	}
+	if _, err := tx.ExecContext(ctx, "INSERT INTO schema_migrations (version) VALUES (?)", version); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("recording migration %d: %w", version, err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("committing migration %d: %w", version, err)
+	}
 	return nil
 }
 

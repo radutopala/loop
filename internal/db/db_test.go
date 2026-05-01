@@ -69,6 +69,20 @@ func (s *StoreSuite) TestClose() {
 	require.NoError(s.T(), s.mock.ExpectationsWereMet())
 }
 
+func (s *StoreSuite) TestWithTxBeginError() {
+	s.mock.ExpectBegin().WillReturnError(sql.ErrConnDone)
+	err := s.store.withTx(context.Background(), func(_ *sql.Tx) error { return nil })
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "beginning tx")
+}
+
+func (s *StoreSuite) TestWithTxCommitError() {
+	s.mock.ExpectBegin()
+	s.mock.ExpectCommit().WillReturnError(sql.ErrConnDone)
+	err := s.store.withTx(context.Background(), func(_ *sql.Tx) error { return nil })
+	require.Error(s.T(), err)
+}
+
 // --- Channel tests ---
 
 func (s *StoreSuite) TestUpsertChannel() {
@@ -297,12 +311,14 @@ func (s *StoreSuite) TestUpdateChannelPermissions() {
 // --- DeleteChannel tests ---
 
 func (s *StoreSuite) TestDeleteChannel() {
+	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).
 		WithArgs("ch1").
 		WillReturnResult(sqlmock.NewResult(0, 5))
 	s.mock.ExpectExec(`DELETE FROM channels WHERE channel_id`).
 		WithArgs("ch1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectCommit()
 
 	err := s.store.DeleteChannel(context.Background(), "ch1")
 	require.NoError(s.T(), err)
@@ -310,24 +326,30 @@ func (s *StoreSuite) TestDeleteChannel() {
 }
 
 func (s *StoreSuite) TestDeleteChannelErrors() {
+	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
 	err := s.store.DeleteChannel(context.Background(), "ch1")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "deleting messages for channel")
 
+	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
 	s.mock.ExpectExec(`DELETE FROM channels WHERE channel_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
 	err = s.store.DeleteChannel(context.Background(), "ch1")
 	require.Error(s.T(), err)
 }
 
 func (s *StoreSuite) TestDeleteChannelsByParentID() {
+	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).
 		WithArgs("ch1").
 		WillReturnResult(sqlmock.NewResult(0, 10))
 	s.mock.ExpectExec(`DELETE FROM channels WHERE parent_id`).
 		WithArgs("ch1").
 		WillReturnResult(sqlmock.NewResult(0, 3))
+	s.mock.ExpectCommit()
 
 	err := s.store.DeleteChannelsByParentID(context.Background(), "ch1")
 	require.NoError(s.T(), err)
@@ -335,13 +357,17 @@ func (s *StoreSuite) TestDeleteChannelsByParentID() {
 }
 
 func (s *StoreSuite) TestDeleteChannelsByParentIDErrors() {
+	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
 	err := s.store.DeleteChannelsByParentID(context.Background(), "ch1")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "deleting messages for child channels")
 
+	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
 	s.mock.ExpectExec(`DELETE FROM channels WHERE parent_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
 	err = s.store.DeleteChannelsByParentID(context.Background(), "ch1")
 	require.Error(s.T(), err)
 }
@@ -905,24 +931,30 @@ func (s *StoreSuite) TestUpdateScheduledTaskError() {
 }
 
 func (s *StoreSuite) TestDeleteScheduledTask() {
+	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`DELETE FROM task_run_logs WHERE task_id`).
 		WithArgs(int64(1)).
 		WillReturnResult(sqlmock.NewResult(0, 2))
 	s.mock.ExpectExec(`DELETE FROM scheduled_tasks WHERE id`).
 		WithArgs(int64(1)).
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectCommit()
 
 	err := s.store.DeleteScheduledTask(context.Background(), 1)
 	require.NoError(s.T(), err)
 }
 
 func (s *StoreSuite) TestDeleteScheduledTaskErrors() {
+	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`DELETE FROM task_run_logs WHERE task_id`).WithArgs(int64(1)).WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
 	err := s.store.DeleteScheduledTask(context.Background(), 1)
 	require.Error(s.T(), err)
 
+	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`DELETE FROM task_run_logs WHERE task_id`).WithArgs(int64(1)).WillReturnResult(sqlmock.NewResult(0, 0))
 	s.mock.ExpectExec(`DELETE FROM scheduled_tasks WHERE id`).WithArgs(int64(1)).WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
 	err = s.store.DeleteScheduledTask(context.Background(), 1)
 	require.Error(s.T(), err)
 }
@@ -2144,12 +2176,14 @@ func (s *StoreSuite) TestUpdateNodeHeartbeatError() {
 }
 
 func (s *StoreSuite) TestDeleteWorkflowRun() {
+	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`DELETE FROM workflow_node_runs WHERE run_id`).
 		WithArgs("run-1").
 		WillReturnResult(sqlmock.NewResult(0, 3))
 	s.mock.ExpectExec(`DELETE FROM workflow_runs WHERE id`).
 		WithArgs("run-1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectCommit()
 
 	err := s.store.DeleteWorkflowRun(context.Background(), "run-1")
 	require.NoError(s.T(), err)
@@ -2158,20 +2192,24 @@ func (s *StoreSuite) TestDeleteWorkflowRun() {
 
 func (s *StoreSuite) TestDeleteWorkflowRunErrors() {
 	// First exec (delete node runs) fails.
+	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`DELETE FROM workflow_node_runs WHERE run_id`).
 		WithArgs("run-1").
 		WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
 
 	err := s.store.DeleteWorkflowRun(context.Background(), "run-1")
 	require.Error(s.T(), err)
 
 	// First exec succeeds, second (delete workflow run) fails.
+	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`DELETE FROM workflow_node_runs WHERE run_id`).
 		WithArgs("run-1").
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	s.mock.ExpectExec(`DELETE FROM workflow_runs WHERE id`).
 		WithArgs("run-1").
 		WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
 
 	err = s.store.DeleteWorkflowRun(context.Background(), "run-1")
 	require.Error(s.T(), err)

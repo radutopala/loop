@@ -54,6 +54,7 @@ func (s *MigrationsSuite) TestRunMigrationsAllNew() {
 		WillReturnResult(sqlmock.NewResult(0, 0))
 
 	// For each subsequent migration, expect a check + execute + record.
+	// SQL migrations run inside a transaction; func migrations run outside one.
 	// Func migrations are identified by their runtime name so the test stays
 	// stable across migration list changes.
 	for i := 1; i < len(migrations); i++ {
@@ -77,14 +78,18 @@ func (s *MigrationsSuite) TestRunMigrationsAllNew() {
 			default:
 				s.T().Fatalf("unhandled func migration %d (%s) in TestRunMigrationsAllNew", i, name)
 			}
+			mock.ExpectExec(`INSERT INTO schema_migrations`).
+				WithArgs(i).
+				WillReturnResult(sqlmock.NewResult(int64(i), 1))
 		} else {
+			mock.ExpectBegin()
 			mock.ExpectExec(`.+`).
 				WillReturnResult(sqlmock.NewResult(0, 0))
+			mock.ExpectExec(`INSERT INTO schema_migrations`).
+				WithArgs(i).
+				WillReturnResult(sqlmock.NewResult(int64(i), 1))
+			mock.ExpectCommit()
 		}
-
-		mock.ExpectExec(`INSERT INTO schema_migrations`).
-			WithArgs(i).
-			WillReturnResult(sqlmock.NewResult(int64(i), 1))
 	}
 
 	err = RunMigrations(context.Background(), db)
@@ -151,8 +156,10 @@ func (s *MigrationsSuite) TestRunMigrationsExecError() {
 	mock.ExpectQuery(`SELECT COUNT`).
 		WithArgs(1).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectBegin()
 	mock.ExpectExec(`.+`).
 		WillReturnError(sql.ErrConnDone)
+	mock.ExpectRollback()
 
 	err = RunMigrations(context.Background(), db)
 	require.Error(s.T(), err)
@@ -169,15 +176,57 @@ func (s *MigrationsSuite) TestRunMigrationsRecordError() {
 	mock.ExpectQuery(`SELECT COUNT`).
 		WithArgs(1).
 		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectBegin()
 	mock.ExpectExec(`.+`).
 		WillReturnResult(sqlmock.NewResult(0, 0))
 	mock.ExpectExec(`INSERT INTO schema_migrations`).
 		WithArgs(1).
 		WillReturnError(sql.ErrConnDone)
+	mock.ExpectRollback()
 
 	err = RunMigrations(context.Background(), db)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "recording migration")
+}
+
+func (s *MigrationsSuite) TestRunMigrationsBeginTxError() {
+	db, mock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	defer db.Close()
+
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS schema_migrations`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT COUNT`).
+		WithArgs(1).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectBegin().WillReturnError(sql.ErrConnDone)
+
+	err = RunMigrations(context.Background(), db)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "beginning tx for migration")
+}
+
+func (s *MigrationsSuite) TestRunMigrationsCommitError() {
+	db, mock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	defer db.Close()
+
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS schema_migrations`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectQuery(`SELECT COUNT`).
+		WithArgs(1).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+	mock.ExpectBegin()
+	mock.ExpectExec(`.+`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	mock.ExpectExec(`INSERT INTO schema_migrations`).
+		WithArgs(1).
+		WillReturnResult(sqlmock.NewResult(1, 1))
+	mock.ExpectCommit().WillReturnError(sql.ErrConnDone)
+
+	err = RunMigrations(context.Background(), db)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "committing migration")
 }
 
 func (s *MigrationsSuite) TestMigrationsCount() {
@@ -214,6 +263,46 @@ func (s *MigrationsSuite) TestRunMigrationsFuncMigrationExecError() {
 	err = RunMigrations(context.Background(), db)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), fmt.Sprintf("executing migration %d", fnIdx))
+}
+
+func (s *MigrationsSuite) TestRunMigrationsFuncMigrationRecordError() {
+	db, mock, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	defer db.Close()
+
+	fnIdx := funcMigrationIndex()
+	require.Greater(s.T(), fnIdx, 0, "should have a func migration")
+
+	mock.ExpectExec(`CREATE TABLE IF NOT EXISTS schema_migrations`).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+
+	// Skip earlier migrations as already applied.
+	for i := 1; i < fnIdx; i++ {
+		mock.ExpectQuery(`SELECT COUNT`).
+			WithArgs(i).
+			WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(1))
+	}
+
+	mock.ExpectQuery(`SELECT COUNT`).
+		WithArgs(fnIdx).
+		WillReturnRows(sqlmock.NewRows([]string{"count"}).AddRow(0))
+
+	// Func migration succeeds (assume migrateTimestampsToUTC is the first one).
+	name := funcMigrationName(fnIdx)
+	require.Contains(s.T(), name, "migrateTimestampsToUTC", "first func migration assumption changed; update test")
+	mock.ExpectQuery(`SELECT id, next_run_at, created_at, updated_at FROM scheduled_tasks`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "next_run_at", "created_at", "updated_at"}))
+	mock.ExpectQuery(`SELECT id, started_at, finished_at FROM task_run_logs`).
+		WillReturnRows(sqlmock.NewRows([]string{"id", "started_at", "finished_at"}))
+
+	// INSERT fails — covers the post-func record branch.
+	mock.ExpectExec(`INSERT INTO schema_migrations`).
+		WithArgs(fnIdx).
+		WillReturnError(sql.ErrConnDone)
+
+	err = RunMigrations(context.Background(), db)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), fmt.Sprintf("recording migration %d", fnIdx))
 }
 
 func (s *MigrationsSuite) TestMigrateBackfillDirPath() {

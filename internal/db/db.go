@@ -176,6 +176,21 @@ func (s *SQLiteStore) Close() error {
 	return s.db.Close()
 }
 
+// withTx runs fn in a write transaction on the writer connection, committing
+// on success and rolling back on error. fn must use the provided tx for all
+// statements so they share atomicity with the commit.
+func (s *SQLiteStore) withTx(ctx context.Context, fn func(tx *sql.Tx) error) error {
+	tx, err := s.writer.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning tx: %w", err)
+	}
+	if err := fn(tx); err != nil {
+		_ = tx.Rollback()
+		return err
+	}
+	return tx.Commit()
+}
+
 func (s *SQLiteStore) UpsertChannel(ctx context.Context, ch *Channel) error {
 	var permStr string
 	if !ch.Permissions.IsEmpty() {
@@ -272,22 +287,28 @@ func (s *SQLiteStore) UpdateChannelPermissions(ctx context.Context, channelID st
 }
 
 func (s *SQLiteStore) DeleteChannel(ctx context.Context, channelID string) error {
-	_, err := s.db.ExecContext(ctx, `DELETE FROM messages WHERE channel_id = ?`, channelID)
-	if err != nil {
-		return fmt.Errorf("deleting messages for channel: %w", err)
-	}
-	_, err = s.db.ExecContext(ctx, `DELETE FROM channels WHERE channel_id = ?`, channelID)
-	return err
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE channel_id = ?`, channelID); err != nil {
+			return fmt.Errorf("deleting messages for channel: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE channel_id = ?`, channelID); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (s *SQLiteStore) DeleteChannelsByParentID(ctx context.Context, parentID string) error {
-	_, err := s.db.ExecContext(ctx,
-		`DELETE FROM messages WHERE channel_id IN (SELECT channel_id FROM channels WHERE parent_id = ?)`, parentID)
-	if err != nil {
-		return fmt.Errorf("deleting messages for child channels: %w", err)
-	}
-	_, err = s.db.ExecContext(ctx, `DELETE FROM channels WHERE parent_id = ?`, parentID)
-	return err
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM messages WHERE channel_id IN (SELECT channel_id FROM channels WHERE parent_id = ?)`, parentID); err != nil {
+			return fmt.Errorf("deleting messages for child channels: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE parent_id = ?`, parentID); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (s *SQLiteStore) ListChannelIDsByParentID(ctx context.Context, parentID string) ([]string, error) {
@@ -587,11 +608,15 @@ func (s *SQLiteStore) ReleaseScheduledTaskRunning(ctx context.Context, id int64)
 }
 
 func (s *SQLiteStore) DeleteScheduledTask(ctx context.Context, id int64) error {
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM task_run_logs WHERE task_id = ?`, id); err != nil {
-		return err
-	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM scheduled_tasks WHERE id = ?`, id)
-	return err
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM task_run_logs WHERE task_id = ?`, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM scheduled_tasks WHERE id = ?`, id); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 func (s *SQLiteStore) ListScheduledTasks(ctx context.Context, channelID string) ([]*ScheduledTask, error) {
@@ -945,14 +970,15 @@ func (s *SQLiteStore) UpdateNodeHeartbeat(ctx context.Context, runID, nodeID str
 }
 
 func (s *SQLiteStore) DeleteWorkflowRun(ctx context.Context, id string) error {
-	// Delete in order: node runs first, then the run itself.
-	// Both use the same serialised writer connection, so the window for
-	// orphan rows on crash is minimal (single-writer WAL mode).
-	if _, err := s.db.ExecContext(ctx, `DELETE FROM workflow_node_runs WHERE run_id = ?`, id); err != nil {
-		return err
-	}
-	_, err := s.db.ExecContext(ctx, `DELETE FROM workflow_runs WHERE id = ?`, id)
-	return err
+	return s.withTx(ctx, func(tx *sql.Tx) error {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM workflow_node_runs WHERE run_id = ?`, id); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM workflow_runs WHERE id = ?`, id); err != nil {
+			return err
+		}
+		return nil
+	})
 }
 
 // Column lists for SELECT queries.
