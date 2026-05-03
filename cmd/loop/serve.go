@@ -586,6 +586,15 @@ func (a *app) serve() error {
 			qEngine := engine.New(qParser, qStore, qCache, engine.OSFileSystem{}, engine.Config{
 				MaxFiles:     cfg.Quality.MaxFiles,
 				ExcludePaths: cfg.Quality.ExcludePaths,
+			}, func() (engine.Config, error) {
+				fresh, err := config.Reload()
+				if err != nil {
+					return engine.Config{}, err
+				}
+				return engine.Config{
+					MaxFiles:     fresh.Quality.MaxFiles,
+					ExcludePaths: fresh.Quality.ExcludePaths,
+				}, nil
 			}, nil)
 			qEngine.SetProgress(apiSrv.EmitQualityProgress)
 			apiSrv.SetQualityScanner(qEngine)
