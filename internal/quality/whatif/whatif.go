@@ -58,9 +58,15 @@ type Mutation struct {
 	NewModule string `json:"new_module,omitempty"`
 
 	// Parts is the number of synthetic files OpSplit produces. Must be
-	// ≥2 for OpSplit; ignored by other Ops.
+	// in [2, MaxSplitParts] for OpSplit; ignored by other Ops.
 	Parts int `json:"parts,omitempty"`
 }
+
+// MaxSplitParts caps OpSplit.Parts so an attacker-supplied huge value
+// can't drive the shadow-graph allocator OOM. Real refactor predictions
+// never need more than a handful of parts; the cap is set well above
+// any plausible input.
+const MaxSplitParts = 100
 
 // Result is the predicted-vs-baseline breakdown the surface returns.
 // Both Signals are 0–10000; DeltaSignal is the signed difference
@@ -190,6 +196,9 @@ func (s *shadow) applyMove(p, newModule string) error {
 func (s *shadow) applySplit(p string, parts int) error {
 	if parts < 2 {
 		return errors.New("split: parts must be ≥2")
+	}
+	if parts > MaxSplitParts {
+		return fmt.Errorf("split: parts must be ≤%d", MaxSplitParts)
 	}
 	var src *graph.Node
 	for _, n := range s.nodes {

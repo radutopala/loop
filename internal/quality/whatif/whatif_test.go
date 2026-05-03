@@ -105,6 +105,13 @@ func (s *WhatifSuite) TestSimulateSplitRequiresAtLeastTwoParts() {
 	require.Contains(s.T(), err.Error(), "parts must be ≥2")
 }
 
+func (s *WhatifSuite) TestSimulateSplitRejectsOverMax() {
+	g := s.buildGraph()
+	_, err := Simulate(g, []Mutation{{Op: OpSplit, Path: "internal/api/handler.go", Parts: MaxSplitParts + 1}})
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "parts must be ≤")
+}
+
 func (s *WhatifSuite) TestSimulateSplitUnknownPathReturnsError() {
 	g := s.buildGraph()
 	_, err := Simulate(g, []Mutation{{Op: OpSplit, Path: "does/not/exist.go", Parts: 2}})
