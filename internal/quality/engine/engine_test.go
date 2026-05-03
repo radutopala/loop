@@ -41,7 +41,7 @@ func (s *EngineSuite) SetupTest() {
 	s.fs = newFakeFS()
 	s.now = time.Date(2026, 5, 1, 12, 0, 0, 0, time.UTC)
 	s.clock = func() time.Time { return s.now }
-	s.engine = New(s.parser, s.store, s.cache, s.fs, Config{}, s.clock)
+	s.engine = New(s.parser, s.store, s.cache, s.fs, Config{}, nil, s.clock)
 	// Replace the production enumerator with a fake by default; tests
 	// that need real walk semantics override this via a temp dir.
 	s.engine.enumerate = listEnumerator(nil)
@@ -114,7 +114,7 @@ func (s *EngineSuite) TestSetProgressFiresStartMidAndTerminalTicks() {
 // --- defaults ---
 
 func (s *EngineSuite) TestNewDefaultsClockToTimeNow() {
-	e := New(s.parser, s.store, s.cache, s.fs, Config{}, nil)
+	e := New(s.parser, s.store, s.cache, s.fs, Config{}, nil, nil)
 	require.NotNil(s.T(), e.clock)
 	got := e.clock()
 	require.WithinDuration(s.T(), time.Now(), got, time.Second)
@@ -282,11 +282,116 @@ func (s *EngineSuite) TestScanDifferentChannelsRunInParallel() {
 	wg.Wait()
 }
 
+// --- hot-reload of MaxFiles / ExcludePaths ---
+
+func (s *EngineSuite) TestScanRefreshesConfigFromLoader() {
+	// Capture the EnumerateOptions the engine hands the enumerator so we
+	// can assert the loader's values were used (not the seed cfg).
+	var seenOpts []graph.EnumerateOptions
+	s.engine.enumerate = func(_ string, opts graph.EnumerateOptions) ([]string, error) {
+		seenOpts = append(seenOpts, opts)
+		return nil, nil
+	}
+	calls := 0
+	s.engine.configLoad = func() (Config, error) {
+		calls++
+		return Config{
+			MaxFiles:     100 + calls,
+			ExcludePaths: []string{fmt.Sprintf("p%d/", calls)},
+		}, nil
+	}
+
+	_, err := s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	require.NoError(s.T(), err)
+	_, err = s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	require.NoError(s.T(), err)
+
+	require.Equal(s.T(), 2, calls)
+	require.Len(s.T(), seenOpts, 2)
+	require.Equal(s.T(), 101, seenOpts[0].MaxFiles)
+	require.Equal(s.T(), []string{"p1/"}, seenOpts[0].ExtraExcludePatterns)
+	require.Equal(s.T(), 102, seenOpts[1].MaxFiles)
+	require.Equal(s.T(), []string{"p2/"}, seenOpts[1].ExtraExcludePatterns)
+}
+
+func (s *EngineSuite) TestScanFallsBackToCachedCfgOnLoaderError() {
+	// First scan: loader succeeds, engine caches the fresh value.
+	// Second scan: loader errors, engine reuses the cached value.
+	var seenOpts []graph.EnumerateOptions
+	s.engine.enumerate = func(_ string, opts graph.EnumerateOptions) ([]string, error) {
+		seenOpts = append(seenOpts, opts)
+		return nil, nil
+	}
+	calls := 0
+	s.engine.configLoad = func() (Config, error) {
+		calls++
+		if calls == 1 {
+			return Config{MaxFiles: 42, ExcludePaths: []string{"good/"}}, nil
+		}
+		return Config{}, errors.New("read config: boom")
+	}
+
+	_, err := s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	require.NoError(s.T(), err)
+	_, err = s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	require.NoError(s.T(), err)
+
+	require.Equal(s.T(), 2, calls)
+	require.Equal(s.T(), 42, seenOpts[0].MaxFiles)
+	require.Equal(s.T(), []string{"good/"}, seenOpts[0].ExtraExcludePatterns)
+	// Loader errored on the second call; cached cfg from the first
+	// successful reload must still drive enumeration.
+	require.Equal(s.T(), 42, seenOpts[1].MaxFiles)
+	require.Equal(s.T(), []string{"good/"}, seenOpts[1].ExtraExcludePatterns)
+}
+
+func (s *EngineSuite) TestScanInitialLoaderErrorFallsBackToSeedCfg() {
+	// Loader errors on the very first call; engine must use the seed
+	// Config that was passed to New (cfg cache starts there).
+	seed := Config{MaxFiles: 7, ExcludePaths: []string{"seed/"}}
+	e := New(s.parser, s.store, s.cache, s.fs, seed, func() (Config, error) {
+		return Config{}, errors.New("nope")
+	}, s.clock)
+	var got graph.EnumerateOptions
+	e.enumerate = func(_ string, opts graph.EnumerateOptions) ([]string, error) {
+		got = opts
+		return nil, nil
+	}
+
+	_, err := e.Scan(context.Background(), "ch1", "main", "/work")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 7, got.MaxFiles)
+	require.Equal(s.T(), []string{"seed/"}, got.ExtraExcludePatterns)
+}
+
+func (s *EngineSuite) TestScanNilLoaderUsesSeedCfg() {
+	// Default suite engine has nil configLoad; supply a non-empty seed
+	// cfg via New and verify it flows through unchanged across scans.
+	seed := Config{MaxFiles: 3, ExcludePaths: []string{"a/", "b/"}}
+	e := New(s.parser, s.store, s.cache, s.fs, seed, nil, s.clock)
+	var seenOpts []graph.EnumerateOptions
+	e.enumerate = func(_ string, opts graph.EnumerateOptions) ([]string, error) {
+		seenOpts = append(seenOpts, opts)
+		return nil, nil
+	}
+
+	_, err := e.Scan(context.Background(), "ch1", "main", "/work")
+	require.NoError(s.T(), err)
+	_, err = e.Scan(context.Background(), "ch2", "main", "/work")
+	require.NoError(s.T(), err)
+
+	require.Len(s.T(), seenOpts, 2)
+	for _, o := range seenOpts {
+		require.Equal(s.T(), 3, o.MaxFiles)
+		require.Equal(s.T(), []string{"a/", "b/"}, o.ExtraExcludePatterns)
+	}
+}
+
 // --- production helpers ---
 
 func (s *EngineSuite) TestNewWiresProductionEnumerate() {
 	// Ensure New() picks graph.Enumerate by default; cover the line.
-	e := New(s.parser, s.store, s.cache, s.fs, Config{}, s.clock)
+	e := New(s.parser, s.store, s.cache, s.fs, Config{}, nil, s.clock)
 	require.NotNil(s.T(), e.enumerate)
 	// Empty temp dir → zero files, no error.
 	tmp := s.T().TempDir()

@@ -307,7 +307,7 @@ func (a *app) scanForGraph(ctx context.Context, stderr io.Writer, p parser.Parse
 		dirPath = wd
 	}
 	cache := graph.NewCache()
-	eng := engine.New(p, noopStore{}, cache, engine.OSFileSystem{}, cfg, nil)
+	eng := engine.New(p, noopStore{}, cache, engine.OSFileSystem{}, cfg, nil, nil)
 	if _, err := eng.Scan(ctx, "cli", "main", dirPath); err != nil {
 		var tooLarge *graph.RepoTooLargeError
 		if errors.As(err, &tooLarge) {

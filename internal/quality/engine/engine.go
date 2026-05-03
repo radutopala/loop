@@ -26,9 +26,10 @@ type FileSystem interface {
 // than letting time.Now() drift through assertions.
 type Clock func() time.Time
 
-// Config carries the engine-tunable knobs the project config maps to. The
-// engine does not read config itself; the daemon constructs an engine
-// once at startup with values resolved from the config-merge layer.
+// Config carries the engine-tunable knobs the project config maps to.
+// The engine does not read config itself; the daemon resolves values
+// from the config-merge layer and either constructs the engine with a
+// static Config or installs a ConfigLoader for hot-reload.
 type Config struct {
 	// MaxFiles overrides graph.DefaultMaxFiles. Zero uses the default;
 	// negative disables the cap (intended for tests, never production).
@@ -38,6 +39,15 @@ type Config struct {
 	// repo's .gitignore. Same syntax as DefaultExcludePatterns.
 	ExcludePaths []string
 }
+
+// ConfigLoader returns the latest engine Config. Engine calls it at the
+// start of each Scan so MaxFiles/ExcludePaths edits to the project
+// config take effect on the next scan without a daemon restart. On
+// error the engine falls back to the last-known-good Config (the seed
+// passed to New, or the most recent successful reload).
+//
+// nil is fine — Scan then always uses the seed Config.
+type ConfigLoader func() (Config, error)
 
 // ScanResult is the engine-level return shape. Signal is the just-computed
 // 0–10000 quality_signal plus per-metric breakdown; the rest of the fields
@@ -83,7 +93,6 @@ type Engine struct {
 	store  snapshot.Store
 	cache  *graph.Cache
 	fs     FileSystem
-	cfg    Config
 	clock  Clock
 
 	// enumerate is held as a struct field so tests can substitute a
@@ -94,7 +103,12 @@ type Engine struct {
 	// nil disables progress reporting (the default for the CLI path).
 	progress ProgressFunc
 
+	// configLoad provides the per-Scan hot-reload of MaxFiles /
+	// ExcludePaths. nil means "use the seed cfg always".
+	configLoad ConfigLoader
+
 	mu       sync.Mutex
+	cfg      Config // last-known-good; guarded by mu
 	inFlight map[string]struct{}
 }
 
@@ -102,20 +116,43 @@ type enumerateFunc func(rootDir string, opts graph.EnumerateOptions) ([]string, 
 
 // New wires a production Engine. The caller owns parser, store, cache and
 // fs; the engine never closes them. Clock defaults to time.Now if nil.
-func New(p parser.Parser, store snapshot.Store, cache *graph.Cache, fs FileSystem, cfg Config, clock Clock) *Engine {
+//
+// configLoad is the hot-reload source for MaxFiles / ExcludePaths. Pass
+// nil to freeze on the seed cfg (the CLI / one-shot scan path); pass a
+// loader (e.g. an adapter over config.Reload) to make project-config
+// edits take effect on the next Scan without a daemon restart.
+func New(p parser.Parser, store snapshot.Store, cache *graph.Cache, fs FileSystem, cfg Config, configLoad ConfigLoader, clock Clock) *Engine {
 	if clock == nil {
 		clock = time.Now
 	}
 	return &Engine{
-		parser:    p,
-		store:     store,
-		cache:     cache,
-		fs:        fs,
-		cfg:       cfg,
-		clock:     clock,
-		enumerate: graph.Enumerate,
-		inFlight:  make(map[string]struct{}),
+		parser:     p,
+		store:      store,
+		cache:      cache,
+		fs:         fs,
+		cfg:        cfg,
+		configLoad: configLoad,
+		clock:      clock,
+		enumerate:  graph.Enumerate,
+		inFlight:   make(map[string]struct{}),
 	}
+}
+
+// currentConfig returns the Config the next Scan should use. When a
+// loader is installed, it refreshes from the project config and caches
+// the result; loader errors fall back to the last-known-good cfg.
+func (e *Engine) currentConfig() Config {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.configLoad == nil {
+		return e.cfg
+	}
+	fresh, err := e.configLoad()
+	if err != nil {
+		return e.cfg
+	}
+	e.cfg = fresh
+	return fresh
 }
 
 // SetProgress installs the progress hook. Pass nil to disable. Safe to
@@ -138,9 +175,10 @@ func (e *Engine) Scan(ctx context.Context, channelID, branch, dirPath string) (S
 	}
 	defer e.release(channelID)
 
+	cfg := e.currentConfig()
 	files, err := e.enumerate(dirPath, graph.EnumerateOptions{
-		MaxFiles:             e.cfg.MaxFiles,
-		ExtraExcludePatterns: e.cfg.ExcludePaths,
+		MaxFiles:             cfg.MaxFiles,
+		ExtraExcludePatterns: cfg.ExcludePaths,
 	})
 	if err != nil {
 		var tooLarge *graph.RepoTooLargeError
