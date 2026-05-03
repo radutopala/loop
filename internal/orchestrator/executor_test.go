@@ -1648,10 +1648,9 @@ func (s *TaskExecutorSuite) TestStreamingResolvesThreadChatID() {
 	s.store.On("GetScheduledTask", s.ctx, int64(71)).Return(&db.ScheduledTask{ID: 71, Type: db.TaskTypeCron}, nil)
 
 	s.bot.On("CreateSimpleThread", s.ctx, "ch71", mock.Anything, mock.Anything).Return("thread-71", nil).Once()
-	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
-		return ch.ChannelID == "thread-71"
-	})).Return(nil)
-	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(71), "thread-71").Return(nil)
+	s.store.On("LinkTaskThread", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "thread-71" && ch.ParentID == "ch71"
+	}), int64(71), "thread-71").Return(nil)
 
 	// The agent event must be inserted with chat_id=999 (the resolved thread chat id).
 	s.store.On("InsertAgentEvent", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
