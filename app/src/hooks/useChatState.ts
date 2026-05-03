@@ -68,6 +68,7 @@ export function useChatState(
     appendLiveThinking,
     appendLiveToolUse,
     appendLiveToolResult,
+    appendLiveCompacting,
     markProcessed,
     removeMessage,
     refetchHead,
@@ -190,6 +191,12 @@ export function useChatState(
       }
       if (event.type === "agent.activity") {
         const data = event.data as AgentActivityData;
+        if (data.activity === "compacting") {
+          // Persist as a timeline item so it survives subsequent activity
+          // events overwriting the rolling indicator slot, and so the run
+          // summary can count it.
+          appendLiveCompacting();
+        }
         setAgentActivity(data);
         return;
       }
@@ -256,7 +263,7 @@ export function useChatState(
         return;
       }
     },
-    [appendLiveMessage, appendLiveThinking, appendLiveToolUse, appendLiveToolResult, refetchHead],
+    [appendLiveMessage, appendLiveThinking, appendLiveToolUse, appendLiveToolResult, appendLiveCompacting, refetchHead],
   );
 
   // Subscribe to chat events from the app-level store (single WS).

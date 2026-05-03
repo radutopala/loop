@@ -343,7 +343,21 @@ function renderTimelineItem(
     if (it.tool_use_id && skippedToolResultIDs.has(it.tool_use_id)) return null;
     return <ToolActivityIndicator key={`tr-${it.id}`} toolName="result" input="" result={{ text: it.text, is_error: it.is_error ?? false, truncated: it.truncated ?? false }} />;
   }
+  if (it.kind === "compacting") {
+    return <CompactingMarker key={`c-${it.id}`} />;
+  }
   return null;
+}
+
+function CompactingMarker() {
+  const { colors } = useTheme();
+  const activityStyle = buildActivityStyle(colors);
+  return (
+    <div style={activityStyle}>
+      <span style={{ opacity: 0.5 }} dangerouslySetInnerHTML={{ __html: "&#128220;" }} />
+      <span style={{ color: colors.textMuted }}>Compacted context</span>
+    </div>
+  );
 }
 
 function ToolRunBlock({ items, resultsByToolUseID, skippedToolResultIDs, isActive }: {
@@ -367,12 +381,14 @@ function ToolRunBlock({ items, resultsByToolUseID, skippedToolResultIDs, isActiv
   const toolNames: string[] = [];
   let thinkingCount = 0;
   let errorCount = 0;
+  let compactingCount = 0;
   for (const it of items) {
     if (it.kind === "thinking") thinkingCount++;
     if (it.kind === "tool_use") {
       if (!toolNames.includes(it.tool_name)) toolNames.push(it.tool_name);
     }
     if (it.kind === "tool_result" && it.is_error) errorCount++;
+    if (it.kind === "compacting") compactingCount++;
   }
   const summaryParts: string[] = [];
   if (toolNames.length > 0) {
@@ -380,6 +396,7 @@ function ToolRunBlock({ items, resultsByToolUseID, skippedToolResultIDs, isActiv
     summaryParts.push(toolNames.length > 4 ? `${shown}, +${toolNames.length - 4}` : shown);
   }
   if (thinkingCount > 0) summaryParts.push(`${thinkingCount} thought${thinkingCount === 1 ? "" : "s"}`);
+  if (compactingCount > 0) summaryParts.push(compactingCount === 1 ? "compacted" : `${compactingCount} compactions`);
   const summary = summaryParts.join(" · ");
 
   return (

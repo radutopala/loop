@@ -432,6 +432,11 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				} else {
 					data.Description = detail
 				}
+				if activity == "compacting" {
+					storeAgentEvent(ctx, e.store, resolveTargetChatID(targetID), targetID, &db.Message{
+						Kind: db.MessageKindCompacting,
+					}, e.logger.Warn)
+				}
 				e.events.BroadcastAgentActivity(targetID, data)
 			}
 		}

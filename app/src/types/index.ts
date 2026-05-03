@@ -30,14 +30,16 @@ export interface Message {
 }
 
 // TimelineItem is the discriminated union returned by /api/channels/{id}/timeline.
-// Real chat messages and agent events (thinking, tool_use, tool_result) are
-// interleaved by chain_position so reload renders the same canonical order
-// the user saw live.
+// Real chat messages and agent events (thinking, tool_use, tool_result,
+// compacting) are interleaved by chain_position so reload renders the same
+// canonical order the user saw live. The `compacting` kind is a marker
+// (no payload fields) emitted whenever the runner reports a /compact pass.
 export type TimelineItem =
   | { kind: "message"; position: number; id: number; data: Message }
   | { kind: "thinking"; position: number; id: number; text: string; truncated?: boolean }
   | { kind: "tool_use"; position: number; id: number; tool_use_id: string; tool_name: string; tool_input: string; truncated?: boolean }
-  | { kind: "tool_result"; position: number; id: number; tool_use_id: string; text: string; is_error?: boolean; truncated?: boolean };
+  | { kind: "tool_result"; position: number; id: number; tool_use_id: string; text: string; is_error?: boolean; truncated?: boolean }
+  | { kind: "compacting"; position: number; id: number };
 
 export interface TimelineCursor {
   position: number;

@@ -108,6 +108,9 @@ func buildTimelineItem(m *db.Message) timelineItem {
 		base.IsError = m.IsError
 		base.Text, base.Truncated = capInline(m.Content)
 		return base
+	case db.MessageKindCompacting:
+		base.Kind = "compacting"
+		return base
 	default:
 		base.Kind = string(m.Kind)
 		return base

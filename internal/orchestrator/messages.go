@@ -361,6 +361,11 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 				} else {
 					data.Description = detail
 				}
+				if activity == "compacting" {
+					storeAgentEvent(ctx, o.store, chatID, msg.ChannelID, &db.Message{
+						Kind: db.MessageKindCompacting,
+					}, o.logger.Warn)
+				}
 				o.events.BroadcastAgentActivity(msg.ChannelID, data)
 			}
 		}

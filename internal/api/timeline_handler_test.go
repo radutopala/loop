@@ -223,6 +223,26 @@ func (s *ServerSuite) TestHandleTimelineMixedLegacyAndBackfilled() {
 	require.Equal(s.T(), "old msg", resp.Items[2].Data.Content)
 }
 
+func (s *ServerSuite) TestHandleTimelineCompactingKind() {
+	now := time.Now().UTC()
+	rows := []*db.Message{
+		{ID: 11, ChannelID: "ch-1", IsBot: true, CreatedAt: now, Kind: db.MessageKindCompacting, ChainPosition: 4},
+	}
+	s.store.On("GetTimeline", mock.Anything, "ch-1", int64(0), int64(0), 51).Return(rows, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/timeline", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp timelineResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp.Items, 1)
+	require.Equal(s.T(), "compacting", resp.Items[0].Kind)
+	require.Equal(s.T(), int64(4), resp.Items[0].Position)
+	require.Equal(s.T(), int64(11), resp.Items[0].ID)
+	require.Nil(s.T(), resp.Items[0].Data)
+	require.Empty(s.T(), resp.Items[0].Text)
+}
+
 func (s *ServerSuite) TestBuildTimelineItemUnknownKind() {
 	m := &db.Message{ID: 1, ChannelID: "ch-1", Kind: db.MessageKind("future_unknown_kind"), ChainPosition: 7}
 	item := buildTimelineItem(m)

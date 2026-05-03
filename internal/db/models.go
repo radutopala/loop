@@ -32,6 +32,7 @@ const (
 	MessageKindThinking   MessageKind = "thinking"
 	MessageKindToolUse    MessageKind = "tool_use"
 	MessageKindToolResult MessageKind = "tool_result"
+	MessageKindCompacting MessageKind = "compacting"
 )
 
 // Message represents either a chat message or an agent event row. Agent event

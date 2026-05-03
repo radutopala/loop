@@ -1574,6 +1574,73 @@ func (s *TaskExecutorSuite) TestStreamingOnActivityBroadcasts() {
 	eb.AssertExpectations(s.T())
 }
 
+// TestStreamingOnCompactingPersistsRow asserts that a "compacting" activity
+// event in the scheduled-task path writes a kind=compacting row via
+// InsertAgentEvent (mirrors how thinking/tool_result are persisted) so the
+// marker survives run completion / page reload. Also asserts that
+// non-compacting activities do NOT trigger persistence — only the broadcast.
+func (s *TaskExecutorSuite) TestStreamingOnCompactingPersistsRow() {
+	s.executor.streamingEnabled.Store(true)
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+	allowStatusBroadcasts(eb)
+
+	task := &db.ScheduledTask{
+		ID: 81, ChannelID: "ch81", Prompt: "compact me",
+		Type: db.TaskTypeOnce, Schedule: "10s",
+	}
+
+	parent := &db.Channel{ID: 300, ChannelID: "ch81", Platform: types.PlatformLocal, DirPath: "/work"}
+	s.store.On("GetChannel", mock.Anything, "ch81").Return(parent, nil)
+	s.store.On("GetChannel", mock.Anything, "thread-81").Return(nil, nil).Maybe()
+
+	s.bot.On("CreateSimpleThread", s.ctx, "ch81", mock.Anything, mock.Anything).Return("thread-81", nil).Once()
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "thread-81" && ch.ParentID == "ch81"
+	})).Return(nil).Once()
+
+	// Pre-thread compacting persists with chat_id=300 (the parent channel)
+	// and ChannelID="ch81" (the task's channel).
+	s.store.On("InsertAgentEvent", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
+		return m.ChannelID == "ch81" && m.ChatID == 300 && m.Kind == db.MessageKindCompacting
+	})).Return(nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnActivity == nil {
+			return false
+		}
+		// Pre-thread compacting fires before OnTurn — exercises both the
+		// broadcast path and the storeAgentEvent path against parentChatID.
+		req.OnActivity("compacting", "")
+		// Non-compacting activity must NOT trigger storeAgentEvent (verified
+		// by InsertAgentEvent expecting only one call total).
+		req.OnActivity("model", "claude-opus-4-6")
+		req.OnTurn("Turn 1")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response: "Turn 1", SessionID: "sess-cmp",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "thread-81", "sess-cmp").Return(nil)
+
+	eb.On("BroadcastChannelCreated", "ch81", "thread-81").Once()
+	eb.On("BroadcastMessageCreated", "thread-81", mock.Anything).Maybe()
+	eb.On("BroadcastAgentActivity", "ch81", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
+		return d.Activity == "compacting"
+	})).Once()
+	eb.On("BroadcastAgentActivity", "ch81", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
+		return d.Activity == "model" && d.Model == "claude-opus-4-6"
+	})).Once()
+
+	resp, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "Turn 1", resp)
+
+	eb.AssertNumberOfCalls(s.T(), "BroadcastAgentActivity", 2)
+	s.store.AssertNumberOfCalls(s.T(), "InsertAgentEvent", 1)
+	eb.AssertExpectations(s.T())
+}
+
 func (s *TaskExecutorSuite) TestStreamingOnThinkingAndToolResultBroadcasts() {
 	s.executor.streamingEnabled.Store(true)
 	eb := new(MockEventBroadcaster)

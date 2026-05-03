@@ -15,6 +15,7 @@ interface UseTimelineResult {
   appendLiveThinking: (text: string) => void;
   appendLiveToolUse: (toolUseID: string | undefined, toolName: string, input: string) => void;
   appendLiveToolResult: (toolUseID: string | undefined, output: string, isError: boolean) => void;
+  appendLiveCompacting: () => void;
   // Mutators for chat-row events that already affected DB state.
   markProcessed: (msgIds: string[]) => void;
   removeMessage: (msgId: string) => void;
@@ -153,6 +154,17 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
     [nextLiveId],
   );
 
+  const appendLiveCompacting = useCallback(() => {
+    setLiveTail((prev) => {
+      // Coalesce repeated compacting events: if the last item is already a
+      // compacting marker, skip — the runner can emit the status multiple times
+      // during a single /compact pass.
+      const last = prev[prev.length - 1];
+      if (last && last.kind === "compacting") return prev;
+      return [...prev, { kind: "compacting", position: 0, id: nextLiveId() }];
+    });
+  }, [nextLiveId]);
+
   const markProcessed = useCallback((msgIds: string[]) => {
     if (msgIds.length === 0) return;
     const idSet = new Set(msgIds);
@@ -250,6 +262,7 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
     appendLiveThinking,
     appendLiveToolUse,
     appendLiveToolResult,
+    appendLiveCompacting,
     markProcessed,
     removeMessage,
     refetchHead,

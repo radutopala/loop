@@ -3926,6 +3926,70 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnActivityBroadcasts() {
 	eb.AssertExpectations(s.T())
 }
 
+// TestHandleMessageStreamingOnCompactingPersistsRow asserts that a "compacting"
+// activity event writes a kind=compacting row via InsertAgentEvent so the
+// marker survives run completion / page reload, in addition to the normal
+// BroadcastAgentActivity for live subscribers.
+func (s *OrchestratorSuite) TestHandleMessageStreamingOnCompactingPersistsRow() {
+	cfgStream := s.orch.cfg.Load()
+	cfgStream.StreamingEnabled = true
+	s.orch.cfg.Store(cfgStream)
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+
+	msg := &bot.IncomingMessage{
+		ChannelID:    "ch1",
+		GuildID:      "g1",
+		AuthorID:     "user1",
+		AuthorName:   "Alice",
+		Content:      "hello",
+		MessageID:    "msg1",
+		IsBotMention: true,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 7, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+
+	// The compacting row must be inserted with chat_id=7 (the channel's chat id)
+	// and Kind=compacting. No tool/text fields are set.
+	s.store.On("InsertAgentEvent", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
+		return m.ChatID == 7 && m.ChannelID == "ch1" && m.Kind == db.MessageKindCompacting
+	})).Return(nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnActivity == nil {
+			return false
+		}
+		req.OnActivity("compacting", "")
+		req.OnTurn("done")
+		return true
+	})).Return(&agent.AgentResponse{
+		Response:  "done",
+		SessionID: "sess-cmp",
+	}, nil)
+
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-cmp").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+
+	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.Anything).Return()
+	eb.On("BroadcastAgentActivity", "ch1", mock.MatchedBy(func(d events.AgentActivityEventData) bool {
+		return d.Activity == "compacting"
+	})).Once()
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	s.store.AssertCalled(s.T(), "InsertAgentEvent", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
+		return m.Kind == db.MessageKindCompacting
+	}))
+	eb.AssertExpectations(s.T())
+}
+
 func (s *OrchestratorSuite) TestHandleMessageStreamingOnThinkingAndToolResultBroadcasts() {
 	cfgStream := s.orch.cfg.Load()
 	cfgStream.StreamingEnabled = true
