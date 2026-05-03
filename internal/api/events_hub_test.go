@@ -20,6 +20,20 @@ type EventsHubSuite struct {
 	suite.Suite
 }
 
+// holdUntilClientDisconnects blocks the test's WebSocket handler until the
+// client closes the connection. Using select {} here leaks the handler
+// goroutine — httptest.Server.Close does not force-close hijacked conns,
+// so handlers that don't observe the client disconnect outlive the test.
+// Under -race + parallel ./... that accumulation pushes the binary past
+// its timeout; reading from the conn lets the goroutine exit cleanly.
+func holdUntilClientDisconnects(conn *websocket.Conn) {
+	for {
+		if _, _, err := conn.ReadMessage(); err != nil {
+			return
+		}
+	}
+}
+
 func TestEventsHubSuite(t *testing.T) {
 	suite.Run(t, new(EventsHubSuite))
 }
@@ -71,7 +85,7 @@ func (s *EventsHubSuite) TestBroadcastToAll() {
 		}
 		// Subscribe to all channels (empty filter)
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -107,7 +121,7 @@ func (s *EventsHubSuite) TestBroadcastFilteredByChannel() {
 			return
 		}
 		hub.Register(conn, []string{"ch-2"})
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -142,7 +156,7 @@ func (s *EventsHubSuite) TestBroadcastAgentStatus() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -174,7 +188,7 @@ func (s *EventsHubSuite) TestBroadcastAgentStatusWithThreadIDBypassesFilter() {
 		}
 		// Subscribe to ch-other only — NOT the task's channel
 		hub.Register(conn, []string{"ch-other"})
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -209,7 +223,7 @@ func (s *EventsHubSuite) TestBroadcastToolUse() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -240,7 +254,7 @@ func (s *EventsHubSuite) TestBroadcastAgentThinking() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -272,7 +286,7 @@ func (s *EventsHubSuite) TestBroadcastToolResult() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -308,7 +322,7 @@ func (s *EventsHubSuite) TestBroadcastAgentActivity() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -339,7 +353,7 @@ func (s *EventsHubSuite) TestBroadcastMessageStreaming() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -370,7 +384,7 @@ func (s *EventsHubSuite) TestBroadcastChannelCreated() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -401,7 +415,7 @@ func (s *EventsHubSuite) TestBroadcastChannelDeleted() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -432,7 +446,7 @@ func (s *EventsHubSuite) TestBroadcastRemovesClosedConnections() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -482,7 +496,7 @@ func (s *EventsHubSuite) TestBroadcastAskUser() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -517,7 +531,7 @@ func (s *EventsHubSuite) TestBroadcastExitPlan() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -548,7 +562,7 @@ func (s *EventsHubSuite) TestBroadcastTodoWrite() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -656,7 +670,7 @@ func (s *EventsHubSuite) TestBroadcastAgentInstanceRegistered() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -685,7 +699,7 @@ func (s *EventsHubSuite) TestBroadcastAgentInstanceUnregistered() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -713,7 +727,7 @@ func (s *EventsHubSuite) TestBroadcastAgentInstanceMetadata() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -741,7 +755,7 @@ func (s *EventsHubSuite) TestBroadcastImageBuildStatus() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -769,7 +783,7 @@ func (s *EventsHubSuite) TestBroadcastImageUpdateAvailable() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -797,7 +811,7 @@ func (s *EventsHubSuite) TestBroadcastContainerRegistered() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -825,7 +839,7 @@ func (s *EventsHubSuite) TestBroadcastContainerRemoved() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -853,7 +867,7 @@ func (s *EventsHubSuite) TestBroadcastContainerStatusChanged() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -881,7 +895,7 @@ func (s *EventsHubSuite) TestBroadcastTaskCreated() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -909,7 +923,7 @@ func (s *EventsHubSuite) TestBroadcastTaskUpdated() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -937,7 +951,7 @@ func (s *EventsHubSuite) TestBroadcastTaskDeleted() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -965,7 +979,7 @@ func (s *EventsHubSuite) TestBroadcastTaskRunCompleted() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -993,7 +1007,7 @@ func (s *EventsHubSuite) TestBroadcastWorkflowRunStarted() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -1026,7 +1040,7 @@ func (s *EventsHubSuite) TestBroadcastWorkflowRunCompleted() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -1059,7 +1073,7 @@ func (s *EventsHubSuite) TestBroadcastWorkflowRunPaused() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -1093,7 +1107,7 @@ func (s *EventsHubSuite) TestBroadcastWorkflowNodeStarted() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -1125,7 +1139,7 @@ func (s *EventsHubSuite) TestBroadcastWorkflowNodeCompleted() {
 			return
 		}
 		hub.Register(conn, nil)
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -1158,7 +1172,7 @@ func (s *EventsHubSuite) TestBroadcastGateApprovalRequested() {
 			return
 		}
 		hub.Register(conn, []string{"ch-1"})
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 
@@ -1192,7 +1206,7 @@ func (s *EventsHubSuite) TestBroadcastGateApprovalResolved() {
 			return
 		}
 		hub.Register(conn, []string{"ch-1"})
-		select {}
+		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
 

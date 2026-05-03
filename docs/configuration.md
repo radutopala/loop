@@ -309,6 +309,32 @@ Available at both global and project level. Project values override global value
 | `memory.embeddings.model` | `string` | `""` | Embedding model name (e.g. `"nomic-embed-text"`). |
 | `memory.embeddings.ollama_url` | `string` | `"http://localhost:11434"` | Ollama API endpoint. |
 
+#### Quality
+
+```jsonc
+"quality": {
+  "max_files": 25000,
+  "exclude_paths": ["docs/**"],
+  "rules": {
+    "signal_floor":     { "enabled": true, "threshold": 5000 },
+    "parse_fail":       { "enabled": true, "threshold": 0.01 },
+    "no_import_cycles": { "enabled": true }
+  }
+}
+```
+
+Scans are manual: panel "Scan now" button, `loop quality scan`, or the `quality_scan` MCP tool.
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `quality.max_files` | `int` | `25000` | Hard cap on scannable files after exclusions. Over the cap returns a structured `RepoTooLarge` error; no partial scan is produced. |
+| `quality.exclude_paths` | `string[]` | `[]` | Doublestar globs appended to the built-in defaults (`.git/`, `node_modules/`, `dist/`, `build/`, `target/`, `vendor/`, `*.min.js`, `*.generated.go`) and the repo's `.gitignore`. |
+| `quality.rules.<name>.enabled` | `bool` | `true` | Per-rule on/off. Built-in rules: `no_import_cycles`, `signal_floor`, `parse_fail`. |
+| `quality.rules.signal_floor.threshold` | `float` | `5000` | Lower bound on `quality_signal` (0–10000). Below this, the rule fails. |
+| `quality.rules.parse_fail.threshold` | `float` | `0.01` | Maximum fraction of files allowed to fail to parse (0.01 = 1%). |
+
+Config changes drop the engine's parser/graph cache for the affected channel but **do not auto-trigger a rescan** — the panel keeps rendering the previous snapshot until the next manual or live scan rebuilds with the new config. See [Quality](quality.md) for the full surface.
+
 #### Permissions (RBAC)
 
 ```jsonc

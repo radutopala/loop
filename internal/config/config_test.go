@@ -1056,6 +1056,85 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			},
 		},
 		{
+			name:        "QualityMaxFiles/Override",
+			projectJSON: `{"quality": {"max_files": 12000}}`,
+			mainCfg:     &Config{Quality: QualityConfig{MaxFiles: 5000}},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), 12000, merged.Quality.MaxFiles)
+				require.Equal(s.T(), 5000, main.Quality.MaxFiles)
+			},
+		},
+		{
+			name:        "QualityMaxFiles/AbsentKeepsGlobal",
+			projectJSON: `{"quality": {}}`,
+			mainCfg:     &Config{Quality: QualityConfig{MaxFiles: 5000}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), 5000, merged.Quality.MaxFiles)
+			},
+		},
+		{
+			name:        "QualityExcludePaths/Override",
+			projectJSON: `{"quality": {"exclude_paths": ["./generated/**"]}}`,
+			mainCfg:     &Config{Quality: QualityConfig{ExcludePaths: []string{"./vendor/**"}}},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), []string{"./generated/**"}, merged.Quality.ExcludePaths)
+				require.Equal(s.T(), []string{"./vendor/**"}, main.Quality.ExcludePaths)
+			},
+		},
+		{
+			name:        "QualityExcludePaths/AbsentKeepsGlobal",
+			projectJSON: `{"quality": {}}`,
+			mainCfg:     &Config{Quality: QualityConfig{ExcludePaths: []string{"./vendor/**"}}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), []string{"./vendor/**"}, merged.Quality.ExcludePaths)
+			},
+		},
+		{
+			name:        "QualityRules/OverrideThreshold",
+			projectJSON: `{"quality": {"rules": {"signal_floor": {"threshold": 6000}}}}`,
+			mainCfg: &Config{Quality: QualityConfig{Rules: map[string]QualityRuleConfig{
+				"signal_floor": {Enabled: true, Threshold: 5000},
+			}}},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), 6000.0, merged.Quality.Rules["signal_floor"].Threshold)
+				require.True(s.T(), merged.Quality.Rules["signal_floor"].Enabled)
+				require.Equal(s.T(), 5000.0, main.Quality.Rules["signal_floor"].Threshold)
+			},
+		},
+		{
+			name:        "QualityRules/DisableOverridesGlobalEnabled",
+			projectJSON: `{"quality": {"rules": {"no_import_cycles": {"enabled": false}}}}`,
+			mainCfg: &Config{Quality: QualityConfig{Rules: map[string]QualityRuleConfig{
+				"no_import_cycles": {Enabled: true},
+			}}},
+			assert: func(merged, _ *Config) {
+				require.False(s.T(), merged.Quality.Rules["no_import_cycles"].Enabled)
+			},
+		},
+		{
+			name:        "QualityRules/AbsentRuleKeepsGlobalEntry",
+			projectJSON: `{"quality": {"rules": {"signal_floor": {"threshold": 7000}}}}`,
+			mainCfg: &Config{Quality: QualityConfig{Rules: map[string]QualityRuleConfig{
+				"signal_floor":     {Enabled: true, Threshold: 5000},
+				"no_import_cycles": {Enabled: true},
+			}}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), 7000.0, merged.Quality.Rules["signal_floor"].Threshold)
+				require.True(s.T(), merged.Quality.Rules["no_import_cycles"].Enabled)
+			},
+		},
+		{
+			name:        "QualityRules/NewRuleAddedToEmptyGlobal",
+			projectJSON: `{"quality": {"rules": {"parse_fail": {"threshold": 0.005}}}}`,
+			mainCfg:     &Config{Quality: QualityConfig{}},
+			assert: func(merged, _ *Config) {
+				require.NotNil(s.T(), merged.Quality.Rules)
+				rc := merged.Quality.Rules["parse_fail"]
+				require.Equal(s.T(), 0.005, rc.Threshold)
+				require.True(s.T(), rc.Enabled)
+			},
+		},
+		{
 			name:        "Envs/Merged",
 			projectJSON: `{"envs": {"PROJECT_KEY": "proj-val", "SHARED": "proj"}}`,
 			mainCfg: &Config{
@@ -1602,6 +1681,56 @@ func (s *ConfigSuite) TestMemoryConfigAbsent() {
 	require.NoError(s.T(), err)
 	require.False(s.T(), cfg.Memory.Enabled)
 	require.Empty(s.T(), cfg.Memory.Embeddings.Provider)
+}
+
+func (s *ConfigSuite) TestQualityConfigFullBlock() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"quality": {
+				"max_files": 12000,
+				"exclude_paths": ["./generated/**", "./vendor/**"],
+				"rules": {
+					"signal_floor":     { "enabled": true,  "threshold": 6000 },
+					"parse_fail":       { "enabled": true,  "threshold": 0.005 },
+					"no_import_cycles": { "enabled": false }
+				}
+			}
+		}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 12000, cfg.Quality.MaxFiles)
+	require.Equal(s.T(), []string{"./generated/**", "./vendor/**"}, cfg.Quality.ExcludePaths)
+	require.Len(s.T(), cfg.Quality.Rules, 3)
+	require.True(s.T(), cfg.Quality.Rules["signal_floor"].Enabled)
+	require.Equal(s.T(), 6000.0, cfg.Quality.Rules["signal_floor"].Threshold)
+	require.True(s.T(), cfg.Quality.Rules["parse_fail"].Enabled)
+	require.Equal(s.T(), 0.005, cfg.Quality.Rules["parse_fail"].Threshold)
+	require.False(s.T(), cfg.Quality.Rules["no_import_cycles"].Enabled)
+}
+
+func (s *ConfigSuite) TestQualityRuleEnabledDefaultsTrue() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"quality": {
+				"rules": {
+					"signal_floor": { "threshold": 5500 }
+				}
+			}
+		}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.True(s.T(), cfg.Quality.Rules["signal_floor"].Enabled)
+	require.Equal(s.T(), 5500.0, cfg.Quality.Rules["signal_floor"].Threshold)
 }
 
 func (s *ConfigSuite) TestMemoryConfigNotExplicitlyEnabled() {

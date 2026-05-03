@@ -593,6 +593,92 @@ A seccomp gate trap matched a rule with `decision: approve` and is blocked waiti
 
 ---
 
+### `quality.session_started`
+
+Emitted at the start of a quality scan. Tells the UI to dim the previous snapshot and show the in-progress indicator.
+
+**Payload schema:**
+
+```json
+{
+  "dir_path": "/work",
+  "branch": "main"
+}
+```
+
+**Scope:** Channel.
+
+---
+
+### `quality.scanned`
+
+Emitted when a scan completes. Carries the full `QualityScanReport` — the same shape returned by `POST /api/channels/{id}/quality/scan` and `GET /api/channels/{id}/quality/snapshot`. The panel re-renders headline signal, metric cards, treemap, and rules from this payload.
+
+**Payload schema:** `QualityScanReport` — see [Quality](quality.md#http) and [HTTP API: Quality](api.md#quality).
+
+**Scope:** Channel.
+
+---
+
+### `quality.rules_violated`
+
+Emitted alongside `quality.scanned` only when at least one rule failed. Carries the same `QualityRulesReport` (`{passed, failed}`) embedded in the report — separated as its own event so notification surfaces (toasts, badges) can subscribe without having to inspect the full report.
+
+**Payload schema:**
+
+```json
+{
+  "passed": [
+    { "name": "no_import_cycles", "severity": "pass", "message": "no import cycles detected" }
+  ],
+  "failed": [
+    { "name": "signal_floor", "severity": "fail", "message": "quality_signal=4200 below floor 5000" }
+  ]
+}
+```
+
+**Scope:** Channel.
+
+---
+
+### `quality.session_ended`
+
+Emitted at the end of a quality scan, regardless of outcome. Tells the UI to re-enable the "Scan now" button.
+
+**Payload schema:**
+
+```json
+{
+  "branch": "main",
+  "ok": true,
+  "error": "",
+  "repo_too_large": false
+}
+```
+
+| Field            | Type   | Description |
+|------------------|--------|-------------|
+| `branch`         | string | Branch the scan ran on |
+| `ok`             | bool   | `true` on success; `false` if the scan errored or the repo was too large |
+| `error`          | string | Error string when `ok=false` |
+| `repo_too_large` | bool   | `true` when the scan was refused because the file count exceeded `quality.max_files` |
+
+**Scope:** Channel.
+
+---
+
+### `quality.scan_progress` *(reserved)*
+
+The event type is declared (`internal/api/events_hub.go`) and the panel handles it, but the daemon does not emit it yet. Reserved for a future progress-reporting pass; until then the panel falls back to an indeterminate "Scanning…" label.
+
+---
+
+### `quality.scan_cancelled` *(reserved)*
+
+The event type is declared but no cancel endpoint exists; the engine cannot be cancelled mid-scan today. Reserved for symmetry with the panel's planned cancel button.
+
+---
+
 ### `gate.approval_resolved`
 
 A previously-broadcast approval was resolved (either through the UI, a Discord/Slack button click, or timeout). The UI should dismiss the matching approval card.
@@ -669,6 +755,7 @@ A previously-broadcast approval was resolved (either through the UI, a Discord/S
 | `BroadcastWorkflowNodeCompleted` | `workflow.node_completed` | `WorkflowNodeEventData` | Global |
 | `BroadcastGateApprovalRequested` | `gate.approval_requested` | `GateApprovalEventData` | Channel |
 | `BroadcastGateApprovalResolved` | `gate.approval_resolved` | `GateApprovalResolvedData` | Channel |
+| `BroadcastQualityEvent` | `quality.session_started` / `quality.scanned` / `quality.rules_violated` / `quality.session_ended` | `any` | Channel |
 
 ---
 

@@ -139,6 +139,16 @@ func (s *DockerSuite) TestDefaultExecUserNumeric() {
 	require.Regexp(s.T(), `^\d+:\d+$`, u)
 }
 
+func (s *DockerSuite) TestFormatExecUserPositive() {
+	require.Equal(s.T(), "1000:1000", formatExecUser(1000, 1000))
+}
+
+func (s *DockerSuite) TestFormatExecUserWindowsFallback() {
+	require.Equal(s.T(), "0:0", formatExecUser(-1, -1))
+	require.Equal(s.T(), "0:0", formatExecUser(-1, 0))
+	require.Equal(s.T(), "0:0", formatExecUser(0, -1))
+}
+
 func (s *DockerSuite) TestExecAttach() {
 	api := new(mockDockerExecAPI)
 	client := &DockerExecClient{api: api, execUser: defaultExecUser}

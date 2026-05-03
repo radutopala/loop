@@ -34,6 +34,11 @@ import (
 	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/osutil"
+	"github.com/radutopala/loop/internal/quality/engine"
+	"github.com/radutopala/loop/internal/quality/evolution"
+	"github.com/radutopala/loop/internal/quality/graph"
+	"github.com/radutopala/loop/internal/quality/rules"
+	"github.com/radutopala/loop/internal/quality/snapshot"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/terminal"
 	"github.com/radutopala/loop/internal/types"
@@ -567,6 +572,34 @@ func (a *app) serve() error {
 	_ = os.MkdirAll(screenshotDir, 0o755)
 	apiSrv.SetScreenshotDir(screenshotDir)
 
+	// Quality engine: parser + graph cache + SQL-backed snapshot store. The
+	// HTTP handlers stay 501 until all three are wired; CLI (`loop quality
+	// scan`) uses its own ephemeral instances. Scans are manual or
+	// agent-triggered (via the MCP `scan` tool); there is no live-rescan loop.
+	if w, ok := store.(interface{ WriterDB() *sql.DB }); ok && w.WriterDB() != nil {
+		qParser, qErr := a.newQualityParser()
+		if qErr != nil {
+			logger.Warn("quality engine disabled: parser init failed", "error", qErr)
+		} else {
+			qCache := graph.NewCache()
+			qStore := snapshot.NewSQLStore(w.WriterDB())
+			qEngine := engine.New(qParser, qStore, qCache, engine.OSFileSystem{}, engine.Config{
+				MaxFiles:     cfg.Quality.MaxFiles,
+				ExcludePaths: cfg.Quality.ExcludePaths,
+			}, nil)
+			qEngine.SetProgress(apiSrv.EmitQualityProgress)
+			apiSrv.SetQualityScanner(qEngine)
+			apiSrv.SetQualityGraphProvider(qCache)
+			apiSrv.SetQualitySnapshotReader(qStore)
+			apiSrv.SetQualityHistoryReader(evolution.NewExecReader())
+			if rcfg := buildRulesConfig(cfg.Quality.Rules); rcfg != nil {
+				apiSrv.SetQualityRulesConfig(rcfg)
+			}
+		}
+	} else {
+		logger.Warn("quality engine disabled: store does not expose WriterDB")
+	}
+
 	if err := apiSrv.Start(cfg.APIAddr); err != nil {
 		return fmt.Errorf("starting api server: %w", err)
 	}
@@ -606,6 +639,29 @@ func (a *app) serve() error {
 	}
 
 	return nil
+}
+
+// buildRulesConfig overlays project-config rule overrides on top of the
+// rules-engine defaults. Returns nil when the user hasn't configured any
+// rule overrides — the api server then falls through to rules.DefaultConfig
+// at evaluation time, keeping behaviour identical to the unconfigured case.
+func buildRulesConfig(overrides map[string]config.QualityRuleConfig) *rules.Config {
+	if len(overrides) == 0 {
+		return nil
+	}
+	cfg := rules.DefaultConfig()
+	for name, override := range overrides {
+		rc, ok := cfg.Rules[name]
+		if !ok {
+			continue
+		}
+		rc.Enabled = override.Enabled
+		if override.Threshold > 0 {
+			rc.Threshold = override.Threshold
+		}
+		cfg.Rules[name] = rc
+	}
+	return &cfg
 }
 
 // wireGatePolicy compiles the shared seccomp policy and hands it to the

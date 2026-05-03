@@ -83,6 +83,10 @@ func (s *StoreSuite) TestWithTxCommitError() {
 	require.Error(s.T(), err)
 }
 
+func (s *StoreSuite) TestWriterDB() {
+	require.Same(s.T(), s.db, s.store.WriterDB())
+}
+
 // --- Channel tests ---
 
 func (s *StoreSuite) TestUpsertChannel() {
@@ -315,6 +319,9 @@ func (s *StoreSuite) TestDeleteChannel() {
 	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).
 		WithArgs("ch1").
 		WillReturnResult(sqlmock.NewResult(0, 5))
+	s.mock.ExpectExec(`DELETE FROM quality_snapshots WHERE channel_id`).
+		WithArgs("ch1").
+		WillReturnResult(sqlmock.NewResult(0, 2))
 	s.mock.ExpectExec(`DELETE FROM channels WHERE channel_id`).
 		WithArgs("ch1").
 		WillReturnResult(sqlmock.NewResult(0, 1))
@@ -335,6 +342,13 @@ func (s *StoreSuite) TestDeleteChannelErrors() {
 
 	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
+	s.mock.ExpectExec(`DELETE FROM quality_snapshots WHERE channel_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
+	err = s.store.DeleteChannel(context.Background(), "ch1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "deleting quality snapshots for channel")
+
+	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
+	s.mock.ExpectExec(`DELETE FROM quality_snapshots WHERE channel_id`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
 	s.mock.ExpectExec(`DELETE FROM channels WHERE channel_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
 	s.mock.ExpectRollback()
 	err = s.store.DeleteChannel(context.Background(), "ch1")
@@ -346,6 +360,9 @@ func (s *StoreSuite) TestDeleteChannelsByParentID() {
 	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).
 		WithArgs("ch1").
 		WillReturnResult(sqlmock.NewResult(0, 10))
+	s.mock.ExpectExec(`DELETE FROM quality_snapshots WHERE channel_id IN`).
+		WithArgs("ch1").
+		WillReturnResult(sqlmock.NewResult(0, 4))
 	s.mock.ExpectExec(`DELETE FROM channels WHERE parent_id`).
 		WithArgs("ch1").
 		WillReturnResult(sqlmock.NewResult(0, 3))
@@ -366,6 +383,13 @@ func (s *StoreSuite) TestDeleteChannelsByParentIDErrors() {
 
 	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
+	s.mock.ExpectExec(`DELETE FROM quality_snapshots WHERE channel_id IN`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
+	err = s.store.DeleteChannelsByParentID(context.Background(), "ch1")
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "deleting quality snapshots for child channels")
+
+	s.mock.ExpectExec(`DELETE FROM messages WHERE channel_id IN`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
+	s.mock.ExpectExec(`DELETE FROM quality_snapshots WHERE channel_id IN`).WithArgs("ch1").WillReturnResult(sqlmock.NewResult(0, 0))
 	s.mock.ExpectExec(`DELETE FROM channels WHERE parent_id`).WithArgs("ch1").WillReturnError(sql.ErrConnDone)
 	s.mock.ExpectRollback()
 	err = s.store.DeleteChannelsByParentID(context.Background(), "ch1")
@@ -1499,6 +1523,14 @@ func (s *StoreSuite) TestNewSQLiteStoreWithNowFunc() {
 
 	now := store.nowFunc()
 	require.False(s.T(), now.IsZero())
+}
+
+func (s *StoreSuite) TestWriterDBReturnsHandle() {
+	store, err := NewSQLiteStore(":memory:")
+	require.NoError(s.T(), err)
+	defer store.Close()
+
+	require.NotNil(s.T(), store.WriterDB())
 }
 
 func (s *StoreSuite) TestNewSQLiteStoreReaderOpenError() {

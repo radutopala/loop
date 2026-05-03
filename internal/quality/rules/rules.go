@@ -1,0 +1,195 @@
+package rules
+
+import (
+	"fmt"
+	"sort"
+
+	"github.com/radutopala/loop/internal/quality/graph"
+	"github.com/radutopala/loop/internal/quality/metrics"
+)
+
+// Severity reports a rule's pass/fail status. The CLI exits 0 regardless
+// of severity (rule status is data, not behaviour, mirroring gofmt's
+// philosophy). Callers gate CI with their own parsers (jq, etc.).
+type Severity string
+
+const (
+	// SevPass means the rule's invariant holds against the current scan.
+	SevPass Severity = "pass"
+	// SevFail means the invariant is violated; Citations point to the
+	// offending files/lines for the panel and rules MCP tool to render.
+	SevFail Severity = "fail"
+)
+
+// Citation is one file/line span the rule wants the user to see.
+type Citation struct {
+	Path      string
+	StartLine int
+	EndLine   int
+	Note      string
+}
+
+// Result is one rule's outcome from one scan.
+type Result struct {
+	Name      string
+	Severity  Severity
+	Message   string
+	Citations []Citation
+}
+
+// RuleConfig carries the per-rule overrides resolved from the project
+// config (quality.rules.<name>.{threshold,enabled}). Threshold is the
+// generic knob — rules that have no numeric threshold ignore it.
+type RuleConfig struct {
+	Enabled   bool
+	Threshold float64
+}
+
+// Config is the full set of per-rule overrides. Missing entries fall
+// back to the rule's hard-coded default.
+type Config struct {
+	Rules map[string]RuleConfig
+}
+
+// SignalFloorDefault is the lower bound on quality_signal that the
+// signal_floor rule treats as healthy. Tunable via
+// quality.rules.signal_floor.threshold.
+const SignalFloorDefault = 5000.0
+
+// ParseFailMaxDefault is the maximum fraction of parse-failed files the
+// parse_fail rule tolerates. 0.01 = 1%. Tunable via
+// quality.rules.parse_fail.threshold.
+const ParseFailMaxDefault = 0.01
+
+// Built-in rule names. Exported so callers can build Config maps without
+// stringly-typing the keys.
+const (
+	NoImportCycles = "no_import_cycles"
+	SignalFloor    = "signal_floor"
+	ParseFail      = "parse_fail"
+)
+
+// Run evaluates every built-in rule against (g, sig) using cfg as the
+// override source. Results come back in a stable order (rule-name asc)
+// so panel renders and JSON outputs are deterministic.
+func Run(cfg Config, g *graph.Graph, sig metrics.Signal) []Result {
+	results := []Result{
+		evalNoImportCycles(cfg, sig),
+		evalSignalFloor(cfg, sig),
+		evalParseFail(cfg, g),
+	}
+	sort.Slice(results, func(i, j int) bool { return results[i].Name < results[j].Name })
+	return results
+}
+
+func ruleEnabled(cfg Config, name string) bool {
+	if rc, ok := cfg.Rules[name]; ok {
+		return rc.Enabled
+	}
+	return true
+}
+
+func ruleThreshold(cfg Config, name string, fallback float64) float64 {
+	if rc, ok := cfg.Rules[name]; ok && rc.Threshold > 0 {
+		return rc.Threshold
+	}
+	return fallback
+}
+
+func evalNoImportCycles(cfg Config, sig metrics.Signal) Result {
+	r := Result{Name: NoImportCycles, Severity: SevPass, Message: "no import cycles detected"}
+	if !ruleEnabled(cfg, NoImportCycles) {
+		r.Message = "rule disabled"
+		return r
+	}
+	detail, ok := metricDetail[metrics.CyclesDetail](sig, metrics.CyclesName)
+	if !ok || len(detail.Cycles) == 0 {
+		return r
+	}
+	r.Severity = SevFail
+	r.Message = fmt.Sprintf("%d import cycle(s) detected; largest contains %d files", len(detail.Cycles), detail.LargestCycleSize)
+	for _, scc := range detail.Cycles {
+		for _, p := range scc {
+			r.Citations = append(r.Citations, Citation{Path: p, Note: "in cycle"})
+		}
+	}
+	return r
+}
+
+func evalSignalFloor(cfg Config, sig metrics.Signal) Result {
+	threshold := ruleThreshold(cfg, SignalFloor, SignalFloorDefault)
+	r := Result{Name: SignalFloor, Severity: SevPass, Message: fmt.Sprintf("quality_signal=%d ≥ %.0f", sig.Value, threshold)}
+	if !ruleEnabled(cfg, SignalFloor) {
+		r.Message = "rule disabled"
+		return r
+	}
+	if float64(sig.Value) < threshold {
+		r.Severity = SevFail
+		r.Message = fmt.Sprintf("quality_signal=%d below floor %.0f", sig.Value, threshold)
+	}
+	return r
+}
+
+func evalParseFail(cfg Config, g *graph.Graph) Result {
+	threshold := ruleThreshold(cfg, ParseFail, ParseFailMaxDefault)
+	r := Result{Name: ParseFail, Severity: SevPass}
+	if !ruleEnabled(cfg, ParseFail) {
+		r.Message = "rule disabled"
+		return r
+	}
+	total := len(g.Nodes)
+	if total == 0 {
+		r.Message = "no files scanned"
+		return r
+	}
+	frac := float64(g.ParseFailed) / float64(total)
+	r.Message = fmt.Sprintf("%d/%d files failed to parse (%.2f%%, max %.2f%%)", g.ParseFailed, total, frac*100, threshold*100)
+	if frac > threshold {
+		r.Severity = SevFail
+		for _, n := range g.Nodes {
+			if n.ParseFailed {
+				r.Citations = append(r.Citations, Citation{Path: n.Path, Note: "parse failed"})
+			}
+		}
+	}
+	return r
+}
+
+// metricDetail finds the named metric's Detail and asserts it to T.
+// Returns (zero, false) on miss or type mismatch — rules treat that as
+// "metric absent → rule passes vacuously".
+func metricDetail[T any](sig metrics.Signal, name string) (T, bool) {
+	for _, m := range sig.Metrics {
+		if m.Name != name {
+			continue
+		}
+		if d, ok := m.Detail.(T); ok {
+			return d, true
+		}
+		var zero T
+		return zero, false
+	}
+	var zero T
+	return zero, false
+}
+
+// DefaultConfig returns a Config with every built-in enabled at default
+// thresholds. Callers merge in project-config overrides on top.
+func DefaultConfig() Config {
+	return Config{Rules: map[string]RuleConfig{
+		NoImportCycles: {Enabled: true},
+		SignalFloor:    {Enabled: true, Threshold: SignalFloorDefault},
+		ParseFail:      {Enabled: true, Threshold: ParseFailMaxDefault},
+	}}
+}
+
+// AnyFailed is a convenience for "did this scan trip a rule?". Used by
+// the rules MCP tool's structured failure summary.
+func AnyFailed(results []Result) bool {
+	for _, r := range results {
+		if r.Severity == SevFail {
+			return true
+		}
+	}
+	return false
+}

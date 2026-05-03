@@ -19,6 +19,7 @@ require (
 	github.com/gorilla/websocket v1.5.3
 	github.com/moby/docker-image-spec v1.3.1
 	github.com/modelcontextprotocol/go-sdk v1.4.1
+	github.com/odvcencio/gotreesitter v0.15.3
 	github.com/opencontainers/image-spec v1.1.1
 	github.com/radutopala/ticket v0.4.0
 	github.com/robfig/cron/v3 v3.0.1

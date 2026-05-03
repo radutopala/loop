@@ -51,6 +51,12 @@ const (
 	EventWorkflowNodeCompleted     = "workflow.node_completed"
 	EventGateApprovalRequested     = "gate.approval_requested"
 	EventGateApprovalResolved      = "gate.approval_resolved"
+	EventQualitySessionStarted     = "quality.session_started"
+	EventQualitySessionEnded       = "quality.session_ended"
+	EventQualityScanned            = "quality.scanned"
+	EventQualityScanProgress       = "quality.scan_progress"
+	EventQualityScanCancelled      = "quality.scan_cancelled"
+	EventQualityRulesViolated      = "quality.rules_violated"
 )
 
 // Event represents a server-sent event to WebSocket clients.
@@ -75,6 +81,10 @@ type EventsHub struct {
 	mu          sync.RWMutex
 	subscribers map[*eventConn]struct{}
 	logger      *slog.Logger
+	// captureHook is a test-only seam: when non-nil, every Broadcast invokes
+	// it after marshalling so tests can observe events without registering
+	// a real websocket. Production code never sets it.
+	captureHook func(Event)
 }
 
 type eventConn struct {
@@ -121,6 +131,9 @@ func (h *EventsHub) Broadcast(evt Event) {
 	if err != nil {
 		h.logger.Error("events hub: marshal failed", "error", err, "type", evt.Type)
 		return
+	}
+	if h.captureHook != nil {
+		h.captureHook(evt)
 	}
 
 	h.mu.RLock()
@@ -457,6 +470,18 @@ func (h *EventsHub) BroadcastGateApprovalRequested(channelID string, data events
 func (h *EventsHub) BroadcastGateApprovalResolved(channelID string, data events.GateApprovalResolvedData) {
 	h.Broadcast(Event{
 		Type:      EventGateApprovalResolved,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastQualityEvent sends a generic quality.* event scoped to channelID.
+// One broadcaster covers all six quality event types — payload shape varies
+// per type and is the handler's responsibility, so a single entry point
+// keeps the hub surface small.
+func (h *EventsHub) BroadcastQualityEvent(eventType, channelID string, data any) {
+	h.Broadcast(Event{
+		Type:      eventType,
 		ChannelID: channelID,
 		Data:      data,
 	})

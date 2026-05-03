@@ -219,6 +219,24 @@ var migrations = []migration{
 	// Replace mis-ordered idx_scheduled_tasks_type_next_run: GetDueTasks filters by enabled+running, not type.
 	sqlMigration(`DROP INDEX IF EXISTS idx_scheduled_tasks_type_next_run`),
 	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_scheduled_tasks_due ON scheduled_tasks(next_run_at) WHERE enabled = 1 AND running = 0`),
+	// Quality snapshots — one row per (channel_id, branch_name); UPSERT
+	// on rescan. JSON breakdown stores []metrics.Result in encoded form
+	// for the panel to forward verbatim.
+	sqlMigration(`CREATE TABLE IF NOT EXISTS quality_snapshots (
+		id INTEGER PRIMARY KEY AUTOINCREMENT,
+		channel_id TEXT NOT NULL,
+		branch_name TEXT NOT NULL DEFAULT '',
+		scanned_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+		signal_value INTEGER NOT NULL,
+		geo_mean REAL NOT NULL,
+		metric_breakdown_json TEXT NOT NULL DEFAULT '{}',
+		UNIQUE(channel_id, branch_name)
+	)`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_quality_snapshots_channel ON quality_snapshots(channel_id)`),
+	// Per-file deficit attribution for the panel treemap. JSON array of
+	// metrics.FileTile so the panel can render a "which file is dragging"
+	// view instead of just the 5 aggregated metric tiles.
+	sqlMigration(`ALTER TABLE quality_snapshots ADD COLUMN tile_data_json TEXT NOT NULL DEFAULT '[]'`),
 }
 
 // RunMigrations executes all pending schema migrations.

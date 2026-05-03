@@ -63,6 +63,7 @@ AI agents powered by Claude, running in Docker containers. Use the **desktop app
 - **API Server** exposes REST endpoints for task and channel management
 - **SQLite** stores channels, messages, scheduled tasks, run logs, and memory file embeddings
 - **Security Gate** — a seccomp `RET_USER_NOTIF` filter installed in every agent container (works on Linux, macOS, and Windows hosts — the filter + notify-loop server both run inside the container) traps sensitive syscalls (`connect`, `execve`/`execveat`, `openat*`, `renameat2`, `unlinkat`, …) and routes `approve`-rule hits to the chat as a three-button card. An in-container Docker HTTP proxy replaces the raw `docker.sock` bind and enforces method/path/body rules. Enabled by default; see [Configuration: Security Gate](docs/configuration.md#security-gate)
+- **Quality Engine** — pure-Go architectural-quality scanner under `internal/quality/`. Reduces a workspace to a single `quality_signal` (0–10000, geometric mean of 5 graph-level metrics: modularity, cycles, depth, equality, redundancy). Surfaced via the desktop `QualityPanel`, a chat-bar quality indicator, two MCP tools (`quality_scan`, `quality_snapshot`), two HTTP endpoints, and `loop quality scan` for CI gates. Snapshots persist per `(channel, branch)`. See [docs/quality.md](docs/quality.md)
 
 ## Prerequisites
 
@@ -361,6 +362,7 @@ On startup, `loop serve` keeps the versioned container files (`Dockerfile`, `ent
 | `workflows` | `[]` | Declarative DAG-based workflow definitions (see [Workflows](#workflows)) |
 | `workflow_concurrency` | `{}` | Max concurrent runs and nodes (`max_concurrent_runs`, `max_concurrent_nodes`; 0 = unlimited) |
 | `memory` | `{}` | Semantic memory search configuration (see below) |
+| `quality` | `{}` | Architectural quality engine: `max_files`, `exclude_paths`, per-rule overrides (see [docs/quality.md](docs/quality.md)) |
 | `permissions` | `{}` | RBAC permissions: owners and members (see below) |
 | `gates.agentgate` | `{enabled: true, default_decision: "allow", ...baseline rules}` | Seccomp security gate for agent containers. Enabled by default; ships with a baseline of 2 path / 2 command / 8 file rules (see [Configuration: Security Gate](docs/configuration.md#security-gate)) |
 | `gates.docker_proxy` | mirrors `gates.agentgate.enabled` | In-container Docker HTTP proxy. Agents talk to `/var/run/docker.sock` (tmpfs, owned by `loop dockerproxy`); that process reverse-proxies to the real daemon socket at `/var/run/docker.sock.host`. Ships with 15 method/path rules and 2 JSON body-inspection rules. Body rules support `deny` (hard 403, no prompt), `approve` (block + user prompt) and `allow` (silent pass-through) — same decision set as the HTTP rules |
@@ -549,6 +551,7 @@ For development: `make docker-build` builds from `container/Dockerfile` in the r
 | `loop daemon:restart` | `d:restart`, `restart` | Restart the daemon |
 | `loop daemon:status` | `d:status` | Show daemon status |
 | `loop mcp-host-browser` | | Standalone MCP server for host Chrome browser automation |
+| `loop quality scan` | | One-shot architectural quality scan (`--root <dir>`, `--max-files <n>`, `--json`); see [docs/quality.md](docs/quality.md) |
 | `loop readme` | `r` | Print the README documentation |
 
 ### MCP Host Browser (standalone)
@@ -962,6 +965,7 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 - **Workflows panel** — start, monitor, and manage DAG-based workflow runs. Available as both a global overlay panel (shows runs across **all** channels) and an embedded split panel scoped to a single channel. Two-pane layout with run list and interactive DAG graph visualization — nodes are rendered on an SVG canvas with a dot grid background, pan/zoom (scroll + Ctrl+Scroll), cursor-anchored zoom, minimap with draggable viewport, and zoom controls. Nodes show status (pending, running, success, failed, skipped, paused), type badges, retry counts, and elapsed time with connected dependency edges. Click a node to expand its output in a 50/50 split below the graph. Approval widget for paused runs. Real-time updates via WebSocket events. See [Workflows](docs/workflows.md)
 - **Containers panel** — global view of all Docker containers (agent, shell, chrome) with real-time status lifecycle (running → stopped → pending-removal), type labels, scheduled removal countdown, and live updates via WebSocket events
 - **Memory panel** — browse and search semantic memory files
+- **Quality panel** — per-channel architectural-quality dashboard. Headline `quality_signal` (0–10000) with red/amber/green band, per-metric cards (Modularity, Cycles, Depth, Equality, Dead Code), `@visx/hierarchy` treemap (tile size = file LOC, color = per-file deficit), diagnostic popover on tile click, and failed-rule citation cards. Round indicator in the chat-bar toolbar shows the current band; click to add a Quality leaf to the channel's split-pane tree. Live-rescan opt-in via `quality.live_rescan = true` (agentgate `OnFileWrite` + `OnToolUse` feeds, debounced 250 ms). See [Quality](docs/quality.md)
 - **Custom layouts** — named split-pane workspaces with drag-to-resize, saved per channel. Create, rename, delete, and restore default layouts from the tab bar
 - **Islands layout** — panels float as rounded cards over a deep canvas background with gaps between them. Enable via `"islands": true` in the `desktop` config section (on by default)
 - **Multi-window** — open multiple windows (Cmd+N), each navigating independently
@@ -1035,6 +1039,8 @@ make app-install
 | `POST` | `/api/commands` | Send a slash command to a channel |
 | `POST` | `/api/memory/search` | Semantic search across memory files |
 | `POST` | `/api/memory/index` | Re-index memory files |
+| `POST` | `/api/channels/{id}/quality/scan` | Kick a quality scan asynchronously (returns `202 Accepted`; report ships via the `quality.scanned` event) |
+| `GET` | `/api/channels/{id}/quality/snapshot` | Fetch the persisted quality snapshot (404 when none exists yet) |
 | `GET` | `/api/readme` | Get the Loop README documentation |
 | `PUT` | `/api/playground?name=...` | Create/update a playground (html, title, description) |
 | `GET` | `/api/playground?name=...` | Get playground metadata |
@@ -1092,6 +1098,8 @@ make app-install
 | `send_message` | Send a message to a channel or thread |
 | `search_memory` | Semantic search across memory files (ranked by similarity) |
 | `index_memory` | Force re-index all memory files |
+| `quality_scan` | Trigger an architectural-quality scan for the current channel (status hint returns immediately; report ships via the `quality.scanned` event) |
+| `quality_snapshot` | Read the persisted quality snapshot (current branch first, then most recent) |
 | `get_readme` | Get the full Loop README documentation |
 | `playground` | Manage playgrounds (create/update/delete) |
 | `playground_file` | Manage files within a playground (create/update/read/delete/list) |

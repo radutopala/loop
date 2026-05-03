@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"context"
+	"database/sql"
 	"time"
 
 	"github.com/stretchr/testify/mock"
@@ -193,6 +194,17 @@ func (m *MockStore) ListChannelIDsByParentID(ctx context.Context, parentID strin
 
 func (m *MockStore) Close() error {
 	return m.Called().Error(0)
+}
+
+// WriterDB satisfies the optional `interface{ WriterDB() *sql.DB }` that
+// serve() type-asserts on to wire fs migrations and the quality engine.
+// Returns nil unless the test explicitly sets a *sql.DB via .On("WriterDB").
+func (m *MockStore) WriterDB() *sql.DB {
+	args := m.Called()
+	if args.Get(0) == nil {
+		return nil
+	}
+	return args.Get(0).(*sql.DB)
 }
 
 func (m *MockStore) GetScheduledTaskByTemplateName(ctx context.Context, channelID, templateName string) (*db.ScheduledTask, error) {

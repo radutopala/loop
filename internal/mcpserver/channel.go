@@ -18,17 +18,21 @@ import (
 // channelTransport wraps StdioTransport with a mutex-protected writer
 // and the ability to inject channel notifications into the stdout stream.
 type channelTransport struct {
-	inner  mcp.Transport
-	mu     sync.Mutex
-	writer io.Writer
+	inner          mcp.Transport
+	mu             sync.Mutex
+	writer         io.Writer
+	dialBackoff    time.Duration
+	reconnectDelay time.Duration
 }
 
 // newChannelTransport creates a transport that shares a mutex between
 // the MCP server's normal JSON-RPC output and channel notifications.
 func newChannelTransport() *channelTransport {
 	return &channelTransport{
-		inner:  &mcp.StdioTransport{},
-		writer: os.Stdout,
+		inner:          &mcp.StdioTransport{},
+		writer:         os.Stdout,
+		dialBackoff:    2 * time.Second,
+		reconnectDelay: time.Second,
 	}
 }
 
@@ -98,18 +102,38 @@ func (c *channelConn) SessionID() string {
 // messages as channel notifications to the MCP stdout stream.
 // It automatically reconnects when the connection drops (e.g. when the
 // agent is unregistered/re-registered during a frontend tab switch).
-func startPushReceiver(apiURL, channelID, agentID string, transport *channelTransport, logger *slog.Logger) {
+//
+// The goroutine exits when ctx is cancelled — Server.Run cancels its
+// derived ctx before returning so test runs (and graceful shutdowns)
+// don't leak DNS-hung dial loops.
+func startPushReceiver(ctx context.Context, apiURL, channelID, agentID string, transport *channelTransport, logger *slog.Logger) {
 	wsURL := "ws" + apiURL[4:] + "/api/ws/agent-channel?agent_id=" + agentID + "&channel_id=" + channelID
 
 	go func() {
 		for {
 			logger.Info("channel push: connecting", "url", wsURL)
-			conn, _, err := websocket.DefaultDialer.Dial(wsURL, nil)
+			conn, _, err := websocket.DefaultDialer.DialContext(ctx, wsURL, nil)
 			if err != nil {
+				if ctx.Err() != nil {
+					return
+				}
 				logger.Error("channel push: dial failed, retrying", "error", err)
-				time.Sleep(2 * time.Second)
+				if sleepCtx(ctx, transport.dialBackoff) {
+					return
+				}
 				continue
 			}
+
+			// Cancel-on-ctx watcher: closes the conn so a blocked ReadJSON
+			// returns and we can exit the read loop promptly.
+			watcherDone := make(chan struct{})
+			go func() {
+				select {
+				case <-ctx.Done():
+					_ = conn.Close()
+				case <-watcherDone:
+				}
+			}()
 
 			// Read loop: forward messages until connection drops.
 			for {
@@ -129,8 +153,24 @@ func startPushReceiver(apiURL, channelID, agentID string, transport *channelTran
 					logger.Error("channel push: write notification failed", "error", err)
 				}
 			}
+			close(watcherDone)
 
-			time.Sleep(time.Second)
+			if sleepCtx(ctx, transport.reconnectDelay) {
+				return
+			}
 		}
 	}()
+}
+
+// sleepCtx sleeps for d or until ctx is cancelled. Returns true when ctx
+// cancelled (caller should exit) and false when the timer fired normally.
+func sleepCtx(ctx context.Context, d time.Duration) bool {
+	t := time.NewTimer(d)
+	defer t.Stop()
+	select {
+	case <-ctx.Done():
+		return true
+	case <-t.C:
+		return false
+	}
 }

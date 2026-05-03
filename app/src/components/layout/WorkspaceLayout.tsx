@@ -27,6 +27,7 @@ import { TasksPanel } from "../panels/TasksPanel";
 import { KanbanPanel } from "../panels/KanbanPanel";
 import { WorkflowsLayoutPanel } from "../panels/WorkflowsLayoutPanel";
 import { AuditPanel } from "../panels/AuditPanel";
+import { QualityPanel } from "../panels/QualityPanel";
 import { killAgentContainer } from "../../api/loopApi";
 import { ChannelHeaderInfo } from "./ChannelHeaderInfo";
 import { HeaderBranchPicker } from "./HeaderBranchPicker";
@@ -526,6 +527,30 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     [channelId, activeName, layoutNames],
   );
 
+  // Listen for cross-component "open this panel" requests (e.g. the chat-bar
+  // quality icon). The event carries the target channelId so other workspaces
+  // ignore it. If the panel already exists in the active tree this is a no-op;
+  // otherwise we split the first leaf or create a fresh tree if empty.
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      const ce = ev as CustomEvent<{ channelId: string; panel: PanelType }>;
+      if (!ce.detail || ce.detail.channelId !== channelId) return;
+      const panel = ce.detail.panel;
+      const current = treeRef.current;
+      if (current && collectLeaves(current).some((l) => l.panel === panel)) return;
+      if (!current) {
+        handleEmptyAdd(panel);
+        return;
+      }
+      const firstLeaf = collectLeaves(current)[0];
+      if (firstLeaf) {
+        handleSplitLeaf(firstLeaf.id, panel, "vertical");
+      }
+    };
+    window.addEventListener("loop:open-panel", handler);
+    return () => window.removeEventListener("loop:open-panel", handler);
+  }, [channelId, handleEmptyAdd, handleSplitLeaf]);
+
   const handleKillAgents = useCallback(() => {
     // Close all agent and shell terminal sessions in the current tree.
     const current = treeRef.current;
@@ -768,6 +793,17 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
             <AuditPanel
               key={`layout-audit-${channelId}`}
               channelId={channelId}
+            />
+          );
+        case "quality":
+          return (
+            <QualityPanel
+              key={`layout-quality-${channelId}`}
+              channelId={channelId}
+              dirPath={dirPath}
+              branch={branch}
+              embedded
+              onClose={() => handleRemoveLeaf(leaf.id)}
             />
           );
         default:

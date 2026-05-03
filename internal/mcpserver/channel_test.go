@@ -104,7 +104,9 @@ func (s *ChannelSuite) TestStartPushReceiver() {
 	transport.writer = safeBuf
 
 	apiURL := "http" + strings.TrimPrefix(wsSrv.URL, "http")
-	startPushReceiver(apiURL, "ch-1", "agent-0", transport, slog.Default())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startPushReceiver(ctx, apiURL, "ch-1", "agent-0", transport, slog.Default())
 
 	// Wait for the message to be processed.
 	time.Sleep(200 * time.Millisecond)
@@ -153,7 +155,9 @@ func (s *ChannelSuite) TestStartPushReceiverReconnects() {
 	transport.writer = safeBuf
 
 	apiURL := "http" + strings.TrimPrefix(wsSrv.URL, "http")
-	startPushReceiver(apiURL, "ch-1", "agent-0", transport, slog.Default())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startPushReceiver(ctx, apiURL, "ch-1", "agent-0", transport, slog.Default())
 
 	// Wait for reconnect + message processing (1s reconnect delay + processing).
 	require.Eventually(s.T(), func() bool {
@@ -244,7 +248,9 @@ func (s *ChannelSuite) TestStartPushReceiverWriteNotificationError() {
 	transport.writer = &errorWriter{} // makes WriteNotification return an error
 
 	apiURL := "http" + strings.TrimPrefix(wsSrv.URL, "http")
-	startPushReceiver(apiURL, "ch-1", "agent-0", transport, slog.Default())
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startPushReceiver(ctx, apiURL, "ch-1", "agent-0", transport, slog.Default())
 	time.Sleep(200 * time.Millisecond)
 }
 
@@ -253,8 +259,84 @@ func (s *ChannelSuite) TestStartPushReceiverDialError() {
 	safeBuf := &syncBuffer{}
 	transport.writer = safeBuf
 
-	// Unreachable URL — should not panic, will keep retrying in background.
-	startPushReceiver("http://127.0.0.1:1", "ch-1", "agent-0", transport, slog.Default())
+	// Unreachable URL — should not panic; the goroutine retries until the
+	// test cancels its ctx.
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startPushReceiver(ctx, "http://127.0.0.1:1", "ch-1", "agent-0", transport, slog.Default())
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(s.T(), 0, safeBuf.Len())
+}
+
+// TestStartPushReceiverDialCtxCancelled covers the post-dial ctx.Err()
+// early-return: ctx is cancelled before the goroutine attempts its first
+// dial, so DialContext returns immediately with a context error and the
+// receiver exits without logging "dial failed, retrying".
+func (s *ChannelSuite) TestStartPushReceiverDialCtxCancelled() {
+	transport := newChannelTransport()
+	safeBuf := &syncBuffer{}
+	transport.writer = safeBuf
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel() // cancel up-front
+	startPushReceiver(ctx, "http://127.0.0.1:1", "ch-1", "agent-0", transport, slog.Default())
+	time.Sleep(20 * time.Millisecond)
+	require.Equal(s.T(), 0, safeBuf.Len())
+}
+
+// TestStartPushReceiverCtxCancelDuringRead covers the watcher's
+// <-ctx.Done() branch: a connection is open and the receiver is blocked
+// in ReadJSON; ctx cancellation causes the watcher goroutine to close
+// the conn so ReadJSON returns and the loop unwinds cleanly.
+func (s *ChannelSuite) TestStartPushReceiverCtxCancelDuringRead() {
+	// Upgrade and hold the connection open until the client side closes.
+	upgrader := websocket.Upgrader{}
+	wsSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := upgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		for {
+			if _, _, err := conn.NextReader(); err != nil {
+				return
+			}
+		}
+	}))
+	defer wsSrv.Close()
+
+	transport := newChannelTransport()
+	transport.dialBackoff = 5 * time.Millisecond
+	transport.reconnectDelay = 5 * time.Millisecond
+	safeBuf := &syncBuffer{}
+	transport.writer = safeBuf
+
+	apiURL := "http" + strings.TrimPrefix(wsSrv.URL, "http")
+	ctx, cancel := context.WithCancel(context.Background())
+	startPushReceiver(ctx, apiURL, "ch-1", "agent-0", transport, slog.Default())
+
+	// Wait for the goroutine to dial and enter the read loop.
+	time.Sleep(50 * time.Millisecond)
+
+	// Cancel — exercises watcher's <-ctx.Done() case.
+	cancel()
+	time.Sleep(50 * time.Millisecond)
+}
+
+// TestStartPushReceiverDialBackoffRetries covers the dial-failure retry
+// path: with a tiny dialBackoff, the sleepCtx timer fires (returns false)
+// and the loop hits `continue` to retry the next dial.
+func (s *ChannelSuite) TestStartPushReceiverDialBackoffRetries() {
+	transport := newChannelTransport()
+	transport.dialBackoff = 5 * time.Millisecond
+	safeBuf := &syncBuffer{}
+	transport.writer = safeBuf
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	startPushReceiver(ctx, "http://127.0.0.1:1", "ch-1", "agent-0", transport, slog.Default())
+	// Allow several backoff cycles so the timer-fired branch is exercised
+	// before the deferred cancel exits the goroutine.
 	time.Sleep(50 * time.Millisecond)
 	require.Equal(s.T(), 0, safeBuf.Len())
 }

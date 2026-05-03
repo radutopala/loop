@@ -1134,6 +1134,52 @@ Remove a git worktree from disk and optionally delete its associated thread.
 
 ---
 
+## Quality
+
+See [Quality](quality.md) for the engine's full architecture, metric definitions, and rule semantics.
+
+### `POST /api/channels/{id}/quality/scan`
+
+Kick a quality scan for the channel. The request returns immediately; the full report ships over the WebSocket as a `quality.scanned` event.
+
+**Response (202 Accepted):**
+```json
+{ "status": "started" }
+```
+
+When a scan is already in flight for this channel, returns `{"status": "in_progress"}` without queueing or replacing — the engine coalesces concurrent triggers per channel.
+
+**Errors:** `501` if the quality scanner is not configured.
+
+---
+
+### `GET /api/channels/{id}/quality/snapshot`
+
+Fetch the persisted quality snapshot. Returns the row for the channel's current branch first; on miss falls back to the most recent snapshot on any branch with `branch_mismatch: true` so the panel can render a banner.
+
+**Response (200):**
+```json
+{
+  "dir_path": "/work",
+  "branch": "main",
+  "current_branch": "main",
+  "branch_mismatch": false,
+  "signal": 6532,
+  "geo_mean": 0.6532,
+  "scanned_at": "2026-04-30T17:01:23Z",
+  "metrics": [
+    { "name": "modularity", "score": 0.71, "raw": 0.42 }
+  ],
+  "tiles": [
+    { "path": "internal/foo/bar.go", "loc": 312, "deficit": 0.18, "metric_deficits": { "depth": 0.12 }, "top_reason": "depth" }
+  ]
+}
+```
+
+**Errors:** `404` if no snapshot has ever been recorded for the channel. `501` if the snapshot reader is not configured.
+
+---
+
 ## Memory
 
 See [Memory System](memory.md) for the full architecture.

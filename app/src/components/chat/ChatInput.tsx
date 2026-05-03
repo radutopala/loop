@@ -7,6 +7,7 @@ import { fonts } from "../../theme";
 import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
 import { storageGetJSON, storageSetJSON } from "../../utils/storage";
+import { QualityIndicator } from "./QualityIndicator";
 
 // Draft text per channel — persisted to localStorage across app restarts.
 const DRAFT_KEY = "loop-chat-drafts";
@@ -810,6 +811,7 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
         disabled={sending}
       />
       <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%" }}>
+      <QualityIndicator channelId={channelId} />
       {shortcuts.length > 0 && (
         <button
           style={{

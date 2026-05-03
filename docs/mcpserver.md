@@ -100,6 +100,15 @@ When `--agent-id` is set, the server also:
 | `search_memory` | Semantic search across memory files. Returns relevant chunks ranked by similarity. Optional `top_k` (default 5). |
 | `index_memory` | Force re-index all memory files after edits |
 
+### Quality Tools
+
+| Tool | Description |
+|------|-------------|
+| `quality_scan` | Trigger an architectural quality scan for the current channel. Returns a status hint immediately; the full report ships via the `quality.scanned` event. |
+| `quality_snapshot` | Read the persisted snapshot (current branch first, then most recent). Returns `quality_signal`, geo-mean, per-metric breakdown, and a branch-mismatch flag. |
+
+Both tools read `channelID` from the per-channel server struct and take no `WorkDir` argument. See [Quality](quality.md) for the engine and metric semantics.
+
 ## Construction
 
 ```go
@@ -130,5 +139,6 @@ After `Run()` returns, the caller invokes `UnregisterAgent()` which sends `DELET
 - [Multi-Agent](multi-agent.md) — Agent registry, MCP Channels, Swarm & Canvas layouts
 - [Containers](containers.md) — Container MCP config setup
 - [Memory](memory.md) — Semantic search and Ollama embeddings
+- [Quality](quality.md) — Architectural quality engine
 - [Scheduling](scheduling.md) — Task types and templates
 - [Workflows](workflows.md) — DAG-based workflow engine

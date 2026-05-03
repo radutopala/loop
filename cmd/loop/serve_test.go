@@ -12,6 +12,7 @@ import (
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/orchestrator"
+	"github.com/radutopala/loop/internal/quality/rules"
 	"github.com/radutopala/loop/internal/types"
 )
 
@@ -118,6 +119,53 @@ func (s *ServeSuite) TestWireGatePolicyCompileErrorLogsAndSkips() {
 }
 
 // --- wireGatePolicy: happy path ---
+
+// --- buildRulesConfig ---
+
+// TestBuildRulesConfigEmptyReturnsNil: no project overrides → nil so the api
+// server falls through to rules.DefaultConfig() at evaluation time.
+func (s *ServeSuite) TestBuildRulesConfigEmptyReturnsNil() {
+	require.Nil(s.T(), buildRulesConfig(nil))
+	require.Nil(s.T(), buildRulesConfig(map[string]config.QualityRuleConfig{}))
+}
+
+// TestBuildRulesConfigAppliesOverrides: project overrides flip Enabled and
+// raise Threshold while leaving the unmentioned default rule entries
+// untouched at their DefaultConfig values.
+func (s *ServeSuite) TestBuildRulesConfigAppliesOverrides() {
+	cfg := buildRulesConfig(map[string]config.QualityRuleConfig{
+		rules.SignalFloor:    {Enabled: true, Threshold: 6500},
+		rules.NoImportCycles: {Enabled: false},
+	})
+	require.NotNil(s.T(), cfg)
+	require.True(s.T(), cfg.Rules[rules.SignalFloor].Enabled)
+	require.Equal(s.T(), 6500.0, cfg.Rules[rules.SignalFloor].Threshold)
+	require.False(s.T(), cfg.Rules[rules.NoImportCycles].Enabled)
+	require.True(s.T(), cfg.Rules[rules.ParseFail].Enabled)
+	require.Equal(s.T(), rules.ParseFailMaxDefault, cfg.Rules[rules.ParseFail].Threshold)
+}
+
+// TestBuildRulesConfigZeroThresholdKeepsDefault: a project override that
+// leaves Threshold at zero must NOT clobber the default value — zero is the
+// "unset" sentinel, identical to omitting the field in JSON.
+func (s *ServeSuite) TestBuildRulesConfigZeroThresholdKeepsDefault() {
+	cfg := buildRulesConfig(map[string]config.QualityRuleConfig{
+		rules.SignalFloor: {Enabled: true},
+	})
+	require.NotNil(s.T(), cfg)
+	require.Equal(s.T(), rules.SignalFloorDefault, cfg.Rules[rules.SignalFloor].Threshold)
+}
+
+// TestBuildRulesConfigUnknownRuleSkipped: an override for a rule the engine
+// doesn't ship is silently dropped — typos shouldn't synthesize new rules.
+func (s *ServeSuite) TestBuildRulesConfigUnknownRuleSkipped() {
+	cfg := buildRulesConfig(map[string]config.QualityRuleConfig{
+		"made_up_rule": {Enabled: true, Threshold: 99},
+	})
+	require.NotNil(s.T(), cfg)
+	_, exists := cfg.Rules["made_up_rule"]
+	require.False(s.T(), exists)
+}
 
 func (s *ServeSuite) TestWireGatePolicyHappyPathPlumbsPolicyDirIntoRunner() {
 	cfg := gateCfg(true)

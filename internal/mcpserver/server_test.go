@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/require"
@@ -105,6 +106,45 @@ func (s *MCPServerSuite) TestNew() {
 	require.NotNil(s.T(), s.srv.mcpServer)
 }
 
+// TestRunWithChannelTransport covers Server.Run's channelTransport != nil
+// branch: when WithAgentTools is set, Run threads the supplied transport
+// into channelTransport.inner, starts the push-receiver goroutine, and
+// cancels the receiver ctx on return so no goroutine leaks.
+func (s *MCPServerSuite) TestRunWithChannelTransport() {
+	srv := New("ch-1", "http://127.0.0.1:1", "author-1", http.DefaultClient, nil, WithAgentTools("agent-0"))
+	// Tiny backoffs so the receiver goroutine cycles quickly during the test.
+	srv.channelTransport.dialBackoff = 5 * time.Millisecond
+	srv.channelTransport.reconnectDelay = 5 * time.Millisecond
+
+	client := mcp.NewClient(&mcp.Implementation{Name: "test-client", Version: "1.0.0"}, nil)
+	t1, t2 := mcp.NewInMemoryTransports()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	runDone := make(chan error, 1)
+	go func() {
+		runDone <- srv.Run(ctx, t1)
+	}()
+
+	session, err := client.Connect(ctx, t2, nil)
+	require.NoError(s.T(), err)
+
+	// Verify the threaded transport actually serves MCP traffic.
+	res, err := session.ListTools(ctx, nil)
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), res.Tools)
+
+	require.NoError(s.T(), session.Close())
+	cancel()
+
+	select {
+	case <-runDone:
+	case <-time.After(2 * time.Second):
+		s.T().Fatal("Run did not return after ctx cancel + session close")
+	}
+}
+
 func (s *MCPServerSuite) TestMCPServer() {
 	require.Equal(s.T(), s.srv.mcpServer, s.srv.MCPServer())
 }
@@ -114,7 +154,7 @@ func (s *MCPServerSuite) TestMCPServer() {
 func (s *MCPServerSuite) TestListTools() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 15) // 12 base + 2 playground + 1 shortcut
+	require.Len(s.T(), res.Tools, 25) // 12 base + 2 playground + 1 shortcut + 10 quality
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -135,6 +175,16 @@ func (s *MCPServerSuite) TestListTools() {
 	require.True(s.T(), names["playground"])
 	require.True(s.T(), names["playground_file"])
 	require.True(s.T(), names["prompt_shortcut"])
+	require.True(s.T(), names["quality_scan"])
+	require.True(s.T(), names["quality_snapshot"])
+	require.True(s.T(), names["quality_cycles"])
+	require.True(s.T(), names["quality_metrics"])
+	require.True(s.T(), names["quality_diagnostics"])
+	require.True(s.T(), names["quality_rules"])
+	require.True(s.T(), names["quality_whatif"])
+	require.True(s.T(), names["quality_evolution"])
+	require.True(s.T(), names["quality_bugfactor"])
+	require.True(s.T(), names["quality_c4"])
 }
 
 // --- schedule_task ---
@@ -1166,7 +1216,7 @@ func (s *MCPMemorySuite) callTool(name string, args map[string]any) (string, boo
 func (s *MCPMemorySuite) TestListToolsIncludesMemory() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 17) // 12 base + 2 memory + 2 playground + 1 shortcut
+	require.Len(s.T(), res.Tools, 27) // 12 base + 2 memory + 2 playground + 1 shortcut + 10 quality
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -1362,7 +1412,7 @@ func (s *MCPMemoryChannelIDSuite) TestMemoryEnabledWithEmptyDirPath() {
 func (s *MCPMemoryChannelIDSuite) TestListToolsIncludesMemory() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 17)
+	require.Len(s.T(), res.Tools, 27)
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {

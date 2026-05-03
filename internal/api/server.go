@@ -18,6 +18,7 @@ import (
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/osutil"
+	"github.com/radutopala/loop/internal/quality/rules"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/worktree"
 )
@@ -110,6 +111,19 @@ type Server struct {
 	approvalResolver        bot.ApprovalResolver                                 // gate approval dispatcher
 	containerApprovalRouter ContainerApprovalRouter                              // per-container bearer-token → Manager lookup
 	auditDirResolver        AuditDirResolver                                     // per-channel host path to the gate audit jsonl dir
+
+	// Quality-scan wiring. All fields are nil by default — handlers
+	// return 501 until the daemon wires concrete implementations. Tests
+	// can opt-in via the Set*Quality* setters without spinning up a real
+	// engine.
+	qualityScanner    QualityScanner
+	qualityGraph      QualityGraphProvider
+	qualitySnapshots  QualitySnapshotReader
+	qualityRulesCfg   *rules.Config
+	qualityHistory    QualityHistoryReader
+	qualityMu         sync.Mutex
+	qualityCancellers map[string]context.CancelFunc
+	qualityProgress   map[string]time.Time // per-channel throttle for quality.scan_progress
 }
 
 // AuditDirResolver maps a channel ID to the host directory that backs the
@@ -330,6 +344,17 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/gate/container-approval", s.handleContainerApproval)
 	mux.HandleFunc("GET /api/workflows", s.handleListWorkflows)
 	mux.HandleFunc("POST /api/workflows", s.handleModifyWorkflow)
+	mux.HandleFunc("POST /api/channels/{id}/quality/scan", s.handleQualityScan)
+	mux.HandleFunc("DELETE /api/channels/{id}/quality/scan", s.handleQualityScanCancel)
+	mux.HandleFunc("GET /api/channels/{id}/quality/snapshot", s.handleQualitySnapshot)
+	mux.HandleFunc("GET /api/channels/{id}/quality/cycles", s.handleQualityCycles)
+	mux.HandleFunc("GET /api/channels/{id}/quality/metrics", s.handleQualityMetrics)
+	mux.HandleFunc("GET /api/channels/{id}/quality/diagnostics", s.handleQualityDiagnostics)
+	mux.HandleFunc("GET /api/channels/{id}/quality/rules", s.handleQualityRules)
+	mux.HandleFunc("POST /api/channels/{id}/quality/whatif", s.handleQualityWhatif)
+	mux.HandleFunc("GET /api/channels/{id}/quality/evolution", s.handleQualityEvolution)
+	mux.HandleFunc("GET /api/channels/{id}/quality/c4", s.handleQualityC4)
+	mux.HandleFunc("GET /api/channels/{id}/quality/bugfactor", s.handleQualityBugFactor)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
 	mux.HandleFunc("GET /api/ws/browser", s.handleBrowserWS)

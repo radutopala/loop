@@ -34,6 +34,9 @@ import (
 	"github.com/radutopala/loop/internal/orchestrator"
 	"github.com/radutopala/loop/internal/osutil"
 	"github.com/radutopala/loop/internal/playground"
+	_ "github.com/radutopala/loop/internal/quality"
+	"github.com/radutopala/loop/internal/quality/evolution"
+	"github.com/radutopala/loop/internal/quality/parser"
 	"github.com/radutopala/loop/internal/readme"
 	"github.com/radutopala/loop/internal/scheduler"
 	slackbot "github.com/radutopala/loop/internal/slack"
@@ -141,6 +144,16 @@ type app struct {
 	osExit         func(int)
 	dockerproxyRun func(stdout, stderr io.Writer) int
 	syscallwrapRun func(forwardArgs, selfArgv []string) int
+
+	// Quality-scan parser factory. Held as an injectable field so tests
+	// can exercise both the success and init-failure paths without
+	// invoking gotreesitter directly.
+	newQualityParser func() (parser.Parser, error)
+
+	// Evolution history-reader factory. Held as an injectable field so
+	// tests can substitute a fake reader without provisioning a real
+	// git repo.
+	newEvolutionReader func() evolution.HistoryReader
 }
 
 func newApp() *app {
@@ -210,6 +223,12 @@ func newApp() *app {
 		osExit:         os.Exit,
 		dockerproxyRun: dockerproxy.Run,
 		syscallwrapRun: runSyscallwrap,
+
+		// Quality-scan parser factory
+		newQualityParser: defaultNewQualityParser,
+
+		// Evolution history-reader factory
+		newEvolutionReader: func() evolution.HistoryReader { return evolution.NewExecReader() },
 	}
 	// Wire up functions that reference methods on a.
 	a.newDiscordBot = func(token, appID, guildID string, logger *slog.Logger) (orchestrator.Bot, error) {
@@ -266,6 +285,7 @@ func (a *app) newRootCmd() *cobra.Command {
 	root.AddCommand(a.newMCPHostBrowserCmd())
 	root.AddCommand(a.newSyscallwrapCmd())
 	root.AddCommand(a.newDockerproxyCmd())
+	root.AddCommand(a.newQualityCmd())
 	root.SetHelpTemplate(helpTemplate)
 	return root
 }

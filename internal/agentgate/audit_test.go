@@ -204,14 +204,21 @@ func (s *AuditSuite) TestFileAuditorConstructorMkdirError() {
 }
 
 func (s *AuditSuite) TestFileAuditorOpenError() {
-	// Make the directory read-only so OpenFile (O_CREATE) fails.
+	// Make the directory read-only so OpenFile (O_CREATE) fails. Read-only dirs
+	// don't enforce as root, so root falls through to the directory-collision
+	// path below: pre-creating today's audit path as a directory makes OpenFile
+	// fail with EISDIR regardless of UID.
 	ro := filepath.Join(s.dir, "ro")
 	require.NoError(s.T(), os.Mkdir(ro, 0o500))
 	s.T().Cleanup(func() { _ = os.Chmod(ro, 0o750) })
-	_, err := NewFileAuditor(ro, 0, true)
 	if os.Geteuid() == 0 {
-		s.T().Skip("cannot enforce read-only dir as root")
+		today := time.Now().UTC().Format("2006-01-02")
+		blocker := filepath.Join(ro, "agentgate-"+today+".jsonl")
+		require.NoError(s.T(), os.Chmod(ro, 0o750))
+		require.NoError(s.T(), os.Mkdir(blocker, 0o750))
+		require.NoError(s.T(), os.Chmod(ro, 0o500))
 	}
+	_, err := NewFileAuditor(ro, 0, true)
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "open audit file")
 }

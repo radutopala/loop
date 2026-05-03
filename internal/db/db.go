@@ -306,6 +306,11 @@ func (s *SQLiteStore) DeleteChannel(ctx context.Context, channelID string) error
 		if _, err := tx.ExecContext(ctx, `DELETE FROM messages WHERE channel_id = ?`, channelID); err != nil {
 			return fmt.Errorf("deleting messages for channel: %w", err)
 		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM quality_snapshots WHERE channel_id = ?`, channelID,
+		); err != nil {
+			return fmt.Errorf("deleting quality snapshots for channel: %w", err)
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE channel_id = ?`, channelID); err != nil {
 			return err
 		}
@@ -318,6 +323,11 @@ func (s *SQLiteStore) DeleteChannelsByParentID(ctx context.Context, parentID str
 		if _, err := tx.ExecContext(ctx,
 			`DELETE FROM messages WHERE channel_id IN (SELECT channel_id FROM channels WHERE parent_id = ?)`, parentID); err != nil {
 			return fmt.Errorf("deleting messages for child channels: %w", err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`DELETE FROM quality_snapshots WHERE channel_id IN (SELECT channel_id FROM channels WHERE parent_id = ?)`, parentID,
+		); err != nil {
+			return fmt.Errorf("deleting quality snapshots for child channels: %w", err)
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM channels WHERE parent_id = ?`, parentID); err != nil {
 			return err

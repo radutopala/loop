@@ -27,6 +27,7 @@ Comprehensive documentation for every feature of the Loop platform.
 - [**Events**](events.md) — Real-time WebSocket events, subscription model, event payloads, container lifecycle events
 - [**Terminal**](terminal.md) — Terminal WebSocket protocol, Docker exec, host PTY, ring buffer
 - [**Memory**](memory.md) — Semantic search, Ollama embeddings, chunking, re-indexing
+- [**Quality**](quality.md) — Architectural quality engine: 5 graph-level metrics aggregated into `quality_signal`, treemap, rules, live rescan
 
 ## Desktop App
 

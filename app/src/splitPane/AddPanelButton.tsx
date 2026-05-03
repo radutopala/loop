@@ -116,6 +116,12 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
       <rect x="5" y="3" width="14" height="18" rx="2" />
     </svg>
   ),
+  quality: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="9" />
+      <path d="M8 12l3 3 5-6" />
+    </svg>
+  ),
 };
 
 const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
@@ -136,6 +142,7 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   kanban: "Kanban board for tickets",
   workflows: "Workflow runs and status",
   audit: "Agent gate audit logs",
+  quality: "Architectural quality signal",
 };
 
 /** Centered picker for when layout is empty (no tree). */

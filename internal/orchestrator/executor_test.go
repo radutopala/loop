@@ -1315,11 +1315,14 @@ func (s *TaskExecutorSuite) TestStreamingOnToolUseBroadcasts() {
 	}
 
 	s.store.On("GetChannel", mock.Anything, "ch25").Return(nil, nil)
-	s.store.On("GetChannel", mock.Anything, "thread-25").Return(nil, nil).Maybe()
+	// Return a non-nil channel so resolveTargetChatID's lazy threadChatID
+	// resolution sets a non-zero chatID (covers the `threadChatID = ch.ID` branch).
+	s.store.On("GetChannel", mock.Anything, "thread-25").Return(&db.Channel{ID: 250, ChannelID: "thread-25"}, nil).Maybe()
 	s.store.On("GetScheduledTask", s.ctx, int64(25)).Return(&db.ScheduledTask{ID: 25, Type: db.TaskTypeCron}, nil)
 
 	s.bot.On("CreateSimpleThread", s.ctx, "ch25", mock.Anything, mock.Anything).Return("thread-25", nil).Once()
 	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(25), "thread-25").Return(nil)
+	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
 
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnToolUse == nil {
@@ -1621,6 +1624,108 @@ func (s *TaskExecutorSuite) TestStreamingOnThinkingAndToolResultBroadcasts() {
 	eb.AssertNumberOfCalls(s.T(), "BroadcastAgentThinking", 2)
 	eb.AssertNumberOfCalls(s.T(), "BroadcastToolResult", 2)
 	eb.AssertExpectations(s.T())
+}
+
+// TestStreamingResolvesThreadChatID covers resolveTargetChatID's lazy lookup:
+// once a thread is created and a tool callback fires for that thread, the
+// executor calls GetChannel(threadID) once and stamps the resulting chat_id
+// onto the inserted agent event.
+func (s *TaskExecutorSuite) TestStreamingResolvesThreadChatID() {
+	s.executor.streamingEnabled.Store(true)
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+	allowStatusBroadcasts(eb)
+
+	task := &db.ScheduledTask{
+		ID: 71, ChannelID: "ch71", Prompt: "resolve thread chat id",
+		Type: db.TaskTypeCron, Schedule: "0 * * * *",
+	}
+
+	parent := &db.Channel{ID: 100, ChannelID: "ch71", Platform: types.PlatformLocal}
+	threadCh := &db.Channel{ID: 999, ChannelID: "thread-71", ParentID: "ch71", Platform: types.PlatformLocal}
+	s.store.On("GetChannel", mock.Anything, "ch71").Return(parent, nil)
+	s.store.On("GetChannel", mock.Anything, "thread-71").Return(threadCh, nil).Once()
+	s.store.On("GetScheduledTask", s.ctx, int64(71)).Return(&db.ScheduledTask{ID: 71, Type: db.TaskTypeCron}, nil)
+
+	s.bot.On("CreateSimpleThread", s.ctx, "ch71", mock.Anything, mock.Anything).Return("thread-71", nil).Once()
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "thread-71"
+	})).Return(nil)
+	s.store.On("UpdateScheduledTaskThreadID", s.ctx, int64(71), "thread-71").Return(nil)
+
+	// The agent event must be inserted with chat_id=999 (the resolved thread chat id).
+	s.store.On("InsertAgentEvent", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
+		return m.ChatID == 999 && m.ChannelID == "thread-71" && m.Kind == db.MessageKindToolUse
+	})).Return(nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil || req.OnToolUse == nil {
+			return false
+		}
+		req.OnTurn("Turn 1")
+		req.OnToolUse("toolu_r", "Read", "/x")
+		// Second tool call exercises the cached path (threadChatIDResolved=true).
+		req.OnToolUse("toolu_s", "Read", "/y")
+		return true
+	})).Return(&agent.AgentResponse{Response: "Turn 1", SessionID: "s71"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-71", "s71").Return(nil)
+
+	eb.On("BroadcastChannelCreated", "ch71", "thread-71").Once()
+	eb.On("BroadcastMessageCreated", "thread-71", mock.Anything).Maybe()
+	eb.On("BroadcastToolUse", "thread-71", mock.Anything).Twice()
+
+	// The second tool call hits the cached branch but still inserts an agent event.
+	s.store.On("InsertAgentEvent", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
+		return m.ChatID == 999 && m.Kind == db.MessageKindToolUse
+	})).Return(nil).Maybe()
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	// GetChannel("thread-71") must be called exactly once (lazy + cached).
+	s.store.AssertNumberOfCalls(s.T(), "GetChannel", 2) // ch71 + thread-71
+}
+
+// TestStreamingOnceTaskUpsertsChannel covers the TaskTypeOnce branch in the
+// thread-creation path: one-shot tasks call UpsertChannel for the thread row
+// instead of LinkTaskThread (which is reserved for recurring tasks).
+func (s *TaskExecutorSuite) TestStreamingOnceTaskUpsertsChannel() {
+	s.executor.streamingEnabled.Store(true)
+	eb := new(MockEventBroadcaster)
+	s.executor.SetEventBroadcaster(eb)
+	allowStatusBroadcasts(eb)
+
+	task := &db.ScheduledTask{
+		ID: 72, ChannelID: "ch72", Prompt: "one-shot",
+		Type: db.TaskTypeOnce, Schedule: "10s",
+	}
+
+	parent := &db.Channel{ID: 200, ChannelID: "ch72", Platform: types.PlatformLocal, DirPath: "/work"}
+	s.store.On("GetChannel", mock.Anything, "ch72").Return(parent, nil)
+	s.store.On("GetChannel", mock.Anything, "thread-72").Return(nil, nil).Maybe()
+
+	s.bot.On("CreateSimpleThread", s.ctx, "ch72", mock.Anything, mock.Anything).Return("thread-72", nil).Once()
+	// One-shot tasks must NOT call LinkTaskThread — they call UpsertChannel.
+	s.store.On("UpsertChannel", s.ctx, mock.MatchedBy(func(ch *db.Channel) bool {
+		return ch.ChannelID == "thread-72" && ch.ParentID == "ch72"
+	})).Return(nil).Once()
+
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnTurn == nil {
+			return false
+		}
+		req.OnTurn("Done")
+		return true
+	})).Return(&agent.AgentResponse{Response: "Done", SessionID: "s72"}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "thread-72", "s72").Return(nil)
+
+	eb.On("BroadcastChannelCreated", "ch72", "thread-72").Once()
+	eb.On("BroadcastMessageCreated", "thread-72", mock.Anything).Maybe()
+
+	_, err := s.executor.ExecuteTask(s.ctx, task)
+	require.NoError(s.T(), err)
+	s.store.AssertCalled(s.T(), "UpsertChannel", s.ctx, mock.Anything)
+	s.store.AssertNotCalled(s.T(), "LinkTaskThread", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+	s.store.AssertNotCalled(s.T(), "UpdateScheduledTaskThreadID", mock.Anything, mock.Anything, mock.Anything)
 }
 
 func (s *TaskExecutorSuite) TestStreamingInvitesPermissionUsersToThread() {

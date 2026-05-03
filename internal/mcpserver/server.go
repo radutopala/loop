@@ -179,6 +179,56 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 		Description: "Manage files within a playground. Actions: create/update (write a file), read (get content), delete (remove a file), list (show all files). Use for script.js, style.css, importmap.json, lib/utils.js, assets, etc. Files are served at relative URLs — use import './lib/utils.js' between JS modules.",
 	}, s.handlePlaygroundFile)
 
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "quality_scan",
+		Description: "Trigger a quality scan of the current channel's working directory. Returns immediately; the scan runs asynchronously and fires a 'quality.scanned' event with the full result (signal value, metric breakdown, rule pass/fail). Use quality_snapshot to read the most recent persisted result.",
+	}, s.handleQualityScan)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "quality_snapshot",
+		Description: "Read the persisted quality snapshot for the current channel: the signal value (0-10000 band), per-metric scores, and the scanned-at timestamp. Returns 'no snapshot yet' when the channel has never been scanned — call quality_scan first.",
+	}, s.handleQualitySnapshot)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "quality_cycles",
+		Description: "List import cycles in the current channel's codebase — strongly connected components of size > 1 in the import graph. Each cycle is the set of files that mutually depend on each other. Requires a prior quality_scan.",
+	}, s.handleQualityCycles)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "quality_metrics",
+		Description: "Read the per-metric breakdown from the latest quality snapshot — modularity, cycles, depth, equality, redundancy. Each entry has score (0..1, higher is better) and raw value. Returns 'no snapshot yet' when no scan has run.",
+	}, s.handleQualityMetrics)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "quality_diagnostics",
+		Description: "List the files contributing most to the quality signal's deficit — sorted descending by per-file deficit, with the worst-offending metric named per file. Optional 'limit' caps the list size (default = all). Requires a prior quality_scan.",
+	}, s.handleQualityDiagnostics)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "quality_rules",
+		Description: "Run the quality rules engine against the cached graph for the current channel and return the pass/fail outcome of each built-in rule with file/line citations on failures. Built-in rules: no_import_cycles, signal_floor, parse_fail. Requires a prior quality_scan.",
+	}, s.handleQualityRules)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "quality_whatif",
+		Description: "Simulate one or more refactor mutations against the cached graph and return the predicted quality_signal delta. Each mutation has op = 'delete' (drop a file), 'move' (re-assign a file to new_module), or 'split' (slice a file into N parts). Use to A/B candidate refactors before touching the codebase.",
+	}, s.handleQualityWhatif)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "quality_evolution",
+		Description: "Mine git history for the current channel's working directory and return coupling pairs (files that change together), churn hotspots (most-changed files), and bus-factor risks (single-author files). Default scope: last 12 months, capped at 1000 commits. Requires the workdir to be a git repo.",
+	}, s.handleQualityEvolution)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "quality_bugfactor",
+		Description: "Surface bus-factor risks only — files whose change history is concentrated on a single author above the configured threshold. Useful for ownership reviews and offboarding planning. Requires the workdir to be a git repo.",
+	}, s.handleQualityBugFactor)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "quality_c4",
+		Description: "Emit a C4 component-level diagram (Mermaid syntax) for the cached graph — clusters by top-level package, draws cross-package import edges. Returns a fenced Mermaid block ready to render in chat or paste into a markdown doc. Requires a prior quality_scan.",
+	}, s.handleQualityC4)
+
 	if s.workflowsEnabled {
 		s.registerWorkflowTools()
 	}
@@ -191,12 +241,18 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	return s
 }
 
-// Run starts the MCP server on the given transport.
+// Run starts the MCP server on the given transport. The push-receiver
+// goroutine (when channel tools are enabled) is bound to a derived ctx
+// that is cancelled on return so tests and graceful shutdowns don't leak
+// DNS-hung websocket dial loops.
 func (s *Server) Run(ctx context.Context, transport mcp.Transport) error {
 	// Use the channel transport when agent tools are enabled,
 	// so channel notifications share the stdout mutex with MCP responses.
 	if s.channelTransport != nil {
-		startPushReceiver(s.apiURL, s.channelID, s.agentID, s.channelTransport, s.logger)
+		s.channelTransport.inner = transport
+		pushCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		startPushReceiver(pushCtx, s.apiURL, s.channelID, s.agentID, s.channelTransport, s.logger)
 		transport = s.channelTransport
 	}
 	return s.mcpServer.Run(ctx, transport)

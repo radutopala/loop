@@ -53,7 +53,13 @@ func newDockerExecClientWith(apiFactory func() (dockerExecAPI, error)) (*DockerE
 // On Windows, os.Getuid/os.Getgid return -1; Docker Desktop maps file
 // permissions transparently, so fall back to the container's root user.
 func defaultExecUser() string {
-	uid, gid := os.Getuid(), os.Getgid()
+	return formatExecUser(os.Getuid(), os.Getgid())
+}
+
+// formatExecUser is the pure helper behind defaultExecUser, split out so the
+// Windows uid/gid==-1 fallback can be exercised on POSIX hosts where
+// os.Getuid/os.Getgid never return negative values.
+func formatExecUser(uid, gid int) string {
 	if uid < 0 || gid < 0 {
 		return "0:0"
 	}

@@ -169,6 +169,45 @@ func buildSchema() *ConfigSchema {
 				},
 			},
 
+			// ── Quality section (nested object) ──
+			"quality": {
+				Type:     "object",
+				XSection: "Quality",
+				Properties: map[string]*SchemaProperty{
+					"max_files": {
+						Type:         "integer",
+						Title:        "Max Files",
+						Description:  "Refuse to scan when scannable file count exceeds this (0 = engine default of 25000)",
+						XPlaceholder: "25000",
+					},
+					"exclude_paths": {
+						Type:        "array",
+						Title:       "Exclude Paths",
+						Description: "Additional path patterns to skip during scan (applied after built-in defaults and .gitignore)",
+						Items:       &SchemaProperty{Type: "string"},
+					},
+					"rules": {
+						Type:        "object",
+						Title:       "Rules",
+						Description: "Per-rule overrides (built-in: no_import_cycles, signal_floor, parse_fail)",
+						AdditionalProperties: &SchemaProperty{
+							Type: "object",
+							Properties: map[string]*SchemaProperty{
+								"enabled": {
+									Type:  "boolean",
+									Title: "Enabled",
+								},
+								"threshold": {
+									Type:        "number",
+									Title:       "Threshold",
+									Description: "Numeric threshold (e.g. signal_floor=5000, parse_fail=0.01)",
+								},
+							},
+						},
+					},
+				},
+			},
+
 			// ── Memory section (nested object) ──
 			"memory": {
 				Type:     "object",

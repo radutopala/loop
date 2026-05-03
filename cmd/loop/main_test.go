@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -18,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/DATA-DOG/go-sqlmock"
 	"github.com/bwmarrin/discordgo"
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/stretchr/testify/mock"
@@ -33,11 +35,13 @@ import (
 	"github.com/radutopala/loop/internal/daemon"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/embeddings"
+	"github.com/radutopala/loop/internal/fsmigrate"
 	"github.com/radutopala/loop/internal/local"
 	"github.com/radutopala/loop/internal/mcpbrowser"
 	"github.com/radutopala/loop/internal/mcpserver"
 	"github.com/radutopala/loop/internal/memory"
 	"github.com/radutopala/loop/internal/orchestrator"
+	"github.com/radutopala/loop/internal/quality/parser"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/terminal"
 	"github.com/radutopala/loop/internal/testutil"
@@ -439,6 +443,7 @@ func (s *MainSuite) setupServeMocks() *serveMocks {
 		cfg:          testConfig(),
 	}
 	m.store.On("Close").Return(nil)
+	m.store.On("WriterDB").Return((*sql.DB)(nil)).Maybe()
 	m.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 	m.dockerClient.On("LatestClaudeVersion").Return("1.0.0").Maybe()
 	m.dockerClient.On("ListContainerInfos", mock.Anything).Return([]*container.ContainerInfo{}, nil).Maybe()
@@ -637,7 +642,7 @@ func (s *MainSuite) TestRunMCPWithInMemoryTransport() {
 
 	res, err := session.ListTools(context.Background(), nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 15) // 12 base + 2 playground + 1 shortcut
+	require.Len(s.T(), res.Tools, 25) // 12 base + 2 playground + 1 shortcut + 10 quality
 }
 
 func (s *MainSuite) TestEnsureChannelSuccess() {
@@ -1649,6 +1654,7 @@ func (s *MainSuite) TestServeEarlyErrors() {
 	for _, tt := range tests {
 		s.Run(tt.name, func() {
 			store := new(testutil.MockStore)
+			store.On("WriterDB").Return((*sql.DB)(nil)).Maybe()
 			tt.setup(store)
 			err := s.app.serve()
 			require.Error(s.T(), err)
@@ -1656,6 +1662,36 @@ func (s *MainSuite) TestServeEarlyErrors() {
 			store.AssertExpectations(s.T())
 		})
 	}
+}
+
+// writerDBStore wraps a *testutil.MockStore and exposes a WriterDB() method so
+// the optional fs-migration interface assertion in serve() succeeds.
+type writerDBStore struct {
+	*testutil.MockStore
+	writer *sql.DB
+}
+
+func (w *writerDBStore) WriterDB() *sql.DB { return w.writer }
+
+func (s *MainSuite) TestServeFSMigrationError() {
+	store := new(testutil.MockStore)
+	store.On("Close").Return(nil)
+	sqlMock, _, err := sqlmock.New()
+	require.NoError(s.T(), err)
+	s.T().Cleanup(func() { _ = sqlMock.Close() })
+	wrapped := &writerDBStore{MockStore: store, writer: sqlMock}
+
+	s.app.configLoad = func() (*config.Config, error) { return testConfig(), nil }
+	s.app.newSQLiteStore = func(_ string) (db.Store, error) { return wrapped, nil }
+	s.app.fsMigrateRun = func(_ context.Context, _ *sql.DB, _ *fsmigrate.Ctx) error {
+		return errors.New("migration boom")
+	}
+
+	err = s.app.serve()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "running fs migrations")
+	require.Contains(s.T(), err.Error(), "migration boom")
+	store.AssertExpectations(s.T())
 }
 
 func (s *MainSuite) TestServeSlackHappyPathShutdown() {
@@ -2017,6 +2053,125 @@ func (s *MainSuite) TestServeGateEnabledBotWithoutSettersIsIgnored() {
 	case err := <-errCh:
 		require.NoError(s.T(), err)
 	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+}
+
+// useRealStore swaps newSQLiteStore for a real in-memory db.SQLiteStore so
+// the WriterDB() type-assertion returns a non-nil *sql.DB. This is needed
+// to cover serve()'s fs-migration block and the quality engine wiring,
+// both of which are gated on a real writer DB.
+//
+// Sets cfg.LoopDir to a per-test temp dir if the caller hasn't already —
+// fsmigrate writes container/ files under LoopDir, and an empty LoopDir
+// would land them in the current working directory.
+func (s *MainSuite) useRealStore(m *serveMocks) *db.SQLiteStore {
+	store, err := db.NewSQLiteStore(":memory:")
+	require.NoError(s.T(), err)
+	s.app.newSQLiteStore = func(_ string) (db.Store, error) { return store, nil }
+	if m.cfg.LoopDir == "" {
+		m.cfg.LoopDir = s.T().TempDir()
+	}
+	// Replace the MockStore in m so AssertExpectations doesn't trigger.
+	m.store = nil
+	return store
+}
+
+// TestServeWithRealStoreCoversFsMigrateAndQualityWiring exercises the two
+// blocks gated on `WriterDB() != nil`: fs migration and the quality
+// engine assembly. A real in-memory SQLiteStore satisfies both branches.
+func (s *MainSuite) TestServeWithRealStoreCoversFsMigrateAndQualityWiring() {
+	m := s.setupServeMocks()
+	m.setupHappyBot()
+	store := s.useRealStore(m)
+	defer store.Close()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.app.serve() }()
+
+	time.Sleep(150 * time.Millisecond)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(10 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+}
+
+// TestServeWithQualityRulesOverrideCoversSetRulesConfig exercises the
+// `if rcfg := buildRulesConfig(...); rcfg != nil` branch in the quality
+// wiring — only fires when the project supplied at least one rule override.
+func (s *MainSuite) TestServeWithQualityRulesOverrideCoversSetRulesConfig() {
+	m := s.setupServeMocks()
+	m.setupHappyBot()
+	m.cfg.Quality.Rules = map[string]config.QualityRuleConfig{
+		"signal_floor": {Enabled: true, Threshold: 6500},
+	}
+	store := s.useRealStore(m)
+	defer store.Close()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.app.serve() }()
+
+	time.Sleep(150 * time.Millisecond)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(10 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+}
+
+// TestServeFsMigrateError covers the early-return when fs migrations fail.
+// A real store makes WriterDB() non-nil so the block is entered; the
+// injected fsMigrateRun error then trips the wrapped-error return.
+func (s *MainSuite) TestServeFsMigrateError() {
+	m := s.setupServeMocks()
+	store := s.useRealStore(m)
+	defer store.Close()
+	s.app.fsMigrateRun = func(_ context.Context, _ *sql.DB, _ *fsmigrate.Ctx) error {
+		return errors.New("fs migrate boom")
+	}
+
+	err := s.app.serve()
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "running fs migrations")
+	require.Contains(s.T(), err.Error(), "fs migrate boom")
+}
+
+// TestServeQualityParserInitErrorIsLogged covers the "parser init failed"
+// warning branch in the quality wiring. serve() must continue past the
+// error (panel just stays empty) so we still need a happy-bot setup +
+// SIGINT shutdown to round-trip.
+func (s *MainSuite) TestServeQualityParserInitErrorIsLogged() {
+	m := s.setupServeMocks()
+	m.setupHappyBot()
+	store := s.useRealStore(m)
+	defer store.Close()
+	s.app.newQualityParser = func() (parser.Parser, error) {
+		return nil, errors.New("grammar load failed")
+	}
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.app.serve() }()
+
+	time.Sleep(150 * time.Millisecond)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(10 * time.Second):
 		s.T().Fatal("serve() did not return in time")
 	}
 }

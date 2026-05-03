@@ -168,6 +168,29 @@ type MemoryConfig struct {
 	Embeddings         EmbeddingsConfig
 }
 
+// QualityConfig groups all architectural-quality settings. Scans are
+// triggered manually (via the panel's "Scan now" button or `loop quality
+// scan`) or by the agent (via the `quality_scan` MCP tool); there is no
+// live-rescan loop.
+//
+// MaxFiles, ExcludePaths and Rules drive the engine + rules layers; they
+// are read once at daemon startup and passed to engine.New /
+// apiSrv.SetQualityRulesConfig. Reload requires a daemon restart (matches
+// how memory paths and other engine-time knobs behave today).
+type QualityConfig struct {
+	MaxFiles     int
+	ExcludePaths []string
+	Rules        map[string]QualityRuleConfig
+}
+
+// QualityRuleConfig is the project-config override for one built-in rule.
+// Threshold zero means "use the rule's default"; the rules engine treats
+// it as unset (see rules.ruleThreshold).
+type QualityRuleConfig struct {
+	Enabled   bool
+	Threshold float64
+}
+
 // GatesConfig groups all approval-based enforcement layers: the kernel
 // syscall gate ("agentgate") and the Docker HTTP proxy gate. They share a
 // single per-container Manager, bearer token, and approval endpoint — so
@@ -234,6 +257,7 @@ type Config struct {
 	WorkflowBashLocal    bool
 	Browser              BrowserConfig
 	Memory               MemoryConfig
+	Quality              QualityConfig
 	Permissions          types.Permissions
 	ExtraDirs            []string
 	Desktop              DesktopConfig
@@ -306,6 +330,7 @@ type jsonConfig struct {
 	WorkflowBashLocal     *bool                  `json:"workflow_bash_local"`
 	Browser               *jsonBrowserConfig     `json:"browser"`
 	Memory                *jsonMemoryConfig      `json:"memory"`
+	Quality               *jsonQualityConfig     `json:"quality"`
 	Permissions           *jsonPermissionsConfig `json:"permissions"`
 	Desktop               *DesktopConfig         `json:"desktop"`
 	Gates                 *jsonGatesConfig       `json:"gates"`
@@ -318,6 +343,21 @@ type jsonMemoryConfig struct {
 	MaxChunkChars      int               `json:"max_chunk_chars"`
 	ReindexIntervalSec int               `json:"reindex_interval_sec"`
 	Embeddings         *EmbeddingsConfig `json:"embeddings"`
+}
+
+// jsonQualityConfig is the JSON representation of the quality block.
+type jsonQualityConfig struct {
+	MaxFiles     *int                             `json:"max_files"`
+	ExcludePaths []string                         `json:"exclude_paths"`
+	Rules        map[string]jsonQualityRuleConfig `json:"rules"`
+}
+
+// jsonQualityRuleConfig is the JSON representation of one rule's overrides.
+// Enabled is a pointer so an absent field falls back to "rule enabled" while
+// `"enabled": false` flips the rule off explicitly.
+type jsonQualityRuleConfig struct {
+	Enabled   *bool   `json:"enabled"`
+	Threshold float64 `json:"threshold"`
 }
 
 // jsonBrowserConfig is the JSON representation of the browser block.
@@ -570,6 +610,22 @@ func (l *Loader) parse() (*Config, error) {
 		cfg.Memory.Paths = []string{"./memory"}
 	}
 
+	// Quality config: MaxFiles / ExcludePaths feed engine.Config;
+	// Rules feeds rules.Config (per-rule enable + threshold overrides).
+	if jc.Quality != nil {
+		cfg.Quality.MaxFiles = ptrDefault(jc.Quality.MaxFiles, 0)
+		cfg.Quality.ExcludePaths = jc.Quality.ExcludePaths
+		if len(jc.Quality.Rules) > 0 {
+			cfg.Quality.Rules = make(map[string]QualityRuleConfig, len(jc.Quality.Rules))
+			for name, jrc := range jc.Quality.Rules {
+				cfg.Quality.Rules[name] = QualityRuleConfig{
+					Enabled:   ptrDefault(jrc.Enabled, true),
+					Threshold: jrc.Threshold,
+				}
+			}
+		}
+	}
+
 	if jc.Permissions != nil {
 		if jc.Permissions.Owners != nil {
 			cfg.Permissions.Owners.Users = jc.Permissions.Owners.Users
@@ -687,6 +743,7 @@ type projectConfig struct {
 	WorkflowConcurrency  *WorkflowConcurrency   `json:"workflow_concurrency"`
 	PromptShortcuts      []PromptShortcut       `json:"prompt_shortcuts"`
 	Memory               *jsonMemoryConfig      `json:"memory"`
+	Quality              *jsonQualityConfig     `json:"quality"`
 	Permissions          *jsonPermissionsConfig `json:"permissions"`
 	ExtraDirs            []string               `json:"extra_dirs"`
 	Gates                *jsonGatesConfig       `json:"gates"`
@@ -841,6 +898,35 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 		}
 		if pc.Browser.HostCDPPort != nil {
 			merged.Browser.HostCDPPort = *pc.Browser.HostCDPPort
+		}
+	}
+
+	// Quality config: project overrides global per-key. Rules merge by
+	// name — project entries replace global entries with the same name;
+	// global entries that aren't mentioned in the project block survive.
+	if pc.Quality != nil {
+		if pc.Quality.MaxFiles != nil {
+			merged.Quality.MaxFiles = *pc.Quality.MaxFiles
+		}
+		if pc.Quality.ExcludePaths != nil {
+			merged.Quality.ExcludePaths = pc.Quality.ExcludePaths
+		}
+		if len(pc.Quality.Rules) > 0 {
+			cloned := make(map[string]QualityRuleConfig, len(merged.Quality.Rules)+len(pc.Quality.Rules))
+			maps.Copy(cloned, merged.Quality.Rules)
+			for name, jrc := range pc.Quality.Rules {
+				rc, existed := cloned[name]
+				if jrc.Enabled != nil {
+					rc.Enabled = *jrc.Enabled
+				} else if !existed {
+					rc.Enabled = true
+				}
+				if jrc.Threshold > 0 {
+					rc.Threshold = jrc.Threshold
+				}
+				cloned[name] = rc
+			}
+			merged.Quality.Rules = cloned
 		}
 	}
 

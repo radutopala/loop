@@ -54,6 +54,23 @@
   //  "members": { "users": [], "roles": [] }
   //},
 
+  // Architectural-quality engine. Scans are manual (panel "Scan now",
+  // `loop quality scan`, or the `quality_scan` MCP tool) — there is no
+  // background loop.
+  //"quality": {
+  //  // Refuse to scan when the post-exclusion file count exceeds this. 0 = engine default (25000).
+  //  //"max_files": 25000,
+  //  // Additional path patterns skipped during scan (applied after built-in defaults and .gitignore).
+  //  //"exclude_paths": ["./generated/**", "./vendor/**"],
+  //  // Per-rule overrides. Built-in rules: no_import_cycles, signal_floor, parse_fail.
+  //  // Missing entries keep the default; threshold 0 keeps the default.
+  //  //"rules": {
+  //  //  "signal_floor":     { "enabled": true, "threshold": 6000 },
+  //  //  "parse_fail":       { "enabled": true, "threshold": 0.005 },
+  //  //  "no_import_cycles": { "enabled": false }
+  //  //}
+  //},
+
   // Semantic memory search configuration.
   // Must be explicitly enabled. Paths are resolved per project work dir.
   "memory": {

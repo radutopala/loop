@@ -46,7 +46,7 @@ type FileHandler struct {
 }
 
 // NewFileHandler wires the policy, approval source, and decision cache
-// together. cacheSize <= 0 is clamped to 1024 (the default in the plan).
+// together. cacheSize <= 0 is clamped to 1024 (the default).
 // Auditor defaults to NopAuditor; the server factory swaps in a real sink.
 func NewFileHandler(policy *Policy, approver Approver, cacheSize int) *FileHandler {
 	return &FileHandler{
