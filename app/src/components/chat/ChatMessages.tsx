@@ -272,7 +272,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
             <AgentActivityIndicator activity={agentActivity} />
           )}
           {gateApproval && (
-            <ApprovalCard data={gateApproval} onResolved={() => { chatState.clearGateApproval(); scrollToBottom(); }} />
+            <ApprovalCard data={gateApproval} channelId={channelId} onResolved={() => { chatState.clearGateApproval(); scrollToBottom(); }} />
           )}
           {askUserQuestions && !isRunning && channelId && (
             <AskUserQuestionCard questions={askUserQuestions.questions} channelId={channelId} mode={chatState.mode} onSent={() => { chatState.clearAskUser(); scrollToBottom(); }} />
