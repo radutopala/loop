@@ -105,12 +105,11 @@ export interface QualityEvolutionResponse {
   bus_factor: QualityBusFactorRisk[];
 }
 
-export type QualityWhatifOp = "delete" | "move" | "split";
+export type QualityWhatifOp = "delete" | "split";
 
 export interface QualityMutation {
   op: QualityWhatifOp;
   path: string;
-  new_module?: string;
   parts?: number;
 }
 

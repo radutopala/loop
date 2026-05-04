@@ -70,27 +70,6 @@ func (s *WhatifSuite) TestSimulateDeleteUnknownPathReturnsError() {
 	require.Contains(s.T(), err.Error(), "delete")
 }
 
-func (s *WhatifSuite) TestSimulateMoveChangesNodeModule() {
-	g := s.buildGraph()
-	r, err := Simulate(g, []Mutation{{Op: OpMove, Path: "internal/api/util.go", NewModule: "shared"}})
-	require.NoError(s.T(), err)
-	require.Equal(s.T(), r.PredictedSignal-r.BaselineSignal, r.DeltaSignal)
-}
-
-func (s *WhatifSuite) TestSimulateMoveRequiresNewModule() {
-	g := s.buildGraph()
-	_, err := Simulate(g, []Mutation{{Op: OpMove, Path: "internal/api/util.go"}})
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "new_module is required")
-}
-
-func (s *WhatifSuite) TestSimulateMoveUnknownPathReturnsError() {
-	g := s.buildGraph()
-	_, err := Simulate(g, []Mutation{{Op: OpMove, Path: "does/not/exist.go", NewModule: "shared"}})
-	require.Error(s.T(), err)
-	require.Contains(s.T(), err.Error(), "path not in graph")
-}
-
 func (s *WhatifSuite) TestSimulateSplitProducesPartFilesAndDistributesEdges() {
 	g := s.buildGraph()
 	r, err := Simulate(g, []Mutation{{Op: OpSplit, Path: "internal/api/handler.go", Parts: 3}})
@@ -130,7 +109,7 @@ func (s *WhatifSuite) TestSimulateChainAppliesMutationsInOrder() {
 	g := s.buildGraph()
 	r, err := Simulate(g, []Mutation{
 		{Op: OpDelete, Path: "internal/dead/orphan.go"},
-		{Op: OpMove, Path: "internal/api/util.go", NewModule: "shared"},
+		{Op: OpSplit, Path: "internal/api/handler.go", Parts: 2},
 	})
 	require.NoError(s.T(), err)
 	require.Len(s.T(), r.Mutations, 2)

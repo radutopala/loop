@@ -32,12 +32,6 @@ const (
 	// this dead file?".
 	OpDelete Op = "delete"
 
-	// OpMove relocates a file's module clustering — useful for "what
-	// happens to modularity if I move this file from internal/api to
-	// internal/handlers?". Edges and the file itself are preserved;
-	// only the Node.Module field changes.
-	OpMove Op = "move"
-
 	// OpSplit replaces one file with N synthetic part-files,
 	// distributing the original outgoing edges round-robin and
 	// duplicating incoming edges to every part. Used to predict
@@ -53,9 +47,6 @@ type Mutation struct {
 
 	// Path is the existing file path to mutate. Required for every Op.
 	Path string `json:"path"`
-
-	// NewModule is the destination module for OpMove. Empty for other Ops.
-	NewModule string `json:"new_module,omitempty"`
 
 	// Parts is the number of synthetic files OpSplit produces. Must be
 	// in [2, MaxSplitParts] for OpSplit; ignored by other Ops.
@@ -147,8 +138,6 @@ func (s *shadow) apply(m Mutation) error {
 	switch m.Op {
 	case OpDelete:
 		return s.applyDelete(m.Path)
-	case OpMove:
-		return s.applyMove(m.Path, m.NewModule)
 	case OpSplit:
 		return s.applySplit(m.Path, m.Parts)
 	default:
@@ -178,19 +167,6 @@ func (s *shadow) applyDelete(p string) error {
 	}
 	s.edges = keptEdges
 	return nil
-}
-
-func (s *shadow) applyMove(p, newModule string) error {
-	if newModule == "" {
-		return errors.New("move: new_module is required")
-	}
-	for _, n := range s.nodes {
-		if n.Path == p {
-			n.Module = newModule
-			return nil
-		}
-	}
-	return fmt.Errorf("path not in graph: %s", p)
 }
 
 func (s *shadow) applySplit(p string, parts int) error {

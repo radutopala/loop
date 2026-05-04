@@ -106,8 +106,7 @@ func (a *app) runQualityCycles(ctx context.Context, out, stderr io.Writer, p par
 
 // newQualityWhatifCmd takes a JSON mutation list (file via --file or stdin)
 // and prints the predicted signal delta. The mutation grammar matches
-// whatif.Mutation: {"op": "delete|move|split", "path": "...",
-// "new_module": "...", "parts": N}.
+// whatif.Mutation: {"op": "delete|split", "path": "...", "parts": N}.
 func (a *app) newQualityWhatifCmd() *cobra.Command {
 	var jsonOut bool
 	var maxFiles int
@@ -116,8 +115,8 @@ func (a *app) newQualityWhatifCmd() *cobra.Command {
 		Use:   "whatif [path]",
 		Short: "Simulate refactor mutations and print predicted signal delta",
 		Long: `Mutation list comes from --file (or stdin if --file is "-").
-Each mutation is one JSON object with keys: op (delete | move | split),
-path (file to mutate), new_module (move only), parts (split only).
+Each mutation is one JSON object with keys: op (delete | split),
+path (file to mutate), parts (split only).
 Pass an array for batched mutations.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(c *cobra.Command, args []string) error {
