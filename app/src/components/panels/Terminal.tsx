@@ -175,7 +175,7 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
         <div style={{ padding: "8px 0 8px 12px", width: "100%", height: "100%", boxSizing: "border-box" }}>
           <div ref={terminalRef} style={{ width: "100%", height: "100%" }} />
         </div>
-        {gateApproval && (
+        {gateApproval && channelId && (
           <div style={{
             position: "absolute",
             inset: 0,
@@ -187,7 +187,7 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
             zIndex: 10,
           }}>
             <div style={{ width: "100%", maxWidth: 520, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", borderRadius: 8 }}>
-              <ApprovalCard data={gateApproval} onResolved={onGateApprovalResolved} style={{ margin: 0 }} />
+              <ApprovalCard data={gateApproval} channelId={channelId} onResolved={onGateApprovalResolved} style={{ margin: 0 }} />
             </div>
           </div>
         )}

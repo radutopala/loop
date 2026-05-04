@@ -263,6 +263,7 @@ declare global {
       installUpdate?: () => Promise<void>;
       onUpdateStatus?: (callback: (status: UpdateStatus) => void) => void;
       notifyTurnEnd?: () => void;
+      notifyApprovalNeeded?: () => void;
     };
   }
 }

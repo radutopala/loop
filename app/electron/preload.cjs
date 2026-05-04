@@ -21,4 +21,5 @@ contextBridge.exposeInMainWorld("loopAPI", {
     ipcRenderer.on("update-status", (_event, status) => callback(status));
   },
   notifyTurnEnd: () => ipcRenderer.send("turn-ended"),
+  notifyApprovalNeeded: () => ipcRenderer.send("approval-needed"),
 });

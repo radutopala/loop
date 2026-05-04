@@ -245,6 +245,9 @@ export function useChatState(
             setTriggerContent(null);
             // Clear todos when the agent turn ends.
             setTodos(null);
+            // Drop any stale gate approval — the backend's pending entry is
+            // already gone, so a click would 404 with "no pending approval".
+            setGateApproval(null);
             // Refetch the head — JSONL ingest now has chain_position values for
             // the run's rows, so the persisted timeline supersedes the live tail.
             refetchHead();

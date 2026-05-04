@@ -218,6 +218,21 @@ export function useChatStateStore({
         }
       }
 
+      // Notify on a fresh approval request — the agent is blocked until the
+      // user clicks Allow/Deny, so bounce the dock continuously and fire a
+      // Web Notification when the relevant view isn't focused.
+      if (channelId && wsEvent.type === "gate.approval_requested") {
+        const approvalTarget = stateTarget || channelId;
+        if (document.hidden || approvalTarget !== selectedIdRef.current) {
+          const ch = channelsRef.current.find((c) => c.id === approvalTarget) ?? channelsRef.current.find((c) => c.id === channelId);
+          const name = ch?.name || channelId;
+          const reqData = wsEvent.data as GateApprovalRequestedData;
+          const body = reqData.target ? `Approval needed: ${reqData.target}` : "Approval needed";
+          new Notification(`Loop — ${name}`, { body });
+        }
+        window.loopAPI?.notifyApprovalNeeded?.();
+      }
+
       // Forward events to the chat listener (useChatState) when the
       // effective target matches the selected channel. Using stateTarget
       // (not channelId) ensures that agent.status events routed to a
@@ -417,6 +432,8 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
           state.triggerContent = null;
           // Clear todos when the agent turn ends.
           state.todos = null;
+          // Drop any stale gate approval so a remount doesn't rehydrate it.
+          state.gateApproval = null;
         }
         if (
           data.status === "completed" &&
