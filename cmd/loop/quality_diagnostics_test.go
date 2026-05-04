@@ -186,11 +186,12 @@ func (s *MainSuite) TestQualityWhatifScanError() {
 
 func (s *MainSuite) TestReadMutationsArrayFromFile() {
 	mutFile := filepath.Join(s.T().TempDir(), "mut.json")
-	require.NoError(s.T(), os.WriteFile(mutFile, []byte(`[{"op":"delete","path":"a.go"},{"op":"move","path":"b.go","new_module":"x"}]`), 0o600))
+	require.NoError(s.T(), os.WriteFile(mutFile, []byte(`[{"op":"delete","path":"a.go"},{"op":"split","path":"b.go","parts":2}]`), 0o600))
 	muts, err := s.app.readMutations(nil, mutFile)
 	require.NoError(s.T(), err)
 	require.Len(s.T(), muts, 2)
 	require.Equal(s.T(), whatif.OpDelete, muts[0].Op)
+	require.Equal(s.T(), whatif.OpSplit, muts[1].Op)
 }
 
 func (s *MainSuite) TestReadMutationsSingleObject() {

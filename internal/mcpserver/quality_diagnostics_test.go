@@ -256,7 +256,7 @@ func (s *MCPServerSuite) TestQualityWhatifNegativeDelta() {
 		}`), nil
 	}
 	text, isError := s.callTool("quality_whatif", map[string]any{
-		"mutations": []any{map[string]any{"op": "move", "path": "a.go", "new_module": "x"}},
+		"mutations": []any{map[string]any{"op": "split", "path": "a.go", "parts": 2}},
 	})
 	require.False(s.T(), isError)
 	require.Contains(s.T(), text, "7000 → 6800")

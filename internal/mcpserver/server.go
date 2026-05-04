@@ -211,7 +211,7 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "quality_whatif",
-		Description: "Simulate one or more refactor mutations against the cached graph and return the predicted quality_signal delta. Each mutation has op = 'delete' (drop a file), 'move' (re-assign a file to new_module), or 'split' (slice a file into N parts). Use to A/B candidate refactors before touching the codebase.",
+		Description: "Simulate one or more refactor mutations against the cached graph and return the predicted quality_signal delta. Each mutation has op = 'delete' (drop a file) or 'split' (slice a file into N parts). Use to A/B candidate refactors before touching the codebase.",
 	}, s.handleQualityWhatif)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{

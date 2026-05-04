@@ -178,10 +178,9 @@ func formatCitationNote(note string) string {
 }
 
 type qualityWhatifMutationInput struct {
-	Op        string `json:"op"`
-	Path      string `json:"path"`
-	NewModule string `json:"new_module,omitempty"`
-	Parts     int    `json:"parts,omitempty"`
+	Op    string `json:"op"`
+	Path  string `json:"path"`
+	Parts int    `json:"parts,omitempty"`
 }
 
 type qualityWhatifInput struct {
