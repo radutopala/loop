@@ -52,19 +52,28 @@ func (s *TilesSuite) TestCycleMembersFlaggedAsCyclesDrag() {
 }
 
 func (s *TilesSuite) TestModularityCrossClusterFraction() {
-	// Two modules: "internal" and "cmd". Cross edge from cmd→internal/x.
+	// Two tightly-coupled pairs with a single cross edge — Louvain
+	// reliably finds {a,b} and {c,d} as two communities, with the a→c
+	// link counting as cross-community drag for both endpoints.
 	g := graph.Build([]*parser.FileFacts{
-		{Path: "cmd/main.go", LOC: 1, Imports: []parser.Import{{Path: "internal/x"}}},
-		{Path: "internal/x.go", LOC: 1},
+		{Path: "a.go", LOC: 1, Imports: []parser.Import{{Path: "./b"}, {Path: "./c"}}},
+		{Path: "b.go", LOC: 1, Imports: []parser.Import{{Path: "./a"}}},
+		{Path: "c.go", LOC: 1, Imports: []parser.Import{{Path: "./d"}}},
+		{Path: "d.go", LOC: 1, Imports: []parser.Import{{Path: "./c"}}},
 	})
 	tiles := AttributeFiles(g, []Result{Modularity(g), Cycles(g), Depth(g), Equality(g), Redundancy(g)})
 	byPath := map[string]FileTile{}
 	for _, t := range tiles {
 		byPath[t.Path] = t
 	}
-	// Both files have one edge each, all crossing module boundaries.
-	require.Equal(s.T(), 1.0, byPath["cmd/main.go"].MetricDeficits[ModularityName])
-	require.Equal(s.T(), 1.0, byPath["internal/x.go"].MetricDeficits[ModularityName])
+	// Each directed edge counts toward both endpoints' totals (drag is
+	// computed on the symmetric edge tally). a participates in 3 edges
+	// (a→b, a→c, b→a) of which 1 crosses → drag 1/3. b participates in
+	// 2 edges (a→b, b→a), both intra → drag 0. c mirrors a; d mirrors b.
+	require.InDelta(s.T(), 1.0/3.0, byPath["a.go"].MetricDeficits[ModularityName], 1e-9)
+	require.InDelta(s.T(), 1.0/3.0, byPath["c.go"].MetricDeficits[ModularityName], 1e-9)
+	require.Equal(s.T(), 0.0, byPath["b.go"].MetricDeficits[ModularityName])
+	require.Equal(s.T(), 0.0, byPath["d.go"].MetricDeficits[ModularityName])
 }
 
 func (s *TilesSuite) TestModularityIntraClusterIsHealthy() {
