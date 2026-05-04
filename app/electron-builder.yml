@@ -15,6 +15,7 @@ mac:
   target:
     - dmg
     - zip
+  artifactName: "${productName}-${version}-${arch}-mac.${ext}"
   category: public.app-category.developer-tools
   icon: build/icon.icns
   darkModeSupport: true
