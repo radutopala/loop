@@ -21,6 +21,7 @@ const DefaultMaxFiles = 25_000
 // marks a pattern as directory-only and prunes the subtree.
 var DefaultExcludePatterns = []string{
 	".git/",
+	".worktrees/",
 	"node_modules/",
 	"dist/",
 	"build/",

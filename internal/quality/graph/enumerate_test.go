@@ -34,19 +34,20 @@ func (s *EnumerateSuite) writeTree(root string, files map[string]string) {
 func (s *EnumerateSuite) TestEnumerateHappyPathWithDefaults() {
 	root := s.T().TempDir()
 	s.writeTree(root, map[string]string{
-		"src/foo.go":         "package foo",
-		"src/bar.ts":         "export {};",
-		"README.md":          "readme",
-		"package.json":       "{}",
-		"node_modules/x.js":  "skip me",
-		"node_modules/sub/y": "skip me too",
-		"dist/bundle.min.js": "skip me",
-		"build/out.bin":      "skip",
-		"target/cache":       "skip",
-		"vendor/dep/dep.go":  "skip",
-		".git/HEAD":          "ref: refs/heads/main",
-		"foo.generated.go":   "// generated",
-		"docs/page.md":       "doc",
+		"src/foo.go":                    "package foo",
+		"src/bar.ts":                    "export {};",
+		"README.md":                     "readme",
+		"package.json":                  "{}",
+		"node_modules/x.js":             "skip me",
+		"node_modules/sub/y":            "skip me too",
+		"dist/bundle.min.js":            "skip me",
+		"build/out.bin":                 "skip",
+		"target/cache":                  "skip",
+		"vendor/dep/dep.go":             "skip",
+		".git/HEAD":                     "ref: refs/heads/main",
+		".worktrees/wt-a/internal/x.go": "skip",
+		"foo.generated.go":              "// generated",
+		"docs/page.md":                  "doc",
 	})
 
 	files, err := Enumerate(root, EnumerateOptions{})
