@@ -627,6 +627,12 @@ ipcMain.on("approval-needed", () => {
   }
 });
 
+ipcMain.on("set-theme", (_event, themeName: string) => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send("theme-changed", themeName);
+  }
+});
+
 ipcMain.handle("get-update-status", () => updateStatus);
 
 ipcMain.handle("download-update", async () => {

@@ -22,4 +22,8 @@ contextBridge.exposeInMainWorld("loopAPI", {
   },
   notifyTurnEnd: () => ipcRenderer.send("turn-ended"),
   notifyApprovalNeeded: () => ipcRenderer.send("approval-needed"),
+  setTheme: (name) => ipcRenderer.send("set-theme", name),
+  onThemeChanged: (callback) => {
+    ipcRenderer.on("theme-changed", (_event, name) => callback(name));
+  },
 });

@@ -264,6 +264,8 @@ declare global {
       onUpdateStatus?: (callback: (status: UpdateStatus) => void) => void;
       notifyTurnEnd?: () => void;
       notifyApprovalNeeded?: () => void;
+      setTheme?: (name: string) => void;
+      onThemeChanged?: (callback: (name: string) => void) => void;
     };
   }
 }
