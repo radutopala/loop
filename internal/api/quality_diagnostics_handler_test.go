@@ -248,6 +248,7 @@ func (s *ServerSuite) TestHandleQualityRulesNoCachedGraph() {
 }
 
 func (s *ServerSuite) TestHandleQualityRulesDefaultConfigRunsAgainstGraph() {
+	s.channelWithDir("ch-1", s.T().TempDir())
 	s.srv.SetQualityGraphProvider(&graphProviderHit{g: smallGraph()})
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/rules", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
@@ -256,6 +257,7 @@ func (s *ServerSuite) TestHandleQualityRulesDefaultConfigRunsAgainstGraph() {
 }
 
 func (s *ServerSuite) TestHandleQualityRulesUsesCustomConfig() {
+	s.channelWithDir("ch-1", s.T().TempDir())
 	s.srv.SetQualityGraphProvider(&graphProviderHit{g: smallGraph()})
 	// All disabled — every rule reports as "pass" with a "disabled" message.
 	cfg := rules.Config{Rules: map[string]rules.RuleConfig{
@@ -263,7 +265,7 @@ func (s *ServerSuite) TestHandleQualityRulesUsesCustomConfig() {
 		rules.NoImportCycles: {Enabled: false},
 		rules.ParseFail:      {Enabled: false},
 	}}
-	s.srv.SetQualityRulesConfig(&cfg)
+	s.srv.SetQualityRulesLoader(func(string, string) *rules.Config { return &cfg })
 	rec := s.testRequest("GET", "/api/channels/ch-1/quality/rules", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	var resp QualityRulesResponse
@@ -273,6 +275,7 @@ func (s *ServerSuite) TestHandleQualityRulesUsesCustomConfig() {
 }
 
 func (s *ServerSuite) TestHandleQualityRulesEmitsCitationsForFailedRules() {
+	s.channelWithDir("ch-1", s.T().TempDir())
 	// Build a graph with a cycle so no_import_cycles fires.
 	cyc := graph.Build([]*parser.FileFacts{
 		{Path: "a.go", Imports: []parser.Import{{Path: "./b"}}},

@@ -106,9 +106,9 @@ func (s *SnapshotSuite) TestSaveTilesMarshalErrorPropagates() {
 // --- Get ---
 
 func (s *SnapshotSuite) TestGetHit() {
-	rows := sqlmock.NewRows([]string{"channel_id", "branch_name", "scanned_at", "signal_value", "geo_mean", "metric_breakdown_json", "tile_data_json"}).
-		AddRow("ch1", "main", s.now, 8500, 0.85, `[{"Name":"modularity","Score":0.9}]`, `[{"path":"a/x.go","loc":10,"deficit":0.5,"metric_deficits":{"modularity":0.5},"top_reason":"modularity"}]`)
-	s.mock.ExpectQuery("SELECT channel_id, branch_name, scanned_at, signal_value, geo_mean, metric_breakdown_json, tile_data_json").
+	rows := sqlmock.NewRows([]string{"channel_id", "branch_name", "scanned_at", "signal_value", "previous_signal_value", "geo_mean", "metric_breakdown_json", "tile_data_json"}).
+		AddRow("ch1", "main", s.now, 8500, 8200, 0.85, `[{"Name":"modularity","Score":0.9}]`, `[{"path":"a/x.go","loc":10,"deficit":0.5,"metric_deficits":{"modularity":0.5},"top_reason":"modularity"}]`)
+	s.mock.ExpectQuery("SELECT channel_id, branch_name, scanned_at, signal_value, previous_signal_value, geo_mean, metric_breakdown_json, tile_data_json").
 		WithArgs("ch1", "main").
 		WillReturnRows(rows)
 
@@ -117,13 +117,14 @@ func (s *SnapshotSuite) TestGetHit() {
 	require.Equal(s.T(), "ch1", snap.ChannelID)
 	require.Equal(s.T(), "main", snap.Branch)
 	require.Equal(s.T(), 8500, snap.Value)
+	require.Equal(s.T(), 8200, snap.PreviousValue)
 	require.InDelta(s.T(), 0.85, snap.GeoMean, 1e-9)
 	require.JSONEq(s.T(), `[{"Name":"modularity","Score":0.9}]`, string(snap.MetricBreakdown))
 	require.Contains(s.T(), string(snap.TileData), `"a/x.go"`)
 }
 
 func (s *SnapshotSuite) TestGetMissReturnsErrNotFound() {
-	s.mock.ExpectQuery("SELECT channel_id, branch_name, scanned_at, signal_value, geo_mean, metric_breakdown_json, tile_data_json").
+	s.mock.ExpectQuery("SELECT channel_id, branch_name, scanned_at, signal_value, previous_signal_value, geo_mean, metric_breakdown_json, tile_data_json").
 		WithArgs("ch1", "feature/x").
 		WillReturnError(sql.ErrNoRows)
 
@@ -133,7 +134,7 @@ func (s *SnapshotSuite) TestGetMissReturnsErrNotFound() {
 }
 
 func (s *SnapshotSuite) TestGetUnexpectedErrorPropagates() {
-	s.mock.ExpectQuery("SELECT channel_id, branch_name, scanned_at, signal_value, geo_mean, metric_breakdown_json, tile_data_json").
+	s.mock.ExpectQuery("SELECT channel_id, branch_name, scanned_at, signal_value, previous_signal_value, geo_mean, metric_breakdown_json, tile_data_json").
 		WithArgs("ch1", "main").
 		WillReturnError(fmt.Errorf("boom"))
 
@@ -142,12 +143,26 @@ func (s *SnapshotSuite) TestGetUnexpectedErrorPropagates() {
 	require.Contains(s.T(), err.Error(), "scan quality snapshot row")
 }
 
+func (s *SnapshotSuite) TestGetFirstScanHasSentinelPreviousValue() {
+	// First scan: previous_signal_value sits at the column default (-1).
+	// Consumers use this to decide whether to render a delta chip.
+	rows := sqlmock.NewRows([]string{"channel_id", "branch_name", "scanned_at", "signal_value", "previous_signal_value", "geo_mean", "metric_breakdown_json", "tile_data_json"}).
+		AddRow("ch1", "main", s.now, 8500, NoPreviousValue, 0.85, `[]`, `[]`)
+	s.mock.ExpectQuery("SELECT channel_id, branch_name, scanned_at, signal_value, previous_signal_value, geo_mean, metric_breakdown_json, tile_data_json").
+		WithArgs("ch1", "main").
+		WillReturnRows(rows)
+
+	snap, err := s.store.Get(context.Background(), "ch1", "main")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), NoPreviousValue, snap.PreviousValue)
+}
+
 // --- GetLatest ---
 
 func (s *SnapshotSuite) TestGetLatest() {
-	rows := sqlmock.NewRows([]string{"channel_id", "branch_name", "scanned_at", "signal_value", "geo_mean", "metric_breakdown_json", "tile_data_json"}).
-		AddRow("ch1", "feature/x", s.now, 7200, 0.72, `[]`, `[]`)
-	s.mock.ExpectQuery("SELECT channel_id, branch_name, scanned_at, signal_value, geo_mean, metric_breakdown_json, tile_data_json").
+	rows := sqlmock.NewRows([]string{"channel_id", "branch_name", "scanned_at", "signal_value", "previous_signal_value", "geo_mean", "metric_breakdown_json", "tile_data_json"}).
+		AddRow("ch1", "feature/x", s.now, 7200, 7100, 0.72, `[]`, `[]`)
+	s.mock.ExpectQuery("SELECT channel_id, branch_name, scanned_at, signal_value, previous_signal_value, geo_mean, metric_breakdown_json, tile_data_json").
 		WithArgs("ch1").
 		WillReturnRows(rows)
 
@@ -155,10 +170,11 @@ func (s *SnapshotSuite) TestGetLatest() {
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "feature/x", snap.Branch)
 	require.Equal(s.T(), 7200, snap.Value)
+	require.Equal(s.T(), 7100, snap.PreviousValue)
 }
 
 func (s *SnapshotSuite) TestGetLatestMissReturnsErrNotFound() {
-	s.mock.ExpectQuery("SELECT channel_id, branch_name, scanned_at, signal_value, geo_mean, metric_breakdown_json, tile_data_json").
+	s.mock.ExpectQuery("SELECT channel_id, branch_name, scanned_at, signal_value, previous_signal_value, geo_mean, metric_breakdown_json, tile_data_json").
 		WithArgs("ch1").
 		WillReturnError(sql.ErrNoRows)
 

@@ -586,24 +586,13 @@ func (a *app) serve() error {
 			qEngine := engine.New(qParser, qStore, qCache, engine.OSFileSystem{}, engine.Config{
 				MaxFiles:     cfg.Quality.MaxFiles,
 				ExcludePaths: cfg.Quality.ExcludePaths,
-			}, func() (engine.Config, error) {
-				fresh, err := config.Reload()
-				if err != nil {
-					return engine.Config{}, err
-				}
-				return engine.Config{
-					MaxFiles:     fresh.Quality.MaxFiles,
-					ExcludePaths: fresh.Quality.ExcludePaths,
-				}, nil
-			}, nil)
+			}, qualityConfigLoader(cfg, config.Reload), nil)
 			qEngine.SetProgress(apiSrv.EmitQualityProgress)
 			apiSrv.SetQualityScanner(qEngine)
 			apiSrv.SetQualityGraphProvider(qCache)
 			apiSrv.SetQualitySnapshotReader(qStore)
 			apiSrv.SetQualityHistoryReader(evolution.NewExecReader())
-			if rcfg := buildRulesConfig(cfg.Quality.Rules); rcfg != nil {
-				apiSrv.SetQualityRulesConfig(rcfg)
-			}
+			apiSrv.SetQualityRulesLoader(qualityRulesLoader(cfg, config.Reload))
 		}
 	} else {
 		logger.Warn("quality engine disabled: store does not expose WriterDB")
@@ -699,6 +688,68 @@ func (a *app) wireGatePolicy(
 		return
 	}
 	runner.SetGatePolicy(policy, policyDir)
+}
+
+// mergedProjectConfig resolves the effective config for a scan, layering
+// global → [parent →] project. dirPath="" falls through to global;
+// parentDirPath !="" triggers the three-layer worktree merge. Reload
+// errors fall back silently to the initial cfg; project-load errors
+// propagate to the caller.
+func mergedProjectConfig(
+	cfg *config.Config,
+	reload func() (*config.Config, error),
+	dirPath, parentDirPath string,
+) (*config.Config, error) {
+	base := cfg
+	if fresh, err := reload(); err == nil {
+		base = fresh
+	}
+	switch {
+	case parentDirPath != "" && dirPath != "":
+		return config.LoadWorktreeProjectConfig(dirPath, parentDirPath, base)
+	case dirPath != "":
+		return config.LoadProjectConfig(dirPath, base)
+	default:
+		return base, nil
+	}
+}
+
+// qualityConfigLoader returns an engine.ConfigLoader that maps the
+// merged project config (global → [parent →] project) into the
+// engine-only Config the scanner consumes.
+//
+// Loader errors propagate to the engine, which falls back to its
+// last-known-good Config rather than failing the scan — see
+// engine.currentConfig.
+func qualityConfigLoader(cfg *config.Config, reload func() (*config.Config, error)) engine.ConfigLoader {
+	return func(dirPath, parentDirPath string) (engine.Config, error) {
+		merged, err := mergedProjectConfig(cfg, reload, dirPath, parentDirPath)
+		if err != nil {
+			return engine.Config{}, err
+		}
+		return engine.Config{
+			MaxFiles:     merged.Quality.MaxFiles,
+			ExcludePaths: merged.Quality.ExcludePaths,
+		}, nil
+	}
+}
+
+// qualityRulesLoader returns a function that resolves the rules.Config
+// for a scan, applying project-level overrides on top of the
+// rules-engine defaults. Returns nil when neither global nor project
+// config sets any rule overrides — callers (collectRules,
+// handleQualityRules) treat nil as "use rules.DefaultConfig()".
+//
+// On project-config load error, falls back to the initial cfg's rule
+// overrides rather than failing the scan.
+func qualityRulesLoader(cfg *config.Config, reload func() (*config.Config, error)) func(dirPath, parentDirPath string) *rules.Config {
+	return func(dirPath, parentDirPath string) *rules.Config {
+		merged, err := mergedProjectConfig(cfg, reload, dirPath, parentDirPath)
+		if err != nil {
+			merged = cfg
+		}
+		return buildRulesConfig(merged.Quality.Rules)
+	}
 }
 
 // workflowsFromConfig returns a function that loads workflows from the

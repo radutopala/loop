@@ -237,6 +237,12 @@ var migrations = []migration{
 	// metrics.FileTile so the panel can render a "which file is dragging"
 	// view instead of just the 5 aggregated metric tiles.
 	sqlMigration(`ALTER TABLE quality_snapshots ADD COLUMN tile_data_json TEXT NOT NULL DEFAULT '[]'`),
+	// Cached "previous signal" so the panel can render a Δ-since-last-scan
+	// headline without keeping a separate history table. UPSERTs copy the
+	// existing signal_value into this column before overwriting it. -1
+	// means "no previous scan yet" — the panel renders the absolute value
+	// instead of a delta.
+	sqlMigration(`ALTER TABLE quality_snapshots ADD COLUMN previous_signal_value INTEGER NOT NULL DEFAULT -1`),
 }
 
 // RunMigrations executes all pending schema migrations.

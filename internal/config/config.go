@@ -173,10 +173,11 @@ type MemoryConfig struct {
 // scan`) or by the agent (via the `quality_scan` MCP tool); there is no
 // live-rescan loop.
 //
-// MaxFiles and ExcludePaths drive the engine layer and are hot-reloaded
-// by the engine on every Scan via config.Reload (no daemon restart
-// needed). Rules drive the rules layer via apiSrv.SetQualityRulesConfig
-// at startup; changing thresholds still requires a restart today.
+// MaxFiles, ExcludePaths, and Rules are all hot-reloaded on every Scan:
+// the engine pulls MaxFiles/ExcludePaths via config.Reload, and the API
+// server pulls Rules via apiSrv.SetQualityRulesLoader. Project-level
+// `.loop/config.json` overrides (including the worktree → parent →
+// global layering) are picked up the same way. No daemon restart needed.
 type QualityConfig struct {
 	MaxFiles     int
 	ExcludePaths []string

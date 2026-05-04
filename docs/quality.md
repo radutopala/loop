@@ -15,8 +15,8 @@ Design is inspired by [sentrux](https://github.com/sentrux/sentrux) (Rust, MIT).
 | **Modularity** (Newman's Q) | `internal/quality/metrics` | Cohesion within packages vs. coupling across them. | Higher = healthier. |
 | **Cycles** (Tarjan SCC) | `internal/quality/metrics` | Strongly-connected components in the import graph. | Fewer/smaller = healthier. |
 | **Depth** (Lakos levelization) | `internal/quality/metrics` | Longest path through the dependency DAG. | Lower = healthier. |
-| **Equality** (Gini) | `internal/quality/metrics` | Inequality of per-function complexity. | Lower (less concentration) = healthier. |
-| **Redundancy** | `internal/quality/metrics` | Dead-code candidates and duplicate clones. | Lower = healthier. |
+| **Equality** (Gini) | `internal/quality/metrics` | Concentration of LOC across files (god-file detection). | Lower (less concentration) = healthier. |
+| **Redundancy** | `internal/quality/metrics` | Dead-code candidates: functions whose name never appears at any Call site, after filtering runtime entry points (`main`, `init`, `Test*`/`Benchmark*`/`Example*`/`Fuzz*`) and common interface methods (`String`, `Error`, `MarshalJSON`, `ServeHTTP`, …). | Lower = healthier. |
 
 Each metric returns a `Score` in `[0, 1]`; `quality_signal` is `round(10000 * geo_mean(scores))`. See `internal/quality/metrics/signal.go`.
 
@@ -71,6 +71,7 @@ One row per `(channel_id, branch)` is persisted in the `quality_snapshots` table
 | `geo_mean` | `REAL` | Pre-rounded geometric mean of metric scores. |
 | `metric_breakdown_json` | `TEXT` | Per-metric score + raw value (JSON array). |
 | `tile_data_json` | `TEXT` | Per-file deficit attribution for the treemap (JSON array). |
+| `previous_signal_value` | `INTEGER` | Prior `signal_value` for this `(channel, branch)`, copied automatically by the UPSERT path before the new value is written. Sentinel `-1` (`snapshot.NoPreviousValue`) means "no prior scan yet" — the panel renders the absolute headline instead of a Δ chip. |
 
 Manual "Scan now" and live-rescan both **upsert** for the current branch. Other branches' snapshots are preserved (switching branches doesn't lose data). Rows older than 7 days are pruned on engine start. See `internal/quality/snapshot/snapshot.go`.
 
@@ -104,8 +105,8 @@ loop quality scan --json | jq -e '.rules.failed | length == 0'
 
 Layout, top to bottom:
 
-1. **Headline signal** — the 0–10000 number with red/amber/green band (red < 5000, amber 5000–7000, green > 7000).
-2. **Metric cards** — one per metric (Modularity, Cycles, Depth, Equality, Dead Code) with current value.
+1. **Headline** — once at least two scans exist for the current `(channel, branch)`, the panel leads with `Δ since last scan` (green for improvement, red for regression). The absolute signal stays band-coloured (red < 5000, amber 5000–7000, green > 7000) but drops to a smaller chip alongside the previous value. On the first scan the absolute number remains the headline (there is nothing to compare against). The underlying `previous_signal` field is also exposed on the `quality.scanned` event payload so consumers can render the delta without re-fetching the snapshot.
+2. **Metric cards** — one per metric (Modularity, Cycles, Depth, Equality, Redundancy) with current value.
 3. **Treemap** — `@visx/hierarchy` binary treemap. Tile size = file LOC, tile color = per-file deficit (red = drag on signal, green = healthy). Clicking a tile selects it for the popover.
 4. **Diagnostic popover** — opens when a tile is selected; shows path, LOC, top-reason metric, and per-metric deficit breakdown for that file.
 5. **Failed rules** — citation cards for any failing rule.

@@ -21,15 +21,27 @@ var ErrNotFound = errors.New("quality snapshot not found")
 // — round-tripping into typed metric Detail values would require a
 // per-metric registry the panel doesn't need. TileData carries the
 // per-file deficit projection for the treemap.
+//
+// PreviousValue is the signal_value from the prior scan of this same
+// (channel, branch) pair, captured automatically by the UPSERT path
+// before signal_value is overwritten. Sentinel -1 means "no previous
+// scan" (first scan after install or branch creation) — consumers
+// should render the absolute value instead of a delta.
 type Snapshot struct {
 	ChannelID       string
 	Branch          string
 	ScannedAt       time.Time
 	Value           int
+	PreviousValue   int
 	GeoMean         float64
 	MetricBreakdown json.RawMessage
 	TileData        json.RawMessage
 }
+
+// NoPreviousValue is the sentinel stored in previous_signal_value when
+// no prior scan exists. Distinguished from a legitimate 0 (catastrophic
+// signal) so the panel can hide the Δ chip on first scans.
+const NoPreviousValue = -1
 
 // Store is the persistence contract. Implementations must be safe for
 // concurrent use — multiple writers may race UPSERTs from concurrent
@@ -72,6 +84,13 @@ func NewSQLStore(db *sql.DB) *SQLStore {
 // Save UPSERTs the row using SQLite's ON CONFLICT clause. The unique
 // constraint on (channel_id, branch_name) makes the conflict path
 // deterministic — no need for explicit transactions.
+//
+// On the conflict (re-scan) path, the existing signal_value is copied
+// into previous_signal_value before the new value is written. The
+// reference quality_snapshots.signal_value (un-prefixed) refers to the
+// pre-update row state in SQLite's UPSERT semantics; excluded.* refers
+// to the values about to be inserted. New rows leave previous_signal_value
+// at its column default (NoPreviousValue).
 func (s *SQLStore) Save(ctx context.Context, channelID, branch string, sig metrics.Signal, scannedAt time.Time) error {
 	raw, err := json.Marshal(sig.Metrics)
 	if err != nil {
@@ -90,6 +109,7 @@ func (s *SQLStore) Save(ctx context.Context, channelID, branch string, sig metri
 			(channel_id, branch_name, scanned_at, signal_value, geo_mean, metric_breakdown_json, tile_data_json)
 		VALUES (?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(channel_id, branch_name) DO UPDATE SET
+			previous_signal_value = quality_snapshots.signal_value,
 			scanned_at = excluded.scanned_at,
 			signal_value = excluded.signal_value,
 			geo_mean = excluded.geo_mean,
@@ -105,7 +125,7 @@ func (s *SQLStore) Save(ctx context.Context, channelID, branch string, sig metri
 // Get returns the snapshot for an exact branch or ErrNotFound.
 func (s *SQLStore) Get(ctx context.Context, channelID, branch string) (*Snapshot, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT channel_id, branch_name, scanned_at, signal_value, geo_mean, metric_breakdown_json, tile_data_json
+		SELECT channel_id, branch_name, scanned_at, signal_value, previous_signal_value, geo_mean, metric_breakdown_json, tile_data_json
 		  FROM quality_snapshots
 		 WHERE channel_id = ? AND branch_name = ?
 	`, channelID, branch)
@@ -115,7 +135,7 @@ func (s *SQLStore) Get(ctx context.Context, channelID, branch string) (*Snapshot
 // GetLatest returns the most-recently-scanned row for the channel.
 func (s *SQLStore) GetLatest(ctx context.Context, channelID string) (*Snapshot, error) {
 	row := s.db.QueryRowContext(ctx, `
-		SELECT channel_id, branch_name, scanned_at, signal_value, geo_mean, metric_breakdown_json, tile_data_json
+		SELECT channel_id, branch_name, scanned_at, signal_value, previous_signal_value, geo_mean, metric_breakdown_json, tile_data_json
 		  FROM quality_snapshots
 		 WHERE channel_id = ?
 		 ORDER BY scanned_at DESC
@@ -142,6 +162,7 @@ func scanRow(row *sql.Row) (*Snapshot, error) {
 		&snap.Branch,
 		&snap.ScannedAt,
 		&snap.Value,
+		&snap.PreviousValue,
 		&snap.GeoMean,
 		&raw,
 		&tiles,

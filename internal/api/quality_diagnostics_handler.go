@@ -168,12 +168,19 @@ func (s *Server) handleQualityRules(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	cfg := rules.DefaultConfig()
-	if s.qualityRulesCfg != nil {
-		cfg = *s.qualityRulesCfg
+	// Best-effort dir resolution: if the channel store isn't wired or
+	// the channel has no dir_path, fall back to "" — the loader treats
+	// that as "use global config only", which is the same behaviour the
+	// previous static config field provided.
+	var dirPath, parentDirPath string
+	if s.store != nil {
+		if d, err := s.resolveDirPath(r.Context(), "", channelID); err == nil {
+			dirPath = d
+			parentDirPath = s.resolveParentDirPath(r.Context(), channelID)
+		}
 	}
 	sig := metrics.Compute(g)
-	results := rules.Run(cfg, g, sig)
+	results := rules.Run(s.resolveRulesConfig(dirPath, parentDirPath), g, sig)
 
 	resp := QualityRulesReport{}
 	for _, ru := range results {

@@ -117,3 +117,23 @@ func (s *Server) resolveDirPath(ctx context.Context, dirPath, channelID string) 
 	}
 	return ch.DirPath, nil
 }
+
+// resolveParentDirPath returns the parent project's dir_path for a
+// worktree channel, or "" for non-worktree channels (and for any
+// lookup error — callers treat that as "no parent" rather than a hard
+// failure). Used by the quality engine config-merge layer so worktree
+// scans see the parent project's `.loop/config.json` overrides.
+func (s *Server) resolveParentDirPath(ctx context.Context, channelID string) string {
+	if channelID == "" || s.store == nil {
+		return ""
+	}
+	ch, err := s.store.GetChannel(ctx, channelID)
+	if err != nil || ch == nil || !ch.Worktree || ch.ParentID == "" {
+		return ""
+	}
+	parent, err := s.store.GetChannel(ctx, ch.ParentID)
+	if err != nil || parent == nil {
+		return ""
+	}
+	return parent.DirPath
+}
