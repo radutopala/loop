@@ -620,6 +620,10 @@ func (a *app) serve() error {
 	// externally (OOM kill, docker rm, daemon restart) and remove stale entries.
 	go containerReg.RunReconcileLoop(ctx, dockerClient, 30*time.Second, cfg.ContainerKeepAlive, logger)
 
+	// Signal readiness: API server, orchestrator, and signal handler are wired.
+	// Tests block on this channel before sending SIGINT to avoid timing flakes.
+	close(a.serveReady)
+
 	<-ctx.Done()
 	logger.Info("shutting down")
 

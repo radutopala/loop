@@ -167,7 +167,7 @@ func (s *MainSuite) TestServeSlackHappyPathShutdown() {
 	require.NotNil(s.T(), gotChannels, "Slack should always create channel service")
 	require.NotNil(s.T(), gotThreads, "Slack should always create thread service")
 
-	time.Sleep(100 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))
@@ -233,7 +233,7 @@ func (s *MainSuite) TestServeHappyPathShutdown() {
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
 
-	time.Sleep(100 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))
@@ -265,7 +265,7 @@ func (s *MainSuite) TestServeHappyPathWithChannelService() {
 	gotChannels := <-channelsCh
 	require.NotNil(s.T(), gotChannels)
 
-	time.Sleep(100 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))
@@ -291,7 +291,7 @@ func (s *MainSuite) TestServeHappyPathShutdownWithStopError() {
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
 
-	time.Sleep(100 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))
@@ -322,7 +322,7 @@ func (s *MainSuite) TestServeHappyPathShutdownWithAPIStopError() {
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
 
-	time.Sleep(100 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))
@@ -447,7 +447,7 @@ func (s *MainSuite) TestServeGateEnabledWiresApprovalResolverAndBroadcaster() {
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
 
-	time.Sleep(150 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))
@@ -494,7 +494,7 @@ func (s *MainSuite) TestServeGateEnabledBotWithoutSettersIsIgnored() {
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
 
-	time.Sleep(150 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))
@@ -539,7 +539,7 @@ func (s *MainSuite) TestServeWithRealStoreCoversFsMigrateAndQualityWiring() {
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
 
-	time.Sleep(150 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))
@@ -567,7 +567,7 @@ func (s *MainSuite) TestServeWithQualityRulesOverrideCoversSetRulesConfig() {
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
 
-	time.Sleep(150 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))
@@ -613,7 +613,7 @@ func (s *MainSuite) TestServeQualityParserInitErrorIsLogged() {
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
 
-	time.Sleep(150 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))

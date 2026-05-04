@@ -154,6 +154,12 @@ type app struct {
 	// tests can substitute a fake reader without provisioning a real
 	// git repo.
 	newEvolutionReader func() evolution.HistoryReader
+
+	// serveReady is closed by serve() once the API server and orchestrator
+	// are running and the SIGINT/SIGTERM handler is wired. Tests use it to
+	// wait deterministically for readiness before sending a shutdown signal,
+	// avoiding fixed time.Sleep races on slow CI runners.
+	serveReady chan struct{}
 }
 
 func newApp() *app {
@@ -229,6 +235,8 @@ func newApp() *app {
 
 		// Evolution history-reader factory
 		newEvolutionReader: func() evolution.HistoryReader { return evolution.NewExecReader() },
+
+		serveReady: make(chan struct{}),
 	}
 	// Wire up functions that reference methods on a.
 	a.newDiscordBot = func(token, appID, guildID string, logger *slog.Logger) (orchestrator.Bot, error) {

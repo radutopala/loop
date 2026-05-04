@@ -379,6 +379,20 @@ func (s *MainSuite) SetupTest() {
 	s.app.loadProjectMemoryPaths = func(_ string) []string { return nil }
 }
 
+// waitForServeReady blocks until serve() signals readiness. Fails the test if
+// serve() returns first (early error) or if readiness times out — replaces the
+// fixed time.Sleep that races on slow CI runners.
+func (s *MainSuite) waitForServeReady(errCh <-chan error) {
+	s.T().Helper()
+	select {
+	case <-s.app.serveReady:
+	case err := <-errCh:
+		s.T().Fatalf("serve() returned before readiness: %v", err)
+	case <-time.After(10 * time.Second):
+		s.T().Fatal("serve() did not signal readiness in time")
+	}
+}
+
 func testConfig() *config.Config {
 	return &config.Config{
 		Platforms:    []types.Platform{types.PlatformDiscord},
@@ -690,7 +704,7 @@ func (s *MainSuite) TestServeLocalPlatformHappyPath() {
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
 
-	time.Sleep(100 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))
@@ -717,7 +731,7 @@ func (s *MainSuite) TestServeWithTerminalManager() {
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
 
-	time.Sleep(100 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))
@@ -742,7 +756,7 @@ func (s *MainSuite) TestServeWithBrowserProvider() {
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
 
-	time.Sleep(100 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))
@@ -767,7 +781,7 @@ func (s *MainSuite) TestServeWithDockerBrowserProvider() {
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
 
-	time.Sleep(100 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))
@@ -791,7 +805,7 @@ func (s *MainSuite) TestServeRegistryRestoreError() {
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
 
-	time.Sleep(100 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))
@@ -823,7 +837,7 @@ func (s *MainSuite) TestServeRegistryRestoreWithData() {
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
 
-	time.Sleep(100 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))
@@ -848,7 +862,7 @@ func (s *MainSuite) TestServeWithBrowserProviderError() {
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
 
-	time.Sleep(100 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))
@@ -869,7 +883,7 @@ func (s *MainSuite) TestServeWithWorkflowBashLocal() {
 	errCh := make(chan error, 1)
 	go func() { errCh <- s.app.serve() }()
 
-	time.Sleep(100 * time.Millisecond)
+	s.waitForServeReady(errCh)
 	p, err := os.FindProcess(os.Getpid())
 	require.NoError(s.T(), err)
 	require.NoError(s.T(), p.Signal(syscall.SIGINT))
