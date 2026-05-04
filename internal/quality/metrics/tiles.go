@@ -37,7 +37,7 @@ func AttributeFiles(g *graph.Graph, results []Result) []FileTile {
 	if g == nil || len(g.Nodes) == 0 {
 		return nil
 	}
-	mod := modularityFileDrag(g)
+	mod := modularityFileDrag(g, findResult(results, ModularityName))
 	cyc := cyclesFileDrag(findResult(results, CyclesName))
 	dep := depthFileDrag(findResult(results, DepthName))
 	eq := equalityFileDrag(g)
@@ -102,14 +102,25 @@ func findResult(results []Result, name string) *Result {
 }
 
 // modularityFileDrag returns the per-file fraction of edges that cross
-// the file's cluster boundary. A file with all-internal edges has drag 0;
-// one whose every edge points outside its module has drag 1. Files with
-// no edges are absent from the map (drag 0).
-func modularityFileDrag(g *graph.Graph) map[string]float64 {
-	moduleByNode := make([]int, len(g.Nodes))
-	for mi, m := range g.Modules {
-		for _, ni := range m.NodeIndices {
-			moduleByNode[ni] = mi
+// the file's community boundary. A file with all-internal edges has
+// drag 0; one whose every edge points outside its community has drag 1.
+// Files with no edges are absent from the map (drag 0).
+//
+// The community labelling is read from the Modularity result's Detail
+// so the diagnostics view is consistent with the headline metric — both
+// reflect the same Louvain partition. If Detail is missing or the wrong
+// shape (older snapshot, alternate metric pipeline) we fall back to
+// each-node-its-own-community, which yields drag = (cross / total)
+// against the trivial partition; effectively zeroing out modularity's
+// contribution to the tile, which is the right "we don't know" answer.
+func modularityFileDrag(g *graph.Graph, r *Result) map[string]float64 {
+	community := make([]int, len(g.Nodes))
+	for i := range community {
+		community[i] = i
+	}
+	if r != nil {
+		if d, ok := r.Detail.(ModularityDetail); ok && len(d.Communities) == len(g.Nodes) {
+			community = d.Communities
 		}
 	}
 	cross := make([]int, len(g.Nodes))
@@ -117,7 +128,7 @@ func modularityFileDrag(g *graph.Graph) map[string]float64 {
 	for _, e := range g.Edges {
 		total[e.FromIndex]++
 		total[e.ToIndex]++
-		if moduleByNode[e.FromIndex] != moduleByNode[e.ToIndex] {
+		if community[e.FromIndex] != community[e.ToIndex] {
 			cross[e.FromIndex]++
 			cross[e.ToIndex]++
 		}
