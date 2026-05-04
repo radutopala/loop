@@ -27,21 +27,23 @@ import (
 // preset response. Tests inject success, error, and InProgress paths
 // without spinning up a real engine.
 type fakeQualityScanner struct {
-	mu        sync.Mutex
-	calls     int32
-	dirPath   string
-	branch    string
-	channelID string
-	result    engine.ScanResult
-	err       error
-	delay     time.Duration
-	cancelOn  chan struct{}
+	mu            sync.Mutex
+	calls         int32
+	dirPath       string
+	parentDirPath string
+	branch        string
+	channelID     string
+	result        engine.ScanResult
+	err           error
+	delay         time.Duration
+	cancelOn      chan struct{}
 }
 
-func (f *fakeQualityScanner) Scan(ctx context.Context, channelID, branch, dirPath string) (engine.ScanResult, error) {
+func (f *fakeQualityScanner) Scan(ctx context.Context, channelID, branch, dirPath, parentDirPath string) (engine.ScanResult, error) {
 	atomic.AddInt32(&f.calls, 1)
 	f.mu.Lock()
 	f.dirPath = dirPath
+	f.parentDirPath = parentDirPath
 	f.branch = branch
 	f.channelID = channelID
 	f.mu.Unlock()
@@ -233,6 +235,78 @@ func (s *ServerSuite) TestHandleQualityScanSuccessBroadcastsEvents() {
 	require.Empty(s.T(), report.Rules.Failed)
 }
 
+func (s *ServerSuite) TestHandleQualityScanWorktreePassesParentDirPath() {
+	dir := s.T().TempDir()
+	parentDir := s.T().TempDir()
+	// First GetChannel("ch-1") in resolveDirPath returns the worktree
+	// channel; second call in resolveParentDirPath returns it again;
+	// then GetChannel("parent-1") returns the parent.
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
+		ChannelID: "ch-1", DirPath: dir, Worktree: true, ParentID: "parent-1",
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "parent-1").Return(&db.Channel{
+		ChannelID: "parent-1", DirPath: parentDir,
+	}, nil)
+
+	scanner := &fakeQualityScanner{result: engine.ScanResult{Signal: metrics.Signal{Value: 8000}}}
+	s.srv.SetQualityScanner(scanner)
+	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: graph.Build(nil)})
+	cap := s.hookHub()
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/quality/scan", "")
+	require.Equal(s.T(), http.StatusAccepted, rec.Code)
+
+	cap.waitFor(3)
+	scanner.mu.Lock()
+	defer scanner.mu.Unlock()
+	require.Equal(s.T(), dir, scanner.dirPath)
+	require.Equal(s.T(), parentDir, scanner.parentDirPath)
+}
+
+func (s *ServerSuite) TestHandleQualityScanNonWorktreeOmitsParentDirPath() {
+	dir := s.T().TempDir()
+	s.channelWithDir("ch-1", dir)
+
+	scanner := &fakeQualityScanner{result: engine.ScanResult{Signal: metrics.Signal{Value: 8000}}}
+	s.srv.SetQualityScanner(scanner)
+	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: graph.Build(nil)})
+	cap := s.hookHub()
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/quality/scan", "")
+	require.Equal(s.T(), http.StatusAccepted, rec.Code)
+
+	cap.waitFor(3)
+	scanner.mu.Lock()
+	defer scanner.mu.Unlock()
+	require.Equal(s.T(), dir, scanner.dirPath)
+	require.Empty(s.T(), scanner.parentDirPath)
+}
+
+func (s *ServerSuite) TestHandleQualityScanWorktreeWithMissingParentSilentlyDrops() {
+	// Worktree channel references a parent that GetChannel can't find:
+	// resolveParentDirPath must swallow the error and return "" rather
+	// than failing the scan — the scan still runs with no parent
+	// override.
+	dir := s.T().TempDir()
+	s.store.On("GetChannel", mock.Anything, "ch-1").Return(&db.Channel{
+		ChannelID: "ch-1", DirPath: dir, Worktree: true, ParentID: "missing",
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "missing").Return((*db.Channel)(nil), errors.New("not found"))
+
+	scanner := &fakeQualityScanner{result: engine.ScanResult{Signal: metrics.Signal{Value: 8000}}}
+	s.srv.SetQualityScanner(scanner)
+	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: graph.Build(nil)})
+	cap := s.hookHub()
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/quality/scan", "")
+	require.Equal(s.T(), http.StatusAccepted, rec.Code)
+
+	cap.waitFor(3)
+	scanner.mu.Lock()
+	defer scanner.mu.Unlock()
+	require.Empty(s.T(), scanner.parentDirPath)
+}
+
 func (s *ServerSuite) TestHandleQualityScanRulesViolatedFires() {
 	dir := s.T().TempDir()
 	s.channelWithDir("ch-1", dir)
@@ -274,7 +348,7 @@ func (s *ServerSuite) TestHandleQualityScanCustomRulesConfig() {
 		rules.NoImportCycles: {Enabled: true},
 		rules.ParseFail:      {Enabled: true, Threshold: rules.ParseFailMaxDefault},
 	}}
-	s.srv.SetQualityRulesConfig(&cfg)
+	s.srv.SetQualityRulesLoader(func(string, string) *rules.Config { return &cfg })
 	cap := s.hookHub()
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/scan", "")
@@ -621,14 +695,23 @@ func (s *ServerSuite) TestBuildQualityReportSplitsFailedRules() {
 }
 
 func (s *ServerSuite) TestCollectRulesNoGraphProviderReturnsNil() {
-	out := s.srv.collectRules("ch-1", metrics.Signal{})
+	out := s.srv.collectRules("ch-1", "", "", metrics.Signal{})
 	require.Nil(s.T(), out)
 }
 
 func (s *ServerSuite) TestCollectRulesNilGraphReturnsNil() {
 	s.srv.SetQualityGraphProvider(&fakeGraphProvider{g: nil})
-	out := s.srv.collectRules("ch-1", metrics.Signal{})
+	out := s.srv.collectRules("ch-1", "", "", metrics.Signal{})
 	require.Nil(s.T(), out)
+}
+
+// Loader returning nil should fall through to rules.DefaultConfig — same
+// semantic as no loader being wired at all. Ensures the loader can opt
+// out without forcing callers to clear it.
+func (s *ServerSuite) TestResolveRulesConfigLoaderReturnsNilFallsBackToDefault() {
+	s.srv.SetQualityRulesLoader(func(string, string) *rules.Config { return nil })
+	got := s.srv.resolveRulesConfig("", "")
+	require.Equal(s.T(), rules.DefaultConfig(), got)
 }
 
 // --- BroadcastQualityEvent (delivery side) ---

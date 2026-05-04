@@ -40,14 +40,18 @@ type Config struct {
 	ExcludePaths []string
 }
 
-// ConfigLoader returns the latest engine Config. Engine calls it at the
-// start of each Scan so MaxFiles/ExcludePaths edits to the project
-// config take effect on the next scan without a daemon restart. On
-// error the engine falls back to the last-known-good Config (the seed
-// passed to New, or the most recent successful reload).
+// ConfigLoader returns the latest engine Config for the channel about
+// to be scanned. dirPath is the workspace root; parentDirPath is the
+// parent project's dir for worktree channels and "" otherwise. The
+// loader is expected to merge the global config with the project-level
+// `.loop/config.json` at those paths so per-project MaxFiles /
+// ExcludePaths edits take effect on the next Scan without a daemon
+// restart. On error the engine falls back to the last-known-good
+// Config (the seed passed to New, or the most recent successful
+// reload).
 //
 // nil is fine — Scan then always uses the seed Config.
-type ConfigLoader func() (Config, error)
+type ConfigLoader func(dirPath, parentDirPath string) (Config, error)
 
 // ScanResult is the engine-level return shape. Signal is the just-computed
 // 0–10000 quality_signal plus per-metric breakdown; the rest of the fields
@@ -56,6 +60,13 @@ type ConfigLoader func() (Config, error)
 type ScanResult struct {
 	// Signal is the aggregated metric signal. Zero-valued when InProgress.
 	Signal metrics.Signal
+
+	// PreviousSignal is the prior scan's headline value for this
+	// (channel, branch). snapshot.NoPreviousValue (-1) when no prior
+	// scan exists. Captured before the new snapshot is written so the
+	// quality.scanned event payload can drive the panel's Δ chip
+	// without an extra snapshot round-trip.
+	PreviousSignal int
 
 	// FileCount is the number of files the parser was handed (after
 	// exclusions, before parse failures).
@@ -139,15 +150,16 @@ func New(p parser.Parser, store snapshot.Store, cache *graph.Cache, fs FileSyste
 }
 
 // currentConfig returns the Config the next Scan should use. When a
-// loader is installed, it refreshes from the project config and caches
-// the result; loader errors fall back to the last-known-good cfg.
-func (e *Engine) currentConfig() Config {
+// loader is installed, it refreshes from the project config (merging
+// dirPath / parentDirPath project overrides) and caches the result;
+// loader errors fall back to the last-known-good cfg.
+func (e *Engine) currentConfig(dirPath, parentDirPath string) Config {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	if e.configLoad == nil {
 		return e.cfg
 	}
-	fresh, err := e.configLoad()
+	fresh, err := e.configLoad(dirPath, parentDirPath)
 	if err != nil {
 		return e.cfg
 	}
@@ -169,13 +181,16 @@ func (e *Engine) SetProgress(p ProgressFunc) {
 //
 // dirPath is the workspace root the parser is handed; relative paths in
 // the returned snapshot are slash-separated and rooted at dirPath.
-func (e *Engine) Scan(ctx context.Context, channelID, branch, dirPath string) (ScanResult, error) {
+// parentDirPath is the parent project dir for worktree channels (so the
+// configLoader can layer parent + worktree project configs on top of
+// the global one) and "" for non-worktree channels.
+func (e *Engine) Scan(ctx context.Context, channelID, branch, dirPath, parentDirPath string) (ScanResult, error) {
 	if !e.acquire(channelID) {
 		return ScanResult{InProgress: true}, nil
 	}
 	defer e.release(channelID)
 
-	cfg := e.currentConfig()
+	cfg := e.currentConfig(dirPath, parentDirPath)
 	files, err := e.enumerate(dirPath, graph.EnumerateOptions{
 		MaxFiles:             cfg.MaxFiles,
 		ExtraExcludePatterns: cfg.ExcludePaths,
@@ -231,15 +246,27 @@ func (e *Engine) Scan(ctx context.Context, channelID, branch, dirPath string) (S
 
 	sig := metrics.Compute(g)
 	scannedAt := e.clock().UTC()
+
+	// Capture the prior snapshot's headline before Save overwrites it.
+	// A miss here is normal (first scan ever for this branch) and yields
+	// snapshot.NoPreviousValue. Other errors are non-fatal — the scan
+	// itself still completed; the panel just loses the Δ chip on this
+	// run.
+	previous := snapshot.NoPreviousValue
+	if prior, err := e.store.Get(ctx, channelID, branch); err == nil && prior != nil {
+		previous = prior.Value
+	}
+
 	if err := e.store.Save(ctx, channelID, branch, sig, scannedAt); err != nil {
 		return ScanResult{}, fmt.Errorf("save snapshot: %w", err)
 	}
 
 	return ScanResult{
-		Signal:      sig,
-		FileCount:   len(facts),
-		ParseFailed: parseFailed,
-		ScannedAt:   scannedAt,
+		Signal:         sig,
+		PreviousSignal: previous,
+		FileCount:      len(facts),
+		ParseFailed:    parseFailed,
+		ScannedAt:      scannedAt,
 	}, nil
 }
 

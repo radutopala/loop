@@ -308,7 +308,7 @@ func (a *app) scanForGraph(ctx context.Context, stderr io.Writer, p parser.Parse
 	}
 	cache := graph.NewCache()
 	eng := engine.New(p, noopStore{}, cache, engine.OSFileSystem{}, cfg, nil, nil)
-	if _, err := eng.Scan(ctx, "cli", "main", dirPath); err != nil {
+	if _, err := eng.Scan(ctx, "cli", "main", dirPath, ""); err != nil {
 		var tooLarge *graph.RepoTooLargeError
 		if errors.As(err, &tooLarge) {
 			fmt.Fprintf(stderr, "repo too large to scan (%d files; limit %d). Add patterns to quality.exclude_paths or raise quality.max_files.\n", tooLarge.FileCount, tooLarge.Limit)

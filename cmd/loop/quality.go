@@ -112,7 +112,7 @@ func (a *app) runQualityScan(ctx context.Context, out, stderr io.Writer, p parse
 
 	cache := graph.NewCache()
 	eng := engine.New(p, noopStore{}, cache, engine.OSFileSystem{}, cfg, nil, nil)
-	res, err := eng.Scan(ctx, "cli", "main", dirPath)
+	res, err := eng.Scan(ctx, "cli", "main", dirPath, "")
 	if err != nil {
 		var tooLarge *graph.RepoTooLargeError
 		if errors.As(err, &tooLarge) {

@@ -9,6 +9,7 @@ import {
   fetchQualityCycles,
   fetchQualityEvolution,
   fetchQualitySnapshot,
+  NoPreviousSignal,
   simulateQualityWhatif,
   triggerQualityScan,
   type QualityC4Response,
@@ -206,10 +207,11 @@ export function QualityPanel({ channelId, embedded, onClose }: QualityPanelProps
     ro.observe(el);
   }, []);
 
-  const display: { signal: number; geo_mean: number; metrics: QualityMetric[]; tiles: QualityFileTile[]; rules?: { failed: QualityRule[] }; scanned_at: string; branch: string } | null =
+  const display: { signal: number; previous_signal: number; geo_mean: number; metrics: QualityMetric[]; tiles: QualityFileTile[]; rules?: { failed: QualityRule[] }; scanned_at: string; branch: string } | null =
     scanReport
       ? {
           signal: scanReport.signal,
+          previous_signal: scanReport.previous_signal,
           geo_mean: scanReport.geo_mean,
           metrics: scanReport.metrics,
           tiles: scanReport.tiles ?? [],
@@ -220,6 +222,7 @@ export function QualityPanel({ channelId, embedded, onClose }: QualityPanelProps
       : snapshot
         ? {
             signal: snapshot.signal,
+            previous_signal: snapshot.previous_signal,
             geo_mean: snapshot.geo_mean,
             metrics: snapshot.metrics,
             tiles: snapshot.tiles ?? [],
@@ -341,6 +344,11 @@ export function QualityPanel({ channelId, embedded, onClose }: QualityPanelProps
 
   const sig = display?.signal ?? 0;
   const sigColor = bandColor(sig);
+  const prev = display?.previous_signal ?? NoPreviousSignal;
+  const hasPrev = prev !== NoPreviousSignal;
+  const delta = hasPrev ? sig - prev : 0;
+  const deltaColor = delta > 0 ? "#22c55e" : delta < 0 ? "#ef4444" : colors.textDim;
+  const deltaLabel = delta > 0 ? `+${delta}` : `${delta}`;
   const failedRules = display && "rules" in display && display.rules ? display.rules.failed : [];
   const showProgress = scanning && progress !== null;
   const headerLabel = scanning
@@ -388,11 +396,33 @@ export function QualityPanel({ channelId, embedded, onClose }: QualityPanelProps
               </div>
             )}
           </div>
+        ) : hasPrev ? (
+          // Δ-since-last-scan as the primary headline. Absolute signal
+          // and previous value drop below in muted text — useful for
+          // context but not the thing the eye lands on. The signal
+          // itself stays band-colored so red/amber/green is preserved.
+          <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
+            <span
+              style={{ fontSize: 36, fontWeight: 600, color: deltaColor, fontFamily: fonts.mono }}
+              title="Change in signal since the last scan of this branch"
+            >
+              {deltaLabel}
+            </span>
+            <span style={{ color: colors.textDim, fontSize: 12 }}>
+              <span style={{ color: sigColor, fontFamily: fonts.mono }}>{sig}</span>
+              {" "}from{" "}
+              <span style={{ fontFamily: fonts.mono }}>{prev}</span>
+              {" · "}geo-mean {display?.geo_mean.toFixed(3)} · branch “{display?.branch}”
+              {display?.scanned_at ? ` · ${formatScannedAt(display.scanned_at)}` : ""}
+            </span>
+          </div>
         ) : (
-          <div style={{ display: "flex", alignItems: "baseline", gap: 12 }}>
+          // First scan ever for this (channel, branch): no delta to
+          // render — fall back to the absolute headline.
+          <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
             <span style={{ fontSize: 36, fontWeight: 600, color: sigColor, fontFamily: fonts.mono }}>{sig}</span>
             <span style={{ color: colors.textDim, fontSize: 12 }}>
-              geo-mean {display?.geo_mean.toFixed(3)} · branch “{display?.branch}”
+              first scan · geo-mean {display?.geo_mean.toFixed(3)} · branch “{display?.branch}”
               {display?.scanned_at ? ` · ${formatScannedAt(display.scanned_at)}` : ""}
             </span>
           </div>

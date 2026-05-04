@@ -27,7 +27,7 @@ import (
 // Held as an interface so tests can inject a fake without spinning up a
 // real parser + cache + store stack.
 type QualityScanner interface {
-	Scan(ctx context.Context, channelID, branch, dirPath string) (engine.ScanResult, error)
+	Scan(ctx context.Context, channelID, branch, dirPath, parentDirPath string) (engine.ScanResult, error)
 }
 
 // QualityGraphProvider supplies the post-scan graph for rule evaluation.
@@ -47,17 +47,24 @@ type QualitySnapshotReader interface {
 // QualityScanReport is the JSON contract for both the POST scan response
 // and the quality.scanned event payload. Matches the CLI's scanReport
 // shape so the panel can render either source identically.
+//
+// PreviousSignal mirrors QualitySnapshotResponse.PreviousSignal — the
+// prior scan's headline for this (channel, branch), or
+// snapshot.NoPreviousValue (-1) on first scan. Lets the panel show
+// the Δ chip immediately on quality.scanned without re-fetching the
+// snapshot.
 type QualityScanReport struct {
-	DirPath     string                `json:"dir_path"`
-	Branch      string                `json:"branch"`
-	Signal      int                   `json:"signal"`
-	GeoMean     float64               `json:"geo_mean"`
-	FileCount   int                   `json:"file_count"`
-	ParseFailed int                   `json:"parse_failed"`
-	ScannedAt   time.Time             `json:"scanned_at"`
-	Metrics     []QualityMetricReport `json:"metrics"`
-	Tiles       []QualityFileTile     `json:"tiles"`
-	Rules       QualityRulesReport    `json:"rules"`
+	DirPath        string                `json:"dir_path"`
+	Branch         string                `json:"branch"`
+	Signal         int                   `json:"signal"`
+	PreviousSignal int                   `json:"previous_signal"`
+	GeoMean        float64               `json:"geo_mean"`
+	FileCount      int                   `json:"file_count"`
+	ParseFailed    int                   `json:"parse_failed"`
+	ScannedAt      time.Time             `json:"scanned_at"`
+	Metrics        []QualityMetricReport `json:"metrics"`
+	Tiles          []QualityFileTile     `json:"tiles"`
+	Rules          QualityRulesReport    `json:"rules"`
 }
 
 // QualityFileTile is the wire shape for one file's deficit attribution.
@@ -106,12 +113,20 @@ type QualityCitationReport struct {
 // QualitySnapshotResponse is the GET endpoint shape. BranchMismatch is
 // true when no snapshot exists for the requested branch but a snapshot
 // for a different branch is returned — the panel renders a banner.
+//
+// PreviousSignal is the headline value from the prior scan of the same
+// (channel, branch) pair, captured by the snapshot UPSERT path. The
+// sentinel snapshot.NoPreviousValue (-1) means "first scan ever for
+// this row" — the panel hides the Δ chip in that case. Always present
+// on the wire (no omitempty) so the UI can distinguish "no delta yet"
+// from "delta is exactly zero".
 type QualitySnapshotResponse struct {
 	DirPath        string                `json:"dir_path"`
 	Branch         string                `json:"branch"`
 	CurrentBranch  string                `json:"current_branch"`
 	BranchMismatch bool                  `json:"branch_mismatch"`
 	Signal         int                   `json:"signal"`
+	PreviousSignal int                   `json:"previous_signal"`
 	GeoMean        float64               `json:"geo_mean"`
 	ScannedAt      time.Time             `json:"scanned_at"`
 	Metrics        []QualityMetricReport `json:"metrics"`
@@ -144,10 +159,19 @@ func (s *Server) SetQualitySnapshotReader(r QualitySnapshotReader) {
 	s.qualitySnapshots = r
 }
 
-// SetQualityRulesConfig overrides the rules engine config; nil falls back
-// to rules.DefaultConfig() at evaluation time.
-func (s *Server) SetQualityRulesConfig(cfg *rules.Config) {
-	s.qualityRulesCfg = cfg
+// QualityRulesLoader resolves the rules.Config for a scan, given the
+// scan's dirPath and (for worktrees) the parent project's dirPath.
+// Returning nil means "use rules.DefaultConfig()" — same semantic the
+// previous static SetQualityRulesConfig(nil) carried.
+type QualityRulesLoader func(dirPath, parentDirPath string) *rules.Config
+
+// SetQualityRulesLoader wires the per-scan rules-config resolver. Nil
+// disables overrides — handlers fall back to rules.DefaultConfig() at
+// evaluation time. Replaces the static SetQualityRulesConfig so changes
+// to project-level rule overrides are picked up without restarting the
+// daemon (mirrors qualityConfigLoader for the engine config).
+func (s *Server) SetQualityRulesLoader(loader QualityRulesLoader) {
+	s.qualityRulesLoad = loader
 }
 
 // progressThrottle is the minimum gap between successive quality.scan_progress
@@ -212,6 +236,7 @@ func (s *Server) handleQualityScan(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
+	parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
 	branch := gitBranch(r.Context(), dirPath)
 	if branch == "" {
 		branch = "main"
@@ -235,17 +260,17 @@ func (s *Server) handleQualityScan(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	go s.runQualityScanAsync(scanCtx, channelID, dirPath, branch)
+	go s.runQualityScanAsync(scanCtx, channelID, dirPath, parentDirPath, branch)
 	writeHTTPJSON(w, http.StatusAccepted, scanResponse{Status: "started"}, s.logger)
 }
 
 // runQualityScanAsync runs the engine scan, broadcasts the result, and
 // drops the in-flight registration. The scan ctx is detached from the
 // HTTP request so this goroutine owns its full lifecycle.
-func (s *Server) runQualityScanAsync(ctx context.Context, channelID, dirPath, branch string) {
+func (s *Server) runQualityScanAsync(ctx context.Context, channelID, dirPath, parentDirPath, branch string) {
 	defer s.unregisterQualityScan(channelID)
 
-	res, err := s.qualityScanner.Scan(ctx, channelID, branch, dirPath)
+	res, err := s.qualityScanner.Scan(ctx, channelID, branch, dirPath, parentDirPath)
 	if err != nil {
 		s.broadcastQualityError(channelID, dirPath, branch, err)
 		return
@@ -258,7 +283,7 @@ func (s *Server) runQualityScanAsync(ctx context.Context, channelID, dirPath, br
 		return
 	}
 
-	report := buildQualityReport(dirPath, branch, res, s.collectRules(channelID, res.Signal))
+	report := buildQualityReport(dirPath, branch, res, s.collectRules(channelID, dirPath, parentDirPath, res.Signal))
 
 	if hub := s.eventsHub; hub != nil {
 		hub.BroadcastQualityEvent(EventQualityScanned, channelID, report)
@@ -300,8 +325,10 @@ func (s *Server) broadcastQualityError(channelID, dirPath, branch string, err er
 // collectRules runs the rules engine against the cached graph for
 // channelID. A missing graph (no scan ever completed, or the graph
 // provider is unset) yields an empty result list — rules evaluate
-// vacuously and the panel renders no rule cards.
-func (s *Server) collectRules(channelID string, sig metrics.Signal) []rules.Result {
+// vacuously and the panel renders no rule cards. The rules config is
+// resolved via the loader so per-project overrides (rules in the
+// project's .loop/config.json) reach this path on every scan.
+func (s *Server) collectRules(channelID, dirPath, parentDirPath string, sig metrics.Signal) []rules.Result {
 	if s.qualityGraph == nil {
 		return nil
 	}
@@ -309,11 +336,20 @@ func (s *Server) collectRules(channelID string, sig metrics.Signal) []rules.Resu
 	if g == nil {
 		return nil
 	}
-	cfg := rules.DefaultConfig()
-	if s.qualityRulesCfg != nil {
-		cfg = *s.qualityRulesCfg
+	return rules.Run(s.resolveRulesConfig(dirPath, parentDirPath), g, sig)
+}
+
+// resolveRulesConfig returns the effective rules.Config for a scan,
+// invoking the loader (if wired) and falling back to
+// rules.DefaultConfig() when the loader is unset or returns nil.
+func (s *Server) resolveRulesConfig(dirPath, parentDirPath string) rules.Config {
+	if s.qualityRulesLoad == nil {
+		return rules.DefaultConfig()
 	}
-	return rules.Run(cfg, g, sig)
+	if cfg := s.qualityRulesLoad(dirPath, parentDirPath); cfg != nil {
+		return *cfg
+	}
+	return rules.DefaultConfig()
 }
 
 // registerQualityScan claims the in-flight slot for channelID. Returns
@@ -390,6 +426,7 @@ func (s *Server) handleQualitySnapshot(w http.ResponseWriter, r *http.Request) {
 		CurrentBranch:  currentBranch,
 		BranchMismatch: branchMismatch,
 		Signal:         snap.Value,
+		PreviousSignal: snap.PreviousValue,
 		GeoMean:        snap.GeoMean,
 		ScannedAt:      snap.ScannedAt,
 		Metrics:        unmarshalMetricBreakdown(snap.MetricBreakdown, s.logger),
@@ -450,13 +487,14 @@ func unmarshalTileData(raw json.RawMessage, logger interface {
 // tests can exercise the shape independently.
 func buildQualityReport(dirPath, branch string, res engine.ScanResult, ruleResults []rules.Result) QualityScanReport {
 	rep := QualityScanReport{
-		DirPath:     dirPath,
-		Branch:      branch,
-		Signal:      res.Signal.Value,
-		GeoMean:     res.Signal.GeoMean,
-		FileCount:   res.FileCount,
-		ParseFailed: res.ParseFailed,
-		ScannedAt:   res.ScannedAt,
+		DirPath:        dirPath,
+		Branch:         branch,
+		Signal:         res.Signal.Value,
+		PreviousSignal: res.PreviousSignal,
+		GeoMean:        res.Signal.GeoMean,
+		FileCount:      res.FileCount,
+		ParseFailed:    res.ParseFailed,
+		ScannedAt:      res.ScannedAt,
 	}
 	for _, m := range res.Signal.Metrics {
 		rep.Metrics = append(rep.Metrics, QualityMetricReport{

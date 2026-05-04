@@ -114,7 +114,7 @@ func buildEdges(sorted []*parser.FileFacts, index map[string]int) []Edge {
 		}
 		fromIdx := index[f.Path]
 		for _, imp := range f.Imports {
-			toIdx, ok := resolveImport(imp.Path, f.Path, index, dirIndex)
+			toIdx, ok := resolveImport(imp.Path, f.Path, f.Language, index, dirIndex)
 			if !ok || toIdx == fromIdx {
 				continue
 			}
@@ -151,8 +151,16 @@ var candidateExts = []string{".go", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs"
 //     internal/api/);
 //  4. file-suffix match (module-style TS/JS imports without extension).
 //
+// fromLang is the importer's language ("go", "typescript", "javascript",
+// or ""). Go bare imports (no slash) are always stdlib (e.g. "embed",
+// "fmt") and never resolve to a local file — without that guard, the
+// fuzzy file-suffix match in steps 3–4 would falsely tie any local
+// `*/embed.go` to every Go file that imports the stdlib `embed` package
+// (and similarly for any other stdlib name shadowed by a same-basename
+// local file), producing phantom edges and phantom cycles.
+//
 // Returns (-1, false) for external imports — engine drops them.
-func resolveImport(impPath, fromPath string, index map[string]int, dirIndex map[string]int) (int, bool) {
+func resolveImport(impPath, fromPath, fromLang string, index map[string]int, dirIndex map[string]int) (int, bool) {
 	imp := strings.TrimSpace(impPath)
 	if imp == "" {
 		return -1, false
@@ -171,6 +179,10 @@ func resolveImport(impPath, fromPath string, index map[string]int, dirIndex map[
 				return idx, true
 			}
 		}
+		return -1, false
+	}
+
+	if fromLang == "go" && !strings.Contains(imp, "/") {
 		return -1, false
 	}
 

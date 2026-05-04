@@ -18,7 +18,6 @@ import (
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/osutil"
-	"github.com/radutopala/loop/internal/quality/rules"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/worktree"
 )
@@ -119,7 +118,7 @@ type Server struct {
 	qualityScanner    QualityScanner
 	qualityGraph      QualityGraphProvider
 	qualitySnapshots  QualitySnapshotReader
-	qualityRulesCfg   *rules.Config
+	qualityRulesLoad  QualityRulesLoader
 	qualityHistory    QualityHistoryReader
 	qualityMu         sync.Mutex
 	qualityCancellers map[string]context.CancelFunc

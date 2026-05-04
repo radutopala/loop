@@ -215,35 +215,55 @@ func (s *GraphSuite) TestBuildSortsEdgesByFromThenTo() {
 // --- resolveImport direct cases for branch coverage ---
 
 func (s *GraphSuite) TestResolveImportEmptyString() {
-	idx, ok := resolveImport("", "from.go", map[string]int{"from.go": 0}, nil)
+	idx, ok := resolveImport("", "from.go", "", map[string]int{"from.go": 0}, nil)
 	require.False(s.T(), ok)
 	require.Equal(s.T(), -1, idx)
 }
 
 func (s *GraphSuite) TestResolveImportExactPathHit() {
-	idx, ok := resolveImport("foo/bar.go", "from.go", map[string]int{"foo/bar.go": 7}, nil)
+	idx, ok := resolveImport("foo/bar.go", "from.go", "", map[string]int{"foo/bar.go": 7}, nil)
 	require.True(s.T(), ok)
 	require.Equal(s.T(), 7, idx)
 }
 
 func (s *GraphSuite) TestResolveImportSuffixWithoutLeadingSlashEqualsExtTarget() {
 	// Covers the "p == imp+ext" branch.
-	idx, ok := resolveImport("foo", "from.go", map[string]int{"foo.go": 5}, nil)
+	idx, ok := resolveImport("foo", "from.ts", "typescript", map[string]int{"foo.go": 5}, nil)
 	require.True(s.T(), ok)
 	require.Equal(s.T(), 5, idx)
 }
 
 func (s *GraphSuite) TestResolveImportParentRelativeSuccess() {
-	idx, ok := resolveImport("../shared/x", "src/index.ts",
+	idx, ok := resolveImport("../shared/x", "src/index.ts", "typescript",
 		map[string]int{"shared/x.ts": 4}, nil)
 	require.True(s.T(), ok)
 	require.Equal(s.T(), 4, idx)
 }
 
 func (s *GraphSuite) TestResolveImportNoMatchReturnsFalse() {
-	idx, ok := resolveImport("does-not-exist", "from.go", map[string]int{"foo.go": 0}, nil)
+	idx, ok := resolveImport("does-not-exist", "from.go", "", map[string]int{"foo.go": 0}, nil)
 	require.False(s.T(), ok)
 	require.Equal(s.T(), -1, idx)
+}
+
+func (s *GraphSuite) TestResolveImportGoBareImportIsStdlib() {
+	// `import "embed"` from a Go file must NOT resolve to a local
+	// `*/embed.go` via the file-suffix match — that produced phantom
+	// edges and phantom cycles between any two same-basename stdlib
+	// shadows in the codebase (the bug that this guard fixes).
+	idx, ok := resolveImport("embed", "internal/foo/x.go", "go",
+		map[string]int{"internal/bar/embed.go": 3}, map[string]int{"internal/bar": 3})
+	require.False(s.T(), ok)
+	require.Equal(s.T(), -1, idx)
+}
+
+func (s *GraphSuite) TestResolveImportGoSlashedImportStillResolves() {
+	// Sanity check: the stdlib guard must not affect normal Go module
+	// imports (which always have at least one slash).
+	idx, ok := resolveImport("github.com/example/lib/internal/api", "internal/foo/x.go", "go",
+		map[string]int{"internal/api/handler.go": 8}, map[string]int{"internal/api": 8})
+	require.True(s.T(), ok)
+	require.Equal(s.T(), 8, idx)
 }
 
 // --- buildDirIndex direct cases ---
@@ -267,9 +287,11 @@ func (s *GraphSuite) TestBuildDirIndexKeepsLowestIndexPerDirectory() {
 }
 
 func (s *GraphSuite) TestResolveImportDirectoryExactMatch() {
-	// Covers the "dir == imp" branch in the directory-suffix scan.
+	// Covers the "dir == imp" branch in the directory-suffix scan. Use
+	// a TS importer so the Go-stdlib guard doesn't reject the bare
+	// import.
 	dirIdx := map[string]int{"foo": 9}
-	idx, ok := resolveImport("foo", "from.go", map[string]int{}, dirIdx)
+	idx, ok := resolveImport("foo", "from.ts", "typescript", map[string]int{}, dirIdx)
 	require.True(s.T(), ok)
 	require.Equal(s.T(), 9, idx)
 }
@@ -278,7 +300,7 @@ func (s *GraphSuite) TestResolveImportFileSuffixWithExtension() {
 	// Covers the bare 'strings.HasSuffix(p, "/"+imp)' branch — the
 	// import already includes the extension, so no ext-loop append is
 	// needed for the match.
-	idx, ok := resolveImport("util.go", "from.go",
+	idx, ok := resolveImport("util.go", "from.go", "",
 		map[string]int{"src/util.go": 7}, nil)
 	require.True(s.T(), ok)
 	require.Equal(s.T(), 7, idx)

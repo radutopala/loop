@@ -35,6 +35,10 @@ export interface QualityScanReport {
   dir_path: string;
   branch: string;
   signal: number;
+  // previous_signal is the prior scan's headline for this (channel,
+  // branch). Sentinel -1 means "no prior scan" — render the absolute
+  // value, not a delta.
+  previous_signal: number;
   geo_mean: number;
   file_count: number;
   parse_failed: number;
@@ -50,11 +54,15 @@ export interface QualitySnapshot {
   current_branch: string;
   branch_mismatch: boolean;
   signal: number;
+  previous_signal: number;
   geo_mean: number;
   scanned_at: string;
   metrics: QualityMetric[];
   tiles: QualityFileTile[];
 }
+
+// NoPreviousSignal mirrors snapshot.NoPreviousValue on the wire.
+export const NoPreviousSignal = -1;
 
 export interface QualityScanResponse {
   status: "started" | "in_progress";

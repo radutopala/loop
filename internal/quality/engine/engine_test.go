@@ -56,7 +56,7 @@ func (s *EngineSuite) TestScanPersistsSnapshotAndCachesGraph() {
 	s.parser.facts["a.go"] = &parser.FileFacts{Path: "a.go", Language: "go", LOC: 1}
 	s.parser.facts["b.go"] = &parser.FileFacts{Path: "b.go", Language: "go", LOC: 1}
 
-	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work", "")
 	require.NoError(s.T(), err)
 	require.False(s.T(), res.InProgress)
 	require.Equal(s.T(), 2, res.FileCount)
@@ -81,7 +81,7 @@ func (s *EngineSuite) TestScanSkipsUnsupportedFiles() {
 	s.parser.facts["a.go"] = &parser.FileFacts{Path: "a.go", Language: "go", LOC: 1}
 	// README.md is not in s.parser.exts → Supports returns false.
 
-	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 1, res.FileCount)
 	// fakeFS was never asked for README.md.
@@ -104,11 +104,33 @@ func (s *EngineSuite) TestSetProgressFiresStartMidAndTerminalTicks() {
 		ticks = append(ticks, tick{channel: channelID, done: done, total: total})
 	})
 
-	_, err := s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	_, err := s.engine.Scan(context.Background(), "ch1", "main", "/work", "")
 	require.NoError(s.T(), err)
 	require.GreaterOrEqual(s.T(), len(ticks), 3)
 	require.Equal(s.T(), tick{"ch1", 0, 2}, ticks[0])
 	require.Equal(s.T(), tick{"ch1", 2, 2}, ticks[len(ticks)-1])
+}
+
+func (s *EngineSuite) TestScanCapturesPriorSignalIntoResult() {
+	s.engine.enumerate = listEnumerator([]string{"a.go"})
+	s.fs.put("/work/a.go", []byte("package a\n"))
+	s.parser.facts["a.go"] = &parser.FileFacts{Path: "a.go", Language: "go", LOC: 1}
+	s.store.prior = &snapshot.Snapshot{Value: 7321}
+
+	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work", "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 7321, res.PreviousSignal)
+}
+
+func (s *EngineSuite) TestScanFirstScanLeavesPreviousSignalAtSentinel() {
+	s.engine.enumerate = listEnumerator([]string{"a.go"})
+	s.fs.put("/work/a.go", []byte("package a\n"))
+	s.parser.facts["a.go"] = &parser.FileFacts{Path: "a.go", Language: "go", LOC: 1}
+	// fakeStore.prior is nil → Get returns ErrNotFound.
+
+	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work", "")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), snapshot.NoPreviousValue, res.PreviousSignal)
 }
 
 // --- defaults ---
@@ -128,7 +150,7 @@ func (s *EngineSuite) TestScanReadFileErrorFlagsParseFailed() {
 	// b.go is missing from fakeFS → ReadFile returns error.
 	s.parser.facts["a.go"] = &parser.FileFacts{Path: "a.go", Language: "go", LOC: 1}
 
-	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 2, res.FileCount)
 	require.Equal(s.T(), 1, res.ParseFailed)
@@ -139,7 +161,7 @@ func (s *EngineSuite) TestScanParseErrorFlagsParseFailed() {
 	s.fs.put("/work/bad.go", []byte("package bad\n"))
 	s.parser.errs["bad.go"] = errors.New("boom")
 
-	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 1, res.FileCount)
 	require.Equal(s.T(), 1, res.ParseFailed)
@@ -152,7 +174,7 @@ func (s *EngineSuite) TestScanParserReturnsParseFailedFacts() {
 	s.fs.put("/work/glr.go", []byte("package glr\n"))
 	s.parser.facts["glr.go"] = &parser.FileFacts{Path: "glr.go", ParseFailed: true}
 
-	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 1, res.FileCount)
 	require.Equal(s.T(), 1, res.ParseFailed)
@@ -162,7 +184,7 @@ func (s *EngineSuite) TestScanRepoTooLargePropagatesStructuredError() {
 	s.engine.enumerate = func(_ string, _ graph.EnumerateOptions) ([]string, error) {
 		return nil, &graph.RepoTooLargeError{FileCount: 100, Limit: 50}
 	}
-	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work", "")
 	require.Error(s.T(), err)
 	require.Equal(s.T(), ScanResult{}, res)
 	var tooLarge *graph.RepoTooLargeError
@@ -175,7 +197,7 @@ func (s *EngineSuite) TestScanEnumerateOtherErrorWrapped() {
 	s.engine.enumerate = func(_ string, _ graph.EnumerateOptions) ([]string, error) {
 		return nil, errors.New("disk gone")
 	}
-	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work", "")
 	require.Error(s.T(), err)
 	require.Equal(s.T(), ScanResult{}, res)
 	require.Contains(s.T(), err.Error(), "enumerate files")
@@ -188,7 +210,7 @@ func (s *EngineSuite) TestScanContextCancelled() {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel()
-	res, err := s.engine.Scan(ctx, "ch1", "main", "/work")
+	res, err := s.engine.Scan(ctx, "ch1", "main", "/work", "")
 	require.ErrorIs(s.T(), err, context.Canceled)
 	require.Equal(s.T(), ScanResult{}, res)
 	require.Empty(s.T(), s.store.saves)
@@ -200,7 +222,7 @@ func (s *EngineSuite) TestScanStoreSaveErrorWrapped() {
 	s.parser.facts["a.go"] = &parser.FileFacts{Path: "a.go", Language: "go", LOC: 1}
 	s.store.saveErr = errors.New("disk full")
 
-	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work", "")
 	require.Error(s.T(), err)
 	require.Equal(s.T(), ScanResult{}, res)
 	require.Contains(s.T(), err.Error(), "save snapshot")
@@ -227,12 +249,12 @@ func (s *EngineSuite) TestScanCoalescesConcurrentCallsForSameChannel() {
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		firstRes, firstErr = s.engine.Scan(context.Background(), "ch1", "main", "/work")
+		firstRes, firstErr = s.engine.Scan(context.Background(), "ch1", "main", "/work", "")
 	}()
 	<-started
 
 	// Second concurrent call coalesces.
-	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	res, err := s.engine.Scan(context.Background(), "ch1", "main", "/work", "")
 	require.NoError(s.T(), err)
 	require.True(s.T(), res.InProgress)
 
@@ -243,7 +265,7 @@ func (s *EngineSuite) TestScanCoalescesConcurrentCallsForSameChannel() {
 	require.Equal(s.T(), int32(1), calls.Load())
 
 	// After release the in-flight slot is cleared, so another scan runs.
-	res2, err := s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	res2, err := s.engine.Scan(context.Background(), "ch1", "main", "/work", "")
 	require.NoError(s.T(), err)
 	require.False(s.T(), res2.InProgress)
 	require.Equal(s.T(), int32(2), calls.Load())
@@ -272,7 +294,7 @@ func (s *EngineSuite) TestScanDifferentChannelsRunInParallel() {
 		wg.Add(1)
 		go func(channelID string) {
 			defer wg.Done()
-			_, _ = s.engine.Scan(context.Background(), channelID, "main", "/work")
+			_, _ = s.engine.Scan(context.Background(), channelID, "main", "/work", "")
 		}(ch)
 	}
 	// Wait until all three are in flight.
@@ -293,17 +315,19 @@ func (s *EngineSuite) TestScanRefreshesConfigFromLoader() {
 		return nil, nil
 	}
 	calls := 0
-	s.engine.configLoad = func() (Config, error) {
+	var seenLoaderArgs []string
+	s.engine.configLoad = func(dirPath, parentDirPath string) (Config, error) {
 		calls++
+		seenLoaderArgs = append(seenLoaderArgs, dirPath+"|"+parentDirPath)
 		return Config{
 			MaxFiles:     100 + calls,
 			ExcludePaths: []string{fmt.Sprintf("p%d/", calls)},
 		}, nil
 	}
 
-	_, err := s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	_, err := s.engine.Scan(context.Background(), "ch1", "main", "/work", "")
 	require.NoError(s.T(), err)
-	_, err = s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	_, err = s.engine.Scan(context.Background(), "ch1", "main", "/work", "/parent")
 	require.NoError(s.T(), err)
 
 	require.Equal(s.T(), 2, calls)
@@ -312,6 +336,9 @@ func (s *EngineSuite) TestScanRefreshesConfigFromLoader() {
 	require.Equal(s.T(), []string{"p1/"}, seenOpts[0].ExtraExcludePatterns)
 	require.Equal(s.T(), 102, seenOpts[1].MaxFiles)
 	require.Equal(s.T(), []string{"p2/"}, seenOpts[1].ExtraExcludePatterns)
+	// dirPath / parentDirPath flow through the loader so it can layer
+	// project-level config on top of the global one.
+	require.Equal(s.T(), []string{"/work|", "/work|/parent"}, seenLoaderArgs)
 }
 
 func (s *EngineSuite) TestScanFallsBackToCachedCfgOnLoaderError() {
@@ -323,7 +350,7 @@ func (s *EngineSuite) TestScanFallsBackToCachedCfgOnLoaderError() {
 		return nil, nil
 	}
 	calls := 0
-	s.engine.configLoad = func() (Config, error) {
+	s.engine.configLoad = func(_, _ string) (Config, error) {
 		calls++
 		if calls == 1 {
 			return Config{MaxFiles: 42, ExcludePaths: []string{"good/"}}, nil
@@ -331,9 +358,9 @@ func (s *EngineSuite) TestScanFallsBackToCachedCfgOnLoaderError() {
 		return Config{}, errors.New("read config: boom")
 	}
 
-	_, err := s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	_, err := s.engine.Scan(context.Background(), "ch1", "main", "/work", "")
 	require.NoError(s.T(), err)
-	_, err = s.engine.Scan(context.Background(), "ch1", "main", "/work")
+	_, err = s.engine.Scan(context.Background(), "ch1", "main", "/work", "")
 	require.NoError(s.T(), err)
 
 	require.Equal(s.T(), 2, calls)
@@ -349,7 +376,7 @@ func (s *EngineSuite) TestScanInitialLoaderErrorFallsBackToSeedCfg() {
 	// Loader errors on the very first call; engine must use the seed
 	// Config that was passed to New (cfg cache starts there).
 	seed := Config{MaxFiles: 7, ExcludePaths: []string{"seed/"}}
-	e := New(s.parser, s.store, s.cache, s.fs, seed, func() (Config, error) {
+	e := New(s.parser, s.store, s.cache, s.fs, seed, func(_, _ string) (Config, error) {
 		return Config{}, errors.New("nope")
 	}, s.clock)
 	var got graph.EnumerateOptions
@@ -358,7 +385,7 @@ func (s *EngineSuite) TestScanInitialLoaderErrorFallsBackToSeedCfg() {
 		return nil, nil
 	}
 
-	_, err := e.Scan(context.Background(), "ch1", "main", "/work")
+	_, err := e.Scan(context.Background(), "ch1", "main", "/work", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), 7, got.MaxFiles)
 	require.Equal(s.T(), []string{"seed/"}, got.ExtraExcludePatterns)
@@ -375,9 +402,9 @@ func (s *EngineSuite) TestScanNilLoaderUsesSeedCfg() {
 		return nil, nil
 	}
 
-	_, err := e.Scan(context.Background(), "ch1", "main", "/work")
+	_, err := e.Scan(context.Background(), "ch1", "main", "/work", "")
 	require.NoError(s.T(), err)
-	_, err = e.Scan(context.Background(), "ch2", "main", "/work")
+	_, err = e.Scan(context.Background(), "ch2", "main", "/work", "")
 	require.NoError(s.T(), err)
 
 	require.Len(s.T(), seenOpts, 2)
@@ -451,6 +478,10 @@ type fakeStore struct {
 	mu      sync.Mutex
 	saves   []savedSnapshot
 	saveErr error
+	// prior, when non-nil, is returned from Get for any (channel, branch)
+	// — sufficient for engine tests since they exercise a single
+	// (channel, branch) pair per scan call.
+	prior *snapshot.Snapshot
 }
 
 func (s *fakeStore) Save(_ context.Context, channelID, branch string, sig metrics.Signal, at time.Time) error {
@@ -464,6 +495,11 @@ func (s *fakeStore) Save(_ context.Context, channelID, branch string, sig metric
 }
 
 func (s *fakeStore) Get(_ context.Context, _, _ string) (*snapshot.Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.prior != nil {
+		return s.prior, nil
+	}
 	return nil, snapshot.ErrNotFound
 }
 
