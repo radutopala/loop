@@ -222,15 +222,20 @@ export function useChatStateStore({
       // user clicks Allow/Deny, so bounce the dock continuously and fire a
       // Web Notification when the relevant view isn't focused.
       if (channelId && wsEvent.type === "gate.approval_requested") {
+        const reqData = wsEvent.data as GateApprovalRequestedData;
         const approvalTarget = stateTarget || channelId;
         if (document.hidden || approvalTarget !== selectedIdRef.current) {
           const ch = channelsRef.current.find((c) => c.id === approvalTarget) ?? channelsRef.current.find((c) => c.id === channelId);
           const name = ch?.name || channelId;
-          const reqData = wsEvent.data as GateApprovalRequestedData;
           const body = reqData.target ? `Approval needed: ${reqData.target}` : "Approval needed";
           new Notification(`Loop — ${name}`, { body });
         }
-        window.loopAPI?.notifyApprovalNeeded?.();
+        window.loopAPI?.notifyApprovalNeeded?.(reqData.req_id);
+      }
+
+      if (wsEvent.type === "gate.approval_resolved") {
+        const data = wsEvent.data as GateApprovalResolvedData;
+        window.loopAPI?.notifyApprovalResolved?.(data.req_id);
       }
 
       // Forward events to the chat listener (useChatState) when the

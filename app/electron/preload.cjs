@@ -21,5 +21,10 @@ contextBridge.exposeInMainWorld("loopAPI", {
     ipcRenderer.on("update-status", (_event, status) => callback(status));
   },
   notifyTurnEnd: () => ipcRenderer.send("turn-ended"),
-  notifyApprovalNeeded: () => ipcRenderer.send("approval-needed"),
+  notifyApprovalNeeded: (reqId) => ipcRenderer.send("approval-needed", reqId),
+  notifyApprovalResolved: (reqId) => ipcRenderer.send("approval-resolved", reqId),
+  setTheme: (name) => ipcRenderer.send("set-theme", name),
+  onThemeChanged: (callback) => {
+    ipcRenderer.on("theme-changed", (_event, name) => callback(name));
+  },
 });

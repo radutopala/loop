@@ -263,7 +263,10 @@ declare global {
       installUpdate?: () => Promise<void>;
       onUpdateStatus?: (callback: (status: UpdateStatus) => void) => void;
       notifyTurnEnd?: () => void;
-      notifyApprovalNeeded?: () => void;
+      notifyApprovalNeeded?: (reqId?: string) => void;
+      notifyApprovalResolved?: (reqId?: string) => void;
+      setTheme?: (name: string) => void;
+      onThemeChanged?: (callback: (name: string) => void) => void;
     };
   }
 }

@@ -66,16 +66,29 @@ export function ThemeProvider({ children, initialTheme, initialFontSizes, initia
     islandBorder: "none",
   };
 
-  // Wrap setThemeName to also persist to localStorage
+  // Wrap setThemeName to also persist to localStorage and broadcast to other
+  // Electron windows so they update live.
   const setThemeName = (name: string) => {
     setThemeNameState(name);
     storageSet("loop-theme", name);
+    window.loopAPI?.setTheme?.(name);
   };
 
   // On initial mount, persist the initial theme + islands to localStorage
   useEffect(() => {
     storageSet("loop-theme", themeName);
     storageSet("loop-islands", islands ? "1" : "0");
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Listen for theme changes broadcast from other Electron windows.
+  useEffect(() => {
+    if (!window.loopAPI?.onThemeChanged) return;
+    window.loopAPI.onThemeChanged((name: string) => {
+      if (allThemes[name]) {
+        setThemeNameState(name);
+        storageSet("loop-theme", name);
+      }
+    });
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Update scrollbar & body background via injected <style>, update meta theme-color

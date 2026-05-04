@@ -617,13 +617,78 @@ ipcMain.on("turn-ended", () => {
   }
 });
 
-ipcMain.on("approval-needed", () => {
+// Pending approval requests, keyed by req_id. While this set is non-empty and
+// no Loop window is focused, re-fire bounce("critical") on a timer — recent
+// macOS versions ignore the "until activated" promise and stop after a single
+// bounce, so we drive it ourselves to keep the dock bumping.
+const pendingApprovals = new Set<string>();
+let approvalBounceId: number | null = null;
+let approvalBounceInterval: NodeJS.Timeout | null = null;
+const APPROVAL_BOUNCE_INTERVAL_MS = 2000;
+
+function startApprovalBounce() {
+  if (pendingApprovals.size === 0) return;
   const wins = BrowserWindow.getAllWindows();
   if (wins.some((w) => w.isFocused())) return;
-  if (process.platform === "darwin") {
-    app.dock?.bounce("critical");
-  } else {
+
+  if (process.platform !== "darwin") {
     for (const w of wins) w.flashFrame(true);
+    return;
+  }
+
+  if (approvalBounceInterval) return;
+  const tick = () => {
+    if (pendingApprovals.size === 0) return;
+    if (BrowserWindow.getAllWindows().some((w) => w.isFocused())) return;
+    approvalBounceId = app.dock?.bounce("critical") ?? null;
+  };
+  tick();
+  approvalBounceInterval = setInterval(tick, APPROVAL_BOUNCE_INTERVAL_MS);
+}
+
+function stopApprovalBounce() {
+  if (approvalBounceInterval) {
+    clearInterval(approvalBounceInterval);
+    approvalBounceInterval = null;
+  }
+  if (process.platform === "darwin") {
+    if (approvalBounceId !== null) {
+      app.dock?.cancelBounce(approvalBounceId);
+      approvalBounceId = null;
+    }
+  } else {
+    for (const w of BrowserWindow.getAllWindows()) w.flashFrame(false);
+  }
+}
+
+ipcMain.on("approval-needed", (_event, reqId?: string) => {
+  if (reqId) pendingApprovals.add(reqId);
+  startApprovalBounce();
+});
+
+ipcMain.on("approval-resolved", (_event, reqId?: string) => {
+  if (reqId) pendingApprovals.delete(reqId);
+  if (pendingApprovals.size === 0) stopApprovalBounce();
+});
+
+app.on("browser-window-focus", () => {
+  if (approvalBounceInterval) {
+    clearInterval(approvalBounceInterval);
+    approvalBounceInterval = null;
+  }
+  approvalBounceId = null;
+});
+
+app.on("browser-window-blur", () => {
+  setTimeout(() => {
+    if (BrowserWindow.getAllWindows().some((w) => w.isFocused())) return;
+    startApprovalBounce();
+  }, 50);
+});
+
+ipcMain.on("set-theme", (_event, themeName: string) => {
+  for (const win of BrowserWindow.getAllWindows()) {
+    win.webContents.send("theme-changed", themeName);
   }
 });
 
