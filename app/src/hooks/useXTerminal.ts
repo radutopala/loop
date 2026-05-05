@@ -251,6 +251,18 @@ export function useXTerminal({
       // ensuring dragSel is populated when _xtermGetSelection is called.
       document.addEventListener("mouseup", onDragMouseUp, true);
 
+      // Copy-on-select: bubble phase runs after both our capture handler
+      // (populates dragSel) and xterm's internal mouseup (finalises
+      // term.getSelection()), so the selection is always ready here.
+      const onCopySelection = (e: MouseEvent) => {
+        if (e.button !== 0) return;
+        const sel = term.getSelection() || dragSel;
+        if (sel) {
+          void navigator.clipboard.writeText(sel).catch(() => {});
+        }
+      };
+      document.addEventListener("mouseup", onCopySelection);
+
       if (xtermEl) xtermEl._xtermGetSelection = () => term.getSelection() || dragSel;
 
       let fitTimer: ReturnType<typeof setTimeout> | null = null;
@@ -280,6 +292,7 @@ export function useXTerminal({
         resizeObserver.disconnect();
         container.removeEventListener("mousedown", onDragMouseDown);
         document.removeEventListener("mouseup", onDragMouseUp, true);
+        document.removeEventListener("mouseup", onCopySelection);
         if (xtermEl) delete xtermEl._xtermGetSelection;
       };
     }
