@@ -37,6 +37,7 @@ import (
 	"github.com/radutopala/loop/internal/quality/engine"
 	"github.com/radutopala/loop/internal/quality/evolution"
 	"github.com/radutopala/loop/internal/quality/graph"
+	"github.com/radutopala/loop/internal/quality/metrics"
 	"github.com/radutopala/loop/internal/quality/rules"
 	"github.com/radutopala/loop/internal/quality/snapshot"
 	"github.com/radutopala/loop/internal/scheduler"
@@ -586,6 +587,7 @@ func (a *app) serve() error {
 			qEngine := engine.New(qParser, qStore, qCache, engine.OSFileSystem{}, engine.Config{
 				MaxFiles:     cfg.Quality.MaxFiles,
 				ExcludePaths: cfg.Quality.ExcludePaths,
+				Metrics:      buildMetricsConfig(cfg.Quality),
 			}, qualityConfigLoader(cfg, config.Reload), nil)
 			qEngine.SetProgress(apiSrv.EmitQualityProgress)
 			apiSrv.SetQualityScanner(qEngine)
@@ -593,6 +595,7 @@ func (a *app) serve() error {
 			apiSrv.SetQualitySnapshotReader(qStore)
 			apiSrv.SetQualityHistoryReader(evolution.NewExecReader())
 			apiSrv.SetQualityRulesLoader(qualityRulesLoader(cfg, config.Reload))
+			apiSrv.SetQualityMetricsLoader(qualityMetricsLoader(cfg, config.Reload))
 		}
 	} else {
 		logger.Warn("quality engine disabled: store does not expose WriterDB")
@@ -734,8 +737,39 @@ func qualityConfigLoader(cfg *config.Config, reload func() (*config.Config, erro
 		return engine.Config{
 			MaxFiles:     merged.Quality.MaxFiles,
 			ExcludePaths: merged.Quality.ExcludePaths,
+			Metrics:      buildMetricsConfig(merged.Quality),
 		}, nil
 	}
+}
+
+// buildMetricsConfig overlays project-config complexity / clones
+// thresholds on top of metrics.DefaultConfig(). A zero on any field
+// means "leave the default in place" — projects can tweak just one
+// dimension without restating the rest.
+func buildMetricsConfig(qc config.QualityConfig) metrics.Config {
+	cfg := metrics.DefaultConfig()
+	if qc.Complexity.CyclomaticT > 0 {
+		cfg.Complexity.CyclomaticT = qc.Complexity.CyclomaticT
+	}
+	if qc.Complexity.CognitiveT > 0 {
+		cfg.Complexity.CognitiveT = qc.Complexity.CognitiveT
+	}
+	if qc.Complexity.NestingT > 0 {
+		cfg.Complexity.NestingT = qc.Complexity.NestingT
+	}
+	if qc.Complexity.ParamsT > 0 {
+		cfg.Complexity.ParamsT = qc.Complexity.ParamsT
+	}
+	if qc.Complexity.LOCT > 0 {
+		cfg.Complexity.LOCT = qc.Complexity.LOCT
+	}
+	if qc.Clones.MinLOC > 0 {
+		cfg.Clones.MinLOC = qc.Clones.MinLOC
+	}
+	if qc.Clones.MaxDistance > 0 {
+		cfg.Clones.MaxDistance = qc.Clones.MaxDistance
+	}
+	return cfg
 }
 
 // qualityRulesLoader returns a function that resolves the rules.Config
@@ -753,6 +787,24 @@ func qualityRulesLoader(cfg *config.Config, reload func() (*config.Config, error
 			merged = cfg
 		}
 		return buildRulesConfig(merged.Quality.Rules)
+	}
+}
+
+// qualityMetricsLoader returns a function that resolves the
+// metrics.Config for the diagnostics handlers (rules, whatif) on the
+// cached graph. Mirrors qualityRulesLoader so per-project Complexity /
+// Clones threshold overrides reach those endpoints on every request
+// without a daemon restart.
+//
+// On project-config load error, falls back to the initial cfg's
+// thresholds rather than failing the request.
+func qualityMetricsLoader(cfg *config.Config, reload func() (*config.Config, error)) func(dirPath, parentDirPath string) metrics.Config {
+	return func(dirPath, parentDirPath string) metrics.Config {
+		merged, err := mergedProjectConfig(cfg, reload, dirPath, parentDirPath)
+		if err != nil {
+			merged = cfg
+		}
+		return buildMetricsConfig(merged.Quality)
 	}
 }
 

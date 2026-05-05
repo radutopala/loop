@@ -241,6 +241,71 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			},
 		},
 		{
+			name:        "QualityComplexity/SingleFieldOverride",
+			projectJSON: `{"quality": {"complexity": {"cyclomatic_t": 12}}}`,
+			mainCfg: &Config{Quality: QualityConfig{Complexity: QualityComplexityConfig{
+				CyclomaticT: 8, CognitiveT: 15, NestingT: 3, ParamsT: 5, LOCT: 50,
+			}}},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), 12, merged.Quality.Complexity.CyclomaticT)
+				// Other dimensions survive unchanged.
+				require.Equal(s.T(), 15, merged.Quality.Complexity.CognitiveT)
+				require.Equal(s.T(), 3, merged.Quality.Complexity.NestingT)
+				require.Equal(s.T(), 8, main.Quality.Complexity.CyclomaticT)
+			},
+		},
+		{
+			name:        "QualityComplexity/AllFieldsOverride",
+			projectJSON: `{"quality": {"complexity": {"cyclomatic_t": 12, "cognitive_t": 20, "nesting_t": 5, "params_t": 6, "loc_t": 80}}}`,
+			mainCfg:     &Config{Quality: QualityConfig{}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), QualityComplexityConfig{
+					CyclomaticT: 12, CognitiveT: 20, NestingT: 5, ParamsT: 6, LOCT: 80,
+				}, merged.Quality.Complexity)
+			},
+		},
+		{
+			name:        "QualityComplexity/AbsentKeepsGlobal",
+			projectJSON: `{"quality": {}}`,
+			mainCfg: &Config{Quality: QualityConfig{Complexity: QualityComplexityConfig{
+				CyclomaticT: 8, CognitiveT: 15,
+			}}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), 8, merged.Quality.Complexity.CyclomaticT)
+				require.Equal(s.T(), 15, merged.Quality.Complexity.CognitiveT)
+			},
+		},
+		{
+			name:        "QualityClones/SingleFieldOverride",
+			projectJSON: `{"quality": {"clones": {"max_distance": 1}}}`,
+			mainCfg: &Config{Quality: QualityConfig{Clones: QualityClonesConfig{
+				MinLOC: 10, MaxDistance: 3,
+			}}},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), 1, merged.Quality.Clones.MaxDistance)
+				require.Equal(s.T(), 10, merged.Quality.Clones.MinLOC)
+				require.Equal(s.T(), 3, main.Quality.Clones.MaxDistance)
+			},
+		},
+		{
+			name:        "QualityClones/BothFieldsOverride",
+			projectJSON: `{"quality": {"clones": {"min_loc": 7, "max_distance": 2}}}`,
+			mainCfg:     &Config{Quality: QualityConfig{}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), QualityClonesConfig{MinLOC: 7, MaxDistance: 2}, merged.Quality.Clones)
+			},
+		},
+		{
+			name:        "QualityClones/AbsentKeepsGlobal",
+			projectJSON: `{"quality": {}}`,
+			mainCfg: &Config{Quality: QualityConfig{Clones: QualityClonesConfig{
+				MinLOC: 10, MaxDistance: 3,
+			}}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), QualityClonesConfig{MinLOC: 10, MaxDistance: 3}, merged.Quality.Clones)
+			},
+		},
+		{
 			name:        "Envs/Merged",
 			projectJSON: `{"envs": {"PROJECT_KEY": "proj-val", "SHARED": "proj"}}`,
 			mainCfg: &Config{

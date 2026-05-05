@@ -23,7 +23,9 @@ func (s *RedundancySuite) TestNilGraph() {
 	require.Equal(s.T(), RedundancyName, r.Name)
 	require.Equal(s.T(), 0.0, r.Raw)
 	require.Equal(s.T(), 1.0, r.Score)
-	require.Equal(s.T(), RedundancyDetail{}, r.Detail)
+	d := r.Detail.(RedundancyDetail)
+	require.Equal(s.T(), DeadCodeDetail{}, d.DeadCode)
+	require.Equal(s.T(), ClonesDetail{}, d.Clones)
 }
 
 func (s *RedundancySuite) TestEmptyGraph() {
@@ -39,7 +41,7 @@ func (s *RedundancySuite) TestNoFunctionsScoresOne() {
 	r := Redundancy(g)
 	require.Equal(s.T(), 1.0, r.Score)
 	d := r.Detail.(RedundancyDetail)
-	require.Equal(s.T(), 0, d.TotalFunctions)
+	require.Equal(s.T(), 0, d.DeadCode.TotalFunctions)
 }
 
 func (s *RedundancySuite) TestAllFunctionsCalledScoresOne() {
@@ -55,11 +57,10 @@ func (s *RedundancySuite) TestAllFunctionsCalledScoresOne() {
 		},
 	})
 	r := Redundancy(g)
-	require.Equal(s.T(), 0.0, r.Raw)
 	require.Equal(s.T(), 1.0, r.Score)
 	d := r.Detail.(RedundancyDetail)
-	require.Empty(s.T(), d.DeadFunctions)
-	require.Equal(s.T(), 2, d.TotalFunctions)
+	require.Empty(s.T(), d.DeadCode.DeadFunctions)
+	require.Equal(s.T(), 2, d.DeadCode.TotalFunctions)
 }
 
 func (s *RedundancySuite) TestUncalledFunctionFlagged() {
@@ -74,12 +75,12 @@ func (s *RedundancySuite) TestUncalledFunctionFlagged() {
 		},
 	})
 	r := Redundancy(g)
-	require.Equal(s.T(), 1.0, r.Raw)
-	require.InDelta(s.T(), 0.5, r.Score, 1e-9)
+	// dead-half score = 0.5; clones-half score = 1.0 → mean 0.75.
+	require.InDelta(s.T(), 0.75, r.Score, 1e-9)
 	d := r.Detail.(RedundancyDetail)
-	require.Len(s.T(), d.DeadFunctions, 1)
-	require.Equal(s.T(), "Unused", d.DeadFunctions[0].Name)
-	require.Equal(s.T(), 20, d.DeadFunctions[0].StartLine)
+	require.Len(s.T(), d.DeadCode.DeadFunctions, 1)
+	require.Equal(s.T(), "Unused", d.DeadCode.DeadFunctions[0].Name)
+	require.Equal(s.T(), 20, d.DeadCode.DeadFunctions[0].StartLine)
 }
 
 func (s *RedundancySuite) TestEntryPointsNotFlagged() {
@@ -94,7 +95,7 @@ func (s *RedundancySuite) TestEntryPointsNotFlagged() {
 	})
 	r := Redundancy(g)
 	d := r.Detail.(RedundancyDetail)
-	require.Empty(s.T(), d.DeadFunctions)
+	require.Empty(s.T(), d.DeadCode.DeadFunctions)
 }
 
 func (s *RedundancySuite) TestTestHarnessNamesNotFlagged() {
@@ -111,7 +112,7 @@ func (s *RedundancySuite) TestTestHarnessNamesNotFlagged() {
 	})
 	r := Redundancy(g)
 	d := r.Detail.(RedundancyDetail)
-	require.Empty(s.T(), d.DeadFunctions)
+	require.Empty(s.T(), d.DeadCode.DeadFunctions)
 }
 
 func (s *RedundancySuite) TestInterfaceMethodsNotFlagged() {
@@ -128,7 +129,7 @@ func (s *RedundancySuite) TestInterfaceMethodsNotFlagged() {
 	})
 	r := Redundancy(g)
 	d := r.Detail.(RedundancyDetail)
-	require.Empty(s.T(), d.DeadFunctions)
+	require.Empty(s.T(), d.DeadCode.DeadFunctions)
 }
 
 func (s *RedundancySuite) TestCrossFileCallsCount() {
@@ -144,7 +145,7 @@ func (s *RedundancySuite) TestCrossFileCallsCount() {
 	})
 	r := Redundancy(g)
 	d := r.Detail.(RedundancyDetail)
-	require.Empty(s.T(), d.DeadFunctions)
+	require.Empty(s.T(), d.DeadCode.DeadFunctions)
 }
 
 func (s *RedundancySuite) TestDeadHotspotCap() {
@@ -156,8 +157,8 @@ func (s *RedundancySuite) TestDeadHotspotCap() {
 	g := graph.Build([]*parser.FileFacts{{Path: "a.go", Functions: funcs}})
 	r := Redundancy(g)
 	d := r.Detail.(RedundancyDetail)
-	require.Equal(s.T(), 30, d.DeadCount)
-	require.Len(s.T(), d.DeadFunctions, redundancyHotspotCap)
+	require.Equal(s.T(), 30, d.DeadCode.DeadCount)
+	require.Len(s.T(), d.DeadCode.DeadFunctions, redundancyHotspotCap)
 }
 
 func (s *RedundancySuite) TestDeadListSortedByPathThenLine() {
@@ -178,11 +179,11 @@ func (s *RedundancySuite) TestDeadListSortedByPathThenLine() {
 	})
 	r := Redundancy(g)
 	d := r.Detail.(RedundancyDetail)
-	require.Len(s.T(), d.DeadFunctions, 3)
-	require.Equal(s.T(), "a.go", d.DeadFunctions[0].Path)
-	require.Equal(s.T(), "z.go", d.DeadFunctions[1].Path)
-	require.Equal(s.T(), 10, d.DeadFunctions[1].StartLine)
-	require.Equal(s.T(), 100, d.DeadFunctions[2].StartLine)
+	require.Len(s.T(), d.DeadCode.DeadFunctions, 3)
+	require.Equal(s.T(), "a.go", d.DeadCode.DeadFunctions[0].Path)
+	require.Equal(s.T(), "z.go", d.DeadCode.DeadFunctions[1].Path)
+	require.Equal(s.T(), 10, d.DeadCode.DeadFunctions[1].StartLine)
+	require.Equal(s.T(), 100, d.DeadCode.DeadFunctions[2].StartLine)
 }
 
 func (s *RedundancySuite) TestIsReachableByConvention() {
@@ -196,4 +197,30 @@ func (s *RedundancySuite) TestIsReachableByConvention() {
 	require.True(s.T(), isReachableByConvention("Error"))
 	require.False(s.T(), isReachableByConvention("ordinaryHelper"))
 	require.True(s.T(), isReachableByConvention("Test")) // bare "Test" still matches the prefix rule
+}
+
+func (s *RedundancySuite) TestClonesDragScore() {
+	// Two duplicate functions, no dead code. Dead score 1.0, clone
+	// score < 1.0 → mean drops below 1.0.
+	body := func() *parser.FunctionBody {
+		return &parser.FunctionBody{
+			LOC:      10,
+			Shingles: []uint64{0xAAAA, 0xBBBB, 0xCCCC, 0xDDDD, 0xEEEE},
+		}
+	}
+	g := graph.Build([]*parser.FileFacts{
+		{
+			Path:      "a.go",
+			Functions: []parser.Function{{Name: "A", Body: body()}},
+			Calls:     []parser.Call{{Name: "A"}, {Name: "B"}},
+		},
+		{
+			Path:      "b.go",
+			Functions: []parser.Function{{Name: "B", Body: body()}},
+		},
+	})
+	r := Redundancy(g)
+	d := r.Detail.(RedundancyDetail)
+	require.NotEmpty(s.T(), d.Clones.Clusters)
+	require.Less(s.T(), r.Score, 1.0)
 }

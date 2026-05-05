@@ -128,6 +128,56 @@ export interface QualityC4Response {
   edge_count: number;
 }
 
+export interface QualityComplexityFunction {
+  path: string;
+  name: string;
+  start_line: number;
+  cyclomatic: number;
+  cognitive: number;
+  max_nesting: number;
+  param_count: number;
+  loc: number;
+  score: number;
+}
+
+export interface QualityComplexityResponse {
+  score: number;
+  raw: number;
+  total_functions: number;
+  over_threshold: number;
+  histogram: Record<string, Record<string, number>>;
+  functions: QualityComplexityFunction[];
+  offset: number;
+  limit: number;
+  returned: number;
+}
+
+export interface QualityCloneMember {
+  path: string;
+  name: string;
+  start_line: number;
+  end_line: number;
+  loc: number;
+}
+
+export interface QualityCloneCluster {
+  members: QualityCloneMember[];
+  loc: number;
+  max_distance: number;
+}
+
+export interface QualityClonesResponse {
+  score: number;
+  raw: number;
+  duplicated_loc: number;
+  total_loc: number;
+  cluster_count: number;
+  clusters: QualityCloneCluster[];
+  offset: number;
+  limit: number;
+  returned: number;
+}
+
 const base = (channelId: string) => `${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/quality`;
 
 export async function triggerQualityScan(channelId: string): Promise<QualityScanResponse> {
@@ -166,6 +216,32 @@ export async function fetchQualityC4(channelId: string): Promise<QualityC4Respon
   const res = await fetch(`${base(channelId)}/c4`);
   if (!res.ok) throw new Error(await readErr(res, "c4"));
   return (await res.json()) as QualityC4Response;
+}
+
+export async function fetchQualityComplexity(
+  channelId: string,
+  opts: { limit?: number; offset?: number } = {},
+): Promise<QualityComplexityResponse> {
+  const q = new URLSearchParams();
+  if (opts.limit !== undefined) q.set("limit", String(opts.limit));
+  if (opts.offset !== undefined) q.set("offset", String(opts.offset));
+  const url = `${base(channelId)}/complexity${q.toString() ? `?${q}` : ""}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(await readErr(res, "complexity"));
+  return (await res.json()) as QualityComplexityResponse;
+}
+
+export async function fetchQualityClones(
+  channelId: string,
+  opts: { limit?: number; offset?: number } = {},
+): Promise<QualityClonesResponse> {
+  const q = new URLSearchParams();
+  if (opts.limit !== undefined) q.set("limit", String(opts.limit));
+  if (opts.offset !== undefined) q.set("offset", String(opts.offset));
+  const url = `${base(channelId)}/clones${q.toString() ? `?${q}` : ""}`;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(await readErr(res, "clones"));
+  return (await res.json()) as QualityClonesResponse;
 }
 
 export async function simulateQualityWhatif(

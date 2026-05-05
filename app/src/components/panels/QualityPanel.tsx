@@ -6,6 +6,8 @@ import { useEventStream } from "../../hooks/useEventStream";
 import { fonts } from "../../theme";
 import {
   fetchQualityC4,
+  fetchQualityClones,
+  fetchQualityComplexity,
   fetchQualityCycles,
   fetchQualityEvolution,
   fetchQualitySnapshot,
@@ -13,6 +15,10 @@ import {
   simulateQualityWhatif,
   triggerQualityScan,
   type QualityC4Response,
+  type QualityCloneCluster,
+  type QualityClonesResponse,
+  type QualityComplexityFunction,
+  type QualityComplexityResponse,
   type QualityEvolutionResponse,
   type QualityFileTile,
   type QualityMetric,
@@ -43,11 +49,12 @@ interface TreemapDatum {
   children?: TreemapDatum[];
 }
 
-type TabId = "overview" | "diagnostics" | "cycles" | "evolution" | "whatif" | "c4";
+type TabId = "overview" | "diagnostics" | "hotspots" | "cycles" | "evolution" | "whatif" | "c4";
 
 const TABS: { id: TabId; label: string }[] = [
   { id: "overview", label: "Overview" },
   { id: "diagnostics", label: "Diagnostics" },
+  { id: "hotspots", label: "Hotspots" },
   { id: "cycles", label: "Cycles" },
   { id: "evolution", label: "Evolution" },
   { id: "whatif", label: "What-if" },
@@ -82,6 +89,7 @@ function metricLabel(name: string): string {
     depth: "Depth",
     equality: "Equality",
     redundancy: "Redundancy",
+    complexity: "Complexity",
   };
   return map[name] ?? name;
 }
@@ -348,7 +356,7 @@ export function QualityPanel({ channelId, embedded, onClose }: QualityPanelProps
   const hasPrev = prev !== NoPreviousSignal;
   const delta = hasPrev ? sig - prev : 0;
   const deltaColor = delta > 0 ? "#22c55e" : delta < 0 ? "#ef4444" : colors.textDim;
-  const deltaLabel = delta > 0 ? `+${delta}` : `${delta}`;
+  const deltaLabel = delta > 0 ? `Δ +${delta}` : `Δ ${delta}`;
   const failedRules = display && "rules" in display && display.rules ? display.rules.failed : [];
   const showProgress = scanning && progress !== null;
   const headerLabel = scanning
@@ -397,21 +405,22 @@ export function QualityPanel({ channelId, embedded, onClose }: QualityPanelProps
             )}
           </div>
         ) : hasPrev ? (
-          // Δ-since-last-scan as the primary headline. Absolute signal
-          // and previous value drop below in muted text — useful for
-          // context but not the thing the eye lands on. The signal
-          // itself stays band-colored so red/amber/green is preserved.
+          // Absolute signal is the primary headline (band-coloured so
+          // red/amber/green is the first thing the eye lands on); the
+          // Δ-since-last-scan rides alongside as a secondary chip and
+          // the previous value drops below in muted text.
           <div style={{ display: "flex", alignItems: "baseline", gap: 14, flexWrap: "wrap" }}>
+            <span style={{ fontSize: 48, fontWeight: 700, color: sigColor, fontFamily: fonts.mono, lineHeight: 1 }}>
+              {sig}
+            </span>
             <span
-              style={{ fontSize: 36, fontWeight: 600, color: deltaColor, fontFamily: fonts.mono }}
+              style={{ fontSize: 18, fontWeight: 600, color: deltaColor, fontFamily: fonts.mono }}
               title="Change in signal since the last scan of this branch"
             >
               {deltaLabel}
             </span>
             <span style={{ color: colors.textDim, fontSize: 12 }}>
-              <span style={{ color: sigColor, fontFamily: fonts.mono }}>{sig}</span>
-              {" "}from{" "}
-              <span style={{ fontFamily: fonts.mono }}>{prev}</span>
+              from <span style={{ fontFamily: fonts.mono }}>{prev}</span>
               {" · "}geo-mean {display?.geo_mean.toFixed(3)} · branch “{display?.branch}”
               {display?.scanned_at ? ` · ${formatScannedAt(display.scanned_at)}` : ""}
             </span>
@@ -420,7 +429,7 @@ export function QualityPanel({ channelId, embedded, onClose }: QualityPanelProps
           // First scan ever for this (channel, branch): no delta to
           // render — fall back to the absolute headline.
           <div style={{ display: "flex", alignItems: "baseline", gap: 12, flexWrap: "wrap" }}>
-            <span style={{ fontSize: 36, fontWeight: 600, color: sigColor, fontFamily: fonts.mono }}>{sig}</span>
+            <span style={{ fontSize: 48, fontWeight: 700, color: sigColor, fontFamily: fonts.mono, lineHeight: 1 }}>{sig}</span>
             <span style={{ color: colors.textDim, fontSize: 12 }}>
               first scan · geo-mean {display?.geo_mean.toFixed(3)} · branch “{display?.branch}”
               {display?.scanned_at ? ` · ${formatScannedAt(display.scanned_at)}` : ""}
@@ -480,6 +489,10 @@ export function QualityPanel({ channelId, embedded, onClose }: QualityPanelProps
             btnStyle={btnStyle}
             onSimulateDelete={runWhatifDelete}
           />
+        )}
+
+        {activeTab === "hotspots" && (
+          <HotspotsTab channelId={channelId} scanGeneration={scanGeneration} colors={colors} fontSizes={fontSizes} />
         )}
 
         {activeTab === "cycles" && (
@@ -818,6 +831,170 @@ function CyclesTab({ channelId, scanGeneration, colors, fontSizes }: AsyncTabPro
   );
 }
 
+// --- Hotspots tab -------------------------------------------------
+
+const HOTSPOT_FUNCTIONS_LIMIT = 50;
+const HOTSPOT_CLUSTERS_LIMIT = 25;
+
+function HotspotsTab({ channelId, scanGeneration, colors, fontSizes }: AsyncTabProps) {
+  const complexity = useAsyncFetch<QualityComplexityResponse>(
+    () => fetchQualityComplexity(channelId, { limit: HOTSPOT_FUNCTIONS_LIMIT }),
+    [channelId, scanGeneration],
+  );
+  const clones = useAsyncFetch<QualityClonesResponse>(
+    () => fetchQualityClones(channelId, { limit: HOTSPOT_CLUSTERS_LIMIT }),
+    [channelId, scanGeneration],
+  );
+
+  const loading = complexity.loading || clones.loading;
+  const error = complexity.error || clones.error;
+  if (loading) return <LoadingState colors={colors} fontSizes={fontSizes} />;
+  if (error) return <ErrorState message={error} colors={colors} fontSizes={fontSizes} />;
+
+  return (
+    <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 20 }}>
+      <ComplexityHotspots data={complexity.data} colors={colors} fontSizes={fontSizes} />
+      <CloneHotspots data={clones.data} colors={colors} fontSizes={fontSizes} />
+    </div>
+  );
+}
+
+interface HotspotSectionProps {
+  colors: ReturnType<typeof useTheme>["colors"];
+  fontSizes: ReturnType<typeof useTheme>["fontSizes"];
+}
+
+function ComplexityHotspots({ data, colors, fontSizes }: HotspotSectionProps & { data: QualityComplexityResponse | null }) {
+  if (!data) return null;
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: colors.textDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+        Complex functions ({data.over_threshold} of {data.total_functions} over threshold · score {data.score.toFixed(3)})
+      </div>
+      <SectionHelp colors={colors}>
+        Per-function score is the worst of cyclomatic, cognitive, max nesting, parameter count, and LOC against
+        their soft thresholds. <b>Score 0</b> means at least one dimension is at 2× the threshold; <b>1.0</b>
+        means everything fits comfortably. The list is worst-first, capped at {HOTSPOT_FUNCTIONS_LIMIT}.
+      </SectionHelp>
+      {data.functions.length === 0 ? (
+        <div style={{ color: colors.textDim, fontSize: fontSizes.panels }}>No functions over the complexity threshold.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+          {data.functions.map((fc, i) => (
+            <ComplexityRow key={`${fc.path}:${fc.start_line}:${i}`} fn={fc} colors={colors} fontSizes={fontSizes} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ComplexityRow({ fn, colors }: HotspotSectionProps & { fn: QualityComplexityFunction }) {
+  const deficit = 1 - fn.score;
+  const accent = deficitColor(deficit);
+  return (
+    <div
+      style={{
+        border: `1px solid ${colors.border}`,
+        borderLeft: `3px solid ${accent}`,
+        borderRadius: 4,
+        padding: "6px 10px",
+        background: colors.surface,
+        fontFamily: fonts.mono,
+        fontSize: 11,
+        color: colors.textLight,
+      }}
+    >
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "baseline" }}>
+        <div style={{ wordBreak: "break-all", flex: 1 }}>
+          <span>{fn.path}</span>
+          <span style={{ color: colors.textDim }}>:{fn.start_line}</span>
+          <span> {fn.name}</span>
+        </div>
+        <div style={{ color: accent, whiteSpace: "nowrap" }} title="Per-function score (1.0 healthy, 0 worst)">
+          {fn.score.toFixed(2)}
+        </div>
+      </div>
+      <div style={{ color: colors.textDim, fontSize: 10, marginTop: 2 }}>
+        cyc {fn.cyclomatic} · cog {fn.cognitive} · nest {fn.max_nesting} · params {fn.param_count} · LOC {fn.loc}
+      </div>
+    </div>
+  );
+}
+
+function CloneHotspots({ data, colors, fontSizes }: HotspotSectionProps & { data: QualityClonesResponse | null }) {
+  if (!data) return null;
+  const showing = Math.min(data.clusters.length, HOTSPOT_CLUSTERS_LIMIT);
+  return (
+    <div>
+      <div style={{ fontSize: 11, color: colors.textDim, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 6 }}>
+        Clone clusters ({data.cluster_count} total · {data.duplicated_loc.toLocaleString()} of {data.total_loc.toLocaleString()} LOC duplicated)
+      </div>
+      <SectionHelp colors={colors}>
+        Functions whose AST shape is near-identical, grouped by SimHash + Hamming distance. <b>Max-distance 0</b> is
+        an exact-shape duplicate; higher numbers are looser matches. Showing the {showing} largest clusters by total
+        LOC; expand to see members.
+      </SectionHelp>
+      {data.clusters.length === 0 ? (
+        <div style={{ color: colors.textDim, fontSize: fontSizes.panels }}>No clone clusters detected.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {data.clusters.map((cl, i) => (
+            <CloneClusterRow key={i} cluster={cl} index={i} colors={colors} fontSizes={fontSizes} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function CloneClusterRow({ cluster, index, colors, fontSizes }: HotspotSectionProps & { cluster: QualityCloneCluster; index: number }) {
+  const [open, setOpen] = useState(index === 0);
+  return (
+    <div style={{ border: `1px solid ${colors.border}`, borderRadius: 4, background: colors.surface }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          width: "100%",
+          display: "flex",
+          justifyContent: "space-between",
+          alignItems: "baseline",
+          padding: "6px 10px",
+          background: "transparent",
+          border: "none",
+          color: colors.textLight,
+          cursor: "pointer",
+          fontFamily: fonts.sans,
+          fontSize: fontSizes.panels,
+          textAlign: "left",
+        }}
+      >
+        <span>
+          <span style={{ color: colors.textDim, marginRight: 6 }}>{open ? "▾" : "▸"}</span>
+          Cluster #{index + 1} — {cluster.members.length} members
+        </span>
+        <span style={{ color: colors.textDim, fontSize: 11 }}>
+          {cluster.loc.toLocaleString()} LOC · max-distance {cluster.max_distance}
+        </span>
+      </button>
+      {open && (
+        <div style={{ padding: "0 10px 8px 10px", display: "flex", flexDirection: "column", gap: 2, fontFamily: fonts.mono, fontSize: 11, color: colors.textLight }}>
+          {cluster.members.map((m, j) => (
+            <div key={j} style={{ display: "flex", justifyContent: "space-between", gap: 8 }}>
+              <span style={{ wordBreak: "break-all", flex: 1 }}>
+                {m.path}
+                <span style={{ color: colors.textDim }}>:{m.start_line}</span>
+                {" "}{m.name}
+              </span>
+              <span style={{ color: colors.textDim, whiteSpace: "nowrap" }}>LOC {m.loc}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 // --- Evolution tab ------------------------------------------------
 
 function EvolutionTab({ channelId, scanGeneration, colors, fontSizes }: AsyncTabProps) {
@@ -960,7 +1137,7 @@ function WhatifTab({ target, loading, error, result, colors, fontSizes }: Whatif
 
   const delta = result.delta_signal;
   const deltaColor = delta > 0 ? "#22c55e" : delta < 0 ? "#ef4444" : colors.textDim;
-  const deltaLabel = delta > 0 ? `+${delta}` : `${delta}`;
+  const deltaLabel = delta > 0 ? `Δ +${delta}` : `Δ ${delta}`;
 
   return (
     <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 12 }}>

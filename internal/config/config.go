@@ -173,15 +173,48 @@ type MemoryConfig struct {
 // scan`) or by the agent (via the `quality_scan` MCP tool); there is no
 // live-rescan loop.
 //
-// MaxFiles, ExcludePaths, and Rules are all hot-reloaded on every Scan:
-// the engine pulls MaxFiles/ExcludePaths via config.Reload, and the API
-// server pulls Rules via apiSrv.SetQualityRulesLoader. Project-level
-// `.loop/config.json` overrides (including the worktree → parent →
-// global layering) are picked up the same way. No daemon restart needed.
+// MaxFiles, ExcludePaths, Rules, Complexity, and Clones are all
+// hot-reloaded on every Scan: the engine pulls them via config.Reload,
+// and the API server pulls Rules via apiSrv.SetQualityRulesLoader.
+// Project-level `.loop/config.json` overrides (including the worktree →
+// parent → global layering) are picked up the same way. No daemon
+// restart needed.
 type QualityConfig struct {
 	MaxFiles     int
 	ExcludePaths []string
 	Rules        map[string]QualityRuleConfig
+
+	// Complexity carries the soft-threshold knobs the per-function
+	// complexity score uses. Zero values fall back to
+	// metrics.DefaultComplexityConfig() at scan time.
+	Complexity QualityComplexityConfig
+
+	// Clones carries the clone-detector knobs (minimum function LOC,
+	// SimHash hamming-distance ceiling). Zero values fall back to
+	// metrics.DefaultClonesConfig() at scan time.
+	Clones QualityClonesConfig
+}
+
+// QualityComplexityConfig mirrors metrics.ComplexityConfig in the
+// project-config layer. Per-dimension threshold T means "score 1.0 at
+// or below T, decay linearly to 0 at 2·T". Zero on any field reverts
+// the dimension to its default.
+type QualityComplexityConfig struct {
+	CyclomaticT int
+	CognitiveT  int
+	NestingT    int
+	ParamsT     int
+	LOCT        int
+}
+
+// QualityClonesConfig mirrors metrics.ClonesConfig in the project-config
+// layer. MinLOC zero falls back to default; MaxDistance zero is treated
+// as "exact match only" (legitimate config), so a separate explicit-set
+// signal is unnecessary — the json layer uses pointers to disambiguate
+// "absent" from "0".
+type QualityClonesConfig struct {
+	MinLOC      int
+	MaxDistance int
 }
 
 // QualityRuleConfig is the project-config override for one built-in rule.
@@ -351,6 +384,27 @@ type jsonQualityConfig struct {
 	MaxFiles     *int                             `json:"max_files"`
 	ExcludePaths []string                         `json:"exclude_paths"`
 	Rules        map[string]jsonQualityRuleConfig `json:"rules"`
+	Complexity   *jsonQualityComplexityConfig     `json:"complexity"`
+	Clones       *jsonQualityClonesConfig         `json:"clones"`
+}
+
+// jsonQualityComplexityConfig is the JSON representation of the
+// complexity-thresholds block. Pointer fields disambiguate "absent" from
+// "explicitly zero" — zero on any T means "use default".
+type jsonQualityComplexityConfig struct {
+	CyclomaticT *int `json:"cyclomatic_t"`
+	CognitiveT  *int `json:"cognitive_t"`
+	NestingT    *int `json:"nesting_t"`
+	ParamsT     *int `json:"params_t"`
+	LOCT        *int `json:"loc_t"`
+}
+
+// jsonQualityClonesConfig is the JSON representation of the
+// clone-detector block. MaxDistance is a pointer so 0 (exact match)
+// stays distinguishable from "not configured".
+type jsonQualityClonesConfig struct {
+	MinLOC      *int `json:"min_loc"`
+	MaxDistance *int `json:"max_distance"`
 }
 
 // jsonQualityRuleConfig is the JSON representation of one rule's overrides.
@@ -612,7 +666,8 @@ func (l *Loader) parse() (*Config, error) {
 	}
 
 	// Quality config: MaxFiles / ExcludePaths feed engine.Config;
-	// Rules feeds rules.Config (per-rule enable + threshold overrides).
+	// Rules feeds rules.Config (per-rule enable + threshold overrides);
+	// Complexity / Clones feed metrics.Config (per-metric thresholds).
 	if jc.Quality != nil {
 		cfg.Quality.MaxFiles = ptrDefault(jc.Quality.MaxFiles, 0)
 		cfg.Quality.ExcludePaths = jc.Quality.ExcludePaths
@@ -623,6 +678,21 @@ func (l *Loader) parse() (*Config, error) {
 					Enabled:   ptrDefault(jrc.Enabled, true),
 					Threshold: jrc.Threshold,
 				}
+			}
+		}
+		if jc.Quality.Complexity != nil {
+			cfg.Quality.Complexity = QualityComplexityConfig{
+				CyclomaticT: ptrDefault(jc.Quality.Complexity.CyclomaticT, 0),
+				CognitiveT:  ptrDefault(jc.Quality.Complexity.CognitiveT, 0),
+				NestingT:    ptrDefault(jc.Quality.Complexity.NestingT, 0),
+				ParamsT:     ptrDefault(jc.Quality.Complexity.ParamsT, 0),
+				LOCT:        ptrDefault(jc.Quality.Complexity.LOCT, 0),
+			}
+		}
+		if jc.Quality.Clones != nil {
+			cfg.Quality.Clones = QualityClonesConfig{
+				MinLOC:      ptrDefault(jc.Quality.Clones.MinLOC, 0),
+				MaxDistance: ptrDefault(jc.Quality.Clones.MaxDistance, 0),
 			}
 		}
 	}
@@ -905,6 +975,9 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 	// Quality config: project overrides global per-key. Rules merge by
 	// name — project entries replace global entries with the same name;
 	// global entries that aren't mentioned in the project block survive.
+	// Complexity / Clones override per-field — only fields the project
+	// explicitly sets replace the global value, so a project that wants
+	// to tweak just one threshold doesn't have to restate the rest.
 	if pc.Quality != nil {
 		if pc.Quality.MaxFiles != nil {
 			merged.Quality.MaxFiles = *pc.Quality.MaxFiles
@@ -928,6 +1001,31 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 				cloned[name] = rc
 			}
 			merged.Quality.Rules = cloned
+		}
+		if pc.Quality.Complexity != nil {
+			if pc.Quality.Complexity.CyclomaticT != nil {
+				merged.Quality.Complexity.CyclomaticT = *pc.Quality.Complexity.CyclomaticT
+			}
+			if pc.Quality.Complexity.CognitiveT != nil {
+				merged.Quality.Complexity.CognitiveT = *pc.Quality.Complexity.CognitiveT
+			}
+			if pc.Quality.Complexity.NestingT != nil {
+				merged.Quality.Complexity.NestingT = *pc.Quality.Complexity.NestingT
+			}
+			if pc.Quality.Complexity.ParamsT != nil {
+				merged.Quality.Complexity.ParamsT = *pc.Quality.Complexity.ParamsT
+			}
+			if pc.Quality.Complexity.LOCT != nil {
+				merged.Quality.Complexity.LOCT = *pc.Quality.Complexity.LOCT
+			}
+		}
+		if pc.Quality.Clones != nil {
+			if pc.Quality.Clones.MinLOC != nil {
+				merged.Quality.Clones.MinLOC = *pc.Quality.Clones.MinLOC
+			}
+			if pc.Quality.Clones.MaxDistance != nil {
+				merged.Quality.Clones.MaxDistance = *pc.Quality.Clones.MaxDistance
+			}
 		}
 	}
 

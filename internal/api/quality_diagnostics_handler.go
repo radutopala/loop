@@ -179,7 +179,7 @@ func (s *Server) handleQualityRules(w http.ResponseWriter, r *http.Request) {
 			parentDirPath = s.resolveParentDirPath(r.Context(), channelID)
 		}
 	}
-	sig := metrics.Compute(g)
+	sig := metrics.ComputeWith(g, s.resolveMetricsConfig(dirPath, parentDirPath))
 	results := rules.Run(s.resolveRulesConfig(dirPath, parentDirPath), g, sig)
 
 	resp := QualityRulesReport{}
@@ -237,7 +237,14 @@ func (s *Server) handleQualityWhatif(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "mutations: at least one mutation required", http.StatusBadRequest)
 		return
 	}
-	res, err := whatif.Simulate(g, req.Mutations)
+	var dirPath, parentDirPath string
+	if s.store != nil {
+		if d, derr := s.resolveDirPath(r.Context(), "", channelID); derr == nil {
+			dirPath = d
+			parentDirPath = s.resolveParentDirPath(r.Context(), channelID)
+		}
+	}
+	res, err := whatif.SimulateWith(g, req.Mutations, s.resolveMetricsConfig(dirPath, parentDirPath))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return

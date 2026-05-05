@@ -40,6 +40,55 @@ func (s *ConfigSuite) TestQualityConfigFullBlock() {
 	require.False(s.T(), cfg.Quality.Rules["no_import_cycles"].Enabled)
 }
 
+func (s *ConfigSuite) TestQualityComplexityAndClonesBlock() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"quality": {
+				"complexity": {
+					"cyclomatic_t": 12,
+					"cognitive_t":  20,
+					"nesting_t":    5,
+					"params_t":     6,
+					"loc_t":        80
+				},
+				"clones": {
+					"min_loc":      8,
+					"max_distance": 2
+				}
+			}
+		}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 12, cfg.Quality.Complexity.CyclomaticT)
+	require.Equal(s.T(), 20, cfg.Quality.Complexity.CognitiveT)
+	require.Equal(s.T(), 5, cfg.Quality.Complexity.NestingT)
+	require.Equal(s.T(), 6, cfg.Quality.Complexity.ParamsT)
+	require.Equal(s.T(), 80, cfg.Quality.Complexity.LOCT)
+	require.Equal(s.T(), 8, cfg.Quality.Clones.MinLOC)
+	require.Equal(s.T(), 2, cfg.Quality.Clones.MaxDistance)
+}
+
+func (s *ConfigSuite) TestQualityComplexityAndClonesAbsentLeavesZero() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"quality": {}
+		}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), QualityComplexityConfig{}, cfg.Quality.Complexity)
+	require.Equal(s.T(), QualityClonesConfig{}, cfg.Quality.Clones)
+}
+
 func (s *ConfigSuite) TestQualityRuleEnabledDefaultsTrue() {
 	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{

@@ -391,6 +391,17 @@ func (s *EngineSuite) TestScanInitialLoaderErrorFallsBackToSeedCfg() {
 	require.Equal(s.T(), []string{"seed/"}, got.ExtraExcludePatterns)
 }
 
+func (s *EngineSuite) TestMetricsConfigZeroFallsBackToDefault() {
+	got := s.engine.metricsConfig(Config{})
+	require.Equal(s.T(), metrics.DefaultConfig(), got)
+}
+
+func (s *EngineSuite) TestMetricsConfigPassesThroughOverrides() {
+	custom := metrics.Config{Complexity: metrics.ComplexityConfig{CyclomaticT: 7}}
+	got := s.engine.metricsConfig(Config{Metrics: custom})
+	require.Equal(s.T(), custom, got)
+}
+
 func (s *EngineSuite) TestScanNilLoaderUsesSeedCfg() {
 	// Default suite engine has nil configLoad; supply a non-empty seed
 	// cfg via New and verify it flows through unchanged across scans.

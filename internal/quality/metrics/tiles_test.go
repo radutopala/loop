@@ -52,7 +52,7 @@ func (s *TilesSuite) TestCycleMembersFlaggedAsCyclesDrag() {
 }
 
 func (s *TilesSuite) TestModularityCrossClusterFraction() {
-	// Two tightly-coupled pairs with a single cross edge — Louvain
+	// Two tightly-coupled pairs with a single cross edge — Leiden
 	// reliably finds {a,b} and {c,d} as two communities, with the a→c
 	// link counting as cross-community drag for both endpoints.
 	g := graph.Build([]*parser.FileFacts{
@@ -238,6 +238,32 @@ func (s *TilesSuite) TestComputePopulatesTiles() {
 func (s *TilesSuite) TestAggregateLeavesTilesEmpty() {
 	sig := Aggregate([]Result{{Name: ModularityName, Score: 1, Raw: 0.5}})
 	require.Empty(s.T(), sig.Tiles)
+}
+
+func (s *TilesSuite) TestComplexityFileDragHandlesNilAndBadDetail() {
+	require.Empty(s.T(), complexityFileDrag(nil))
+	require.Empty(s.T(), complexityFileDrag(&Result{Detail: "not a ComplexityDetail"}))
+}
+
+func (s *TilesSuite) TestComplexityFileDragSkipsPerfectFiles() {
+	r := &Result{Detail: ComplexityDetail{
+		Functions: []FuncComplexity{
+			{Path: "perfect.go", LOC: 10, Score: 1.0},
+		},
+	}}
+	require.Empty(s.T(), complexityFileDrag(r))
+}
+
+func (s *TilesSuite) TestComplexityFileDragWeightsByLOC() {
+	r := &Result{Detail: ComplexityDetail{
+		Functions: []FuncComplexity{
+			{Path: "a.go", LOC: 0, Score: 0.0},
+			{Path: "b.go", LOC: 10, Score: 0.5},
+		},
+	}}
+	out := complexityFileDrag(r)
+	require.InDelta(s.T(), 1.0, out["a.go"], 1e-9)
+	require.InDelta(s.T(), 0.5, out["b.go"], 1e-9)
 }
 
 func (s *TilesSuite) TestWorstDeficitDeterministicTieBreak() {

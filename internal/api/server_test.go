@@ -312,6 +312,8 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("GET /api/channels/{id}/quality/evolution", s.srv.handleQualityEvolution)
 	s.mux.HandleFunc("GET /api/channels/{id}/quality/c4", s.srv.handleQualityC4)
 	s.mux.HandleFunc("GET /api/channels/{id}/quality/bugfactor", s.srv.handleQualityBugFactor)
+	s.mux.HandleFunc("GET /api/channels/{id}/quality/complexity", s.srv.handleQualityComplexity)
+	s.mux.HandleFunc("GET /api/channels/{id}/quality/clones", s.srv.handleQualityClones)
 	s.mux.HandleFunc("GET /api/health", handleHealth)
 	s.mux.HandleFunc("GET /api/ws/terminal", s.srv.handleTerminalWS)
 	s.mux.HandleFunc("GET /api/ws", s.srv.handleEventsWS)

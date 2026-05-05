@@ -8,7 +8,7 @@ import (
 // metric cards, and the rules engine. Stable across releases.
 const ModularityName = "modularity"
 
-// ModularityDetail carries the per-snapshot Louvain partition so the
+// ModularityDetail carries the per-snapshot Leiden partition so the
 // diagnostics layer (tile drag, what-if simulation) can reuse exactly
 // the same clustering the headline Q was computed on. Communities is
 // 1:1 with g.Nodes, indexed identically; NumCommunities is derived but
@@ -19,11 +19,11 @@ type ModularityDetail struct {
 }
 
 // Modularity computes Newman's Q for the given graph against communities
-// the Louvain method discovers from the import structure itself —
+// the Leiden algorithm discovers from the import structure itself —
 // rather than against the directory layout. The directory-based
 // clustering treats e.g. all of internal/* as one giant cluster, which
 // gives Q ≈ 0 for any single-language Go project regardless of how
-// well-organised it is internally; Louvain finds the import-coupled
+// well-organised it is internally; Leiden finds the import-coupled
 // sub-modules and Q reflects their actual cohesion.
 //
 // Range: Q sits in [-0.5, 1.0]. Real-world structured codebases land

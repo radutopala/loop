@@ -14,7 +14,7 @@ import (
 func (s *MCPServerSuite) TestListTools() {
 	res, err := s.session.ListTools(s.ctx, nil)
 	require.NoError(s.T(), err)
-	require.Len(s.T(), res.Tools, 25) // 12 base + 2 playground + 1 shortcut + 10 quality
+	require.Len(s.T(), res.Tools, 27) // 12 base + 2 playground + 1 shortcut + 12 quality
 
 	names := make(map[string]bool)
 	for _, t := range res.Tools {
@@ -45,6 +45,8 @@ func (s *MCPServerSuite) TestListTools() {
 	require.True(s.T(), names["quality_evolution"])
 	require.True(s.T(), names["quality_bugfactor"])
 	require.True(s.T(), names["quality_c4"])
+	require.True(s.T(), names["quality_complexity"])
+	require.True(s.T(), names["quality_clones"])
 }
 
 // --- schedule_task ---

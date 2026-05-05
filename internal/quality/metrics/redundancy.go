@@ -7,16 +7,29 @@ import (
 	"github.com/radutopala/loop/internal/quality/graph"
 )
 
-// RedundancyName is the canonical key for the dead-code / redundancy metric.
+// RedundancyName is the canonical key for the redundancy metric — the
+// arithmetic mean of the dead-code score and the clone-cluster score.
+// "Code that shouldn't exist" is the unifying theme.
 const RedundancyName = "redundancy"
 
-// RedundancyDetail is the panel-facing payload: candidate dead functions
-// surfaced for the diagnostics list. The signal is a heuristic — it
-// flags functions whose name never appears in any Call site — so it
-// over-reports on interface satisfaction, reflection, and externally
-// consumed library APIs. The panel marks entries as "candidates" rather
-// than certainties.
+// RedundancyDetail is the panel-facing payload: dead-code findings plus
+// clone-cluster findings under one umbrella. The two sub-scores are
+// averaged to produce the metric score; each is rendered as its own
+// section in the diagnostics surface.
 type RedundancyDetail struct {
+	// DeadCode is the dead-function half: candidate functions whose name
+	// never appears at a call site, after filtering out runtime and
+	// interface conventions.
+	DeadCode DeadCodeDetail
+
+	// Clones is the duplicate-shape half: clusters of functions whose
+	// AST shingles produce nearby SimHash fingerprints.
+	Clones ClonesDetail
+}
+
+// DeadCodeDetail is the panel-facing payload for the dead-function half
+// of redundancy. Same shape RedundancyDetail had before clones moved in.
+type DeadCodeDetail struct {
 	// DeadFunctions is the capped list shown in the panel, sorted by
 	// (Path asc, StartLine asc). Capped at redundancyHotspotCap entries;
 	// the full count is in DeadCount.
@@ -95,16 +108,47 @@ func isReachableByConvention(name string) bool {
 	return false
 }
 
-// Redundancy estimates dead code by name-reachability: a function whose
-// name never appears in any Call site, after filtering out runtime and
-// interface conventions, is flagged as a candidate. Score is the share
-// of definitions that *aren't* dead.
+// Redundancy combines the dead-code finder with the clone-cluster
+// finder. Score is the arithmetic mean of the two sub-scores; either
+// half pulling toward zero drags the redundancy axis toward zero too.
+//
+// Empty graphs and graphs with no functions return Score 1.0 — there's
+// nothing to be dead or duplicated.
+func Redundancy(g *graph.Graph) Result {
+	return RedundancyWith(g, DefaultClonesConfig())
+}
+
+// RedundancyWith is the config-driven entry point used by ComputeWith.
+// Plain Redundancy keeps the default clone thresholds for callers (CLI,
+// snapshots) that don't thread a Config.
+func RedundancyWith(g *graph.Graph, clonesCfg ClonesConfig) Result {
+	dead := computeDeadCode(g)
+	clones := ComputeClones(g, clonesCfg)
+	deadDetail, _ := dead.Detail.(DeadCodeDetail)
+	clonesDetail, _ := clones.Detail.(ClonesDetail)
+
+	mean := (dead.Score + clones.Score) / 2.0
+	return Result{
+		Name:  RedundancyName,
+		Raw:   dead.Raw + clones.Raw,
+		Score: clamp01(mean),
+		Detail: RedundancyDetail{
+			DeadCode: deadDetail,
+			Clones:   clonesDetail,
+		},
+	}
+}
+
+// computeDeadCode estimates dead code by name-reachability: a function
+// whose name never appears in any Call site, after filtering out runtime
+// and interface conventions, is flagged as a candidate. Score is the
+// share of definitions that *aren't* dead.
 //
 // Empty graphs and graphs with no functions return Score 1.0 — there's
 // nothing to be dead.
-func Redundancy(g *graph.Graph) Result {
+func computeDeadCode(g *graph.Graph) Result {
 	if g == nil || len(g.Nodes) == 0 {
-		return Result{Name: RedundancyName, Raw: 0, Score: 1.0, Detail: RedundancyDetail{}}
+		return Result{Name: RedundancyName, Raw: 0, Score: 1.0, Detail: DeadCodeDetail{}}
 	}
 
 	callSet := make(map[string]struct{})
@@ -116,7 +160,7 @@ func Redundancy(g *graph.Graph) Result {
 		}
 	}
 	if totalFns == 0 {
-		return Result{Name: RedundancyName, Raw: 0, Score: 1.0, Detail: RedundancyDetail{}}
+		return Result{Name: RedundancyName, Raw: 0, Score: 1.0, Detail: DeadCodeDetail{}}
 	}
 
 	var dead []DeadFunction
@@ -154,7 +198,7 @@ func Redundancy(g *graph.Graph) Result {
 		Name:  RedundancyName,
 		Raw:   float64(deadCount),
 		Score: clamp01(score),
-		Detail: RedundancyDetail{
+		Detail: DeadCodeDetail{
 			DeadFunctions:  listed,
 			TotalFunctions: totalFns,
 			DeadCount:      deadCount,

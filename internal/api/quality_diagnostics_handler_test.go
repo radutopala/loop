@@ -339,6 +339,7 @@ func (s *ServerSuite) TestHandleQualityWhatifBodyReadError() {
 }
 
 func (s *ServerSuite) TestHandleQualityWhatifSimulateError() {
+	s.channelWithDir("ch-1", s.T().TempDir())
 	s.srv.SetQualityGraphProvider(&graphProviderHit{g: smallGraph()})
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/whatif", `{"mutations":[{"op":"delete","path":"missing.go"}]}`)
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
@@ -346,6 +347,7 @@ func (s *ServerSuite) TestHandleQualityWhatifSimulateError() {
 }
 
 func (s *ServerSuite) TestHandleQualityWhatifDeleteSucceeds() {
+	s.channelWithDir("ch-1", s.T().TempDir())
 	s.srv.SetQualityGraphProvider(&graphProviderHit{g: smallGraph()})
 	rec := s.testRequest("POST", "/api/channels/ch-1/quality/whatif", `{"mutations":[{"op":"delete","path":"internal/api/u.go"}]}`)
 	require.Equal(s.T(), http.StatusOK, rec.Code)

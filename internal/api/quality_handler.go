@@ -165,6 +165,12 @@ func (s *Server) SetQualitySnapshotReader(r QualitySnapshotReader) {
 // previous static SetQualityRulesConfig(nil) carried.
 type QualityRulesLoader func(dirPath, parentDirPath string) *rules.Config
 
+// QualityMetricsLoader resolves the metrics.Config for a scan, given the
+// same (dirPath, parentDirPath) pair. Returning the zero Config means
+// "use metrics.DefaultConfig()" so the metric paths stay consistent
+// between the scanner and the post-scan diagnostics endpoints.
+type QualityMetricsLoader func(dirPath, parentDirPath string) metrics.Config
+
 // SetQualityRulesLoader wires the per-scan rules-config resolver. Nil
 // disables overrides — handlers fall back to rules.DefaultConfig() at
 // evaluation time. Replaces the static SetQualityRulesConfig so changes
@@ -172,6 +178,30 @@ type QualityRulesLoader func(dirPath, parentDirPath string) *rules.Config
 // daemon (mirrors qualityConfigLoader for the engine config).
 func (s *Server) SetQualityRulesLoader(loader QualityRulesLoader) {
 	s.qualityRulesLoad = loader
+}
+
+// SetQualityMetricsLoader wires the per-scan metrics-config resolver
+// used by handlers that recompute the signal from the cached graph
+// (rules, whatif). Nil disables overrides — handlers fall back to
+// metrics.DefaultConfig() at evaluation time, matching the behaviour
+// before per-metric thresholds were configurable.
+func (s *Server) SetQualityMetricsLoader(loader QualityMetricsLoader) {
+	s.qualityMetricsCfg = loader
+}
+
+// resolveMetricsConfig returns the effective metrics.Config for a
+// recompute on the cached graph, invoking the loader (if wired) and
+// falling back to metrics.DefaultConfig() when the loader is unset or
+// returns the zero value.
+func (s *Server) resolveMetricsConfig(dirPath, parentDirPath string) metrics.Config {
+	if s.qualityMetricsCfg == nil {
+		return metrics.DefaultConfig()
+	}
+	cfg := s.qualityMetricsCfg(dirPath, parentDirPath)
+	if cfg == (metrics.Config{}) {
+		return metrics.DefaultConfig()
+	}
+	return cfg
 }
 
 // progressThrottle is the minimum gap between successive quality.scan_progress

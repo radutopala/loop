@@ -25,9 +25,9 @@ type Signal struct {
 	GeoMean float64
 
 	// Metrics is the per-metric results in their canonical order
-	// (modularity, cycles, depth, equality, redundancy). Same slice the
-	// caller passed to Aggregate, kept here so consumers don't have to
-	// thread results through both APIs.
+	// (modularity, cycles, depth, equality, redundancy, complexity).
+	// Same slice the caller passed to Aggregate, kept here so consumers
+	// don't have to thread results through both APIs.
 	Metrics []Result
 
 	// Tiles is the per-file deficit projection rendered as the panel's
@@ -62,16 +62,40 @@ func Aggregate(results []Result) Signal {
 	}
 }
 
-// Compute is the convenience entry point: runs all 5 metrics on g
-// and returns the aggregated Signal. Useful for the snapshot package,
-// the MCP scan tool, and the CLI.
+// Config carries the threshold knobs ComputeWith propagates into the
+// per-metric routines that take config (currently complexity and
+// clones). Pass DefaultConfig() when no project-level overrides exist.
+type Config struct {
+	Complexity ComplexityConfig
+	Clones     ClonesConfig
+}
+
+// DefaultConfig returns the production defaults, equivalent to calling
+// each metric's individual default constructor.
+func DefaultConfig() Config {
+	return Config{
+		Complexity: DefaultComplexityConfig(),
+		Clones:     DefaultClonesConfig(),
+	}
+}
+
+// Compute is the convenience entry point: runs all metrics on g with
+// default thresholds and returns the aggregated Signal. Useful for the
+// snapshot package, the MCP scan tool, and the CLI.
 func Compute(g *graph.Graph) Signal {
+	return ComputeWith(g, DefaultConfig())
+}
+
+// ComputeWith runs all metrics with caller-supplied thresholds. Used by
+// the engine when project-level config overrides default thresholds.
+func ComputeWith(g *graph.Graph, cfg Config) Signal {
 	results := []Result{
 		Modularity(g),
 		Cycles(g),
 		Depth(g),
 		Equality(g),
-		Redundancy(g),
+		RedundancyWith(g, cfg.Clones),
+		ComputeComplexity(g, cfg.Complexity),
 	}
 	sig := Aggregate(results)
 	sig.Tiles = AttributeFiles(g, results)

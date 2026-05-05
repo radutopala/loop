@@ -80,11 +80,22 @@ var ErrEmptyGraph = errors.New("whatif: graph is empty")
 // reassembles, and returns the predicted metric breakdown. Errors from
 // individual mutations short-circuit and surface to the caller (so a
 // typo'd path doesn't silently produce misleading numbers).
+//
+// Uses metrics.DefaultConfig() — callers that need project-level
+// thresholds applied to the prediction should use SimulateWith.
 func Simulate(g *graph.Graph, muts []Mutation) (Result, error) {
+	return SimulateWith(g, muts, metrics.DefaultConfig())
+}
+
+// SimulateWith is the config-driven variant of Simulate, used by the
+// HTTP handler so the whatif prediction picks up the same Complexity /
+// Clones thresholds the snapshot scan does. Both baseline and predicted
+// signals are computed against the same cfg so the delta is honest.
+func SimulateWith(g *graph.Graph, muts []Mutation, cfg metrics.Config) (Result, error) {
 	if g == nil || len(g.Nodes) == 0 {
 		return Result{}, ErrEmptyGraph
 	}
-	baseline := metrics.Compute(g)
+	baseline := metrics.ComputeWith(g, cfg)
 
 	shadow := projectToShadow(g)
 	for i, m := range muts {
@@ -92,7 +103,7 @@ func Simulate(g *graph.Graph, muts []Mutation) (Result, error) {
 			return Result{}, fmt.Errorf("mutation %d (%s %s): %w", i, m.Op, m.Path, err)
 		}
 	}
-	predicted := metrics.Compute(shadow.assemble())
+	predicted := metrics.ComputeWith(shadow.assemble(), cfg)
 
 	return Result{
 		Mutations:        muts,

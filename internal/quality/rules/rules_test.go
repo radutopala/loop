@@ -69,12 +69,15 @@ func (s *RulesSuite) TestRunHealthyGraphAllPass() {
 	// metrics package's zero-floor semantics on tiny graphs.
 	sig := metrics.Signal{Value: 6000}
 	results := Run(DefaultConfig(), g, sig)
-	require.Len(s.T(), results, 3)
+	require.Len(s.T(), results, 6)
 	require.False(s.T(), AnyFailed(results))
 	// Sorted by name asc.
-	require.Equal(s.T(), NoImportCycles, results[0].Name)
-	require.Equal(s.T(), ParseFail, results[1].Name)
-	require.Equal(s.T(), SignalFloor, results[2].Name)
+	require.Equal(s.T(), ComplexityCeiling, results[0].Name)
+	require.Equal(s.T(), ComplexityScoreFloor, results[1].Name)
+	require.Equal(s.T(), DuplicationCeiling, results[2].Name)
+	require.Equal(s.T(), NoImportCycles, results[3].Name)
+	require.Equal(s.T(), ParseFail, results[4].Name)
+	require.Equal(s.T(), SignalFloor, results[5].Name)
 }
 
 func (s *RulesSuite) TestAnyFailed() {
@@ -88,6 +91,12 @@ func (s *RulesSuite) TestDefaultConfig() {
 	require.True(s.T(), cfg.Rules[SignalFloor].Enabled)
 	require.Equal(s.T(), SignalFloorDefault, cfg.Rules[SignalFloor].Threshold)
 	require.Equal(s.T(), ParseFailMaxDefault, cfg.Rules[ParseFail].Threshold)
+	require.True(s.T(), cfg.Rules[ComplexityCeiling].Enabled)
+	require.Equal(s.T(), ComplexityCeilingDefault, cfg.Rules[ComplexityCeiling].Threshold)
+	require.True(s.T(), cfg.Rules[ComplexityScoreFloor].Enabled)
+	require.Equal(s.T(), ComplexityScoreFloorDefault, cfg.Rules[ComplexityScoreFloor].Threshold)
+	require.True(s.T(), cfg.Rules[DuplicationCeiling].Enabled)
+	require.Equal(s.T(), DuplicationCeilingDefault, cfg.Rules[DuplicationCeiling].Threshold)
 }
 
 // --- no_import_cycles ---
@@ -230,6 +239,232 @@ func (s *RulesSuite) TestParseFailRespectsCustomThreshold() {
 	g := parseFailedGraph(5, 95)                                      // 5%
 	results := Run(cfg, g, metrics.Signal{})
 	r := findResult(results, ParseFail)
+	require.Equal(s.T(), SevPass, r.Severity)
+}
+
+// --- complexity_ceiling ---
+
+func (s *RulesSuite) TestComplexityCeilingPassesWithinTolerance() {
+	sig := metrics.Signal{Metrics: []metrics.Result{
+		{Name: metrics.ComplexityName, Score: 0.9, Detail: metrics.ComplexityDetail{
+			TotalFunctions: 100, OverThreshold: 5,
+		}},
+	}}
+	results := Run(DefaultConfig(), &graph.Graph{}, sig)
+	r := findResult(results, ComplexityCeiling)
+	require.Equal(s.T(), SevPass, r.Severity)
+	require.Contains(s.T(), r.Message, "5/100")
+}
+
+func (s *RulesSuite) TestComplexityCeilingFailsAboveTolerance() {
+	sig := metrics.Signal{Metrics: []metrics.Result{
+		{Name: metrics.ComplexityName, Score: 0.4, Detail: metrics.ComplexityDetail{
+			TotalFunctions: 100,
+			OverThreshold:  20,
+			Functions: []metrics.FuncComplexity{
+				{Path: "a.go", Name: "Hot", StartLine: 5, Score: 0.2},
+				{Path: "b.go", Name: "Warm", StartLine: 7, Score: 1.0}, // ignored — not over threshold
+				{Path: "c.go", Name: "Crit", StartLine: 9, Score: 0.0},
+			},
+		}},
+	}}
+	results := Run(DefaultConfig(), &graph.Graph{}, sig)
+	r := findResult(results, ComplexityCeiling)
+	require.Equal(s.T(), SevFail, r.Severity)
+	require.Len(s.T(), r.Citations, 2)
+	paths := citationPaths(r.Citations)
+	require.Contains(s.T(), paths, "a.go")
+	require.Contains(s.T(), paths, "c.go")
+	require.NotContains(s.T(), paths, "b.go")
+}
+
+func (s *RulesSuite) TestComplexityCeilingDisabled() {
+	cfg := DefaultConfig()
+	cfg.Rules[ComplexityCeiling] = RuleConfig{Enabled: false}
+	sig := metrics.Signal{Metrics: []metrics.Result{
+		{Name: metrics.ComplexityName, Detail: metrics.ComplexityDetail{OverThreshold: 999}},
+	}}
+	results := Run(cfg, &graph.Graph{}, sig)
+	r := findResult(results, ComplexityCeiling)
+	require.Equal(s.T(), SevPass, r.Severity)
+	require.Equal(s.T(), "rule disabled", r.Message)
+}
+
+func (s *RulesSuite) TestComplexityCeilingMetricAbsent() {
+	results := Run(DefaultConfig(), &graph.Graph{}, metrics.Signal{})
+	r := findResult(results, ComplexityCeiling)
+	require.Equal(s.T(), SevPass, r.Severity)
+	require.Equal(s.T(), "complexity metric absent", r.Message)
+}
+
+func (s *RulesSuite) TestComplexityCeilingRespectsCustomThreshold() {
+	cfg := DefaultConfig()
+	cfg.Rules[ComplexityCeiling] = RuleConfig{Enabled: true, Threshold: 100}
+	sig := metrics.Signal{Metrics: []metrics.Result{
+		{Name: metrics.ComplexityName, Detail: metrics.ComplexityDetail{
+			TotalFunctions: 200, OverThreshold: 50,
+		}},
+	}}
+	results := Run(cfg, &graph.Graph{}, sig)
+	r := findResult(results, ComplexityCeiling)
+	require.Equal(s.T(), SevPass, r.Severity)
+}
+
+// --- complexity_score_floor ---
+
+func (s *RulesSuite) TestComplexityScoreFloorPassesAtThreshold() {
+	sig := metrics.Signal{Metrics: []metrics.Result{
+		{Name: metrics.ComplexityName, Score: 0.5, Detail: metrics.ComplexityDetail{}},
+	}}
+	results := Run(DefaultConfig(), &graph.Graph{}, sig)
+	r := findResult(results, ComplexityScoreFloor)
+	require.Equal(s.T(), SevPass, r.Severity)
+}
+
+func (s *RulesSuite) TestComplexityScoreFloorFailsBelowThreshold() {
+	sig := metrics.Signal{Metrics: []metrics.Result{
+		{Name: metrics.ComplexityName, Score: 0.3, Detail: metrics.ComplexityDetail{
+			Functions: []metrics.FuncComplexity{
+				{Path: "a.go", Name: "Hot", StartLine: 1, Score: 0.1},
+				{Path: "b.go", Name: "Clean", StartLine: 1, Score: 1.0}, // skipped
+			},
+		}},
+	}}
+	results := Run(DefaultConfig(), &graph.Graph{}, sig)
+	r := findResult(results, ComplexityScoreFloor)
+	require.Equal(s.T(), SevFail, r.Severity)
+	require.Contains(s.T(), r.Message, "below floor")
+	require.Len(s.T(), r.Citations, 1)
+	require.Equal(s.T(), "a.go", r.Citations[0].Path)
+}
+
+func (s *RulesSuite) TestComplexityScoreFloorFailsWithNonComplexityDetail() {
+	// Score below floor but Detail isn't ComplexityDetail — failure path
+	// runs without panicking and emits no citations.
+	sig := metrics.Signal{Metrics: []metrics.Result{
+		{Name: metrics.ComplexityName, Score: 0.1, Detail: "not a ComplexityDetail"},
+	}}
+	results := Run(DefaultConfig(), &graph.Graph{}, sig)
+	r := findResult(results, ComplexityScoreFloor)
+	require.Equal(s.T(), SevFail, r.Severity)
+	require.Empty(s.T(), r.Citations)
+}
+
+func (s *RulesSuite) TestComplexityScoreFloorDisabled() {
+	cfg := DefaultConfig()
+	cfg.Rules[ComplexityScoreFloor] = RuleConfig{Enabled: false}
+	sig := metrics.Signal{Metrics: []metrics.Result{
+		{Name: metrics.ComplexityName, Score: 0.0},
+	}}
+	results := Run(cfg, &graph.Graph{}, sig)
+	r := findResult(results, ComplexityScoreFloor)
+	require.Equal(s.T(), SevPass, r.Severity)
+	require.Equal(s.T(), "rule disabled", r.Message)
+}
+
+func (s *RulesSuite) TestComplexityScoreFloorMetricAbsent() {
+	results := Run(DefaultConfig(), &graph.Graph{}, metrics.Signal{})
+	r := findResult(results, ComplexityScoreFloor)
+	require.Equal(s.T(), SevPass, r.Severity)
+	require.Equal(s.T(), "complexity metric absent", r.Message)
+}
+
+func (s *RulesSuite) TestComplexityScoreFloorRespectsCustomThreshold() {
+	cfg := DefaultConfig()
+	cfg.Rules[ComplexityScoreFloor] = RuleConfig{Enabled: true, Threshold: 0.9}
+	sig := metrics.Signal{Metrics: []metrics.Result{
+		{Name: metrics.ComplexityName, Score: 0.7, Detail: metrics.ComplexityDetail{}},
+	}}
+	results := Run(cfg, &graph.Graph{}, sig)
+	r := findResult(results, ComplexityScoreFloor)
+	require.Equal(s.T(), SevFail, r.Severity)
+	require.Contains(s.T(), r.Message, "0.900")
+}
+
+// --- duplication_ceiling ---
+
+func (s *RulesSuite) TestDuplicationCeilingPassesWithinTolerance() {
+	sig := metrics.Signal{Metrics: []metrics.Result{
+		{Name: metrics.RedundancyName, Detail: metrics.RedundancyDetail{
+			Clones: metrics.ClonesDetail{DuplicatedLOC: 5, TotalLOC: 100},
+		}},
+	}}
+	results := Run(DefaultConfig(), &graph.Graph{}, sig)
+	r := findResult(results, DuplicationCeiling)
+	require.Equal(s.T(), SevPass, r.Severity)
+	require.Contains(s.T(), r.Message, "5/100")
+}
+
+func (s *RulesSuite) TestDuplicationCeilingFailsAboveTolerance() {
+	sig := metrics.Signal{Metrics: []metrics.Result{
+		{Name: metrics.RedundancyName, Detail: metrics.RedundancyDetail{
+			Clones: metrics.ClonesDetail{
+				DuplicatedLOC: 20,
+				TotalLOC:      100,
+				Clusters: []metrics.CloneCluster{
+					{
+						LOC: 30,
+						Members: []metrics.CloneMember{
+							{Path: "a.go", Name: "F1", StartLine: 1, EndLine: 10, LOC: 10},
+							{Path: "b.go", Name: "F2", StartLine: 1, EndLine: 10, LOC: 10},
+						},
+					},
+				},
+			},
+		}},
+	}}
+	results := Run(DefaultConfig(), &graph.Graph{}, sig)
+	r := findResult(results, DuplicationCeiling)
+	require.Equal(s.T(), SevFail, r.Severity)
+	require.Len(s.T(), r.Citations, 2)
+	paths := citationPaths(r.Citations)
+	require.Contains(s.T(), paths, "a.go")
+	require.Contains(s.T(), paths, "b.go")
+}
+
+func (s *RulesSuite) TestDuplicationCeilingDisabled() {
+	cfg := DefaultConfig()
+	cfg.Rules[DuplicationCeiling] = RuleConfig{Enabled: false}
+	sig := metrics.Signal{Metrics: []metrics.Result{
+		{Name: metrics.RedundancyName, Detail: metrics.RedundancyDetail{
+			Clones: metrics.ClonesDetail{DuplicatedLOC: 999, TotalLOC: 1000},
+		}},
+	}}
+	results := Run(cfg, &graph.Graph{}, sig)
+	r := findResult(results, DuplicationCeiling)
+	require.Equal(s.T(), SevPass, r.Severity)
+	require.Equal(s.T(), "rule disabled", r.Message)
+}
+
+func (s *RulesSuite) TestDuplicationCeilingMetricAbsent() {
+	results := Run(DefaultConfig(), &graph.Graph{}, metrics.Signal{})
+	r := findResult(results, DuplicationCeiling)
+	require.Equal(s.T(), SevPass, r.Severity)
+	require.Equal(s.T(), "redundancy metric absent", r.Message)
+}
+
+func (s *RulesSuite) TestDuplicationCeilingZeroTotalLOC() {
+	sig := metrics.Signal{Metrics: []metrics.Result{
+		{Name: metrics.RedundancyName, Detail: metrics.RedundancyDetail{
+			Clones: metrics.ClonesDetail{DuplicatedLOC: 0, TotalLOC: 0},
+		}},
+	}}
+	results := Run(DefaultConfig(), &graph.Graph{}, sig)
+	r := findResult(results, DuplicationCeiling)
+	require.Equal(s.T(), SevPass, r.Severity)
+	require.Equal(s.T(), "no clone-eligible functions", r.Message)
+}
+
+func (s *RulesSuite) TestDuplicationCeilingRespectsCustomThreshold() {
+	cfg := DefaultConfig()
+	cfg.Rules[DuplicationCeiling] = RuleConfig{Enabled: true, Threshold: 0.5}
+	sig := metrics.Signal{Metrics: []metrics.Result{
+		{Name: metrics.RedundancyName, Detail: metrics.RedundancyDetail{
+			Clones: metrics.ClonesDetail{DuplicatedLOC: 30, TotalLOC: 100},
+		}},
+	}}
+	results := Run(cfg, &graph.Graph{}, sig)
+	r := findResult(results, DuplicationCeiling)
 	require.Equal(s.T(), SevPass, r.Severity)
 }
 

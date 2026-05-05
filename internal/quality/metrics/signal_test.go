@@ -31,16 +31,17 @@ func (s *SignalSuite) TestAggregateAllPerfectScoresMax() {
 		{Name: DepthName, Score: 1.0},
 		{Name: EqualityName, Score: 1.0},
 		{Name: RedundancyName, Score: 1.0},
+		{Name: ComplexityName, Score: 1.0},
 	}
 	sig := Aggregate(results)
 	require.InDelta(s.T(), 1.0, sig.GeoMean, 1e-9)
 	require.Equal(s.T(), SignalScale, sig.Value)
-	require.Len(s.T(), sig.Metrics, 5)
+	require.Len(s.T(), sig.Metrics, 6)
 }
 
 func (s *SignalSuite) TestAggregateUniformScoresGeometricMeanEqualsScore() {
 	results := []Result{
-		{Score: 0.5}, {Score: 0.5}, {Score: 0.5}, {Score: 0.5}, {Score: 0.5},
+		{Score: 0.5}, {Score: 0.5}, {Score: 0.5}, {Score: 0.5}, {Score: 0.5}, {Score: 0.5},
 	}
 	sig := Aggregate(results)
 	require.InDelta(s.T(), 0.5, sig.GeoMean, 1e-9)
@@ -49,7 +50,7 @@ func (s *SignalSuite) TestAggregateUniformScoresGeometricMeanEqualsScore() {
 
 func (s *SignalSuite) TestAggregateZeroScoreDominatesToZero() {
 	results := []Result{
-		{Score: 0.0}, {Score: 1.0}, {Score: 1.0}, {Score: 1.0}, {Score: 1.0},
+		{Score: 0.0}, {Score: 1.0}, {Score: 1.0}, {Score: 1.0}, {Score: 1.0}, {Score: 1.0},
 	}
 	sig := Aggregate(results)
 	require.Equal(s.T(), 0.0, sig.GeoMean)
@@ -57,13 +58,13 @@ func (s *SignalSuite) TestAggregateZeroScoreDominatesToZero() {
 }
 
 func (s *SignalSuite) TestAggregateMixedScoresCorrectGeometricMean() {
-	// 5√(0.8 · 0.6 · 0.9 · 0.7 · 0.5) = 5√0.1512 ≈ 0.6853.
+	// 6√(0.8 · 0.6 · 0.9 · 0.7 · 0.5 · 0.85) ≈ 0.7104.
 	results := []Result{
-		{Score: 0.8}, {Score: 0.6}, {Score: 0.9}, {Score: 0.7}, {Score: 0.5},
+		{Score: 0.8}, {Score: 0.6}, {Score: 0.9}, {Score: 0.7}, {Score: 0.5}, {Score: 0.85},
 	}
 	sig := Aggregate(results)
-	require.InDelta(s.T(), 0.6853, sig.GeoMean, 1e-3)
-	require.InDelta(s.T(), 6853, sig.Value, 5)
+	require.InDelta(s.T(), 0.7104, sig.GeoMean, 1e-3)
+	require.InDelta(s.T(), 7104, sig.Value, 5)
 }
 
 func (s *SignalSuite) TestAggregateRoundsHalfUp() {
@@ -83,7 +84,7 @@ func (s *SignalSuite) TestComputeOnNilGraph() {
 	sig := Compute(nil)
 	require.Equal(s.T(), SignalScale, sig.Value)
 	require.InDelta(s.T(), 1.0, sig.GeoMean, 1e-9)
-	require.Len(s.T(), sig.Metrics, 5)
+	require.Len(s.T(), sig.Metrics, 6)
 	for _, r := range sig.Metrics {
 		require.Equal(s.T(), 1.0, r.Score)
 	}
@@ -92,12 +93,42 @@ func (s *SignalSuite) TestComputeOnNilGraph() {
 func (s *SignalSuite) TestComputeOnEmptyGraph() {
 	sig := Compute(graph.Build(nil))
 	require.Equal(s.T(), SignalScale, sig.Value)
-	require.Len(s.T(), sig.Metrics, 5)
+	require.Len(s.T(), sig.Metrics, 6)
 	require.Equal(s.T(), ModularityName, sig.Metrics[0].Name)
 	require.Equal(s.T(), CyclesName, sig.Metrics[1].Name)
 	require.Equal(s.T(), DepthName, sig.Metrics[2].Name)
 	require.Equal(s.T(), EqualityName, sig.Metrics[3].Name)
 	require.Equal(s.T(), RedundancyName, sig.Metrics[4].Name)
+	require.Equal(s.T(), ComplexityName, sig.Metrics[5].Name)
+}
+
+func (s *SignalSuite) TestComputeWithCustomConfig() {
+	g := graph.Build([]*parser.FileFacts{
+		{
+			Path: "a.go",
+			Functions: []parser.Function{
+				{Name: "F", Body: &parser.FunctionBody{
+					LOC: 10, ParamCount: 1, MaxNesting: 1,
+					DecisionPoints: 5, CognitiveLoad: 1,
+				}},
+			},
+		},
+	})
+	cfg := DefaultConfig()
+	cfg.Complexity.CyclomaticT = 2 // 5 > 2, so the function exceeds the threshold
+	sig := ComputeWith(g, cfg)
+	complexity := findResultByName(sig.Metrics, ComplexityName)
+	require.NotNil(s.T(), complexity)
+	require.Less(s.T(), complexity.Score, 1.0)
+}
+
+func findResultByName(results []Result, name string) *Result {
+	for i := range results {
+		if results[i].Name == name {
+			return &results[i]
+		}
+	}
+	return nil
 }
 
 func (s *SignalSuite) TestComputeOnHealthyGraph() {

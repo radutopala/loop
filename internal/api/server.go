@@ -119,6 +119,7 @@ type Server struct {
 	qualityGraph      QualityGraphProvider
 	qualitySnapshots  QualitySnapshotReader
 	qualityRulesLoad  QualityRulesLoader
+	qualityMetricsCfg QualityMetricsLoader
 	qualityHistory    QualityHistoryReader
 	qualityMu         sync.Mutex
 	qualityCancellers map[string]context.CancelFunc
@@ -354,6 +355,8 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/channels/{id}/quality/evolution", s.handleQualityEvolution)
 	mux.HandleFunc("GET /api/channels/{id}/quality/c4", s.handleQualityC4)
 	mux.HandleFunc("GET /api/channels/{id}/quality/bugfactor", s.handleQualityBugFactor)
+	mux.HandleFunc("GET /api/channels/{id}/quality/complexity", s.handleQualityComplexity)
+	mux.HandleFunc("GET /api/channels/{id}/quality/clones", s.handleQualityClones)
 	mux.HandleFunc("GET /api/health", handleHealth)
 	mux.HandleFunc("GET /api/ws/terminal", s.handleTerminalWS)
 	mux.HandleFunc("GET /api/ws/browser", s.handleBrowserWS)

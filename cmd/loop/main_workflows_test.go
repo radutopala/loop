@@ -170,6 +170,106 @@ func (s *MainSuite) TestQualityConfigLoaderFallsBackToInitialOnReloadError() {
 	require.Equal(s.T(), []string{"fallback/"}, got.ExcludePaths)
 }
 
+func (s *MainSuite) TestQualityConfigLoaderThreadsMetricsConfig() {
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(loopDir, "config.json"), []byte(`{
+		"quality": {
+			"complexity": {"cyclomatic_t": 12, "loc_t": 80},
+			"clones":     {"max_distance": 1}
+		}
+	}`), 0o644))
+
+	cfg := &config.Config{}
+	reload := func() (*config.Config, error) { return cfg, nil }
+
+	loader := qualityConfigLoader(cfg, reload)
+	got, err := loader(tmpDir, "")
+	require.NoError(s.T(), err)
+	// Project overrides apply.
+	require.Equal(s.T(), 12, got.Metrics.Complexity.CyclomaticT)
+	require.Equal(s.T(), 80, got.Metrics.Complexity.LOCT)
+	require.Equal(s.T(), 1, got.Metrics.Clones.MaxDistance)
+	// Other dimensions fall back to package defaults.
+	require.Equal(s.T(), 15, got.Metrics.Complexity.CognitiveT)
+	require.Equal(s.T(), 4, got.Metrics.Complexity.NestingT)
+	require.Equal(s.T(), 5, got.Metrics.Clones.MinLOC)
+}
+
+func (s *MainSuite) TestQualityMetricsLoaderReturnsDefaults() {
+	cfg := &config.Config{}
+	reload := func() (*config.Config, error) { return cfg, nil }
+
+	loader := qualityMetricsLoader(cfg, reload)
+	got := loader("", "")
+	require.Equal(s.T(), 10, got.Complexity.CyclomaticT)
+	require.Equal(s.T(), 3, got.Clones.MaxDistance)
+}
+
+func (s *MainSuite) TestQualityMetricsLoaderFallsBackToInitialOnReloadError() {
+	cfg := &config.Config{Quality: config.QualityConfig{
+		Complexity: config.QualityComplexityConfig{CyclomaticT: 9},
+		Clones:     config.QualityClonesConfig{MaxDistance: 2},
+	}}
+	reload := func() (*config.Config, error) { return nil, errors.New("disk gone") }
+
+	loader := qualityMetricsLoader(cfg, reload)
+	got := loader("", "")
+	require.Equal(s.T(), 9, got.Complexity.CyclomaticT)
+	require.Equal(s.T(), 2, got.Clones.MaxDistance)
+}
+
+func (s *MainSuite) TestQualityMetricsLoaderFallsBackOnMergeError() {
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(loopDir, "config.json"), []byte(`{not valid json`), 0o644))
+
+	cfg := &config.Config{Quality: config.QualityConfig{
+		Complexity: config.QualityComplexityConfig{CyclomaticT: 7},
+	}}
+	reload := func() (*config.Config, error) { return cfg, nil }
+
+	loader := qualityMetricsLoader(cfg, reload)
+	got := loader(tmpDir, "")
+	// Merge failed (bad JSON) → loader falls back to initial cfg's overrides.
+	require.Equal(s.T(), 7, got.Complexity.CyclomaticT)
+}
+
+func (s *MainSuite) TestQualityMetricsLoaderMergesProjectOverrides() {
+	tmpDir := s.T().TempDir()
+	loopDir := filepath.Join(tmpDir, ".loop")
+	require.NoError(s.T(), os.MkdirAll(loopDir, 0o755))
+	require.NoError(s.T(), os.WriteFile(filepath.Join(loopDir, "config.json"), []byte(`{
+		"quality": {
+			"complexity": {
+				"cyclomatic_t": 6,
+				"cognitive_t":  9,
+				"nesting_t":    2,
+				"params_t":     3,
+				"loc_t":        45
+			},
+			"clones": {"min_loc": 4, "max_distance": 1}
+		}
+	}`), 0o644))
+
+	cfg := &config.Config{}
+	reload := func() (*config.Config, error) { return cfg, nil }
+
+	loader := qualityMetricsLoader(cfg, reload)
+	got := loader(tmpDir, "")
+	// Every override threads through buildMetricsConfig — exercises each
+	// `if x > 0` mutation branch and the project-merge happy path.
+	require.Equal(s.T(), 6, got.Complexity.CyclomaticT)
+	require.Equal(s.T(), 9, got.Complexity.CognitiveT)
+	require.Equal(s.T(), 2, got.Complexity.NestingT)
+	require.Equal(s.T(), 3, got.Complexity.ParamsT)
+	require.Equal(s.T(), 45, got.Complexity.LOCT)
+	require.Equal(s.T(), 4, got.Clones.MinLOC)
+	require.Equal(s.T(), 1, got.Clones.MaxDistance)
+}
+
 func (s *MainSuite) TestQualityConfigLoaderMergesProjectConfig() {
 	tmpDir := s.T().TempDir()
 	loopDir := filepath.Join(tmpDir, ".loop")

@@ -138,12 +138,12 @@ func (p *TreeSitterParser) Parse(path string, source []byte) (*FileFacts, error)
 		if !ok {
 			break
 		}
-		applyMatch(facts, match, source)
+		applyMatch(facts, match, source, handle)
 	}
 	return facts, nil
 }
 
-func applyMatch(facts *FileFacts, match gotreesitter.QueryMatch, source []byte) {
+func applyMatch(facts *FileFacts, match gotreesitter.QueryMatch, source []byte, handle *languageHandle) {
 	var (
 		fnName, typeName, callName, importPath string
 		fnDef, typeDef, callSite, importSite   *gotreesitter.Node
@@ -175,6 +175,7 @@ func applyMatch(facts *FileFacts, match gotreesitter.QueryMatch, source []byte) 
 			Name:      fnName,
 			StartLine: lineOf(fnDef.StartPoint()),
 			EndLine:   lineOf(fnDef.EndPoint()),
+			Body:      walkFunctionBody(handle.language, handle.name, fnDef, source),
 		})
 	case typeDef != nil && typeName != "":
 		facts.Types = append(facts.Types, TypeDecl{

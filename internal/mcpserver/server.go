@@ -229,6 +229,16 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 		Description: "Emit a C4 component-level diagram (Mermaid syntax) for the cached graph — clusters by top-level package, draws cross-package import edges. Returns a fenced Mermaid block ready to render in chat or paste into a markdown doc. Requires a prior quality_scan.",
 	}, s.handleQualityC4)
 
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "quality_complexity",
+		Description: "List the per-function complexity hotspots from the cached graph — cyclomatic, cognitive, max nesting, parameter count, and LOC per function. Optional 'limit' (default 50, max 100) and 'offset' (default 0) page through the worst-first list. Requires a prior quality_scan.",
+	}, s.handleQualityComplexity)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "quality_clones",
+		Description: "List clone clusters detected by SimHash + Hamming distance — groups of functions that share near-duplicate AST shape. Each cluster lists its members, total LOC, and worst pairwise distance. Optional 'limit' (default 25, max 50) and 'offset' page through the largest-first list. Requires a prior quality_scan.",
+	}, s.handleQualityClones)
+
 	if s.workflowsEnabled {
 		s.registerWorkflowTools()
 	}

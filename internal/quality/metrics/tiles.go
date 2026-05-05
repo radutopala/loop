@@ -42,6 +42,7 @@ func AttributeFiles(g *graph.Graph, results []Result) []FileTile {
 	dep := depthFileDrag(findResult(results, DepthName))
 	eq := equalityFileDrag(g)
 	red := redundancyFileDrag(g)
+	cmplx := complexityFileDrag(findResult(results, ComplexityName))
 
 	out := make([]FileTile, 0, len(g.Nodes))
 	for _, n := range g.Nodes {
@@ -51,6 +52,7 @@ func AttributeFiles(g *graph.Graph, results []Result) []FileTile {
 			DepthName:      dep[n.Path],
 			EqualityName:   eq[n.Path],
 			RedundancyName: red[n.Path],
+			ComplexityName: cmplx[n.Path],
 		}
 		worst, reason := worstDeficit(deficits)
 		out = append(out, FileTile{
@@ -80,7 +82,7 @@ func AttributeFiles(g *graph.Graph, results []Result) []FileTile {
 // order over Go maps is random; for ties we deterministically prefer the
 // canonical metric order so the panel shows a stable TopReason.
 func worstDeficit(d map[string]float64) (float64, string) {
-	order := []string{ModularityName, CyclesName, DepthName, EqualityName, RedundancyName}
+	order := []string{ModularityName, CyclesName, DepthName, EqualityName, RedundancyName, ComplexityName}
 	worst := 0.0
 	reason := ""
 	for _, k := range order {
@@ -108,7 +110,7 @@ func findResult(results []Result, name string) *Result {
 //
 // The community labelling is read from the Modularity result's Detail
 // so the diagnostics view is consistent with the headline metric — both
-// reflect the same Louvain partition. If Detail is missing or the wrong
+// reflect the same Leiden partition. If Detail is missing or the wrong
 // shape (older snapshot, alternate metric pipeline) we fall back to
 // each-node-its-own-community, which yields drag = (cross / total)
 // against the trivial partition; effectively zeroing out modularity's
@@ -218,6 +220,46 @@ func equalityFileDrag(g *graph.Graph) map[string]float64 {
 			continue
 		}
 		out[n.Path] = math.Min(1.0, (float64(n.LOC)-mean)/spread)
+	}
+	return out
+}
+
+// complexityFileDrag attributes per-file deficit by reading the
+// ComplexityDetail and bucketing each function's score by its file.
+// File deficit is 1 - (LOC-weighted mean per-function score), the same
+// shape the metric uses but scoped to the file.
+func complexityFileDrag(r *Result) map[string]float64 {
+	out := make(map[string]float64)
+	if r == nil {
+		return out
+	}
+	d, ok := r.Detail.(ComplexityDetail)
+	if !ok {
+		return out
+	}
+	type acc struct {
+		weighted, totalLOC float64
+	}
+	per := make(map[string]*acc)
+	for _, fc := range d.Functions {
+		a, ok := per[fc.Path]
+		if !ok {
+			a = &acc{}
+			per[fc.Path] = a
+		}
+		w := float64(fc.LOC)
+		if w <= 0 {
+			w = 1
+		}
+		a.weighted += fc.Score * w
+		a.totalLOC += w
+	}
+	for path, a := range per {
+		mean := a.weighted / a.totalLOC
+		if mean >= 1.0 {
+			continue
+		}
+		out[path] = 1.0 - mean
 	}
 	return out
 }

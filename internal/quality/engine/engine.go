@@ -38,6 +38,11 @@ type Config struct {
 	// ExcludePaths appends to graph.DefaultExcludePatterns and the
 	// repo's .gitignore. Same syntax as DefaultExcludePatterns.
 	ExcludePaths []string
+
+	// Metrics carries the per-metric threshold overrides (complexity
+	// dimension ceilings, clone Hamming distance, etc.). Zero value
+	// means "use metrics.DefaultConfig()".
+	Metrics metrics.Config
 }
 
 // ConfigLoader returns the latest engine Config for the channel about
@@ -174,6 +179,17 @@ func (e *Engine) SetProgress(p ProgressFunc) {
 	e.progress = p
 }
 
+// metricsConfig resolves the per-metric thresholds for this scan. An
+// uninitialised Metrics struct (zero value across all dimension knobs)
+// falls back to the package defaults so callers can leave the field
+// blank when they have no overrides.
+func (e *Engine) metricsConfig(cfg Config) metrics.Config {
+	if cfg.Metrics == (metrics.Config{}) {
+		return metrics.DefaultConfig()
+	}
+	return cfg.Metrics
+}
+
 // Scan runs a full scan for (channelID, branch) rooted at dirPath and
 // persists the resulting snapshot. Concurrent calls for the same channel
 // return InProgress=true without re-running. Concurrent calls for
@@ -244,7 +260,7 @@ func (e *Engine) Scan(ctx context.Context, channelID, branch, dirPath, parentDir
 		e.progress(channelID, total, total)
 	}
 
-	sig := metrics.Compute(g)
+	sig := metrics.ComputeWith(g, e.metricsConfig(cfg))
 	scannedAt := e.clock().UTC()
 
 	// Capture the prior snapshot's headline before Save overwrites it.
