@@ -1,6 +1,6 @@
 # Architectural Quality
 
-The quality engine reduces a workspace to one continuous `quality_signal` in the 0–10000 band, computed as the geometric mean of five graph-level metrics. Scans run on demand from the desktop panel, the `loop quality scan` CLI, the `quality_scan` MCP tool, or — when enabled — automatically after each agent file edit.
+The quality engine reduces a workspace to one continuous `quality_signal` in the 0–10000 band, computed as the geometric mean of six graph- and function-level metrics. Scans run on demand from the desktop panel, the `loop quality scan` CLI, the `quality_scan` MCP tool, or — when enabled — automatically after each agent file edit.
 
 Design is inspired by [sentrux](https://github.com/sentrux/sentrux) (Rust, MIT). Algorithms are clean-room Go re-implementations under `internal/quality/`.
 
@@ -12,13 +12,14 @@ Design is inspired by [sentrux](https://github.com/sentrux/sentrux) (Rust, MIT).
 
 | Metric | Package | Captures | Signal direction |
 |---|---|---|---|
-| **Modularity** (Newman's Q) | `internal/quality/metrics` | Cohesion within packages vs. coupling across them. | Higher = healthier. |
+| **Modularity** (Newman's Q via Leiden) | `internal/quality/metrics` | Cohesion within communities vs. coupling across them. Leiden (Traag, Waltman, van Eck 2019) replaces Louvain — its refinement phase eliminates the disconnected-community pathology and recovers latent sub-community structure on hub-and-spoke graphs that previously collapsed to Q ≈ 0. | Higher = healthier. |
 | **Cycles** (Tarjan SCC) | `internal/quality/metrics` | Strongly-connected components in the import graph. | Fewer/smaller = healthier. |
 | **Depth** (Lakos levelization) | `internal/quality/metrics` | Longest path through the dependency DAG. | Lower = healthier. |
 | **Equality** (Gini) | `internal/quality/metrics` | Concentration of LOC across files (god-file detection). | Lower (less concentration) = healthier. |
-| **Redundancy** | `internal/quality/metrics` | Dead-code candidates: functions whose name never appears at any Call site, after filtering runtime entry points (`main`, `init`, `Test*`/`Benchmark*`/`Example*`/`Fuzz*`) and common interface methods (`String`, `Error`, `MarshalJSON`, `ServeHTTP`, …). | Lower = healthier. |
+| **Redundancy** | `internal/quality/metrics` | Dead-code candidates: functions whose name never appears at any Call site, after filtering runtime entry points (`main`, `init`, `Test*`/`Benchmark*`/`Example*`/`Fuzz*`) and common interface methods (`String`, `Error`, `MarshalJSON`, `ServeHTTP`, …). The headline score also folds in clone duplication via SimHash + Hamming-distance clustering over function bodies, so two near-duplicates count toward the same drag as one dead function. | Lower = healthier. |
+| **Complexity** | `internal/quality/metrics` | Per-function cyclomatic, cognitive, max nesting, parameter count, and LOC against soft thresholds. Each dimension scores 1.0 at or below T and decays as `T/raw` past T (0.50 at 2T, 0.25 at 4T, 0.10 at 10T) — a saturating curve that keeps badly-complex functions ranked against each other instead of all clamping to 0. The metric score is the LOC-weighted mean of per-function scores. | Higher = healthier. |
 
-Each metric returns a `Score` in `[0, 1]`; `quality_signal` is `round(10000 * geo_mean(scores))`. See `internal/quality/metrics/signal.go`.
+Each metric returns a `Score` in `[0, 1]`; `quality_signal` is `round(10000 * geo_mean(scores))`. See `internal/quality/metrics/signal.go`. The standalone `clones` sub-metric (clusters, duplicated/total LOC) is exposed separately via `quality_clones` and `GET /quality/clones`; it is folded into Redundancy at the headline level so the geomean factor count stays at six.
 
 ---
 
@@ -32,6 +33,8 @@ The active grammar set is pinned in `internal/quality/grammars.go`:
 
 Files in other languages are enumerated and counted toward `quality.max_files` but are skipped at parse time and reported via the `parse_failed` counter. To add a language: append to `ActiveLanguages` in `grammars.go`, vendor the upstream tree-sitter `tags.scm` plus any quality-specific captures into `internal/quality/parser/queries/<lang>.scm`, and add fixtures under `internal/quality/parser/testdata/`.
 
+For each parsed function, the parser also runs a tree-sitter body walk (`internal/quality/parser/bodywalk.go`) that produces a `FunctionBody` fact — decision points, cognitive load, max nesting, parameter count, LOC, and a normalised shingle list. The Complexity and Clones metrics consume these directly; languages without a body-walk pass simply skip those metrics.
+
 The parser is [`github.com/odvcencio/gotreesitter`](https://github.com/odvcencio/gotreesitter) — a pure-Go tree-sitter runtime, MIT-licensed. No CGO; cross-compiles to every Go target supported by Loop.
 
 ---
@@ -44,10 +47,24 @@ Quality is driven by `quality.*` keys in `~/.loop/config.json` and per-project `
 "quality": {
   "max_files": 25000,                  // hard cap; over this returns RepoTooLarge
   "exclude_paths": ["docs/**"],        // appended to .gitignore + built-in defaults
+  "complexity": {                      // per-dimension soft thresholds; 0/omit = use default
+    "cyclomatic_t": 10,
+    "cognitive_t":  15,
+    "nesting_t":    4,
+    "params_t":     5,
+    "loc_t":        60
+  },
+  "clones": {                          // SimHash clone detector
+    "min_loc":      5,                 // skip functions smaller than this
+    "max_distance": 3                  // 0 = exact, up to 64
+  },
   "rules": {
-    "signal_floor":     { "enabled": true, "threshold": 5000 },
-    "parse_fail":       { "enabled": true, "threshold": 0.01 },
-    "no_import_cycles": { "enabled": true }
+    "signal_floor":            { "enabled": true, "threshold": 5000 },
+    "parse_fail":              { "enabled": true, "threshold": 0.01 },
+    "no_import_cycles":        { "enabled": true },
+    "complexity_ceiling":      { "enabled": true, "threshold": 10 },
+    "complexity_score_floor":  { "enabled": true, "threshold": 0.5 },
+    "duplication_ceiling":     { "enabled": true, "threshold": 0.10 }
   }
 }
 ```
@@ -81,13 +98,16 @@ When the panel asks for a snapshot whose branch differs from the current branch,
 
 ## Rules
 
-Three built-in rules ship enabled by default. Each emits structured citations consumable by the panel and any future `rules` MCP tool.
+Six built-in rules ship enabled by default. Each emits structured citations consumable by the panel and any future `rules` MCP tool.
 
 | Rule | Default | Tunable | Citations |
 |---|---|---|---|
 | `no_import_cycles` | `enabled: true` | enable/disable | One per SCC > 1 file. |
 | `signal_floor` | `threshold: 5000` | enable/disable, threshold | The current signal value. |
 | `parse_fail` | `threshold: 0.01` (1.0%) | enable/disable, threshold | Aggregate parse-fail count vs. scanned. |
+| `complexity_ceiling` | `threshold: 10` | enable/disable, threshold | Functions with at least one dimension over its soft threshold, capped at the rule's hotspot list size. |
+| `complexity_score_floor` | `threshold: 0.5` | enable/disable, threshold | The complexity metric's headline score. |
+| `duplication_ceiling` | `threshold: 0.10` (10%) | enable/disable, threshold | Per cluster: members + duplicated LOC. |
 
 Per-rule overrides go under `quality.rules.<name>.{enabled,threshold}` (project config and global config both honored). Rule pass/fail is **data**, not behavior: the CLI exits 0 regardless. CI gates on the JSON output:
 
@@ -105,11 +125,13 @@ loop quality scan --json | jq -e '.rules.failed | length == 0'
 
 Layout, top to bottom:
 
-1. **Headline** — once at least two scans exist for the current `(channel, branch)`, the panel leads with `Δ since last scan` (green for improvement, red for regression). The absolute signal stays band-coloured (red < 5000, amber 5000–7000, green > 7000) but drops to a smaller chip alongside the previous value. On the first scan the absolute number remains the headline (there is nothing to compare against). The underlying `previous_signal` field is also exposed on the `quality.scanned` event payload so consumers can render the delta without re-fetching the snapshot.
-2. **Metric cards** — one per metric (Modularity, Cycles, Depth, Equality, Redundancy) with current value.
-3. **Treemap** — `@visx/hierarchy` binary treemap. Tile size = file LOC, tile color = per-file deficit (red = drag on signal, green = healthy). Clicking a tile selects it for the popover.
-4. **Diagnostic popover** — opens when a tile is selected; shows path, LOC, top-reason metric, and per-metric deficit breakdown for that file.
-5. **Failed rules** — citation cards for any failing rule.
+1. **Headline** — the absolute signal is the primary number (48px, band-coloured: red < 5000, amber 5000–7000, green > 7000). Once at least two scans exist for the current `(channel, branch)` the change since the last scan rides alongside as a secondary chip prefixed with `Δ` (green for improvement, red for regression). On the first scan there is no chip — the absolute number stands alone. The underlying `previous_signal` field is also exposed on the `quality.scanned` event payload so consumers can render the delta without re-fetching the snapshot.
+2. **Tabs** — *Overview* (metric cards + treemap), *Diagnostics* (per-tile breakdown), *Hotspots* (function-level complexity + clone clusters), *Cycles* (Tarjan SCC list), *Evolution* (git-history coupling, churn, bus-factor), *What-if* (mutation simulator), *C4* (Mermaid).
+3. **Metric cards** — one per metric (Modularity, Cycles, Depth, Equality, Redundancy, Complexity) with current value.
+4. **Treemap** — `@visx/hierarchy` binary treemap. Tile size = file LOC, tile color = per-file deficit (red = drag on signal, green = healthy). Clicking a tile selects it for the popover.
+5. **Diagnostic popover** — opens when a tile is selected; shows path, LOC, top-reason metric, and per-metric deficit breakdown for that file (including complexity drag).
+6. **Hotspots tab** — worst-first complex functions with score, band-coloured severity, and per-dim breakdown (`cyc / cog / nest / params / LOC`); plus collapsible clone-cluster cards listing each member function, total LOC, and worst pairwise Hamming distance. Both lists page via `?limit=` / `?offset=`.
+7. **Failed rules** — citation cards for any failing rule.
 
 Empty state (no snapshot ever scanned for this channel) renders a centered "Scan now" button plus a one-line explainer. Loading state during a scan dims the previous snapshot and shows `Scanning… <done>/<total>` driven by `quality.scan_progress` events (throttled to ~250 ms, with a guaranteed first and terminal tick).
 
@@ -149,6 +171,8 @@ Useful for CI gates and ad-hoc inspection without running the daemon.
 | `quality_evolution` | Git-history coupling pairs, churn hotspots, and bus-factor risk over the configured window (default 12 months / 1000 commits). |
 | `quality_c4` | Mermaid `flowchart` clustered by Go package, top-level dirs wrapped in `subgraph` blocks. |
 | `quality_bugfactor` | Files with the highest combined deficit + churn signal — best refactor candidates. |
+| `quality_complexity` | Per-function complexity hotspots (cyclomatic, cognitive, max nesting, params, LOC), worst-first, with `offset`/`limit` paging. Recomputes from the cached graph using the project's complexity thresholds. |
+| `quality_clones` | Clone clusters from the cached graph (SimHash near-duplicate detection). Members, total LOC, worst pairwise Hamming distance per cluster, with `offset`/`limit` paging. |
 
 All tools read `channelID` from the per-channel MCP server struct; they take no `WorkDir` argument.
 
@@ -167,6 +191,8 @@ All tools read `channelID` from the per-channel MCP server struct; they take no 
 | `GET` | `/api/channels/{id}/quality/evolution` | Git-history coupling, churn, bus-factor. Optional `?since_months=` and `?max_commits=`. |
 | `GET` | `/api/channels/{id}/quality/c4` | Mermaid `flowchart` for the current graph. |
 | `GET` | `/api/channels/{id}/quality/bugfactor` | Top refactor candidates by deficit + churn. Optional `?limit=`. |
+| `GET` | `/api/channels/{id}/quality/complexity` | Per-function complexity hotspots. Optional `?limit=` (default 50, max 100) and `?offset=` (default 0). |
+| `GET` | `/api/channels/{id}/quality/clones` | Clone clusters from the cached graph. Optional `?limit=` (default 25, max 50) and `?offset=` (default 0). |
 
 There is no auth — endpoints are intended for local Electron only, like every other `/api/*` route.
 

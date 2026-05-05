@@ -106,8 +106,10 @@ When `--agent-id` is set, the server also:
 |------|-------------|
 | `quality_scan` | Trigger an architectural quality scan for the current channel. Returns a status hint immediately; the full report ships via the `quality.scanned` event. |
 | `quality_snapshot` | Read the persisted snapshot (current branch first, then most recent). Returns `quality_signal`, geo-mean, per-metric breakdown, and a branch-mismatch flag. |
+| `quality_complexity` | Per-function complexity hotspots from the cached graph (cyclomatic, cognitive, max nesting, params, LOC). Optional `limit` (default 50, max 100) and `offset` (default 0) page through the worst-first list. Requires a prior scan. |
+| `quality_clones` | Clone clusters from the cached graph (SimHash near-duplicate detection). Optional `limit` (default 25, max 50) and `offset` (default 0) page through clusters by total LOC desc. Requires a prior scan. |
 
-Both tools read `channelID` from the per-channel server struct and take no `WorkDir` argument. See [Quality](quality.md) for the engine and metric semantics.
+These four tools read `channelID` from the per-channel server struct and take no `WorkDir` argument. See [Quality](quality.md) for the engine and metric semantics, including the `T/raw` complexity curve and the SimHash + Hamming-distance clone clustering.
 
 ## Construction
 

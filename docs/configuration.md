@@ -315,10 +315,24 @@ Available at both global and project level. Project values override global value
 "quality": {
   "max_files": 25000,
   "exclude_paths": ["docs/**"],
+  "complexity": {
+    "cyclomatic_t": 10,
+    "cognitive_t":  15,
+    "nesting_t":    4,
+    "params_t":     5,
+    "loc_t":        60
+  },
+  "clones": {
+    "min_loc":      5,
+    "max_distance": 3
+  },
   "rules": {
-    "signal_floor":     { "enabled": true, "threshold": 5000 },
-    "parse_fail":       { "enabled": true, "threshold": 0.01 },
-    "no_import_cycles": { "enabled": true }
+    "signal_floor":            { "enabled": true, "threshold": 5000 },
+    "parse_fail":              { "enabled": true, "threshold": 0.01 },
+    "no_import_cycles":        { "enabled": true },
+    "complexity_ceiling":      { "enabled": true, "threshold": 10 },
+    "complexity_score_floor":  { "enabled": true, "threshold": 0.5 },
+    "duplication_ceiling":     { "enabled": true, "threshold": 0.10 }
   }
 }
 ```
@@ -329,9 +343,19 @@ Scans are manual: panel "Scan now" button, `loop quality scan`, or the `quality_
 |---|---|---|---|
 | `quality.max_files` | `int` | `25000` | Hard cap on scannable files after exclusions. Over the cap returns a structured `RepoTooLarge` error; no partial scan is produced. |
 | `quality.exclude_paths` | `string[]` | `[]` | Doublestar globs appended to the built-in defaults (`.git/`, `node_modules/`, `dist/`, `build/`, `target/`, `vendor/`, `*.min.js`, `*.generated.go`) and the repo's `.gitignore`. |
-| `quality.rules.<name>.enabled` | `bool` | `true` | Per-rule on/off. Built-in rules: `no_import_cycles`, `signal_floor`, `parse_fail`. |
+| `quality.complexity.cyclomatic_t` | `int` | `10` | Soft threshold for McCabe cyclomatic complexity. Above T the dimension scores `T/raw` (0.50 at 2T, 0.10 at 10T, asymptotic to 0). `0` disables the dimension. |
+| `quality.complexity.cognitive_t` | `int` | `15` | Soft threshold for Sonar cognitive load. Same `T/raw` curve. |
+| `quality.complexity.nesting_t` | `int` | `4` | Soft threshold for max nesting depth. |
+| `quality.complexity.params_t` | `int` | `5` | Soft threshold for parameter count. |
+| `quality.complexity.loc_t` | `int` | `60` | Soft threshold for function LOC. |
+| `quality.clones.min_loc` | `int` | `5` | Minimum function LOC to be considered for clone clustering. Below this, functions are skipped to avoid trivial getter/setter clusters. |
+| `quality.clones.max_distance` | `int` | `3` | Max SimHash Hamming distance between two functions in the same cluster. `0` requires exact-shape duplicates; `64` clusters anything. |
+| `quality.rules.<name>.enabled` | `bool` | `true` | Per-rule on/off. Built-in rules: `no_import_cycles`, `signal_floor`, `parse_fail`, `complexity_ceiling`, `complexity_score_floor`, `duplication_ceiling`. |
 | `quality.rules.signal_floor.threshold` | `float` | `5000` | Lower bound on `quality_signal` (0–10000). Below this, the rule fails. |
 | `quality.rules.parse_fail.threshold` | `float` | `0.01` | Maximum fraction of files allowed to fail to parse (0.01 = 1%). |
+| `quality.rules.complexity_ceiling.threshold` | `int` | `10` | Maximum number of functions allowed to breach any complexity soft threshold before this rule fails. |
+| `quality.rules.complexity_score_floor.threshold` | `float` | `0.5` | Lower bound on the complexity metric's headline score (0–1). |
+| `quality.rules.duplication_ceiling.threshold` | `float` | `0.10` | Maximum tolerated `duplicated_loc / total_loc` ratio across clone clusters. |
 
 Config changes drop the engine's parser/graph cache for the affected channel but **do not auto-trigger a rescan** — the panel keeps rendering the previous snapshot until the next manual or live scan rebuilds with the new config. See [Quality](quality.md) for the full surface.
 

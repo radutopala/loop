@@ -1180,6 +1180,97 @@ Fetch the persisted quality snapshot. Returns the row for the channel's current 
 
 ---
 
+### `GET /api/channels/{id}/quality/complexity`
+
+Per-function complexity hotspots from the cached graph (cyclomatic, cognitive, max nesting, parameter count, LOC). Recomputes the metric using the channel's effective `quality.complexity` thresholds — same numbers the engine produced during scan. The function list is sorted worst-first; per-dimension scores follow a saturating `T/raw` curve past threshold, so badly-saturated functions stay ranked against each other.
+
+**Query Parameters:**
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `limit` | int | no | Max functions per page (default 50, max 100). |
+| `offset` | int | no | Start offset into the worst-first list (default 0). |
+
+**Response (200):**
+```json
+{
+  "score": 0.903,
+  "raw": 338,
+  "total_functions": 8388,
+  "over_threshold": 338,
+  "histogram": {
+    "cyclomatic": { "ok": 8201, "warn": 138, "crit": 48 },
+    "cognitive":  { "ok": 8171, "warn": 141, "crit": 75 },
+    "nesting":    { "ok": 8370, "warn":  17, "crit":  0 },
+    "params":     { "ok": 8347, "warn":  30, "crit": 10 },
+    "loc":        { "ok": 8219, "warn": 135, "crit": 33 }
+  },
+  "functions": [
+    {
+      "path": "internal/orchestrator/executor.go",
+      "name": "ExecuteTask",
+      "start_line": 91,
+      "cyclomatic": 105,
+      "cognitive":  243,
+      "max_nesting": 4,
+      "param_count": 2,
+      "loc": 485,
+      "score": 0.062
+    }
+  ],
+  "offset": 0,
+  "limit": 50,
+  "returned": 1
+}
+```
+
+`raw` is the count of over-threshold functions (mirrors `over_threshold`). Histogram buckets are `ok` (≤ T), `warn` (T..2T), `crit` (> 2T). `score` is the LOC-weighted mean of per-function scores.
+
+**Errors:** `400` on invalid `limit` / `offset`. `404` if no graph is cached for the channel (run a scan first). `501` if the quality engine is not configured.
+
+---
+
+### `GET /api/channels/{id}/quality/clones`
+
+Clone clusters from the cached graph. SimHash fingerprints over normalised function-body shingles are bucketed by Hamming distance — see `quality.clones.max_distance`. Clusters with one member are dropped. The list is sorted by total LOC descending.
+
+**Query Parameters:**
+
+| Param | Type | Required | Description |
+|---|---|---|---|
+| `limit` | int | no | Max clusters per page (default 25, max 50). |
+| `offset` | int | no | Start offset (default 0). |
+
+**Response (200):**
+```json
+{
+  "score": 0.842,
+  "raw": 412,
+  "duplicated_loc": 412,
+  "total_loc": 33559,
+  "cluster_count": 27,
+  "clusters": [
+    {
+      "members": [
+        { "path": "internal/api/foo_handler.go", "name": "handleFoo", "start_line": 91, "end_line": 142, "loc": 52 },
+        { "path": "internal/api/bar_handler.go", "name": "handleBar", "start_line": 91, "end_line": 142, "loc": 52 }
+      ],
+      "loc": 104,
+      "max_distance": 1
+    }
+  ],
+  "offset": 0,
+  "limit": 25,
+  "returned": 1
+}
+```
+
+`raw` is `duplicated_loc`, the LOC counted as duplicate (every member's LOC except one representative per cluster). `score` is `1 - duplicated_loc/total_loc`.
+
+**Errors:** `400` on invalid `limit` / `offset`. `404` if no graph is cached for the channel. `501` if the quality engine is not configured.
+
+---
+
 ## Memory
 
 See [Memory System](memory.md) for the full architecture.

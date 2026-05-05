@@ -63,7 +63,7 @@ AI agents powered by Claude, running in Docker containers. Use the **desktop app
 - **API Server** exposes REST endpoints for task and channel management
 - **SQLite** stores channels, messages, scheduled tasks, run logs, and memory file embeddings
 - **Security Gate** — a seccomp `RET_USER_NOTIF` filter installed in every agent container (works on Linux, macOS, and Windows hosts — the filter + notify-loop server both run inside the container) traps sensitive syscalls (`connect`, `execve`/`execveat`, `openat*`, `renameat2`, `unlinkat`, …) and routes `approve`-rule hits to the chat as a three-button card. An in-container Docker HTTP proxy replaces the raw `docker.sock` bind and enforces method/path/body rules. Enabled by default; see [Configuration: Security Gate](docs/configuration.md#security-gate)
-- **Quality Engine** — pure-Go architectural-quality scanner under `internal/quality/`. Reduces a workspace to a single `quality_signal` (0–10000, geometric mean of 5 graph-level metrics: modularity, cycles, depth, equality, redundancy). Surfaced via the desktop `QualityPanel`, a chat-bar quality indicator, two MCP tools (`quality_scan`, `quality_snapshot`), two HTTP endpoints, and `loop quality scan` for CI gates. Snapshots persist per `(channel, branch)`. See [docs/quality.md](docs/quality.md)
+- **Quality Engine** — pure-Go architectural-quality scanner under `internal/quality/`. Reduces a workspace to a single `quality_signal` (0–10000, geometric mean of 6 graph-level metrics: modularity (Leiden), cycles, depth, equality, redundancy (with SimHash clone detection folded in), and per-function complexity). Surfaced via the desktop `QualityPanel` (Overview / Diagnostics / Hotspots / Cycles / Evolution tabs), a chat-bar quality indicator, MCP tools (`quality_scan`, `quality_snapshot`, `quality_complexity`, `quality_clones`, …), HTTP endpoints, and `loop quality scan` for CI gates. Snapshots persist per `(channel, branch)`. See [docs/quality.md](docs/quality.md)
 
 ## Prerequisites
 
@@ -1041,6 +1041,8 @@ make app-install
 | `POST` | `/api/memory/index` | Re-index memory files |
 | `POST` | `/api/channels/{id}/quality/scan` | Kick a quality scan asynchronously (returns `202 Accepted`; report ships via the `quality.scanned` event) |
 | `GET` | `/api/channels/{id}/quality/snapshot` | Fetch the persisted quality snapshot (404 when none exists yet) |
+| `GET` | `/api/channels/{id}/quality/complexity` | Per-function complexity hotspots (cyclomatic, cognitive, max nesting, params, LOC) with `?limit=` and `?offset=` paging |
+| `GET` | `/api/channels/{id}/quality/clones` | Clone clusters (SimHash + Hamming distance) with member functions, total LOC, and `?limit=` / `?offset=` paging |
 | `GET` | `/api/readme` | Get the Loop README documentation |
 | `PUT` | `/api/playground?name=...` | Create/update a playground (html, title, description) |
 | `GET` | `/api/playground?name=...` | Get playground metadata |
@@ -1100,6 +1102,8 @@ make app-install
 | `index_memory` | Force re-index all memory files |
 | `quality_scan` | Trigger an architectural-quality scan for the current channel (status hint returns immediately; report ships via the `quality.scanned` event) |
 | `quality_snapshot` | Read the persisted quality snapshot (current branch first, then most recent) |
+| `quality_complexity` | Per-function complexity hotspots (cyclomatic, cognitive, max nesting, params, LOC), worst-first, with offset/limit paging |
+| `quality_clones` | Clone clusters from the cached graph (SimHash near-duplicate detection), with offset/limit paging |
 | `get_readme` | Get the full Loop README documentation |
 | `playground` | Manage playgrounds (create/update/delete) |
 | `playground_file` | Manage files within a playground (create/update/read/delete/list) |
