@@ -10,8 +10,12 @@ import (
 const ComplexityName = "complexity"
 
 // ComplexityConfig carries the soft thresholds the per-function score
-// curve uses. Each dimension scores 1.0 at or below T, decaying linearly
-// to 0 at 2·T (a doubled threshold gets the worst score).
+// curve uses. Each dimension scores 1.0 at or below T, then decays as
+// T/raw — at 2·T the score is 0.5, at 4·T 0.25, at 10·T 0.1, asymptotic
+// to 0. The smooth tail keeps badly-saturated functions distinguishable
+// from each other (a 121-cog hot spot scores meaningfully worse than a
+// 31-cog one) instead of clamping a wall of zeros at 2·T like a linear
+// floor would.
 //
 // Defaults match the published soft norms: cyclomatic 10 (McCabe),
 // cognitive 15 (Sonar), nesting 4 (Sonar), params 5 (Clean Code), LOC 60.
@@ -172,20 +176,16 @@ func perFunctionScore(fc FuncComplexity, cfg ComplexityConfig) float64 {
 	return min
 }
 
-// dimScore maps a raw value against threshold T to a [0, 1] score.
-// Values at or below T score 1.0; values at 2·T score 0; the curve is
-// linear in between. T <= 0 disables the dimension (always 1.0).
+// dimScore maps a raw value against threshold T to a (0, 1] score.
+// Values at or below T score 1.0; above T the score is T/raw — a smooth
+// reciprocal tail that never clamps to 0, so functions far past 2·T
+// stay ranked against each other. T <= 0 disables the dimension
+// (always 1.0).
 func dimScore(raw, t int) float64 {
-	if t <= 0 {
+	if t <= 0 || raw <= t {
 		return 1.0
 	}
-	if raw <= t {
-		return 1.0
-	}
-	if raw >= 2*t {
-		return 0.0
-	}
-	return 1.0 - float64(raw-t)/float64(t)
+	return float64(t) / float64(raw)
 }
 
 func emptyHistogram() map[string]map[string]int {

@@ -70,7 +70,7 @@ func (s *ComplexitySuite) TestExceededDimensionDragsScore() {
 			Functions: []parser.Function{
 				{Name: "Hot", StartLine: 5, Body: &parser.FunctionBody{
 					LOC: 20, ParamCount: 1, MaxNesting: 1,
-					DecisionPoints: 20, // 2x cyclomatic threshold (10) → score 0
+					DecisionPoints: 20, // 2× cyclomatic threshold (10) → T/raw = 0.5
 					CognitiveLoad:  1,
 				}},
 			},
@@ -81,11 +81,11 @@ func (s *ComplexitySuite) TestExceededDimensionDragsScore() {
 	require.Equal(s.T(), 1, d.OverThreshold)
 	require.Len(s.T(), d.Functions, 1)
 	require.Equal(s.T(), "Hot", d.Functions[0].Name)
-	require.InDelta(s.T(), 0.0, d.Functions[0].Score, 1e-9)
+	require.InDelta(s.T(), 0.5, d.Functions[0].Score, 1e-9)
 	require.Equal(s.T(), 1, d.Histogram["cyclomatic"]["crit"])
 }
 
-func (s *ComplexitySuite) TestSoftCurveLinearMidpoint() {
+func (s *ComplexitySuite) TestSoftCurveBetweenThresholds() {
 	cfg := DefaultComplexityConfig() // cyclomatic threshold = 10
 	g := graph.Build([]*parser.FileFacts{
 		{
@@ -93,7 +93,7 @@ func (s *ComplexitySuite) TestSoftCurveLinearMidpoint() {
 			Functions: []parser.Function{
 				{Name: "Mid", Body: &parser.FunctionBody{
 					LOC: 10, ParamCount: 1, MaxNesting: 1,
-					DecisionPoints: 15, // halfway between T (1.0) and 2T (0.0) → 0.5
+					DecisionPoints: 15, // 1.5× T → T/raw = 10/15 ≈ 0.667
 					CognitiveLoad:  1,
 				}},
 			},
@@ -101,8 +101,42 @@ func (s *ComplexitySuite) TestSoftCurveLinearMidpoint() {
 	})
 	r := ComputeComplexity(g, cfg)
 	d := r.Detail.(ComplexityDetail)
-	require.InDelta(s.T(), 0.5, d.Functions[0].Score, 1e-9)
+	require.InDelta(s.T(), 10.0/15.0, d.Functions[0].Score, 1e-9)
 	require.Equal(s.T(), 1, d.Histogram["cyclomatic"]["warn"])
+}
+
+func (s *ComplexitySuite) TestSoftCurveDistinguishesSaturatedFunctions() {
+	// The reciprocal tail keeps "way past 2T" functions ranked against
+	// each other rather than clamping a wall of zeros at 2T.
+	cfg := DefaultComplexityConfig() // cyclomatic threshold = 10
+	g := graph.Build([]*parser.FileFacts{
+		{
+			Path: "a.go",
+			Functions: []parser.Function{
+				{Name: "Bad", StartLine: 1, Body: &parser.FunctionBody{
+					LOC: 10, ParamCount: 1, MaxNesting: 1,
+					DecisionPoints: 20, CognitiveLoad: 1, // 2T → 0.5
+				}},
+				{Name: "Worse", StartLine: 2, Body: &parser.FunctionBody{
+					LOC: 10, ParamCount: 1, MaxNesting: 1,
+					DecisionPoints: 50, CognitiveLoad: 1, // 5T → 0.2
+				}},
+				{Name: "Worst", StartLine: 3, Body: &parser.FunctionBody{
+					LOC: 10, ParamCount: 1, MaxNesting: 1,
+					DecisionPoints: 200, CognitiveLoad: 1, // 20T → 0.05
+				}},
+			},
+		},
+	})
+	r := ComputeComplexity(g, cfg)
+	d := r.Detail.(ComplexityDetail)
+	require.Len(s.T(), d.Functions, 3)
+	require.Equal(s.T(), "Worst", d.Functions[0].Name)
+	require.Equal(s.T(), "Worse", d.Functions[1].Name)
+	require.Equal(s.T(), "Bad", d.Functions[2].Name)
+	require.InDelta(s.T(), 0.05, d.Functions[0].Score, 1e-9)
+	require.InDelta(s.T(), 0.2, d.Functions[1].Score, 1e-9)
+	require.InDelta(s.T(), 0.5, d.Functions[2].Score, 1e-9)
 }
 
 func (s *ComplexitySuite) TestLOCWeightedMean() {
@@ -113,7 +147,7 @@ func (s *ComplexitySuite) TestLOCWeightedMean() {
 			Functions: []parser.Function{
 				{Name: "BigBad", Body: &parser.FunctionBody{
 					LOC: 100, ParamCount: 1, MaxNesting: 1,
-					DecisionPoints: 20, // score 0
+					DecisionPoints: 20, // 2T → score 0.5
 					CognitiveLoad:  1,
 				}},
 				{Name: "TinyGood", Body: &parser.FunctionBody{
@@ -125,8 +159,8 @@ func (s *ComplexitySuite) TestLOCWeightedMean() {
 		},
 	})
 	r := ComputeComplexity(g, DefaultComplexityConfig())
-	// Weighted: (0 * 100 + 1 * 1) / 101 ≈ 0.0099
-	require.InDelta(s.T(), 0.0099, r.Score, 1e-3)
+	// Weighted: (0.5 * 100 + 1 * 1) / 101 ≈ 0.5050
+	require.InDelta(s.T(), (0.5*100+1.0*1)/101, r.Score, 1e-9)
 }
 
 func (s *ComplexitySuite) TestHotspotCap() {
@@ -193,5 +227,6 @@ func (s *ComplexitySuite) TestZeroLOCFunctionStillContributes() {
 	r := ComputeComplexity(g, DefaultComplexityConfig())
 	d := r.Detail.(ComplexityDetail)
 	require.Equal(s.T(), 1, d.TotalFunctions)
-	require.Equal(s.T(), 0.0, d.Functions[0].Score)
+	require.InDelta(s.T(), 0.5, d.Functions[0].Score, 1e-9)
+	require.InDelta(s.T(), 0.5, r.Score, 1e-9)
 }

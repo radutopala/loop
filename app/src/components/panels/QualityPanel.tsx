@@ -873,8 +873,10 @@ function ComplexityHotspots({ data, colors, fontSizes }: HotspotSectionProps & {
       </div>
       <SectionHelp colors={colors}>
         Per-function score is the worst of cyclomatic, cognitive, max nesting, parameter count, and LOC against
-        their soft thresholds. <b>Score 0</b> means at least one dimension is at 2× the threshold; <b>1.0</b>
-        means everything fits comfortably. The list is worst-first, capped at {HOTSPOT_FUNCTIONS_LIMIT}.
+        their soft thresholds. The dimension score is <code>T/raw</code> above threshold — <b>0.50</b> at 2× T,
+        <b>0.25</b> at 4× T, <b>0.10</b> at 10× T — so badly-saturated functions stay distinguishable instead of
+        clamping to a wall of zeros. <b>1.0</b> means everything fits comfortably. The list is worst-first,
+        capped at {HOTSPOT_FUNCTIONS_LIMIT}.
       </SectionHelp>
       {data.functions.length === 0 ? (
         <div style={{ color: colors.textDim, fontSize: fontSizes.panels }}>No functions over the complexity threshold.</div>
