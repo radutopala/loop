@@ -1050,23 +1050,32 @@ function AskUserQuestionCard({ questions, channelId, mode, onSent }: { questions
             </button>
           </div>
           {answers.get(qi) === "__other__" && (
-            <input
+            <textarea
               autoFocus
-              placeholder="Type your answer..."
+              placeholder="Type your answer (⌘/Ctrl+Enter to send)…"
               value={otherTexts.get(qi) || ""}
               onChange={(e) => setOtherText(qi, e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+                  e.preventDefault();
+                  if (allAnswered && !sending) void handleSend();
+                }
+              }}
+              rows={3}
+              disabled={sending}
               style={{
                 marginTop: 6,
                 width: "100%",
                 boxSizing: "border-box",
-                padding: "4px 8px",
+                padding: 8,
                 fontSize: 12,
                 fontFamily: fonts.mono,
-                backgroundColor: colors.bg,
+                backgroundColor: colors.codeBlockBg,
                 border: `1px solid ${colors.border}`,
-                borderRadius: 4,
-                color: colors.textLight,
+                borderRadius: 6,
+                color: colors.text,
                 outline: "none",
+                resize: "vertical",
               }}
             />
           )}
