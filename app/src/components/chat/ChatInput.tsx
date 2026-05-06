@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../../types";
-import { sendCommand, sendMessage } from "../../api/loopApi";
+import { resolveGateApproval, sendCommand, sendMessage } from "../../api/loopApi";
 import { fetchShortcuts, type PromptShortcut } from "../../api/configApi";
 import { searchFiles, type FileSearchResult, type RootEntry } from "../../api/files";
 import { fonts } from "../../theme";
@@ -212,13 +212,17 @@ export interface ChatInputProps {
   onSent?: () => void;
   quotedMessage?: Message | null;
   onClearQuote?: () => void;
+  // When a gate approval popup is showing, sending a message auto-denies the
+  // gate, interrupts the resumed run, and queues the user's text — same flow
+  // as ApprovalCard's "Deny with prompt".
+  pendingGateReqId?: string | null;
 }
 
 function buildQuotePrefix(msg: Message): string {
   return msg.content.split("\n").map(l => `> ${l}`).join("\n") + "\n\n";
 }
 
-export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode, onDismissCards, onSent, quotedMessage, onClearQuote }: ChatInputProps) {
+export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode, onDismissCards, onSent, quotedMessage, onClearQuote, pendingGateReqId }: ChatInputProps) {
   const { colors } = useTheme();
   const styles = buildInputStyles(colors);
   const modeStyles = buildModeStyles(colors);
@@ -355,9 +359,16 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
         }
       } else {
         const content = quotedMessage ? buildQuotePrefix(quotedMessage) + trimmed : trimmed;
-        const effectiveMode = overrideMode ?? sendMode;
-        const interrupt = effectiveIsRunning && effectiveMode === "interrupt";
-        await sendMessage(channelId, content, mode, interrupt || undefined);
+        // When a gate approval popup is pending, auto-deny it and force
+        // interrupt — same shape as ApprovalCard's "Deny with prompt".
+        if (pendingGateReqId) {
+          await resolveGateApproval(pendingGateReqId, "deny");
+          await sendMessage(channelId, content, mode, true);
+        } else {
+          const effectiveMode = overrideMode ?? sendMode;
+          const interrupt = effectiveIsRunning && effectiveMode === "interrupt";
+          await sendMessage(channelId, content, mode, interrupt || undefined);
+        }
       }
       // Push to history.
       historyRef.current.push(trimmed);
@@ -374,7 +385,7 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
       // Re-focus after React re-enables the textarea on the next render.
       requestAnimationFrame(() => inputRef.current?.focus());
     }
-  }, [channelId, text, sending, mode, isLoopCommand, effectiveIsRunning, sendMode, quotedMessage, onClearQuote, onDismissCards]);
+  }, [channelId, text, sending, mode, isLoopCommand, effectiveIsRunning, sendMode, quotedMessage, onClearQuote, onDismissCards, pendingGateReqId]);
 
   const updateCommandDropdown = useCallback((val: string) => {
     const trimmed = val.trimStart();
@@ -434,7 +445,12 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
     draftText.delete(channelId);
     setSending(true);
     try {
-      await sendMessage(channelId, shortcut.prompt, mode);
+      if (pendingGateReqId) {
+        await resolveGateApproval(pendingGateReqId, "deny");
+        await sendMessage(channelId, shortcut.prompt, mode, true);
+      } else {
+        await sendMessage(channelId, shortcut.prompt, mode);
+      }
       historyRef.current.push(shortcut.prompt);
       historyIdxRef.current = -1;
       draftRef.current = "";
@@ -444,7 +460,7 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
       setSending(false);
       requestAnimationFrame(() => inputRef.current?.focus());
     }
-  }, [channelId, mode, onDismissCards, onSent]);
+  }, [channelId, mode, onDismissCards, onSent, pendingGateReqId]);
 
   const handleChange = useCallback(
     (e: React.ChangeEvent<HTMLTextAreaElement>) => {
