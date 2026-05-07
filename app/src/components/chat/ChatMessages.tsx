@@ -633,22 +633,28 @@ function CompletionSummary({ info }: { info: { duration_ms?: number; num_turns?:
   );
 }
 
-// extractToolInputPath returns the file path from a serialized tool_input JSON
-// payload, or null when no path-like field is present.
-function extractToolInputPath(input: string): string | null {
-  if (!input) return null;
-  const trimmed = input.trim();
-  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
-  try {
-    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-    for (const key of ["file_path", "path", "filename", "filepath", "notebook_path"]) {
-      const v = parsed[key];
-      if (typeof v === "string" && v.length > 0) return v;
-    }
-    return null;
-  } catch {
-    return null;
+// Tools whose tool_input summary (from internal/container/runner.go's
+// summarizeToolInput) is the bare file path string — render it as a single
+// FileLink rather than scanning for path-shaped substrings.
+const FILE_PATH_TOOLS = new Set(["Read", "Edit", "Write", "MultiEdit", "NotebookEdit", "NotebookRead"]);
+
+function renderInputWithLinks(input: string, toolName: string, channelId: string): React.ReactNode {
+  if (!input) return input;
+  if (!channelId) return input;
+  if (FILE_PATH_TOOLS.has(toolName)) {
+    return <FileLink channelId={channelId} raw={input} line={null} />;
   }
+  const candidates = findCandidatePaths(input);
+  if (candidates.length === 0) return input;
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  candidates.forEach((c, i) => {
+    if (c.start > last) parts.push(input.slice(last, c.start));
+    parts.push(<FileLink key={`tool-link-${i}`} channelId={channelId} raw={c.raw} line={c.line} />);
+    last = c.start + c.length;
+  });
+  if (last < input.length) parts.push(input.slice(last));
+  return <>{parts}</>;
 }
 
 function ToolActivityIndicator({ toolName, input, result }: { toolName: string; input?: string; result?: { text: string; is_error: boolean; truncated: boolean } }) {
@@ -657,8 +663,8 @@ function ToolActivityIndicator({ toolName, input, result }: { toolName: string; 
   const activityStyle = buildActivityStyle(colors);
   const [expanded, setExpanded] = useState(false);
   const safeInput = input ?? "";
-  const inputPath = extractToolInputPath(safeInput);
-  const summary = safeInput.length > 80 ? safeInput.slice(0, 80) + "..." : safeInput;
+  const isPathTool = FILE_PATH_TOOLS.has(toolName);
+  const truncated = !isPathTool && safeInput.length > 80 ? safeInput.slice(0, 80) + "..." : safeInput;
   const fullText = result?.text ?? "";
   const previewText = fullText.length > 120 ? fullText.slice(0, 120) + "..." : fullText;
   const hasResult = fullText !== "";
@@ -669,12 +675,8 @@ function ToolActivityIndicator({ toolName, input, result }: { toolName: string; 
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ opacity: 0.5 }}>&#9881;</span>
         <span style={{ color: colors.textMuted, fontWeight: 500 }}>{toolName}</span>
-        {inputPath && channelId ? (
-          <span style={{ opacity: 0.85 }}>
-            <FileLink channelId={channelId} raw={inputPath} line={null} />
-          </span>
-        ) : (
-          summary && <span style={{ opacity: 0.7 }}>{summary}</span>
+        {truncated && (
+          <span style={{ opacity: 0.85 }}>{renderInputWithLinks(truncated, toolName, channelId)}</span>
         )}
       </div>
       {hasResult && (
