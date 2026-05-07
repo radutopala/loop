@@ -527,12 +527,15 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
               background: colors.bg,
               border: `1px solid ${colors.border}`,
               borderRadius: 8,
-              padding: 16,
-              width: 400,
-              maxWidth: "90%",
+              padding: 24,
+              width: "70vw",
+              minWidth: 600,
+              maxWidth: 1200,
+              maxHeight: "90vh",
+              overflowY: "auto",
               display: "flex",
               flexDirection: "column",
-              gap: 10,
+              gap: 14,
               boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
             }}
           >
@@ -566,7 +569,7 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
               placeholder="Description (optional)"
               value={newDescription}
               onChange={(e) => setNewDescription(e.target.value)}
-              rows={3}
+              rows={6}
               style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
             />
             <div style={{ display: "flex", gap: 6 }}>
@@ -586,8 +589,8 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
                   <input type="text" placeholder="External ref (e.g. gh-123)" value={newExternalRef} onChange={(e) => setNewExternalRef(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
                   <input type="text" placeholder="Parent ticket ID" value={newParent} onChange={(e) => setNewParent(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
                 </div>
-                <textarea placeholder="Design notes" value={newDesign} onChange={(e) => setNewDesign(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
-                <textarea placeholder="Acceptance criteria" value={newAcceptance} onChange={(e) => setNewAcceptance(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
+                <textarea placeholder="Design notes" value={newDesign} onChange={(e) => setNewDesign(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
+                <textarea placeholder="Acceptance criteria" value={newAcceptance} onChange={(e) => setNewAcceptance(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
               </div>
             )}
             <div style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
@@ -618,12 +621,15 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
               background: colors.bg,
               border: `1px solid ${colors.border}`,
               borderRadius: 8,
-              padding: 16,
-              width: 400,
-              maxWidth: "90%",
+              padding: 24,
+              width: "70vw",
+              minWidth: 600,
+              maxWidth: 1200,
+              maxHeight: "90vh",
+              overflowY: "auto",
               display: "flex",
               flexDirection: "column",
-              gap: 10,
+              gap: 14,
               boxShadow: "0 8px 32px rgba(0,0,0,0.3)",
             }}
           >
@@ -660,7 +666,7 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
               placeholder="Description (optional)"
               value={editDescription}
               onChange={(e) => setEditDescription(e.target.value)}
-              rows={3}
+              rows={6}
               style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }}
             />
             <div style={{ display: "flex", gap: 6 }}>
@@ -678,8 +684,8 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <input type="text" placeholder="Dependencies (comma-separated IDs)" value={editDeps} onChange={(e) => setEditDeps(e.target.value)} style={inputStyle} />
                 <input type="text" placeholder="External ref (e.g. gh-123)" value={editExternalRef} onChange={(e) => setEditExternalRef(e.target.value)} style={inputStyle} />
-                <textarea placeholder="Design notes" value={editDesign} onChange={(e) => setEditDesign(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
-                <textarea placeholder="Acceptance criteria" value={editAcceptance} onChange={(e) => setEditAcceptance(e.target.value)} rows={2} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
+                <textarea placeholder="Design notes" value={editDesign} onChange={(e) => setEditDesign(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
+                <textarea placeholder="Acceptance criteria" value={editAcceptance} onChange={(e) => setEditAcceptance(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
               </div>
             )}
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
