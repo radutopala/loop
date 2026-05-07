@@ -1301,11 +1301,16 @@ func (s *ServerSuite) TestFilesExists_Relative() {
 	rec := s.testRequest("POST", "/api/channels/ch-1/files/exists", body)
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
+	// Wire format: root_index must be emitted even for the primary root (0),
+	// so the FE can distinguish "field present, value 0" from "field missing".
+	require.Contains(s.T(), rec.Body.String(), `"root_index":0`)
+
 	var resp filesExistsResponse
 	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
 	require.Len(s.T(), resp.Results, 2)
 	require.True(s.T(), resp.Results[0].Exists)
 	require.Equal(s.T(), "real.txt", resp.Results[0].RelPath)
+	require.Equal(s.T(), 0, resp.Results[0].RootIndex)
 	require.False(s.T(), resp.Results[1].Exists)
 }
 

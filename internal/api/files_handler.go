@@ -630,8 +630,8 @@ type filesExistsRequest struct {
 type filesExistsResult struct {
 	Path      string `json:"path"`
 	Exists    bool   `json:"exists"`
-	RootIndex int    `json:"root_index,omitempty"`
-	RelPath   string `json:"rel_path,omitempty"`
+	RootIndex int    `json:"root_index"`
+	RelPath   string `json:"rel_path"`
 }
 
 type filesExistsResponse struct {
