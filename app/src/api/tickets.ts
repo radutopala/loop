@@ -20,6 +20,7 @@ export interface Ticket {
   links: string[];
   parent?: string;
   external_ref?: string;
+  pr?: string;
   design?: string;
   acceptance?: string;
   created: string;
@@ -57,6 +58,7 @@ export async function createTicket(data: {
   tags?: string[];
   parent?: string;
   external_ref?: string;
+  pr?: string;
   design?: string;
   acceptance?: string;
 }): Promise<Ticket> {
@@ -92,6 +94,7 @@ export async function updateTicket(
     deps?: string[];
     parent?: string;
     external_ref?: string;
+    pr?: string;
     design?: string;
     acceptance?: string;
   },

@@ -21,7 +21,7 @@ require (
 	github.com/modelcontextprotocol/go-sdk v1.4.1
 	github.com/odvcencio/gotreesitter v0.15.3
 	github.com/opencontainers/image-spec v1.1.1
-	github.com/radutopala/ticket v0.4.0
+	github.com/radutopala/ticket v0.4.2
 	github.com/robfig/cron/v3 v3.0.1
 	github.com/slack-go/slack v0.17.3
 	github.com/spf13/cobra v1.10.2
