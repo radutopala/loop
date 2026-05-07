@@ -938,6 +938,37 @@ Create a directory (including nested intermediate directories).
 
 ---
 
+### `POST /api/channels/{id}/files/exists`
+
+Batched existence check for path candidates discovered in chat text or tool input. Used by the desktop app's clickable file-link UX (see [Chat: File Links](chat.md#file-links)).
+
+**Request body:**
+```json
+{"paths": ["app/src/main.tsx", "/Users/me/dev/loop/README.md", "missing/file.go"]}
+```
+
+**Response (200):**
+```json
+{
+  "results": [
+    {"path": "app/src/main.tsx",                      "exists": true,  "root_index": 0, "rel_path": "app/src/main.tsx"},
+    {"path": "/Users/me/dev/loop/README.md",          "exists": true,  "root_index": 0, "rel_path": "README.md"},
+    {"path": "missing/file.go",                       "exists": false}
+  ]
+}
+```
+
+**Behavior notes:**
+- Each candidate is resolved against the channel's primary `dir_path` and any `extra_dirs` from project config, in order. The first root that contains the path wins; the `root_index` in the response refers to that root (compatible with the `root` query parameter on other file endpoints).
+- Relative paths are tried under each root via the same path-validation rules as the read/write endpoints (no absolute, no `..` traversal, symlink-aware containment check).
+- Absolute paths are stat'd directly, then matched against each root's resolved prefix to derive `rel_path`. Paths outside every root return `exists: false`.
+- Directories return `exists: false` — only regular files are reported as existing, since the link UX opens files in the editor.
+- The batch is capped at **200 paths per request**; extras are silently dropped. Request body is limited to 64 KiB.
+
+**Errors:** `400` if the request body is malformed or the channel's directory cannot be resolved.
+
+---
+
 ### Path Validation
 
 All file operations validate the relative path against the channel's root directory:

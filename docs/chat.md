@@ -97,6 +97,39 @@ Inline elements are parsed via regex: `` /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*)/ ``
 
 ---
 
+## File Links
+
+Paths that look like files in the channel's working tree are auto-detected in both message text and tool-use input blocks, validated against the loop fs, and rendered as clickable links. Clicking opens the file in the editor panel and scrolls to the parsed line.
+
+### Detection
+
+A regex (`app/src/utils/fileLinks.ts`) extracts candidates from rendered text:
+
+- Relative paths with at least one `/` and a file extension (`src/foo.ts`, `internal/api/server.go`)
+- Absolute paths starting with `/` (e.g. `/Users/me/dev/loop/main.go`)
+- Optional trailing `:NNN` line suffix is captured separately so the click can jump to that line
+- URLs (`https://…`, `file://…`) are excluded
+
+Tool-use blocks dispatch on tool name. Tools whose `tool_input` summary is itself a bare path — `Read`, `Edit`, `Write`, `MultiEdit`, `NotebookEdit`, `NotebookRead` — render the entire input as a single link. All other tools (`Bash`, `Grep`, `Glob`, …) fall back to the same regex pass over their input string, so paths embedded in commands or queries still link.
+
+### Validation
+
+Candidates are batched per channel and POSTed to [`/api/channels/{id}/files/exists`](api.md#post-apichannelsidfilesexists), with the result cached. While a candidate is pending or unknown, the link renders as plain text — layout stays stable, no flicker. Once validated:
+
+- **Exists** → renders as an underlined link in `colors.active`
+- **Does not exist** → continues to render as plain text
+
+### Click Behavior
+
+Clicking a valid link dispatches a `loop:open-file` `CustomEvent` with the resolved `{ rootIndex, relPath }` and optional line number. The `WorkspaceLayout` handler:
+
+1. Adds an Editor leaf if none exists, placed **opposite the Chat panel horizontally** (so chat stays on one side and the editor lands on the other).
+2. Calls `openFileAtLine(pathKey, line)` on the editor state. If the file is already loaded, the scroll happens immediately; otherwise the requested line is queued and flushed once the file content is ready.
+
+The editor centers the target line and focuses the view. When `line` is null the file simply opens at the top.
+
+---
+
 ## Streaming
 
 When the agent is generating a response, the chat view shows a streaming bubble:
@@ -129,7 +162,7 @@ Activity text is truncated to **100 characters** maximum with "..." appended.
 When the agent invokes a tool (`tool.use` event), an indicator is appended to the timeline:
 - Gear icon
 - Tool name in bold
-- Input summary (truncated for display)
+- Input summary (truncated for display, except for path-bearing tools whose entire input is rendered as a clickable [file link](#file-links))
 
 When the matching `tool.result` event arrives (paired by `tool_use_id`), the indicator collapses into a `tool_use` + `tool_result` pair rendered together — the result is shown as a dimmed second line beneath the tool call. Tool calls and their results are persisted as timeline rows, so reloading the channel replays them in chain order alongside the surrounding messages.
 
