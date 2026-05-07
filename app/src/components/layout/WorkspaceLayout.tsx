@@ -15,6 +15,8 @@ import type { CanvasNode } from "../../canvas/types";
 import { EmptyLayoutPicker } from "../../splitPane/AddPanelButton";
 import { Terminal, getCloseForInstance } from "../panels/Terminal";
 import { ChatView } from "../chat/ChatView";
+import type { FileLinkOpenDetail } from "../chat/FileLink";
+import { makePathKey } from "../panels/EditorFileTree";
 import { EditorPanel } from "../panels/EditorPanel";
 import { FileTreePanel } from "../panels/FileTreePanel";
 import { MemoryPanel } from "../panels/MemoryPanel";
@@ -68,6 +70,50 @@ function leafIdForPanel(channelId: string, panel: PanelType): string {
     return panel;
   }
   return nextId(channelId, panel);
+}
+
+/**
+ * Insert `newLeaf` on the opposite horizontal side of the leaf identified by
+ * `anchorId`. If the anchor's parent is a horizontal split, the new leaf is
+ * appended at whichever end is farther from the anchor. Otherwise the anchor
+ * is wrapped into a new horizontal split with the new leaf placed to its
+ * right (the typical layout when chat is on the left).
+ */
+function insertOppositeHorizontal(node: PaneNode, anchorId: string, newLeaf: LeafNode): PaneNode {
+  if (node.type === "leaf") {
+    if (node.id !== anchorId) return node;
+    return {
+      type: "split",
+      direction: "horizontal",
+      flex: node.flex,
+      children: [{ ...node, flex: 1 }, { ...newLeaf, flex: 1 }],
+    };
+  }
+  const directIdx = node.children.findIndex((c) => c.type === "leaf" && c.id === anchorId);
+  if (directIdx !== -1) {
+    if (node.direction === "horizontal") {
+      const half = (node.children.length - 1) / 2;
+      const appendRight = directIdx <= half;
+      const inserted: LeafNode = { ...newLeaf, flex: 1 };
+      return {
+        ...node,
+        children: appendRight ? [...node.children, inserted] : [inserted, ...node.children],
+      };
+    }
+    return {
+      ...node,
+      children: node.children.map((c, i) => {
+        if (i !== directIdx) return c;
+        return {
+          type: "split" as const,
+          direction: "horizontal" as const,
+          flex: c.flex,
+          children: [{ ...c, flex: 1 }, { ...newLeaf, flex: 1 }],
+        };
+      }),
+    };
+  }
+  return { ...node, children: node.children.map((c) => insertOppositeHorizontal(c, anchorId, newLeaf)) };
 }
 
 function withDefaultFileTreeForEditor(tree: PaneNode, editorLeafId: string, fileTreeLeafId: string): PaneNode {
@@ -550,6 +596,39 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
     window.addEventListener("loop:open-panel", handler);
     return () => window.removeEventListener("loop:open-panel", handler);
   }, [channelId, handleEmptyAdd, handleSplitLeaf]);
+
+  // Listen for "open this file in the editor" events dispatched by FileLink in
+  // chat. If no editor leaf exists yet, place one on the opposite horizontal
+  // side of the chat leaf. Then load the file and scroll to the requested line.
+  useEffect(() => {
+    const handler = (ev: Event) => {
+      const ce = ev as CustomEvent<FileLinkOpenDetail>;
+      if (!ce.detail || ce.detail.channelId !== channelId) return;
+      const { target, line } = ce.detail;
+      const pathKey = makePathKey(target.rootIndex, target.relPath);
+
+      const current = treeRef.current;
+      const hasEditor = current ? collectLeaves(current).some((l) => l.panel === "editor") : false;
+      if (!hasEditor && current && canAddPanel(current, "editor")) {
+        const chatLeaf = collectLeaves(current).find((l) => l.panel === "chat");
+        const editorId = leafIdForPanel(channelId, "editor");
+        if (chatLeaf) {
+          setTree((prev) => {
+            if (!prev) return prev;
+            return insertOppositeHorizontal(prev, chatLeaf.id, makeLeaf(editorId, "editor"));
+          });
+        } else {
+          handleSplitLeaf(collectLeaves(current)[0]?.id ?? "", "editor", "horizontal");
+        }
+      } else if (!current) {
+        handleEmptyAdd("editor");
+      }
+
+      editorState.openFileAtLine(pathKey, line);
+    };
+    window.addEventListener("loop:open-file", handler);
+    return () => window.removeEventListener("loop:open-file", handler);
+  }, [channelId, editorState, handleEmptyAdd, handleSplitLeaf]);
 
   const handleKillAgents = useCallback(() => {
     // Close all agent and shell terminal sessions in the current tree.

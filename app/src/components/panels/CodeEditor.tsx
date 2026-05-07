@@ -1,7 +1,7 @@
 import "@fontsource/jetbrains-mono/400.css";
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { EditorView, keymap, lineNumbers, highlightActiveLine, highlightActiveLineGutter, drawSelection } from "@codemirror/view";
-import { EditorState, Compartment } from "@codemirror/state";
+import { EditorSelection, EditorState, Compartment } from "@codemirror/state";
 import { defaultKeymap, indentWithTab, history, historyKeymap } from "@codemirror/commands";
 import { search, searchKeymap, openSearchPanel } from "@codemirror/search";
 import { bracketMatching, foldGutter, foldKeymap } from "@codemirror/language";
@@ -76,6 +76,8 @@ export interface CodeEditorHandle {
   getSelection(): { from: number; to: number; text: string } | null;
   /** Replace the current selection. */
   replaceSelection(text: string): void;
+  /** Move the cursor to the given 1-based line and scroll it into view. */
+  scrollToLine(line: number): void;
 }
 
 // ── Props ──
@@ -173,6 +175,18 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       if (!view) return;
       const { from, to } = view.state.selection.main;
       view.dispatch({ changes: { from, to, insert: text } });
+    },
+    scrollToLine(line: number) {
+      const view = viewRef.current;
+      if (!view) return;
+      const total = view.state.doc.lines;
+      const target = Math.max(1, Math.min(line, total));
+      const lineInfo = view.state.doc.line(target);
+      view.dispatch({
+        selection: EditorSelection.cursor(lineInfo.from),
+        effects: EditorView.scrollIntoView(lineInfo.from, { y: "center" }),
+      });
+      view.focus();
     },
   }));
 

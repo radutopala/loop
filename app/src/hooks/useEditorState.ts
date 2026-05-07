@@ -92,6 +92,8 @@ export interface EditorStateApi {
   saveFile: (filePath?: string) => void;
   saveAllDirty: () => void;
   clearError: () => void;
+  /** Open a file (preview tab) and scroll to the given 1-based line once loaded. */
+  openFileAtLine: (path: string, line: number | null) => void;
 
   // Auto-refresh resolution
   acceptPendingRefresh: (pathKey: string) => void;
@@ -129,6 +131,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
   const [previewTabsEnabled, setPreviewTabsEnabled] = useState(true);
 
   const codeEditorRef = useRef<CodeEditorHandle | null>(null);
+  const pendingScrollRef = useRef<{ pathKey: string; line: number } | null>(null);
   const selectedPathRef = useRef(selectedPath);
   selectedPathRef.current = selectedPath;
   const dirtyTabsRef = useRef(dirtyTabs);
@@ -291,6 +294,43 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     setPreviewTab(path);
     if (selectedPathRef.current !== path) switchToTab(path);
   }, [previewTab, previewTabsEnabled, openTabs, switchToTab]);
+
+  const tryFlushPendingScroll = useCallback(() => {
+    const pending = pendingScrollRef.current;
+    if (!pending) return;
+    if (pending.pathKey !== selectedPathRef.current) return;
+    const editor = codeEditorRef.current;
+    if (!editor) return;
+    editor.scrollToLine(pending.line);
+    pendingScrollRef.current = null;
+  }, []);
+
+  // After file content arrives and CodeEditor mounts, flush any pending scroll.
+  useEffect(() => {
+    if (fileContent === null) return;
+    // CodeEditor mounts on the same render that sets fileContent; the ref is
+    // assigned during commit, so this effect (post-commit) sees it. Defer to
+    // the next animation frame to ensure layout has settled before scrolling.
+    const id = requestAnimationFrame(() => tryFlushPendingScroll());
+    return () => cancelAnimationFrame(id);
+  }, [fileContent, selectedPath, tryFlushPendingScroll]);
+
+  const fileContentRef = useRef(fileContent);
+  fileContentRef.current = fileContent;
+
+  const openFileAtLine = useCallback((path: string, line: number | null) => {
+    if (line !== null) {
+      pendingScrollRef.current = { pathKey: path, line };
+    } else {
+      pendingScrollRef.current = null;
+    }
+    openFile(path);
+    // If it's already the active tab with content loaded, openFile is a no-op
+    // and no fileContent effect will fire — scroll synchronously.
+    if (line !== null && selectedPathRef.current === path && fileContentRef.current !== null) {
+      tryFlushPendingScroll();
+    }
+  }, [openFile, tryFlushPendingScroll]);
 
   // Double-click promote: ensure permanent and active.
   const promoteFile = useCallback((path: string) => {
@@ -634,6 +674,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     handleDeleteDirPath,
     switchToTab,
     openFile,
+    openFileAtLine,
     promoteFile,
     closeTab,
     markDirty,

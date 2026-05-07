@@ -288,6 +288,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/channels/{id}/file", s.handleReadFile)
 	mux.HandleFunc("PUT /api/channels/{id}/file", s.handleWriteFile)
 	mux.HandleFunc("DELETE /api/channels/{id}/file", s.handleDeleteFile)
+	mux.HandleFunc("POST /api/channels/{id}/files/exists", s.handleFilesExists)
 	mux.HandleFunc("POST /api/channels/{id}/dir", s.handleCreateDir)
 	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
 	mux.HandleFunc("GET /api/channels/{id}/branches", s.handleListBranches)
