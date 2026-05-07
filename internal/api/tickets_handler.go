@@ -428,6 +428,19 @@ func (s *Server) handleAssignTicket(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "channel not found or has no dir_path", http.StatusBadRequest)
 		return
 	}
+	// If req.ChannelID is a thread, resolve to its parent project channel so
+	// the worktree's seeded session matches what the new thread row will store
+	// (thread_service.CreateThread also re-resolves to the grandparent).
+	if parent.ParentID != "" {
+		grandparent, err := s.store.GetChannel(r.Context(), parent.ParentID)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		if grandparent != nil && grandparent.DirPath != "" {
+			parent = grandparent
+		}
+	}
 
 	// Use the parent channel's current branch as the base ref for the worktree.
 	// req.Branch overrides this if the caller wants a specific base.

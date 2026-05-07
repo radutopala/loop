@@ -705,6 +705,35 @@ func (s *ServerSuite) TestAssignTicket_MissingDir() {
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
 }
 
+func (s *ServerSuite) TestAssignTicket_ResolvesThreadToGrandparent() {
+	// Mirror of TestCreateWorktree_ResolvesThreadToGrandparent: when channel_id
+	// is a thread, the worktree should be created from the grandparent's
+	// DirPath/SessionID — matching where the new thread row will be parented.
+	dir := initGitRepoWithTickets(s.T())
+	writeTestTicket(s.T(), dir, "tic-gpr", "Grandparent resolve", tk.StatusOpen)
+
+	s.srv.sys = s.sys
+	// Thread channel with a parent project channel.
+	s.store.On("GetChannel", mock.Anything, "thread-ch").Return(&db.Channel{
+		ChannelID: "thread-ch", ParentID: "proj-ch", DirPath: dir, SessionID: "thread-sess",
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "proj-ch").Return(&db.Channel{
+		ChannelID: "proj-ch", DirPath: dir, SessionID: "grandparent-sess",
+	}, nil)
+	s.threads.On("CreateThread", mock.Anything, "thread-ch", mock.Anything, "", "").Return("gpr-thread", nil)
+	s.store.On("GetChannel", mock.Anything, "gpr-thread").Return(&db.Channel{
+		ChannelID: "gpr-thread", DirPath: dir, ParentID: "proj-ch", Active: true,
+	}, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+
+	body := fmt.Sprintf(`{"dir": %q, "channel_id": "thread-ch"}`, dir)
+	rec := s.testRequest("POST", "/api/tickets/tic-gpr/assign", body)
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+
+	// Verify proj-ch was looked up (grandparent resolution happened).
+	s.store.AssertCalled(s.T(), "GetChannel", mock.Anything, "proj-ch")
+}
+
 func (s *ServerSuite) TestAssignTicket_AutoStartAgent() {
 	dir := initGitRepoWithTickets(s.T())
 	// Write ticket with a description so the agent auto-start path is triggered
