@@ -601,9 +601,9 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
     }
 
     return (
-      <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column" }}>
+      <div style={{ flex: 1, minHeight: 0, display: "flex", flexDirection: "column" }}>
         {/* Task header */}
-        <div style={{ padding: 12, borderBottom: `1px solid ${colors.border}`, display: "flex", flexDirection: "column", gap: 6 }}>
+        <div style={{ padding: 12, borderBottom: `1px solid ${colors.border}`, display: "flex", flexDirection: "column", gap: 6, maxHeight: "50%", overflowY: "auto", flexShrink: 0 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: colors.text }}>Task #{selectedTask.id}</span>
             <span
@@ -692,7 +692,7 @@ export function TasksPanel({ channelId, allowWorktree, onSelectChannel }: TasksP
             Run History
           </div>
         </div>
-        <div style={{ flex: 1, overflowY: "auto" }}>
+        <div style={{ flex: 1, minHeight: 0, overflowY: "auto" }}>
           {runs.length === 0 ? (
             <div style={{ padding: 16, color: colors.textDim, fontSize: 12, textAlign: "center" }}>
               No runs yet
