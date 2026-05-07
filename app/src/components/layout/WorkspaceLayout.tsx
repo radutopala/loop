@@ -94,7 +94,12 @@ function insertOppositeHorizontal(node: PaneNode, anchorId: string, newLeaf: Lea
     if (node.direction === "horizontal") {
       const half = (node.children.length - 1) / 2;
       const appendRight = directIdx <= half;
-      const inserted: LeafNode = { ...newLeaf, flex: 1 };
+      // Match the existing siblings' scale so the new leaf is visible. Using
+      // `flex: 1` against siblings whose flex values are 50+ would compress the
+      // new pane to ~1% of the container width.
+      const totalFlex = node.children.reduce((sum, c) => sum + c.flex, 0);
+      const avgFlex = totalFlex / node.children.length;
+      const inserted: LeafNode = { ...newLeaf, flex: avgFlex };
       return {
         ...node,
         children: appendRight ? [...node.children, inserted] : [inserted, ...node.children],
