@@ -1096,6 +1096,7 @@ make app-install
 | `edit_task` | Edit a task's schedule, type, and/or prompt |
 | `create_channel` | Create a new channel by name |
 | `create_thread` | Create a new thread; optional `message` triggers a runner immediately |
+| `create_worktree_thread` | Create a thread backed by a fresh git worktree on the given branch (mirror of the UI's `+wt` button); optional `message` triggers a runner immediately |
 | `delete_thread` | Delete a thread by ID (cleans up worktree and branch if applicable) |
 | `search_channels` | Search for channels and threads by name |
 | `send_message` | Send a message to a channel or thread |

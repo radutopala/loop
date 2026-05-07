@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -165,6 +166,40 @@ func (s *ServerSuite) TestEncodeClaudeProjectPath() {
 	require.Equal(s.T(), "-Users-me--worktrees-wt1", osutil.EncodeClaudeProjectPath("/Users/me/.worktrees/wt1"))
 	require.Equal(s.T(), "-Users-me--claude", osutil.EncodeClaudeProjectPath("/Users/me/.claude"))
 	require.Equal(s.T(), "", osutil.EncodeClaudeProjectPath(""))
+}
+
+func (s *ServerSuite) TestCreateWorktree_AutoTriggerWithMessage() {
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/auto-trigger")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	s.srv.sys = s.sys
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: dir}, nil)
+	// Empty message passed to CreateThread because msgHandler is set (HandleThreadCreated stores it instead).
+	s.threads.On("CreateThread", mock.Anything, "ch1", mock.Anything, "user-42", "").Return("at-thread", nil)
+	s.store.On("GetChannel", mock.Anything, "at-thread").Return(&db.Channel{
+		ChannelID: "at-thread", DirPath: dir, ParentID: "ch1", Active: true,
+	}, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+
+	handler := new(MockIncomingMessageHandler)
+	s.srv.SetIncomingMessageHandler(handler)
+	defer func() { s.srv.msgHandler = nil }()
+
+	called := make(chan struct{}, 1)
+	handler.On("HandleThreadCreated", mock.Anything, "at-thread", "user-42", "Implement the parser").
+		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
+
+	rec := s.testRequest("POST", "/api/worktrees", `{"channel_id":"ch1","branch":"feature/auto-trigger","name":"at-wt","author_id":"user-42","message":"Implement the parser"}`)
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		s.T().Fatal("HandleThreadCreated was not called within 1s")
+	}
+	handler.AssertExpectations(s.T())
 }
 
 func (s *ServerSuite) TestCreateWorktree_MissingChannelID() {

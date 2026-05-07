@@ -1096,9 +1096,13 @@ Create a git worktree as a new thread. The worktree gets its own branch (`worktr
 {
   "channel_id": "parent-channel-id",
   "branch": "main",
-  "name": "optional-name"
+  "name": "optional-name",
+  "author_id": "optional-user-id",
+  "message": "optional first prompt"
 }
 ```
+
+If `message` is provided, the bot posts it as a self-mention into the new thread to trigger a runner immediately with that prompt — same auto-trigger semantics as `POST /api/threads`.
 
 **Response (201):**
 ```json

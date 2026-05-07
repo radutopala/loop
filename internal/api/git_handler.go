@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -402,6 +403,8 @@ type createWorktreeRequest struct {
 	ChannelID string `json:"channel_id"`
 	Branch    string `json:"branch"`
 	Name      string `json:"name,omitempty"`
+	AuthorID  string `json:"author_id,omitempty"`
+	Message   string `json:"message,omitempty"`
 }
 
 type createWorktreeResponse struct {
@@ -460,7 +463,13 @@ func (s *Server) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {
 	worktreePath := result.WorktreePath
 
 	threadName := fmt.Sprintf("%s (%s)", name, req.Branch)
-	threadID, err := s.threads.CreateThread(r.Context(), req.ChannelID, threadName, "", "")
+	// When msgHandler is set, skip storing the message in CreateThread —
+	// HandleThreadCreated will store it as a user message instead.
+	msg := req.Message
+	if s.msgHandler != nil {
+		msg = ""
+	}
+	threadID, err := s.threads.CreateThread(r.Context(), req.ChannelID, threadName, req.AuthorID, msg)
 	if err != nil {
 		http.Error(w, fmt.Sprintf("creating thread: %s", err), http.StatusInternalServerError)
 		return
@@ -480,6 +489,10 @@ func (s *Server) handleCreateWorktree(w http.ResponseWriter, r *http.Request) {
 
 	if s.eventsHub != nil {
 		s.eventsHub.BroadcastChannelCreated(req.ChannelID, threadID)
+	}
+
+	if s.msgHandler != nil && req.Message != "" {
+		go s.msgHandler.HandleThreadCreated(context.Background(), threadID, req.AuthorID, req.Message)
 	}
 
 	writeHTTPJSON(w, http.StatusCreated, createWorktreeResponse{
