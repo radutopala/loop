@@ -226,6 +226,85 @@ func (s *MCPServerSuite) TestCreateThreadErrors() {
 	}
 }
 
+// --- create_worktree_thread ---
+
+func (s *MCPServerSuite) TestCreateWorktreeThreadSuccess() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		require.Equal(s.T(), "POST", req.Method)
+		require.Contains(s.T(), req.URL.String(), "/api/worktrees")
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"channel_id":"test-channel"`)
+		require.Contains(s.T(), string(body), `"branch":"feat/foo"`)
+		require.Contains(s.T(), string(body), `"name":"my-wt"`)
+		return jsonResponse(http.StatusCreated, `{"thread_id":"thread-1","worktree_path":"/tmp/wt/my-wt"}`), nil
+	}
+
+	text, isError := s.callTool("create_worktree_thread", map[string]any{"branch": "feat/foo", "name": "my-wt"})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "thread-1")
+	require.Contains(s.T(), text, "/tmp/wt/my-wt")
+	require.Contains(s.T(), text, "feat/foo")
+}
+
+func (s *MCPServerSuite) TestCreateWorktreeThreadSuccessWithMessage() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"branch":"feat/foo"`)
+		require.Contains(s.T(), string(body), `"message":"Implement the parser"`)
+		return jsonResponse(http.StatusCreated, `{"thread_id":"thread-9","worktree_path":"/tmp/wt/wt-xx"}`), nil
+	}
+
+	text, isError := s.callTool("create_worktree_thread", map[string]any{"branch": "feat/foo", "message": "Implement the parser"})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "thread-9")
+	require.Contains(s.T(), text, "agent has been triggered")
+}
+
+func (s *MCPServerSuite) TestCreateWorktreeThreadSuccessNoName() {
+	s.httpClient.doFunc = func(req *http.Request) (*http.Response, error) {
+		body, _ := io.ReadAll(req.Body)
+		require.Contains(s.T(), string(body), `"branch":"main"`)
+		require.NotContains(s.T(), string(body), `"name"`)
+		return jsonResponse(http.StatusCreated, `{"thread_id":"thread-2","worktree_path":"/tmp/wt/wt-abcd"}`), nil
+	}
+
+	text, isError := s.callTool("create_worktree_thread", map[string]any{"branch": "main"})
+	require.False(s.T(), isError)
+	require.Contains(s.T(), text, "thread-2")
+}
+
+func (s *MCPServerSuite) TestCreateWorktreeThreadEmptyBranch() {
+	text, isError := s.callTool("create_worktree_thread", map[string]any{"branch": ""})
+	require.True(s.T(), isError)
+	require.Contains(s.T(), text, "branch is required")
+}
+
+func (s *MCPServerSuite) TestCreateWorktreeThreadErrors() {
+	tests := []struct {
+		name     string
+		doFunc   func(*http.Request) (*http.Response, error)
+		wantText string
+	}{
+		{"API error", func(*http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusInternalServerError, "channel not found or has no dir_path"), nil
+		}, "API error"},
+		{"HTTP error", func(*http.Request) (*http.Response, error) {
+			return nil, fmt.Errorf("connection refused")
+		}, "calling API"},
+		{"invalid response JSON", func(*http.Request) (*http.Response, error) {
+			return jsonResponse(http.StatusCreated, "not json"), nil
+		}, "decoding response"},
+	}
+	for _, tt := range tests {
+		s.Run(tt.name, func() {
+			s.httpClient.doFunc = tt.doFunc
+			text, isError := s.callTool("create_worktree_thread", map[string]any{"branch": "feat/foo"})
+			require.True(s.T(), isError)
+			require.Contains(s.T(), text, tt.wantText)
+		})
+	}
+}
+
 // --- delete_thread ---
 
 func (s *MCPServerSuite) TestDeleteThreadSuccess() {

@@ -957,7 +957,7 @@ Loop includes a cross-platform desktop app for macOS, Windows, and Linux, built 
 
 ### Features
 
-- **Chat** — send messages, stream agent responses in real-time, search messages (Cmd+K), copy-on-select, persistent drafts across channel switches, message history navigation (ArrowUp/ArrowDown), prompt shortcuts (`#` picker)
+- **Chat** — send messages, stream agent responses in real-time, search messages (Cmd+K), copy-on-select, persistent drafts across channel switches, message history navigation (ArrowUp/ArrowDown), prompt shortcuts (`#` picker), clickable file links in message text and tool blocks (paths with optional `:line` suffix are auto-detected, validated against the working tree, and open the editor panel — placed opposite the chat horizontally if missing — scrolled to the target line)
 - **Terminal** — interactive xterm.js terminals with horizontal/vertical splits. Three panel types: **Docker Agent** launches Claude Code inside the project's docker container, **Docker Shell** opens a plain bash shell in the same container (no Claude), and **Host Shell** runs on the local machine. Docker Agent and Docker Shell share the container — files and processes are visible across panes
 - **File editor** — CodeMirror-powered editor with syntax highlighting, markdown preview, in-file search, context menus, auto-save, and directory creation/deletion
 - **Git panel** — git changes with per-file addition/deletion stats, maximizable to full width, expandable context rows between hunks (GitLab-style "load more"), branch-to-branch diff mode for comparing any two branches, renamed file support with `{old => new}` notation, commit history view with branch selector and lazy pagination, worktrees tab for managing git worktrees (import, navigate, delete)
@@ -1033,6 +1033,7 @@ make app-install
 | `POST` | `/api/worktrees/import` | Import an existing worktree as a thread |
 | `DELETE` | `/api/worktrees` | Remove a git worktree from disk and optionally delete its thread |
 | `GET` | `/api/channels/{id}/roots` | List all root directories (primary + extra from project config) |
+| `POST` | `/api/channels/{id}/files/exists` | Batched existence check for path candidates (used by the chat file-link UX); returns `{exists, root_index, rel_path}` per path |
 | `GET` | `/api/channels/{id}/diff` | Get git diff (working changes, or `?source=X&target=Y` for branch diff) |
 | `GET` | `/api/channels/{id}/messages` | List messages with cursor-based pagination |
 | `GET` | `/api/channels/{id}/timeline` | List interleaved messages, thinking blocks, and tool events with cursor-based pagination |
@@ -1095,6 +1096,7 @@ make app-install
 | `edit_task` | Edit a task's schedule, type, and/or prompt |
 | `create_channel` | Create a new channel by name |
 | `create_thread` | Create a new thread; optional `message` triggers a runner immediately |
+| `create_worktree_thread` | Create a thread backed by a fresh git worktree on the given branch (mirror of the UI's `+wt` button); optional `message` triggers a runner immediately |
 | `delete_thread` | Delete a thread by ID (cleans up worktree and branch if applicable) |
 | `search_channels` | Search for channels and threads by name |
 | `send_message` | Send a message to a channel or thread |

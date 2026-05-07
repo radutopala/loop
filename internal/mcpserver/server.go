@@ -133,6 +133,11 @@ func New(channelID, apiURL, authorID string, httpClient HTTPClient, logger *slog
 	}, s.handleCreateThread)
 
 	mcp.AddTool(s.mcpServer, &mcp.Tool{
+		Name:        "create_worktree_thread",
+		Description: "Create a new thread backed by a fresh git worktree on the given branch. The worktree is checked out from the parent channel's repository, and the thread's working directory is set to the worktree path. Mirrors the +wt button in the UI. If a message is provided, the bot posts it as a self-mention to trigger a runner immediately with that task.",
+	}, s.handleCreateWorktreeThread)
+
+	mcp.AddTool(s.mcpServer, &mcp.Tool{
 		Name:        "delete_thread",
 		Description: "Delete a thread by its ID. This removes the thread from the platform and the database.",
 	}, s.handleDeleteThread)

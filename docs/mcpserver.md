@@ -47,6 +47,7 @@ Agent (Claude Code)  ←→  MCP Protocol (stdio)  ←→  loop mcp  ←→  HTT
 | `send_message` | Send a message to a channel or thread. Supports `@BotName` mentions (auto-converted to proper mentions). |
 | `create_channel` | Create a new channel (bot auto-joins) |
 | `create_thread` | Create a thread in the current channel. If message provided, triggers an agent immediately. |
+| `create_worktree_thread` | Create a thread backed by a fresh git worktree on the given `branch` (mirrors the UI `+wt` button). Optional `name` for the worktree directory; optional `message` triggers an agent immediately. |
 | `delete_thread` | Delete a thread by ID |
 | `search_channels` | Search channels and threads by optional query. Returns IDs, names, directory paths, parent IDs, and active status. |
 
