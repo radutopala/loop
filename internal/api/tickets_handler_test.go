@@ -258,7 +258,7 @@ func (s *ServerSuite) TestUpdateTicket_ExtendedFields() {
 	dir := createTicketsDir(s.T())
 	writeTestTicket(s.T(), dir, "tic-extf", "Extended fields", tk.StatusOpen)
 
-	body := fmt.Sprintf(`{"dir": %q, "deps": ["tic-dep1", "tic-dep2"], "parent": "tic-parent", "external_ref": "gh-42", "design": "Use REST API", "acceptance": "All tests pass"}`, dir)
+	body := fmt.Sprintf(`{"dir": %q, "deps": ["tic-dep1", "tic-dep2"], "parent": "tic-parent", "external_ref": "gh-42", "pr": "https://github.com/owner/repo/pull/7", "design": "Use REST API", "acceptance": "All tests pass"}`, dir)
 	rec := s.testRequest("PATCH", "/api/tickets/tic-extf", body)
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 
@@ -267,6 +267,7 @@ func (s *ServerSuite) TestUpdateTicket_ExtendedFields() {
 	require.Equal(s.T(), []string{"tic-dep1", "tic-dep2"}, resp.Deps)
 	require.Equal(s.T(), "tic-parent", resp.Parent)
 	require.Equal(s.T(), "gh-42", resp.ExternalRef)
+	require.Equal(s.T(), "https://github.com/owner/repo/pull/7", resp.PR)
 	require.Equal(s.T(), "Use REST API", resp.Design)
 	require.Equal(s.T(), "All tests pass", resp.Acceptance)
 
@@ -277,6 +278,7 @@ func (s *ServerSuite) TestUpdateTicket_ExtendedFields() {
 	require.Equal(s.T(), []string{"tic-dep1", "tic-dep2"}, ticket.Deps)
 	require.Equal(s.T(), "tic-parent", ticket.Parent)
 	require.Equal(s.T(), "gh-42", ticket.ExternalRef)
+	require.Equal(s.T(), "https://github.com/owner/repo/pull/7", ticket.PR)
 	require.Equal(s.T(), "Use REST API", ticket.Design)
 	require.Equal(s.T(), "All tests pass", ticket.Acceptance)
 }

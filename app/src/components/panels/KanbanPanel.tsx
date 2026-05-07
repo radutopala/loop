@@ -40,6 +40,36 @@ const PRIORITY_LABELS: Record<number, string> = {
   4: "P4",
 };
 
+function isUrl(value: string): boolean {
+  return /^https?:\/\//i.test(value);
+}
+
+function renderRefLink(value: string, title: string, linkColor: string, dimColor: string) {
+  if (isUrl(value)) {
+    return (
+      <a
+        href={value}
+        target="_blank"
+        rel="noreferrer"
+        title={title}
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          fontFamily: "monospace",
+          color: linkColor,
+          textDecoration: "underline",
+          overflow: "hidden",
+          textOverflow: "ellipsis",
+          whiteSpace: "nowrap",
+          maxWidth: "100%",
+        }}
+      >
+        {value}
+      </a>
+    );
+  }
+  return <span title={title} style={{ fontFamily: "monospace", color: dimColor }}>{value}</span>;
+}
+
 export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel }: KanbanPanelProps) {
   const { colors, fontSizes } = useTheme();
   const [tickets, setTickets] = useState<Ticket[]>([]);
@@ -52,7 +82,7 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
   const loadDraft = useCallback(() => {
     try {
       const raw = localStorage.getItem(draftKey);
-      if (raw) return JSON.parse(raw) as { title?: string; type?: string; priority?: number; description?: string; assignee?: string; tags?: string; external_ref?: string; parent?: string; design?: string; acceptance?: string };
+      if (raw) return JSON.parse(raw) as { title?: string; type?: string; priority?: number; description?: string; assignee?: string; tags?: string; external_ref?: string; pr?: string; parent?: string; design?: string; acceptance?: string };
     } catch { /* ignore */ }
     return null;
   }, [draftKey]);
@@ -64,6 +94,7 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
   const [newAssignee, setNewAssignee] = useState(draft?.assignee ?? "");
   const [newTags, setNewTags] = useState(draft?.tags ?? "");
   const [newExternalRef, setNewExternalRef] = useState(draft?.external_ref ?? "");
+  const [newPR, setNewPR] = useState(draft?.pr ?? "");
   const [newParent, setNewParent] = useState(draft?.parent ?? "");
   const [newDesign, setNewDesign] = useState(draft?.design ?? "");
   const [newAcceptance, setNewAcceptance] = useState(draft?.acceptance ?? "");
@@ -71,13 +102,13 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
 
   // Persist draft to localStorage on change
   useEffect(() => {
-    const hasContent = newTitle || newDescription || newType !== "task" || newPriority !== 2 || newAssignee || newTags || newExternalRef || newParent || newDesign || newAcceptance;
+    const hasContent = newTitle || newDescription || newType !== "task" || newPriority !== 2 || newAssignee || newTags || newExternalRef || newPR || newParent || newDesign || newAcceptance;
     if (hasContent) {
-      localStorage.setItem(draftKey, JSON.stringify({ title: newTitle, type: newType, priority: newPriority, description: newDescription, assignee: newAssignee, tags: newTags, external_ref: newExternalRef, parent: newParent, design: newDesign, acceptance: newAcceptance }));
+      localStorage.setItem(draftKey, JSON.stringify({ title: newTitle, type: newType, priority: newPriority, description: newDescription, assignee: newAssignee, tags: newTags, external_ref: newExternalRef, pr: newPR, parent: newParent, design: newDesign, acceptance: newAcceptance }));
     } else {
       localStorage.removeItem(draftKey);
     }
-  }, [draftKey, newTitle, newType, newPriority, newDescription, newAssignee, newTags, newExternalRef, newParent, newDesign, newAcceptance]);
+  }, [draftKey, newTitle, newType, newPriority, newDescription, newAssignee, newTags, newExternalRef, newPR, newParent, newDesign, newAcceptance]);
 
   // Edit form
   const [editing, setEditing] = useState<Ticket | null>(null);
@@ -89,6 +120,7 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
   const [editTags, setEditTags] = useState("");
   const [editDeps, setEditDeps] = useState("");
   const [editExternalRef, setEditExternalRef] = useState("");
+  const [editPR, setEditPR] = useState("");
   const [editDesign, setEditDesign] = useState("");
   const [editAcceptance, setEditAcceptance] = useState("");
   const [showEditAdvanced, setShowEditAdvanced] = useState(false);
@@ -144,6 +176,7 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
         assignee: newAssignee.trim() || undefined,
         tags: parsedTags.length > 0 ? parsedTags : undefined,
         external_ref: newExternalRef.trim() || undefined,
+        pr: newPR.trim() || undefined,
         parent: newParent.trim() || undefined,
         design: newDesign.trim() || undefined,
         acceptance: newAcceptance.trim() || undefined,
@@ -156,6 +189,7 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
       setNewAssignee("");
       setNewTags("");
       setNewExternalRef("");
+      setNewPR("");
       setNewParent("");
       setNewDesign("");
       setNewAcceptance("");
@@ -165,7 +199,7 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
     } catch {
       /* ignore */
     }
-  }, [dirPath, draftKey, newTitle, newType, newPriority, newDescription, newAssignee, newTags, newExternalRef, newParent, newDesign, newAcceptance, loadTickets]);
+  }, [dirPath, draftKey, newTitle, newType, newPriority, newDescription, newAssignee, newTags, newExternalRef, newPR, newParent, newDesign, newAcceptance, loadTickets]);
 
   const handleStatusChange = useCallback(
     async (ticketId: string, newStatus: string) => {
@@ -208,9 +242,10 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
     setEditTags(ticket.tags.join(", "));
     setEditDeps(ticket.deps.join(", "));
     setEditExternalRef(ticket.external_ref || "");
+    setEditPR(ticket.pr || "");
     setEditDesign(ticket.design || "");
     setEditAcceptance(ticket.acceptance || "");
-    setShowEditAdvanced(!!(ticket.deps.length || ticket.external_ref || ticket.design || ticket.acceptance));
+    setShowEditAdvanced(!!(ticket.deps.length || ticket.external_ref || ticket.pr || ticket.design || ticket.acceptance));
   }, []);
 
   const handleDelete = useCallback(
@@ -243,6 +278,7 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
         tags: parsedTags,
         deps: parsedDeps,
         external_ref: editExternalRef.trim(),
+        pr: editPR.trim(),
         design: editDesign.trim(),
         acceptance: editAcceptance.trim(),
       });
@@ -252,7 +288,7 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
     } catch {
       /* ignore */
     }
-  }, [editing, dirPath, editTitle, editType, editPriority, editDescription, editAssignee, editTags, editDeps, editExternalRef, editDesign, editAcceptance, loadTickets]);
+  }, [editing, dirPath, editTitle, editType, editPriority, editDescription, editAssignee, editTags, editDeps, editExternalRef, editPR, editDesign, editAcceptance, loadTickets]);
 
   const inputStyle: React.CSSProperties = {
     width: "100%",
@@ -362,11 +398,12 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
           </div>
         )}
 
-        {/* Assignee / external ref */}
-        {(ticket.assignee || ticket.external_ref) && (
-          <div style={{ display: "flex", gap: 6, fontSize: 10, color: colors.textDim }}>
+        {/* Assignee / external ref / PR */}
+        {(ticket.assignee || ticket.external_ref || ticket.pr) && (
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, fontSize: 10, color: colors.textDim, minWidth: 0 }}>
             {ticket.assignee && <span title="Assignee">{ticket.assignee}</span>}
-            {ticket.external_ref && <span title="External ref" style={{ fontFamily: "monospace" }}>{ticket.external_ref}</span>}
+            {ticket.external_ref && renderRefLink(ticket.external_ref, "External ref", colors.active, colors.textDim)}
+            {ticket.pr && renderRefLink(ticket.pr, "Pull request", colors.active, colors.textDim)}
           </div>
         )}
 
@@ -586,9 +623,10 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
             {showCreateAdvanced && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <div style={{ display: "flex", gap: 6 }}>
-                  <input type="text" placeholder="External ref (e.g. gh-123)" value={newExternalRef} onChange={(e) => setNewExternalRef(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
+                  <input type="text" placeholder="External ref (URL or e.g. gh-123)" value={newExternalRef} onChange={(e) => setNewExternalRef(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
                   <input type="text" placeholder="Parent ticket ID" value={newParent} onChange={(e) => setNewParent(e.target.value)} style={{ ...inputStyle, flex: 1 }} />
                 </div>
+                <input type="text" placeholder="PR URL (e.g. https://github.com/owner/repo/pull/123)" value={newPR} onChange={(e) => setNewPR(e.target.value)} style={inputStyle} />
                 <textarea placeholder="Design notes" value={newDesign} onChange={(e) => setNewDesign(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
                 <textarea placeholder="Acceptance criteria" value={newAcceptance} onChange={(e) => setNewAcceptance(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
               </div>
@@ -683,7 +721,8 @@ export function KanbanPanel({ channelId, dirPath, allowWorktree, onSelectChannel
             {showEditAdvanced && (
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <input type="text" placeholder="Dependencies (comma-separated IDs)" value={editDeps} onChange={(e) => setEditDeps(e.target.value)} style={inputStyle} />
-                <input type="text" placeholder="External ref (e.g. gh-123)" value={editExternalRef} onChange={(e) => setEditExternalRef(e.target.value)} style={inputStyle} />
+                <input type="text" placeholder="External ref (URL or e.g. gh-123)" value={editExternalRef} onChange={(e) => setEditExternalRef(e.target.value)} style={inputStyle} />
+                <input type="text" placeholder="PR URL (e.g. https://github.com/owner/repo/pull/123)" value={editPR} onChange={(e) => setEditPR(e.target.value)} style={inputStyle} />
                 <textarea placeholder="Design notes" value={editDesign} onChange={(e) => setEditDesign(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
                 <textarea placeholder="Acceptance criteria" value={editAcceptance} onChange={(e) => setEditAcceptance(e.target.value)} rows={5} style={{ ...inputStyle, resize: "vertical", fontFamily: "inherit" }} />
               </div>

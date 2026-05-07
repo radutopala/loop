@@ -26,6 +26,7 @@ type ticketResponse struct {
 	Links       []string `json:"links"`
 	Parent      string   `json:"parent,omitempty"`
 	ExternalRef string   `json:"external_ref,omitempty"`
+	PR          string   `json:"pr,omitempty"`
 	Design      string   `json:"design,omitempty"`
 	Acceptance  string   `json:"acceptance,omitempty"`
 	Created     string   `json:"created"`
@@ -57,6 +58,7 @@ func ticketToResponse(t *tk.Ticket) ticketResponse {
 		Links:       links,
 		Parent:      t.Parent,
 		ExternalRef: t.ExternalRef,
+		PR:          t.PR,
 		Design:      t.Design,
 		Acceptance:  t.Acceptance,
 		Created:     t.Created.Format(time.RFC3339),
@@ -73,6 +75,7 @@ type createTicketRequest struct {
 	Tags        []string `json:"tags,omitempty"`
 	Parent      string   `json:"parent,omitempty"`
 	ExternalRef string   `json:"external_ref,omitempty"`
+	PR          string   `json:"pr,omitempty"`
 	Design      string   `json:"design,omitempty"`
 	Acceptance  string   `json:"acceptance,omitempty"`
 }
@@ -89,6 +92,7 @@ type updateTicketRequest struct {
 	Deps        []string `json:"deps,omitempty"`
 	Parent      *string  `json:"parent,omitempty"`
 	ExternalRef *string  `json:"external_ref,omitempty"`
+	PR          *string  `json:"pr,omitempty"`
 	Design      *string  `json:"design,omitempty"`
 	Acceptance  *string  `json:"acceptance,omitempty"`
 }
@@ -247,6 +251,7 @@ func (s *Server) handleCreateTicket(w http.ResponseWriter, r *http.Request) {
 		Tags:        req.Tags,
 		Parent:      req.Parent,
 		ExternalRef: req.ExternalRef,
+		PR:          req.PR,
 		Design:      req.Design,
 		Acceptance:  req.Acceptance,
 		Created:     time.Now().UTC(),
@@ -335,6 +340,9 @@ func (s *Server) handleUpdateTicket(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.ExternalRef != nil {
 		ticket.ExternalRef = *req.ExternalRef
+	}
+	if req.PR != nil {
+		ticket.PR = *req.PR
 	}
 	if req.Design != nil {
 		ticket.Design = *req.Design
