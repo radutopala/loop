@@ -202,6 +202,93 @@ func (s *ServerSuite) TestCreateWorktree_AutoTriggerWithMessage() {
 	handler.AssertExpectations(s.T())
 }
 
+func (s *ServerSuite) TestCreateWorktree_ResolvesThreadToGrandparent() {
+	// When channel_id refers to a thread, the worktree should be based on the
+	// grandparent project channel's DirPath/SessionID — matching what
+	// thread_service.CreateThread does when storing the new thread row.
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/gp-resolve")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	// Override sys so we can assert on the exact session file copy paths.
+	sys := new(testutil.MockSystem)
+	sys.On("UserHomeDir").Return("/home/testuser", nil)
+	sys.On("ReadFile", mock.MatchedBy(func(p string) bool {
+		// Source must be the grandparent's project dir, with grandparent's session ID.
+		return strings.Contains(p, osutil.EncodeClaudeProjectPath(dir)) &&
+			strings.HasSuffix(p, "grandparent-sess.jsonl")
+	})).Return([]byte(`{"session":"data"}`), nil)
+	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("WriteFile", mock.Anything, mock.Anything, mock.Anything).Return(nil)
+	s.srv.sys = sys
+	s.srv.worktreeCreator.Sys = sys
+
+	// "thread-ch" is a thread of the project channel "proj-ch".
+	s.store.On("GetChannel", mock.Anything, "thread-ch").Return(&db.Channel{
+		ChannelID: "thread-ch",
+		ParentID:  "proj-ch",
+		DirPath:   dir,
+		SessionID: "thread-sess",
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "proj-ch").Return(&db.Channel{
+		ChannelID: "proj-ch",
+		DirPath:   dir,
+		SessionID: "grandparent-sess",
+	}, nil)
+	s.threads.On("CreateThread", mock.Anything, "thread-ch", mock.Anything, "", "").Return("new-wt-thread", nil)
+	s.store.On("GetChannel", mock.Anything, "new-wt-thread").Return(&db.Channel{
+		ChannelID: "new-wt-thread", DirPath: dir, ParentID: "proj-ch", Active: true,
+	}, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+
+	rec := s.testRequest("POST", "/api/worktrees", `{"channel_id":"thread-ch","branch":"feature/gp-resolve","name":"gp-wt"}`)
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+
+	// Verify the session copy used the GRANDPARENT's session ID, not the thread's.
+	sys.AssertCalled(s.T(), "ReadFile", mock.MatchedBy(func(p string) bool {
+		return strings.HasSuffix(p, "grandparent-sess.jsonl")
+	}))
+	sys.AssertNotCalled(s.T(), "ReadFile", mock.MatchedBy(func(p string) bool {
+		return strings.HasSuffix(p, "thread-sess.jsonl")
+	}))
+}
+
+func (s *ServerSuite) TestCreateWorktree_GrandparentLookupError() {
+	dir := initGitRepo(s.T())
+	s.store.On("GetChannel", mock.Anything, "thread-ch").Return(&db.Channel{
+		ChannelID: "thread-ch", ParentID: "proj-ch", DirPath: dir,
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "proj-ch").Return(nil, errors.New("db boom"))
+
+	rec := s.testRequest("POST", "/api/worktrees", `{"channel_id":"thread-ch","branch":"main"}`)
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+	require.Contains(s.T(), rec.Body.String(), "db boom")
+}
+
+func (s *ServerSuite) TestCreateWorktree_GrandparentMissingFallsBackToThread() {
+	// If grandparent lookup returns nil, keep using the immediate channel
+	// (defensive — shouldn't happen, but the fallback covers the branch).
+	dir := initGitRepo(s.T())
+	cmd := exec.Command("git", "branch", "feature/gp-fallback")
+	cmd.Dir = dir
+	require.NoError(s.T(), cmd.Run())
+
+	s.srv.sys = s.sys
+	s.store.On("GetChannel", mock.Anything, "thread-ch").Return(&db.Channel{
+		ChannelID: "thread-ch", ParentID: "proj-ch", DirPath: dir, SessionID: "thread-sess",
+	}, nil)
+	s.store.On("GetChannel", mock.Anything, "proj-ch").Return(nil, nil)
+	s.threads.On("CreateThread", mock.Anything, "thread-ch", mock.Anything, "", "").Return("fb-thread", nil)
+	s.store.On("GetChannel", mock.Anything, "fb-thread").Return(&db.Channel{
+		ChannelID: "fb-thread", DirPath: dir, ParentID: "thread-ch", Active: true,
+	}, nil)
+	s.store.On("UpsertChannel", mock.Anything, mock.Anything).Return(nil)
+
+	rec := s.testRequest("POST", "/api/worktrees", `{"channel_id":"thread-ch","branch":"feature/gp-fallback","name":"gp-fb-wt"}`)
+	require.Equal(s.T(), http.StatusCreated, rec.Code)
+}
+
 func (s *ServerSuite) TestCreateWorktree_MissingChannelID() {
 	rec := s.testRequest("POST", "/api/worktrees", `{"branch":"main"}`)
 	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
