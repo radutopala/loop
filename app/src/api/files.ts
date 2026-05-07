@@ -95,6 +95,27 @@ export async function createDir(channelId: string, path: string, root?: number):
   if (!res.ok) throw new Error(`Failed to create directory: ${res.statusText}`);
 }
 
+// ── File existence (batch validation for chat file links) ──
+
+export interface FileExistsResult {
+  path: string;
+  exists: boolean;
+  root_index?: number;
+  rel_path?: string;
+}
+
+export async function checkFilesExist(channelId: string, paths: string[]): Promise<FileExistsResult[]> {
+  if (paths.length === 0) return [];
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/files/exists`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ paths }),
+  });
+  if (!res.ok) return paths.map((p) => ({ path: p, exists: false }));
+  const data: { results: FileExistsResult[] } = await res.json();
+  return data.results ?? [];
+}
+
 // ── File search (for @file picker) ──
 
 export interface FileSearchResult {

@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"io/fs"
@@ -617,4 +618,99 @@ func (s *Server) handleCreateDir(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeHTTPJSON(w, http.StatusOK, writeFileResponse{OK: true}, s.logger)
+}
+
+// filesExistsRequest is a batch existence check.
+// Each candidate is either a relative path (tried against every root)
+// or an absolute path (matched against root prefixes).
+type filesExistsRequest struct {
+	Paths []string `json:"paths"`
+}
+
+type filesExistsResult struct {
+	Path      string `json:"path"`
+	Exists    bool   `json:"exists"`
+	RootIndex int    `json:"root_index,omitempty"`
+	RelPath   string `json:"rel_path,omitempty"`
+}
+
+type filesExistsResponse struct {
+	Results []filesExistsResult `json:"results"`
+}
+
+// resolveAndStat returns true if path exists as a regular file under any root.
+// For relative input, every root is tried in order. For absolute input, the
+// first root that prefixes the path is used.
+func (s *Server) resolveAndStat(roots []string, path string) (bool, int, string) {
+	if path == "" {
+		return false, 0, ""
+	}
+	if filepath.IsAbs(path) {
+		realPath, err := s.sys.EvalSymlinks(path)
+		if err != nil {
+			return false, 0, ""
+		}
+		info, err := s.sys.Stat(realPath)
+		if err != nil || info.IsDir() {
+			return false, 0, ""
+		}
+		for i, root := range roots {
+			realRoot, err := s.sys.EvalSymlinks(root)
+			if err != nil {
+				continue
+			}
+			rootPrefix := realRoot + string(filepath.Separator)
+			if realPath != realRoot && !strings.HasPrefix(realPath, rootPrefix) {
+				continue
+			}
+			// realPath is realRoot or starts with rootPrefix → string trim is safe.
+			rel := strings.TrimPrefix(strings.TrimPrefix(realPath, realRoot), string(filepath.Separator))
+			return true, i, filepath.ToSlash(rel)
+		}
+		return false, 0, ""
+	}
+	for i, root := range roots {
+		absPath, err := s.validateFilePath(root, path)
+		if err != nil {
+			continue
+		}
+		info, err := s.sys.Stat(absPath)
+		if err != nil || info.IsDir() {
+			continue
+		}
+		return true, i, filepath.ToSlash(filepath.Clean(path))
+	}
+	return false, 0, ""
+}
+
+const maxExistsBatch = 200
+
+func (s *Server) handleFilesExists(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel listing not configured") {
+		return
+	}
+
+	channelID := r.PathValue("id")
+	roots, err := s.allDirPaths(r.Context(), channelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	var req filesExistsRequest
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&req); err != nil {
+		http.Error(w, "invalid request body", http.StatusBadRequest)
+		return
+	}
+	if len(req.Paths) > maxExistsBatch {
+		req.Paths = req.Paths[:maxExistsBatch]
+	}
+
+	results := make([]filesExistsResult, 0, len(req.Paths))
+	for _, p := range req.Paths {
+		exists, idx, rel := s.resolveAndStat(roots, p)
+		results = append(results, filesExistsResult{Path: p, Exists: exists, RootIndex: idx, RelPath: rel})
+	}
+
+	writeHTTPJSON(w, http.StatusOK, filesExistsResponse{Results: results}, s.logger)
 }

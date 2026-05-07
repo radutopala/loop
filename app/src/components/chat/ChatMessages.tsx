@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { createContext, forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { AgentActivityData, AskUserQuestion, ExitPlanModeData, Message, TimelineItem, TodoItem } from "../../types";
 import type { ChatState } from "../../hooks/useChatState";
 import { sendMessage } from "../../api/loopApi";
@@ -9,6 +9,8 @@ import { ContextMenu } from "../shared/ContextMenu";
 import type { MenuItem } from "../shared/ContextMenu";
 import { QueuedMessagesPopup } from "./QueuedMessagesPopup";
 import { ApprovalCard } from "./ApprovalCard";
+import { FileLink } from "./FileLink";
+import { findCandidatePaths } from "../../utils/fileLinks";
 
 function buildMessageStyles(colors: ColorPalette): Record<string, React.CSSProperties> {
   return {
@@ -126,6 +128,10 @@ function buildActivityStyle(colors: ColorPalette): React.CSSProperties {
   };
 }
 
+// ChannelContext lets nested renderers (MarkdownContent, ToolActivityIndicator)
+// resolve the current channel without prop drilling through every helper.
+const ChannelContext = createContext<string>("");
+
 export interface ChatMessagesProps {
   channelId: string;
   chatState: ChatState;
@@ -220,7 +226,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   const showTriggerQuote = isRunning && !!triggerContent && (hasQueuedMessages || hadQueuedRef.current);
 
   return (
-    <>
+    <ChannelContext.Provider value={channelId}>
       <div ref={containerRef} style={styles.messages} onScroll={handleScroll}>
         <div style={styles.messageColumn}>
           {hasMore && (
@@ -295,7 +301,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
       {queuedMessages.length > 0 && (
         <QueuedMessagesPopup messages={queuedMessages} channelId={channelId} />
       )}
-    </>
+    </ChannelContext.Provider>
   );
 });
 
@@ -627,11 +633,31 @@ function CompletionSummary({ info }: { info: { duration_ms?: number; num_turns?:
   );
 }
 
+// extractToolInputPath returns the file path from a serialized tool_input JSON
+// payload, or null when no path-like field is present.
+function extractToolInputPath(input: string): string | null {
+  if (!input) return null;
+  const trimmed = input.trim();
+  if (!trimmed.startsWith("{") || !trimmed.endsWith("}")) return null;
+  try {
+    const parsed = JSON.parse(trimmed) as Record<string, unknown>;
+    for (const key of ["file_path", "path", "filename", "filepath", "notebook_path"]) {
+      const v = parsed[key];
+      if (typeof v === "string" && v.length > 0) return v;
+    }
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 function ToolActivityIndicator({ toolName, input, result }: { toolName: string; input?: string; result?: { text: string; is_error: boolean; truncated: boolean } }) {
   const { colors } = useTheme();
+  const channelId = useContext(ChannelContext);
   const activityStyle = buildActivityStyle(colors);
   const [expanded, setExpanded] = useState(false);
   const safeInput = input ?? "";
+  const inputPath = extractToolInputPath(safeInput);
   const summary = safeInput.length > 80 ? safeInput.slice(0, 80) + "..." : safeInput;
   const fullText = result?.text ?? "";
   const previewText = fullText.length > 120 ? fullText.slice(0, 120) + "..." : fullText;
@@ -643,7 +669,13 @@ function ToolActivityIndicator({ toolName, input, result }: { toolName: string; 
       <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
         <span style={{ opacity: 0.5 }}>&#9881;</span>
         <span style={{ color: colors.textMuted, fontWeight: 500 }}>{toolName}</span>
-        {summary && <span style={{ opacity: 0.7 }}>{summary}</span>}
+        {inputPath && channelId ? (
+          <span style={{ opacity: 0.85 }}>
+            <FileLink channelId={channelId} raw={inputPath} line={null} />
+          </span>
+        ) : (
+          summary && <span style={{ opacity: 0.7 }}>{summary}</span>
+        )}
       </div>
       {hasResult && (
         <div
@@ -744,12 +776,13 @@ function TodoChecklist({ todos }: { todos: TodoItem[] }) {
 
 function MarkdownContent({ content }: { content: string }) {
   const { colors } = useTheme();
+  const channelId = useContext(ChannelContext);
   const s = buildMessageStyles(colors);
-  const parts = parseMarkdown(content, s);
+  const parts = parseMarkdown(content, s, channelId);
   return <>{parts}</>;
 }
 
-function parseMarkdown(text: string, s: Record<string, React.CSSProperties>): React.ReactNode[] {
+function parseMarkdown(text: string, s: Record<string, React.CSSProperties>, channelId: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   const lines = text.split("\n");
   let i = 0;
@@ -792,7 +825,7 @@ function parseMarkdown(text: string, s: Record<string, React.CSSProperties>): Re
             <tr>
               {headers.map((h, hi) => (
                 <th key={hi} style={{ ...s.tableHeaderCell, textAlign: aligns[hi] ?? "left" }}>
-                  {formatInline(h, s)}
+                  {formatInline(h, s, channelId)}
                 </th>
               ))}
             </tr>
@@ -802,7 +835,7 @@ function parseMarkdown(text: string, s: Record<string, React.CSSProperties>): Re
               <tr key={ri}>
                 {row.map((cell, ci) => (
                   <td key={ci} style={{ ...s.tableCell, textAlign: aligns[ci] ?? "left" }}>
-                    {formatInline(cell, s)}
+                    {formatInline(cell, s, channelId)}
                   </td>
                 ))}
               </tr>
@@ -824,7 +857,7 @@ function parseMarkdown(text: string, s: Record<string, React.CSSProperties>): Re
       nodes.push(
         <blockquote key={nodes.length} style={s.blockquote}>
           {quoteLines.map((ql, qi) => (
-            <p key={qi} style={s.paragraph}>{ql ? formatInline(ql, s) : <br />}</p>
+            <p key={qi} style={s.paragraph}>{ql ? formatInline(ql, s, channelId) : <br />}</p>
           ))}
         </blockquote>,
       );
@@ -837,7 +870,7 @@ function parseMarkdown(text: string, s: Record<string, React.CSSProperties>): Re
     } else {
       nodes.push(
         <p key={nodes.length} style={s.paragraph}>
-          {formatInline(line, s)}
+          {formatInline(line, s, channelId)}
         </p>,
       );
     }
@@ -874,32 +907,62 @@ function splitTableRow(line: string): string[] {
   return s.split("|").map((c) => c.trim());
 }
 
-function linkifyText(text: string, keyBase: number): React.ReactNode[] {
+function linkifyText(text: string, keyBase: number, channelId: string): React.ReactNode[] {
+  // Collect URL and file-path matches, then merge by start position. File-path
+  // matches that overlap a URL match are dropped (URLs win — they often contain
+  // a `.ext` suffix that would otherwise be mis-detected as a path).
   const urlRegex = /(https?:\/\/[^\s<>)"']+)/g;
-  const parts: React.ReactNode[] = [];
-  let last = 0;
+  type Hit =
+    | { kind: "url"; start: number; length: number; href: string }
+    | { kind: "path"; start: number; length: number; raw: string; line: number | null };
+  const hits: Hit[] = [];
   for (;;) {
     const m = urlRegex.exec(text);
     if (!m) break;
-    if (m.index > last) parts.push(text.slice(last, m.index));
-    parts.push(
-      <a
-        key={`link-${keyBase}-${parts.length}`}
-        href={m[0]}
-        target="_blank"
-        rel="noopener noreferrer"
-        style={{ color: "#6ba3f7", textDecoration: "underline" }}
-      >
-        {m[0]}
-      </a>,
-    );
-    last = m.index + m[0].length;
+    hits.push({ kind: "url", start: m.index, length: m[0].length, href: m[0] });
+  }
+  if (channelId) {
+    for (const c of findCandidatePaths(text)) {
+      if (hits.some((h) => h.kind === "url" && c.start >= h.start && c.start < h.start + h.length)) continue;
+      hits.push({ kind: "path", start: c.start, length: c.length, raw: c.raw, line: c.line });
+    }
+  }
+  hits.sort((a, b) => a.start - b.start);
+
+  const parts: React.ReactNode[] = [];
+  let last = 0;
+  for (const h of hits) {
+    if (h.start < last) continue; // overlapping (shouldn't happen after URL filter, but be safe)
+    if (h.start > last) parts.push(text.slice(last, h.start));
+    if (h.kind === "url") {
+      parts.push(
+        <a
+          key={`link-${keyBase}-${parts.length}`}
+          href={h.href}
+          target="_blank"
+          rel="noopener noreferrer"
+          style={{ color: "#6ba3f7", textDecoration: "underline" }}
+        >
+          {h.href}
+        </a>,
+      );
+    } else {
+      parts.push(
+        <FileLink
+          key={`file-${keyBase}-${parts.length}`}
+          channelId={channelId}
+          raw={h.raw}
+          line={h.line}
+        />,
+      );
+    }
+    last = h.start + h.length;
   }
   if (last < text.length) parts.push(text.slice(last));
   return parts;
 }
 
-function formatInline(text: string, s: Record<string, React.CSSProperties>): React.ReactNode[] {
+function formatInline(text: string, s: Record<string, React.CSSProperties>, channelId: string): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   // Match inline code, bold, italic, markdown links.
   const regex = /(`[^`]+`|\*\*[^*]+\*\*|\*[^*]+\*|\[[^\]]+\]\([^)]+\))/g;
@@ -910,7 +973,7 @@ function formatInline(text: string, s: Record<string, React.CSSProperties>): Rea
     if (!match) break;
 
     if (match.index > lastIndex) {
-      nodes.push(...linkifyText(text.slice(lastIndex, match.index), nodes.length));
+      nodes.push(...linkifyText(text.slice(lastIndex, match.index), nodes.length, channelId));
     }
 
     const token = match[0];
@@ -947,7 +1010,7 @@ function formatInline(text: string, s: Record<string, React.CSSProperties>): Rea
   }
 
   if (lastIndex < text.length) {
-    nodes.push(...linkifyText(text.slice(lastIndex), nodes.length));
+    nodes.push(...linkifyText(text.slice(lastIndex), nodes.length, channelId));
   }
 
   return nodes;

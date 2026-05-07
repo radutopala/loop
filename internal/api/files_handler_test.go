@@ -1287,3 +1287,217 @@ func (s *ServerSuite) TestCreateDir_MkdirAllError() {
 	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
 	require.Contains(s.T(), rec.Body.String(), "failed to create directory")
 }
+
+// ── handleFilesExists ──
+
+func (s *ServerSuite) TestFilesExists_Relative() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "real.txt"), []byte("x"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	body := `{"paths":["real.txt","missing.txt"]}`
+	rec := s.testRequest("POST", "/api/channels/ch-1/files/exists", body)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp filesExistsResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp.Results, 2)
+	require.True(s.T(), resp.Results[0].Exists)
+	require.Equal(s.T(), "real.txt", resp.Results[0].RelPath)
+	require.False(s.T(), resp.Results[1].Exists)
+}
+
+func (s *ServerSuite) TestFilesExists_Absolute() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "abs.txt"), []byte("x"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	body := fmt.Sprintf(`{"paths":[%q]}`, filepath.Join(tmpDir, "abs.txt"))
+	rec := s.testRequest("POST", "/api/channels/ch-1/files/exists", body)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp filesExistsResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp.Results, 1)
+	require.True(s.T(), resp.Results[0].Exists)
+	require.Equal(s.T(), "abs.txt", resp.Results[0].RelPath)
+}
+
+func (s *ServerSuite) TestFilesExists_AbsoluteOutsideRoot() {
+	tmpDir := s.T().TempDir()
+	otherDir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(otherDir, "outside.txt"), []byte("x"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	body := fmt.Sprintf(`{"paths":[%q]}`, filepath.Join(otherDir, "outside.txt"))
+	rec := s.testRequest("POST", "/api/channels/ch-1/files/exists", body)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp filesExistsResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp.Results, 1)
+	require.False(s.T(), resp.Results[0].Exists)
+}
+
+func (s *ServerSuite) TestFilesExists_DirectoryNotFile() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(tmpDir, "sub"), 0755))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	body := `{"paths":["sub"]}`
+	rec := s.testRequest("POST", "/api/channels/ch-1/files/exists", body)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp filesExistsResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.False(s.T(), resp.Results[0].Exists)
+}
+
+func (s *ServerSuite) TestFilesExists_EmptyPath() {
+	tmpDir := s.T().TempDir()
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	body := `{"paths":[""]}`
+	rec := s.testRequest("POST", "/api/channels/ch-1/files/exists", body)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp filesExistsResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.False(s.T(), resp.Results[0].Exists)
+}
+
+func (s *ServerSuite) TestFilesExists_TruncatesBatch() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "x.txt"), []byte("x"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	paths := make([]string, maxExistsBatch+10)
+	for i := range paths {
+		paths[i] = "x.txt"
+	}
+	enc, err := json.Marshal(filesExistsRequest{Paths: paths})
+	require.NoError(s.T(), err)
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/files/exists", string(enc))
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp filesExistsResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp.Results, maxExistsBatch)
+}
+
+func (s *ServerSuite) TestFilesExists_BadJSON() {
+	tmpDir := s.T().TempDir()
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	rec := s.testRequest("POST", "/api/channels/ch-1/files/exists", "not json")
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestFilesExists_NotConfigured() {
+	srv := nilServer()
+	mux := http.NewServeMux()
+	mux.HandleFunc("POST /api/channels/{id}/files/exists", srv.handleFilesExists)
+
+	req, _ := http.NewRequest("POST", "/api/channels/ch-1/files/exists", nil)
+	rec := newRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+func (s *ServerSuite) TestFilesExists_ChannelNotFound() {
+	s.store.On("GetChannel", mock.Anything, "missing").
+		Return((*db.Channel)(nil), nil)
+
+	rec := s.testRequest("POST", "/api/channels/missing/files/exists", `{"paths":["x"]}`)
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestFilesExists_AbsoluteRootSymlinkFail() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "real.txt"), []byte("x"), 0644))
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	// Force the absolute-path branch to fail on the path's EvalSymlinks call
+	// by passing a non-existent absolute path under the (real) root.
+	body := fmt.Sprintf(`{"paths":[%q]}`, filepath.Join(tmpDir, "ghost.txt"))
+	rec := s.testRequest("POST", "/api/channels/ch-1/files/exists", body)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp filesExistsResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.False(s.T(), resp.Results[0].Exists)
+}
+
+// resolveAndStat unit tests — exercise rarely-hit branches via mock sys.
+
+func (s *ServerSuite) TestResolveAndStat_AbsoluteIsDir() {
+	tmpDir := s.T().TempDir()
+	require.NoError(s.T(), os.MkdirAll(filepath.Join(tmpDir, "subdir"), 0755))
+
+	exists, _, _ := s.srv.resolveAndStat([]string{tmpDir}, filepath.Join(tmpDir, "subdir"))
+	require.False(s.T(), exists)
+}
+
+func (s *ServerSuite) TestResolveAndStat_AbsoluteRootEvalSymlinksFails() {
+	target := "/abs/file.txt"
+
+	s.sys.Override("EvalSymlinks", target).Return(target, nil)
+	s.sys.On("EvalSymlinks", "/missing-root").Return("", fmt.Errorf("injected eval err"))
+	s.sys.Override("Stat", target).Return(mockFileInfoSizeBytes(0), nil)
+	s.srv.sys = s.sys
+
+	exists, _, _ := s.srv.resolveAndStat([]string{"/missing-root"}, target)
+	require.False(s.T(), exists)
+}
+
+func (s *ServerSuite) TestFilesExists_RelativeTraversal() {
+	tmpDir := s.T().TempDir()
+
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
+
+	body := `{"paths":["../etc/passwd"]}`
+	rec := s.testRequest("POST", "/api/channels/ch-1/files/exists", body)
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp filesExistsResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.False(s.T(), resp.Results[0].Exists)
+}
+
+func (s *ServerSuite) TestResolveAndStat_AbsoluteFile() {
+	target := "/A/file.txt"
+	root := "/A"
+
+	s.sys.Override("EvalSymlinks", target).Return(target, nil)
+	s.sys.On("EvalSymlinks", root).Return(root, nil)
+	s.sys.Override("Stat", target).Return(mockFileInfoSizeBytes(0), nil)
+	s.srv.sys = s.sys
+
+	exists, idx, rel := s.srv.resolveAndStat([]string{root}, target)
+	require.True(s.T(), exists)
+	require.Equal(s.T(), 0, idx)
+	require.Equal(s.T(), "file.txt", rel)
+}
+
+// mockFileInfoSizeBytes returns a non-dir file info for tests.
+func mockFileInfoSizeBytes(size int64) fs.FileInfo {
+	return &mockFileInfo{name: "x", size: size, modTime: time.Time{}}
+}
