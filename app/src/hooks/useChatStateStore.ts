@@ -194,6 +194,20 @@ export function useChatStateStore({
             const parentTracked = runMap.get(channelId);
             if (parentTracked !== undefined && (parentTracked === "" || parentTracked === finishing)) {
               runMap.delete(channelId);
+              // Also clear the parent's stored chat state and forward the
+              // event to the parent's chat listener (if the parent is the
+              // selected view). Without this, a first-run "running" event
+              // broadcast to the parent (no thread existed yet) leaves the
+              // parent's view stuck showing the stop button after the run
+              // completes — the completion event carries thread_id and
+              // gets routed exclusively to the thread's state.
+              const parentState = store.get(channelId);
+              if (parentState) {
+                applyEvent(parentState, wsEvent);
+              }
+              if (channelId === selectedIdRef.current) {
+                for (const listener of chatListenersRef.current) listener(wsEvent);
+              }
             }
           }
           // Keep the store entry — it holds completionInfo, mode, askUser, etc.
