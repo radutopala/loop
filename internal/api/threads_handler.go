@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"path/filepath"
@@ -87,6 +88,10 @@ func (s *Server) handleDeleteThread(w http.ResponseWriter, r *http.Request) {
 	threadID := r.PathValue("id")
 
 	if err := s.threads.DeleteThread(r.Context(), threadID); err != nil {
+		if errors.Is(err, ErrChannelLocked) {
+			http.Error(w, err.Error(), http.StatusConflict)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

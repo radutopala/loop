@@ -1467,7 +1467,7 @@ func (r *DockerRunner) writeGatePolicyFile(cfg *config.Config, channelID, workDi
 	payload := gatePolicyJSON{
 		DefaultDecision: cfg.Gates.Agentgate.DefaultDecision,
 		PathRules:       cfg.Gates.Agentgate.PathRules,
-		CommandRules:    cfg.Gates.Agentgate.CommandRules,
+		CommandRules:    injectWorkspaceRmRfRule(cfg.Gates.Agentgate.CommandRules, workDir, parentDirPath),
 		FileRules:       injectWorkspaceRule(cfg.Gates.Agentgate.FileRules, workDir, parentDirPath),
 	}
 	raw, _ := json.Marshal(payload)
@@ -1563,6 +1563,40 @@ func injectWorkspaceBindRule(rules []types.BodyRule, workDir, parentDirPath stri
 		Message:  "workspace bind-mount fast-path",
 	}
 	out := make([]types.BodyRule, 0, len(rules)+1)
+	out = append(out, ws)
+	out = append(out, rules...)
+	return out
+}
+
+// injectWorkspaceRmRfRule inserts an Allow command rule for `rm` whose
+// ArgsPattern accepts any combination of flags followed by paths under the
+// channel's workspace (workDir, optionally also parentDirPath). The rule is
+// prepended so it fires before the static `rm -rf on absolute path` deny —
+// agents routinely `rm -rf` build outputs inside their own project tree, and
+// without this whitelist the deny would block legitimate cleanup.
+//
+// Mirrors the /tmp allow's "every positional arg must be a workspace path"
+// shape: a mixed `rm -rf /workspace/build /etc/passwd` won't match (the /etc
+// path falls outside the alternation) and falls through to the deny.
+//
+// Returns rules unchanged when workDir is empty (ad-hoc one-shot runs).
+func injectWorkspaceRmRfRule(rules []types.CommandRule, workDir, parentDirPath string) []types.CommandRule {
+	if workDir == "" {
+		return rules
+	}
+	prefixes := []string{regexp.QuoteMeta(workDir)}
+	if parentDirPath != "" && parentDirPath != workDir {
+		prefixes = append(prefixes, regexp.QuoteMeta(parentDirPath))
+	}
+	alt := "(?:" + strings.Join(prefixes, "|") + ")"
+	pattern := `^(-[a-zA-Z]+\s+)*` + alt + `(/\S*)?(\s+` + alt + `(/\S*)?)*$`
+	ws := types.CommandRule{
+		Commands:     []string{"rm"},
+		ArgsPatterns: []string{pattern},
+		Decision:     types.DecisionAllow,
+		Message:      "rm under workspace",
+	}
+	out := make([]types.CommandRule, 0, len(rules)+1)
 	out = append(out, ws)
 	out = append(out, rules...)
 	return out

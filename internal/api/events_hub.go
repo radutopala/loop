@@ -28,6 +28,7 @@ const (
 	EventTodoWrite                 = "agent.todos"
 	EventChannelCreated            = "channel.created"
 	EventChannelDeleted            = "channel.deleted"
+	EventChannelLocked             = "channel.locked"
 	EventAgentInstanceRegistered   = "agent_instance.registered"
 	EventAgentInstanceUnregistered = "agent_instance.unregistered"
 	EventAgentInstanceMetadata     = "agent_instance.metadata"
@@ -211,6 +212,17 @@ func (h *EventsHub) BroadcastChannelDeleted(channelID string) {
 	h.Broadcast(Event{
 		Type:      EventChannelDeleted,
 		ChannelID: channelID,
+		Global:    true,
+	})
+}
+
+// BroadcastChannelLocked sends a channel.locked event so subscribers can
+// refresh the lock state in their sidebar without polling.
+func (h *EventsHub) BroadcastChannelLocked(channelID string, locked bool) {
+	h.Broadcast(Event{
+		Type:      EventChannelLocked,
+		ChannelID: channelID,
+		Data:      map[string]bool{"locked": locked},
 		Global:    true,
 	})
 }

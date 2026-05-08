@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import type { Channel, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
 import { fonts } from "./theme";
 import { ThemeProvider, useTheme, DEFAULT_FONT_SIZES } from "./ThemeContext";
-import { createChannel, createThread, createWorktreeThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, getImageStatus, importWorktree, initApiUrl, rebuildImage } from "./api/loopApi";
+import { createChannel, createThread, createWorktreeThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, getImageStatus, importWorktree, initApiUrl, rebuildImage, setChannelLocked } from "./api/loopApi";
 import { fetchGlobalConfig } from "./api/configApi";
 import { Sidebar } from "./components/sidebar/Sidebar";
 import { MarkdownFilePanel } from "./components/panels/FilePanel";
@@ -426,6 +426,21 @@ function AppInner() {
     [channels, loadChannels, selectedId],
   );
 
+  const handleSetLocked = useCallback(
+    async (id: string, locked: boolean) => {
+      setError(null);
+      try {
+        await setChannelLocked(id, locked);
+        await loadChannels();
+      } catch (err) {
+        const message = err instanceof Error ? err.message : "Failed to update lock";
+        setError(message);
+        console.error("set locked failed:", err);
+      }
+    },
+    [loadChannels],
+  );
+
   const handleDeleteBatch = useCallback(
     async (ids: string[]) => {
       setError(null);
@@ -497,6 +512,7 @@ function AppInner() {
         onCreateChannel={handleCreateChannel}
         onCreateThread={handleCreateThread}
         onDeleteThread={handleDelete}
+        onSetLocked={handleSetLocked}
         onDeleteBatch={handleDeleteBatch}
         onOpenSettings={() => togglePanel("settings")}
         onOpenConfig={openConfig}

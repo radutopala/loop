@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
@@ -321,6 +322,90 @@ func (s *ServerSuite) TestDeleteChannelChildrenError() {
 	s.mux.ServeHTTP(w, req)
 
 	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+}
+
+func (s *ServerSuite) TestDeleteChannelLockedReturnsConflict() {
+	s.store.On("GetChannel", mock.Anything, "ch-locked").
+		Return(&db.Channel{ChannelID: "ch-locked", Locked: true}, nil)
+
+	req := httptest.NewRequest(http.MethodDelete, "/api/channels/ch-locked", nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusConflict, w.Code)
+	require.Contains(s.T(), w.Body.String(), "locked")
+	// Must not progress to children or self deletion.
+	s.store.AssertNotCalled(s.T(), "DeleteChannelsByParentID", mock.Anything, "ch-locked")
+	s.store.AssertNotCalled(s.T(), "DeleteChannel", mock.Anything, "ch-locked")
+}
+
+func (s *ServerSuite) TestDeleteThreadLockedReturnsConflict() {
+	s.threads.On("DeleteThread", mock.Anything, "thread-locked").Return(ErrChannelLocked)
+
+	rec := s.testRequest("DELETE", "/api/threads/thread-locked", "")
+
+	require.Equal(s.T(), http.StatusConflict, rec.Code)
+	s.threads.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSetChannelLockedSuccess() {
+	s.srv.SetEventsHub(NewEventsHub(slog.New(slog.NewTextHandler(io.Discard, nil))))
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1"}, nil)
+	s.store.On("UpdateChannelLocked", mock.Anything, "ch-1", true).Return(nil)
+
+	rec := s.testRequest("PATCH", "/api/channels/ch-1/lock", `{"locked":true}`)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSetChannelLockedNotFound() {
+	s.store.On("GetChannel", mock.Anything, "missing").
+		Return((*db.Channel)(nil), nil)
+
+	rec := s.testRequest("PATCH", "/api/channels/missing/lock", `{"locked":true}`)
+
+	require.Equal(s.T(), http.StatusNotFound, rec.Code)
+	s.store.AssertNotCalled(s.T(), "UpdateChannelLocked", mock.Anything, "missing", mock.Anything)
+}
+
+func (s *ServerSuite) TestSetChannelLockedGetError() {
+	s.store.On("GetChannel", mock.Anything, "ch-err").
+		Return((*db.Channel)(nil), errors.New("db error"))
+
+	rec := s.testRequest("PATCH", "/api/channels/ch-err/lock", `{"locked":true}`)
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+func (s *ServerSuite) TestSetChannelLockedUpdateError() {
+	s.store.On("GetChannel", mock.Anything, "ch-1").
+		Return(&db.Channel{ChannelID: "ch-1"}, nil)
+	s.store.On("UpdateChannelLocked", mock.Anything, "ch-1", true).
+		Return(errors.New("db error"))
+
+	rec := s.testRequest("PATCH", "/api/channels/ch-1/lock", `{"locked":true}`)
+
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+func (s *ServerSuite) TestSetChannelLockedInvalidJSON() {
+	rec := s.testRequest("PATCH", "/api/channels/ch-1/lock", `{not json`)
+
+	require.Equal(s.T(), http.StatusBadRequest, rec.Code)
+}
+
+func (s *ServerSuite) TestSetChannelLockedNotConfigured() {
+	srv := NewServer(nil, nil, nil, nil, nil, slog.New(slog.NewTextHandler(io.Discard, nil)))
+	mux := http.NewServeMux()
+	mux.HandleFunc("PATCH /api/channels/{id}/lock", srv.handleSetChannelLocked)
+
+	req := httptest.NewRequest(http.MethodPatch, "/api/channels/ch-1/lock", strings.NewReader(`{"locked":true}`))
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
 }
 
 func (s *ServerSuite) TestDeleteChannelDeleteError() {

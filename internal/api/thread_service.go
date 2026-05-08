@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -9,6 +10,11 @@ import (
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/randutil"
 )
+
+// ErrChannelLocked is returned when a delete is attempted on a locked
+// channel/thread row. Callers map it to HTTP 409 (or equivalent) so the UI
+// can surface the conflict and prompt for an unlock.
+var ErrChannelLocked = errors.New("channel is locked")
 
 // ThreadCreator can create and delete threads on the chat platform.
 type ThreadCreator interface {
@@ -53,6 +59,9 @@ func (s *threadService) DeleteThread(ctx context.Context, threadID string) error
 	}
 	if ch.ParentID == "" {
 		return fmt.Errorf("channel %s is not a thread", threadID)
+	}
+	if ch.Locked {
+		return ErrChannelLocked
 	}
 
 	if !s.keepMCPConfigs {

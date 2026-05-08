@@ -19,6 +19,7 @@ type Channel struct {
 	SessionID   string            `json:"session_id"`
 	Permissions types.Permissions `json:"permissions"`
 	Worktree    bool              `json:"worktree"`
+	Locked      bool              `json:"locked"`
 	CreatedAt   time.Time         `json:"created_at"`
 	UpdatedAt   time.Time         `json:"updated_at"`
 }
