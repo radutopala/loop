@@ -55,36 +55,42 @@ export function ChannelHeaderInfo({ channel, colors, hideBranch }: ChannelHeader
       </span>
       <>
         <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px 0 12px" }}>|</span>
-        {channel.session_id ? (
-          <span
-            onDoubleClick={(e) => { navigator.clipboard.writeText(channel.session_id); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
-            title={`Session: ${channel.session_id}\nDouble-click to copy`}
-            style={{ fontSize: 11, color: colors.textDim, fontFamily: fonts.mono, flexShrink: 0, cursor: "default",
-              WebkitAppRegion: "no-drag",
-            }}
-          >
-            {channel.session_id}
-          </span>
-        ) : (
-          <span style={{ fontSize: 11, color: colors.textDim, fontFamily: fonts.mono, flexShrink: 0 }}>no session</span>
-        )}
+        <span style={{ fontSize: 11, color: colors.textDim, fontFamily: fonts.mono, flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }}>
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor" aria-label="Claude">
+            <rect x="6" y="3" width="12" height="6" rx="3" />
+            <rect x="2" y="10" width="20" height="6" rx="3" />
+            <rect x="6" y="18" width="3" height="3" rx="0.5" />
+            <rect x="15" y="18" width="3" height="3" rx="0.5" />
+          </svg>
+          {channel.session_id ? (
+            <span
+              onDoubleClick={(e) => { navigator.clipboard.writeText(channel.session_id); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
+              title={`Session: ${channel.session_id}\nDouble-click to copy`}
+              style={{ cursor: "default", WebkitAppRegion: "no-drag" }}
+            >
+              {channel.session_id}
+            </span>
+          ) : (
+            <span>no session</span>
+          )}
+        </span>
       </>
       {commit && (
         <>
           <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px 0 12px" }}>|</span>
-          <span
-            onDoubleClick={(e) => { navigator.clipboard.writeText(commit); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
-            title="Double-click to copy commit hash"
-            style={{
-              fontSize: 11,
-              color: colors.textDim,
-              fontFamily: fonts.mono,
-              flexShrink: 0,
-              cursor: "default",
-              WebkitAppRegion: "no-drag",
-            }}
-          >
-            {commit}
+          <span style={{ fontSize: 11, color: colors.textDim, fontFamily: fonts.mono, flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }}>
+            <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-label="Commit">
+              <circle cx="12" cy="12" r="3" />
+              <line x1="3" y1="12" x2="9" y2="12" />
+              <line x1="15" y1="12" x2="21" y2="12" />
+            </svg>
+            <span
+              onDoubleClick={(e) => { navigator.clipboard.writeText(commit); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
+              title="Double-click to copy commit hash"
+              style={{ cursor: "default", WebkitAppRegion: "no-drag" }}
+            >
+              {commit}
+            </span>
           </span>
         </>
       )}
