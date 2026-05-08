@@ -1228,7 +1228,7 @@ func (r *DockerRunner) createAndStartContainer(
 	// Write the per-container docker-proxy policy file. loop-dockerproxy
 	// reads it inside the container; the bind-mount below mounts it read-
 	// only under /etc/loop/proxy-policy.json.
-	proxyPolicyHostPath, err := r.writeProxyPolicyFile(cfg, channelID)
+	proxyPolicyHostPath, err := r.writeProxyPolicyFile(cfg, channelID, workDir, parentDirPath)
 	if err != nil {
 		return "", "", "", false, err
 	}
@@ -1382,6 +1382,16 @@ func (r *DockerRunner) newGateToken() (string, error) {
 	return hex.EncodeToString(b), nil
 }
 
+// proxyPolicyJSON mirrors the subset of config.DockerProxyConfig that
+// loop-dockerproxy reads. Keeping it explicit (rather than serialising the
+// whole DockerProxyConfig) avoids leaking the Enabled flag into the container
+// and lets us splice in per-container body rules without mutating cfg.
+type proxyPolicyJSON struct {
+	DefaultDecision types.Decision          `json:"default_decision"`
+	HTTPRules       []types.HTTPServiceRule `json:"http_rules"`
+	BodyRules       []types.BodyRule        `json:"body_rules"`
+}
+
 // writeProxyPolicyFile serialises cfg.DockerProxy to JSON at
 // {policyDir}/<channel>/proxy-policy.json and returns the host path. Returns
 // ("", nil) when the proxy is disabled OR when policyDir is unset (tests).
@@ -1389,8 +1399,13 @@ func (r *DockerRunner) newGateToken() (string, error) {
 //
 // Keyed by channel (not cid) so all per-channel artifacts — policy files and
 // audit logs — share one tree. Concurrent same-channel spawns are safe: the
-// payload is derived from global config, so overwrites are idempotent.
-func (r *DockerRunner) writeProxyPolicyFile(cfg *config.Config, channelID string) (string, error) {
+// payload is derived from global config plus the channel's stable workDir,
+// so overwrites are idempotent.
+//
+// workDir/parentDirPath come from the per-channel mount setup — the workspace
+// bind-approval rule is injected here (not in the static defaults) because
+// the real workspace path is the host bind-mount path, not a fixed /work.
+func (r *DockerRunner) writeProxyPolicyFile(cfg *config.Config, channelID, workDir, parentDirPath string) (string, error) {
 	if !cfg.Gates.DockerProxy.Enabled {
 		return "", nil
 	}
@@ -1401,7 +1416,12 @@ func (r *DockerRunner) writeProxyPolicyFile(cfg *config.Config, channelID string
 	if err := r.sys.MkdirAll(dir, 0o750); err != nil {
 		return "", fmt.Errorf("creating policy dir: %w", err)
 	}
-	raw, _ := json.Marshal(cfg.Gates.DockerProxy)
+	payload := proxyPolicyJSON{
+		DefaultDecision: cfg.Gates.DockerProxy.DefaultDecision,
+		HTTPRules:       cfg.Gates.DockerProxy.HTTPRules,
+		BodyRules:       injectWorkspaceBindRule(cfg.Gates.DockerProxy.BodyRules, workDir, parentDirPath),
+	}
+	raw, _ := json.Marshal(payload)
 	path := filepath.Join(dir, "proxy-policy.json")
 	if err := r.sys.WriteFile(path, raw, 0o640); err != nil {
 		return "", fmt.Errorf("writing proxy policy: %w", err)
@@ -1497,6 +1517,55 @@ func (r *DockerRunner) ensureGateAuditDir(channelID, dirPath string) (string, er
 		return "", fmt.Errorf("creating audit dir: %w", err)
 	}
 	return dir, nil
+}
+
+// injectWorkspaceBindRule prepends an Allow body rule that fires when the
+// agent submits a HostConfig.Binds[*] entry whose source is the channel's real
+// workspace path (workDir, optionally also parentDirPath). The rule must come
+// before the static deny on POST /containers/create so workspaces under
+// generically-denied prefixes (e.g. /home/<user>/projects on Linux) aren't
+// blanket-denied — any mount inside the project's own tree is the agent's
+// own dev-loop work and is allowed directly without a prompt.
+//
+// On macOS Docker Desktop, agent-submitted bind sources may carry a
+// /host_mnt prefix (the daemon's view of host paths through the Linux VM),
+// so each pattern is emitted in both bare and /host_mnt-prefixed form.
+//
+// Returns rules unchanged when workDir is empty (ad-hoc one-shot runs).
+func injectWorkspaceBindRule(rules []types.BodyRule, workDir, parentDirPath string) []types.BodyRule {
+	if workDir == "" {
+		return rules
+	}
+	paths := []string{workDir}
+	if parentDirPath != "" && parentDirPath != workDir {
+		paths = append(paths, parentDirPath)
+	}
+	values := make([]string, 0, len(paths)*2)
+	for _, p := range paths {
+		quoted := regexp.QuoteMeta(p)
+		values = append(values,
+			"^"+quoted+"($|/)",
+			"^/host_mnt"+quoted+"($|/)",
+		)
+	}
+	ws := types.BodyRule{
+		AppliesTo:    "POST ^/containers/create$",
+		ContentTypes: []string{"application/json"},
+		MaxBodyBytes: 1048576,
+		JSONChecks: []types.JSONCheck{
+			{
+				Path:   "HostConfig.Binds[*]",
+				Op:     "source_path_in",
+				Values: values,
+			},
+		},
+		Decision: types.DecisionAllow,
+		Message:  "workspace bind-mount fast-path",
+	}
+	out := make([]types.BodyRule, 0, len(rules)+1)
+	out = append(out, ws)
+	out = append(out, rules...)
+	return out
 }
 
 // injectWorkspaceRule inserts a workspace fast-path Allow rule into the file
