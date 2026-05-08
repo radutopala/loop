@@ -77,7 +77,7 @@ func (s *ProxySuite) TestPolicyDirReturnsStoredValue() {
 
 func (s *ProxySuite) TestWriteProxyPolicyFileDisabledReturnsEmpty() {
 	cfg := &config.Config{}
-	path, err := s.runner.writeProxyPolicyFile(cfg, "ch-1")
+	path, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", "", "")
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), path)
 }
@@ -86,7 +86,7 @@ func (s *ProxySuite) TestWriteProxyPolicyFileNoPolicyDirReturnsEmpty() {
 	// Enabled but policyDir unset — tests exercising other code paths can
 	// skip the filesystem setup entirely.
 	cfg := &config.Config{Gates: config.GatesConfig{DockerProxy: config.DockerProxyConfig{Enabled: true}}}
-	path, err := s.runner.writeProxyPolicyFile(cfg, "ch-1")
+	path, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", "", "")
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), path)
 }
@@ -100,7 +100,7 @@ func (s *ProxySuite) TestWriteProxyPolicyFileMkdirError() {
 	s.runner.policyDir = "/run/loop"
 	cfg := &config.Config{Gates: config.GatesConfig{DockerProxy: config.DockerProxyConfig{Enabled: true}}}
 
-	_, err := s.runner.writeProxyPolicyFile(cfg, "ch-1")
+	_, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "creating policy dir")
 }
@@ -115,7 +115,7 @@ func (s *ProxySuite) TestWriteProxyPolicyFileWriteError() {
 	s.runner.policyDir = "/run/loop"
 	cfg := &config.Config{Gates: config.GatesConfig{DockerProxy: config.DockerProxyConfig{Enabled: true}}}
 
-	_, err := s.runner.writeProxyPolicyFile(cfg, "ch-1")
+	_, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", "", "")
 	require.Error(s.T(), err)
 	require.Contains(s.T(), err.Error(), "writing proxy policy")
 }
@@ -151,14 +151,115 @@ func (s *ProxySuite) TestWriteProxyPolicyFileSerialisesConfig() {
 		},
 	}
 
-	path, err := s.runner.writeProxyPolicyFile(cfg, "ch-1")
+	path, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", "", "")
 	require.NoError(s.T(), err)
 	require.Equal(s.T(), "/run/loop/ch-1/proxy-policy.json", path)
 
-	var got config.DockerProxyConfig
+	var got proxyPolicyJSON
 	require.NoError(s.T(), json.Unmarshal(captured, &got))
 	require.Equal(s.T(), cfg.Gates.DockerProxy.DefaultDecision, got.DefaultDecision)
 	require.Equal(s.T(), cfg.Gates.DockerProxy.HTTPRules, got.HTTPRules)
+}
+
+// --- injectWorkspaceBindRule ---
+
+func (s *ProxySuite) TestInjectWorkspaceBindRuleEmptyWorkDirReturnsRulesUnchanged() {
+	in := []types.BodyRule{{AppliesTo: "POST ^/x$", Decision: types.DecisionDeny}}
+	out := injectWorkspaceBindRule(in, "", "")
+	require.Equal(s.T(), in, out)
+}
+
+func (s *ProxySuite) TestInjectWorkspaceBindRulePrependsAllowRuleWithBareAndHostMntForms() {
+	in := []types.BodyRule{{
+		AppliesTo: "POST ^/containers/create$",
+		Decision:  types.DecisionDeny,
+		Message:   "container-escape risk",
+	}}
+	out := injectWorkspaceBindRule(in, "/Users/r/dev/loop", "")
+	require.Len(s.T(), out, 2)
+
+	// Allow rule must be first so it fires before the deny.
+	require.Equal(s.T(), types.DecisionAllow, out[0].Decision)
+	require.Equal(s.T(), "POST ^/containers/create$", out[0].AppliesTo)
+	require.Equal(s.T(), []string{"application/json"}, out[0].ContentTypes)
+	require.Equal(s.T(), int64(1048576), out[0].MaxBodyBytes)
+	require.Equal(s.T(), "workspace bind-mount fast-path", out[0].Message)
+	require.Len(s.T(), out[0].JSONChecks, 1)
+	require.Equal(s.T(), "HostConfig.Binds[*]", out[0].JSONChecks[0].Path)
+	require.Equal(s.T(), "source_path_in", out[0].JSONChecks[0].Op)
+	require.Equal(s.T(), []string{
+		`^/Users/r/dev/loop($|/)`,
+		`^/host_mnt/Users/r/dev/loop($|/)`,
+	}, out[0].JSONChecks[0].Values)
+
+	// Original deny rule preserved.
+	require.Equal(s.T(), in[0], out[1])
+}
+
+func (s *ProxySuite) TestInjectWorkspaceBindRuleIncludesParentDirWhenDistinct() {
+	out := injectWorkspaceBindRule(nil, "/Users/r/dev/loop/sub", "/Users/r/dev/loop")
+	require.Len(s.T(), out, 1)
+	require.Equal(s.T(), []string{
+		`^/Users/r/dev/loop/sub($|/)`,
+		`^/host_mnt/Users/r/dev/loop/sub($|/)`,
+		`^/Users/r/dev/loop($|/)`,
+		`^/host_mnt/Users/r/dev/loop($|/)`,
+	}, out[0].JSONChecks[0].Values)
+}
+
+func (s *ProxySuite) TestInjectWorkspaceBindRuleSkipsParentWhenSameAsWorkDir() {
+	out := injectWorkspaceBindRule(nil, "/w", "/w")
+	require.Len(s.T(), out, 1)
+	require.Equal(s.T(), []string{
+		`^/w($|/)`,
+		`^/host_mnt/w($|/)`,
+	}, out[0].JSONChecks[0].Values)
+}
+
+func (s *ProxySuite) TestInjectWorkspaceBindRuleQuotesRegexMetacharsInPath() {
+	// A workspace path with a literal dot must be matched literally, not as
+	// the regex-any wildcard.
+	out := injectWorkspaceBindRule(nil, "/Users/r/dev/foo.bar", "")
+	require.Len(s.T(), out, 1)
+	require.Equal(s.T(), []string{
+		`^/Users/r/dev/foo\.bar($|/)`,
+		`^/host_mnt/Users/r/dev/foo\.bar($|/)`,
+	}, out[0].JSONChecks[0].Values)
+}
+
+func (s *ProxySuite) TestWriteProxyPolicyFilePrependsWorkspaceAllowRule() {
+	sys := newDefaultMockSystem()
+	var captured []byte
+	sys.ExpectedCalls = nil
+	sys.On("MkdirAll", mock.Anything, mock.Anything).Return(nil)
+	sys.On("WriteFile", "/run/loop/ch-1/proxy-policy.json", mock.Anything, mock.Anything).
+		Run(func(args mock.Arguments) { captured = append([]byte(nil), args.Get(1).([]byte)...) }).
+		Return(nil)
+
+	s.runner.sys = sys
+	s.runner.policyDir = "/run/loop"
+	cfg := &config.Config{
+		Gates: config.GatesConfig{
+			DockerProxy: config.DockerProxyConfig{
+				Enabled:         true,
+				DefaultDecision: types.DecisionAllow,
+				BodyRules: []types.BodyRule{{
+					AppliesTo: "POST ^/containers/create$",
+					Decision:  types.DecisionDeny,
+				}},
+			},
+		},
+	}
+
+	_, err := s.runner.writeProxyPolicyFile(cfg, "ch-1", "/Users/r/dev/loop", "")
+	require.NoError(s.T(), err)
+
+	var got proxyPolicyJSON
+	require.NoError(s.T(), json.Unmarshal(captured, &got))
+	require.Len(s.T(), got.BodyRules, 2)
+	require.Equal(s.T(), types.DecisionAllow, got.BodyRules[0].Decision)
+	require.Equal(s.T(), "workspace bind-mount fast-path", got.BodyRules[0].Message)
+	require.Equal(s.T(), types.DecisionDeny, got.BodyRules[1].Decision)
 }
 
 // --- End-to-end: Run() with proxy enabled ---
