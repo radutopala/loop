@@ -37,11 +37,17 @@ export function ChannelHeaderInfo({ channel, colors, hideBranch }: ChannelHeader
         {dirPath}
       </span>
       <span style={{ color: colors.border, flexShrink: 0, margin: "0 8px 0 12px" }}>|</span>
-      <span style={{ fontSize: 11, color: colors.textDim, fontFamily: fonts.mono, flexShrink: 0 }}>
-        <span style={{ marginRight: 4 }}>{channel.parent_id ? "Thread" : "Channel"} ID:</span>
+      <span style={{ fontSize: 11, color: colors.textDim, fontFamily: fonts.mono, flexShrink: 0, display: "inline-flex", alignItems: "center", gap: 4 }}>
+        {channel.parent_id ? (
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-label="Thread">
+            <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+          </svg>
+        ) : (
+          <span aria-label="Channel">#</span>
+        )}
         <span
           onDoubleClick={(e) => { navigator.clipboard.writeText(channel.id); const sel = window.getSelection(); sel?.selectAllChildren(e.currentTarget); }}
-          title={`${channel.parent_id ? "Thread" : "Channel"} ID: ${channel.id}\nDouble-click to copy`}
+          title={`${channel.parent_id ? "Thread" : "Channel"} ${channel.id}\nDouble-click to copy`}
           style={{ cursor: "default", WebkitAppRegion: "no-drag" }}
         >
           {channel.id}
