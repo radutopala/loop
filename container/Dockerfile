@@ -12,7 +12,7 @@ RUN go install golang.org/x/tools/gopls@latest
 FROM golang:1.26
 ENV GOTOOLCHAIN=auto
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        bash ca-certificates curl git make \
+        bash ca-certificates curl git make patch \
         nodejs npm \
         docker-cli docker-compose \
         gosu ripgrep openssh-client \
