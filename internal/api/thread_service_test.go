@@ -235,6 +235,17 @@ func (s *ThreadServiceSuite) TestDeleteThreadDiscordError() {
 	require.Contains(s.T(), err.Error(), "deleting thread")
 }
 
+func (s *ThreadServiceSuite) TestDeleteThreadLockedReturnsSentinel() {
+	s.store.On("GetChannel", s.ctx, "thread-1").
+		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1", Locked: true}, nil)
+
+	err := s.svc.DeleteThread(s.ctx, "thread-1")
+	require.ErrorIs(s.T(), err, ErrChannelLocked)
+	// Must not call platform delete or DB delete on a locked thread.
+	s.creator.AssertNotCalled(s.T(), "DeleteThread", s.ctx, "thread-1")
+	s.store.AssertNotCalled(s.T(), "DeleteChannel", s.ctx, "thread-1")
+}
+
 func (s *ThreadServiceSuite) TestDeleteThreadDBError() {
 	s.store.On("GetChannel", s.ctx, "thread-1").
 		Return(&db.Channel{ChannelID: "thread-1", ParentID: "ch-1"}, nil)

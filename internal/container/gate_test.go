@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"regexp"
 	"slices"
 	"strings"
 	"testing"
@@ -293,6 +294,66 @@ func (s *GateSuite) TestInjectWorkspaceRuleAppendsWhenNoAllow() {
 	require.Len(s.T(), out, 2)
 	require.Equal(s.T(), types.DecisionDeny, out[0].Decision)
 	require.Equal(s.T(), types.DecisionAllow, out[1].Decision, "appended at end when no existing Allow")
+}
+
+// --- injectWorkspaceRmRfRule ---
+
+func (s *GateSuite) TestInjectWorkspaceRmRfRuleEmptyWorkDirReturnsInput() {
+	in := []types.CommandRule{{Commands: []string{"rm"}, Decision: types.DecisionDeny}}
+	out := injectWorkspaceRmRfRule(in, "", "")
+	require.Equal(s.T(), in, out)
+}
+
+func (s *GateSuite) TestInjectWorkspaceRmRfRulePrependsAllowBeforeDeny() {
+	in := []types.CommandRule{
+		{Commands: []string{"rm"}, Decision: types.DecisionDeny, Message: "rm -rf"},
+	}
+	out := injectWorkspaceRmRfRule(in, "/host/work", "")
+
+	require.Len(s.T(), out, 2)
+	require.Equal(s.T(), types.DecisionAllow, out[0].Decision)
+	require.Equal(s.T(), []string{"rm"}, out[0].Commands)
+	require.Equal(s.T(), "rm under workspace", out[0].Message)
+	require.Equal(s.T(), in[0], out[1])
+
+	// Verify the regex actually matches expected shapes.
+	pat := out[0].ArgsPatterns[0]
+	re := regexp.MustCompile(pat)
+	require.True(s.T(), re.MatchString("/host/work/build"), "single workspace path should match")
+	require.True(s.T(), re.MatchString("-rf /host/work/build"), "rm -rf workspace should match")
+	require.True(s.T(), re.MatchString("-rf /host/work"), "rm -rf workspace root should match")
+	require.True(s.T(), re.MatchString("-rf /host/work/a /host/work/b"), "multiple workspace paths should match")
+	require.False(s.T(), re.MatchString("-rf /etc/passwd"), "non-workspace path must not match")
+	require.False(s.T(), re.MatchString("-rf /host/work/a /etc/passwd"), "mixed bag must not match")
+	require.False(s.T(), re.MatchString("-rf /host/workshop"), "prefix-only must not match (path must end or start with /)")
+}
+
+func (s *GateSuite) TestInjectWorkspaceRmRfRuleIncludesParentDir() {
+	out := injectWorkspaceRmRfRule(nil, "/host/repo/.worktrees/wt-1", "/host/repo")
+	require.Len(s.T(), out, 1)
+
+	re := regexp.MustCompile(out[0].ArgsPatterns[0])
+	require.True(s.T(), re.MatchString("-rf /host/repo/.worktrees/wt-1/build"))
+	require.True(s.T(), re.MatchString("-rf /host/repo/dist"), "parent dir should also match")
+	require.False(s.T(), re.MatchString("-rf /host/other"))
+}
+
+func (s *GateSuite) TestInjectWorkspaceRmRfRuleSkipsParentWhenEqual() {
+	out := injectWorkspaceRmRfRule(nil, "/host/repo", "/host/repo")
+	require.Len(s.T(), out, 1)
+	// Pattern must include /host/repo only once — not "(/host/repo|/host/repo)".
+	require.NotContains(s.T(), out[0].ArgsPatterns[0], "|", "parent should be deduped when equal to workDir")
+}
+
+func (s *GateSuite) TestInjectWorkspaceRmRfRuleQuotesRegexMetacharsInPath() {
+	out := injectWorkspaceRmRfRule(nil, "/host/foo.bar", "")
+	require.Len(s.T(), out, 1)
+
+	re := regexp.MustCompile(out[0].ArgsPatterns[0])
+	require.True(s.T(), re.MatchString("-rf /host/foo.bar/build"))
+	// Without QuoteMeta the dot would match any char and let "/host/fooXbar"
+	// through. With QuoteMeta it must not.
+	require.False(s.T(), re.MatchString("-rf /host/fooXbar/build"))
 }
 
 // --- End-to-end Run() with gate enabled ---

@@ -45,6 +45,7 @@ interface SidebarProps {
   onCreateChannel: (name: string) => void;
   onCreateThread: (parentId: string, name: string) => void;
   onDeleteThread: (threadId: string) => void;
+  onSetLocked?: (channelId: string, locked: boolean) => void;
   onDeleteBatch?: (ids: string[]) => void;
   onOpenDirectory?: (dirPath: string) => void;
   onOpenSettings?: () => void;
@@ -76,6 +77,7 @@ export function Sidebar({
   onCreateChannel,
   onCreateThread,
   onDeleteThread,
+  onSetLocked,
   onDeleteBatch,
   onOpenDirectory,
   onOpenSettings,
@@ -174,17 +176,27 @@ export function Sidebar({
           onClick: () => navigator.clipboard.writeText(channel.id),
         },
       ];
-      if (!isDm) {
+      if (!isDm && onSetLocked) {
+        items.push({
+          label: channel.locked ? "Unlock" : "Lock",
+          separator: true,
+          onClick: () => onSetLocked(channel.id, !channel.locked),
+        });
+      }
+      // Hide delete when locked: the operator must Unlock first to confirm
+      // intent. This prevents accidental loss of work parked in long-running
+      // threads.
+      if (!isDm && !channel.locked) {
         items.push({
           label: isThread ? "Delete Thread" : "Delete Channel",
           danger: true,
-          separator: true,
+          separator: !onSetLocked,
           onClick: () => onDeleteThread(channel.id),
         });
       }
       setContextMenu({ x: e.clientX, y: e.clientY, items });
     },
-    [onDeleteThread],
+    [onDeleteThread, onSetLocked],
   );
 
   const handleMouseDown = useCallback(

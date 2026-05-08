@@ -13,6 +13,7 @@ export interface Channel {
   branch: string;
   commit: string;
   worktree: boolean;
+  locked: boolean;
   diff_additions: number;
   diff_deletions: number;
 }

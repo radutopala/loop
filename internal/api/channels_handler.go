@@ -45,6 +45,7 @@ type channelResponse struct {
 	Branch           string `json:"branch,omitempty"`
 	Commit           string `json:"commit,omitempty"`
 	Worktree         bool   `json:"worktree"`
+	Locked           bool   `json:"locked"`
 	DiffAdditions    int    `json:"diff_additions,omitempty"`
 	DiffDeletions    int    `json:"diff_deletions,omitempty"`
 }
@@ -150,6 +151,7 @@ func (s *Server) handleSearchChannels(w http.ResponseWriter, r *http.Request) {
 			Branch:           gitBranch(r.Context(), dirPath),
 			Commit:           gitCommit(r.Context(), dirPath),
 			Worktree:         ch.Worktree,
+			Locked:           ch.Locked,
 			DiffAdditions:    diffAdd,
 			DiffDeletions:    diffDel,
 		})
@@ -246,6 +248,10 @@ func (s *Server) handleDeleteChannel(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "channel not found", http.StatusNotFound)
 		return
 	}
+	if ch.Locked {
+		http.Error(w, ErrChannelLocked.Error(), http.StatusConflict)
+		return
+	}
 
 	// Delete child threads first.
 	if err := s.store.DeleteChannelsByParentID(r.Context(), channelID); err != nil {
@@ -293,6 +299,47 @@ func (s *Server) cleanupChannelContainers(ctx context.Context, channelID string)
 			}
 		}
 	}
+}
+
+type setLockedRequest struct {
+	Locked bool `json:"locked"`
+}
+
+// handleSetChannelLocked toggles the locked flag on a channel or thread.
+// Locking guards against accidental UI deletes; an unlock is required before
+// the corresponding DELETE endpoint will succeed.
+func (s *Server) handleSetChannelLocked(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel locking not configured") {
+		return
+	}
+
+	channelID := r.PathValue("id")
+
+	var req setLockedRequest
+	if !decodeJSON(w, r, &req) {
+		return
+	}
+
+	ch, err := s.store.GetChannel(r.Context(), channelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if ch == nil {
+		http.Error(w, "channel not found", http.StatusNotFound)
+		return
+	}
+
+	if err := s.store.UpdateChannelLocked(r.Context(), channelID, req.Locked); err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if s.eventsHub != nil {
+		s.eventsHub.BroadcastChannelLocked(channelID, req.Locked)
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
 
 type ensureAllChannelsRequest struct {

@@ -27,6 +27,7 @@ interface ChannelAPIResponse {
   branch?: string;
   commit?: string;
   worktree?: boolean;
+  locked?: boolean;
   diff_additions?: number;
   diff_deletions?: number;
 }
@@ -47,6 +48,7 @@ export async function fetchChannels(): Promise<Channel[]> {
     branch: c.branch || "",
     commit: c.commit || "",
     worktree: c.worktree ?? false,
+    locked: c.locked ?? false,
     diff_additions: c.diff_additions ?? 0,
     diff_deletions: c.diff_deletions ?? 0,
   }));
@@ -98,6 +100,15 @@ export async function deleteChannel(channelId: string): Promise<void> {
   if (!res.ok) throw new Error(`Failed to delete channel: ${res.statusText}`);
 }
 
+export async function setChannelLocked(channelId: string, locked: boolean): Promise<void> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/lock`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ locked }),
+  });
+  if (!res.ok) throw new Error(`Failed to update lock: ${res.statusText}`);
+}
+
 export async function ensureChannel(dirPath: string): Promise<Channel> {
   const res = await fetch(`${getApiUrl()}/api/channels`, {
     method: "POST",
@@ -118,6 +129,7 @@ export async function ensureChannel(dirPath: string): Promise<Channel> {
     branch: data.branch || "",
     commit: data.commit || "",
     worktree: data.worktree ?? false,
+    locked: data.locked ?? false,
     diff_additions: data.diff_additions ?? 0,
     diff_deletions: data.diff_deletions ?? 0,
   };

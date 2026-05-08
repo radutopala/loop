@@ -243,6 +243,11 @@ var migrations = []migration{
 	// means "no previous scan yet" — the panel renders the absolute value
 	// instead of a delta.
 	sqlMigration(`ALTER TABLE quality_snapshots ADD COLUMN previous_signal_value INTEGER NOT NULL DEFAULT -1`),
+	// locked: when 1, the channel/thread cannot be deleted. UI hides the
+	// delete affordance and the DELETE handlers + MCP delete_thread tool
+	// reject the request. Operators flip the flag from a context-menu
+	// "Lock"/"Unlock" toggle.
+	sqlMigration(`ALTER TABLE channels ADD COLUMN locked INTEGER NOT NULL DEFAULT 0`),
 }
 
 // RunMigrations executes all pending schema migrations.

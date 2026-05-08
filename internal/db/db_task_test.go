@@ -227,7 +227,7 @@ func (s *StoreSuite) TestLinkTaskThread() {
 
 	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`INSERT INTO channels`).
-		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", ch.ParentID, "", "", "", 1, 0, sqlmock.AnyArg()).
+		WithArgs(ch.ChannelID, ch.GuildID, ch.Name, "", ch.ParentID, "", "", "", 1, 0, 0, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mock.ExpectExec(`UPDATE scheduled_tasks SET thread_id`).
 		WithArgs("thread-1", sqlmock.AnyArg(), int64(7)).
@@ -246,7 +246,7 @@ func (s *StoreSuite) TestLinkTaskThreadWithPermissions() {
 
 	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`INSERT INTO channels`).
-		WithArgs("thread-2", "", "", "", "", "", "", `{"owners":{"users":["U1"],"roles":null},"members":{"users":null,"roles":null}}`, 1, 0, sqlmock.AnyArg()).
+		WithArgs("thread-2", "", "", "", "", "", "", `{"owners":{"users":["U1"],"roles":null},"members":{"users":null,"roles":null}}`, 1, 0, 0, sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mock.ExpectExec(`UPDATE scheduled_tasks SET thread_id`).
 		WithArgs("thread-2", sqlmock.AnyArg(), int64(8)).
@@ -263,7 +263,7 @@ func (s *StoreSuite) TestLinkTaskThreadChannelInsertError() {
 	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`INSERT INTO channels`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnError(sql.ErrConnDone)
 	s.mock.ExpectRollback()
 
@@ -277,7 +277,7 @@ func (s *StoreSuite) TestLinkTaskThreadTaskUpdateError() {
 	s.mock.ExpectBegin()
 	s.mock.ExpectExec(`INSERT INTO channels`).
 		WithArgs(sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
-			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
+			sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()).
 		WillReturnResult(sqlmock.NewResult(1, 1))
 	s.mock.ExpectExec(`UPDATE scheduled_tasks SET thread_id`).
 		WithArgs("thread-1", sqlmock.AnyArg(), int64(7)).
