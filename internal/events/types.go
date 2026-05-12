@@ -61,6 +61,11 @@ type AgentStatusEventData struct {
 	Model          string `json:"model,omitempty"`
 	TriggerContent string `json:"trigger_content,omitempty"`
 	ThreadID       string `json:"thread_id,omitempty"`
+	// Trigger identifies what kicked off the run — "scheduled" for runs
+	// driven by the task scheduler, empty for user-message runs. The
+	// renderer uses this to suppress the macOS dock bounce on scheduled
+	// completions (they happen often and aren't user-actionable).
+	Trigger string `json:"trigger,omitempty"`
 }
 
 // ToolUseEventData is the payload for tool.use events.

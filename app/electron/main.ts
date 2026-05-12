@@ -607,9 +607,18 @@ app.on("activate", () => {
   }
 });
 
+// Debounce turn-ended bounces: while the window is unfocused, only bounce on
+// the first turn-end and ignore subsequent ones until the user focuses Loop
+// again. Without this, a chain of turns (agent back-and-forth, multiple
+// scheduled completions) bounces the dock repeatedly even though one nudge
+// is plenty.
+let turnEndBouncedSinceFocus = false;
+
 ipcMain.on("turn-ended", () => {
   const wins = BrowserWindow.getAllWindows();
   if (wins.some((w) => w.isFocused())) return;
+  if (turnEndBouncedSinceFocus) return;
+  turnEndBouncedSinceFocus = true;
   if (process.platform === "darwin") {
     app.dock?.bounce("informational");
   } else {
@@ -677,6 +686,7 @@ app.on("browser-window-focus", () => {
     approvalBounceInterval = null;
   }
   approvalBounceId = null;
+  turnEndBouncedSinceFocus = false;
 });
 
 app.on("browser-window-blur", () => {
