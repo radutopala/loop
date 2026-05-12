@@ -2,6 +2,7 @@ package api
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -536,6 +537,107 @@ func (s *ServerSuite) TestGitDiffBranchNonexistentRef() {
 	require.Contains(s.T(), w.Body.String(), "git diff failed")
 }
 
+// During a merge conflict, `git diff --numstat` emits one numstat row per
+// parent (combined-diff style) and `git diff --cached --numstat` emits one
+// more — yielding three rows for the same path before this fix. Verify we
+// collapse those into a single entry tagged "conflict" with a patch derived
+// from the worktree file (so the user sees the <<<<<<< markers).
+func (s *ServerSuite) TestGitDiffMergeConflictEmitsSingleConflictEntry() {
+	dir := s.T().TempDir()
+	gitRun(s.T(), dir, "init")
+	gitRun(s.T(), dir, "config", "user.email", "t@t.t")
+	gitRun(s.T(), dir, "config", "user.name", "t")
+	gitRun(s.T(), dir, "config", "commit.gpgsign", "false")
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "a.txt"), []byte("base\n"), 0o644))
+	gitRun(s.T(), dir, "add", "a.txt")
+	gitRun(s.T(), dir, "commit", "-m", "base")
+
+	gitRun(s.T(), dir, "checkout", "-b", "feature")
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "a.txt"), []byte("feature change\n"), 0o644))
+	gitRun(s.T(), dir, "commit", "-am", "feature")
+	gitRun(s.T(), dir, "checkout", "-")
+
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "a.txt"), []byte("base change\n"), 0o644))
+	gitRun(s.T(), dir, "commit", "-am", "base-update")
+
+	// Trigger the conflict — git exits non-zero, which is the expected state.
+	merge := exec.Command("git", "merge", "feature")
+	merge.Dir = dir
+	mergeOut, _ := merge.CombinedOutput()
+	require.Contains(s.T(), string(mergeOut), "CONFLICT")
+
+	s.store.On("GetChannel", mock.Anything, "ch-conflict").
+		Return(&db.Channel{ChannelID: "ch-conflict", DirPath: dir}, nil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/diff", s.srv.handleGitDiff)
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-conflict/diff", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+
+	var decoded diffResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &decoded))
+
+	// Exactly one entry for a.txt, tagged "conflict".
+	require.Len(s.T(), decoded.Files, 1, "expected single entry for a.txt; got %+v", decoded.Files)
+	require.Equal(s.T(), "a.txt", decoded.Files[0].Path)
+	require.Equal(s.T(), statusConflict, decoded.Files[0].Status)
+
+	// The diff text carries a parseable diff --git block whose content
+	// includes the conflict markers from the worktree file.
+	require.Contains(s.T(), decoded.Diff, "diff --git a/a.txt b/a.txt")
+	require.Contains(s.T(), decoded.Diff, "<<<<<<<")
+	require.Contains(s.T(), decoded.Diff, ">>>>>>>")
+}
+
+func TestListUnmergedPathsNonRepo(t *testing.T) {
+	require.Empty(t, listUnmergedPaths(context.Background(), t.TempDir()))
+}
+
+func TestListUnmergedPathsCleanRepo(t *testing.T) {
+	dir := t.TempDir()
+	gitRun(t, dir, "init")
+	gitRun(t, dir, "config", "user.email", "t@t.t")
+	gitRun(t, dir, "config", "user.name", "t")
+	gitRun(t, dir, "config", "commit.gpgsign", "false")
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "x"), []byte("y\n"), 0o644))
+	gitRun(t, dir, "add", "x")
+	gitRun(t, dir, "commit", "-m", "init")
+
+	require.Empty(t, listUnmergedPaths(context.Background(), dir))
+}
+
+func TestFilterOutPaths(t *testing.T) {
+	tests := []struct {
+		name    string
+		entries []diffFileEntry
+		exclude []string
+		want    []string
+	}{
+		{"no exclude", []diffFileEntry{{Path: "a"}, {Path: "b"}}, nil, []string{"a", "b"}},
+		{"exclude one", []diffFileEntry{{Path: "a"}, {Path: "b"}}, []string{"a"}, []string{"b"}},
+		{"exclude all", []diffFileEntry{{Path: "a"}, {Path: "b"}}, []string{"a", "b"}, nil},
+		{"exclude unknown", []diffFileEntry{{Path: "a"}}, []string{"z"}, []string{"a"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := filterOutPaths(tt.entries, tt.exclude)
+			gotPaths := make([]string, len(got))
+			for i, e := range got {
+				gotPaths[i] = e.Path
+			}
+			if len(tt.want) == 0 {
+				require.Empty(t, gotPaths)
+			} else {
+				require.Equal(t, tt.want, gotPaths)
+			}
+		})
+	}
+}
+
 func TestResolveBranchRefEmpty(t *testing.T) {
 	// The handler validates branch names before calling resolveBranchRef, so
 	// this path is unreachable end-to-end — covered with a direct unit test.
@@ -634,11 +736,12 @@ func TestStampStatus(t *testing.T) {
 }
 
 func TestStatusPriority(t *testing.T) {
-	require.Equal(t, 0, statusPriority(statusStaged))
-	require.Equal(t, 1, statusPriority(statusUnstaged))
-	require.Equal(t, 2, statusPriority(statusUntracked))
-	require.Equal(t, 3, statusPriority(""))
-	require.Equal(t, 3, statusPriority("unknown"))
+	require.Equal(t, 0, statusPriority(statusConflict))
+	require.Equal(t, 1, statusPriority(statusStaged))
+	require.Equal(t, 2, statusPriority(statusUnstaged))
+	require.Equal(t, 3, statusPriority(statusUntracked))
+	require.Equal(t, 4, statusPriority(""))
+	require.Equal(t, 4, statusPriority("unknown"))
 }
 
 func TestParseNumstat(t *testing.T) {

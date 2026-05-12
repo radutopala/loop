@@ -51,7 +51,7 @@ export async function createBranch(channelId: string, name: string, from?: strin
 
 // ── Diff & Commits ──
 
-export type DiffFileStatus = "staged" | "unstaged" | "untracked";
+export type DiffFileStatus = "staged" | "unstaged" | "untracked" | "conflict";
 
 export interface DiffFile {
   path: string;
