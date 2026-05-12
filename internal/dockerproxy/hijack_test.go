@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -32,8 +31,7 @@ func TestHijackSuite(t *testing.T) {
 // Hijacked connection header, then echoes received bytes back to the client.
 func upstreamHijackEcho(t *testing.T) (string, func(), *sync.WaitGroup) {
 	t.Helper()
-	dir := t.TempDir()
-	sock := filepath.Join(dir, "docker.sock")
+	sock := shortSockPath(t, "docker.sock")
 	ln, err := net.Listen("unix", sock)
 	require.NoError(t, err)
 	var wg sync.WaitGroup
@@ -82,8 +80,7 @@ func upstreamHijackEcho(t *testing.T) (string, func(), *sync.WaitGroup) {
 // HTTP request with `Connection: Upgrade` — httptest's ResponseRecorder
 // doesn't implement http.Hijacker.
 func (s *HijackSuite) proxyListener(policy *Policy, upstreamSock string) (string, func()) {
-	dir := s.T().TempDir()
-	sock := filepath.Join(dir, "proxy.sock")
+	sock := shortSockPath(s.T(), "proxy.sock")
 	ln, err := net.Listen("unix", sock)
 	require.NoError(s.T(), err)
 
@@ -168,8 +165,7 @@ func (s *HijackSuite) TestHijackAttach() {
 // so `docker run`'s output silently vanished. This test fails without the
 // `<-done; <-done` pair in hijack.go.
 func (s *HijackSuite) TestHijackRelaysFullUpstreamAfterClientHalfClose() {
-	dir := s.T().TempDir()
-	sock := filepath.Join(dir, "docker.sock")
+	sock := shortSockPath(s.T(), "docker.sock")
 	ln, err := net.Listen("unix", sock)
 	s.Require().NoError(err)
 	defer func() { _ = ln.Close() }()
@@ -246,7 +242,7 @@ func (s *HijackSuite) TestHijackRelaysFullUpstreamAfterClientHalfClose() {
 }
 
 func (s *HijackSuite) TestHijackUpstreamUnreachable() {
-	missing := filepath.Join(s.T().TempDir(), "nothing.sock")
+	missing := shortSockPath(s.T(), "nothing.sock")
 	policy, err := CompilePolicy(types.DecisionAllow,
 		[]types.HTTPServiceRule{
 			{Methods: []string{"POST"}, Paths: []string{"^/containers/[^/]+/attach$"}, Decision: types.DecisionAllow},
@@ -292,7 +288,7 @@ func (s *HijackSuite) TestHijackNoHijackerReturns500() {
 // readRawHeaders error branch in hijackProxy.
 func upstreamAcceptAndClose(t *testing.T) (string, func()) {
 	t.Helper()
-	sock := filepath.Join(t.TempDir(), "close.sock")
+	sock := shortSockPath(t, "close.sock")
 	ln, err := net.Listen("unix", sock)
 	require.NoError(t, err)
 	go func() {

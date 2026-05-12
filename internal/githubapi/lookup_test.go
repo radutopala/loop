@@ -3,6 +3,7 @@ package githubapi
 import (
 	"context"
 	"errors"
+	"os/exec"
 	"strings"
 	"testing"
 
@@ -187,19 +188,28 @@ func (s *GithubAPISuite) TestExecRunnerBinaryNotFoundMapsToSentinel() {
 }
 
 func (s *GithubAPISuite) TestExecRunnerSuccess() {
-	// /bin/true exits 0 with no output — exercises the happy path of
-	// execRunner.Run end-to-end.
-	r := NewExecRunner("/bin/true")
+	// `true` exits 0 with no output — exercises the happy path of
+	// execRunner.Run end-to-end. Resolve via PATH so macOS (/usr/bin/true)
+	// and Linux (/bin/true) both work.
+	truePath, err := exec.LookPath("true")
+	if err != nil {
+		s.T().Skip("no `true` binary on PATH")
+	}
+	r := NewExecRunner(truePath)
 	out, err := r.Run(context.Background(), s.T().TempDir(), []string{"FOO=bar"})
 	require.NoError(s.T(), err)
 	require.Empty(s.T(), out)
 }
 
 func (s *GithubAPISuite) TestExecRunnerBubblesStderrOnFailure() {
-	// /bin/false exits 1 with empty stderr; the error message should
-	// fall back to err.Error() rather than be empty.
-	r := NewExecRunner("/bin/false")
-	_, err := r.Run(context.Background(), s.T().TempDir(), nil, "ignored-arg")
+	// `false` exits 1 with empty stderr; the error message should fall
+	// back to err.Error() rather than be empty.
+	falsePath, err := exec.LookPath("false")
+	if err != nil {
+		s.T().Skip("no `false` binary on PATH")
+	}
+	r := NewExecRunner(falsePath)
+	_, err = r.Run(context.Background(), s.T().TempDir(), nil, "ignored-arg")
 	require.Error(s.T(), err)
 	require.True(s.T(),
 		strings.Contains(err.Error(), "exit status") || strings.Contains(err.Error(), "ignored-arg"),

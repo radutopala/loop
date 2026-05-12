@@ -319,8 +319,7 @@ func (s *AppSuite) TestRunExportedEntrypoint() {
 }
 
 func (s *AppSuite) TestDefaultListenUnixRoundTrip() {
-	dir := s.T().TempDir()
-	path := filepath.Join(dir, "a.sock")
+	path := shortSockPath(s.T(), "a.sock")
 
 	ln, err := defaultListenUnix(path)
 	require.NoError(s.T(), err)
@@ -333,8 +332,7 @@ func (s *AppSuite) TestDefaultListenUnixRoundTrip() {
 }
 
 func (s *AppSuite) TestDefaultServeShutsDownOnContextCancel() {
-	dir := s.T().TempDir()
-	path := filepath.Join(dir, "d.sock")
+	path := shortSockPath(s.T(), "d.sock")
 	ln, err := defaultListenUnix(path)
 	require.NoError(s.T(), err)
 	defer ln.Close()
@@ -361,8 +359,7 @@ func (s *AppSuite) TestDefaultServeShutsDownOnContextCancel() {
 // httpd.Serve returns a non-ErrServerClosed error (e.g. listener closed
 // externally) before the context is cancelled.
 func (s *AppSuite) TestDefaultServeReturnsServeError() {
-	dir := s.T().TempDir()
-	path := filepath.Join(dir, "bad.sock")
+	path := shortSockPath(s.T(), "bad.sock")
 	ln, err := defaultListenUnix(path)
 	require.NoError(s.T(), err)
 
@@ -382,8 +379,7 @@ func (s *AppSuite) TestDefaultServeReturnsServeError() {
 }
 
 func (s *AppSuite) TestDefaultServeProxiesHTTPBeforeCancel() {
-	dir := s.T().TempDir()
-	path := filepath.Join(dir, "e.sock")
+	path := shortSockPath(s.T(), "e.sock")
 	ln, err := defaultListenUnix(path)
 	require.NoError(s.T(), err)
 	defer ln.Close()
