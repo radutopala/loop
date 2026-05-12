@@ -228,10 +228,12 @@ export function useChatStateStore({
                 : `Error: ${data.error ?? "unknown"}`;
             new Notification(`Loop — ${name}`, { body });
           }
-          // Skip the dock bounce for scheduled-task completions — they fire
-          // frequently and aren't user-actionable. User-initiated runs still
-          // bounce so the user notices when their reply lands.
-          if (data.trigger !== "scheduled") {
+          // Skip the dock bounce for non-user-driven runs — scheduled tasks
+          // fire frequently and aren't user-actionable, and "bot" runs are
+          // indirect chains (an agent re-entering via send_message /
+          // create_thread MCP tools, often as part of a scheduled task).
+          // Real user replies stay tagged as empty/user and still bounce.
+          if (data.trigger !== "scheduled" && data.trigger !== "bot") {
             window.loopAPI?.notifyTurnEnd?.();
           }
         }

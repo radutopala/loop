@@ -2,6 +2,8 @@ package orchestrator
 
 import (
 	"errors"
+	"io"
+	"log/slog"
 	"strings"
 	"time"
 
@@ -9,6 +11,7 @@ import (
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/bot"
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/types"
@@ -948,4 +951,110 @@ func (s *OrchestratorSuite) TestHandleMessageInsertBotResponseErrors() {
 			s.store.AssertExpectations(s.T())
 		})
 	}
+}
+
+// Bot-self-triggered runs (e.g. the agent re-entering via send_message /
+// create_thread MCP tools) must tag agent.status broadcasts with Trigger="bot"
+// so the renderer suppresses the macOS dock bounce — those chains are indirect
+// and not user-actionable.
+func (s *OrchestratorSuite) TestHandleMessageBotSelfTriggerTagsBroadcastsAsBot() {
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+
+	// Override the default IsBotUser(*)->false expectation so BOT-as-author
+	// resolves to true. Keep the catch-all for everything else.
+	s.bot = new(MockBot)
+	s.bot.On("BotUserID").Return("BOT").Maybe()
+	s.bot.On("IsBotUser", "BOT").Return(true).Maybe()
+	s.bot.On("IsBotUser", mock.Anything).Return(false).Maybe()
+	s.bot.On("SendStopButton", mock.Anything, mock.Anything, mock.Anything).Return("stop-msg-1", nil).Maybe()
+	s.bot.On("RemoveStopButton", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{}, nil)
+	s.orch.SetEventBroadcaster(eb)
+
+	msg := &bot.IncomingMessage{
+		ChannelID:    "ch1",
+		AuthorID:     "BOT",
+		AuthorName:   "agent",
+		Content:      "hi from agent",
+		MessageID:    "msg-bot-1",
+		IsBotMention: true,
+		Platform:     types.PlatformDiscord,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{
+		{ID: 10, MsgID: "msg-bot-1", AuthorName: "agent", Content: "hi from agent", ChannelID: "ch1"},
+	}, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
+		Response:  "ack",
+		SessionID: "sess1",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess1").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{10}).Return(nil)
+
+	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "running" && d.Trigger == "bot"
+	})).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "completed" && d.Trigger == "bot"
+	})).Return()
+	eb.On("BroadcastMessagesProcessed", "ch1", mock.Anything).Return()
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	eb.AssertExpectations(s.T())
+}
+
+// Real user messages must NOT carry a bot/scheduled trigger — the renderer
+// relies on the empty trigger to bounce the dock when the user's reply lands.
+func (s *OrchestratorSuite) TestHandleMessageUserTriggerLeavesTriggerEmpty() {
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+
+	msg := &bot.IncomingMessage{
+		ChannelID:    "ch1",
+		AuthorID:     "user1",
+		AuthorName:   "Alice",
+		Content:      "hi",
+		MessageID:    "msg-user-1",
+		IsBotMention: true,
+		Platform:     types.PlatformDiscord,
+		Timestamp:    time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{
+		{ID: 11, MsgID: "msg-user-1", AuthorName: "Alice", Content: "hi", ChannelID: "ch1"},
+	}, nil)
+	s.runner.On("Run", mock.Anything, mock.Anything).Return(&agent.AgentResponse{
+		Response:  "Hello!",
+		SessionID: "sess2",
+	}, nil)
+	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess2").Return(nil)
+	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{11}).Return(nil)
+
+	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "running" && d.Trigger == ""
+	})).Return()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "completed" && d.Trigger == ""
+	})).Return()
+	eb.On("BroadcastMessagesProcessed", "ch1", mock.Anything).Return()
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	eb.AssertExpectations(s.T())
 }
