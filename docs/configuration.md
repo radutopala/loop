@@ -85,6 +85,12 @@ Browser settings are grouped under `"browser"`:
 | `api_addr` | `string` | `":8222"` | HTTP API listen address. |
 | `poll_interval_sec` | `int` | `30` | How often the scheduler checks for due tasks (seconds). |
 
+#### GitHub
+
+| Field | Type | Default | Description |
+|---|---|---|---|
+| `github.gh_user` | `string` | `""` | Named `gh` CLI account to use for PR lookups (see `gh auth status`). Empty falls back to whichever account `gh` currently has active. Used by `GET /api/channels/{id}/pr` and the Git panel's PR chip. |
+
 #### Mounts
 
 ```jsonc
@@ -508,6 +514,7 @@ Not all global fields are available in project configs. The following fields can
 | `browser.enabled` | **Overrides** global value when set. |
 | `browser.chrome_image` | **Overrides** global value when set. |
 | `browser.host_cdp_port` | **Overrides** global value when set. |
+| `github.gh_user` | **Overrides** global value when set. |
 | `gates.agentgate.enabled` | **Narrows only**: project may set `false` to disable the gate for this project; it **cannot** re-enable the gate when global `gates.agentgate.enabled` is `false`. Transitively disables `gates.docker_proxy.enabled` when the project turns the gate off. |
 | `gates.agentgate.path_rules` / `command_rules` / `file_rules` | **Prepended** to the merged global rules (first-match-wins applies project rules first). **Rules with `decision: "allow"` are rejected at load time** — project configs may only tighten the policy, not loosen it. |
 | `gates.agentgate.default_decision` | **Ignored** — global wins unconditionally. |
@@ -577,6 +584,11 @@ The merge follows these principles:
   //  "enabled": true,
   //  "chrome_image": "loop-chrome:latest",
   //  "host_cdp_port": 9222
+  //},
+
+  // GitHub integration (used by the Git panel's PR chip)
+  //"github": {
+  //  "gh_user": "" // named gh CLI account; empty = gh's currently-active account
   //},
 
   // RBAC permissions
@@ -730,6 +742,11 @@ The merge follows these principles:
   //"browser": {
   //  "enabled": false,
   //  "chrome_image": "loop-chrome:latest"
+  //},
+
+  // GitHub override (per-project gh CLI account)
+  //"github": {
+  //  "gh_user": ""
   //},
 
   // Memory config (paths appended to global; embeddings override global)

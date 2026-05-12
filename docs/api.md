@@ -1012,6 +1012,42 @@ Get git diff information for a channel's working directory. Includes both tracke
 
 ---
 
+## Pull Request
+
+### `GET /api/channels/{id}/pr`
+
+Look up the open GitHub pull request whose head branch matches the channel's current branch. Shells out to `gh pr view` against the channel's working directory.
+
+**Response (200, PR found):**
+```json
+{
+  "present": true,
+  "pr": {
+    "number": 24,
+    "url": "https://github.com/owner/repo/pull/24",
+    "base_ref": "main",
+    "head_ref": "feat/git-panel-pr-aware",
+    "state": "OPEN",
+    "title": "feat(git-panel): default diff base to PR target and live-update branch",
+    "is_draft": false
+  }
+}
+```
+
+**Response (200, no PR):**
+```json
+{"present": false}
+```
+
+**Behavior notes:**
+- The lookup uses `gh pr view --json number,url,baseRefName,headRefName,state,title,isDraft` and falls back to a `gh pr list` query when `pr view` reports no match.
+- The `gh` account is picked by the `github.gh_user` config key (mergeable per-project via `.loop/config.json`); empty falls back to whichever account `gh` currently has active.
+- Environmental failures (`gh` not installed, no GitHub remote, network) degrade to `present: false` rather than a 5xx so the UI hides the PR chip silently.
+
+**Errors:** `404` if channel not found.
+
+---
+
 ## Branches & Worktrees
 
 ### `GET /api/channels/{id}/branches`

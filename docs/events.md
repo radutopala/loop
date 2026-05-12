@@ -399,6 +399,34 @@ The `channel_id` in the event envelope identifies which channel was deleted.
 
 ---
 
+### `channel.updated`
+
+A channel's git state changed (branch switch, new commit, or diff size). Broadcast globally so the sidebar branch label, diff counts, and any open Git panel can react without re-fetching `/api/channels`.
+
+Emitted by the in-process `BranchPoller` goroutine, which ticks every 5s (default), compares each channel's working directory against the previous tick, and broadcasts only when at least one field changed. The first tick after startup primes the cache without broadcasting.
+
+**Payload schema:**
+
+```json
+{
+  "channel_id": "channel-id",
+  "branch": "feat/git-panel-pr-aware",
+  "commit": "dbd4bbd",
+  "diff_additions": 1477,
+  "diff_deletions": 6
+}
+```
+
+| Field            | Type   | Description |
+|------------------|--------|-------------|
+| `channel_id`     | string | Channel whose state changed |
+| `branch`         | string | Current branch (`git rev-parse --abbrev-ref HEAD`) |
+| `commit`         | string | Short commit hash (`git rev-parse --short HEAD`) |
+| `diff_additions` | int    | Lines added in the working-tree diff |
+| `diff_deletions` | int    | Lines removed in the working-tree diff |
+
+---
+
 ### `container.registered`
 
 A new container was added to the registry (agent started, shell created, Chrome launched).
@@ -735,6 +763,7 @@ A previously-broadcast approval was resolved (either through the UI, a Discord/S
 | `BroadcastTodoWrite` | `agent.todos` | `TodoWriteEventData` | Channel |
 | `BroadcastChannelCreated` | `channel.created` | `map[string]string{"channel_id": id}` | Channel |
 | `BroadcastChannelDeleted` | `channel.deleted` | `nil` | Channel |
+| `BroadcastChannelUpdated` | `channel.updated` | `ChannelUpdatedData` | Global |
 | `BroadcastAgentInstanceRegistered` | `agent_instance.registered` | `AgentInstanceEventData` | Channel |
 | `BroadcastAgentInstanceUnregistered` | `agent_instance.unregistered` | `AgentInstanceEventData` | Channel |
 | `BroadcastAgentInstanceMetadata` | `agent_instance.metadata` | `AgentInstanceEventData` | Channel |
