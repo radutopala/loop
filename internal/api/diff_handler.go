@@ -29,20 +29,23 @@ const (
 	statusStaged    = "staged"
 	statusUnstaged  = "unstaged"
 	statusUntracked = "untracked"
+	statusConflict  = "conflict"
 )
 
 // statusPriority orders entries within a single path so that, when a file is
 // partially staged, the staged row precedes the unstaged row in the output.
 func statusPriority(status string) int {
 	switch status {
-	case statusStaged:
+	case statusConflict:
 		return 0
-	case statusUnstaged:
+	case statusStaged:
 		return 1
-	case statusUntracked:
+	case statusUnstaged:
 		return 2
-	default:
+	case statusUntracked:
 		return 3
+	default:
+		return 4
 	}
 }
 
@@ -94,6 +97,14 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Unmerged paths (merge/rebase conflicts) need special handling: the
+	// regular `git diff` passes emit the file multiple times (once per
+	// parent in combined-diff numstat plus an "* Unmerged path" stub from
+	// --cached), and the worktree diff uses `diff --cc` headers which the
+	// frontend parser doesn't recognize. Detect them up front so we can
+	// emit one entry per conflict with the worktree contents.
+	conflictPaths := listUnmergedPaths(r.Context(), dirPath)
+
 	// Staged changes: index vs HEAD. May fail in a brand-new repo with no
 	// commits — treat that as "no staged entries" rather than erroring.
 	stagedCmd := exec.CommandContext(r.Context(), "git", "diff", "--cached", "--numstat", "-z")
@@ -102,7 +113,7 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 	var stagedFiles []diffFileEntry
 	var stagedDiffText string
 	if stagedErr == nil {
-		stagedFiles = parseNumstat(string(stagedNumstatOut))
+		stagedFiles = filterOutPaths(parseNumstat(string(stagedNumstatOut)), conflictPaths)
 		stampStatus(stagedFiles, statusStaged)
 
 		stagedDiffCmd := exec.CommandContext(r.Context(), "git", "diff", "--cached")
@@ -121,7 +132,7 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	unstagedFiles := parseNumstat(string(numstatOut))
+	unstagedFiles := filterOutPaths(parseNumstat(string(numstatOut)), conflictPaths)
 	stampStatus(unstagedFiles, statusUnstaged)
 
 	diffCmd := exec.CommandContext(r.Context(), "git", "diff")
@@ -129,10 +140,22 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 	diffOut, _ := diffCmd.Output()
 	unstagedDiffText := string(diffOut)
 
-	files := make([]diffFileEntry, 0, len(stagedFiles)+len(unstagedFiles))
+	files := make([]diffFileEntry, 0, len(stagedFiles)+len(unstagedFiles)+len(conflictPaths))
 	files = append(files, stagedFiles...)
 	files = append(files, unstagedFiles...)
 	diffText := stagedDiffText + unstagedDiffText
+
+	// Emit one entry per conflict with a synthetic patch of the worktree
+	// file (including <<<<<<< / ======= / >>>>>>> markers) so the diff view
+	// can show what's actually conflicting.
+	for _, cp := range conflictPaths {
+		entry, patch := buildUntrackedEntry(dirPath, cp)
+		if entry != nil {
+			entry.Status = statusConflict
+			files = append(files, *entry)
+			diffText += patch
+		}
+	}
 
 	// Include untracked files.
 	untrackedCmd := exec.CommandContext(r.Context(), "git", "ls-files", "--others", "--exclude-standard")
@@ -169,6 +192,52 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
+}
+
+// listUnmergedPaths returns the worktree-relative paths that git reports as
+// unmerged (merge/rebase conflict). Uses `git status --porcelain=v1 -z`:
+// unmerged entries are those with a status code in {DD,AU,UD,UA,DU,AA,UU}.
+// Returns an empty slice for non-repo dirs or clean trees.
+func listUnmergedPaths(ctx context.Context, dir string) []string {
+	cmd := exec.CommandContext(ctx, "git", "status", "--porcelain=v1", "-z")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+	var paths []string
+	for _, rec := range strings.Split(string(out), "\x00") {
+		if len(rec) < 4 {
+			continue
+		}
+		// porcelain v1: "XY path"; unmerged when X or Y is 'U', or X==Y in {A,D}.
+		x, y := rec[0], rec[1]
+		isUnmerged := x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D')
+		if !isUnmerged {
+			continue
+		}
+		paths = append(paths, rec[3:])
+	}
+	return paths
+}
+
+// filterOutPaths returns entries whose Path is not in the exclude set.
+func filterOutPaths(entries []diffFileEntry, exclude []string) []diffFileEntry {
+	if len(exclude) == 0 {
+		return entries
+	}
+	excl := make(map[string]struct{}, len(exclude))
+	for _, p := range exclude {
+		excl[p] = struct{}{}
+	}
+	kept := entries[:0]
+	for _, e := range entries {
+		if _, skip := excl[e.Path]; skip {
+			continue
+		}
+		kept = append(kept, e)
+	}
+	return kept
 }
 
 // splitLines splits output into non-empty trimmed lines.
