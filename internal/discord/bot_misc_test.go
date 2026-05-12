@@ -401,3 +401,7 @@ func (s *BotSuite) TestHandleIncomingMessageNoop() {
 	// HandleIncomingMessage is a no-op stub — just verify it doesn't panic.
 	s.bot.HandleIncomingMessage(context.Background(), "", "", "", "")
 }
+
+func (s *BotSuite) TestHandleIncomingMessageWithPriorityNoop() {
+	s.bot.HandleIncomingMessageWithPriority(context.Background(), "", "", "", "", 0)
+}

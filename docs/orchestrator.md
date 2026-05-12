@@ -11,8 +11,9 @@ The `Orchestrator` struct holds references to:
 - `runner` (`orchestrator.Runner`) -- Docker container runner for agent execution
 - `scheduler` (`scheduler.Scheduler`) -- Cron/interval/once task scheduler
 - `events` (`events.Broadcaster`) -- SSE/WebSocket event broadcaster for the Electron app
-- `queue` (`*ChannelQueue`) -- Per-channel concurrency control
+- `channelLocks` (`sync.Map`) -- Per-channel `*sync.Mutex` that serialises the drain loop so only one agent run executes per channel at a time
 - `activeRuns` (`sync.Map`) -- Maps channel IDs to cancel functions for stop-button support
+- `activeRunMsgIDs` (`sync.Map`) -- Maps channel IDs to the `msg_id` of the row currently running; surfaced via `ActiveRunMessageID` for the interrupt path and FE diagnostics
 - `cfg` (`config.Config`) -- Application configuration
 
 ## Startup Flow
@@ -23,6 +24,13 @@ When `Start` is called:
 2. Register slash commands on all platforms (`bot.RegisterCommands`).
 3. Start the bot (opens connections to Discord/Slack/etc.).
 4. Start the scheduler (loads tasks from DB, begins cron loop).
+
+After `Start` returns, `cmd/loop/serve.go` runs the **DB-queue resume sweep** before signalling readiness:
+
+1. `store.ResetStaleRunningMessages` clears `is_running=1` rows left over from the prior daemon run (their containers are gone, so their agent runs cannot survive a restart). The sweep returns `(channel_id, msg_id)` pairs grouped per channel and the daemon broadcasts a `messages.processed` event per channel so any reconnected client clears the stale "processing" label.
+2. `store.ListPendingChannels` returns every channel that still has `is_triggered=1 AND is_processed=0` rows; the daemon spawns a `go orch.ResumeChannel(ctx, ch)` per channel. `ResumeChannel` is `drainChannel(ctx, ch, nil)` — the same path `HandleMessage` uses, but with a `nil` incoming so the run is reconstructed from the row alone.
+
+Rows that were running mid-restart end up marked processed with no agent response — the user sees the "processing" label disappear and can re-send if they wanted it. Queued rows resume in priority order.
 
 ## Message Flow
 
@@ -35,16 +43,19 @@ Platform Event
 HandleMessage (channel active check, auto-create, thread resolution)
     |
     v
-Store message in DB + broadcast event
-    |
-    v
 Trigger check (mention, reply, prefix, DM)
     |
     v
 Permission check (config + DB merge)
     |
     v
-processTriggeredMessage (queue, stop button, typing, agent run, deliver)
+Store message in DB (is_triggered=1 when allowed) + broadcast event
+    |
+    v
+drainChannel (per-channel mutex, ClaimNextPending in priority order)
+    |
+    v
+processClaimedMessage (stop button, typing, agent run, deliver, release)
 ```
 
 ### Step 1: Channel Resolution
@@ -54,13 +65,7 @@ processTriggeredMessage (queue, stop button, typing, agent run, deliver)
 - **Active channel** -- Proceed to message storage.
 - **Inactive channel** -- Attempt thread resolution via `resolveThread`. If the channel is a thread with an active parent, upsert the thread as a channel inheriting the parent's properties (`DirPath`, `SessionID`, `GuildID`, `Permissions`, `Platform`). If not a thread and the message has a trigger (mention, prefix, reply, DM), auto-create the channel. Otherwise, silently ignore.
 
-### Step 2: Message Storage
-
-Every message from a triggered channel is stored in the database via `store.InsertMessage`. The message ID is the platform's native ID (Discord snowflake, Slack timestamp) when available, or a generated `ask-{hex}` ID when the platform does not provide one.
-
-If an event broadcaster is configured, a `message.created` event is broadcast with the message data so the Electron app can update its UI in real time.
-
-### Step 3: Trigger Check
+### Step 2: Trigger Check
 
 A message is "triggered" if any of these conditions are true:
 
@@ -69,53 +74,72 @@ A message is "triggered" if any of these conditions are true:
 - `HasPrefix` -- The message starts with `!loop`
 - `IsDM` -- The message is a direct message
 
-If none are true, the message is stored but no agent run is initiated. This allows the bot to passively record conversation context in active channels.
+If none are true, the message is still stored (so the bot can passively record conversation context) but with `is_triggered=0`, which keeps it out of the drain queue.
 
-### Step 4: Permission Check
+### Step 3: Permission Check
 
-Before processing a triggered message, the orchestrator checks whether the author has permission:
+Before persisting `is_triggered=1`, the orchestrator checks whether the author has permission:
 
 - **Bot self-mentions** are always allowed (e.g., from `create_thread` MCP tool posts).
 - **Local platform** messages always bypass permission checks -- the user is running on their own machine.
-- For other cases, `resolveRole` merges config-file permissions and database permissions to determine the author's role. If the resolved role is empty (no role), the message is silently ignored with a log entry.
+- For other cases, `resolveRole` merges config-file permissions and database permissions to determine the author's role. If the resolved role is empty (no role), the row lands with `is_triggered=0` and the message is silently ignored with a log entry — denied messages stay as plain history and never enter the drain queue.
 
 See [Permission & RBAC System](permissions.md) for the full merge logic.
 
-### Step 5: processTriggeredMessage
+### Step 4: Message Storage
 
-This is the core execution path:
+Every message is stored in the database via `store.InsertMessage`. The message ID is the platform's native ID (Discord snowflake, Slack timestamp) when available, or a generated `ask-{hex}` ID when the platform does not provide one. The row carries `is_triggered` (gated by trigger + permission), `priority` (used to bump deny-with-prompt interrupts ahead of queued rows — see [Interrupting an active run](#interrupting-an-active-run)), and `mode` (`"plan"` for plan-mode runs) so a daemon restart can resume work without losing fields the in-flight `bot.IncomingMessage` would otherwise carry.
+
+If an event broadcaster is configured, a `message.created` event is broadcast with the message data so the Electron app can update its UI in real time.
+
+### Step 5: drainChannel
+
+When a row lands with `is_triggered=1`, `HandleMessage` calls `drainChannel(channelID, incoming)` on the same goroutine. The drain is the only path that runs the agent — there is no in-memory queue and no per-message goroutine waiting on a slot.
 
 ```go
-func (o *Orchestrator) processTriggeredMessage(ctx, msg) {
-    1. queue.Acquire(channelID)           // Block until channel slot is free
-    2. defer queue.Release(channelID)     // Release slot on exit
-    3. prepareAgentRequest(msg)           // Fetch recent messages, build request
-    4. Race guard: if msg was deleted     // Abort before any side effects
-       from the queue while waiting,
-       return early
-    5. bot.SendStopButton(channelID)      // Send interactive stop button
-    6. defer bot.RemoveStopButton(...)    // Remove stop button
-    7. defer activeRuns.Delete(channelID) // Clean up cancel func
-    8. Start typing indicator goroutine   // Refreshes every 8 seconds
-    9. executeAgentRun(msg, req)          // Run agent in container
-   10. deliverResponse(msg, resp)         // Send response, store, mark processed
+func (o *Orchestrator) drainChannel(ctx, channelID, incoming *bot.IncomingMessage) {
+    lock := channelLocks.LoadOrStore(channelID, &sync.Mutex{})
+    lock.Lock(); defer lock.Unlock()
+    for {
+        row, _ := store.ClaimNextPending(ctx, channelID)  // SELECT + UPDATE is_running=1
+        if row == nil { return }
+        processClaimedMessage(ctx, row, incoming)
+        store.ReleaseRunningMessage(ctx, row.ID, true)    // is_running=0, is_processed=1
+    }
 }
 ```
 
-### Queued-message deletion race guard
+`ClaimNextPending` runs inside a single SQLite write transaction and returns the next row matching `is_processed=0 AND is_triggered=1 AND is_running=0 AND kind='message'` for the channel, ordered by `priority DESC, id ASC`. The atomic SELECT + UPDATE serialises the claim against every other writer, so concurrent drains for the same channel can never hand the same row to two agents.
 
-Between the moment a message is enqueued and the moment its goroutine wins the channel slot, the user may have deleted the message from the queue (via the popup above the chat input — see [Chat View - Queued Messages Popup](chat.md#queued-messages-popup)). The goroutine still holds the original `msg` in memory, so without a guard it would blindly run the agent against a message that no longer exists in the database.
+`processClaimedMessage` reconstructs a minimal `bot.IncomingMessage` from the row (`AuthorID`, `Content`, `Mode`, `MsgID`, `Priority`) and overlays the bot-side fields (`Platform`, `IsBotMention`, `IsReplyToBot`, `IsDM`, `AuthorRoles`, `GuildID`) from `incoming` when the msg_ids match. For priority-bumped or daemon-restart-resume rows the `incoming` value does not match (or is `nil`), and the run executes from the row alone. The remainder of the body matches the previous in-memory flow:
 
-After `prepareAgentRequest` returns the `recent` slice, the orchestrator scans it for `msg.MessageID`. If at least one row in `recent` carries a `MsgID` but the trigger's `MsgID` is not among them, the message was deleted during the wait and `processTriggeredMessage` returns early — before sending the stop button, starting the typing indicator, or invoking the runner. The `hasAnyMsgID` check avoids false positives when `recent` is empty or when legacy rows lack `MsgID` values.
+```go
+func (o *Orchestrator) processClaimedMessage(ctx, row, incoming) {
+    req, recent, channel, err := prepareAgentRequest(msg)
+    if err != nil { return }                                 // ReleaseRunningMessage still fires
+    stopMsgID, _ := bot.SendStopButton(channelID)
+    defer activeRuns.Delete(channelID)
+    defer activeRunMsgIDs.Delete(channelID)
+    defer bot.RemoveStopButton(channelID, stopMsgID)
+    activeRunMsgIDs.Store(channelID, msg.MessageID)
+    go refreshTyping(typingCtx, channelID)
+    resp, lastText, runID, err := executeAgentRun(ctx, msg, req, channel)
+    if err != nil { markTriggerProcessed(msg, recent); return }
+    deliverResponse(msg, resp, recent, lastText, runID)
+}
+```
 
-## Channel Queue
+Errors or stops still mark the trigger row processed (via `markTriggerProcessed`) so the frontend doesn't keep showing it as "processing" while the next queued row starts. `drainChannel`'s loop keeps pulling until `ClaimNextPending` returns `nil`, then releases the channel lock — there is no idle goroutine waiting for work between drains.
 
-The `ChannelQueue` ensures that only one agent container runs per channel at a time. It uses a `map[string]chan struct{}` where each channel has a buffered channel of size 1.
+## Per-channel Drain Serialization
 
-- `Acquire(channelID)` sends to the channel (blocks if another run is in progress).
-- `Release(channelID)` receives from the channel (unblocks the next waiting run).
+The `channelLocks` `sync.Map` holds a `*sync.Mutex` per channel. `drainChannel` `Lock`s on entry and `Unlock`s when the loop drains the channel empty, so within a single channel only one agent run executes at a time. Across channels the drains are independent: a long agent run on channel A does not block channel B's `HandleMessage` from claiming and processing its own rows. The drain holds the in-memory lock only for the lifetime of the loop, not the row — once a row is released, the next `HandleMessage` call (or `ResumeChannel` from startup) can claim it.
 
-This prevents race conditions where multiple messages in rapid succession could spawn concurrent agent runs for the same channel. Messages queue up and are processed sequentially.
+There is no notify channel and no idle processor goroutine: each `HandleMessage` and `ResumeChannel` call attempts to drain on its own goroutine, the mutex collapses concurrent attempts into a single drain, and any rows inserted during a drain (e.g. a priority-bumped interrupt while an earlier row is running) are picked up by the same loop on its next iteration.
+
+## Interrupting an active run
+
+When the user clicks "Deny with prompt" on a gate approval (or the API receives `POST /api/messages` with `interrupt=true`), `messages_handler.go` cancels the active run via `runCanceller.CancelActiveRun(channelID)` and inserts the prompt with `priority = MaxQueuedPriority(channelID) + 1`. The interrupt row outranks any queued messages on the next `ClaimNextPending` (which orders by `priority DESC`) so the prompt runs ahead of them, but **no queued rows are deleted** — they keep their original `priority=0` and resume in FIFO order once the interrupt finishes. This replaces an earlier destructive design that dropped the queued rows entirely.
 
 ## Agent Request Preparation
 
@@ -199,7 +223,8 @@ For the Electron app, streaming events are broadcast via the `EventsHub`:
 
 - `message.created` -- New message (user or bot)
 - `message.deleted` -- A queued user message was removed from the queue (via `DELETE /api/messages/{id}`)
-- `agent.status` -- Status changes (running, completed, error) with metadata (duration, turns, model, run_id)
+- `messages.processed` -- One or more user messages were marked processed; the FE clears their `processing`/`queued` labels. Emitted by `deliverResponse`, by `markTriggerProcessed` on run errors/stops, and by the daemon startup sweep when `ResetStaleRunningMessages` clears in-flight rows from a prior run
+- `agent.status` -- Status changes (running, completed, error) with metadata (duration, turns, model, run_id, msg_id of the triggering row so the FE can label the correct chat bubble as "processing" even when a priority-bumped row is processed out of chronological order)
 - `tool.use` -- Tool invocations with name and input summary
 - `agent.activity` -- Model detection and subagent progress
 - `agent.ask_user` -- Structured questions from AskUserQuestion tool
@@ -251,7 +276,7 @@ MCP config cleanup is best-effort; failures are logged as warnings.
 
 The `TaskExecutor` handles scheduled task runs. It follows a similar pattern to message processing but with key differences:
 
-1. **No queue** -- Tasks run independently of the channel queue.
+1. **No drain queue** -- Tasks bypass `drainChannel` entirely and call `runner.Run` directly. They do not go through `ClaimNextPending` and do not contend with chat messages for the per-channel mutex.
 2. **Thread creation** -- On the first streaming turn, a thread is created for the task output with the name prefix `task #N (schedule)`. The prompt is truncated to 100 characters for the thread name.
 3. **Ephemeral detection** -- If `AutoDeleteSec > 0`, the agent is instructed via system prompt that responses starting with `[EPHEMERAL]` indicate nothing meaningful to report. Ephemeral threads are renamed with a different emoji and auto-deleted after the configured delay.
 4. **Permission user invites** -- All owner and member users from the channel's permissions are invited to the task thread.

@@ -24,6 +24,14 @@ type Channel struct {
 	UpdatedAt   time.Time         `json:"updated_at"`
 }
 
+// StaleRunningMessage describes a (channel_id, msg_id) pair returned by
+// ResetStaleRunningMessages so the caller can broadcast per-channel
+// messages.processed events for rows it cleaned up at startup.
+type StaleRunningMessage struct {
+	ChannelID string
+	MsgID     string
+}
+
 // MessageKind discriminates real chat messages from JSONL-backed agent events
 // stored in the same table.
 type MessageKind string
@@ -40,6 +48,14 @@ const (
 // rows (kind != "message") carry inline content captured from the docker
 // stream at run time; ToolName / IsError add the metadata that doesn't fit in
 // Content.
+//
+// IsTriggered / IsRunning / Priority / Mode drive the DB-pull processor: the
+// orchestrator's per-channel processor loop reads these to claim the next
+// eligible row (ORDER BY priority DESC, id ASC). IsTriggered marks rows the
+// agent should run on (bot mention, DM, prefix, reply). IsRunning is the
+// per-row claim flag. Priority lets an interrupt-prompt insert in front of
+// queued rows without deleting them. Mode persists "plan" vs "" so the
+// processor can rebuild the agent request.
 type Message struct {
 	ID            int64       `json:"id"`
 	ChatID        int64       `json:"chat_id"`
@@ -50,6 +66,10 @@ type Message struct {
 	Content       string      `json:"content"`
 	IsBot         bool        `json:"is_bot"`
 	IsProcessed   bool        `json:"is_processed"`
+	IsTriggered   bool        `json:"is_triggered,omitempty"`
+	IsRunning     bool        `json:"is_running,omitempty"`
+	Priority      int         `json:"priority,omitempty"`
+	Mode          string      `json:"mode,omitempty"`
 	CreatedAt     time.Time   `json:"created_at"`
 	Kind          MessageKind `json:"kind"`
 	ChainPosition int64       `json:"chain_position"`

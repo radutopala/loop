@@ -103,8 +103,9 @@ func (s *ServerSuite) TestSendMessageInterrupt() {
 	s.srv.SetRunCanceller(canceller)
 
 	canceller.On("CancelActiveRun", "ch-1").Return(true)
+	s.store.On("MaxQueuedPriority", mock.Anything, "ch-1").Return(2, nil)
 	called := make(chan struct{}, 1)
-	handler.On("HandleIncomingMessage", mock.Anything, "ch-1", "", "stop and go", "").
+	handler.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", "stop and go", "", 3).
 		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
 
 	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"stop and go","interrupt":true}`)
@@ -114,7 +115,34 @@ func (s *ServerSuite) TestSendMessageInterrupt() {
 	select {
 	case <-called:
 	case <-time.After(time.Second):
-		s.T().Fatal("HandleIncomingMessage was not called within 1s")
+		s.T().Fatal("HandleIncomingMessageWithPriority was not called within 1s")
+	}
+
+	canceller.AssertExpectations(s.T())
+	handler.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSendMessageInterruptMaxQueuedPriorityError() {
+	handler := new(MockIncomingMessageHandler)
+	canceller := new(MockRunCanceller)
+	s.srv.SetIncomingMessageHandler(handler)
+	s.srv.SetRunCanceller(canceller)
+
+	canceller.On("CancelActiveRun", "ch-1").Return(true)
+	s.store.On("MaxQueuedPriority", mock.Anything, "ch-1").Return(0, errors.New("db error"))
+	called := make(chan struct{}, 1)
+	// On error, priority falls back to 0.
+	handler.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", "go now", "", 0).
+		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
+
+	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"go now","interrupt":true}`)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+
+	select {
+	case <-called:
+	case <-time.After(time.Second):
+		s.T().Fatal("HandleIncomingMessageWithPriority was not called within 1s")
 	}
 
 	canceller.AssertExpectations(s.T())

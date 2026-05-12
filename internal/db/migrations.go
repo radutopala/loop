@@ -248,6 +248,20 @@ var migrations = []migration{
 	// reject the request. Operators flip the flag from a context-menu
 	// "Lock"/"Unlock" toggle.
 	sqlMigration(`ALTER TABLE channels ADD COLUMN locked INTEGER NOT NULL DEFAULT 0`),
+	// DB-pull message processor columns. is_triggered marks rows the agent
+	// should run on (bot mentions, DMs, replies, prefixes — values previously
+	// only held in memory on bot.IncomingMessage). is_running is the per-row
+	// claim flag set atomically by ClaimNextPending; daemon startup resets
+	// stale rows. priority drives ordering (DESC, then id ASC) so an
+	// interrupt-prompt can be inserted in front of the queue without deleting
+	// other queued rows. mode persists the agent mode ("plan" or "") so the
+	// processor can rebuild the request from the row.
+	sqlMigration(`ALTER TABLE messages ADD COLUMN is_triggered INTEGER NOT NULL DEFAULT 0`),
+	sqlMigration(`ALTER TABLE messages ADD COLUMN is_running INTEGER NOT NULL DEFAULT 0`),
+	sqlMigration(`ALTER TABLE messages ADD COLUMN priority INTEGER NOT NULL DEFAULT 0`),
+	sqlMigration(`ALTER TABLE messages ADD COLUMN mode TEXT NOT NULL DEFAULT ''`),
+	// Covers ClaimNextPending: filtered by channel + queue eligibility, ordered by priority DESC, id ASC.
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_messages_pending ON messages(channel_id, is_processed, is_triggered, is_running, priority DESC, id ASC)`),
 }
 
 // RunMigrations executes all pending schema migrations.

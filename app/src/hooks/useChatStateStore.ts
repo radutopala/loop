@@ -8,6 +8,7 @@ import type {
   GateApprovalResolvedData,
   MessageCreatedData,
   MessageStreamingData,
+  MessagesProcessedData,
   TodoWriteData,
   ToolUseData,
   WSEvent,
@@ -33,6 +34,8 @@ export interface ActiveChatState {
   } | null;
   triggerContent: string | null;
   gateApproval: GateApprovalRequestedData | null;
+  /** msg_id of the message the agent is currently processing — backend-driven via agent.status. */
+  processingMsgId: string | null;
 }
 
 /** Callback type for chat event listeners registered by useChatState. */
@@ -372,6 +375,7 @@ function createEmptyState(): ActiveChatState {
     completionInfo: null,
     triggerContent: null,
     gateApproval: null,
+    processingMsgId: null,
   };
 }
 
@@ -437,6 +441,13 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
       }
       break;
     }
+    case "messages.processed": {
+      const data = event.data as MessagesProcessedData;
+      if (state.processingMsgId && data.msg_ids.includes(state.processingMsgId)) {
+        state.processingMsgId = null;
+      }
+      break;
+    }
     case "agent.status": {
       const data = event.data as AgentStatusData;
       if (data.status === "running") {
@@ -446,6 +457,7 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
         state.askUserQuestions = null;
         state.exitPlanRequest = null;
         state.triggerContent = data.trigger_content ?? null;
+        state.processingMsgId = data.msg_id ?? null;
       } else {
         // Only clear isRunning if the finishing run_id matches the one we're
         // tracking, or if either side has no run_id (backwards compat).
@@ -460,6 +472,7 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
           state.todos = null;
           // Drop any stale gate approval so a remount doesn't rehydrate it.
           state.gateApproval = null;
+          state.processingMsgId = null;
         }
         if (
           data.status === "completed" &&

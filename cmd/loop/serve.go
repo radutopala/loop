@@ -622,6 +622,34 @@ func (a *app) serve() error {
 		return fmt.Errorf("starting orchestrator: %w", err)
 	}
 
+	// Resume DB-queued messages from the prior daemon run: clear stale
+	// is_running rows (their agent runs cannot survive a restart), then
+	// kick off a drain per channel that still has unprocessed triggered rows.
+	if stale, err := store.ResetStaleRunningMessages(ctx); err != nil {
+		logger.Error("resetting stale running messages", "error", err)
+	} else if len(stale) > 0 {
+		logger.Warn("reset stale running messages from prior daemon run", "count", len(stale))
+		if eventsHub != nil {
+			byChan := make(map[string][]string, len(stale))
+			for _, rec := range stale {
+				if rec.MsgID == "" {
+					continue
+				}
+				byChan[rec.ChannelID] = append(byChan[rec.ChannelID], rec.MsgID)
+			}
+			for ch, ids := range byChan {
+				eventsHub.BroadcastMessagesProcessed(ch, events.MessagesProcessedData{MsgIDs: ids})
+			}
+		}
+	}
+	if pending, err := store.ListPendingChannels(ctx); err != nil {
+		logger.Error("listing pending channels", "error", err)
+	} else {
+		for _, ch := range pending {
+			go orch.ResumeChannel(ctx, ch)
+		}
+	}
+
 	// Periodic registry reconciliation: detect containers that disappeared
 	// externally (OOM kill, docker rm, daemon restart) and remove stale entries.
 	go containerReg.RunReconcileLoop(ctx, dockerClient, 30*time.Second, cfg.ContainerKeepAlive, logger)

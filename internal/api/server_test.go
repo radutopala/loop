@@ -107,6 +107,10 @@ func (m *MockIncomingMessageHandler) HandleIncomingMessage(ctx context.Context, 
 	m.Called(ctx, channelID, authorID, content, mode)
 }
 
+func (m *MockIncomingMessageHandler) HandleIncomingMessageWithPriority(ctx context.Context, channelID, authorID, content, mode string, priority int) {
+	m.Called(ctx, channelID, authorID, content, mode, priority)
+}
+
 func (m *MockIncomingMessageHandler) HandleThreadCreated(ctx context.Context, threadID, authorID, message string) {
 	m.Called(ctx, threadID, authorID, message)
 }

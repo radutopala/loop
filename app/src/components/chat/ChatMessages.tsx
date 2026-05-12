@@ -147,7 +147,7 @@ export interface ChatMessagesHandle {
 export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(function ChatMessages({ channelId, chatState, scrollToMessageId, onScrollComplete, onQuote }, ref) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
-  const { items, liveTail, messages, loading, loadMore, hasMore, streamingContent, isRunning, agentActivity, askUserQuestions, exitPlanRequest, todos, completionInfo, triggerContent, gateApproval } = chatState;
+  const { items, liveTail, messages, loading, loadMore, hasMore, streamingContent, isRunning, agentActivity, askUserQuestions, exitPlanRequest, todos, completionInfo, triggerContent, gateApproval, processingMsgId } = chatState;
   // Pair tool_use with its tool_result by tool_use_id so the renderer can
   // collapse them into a single pill with output. Skip pairing when the
   // tool_use_id is empty (live events without a stable id).
@@ -210,13 +210,17 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     }
   }, [hasMore, loading, loadMore]);
 
-  // Find the first unprocessed user message ID — the one currently being processed.
-  // Later unprocessed messages are shown with a "queued" label.
+  // The backend tells us which msg_id the agent is currently processing via
+  // agent.status. We must NOT infer from array position because priority-bumped
+  // messages (e.g. deny-with-prompt) can be processed out of chronological
+  // order. Fallback: during the brief startup window before the first
+  // agent.status event arrives, use the first-unprocessed heuristic.
   const unprocessedUserMsgs = messages.filter((m) => !m.is_bot && !m.is_processed);
-  const firstUnprocessedUserMsgId = unprocessedUserMsgs[0]?.msg_id ?? null;
-  const hasQueuedMessages = unprocessedUserMsgs.length > 1;
+  const effectiveProcessingMsgId =
+    processingMsgId ?? (isRunning ? unprocessedUserMsgs[0]?.msg_id ?? null : null);
   // Messages waiting behind the currently-processing one; deletable from the popup.
-  const queuedMessages = unprocessedUserMsgs.slice(1);
+  const queuedMessages = unprocessedUserMsgs.filter((m) => m.msg_id !== effectiveProcessingMsgId);
+  const hasQueuedMessages = queuedMessages.length > 0;
 
   // Track whether we ever had queued messages in this batch, so the trigger
   // quote persists even when processing the last message of a multi-message batch.
@@ -244,8 +248,8 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
                   <MessageBubble
                     key={`m-${msg.msg_id}`}
                     message={msg}
-                    showProcessing={isRunning && !msg.is_bot && msg.msg_id === firstUnprocessedUserMsgId}
-                    showQueued={!msg.is_bot && !msg.is_processed && !(isRunning && msg.msg_id === firstUnprocessedUserMsgId)}
+                    showProcessing={isRunning && !msg.is_bot && msg.msg_id === effectiveProcessingMsgId}
+                    showQueued={!msg.is_bot && !msg.is_processed && msg.msg_id !== effectiveProcessingMsgId}
                     highlighted={msg.id === highlightedMsgId}
                     onQuote={onQuote}
                   />
@@ -272,7 +276,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
             });
           })()}
           {showTriggerQuote && (
-            <TriggerQuote content={triggerContent} time={firstUnprocessedUserMsgId ? messages.find((m) => m.msg_id === firstUnprocessedUserMsgId)?.created_at : undefined} />
+            <TriggerQuote content={triggerContent} time={effectiveProcessingMsgId ? messages.find((m) => m.msg_id === effectiveProcessingMsgId)?.created_at : undefined} />
           )}
           {isRunning && agentActivity && (
             <AgentActivityIndicator activity={agentActivity} />

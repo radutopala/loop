@@ -42,6 +42,7 @@ type ActiveChatLister interface {
 // through the orchestrator so Claude can respond.
 type IncomingMessageHandler interface {
 	HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string)
+	HandleIncomingMessageWithPriority(ctx context.Context, channelID, authorID, content, mode string, priority int)
 	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }
 

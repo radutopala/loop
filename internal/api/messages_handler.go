@@ -34,8 +34,19 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 
 	// Route through the orchestrator when available.
 	if s.msgHandler != nil {
+		// Interrupt mode: cancel the active run and bump this message above any
+		// queued rows so it claims next. Existing queued rows are preserved.
 		if req.Interrupt && s.runCanceller != nil {
 			s.runCanceller.CancelActiveRun(req.ChannelID)
+			prio := 0
+			if s.store != nil {
+				if p, err := s.store.MaxQueuedPriority(r.Context(), req.ChannelID); err == nil {
+					prio = p + 1
+				}
+			}
+			go s.msgHandler.HandleIncomingMessageWithPriority(context.Background(), req.ChannelID, "", req.Content, req.Mode, prio)
+			w.WriteHeader(http.StatusNoContent)
+			return
 		}
 		// Use a detached context — r.Context() is cancelled when the HTTP response is sent.
 		go s.msgHandler.HandleIncomingMessage(context.Background(), req.ChannelID, "", req.Content, req.Mode)

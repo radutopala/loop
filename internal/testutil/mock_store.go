@@ -70,6 +70,40 @@ func (m *MockStore) DeleteQueuedMessage(ctx context.Context, channelID, msgID st
 	return args.Bool(0), args.Error(1)
 }
 
+func (m *MockStore) ClaimNextPending(ctx context.Context, channelID string) (*db.Message, error) {
+	args := m.Called(ctx, channelID)
+	if fn, ok := args.Get(0).(func(context.Context, string) *db.Message); ok {
+		return fn(ctx, channelID), args.Error(1)
+	}
+	msg, _ := args.Get(0).(*db.Message)
+	return msg, args.Error(1)
+}
+
+func (m *MockStore) ReleaseRunningMessage(ctx context.Context, id int64, processed bool) error {
+	return m.Called(ctx, id, processed).Error(0)
+}
+
+func (m *MockStore) ResetStaleRunningMessages(ctx context.Context) ([]db.StaleRunningMessage, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]db.StaleRunningMessage), args.Error(1)
+}
+
+func (m *MockStore) MaxQueuedPriority(ctx context.Context, channelID string) (int, error) {
+	args := m.Called(ctx, channelID)
+	return args.Int(0), args.Error(1)
+}
+
+func (m *MockStore) ListPendingChannels(ctx context.Context) ([]string, error) {
+	args := m.Called(ctx)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]string), args.Error(1)
+}
+
 func (m *MockStore) GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*db.Message, error) {
 	args := m.Called(ctx, channelID, limit)
 	if args.Get(0) == nil {
@@ -202,13 +236,10 @@ func (m *MockStore) Close() error {
 
 // WriterDB satisfies the optional `interface{ WriterDB() *sql.DB }` that
 // serve() type-asserts on to wire fs migrations and the quality engine.
-// Returns nil unless the test explicitly sets a *sql.DB via .On("WriterDB").
+// Returns whatever the test set via .On("WriterDB"). Tests typically pass
+// `(*sql.DB)(nil)` since the mock never needs a real handle.
 func (m *MockStore) WriterDB() *sql.DB {
-	args := m.Called()
-	if args.Get(0) == nil {
-		return nil
-	}
-	return args.Get(0).(*sql.DB)
+	return m.Called().Get(0).(*sql.DB)
 }
 
 func (m *MockStore) GetScheduledTaskByTemplateName(ctx context.Context, channelID, templateName string) (*db.ScheduledTask, error) {

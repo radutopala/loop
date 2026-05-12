@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/mock"
@@ -119,6 +120,10 @@ func (m *MockBot) CreateSimpleThread(ctx context.Context, channelID, name, initi
 
 func (m *MockBot) HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string) {
 	m.Called(ctx, channelID, authorID, content, mode)
+}
+
+func (m *MockBot) HandleIncomingMessageWithPriority(ctx context.Context, channelID, authorID, content, mode string, priority int) {
+	m.Called(ctx, channelID, authorID, content, mode, priority)
 }
 
 func (m *MockBot) HandleThreadCreated(ctx context.Context, threadID, authorID, message string) {
@@ -263,6 +268,15 @@ type OrchestratorSuite struct {
 	scheduler *testutil.MockScheduler
 	orch      *Orchestrator
 	ctx       context.Context
+
+	// pendingMu guards the default ClaimNextPending mock's introspection of
+	// past InsertMessage calls. claimed dedupes which msg_ids have been
+	// served — drainChannel calls ClaimNextPending repeatedly until nil, so
+	// without dedupe it would loop forever on the same row.
+	pendingMu sync.Mutex
+	pending   map[string][]*db.Message
+	claimed   map[string]bool
+	nextRowID int64
 }
 
 func TestOrchestratorSuite(t *testing.T) {
@@ -275,8 +289,10 @@ func (s *OrchestratorSuite) SetupTest() {
 	s.runner = new(MockRunner)
 	s.scheduler = new(testutil.MockScheduler)
 	s.ctx = context.Background()
+	s.pending = make(map[string][]*db.Message)
+	s.nextRowID = 0
 
-	// Default expectations for stop button (non-fatal, called during processTriggeredMessage)
+	// Default expectations for stop button (non-fatal, called during processClaimedMessage)
 	s.bot.On("BotUserID").Return("BOT").Maybe()
 	s.bot.On("IsBotUser", mock.Anything).Return(false).Maybe()
 	s.bot.On("SendStopButton", mock.Anything, mock.Anything, mock.Anything).Return("stop-msg-1", nil).Maybe()
@@ -287,13 +303,50 @@ func (s *OrchestratorSuite) SetupTest() {
 		return msg.IsBot
 	})).Return(nil).Maybe()
 
+	// Default DB-pull drain plumbing. ClaimNextPending introspects past
+	// InsertMessage calls on the same channel and returns the next
+	// unclaimed triggered row. This lets existing tests keep their
+	// `InsertMessage(...).Return(nil)` mocks intact while still having
+	// the drain loop see the inserted row. Tests that need a specific
+	// error from InsertMessage stay in control because their per-test
+	// On("InsertMessage", ...) registers after SetupTest and is matched
+	// in registration order.
+	s.claimed = make(map[string]bool)
+	s.store.On("ClaimNextPending", mock.Anything, mock.AnythingOfType("string")).Return(
+		func(_ context.Context, ch string) *db.Message {
+			s.pendingMu.Lock()
+			defer s.pendingMu.Unlock()
+			for _, call := range s.store.Calls {
+				if call.Method != "InsertMessage" || len(call.Arguments) < 2 {
+					continue
+				}
+				row, ok := call.Arguments.Get(1).(*db.Message)
+				if !ok || !row.IsTriggered || row.ChannelID != ch {
+					continue
+				}
+				if s.claimed[row.MsgID] {
+					continue
+				}
+				s.claimed[row.MsgID] = true
+				s.nextRowID++
+				captured := *row
+				captured.ID = s.nextRowID
+				return &captured
+			}
+			return nil
+		},
+		nil,
+	).Maybe()
+	s.store.On("ReleaseRunningMessage", mock.Anything, mock.AnythingOfType("int64"), mock.AnythingOfType("bool")).Return(nil).Maybe()
+
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{}, nil)
 }
 
 func (s *OrchestratorSuite) TestNew() {
 	require.NotNil(s.T(), s.orch)
-	require.NotNil(s.T(), s.orch.queue)
+	require.NotNil(s.T(), s.orch.store)
+	require.NotNil(s.T(), s.orch.bot)
 }
 
 func (s *OrchestratorSuite) TestSetEventBroadcaster() {
@@ -718,6 +771,55 @@ func (s *OrchestratorSuite) TestCancelActiveRunActive() {
 func (s *OrchestratorSuite) TestCancelActiveRunNoRun() {
 	ok := s.orch.CancelActiveRun("ch-nonexistent")
 	require.False(s.T(), ok)
+}
+
+func (s *OrchestratorSuite) TestActiveRunMessageIDStored() {
+	s.orch.activeRunMsgIDs.Store("ch-a", "m-1")
+	require.Equal(s.T(), "m-1", s.orch.ActiveRunMessageID("ch-a"))
+}
+
+func (s *OrchestratorSuite) TestActiveRunMessageIDNotPresent() {
+	require.Equal(s.T(), "", s.orch.ActiveRunMessageID("ch-missing"))
+}
+
+// --- ResumeChannel / drainChannel error paths ---
+//
+// These build a fresh orchestrator so the default SetupTest ClaimNextPending /
+// ReleaseRunningMessage mocks (which return rows from past InsertMessage calls)
+// don't override the per-test expectations.
+func (s *OrchestratorSuite) TestResumeChannelDrainsEmpty() {
+	store := new(testutil.MockStore)
+	store.On("ClaimNextPending", mock.Anything, "empty-ch").Return(nil, nil).Once()
+	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+
+	orch.ResumeChannel(context.Background(), "empty-ch")
+	store.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestDrainChannelClaimError() {
+	store := new(testutil.MockStore)
+	store.On("ClaimNextPending", mock.Anything, "err-ch").Return(nil, errors.New("db gone")).Once()
+	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+
+	orch.ResumeChannel(context.Background(), "err-ch")
+	store.AssertExpectations(s.T())
+}
+
+func (s *OrchestratorSuite) TestDrainChannelReleaseError() {
+	// Force processClaimedMessage to exit early (GetRecentMessages error in
+	// prepareAgentRequest) so we only need to mock the few methods drainChannel
+	// itself touches. ReleaseRunningMessage then returns an error so we exercise
+	// the log-and-continue branch in drainChannel.
+	store := new(testutil.MockStore)
+	row := &db.Message{ID: 99, ChannelID: "rel-ch", MsgID: "m-rel", IsTriggered: true, AuthorID: "u", AuthorName: "u", Content: "hi"}
+	store.On("ClaimNextPending", mock.Anything, "rel-ch").Return(row, nil).Once()
+	store.On("ClaimNextPending", mock.Anything, "rel-ch").Return(nil, nil).Once()
+	store.On("ReleaseRunningMessage", mock.Anything, int64(99), true).Return(errors.New("release failed")).Once()
+	store.On("GetRecentMessages", mock.Anything, "rel-ch", mock.Anything).Return(nil, errors.New("recent failed")).Once()
+
+	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+	orch.ResumeChannel(context.Background(), "rel-ch")
+	store.AssertExpectations(s.T())
 }
 
 func (s *OrchestratorSuite) TestCurrentConfigReloads() {

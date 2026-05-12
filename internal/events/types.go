@@ -61,6 +61,12 @@ type AgentStatusEventData struct {
 	Model          string `json:"model,omitempty"`
 	TriggerContent string `json:"trigger_content,omitempty"`
 	ThreadID       string `json:"thread_id,omitempty"`
+	// MsgID identifies which user message triggered this run. The FE uses
+	// it to label the correct chat row as "processing" — needed because
+	// priority-bumped messages can be processed out of chronological order,
+	// so the FE can't infer it from array position. Populated on running,
+	// completed, and error transitions for the same message.
+	MsgID string `json:"msg_id,omitempty"`
 	// Trigger identifies what kicked off the run — "scheduled" for runs
 	// driven by the task scheduler, empty for user-message runs. The
 	// renderer uses this to suppress the macOS dock bounce on scheduled

@@ -471,7 +471,9 @@ When multiple messages are sent while the agent is running, unprocessed messages
 
 ### Processing State
 
-Each user message has an `is_processed` flag. The first unprocessed user message is considered "currently being processed"; subsequent unprocessed messages are "queued".
+Each user message has an `is_processed` flag. The backend marks exactly one row as "currently running" via the [`agent.status`](events.md#agentstatus) event, which carries `msg_id` on `running`, `completed`, and `error` transitions. `useChatState` mirrors this into a `processingMsgId` field on the chat state; `ChatMessages` uses it to pick which row gets the `processing` label and which unprocessed rows fall into the `queued` bucket. This handles priority-bumped messages (e.g. the gate's "Deny with prompt" interrupt) that run ahead of older queued rows — the FE can't infer order from array position because chat history stays chronological.
+
+Until the first `agent.status` event arrives (or after a hard reload while `isRunning` is still true), the FE falls back to "first unprocessed user message" so the indicator is never absent during the brief startup window.
 
 | State | Label | Style |
 |-------|-------|-------|
@@ -490,12 +492,12 @@ The trigger quote persists across channel switches via the chat state store and 
 
 ### Queued Messages Popup
 
-A `QueuedMessagesPopup` component (`src/components/chat/QueuedMessagesPopup.tsx`) renders above the chat input whenever there are two or more unprocessed user messages — the first is "processing" and the rest are the popup's contents. It is hidden when the queue is empty.
+A `QueuedMessagesPopup` component (`src/components/chat/QueuedMessagesPopup.tsx`) renders above the chat input whenever there are one or more unprocessed user messages waiting behind the currently-running one. It is hidden when the queue is empty.
 
 - **Collapsible header** — shows `N queued` with a chevron. Click to expand the list.
 - **Row layout** — one line per message, truncated with ellipsis. Clicking a row toggles an inline expanded view (full content, pre-wrapped).
-- **Delete button** — a `×` button on each row calls `DELETE /api/messages/{msg_id}?channel_id=...` via the `deleteQueuedMessage` API client. The row dims while the request is in flight; the server broadcasts a `message.deleted` WebSocket event and `useChatState` removes the message from local state.
-- **Safety** — only waiting messages (past the first unprocessed one) appear in the popup. The currently-processing message is excluded — use the existing stop button to cancel an in-flight run.
+- **Delete button** — a `×` button on each row calls `DELETE /api/messages/{msg_id}?channel_id=...` via the `deleteQueuedMessage` API client. The row dims while the request is in flight; the server broadcasts a `message.deleted` WebSocket event and `useChatState` removes the message from local state. Deleting a queued row is safe even mid-run — `ClaimNextPending` only sees `is_running=0 AND is_processed=0` rows, so the deletion lands before the row can be claimed.
+- **Safety** — the row identified by `processingMsgId` (see [Processing State](#processing-state)) is filtered out of the popup. Use the existing stop button to cancel an in-flight run, or "Deny with prompt" on a gate card to interrupt with a new prompt that runs ahead of the queue without dropping queued rows.
 
 ---
 

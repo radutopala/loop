@@ -193,6 +193,7 @@ Agent lifecycle status change (running, completed, errored).
   "stop_reason": "end_turn",
   "model": "claude-sonnet-4-20250514",
   "trigger_content": "hi",
+  "msg_id": "discord_msg_id_or_internal_id",
   "thread_id": "thread_abc123"
 }
 ```
@@ -207,6 +208,7 @@ Agent lifecycle status change (running, completed, errored).
 | `stop_reason`     | string | Why the agent stopped (e.g., `"end_turn"`, `"max_turns"`) |
 | `model`           | string | Model used for the run |
 | `trigger_content` | string | Content of the message that triggered the run (on `"running"` status) |
+| `msg_id`          | string | `msg_id` of the user message that triggered the run. Present on `running`, `completed`, and `error` for the same row. The frontend uses it to label the correct chat bubble as "processing" — needed because priority-bumped messages (deny-with-prompt interrupts) can be processed ahead of older queued rows, so the FE cannot infer it from array position. |
 | `thread_id`       | string | Thread ID for scheduled task runs. Present on all status events (`running`, `error`, `completed`) when the task has an existing thread. The frontend uses this to route state (store entry, `isRunningMap`) to the thread instead of the parent channel, so the parent doesn't show a running indicator for thread work and the thread view shows the stop button and streaming content. |
 
 ---

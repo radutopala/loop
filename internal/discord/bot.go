@@ -478,6 +478,11 @@ func (b *DiscordBot) CreateSimpleThread(ctx context.Context, channelID, name, in
 func (b *DiscordBot) HandleIncomingMessage(_ context.Context, _, _, _, _ string) {
 }
 
+// HandleIncomingMessageWithPriority is a no-op on Discord — chat platforms
+// don't drive the API interrupt path that uses priority.
+func (b *DiscordBot) HandleIncomingMessageWithPriority(_ context.Context, _, _, _, _ string, _ int) {
+}
+
 // HandleThreadCreated posts the initial message (with a bot mention) to the
 // thread so that the normal message event handler picks it up and triggers a
 // new agent run.
