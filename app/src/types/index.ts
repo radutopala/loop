@@ -87,6 +87,7 @@ export interface AgentStatusData {
   model?: string;
   trigger_content?: string;
   thread_id?: string;
+  trigger?: string;
 }
 
 export interface ToolUseData {

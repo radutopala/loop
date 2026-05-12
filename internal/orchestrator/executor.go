@@ -451,7 +451,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	// subscription bootstrap). The frontend routes the parent event to the
 	// thread's store via thread_id so the parent doesn't show running state.
 	if e.events != nil {
-		status := events.AgentStatusEventData{Status: "running", RunID: runID, ThreadID: threadID}
+		status := events.AgentStatusEventData{Status: "running", RunID: runID, ThreadID: threadID, Trigger: "scheduled"}
 		if hasExistingThread {
 			e.events.BroadcastAgentStatus(threadID, status)
 		}
@@ -474,7 +474,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 	resp, err := e.runner.Run(runCtx, req)
 	if err != nil {
 		if e.events != nil {
-			errStatus := events.AgentStatusEventData{Status: "error", RunID: runID, Error: err.Error(), ThreadID: threadID}
+			errStatus := events.AgentStatusEventData{Status: "error", RunID: runID, Error: err.Error(), ThreadID: threadID, Trigger: "scheduled"}
 			if hasExistingThread {
 				// Broadcast to thread directly so the thread view updates immediately.
 				e.events.BroadcastAgentStatus(threadID, errStatus)
@@ -486,7 +486,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 
 	if resp.Error != "" {
 		if e.events != nil {
-			errStatus := events.AgentStatusEventData{Status: "error", RunID: runID, Error: resp.Error, ThreadID: threadID}
+			errStatus := events.AgentStatusEventData{Status: "error", RunID: runID, Error: resp.Error, ThreadID: threadID, Trigger: "scheduled"}
 			if hasExistingThread {
 				e.events.BroadcastAgentStatus(threadID, errStatus)
 			}
@@ -540,6 +540,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 			NumTurns:   resp.NumTurns,
 			Model:      resp.Model,
 			ThreadID:   threadID,
+			Trigger:    "scheduled",
 		}
 		if targetChannelID != task.ChannelID {
 			e.events.BroadcastAgentStatus(targetChannelID, done)

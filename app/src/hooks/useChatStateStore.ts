@@ -228,7 +228,12 @@ export function useChatStateStore({
                 : `Error: ${data.error ?? "unknown"}`;
             new Notification(`Loop — ${name}`, { body });
           }
-          window.loopAPI?.notifyTurnEnd?.();
+          // Skip the dock bounce for scheduled-task completions — they fire
+          // frequently and aren't user-actionable. User-initiated runs still
+          // bounce so the user notices when their reply lands.
+          if (data.trigger !== "scheduled") {
+            window.loopAPI?.notifyTurnEnd?.();
+          }
         }
       }
 
