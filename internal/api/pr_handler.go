@@ -67,7 +67,8 @@ func (s *Server) handleChannelPR(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ghUser := s.resolveGHUser(dirPath)
+	parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
+	ghUser := s.resolveGHUser(dirPath, parentDirPath)
 
 	pr, err := s.githubLookup.LookupPR(r.Context(), dirPath, ghUser, branch)
 	if err != nil {
@@ -89,9 +90,13 @@ func (s *Server) handleChannelPR(w http.ResponseWriter, r *http.Request) {
 	writeHTTPJSON(w, http.StatusOK, prResponse{Present: true, PR: pr}, s.logger)
 }
 
-// resolveGHUser returns the gh CLI user for the channel's workdir. Project
-// config overrides global; both fall back to "" (use gh's active account).
-func (s *Server) resolveGHUser(workdir string) string {
+// resolveGHUser returns the gh CLI user for the channel's workdir. For
+// worktree channels (parentDirPath != "") the merge is three-layered:
+// global → parent project → worktree, so the parent project's
+// github.gh_user setting applies even when the worktree's own
+// .loop/config.json is empty. Falls back to "" (use gh's active account)
+// on any load error.
+func (s *Server) resolveGHUser(workdir, parentDirPath string) string {
 	loadConfig := s.loadConfig
 	if loadConfig == nil {
 		loadConfig = config.Load
@@ -100,12 +105,21 @@ func (s *Server) resolveGHUser(workdir string) string {
 	if err != nil || cfg == nil {
 		return ""
 	}
-	loadProjectConfig := s.loadProjectConfig
-	if loadProjectConfig == nil {
-		loadProjectConfig = config.LoadProjectConfig
-	}
 	merged := cfg
-	if workdir != "" {
+	switch {
+	case workdir != "" && parentDirPath != "":
+		loadWorktree := s.loadWorktreeProjectConfig
+		if loadWorktree == nil {
+			loadWorktree = config.LoadWorktreeProjectConfig
+		}
+		if pc, perr := loadWorktree(workdir, parentDirPath, cfg); perr == nil && pc != nil {
+			merged = pc
+		}
+	case workdir != "":
+		loadProjectConfig := s.loadProjectConfig
+		if loadProjectConfig == nil {
+			loadProjectConfig = config.LoadProjectConfig
+		}
 		if pc, perr := loadProjectConfig(workdir, cfg); perr == nil && pc != nil {
 			merged = pc
 		}

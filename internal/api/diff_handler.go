@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/http"
@@ -236,6 +237,13 @@ func (s *Server) handleBranchDiff(w http.ResponseWriter, r *http.Request, dirPat
 		return
 	}
 
+	// Resolve refs against the worktree. A stacked PR's parent branch may
+	// only exist as origin/<name> locally — fall back to that when the
+	// bare ref doesn't resolve, so the user doesn't need to manually pick
+	// "origin/<branch>" in the dropdown.
+	source = resolveBranchRef(r.Context(), dirPath, source)
+	target = resolveBranchRef(r.Context(), dirPath, target)
+
 	rangeSpec := source + "..." + target
 
 	numstatCmd := exec.CommandContext(r.Context(), "git", "diff", "--numstat", "-z", rangeSpec)
@@ -274,6 +282,30 @@ func (s *Server) handleBranchDiff(w http.ResponseWriter, r *http.Request, dirPat
 		TotalAdditions: totalAdd,
 		TotalDeletions: totalDel,
 	}, s.logger)
+}
+
+// resolveBranchRef returns the ref to pass to git: `ref` if it resolves in
+// the worktree, otherwise `origin/<ref>` if that resolves, otherwise the
+// original `ref` (so git itself produces the error). This handles stacked
+// PRs whose parent branch is only present as a remote-tracking ref.
+func resolveBranchRef(ctx context.Context, dir, ref string) string {
+	if ref == "" {
+		return ref
+	}
+	if refResolves(ctx, dir, ref) {
+		return ref
+	}
+	remote := "origin/" + ref
+	if refResolves(ctx, dir, remote) {
+		return remote
+	}
+	return ref
+}
+
+func refResolves(ctx context.Context, dir, ref string) bool {
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	cmd.Dir = dir
+	return cmd.Run() == nil
 }
 
 // parseNumstat parses `git diff --numstat -z` output into file entries.
