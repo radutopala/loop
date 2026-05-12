@@ -296,6 +296,15 @@ type Config struct {
 	ExtraDirs            []string
 	Desktop              DesktopConfig
 	Gates                GatesConfig
+	GitHub               GitHubConfig
+}
+
+// GitHubConfig holds GitHub integration settings. GHUser names a `gh` CLI
+// account (per `gh auth status`); when set, PR lookups read its token via
+// `gh auth token --user <name>` and invoke `gh` with GH_TOKEN env override —
+// avoiding the racy mutation of global gh state via `gh auth switch`.
+type GitHubConfig struct {
+	GHUser string `json:"gh_user"`
 }
 
 // DesktopConfig holds Electron desktop app preferences.
@@ -368,6 +377,7 @@ type jsonConfig struct {
 	Permissions           *jsonPermissionsConfig `json:"permissions"`
 	Desktop               *DesktopConfig         `json:"desktop"`
 	Gates                 *jsonGatesConfig       `json:"gates"`
+	GitHub                *GitHubConfig          `json:"github"`
 }
 
 // jsonMemoryConfig is the JSON representation of the memory block.
@@ -647,6 +657,10 @@ func (l *Loader) parse() (*Config, error) {
 	cfg.CopyFiles = sliceDefault(jc.CopyFiles, []string{"~/.claude.json"})
 	cfg.Envs = stringifyEnvs(jc.Envs)
 
+	if jc.GitHub != nil {
+		cfg.GitHub = *jc.GitHub
+	}
+
 	// Memory config: enabled must be explicitly true.
 	if jc.Memory != nil {
 		cfg.Memory.Enabled = ptrDefault(jc.Memory.Enabled, false)
@@ -818,6 +832,7 @@ type projectConfig struct {
 	Permissions          *jsonPermissionsConfig `json:"permissions"`
 	ExtraDirs            []string               `json:"extra_dirs"`
 	Gates                *jsonGatesConfig       `json:"gates"`
+	GitHub               *GitHubConfig          `json:"github"`
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
@@ -1172,6 +1187,11 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 	// ExtraDirs: project replaces global when set.
 	if len(pc.ExtraDirs) > 0 {
 		merged.ExtraDirs = pc.ExtraDirs
+	}
+
+	// GitHub: project overrides global when gh_user is set.
+	if pc.GitHub != nil && pc.GitHub.GHUser != "" {
+		merged.GitHub.GHUser = pc.GitHub.GHUser
 	}
 
 	return &merged, nil

@@ -110,6 +110,7 @@ type Server struct {
 	approvalResolver        bot.ApprovalResolver                                 // gate approval dispatcher
 	containerApprovalRouter ContainerApprovalRouter                              // per-container bearer-token → Manager lookup
 	auditDirResolver        AuditDirResolver                                     // per-channel host path to the gate audit jsonl dir
+	githubLookup            GitHubLookup                                         // resolves PR for a channel's branch via `gh`
 
 	// Quality-scan wiring. All fields are nil by default — handlers
 	// return 501 until the daemon wires concrete implementations. Tests
@@ -292,6 +293,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/channels/{id}/files/exists", s.handleFilesExists)
 	mux.HandleFunc("POST /api/channels/{id}/dir", s.handleCreateDir)
 	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
+	mux.HandleFunc("GET /api/channels/{id}/pr", s.handleChannelPR)
 	mux.HandleFunc("GET /api/channels/{id}/branches", s.handleListBranches)
 	mux.HandleFunc("GET /api/channels/{id}/commits", s.handleListCommits)
 	mux.HandleFunc("POST /api/channels/{id}/branches/switch", s.handleSwitchBranch)

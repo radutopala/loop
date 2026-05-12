@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { Channel, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
+import type { Channel, ChannelUpdatedData, ImageBuildStatusData, ImageUpdateAvailableData, UpdateStatus, WSEvent } from "./types";
 import { fonts } from "./theme";
 import { ThemeProvider, useTheme, DEFAULT_FONT_SIZES } from "./ThemeContext";
 import { createChannel, createThread, createWorktreeThread, deleteChannel, deleteThread, ensureChannel, fetchChannels, fetchDiff, getImageStatus, importWorktree, initApiUrl, rebuildImage, setChannelLocked } from "./api/loopApi";
@@ -218,6 +218,17 @@ function AppInner() {
         setSelectedId(null);
       }
       loadChannels();
+      return;
+    }
+    if (event.type === "channel.updated") {
+      const d = event.data as ChannelUpdatedData;
+      setChannels((prev) => prev.map((c) => c.id === d.channel_id ? {
+        ...c,
+        branch: d.branch,
+        commit: d.commit,
+        diff_additions: d.diff_additions,
+        diff_deletions: d.diff_deletions,
+      } : c));
       return;
     }
     if (event.type === "image.build_status") {

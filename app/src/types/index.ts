@@ -143,6 +143,29 @@ export interface TodoWriteData {
   todos: TodoItem[];
 }
 
+export interface PRInfo {
+  number: number;
+  url: string;
+  base_ref: string;
+  head_ref: string;
+  state: string;
+  title?: string;
+  is_draft?: boolean;
+}
+
+export interface PRResponse {
+  present: boolean;
+  pr?: PRInfo;
+}
+
+export interface ChannelUpdatedData {
+  channel_id: string;
+  branch: string;
+  commit: string;
+  diff_additions: number;
+  diff_deletions: number;
+}
+
 export interface GateApprovalRequestedData {
   req_id: string;
   kind: string;

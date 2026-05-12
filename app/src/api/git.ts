@@ -90,6 +90,29 @@ export async function fetchCommits(channelId: string, branch?: string, limit?: n
   return data.commits;
 }
 
+// ── Pull request ──
+
+export interface PRInfo {
+  number: number;
+  url: string;
+  base_ref: string;
+  head_ref: string;
+  state: string;
+  title?: string;
+  is_draft?: boolean;
+}
+
+export interface PRResponse {
+  present: boolean;
+  pr?: PRInfo;
+}
+
+export async function fetchPR(channelId: string): Promise<PRResponse> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/pr`);
+  if (!res.ok) throw new Error(`Failed to fetch PR info: ${res.statusText}`);
+  return res.json();
+}
+
 export async function fetchDiff(channelId: string, source?: string, target?: string): Promise<DiffResponse> {
   let url = `${getApiUrl()}/api/channels/${channelId}/diff`;
   if (source && target) {

@@ -137,6 +137,21 @@ func (s *ConfigSuite) TestLoadStreamingEnabledExplicitFalse() {
 	require.False(s.T(), cfg.StreamingEnabled)
 }
 
+func (s *ConfigSuite) TestLoadGitHubConfig() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"github": { "gh_user": "radutopala" }
+		}`), nil
+	}
+
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "radutopala", cfg.GitHub.GHUser)
+}
+
 func (s *ConfigSuite) TestLoadBrowserEnabledExplicitFalse() {
 	s.loader.readFile = func(_ string) ([]byte, error) {
 		return []byte(`{
