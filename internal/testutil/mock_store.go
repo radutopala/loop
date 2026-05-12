@@ -265,6 +265,11 @@ func (m *MockStore) ReleaseScheduledTaskRunning(ctx context.Context, id int64) e
 	return m.Called(ctx, id).Error(0)
 }
 
+func (m *MockStore) ResetStaleRunningTasks(ctx context.Context) (int64, error) {
+	args := m.Called(ctx)
+	return args.Get(0).(int64), args.Error(1)
+}
+
 func (m *MockStore) UpdateChannelPermissions(ctx context.Context, channelID string, perms types.Permissions) error {
 	return m.Called(ctx, channelID, perms).Error(0)
 }

@@ -445,6 +445,7 @@ func (s *MainSuite) setupServeMocks() *serveMocks {
 	m.store.On("WriterDB").Return((*sql.DB)(nil)).Maybe()
 	m.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 	m.store.On("ListChannels", mock.Anything).Return(nil, nil).Maybe()
+	m.store.On("ResetStaleRunningTasks", mock.Anything).Return(int64(0), nil).Maybe()
 	m.dockerClient.On("LatestClaudeVersion").Return("1.0.0").Maybe()
 	m.dockerClient.On("ListContainerInfos", mock.Anything).Return([]*container.ContainerInfo{}, nil).Maybe()
 	s.app.configLoad = func() (*config.Config, error) { return m.cfg, nil }

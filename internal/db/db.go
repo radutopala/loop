@@ -47,6 +47,7 @@ type Store interface {
 	UpdateScheduledTaskOriginBranch(ctx context.Context, id int64, branch string) error
 	ClaimScheduledTaskRunning(ctx context.Context, id int64) (bool, error)
 	ReleaseScheduledTaskRunning(ctx context.Context, id int64) error
+	ResetStaleRunningTasks(ctx context.Context) (int64, error)
 	GetScheduledTask(ctx context.Context, id int64) (*ScheduledTask, error)
 	GetScheduledTaskByTemplateName(ctx context.Context, channelID, templateName string) (*ScheduledTask, error)
 	ListChannels(ctx context.Context) ([]*Channel, error)
@@ -688,6 +689,39 @@ func (s *SQLiteStore) ReleaseScheduledTaskRunning(ctx context.Context, id int64)
 		s.nowFunc(), id,
 	)
 	return err
+}
+
+// ResetStaleRunningTasks clears `running=1` on any scheduled_tasks row and
+// finalizes any orphaned `task_run_logs` row whose run never completed (e.g.
+// because the daemon was killed before its defer-based release could fire).
+// Returns the number of tasks whose running flag was cleared. Safe to call
+// at daemon startup — by that point no task is genuinely in flight, since
+// task execution is owned by this same process.
+func (s *SQLiteStore) ResetStaleRunningTasks(ctx context.Context) (int64, error) {
+	var reset int64
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		now := s.nowFunc()
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE task_run_logs
+			    SET status = 'failed',
+			        finished_at = ?,
+			        error_text = CASE WHEN error_text = '' THEN 'daemon restarted while running' ELSE error_text END
+			  WHERE status = 'running' AND finished_at IS NULL`,
+			now,
+		); err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx,
+			`UPDATE scheduled_tasks SET running = 0, updated_at = ? WHERE running = 1`,
+			now,
+		)
+		if err != nil {
+			return err
+		}
+		reset, err = result.RowsAffected()
+		return err
+	})
+	return reset, err
 }
 
 func (s *SQLiteStore) DeleteScheduledTask(ctx context.Context, id int64) error {

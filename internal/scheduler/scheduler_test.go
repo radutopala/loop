@@ -42,11 +42,16 @@ func (s *SchedulerSuite) SetupTest() {
 	s.store = new(testutil.MockStore)
 	s.executor = new(MockTaskExecutor)
 	s.logger = slog.Default()
+	// Start() runs a stale-task reset sweep; default it to a no-op so individual
+	// tests don't have to set the expectation. Tests that exercise the sweep
+	// itself can override with a more specific .On().
+	s.store.On("ResetStaleRunningTasks", mock.Anything).Return(int64(0), nil).Maybe()
 }
 
 // setupDueTasks configures the mock store to return tasks once, then empty.
 // It also allows GetChannel lookups used for platform logging and running state updates.
 func setupDueTasks(store *testutil.MockStore, tasks []*db.ScheduledTask) {
+	store.On("ResetStaleRunningTasks", mock.Anything).Return(int64(0), nil).Maybe()
 	store.On("GetDueTasks", mock.Anything, mock.Anything).Return(tasks, nil).Once()
 	store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{}, nil).Maybe()
 	if len(tasks) > 0 {
@@ -267,6 +272,32 @@ func (s *SchedulerSuite) TestStopWithoutStart() {
 	ts := NewTaskScheduler(s.store, s.executor, time.Second, s.logger)
 	err := ts.Stop()
 	require.NoError(s.T(), err)
+}
+
+func (s *SchedulerSuite) TestStartResetsStaleRunningTasks() {
+	// Override the SetupTest default with a strict expectation: Start MUST
+	// call ResetStaleRunningTasks exactly once, before the poll loop runs.
+	s.store.ExpectedCalls = nil
+	s.store.On("ResetStaleRunningTasks", mock.Anything).Return(int64(2), nil).Once()
+	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{}, nil).Maybe()
+
+	ts := NewTaskScheduler(s.store, s.executor, 10*time.Millisecond, s.logger)
+	require.NoError(s.T(), ts.Start(context.Background()))
+	require.NoError(s.T(), ts.Stop())
+
+	s.store.AssertCalled(s.T(), "ResetStaleRunningTasks", mock.Anything)
+}
+
+func (s *SchedulerSuite) TestStartContinuesWhenResetSweepFails() {
+	// A failing sweep must not block startup — log the error and keep going.
+	s.store.ExpectedCalls = nil
+	s.store.On("ResetStaleRunningTasks", mock.Anything).
+		Return(int64(0), errors.New("db locked")).Once()
+	s.store.On("GetDueTasks", mock.Anything, mock.Anything).Return([]*db.ScheduledTask{}, nil).Maybe()
+
+	ts := NewTaskScheduler(s.store, s.executor, 10*time.Millisecond, s.logger)
+	require.NoError(s.T(), ts.Start(context.Background()))
+	require.NoError(s.T(), ts.Stop())
 }
 
 func (s *SchedulerSuite) TestPollLoopExecutesTask() {

@@ -352,6 +352,60 @@ func (s *StoreSuite) TestReleaseScheduledTaskRunningError() {
 	require.Error(s.T(), s.store.ReleaseScheduledTaskRunning(context.Background(), 1))
 }
 
+func (s *StoreSuite) TestResetStaleRunningTasks() {
+	s.mock.ExpectBegin()
+	s.mock.ExpectExec(`UPDATE task_run_logs`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	s.mock.ExpectExec(`UPDATE scheduled_tasks SET running = 0`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 3))
+	s.mock.ExpectCommit()
+
+	reset, err := s.store.ResetStaleRunningTasks(context.Background())
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), int64(3), reset)
+}
+
+func (s *StoreSuite) TestResetStaleRunningTasksLogUpdateError() {
+	s.mock.ExpectBegin()
+	s.mock.ExpectExec(`UPDATE task_run_logs`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
+
+	_, err := s.store.ResetStaleRunningTasks(context.Background())
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestResetStaleRunningTasksTaskUpdateError() {
+	s.mock.ExpectBegin()
+	s.mock.ExpectExec(`UPDATE task_run_logs`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	s.mock.ExpectExec(`UPDATE scheduled_tasks SET running = 0`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
+
+	_, err := s.store.ResetStaleRunningTasks(context.Background())
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestResetStaleRunningTasksRowsAffectedError() {
+	s.mock.ExpectBegin()
+	s.mock.ExpectExec(`UPDATE task_run_logs`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewResult(0, 0))
+	s.mock.ExpectExec(`UPDATE scheduled_tasks SET running = 0`).
+		WithArgs(sqlmock.AnyArg()).
+		WillReturnResult(sqlmock.NewErrorResult(sql.ErrConnDone))
+	s.mock.ExpectRollback()
+
+	_, err := s.store.ResetStaleRunningTasks(context.Background())
+	require.Error(s.T(), err)
+}
+
 // --- TaskRunLog tests ---
 
 func (s *StoreSuite) TestInsertTaskRunLog() {
