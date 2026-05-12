@@ -249,6 +249,93 @@ func (s *MainSuite) TestServeHappyPathShutdown() {
 	m.bot.AssertExpectations(s.T())
 }
 
+// TestServeResumesPendingMessages exercises the startup-recovery block that
+// broadcasts messages.processed for stale running rows and spawns ResumeChannel
+// goroutines for channels with still-pending triggered rows. We swap the
+// default ResetStaleRunningMessages / ListPendingChannels mocks (set up as
+// .Maybe() with nil returns in setupServeMocks) for explicit ones that return
+// representative data.
+func (s *MainSuite) TestServeResumesPendingMessages() {
+	m := s.setupServeMocks()
+	m.setupHappyBot()
+	// Replace the default .Maybe nil mocks with explicit ones returning data.
+	// Testify matches in registration order, so prepending via ExpectedCalls
+	// would be needed if we wanted to override. Simpler path: register new
+	// expectations that match BEFORE the SetupTest .Maybe (which won't run
+	// because the new ones consume the call). We tag .Once() to make this
+	// crystal clear in the suite output.
+	m.store.ExpectedCalls = filterMockCalls(m.store.ExpectedCalls, "ResetStaleRunningMessages", "ListPendingChannels")
+	m.store.On("ResetStaleRunningMessages", mock.Anything).Return([]db.StaleRunningMessage{
+		{ChannelID: "ch-1", MsgID: "msg-a"},
+		{ChannelID: "ch-1", MsgID: "msg-b"},
+		{ChannelID: "ch-2", MsgID: "msg-c"},
+		{ChannelID: "ch-skip", MsgID: ""}, // empty msg_id is filtered out
+	}, nil).Once()
+	// Returning a pending channel kicks off orch.ResumeChannel — that goroutine
+	// calls ClaimNextPending; allow it to no-op cleanly with Maybe.
+	m.store.On("ListPendingChannels", mock.Anything).Return([]string{"ch-pending"}, nil).Once()
+	m.store.On("ClaimNextPending", mock.Anything, "ch-pending").Return(nil, nil).Maybe()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.app.serve() }()
+	s.waitForServeReady(errCh)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+	m.store.AssertCalled(s.T(), "ResetStaleRunningMessages", mock.Anything)
+	m.store.AssertCalled(s.T(), "ListPendingChannels", mock.Anything)
+}
+
+// TestServeStartupRecoveryErrors covers the error branches: both
+// ResetStaleRunningMessages and ListPendingChannels return errors which serve()
+// logs and continues past.
+func (s *MainSuite) TestServeStartupRecoveryErrors() {
+	m := s.setupServeMocks()
+	m.setupHappyBot()
+	m.store.ExpectedCalls = filterMockCalls(m.store.ExpectedCalls, "ResetStaleRunningMessages", "ListPendingChannels")
+	m.store.On("ResetStaleRunningMessages", mock.Anything).Return(nil, errors.New("db gone")).Once()
+	m.store.On("ListPendingChannels", mock.Anything).Return(nil, errors.New("read failed")).Once()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.app.serve() }()
+	s.waitForServeReady(errCh)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+}
+
+// filterMockCalls returns a copy of calls without entries whose Method is in
+// drop. Used to swap out .Maybe() expectations set by setupServeMocks with
+// per-test expectations.
+func filterMockCalls(calls []*mock.Call, drop ...string) []*mock.Call {
+	dropSet := make(map[string]struct{}, len(drop))
+	for _, d := range drop {
+		dropSet[d] = struct{}{}
+	}
+	out := calls[:0:len(calls)]
+	for _, c := range calls {
+		if _, skip := dropSet[c.Method]; skip {
+			continue
+		}
+		out = append(out, c)
+	}
+	return out
+}
+
 func (s *MainSuite) TestServeHappyPathWithChannelService() {
 	m := s.setupServeMocks()
 	m.setupHappyBot()

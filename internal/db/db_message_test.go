@@ -17,10 +17,11 @@ func (s *StoreSuite) TestInsertMessage() {
 	msg := &Message{
 		ChatID: 1, ChannelID: "ch1", MsgID: "msg1",
 		AuthorID: "u1", AuthorName: "user1", Content: "hello",
-		IsBot: false, IsProcessed: false, CreatedAt: time.Now().UTC(),
+		IsBot: false, IsProcessed: false, IsTriggered: true, Priority: 7, Mode: "plan",
+		CreatedAt: time.Now().UTC(),
 	}
 	s.mock.ExpectExec(`INSERT INTO messages`).
-		WithArgs(msg.ChatID, msg.ChannelID, msg.MsgID, msg.AuthorID, msg.AuthorName, msg.Content, 0, 0, sqlmock.AnyArg(), msg.ChannelID).
+		WithArgs(msg.ChatID, msg.ChannelID, msg.MsgID, msg.AuthorID, msg.AuthorName, msg.Content, 0, 0, 1, 7, "plan", sqlmock.AnyArg(), msg.ChannelID).
 		WillReturnResult(sqlmock.NewResult(42, 1))
 	s.mock.ExpectQuery(`SELECT chain_position FROM messages WHERE id`).
 		WithArgs(int64(42)).
@@ -33,7 +34,11 @@ func (s *StoreSuite) TestInsertMessage() {
 }
 
 func (s *StoreSuite) TestInsertMessageErrors() {
-	anyArgs := []driver.Value{sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg()}
+	anyArgs := []driver.Value{
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+		sqlmock.AnyArg(), sqlmock.AnyArg(), sqlmock.AnyArg(),
+	}
 	s.mock.ExpectExec(`INSERT INTO messages`).WithArgs(anyArgs...).WillReturnError(sql.ErrConnDone)
 	err := s.store.InsertMessage(context.Background(), &Message{ChatID: 1, ChannelID: "ch1", MsgID: "msg1", AuthorID: "u1", CreatedAt: time.Now().UTC()})
 	require.Error(s.T(), err)
@@ -131,7 +136,7 @@ func (s *StoreSuite) TestGetRecentMessagesError() {
 
 	// Scan error inside scanMessages.
 	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id`).WithArgs("ch1", 10).WillReturnRows(
-		newMockMessageRows().AddRow("not-an-int", 1, "ch1", "msg1", "u1", "user1", "hello", 0, 0, time.Now().UTC(), "message", int64(0), "", "", 0))
+		newMockMessageRows().AddRow("not-an-int", 1, "ch1", "msg1", "u1", "user1", "hello", 0, 0, 0, 0, 0, "", time.Now().UTC(), "message", int64(0), "", "", 0))
 	msgs, err = s.store.GetRecentMessages(context.Background(), "ch1", 10)
 	require.Error(s.T(), err)
 	require.Nil(s.T(), msgs)
@@ -347,7 +352,7 @@ func (s *StoreSuite) TestInsertAgentEventGeneratesSyntheticMsgID() {
 func (s *StoreSuite) TestGetTimelineFirstPage() {
 	now := time.Now().UTC()
 	rows := addMessageRow(newMockMessageRows(), 1, 1, "ch1", "msg1", "u1", "user1", "hello", 0, 0, now)
-	rows.AddRow(int64(2), int64(1), "ch1", "uuid-think", "", "agent", "", 1, 1, now,
+	rows.AddRow(int64(2), int64(1), "ch1", "uuid-think", "", "agent", "", 1, 1, 0, 0, 0, "", now,
 		"thinking", int64(7), "", "", 0)
 
 	s.mock.ExpectQuery(`SELECT .+ FROM messages\s+WHERE channel_id = \?\s+ORDER BY chain_position DESC, id DESC LIMIT`).
@@ -390,5 +395,214 @@ func (s *StoreSuite) TestGetTimelineWithCursorError() {
 		WillReturnError(sql.ErrConnDone)
 
 	_, err := s.store.GetTimeline(context.Background(), "ch1", 5, 10, 50)
+	require.Error(s.T(), err)
+}
+
+// --- ClaimNextPending tests ---
+
+func (s *StoreSuite) TestClaimNextPending() {
+	now := time.Now().UTC()
+	rows := addMessageRow(newMockMessageRows(), 42, 1, "ch1", "msg-42", "u1", "user1", "hello", 0, 0, now)
+	s.mock.ExpectBegin()
+	s.mock.ExpectQuery(`SELECT .+ FROM messages\s+WHERE channel_id = \? AND is_processed = 0 AND is_triggered = 1\s+AND is_running = 0 AND kind = 'message'\s+ORDER BY priority DESC, id ASC LIMIT 1`).
+		WithArgs("ch1").
+		WillReturnRows(rows)
+	s.mock.ExpectExec(`UPDATE messages SET is_running = 1 WHERE id = \?`).
+		WithArgs(int64(42)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+	s.mock.ExpectCommit()
+
+	msg, err := s.store.ClaimNextPending(context.Background(), "ch1")
+	require.NoError(s.T(), err)
+	require.NotNil(s.T(), msg)
+	require.Equal(s.T(), int64(42), msg.ID)
+	require.True(s.T(), msg.IsRunning)
+}
+
+func (s *StoreSuite) TestClaimNextPendingNoRows() {
+	s.mock.ExpectBegin()
+	s.mock.ExpectQuery(`SELECT .+ FROM messages`).
+		WithArgs("ch1").
+		WillReturnRows(newMockMessageRows())
+	s.mock.ExpectCommit()
+
+	msg, err := s.store.ClaimNextPending(context.Background(), "ch1")
+	require.NoError(s.T(), err)
+	require.Nil(s.T(), msg)
+}
+
+func (s *StoreSuite) TestClaimNextPendingScanError() {
+	s.mock.ExpectBegin()
+	// Wrong-shape row → scan error.
+	s.mock.ExpectQuery(`SELECT .+ FROM messages`).
+		WithArgs("ch1").
+		WillReturnRows(newMockMessageRows().AddRow("not-an-int", 1, "ch1", "m", "", "", "", 0, 0, 0, 0, 0, "", time.Now().UTC(), "message", int64(0), "", "", 0))
+	s.mock.ExpectRollback()
+
+	_, err := s.store.ClaimNextPending(context.Background(), "ch1")
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestClaimNextPendingUpdateError() {
+	now := time.Now().UTC()
+	rows := addMessageRow(newMockMessageRows(), 42, 1, "ch1", "msg-42", "u1", "user1", "hello", 0, 0, now)
+	s.mock.ExpectBegin()
+	s.mock.ExpectQuery(`SELECT .+ FROM messages`).WithArgs("ch1").WillReturnRows(rows)
+	s.mock.ExpectExec(`UPDATE messages SET is_running = 1`).
+		WithArgs(int64(42)).
+		WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
+
+	_, err := s.store.ClaimNextPending(context.Background(), "ch1")
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestClaimNextPendingBeginError() {
+	s.mock.ExpectBegin().WillReturnError(sql.ErrConnDone)
+	_, err := s.store.ClaimNextPending(context.Background(), "ch1")
+	require.Error(s.T(), err)
+}
+
+// --- ReleaseRunningMessage tests ---
+
+func (s *StoreSuite) TestReleaseRunningMessageProcessed() {
+	s.mock.ExpectExec(`UPDATE messages SET is_running = 0, is_processed = CASE WHEN \? = 1 THEN 1 ELSE is_processed END WHERE id = \?`).
+		WithArgs(1, int64(42)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	require.NoError(s.T(), s.store.ReleaseRunningMessage(context.Background(), 42, true))
+}
+
+func (s *StoreSuite) TestReleaseRunningMessageNotProcessed() {
+	s.mock.ExpectExec(`UPDATE messages SET is_running = 0`).
+		WithArgs(0, int64(42)).
+		WillReturnResult(sqlmock.NewResult(0, 1))
+
+	require.NoError(s.T(), s.store.ReleaseRunningMessage(context.Background(), 42, false))
+}
+
+func (s *StoreSuite) TestReleaseRunningMessageError() {
+	s.mock.ExpectExec(`UPDATE messages SET is_running = 0`).
+		WithArgs(1, int64(42)).
+		WillReturnError(sql.ErrConnDone)
+
+	require.Error(s.T(), s.store.ReleaseRunningMessage(context.Background(), 42, true))
+}
+
+// --- ResetStaleRunningMessages tests ---
+
+func (s *StoreSuite) TestResetStaleRunningMessages() {
+	s.mock.ExpectBegin()
+	s.mock.ExpectQuery(`SELECT channel_id, msg_id FROM messages WHERE is_running = 1`).
+		WillReturnRows(sqlmock.NewRows([]string{"channel_id", "msg_id"}).AddRow("ch-1", "msg-a").AddRow("ch-2", "msg-b"))
+	s.mock.ExpectExec(`UPDATE messages SET is_running = 0, is_processed = 1 WHERE is_running = 1`).
+		WillReturnResult(sqlmock.NewResult(0, 2))
+	s.mock.ExpectCommit()
+
+	records, err := s.store.ResetStaleRunningMessages(context.Background())
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []StaleRunningMessage{
+		{ChannelID: "ch-1", MsgID: "msg-a"},
+		{ChannelID: "ch-2", MsgID: "msg-b"},
+	}, records)
+}
+
+func (s *StoreSuite) TestResetStaleRunningMessagesQueryError() {
+	s.mock.ExpectBegin()
+	s.mock.ExpectQuery(`SELECT channel_id, msg_id FROM messages WHERE is_running = 1`).
+		WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
+
+	_, err := s.store.ResetStaleRunningMessages(context.Background())
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestResetStaleRunningMessagesScanError() {
+	s.mock.ExpectBegin()
+	s.mock.ExpectQuery(`SELECT channel_id, msg_id FROM messages WHERE is_running = 1`).
+		WillReturnRows(sqlmock.NewRows([]string{"channel_id", "msg_id"}).AddRow(nil, nil))
+	s.mock.ExpectRollback()
+
+	_, err := s.store.ResetStaleRunningMessages(context.Background())
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestResetStaleRunningMessagesRowsError() {
+	s.mock.ExpectBegin()
+	s.mock.ExpectQuery(`SELECT channel_id, msg_id FROM messages WHERE is_running = 1`).
+		WillReturnRows(sqlmock.NewRows([]string{"channel_id", "msg_id"}).AddRow("ch-1", "ok").RowError(0, sql.ErrConnDone))
+	s.mock.ExpectRollback()
+
+	_, err := s.store.ResetStaleRunningMessages(context.Background())
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestResetStaleRunningMessagesUpdateError() {
+	s.mock.ExpectBegin()
+	s.mock.ExpectQuery(`SELECT channel_id, msg_id FROM messages WHERE is_running = 1`).
+		WillReturnRows(sqlmock.NewRows([]string{"channel_id", "msg_id"}))
+	s.mock.ExpectExec(`UPDATE messages SET is_running = 0`).
+		WillReturnError(sql.ErrConnDone)
+	s.mock.ExpectRollback()
+
+	_, err := s.store.ResetStaleRunningMessages(context.Background())
+	require.Error(s.T(), err)
+}
+
+// --- MaxQueuedPriority tests ---
+
+func (s *StoreSuite) TestMaxQueuedPriority() {
+	s.mock.ExpectQuery(`SELECT MAX\(priority\) FROM messages`).
+		WithArgs("ch1").
+		WillReturnRows(sqlmock.NewRows([]string{"max"}).AddRow(int64(5)))
+
+	prio, err := s.store.MaxQueuedPriority(context.Background(), "ch1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 5, prio)
+}
+
+func (s *StoreSuite) TestMaxQueuedPriorityEmpty() {
+	s.mock.ExpectQuery(`SELECT MAX\(priority\) FROM messages`).
+		WithArgs("ch1").
+		WillReturnRows(sqlmock.NewRows([]string{"max"}).AddRow(nil))
+
+	prio, err := s.store.MaxQueuedPriority(context.Background(), "ch1")
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), 0, prio)
+}
+
+func (s *StoreSuite) TestMaxQueuedPriorityError() {
+	s.mock.ExpectQuery(`SELECT MAX\(priority\) FROM messages`).
+		WithArgs("ch1").
+		WillReturnError(sql.ErrConnDone)
+
+	_, err := s.store.MaxQueuedPriority(context.Background(), "ch1")
+	require.Error(s.T(), err)
+}
+
+// --- ListPendingChannels tests ---
+
+func (s *StoreSuite) TestListPendingChannels() {
+	s.mock.ExpectQuery(`SELECT DISTINCT channel_id FROM messages`).
+		WillReturnRows(sqlmock.NewRows([]string{"channel_id"}).AddRow("ch1").AddRow("ch2"))
+
+	ids, err := s.store.ListPendingChannels(context.Background())
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), []string{"ch1", "ch2"}, ids)
+}
+
+func (s *StoreSuite) TestListPendingChannelsQueryError() {
+	s.mock.ExpectQuery(`SELECT DISTINCT channel_id FROM messages`).
+		WillReturnError(sql.ErrConnDone)
+
+	_, err := s.store.ListPendingChannels(context.Background())
+	require.Error(s.T(), err)
+}
+
+func (s *StoreSuite) TestListPendingChannelsScanError() {
+	s.mock.ExpectQuery(`SELECT DISTINCT channel_id FROM messages`).
+		WillReturnRows(sqlmock.NewRows([]string{"channel_id"}).AddRow(nil))
+
+	_, err := s.store.ListPendingChannels(context.Background())
 	require.Error(s.T(), err)
 }

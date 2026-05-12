@@ -244,7 +244,8 @@ Send a message to a channel. When an orchestrator is configured, routes through 
 {
   "channel_id": "abc123",
   "content": "Hello, bot!",
-  "mode": "plan"
+  "mode": "plan",
+  "interrupt": false
 }
 ```
 
@@ -253,12 +254,14 @@ Send a message to a channel. When an orchestrator is configured, routes through 
 | `channel_id` | string | yes      | Target channel or thread ID |
 | `content`    | string | yes      | Message text |
 | `mode`       | string | no       | Agent mode hint (e.g. `"plan"`) |
+| `interrupt`  | bool   | no       | When `true`, cancels the active run on the channel and inserts this message with `priority = MaxQueuedPriority(channel_id) + 1` so it claims next ahead of any queued rows. Existing queued messages are preserved (not deleted). Used by the chat UI's "Deny with prompt" gate flow. |
 
 **Response:** `204 No Content`
 
 **Behavior notes:**
 - When an `IncomingMessageHandler` is set, the message is dispatched asynchronously with a detached context (the HTTP response returns immediately).
 - When no handler is set, falls back to direct `PostMessage` via the configured message sender.
+- `interrupt=true` requires both a `RunCanceller` and a `Store` on the server; the orchestrator wires both during startup.
 
 **Errors:** `400` if `channel_id` or `content` is empty. `501` if message sending is not configured and no handler is set.
 
@@ -285,7 +288,7 @@ Remove a waiting user message from a channel's queue before the orchestrator dis
 **Behavior notes:**
 - Only deletes rows where `is_bot = 0 AND is_processed = 0` — bot replies and already-processed history can never be removed through this endpoint.
 - On success, broadcasts a [`message.deleted`](events.md#messagedeleted) WebSocket event so connected clients remove the message from their local state.
-- The orchestrator's `processTriggeredMessage` has a race guard that aborts before any side effects (stop button, typing indicator, agent run) if the trigger message is no longer present in the channel's recent history — see [Orchestrator - Queued-message deletion race guard](orchestrator.md#queued-message-deletion-race-guard).
+- A queued row deleted while another run is in progress simply never gets claimed: `ClaimNextPending` only sees `is_processed=0 AND is_triggered=1 AND is_running=0` rows, so the atomic claim transaction can never hand the deleted row to an agent.
 
 **Errors:** `400` if `channel_id` is missing. `404` if no matching deletable row exists (message missing, already processed, or is a bot message). `500` on database error. `501` if message deletion is not configured.
 

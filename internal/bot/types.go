@@ -47,6 +47,10 @@ type IncomingMessage struct {
 	Timestamp    time.Time
 	AuthorRoles  []string // role IDs for permission checking (Discord only)
 	Mode         string   // "plan" or "" (default = agent)
+	// Priority controls queue ordering when this row competes with others on
+	// the same channel. Higher wins; ties broken by id ASC (insertion order).
+	// Default 0 — the interrupt path bumps to MaxQueuedPriority+1.
+	Priority int
 }
 
 // OutgoingMessage to the chat platform.

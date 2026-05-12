@@ -276,6 +276,13 @@ func (b *Bot) OnChannelJoin(handler func(ctx context.Context, channelID string, 
 // HandleIncomingMessage implements api.IncomingMessageHandler. It parses mentions
 // and command prefixes, then routes the message through the orchestrator.
 func (b *Bot) HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string) {
+	b.HandleIncomingMessageWithPriority(ctx, channelID, authorID, content, mode, 0)
+}
+
+// HandleIncomingMessageWithPriority is like HandleIncomingMessage but attaches a
+// priority to the IncomingMessage so the orchestrator can write it onto the DB
+// row. Used by the API interrupt path to bump a new message above queued ones.
+func (b *Bot) HandleIncomingMessageWithPriority(ctx context.Context, channelID, authorID, content, mode string, priority int) {
 	if authorID == "" {
 		authorID = DefaultAuthorID
 	}
@@ -302,6 +309,7 @@ func (b *Bot) HandleIncomingMessage(ctx context.Context, channelID, authorID, co
 			IsDM:         true,
 			Timestamp:    time.Now().UTC(),
 			Mode:         mode,
+			Priority:     priority,
 		})
 	}
 }

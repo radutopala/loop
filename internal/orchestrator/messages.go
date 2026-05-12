@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/radutopala/loop/internal/agent"
@@ -58,14 +59,31 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 		msg.MessageID = msgID
 	}
 
+	triggered := msg.IsBotMention || msg.IsReplyToBot || msg.HasPrefix || msg.IsDM
+
+	// Apply permission gate before persisting IsTriggered so denied messages
+	// land as plain history rows and never enter the drain queue.
+	allowed := true
+	if triggered && !o.bot.IsBotUser(msg.AuthorID) && msg.Platform != types.PlatformLocal {
+		cfgPerms := o.configPermissionsFor(channel.DirPath)
+		role := resolveRole(cfgPerms, channel.Permissions, msg.AuthorID, msg.AuthorRoles)
+		if role == "" {
+			o.logger.Info("message denied by permissions", "channel_id", msg.ChannelID, "author_id", msg.AuthorID)
+			allowed = false
+		}
+	}
+
 	if err := o.store.InsertMessage(ctx, &db.Message{
-		ChatID:     channel.ID,
-		ChannelID:  msg.ChannelID,
-		MsgID:      msgID,
-		AuthorID:   msg.AuthorID,
-		AuthorName: msg.AuthorName,
-		Content:    msg.Content,
-		CreatedAt:  msg.Timestamp,
+		ChatID:      channel.ID,
+		ChannelID:   msg.ChannelID,
+		MsgID:       msgID,
+		AuthorID:    msg.AuthorID,
+		AuthorName:  msg.AuthorName,
+		Content:     msg.Content,
+		IsTriggered: triggered && allowed,
+		Priority:    msg.Priority,
+		Mode:        msg.Mode,
+		CreatedAt:   msg.Timestamp,
 	}); err != nil {
 		o.logger.Error("inserting message", "error", err, "channel_id", msg.ChannelID)
 		return
@@ -85,26 +103,53 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 		"platform", msg.Platform,
 		"author", msg.AuthorName,
 		"content", msg.Content,
-		"triggered", msg.IsBotMention || msg.IsReplyToBot || msg.HasPrefix || msg.IsDM,
+		"triggered", triggered,
 	)
 
-	triggered := msg.IsBotMention || msg.IsReplyToBot || msg.HasPrefix || msg.IsDM
-	if !triggered {
+	if !triggered || !allowed {
 		return
 	}
 
-	// Allow the bot's own self-mentions (e.g. from create_thread MCP tool) to bypass permissions.
-	// Local platform is inherently trusted — the user is running on their own machine.
-	if !o.bot.IsBotUser(msg.AuthorID) && msg.Platform != types.PlatformLocal {
-		cfgPerms := o.configPermissionsFor(channel.DirPath)
-		role := resolveRole(cfgPerms, channel.Permissions, msg.AuthorID, msg.AuthorRoles)
-		if role == "" {
-			o.logger.Info("message denied by permissions", "channel_id", msg.ChannelID, "author_id", msg.AuthorID)
+	o.drainChannel(ctx, msg.ChannelID, msg)
+}
+
+// ResumeChannel drains pending triggered messages for a channel without a
+// matching live IncomingMessage. Used during daemon startup to resume rows
+// that were left unprocessed when the previous run exited.
+func (o *Orchestrator) ResumeChannel(ctx context.Context, channelID string) {
+	o.drainChannel(ctx, channelID, nil)
+}
+
+// drainChannel pulls and processes triggered messages for one channel in
+// priority order. Within a channel only one drain runs at a time (per-channel
+// mutex). Across channels drains run independently — channel B's drain is not
+// blocked by channel A's in-flight agent run.
+//
+// incoming may be nil when called from a path other than a fresh inbound
+// message (e.g. startup resume). When non-nil, its bot-side fields are
+// merged into the claimed row in processClaimedMessage if msg_ids match.
+func (o *Orchestrator) drainChannel(ctx context.Context, channelID string, incoming *bot.IncomingMessage) {
+	lockVal, _ := o.channelLocks.LoadOrStore(channelID, &sync.Mutex{})
+	lock := lockVal.(*sync.Mutex)
+	lock.Lock()
+	defer lock.Unlock()
+
+	for {
+		row, err := o.store.ClaimNextPending(ctx, channelID)
+		if err != nil {
+			o.logger.Error("claiming next pending message", "error", err, "channel_id", channelID)
 			return
 		}
-	}
+		if row == nil {
+			return
+		}
 
-	o.processTriggeredMessage(ctx, msg)
+		o.processClaimedMessage(ctx, row, incoming)
+
+		if err := o.store.ReleaseRunningMessage(ctx, row.ID, true); err != nil {
+			o.logger.Error("releasing running message", "error", err, "channel_id", channelID, "id", row.ID)
+		}
+	}
 }
 
 // resolveThread checks if channelID is a thread with an active parent channel.
@@ -155,23 +200,35 @@ func (o *Orchestrator) resolveThread(ctx context.Context, channelID string) bool
 	return true
 }
 
-func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *bot.IncomingMessage) {
-	o.queue.Acquire(msg.ChannelID)
-	defer o.queue.Release(msg.ChannelID)
+// processClaimedMessage runs the agent on a row already claimed
+// (is_running=1) by drainChannel. The row is the source of truth for
+// AuthorID/Content/Mode/MsgID; incoming carries the bot-side fields
+// (Platform, IsBotMention …) when the row matches the inbound message.
+// For rows claimed from earlier inserts (e.g. priority-bumped interrupts
+// or restart resume), incoming may be a synthesized minimal message.
+func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Message, incoming *bot.IncomingMessage) {
+	msg := &bot.IncomingMessage{
+		ChannelID:  row.ChannelID,
+		AuthorID:   row.AuthorID,
+		AuthorName: row.AuthorName,
+		Content:    row.Content,
+		MessageID:  row.MsgID,
+		Mode:       row.Mode,
+		Priority:   row.Priority,
+		Timestamp:  row.CreatedAt,
+	}
+	if incoming != nil && incoming.MessageID == row.MsgID {
+		msg.GuildID = incoming.GuildID
+		msg.Platform = incoming.Platform
+		msg.IsBotMention = incoming.IsBotMention
+		msg.IsReplyToBot = incoming.IsReplyToBot
+		msg.HasPrefix = incoming.HasPrefix
+		msg.IsDM = incoming.IsDM
+		msg.AuthorRoles = incoming.AuthorRoles
+	}
 
 	req, recent, channel, err := o.prepareAgentRequest(ctx, msg)
 	if err != nil {
-		return
-	}
-
-	// If the queued trigger message was deleted while waiting in the queue,
-	// skip dispatch. The DB row is gone and the frontend already removed it
-	// via the message.deleted WS event. Only trust MsgID-based matching when
-	// recent actually carries MsgIDs — otherwise the check can't distinguish
-	// deletion from legacy rows and we fall through.
-	if msg.MessageID != "" && hasAnyMsgID(recent) && !containsMsgID(recent, msg.MessageID) {
-		o.logger.Info("queued message deleted before dispatch; skipping run",
-			"channel_id", msg.ChannelID, "msg_id", msg.MessageID)
 		return
 	}
 
@@ -182,12 +239,15 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *bot.Inc
 	}
 	defer func() {
 		o.activeRuns.Delete(msg.ChannelID)
+		o.activeRunMsgIDs.Delete(msg.ChannelID)
 		if stopMsgID != "" {
 			if err := o.bot.RemoveStopButton(ctx, msg.ChannelID, stopMsgID); err != nil {
 				o.logger.Error("removing stop button", "error", err, "channel_id", msg.ChannelID)
 			}
 		}
 	}()
+
+	o.activeRunMsgIDs.Store(msg.ChannelID, msg.MessageID)
 
 	typingCtx, stopTyping := context.WithCancel(ctx)
 	defer stopTyping()
@@ -203,26 +263,6 @@ func (o *Orchestrator) processTriggeredMessage(ctx context.Context, msg *bot.Inc
 	}
 
 	o.deliverResponse(ctx, msg, resp, recent, lastStreamedText, runID)
-}
-
-// containsMsgID reports whether any message in recent has the given MsgID.
-func containsMsgID(recent []*db.Message, msgID string) bool {
-	for _, m := range recent {
-		if m.MsgID == msgID {
-			return true
-		}
-	}
-	return false
-}
-
-// hasAnyMsgID reports whether any message in recent has a non-empty MsgID.
-func hasAnyMsgID(recent []*db.Message) bool {
-	for _, m := range recent {
-		if m.MsgID != "" {
-			return true
-		}
-	}
-	return false
 }
 
 // prepareAgentRequest fetches recent messages and channel data, then builds an AgentRequest.
@@ -381,13 +421,13 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	}
 
 	if o.events != nil {
-		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "running", RunID: runID, TriggerContent: msg.Content, Trigger: trigger})
+		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "running", RunID: runID, TriggerContent: msg.Content, Trigger: trigger, MsgID: msg.MessageID})
 	}
 
 	resp, err := o.runner.Run(runCtx, req)
 	if err != nil {
 		if o.events != nil {
-			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "error", RunID: runID, Error: err.Error(), Trigger: trigger})
+			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "error", RunID: runID, Error: err.Error(), Trigger: trigger, MsgID: msg.MessageID})
 		}
 		if runCtx.Err() == context.Canceled {
 			o.logger.Info("run stopped by user", "channel_id", msg.ChannelID)
@@ -409,7 +449,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 
 	if resp.Error != "" {
 		if o.events != nil {
-			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "error", RunID: runID, Error: resp.Error, Trigger: trigger})
+			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "error", RunID: runID, Error: resp.Error, Trigger: trigger, MsgID: msg.MessageID})
 		}
 		o.logger.Error("agent returned error", "error", resp.Error, "channel_id", msg.ChannelID)
 		_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
@@ -494,6 +534,7 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 			StopReason: resp.StopReason,
 			Model:      resp.Model,
 			Trigger:    trigger,
+			MsgID:      msg.MessageID,
 		})
 	}
 }

@@ -27,6 +27,8 @@ export interface ChatState {
   triggerContent: string | null;
   gateApproval: GateApprovalRequestedData | null;
   clearGateApproval: () => void;
+  /** msg_id of the message the agent is currently processing — driven by agent.status backend event. */
+  processingMsgId: string | null;
 }
 
 interface UseChatStateOptions {
@@ -85,6 +87,7 @@ export function useChatState(
   const [completionInfo, setCompletionInfo] = useState<{ duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null>(initialState?.completionInfo ?? null);
   const [triggerContent, setTriggerContent] = useState<string | null>(initialState?.triggerContent ?? null);
   const [gateApproval, setGateApproval] = useState<GateApprovalRequestedData | null>(initialState?.gateApproval ?? null);
+  const [processingMsgId, setProcessingMsgId] = useState<string | null>(initialState?.processingMsgId ?? null);
 
   // Refs tracking latest values for the onUnmount snapshot.
   const streamingRef = useRef(streamingContent);
@@ -111,6 +114,8 @@ export function useChatState(
   triggerRef.current = triggerContent;
   const gateApprovalRef = useRef(gateApproval);
   gateApprovalRef.current = gateApproval;
+  const processingMsgIdRef = useRef(processingMsgId);
+  processingMsgIdRef.current = processingMsgId;
 
   const onUnmountRef = useRef(onUnmount);
   onUnmountRef.current = onUnmount;
@@ -131,6 +136,7 @@ export function useChatState(
         completionInfo: completionRef.current,
         triggerContent: triggerRef.current,
         gateApproval: gateApprovalRef.current,
+        processingMsgId: processingMsgIdRef.current,
       };
       onUnmountRef.current?.(snapshot);
     };
@@ -164,6 +170,9 @@ export function useChatState(
       if (event.type === "messages.processed") {
         const data = event.data as MessagesProcessedData;
         markProcessed(data.msg_ids);
+        if (processingMsgIdRef.current && data.msg_ids.includes(processingMsgIdRef.current)) {
+          setProcessingMsgId(null);
+        }
         return;
       }
       if (event.type === "message.deleted") {
@@ -233,6 +242,7 @@ export function useChatState(
           setAskUserQuestions(null);
           setExitPlanRequest(null);
           setTriggerContent(data.trigger_content ?? null);
+          setProcessingMsgId(data.msg_id ?? null);
         } else {
           // Only clear isRunning if the finishing run_id matches the one we're
           // tracking, or if either side has no run_id (backwards compat).
@@ -248,6 +258,7 @@ export function useChatState(
             // Drop any stale gate approval — the backend's pending entry is
             // already gone, so a click would 404 with "no pending approval".
             setGateApproval(null);
+            setProcessingMsgId(null);
             // Refetch the head — JSONL ingest now has chain_position values for
             // the run's rows, so the persisted timeline supersedes the live tail.
             refetchHead();
@@ -307,5 +318,6 @@ export function useChatState(
     triggerContent,
     gateApproval,
     clearGateApproval: useCallback(() => setGateApproval(null), []),
+    processingMsgId,
   };
 }

@@ -48,6 +48,7 @@ type Bot interface {
 	GetChannelName(ctx context.Context, channelID string) (string, error)
 	CreateSimpleThread(ctx context.Context, channelID, name, initialMessage string) (string, error)
 	HandleIncomingMessage(ctx context.Context, channelID, authorID, content, mode string)
+	HandleIncomingMessageWithPriority(ctx context.Context, channelID, authorID, content, mode string, priority int)
 	HandleThreadCreated(ctx context.Context, threadID, authorID, message string)
 }
 
@@ -75,8 +76,9 @@ type Orchestrator struct {
 	scheduler         scheduler.Scheduler
 	events            events.Broadcaster
 	workflowEngine    WorkflowEngine
-	queue             *ChannelQueue
+	channelLocks      sync.Map // map[channelID]*sync.Mutex — serialises per-channel drain loops
 	activeRuns        sync.Map // map[channelID]context.CancelFunc
+	activeRunMsgIDs   sync.Map // map[channelID]string — msg_id of the row currently running
 	logger            *slog.Logger
 	typingInterval    time.Duration
 	cfg               atomic.Pointer[config.Config]
@@ -98,7 +100,6 @@ func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logg
 		bot:               bot,
 		runner:            runner,
 		scheduler:         sched,
-		queue:             NewChannelQueue(),
 		logger:            logger,
 		typingInterval:    TypingInterval,
 		configLoad:        configLoad,
@@ -138,6 +139,18 @@ func (o *Orchestrator) ActiveChatChannelIDs() map[string]struct{} {
 // TaskExecutor can register task runs for stop button support.
 func (o *Orchestrator) ActiveRunsMap() *sync.Map {
 	return &o.activeRuns
+}
+
+// ActiveRunMessageID returns the msg_id of the message currently being
+// processed on the given channel, or empty string if no run is active.
+// Used by the API layer for interrupt diagnostics and by the FE to know
+// which row to label as "processing".
+func (o *Orchestrator) ActiveRunMessageID(channelID string) string {
+	val, ok := o.activeRunMsgIDs.Load(channelID)
+	if !ok {
+		return ""
+	}
+	return val.(string)
 }
 
 // CancelActiveRun cancels the active agent run for a channel, if any.

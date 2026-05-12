@@ -29,6 +29,11 @@ type Store interface {
 	InsertMessage(ctx context.Context, msg *Message) error
 	MarkMessagesProcessed(ctx context.Context, ids []int64) error
 	DeleteQueuedMessage(ctx context.Context, channelID, msgID string) (bool, error)
+	ClaimNextPending(ctx context.Context, channelID string) (*Message, error)
+	ReleaseRunningMessage(ctx context.Context, id int64, processed bool) error
+	ResetStaleRunningMessages(ctx context.Context) ([]StaleRunningMessage, error)
+	MaxQueuedPriority(ctx context.Context, channelID string) (int, error)
+	ListPendingChannels(ctx context.Context) ([]string, error)
 	GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*Message, error)
 	GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*Message, error)
 	SearchMessages(ctx context.Context, query string, limit int) ([]*Message, error)
@@ -383,9 +388,11 @@ func (s *SQLiteStore) InsertMessage(ctx context.Context, msg *Message) error {
 	// row sorts after every prior chat-or-event row. Single-writer SQLite
 	// serialises Exec calls, so this subselect can't race itself.
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO messages (chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at, chain_position)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MAX(chain_position) FROM messages WHERE channel_id = ?), 0) + 1)`,
-		msg.ChatID, msg.ChannelID, msg.MsgID, msg.AuthorID, msg.AuthorName, msg.Content, boolToInt(msg.IsBot), boolToInt(msg.IsProcessed), msg.CreatedAt, msg.ChannelID,
+		`INSERT INTO messages (chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, priority, mode, created_at, chain_position)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MAX(chain_position) FROM messages WHERE channel_id = ?), 0) + 1)`,
+		msg.ChatID, msg.ChannelID, msg.MsgID, msg.AuthorID, msg.AuthorName, msg.Content,
+		boolToInt(msg.IsBot), boolToInt(msg.IsProcessed), boolToInt(msg.IsTriggered),
+		msg.Priority, msg.Mode, msg.CreatedAt, msg.ChannelID,
 	)
 	if err != nil {
 		return err
@@ -416,6 +423,128 @@ func (s *SQLiteStore) MarkMessagesProcessed(ctx context.Context, ids []int64) er
 		args...,
 	)
 	return err
+}
+
+// ClaimNextPending atomically picks the highest-priority pending row for a channel
+// and marks it is_running=1 in a single transaction. Eligibility: is_processed=0,
+// is_triggered=1, is_running=0, kind='message'. Order: priority DESC, id ASC.
+// Returns nil with no error when the channel has nothing to process.
+func (s *SQLiteStore) ClaimNextPending(ctx context.Context, channelID string) (*Message, error) {
+	var msg *Message
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		row := tx.QueryRowContext(ctx,
+			`SELECT `+messageColumns+` FROM messages
+			 WHERE channel_id = ? AND is_processed = 0 AND is_triggered = 1
+			   AND is_running = 0 AND kind = 'message'
+			 ORDER BY priority DESC, id ASC LIMIT 1`,
+			channelID,
+		)
+		m, err := scanMessageRow(row)
+		if err == sql.ErrNoRows {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `UPDATE messages SET is_running = 1 WHERE id = ?`, m.ID); err != nil {
+			return err
+		}
+		m.IsRunning = true
+		msg = m
+		return nil
+	})
+	return msg, err
+}
+
+// ReleaseRunningMessage clears the is_running flag on a row. When processed=true
+// also marks the row is_processed=1 — the normal completion path. processed=false
+// leaves the row eligible for re-claim (used when the agent cannot be invoked,
+// e.g. row picked up before channel is registered).
+func (s *SQLiteStore) ReleaseRunningMessage(ctx context.Context, id int64, processed bool) error {
+	_, err := s.db.ExecContext(ctx,
+		`UPDATE messages SET is_running = 0, is_processed = CASE WHEN ? = 1 THEN 1 ELSE is_processed END WHERE id = ?`,
+		boolToInt(processed), id,
+	)
+	return err
+}
+
+// ResetStaleRunningMessages clears is_running=1 left over from a previous daemon
+// process (the agent run cannot survive a restart) and marks those rows
+// is_processed=1 so chat history doesn't keep showing them as "processing".
+// Returns (channel_id, msg_id) pairs for cleared rows so the caller can
+// broadcast per-channel messages.processed events. Safe to call at daemon startup.
+func (s *SQLiteStore) ResetStaleRunningMessages(ctx context.Context) ([]StaleRunningMessage, error) {
+	var records []StaleRunningMessage
+	err := s.withTx(ctx, func(tx *sql.Tx) error {
+		rows, err := tx.QueryContext(ctx,
+			`SELECT channel_id, msg_id FROM messages WHERE is_running = 1`,
+		)
+		if err != nil {
+			return err
+		}
+		for rows.Next() {
+			var rec StaleRunningMessage
+			if err := rows.Scan(&rec.ChannelID, &rec.MsgID); err != nil {
+				rows.Close()
+				return err
+			}
+			records = append(records, rec)
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return err
+		}
+		rows.Close()
+		if _, err := tx.ExecContext(ctx,
+			`UPDATE messages SET is_running = 0, is_processed = 1 WHERE is_running = 1`,
+		); err != nil {
+			return err
+		}
+		return nil
+	})
+	return records, err
+}
+
+// MaxQueuedPriority returns the highest priority among eligible-but-not-running
+// rows for a channel. Used by the interrupt branch to insert a higher-priority
+// row that will be claimed ahead of everything else queued.
+func (s *SQLiteStore) MaxQueuedPriority(ctx context.Context, channelID string) (int, error) {
+	var prio sql.NullInt64
+	err := s.db.QueryRowContext(ctx,
+		`SELECT MAX(priority) FROM messages
+		 WHERE channel_id = ? AND is_processed = 0 AND is_triggered = 1 AND kind = 'message'`,
+		channelID,
+	).Scan(&prio)
+	if err != nil {
+		return 0, err
+	}
+	if !prio.Valid {
+		return 0, nil
+	}
+	return int(prio.Int64), nil
+}
+
+// ListPendingChannels returns the set of channel_ids that have at least one
+// eligible (is_triggered=1, is_processed=0, is_running=0) pending message row.
+// Used at daemon startup to wake processors for channels with queued work.
+func (s *SQLiteStore) ListPendingChannels(ctx context.Context) ([]string, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT DISTINCT channel_id FROM messages
+		 WHERE is_processed = 0 AND is_triggered = 1 AND is_running = 0 AND kind = 'message'`,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var ids []string
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
 }
 
 // DeleteQueuedMessage removes a waiting (not-yet-processed, non-bot) user message
@@ -1140,7 +1269,7 @@ func (s *SQLiteStore) DeleteWorkflowRun(ctx context.Context, id string) error {
 
 // Column lists for SELECT queries.
 const (
-	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at, kind, chain_position, tool_use_id, tool_name, is_error`
+	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, is_running, priority, mode, created_at, kind, chain_position, tool_use_id, tool_name, is_error`
 	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running, workflow_name, workflow_inputs`
 )
 
@@ -1194,25 +1323,36 @@ func scanChannels(rows *sql.Rows) ([]*Channel, error) {
 func scanMessages(rows *sql.Rows) ([]*Message, error) {
 	var msgs []*Message
 	for rows.Next() {
-		msg := &Message{}
-		var isBot, isProcessed, isError int
-		var kind string
-		if err := rows.Scan(
-			&msg.ID, &msg.ChatID, &msg.ChannelID, &msg.MsgID,
-			&msg.AuthorID, &msg.AuthorName, &msg.Content,
-			&isBot, &isProcessed, &msg.CreatedAt,
-			&kind, &msg.ChainPosition,
-			&msg.ToolUseID, &msg.ToolName, &isError,
-		); err != nil {
+		msg, err := scanMessageRow(rows)
+		if err != nil {
 			return nil, err
 		}
-		msg.IsBot = isBot == 1
-		msg.IsProcessed = isProcessed == 1
-		msg.IsError = isError == 1
-		msg.Kind = MessageKind(kind)
 		msgs = append(msgs, msg)
 	}
 	return msgs, rows.Err()
+}
+
+func scanMessageRow(scanner rowScanner) (*Message, error) {
+	msg := &Message{}
+	var isBot, isProcessed, isTriggered, isRunning, isError int
+	var kind string
+	if err := scanner.Scan(
+		&msg.ID, &msg.ChatID, &msg.ChannelID, &msg.MsgID,
+		&msg.AuthorID, &msg.AuthorName, &msg.Content,
+		&isBot, &isProcessed, &isTriggered, &isRunning, &msg.Priority, &msg.Mode,
+		&msg.CreatedAt,
+		&kind, &msg.ChainPosition,
+		&msg.ToolUseID, &msg.ToolName, &isError,
+	); err != nil {
+		return nil, err
+	}
+	msg.IsBot = isBot == 1
+	msg.IsProcessed = isProcessed == 1
+	msg.IsTriggered = isTriggered == 1
+	msg.IsRunning = isRunning == 1
+	msg.IsError = isError == 1
+	msg.Kind = MessageKind(kind)
+	return msg, nil
 }
 
 func scanScheduledTasks(rows *sql.Rows) ([]*ScheduledTask, error) {

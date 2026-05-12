@@ -217,6 +217,10 @@ func (m *mockBot) HandleIncomingMessage(ctx context.Context, channelID, authorID
 	m.Called(ctx, channelID, authorID, content, mode)
 }
 
+func (m *mockBot) HandleIncomingMessageWithPriority(ctx context.Context, channelID, authorID, content, mode string, priority int) {
+	m.Called(ctx, channelID, authorID, content, mode, priority)
+}
+
 func (m *mockBot) HandleThreadCreated(ctx context.Context, threadID, authorID, message string) {
 	m.Called(ctx, threadID, authorID, message)
 }
@@ -446,6 +450,8 @@ func (s *MainSuite) setupServeMocks() *serveMocks {
 	m.store.On("ListWorkflowRunsByStatus", mock.Anything, mock.Anything).Return(nil, nil).Maybe()
 	m.store.On("ListChannels", mock.Anything).Return(nil, nil).Maybe()
 	m.store.On("ResetStaleRunningTasks", mock.Anything).Return(int64(0), nil).Maybe()
+	m.store.On("ResetStaleRunningMessages", mock.Anything).Return(([]db.StaleRunningMessage)(nil), nil).Maybe()
+	m.store.On("ListPendingChannels", mock.Anything).Return(([]string)(nil), nil).Maybe()
 	m.dockerClient.On("LatestClaudeVersion").Return("1.0.0").Maybe()
 	m.dockerClient.On("ListContainerInfos", mock.Anything).Return([]*container.ContainerInfo{}, nil).Maybe()
 	s.app.configLoad = func() (*config.Config, error) { return m.cfg, nil }
@@ -931,12 +937,15 @@ func (s *MainSuite) TestLocalBotMentionParsing() {
 	ch := &db.Channel{ID: 1, ChannelID: "ch-1"}
 	store.On("IsChannelActive", mock.Anything, "ch-1").Return(true, nil)
 	store.On("GetChannel", mock.Anything, "ch-1").Return(ch, nil)
+	row := &db.Message{ID: 1, ChannelID: "ch-1", AuthorID: "user-1", Content: "do this", IsTriggered: true}
 	store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
 		// Content should have @LoopBot stripped.
 		return m.Content == "do this" && m.ChannelID == "ch-1"
 	})).Return(nil)
-	// Triggered (mention detected) — GetRecentMessages is called next but
-	// returns an error so processing stops early.
+	store.On("ClaimNextPending", mock.Anything, "ch-1").Return(row, nil).Once()
+	store.On("ClaimNextPending", mock.Anything, "ch-1").Return(nil, nil).Maybe()
+	store.On("ReleaseRunningMessage", mock.Anything, int64(1), true).Return(nil).Maybe()
+	// processClaimedMessage → prepareAgentRequest → GetRecentMessages returns an error so processing stops early.
 	store.On("GetRecentMessages", mock.Anything, "ch-1", mock.Anything).
 		Return(nil, errors.New("stop early"))
 
@@ -958,10 +967,14 @@ func (s *MainSuite) TestLocalBotPrefixParsing() {
 	ch := &db.Channel{ID: 1, ChannelID: "ch-1"}
 	store.On("IsChannelActive", mock.Anything, "ch-1").Return(true, nil)
 	store.On("GetChannel", mock.Anything, "ch-1").Return(ch, nil)
+	row := &db.Message{ID: 1, ChannelID: "ch-1", AuthorID: "user-1", Content: "check status", IsTriggered: true}
 	store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
 		// Content should have !loop prefix stripped.
 		return m.Content == "check status" && m.ChannelID == "ch-1"
 	})).Return(nil)
+	store.On("ClaimNextPending", mock.Anything, "ch-1").Return(row, nil).Once()
+	store.On("ClaimNextPending", mock.Anything, "ch-1").Return(nil, nil).Maybe()
+	store.On("ReleaseRunningMessage", mock.Anything, int64(1), true).Return(nil).Maybe()
 	store.On("GetRecentMessages", mock.Anything, "ch-1", mock.Anything).
 		Return(nil, errors.New("stop early"))
 
@@ -983,11 +996,15 @@ func (s *MainSuite) TestLocalBotPlainMessageTriggers() {
 	// Plain messages (no @LoopBot, no !loop) still trigger on local platform
 	// because IsDM is always true.
 	ch := &db.Channel{ID: 1, ChannelID: "ch-1"}
+	row := &db.Message{ID: 1, ChannelID: "ch-1", AuthorID: "user-1", Content: "just a note", IsTriggered: true}
 	store.On("IsChannelActive", mock.Anything, "ch-1").Return(true, nil)
 	store.On("GetChannel", mock.Anything, "ch-1").Return(ch, nil)
 	store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(m *db.Message) bool {
 		return m.Content == "just a note" && m.ChannelID == "ch-1"
 	})).Return(nil)
+	store.On("ClaimNextPending", mock.Anything, "ch-1").Return(row, nil).Once()
+	store.On("ClaimNextPending", mock.Anything, "ch-1").Return(nil, nil).Maybe()
+	store.On("ReleaseRunningMessage", mock.Anything, int64(1), true).Return(nil).Maybe()
 	store.On("GetRecentMessages", mock.Anything, "ch-1", mock.Anything).
 		Return(nil, errors.New("stop early"))
 
