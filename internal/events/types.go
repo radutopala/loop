@@ -159,6 +159,17 @@ type ImageUpdateAvailableData struct {
 	Component      string `json:"component"` // "claude_code"
 }
 
+// ChannelUpdatedData is the payload for channel.updated events. Sent by the
+// backend branch poller when a channel's branch, commit, or diff stats change
+// so subscribers can refresh the sidebar without re-fetching /api/channels.
+type ChannelUpdatedData struct {
+	ChannelID     string `json:"channel_id"`
+	Branch        string `json:"branch"`
+	Commit        string `json:"commit"`
+	DiffAdditions int    `json:"diff_additions"`
+	DiffDeletions int    `json:"diff_deletions"`
+}
+
 // TaskEventData is the payload for task.created and task.updated events.
 type TaskEventData struct {
 	TaskID    int64  `json:"task_id"`

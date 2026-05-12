@@ -29,6 +29,7 @@ const (
 	EventChannelCreated            = "channel.created"
 	EventChannelDeleted            = "channel.deleted"
 	EventChannelLocked             = "channel.locked"
+	EventChannelUpdated            = "channel.updated"
 	EventAgentInstanceRegistered   = "agent_instance.registered"
 	EventAgentInstanceUnregistered = "agent_instance.unregistered"
 	EventAgentInstanceMetadata     = "agent_instance.metadata"
@@ -212,6 +213,18 @@ func (h *EventsHub) BroadcastChannelDeleted(channelID string) {
 	h.Broadcast(Event{
 		Type:      EventChannelDeleted,
 		ChannelID: channelID,
+		Global:    true,
+	})
+}
+
+// BroadcastChannelUpdated sends a channel.updated event when a channel's
+// branch, commit, or diff stats change. Global so the sidebar can refresh
+// any visible channel row without subscribing to every channel individually.
+func (h *EventsHub) BroadcastChannelUpdated(data events.ChannelUpdatedData) {
+	h.Broadcast(Event{
+		Type:      EventChannelUpdated,
+		ChannelID: data.ChannelID,
+		Data:      data,
 		Global:    true,
 	})
 }

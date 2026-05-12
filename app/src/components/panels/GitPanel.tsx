@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import type { DiffResponse } from "../../api/loopApi";
-import { fetchDiff, fetchBranches, fetchCommits } from "../../api/loopApi";
+import type { DiffResponse, PRInfo } from "../../api/loopApi";
+import { fetchDiff, fetchBranches, fetchCommits, fetchPR } from "../../api/loopApi";
 import { useEventStream } from "../../hooks/useEventStream";
 import { fonts } from "../../theme";
 import type { ColorPalette } from "../../theme";
@@ -88,6 +88,10 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
   const prevDiffRef = useRef<string>("");
   const [diffVersion, setDiffVersion] = useState(0);
   const panelRef = useRef<HTMLDivElement>(null);
+  const [pr, setPR] = useState<PRInfo | null>(null);
+  // Track which channel's PR has seeded sourceBranch so a manual re-pick by
+  // the user isn't clobbered when the same channel's PR refreshes.
+  const prSeededRef = useRef<string>("");
 
   const headerBtnStyle = buildHeaderBtnStyle(colors);
   const hoverIn = (e: React.MouseEvent<HTMLButtonElement>) => {
@@ -98,6 +102,30 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     e.currentTarget.style.backgroundColor = "transparent";
     e.currentTarget.style.color = colors.textDim;
   };
+
+  // Fetch PR info on mount and when channel changes. When a PR is open, seed
+  // sourceBranch to the PR's base (only once per channel) so the Branches Diff
+  // mode defaults to the PR's target rather than main.
+  useEffect(() => {
+    if (!channelId) {
+      setPR(null);
+      return;
+    }
+    let cancelled = false;
+    fetchPR(channelId).then((res) => {
+      if (cancelled) return;
+      if (res.present && res.pr) {
+        setPR(res.pr);
+        if (prSeededRef.current !== channelId) {
+          setSourceBranch(res.pr.base_ref);
+          prSeededRef.current = channelId;
+        }
+      } else {
+        setPR(null);
+      }
+    }).catch(() => { if (!cancelled) setPR(null); });
+    return () => { cancelled = true; };
+  }, [channelId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Fetch branch list when switching to branch or commits mode
   useEffect(() => {
@@ -112,10 +140,14 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
         }
         const sorted = [...all].sort();
         setBranches(sorted);
-        // Default source to main branch (base), target to current branch (changes from)
+        // Default source to PR base (if present), else main, then current.
         if (!sourceBranch) {
-          const main = sorted.find((b) => b === "main" || b === "master");
-          setSourceBranch(main ?? info.current ?? sorted[0] ?? "");
+          if (pr?.base_ref && sorted.includes(pr.base_ref)) {
+            setSourceBranch(pr.base_ref);
+          } else {
+            const main = sorted.find((b) => b === "main" || b === "master");
+            setSourceBranch(main ?? info.current ?? sorted[0] ?? "");
+          }
         }
         if (!targetBranch && info.current) {
           setTargetBranch(info.current);
@@ -324,6 +356,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
           )}
         </span>
         <div style={{ flex: 1 }} />
+        {pr && <PRChip pr={pr} colors={colors} />}
         {gitMode !== "worktrees" && gitMode !== "branchlist" && (
           <button onClick={load} title="Refresh" style={headerBtnStyle} onMouseEnter={hoverIn} onMouseLeave={hoverOut}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12a9 9 0 1 1-3-6.7" /><polyline points="21,3 21,9 15,9" /></svg>
@@ -570,6 +603,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
                 </span>
               </>
             )}
+            {pr && <PRChip pr={pr} colors={colors} />}
           </span>
         )}
         <div style={{ flex: 1 }} />
@@ -717,5 +751,47 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
       {gitMode === "branchlist" ? branchesContent : gitMode === "worktrees" ? worktreesContent : gitMode === "commits" ? commitsContent : diffContent}
       {contextMenuOverlay}
     </div>
+  );
+}
+
+// PRChip is a small inline button linking to the open PR. State badge mirrors
+// GitHub: green dot for open, grey for draft, purple for merged, red for
+// closed. Clicking opens the PR URL in the user's browser.
+function PRChip({ pr, colors }: { pr: PRInfo; colors: ColorPalette }) {
+  const dot = pr.is_draft
+    ? colors.textDim
+    : pr.state === "MERGED"
+      ? "#a371f7"
+      : pr.state === "CLOSED"
+        ? "#cf222e"
+        : "#3fb950";
+  const label = pr.is_draft ? "draft" : pr.state.toLowerCase();
+  const title = pr.title ? `#${pr.number} ${pr.title} (${label})` : `#${pr.number} (${label})`;
+  return (
+    <a
+      href={pr.url}
+      onClick={(e) => {
+        e.preventDefault();
+        window.open(pr.url, "_blank", "noopener,noreferrer");
+      }}
+      title={title}
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 4,
+        padding: "1px 6px",
+        borderRadius: 10,
+        border: `1px solid ${colors.border}`,
+        background: colors.surface,
+        color: colors.textLight,
+        fontSize: 10,
+        fontFamily: fonts.mono,
+        textDecoration: "none",
+        flexShrink: 0,
+      }}
+    >
+      <span style={{ width: 6, height: 6, borderRadius: 3, background: dot, flexShrink: 0 }} />
+      PR #{pr.number}
+    </a>
   );
 }

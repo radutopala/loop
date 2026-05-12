@@ -577,6 +577,31 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 				require.Equal(s.T(), 10, merged.WorkflowConcurrency.MaxConcurrentNodes)
 			},
 		},
+		{
+			name:        "GitHub/Override",
+			projectJSON: `{"github": {"gh_user": "radutopala"}}`,
+			mainCfg:     &Config{GitHub: GitHubConfig{GHUser: "radutopalama"}},
+			assert: func(merged, main *Config) {
+				require.Equal(s.T(), "radutopala", merged.GitHub.GHUser)
+				require.Equal(s.T(), "radutopalama", main.GitHub.GHUser)
+			},
+		},
+		{
+			name:        "GitHub/EmptyKeepsGlobal",
+			projectJSON: `{"github": {"gh_user": ""}}`,
+			mainCfg:     &Config{GitHub: GitHubConfig{GHUser: "radutopalama"}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), "radutopalama", merged.GitHub.GHUser)
+			},
+		},
+		{
+			name:        "GitHub/NoOverride",
+			projectJSON: `{}`,
+			mainCfg:     &Config{GitHub: GitHubConfig{GHUser: "radutopalama"}},
+			assert: func(merged, _ *Config) {
+				require.Equal(s.T(), "radutopalama", merged.GitHub.GHUser)
+			},
+		},
 	}
 
 	for _, tt := range tests {

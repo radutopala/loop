@@ -29,6 +29,7 @@ import (
 	"github.com/radutopala/loop/internal/embeddings"
 	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/fsmigrate"
+	"github.com/radutopala/loop/internal/githubapi"
 	"github.com/radutopala/loop/internal/local"
 	"github.com/radutopala/loop/internal/logging"
 	"github.com/radutopala/loop/internal/memory"
@@ -531,6 +532,8 @@ func (a *app) serve() error {
 
 	eventsHub := api.NewEventsHub(logger)
 	apiSrv.SetEventsHub(eventsHub)
+	apiSrv.SetGitHubLookup(githubapi.NewClient())
+	go api.NewBranchPoller(store, eventsHub, cfg.LoopDir, 0, logger).Run(ctx)
 	containerReg.SetBroadcaster(eventsHub)
 	if gateResolver != nil {
 		if gb, ok := localBot.(interface {
