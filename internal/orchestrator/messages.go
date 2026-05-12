@@ -286,6 +286,15 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 
 	runID := randutil.HexID(8)
 
+	// When the trigger comes from the bot itself (e.g. an agent posting via the
+	// send_message/create_thread MCP tools re-entering HandleMessage), tag the
+	// broadcasts so the renderer can suppress the dock bounce — these are
+	// indirect chains, not user-actionable like a real human reply.
+	trigger := ""
+	if o.bot.IsBotUser(msg.AuthorID) {
+		trigger = "bot"
+	}
+
 	// Register the cancel func so stop button clicks can cancel this run.
 	o.activeRuns.Store(msg.ChannelID, runCancel)
 
@@ -372,13 +381,13 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	}
 
 	if o.events != nil {
-		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "running", RunID: runID, TriggerContent: msg.Content})
+		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "running", RunID: runID, TriggerContent: msg.Content, Trigger: trigger})
 	}
 
 	resp, err := o.runner.Run(runCtx, req)
 	if err != nil {
 		if o.events != nil {
-			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "error", RunID: runID, Error: err.Error()})
+			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "error", RunID: runID, Error: err.Error(), Trigger: trigger})
 		}
 		if runCtx.Err() == context.Canceled {
 			o.logger.Info("run stopped by user", "channel_id", msg.ChannelID)
@@ -400,7 +409,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 
 	if resp.Error != "" {
 		if o.events != nil {
-			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "error", RunID: runID, Error: resp.Error})
+			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "error", RunID: runID, Error: resp.Error, Trigger: trigger})
 		}
 		o.logger.Error("agent returned error", "error", resp.Error, "channel_id", msg.ChannelID)
 		_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
@@ -473,6 +482,10 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 		})
 	}
 	if o.events != nil {
+		trigger := ""
+		if o.bot.IsBotUser(msg.AuthorID) {
+			trigger = "bot"
+		}
 		o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{
 			Status:     "completed",
 			RunID:      runID,
@@ -480,6 +493,7 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 			NumTurns:   resp.NumTurns,
 			StopReason: resp.StopReason,
 			Model:      resp.Model,
+			Trigger:    trigger,
 		})
 	}
 }
