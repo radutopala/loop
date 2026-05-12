@@ -219,11 +219,13 @@ function statusBadgeColor(status: DiffFileStatus, colors: ColorPalette): string 
     case "staged":   return colors.active;
     case "unstaged": return colors.warning;
     case "untracked": return colors.textDim;
+    case "conflict": return colors.dangerText;
   }
 }
 
 function statusBadgeLabel(status: DiffFileStatus): string {
-  return status === "untracked" ? "new" : status;
+  if (status === "untracked") return "new";
+  return status;
 }
 
 // ── Constants ──
