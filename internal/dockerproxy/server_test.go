@@ -64,12 +64,23 @@ func (c *capturingAuditor) snapshot() []AuditEntry {
 	return append([]AuditEntry(nil), c.entries...)
 }
 
+// shortSockPath returns a unix-socket path that fits inside macOS's 104-byte
+// sockaddr_un.sun_path limit. t.TempDir() under /var/folders/... routinely
+// blows past that with a ".sock" suffix, so use /tmp instead and register
+// cleanup with t.Cleanup.
+func shortSockPath(t *testing.T, name string) string {
+	t.Helper()
+	dir, err := os.MkdirTemp("", "loop-px")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	return filepath.Join(dir, name)
+}
+
 // upstreamUnix starts an HTTP upstream listening on a freshly-created unix
 // socket, and returns its path plus a shutdown func.
 func upstreamUnix(t *testing.T, h http.Handler) (string, func()) {
 	t.Helper()
-	dir := t.TempDir()
-	sock := filepath.Join(dir, "docker.sock")
+	sock := shortSockPath(t, "d.sock")
 	ln, err := net.Listen("unix", sock)
 	require.NoError(t, err)
 	srv := &http.Server{Handler: h, ReadHeaderTimeout: 2 * time.Second}
