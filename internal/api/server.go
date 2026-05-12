@@ -67,50 +67,51 @@ type serverSystem interface {
 
 // Server exposes a lightweight HTTP API for task CRUD operations.
 type Server struct {
-	scheduler               scheduler.Scheduler
-	channels                ChannelEnsurer
-	threads                 ThreadEnsurer
-	store                   ChannelLister
-	messages                MessageSender
-	memoryIndexer           MemoryIndexer
-	termManager             TerminalManager
-	hostTermManager         TerminalManager
-	dockerBrowserProvider   BrowserProvider
-	hostBrowserProvider     BrowserProvider                // for host Chrome mode
-	activeBrowserMode       map[string]string              // channelID -> "docker"|"host"; nil defaults to docker
-	browserModeMu           sync.Mutex                     // protects activeBrowserMode
-	cdpManagers             map[string]*browser.CDPManager // "channelID|mode" -> CDPManager
-	cdpManagersMu           sync.Mutex
-	browserCaptures         map[string]*browser.CaptureState // channelID -> state
-	browserCapturesMu       sync.Mutex
-	cmdBuilder              InteractiveCmdBuilder
-	containerRegistry       ContainerManager
-	activeChatLister        ActiveChatLister
-	msgHandler              IncomingMessageHandler
-	runCanceller            RunCanceller
-	interactionHandler      InteractionHandler
-	agentRegistry           *agentregistry.Registry
-	eventsHub               *EventsHub
-	imageManager            ImageManager
-	browserKeepAlive        time.Duration // delay before removing idle browser containers
-	loopDir                 string
-	screenshotDir           string // if set, write screenshots to this dir instead of base64
-	logger                  *slog.Logger
-	server                  *http.Server
-	listener                net.Listener
-	stopErr                 error             // if set, Stop returns this error (for testing)
-	agentWSWriteJSON        func(v any) error // injectable for testing agent-channel WS write errors
-	workflowEngine          WorkflowEngine
-	worktreeCreator         *worktree.Creator
-	sys                     serverSystem
-	loadConfig              func() (*config.Config, error)                       // injectable for testing
-	loadProjectConfig       func(string, *config.Config) (*config.Config, error) // injectable for testing
-	readFile                func(string) ([]byte, error)                         // injectable for testing
-	ticketStoreOpener       func(dir string) TicketStore                         // injectable for testing
-	approvalResolver        bot.ApprovalResolver                                 // gate approval dispatcher
-	containerApprovalRouter ContainerApprovalRouter                              // per-container bearer-token → Manager lookup
-	auditDirResolver        AuditDirResolver                                     // per-channel host path to the gate audit jsonl dir
-	githubLookup            GitHubLookup                                         // resolves PR for a channel's branch via `gh`
+	scheduler                 scheduler.Scheduler
+	channels                  ChannelEnsurer
+	threads                   ThreadEnsurer
+	store                     ChannelLister
+	messages                  MessageSender
+	memoryIndexer             MemoryIndexer
+	termManager               TerminalManager
+	hostTermManager           TerminalManager
+	dockerBrowserProvider     BrowserProvider
+	hostBrowserProvider       BrowserProvider                // for host Chrome mode
+	activeBrowserMode         map[string]string              // channelID -> "docker"|"host"; nil defaults to docker
+	browserModeMu             sync.Mutex                     // protects activeBrowserMode
+	cdpManagers               map[string]*browser.CDPManager // "channelID|mode" -> CDPManager
+	cdpManagersMu             sync.Mutex
+	browserCaptures           map[string]*browser.CaptureState // channelID -> state
+	browserCapturesMu         sync.Mutex
+	cmdBuilder                InteractiveCmdBuilder
+	containerRegistry         ContainerManager
+	activeChatLister          ActiveChatLister
+	msgHandler                IncomingMessageHandler
+	runCanceller              RunCanceller
+	interactionHandler        InteractionHandler
+	agentRegistry             *agentregistry.Registry
+	eventsHub                 *EventsHub
+	imageManager              ImageManager
+	browserKeepAlive          time.Duration // delay before removing idle browser containers
+	loopDir                   string
+	screenshotDir             string // if set, write screenshots to this dir instead of base64
+	logger                    *slog.Logger
+	server                    *http.Server
+	listener                  net.Listener
+	stopErr                   error             // if set, Stop returns this error (for testing)
+	agentWSWriteJSON          func(v any) error // injectable for testing agent-channel WS write errors
+	workflowEngine            WorkflowEngine
+	worktreeCreator           *worktree.Creator
+	sys                       serverSystem
+	loadConfig                func() (*config.Config, error)                               // injectable for testing
+	loadProjectConfig         func(string, *config.Config) (*config.Config, error)         // injectable for testing
+	loadWorktreeProjectConfig func(string, string, *config.Config) (*config.Config, error) // injectable for testing
+	readFile                  func(string) ([]byte, error)                                 // injectable for testing
+	ticketStoreOpener         func(dir string) TicketStore                                 // injectable for testing
+	approvalResolver          bot.ApprovalResolver                                         // gate approval dispatcher
+	containerApprovalRouter   ContainerApprovalRouter                                      // per-container bearer-token → Manager lookup
+	auditDirResolver          AuditDirResolver                                             // per-channel host path to the gate audit jsonl dir
+	githubLookup              GitHubLookup                                                 // resolves PR for a channel's branch via `gh`
 
 	// Quality-scan wiring. All fields are nil by default — handlers
 	// return 501 until the daemon wires concrete implementations. Tests

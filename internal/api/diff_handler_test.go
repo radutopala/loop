@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -447,6 +448,63 @@ func (s *ServerSuite) TestGitDiffBranchInvalidTarget() {
 	require.Contains(s.T(), w.Body.String(), "invalid target branch name")
 }
 
+func (s *ServerSuite) TestGitDiffBranchFallsBackToOriginRef() {
+	// Stacked-PR scenario: the PR's base branch only exists as a remote-tracking
+	// ref (origin/parent), not a local branch. The handler should still produce
+	// a diff by transparently falling back to origin/parent.
+	dir := s.T().TempDir()
+	cmds := [][]string{
+		{"git", "init", "-b", "main"},
+		{"git", "config", "user.email", "test@test.com"},
+		{"git", "config", "user.name", "Test"},
+	}
+	for _, c := range cmds {
+		cmd := exec.Command(c[0], c[1:]...)
+		cmd.Dir = dir
+		require.NoError(s.T(), cmd.Run())
+	}
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "base.txt"), []byte("base\n"), 0o644))
+	gitRun(s.T(), dir, "add", ".")
+	gitRun(s.T(), dir, "commit", "-m", "init")
+
+	// Build parent commit, save its hash as remote ref, delete local branch.
+	gitRun(s.T(), dir, "checkout", "-b", "parent")
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "parent.txt"), []byte("p\n"), 0o644))
+	gitRun(s.T(), dir, "add", ".")
+	gitRun(s.T(), dir, "commit", "-m", "parent work")
+	parentHashCmd := exec.Command("git", "rev-parse", "HEAD")
+	parentHashCmd.Dir = dir
+	parentHashOut, err := parentHashCmd.Output()
+	require.NoError(s.T(), err)
+	parentHash := strings.TrimSpace(string(parentHashOut))
+
+	// Child branch built on parent.
+	gitRun(s.T(), dir, "checkout", "-b", "child")
+	require.NoError(s.T(), os.WriteFile(filepath.Join(dir, "child.txt"), []byte("c\n"), 0o644))
+	gitRun(s.T(), dir, "add", ".")
+	gitRun(s.T(), dir, "commit", "-m", "child work")
+
+	// Now stash parent as origin/parent and remove the local branch — exactly the
+	// state of a worktree whose upstream is set but no local parent branch exists.
+	gitRun(s.T(), dir, "update-ref", "refs/remotes/origin/parent", parentHash)
+	gitRun(s.T(), dir, "branch", "-D", "parent")
+
+	s.store.On("GetChannel", mock.Anything, "ch-stack").
+		Return(&db.Channel{ChannelID: "ch-stack", DirPath: dir}, nil)
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/diff", s.srv.handleGitDiff)
+
+	req := httptest.NewRequest("GET", "/api/channels/ch-stack/diff?source=parent&target=child", nil)
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, req)
+
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	body := w.Body.String()
+	require.Contains(s.T(), body, `"child.txt"`)
+	require.NotContains(s.T(), body, `"parent.txt"`)
+}
+
 func (s *ServerSuite) TestGitDiffBranchNonexistentRef() {
 	// Create a git repo but reference a branch that doesn't exist.
 	dir := s.T().TempDir()
@@ -476,6 +534,12 @@ func (s *ServerSuite) TestGitDiffBranchNonexistentRef() {
 
 	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
 	require.Contains(s.T(), w.Body.String(), "git diff failed")
+}
+
+func TestResolveBranchRefEmpty(t *testing.T) {
+	// The handler validates branch names before calling resolveBranchRef, so
+	// this path is unreachable end-to-end — covered with a direct unit test.
+	require.Equal(t, "", resolveBranchRef(context.Background(), "/tmp", ""))
 }
 
 // gitRun is a test helper to run a git command in a directory.

@@ -127,7 +127,10 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
     return () => { cancelled = true; };
   }, [channelId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Fetch branch list when switching to branch or commits mode
+  // Fetch branch list when switching to branch or commits mode. Re-runs when
+  // `pr` changes so the PR's base ref is included in the dropdown options even
+  // if it isn't a local branch (e.g. stacked PRs where the parent branch lives
+  // only as origin/<name>).
   useEffect(() => {
     if ((gitMode === "branches" || gitMode === "commits") && channelId) {
       fetchBranches(channelId).then((info) => {
@@ -138,6 +141,9 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
         for (const wt of info.worktrees ?? []) {
           if (wt.branch) all.add(wt.branch);
         }
+        // Include the PR's base ref so the dropdown can render it as the
+        // selected source — `git diff` resolves it against remotes if needed.
+        if (pr?.base_ref) all.add(pr.base_ref);
         const sorted = [...all].sort();
         setBranches(sorted);
         // Default source to PR base (if present), else main, then current.
@@ -157,7 +163,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
         }
       }).catch(() => {});
     }
-  }, [gitMode, channelId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [gitMode, channelId, pr?.base_ref]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load first page of commits when branch changes
   useEffect(() => {
