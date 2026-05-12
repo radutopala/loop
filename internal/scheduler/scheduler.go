@@ -64,8 +64,17 @@ func (s *TaskScheduler) SetEventBroadcaster(eb TaskEventBroadcaster) {
 	s.events = eb
 }
 
-// Start launches the polling loop in a background goroutine.
+// Start launches the polling loop in a background goroutine. Before polling
+// begins, any task left flagged `running=1` from a prior daemon process is
+// reset — the defer-based release in executeAndLog does not fire if the
+// process was killed (OOM, SIGKILL, crash), so without this sweep the row
+// would be permanently invisible to GetDueTasks.
 func (s *TaskScheduler) Start(ctx context.Context) error {
+	if reset, err := s.store.ResetStaleRunningTasks(ctx); err != nil {
+		s.logger.Error("failed to reset stale running tasks", "error", err)
+	} else if reset > 0 {
+		s.logger.Warn("reset stale running tasks from prior daemon run", "count", reset)
+	}
 	ctx, s.cancel = context.WithCancel(ctx)
 	s.wg.Add(1)
 	go s.pollLoop(ctx)
