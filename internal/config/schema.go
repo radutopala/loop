@@ -575,10 +575,9 @@ func buildSchema() *ConfigSchema {
 				XSection: "GitHub",
 				Properties: map[string]*SchemaProperty{
 					"gh_user": {
-						Type:         "string",
-						Title:        "gh CLI User",
-						Description:  "Named gh CLI account to use for PR lookups (see `gh auth status`). Per-project override goes in .loop/config.json. Empty uses gh's currently-active account.",
-						XPlaceholder: "radutopala",
+						Type:        "string",
+						Title:       "gh CLI User",
+						Description: "Named gh CLI account to use for PR lookups (see `gh auth status`). Per-project override goes in .loop/config.json. Empty uses gh's currently-active account.",
 					},
 				},
 			},
