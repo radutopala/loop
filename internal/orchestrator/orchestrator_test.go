@@ -855,6 +855,27 @@ func (s *OrchestratorSuite) TestDrainChannelSkipsWhenPlanned() {
 	store.AssertExpectations(s.T())
 }
 
+// TestDrainChannelSkipsWhenAsked verifies the pause flag set by
+// AskUserQuestion short-circuits drainChannel: ClaimNextPending must NOT be
+// invoked while the flag is present.
+func (s *OrchestratorSuite) TestDrainChannelSkipsWhenAsked() {
+	store := new(testutil.MockStore)
+	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+	orch.SetSynchronousDrain()
+
+	orch.markAskedChannel("asked-ch")
+	require.True(s.T(), orch.IsChannelAsked("asked-ch"))
+
+	orch.ResumeChannel(context.Background(), "asked-ch")
+	store.AssertNotCalled(s.T(), "ClaimNextPending")
+
+	orch.ClearAskedChannel("asked-ch")
+	require.False(s.T(), orch.IsChannelAsked("asked-ch"))
+	store.On("ClaimNextPending", mock.Anything, "asked-ch").Return(nil, nil).Once()
+	orch.ResumeChannel(context.Background(), "asked-ch")
+	store.AssertExpectations(s.T())
+}
+
 func (s *OrchestratorSuite) TestCurrentConfigReloads() {
 	s.orch.cfg.Store(&config.Config{KeepMCPConfigs: false})
 	s.orch.configLoad = func() (*config.Config, error) {

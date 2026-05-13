@@ -154,11 +154,13 @@ func (o *Orchestrator) drainChannel(ctx context.Context, channelID string, incom
 	defer lock.Unlock()
 
 	for {
-		// Pause the drain while the channel is parked on an ExitPlanMode card.
-		// The agent presented a plan; any messages queued behind the trigger
-		// (or newly typed after) wait for the user to approve/reject/deny via
-		// POST /api/channels/{id}/plan/resolve, which clears this flag.
-		if o.IsChannelPlanned(channelID) {
+		// Pause the drain while the channel is parked on an ExitPlanMode or
+		// AskUserQuestion card. The agent presented a plan or set of
+		// questions; any messages queued behind the trigger (or newly typed
+		// after) wait for the user to resolve via
+		// POST /api/channels/{id}/plan/resolve or /ask/resolve, which clears
+		// the corresponding flag.
+		if o.IsChannelPlanned(channelID) || o.IsChannelAsked(channelID) {
 			return
 		}
 
@@ -280,16 +282,42 @@ func (o *Orchestrator) processClaimedMessage(ctx context.Context, row *db.Messag
 	defer stopTyping()
 	go o.refreshTyping(typingCtx, msg.ChannelID)
 
-	resp, lastStreamedText, runID, err := o.executeAgentRun(ctx, msg, req, channel)
+	resp, lastStreamedText, runID, finish, err := o.executeAgentRun(ctx, msg, req, channel)
 	if err != nil {
 		// Mark the trigger message as processed even on error/stop so the
 		// frontend doesn't keep showing it as "processing" when the next
-		// queued message starts.
+		// queued message starts. Order matters: messages.processed must land
+		// at the FE BEFORE agent.status non-running, otherwise the
+		// refetchHead the FE kicks off on status non-running can race the
+		// is_processed=1 DB write and overwrite the locally-applied flip
+		// with stale fetched rows.
 		o.markTriggerProcessed(ctx, msg, recent)
+		if finish != nil && o.events != nil {
+			trigger := ""
+			if o.bot.IsBotUser(msg.AuthorID) {
+				trigger = "bot"
+			}
+			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{
+				Status:  finish.status,
+				RunID:   runID,
+				Error:   finish.errMsg,
+				Trigger: trigger,
+				MsgID:   msg.MessageID,
+			})
+		}
 		return
 	}
 
 	o.deliverResponse(ctx, msg, resp, recent, lastStreamedText, runID)
+}
+
+// runFinishStatus carries the deferred agent.status broadcast info from
+// executeAgentRun back to processClaimedMessage, which fires it AFTER
+// markTriggerProcessed so the FE sees messages.processed before the
+// refetchHead triggered by the status event.
+type runFinishStatus struct {
+	status string
+	errMsg string
 }
 
 // prepareAgentRequest fetches recent messages and channel data, then builds an AgentRequest.
@@ -341,8 +369,10 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 
 // executeAgentRun runs the agent with timeout, streaming, and stop-button cancellation.
 // Returns the agent response and the last streamed text (for dedup), or an error if the
-// run failed and the caller should abort.
-func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMessage, req *agent.AgentRequest, channel *db.Channel) (*agent.AgentResponse, string, string, error) {
+// run failed and the caller should abort. The finish field carries the deferred
+// agent.status non-running broadcast (completed/error); the caller fires it AFTER
+// markTriggerProcessed so the FE sees messages.processed before refetchHead.
+func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMessage, req *agent.AgentRequest, channel *db.Channel) (*agent.AgentResponse, string, string, *runFinishStatus, error) {
 	chatID := int64(0)
 	if channel != nil {
 		chatID = channel.ID
@@ -370,6 +400,12 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	// the run so the plan card lands as the only end-of-turn artifact instead
 	// of the agent continuing past it under --dangerously-skip-permissions.
 	var selfInitiatedPlan atomic.Bool
+
+	// Set when the agent emits AskUserQuestion mid-turn. We always cancel the
+	// run so the ask card is the end-of-turn artifact and the agent cannot
+	// keep using other tools past it; the user's answer arrives via the
+	// /ask/resolve endpoint as a priority-bumped continuation message.
+	var selfInitiatedAsk atomic.Bool
 
 	var tracker *streamTracker
 	if cfg.StreamingEnabled {
@@ -400,7 +436,13 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 				if name == "AskUserQuestion" {
 					var data events.AskUserQuestionEventData
 					if err := json.Unmarshal([]byte(input), &data); err == nil && len(data.Questions) > 0 {
+						// Park before broadcasting so the drain loop sees the
+						// flag the moment the run wraps up; cancel the run so
+						// no further tools execute past the ask card.
+						o.markAskedChannel(msg.ChannelID)
 						o.events.BroadcastAskUser(msg.ChannelID, data)
+						selfInitiatedAsk.Store(true)
+						runCancel()
 					}
 				}
 				if name == "ExitPlanMode" {
@@ -475,13 +517,11 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	if err != nil {
 		if selfInitiatedPlan.Load() {
 			o.logger.Info("run stopped for self-initiated plan mode", "channel_id", msg.ChannelID)
-			if o.events != nil {
-				o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "completed", RunID: runID, Trigger: trigger, MsgID: msg.MessageID})
-			}
-			return nil, "", runID, err
+			return nil, "", runID, &runFinishStatus{status: "completed"}, err
 		}
-		if o.events != nil {
-			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "error", RunID: runID, Error: err.Error(), Trigger: trigger, MsgID: msg.MessageID})
+		if selfInitiatedAsk.Load() {
+			o.logger.Info("run stopped for AskUserQuestion", "channel_id", msg.ChannelID)
+			return nil, "", runID, &runFinishStatus{status: "completed"}, err
 		}
 		if runCtx.Err() == context.Canceled {
 			o.logger.Info("run stopped by user", "channel_id", msg.ChannelID)
@@ -490,7 +530,7 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 				Content:          "Run stopped.",
 				ReplyToMessageID: msg.MessageID,
 			})
-			return nil, "", runID, err
+			return nil, "", runID, &runFinishStatus{status: "error", errMsg: err.Error()}, err
 		}
 		o.logger.Error("running agent", "error", err, "channel_id", msg.ChannelID)
 		_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
@@ -498,27 +538,24 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 			Content:          "Sorry, I encountered an error processing your request.",
 			ReplyToMessageID: msg.MessageID,
 		})
-		return nil, "", runID, err
+		return nil, "", runID, &runFinishStatus{status: "error", errMsg: err.Error()}, err
 	}
 
 	if resp.Error != "" {
-		if o.events != nil {
-			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "error", RunID: runID, Error: resp.Error, Trigger: trigger, MsgID: msg.MessageID})
-		}
 		o.logger.Error("agent returned error", "error", resp.Error, "channel_id", msg.ChannelID)
 		_ = o.bot.SendMessage(ctx, &bot.OutgoingMessage{
 			ChannelID:        msg.ChannelID,
 			Content:          fmt.Sprintf("Agent error: %s", resp.Error),
 			ReplyToMessageID: msg.MessageID,
 		})
-		return nil, "", runID, fmt.Errorf("agent error: %s", resp.Error)
+		return nil, "", runID, &runFinishStatus{status: "error", errMsg: resp.Error}, fmt.Errorf("agent error: %s", resp.Error)
 	}
 
 	var lastText string
 	if tracker != nil {
 		lastText = tracker.lastText
 	}
-	return resp, lastText, runID, nil
+	return resp, lastText, runID, nil, nil
 }
 
 // deliverResponse sends the final response, records the bot message, and marks messages as processed.
