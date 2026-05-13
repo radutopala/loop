@@ -403,6 +403,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
 	s.orch.HandleMessage(s.ctx, msg)
 
 	eb.AssertCalled(s.T(), "BroadcastExitPlan", "ch1", mock.Anything)
+	// ExitPlanMode parks the channel so the drain holds queued rows
+	// until the user clicks approve / reject / deny.
+	require.True(s.T(), s.orch.IsChannelPlanned("ch1"))
 	eb.AssertExpectations(s.T())
 }
 
@@ -466,6 +469,9 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanModeSelfInitiated(
 	require.NotNil(s.T(), capturedCtx)
 	require.ErrorIs(s.T(), capturedCtx.Err(), context.Canceled)
 	eb.AssertCalled(s.T(), "BroadcastExitPlan", "ch1", mock.Anything)
+	// Same pause flag as scenario 1 — the drain must hold queued messages
+	// regardless of whether the agent halted naturally or was cancelled.
+	require.True(s.T(), s.orch.IsChannelPlanned("ch1"))
 	// No "Run stopped." message — the plan card itself is the UI artifact.
 	s.bot.AssertNotCalled(s.T(), "SendMessage", mock.Anything, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 		return out != nil && out.Content == "Run stopped."
