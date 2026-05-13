@@ -154,6 +154,14 @@ func (o *Orchestrator) drainChannel(ctx context.Context, channelID string, incom
 	defer lock.Unlock()
 
 	for {
+		// Pause the drain while the channel is parked on an ExitPlanMode card.
+		// The agent presented a plan; any messages queued behind the trigger
+		// (or newly typed after) wait for the user to approve/reject/deny via
+		// POST /api/channels/{id}/plan/resolve, which clears this flag.
+		if o.IsChannelPlanned(channelID) {
+			return
+		}
+
 		row, err := o.store.ClaimNextPending(ctx, channelID)
 		if err != nil {
 			o.logger.Error("claiming next pending message", "error", err, "channel_id", channelID)
@@ -398,6 +406,12 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 				if name == "ExitPlanMode" {
 					var data events.ExitPlanModeEventData
 					if err := json.Unmarshal([]byte(input), &data); err == nil && data.Plan != "" {
+						// Park the channel before broadcasting so the drain
+						// loop sees the flag the moment the run wraps up
+						// (relevant for the user-picked-plan-pill path, where
+						// the agent halts naturally and the drain races back
+						// to claim any queued sibling messages).
+						o.markPlannedChannel(msg.ChannelID)
 						o.events.BroadcastExitPlan(msg.ChannelID, data)
 						// User picked the plan pill → the prompt-injected plan
 						// system message already halts the model at ExitPlanMode.

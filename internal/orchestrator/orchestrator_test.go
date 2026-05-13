@@ -830,6 +830,31 @@ func (s *OrchestratorSuite) TestDrainChannelReleaseError() {
 	store.AssertExpectations(s.T())
 }
 
+// TestDrainChannelSkipsWhenPlanned verifies the pause flag set by
+// ExitPlanMode short-circuits drainChannel: ClaimNextPending must NOT be
+// invoked while the flag is present.
+func (s *OrchestratorSuite) TestDrainChannelSkipsWhenPlanned() {
+	store := new(testutil.MockStore)
+	// No ClaimNextPending expectation — if the guard regresses, the mock
+	// call panics with "unexpected call".
+	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+	orch.SetSynchronousDrain()
+
+	orch.markPlannedChannel("planned-ch")
+	require.True(s.T(), orch.IsChannelPlanned("planned-ch"))
+
+	orch.ResumeChannel(context.Background(), "planned-ch")
+	// Should have returned immediately without touching the store.
+	store.AssertNotCalled(s.T(), "ClaimNextPending")
+
+	// After clearing, the next drain proceeds and finds nothing pending.
+	orch.ClearPlannedChannel("planned-ch")
+	require.False(s.T(), orch.IsChannelPlanned("planned-ch"))
+	store.On("ClaimNextPending", mock.Anything, "planned-ch").Return(nil, nil).Once()
+	orch.ResumeChannel(context.Background(), "planned-ch")
+	store.AssertExpectations(s.T())
+}
+
 func (s *OrchestratorSuite) TestCurrentConfigReloads() {
 	s.orch.cfg.Store(&config.Config{KeepMCPConfigs: false})
 	s.orch.configLoad = func() (*config.Config, error) {

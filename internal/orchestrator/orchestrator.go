@@ -79,6 +79,7 @@ type Orchestrator struct {
 	channelLocks      sync.Map       // map[channelID]*sync.Mutex — serialises per-channel drain loops
 	activeRuns        sync.Map       // map[channelID]context.CancelFunc
 	activeRunMsgIDs   sync.Map       // map[channelID]string — msg_id of the row currently running
+	plannedChannels   sync.Map       // map[channelID]struct{} — channels parked on an ExitPlanMode card
 	drainWG           sync.WaitGroup // tracks in-flight drain goroutines so tests / shutdown can wait
 	drainSpawn        func(func())   // wraps fn into a tracked goroutine; tests swap for inline run
 	logger            *slog.Logger
@@ -170,6 +171,27 @@ func (o *Orchestrator) ActiveRunMessageID(channelID string) string {
 // and by shutdown.
 func (o *Orchestrator) WaitDrains() {
 	o.drainWG.Wait()
+}
+
+// markPlannedChannel parks a channel on an ExitPlanMode card. While parked,
+// drainChannel returns without claiming any queued rows so messages the user
+// types after the plan card appears (and any rows already queued behind the
+// trigger) wait for an explicit approve / reject / deny resolution.
+func (o *Orchestrator) markPlannedChannel(channelID string) {
+	o.plannedChannels.Store(channelID, struct{}{})
+}
+
+// IsChannelPlanned reports whether a channel is currently parked on a plan
+// approval card. Used by drainChannel to short-circuit claims.
+func (o *Orchestrator) IsChannelPlanned(channelID string) bool {
+	_, ok := o.plannedChannels.Load(channelID)
+	return ok
+}
+
+// ClearPlannedChannel removes the plan-pause flag for a channel. Called by
+// the API plan-resolve endpoint once the user has decided how to proceed.
+func (o *Orchestrator) ClearPlannedChannel(channelID string) {
+	o.plannedChannels.Delete(channelID)
 }
 
 // CancelActiveRun cancels the active agent run for a channel, if any.
