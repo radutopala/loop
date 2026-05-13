@@ -4,6 +4,7 @@ package component
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -193,6 +194,10 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// Panel interaction
 	ctx.Step(`^I add a "([^"]*)" panel$`, tc.addPanel)
 	ctx.Step(`^I click the task create button$`, tc.clickTaskCreateButton)
+
+	// Event injection (chromedp dispatches a CustomEvent that the chat store
+	// listens for; routes through the same handler as a real WS message).
+	ctx.Step(`^I inject an exit_plan event with plan "([^"]*)"$`, tc.injectExitPlanEvent)
 
 	// Debugging
 	ctx.Step(`^I take a screenshot$`, tc.takeScreenshot)
@@ -925,4 +930,54 @@ func (tc *TestContext) dumpPageText() error {
 	}
 	fmt.Printf("[DUMP PAGE TEXT] %.2000s\n", body)
 	return nil
+}
+
+// injectExitPlanEvent fires a synthetic agent.exit_plan event into the
+// page's chat store via the loop:test-event CustomEvent hook. Lets us render
+// the ExitPlanCard in BDD without spinning up a real agent run.
+//
+// ChatMessages (which renders the ExitPlanCard) only mounts when the chat is
+// non-empty (ChatView.tsx falls back to a welcome screen otherwise), so we
+// first inject a synthetic message.created event to populate the timeline.
+func (tc *TestContext) injectExitPlanEvent(planText string) error {
+	if tc.ChannelID == "" {
+		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
+	}
+	if err := tc.ensureChromeTab(); err != nil {
+		return err
+	}
+	seed, err := json.Marshal(map[string]any{
+		"type":       "message.created",
+		"channel_id": tc.ChannelID,
+		"timestamp":  1,
+		"data": map[string]any{
+			"msg_id":       "bdd-seed-1",
+			"author_id":    "user",
+			"author_name":  "tester",
+			"content":      "seed",
+			"is_bot":       false,
+			"is_processed": true,
+			"priority":     0,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("marshalling seed payload: %w", err)
+	}
+	payload, err := json.Marshal(map[string]any{
+		"type":       "agent.exit_plan",
+		"channel_id": tc.ChannelID,
+		"data":       map[string]string{"plan": planText},
+	})
+	if err != nil {
+		return fmt.Errorf("marshalling exit_plan payload: %w", err)
+	}
+	js := fmt.Sprintf(
+		`(() => {
+			window.dispatchEvent(new CustomEvent('loop:test-event', {detail: JSON.stringify(%s)}));
+			window.dispatchEvent(new CustomEvent('loop:test-event', {detail: JSON.stringify(%s)}));
+		})()`,
+		string(seed),
+		string(payload),
+	)
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, nil))
 }

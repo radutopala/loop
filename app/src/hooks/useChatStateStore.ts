@@ -116,25 +116,22 @@ export function useChatStateStore({
     [selectedId],
   );
 
+  // Test hook (chromedp BDD): listen for a synthetic CustomEvent and route its
+  // detail (a stringified WSEvent) through the same onMessage handler the real
+  // WebSocket uses. Lets headless browser tests render plan/approval cards
+  // without spinning up a real agent run.
+  const onMessageRef = useRef<((event: MessageEvent) => void) | null>(null);
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const ce = e as CustomEvent<string>;
+      onMessageRef.current?.({ data: ce.detail } as MessageEvent);
+    };
+    window.addEventListener("loop:test-event", handler);
+    return () => window.removeEventListener("loop:test-event", handler);
+  }, []);
+
   // Send subscribe on open.
-  const { send } = useWebSocketConnection({
-    path: "/api/ws",
-    enabled: true,
-    onOpen: useCallback(
-      (ws: WebSocket) => {
-        const set = new Set<string>();
-        if (selectedIdRef.current) set.add(selectedIdRef.current);
-        for (const [id] of isRunningMapRef.current) {
-          set.add(id);
-        }
-        ws.send(
-          JSON.stringify({ type: "subscribe", channels: [...set] }),
-        );
-      },
-      // eslint-disable-next-line react-hooks/exhaustive-deps
-      [],
-    ),
-    onMessage: useCallback((event: MessageEvent) => {
+  const handleMessage = useCallback((event: MessageEvent) => {
       let wsEvent: WSEvent;
       try {
         wsEvent = JSON.parse(event.data);
@@ -276,7 +273,27 @@ export function useChatStateStore({
       if (!channelId || stateTarget === selectedIdRef.current || wsEvent.type === "channel.created" || wsEvent.type === "channel.deleted") {
         onAppEventRef.current(wsEvent);
       }
-    }, []),
+    }, []);
+  onMessageRef.current = handleMessage;
+
+  const { send } = useWebSocketConnection({
+    path: "/api/ws",
+    enabled: true,
+    onOpen: useCallback(
+      (ws: WebSocket) => {
+        const set = new Set<string>();
+        if (selectedIdRef.current) set.add(selectedIdRef.current);
+        for (const [id] of isRunningMapRef.current) {
+          set.add(id);
+        }
+        ws.send(
+          JSON.stringify({ type: "subscribe", channels: [...set] }),
+        );
+      },
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+      [],
+    ),
+    onMessage: handleMessage,
   });
 
   // Re-subscribe when selectedId or isRunningMap changes.
