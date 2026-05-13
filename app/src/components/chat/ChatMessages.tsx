@@ -2,6 +2,7 @@ import { createContext, forwardRef, useCallback, useContext, useEffect, useImper
 import type { AgentActivityData, AskUserQuestion, ExitPlanModeData, Message, TimelineItem, TodoItem } from "../../types";
 import type { ChatState } from "../../hooks/useChatState";
 import { sendMessage } from "../../api/loopApi";
+import { resolvePlan } from "../../api/channels";
 import { fonts } from "../../theme";
 import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
@@ -1210,12 +1211,14 @@ function ExitPlanCard({ plan, channelId, setMode, onSent }: { plan: ExitPlanMode
   const { colors } = useTheme();
   const [sending, setSending] = useState(false);
   const [expanded, setExpanded] = useState(false);
+  const [changesOpen, setChangesOpen] = useState(false);
+  const [changesText, setChangesText] = useState("");
 
-  const handleAccept = async () => {
+  const handleApprove = async () => {
     setSending(true);
     try {
       setMode("agent");
-      await sendMessage(channelId, "I approve the plan. Please proceed with the implementation.");
+      await resolvePlan(channelId, "approve");
       onSent?.();
     } catch { /* ignore */ }
     setSending(false);
@@ -1224,9 +1227,22 @@ function ExitPlanCard({ plan, channelId, setMode, onSent }: { plan: ExitPlanMode
   const handleReject = async () => {
     setSending(true);
     try {
-      // ExitPlanMode auto-flipped the pill to "agent"; revert since the user wants more planning.
+      // ExitPlanMode auto-flipped the pill to "agent"; revert so any
+      // already-queued messages stay in plan mode when the drain resumes.
       setMode("plan");
-      await sendMessage(channelId, "I'd like changes to the plan. Let's discuss.", "plan");
+      await resolvePlan(channelId, "reject");
+      onSent?.();
+    } catch { /* ignore */ }
+    setSending(false);
+  };
+
+  const handleRequestChanges = async () => {
+    const prompt = changesText.trim();
+    if (!prompt) return;
+    setSending(true);
+    try {
+      setMode("plan");
+      await resolvePlan(channelId, "deny", prompt, "plan");
       onSent?.();
     } catch { /* ignore */ }
     setSending(false);
@@ -1276,9 +1292,9 @@ function ExitPlanCard({ plan, channelId, setMode, onSent }: { plan: ExitPlanMode
           {expanded ? "Show less" : `Show all (${lines.length} lines)`}
         </button>
       )}
-      <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
+      <div style={{ display: "flex", gap: 8, marginTop: 10, flexWrap: "wrap" }}>
         <button
-          onClick={handleAccept}
+          onClick={handleApprove}
           disabled={sending}
           style={{
             padding: "5px 16px",
@@ -1292,7 +1308,24 @@ function ExitPlanCard({ plan, channelId, setMode, onSent }: { plan: ExitPlanMode
             opacity: sending ? 0.5 : 1,
           }}
         >
-          Accept & Execute
+          Approve & Execute
+        </button>
+        <button
+          onClick={() => setChangesOpen((v) => !v)}
+          disabled={sending}
+          style={{
+            padding: "5px 16px",
+            fontSize: 12,
+            fontFamily: fonts.mono,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 12,
+            backgroundColor: "transparent",
+            color: colors.text,
+            cursor: "pointer",
+            opacity: sending ? 0.5 : 1,
+          }}
+        >
+          Request Changes
         </button>
         <button
           onClick={handleReject}
@@ -1309,9 +1342,50 @@ function ExitPlanCard({ plan, channelId, setMode, onSent }: { plan: ExitPlanMode
             opacity: sending ? 0.5 : 1,
           }}
         >
-          Request Changes
+          Discard
         </button>
       </div>
+      {changesOpen && (
+        <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+          <textarea
+            value={changesText}
+            onChange={(e) => setChangesText(e.target.value)}
+            placeholder="Describe the changes you want before approving..."
+            rows={3}
+            style={{
+              width: "100%",
+              padding: "6px 8px",
+              fontSize: 12,
+              fontFamily: fonts.mono,
+              color: colors.text,
+              backgroundColor: colors.surface,
+              border: `1px solid ${colors.border}`,
+              borderRadius: 6,
+              resize: "vertical",
+              boxSizing: "border-box",
+            }}
+          />
+          <div>
+            <button
+              onClick={handleRequestChanges}
+              disabled={sending || !changesText.trim()}
+              style={{
+                padding: "5px 16px",
+                fontSize: 12,
+                fontFamily: fonts.mono,
+                border: `1px solid ${colors.active}`,
+                borderRadius: 12,
+                backgroundColor: colors.active,
+                color: "#fff",
+                cursor: "pointer",
+                opacity: sending || !changesText.trim() ? 0.5 : 1,
+              }}
+            >
+              Send changes
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -109,6 +109,25 @@ export async function setChannelLocked(channelId: string, locked: boolean): Prom
   if (!res.ok) throw new Error(`Failed to update lock: ${res.statusText}`);
 }
 
+export type PlanResolveAction = "approve" | "reject" | "deny";
+
+export async function resolvePlan(
+  channelId: string,
+  action: PlanResolveAction,
+  prompt?: string,
+  mode?: string,
+): Promise<void> {
+  const body: Record<string, string> = { action };
+  if (prompt) body.prompt = prompt;
+  if (mode) body.mode = mode;
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/plan/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Failed to resolve plan: ${res.statusText}`);
+}
+
 export async function ensureChannel(dirPath: string): Promise<Channel> {
   const res = await fetch(`${getApiUrl()}/api/channels`, {
     method: "POST",
