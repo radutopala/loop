@@ -95,6 +95,7 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 			AuthorID:   msg.AuthorID,
 			AuthorName: msg.AuthorName,
 			Content:    msg.Content,
+			Priority:   msg.Priority,
 		})
 	}
 
