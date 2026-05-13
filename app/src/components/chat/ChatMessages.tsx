@@ -164,6 +164,22 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
       skippedToolResultIDs.add(it.tool_use_id);
     }
   }
+  // While compacting is actively in progress the bottom "Compacting context..."
+  // indicator is showing — suppress the trailing in-timeline "Compacted context"
+  // marker so we don't render the past-tense stamp before the action finishes.
+  // Once agentActivity transitions away (to "model" etc.) the marker reappears.
+  let suppressedCompactingId: number | null = null;
+  if (isRunning && agentActivity?.activity === "compacting") {
+    for (let i = allItems.length - 1; i >= 0; i--) {
+      if (allItems[i]!.kind === "compacting") {
+        suppressedCompactingId = allItems[i]!.id;
+        break;
+      }
+    }
+  }
+  const visibleAllItems = suppressedCompactingId !== null
+    ? allItems.filter((it) => !(it.kind === "compacting" && it.id === suppressedCompactingId))
+    : allItems;
   const bottomRef = useRef<HTMLDivElement>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   const autoScrollRef = useRef(true);
@@ -254,7 +270,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
             </button>
           )}
           {(() => {
-            const groups = groupTimelineItems(allItems);
+            const groups = groupTimelineItems(visibleAllItems);
             const lastIdx = groups.length - 1;
             return groups.map((g, idx) => {
               if (g.kind === "message") {
