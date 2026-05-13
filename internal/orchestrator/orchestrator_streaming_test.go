@@ -1,10 +1,12 @@
 package orchestrator
 
 import (
+	"context"
 	"errors"
 	"time"
 
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/bot"
@@ -361,9 +363,12 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
 	eb := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(eb)
 
+	// User picked the plan pill (Mode="plan") → req.PlanMode=true →
+	// the runner completes normally because the prompt-injected plan-mode
+	// system prompt halts the model at ExitPlanMode. No cancellation here.
 	msg := &bot.IncomingMessage{
 		ChannelID: "ch1", GuildID: "g1", AuthorID: "user1", AuthorName: "Alice",
-		Content: "plan it", MessageID: "msg-plan", IsBotMention: true, Timestamp: time.Now().UTC(),
+		Content: "plan it", MessageID: "msg-plan", Mode: "plan", IsBotMention: true, Timestamp: time.Now().UTC(),
 	}
 
 	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
@@ -376,7 +381,7 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
 
 	exitInput := `{"plan":"# Plan\nStep 1","planFilePath":"/tmp/p.md"}`
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
-		if req.OnToolUse == nil {
+		if req.OnToolUse == nil || !req.PlanMode {
 			return false
 		}
 		req.OnToolUse("toolu_p", "ExitPlanMode", exitInput)
@@ -398,6 +403,77 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanMode() {
 	s.orch.HandleMessage(s.ctx, msg)
 
 	eb.AssertCalled(s.T(), "BroadcastExitPlan", "ch1", mock.Anything)
+	eb.AssertExpectations(s.T())
+}
+
+// TestHandleMessageStreamingExitPlanModeSelfInitiated covers scenario 2:
+// the user did NOT pick the plan pill (Mode unset), so req.PlanMode=false.
+// The agent volunteers EnterPlanMode → ExitPlanMode mid-turn under
+// --dangerously-skip-permissions. The orchestrator must cancel the run on
+// ExitPlanMode so subsequent tools don't execute past the implicit gate,
+// broadcast a clean `completed` status (not `error`), and skip the
+// "Run stopped." chat message that the manual stop-button path emits.
+func (s *OrchestratorSuite) TestHandleMessageStreamingExitPlanModeSelfInitiated() {
+	cfgStream := s.orch.cfg.Load()
+	cfgStream.StreamingEnabled = true
+	// Non-zero timeout so a context cancellation we observe in the captured
+	// context is provably from runCancel(), not from a 0-duration deadline.
+	cfgStream.ContainerTimeout = time.Minute
+	s.orch.cfg.Store(cfgStream)
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+
+	msg := &bot.IncomingMessage{
+		ChannelID: "ch1", GuildID: "g1", AuthorID: "user1", AuthorName: "Alice",
+		Content: "do stuff", MessageID: "msg-self-plan", IsBotMention: true, Timestamp: time.Now().UTC(),
+	}
+
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Maybe()
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+
+	exitInput := `{"plan":"# Plan\nStep 1","planFilePath":"/tmp/p.md"}`
+	// Capture the run context so we can assert it was cancelled.
+	var capturedCtx context.Context
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnToolUse == nil || req.PlanMode {
+			return false
+		}
+		req.OnToolUse("toolu_p", "ExitPlanMode", exitInput)
+		return true
+	})).Run(func(args mock.Arguments) {
+		capturedCtx = args.Get(0).(context.Context)
+	}).Return((*agent.AgentResponse)(nil), context.Canceled)
+
+	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
+	eb.On("BroadcastToolUse", "ch1", mock.Anything).Return().Once()
+	eb.On("BroadcastExitPlan", "ch1", mock.MatchedBy(func(d events.ExitPlanModeEventData) bool {
+		return d.Plan == "# Plan\nStep 1"
+	})).Return().Once()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "running" && d.MsgID == "msg-self-plan"
+	})).Return().Once()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "completed" && d.Error == "" && d.MsgID == "msg-self-plan"
+	})).Return().Once()
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	require.NotNil(s.T(), capturedCtx)
+	require.ErrorIs(s.T(), capturedCtx.Err(), context.Canceled)
+	eb.AssertCalled(s.T(), "BroadcastExitPlan", "ch1", mock.Anything)
+	// No "Run stopped." message — the plan card itself is the UI artifact.
+	s.bot.AssertNotCalled(s.T(), "SendMessage", mock.Anything, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
+		return out != nil && out.Content == "Run stopped."
+	}))
+	// No error broadcast — we treat the cancellation as a clean end-of-turn.
+	eb.AssertNotCalled(s.T(), "BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "error"
+	}))
 	eb.AssertExpectations(s.T())
 }
 

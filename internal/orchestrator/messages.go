@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/radutopala/loop/internal/agent"
@@ -356,6 +357,12 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 	// Register the cancel func so stop button clicks can cancel this run.
 	o.activeRuns.Store(msg.ChannelID, runCancel)
 
+	// Set when the agent volunteers EnterPlanMode → ExitPlanMode mid-turn
+	// without the user picking the plan pill (req.PlanMode=false). We cancel
+	// the run so the plan card lands as the only end-of-turn artifact instead
+	// of the agent continuing past it under --dangerously-skip-permissions.
+	var selfInitiatedPlan atomic.Bool
+
 	var tracker *streamTracker
 	if cfg.StreamingEnabled {
 		tracker = newStreamTracker(func(text string) {
@@ -392,6 +399,14 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 					var data events.ExitPlanModeEventData
 					if err := json.Unmarshal([]byte(input), &data); err == nil && data.Plan != "" {
 						o.events.BroadcastExitPlan(msg.ChannelID, data)
+						// User picked the plan pill → the prompt-injected plan
+						// system message already halts the model at ExitPlanMode.
+						// Otherwise the agent volunteered plan mode mid-turn, so
+						// stop the run before subsequent tools execute.
+						if !req.PlanMode {
+							selfInitiatedPlan.Store(true)
+							runCancel()
+						}
 					}
 				}
 				if name == "TodoWrite" {
@@ -444,6 +459,13 @@ func (o *Orchestrator) executeAgentRun(ctx context.Context, msg *bot.IncomingMes
 
 	resp, err := o.runner.Run(runCtx, req)
 	if err != nil {
+		if selfInitiatedPlan.Load() {
+			o.logger.Info("run stopped for self-initiated plan mode", "channel_id", msg.ChannelID)
+			if o.events != nil {
+				o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "completed", RunID: runID, Trigger: trigger, MsgID: msg.MessageID})
+			}
+			return nil, "", runID, err
+		}
 		if o.events != nil {
 			o.events.BroadcastAgentStatus(msg.ChannelID, events.AgentStatusEventData{Status: "error", RunID: runID, Error: err.Error(), Trigger: trigger, MsgID: msg.MessageID})
 		}
