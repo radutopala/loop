@@ -6,7 +6,7 @@ import { fonts } from "../../theme";
 import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
 import { ContextMenu } from "../shared/ContextMenu";
-import { DiffViewer, parseUnifiedDiff } from "./DiffViewer";
+import { DiffViewer, fileKey, parseUnifiedDiff } from "./DiffViewer";
 import type { ParsedFile } from "./DiffViewer";
 import { CommitHistory } from "./CommitHistory";
 import { WorktreesPanel } from "./WorktreesPanel";
@@ -215,7 +215,19 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
         setDiffVersion((v) => v + 1);
       }
       setData(d);
-      setParsedFiles(parseUnifiedDiff(d.diff));
+      if (gitMode === "branches") {
+        // Branch-to-branch diff has no staged/unstaged distinction.
+        setParsedFiles(parseUnifiedDiff(d.diff));
+      } else {
+        // Uncommitted mode: parse each section with its known status so a
+        // partially-staged file produces two distinct ParsedFile entries.
+        setParsedFiles([
+          ...parseUnifiedDiff(d.staged_diff ?? "", "staged"),
+          ...parseUnifiedDiff(d.unstaged_diff ?? "", "unstaged"),
+          ...parseUnifiedDiff(d.conflict_diff ?? "", "conflict"),
+          ...parseUnifiedDiff(d.untracked_diff ?? "", "untracked"),
+        ]);
+      }
     } catch {
       /* ignore fetch errors — will retry on next poll */
     } finally {
@@ -243,13 +255,13 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
   useEffect(() => () => { if (debounceRef.current) clearTimeout(debounceRef.current); }, []);
   useEventStream({ channelId, onEvent });
 
-  const toggleFile = useCallback((path: string) => {
+  const toggleFile = useCallback((key: string) => {
     setExpandedFiles((prev) => {
       const next = new Set(prev);
-      if (next.has(path)) {
-        next.delete(path);
+      if (next.has(key)) {
+        next.delete(key);
       } else {
-        next.add(path);
+        next.add(key);
       }
       return next;
     });
@@ -257,7 +269,7 @@ export function GitPanel({ channelId, dirPath, branch, maximized, sidebarOpen, t
 
   const expandAll = useCallback(() => {
     if (data) {
-      setExpandedFiles(new Set(data.files.map((f) => f.path)));
+      setExpandedFiles(new Set(data.files.map(fileKey)));
     }
   }, [data]);
 

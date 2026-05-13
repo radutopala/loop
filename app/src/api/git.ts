@@ -65,7 +65,16 @@ export interface DiffFile {
 
 export interface DiffResponse {
   files: DiffFile[];
+  // Concatenated patch text — used as a change-detection fingerprint and
+  // as the only diff source for branch-to-branch mode.
   diff: string;
+  // Per-status patches for uncommitted mode. Empty/undefined for branch
+  // mode. Parsed separately so partially-staged files (path appearing as
+  // both staged and unstaged) get distinct ParsedFile entries.
+  staged_diff?: string;
+  unstaged_diff?: string;
+  conflict_diff?: string;
+  untracked_diff?: string;
   total_additions: number;
   total_deletions: number;
 }

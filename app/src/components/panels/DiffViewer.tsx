@@ -22,6 +22,18 @@ export interface HunkLine {
 export interface ParsedFile {
   path: string;
   hunks: ParsedHunk[];
+  // Set when the diff was parsed in uncommitted mode so the file list can
+  // disambiguate a partially-staged path that appears twice (once staged,
+  // once unstaged). Undefined for branch-to-branch diffs where the
+  // distinction does not apply.
+  status?: DiffFileStatus;
+}
+
+/** Stable identifier that pairs a file with its status — used as the key
+ * for expandedFiles and to look up the matching ParsedFile. Two rows for
+ * the same path with different statuses get distinct keys. */
+export function fileKey(file: { path: string; status?: DiffFileStatus }): string {
+  return `${file.status ?? ""}:${file.path}`;
 }
 
 export interface ExpandableGap {
@@ -145,7 +157,7 @@ export function computeSegments(parsed: ParsedFile, totalLineCount?: number): Di
   return segments;
 }
 
-export function parseUnifiedDiff(raw: string): ParsedFile[] {
+export function parseUnifiedDiff(raw: string, status?: DiffFileStatus): ParsedFile[] {
   const files: ParsedFile[] = [];
   const fileSections = raw.split(/^diff --git /m);
 
@@ -201,7 +213,7 @@ export function parseUnifiedDiff(raw: string): ParsedFile[] {
       }
     }
 
-    files.push({ path, hunks });
+    files.push({ path, hunks, status });
   }
 
   return files;
@@ -243,7 +255,7 @@ interface DiffViewerProps {
   loading: boolean;
   hasData: boolean;
   totalFiles: number;
-  onToggleFile: (path: string) => void;
+  onToggleFile: (key: string) => void;
   onExpandAll: () => void;
   onCollapseAll: () => void;
   onFileContextMenu: (e: React.MouseEvent, path: string) => void;
@@ -271,10 +283,10 @@ export function DiffViewer({
   const isNavigatingRef = useRef(false);
 
   // Reset focused index to first file when file list changes
-  const fileKeys = files.map((f) => f.path).join("\n");
+  const fileListSignature = files.map(fileKey).join("\n");
   useEffect(() => {
     setFocusedFileIndex(0);
-  }, [fileKeys]);
+  }, [fileListSignature]);
 
   // Update focused file on mouse hover over file sections.
   const handleFileMouseEnter = useCallback((fileIndex: number) => {
@@ -287,7 +299,8 @@ export function DiffViewer({
     isNavigatingRef.current = true;
     setFocusedFileIndex(index);
     const file = files[index]!;
-    if (!expandedFiles.has(file.path)) onToggleFile(file.path);
+    const key = fileKey(file);
+    if (!expandedFiles.has(key)) onToggleFile(key);
     requestAnimationFrame(() => {
       fileRefs.current.get(index)?.scrollIntoView({ behavior: "smooth", block: "start" });
       setTimeout(() => { isNavigatingRef.current = false; }, 500);
@@ -503,21 +516,22 @@ export function DiffViewer({
           <div style={{ padding: "20px 12px", color: colors.textDim, fontSize: 13 }}>No changes</div>
         )}
         {files.map((file, fileIndex) => {
-          const expanded = expandedFiles.has(file.path);
+          const key = fileKey(file);
+          const expanded = expandedFiles.has(key);
           const focused = expandedFiles.size > 0 && fileIndex === clampedIndex;
-          const parsed = parsedFiles.find((pf) => pf.path === file.path);
+          const parsed = parsedFiles.find((pf) => pf.path === file.path && pf.status === file.status);
           const cachedLines = fileContentCache.current.get(file.path);
           const segments = parsed ? computeSegments(parsed, cachedLines?.length) : [];
           return (
             <div
-              key={`${file.path}:${file.status ?? ""}:${fileIndex}`}
+              key={`${key}:${fileIndex}`}
               data-file-idx={fileIndex}
               ref={(el) => { if (el) fileRefs.current.set(fileIndex, el); else fileRefs.current.delete(fileIndex); }}
               onMouseEnter={() => handleFileMouseEnter(fileIndex)}
               style={{ borderLeft: `3px solid ${focused ? colors.active : "transparent"}`, transition: "border-color 0.15s ease" }}
             >
               <button
-                onClick={() => { setFocusedFileIndex(fileIndex); onToggleFile(file.path); }}
+                onClick={() => { setFocusedFileIndex(fileIndex); onToggleFile(key); }}
                 onContextMenu={(e) => { e.preventDefault(); onFileContextMenu(e, file.path); }}
                 style={{
                   display: "flex", alignItems: "center", gap: 6, width: "100%",
