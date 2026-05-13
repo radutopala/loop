@@ -614,6 +614,7 @@ func (a *app) serve() error {
 	executor.SetActiveRuns(orch.ActiveRunsMap())
 	apiSrv.SetIncomingMessageHandler(chatBot)
 	apiSrv.SetRunCanceller(orch)
+	apiSrv.SetPlanResolver(orch)
 	apiSrv.SetInteractionHandler(orch)
 	apiSrv.SetActiveChatLister(orch)
 

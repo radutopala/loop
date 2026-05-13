@@ -51,6 +51,15 @@ type RunCanceller interface {
 	CancelActiveRun(channelID string) bool
 }
 
+// PlanResolver clears and resumes a channel parked on an ExitPlanMode card.
+// ClearPlannedChannel removes the pause flag set by the orchestrator when the
+// agent emitted ExitPlanMode; ResumeChannel kicks the drain so any queued
+// rows can now be claimed.
+type PlanResolver interface {
+	ClearPlannedChannel(channelID string)
+	ResumeChannel(ctx context.Context, channelID string)
+}
+
 // serverSystem abstracts OS operations needed by Server.
 type serverSystem interface {
 	Stat(name string) (os.FileInfo, error)
@@ -89,6 +98,7 @@ type Server struct {
 	activeChatLister          ActiveChatLister
 	msgHandler                IncomingMessageHandler
 	runCanceller              RunCanceller
+	planResolver              PlanResolver
 	interactionHandler        InteractionHandler
 	agentRegistry             *agentregistry.Registry
 	eventsHub                 *EventsHub
@@ -150,6 +160,12 @@ func (s *Server) EventsHub() *EventsHub {
 // SetRunCanceller configures the run canceller for interrupt-mode sends.
 func (s *Server) SetRunCanceller(rc RunCanceller) {
 	s.runCanceller = rc
+}
+
+// SetPlanResolver configures the plan-pause resolver used by
+// /api/channels/{id}/plan/resolve.
+func (s *Server) SetPlanResolver(pr PlanResolver) {
+	s.planResolver = pr
 }
 
 // SetMemoryIndexer configures the memory indexer for the /api/memory/* endpoints.
@@ -263,6 +279,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/threads/{id}", s.handleDeleteThread)
 	mux.HandleFunc("DELETE /api/channels/{id}", s.handleDeleteChannel)
 	mux.HandleFunc("PATCH /api/channels/{id}/lock", s.handleSetChannelLocked)
+	mux.HandleFunc("POST /api/channels/{id}/plan/resolve", s.handlePlanResolve)
 	mux.HandleFunc("POST /api/tasks", s.handleCreateTask)
 	mux.HandleFunc("GET /api/tasks", s.handleListTasks)
 	mux.HandleFunc("GET /api/tasks/{id}", s.handleGetTask)
