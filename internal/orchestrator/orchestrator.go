@@ -76,9 +76,11 @@ type Orchestrator struct {
 	scheduler         scheduler.Scheduler
 	events            events.Broadcaster
 	workflowEngine    WorkflowEngine
-	channelLocks      sync.Map // map[channelID]*sync.Mutex — serialises per-channel drain loops
-	activeRuns        sync.Map // map[channelID]context.CancelFunc
-	activeRunMsgIDs   sync.Map // map[channelID]string — msg_id of the row currently running
+	channelLocks      sync.Map       // map[channelID]*sync.Mutex — serialises per-channel drain loops
+	activeRuns        sync.Map       // map[channelID]context.CancelFunc
+	activeRunMsgIDs   sync.Map       // map[channelID]string — msg_id of the row currently running
+	drainWG           sync.WaitGroup // tracks in-flight drain goroutines so tests / shutdown can wait
+	drainSpawn        func(func())   // wraps fn into a tracked goroutine; tests swap for inline run
 	logger            *slog.Logger
 	typingInterval    time.Duration
 	cfg               atomic.Pointer[config.Config]
@@ -107,7 +109,16 @@ func New(store db.Store, bot Bot, runner Runner, sched scheduler.Scheduler, logg
 		removeMCPConfig:   defaultRemoveMCPConfig,
 	}
 	o.cfg.Store(&cfg)
+	o.drainSpawn = func(fn func()) { o.drainWG.Go(fn) }
 	return o
+}
+
+// SetSynchronousDrain makes drainAsync run drains inline on the caller goroutine.
+// Tests use this so mock expectations from the drain path are observed before
+// the test body asserts them. Production never calls this — drains stay async
+// so HandleMessage returns promptly after persisting the row.
+func (o *Orchestrator) SetSynchronousDrain() {
+	o.drainSpawn = func(fn func()) { fn() }
 }
 
 // currentConfig returns a fresh config by calling configLoad, falling back
@@ -151,6 +162,14 @@ func (o *Orchestrator) ActiveRunMessageID(channelID string) string {
 		return ""
 	}
 	return val.(string)
+}
+
+// WaitDrains blocks until all in-flight drain goroutines spawned by
+// HandleMessage / ResumeChannel have finished. Used by tests (so mock
+// expectations from the drain path are observed before AssertExpectations)
+// and by shutdown.
+func (o *Orchestrator) WaitDrains() {
+	o.drainWG.Wait()
 }
 
 // CancelActiveRun cancels the active agent run for a channel, if any.

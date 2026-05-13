@@ -43,6 +43,7 @@ func (s *OrchestratorCommandsSuite) SetupTest() {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s.orch = New(s.store, s.bot, new(MockRunner), s.sched, logger, config.Config{}, nil)
+	s.orch.SetSynchronousDrain()
 
 	// Default: bot inserts are noisy in command tests; allow silently.
 	s.store.On("InsertMessage", mock.Anything, mock.MatchedBy(func(msg *db.Message) bool {

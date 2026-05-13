@@ -110,14 +110,31 @@ func (o *Orchestrator) HandleMessage(ctx context.Context, msg *bot.IncomingMessa
 		return
 	}
 
-	o.drainChannel(ctx, msg.ChannelID, msg)
+	// Spawn the drain asynchronously so HandleMessage returns once the row
+	// has been persisted. Callers (HTTP interrupt path, bot adapters) rely
+	// on insert-then-return ordering — e.g. the interrupt flow inserts X
+	// then cancels the active run, and that ordering only works if the
+	// insert here is observably complete before HandleMessage returns.
+	// The per-channel mutex inside drainChannel serialises concurrent
+	// drains, so multiple spawns are safe.
+	o.drainAsync(msg.ChannelID, msg)
 }
 
 // ResumeChannel drains pending triggered messages for a channel without a
 // matching live IncomingMessage. Used during daemon startup to resume rows
 // that were left unprocessed when the previous run exited.
-func (o *Orchestrator) ResumeChannel(ctx context.Context, channelID string) {
-	o.drainChannel(ctx, channelID, nil)
+func (o *Orchestrator) ResumeChannel(_ context.Context, channelID string) {
+	o.drainAsync(channelID, nil)
+}
+
+// drainAsync hands the drain to drainSpawn. Production wraps it in a tracked
+// goroutine; tests run it inline. The detached background context is
+// intentional in the goroutine case — the drain can outlive the request that
+// triggered it (e.g. a long agent run started from a short HTTP call).
+func (o *Orchestrator) drainAsync(channelID string, incoming *bot.IncomingMessage) {
+	o.drainSpawn(func() {
+		o.drainChannel(context.Background(), channelID, incoming)
+	})
 }
 
 // drainChannel pulls and processes triggered messages for one channel in
@@ -493,9 +510,10 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 		storeBotMessage(ctx, o.store, o.events, msg.ChannelID, resp.Response)
 	}
 
-	// Only mark messages up to (and including) the trigger message as processed.
-	// Messages queued after the trigger remain unprocessed so the frontend can
-	// still show them as "queued" or "processing".
+	// Mark the trigger and any older non-queued history as processed. Skip
+	// rows that are still queued (IsTriggered && !IsProcessed) other than the
+	// trigger itself — a priority-bumped interrupt can run ahead of an older
+	// queued row, and clearing those would drop them from the drain queue.
 	toMark := recent
 	for i, m := range recent {
 		if m.MsgID == msg.MessageID {
@@ -503,10 +521,13 @@ func (o *Orchestrator) deliverResponse(ctx context.Context, msg *bot.IncomingMes
 			break
 		}
 	}
-	ids := make([]int64, len(toMark))
+	ids := make([]int64, 0, len(toMark))
 	msgIDs := make([]string, 0, len(toMark))
-	for i, m := range toMark {
-		ids[i] = m.ID
+	for _, m := range toMark {
+		if m.MsgID != msg.MessageID && m.IsTriggered && !m.IsProcessed {
+			continue
+		}
+		ids = append(ids, m.ID)
 		if m.MsgID != "" {
 			msgIDs = append(msgIDs, m.MsgID)
 		}
@@ -553,10 +574,13 @@ func (o *Orchestrator) markTriggerProcessed(ctx context.Context, msg *bot.Incomi
 			break
 		}
 	}
-	ids := make([]int64, len(toMark))
+	ids := make([]int64, 0, len(toMark))
 	msgIDs := make([]string, 0, len(toMark))
-	for i, m := range toMark {
-		ids[i] = m.ID
+	for _, m := range toMark {
+		if m.MsgID != msg.MessageID && m.IsTriggered && !m.IsProcessed {
+			continue
+		}
+		ids = append(ids, m.ID)
 		if m.MsgID != "" {
 			msgIDs = append(msgIDs, m.MsgID)
 		}

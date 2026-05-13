@@ -930,6 +930,7 @@ func (s *MainSuite) TestLocalBotMentionParsing() {
 	localBot := local.NewBot(store, logger)
 	sched := scheduler.NewTaskScheduler(store, nil, 0, logger)
 	orch := orchestrator.New(store, localBot, nil, sched, logger, config.Config{}, nil)
+	orch.SetSynchronousDrain()
 	localBot.OnMessage(func(ctx context.Context, msg *bot.IncomingMessage) {
 		orch.HandleMessage(ctx, msg)
 	})
@@ -960,6 +961,7 @@ func (s *MainSuite) TestLocalBotPrefixParsing() {
 	localBot := local.NewBot(store, logger)
 	sched := scheduler.NewTaskScheduler(store, nil, 0, logger)
 	orch := orchestrator.New(store, localBot, nil, sched, logger, config.Config{}, nil)
+	orch.SetSynchronousDrain()
 	localBot.OnMessage(func(ctx context.Context, msg *bot.IncomingMessage) {
 		orch.HandleMessage(ctx, msg)
 	})
@@ -989,6 +991,7 @@ func (s *MainSuite) TestLocalBotPlainMessageTriggers() {
 	localBot := local.NewBot(store, logger)
 	sched := scheduler.NewTaskScheduler(store, nil, 0, logger)
 	orch := orchestrator.New(store, localBot, nil, sched, logger, config.Config{}, nil)
+	orch.SetSynchronousDrain()
 	localBot.OnMessage(func(ctx context.Context, msg *bot.IncomingMessage) {
 		orch.HandleMessage(ctx, msg)
 	})

@@ -32,24 +32,30 @@ func (s *Server) handleSendMessage(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Route through the orchestrator when available.
+	// Route through the orchestrator when available. HandleIncomingMessage*
+	// is now non-blocking after the InsertMessage step (the orchestrator
+	// drains in its own goroutine), so we can call it on the request thread
+	// and rely on the insert being persisted before this function returns.
 	if s.msgHandler != nil {
-		// Interrupt mode: cancel the active run and bump this message above any
-		// queued rows so it claims next. Existing queued rows are preserved.
+		// Interrupt mode: ORDER MATTERS. The new (priority-bumped) row must be
+		// inserted BEFORE we cancel the active run — otherwise the cancelled
+		// run's drain loop can re-claim an older queued row in the window
+		// between cancel and insert, processing it ahead of the interrupt.
+		// Queued rows are preserved; markTriggerProcessed only marks the
+		// cancelled trigger itself.
 		if req.Interrupt && s.runCanceller != nil {
-			s.runCanceller.CancelActiveRun(req.ChannelID)
 			prio := 0
 			if s.store != nil {
 				if p, err := s.store.MaxQueuedPriority(r.Context(), req.ChannelID); err == nil {
 					prio = p + 1
 				}
 			}
-			go s.msgHandler.HandleIncomingMessageWithPriority(context.Background(), req.ChannelID, "", req.Content, req.Mode, prio)
+			s.msgHandler.HandleIncomingMessageWithPriority(context.Background(), req.ChannelID, "", req.Content, req.Mode, prio)
+			s.runCanceller.CancelActiveRun(req.ChannelID)
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		// Use a detached context — r.Context() is cancelled when the HTTP response is sent.
-		go s.msgHandler.HandleIncomingMessage(context.Background(), req.ChannelID, "", req.Content, req.Mode)
+		s.msgHandler.HandleIncomingMessage(context.Background(), req.ChannelID, "", req.Content, req.Mode)
 		w.WriteHeader(http.StatusNoContent)
 		return
 	}

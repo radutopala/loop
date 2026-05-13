@@ -596,11 +596,15 @@ func (s *OrchestratorSuite) TestHandleMessageWithEventBroadcaster() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
 	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
-	// Recent messages ordered DESC: queued message (m-20) is newer than trigger (msg1).
-	// Only the trigger and older messages should be marked as processed.
+	// Recent messages ordered DESC.
+	//   m-20: newer than trigger — out of toMark window entirely.
+	//   m-7:  older than trigger, but still queued (priority-bumped scenario)
+	//         — must be SKIPPED so the drain queue can pick it up next.
+	//   m-5:  older than trigger, non-triggered chat history — must be MARKED.
 	recentMsgs := []*db.Message{
-		{ID: 20, MsgID: "m-20", AuthorName: "Bob", Content: "queued msg", ChannelID: "ch1"},
+		{ID: 20, MsgID: "m-20", AuthorName: "Bob", Content: "queued newer", ChannelID: "ch1"},
 		{ID: 10, MsgID: "msg1", AuthorName: "Alice", Content: "hi", ChannelID: "ch1"},
+		{ID: 7, MsgID: "m-7", AuthorName: "Alice", Content: "queued older", ChannelID: "ch1", IsTriggered: true},
 		{ID: 5, MsgID: "m-5", AuthorName: "Alice", Content: "old", ChannelID: "ch1"},
 	}
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return(recentMsgs, nil)
@@ -610,7 +614,8 @@ func (s *OrchestratorSuite) TestHandleMessageWithEventBroadcaster() {
 	}, nil)
 	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess1").Return(nil)
 	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
-	// Only trigger (ID:10) and older (ID:5) should be marked — not the queued message (ID:20).
+	// Only trigger (ID:10) and non-triggered older (ID:5) should be marked.
+	// m-20 is outside the window; m-7 is queued and must be left alone.
 	s.store.On("MarkMessagesProcessed", s.ctx, []int64{10, 5}).Return(nil)
 
 	// Expect event broadcasts: user message, running status, completed status, bot message, messages processed
@@ -786,14 +791,15 @@ func (s *OrchestratorSuite) TestHandleMessageTriggeredErrors() {
 				s.orch.SetEventBroadcaster(eb)
 				s.setupTriggeredBase()
 				s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{
-					{ID: 10, MsgID: "msg0", Content: "earlier"},
 					{ID: 11, MsgID: "msg1", Content: "hello"},
+					{ID: 10, MsgID: "msg0", Content: "queued older", IsTriggered: true},
 				}, nil)
 				s.runner.On("Run", mock.Anything, mock.Anything).Return(nil, errors.New("runner err"))
 				s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
 					return out.Content == "Sorry, I encountered an error processing your request."
 				})).Return(nil)
-				// markTriggerProcessed should mark from trigger msg onward.
+				// markTriggerProcessed marks the trigger only; the older queued
+				// triggered row (msg0) must survive for the drain to pick up.
 				s.store.On("MarkMessagesProcessed", s.ctx, []int64{11}).Return(nil)
 				eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return().Maybe()
 				eb.On("BroadcastAgentStatus", "ch1", mock.Anything).Return().Maybe()
@@ -971,6 +977,7 @@ func (s *OrchestratorSuite) TestHandleMessageBotSelfTriggerTagsBroadcastsAsBot()
 	s.bot.On("RemoveStopButton", mock.Anything, mock.Anything, mock.Anything).Return(nil).Maybe()
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{}, nil)
+	s.orch.SetSynchronousDrain()
 	s.orch.SetEventBroadcaster(eb)
 
 	msg := &bot.IncomingMessage{
