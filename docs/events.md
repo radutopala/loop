@@ -128,17 +128,21 @@ A new message was posted to a channel (by a user or the bot).
   "author_id": "user123",
   "author_name": "Alice",
   "content": "Hello, world!",
-  "is_bot": false
+  "is_bot": false,
+  "is_processed": false,
+  "priority": 0
 }
 ```
 
-| Field        | Type   | Description |
-|--------------|--------|-------------|
-| `msg_id`     | string | Platform-specific message ID |
-| `author_id`  | string | Author's platform user ID |
-| `author_name`| string | Author's display name |
-| `content`    | string | Full message content |
-| `is_bot`     | bool   | Whether the message was sent by the bot |
+| Field         | Type   | Description |
+|---------------|--------|-------------|
+| `msg_id`      | string | Platform-specific message ID |
+| `author_id`   | string | Author's platform user ID |
+| `author_name` | string | Author's display name |
+| `content`     | string | Full message content |
+| `is_bot`      | bool   | Whether the message was sent by the bot |
+| `is_processed`| bool   | Whether the row has already been processed by the orchestrator. Replayed `message.created` events (e.g. after a reconnect) carry the persisted value so the FE renders historical user rows without a "queued" label. |
+| `priority`    | int    | Queue priority (omitted when zero). Higher values run ahead of older queued rows; used by deny-with-prompt interrupts to insert ahead of B/C without deleting them. The FE renders the position as `1/N` in the queued chip. |
 
 ---
 

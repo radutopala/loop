@@ -36,7 +36,8 @@ Each card displays:
 | Title | Clickable — opens the edit modal |
 | Tags | Comma-separated list |
 | Assignee | Shown when set |
-| External ref | Shown when set (e.g., a Jira or GitHub issue link) |
+| External ref | Shown when set. If the value starts with `http://` or `https://` it renders as an underlined link that opens in a new tab (`target="_blank"`); otherwise it's plain monospace text. The click is `stopPropagation`'d so it doesn't open the edit modal. |
+| Pull request | Same rendering as External ref — clickable link when the value is a URL, plain text otherwise. Set via the `pr` field on the ticket; surfaced in both the create and edit modals' "More fields" section. |
 | Dependency count | Shown when the ticket has dependencies |
 
 ### Status Actions
@@ -73,12 +74,17 @@ Click **"+ New"** in the panel header to open the create modal.
 
 | Field | Description |
 |-------|-------------|
-| External Ref | Link to an external issue tracker (Jira, GitHub, etc.) |
+| External Ref | Link to an external issue tracker (Jira, GitHub, etc.). Rendered as a clickable link on the card when the value is an `http(s)` URL. |
+| Pull Request | URL of the PR backing this ticket. Rendered as a clickable link on the card when the value is an `http(s)` URL. |
 | Parent | Parent ticket ID for sub-task relationships |
 | Design | Design notes (markdown) |
 | Acceptance | Acceptance criteria (markdown) |
 
-Draft form state auto-persists to `localStorage` per channel, so in-progress ticket creation survives page reloads and panel switches.
+### Modal Sizing
+
+The create and edit modals are sized for serious editing rather than quick capture: `width: 70vw`, `minWidth: 600`, `maxWidth: 1200`, with `maxHeight: 90vh` and internal scroll for overflowing content. The description textarea is 6 rows; design and acceptance textareas are 5 rows. Backdrop-click outside the modal cancels without saving (form state is preserved in the draft autosave).
+
+Draft form state auto-persists to `localStorage` per channel under the key `kanban-draft:{channelId}`, so in-progress ticket creation survives page reloads and panel switches. The draft is cleared on save and on explicit cancel-with-empty-form.
 
 ---
 

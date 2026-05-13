@@ -81,6 +81,12 @@ Each tick:
 
 Tasks that are already executing (`running = 1`) are excluded from the query, preventing the scheduler from re-triggering a long-running task.
 
+#### Stale-running sweep on startup
+
+`TaskScheduler.Start` runs `Store.ResetStaleRunningTasks(ctx)` before the first poll tick (`internal/scheduler/scheduler.go:73`). The defer that clears `running = 0` after a run fires inside `executeAndLog`, so a process killed mid-run (OOM, SIGKILL, panic, daemon restart) leaves rows flagged `running = 1` that would otherwise be permanently invisible to `GetDueTasks`. The sweep clears those flags, logs the count at warn level (`reset stale running tasks from prior daemon run`), and lets the next tick pick the rows back up.
+
+The orchestrator does the same thing for chat messages — `Store.ResetStaleRunningMessages(ctx)` is called from `serve.go` during daemon startup and broadcasts the cleared `msg_id`s on `messages.processed` so the chat UI clears any "processing" pills that would otherwise remain stuck after an unclean shutdown.
+
 ### 3. Execute
 
 For each due task:

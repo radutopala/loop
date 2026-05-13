@@ -62,7 +62,8 @@ List all channels with optional filtering. Enriches each channel with container 
     "agent_running": false,
     "branch": "main",
     "commit": "abc1234",
-    "worktree": false
+    "worktree": false,
+    "locked": false
   }
 ]
 ```
@@ -74,6 +75,7 @@ List all channels with optional filtering. Enriches each channel with container 
 - `branch` is resolved by running `git rev-parse --abbrev-ref HEAD` in the channel's directory.
 - `commit` is the short commit hash from `git rev-parse --short HEAD`.
 - `worktree` is true for threads created via `POST /api/worktrees`.
+- `locked` is true when the channel/thread is guarded against accidental deletion (toggle via [`PATCH /api/channels/{id}/lock`](#patch-apichannelsidlock)). `DELETE /api/channels/{id}` and `DELETE /api/threads/{id}` return `409 Conflict` while a row is locked.
 
 **Errors:** `501` if channel listing is not configured.
 
@@ -174,7 +176,34 @@ Delete a channel and all its child threads.
 
 **Behavior notes:** Deletes child threads (channels with matching `parent_id`) before deleting the channel itself.
 
-**Errors:** `404` if channel not found. `501` if channel deletion is not configured.
+**Errors:** `404` if channel not found. `409` if the channel (or any of its threads) is locked. `501` if channel deletion is not configured.
+
+---
+
+### `PATCH /api/channels/{id}/lock`
+
+Toggle the locked flag on a channel or thread. Locking guards against accidental UI deletes — an unlock is required before the corresponding `DELETE /api/channels/{id}` or `DELETE /api/threads/{id}` will succeed (they return `409 Conflict` otherwise).
+
+**Path Parameters:**
+
+| Param | Type   | Description |
+|-------|--------|-------------|
+| `id`  | string | Channel or thread ID |
+
+**Request:**
+```json
+{"locked": true}
+```
+
+| Field    | Type | Required | Description |
+|----------|------|----------|-------------|
+| `locked` | bool | yes      | New locked state |
+
+**Response:** `204 No Content`
+
+**Behavior notes:** Broadcasts a `channel.locked` event with the new state so other clients update their sidebar/menus.
+
+**Errors:** `404` if channel not found. `501` if channel locking is not configured.
 
 ---
 
@@ -229,7 +258,7 @@ Delete a thread.
 
 **Behavior notes:** Removes the thread's MCP config file, deletes from the chat platform (if a creator is configured), and removes from the database. If the thread has an associated git worktree, the worktree and its branch are cleaned up automatically.
 
-**Errors:** `501` if thread deletion is not configured.
+**Errors:** `409` if the thread is locked (toggle via [`PATCH /api/channels/{id}/lock`](#patch-apichannelsidlock)). `501` if thread deletion is not configured.
 
 ---
 
@@ -972,6 +1001,37 @@ Batched existence check for path candidates discovered in chat text or tool inpu
 
 ---
 
+### `GET /api/channels/{id}/files/search`
+
+Fuzzy search for files across the channel's primary `dir_path` and any `extra_dirs`. Used by the chat composer's `@` file picker.
+
+**Query Parameters:**
+
+| Param   | Type   | Description |
+|---------|--------|-------------|
+| `q`     | string | Fuzzy query — every rune must appear in the relative path in order, case-insensitively. Empty `q` returns the first N entries. |
+| `limit` | int    | Max results to return. Default `30`, max `100`. |
+
+**Response (200):**
+```json
+{
+  "results": [
+    {"root_index": 0, "rel_path": "app/src/main.tsx",    "name": "main.tsx"},
+    {"root_index": 0, "rel_path": "internal/api/server.go", "name": "server.go"}
+  ]
+}
+```
+
+**Behavior notes:**
+- Walks all configured roots (primary `dir_path` first, then `extra_dirs`). `root_index` indicates which root the match came from (compatible with the `root` query parameter on file read/write endpoints).
+- Always skips `.git`, `node_modules`, `vendor`, `.next`, `dist`, `build`, `__pycache__` subtrees.
+- Honors the top-level `.gitignore` in each root (basename and full-relpath patterns; negation patterns and nested `.gitignore` files are ignored).
+- Walk stops once `limit` matches have accumulated across all roots.
+
+**Errors:** `400` if the channel's directory cannot be resolved.
+
+---
+
 ### Path Validation
 
 All file operations validate the relative path against the channel's root directory:
@@ -988,28 +1048,52 @@ All file operations validate the relative path against the channel's root direct
 
 ### `GET /api/channels/{id}/diff`
 
-Get git diff information for a channel's working directory. Includes both tracked changes and untracked files.
+Get git diff information for a channel's working directory. Includes both tracked changes and untracked files, and tags each entry with the bucket it came from (staged / unstaged / untracked / conflict).
 
-**Response (200):**
+**Query Parameters:**
+
+| Param    | Type   | Description |
+|----------|--------|-------------|
+| `source` | string | When provided with `target`, switches to branch-to-branch diff mode (`git diff source..target`). `status` is omitted in this mode. |
+| `target` | string | Branch / ref name for branch-to-branch diff mode. |
+
+**Response (200) — uncommitted mode:**
 ```json
 {
   "files": [
-    {"path": "main.go", "additions": 5, "deletions": 2, "binary": false},
-    {"path": "image.png", "additions": 0, "deletions": 0, "binary": true}
+    {"path": "main.go",   "additions": 5, "deletions": 2, "binary": false, "status": "staged"},
+    {"path": "main.go",   "additions": 1, "deletions": 0, "binary": false, "status": "unstaged"},
+    {"path": "new.txt",   "additions": 4, "deletions": 0, "binary": false, "status": "untracked"},
+    {"path": "image.png", "additions": 0, "deletions": 0, "binary": true,  "status": "untracked"}
   ],
   "diff": "diff --git a/main.go b/main.go\n...",
-  "total_additions": 5,
+  "staged_diff": "diff --git a/main.go b/main.go\n...",
+  "unstaged_diff": "diff --git a/main.go b/main.go\n...",
+  "untracked_diff": "diff --git a/new.txt b/new.txt\n...",
+  "conflict_diff": "",
+  "total_additions": 10,
   "total_deletions": 2
 }
 ```
 
+**File entry fields:**
+
+| Field       | Type   | Description |
+|-------------|--------|-------------|
+| `path`      | string | File path relative to the repo root |
+| `old_path`  | string | Original path (set when the file was renamed; omitted otherwise) |
+| `additions` | int    | Lines added in this entry |
+| `deletions` | int    | Lines deleted in this entry |
+| `binary`    | bool   | True for binary files |
+| `status`    | string | `"staged"`, `"unstaged"`, `"untracked"`, or `"conflict"`. Omitted in branch-to-branch diff mode. A partially-staged file appears twice — once as `staged` and once as `unstaged` — in that order. |
+
 **Behavior notes:**
-- Runs `git diff --numstat` for file-level statistics and `git diff` for unified diff text.
-- Runs `git ls-files --others --exclude-standard` to include untracked files.
-- Untracked files generate synthetic diff patches (showing all lines as additions).
-- Binary detection for untracked files checks the first 512 bytes for null bytes.
+- Uncommitted mode (default): runs `git diff --cached` (staged), `git diff` (unstaged), and `git ls-files --others --exclude-standard` (untracked). Conflicts are surfaced via `git diff --diff-filter=U`.
+- The frontend parses `staged_diff` / `unstaged_diff` / `untracked_diff` / `conflict_diff` independently so the per-bucket `status` tag survives partial staging (a path that appears in both staged and unstaged buckets would otherwise collide in a single parsed-by-path lookup).
+- Branch-to-branch mode (`?source=branchA&target=branchB`): a single `git diff` is returned in `diff`; the per-status fields and the `status` tag on each file are omitted.
+- Untracked files generate synthetic diff patches (all lines as additions). Binary detection checks the first 512 bytes for null bytes.
 - If the directory is not a git repo, returns an empty `files` array.
-- Files are sorted alphabetically by path.
+- Files are sorted by (path, status priority) — `conflict` < `staged` < `unstaged` < `untracked`.
 
 **Errors:** `404` if channel not found.
 

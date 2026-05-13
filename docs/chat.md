@@ -202,16 +202,23 @@ When the agent container hits a gate rule with `decision: approve`, the backend 
 - **Target:** the full target string (socket path, command line, or `METHOD /path`) in a monospace style.
 - **Message:** the matching rule's `message` field, shown as a second-line caption when non-empty.
 - **Details:** for `DOCKER-HTTP` prompts on `/containers/create`, `/containers/{id}/exec`, `/networks/create`, and `/volumes/create`, the proxy extracts the security-relevant body fields (e.g. `cmd`, `user`, `privileged`, `binds`) and the card renders them as a sorted `key: value` list under the target. See [Gates: Body details surfaced in the prompt](gates.md#body-details-surfaced-in-the-prompt) for the full key set per endpoint.
-- **Buttons:** three monospace pills, left-to-right:
+- **Buttons:** four monospace pills, left-to-right:
   - `Allow once` — primary accent, lets this one syscall through.
   - `Allow for session` — secondary outline, caches the allow for the container's lifetime.
   - `Deny` — warning accent, rejects the syscall.
+  - `Deny with prompt…` — warning outline. Expands an inline textarea: typing a follow-up and hitting `⌘/Ctrl+Enter` denies the gate, cancels the now-resumed run, and immediately sends the prompt with `interrupt=true` so it claims the next slot ahead of any queued messages (without deleting them — see [Message Queue Indicators](#message-queue-indicators)).
 
 While a button is busy it shows a dim "…" label; failures are rendered below the buttons in the warning color so the user can retry.
+
+### Dock bounce
+
+While a gate prompt is pending **and** no Loop window is focused, the desktop app calls `app.dock.bounce("critical")` on macOS (or `flashFrame(true)` on Windows/Linux) on a 2-second interval until the user focuses Loop. The bounce is driven from the renderer via `approval-needed` / `approval-resolved` IPC messages keyed by `req_id`, so multiple concurrent gates all clear cleanly. Focus or resolution stops the loop and cancels any in-flight bounce. Turn-end bounces use `bounce("informational")` instead and fire only once per unfocused window session — a chain of agent turns or scheduled completions still nudges the dock just once.
 
 ### Resolution
 
 Clicking a button calls `resolveGateApproval(reqId, decision)` which `POST`s to [`/api/gate/approvals/{id}`](api.md#post-apigateapprovalsid) with `{decision}`. On success the component calls its `onResolved` callback, which clears `gateApproval` on the chat state and scrolls to the bottom.
+
+Sending a message while a gate prompt is showing has the same effect as the `Deny with prompt…` flow: the input auto-denies the pending gate first, then sends the message with `interrupt=true`. `ChatInput` receives the pending `req_id` via the `pendingGateReqId` prop and routes the send accordingly.
 
 The backend also broadcasts [`gate.approval_resolved`](events.md#gateapproval_resolved) so any other connected client dismisses the card. Because the desktop doesn't send `author_id`, the server records the decision under `local.DefaultAuthorID`.
 
@@ -249,13 +256,31 @@ The active segment has white background with black text; inactive has transparen
 |--------|---------|
 | Send message | Press `Enter` (without Shift) |
 | New line | Press `Shift+Enter` |
+| Send with opposite mode (Queue ↔ Interrupt) | `⌘+Enter` on macOS / `Ctrl+Enter` elsewhere — flips the active send mode for this send only without changing the persisted preference |
 | Stop running agent | Click the Stop button (square icon with `colors.textDim` border) |
 
 The send button:
-- **Not running:** White circle with up-arrow icon. Disabled (40% opacity) when textarea is empty.
-- **Running:** Transparent with dimmed border, contains a filled square (stop) icon.
+- **Not running:** White circle with up-arrow icon. Disabled (40% opacity) when textarea is empty. A small `Q` or `INT` chip on the button indicates the active send mode.
+- **Running:** Transparent with dimmed border, contains a filled square (stop) icon. Pressing **Stop** is optimistic — the UI flips to "not running" immediately and re-syncs when `agent.status` lands.
 
 After sending, the textarea is cleared and re-focused via `requestAnimationFrame`.
+
+### Send Mode (Queue vs Interrupt)
+
+While the agent is running, a small chip beside the send button selects what `Enter` does. Click the chip to flip between the two modes; the choice is persisted in `localStorage` under `loop-send-mode`.
+
+| Mode | Behavior |
+|------|----------|
+| **Queue** (default, `Q`) | Message is appended to the queue and processed when the current run finishes. |
+| **Interrupt** (`INT`) | Cancels the active run and sends the message with `interrupt=true`. The server inserts it at `priority = MaxQueuedPriority + 1` so it claims the next slot ahead of any already-queued rows; queued rows are preserved (not deleted). |
+
+`⌘/Ctrl+Enter` sends with the opposite mode for one send only (it does not persist). The button tooltip and placeholder reflect the active mode and the keyboard hint at all times.
+
+When the agent is **not** running, the send mode is irrelevant — every send is just a normal message.
+
+### Quote Reply
+
+Clicking a quote button on a bot message stages it as a reply target above the input. The next send prepends the bot's content as block-quoted lines (`> …`) before the new prompt, then clears the quote. The staged quote can be dismissed without sending via the `×` button next to the preview.
 
 ---
 
@@ -363,6 +388,25 @@ Pressing `Tab` or `Enter` replaces the `@partial` text with `@LoopBot ` (with tr
 - Small dropdown positioned above the input
 - Single item: `@LoopBot` with bold text
 - Pre-selected with `colors.selectedBg` background
+
+---
+
+## @File Picker
+
+Typing `@` followed by anything that is not a prefix of "LoopBot" turns the popup into a fuzzy file picker scoped to the channel's working tree (and any configured `extra_dirs`).
+
+### Trigger Conditions
+
+- Same `@` placement rules as `@LoopBot` (start of input, or after whitespace).
+- The text after `@` is the fuzzy query.
+
+### Backend
+
+The picker calls [`GET /api/channels/{id}/files/search?q=...&limit=...`](api.md#get-apichannelsidfilessearch), which walks each root, skips heavyweight subtrees (`.git`, `node_modules`, `vendor`, `.next`, `dist`, `build`, `__pycache__`) and honors the top-level `.gitignore`. Requests are debounced and tagged with a sequence number — late responses for stale queries are dropped, so the dropdown never flickers between results sets.
+
+### Acceptance
+
+Pressing `Tab` or `Enter` (or clicking a row) replaces the `@<query>` span with `` @`<rel_path>` `` (the path wrapped in backticks) plus a trailing space. The accepted path renders as inline code in the sent message and is auto-recognized by the [file-link detector](#file-links), so clicking it in the timeline opens the file in the editor.
 
 ---
 

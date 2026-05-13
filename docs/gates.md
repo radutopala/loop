@@ -138,13 +138,14 @@ Covers `connect(2)` on `AF_UNIX` paths.
 | 1 | `/var/run/docker.sock.host` | `deny` | The real host daemon socket, bind-mounted here so only the in-container Docker proxy can dial it. Agents must go through the proxied `/var/run/docker.sock` |
 | 2 | `/var/run/docker.sock` | `allow` | Proxied socket — every HTTP request is re-gated at the Docker-HTTP layer below, so a prompt here would be duplicate noise |
 
-### Exec (`CommandRule`, 1 rule, first-match-wins)
+### Exec (`CommandRule`, 1 static rule + 1 dynamic workspace rule, first-match-wins)
 
 Seccomp catches `execve` / `execveat`; transparent wrappers (`env`, `sudo`, `nice`, `timeout`, …) are unwrapped so the rule matches the real target.
 
 | # | Command | Args regex | Decision | Why |
 |---|---|---|---|---|
-| 1 | `rm` | `-[a-zA-Z]*r[fF]?.* /.*` | `deny` | `rm -rf` on an absolute path — unconditional blast-radius block |
+| 0 | *(injected)* `rm` | every positional arg must lie under `{workDir}` (or `{parentDirPath}`) — flag-only prefix `^(-[a-zA-Z]+\s+)*` followed by an alternation of workspace path prefixes | `allow` | Workspace fast-path. Inserted per-container by `injectWorkspaceRmRfRule` (`internal/container/runner.go:1583`). Agents routinely `rm -rf build/` or `rm -rf dist/` inside their own tree; without this carve-out rule #1 would block legitimate cleanup. The pattern is **all-args-or-nothing** — a mixed `rm -rf /workspace/build /etc/passwd` falls through to rule #1 and is denied. Omitted when `workDir` is empty (ad-hoc one-shot runs). |
+| 1 | `rm` | `-[a-zA-Z]*r[fF]?.* /.*` | `deny` | `rm -rf` on an absolute path outside the workspace — unconditional blast-radius block. The `/tmp/` allow is injected before this for the same reason as the workspace carve-out (test cleanup like `rm -rf /tmp/testgit`). |
 
 Git write-side operations (`push`, `commit`, `reset --hard`, …) are intentionally not gated by default; add an approve rule if you want prompts.
 
