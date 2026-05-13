@@ -1217,8 +1217,10 @@ function ExitPlanCard({ plan, channelId, setMode, onSent }: { plan: ExitPlanMode
   const handleApprove = async () => {
     setSending(true);
     try {
-      setMode("agent");
       await resolvePlan(channelId, "approve");
+      // Flip pill only after the POST succeeds — otherwise a failed approve
+      // leaves the pill on "agent" while the card still shows an unresolved plan.
+      setMode("agent");
       onSent?.();
     } catch { /* ignore */ }
     setSending(false);
@@ -1365,7 +1367,7 @@ function ExitPlanCard({ plan, channelId, setMode, onSent }: { plan: ExitPlanMode
               boxSizing: "border-box",
             }}
           />
-          <div>
+          <div style={{ display: "flex", gap: 8 }}>
             <button
               onClick={handleRequestChanges}
               disabled={sending || !changesText.trim()}
@@ -1382,6 +1384,26 @@ function ExitPlanCard({ plan, channelId, setMode, onSent }: { plan: ExitPlanMode
               }}
             >
               Send changes
+            </button>
+            <button
+              onClick={() => {
+                setChangesOpen(false);
+                setChangesText("");
+              }}
+              disabled={sending}
+              style={{
+                padding: "5px 16px",
+                fontSize: 12,
+                fontFamily: fonts.mono,
+                border: `1px solid ${colors.border}`,
+                borderRadius: 12,
+                backgroundColor: "transparent",
+                color: colors.text,
+                cursor: "pointer",
+                opacity: sending ? 0.5 : 1,
+              }}
+            >
+              Cancel
             </button>
           </div>
         </div>
