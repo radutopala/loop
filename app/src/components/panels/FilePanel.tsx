@@ -25,6 +25,19 @@ function saveWidth(w: number) {
   storageSet(WIDTH_STORAGE_KEY, String(w));
 }
 
+// Style for the FilePanel content wrapper. When the caller passes `noPadding`
+// it has opted in to managing its own internal layout/scroll — the wrapper
+// becomes a flex column with hidden overflow so a child `flex: 1` resolves
+// correctly and scrolling stays scoped to the child (keeps EditorPanel's tab
+// bar pinned while the file body scrolls). Otherwise we keep the legacy
+// padded auto-scroll behavior for arbitrary content.
+function contentStyle(noPadding: boolean | undefined): React.CSSProperties {
+  if (noPadding) {
+    return { flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minHeight: 0 };
+  }
+  return { flex: 1, overflow: "auto", padding: "12px 16px" };
+}
+
 function buildHeaderBtnStyle(colors: ColorPalette): React.CSSProperties {
   return {
     background: "none",
@@ -77,7 +90,7 @@ export function FilePanel({ title, channel, maximized, sidebarOpen, noPadding, e
   if (embedded) {
     return (
       <div data-testid={dataTestId} style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", backgroundColor: colors.sidebar, zoom: fontSizes.panels / 12, borderRadius: colors.islandRadius, boxShadow: colors.islandShadow, border: colors.islandBorder }}>
-        <div style={{ flex: 1, overflow: "auto", padding: noPadding ? 0 : "12px 16px" }}>
+        <div style={contentStyle(noPadding)}>
           {children}
         </div>
       </div>
@@ -264,7 +277,7 @@ export function FilePanel({ title, channel, maximized, sidebarOpen, noPadding, e
       </div>
 
       {/* Content */}
-      <div style={{ flex: 1, overflow: "auto", padding: noPadding ? 0 : "12px 16px" }}>
+      <div style={contentStyle(noPadding)}>
         {children}
       </div>
     </div>
