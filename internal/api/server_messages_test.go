@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"time"
 
 	"github.com/stretchr/testify/mock"
@@ -102,11 +103,25 @@ func (s *ServerSuite) TestSendMessageInterrupt() {
 	s.srv.SetIncomingMessageHandler(handler)
 	s.srv.SetRunCanceller(canceller)
 
-	canceller.On("CancelActiveRun", "ch-1").Return(true)
+	// Record call order: the priority-bumped insert MUST land before
+	// CancelActiveRun, otherwise the cancelled run's drain loop can re-claim
+	// an older queued row in the window between cancel and insert.
+	var order []string
+	var orderMu sync.Mutex
+	record := func(name string) {
+		orderMu.Lock()
+		defer orderMu.Unlock()
+		order = append(order, name)
+	}
+
+	canceller.On("CancelActiveRun", "ch-1").Run(func(_ mock.Arguments) { record("cancel") }).Return(true)
 	s.store.On("MaxQueuedPriority", mock.Anything, "ch-1").Return(2, nil)
 	called := make(chan struct{}, 1)
 	handler.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", "stop and go", "", 3).
-		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
+		Run(func(_ mock.Arguments) {
+			record("insert")
+			called <- struct{}{}
+		}).Return()
 
 	rec := s.testRequest("POST", "/api/messages", `{"channel_id":"ch-1","content":"stop and go","interrupt":true}`)
 
@@ -120,6 +135,11 @@ func (s *ServerSuite) TestSendMessageInterrupt() {
 
 	canceller.AssertExpectations(s.T())
 	handler.AssertExpectations(s.T())
+
+	orderMu.Lock()
+	defer orderMu.Unlock()
+	require.Equal(s.T(), []string{"insert", "cancel"}, order,
+		"insert must happen before cancel to avoid the cancel-and-reclaim race")
 }
 
 func (s *ServerSuite) TestSendMessageInterruptMaxQueuedPriorityError() {

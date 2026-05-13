@@ -341,6 +341,11 @@ func (s *OrchestratorSuite) SetupTest() {
 
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{}, nil)
+
+	// Run drains inline so mock expectations from the drain path
+	// (runner.Run, MarkMessagesProcessed, …) are observed before the test
+	// body's AssertExpectations calls — TearDown / Cleanup fires too late.
+	s.orch.SetSynchronousDrain()
 }
 
 func (s *OrchestratorSuite) TestNew() {
@@ -791,6 +796,7 @@ func (s *OrchestratorSuite) TestResumeChannelDrainsEmpty() {
 	store := new(testutil.MockStore)
 	store.On("ClaimNextPending", mock.Anything, "empty-ch").Return(nil, nil).Once()
 	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+	orch.SetSynchronousDrain()
 
 	orch.ResumeChannel(context.Background(), "empty-ch")
 	store.AssertExpectations(s.T())
@@ -800,6 +806,7 @@ func (s *OrchestratorSuite) TestDrainChannelClaimError() {
 	store := new(testutil.MockStore)
 	store.On("ClaimNextPending", mock.Anything, "err-ch").Return(nil, errors.New("db gone")).Once()
 	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+	orch.SetSynchronousDrain()
 
 	orch.ResumeChannel(context.Background(), "err-ch")
 	store.AssertExpectations(s.T())
@@ -818,6 +825,7 @@ func (s *OrchestratorSuite) TestDrainChannelReleaseError() {
 	store.On("GetRecentMessages", mock.Anything, "rel-ch", mock.Anything).Return(nil, errors.New("recent failed")).Once()
 
 	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+	orch.SetSynchronousDrain()
 	orch.ResumeChannel(context.Background(), "rel-ch")
 	store.AssertExpectations(s.T())
 }

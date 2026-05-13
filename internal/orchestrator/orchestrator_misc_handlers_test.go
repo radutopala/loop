@@ -356,6 +356,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSuccess() {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute}, nil)
+	s.orch.SetSynchronousDrain()
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
@@ -384,6 +385,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddWithAutoDelete() {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute}, nil)
+	s.orch.SetSynchronousDrain()
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "ephemeral-check").Return(nil, nil)
@@ -412,6 +414,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddIdempotent() {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute}, nil)
+	s.orch.SetSynchronousDrain()
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(&db.ScheduledTask{ID: 5, TemplateName: "daily-check"}, nil)
@@ -450,6 +453,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddStoreError() {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute}, nil)
+	s.orch.SetSynchronousDrain()
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, errors.New("db error"))
@@ -473,6 +477,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddSchedulerError() {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute}, nil)
+	s.orch.SetSynchronousDrain()
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "daily-check").Return(nil, nil)
@@ -498,6 +503,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateList() {
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute}, nil)
+	s.orch.SetSynchronousDrain()
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.bot.On("SendMessage", s.ctx, mock.MatchedBy(func(out *bot.OutgoingMessage) bool {
@@ -574,6 +580,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddResolvePromptError()
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute}, nil)
+	s.orch.SetSynchronousDrain()
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "bad-template").Return(nil, nil)
@@ -597,6 +604,7 @@ func (s *OrchestratorSuite) TestHandleInteractionTemplateAddWithWorktreeFields()
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	s.orch = New(s.store, s.bot, s.runner, s.scheduler, logger, config.Config{TaskTemplates: templates, ContainerTimeout: 5 * time.Minute}, nil)
+	s.orch.SetSynchronousDrain()
 
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, nil)
 	s.store.On("GetScheduledTaskByTemplateName", s.ctx, "ch1", "wt-task").Return(nil, nil)
