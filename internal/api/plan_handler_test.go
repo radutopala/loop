@@ -61,22 +61,30 @@ func (s *ServerSuite) TestPlanResolveApprove() {
 		}).Return()
 	resolver.On("ClearPlannedChannel", "ch-1").
 		Run(func(_ mock.Arguments) { record("clear") }).Return()
+	// ResumeChannel kicks a fresh drain so the just-inserted row gets
+	// claimed even if the drain spawned by HandleIncomingMessageWithPriority
+	// bailed early while the pause flag was still set.
+	resumed := make(chan struct{}, 1)
+	resolver.On("ResumeChannel", mock.Anything, "ch-1").
+		Run(func(_ mock.Arguments) {
+			record("resume")
+			resumed <- struct{}{}
+		}).Return()
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/plan/resolve", `{"action":"approve"}`)
 
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 
 	s.awaitPlanCall("HandleIncomingMessageWithPriority", called)
+	s.awaitPlanCall("ResumeChannel", resumed)
 
 	handler.AssertExpectations(s.T())
 	resolver.AssertExpectations(s.T())
-	// reject path is not used here
-	resolver.AssertNotCalled(s.T(), "ResumeChannel", mock.Anything, mock.Anything)
 
 	orderMu.Lock()
 	defer orderMu.Unlock()
-	require.Equal(s.T(), []string{"insert", "clear"}, order,
-		"insert must happen before ClearPlannedChannel to avoid drain race")
+	require.Equal(s.T(), []string{"insert", "clear", "resume"}, order,
+		"insert → clear → resume; clear before resume avoids the bail-early race")
 }
 
 func (s *ServerSuite) TestPlanResolveApproveMaxPriorityErrorFallsBackToZero() {
@@ -90,11 +98,15 @@ func (s *ServerSuite) TestPlanResolveApproveMaxPriorityErrorFallsBackToZero() {
 	handler.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", planApprovePrompt, "", 0).
 		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
 	resolver.On("ClearPlannedChannel", "ch-1").Return()
+	resumed := make(chan struct{}, 1)
+	resolver.On("ResumeChannel", mock.Anything, "ch-1").
+		Run(func(_ mock.Arguments) { resumed <- struct{}{} }).Return()
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/plan/resolve", `{"action":"approve"}`)
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 
 	s.awaitPlanCall("HandleIncomingMessageWithPriority", called)
+	s.awaitPlanCall("ResumeChannel", resumed)
 	handler.AssertExpectations(s.T())
 	resolver.AssertExpectations(s.T())
 }
@@ -110,12 +122,16 @@ func (s *ServerSuite) TestPlanResolveDeny() {
 	handler.On("HandleIncomingMessageWithPriority", mock.Anything, "ch-1", "", "switch to redis", "plan", 1).
 		Run(func(_ mock.Arguments) { called <- struct{}{} }).Return()
 	resolver.On("ClearPlannedChannel", "ch-1").Return()
+	resumed := make(chan struct{}, 1)
+	resolver.On("ResumeChannel", mock.Anything, "ch-1").
+		Run(func(_ mock.Arguments) { resumed <- struct{}{} }).Return()
 
 	rec := s.testRequest("POST", "/api/channels/ch-1/plan/resolve",
 		`{"action":"deny","prompt":"switch to redis","mode":"plan"}`)
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 
 	s.awaitPlanCall("HandleIncomingMessageWithPriority", called)
+	s.awaitPlanCall("ResumeChannel", resumed)
 	handler.AssertExpectations(s.T())
 	resolver.AssertExpectations(s.T())
 }

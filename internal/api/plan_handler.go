@@ -72,8 +72,11 @@ func (s *Server) handlePlanResolve(w http.ResponseWriter, r *http.Request) {
 //
 // ORDER MATTERS — mirroring the interrupt path in handleSendMessage:
 //  1. Compute the new priority while pause is still set (no drain races).
-//  2. Insert the bumped row.
-//  3. Clear the pause flag so the drain can claim.
+//  2. Insert the bumped row (the handler spawns its own drain goroutine,
+//     which may bail early because the pause flag is still set).
+//  3. Clear the pause flag.
+//  4. Kick a fresh drain. Without this, the drain spawned in step 2 may
+//     have already bailed and the row would sit unprocessed.
 func (s *Server) insertPlanContinuation(ctx context.Context, channelID, content, mode string) {
 	prio := 0
 	if s.store != nil {
@@ -83,4 +86,5 @@ func (s *Server) insertPlanContinuation(ctx context.Context, channelID, content,
 	}
 	s.msgHandler.HandleIncomingMessageWithPriority(context.Background(), channelID, "", content, mode, prio)
 	s.planResolver.ClearPlannedChannel(channelID)
+	s.planResolver.ResumeChannel(context.Background(), channelID)
 }
