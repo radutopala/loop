@@ -239,6 +239,17 @@ func (s *ServerSuite) TestGitDiffPartiallyStaged() {
 	stagedIdx := strings.Index(body, `"status":"staged"`)
 	unstagedIdx := strings.Index(body, `"status":"unstaged"`)
 	require.Less(s.T(), stagedIdx, unstagedIdx, "staged entry should sort before unstaged for the same path")
+
+	// Per-status diff blobs must be exposed separately so the frontend can
+	// parse each with the correct status. Without this split a partially-
+	// staged path collides in parsedFiles.find() and the unstaged row
+	// renders the staged hunk.
+	var decoded diffResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &decoded))
+	require.Contains(s.T(), decoded.StagedDiff, "+v2")
+	require.NotContains(s.T(), decoded.StagedDiff, "+v3")
+	require.Contains(s.T(), decoded.UnstagedDiff, "+v3")
+	require.NotContains(s.T(), decoded.UnstagedDiff, "+v2")
 }
 
 func (s *ServerSuite) TestGitDiffEmptyRepoNoHead() {

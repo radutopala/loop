@@ -58,10 +58,21 @@ func stampStatus(entries []diffFileEntry, status string) {
 }
 
 type diffResponse struct {
-	Files          []diffFileEntry `json:"files"`
-	Diff           string          `json:"diff"`
-	TotalAdditions int             `json:"total_additions"`
-	TotalDeletions int             `json:"total_deletions"`
+	Files []diffFileEntry `json:"files"`
+	// Diff is the concatenated patch text for branch-to-branch mode and a
+	// fallback fingerprint for change detection in uncommitted mode.
+	Diff string `json:"diff"`
+	// Per-status patches for uncommitted mode. Empty for branch-diff mode.
+	// The frontend parses these separately so each ParsedFile carries its
+	// status — needed because a partially-staged path appears twice in
+	// Files (once as staged, once as unstaged) and the parsed-by-path
+	// lookup would otherwise collide.
+	StagedDiff     string `json:"staged_diff,omitempty"`
+	UnstagedDiff   string `json:"unstaged_diff,omitempty"`
+	ConflictDiff   string `json:"conflict_diff,omitempty"`
+	UntrackedDiff  string `json:"untracked_diff,omitempty"`
+	TotalAdditions int    `json:"total_additions"`
+	TotalDeletions int    `json:"total_deletions"`
 }
 
 func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
@@ -143,7 +154,10 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 	files := make([]diffFileEntry, 0, len(stagedFiles)+len(unstagedFiles)+len(conflictPaths))
 	files = append(files, stagedFiles...)
 	files = append(files, unstagedFiles...)
-	diffText := stagedDiffText + unstagedDiffText
+
+	// Per-section patch text — accumulated separately so the frontend can
+	// parse each with its status. See diffResponse for the rationale.
+	var conflictDiffText, untrackedDiffText string
 
 	// Emit one entry per conflict with a synthetic patch of the worktree
 	// file (including <<<<<<< / ======= / >>>>>>> markers) so the diff view
@@ -153,7 +167,7 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 		if entry != nil {
 			entry.Status = statusConflict
 			files = append(files, *entry)
-			diffText += patch
+			conflictDiffText += patch
 		}
 	}
 
@@ -166,7 +180,7 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 			if entry != nil {
 				entry.Status = statusUntracked
 				files = append(files, *entry)
-				diffText += patch
+				untrackedDiffText += patch
 			}
 		}
 	}
@@ -186,7 +200,11 @@ func (s *Server) handleGitDiff(w http.ResponseWriter, r *http.Request) {
 
 	resp := diffResponse{
 		Files:          files,
-		Diff:           diffText,
+		Diff:           stagedDiffText + unstagedDiffText + conflictDiffText + untrackedDiffText,
+		StagedDiff:     stagedDiffText,
+		UnstagedDiff:   unstagedDiffText,
+		ConflictDiff:   conflictDiffText,
+		UntrackedDiff:  untrackedDiffText,
 		TotalAdditions: totalAdd,
 		TotalDeletions: totalDel,
 	}
