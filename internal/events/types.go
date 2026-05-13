@@ -26,6 +26,8 @@ type Broadcaster interface {
 }
 
 // MessageEventData is the payload for message.created events.
+// Priority is carried so the FE can render queue position ("1/3") — higher
+// priority runs before lower; bot messages always carry 0.
 type MessageEventData struct {
 	MsgID       string `json:"msg_id"`
 	AuthorID    string `json:"author_id"`
@@ -33,6 +35,7 @@ type MessageEventData struct {
 	Content     string `json:"content"`
 	IsBot       bool   `json:"is_bot"`
 	IsProcessed bool   `json:"is_processed"`
+	Priority    int    `json:"priority,omitempty"`
 }
 
 // MessagesProcessedData is the payload for messages.processed events.

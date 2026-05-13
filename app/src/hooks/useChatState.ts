@@ -163,6 +163,7 @@ export function useChatState(
           content: data.content,
           is_bot: data.is_bot,
           is_processed: data.is_processed,
+          priority: data.priority,
           created_at: new Date(event.timestamp).toISOString(),
         });
         return;

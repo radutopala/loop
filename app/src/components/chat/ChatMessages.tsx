@@ -222,6 +222,21 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   const queuedMessages = unprocessedUserMsgs.filter((m) => m.msg_id !== effectiveProcessingMsgId);
   const hasQueuedMessages = queuedMessages.length > 0;
 
+  // Queue position labels ("1/3" etc.) keyed by msg_id. The backend processes
+  // rows in (priority DESC, id ASC) order, so we sort by the same rule to
+  // match what the agent will actually run next. Higher priority lands on top
+  // (an interrupt becomes "1/N" and bumps existing rows down).
+  const queueOrdered = [...queuedMessages].sort((a, b) => {
+    const pa = a.priority ?? 0;
+    const pb = b.priority ?? 0;
+    if (pa !== pb) return pb - pa;
+    return a.id - b.id;
+  });
+  const queuePositionByMsgId = new Map<string, string>();
+  queueOrdered.forEach((m, idx) => {
+    queuePositionByMsgId.set(m.msg_id, `${idx + 1}/${queueOrdered.length}`);
+  });
+
   // Track whether we ever had queued messages in this batch, so the trigger
   // quote persists even when processing the last message of a multi-message batch.
   const hadQueuedRef = useRef(false);
@@ -250,6 +265,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
                     message={msg}
                     showProcessing={isRunning && !msg.is_bot && msg.msg_id === effectiveProcessingMsgId}
                     showQueued={!msg.is_bot && !msg.is_processed && msg.msg_id !== effectiveProcessingMsgId}
+                    queuePosition={queuePositionByMsgId.get(msg.msg_id)}
                     highlighted={msg.id === highlightedMsgId}
                     onQuote={onQuote}
                   />
@@ -449,7 +465,7 @@ function ToolRunBlock({ items, resultsByToolUseID, skippedToolResultIDs, isActiv
   );
 }
 
-function MessageBubble({ message, showProcessing, showQueued, highlighted, onQuote }: { message: Message; showProcessing?: boolean; showQueued?: boolean; highlighted?: boolean; onQuote?: (msg: Message) => void }) {
+function MessageBubble({ message, showProcessing, showQueued, queuePosition, highlighted, onQuote }: { message: Message; showProcessing?: boolean; showQueued?: boolean; queuePosition?: string; highlighted?: boolean; onQuote?: (msg: Message) => void }) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
   const isUser = !message.is_bot;
@@ -514,7 +530,7 @@ function MessageBubble({ message, showProcessing, showQueued, highlighted, onQuo
         </div>
         {isUser && (
           <div style={{ display: "flex", justifyContent: "flex-end", alignItems: "center", gap: 6, marginTop: 4 }}>
-            {showQueued && <span style={{ fontSize: 10, color: colors.textDim, background: colors.surface, border: "1px solid rgba(255,255,255,0.2)", borderRadius: 4, padding: "2px 8px", fontWeight: 500, letterSpacing: 0.3 }}>queued</span>}
+            {showQueued && <span style={{ fontSize: 10, color: colors.textDim, background: colors.surface, border: "1px solid rgba(255,255,255,0.2)", borderRadius: 4, padding: "2px 8px", fontWeight: 500, letterSpacing: 0.3 }}>{queuePosition ? `queued ${queuePosition}` : "queued"}</span>}
             {showProcessing && <span style={{ fontSize: 10, color: colors.textMuted, background: colors.surface, border: "1px solid rgba(255,255,255,0.2)", borderRadius: 4, padding: "2px 8px", fontWeight: 500, letterSpacing: 0.3 }}>processing</span>}
             <span style={styles.time}>{time}</span>
           </div>

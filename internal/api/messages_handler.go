@@ -113,6 +113,7 @@ type messageResponse struct {
 	Content     string    `json:"content"`
 	IsBot       bool      `json:"is_bot"`
 	IsProcessed bool      `json:"is_processed"`
+	Priority    int       `json:"priority,omitempty"`
 	CreatedAt   time.Time `json:"created_at"`
 }
 
@@ -131,6 +132,7 @@ func toMessageResponse(m *db.Message) messageResponse {
 		Content:     m.Content,
 		IsBot:       m.IsBot,
 		IsProcessed: m.IsProcessed,
+		Priority:    m.Priority,
 		CreatedAt:   m.CreatedAt,
 	}
 }

@@ -27,6 +27,9 @@ export interface Message {
   content: string;
   is_bot: boolean;
   is_processed: boolean;
+  // Priority governs processing order (higher first). Missing/0 = default.
+  // Used by ChatMessages to render queue position ("1/3").
+  priority?: number;
   created_at: string;
 }
 
@@ -67,6 +70,7 @@ export interface MessageCreatedData {
   content: string;
   is_bot: boolean;
   is_processed: boolean;
+  priority?: number;
 }
 
 export interface MessagesProcessedData {
