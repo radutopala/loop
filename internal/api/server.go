@@ -60,6 +60,15 @@ type PlanResolver interface {
 	ResumeChannel(ctx context.Context, channelID string)
 }
 
+// AskResolver clears and resumes a channel parked on an AskUserQuestion card.
+// ClearAskedChannel removes the pause flag set by the orchestrator when the
+// agent emitted AskUserQuestion; ResumeChannel kicks the drain so any queued
+// rows can now be claimed.
+type AskResolver interface {
+	ClearAskedChannel(channelID string)
+	ResumeChannel(ctx context.Context, channelID string)
+}
+
 // serverSystem abstracts OS operations needed by Server.
 type serverSystem interface {
 	Stat(name string) (os.FileInfo, error)
@@ -99,6 +108,7 @@ type Server struct {
 	msgHandler                IncomingMessageHandler
 	runCanceller              RunCanceller
 	planResolver              PlanResolver
+	askResolver               AskResolver
 	interactionHandler        InteractionHandler
 	agentRegistry             *agentregistry.Registry
 	eventsHub                 *EventsHub
@@ -166,6 +176,12 @@ func (s *Server) SetRunCanceller(rc RunCanceller) {
 // /api/channels/{id}/plan/resolve.
 func (s *Server) SetPlanResolver(pr PlanResolver) {
 	s.planResolver = pr
+}
+
+// SetAskResolver configures the ask-pause resolver used by
+// /api/channels/{id}/ask/resolve.
+func (s *Server) SetAskResolver(ar AskResolver) {
+	s.askResolver = ar
 }
 
 // SetMemoryIndexer configures the memory indexer for the /api/memory/* endpoints.
@@ -280,6 +296,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/channels/{id}", s.handleDeleteChannel)
 	mux.HandleFunc("PATCH /api/channels/{id}/lock", s.handleSetChannelLocked)
 	mux.HandleFunc("POST /api/channels/{id}/plan/resolve", s.handlePlanResolve)
+	mux.HandleFunc("POST /api/channels/{id}/ask/resolve", s.handleAskResolve)
 	mux.HandleFunc("POST /api/tasks", s.handleCreateTask)
 	mux.HandleFunc("GET /api/tasks", s.handleListTasks)
 	mux.HandleFunc("GET /api/tasks/{id}", s.handleGetTask)

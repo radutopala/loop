@@ -1,8 +1,7 @@
 import { createContext, forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useRef, useState } from "react";
 import type { AgentActivityData, AskUserQuestion, ExitPlanModeData, Message, TimelineItem, TodoItem } from "../../types";
 import type { ChatState } from "../../hooks/useChatState";
-import { sendMessage } from "../../api/loopApi";
-import { resolvePlan } from "../../api/channels";
+import { resolveAsk, resolvePlan } from "../../api/channels";
 import { fonts } from "../../theme";
 import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
@@ -1089,7 +1088,7 @@ function AskUserQuestionCard({ questions, channelId, mode, onSent }: { questions
       ? "Here are my answers:\n" + parts.map((p) => `- ${p}`).join("\n")
       : "No specific answers provided.";
     try {
-      await sendMessage(channelId, content, mode);
+      await resolveAsk(channelId, "answer", content, mode);
       onSent?.();
     } catch { /* ignore */ }
     setSending(false);

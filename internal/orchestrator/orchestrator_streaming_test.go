@@ -309,9 +309,18 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingOnToolUseBroadcasts() {
 	eb.AssertExpectations(s.T())
 }
 
+// TestHandleMessageStreamingAskUserQuestion verifies that an
+// AskUserQuestion tool-use cancels the run, parks the channel on the ask
+// flag, broadcasts a clean `completed` status (not `error`), and skips the
+// final response delivery so the ask card lands as the only end-of-turn
+// artifact. The user's answer arrives later via /api/channels/{id}/ask/resolve
+// as a priority-bumped continuation.
 func (s *OrchestratorSuite) TestHandleMessageStreamingAskUserQuestion() {
 	cfgStream := s.orch.cfg.Load()
 	cfgStream.StreamingEnabled = true
+	// Non-zero timeout so the context cancellation we observe is provably
+	// from runCancel(), not a 0-duration deadline.
+	cfgStream.ContainerTimeout = time.Minute
 	s.orch.cfg.Store(cfgStream)
 	eb := new(MockEventBroadcaster)
 	s.orch.SetEventBroadcaster(eb)
@@ -328,31 +337,102 @@ func (s *OrchestratorSuite) TestHandleMessageStreamingAskUserQuestion() {
 	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
 	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
 	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{}, nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil).Maybe()
 
 	askInput := `{"questions":[{"question":"Pick one","header":"Choice","options":[{"label":"X"}]}]}`
+	var capturedCtx context.Context
 	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
 		if req.OnToolUse == nil {
 			return false
 		}
 		req.OnToolUse("toolu_q", "AskUserQuestion", askInput)
-		req.OnTurn("done")
 		return true
-	})).Return(&agent.AgentResponse{Response: "done", SessionID: "sess-ask"}, nil)
-
-	s.store.On("UpdateSessionID", s.ctx, "ch1", "sess-ask").Return(nil)
-	s.bot.On("SendMessage", s.ctx, mock.Anything).Return(nil)
-	s.store.On("MarkMessagesProcessed", s.ctx, []int64{}).Return(nil)
+	})).Run(func(args mock.Arguments) {
+		capturedCtx = args.Get(0).(context.Context)
+	}).Return((*agent.AgentResponse)(nil), context.Canceled)
 
 	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
-	eb.On("BroadcastAgentStatus", "ch1", mock.Anything).Return()
-	eb.On("BroadcastToolUse", "ch1", mock.Anything).Once()
+	eb.On("BroadcastToolUse", "ch1", mock.Anything).Return().Once()
 	eb.On("BroadcastAskUser", "ch1", mock.MatchedBy(func(d events.AskUserQuestionEventData) bool {
 		return len(d.Questions) == 1 && d.Questions[0].Header == "Choice"
-	})).Once()
+	})).Return().Once()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "running" && d.MsgID == "msg-ask"
+	})).Return().Once()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "completed" && d.Error == "" && d.MsgID == "msg-ask"
+	})).Return().Once()
 
 	s.orch.HandleMessage(s.ctx, msg)
 
+	require.NotNil(s.T(), capturedCtx)
+	require.ErrorIs(s.T(), capturedCtx.Err(), context.Canceled)
 	eb.AssertCalled(s.T(), "BroadcastAskUser", "ch1", mock.Anything)
+	require.True(s.T(), s.orch.IsChannelAsked("ch1"))
+	eb.AssertExpectations(s.T())
+}
+
+// TestAskUserQuestionBroadcastOrder is a regression test for a FE-side race:
+// when agent.status non-running lands BEFORE messages.processed, the FE's
+// refetchHead (triggered by status) can fetch /timeline before the
+// is_processed=1 DB write is committed and overwrite the optimistic local
+// flip with stale rows — leaving the trigger labeled "queued" forever.
+// The fix is to broadcast messages.processed FIRST in processClaimedMessage's
+// error path, then the deferred agent.status from executeAgentRun.
+func (s *OrchestratorSuite) TestAskUserQuestionBroadcastOrder() {
+	cfgStream := s.orch.cfg.Load()
+	cfgStream.StreamingEnabled = true
+	cfgStream.ContainerTimeout = time.Minute
+	s.orch.cfg.Store(cfgStream)
+	eb := new(MockEventBroadcaster)
+	s.orch.SetEventBroadcaster(eb)
+
+	msg := &bot.IncomingMessage{
+		ChannelID: "ch1", GuildID: "g1", AuthorID: "user1", AuthorName: "Alice",
+		Content: "ask me", MessageID: "msg-ask-order", IsBotMention: true, Timestamp: time.Now().UTC(),
+	}
+
+	// Recent must contain the trigger row so markTriggerProcessed does NOT
+	// early-return (the empty-recent shortcut would skip the very broadcast
+	// whose ordering we want to test).
+	trigger := &db.Message{ID: 42, ChannelID: "ch1", MsgID: "msg-ask-order", IsTriggered: true}
+	s.store.On("IsChannelActive", s.ctx, "ch1").Return(true, nil)
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil)
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ID: 1, ChannelID: "ch1", Active: true}, nil).Maybe()
+	s.store.On("InsertMessage", s.ctx, mock.Anything).Return(nil)
+	s.store.On("InsertAgentEvent", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.bot.On("SendTyping", mock.Anything, "ch1").Return(nil).Maybe()
+	s.store.On("GetRecentMessages", s.ctx, "ch1", 50).Return([]*db.Message{trigger}, nil)
+	s.store.On("MarkMessagesProcessed", s.ctx, []int64{42}).Return(nil)
+
+	askInput := `{"questions":[{"question":"Pick","header":"Choice","options":[{"label":"X"}]}]}`
+	s.runner.On("Run", mock.Anything, mock.MatchedBy(func(req *agent.AgentRequest) bool {
+		if req.OnToolUse == nil {
+			return false
+		}
+		req.OnToolUse("toolu_q", "AskUserQuestion", askInput)
+		return true
+	})).Return((*agent.AgentResponse)(nil), context.Canceled)
+
+	// Record call order across the two broadcasts we care about.
+	var order []string
+	eb.On("BroadcastMessageCreated", "ch1", mock.Anything).Return()
+	eb.On("BroadcastToolUse", "ch1", mock.Anything).Return().Once()
+	eb.On("BroadcastAskUser", "ch1", mock.Anything).Return().Once()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "running"
+	})).Run(func(_ mock.Arguments) { order = append(order, "running") }).Return().Once()
+	eb.On("BroadcastMessagesProcessed", "ch1", mock.MatchedBy(func(d events.MessagesProcessedData) bool {
+		return len(d.MsgIDs) == 1 && d.MsgIDs[0] == "msg-ask-order"
+	})).Run(func(_ mock.Arguments) { order = append(order, "processed") }).Return().Once()
+	eb.On("BroadcastAgentStatus", "ch1", mock.MatchedBy(func(d events.AgentStatusEventData) bool {
+		return d.Status == "completed"
+	})).Run(func(_ mock.Arguments) { order = append(order, "completed") }).Return().Once()
+
+	s.orch.HandleMessage(s.ctx, msg)
+
+	require.Equal(s.T(), []string{"running", "processed", "completed"}, order,
+		"messages.processed must fire BEFORE agent.status non-running so FE refetchHead sees the committed is_processed=1")
 	eb.AssertExpectations(s.T())
 }
 

@@ -128,6 +128,25 @@ export async function resolvePlan(
   if (!res.ok) throw new Error(`Failed to resolve plan: ${res.statusText}`);
 }
 
+export type AskResolveAction = "answer" | "cancel";
+
+export async function resolveAsk(
+  channelId: string,
+  action: AskResolveAction,
+  answer?: string,
+  mode?: string,
+): Promise<void> {
+  const body: Record<string, string> = { action };
+  if (answer) body.answer = answer;
+  if (mode) body.mode = mode;
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/ask/resolve`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+  if (!res.ok) throw new Error(`Failed to resolve ask: ${res.statusText}`);
+}
+
 export async function ensureChannel(dirPath: string): Promise<Channel> {
   const res = await fetch(`${getApiUrl()}/api/channels`, {
     method: "POST",

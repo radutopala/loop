@@ -198,6 +198,7 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// Event injection (chromedp dispatches a CustomEvent that the chat store
 	// listens for; routes through the same handler as a real WS message).
 	ctx.Step(`^I inject an exit_plan event with plan "([^"]*)"$`, tc.injectExitPlanEvent)
+	ctx.Step(`^I inject an ask_user event with question "([^"]*)" and options "([^"]*)"$`, tc.injectAskUserEvent)
 
 	// Debugging
 	ctx.Step(`^I take a screenshot$`, tc.takeScreenshot)
@@ -932,6 +933,38 @@ func (tc *TestContext) dumpPageText() error {
 	return nil
 }
 
+// seedChatTimeline injects a synthetic message.created event so
+// ChatMessages mounts. ChatView.tsx falls back to a welcome screen when the
+// chat is empty, which keeps the ExitPlan/AskUserQuestion cards offscreen.
+func (tc *TestContext) seedChatTimeline() ([]byte, error) {
+	return json.Marshal(map[string]any{
+		"type":       "message.created",
+		"channel_id": tc.ChannelID,
+		"timestamp":  1,
+		"data": map[string]any{
+			"msg_id":       "bdd-seed-1",
+			"author_id":    "user",
+			"author_name":  "tester",
+			"content":      "seed",
+			"is_bot":       false,
+			"is_processed": true,
+			"priority":     0,
+		},
+	})
+}
+
+// dispatchTestEvents fires N synthetic CustomEvents at the chat store via
+// the loop:test-event hook. The store handles them like real WS messages.
+func (tc *TestContext) dispatchTestEvents(payloads ...[]byte) error {
+	dispatches := make([]string, 0, len(payloads))
+	for _, p := range payloads {
+		dispatches = append(dispatches,
+			fmt.Sprintf("window.dispatchEvent(new CustomEvent('loop:test-event', {detail: JSON.stringify(%s)}));", string(p)))
+	}
+	js := "(() => {" + strings.Join(dispatches, "") + "})()"
+	return chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, nil))
+}
+
 // injectExitPlanEvent fires a synthetic agent.exit_plan event into the
 // page's chat store via the loop:test-event CustomEvent hook. Lets us render
 // the ExitPlanCard in BDD without spinning up a real agent run.
@@ -946,20 +979,7 @@ func (tc *TestContext) injectExitPlanEvent(planText string) error {
 	if err := tc.ensureChromeTab(); err != nil {
 		return err
 	}
-	seed, err := json.Marshal(map[string]any{
-		"type":       "message.created",
-		"channel_id": tc.ChannelID,
-		"timestamp":  1,
-		"data": map[string]any{
-			"msg_id":       "bdd-seed-1",
-			"author_id":    "user",
-			"author_name":  "tester",
-			"content":      "seed",
-			"is_bot":       false,
-			"is_processed": true,
-			"priority":     0,
-		},
-	})
+	seed, err := tc.seedChatTimeline()
 	if err != nil {
 		return fmt.Errorf("marshalling seed payload: %w", err)
 	}
@@ -971,13 +991,47 @@ func (tc *TestContext) injectExitPlanEvent(planText string) error {
 	if err != nil {
 		return fmt.Errorf("marshalling exit_plan payload: %w", err)
 	}
-	js := fmt.Sprintf(
-		`(() => {
-			window.dispatchEvent(new CustomEvent('loop:test-event', {detail: JSON.stringify(%s)}));
-			window.dispatchEvent(new CustomEvent('loop:test-event', {detail: JSON.stringify(%s)}));
-		})()`,
-		string(seed),
-		string(payload),
-	)
-	return chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, nil))
+	return tc.dispatchTestEvents(seed, payload)
+}
+
+// injectAskUserEvent fires a synthetic agent.ask_user event into the chat
+// store. options is a comma-separated list of option labels (e.g. "yes,no").
+// Builds one question with those options; for tests that need multi-question
+// scenarios extend with a richer step signature.
+func (tc *TestContext) injectAskUserEvent(question, options string) error {
+	if tc.ChannelID == "" {
+		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
+	}
+	if err := tc.ensureChromeTab(); err != nil {
+		return err
+	}
+	seed, err := tc.seedChatTimeline()
+	if err != nil {
+		return fmt.Errorf("marshalling seed payload: %w", err)
+	}
+	opts := []map[string]string{}
+	for _, label := range strings.Split(options, ",") {
+		label = strings.TrimSpace(label)
+		if label == "" {
+			continue
+		}
+		opts = append(opts, map[string]string{"label": label})
+	}
+	payload, err := json.Marshal(map[string]any{
+		"type":       "agent.ask_user",
+		"channel_id": tc.ChannelID,
+		"data": map[string]any{
+			"questions": []map[string]any{
+				{
+					"question": question,
+					"header":   "BDD",
+					"options":  opts,
+				},
+			},
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("marshalling ask_user payload: %w", err)
+	}
+	return tc.dispatchTestEvents(seed, payload)
 }
