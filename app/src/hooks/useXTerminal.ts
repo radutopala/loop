@@ -136,6 +136,18 @@ export function useXTerminal({
 
       fitAddon.fit();
 
+      // JetBrains Mono is loaded via @fontsource and may not be ready when
+      // xterm measures its first cell. Without a refit, cell width is computed
+      // against the fallback (SF Mono / Menlo) and the new font renders into
+      // wrong-width cells. Re-fit once the font finishes loading.
+      if (typeof document !== "undefined" && document.fonts?.ready) {
+        void document.fonts.ready.then(() => {
+          if (disposed) return;
+          fitAddon.fit();
+          term.refresh(0, term.rows - 1);
+        });
+      }
+
       xtermRef.current = term;
 
       // Flush any writes that arrived before the dynamic import resolved.

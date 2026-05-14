@@ -227,5 +227,5 @@ export const colors = darkColors;
 
 export const fonts = {
   sans: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif",
-  mono: "'SF Mono', Menlo, Monaco, 'Courier New', monospace",
+  mono: "'JetBrains Mono', 'SF Mono', Menlo, Monaco, 'Courier New', monospace",
 } as const;
