@@ -6,6 +6,7 @@ import { useElapsedTimer } from "../../hooks/useElapsedTimer";
 import { useXTerminal } from "../../hooks/useXTerminal";
 import { TerminalToolbar } from "./TerminalToolbar";
 import { PaneHeaderStatus } from "./PaneHeaderStatus";
+import { TerminalShortcuts } from "./TerminalShortcuts";
 import { ApprovalCard } from "../chat/ApprovalCard";
 
 /** Module-level registry so TerminalPanes can call sendClose for a specific instance. */
@@ -127,6 +128,13 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
     sendCreate();
   }, [reset, sendCreate]);
 
+  const handleShortcutPick = useCallback((prompt: string) => {
+    // Bracketed paste so multi-line prompts (e.g. file-backed shortcuts) land
+    // as a single paste buffer instead of one Enter-per-newline; trailing \r
+    // submits.
+    sendInput(`\x1b[200~${prompt}\x1b[201~\r`);
+  }, [sendInput]);
+
   const { write, xtermRef } = useXTerminal({
     containerRef: terminalRef,
     colors,
@@ -192,6 +200,9 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
           </div>
         )}
       </div>
+      {target === "agent" && instanceId && (
+        <TerminalShortcuts channelId={channelId} leafId={instanceId} onPick={handleShortcutPick} status={status} />
+      )}
     </div>
   );
 }

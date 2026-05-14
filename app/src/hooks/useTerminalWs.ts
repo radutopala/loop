@@ -92,7 +92,12 @@ export function useTerminalWs({
 
   const sendInput = useCallback(
     (data: string) => {
-      send(JSON.stringify({ type: "input", data: btoa(data) }));
+      // Encode UTF-8 then base64. btoa() rejects code points > 0xff, so
+      // multibyte chars (e.g. em-dash in a file-backed prompt) would throw.
+      const bytes = new TextEncoder().encode(data);
+      let bin = "";
+      for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]!);
+      send(JSON.stringify({ type: "input", data: btoa(bin) }));
     },
     [send],
   );
