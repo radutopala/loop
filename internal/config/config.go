@@ -286,17 +286,23 @@ type Config struct {
 	CopyFiles            []string
 	Envs                 map[string]string
 	ClaudeModel          string
-	StreamingEnabled     bool
-	KeepMCPConfigs       bool
-	WorkflowBashLocal    bool
-	Browser              BrowserConfig
-	Memory               MemoryConfig
-	Quality              QualityConfig
-	Permissions          types.Permissions
-	ExtraDirs            []string
-	Desktop              DesktopConfig
-	Gates                GatesConfig
-	GitHub               GitHubConfig
+	// ClaudeDangerouslyLoadDevelopmentChannels gates the
+	// `--dangerously-load-development-channels server:loop` CLI flag added to
+	// the agent's `claude` invocation. Loop's MCP Channels surface depends on
+	// it, but Anthropic ships the flag as development-only; default to off so
+	// users opt in deliberately. Hierarchy: global → project → worktree.
+	ClaudeDangerouslyLoadDevelopmentChannels bool
+	StreamingEnabled                         bool
+	KeepMCPConfigs                           bool
+	WorkflowBashLocal                        bool
+	Browser                                  BrowserConfig
+	Memory                                   MemoryConfig
+	Quality                                  QualityConfig
+	Permissions                              types.Permissions
+	ExtraDirs                                []string
+	Desktop                                  DesktopConfig
+	Gates                                    GatesConfig
+	GitHub                                   GitHubConfig
 }
 
 // GitHubConfig holds GitHub integration settings. GHUser names a `gh` CLI
@@ -339,45 +345,46 @@ func (c *Config) HasPlatform(p types.Platform) bool {
 // jsonConfig is an intermediate struct for JSON unmarshalling.
 // Pointer types for numerics distinguish "missing" (nil) from "zero".
 type jsonConfig struct {
-	Platforms             []string               `json:"platforms"`
-	DiscordToken          string                 `json:"discord_token"`
-	DiscordAppID          string                 `json:"discord_app_id"`
-	SlackBotToken         string                 `json:"slack_bot_token"`
-	SlackAppToken         string                 `json:"slack_app_token"`
-	ClaudeCodeOAuthToken  string                 `json:"claude_code_oauth_token"`
-	AnthropicAPIKey       string                 `json:"anthropic_api_key"`
-	DiscordGuildID        string                 `json:"discord_guild_id"`
-	LogFile               string                 `json:"log_file"`
-	LogLevel              string                 `json:"log_level"`
-	LogFormat             string                 `json:"log_format"`
-	DBPath                string                 `json:"db_path"`
-	ContainerImage        string                 `json:"container_image"`
-	ContainerTimeoutSec   *int                   `json:"container_timeout_sec"`
-	ContainerMemoryMB     *int64                 `json:"container_memory_mb"`
-	ContainerCPUs         *float64               `json:"container_cpus"`
-	ContainerKeepAliveSec *int                   `json:"container_keep_alive_sec"`
-	PollIntervalSec       *int                   `json:"poll_interval_sec"`
-	APIAddr               string                 `json:"api_addr"`
-	MCP                   *jsonMCPConfig         `json:"mcp"`
-	TaskTemplates         []TaskTemplate         `json:"task_templates"`
-	Workflows             []WorkflowDef          `json:"workflows"`
-	WorkflowConcurrency   *WorkflowConcurrency   `json:"workflow_concurrency"`
-	PromptShortcuts       []PromptShortcut       `json:"prompt_shortcuts"`
-	Mounts                []string               `json:"mounts"`
-	CopyFiles             []string               `json:"copy_files"`
-	Envs                  map[string]any         `json:"envs"`
-	ClaudeModel           string                 `json:"claude_model"`
-	ClaudeBinPath         string                 `json:"claude_bin_path"`
-	StreamingEnabled      *bool                  `json:"streaming_enabled"`
-	KeepMCPConfigs        *bool                  `json:"keep_mcp_configs"`
-	WorkflowBashLocal     *bool                  `json:"workflow_bash_local"`
-	Browser               *jsonBrowserConfig     `json:"browser"`
-	Memory                *jsonMemoryConfig      `json:"memory"`
-	Quality               *jsonQualityConfig     `json:"quality"`
-	Permissions           *jsonPermissionsConfig `json:"permissions"`
-	Desktop               *DesktopConfig         `json:"desktop"`
-	Gates                 *jsonGatesConfig       `json:"gates"`
-	GitHub                *GitHubConfig          `json:"github"`
+	Platforms                                []string               `json:"platforms"`
+	DiscordToken                             string                 `json:"discord_token"`
+	DiscordAppID                             string                 `json:"discord_app_id"`
+	SlackBotToken                            string                 `json:"slack_bot_token"`
+	SlackAppToken                            string                 `json:"slack_app_token"`
+	ClaudeCodeOAuthToken                     string                 `json:"claude_code_oauth_token"`
+	AnthropicAPIKey                          string                 `json:"anthropic_api_key"`
+	DiscordGuildID                           string                 `json:"discord_guild_id"`
+	LogFile                                  string                 `json:"log_file"`
+	LogLevel                                 string                 `json:"log_level"`
+	LogFormat                                string                 `json:"log_format"`
+	DBPath                                   string                 `json:"db_path"`
+	ContainerImage                           string                 `json:"container_image"`
+	ContainerTimeoutSec                      *int                   `json:"container_timeout_sec"`
+	ContainerMemoryMB                        *int64                 `json:"container_memory_mb"`
+	ContainerCPUs                            *float64               `json:"container_cpus"`
+	ContainerKeepAliveSec                    *int                   `json:"container_keep_alive_sec"`
+	PollIntervalSec                          *int                   `json:"poll_interval_sec"`
+	APIAddr                                  string                 `json:"api_addr"`
+	MCP                                      *jsonMCPConfig         `json:"mcp"`
+	TaskTemplates                            []TaskTemplate         `json:"task_templates"`
+	Workflows                                []WorkflowDef          `json:"workflows"`
+	WorkflowConcurrency                      *WorkflowConcurrency   `json:"workflow_concurrency"`
+	PromptShortcuts                          []PromptShortcut       `json:"prompt_shortcuts"`
+	Mounts                                   []string               `json:"mounts"`
+	CopyFiles                                []string               `json:"copy_files"`
+	Envs                                     map[string]any         `json:"envs"`
+	ClaudeModel                              string                 `json:"claude_model"`
+	ClaudeBinPath                            string                 `json:"claude_bin_path"`
+	ClaudeDangerouslyLoadDevelopmentChannels *bool                  `json:"claude_dangerously_load_development_channels"`
+	StreamingEnabled                         *bool                  `json:"streaming_enabled"`
+	KeepMCPConfigs                           *bool                  `json:"keep_mcp_configs"`
+	WorkflowBashLocal                        *bool                  `json:"workflow_bash_local"`
+	Browser                                  *jsonBrowserConfig     `json:"browser"`
+	Memory                                   *jsonMemoryConfig      `json:"memory"`
+	Quality                                  *jsonQualityConfig     `json:"quality"`
+	Permissions                              *jsonPermissionsConfig `json:"permissions"`
+	Desktop                                  *DesktopConfig         `json:"desktop"`
+	Gates                                    *jsonGatesConfig       `json:"gates"`
+	GitHub                                   *GitHubConfig          `json:"github"`
 }
 
 // jsonMemoryConfig is the JSON representation of the memory block.
@@ -541,30 +548,31 @@ func (l *Loader) parse() (*Config, error) {
 	}
 
 	cfg := &Config{
-		DiscordToken:         jc.DiscordToken,
-		DiscordAppID:         jc.DiscordAppID,
-		SlackBotToken:        jc.SlackBotToken,
-		SlackAppToken:        jc.SlackAppToken,
-		ClaudeBinPath:        stringDefault(jc.ClaudeBinPath, "claude"),
-		ClaudeCodeOAuthToken: jc.ClaudeCodeOAuthToken,
-		AnthropicAPIKey:      jc.AnthropicAPIKey,
-		DiscordGuildID:       jc.DiscordGuildID,
-		LogFile:              stringDefault(jc.LogFile, filepath.Join(loopDir, "loop.log")),
-		LogLevel:             stringDefault(jc.LogLevel, "info"),
-		LogFormat:            stringDefault(jc.LogFormat, "text"),
-		DBPath:               stringDefault(jc.DBPath, filepath.Join(loopDir, "loop.db")),
-		ContainerImage:       stringDefault(jc.ContainerImage, "loop-agent:latest"),
-		ContainerTimeout:     time.Duration(ptrDefault(jc.ContainerTimeoutSec, 43200)) * time.Second,
-		ContainerMemoryMB:    ptrDefault(jc.ContainerMemoryMB, 1024),
-		ContainerCPUs:        ptrDefault(jc.ContainerCPUs, 1.0),
-		ContainerKeepAlive:   time.Duration(ptrDefault(jc.ContainerKeepAliveSec, 300)) * time.Second,
-		PollInterval:         time.Duration(ptrDefault(jc.PollIntervalSec, 30)) * time.Second,
-		APIAddr:              stringDefault(jc.APIAddr, ":8222"),
-		LoopDir:              loopDir,
-		ClaudeModel:          stringDefault(jc.ClaudeModel, "claude-sonnet-4-6"),
-		StreamingEnabled:     ptrDefault(jc.StreamingEnabled, true),
-		KeepMCPConfigs:       ptrDefault(jc.KeepMCPConfigs, false),
-		WorkflowBashLocal:    ptrDefault(jc.WorkflowBashLocal, false),
+		DiscordToken:                             jc.DiscordToken,
+		DiscordAppID:                             jc.DiscordAppID,
+		SlackBotToken:                            jc.SlackBotToken,
+		SlackAppToken:                            jc.SlackAppToken,
+		ClaudeBinPath:                            stringDefault(jc.ClaudeBinPath, "claude"),
+		ClaudeCodeOAuthToken:                     jc.ClaudeCodeOAuthToken,
+		AnthropicAPIKey:                          jc.AnthropicAPIKey,
+		DiscordGuildID:                           jc.DiscordGuildID,
+		LogFile:                                  stringDefault(jc.LogFile, filepath.Join(loopDir, "loop.log")),
+		LogLevel:                                 stringDefault(jc.LogLevel, "info"),
+		LogFormat:                                stringDefault(jc.LogFormat, "text"),
+		DBPath:                                   stringDefault(jc.DBPath, filepath.Join(loopDir, "loop.db")),
+		ContainerImage:                           stringDefault(jc.ContainerImage, "loop-agent:latest"),
+		ContainerTimeout:                         time.Duration(ptrDefault(jc.ContainerTimeoutSec, 43200)) * time.Second,
+		ContainerMemoryMB:                        ptrDefault(jc.ContainerMemoryMB, 1024),
+		ContainerCPUs:                            ptrDefault(jc.ContainerCPUs, 1.0),
+		ContainerKeepAlive:                       time.Duration(ptrDefault(jc.ContainerKeepAliveSec, 300)) * time.Second,
+		PollInterval:                             time.Duration(ptrDefault(jc.PollIntervalSec, 30)) * time.Second,
+		APIAddr:                                  stringDefault(jc.APIAddr, ":8222"),
+		LoopDir:                                  loopDir,
+		ClaudeModel:                              stringDefault(jc.ClaudeModel, "claude-sonnet-4-6"),
+		ClaudeDangerouslyLoadDevelopmentChannels: ptrDefault(jc.ClaudeDangerouslyLoadDevelopmentChannels, false),
+		StreamingEnabled:                         ptrDefault(jc.StreamingEnabled, true),
+		KeepMCPConfigs:                           ptrDefault(jc.KeepMCPConfigs, false),
+		WorkflowBashLocal:                        ptrDefault(jc.WorkflowBashLocal, false),
 	}
 
 	// Browser config: nested struct with defaults.
@@ -810,29 +818,30 @@ func stringifyEnvs(raw map[string]any) map[string]string {
 
 // projectConfig is the structure for project-specific .loop/config.json files.
 type projectConfig struct {
-	Mounts               []string               `json:"mounts"`
-	CopyFiles            []string               `json:"copy_files"`
-	Envs                 map[string]any         `json:"envs"`
-	MCP                  *jsonMCPConfig         `json:"mcp"`
-	ClaudeModel          string                 `json:"claude_model"`
-	ClaudeBinPath        string                 `json:"claude_bin_path"`
-	ClaudeCodeOAuthToken string                 `json:"claude_code_oauth_token"`
-	AnthropicAPIKey      string                 `json:"anthropic_api_key"`
-	ContainerImage       string                 `json:"container_image"`
-	ContainerMemoryMB    *int64                 `json:"container_memory_mb"`
-	ContainerCPUs        *float64               `json:"container_cpus"`
-	KeepMCPConfigs       *bool                  `json:"keep_mcp_configs"`
-	Browser              *jsonBrowserConfig     `json:"browser"`
-	TaskTemplates        []TaskTemplate         `json:"task_templates"`
-	Workflows            []WorkflowDef          `json:"workflows"`
-	WorkflowConcurrency  *WorkflowConcurrency   `json:"workflow_concurrency"`
-	PromptShortcuts      []PromptShortcut       `json:"prompt_shortcuts"`
-	Memory               *jsonMemoryConfig      `json:"memory"`
-	Quality              *jsonQualityConfig     `json:"quality"`
-	Permissions          *jsonPermissionsConfig `json:"permissions"`
-	ExtraDirs            []string               `json:"extra_dirs"`
-	Gates                *jsonGatesConfig       `json:"gates"`
-	GitHub               *GitHubConfig          `json:"github"`
+	Mounts                                   []string               `json:"mounts"`
+	CopyFiles                                []string               `json:"copy_files"`
+	Envs                                     map[string]any         `json:"envs"`
+	MCP                                      *jsonMCPConfig         `json:"mcp"`
+	ClaudeModel                              string                 `json:"claude_model"`
+	ClaudeBinPath                            string                 `json:"claude_bin_path"`
+	ClaudeDangerouslyLoadDevelopmentChannels *bool                  `json:"claude_dangerously_load_development_channels"`
+	ClaudeCodeOAuthToken                     string                 `json:"claude_code_oauth_token"`
+	AnthropicAPIKey                          string                 `json:"anthropic_api_key"`
+	ContainerImage                           string                 `json:"container_image"`
+	ContainerMemoryMB                        *int64                 `json:"container_memory_mb"`
+	ContainerCPUs                            *float64               `json:"container_cpus"`
+	KeepMCPConfigs                           *bool                  `json:"keep_mcp_configs"`
+	Browser                                  *jsonBrowserConfig     `json:"browser"`
+	TaskTemplates                            []TaskTemplate         `json:"task_templates"`
+	Workflows                                []WorkflowDef          `json:"workflows"`
+	WorkflowConcurrency                      *WorkflowConcurrency   `json:"workflow_concurrency"`
+	PromptShortcuts                          []PromptShortcut       `json:"prompt_shortcuts"`
+	Memory                                   *jsonMemoryConfig      `json:"memory"`
+	Quality                                  *jsonQualityConfig     `json:"quality"`
+	Permissions                              *jsonPermissionsConfig `json:"permissions"`
+	ExtraDirs                                []string               `json:"extra_dirs"`
+	Gates                                    *jsonGatesConfig       `json:"gates"`
+	GitHub                                   *GitHubConfig          `json:"github"`
 }
 
 // LoadProjectConfig loads project-specific config from {workDir}/.loop/config.json
@@ -950,6 +959,10 @@ func (l *Loader) loadProjectConfig(workDir string, mainConfig *Config) (*Config,
 
 	if pc.ClaudeBinPath != "" {
 		merged.ClaudeBinPath = pc.ClaudeBinPath
+	}
+
+	if pc.ClaudeDangerouslyLoadDevelopmentChannels != nil {
+		merged.ClaudeDangerouslyLoadDevelopmentChannels = *pc.ClaudeDangerouslyLoadDevelopmentChannels
 	}
 
 	if pc.ClaudeCodeOAuthToken != "" {

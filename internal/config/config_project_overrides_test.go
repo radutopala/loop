@@ -78,6 +78,32 @@ func (s *ConfigSuite) TestLoadProjectConfigOverrides() {
 			},
 		},
 		{
+			name:        "DevChannels/EnableFromOff",
+			projectJSON: `{"claude_dangerously_load_development_channels": true}`,
+			mainCfg:     &Config{ClaudeDangerouslyLoadDevelopmentChannels: false},
+			assert: func(merged, main *Config) {
+				require.True(s.T(), merged.ClaudeDangerouslyLoadDevelopmentChannels)
+				require.False(s.T(), main.ClaudeDangerouslyLoadDevelopmentChannels)
+			},
+		},
+		{
+			name:        "DevChannels/DisableFromOn",
+			projectJSON: `{"claude_dangerously_load_development_channels": false}`,
+			mainCfg:     &Config{ClaudeDangerouslyLoadDevelopmentChannels: true},
+			assert: func(merged, main *Config) {
+				require.False(s.T(), merged.ClaudeDangerouslyLoadDevelopmentChannels)
+				require.True(s.T(), main.ClaudeDangerouslyLoadDevelopmentChannels)
+			},
+		},
+		{
+			name:        "DevChannels/NoOverride",
+			projectJSON: `{}`,
+			mainCfg:     &Config{ClaudeDangerouslyLoadDevelopmentChannels: true},
+			assert: func(merged, _ *Config) {
+				require.True(s.T(), merged.ClaudeDangerouslyLoadDevelopmentChannels)
+			},
+		},
+		{
 			name: "Container/Override",
 			projectJSON: `{
 				"container_image": "custom-agent:v3",
