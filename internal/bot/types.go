@@ -16,9 +16,9 @@ import (
 // identifiers follow "gate:<ID>:<decision>" where decision is one of
 // "once" | "session" | "deny".
 type ApprovalPrompt struct {
-	ID      string
-	Kind    string
-	Target  string
+	ID     string
+	Kind   string
+	Target string
 	// Source identifies the originating process inside the agent container so
 	// the renderer can target the right UI surface. "chat" for the chat agent,
 	// "terminal:<leafId>" for a specific terminal pane.

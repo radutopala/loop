@@ -63,10 +63,10 @@ type TerminalManager interface {
 
 // wsControlMessage represents a JSON control message from the client.
 type wsControlMessage struct {
-	Type        string   `json:"type"`
-	ContainerID string   `json:"container_id,omitempty"`
-	ChannelID   string   `json:"channel_id,omitempty"`
-	AgentID     string   `json:"agent_id,omitempty"` // e.g. "agent-0" — registers in agent registry
+	Type        string `json:"type"`
+	ContainerID string `json:"container_id,omitempty"`
+	ChannelID   string `json:"channel_id,omitempty"`
+	AgentID     string `json:"agent_id,omitempty"` // e.g. "agent-0" — registers in agent registry
 	// LeafID identifies a single terminal pane in the FE's tab tree. When
 	// present on a create message it is stamped onto the exec as the
 	// LOOP_TERMINAL_LEAF env var so the in-container dockerproxy can

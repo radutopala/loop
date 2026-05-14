@@ -16,16 +16,24 @@ const DefaultFileCacheSize = 1024
 //
 // auditor is fanned out into every handler. Pass NopAuditor{} to disable
 // audit logging; a real FileAuditor is wired by the syscallwrap parent.
-func NewServer(policy *Policy, approver Approver, auditor Auditor, channelID string, notifyFD int) *Server {
+//
+// peerSource is fanned out into every handler's PeerSource field; production
+// wires this to procsource.Lookup so prompts originating from a terminal
+// pane (LOOP_TERMINAL_LEAF stamped on the exec) route to that pane instead
+// of chat. Pass nil to disable lookup and attribute every prompt to chat.
+func NewServer(policy *Policy, approver Approver, auditor Auditor, peerSource PeerSourceLookup, channelID string, notifyFD int) *Server {
 	if auditor == nil {
 		auditor = NopAuditor{}
 	}
 	exec := NewExecveHandler(policy, approver)
 	exec.Auditor = auditor
+	exec.PeerSource = peerSource
 	conn := NewConnectHandler(policy, approver)
 	conn.Auditor = auditor
+	conn.PeerSource = peerSource
 	file := NewFileHandler(policy, approver, DefaultFileCacheSize)
 	file.Auditor = auditor
+	file.PeerSource = peerSource
 	return &Server{
 		Transport: NewNotifyTransport(notifyFD),
 		Factory:   NewProcTraceeFactory(),

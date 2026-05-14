@@ -37,12 +37,17 @@ type FileRequest struct {
 }
 
 // FileHandler evaluates file-op traps. Construct via NewFileHandler.
+//
+// PeerSource maps the tracee PID to an approval-source identifier ("chat"
+// vs "terminal:<leafId>") so the server can route prompts to the right UI
+// surface. nil disables lookup and every prompt is attributed to chat.
 type FileHandler struct {
-	Policy   *Policy
-	Approver Approver
-	Cache    *FileDecisionCache
-	Auditor  Auditor
-	Now      func() time.Time
+	Policy     *Policy
+	Approver   Approver
+	Cache      *FileDecisionCache
+	Auditor    Auditor
+	PeerSource PeerSourceLookup
+	Now        func() time.Time
 }
 
 // NewFileHandler wires the policy, approval source, and decision cache
@@ -92,6 +97,7 @@ func (h *FileHandler) Handle(ctx context.Context, req FileRequest) Outcome {
 			out = h.Approver.Request(ctx, req.ChannelID, ApprovalRequest{
 				Kind:     "file",
 				Target:   target,
+				Source:   sourceForPID(req.PID, h.PeerSource),
 				Message:  match.Message,
 				CacheKey: "file:" + req.Op + ":" + path,
 			})

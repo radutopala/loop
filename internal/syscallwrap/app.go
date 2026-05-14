@@ -16,6 +16,7 @@ import (
 	"golang.org/x/sys/unix"
 
 	"github.com/radutopala/loop/internal/agentgate"
+	"github.com/radutopala/loop/internal/procsource"
 )
 
 const (
@@ -101,7 +102,12 @@ type app struct {
 	socketpair    func() (parentFD, childFD int, err error)
 	startChild    func(argv []string, env []string, childEnd *os.File, uid, gid int) (*os.Process, error)
 	newApprover   func(apiURL, token string) agentgate.Approver
-	newGateServer func(policy *agentgate.Policy, approver agentgate.Approver, auditor agentgate.Auditor, channelID string, notifyFD int) gateServer
+	newGateServer func(policy *agentgate.Policy, approver agentgate.Approver, auditor agentgate.Auditor, peerSource agentgate.PeerSourceLookup, channelID string, notifyFD int) gateServer
+	// peerSource maps the tracee PID to "chat" vs. "terminal:<leafId>" so
+	// gate prompts route to the originating UI surface. Production wires
+	// procsource.Lookup (walks /proc for LOOP_TERMINAL_LEAF). Tests pass a
+	// stub to verify wiring without depending on real /proc state.
+	peerSource agentgate.PeerSourceLookup
 	// openAuditor returns a live Auditor for the given directory +
 	// retention. dir=="" → NopAuditor (no-op). Errors propagate so the
 	// parent fails fast rather than silently running un-audited; the dir
@@ -141,6 +147,7 @@ func newApp() *app {
 		startChild:    defaultStartChild,
 		newApprover:   defaultNewApprover,
 		newGateServer: defaultNewGateServer,
+		peerSource:    procsource.Lookup,
 		openAuditor:   defaultOpenAuditor,
 		receiveHS:     agentgate.ReceiveHandshake,
 		sendAck:       agentgate.SendAck,
