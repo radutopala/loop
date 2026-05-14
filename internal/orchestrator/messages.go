@@ -333,6 +333,12 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 		o.logger.Error("getting channel", "error", err, "channel_id", msg.ChannelID)
 		return nil, nil, nil, err
 	}
+	if channel == nil {
+		// Channel was deleted between message enqueue and drain — nothing
+		// useful to do; surface as an error so the caller marks the message
+		// processed and the drain loop moves on instead of dereferencing nil.
+		return nil, nil, nil, fmt.Errorf("channel %s not found", msg.ChannelID)
+	}
 
 	req := o.buildAgentRequest(msg.ChannelID, recent, channel)
 	req.Prompt = formatMessageContent(msg.AuthorName, msg.Content)
@@ -356,7 +362,7 @@ func (o *Orchestrator) prepareAgentRequest(ctx context.Context, msg *bot.Incomin
 
 	// When running in a worktree, tell the agent its working directory so it
 	// uses the correct absolute paths instead of drifting to the main repo.
-	if channel != nil && channel.Worktree && channel.DirPath != "" {
+	if channel.Worktree && channel.DirPath != "" {
 		dirHint := fmt.Sprintf(
 			"IMPORTANT: Your working directory is %s. Always use absolute paths under this directory for all file operations.",
 			channel.DirPath,
