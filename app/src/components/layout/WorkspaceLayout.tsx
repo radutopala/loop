@@ -781,8 +781,8 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                 hideActions
                 onStatusChange={onStatusChange}
                 onPaneStatus={(status) => handlePaneStatus(leaf.id, status)}
-                gateApproval={chatState.gateApprovalSource === paneSourceTag ? chatState.gateApproval : null}
-                onGateApprovalResolved={chatState.clearGateApproval}
+                gateApproval={chatState.gateApprovals[paneSourceTag] ?? null}
+                onGateApprovalResolved={() => chatState.clearGateApproval(paneSourceTag)}
               />
             </div>
           );

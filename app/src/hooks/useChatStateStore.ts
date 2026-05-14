@@ -33,16 +33,14 @@ export interface ActiveChatState {
     model?: string;
   } | null;
   triggerContent: string | null;
-  gateApproval: GateApprovalRequestedData | null;
   /**
-   * Where the gate approval originated, as reported by the backend. Either
-   * "chat" (the container's entrypoint chat agent) or "terminal:<leafId>"
-   * (a specific terminal pane keyed by its FE layout-tree leaf id). UI
-   * surfaces compare this string verbatim to decide whether to render the
-   * approval card. Missing/empty when the backend can't attribute the
-   * peer — treat as chat for backwards compat.
+   * Pending gate approval requests keyed by source ("chat" or
+   * "terminal:<leafId>"). Each UI surface looks up its own entry, so chat
+   * and one or more terminal panes can have concurrent cards visible. A
+   * backend-attribution miss (empty source) is bucketed under "chat" so
+   * something still renders.
    */
-  gateApprovalSource: string | null;
+  gateApprovals: Record<string, GateApprovalRequestedData>;
   /** msg_id of the message the agent is currently processing — backend-driven via agent.status. */
   processingMsgId: string | null;
 }
@@ -400,8 +398,7 @@ function createEmptyState(): ActiveChatState {
     mode: "agent",
     completionInfo: null,
     triggerContent: null,
-    gateApproval: null,
-    gateApprovalSource: null,
+    gateApprovals: {},
     processingMsgId: null,
   };
 }
@@ -459,18 +456,21 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
     }
     case "gate.approval_requested": {
       const data = event.data as GateApprovalRequestedData;
-      state.gateApproval = data;
       // Trust the backend's attribution. Older proxies / non-Linux hosts may
       // omit source; treat that as the chat agent so something renders.
-      state.gateApprovalSource = data.source && data.source !== "" ? data.source : "chat";
+      const source = data.source && data.source !== "" ? data.source : "chat";
+      state.gateApprovals = { ...state.gateApprovals, [source]: data };
       break;
     }
     case "gate.approval_resolved": {
       const data = event.data as GateApprovalResolvedData;
-      if (state.gateApproval && state.gateApproval.req_id === data.req_id) {
-        state.gateApproval = null;
-        state.gateApprovalSource = null;
+      const next: Record<string, GateApprovalRequestedData> = {};
+      let removed = false;
+      for (const [k, v] of Object.entries(state.gateApprovals)) {
+        if (v.req_id === data.req_id) { removed = true; continue; }
+        next[k] = v;
       }
+      if (removed) state.gateApprovals = next;
       break;
     }
     case "messages.processed": {
@@ -502,9 +502,13 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
           state.triggerContent = null;
           // Clear todos when the agent turn ends.
           state.todos = null;
-          // Drop any stale gate approval so a remount doesn't rehydrate it.
-          state.gateApproval = null;
-          state.gateApprovalSource = null;
+          // Drop any stale chat-sourced gate approval so a remount doesn't
+          // rehydrate it. Terminal-pane gates have their own lifecycle and
+          // are NOT cleared by the chat agent's run ending.
+          if (state.gateApprovals["chat"]) {
+            const { ["chat"]: _removed, ...rest } = state.gateApprovals;
+            state.gateApprovals = rest;
+          }
           state.processingMsgId = null;
         }
         if (

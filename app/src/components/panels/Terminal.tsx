@@ -12,6 +12,12 @@ import { ApprovalCard } from "../chat/ApprovalCard";
 /** Module-level registry so TerminalPanes can call sendClose for a specific instance. */
 const closeRegistry = new Map<string, () => void>();
 
+/** Idle window (no bytes from the container) we wait for after a deny-with-
+ * prompt paste before submitting Enter. The TUI emits bytes while it's
+ * handling the deny tool result and redrawing the input box; once it's
+ * quiescent for this long, it's back at the prompt and ready to accept \r. */
+const DENY_SUBMIT_QUIESCENCE_MS = 400;
+
 export function getCloseForInstance(key: string): (() => void) | undefined {
   return closeRegistry.get(key);
 }
@@ -48,8 +54,25 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
 
   const getStartTimeRef = useRef<(() => number | undefined) | null>(null);
 
+  // Stable handle so onData (defined before useTerminalWs) can call sendInput
+  // for the deny-with-prompt quiescence-fire.
+  const sendInputRef = useRef<((data: string) => void) | null>(null);
+
+  // When non-null, a deny-with-prompt submit is armed: each byte from the
+  // container resets idleTimer; when idleTimer fires (= TUI quiet for
+  // QUIESCENCE_MS), we send \r to submit the pasted text.
+  const pendingSubmitRef = useRef<{ idleTimer: ReturnType<typeof setTimeout> | null } | null>(null);
+
   const onData = useCallback((data: ArrayBuffer) => {
     writeRef.current?.(new Uint8Array(data));
+    const ps = pendingSubmitRef.current;
+    if (ps) {
+      if (ps.idleTimer) clearTimeout(ps.idleTimer);
+      ps.idleTimer = setTimeout(() => {
+        pendingSubmitRef.current = null;
+        sendInputRef.current?.("\r");
+      }, DENY_SUBMIT_QUIESCENCE_MS);
+    }
   }, []);
 
   const onStatus = useCallback(
@@ -100,6 +123,14 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
   });
 
   getStartTimeRef.current = getStartTime;
+  sendInputRef.current = sendInput;
+
+  // Cancel any pending deny-with-prompt submit when the pane unmounts.
+  useEffect(() => () => {
+    const ps = pendingSubmitRef.current;
+    if (ps?.idleTimer) clearTimeout(ps.idleTimer);
+    pendingSubmitRef.current = null;
+  }, []);
 
   // Register sendClose so TerminalPanes can call it when explicitly closing a pane.
   const registryKey = `${target}:${channelId}:${instanceId}`;
@@ -195,7 +226,23 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
             zIndex: 10,
           }}>
             <div style={{ width: "100%", maxWidth: 520, boxShadow: "0 8px 24px rgba(0,0,0,0.35)", borderRadius: 8 }}>
-              <ApprovalCard data={gateApproval} channelId={channelId} onResolved={onGateApprovalResolved} style={{ margin: 0 }} />
+              <ApprovalCard
+                data={gateApproval}
+                channelId={channelId}
+                onResolved={onGateApprovalResolved}
+                onDenyWithPrompt={(text) => {
+                  // Bracketed-paste so multi-line prompts arrive atomically
+                  // in the TUI. Routes the typed text into THIS pane's stdin
+                  // instead of posting to chat.
+                  sendInput(`\x1b[200~${text}\x1b[201~`);
+                  // Arm the quiescence-based submit instead of using a fixed
+                  // timeout: onData resets the idle timer on every byte from
+                  // the container, so \r fires the moment the TUI stops
+                  // emitting output (= back at the input prompt).
+                  pendingSubmitRef.current = { idleTimer: null };
+                }}
+                style={{ margin: 0 }}
+              />
             </div>
           </div>
         )}
