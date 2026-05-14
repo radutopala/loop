@@ -830,6 +830,26 @@ func (s *OrchestratorSuite) TestDrainChannelReleaseError() {
 	store.AssertExpectations(s.T())
 }
 
+// TestDrainChannelChannelDeleted exercises the nil-channel guard added to
+// prepareAgentRequest: if GetChannel returns (nil, nil) — the channel was
+// deleted between message enqueue and drain — processClaimedMessage must
+// return early (no crash, no agent run) and the message must still be
+// released so the drain loop moves on.
+func (s *OrchestratorSuite) TestDrainChannelChannelDeleted() {
+	store := new(testutil.MockStore)
+	row := &db.Message{ID: 42, ChannelID: "gone-ch", MsgID: "m-gone", IsTriggered: true, AuthorID: "u", AuthorName: "u", Content: "hi"}
+	store.On("ClaimNextPending", mock.Anything, "gone-ch").Return(row, nil).Once()
+	store.On("ClaimNextPending", mock.Anything, "gone-ch").Return(nil, nil).Once()
+	store.On("GetRecentMessages", mock.Anything, "gone-ch", mock.Anything).Return([]*db.Message{}, nil).Once()
+	store.On("GetChannel", mock.Anything, "gone-ch").Return(nil, nil).Once()
+	store.On("ReleaseRunningMessage", mock.Anything, int64(42), true).Return(nil).Once()
+
+	orch := New(store, s.bot, s.runner, s.scheduler, slog.New(slog.NewTextHandler(io.Discard, nil)), config.Config{}, nil)
+	orch.SetSynchronousDrain()
+	orch.ResumeChannel(context.Background(), "gone-ch")
+	store.AssertExpectations(s.T())
+}
+
 // TestDrainChannelSkipsWhenPlanned verifies the pause flag set by
 // ExitPlanMode short-circuits drainChannel: ClaimNextPending must NOT be
 // invoked while the flag is present.
