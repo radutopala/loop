@@ -21,6 +21,7 @@ func (a *GateBotAdapter) SendApproval(ctx context.Context, channelID string, req
 		ID:      req.ID,
 		Kind:    req.Kind,
 		Target:  req.Target,
+		Source:  req.Source,
 		Message: req.Message,
 		Details: req.Details,
 	})

@@ -29,6 +29,7 @@ const EndpointPath = "/api/gate/container-approval"
 type RequestBody struct {
 	Kind     string            `json:"kind"`
 	Target   string            `json:"target"`
+	Source   string            `json:"source,omitempty"`
 	Message  string            `json:"message"`
 	CacheKey string            `json:"cache_key"`
 	Details  map[string]string `json:"details,omitempty"`
@@ -75,6 +76,7 @@ func (a *Approver) Request(ctx context.Context, channelID string, req agentgate.
 	bodyBytes, _ := json.Marshal(RequestBody{
 		Kind:     req.Kind,
 		Target:   req.Target,
+		Source:   req.Source,
 		Message:  req.Message,
 		CacheKey: req.CacheKey,
 		Details:  req.Details,

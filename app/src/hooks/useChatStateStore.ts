@@ -34,6 +34,15 @@ export interface ActiveChatState {
   } | null;
   triggerContent: string | null;
   gateApproval: GateApprovalRequestedData | null;
+  /**
+   * Where the gate approval originated, as reported by the backend. Either
+   * "chat" (the container's entrypoint chat agent) or "terminal:<leafId>"
+   * (a specific terminal pane keyed by its FE layout-tree leaf id). UI
+   * surfaces compare this string verbatim to decide whether to render the
+   * approval card. Missing/empty when the backend can't attribute the
+   * peer — treat as chat for backwards compat.
+   */
+  gateApprovalSource: string | null;
   /** msg_id of the message the agent is currently processing — backend-driven via agent.status. */
   processingMsgId: string | null;
 }
@@ -392,6 +401,7 @@ function createEmptyState(): ActiveChatState {
     completionInfo: null,
     triggerContent: null,
     gateApproval: null,
+    gateApprovalSource: null,
     processingMsgId: null,
   };
 }
@@ -448,13 +458,18 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
       break;
     }
     case "gate.approval_requested": {
-      state.gateApproval = event.data as GateApprovalRequestedData;
+      const data = event.data as GateApprovalRequestedData;
+      state.gateApproval = data;
+      // Trust the backend's attribution. Older proxies / non-Linux hosts may
+      // omit source; treat that as the chat agent so something renders.
+      state.gateApprovalSource = data.source && data.source !== "" ? data.source : "chat";
       break;
     }
     case "gate.approval_resolved": {
       const data = event.data as GateApprovalResolvedData;
       if (state.gateApproval && state.gateApproval.req_id === data.req_id) {
         state.gateApproval = null;
+        state.gateApprovalSource = null;
       }
       break;
     }
@@ -489,6 +504,7 @@ function applyEvent(state: ActiveChatState, event: WSEvent): void {
           state.todos = null;
           // Drop any stale gate approval so a remount doesn't rehydrate it.
           state.gateApproval = null;
+          state.gateApprovalSource = null;
           state.processingMsgId = null;
         }
         if (

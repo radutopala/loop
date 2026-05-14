@@ -35,6 +35,23 @@ func (m *MockTerminalManager) CreateSession(ctx context.Context, containerID str
 	return args.String(0), outCh, history, doneCh, args.Error(4)
 }
 
+func (m *MockTerminalManager) CreateSessionWithEnv(ctx context.Context, containerID string, cmd, env []string) (string, <-chan []byte, []byte, <-chan struct{}, error) {
+	args := m.Called(ctx, containerID, cmd, env)
+	var outCh <-chan []byte
+	if args.Get(1) != nil {
+		outCh = args.Get(1).(<-chan []byte)
+	}
+	var history []byte
+	if args.Get(2) != nil {
+		history = args.Get(2).([]byte)
+	}
+	var doneCh <-chan struct{}
+	if args.Get(3) != nil {
+		doneCh = args.Get(3).(<-chan struct{})
+	}
+	return args.String(0), outCh, history, doneCh, args.Error(4)
+}
+
 func (m *MockTerminalManager) AttachSession(sessionID string) (<-chan []byte, []byte, <-chan struct{}, error) {
 	args := m.Called(sessionID)
 	var outCh <-chan []byte

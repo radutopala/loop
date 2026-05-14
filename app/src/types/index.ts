@@ -175,6 +175,13 @@ export interface GateApprovalRequestedData {
   req_id: string;
   kind: string;
   target: string;
+  /** Where the prompt originated inside the agent container. The desktop
+   * uses it verbatim to decide which UI surface should render the card:
+   *   "chat"               — the chat agent (container entrypoint).
+   *   "terminal:<leafId>"  — a specific terminal pane (leaf id from the
+   *                          layout tree, stamped via LOOP_TERMINAL_LEAF
+   *                          on the exec). */
+  source?: string;
   message?: string;
   details?: Record<string, string>;
 }

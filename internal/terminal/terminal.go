@@ -47,6 +47,16 @@ type ExecClient interface {
 	ExecInspectPid(ctx context.Context, execID string) (int, error)
 }
 
+// EnvExecClient is an optional interface ExecClient implementations may
+// satisfy to attach environment variables to a newly created exec. The
+// terminal Manager type-asserts on this when callers route through
+// CreateSessionWithEnv. Containers use it to stamp LOOP_TERMINAL_LEAF on
+// terminal-originated execs so the in-container dockerproxy can attribute
+// approval prompts back to the specific terminal pane (vs. the chat agent).
+type EnvExecClient interface {
+	ExecCreateWithEnv(ctx context.Context, targetID string, cmd, env []string, tty bool) (string, error)
+}
+
 // generateID returns a short random hex string for session IDs.
 // The randRead parameter is the source of randomness (typically crypto/rand.Read).
 func generateID(randRead func([]byte) (int, error)) string {
@@ -227,6 +237,16 @@ const pidFileDir = "/tmp"
 // If cmd is empty, starts a shell that writes its PID to a temp file
 // for reliable process group cleanup.
 func (m *Manager) CreateSession(ctx context.Context, containerID string, cmd []string) (*Session, error) {
+	return m.CreateSessionWithEnv(ctx, containerID, cmd, nil)
+}
+
+// CreateSessionWithEnv is CreateSession with an env-var list attached to
+// the underlying exec. env is propagated only when the ExecClient
+// implements [EnvExecClient]; otherwise it is ignored and the call
+// degrades to a plain ExecCreate. Callers requiring env propagation
+// (e.g. terminal panes stamping LOOP_TERMINAL_LEAF for approval-source
+// attribution) should rely on this contract.
+func (m *Manager) CreateSessionWithEnv(ctx context.Context, containerID string, cmd, env []string) (*Session, error) {
 	sessionID := generateID(m.randRead)
 	pidFile := fmt.Sprintf("%s/.loop-exec-%s.pid", pidFileDir, sessionID)
 
@@ -241,7 +261,15 @@ func (m *Manager) CreateSession(ctx context.Context, containerID string, cmd []s
 		}
 	}
 
-	execID, err := m.client.ExecCreate(ctx, containerID, cmd, true)
+	var (
+		execID string
+		err    error
+	)
+	if envClient, ok := m.client.(EnvExecClient); ok && len(env) > 0 {
+		execID, err = envClient.ExecCreateWithEnv(ctx, containerID, cmd, env, true)
+	} else {
+		execID, err = m.client.ExecCreate(ctx, containerID, cmd, true)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("creating exec: %w", err)
 	}

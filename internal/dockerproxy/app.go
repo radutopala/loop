@@ -182,10 +182,16 @@ func defaultListenUnix(path string) (net.Listener, error) {
 
 // defaultServe runs an http.Server and blocks until ctx is done, then calls
 // Shutdown with a bounded timeout. Returns nil on clean shutdown.
+//
+// ConnContext is wired to connContextPeerPID so unix-domain peers'
+// SO_PEERCRED-derived PIDs are stamped on each request's context. The
+// dockerproxy Server reads them via peerPIDFromContext to attribute
+// approval prompts back to the originating process tree (chat vs. terminal).
 func defaultServe(ctx context.Context, ln net.Listener, handler http.Handler) error {
 	httpd := &http.Server{
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
+		ConnContext:       connContextPeerPID,
 	}
 	errCh := make(chan error, 1)
 	go func() {

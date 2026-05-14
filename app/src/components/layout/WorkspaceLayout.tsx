@@ -766,7 +766,12 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               onClose={() => handleRemoveLeaf(leaf.id)}
             />
           );
-        case "docker-agent":
+        case "docker-agent": {
+          // The backend tags terminal-sourced gates as "terminal:<leafId>"
+          // where <leafId> is the FE pane id stamped on the exec via the
+          // LOOP_TERMINAL_LEAF env var. Match exactly so a gate triggered in
+          // pane A doesn't render in pane B.
+          const paneSourceTag = `terminal:${leaf.id}`;
           return (
             <div key={`layout-docker-agent-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", backgroundColor: colors.sidebar }}>
               <Terminal
@@ -776,11 +781,12 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
                 hideActions
                 onStatusChange={onStatusChange}
                 onPaneStatus={(status) => handlePaneStatus(leaf.id, status)}
-                gateApproval={chatState.gateApproval}
+                gateApproval={chatState.gateApprovalSource === paneSourceTag ? chatState.gateApproval : null}
                 onGateApprovalResolved={chatState.clearGateApproval}
               />
             </div>
           );
+        }
         case "host-shell":
           return (
             <div key={`layout-host-shell-${channelId}-${leaf.id}`} style={{ flex: 1, display: "flex", flexDirection: "column", minHeight: 0, overflow: "hidden", backgroundColor: colors.sidebar }}>

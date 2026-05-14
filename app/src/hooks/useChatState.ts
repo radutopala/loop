@@ -26,6 +26,13 @@ export interface ChatState {
   completionInfo: { duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null;
   triggerContent: string | null;
   gateApproval: GateApprovalRequestedData | null;
+  /**
+   * Where the gate approval originated, as reported by the backend. Either
+   * "chat" (the container entrypoint chat agent) or "terminal:<leafId>" (a
+   * specific terminal pane). UI surfaces compare this string verbatim to
+   * decide whether to render the approval card.
+   */
+  gateApprovalSource: string | null;
   clearGateApproval: () => void;
   /** msg_id of the message the agent is currently processing — driven by agent.status backend event. */
   processingMsgId: string | null;
@@ -87,6 +94,7 @@ export function useChatState(
   const [completionInfo, setCompletionInfo] = useState<{ duration_ms?: number; num_turns?: number; stop_reason?: string; model?: string } | null>(initialState?.completionInfo ?? null);
   const [triggerContent, setTriggerContent] = useState<string | null>(initialState?.triggerContent ?? null);
   const [gateApproval, setGateApproval] = useState<GateApprovalRequestedData | null>(initialState?.gateApproval ?? null);
+  const [gateApprovalSource, setGateApprovalSource] = useState<string | null>(initialState?.gateApprovalSource ?? null);
   const [processingMsgId, setProcessingMsgId] = useState<string | null>(initialState?.processingMsgId ?? null);
 
   // Refs tracking latest values for the onUnmount snapshot.
@@ -114,6 +122,8 @@ export function useChatState(
   triggerRef.current = triggerContent;
   const gateApprovalRef = useRef(gateApproval);
   gateApprovalRef.current = gateApproval;
+  const gateApprovalSourceRef = useRef(gateApprovalSource);
+  gateApprovalSourceRef.current = gateApprovalSource;
   const processingMsgIdRef = useRef(processingMsgId);
   processingMsgIdRef.current = processingMsgId;
 
@@ -136,6 +146,7 @@ export function useChatState(
         completionInfo: completionRef.current,
         triggerContent: triggerRef.current,
         gateApproval: gateApprovalRef.current,
+        gateApprovalSource: gateApprovalSourceRef.current,
         processingMsgId: processingMsgIdRef.current,
       };
       onUnmountRef.current?.(snapshot);
@@ -226,17 +237,31 @@ export function useChatState(
         return;
       }
       if (event.type === "gate.approval_requested") {
-        setGateApproval(event.data as GateApprovalRequestedData);
+        const data = event.data as GateApprovalRequestedData;
+        setGateApproval(data);
+        // Trust the backend's attribution. Older proxies / non-Linux hosts may
+        // omit source; treat that as the chat agent so something renders.
+        setGateApprovalSource(data.source && data.source !== "" ? data.source : "chat");
         return;
       }
       if (event.type === "gate.approval_resolved") {
         const data = event.data as GateApprovalResolvedData;
-        setGateApproval((prev) => (prev && prev.req_id === data.req_id ? null : prev));
+        setGateApproval((prev) => {
+          if (prev && prev.req_id === data.req_id) {
+            setGateApprovalSource(null);
+            return null;
+          }
+          return prev;
+        });
         return;
       }
       if (event.type === "agent.status") {
         const data = event.data as AgentStatusData;
         if (data.status === "running") {
+          // Sync the ref alongside the setter so a follow-up event in the same
+          // tick (e.g. gate.approval_requested) can read the latest isRunning
+          // before React commits the new state.
+          isRunningRef.current = true;
           setIsRunning(true);
           setRunId(data.run_id ?? null);
           setCompletionInfo(null);
@@ -249,6 +274,7 @@ export function useChatState(
           // tracking, or if either side has no run_id (backwards compat).
           const matchesRun = !runIdRef.current || !data.run_id || runIdRef.current === data.run_id;
           if (matchesRun) {
+            isRunningRef.current = false;
             setIsRunning(false);
             setRunId(null);
             setToolActivity(null);
@@ -259,6 +285,7 @@ export function useChatState(
             // Drop any stale gate approval — the backend's pending entry is
             // already gone, so a click would 404 with "no pending approval".
             setGateApproval(null);
+            setGateApprovalSource(null);
             setProcessingMsgId(null);
             // Refetch the head — JSONL ingest now has chain_position values for
             // the run's rows, so the persisted timeline supersedes the live tail.
@@ -318,7 +345,11 @@ export function useChatState(
     completionInfo,
     triggerContent,
     gateApproval,
-    clearGateApproval: useCallback(() => setGateApproval(null), []),
+    gateApprovalSource,
+    clearGateApproval: useCallback(() => {
+      setGateApproval(null);
+      setGateApprovalSource(null);
+    }, []),
     processingMsgId,
   };
 }

@@ -53,7 +53,8 @@ type Server struct {
 }
 
 // ServerConfig groups the dependencies a Server needs. All fields are required
-// except Auditor (nil = discard).
+// except Auditor (nil = discard) and PeerSource (nil = always "chat", used by
+// tests and non-Linux builds where /proc walking is unavailable).
 type ServerConfig struct {
 	CID        string
 	ChannelID  string
@@ -62,6 +63,11 @@ type ServerConfig struct {
 	DockerSock string // e.g. "/var/run/docker.sock"
 	Auditor    Auditor
 	Now        func() time.Time
+	// PeerSource attributes a unix-socket peer PID (extracted via SO_PEERCRED
+	// in the ConnContext hook) to an approval-source identifier. Defaults to
+	// [defaultPeerSource] which walks /proc on Linux; nil disables attribution
+	// and every request becomes Source="chat".
+	PeerSource PeerSourceLookup
 }
 
 // NewServer constructs a Server. CID / ChannelID / Policy / Approver / DockerSock
@@ -81,6 +87,9 @@ func NewServer(cfg ServerConfig) (*Server, error) {
 	}
 	if cfg.Now == nil {
 		cfg.Now = time.Now
+	}
+	if cfg.PeerSource == nil {
+		cfg.PeerSource = defaultPeerSource
 	}
 	dialer := &net.Dialer{Timeout: 5 * time.Second}
 	transport := &http.Transport{
@@ -249,9 +258,11 @@ func (s *Server) runApprovalFlow(
 	decodedBody any,
 ) bool {
 	target := fmt.Sprintf("%s %s", r.Method, r.URL.Path)
+	source := sourceForPeer(peerPIDFromContext(r.Context()), s.cfg.PeerSource)
 	outcome := s.cfg.Approver.Request(r.Context(), s.cfg.ChannelID, agentgate.ApprovalRequest{
 		Kind:     kind,
 		Target:   target,
+		Source:   source,
 		Message:  message,
 		CacheKey: cacheKey,
 		Details:  extractApprovalDetails(r.Method, canonicalPath, decodedBody),
