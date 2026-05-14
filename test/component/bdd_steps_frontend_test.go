@@ -199,11 +199,14 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// listens for; routes through the same handler as a real WS message).
 	ctx.Step(`^I inject an exit_plan event with plan "([^"]*)"$`, tc.injectExitPlanEvent)
 	ctx.Step(`^I inject an ask_user event with question "([^"]*)" and options "([^"]*)"$`, tc.injectAskUserEvent)
+	ctx.Step(`^I inject a gate\.approval_requested event with req_id "([^"]*)", source "([^"]*)", and target "([^"]*)"$`, tc.injectGateApprovalRequested)
+	ctx.Step(`^I inject a gate\.approval_resolved event with req_id "([^"]*)"$`, tc.injectGateApprovalResolved)
 
 	// Debugging
 	ctx.Step(`^I take a screenshot$`, tc.takeScreenshot)
 	ctx.Step(`^I dump page text$`, tc.dumpPageText)
 	ctx.Step(`^I dump visible refs$`, tc.dumpVisibleRefs)
+	ctx.Step(`^I dump pane leaves$`, tc.dumpPaneLeaves)
 }
 
 // ensureChromeTab initializes a browser tab for the scenario if needed.
@@ -898,6 +901,24 @@ func (tc *TestContext) takeScreenshot() error {
 	return os.WriteFile(path, buf, 0o644)
 }
 
+// dumpPaneLeaves prints the pane-header-slot element ids that are currently
+// mounted, plus any element whose data-testid contains "approval-card". Used
+// to debug "the Docker Agent pane didn't mount" vs "the gate event went to
+// the wrong source key" failures.
+func (tc *TestContext) dumpPaneLeaves() error {
+	js := `(() => {
+		const slots = Array.from(document.querySelectorAll('[id^="pane-header-slot-"]')).map(el => el.id);
+		const cards = Array.from(document.querySelectorAll('[data-testid^="approval-card"]')).map(el => el.getAttribute('data-testid'));
+		return 'slots=' + JSON.stringify(slots) + ' cards=' + JSON.stringify(cards);
+	})()`
+	var result string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &result)); err != nil {
+		return err
+	}
+	fmt.Printf("[DUMP PANE LEAVES] %s\n", result)
+	return nil
+}
+
 func (tc *TestContext) dumpVisibleRefs() error {
 	js := `(() => {
 		const els = document.querySelectorAll('button, a[href], input, select, textarea, [role="button"], [role="link"], [role="tab"]');
@@ -1034,4 +1055,63 @@ func (tc *TestContext) injectAskUserEvent(question, options string) error {
 		return fmt.Errorf("marshalling ask_user payload: %w", err)
 	}
 	return tc.dispatchTestEvents(seed, payload)
+}
+
+// injectGateApprovalRequested fires a synthetic gate.approval_requested event
+// into the chat store. `source` is the per-pane routing tag the backend
+// attaches: "chat" (or empty → defaults to chat) routes the ApprovalCard to
+// ChatMessages; "terminal:<leafId>" routes it to the matching Terminal pane
+// overlay (see WorkspaceLayout's paneSourceTag wiring). `target` is the path
+// or arg the card displays — use a unique value per scenario so text
+// assertions are unambiguous.
+func (tc *TestContext) injectGateApprovalRequested(reqID, source, target string) error {
+	if tc.ChannelID == "" {
+		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
+	}
+	if err := tc.ensureChromeTab(); err != nil {
+		return err
+	}
+	seed, err := tc.seedChatTimeline()
+	if err != nil {
+		return fmt.Errorf("marshalling seed payload: %w", err)
+	}
+	payload, err := json.Marshal(map[string]any{
+		"type":       "gate.approval_requested",
+		"channel_id": tc.ChannelID,
+		"data": map[string]any{
+			"req_id": reqID,
+			"kind":   "exec",
+			"target": target,
+			"source": source,
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("marshalling gate.approval_requested payload: %w", err)
+	}
+	return tc.dispatchTestEvents(seed, payload)
+}
+
+// injectGateApprovalResolved fires a synthetic gate.approval_resolved event
+// into the chat store. The store walks gateApprovals and drops the entry
+// whose req_id matches, regardless of source — mirrors what happens when a
+// real approval is resolved over the wire.
+func (tc *TestContext) injectGateApprovalResolved(reqID string) error {
+	if tc.ChannelID == "" {
+		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
+	}
+	if err := tc.ensureChromeTab(); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(map[string]any{
+		"type":       "gate.approval_resolved",
+		"channel_id": tc.ChannelID,
+		"data": map[string]any{
+			"req_id":   reqID,
+			"decision": "once",
+		},
+	})
+	if err != nil {
+		return fmt.Errorf("marshalling gate.approval_resolved payload: %w", err)
+	}
+	return tc.dispatchTestEvents(payload)
 }
