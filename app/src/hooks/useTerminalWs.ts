@@ -50,7 +50,7 @@ export function useTerminalWs({
       retriedRef.current = true;
       const size = getTerminalSizeRef.current?.();
       sendRef.current(
-        JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...(cmd && cmd.length > 0 ? { cmd } : {}), ...size }),
+        JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId, leaf_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...(cmd && cmd.length > 0 ? { cmd } : {}), ...size }),
       );
     }
   }, [channelId, target, instanceId, claudeSessionId, newSession, cmd, killedRef]);
@@ -122,7 +122,7 @@ export function useTerminalWs({
     if (!channelId) return;
     killedRef.current = false;
     const size = getTerminalSizeRef.current?.();
-    send(JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...(cmd && cmd.length > 0 ? { cmd } : {}), ...size }));
+    send(JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId, leaf_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...(cmd && cmd.length > 0 ? { cmd } : {}), ...size }));
   }, [channelId, target, instanceId, claudeSessionId, newSession, cmd, send, killedRef]);
 
   /** Close: stop the exec session but keep the container alive.

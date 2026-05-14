@@ -19,6 +19,10 @@ type ApprovalPrompt struct {
 	ID      string
 	Kind    string
 	Target  string
+	// Source identifies the originating process inside the agent container so
+	// the renderer can target the right UI surface. "chat" for the chat agent,
+	// "terminal:<leafId>" for a specific terminal pane.
+	Source  string
 	Message string
 	Details map[string]string
 }

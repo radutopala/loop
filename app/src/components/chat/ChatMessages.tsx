@@ -147,7 +147,11 @@ export interface ChatMessagesHandle {
 export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(function ChatMessages({ channelId, chatState, scrollToMessageId, onScrollComplete, onQuote }, ref) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
-  const { items, liveTail, messages, loading, loadMore, hasMore, streamingContent, isRunning, agentActivity, askUserQuestions, exitPlanRequest, todos, completionInfo, triggerContent, gateApproval, processingMsgId } = chatState;
+  const { items, liveTail, messages, loading, loadMore, hasMore, streamingContent, isRunning, agentActivity, askUserQuestions, exitPlanRequest, todos, completionInfo, triggerContent, gateApproval, gateApprovalSource, processingMsgId } = chatState;
+  // The approval card belongs to chat only when the gate is attributed to the
+  // chat agent. Terminal-sourced gates ("terminal:<leafId>") render in the
+  // matching terminal pane instead.
+  const showGateApproval = gateApproval && gateApprovalSource === "chat";
   // Pair tool_use with its tool_result by tool_use_id so the renderer can
   // collapse them into a single pill with output. Skip pairing when the
   // tool_use_id is empty (live events without a stable id).
@@ -313,7 +317,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
           {isRunning && agentActivity && (
             <AgentActivityIndicator activity={agentActivity} />
           )}
-          {gateApproval && (
+          {showGateApproval && (
             <ApprovalCard data={gateApproval} channelId={channelId} onResolved={() => { chatState.clearGateApproval(); scrollToBottom(); }} />
           )}
           {askUserQuestions && !isRunning && channelId && (

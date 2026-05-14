@@ -77,6 +77,7 @@ type ContainerApprovalManager interface {
 type containerApprovalRequest struct {
 	Kind     string            `json:"kind"`
 	Target   string            `json:"target"`
+	Source   string            `json:"source,omitempty"`
 	Message  string            `json:"message"`
 	CacheKey string            `json:"cache_key"`
 	Details  map[string]string `json:"details,omitempty"`
@@ -118,6 +119,7 @@ func (s *Server) handleContainerApproval(w http.ResponseWriter, r *http.Request)
 	outcome := mgr.Request(r.Context(), channelID, agentgate.ApprovalRequest{
 		Kind:     body.Kind,
 		Target:   body.Target,
+		Source:   body.Source,
 		Message:  body.Message,
 		CacheKey: body.CacheKey,
 		Details:  body.Details,

@@ -82,12 +82,21 @@ func (c *DockerExecClient) DefaultShellCmd(pidFile string) []string {
 // entrypoint's useradd.
 // If cmd is empty, defaults to /bin/sh.
 func (c *DockerExecClient) ExecCreate(ctx context.Context, containerID string, cmd []string, tty bool) (string, error) {
+	return c.ExecCreateWithEnv(ctx, containerID, cmd, nil, tty)
+}
+
+// ExecCreateWithEnv is ExecCreate with extra environment variables attached
+// to the exec. Used by the terminal Manager to stamp LOOP_TERMINAL_LEAF on
+// terminal-pane execs so the in-container dockerproxy can attribute approval
+// prompts to the originating pane (vs. the chat agent / other terminals).
+func (c *DockerExecClient) ExecCreateWithEnv(ctx context.Context, containerID string, cmd, env []string, tty bool) (string, error) {
 	if len(cmd) == 0 {
 		cmd = []string{"/bin/sh"}
 	}
 	resp, err := c.api.ContainerExecCreate(ctx, containerID, containertypes.ExecOptions{
 		User:         c.execUser(),
 		Cmd:          cmd,
+		Env:          env,
 		Tty:          tty,
 		AttachStdin:  true,
 		AttachStdout: true,

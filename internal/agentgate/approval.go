@@ -32,10 +32,19 @@ type BotRouter interface {
 // alongside Target — e.g. {"image": "alpine", "binds": "/etc:/host-etc:ro"}
 // for a "POST /containers/create" approval. Order is not preserved across
 // JSON transit, so renderers should sort keys for stable display.
+//
+// Source identifies which process originated the request inside the agent
+// container, so the renderer can target the right UI surface:
+//   - "chat" — the chat agent (container entrypoint, PID 1 ancestor).
+//   - "terminal:<leafId>" — the terminal pane whose exec carried
+//     LOOP_TERMINAL_LEAF=<leafId> (set by the WS handler when the FE creates
+//     an agent-pane terminal). Multiple panes in the same container produce
+//     distinct leafIds, so each pane only shows its own approval cards.
 type ApprovalRequest struct {
 	ID       string
 	Kind     string
 	Target   string
+	Source   string
 	Message  string
 	CacheKey string
 	Details  map[string]string

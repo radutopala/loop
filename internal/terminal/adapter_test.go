@@ -49,6 +49,34 @@ func (s *AdapterSuite) TestCreateSessionError() {
 	require.Error(s.T(), err)
 }
 
+func (s *AdapterSuite) TestCreateSessionWithEnv() {
+	s.mock.execID = "exec-env"
+	s.mock.conn = newFakeConn()
+
+	sid, output, _, done, err := s.adapter.CreateSessionWithEnv(
+		context.Background(), "container-1", []string{"/bin/sh"},
+		[]string{"LOOP_TERMINAL_LEAF=leaf-7"},
+	)
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), sid)
+	require.NotNil(s.T(), output)
+	require.NotNil(s.T(), done)
+	require.Equal(s.T(), []string{"LOOP_TERMINAL_LEAF=leaf-7"}, s.mock.envSeen,
+		"adapter must forward env into the underlying ExecCreateWithEnv")
+
+	_, err = s.adapter.StopSession(sid)
+	require.NoError(s.T(), err)
+}
+
+func (s *AdapterSuite) TestCreateSessionWithEnvError() {
+	s.mock.createErr = io.ErrUnexpectedEOF
+
+	_, _, _, _, err := s.adapter.CreateSessionWithEnv(
+		context.Background(), "container-1", nil, []string{"K=V"},
+	)
+	require.Error(s.T(), err)
+}
+
 func (s *AdapterSuite) TestAttachSession() {
 	s.mock.execID = "exec-1"
 	s.mock.conn = newFakeConn()
@@ -151,12 +179,23 @@ type adapterMockExecClient struct {
 	execID    string
 	conn      io.ReadWriteCloser
 	createErr error
+	envSeen   []string // last env passed via ExecCreateWithEnv
 }
 
 func (m *adapterMockExecClient) ExecCreate(_ context.Context, _ string, _ []string, _ bool) (string, error) {
 	if m.createErr != nil {
 		return "", m.createErr
 	}
+	return m.execID, nil
+}
+
+// ExecCreateWithEnv implements EnvExecClient. Captures env so the adapter
+// test can assert the env-pane LOOP_TERMINAL_LEAF was forwarded end-to-end.
+func (m *adapterMockExecClient) ExecCreateWithEnv(_ context.Context, _ string, _, env []string, _ bool) (string, error) {
+	if m.createErr != nil {
+		return "", m.createErr
+	}
+	m.envSeen = env
 	return m.execID, nil
 }
 

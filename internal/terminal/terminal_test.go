@@ -170,6 +170,69 @@ func (s *TerminalSuite) TestCreateSessionWithCmd() {
 	client.AssertExpectations(s.T())
 }
 
+// mockEnvExecClient is mockExecClient + EnvExecClient. CreateSessionWithEnv
+// must dispatch to ExecCreateWithEnv when the client satisfies the optional
+// interface and env is non-empty; otherwise it falls back to ExecCreate
+// (covered by the existing TestCreateSession*).
+type mockEnvExecClient struct {
+	mockExecClient
+}
+
+func (m *mockEnvExecClient) ExecCreateWithEnv(ctx context.Context, targetID string, cmd, env []string, tty bool) (string, error) {
+	args := m.Called(ctx, targetID, cmd, env, tty)
+	return args.String(0), args.Error(1)
+}
+
+func (s *TerminalSuite) TestCreateSessionWithEnvUsesEnvExecClient() {
+	client := new(mockEnvExecClient)
+	pr, pw := io.Pipe()
+	conn := &mockConn{r: pr, w: io.Discard}
+
+	envVars := []string{"LOOP_TERMINAL_LEAF=leaf-9"}
+	client.On("ExecCreateWithEnv", mock.Anything, "ctr-1", mock.Anything, envVars, true).Return("exec-env", nil)
+	client.On("ExecAttach", mock.Anything, "exec-env").Return(conn, nil)
+
+	mgr := NewManager(client, testLogger)
+	sess, err := mgr.CreateSessionWithEnv(context.Background(), "ctr-1", nil, envVars)
+	require.NoError(s.T(), err)
+	require.NotEmpty(s.T(), sess.ID())
+
+	pw.Close()
+	<-sess.Done()
+	client.AssertExpectations(s.T())
+}
+
+func (s *TerminalSuite) TestCreateSessionWithEnvFallbackWhenNoEnv() {
+	// Client implements EnvExecClient but caller passes len(env)==0.
+	// Manager must route to plain ExecCreate, not ExecCreateWithEnv —
+	// preserves the cheap path for the common no-env case.
+	client := new(mockEnvExecClient)
+	pr, pw := io.Pipe()
+	conn := &mockConn{r: pr, w: io.Discard}
+
+	client.On("ExecCreate", mock.Anything, "ctr-1", mock.Anything, true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+
+	mgr := NewManager(client, testLogger)
+	_, err := mgr.CreateSessionWithEnv(context.Background(), "ctr-1", nil, nil)
+	require.NoError(s.T(), err)
+
+	pw.Close()
+	client.AssertExpectations(s.T())
+	client.AssertNotCalled(s.T(), "ExecCreateWithEnv", mock.Anything, mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (s *TerminalSuite) TestCreateSessionWithEnvErrorPropagates() {
+	client := new(mockEnvExecClient)
+	client.On("ExecCreateWithEnv", mock.Anything, "ctr-1", mock.Anything, []string{"K=V"}, true).Return("", errors.New("env exec failed"))
+
+	mgr := NewManager(client, testLogger)
+	_, err := mgr.CreateSessionWithEnv(context.Background(), "ctr-1", nil, []string{"K=V"})
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "creating exec")
+	client.AssertExpectations(s.T())
+}
+
 func (s *TerminalSuite) TestCreateSessionExecCreateError() {
 	client := new(mockExecClient)
 	client.On("ExecCreate", mock.Anything, "ctr-1", mock.Anything, true).Return("", errors.New("exec failed"))

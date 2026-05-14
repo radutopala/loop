@@ -52,6 +52,7 @@ const (
 // TerminalManager abstracts the terminal session operations needed by the handler.
 type TerminalManager interface {
 	CreateSession(ctx context.Context, containerID string, cmd []string) (sessionID string, output <-chan []byte, history []byte, done <-chan struct{}, err error)
+	CreateSessionWithEnv(ctx context.Context, containerID string, cmd, env []string) (sessionID string, output <-chan []byte, history []byte, done <-chan struct{}, err error)
 	AttachSession(sessionID string) (output <-chan []byte, history []byte, done <-chan struct{}, err error)
 	DetachSession(sessionID string, output <-chan []byte) error
 	SendInput(sessionID string, data []byte) error
@@ -66,13 +67,18 @@ type wsControlMessage struct {
 	ContainerID string   `json:"container_id,omitempty"`
 	ChannelID   string   `json:"channel_id,omitempty"`
 	AgentID     string   `json:"agent_id,omitempty"` // e.g. "agent-0" — registers in agent registry
-	Cmd         []string `json:"cmd,omitempty"`
-	SessionID   string   `json:"session_id,omitempty"`
-	Data        string   `json:"data,omitempty"` // base64-encoded input
-	Rows        uint     `json:"rows,omitempty"`
-	Cols        uint     `json:"cols,omitempty"`
-	Target      string   `json:"target,omitempty"` // "host" or "agent" (default)
-	NewSession  bool     `json:"new_session,omitempty"`
+	// LeafID identifies a single terminal pane in the FE's tab tree. When
+	// present on a create message it is stamped onto the exec as the
+	// LOOP_TERMINAL_LEAF env var so the in-container dockerproxy can
+	// attribute approval prompts back to this specific pane.
+	LeafID     string   `json:"leaf_id,omitempty"`
+	Cmd        []string `json:"cmd,omitempty"`
+	SessionID  string   `json:"session_id,omitempty"`
+	Data       string   `json:"data,omitempty"` // base64-encoded input
+	Rows       uint     `json:"rows,omitempty"`
+	Cols       uint     `json:"cols,omitempty"`
+	Target     string   `json:"target,omitempty"` // "host" or "agent" (default)
+	NewSession bool     `json:"new_session,omitempty"`
 }
 
 // wsStatusMessage represents a JSON status message sent to the client.
@@ -417,7 +423,22 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 
 	t.detachCurrent()
 
-	sid, output, history, done, err := t.manager.CreateSession(ctx, msg.ContainerID, msg.Cmd)
+	// Stamp LOOP_TERMINAL_LEAF on agent-pane execs so the in-container
+	// dockerproxy can attribute approval prompts back to this specific pane.
+	// The leaf id is the FE's per-pane handle; the chat agent runs as the
+	// container entrypoint and never carries this env var, so its approval
+	// requests surface as "chat" source.
+	var sid string
+	var output <-chan []byte
+	var history []byte
+	var done <-chan struct{}
+	var err error
+	if msg.LeafID != "" {
+		env := []string{"LOOP_TERMINAL_LEAF=" + msg.LeafID}
+		sid, output, history, done, err = t.manager.CreateSessionWithEnv(ctx, msg.ContainerID, msg.Cmd, env)
+	} else {
+		sid, output, history, done, err = t.manager.CreateSession(ctx, msg.ContainerID, msg.Cmd)
+	}
 	if err != nil {
 		t.sendError(err.Error(), wsErrCodeSessionFailed)
 		return

@@ -28,6 +28,18 @@ func (a *ManagerAdapter) CreateSession(ctx context.Context, containerID string, 
 	return s.ID(), output, history, s.Done(), nil
 }
 
+// CreateSessionWithEnv is CreateSession with extra env vars forwarded to the
+// underlying Docker exec. Used by the terminal WS handler to stamp
+// LOOP_TERMINAL_LEAF on terminal-pane execs.
+func (a *ManagerAdapter) CreateSessionWithEnv(ctx context.Context, containerID string, cmd, env []string) (string, <-chan []byte, []byte, <-chan struct{}, error) {
+	s, err := a.mgr.CreateSessionWithEnv(ctx, containerID, cmd, env)
+	if err != nil {
+		return "", nil, nil, nil, err
+	}
+	output, history := s.Attach()
+	return s.ID(), output, history, s.Done(), nil
+}
+
 // AttachSession re-attaches to an existing session.
 func (a *ManagerAdapter) AttachSession(sessionID string) (<-chan []byte, []byte, <-chan struct{}, error) {
 	s, err := a.mgr.GetSession(sessionID)

@@ -76,6 +76,33 @@ func (s *TerminalHandlerSuite) TestCreateSession() {
 	close(doneCh)
 }
 
+func (s *TerminalHandlerSuite) TestCreateSessionWithLeafID() {
+	// When the FE sends leaf_id, handleCreate must route through
+	// CreateSessionWithEnv stamping LOOP_TERMINAL_LEAF=<leaf_id> so the
+	// in-container dockerproxy can attribute approval prompts back to
+	// this specific terminal pane.
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	expectedEnv := []string{"LOOP_TERMINAL_LEAF=pane-7"}
+	s.terminal.On("CreateSessionWithEnv", mock.Anything, "ctr-1", []string{"/bin/bash"}, expectedEnv).
+		Return("sess-env", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+
+	conn, ts := s.dialWS()
+	defer ts.Close()
+	defer conn.Close()
+
+	sendControl(s.T(), conn, wsControlMessage{Type: "create", ContainerID: "ctr-1", Cmd: []string{"/bin/bash"}, LeafID: "pane-7"})
+
+	msg := readStatusMsg(s.T(), conn)
+	require.Equal(s.T(), "created", msg.Type)
+	require.Equal(s.T(), "sess-env", msg.SessionID)
+
+	s.terminal.AssertCalled(s.T(), "CreateSessionWithEnv", mock.Anything, "ctr-1", []string{"/bin/bash"}, expectedEnv)
+	s.terminal.AssertNotCalled(s.T(), "CreateSession", mock.Anything, mock.Anything, mock.Anything)
+	close(doneCh)
+}
+
 func (s *TerminalHandlerSuite) TestCreateSessionWithInitialResize() {
 	outCh := make(chan []byte, 1)
 	doneCh := make(chan struct{})

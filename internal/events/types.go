@@ -208,10 +208,20 @@ type WorkflowRunEventData struct {
 // back on its resolve POST so the Manager can route the decision. Details
 // are optional structured key/value pairs (e.g. image, binds, privileged
 // for a docker create) the UI can render alongside Target.
+//
+// Source identifies the originating process inside the agent container so
+// the FE can render the card on the right surface:
+//   - "chat" — the chat agent (container entrypoint); show inline in chat.
+//   - "terminal:<leafId>" — a terminal pane whose exec carried
+//     LOOP_TERMINAL_LEAF=<leafId>; show only in that pane.
+//
+// Derived backend-side from SO_PEERCRED + /proc walking in the in-container
+// dockerproxy; the FE consumes it verbatim and matches by string.
 type GateApprovalEventData struct {
 	ReqID   string            `json:"req_id"`
 	Kind    string            `json:"kind"`
 	Target  string            `json:"target"`
+	Source  string            `json:"source,omitempty"`
 	Message string            `json:"message,omitempty"`
 	Details map[string]string `json:"details,omitempty"`
 }
