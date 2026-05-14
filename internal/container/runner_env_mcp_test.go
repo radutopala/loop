@@ -465,6 +465,7 @@ func (s *RunnerSuite) TestRunMCPConfigIncludesAgentID() {
 
 func (s *RunnerSuite) TestRunAgentIDAddsChannelFlag() {
 	ctx := context.Background()
+	s.cfg.ClaudeDangerouslyLoadDevelopmentChannels = true
 	req := &agent.AgentRequest{
 		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
 		ChannelID: "ch-1",
@@ -473,6 +474,25 @@ func (s *RunnerSuite) TestRunAgentIDAddsChannelFlag() {
 
 	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
 		return slices.Contains(cfg.Cmd, "--dangerously-load-development-channels")
+	}), testContainerName, testJSONOK)
+
+	_, err := s.runner.Run(ctx, req)
+	require.NoError(s.T(), err)
+	s.client.AssertExpectations(s.T())
+}
+
+// TestRunAgentIDOmitsChannelFlagByDefault confirms that the development-channels
+// flag is gated behind the config opt-in even when an agent ID is set.
+func (s *RunnerSuite) TestRunAgentIDOmitsChannelFlagByDefault() {
+	ctx := context.Background()
+	req := &agent.AgentRequest{
+		Messages:  []agent.AgentMessage{{Role: "user", Content: "hello"}},
+		ChannelID: "ch-1",
+		AgentID:   "chat",
+	}
+
+	s.setupMockRun(ctx, mock.MatchedBy(func(cfg *ContainerConfig) bool {
+		return !slices.Contains(cfg.Cmd, "--dangerously-load-development-channels")
 	}), testContainerName, testJSONOK)
 
 	_, err := s.runner.Run(ctx, req)

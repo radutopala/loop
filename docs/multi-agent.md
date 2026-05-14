@@ -123,9 +123,18 @@ The `startPushReceiver` goroutine automatically reconnects when the WebSocket co
 
 ### Claude CLI Flag
 
-The `--dangerously-load-development-channels server:loop` flag is added to Claude CLI args when an `agent_id` is set. This enables Claude Code to process `notifications/claude/channel` JSON-RPC notifications from the MCP server.
+The `--dangerously-load-development-channels server:loop` flag is added to Claude CLI args when an `agent_id` is set **and** `claude_dangerously_load_development_channels: true` is set in config. This enables Claude Code to process `notifications/claude/channel` JSON-RPC notifications from the MCP server.
 
-Both chat agents (batch runs) and terminal agents get this flag when they have an `agent_id`.
+Anthropic ships the flag as development-only, so it's **off by default**. Enable it via the standard config hierarchy (global → project → worktree):
+
+```jsonc
+// ~/.loop/config.json or {workDir}/.loop/config.json
+{
+  "claude_dangerously_load_development_channels": true
+}
+```
+
+Both chat agents (batch runs) and terminal agents get this flag when they have an `agent_id` and the opt-in is set.
 
 ## Frontend Events
 
