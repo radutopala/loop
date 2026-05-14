@@ -141,12 +141,13 @@ type fakeParentDeps struct {
 	approverToken string
 	approverCalls int32
 
-	gateServerPolicy    *agentgate.Policy
-	gateServerApprover  agentgate.Approver
-	gateServerAuditor   agentgate.Auditor
-	gateServerChannelID string
-	gateServerNotifyFD  int
-	gateServerReturned  gateServer
+	gateServerPolicy     *agentgate.Policy
+	gateServerApprover   agentgate.Approver
+	gateServerAuditor    agentgate.Auditor
+	gateServerPeerSource agentgate.PeerSourceLookup
+	gateServerChannelID  string
+	gateServerNotifyFD   int
+	gateServerReturned   gateServer
 
 	openAuditorDir       string
 	openAuditorRetention int
@@ -255,10 +256,11 @@ func (f *fakeParentDeps) wire() *app {
 			f.approverToken = token
 			return stubApprover{}
 		},
-		newGateServer: func(policy *agentgate.Policy, approver agentgate.Approver, auditor agentgate.Auditor, channelID string, notifyFD int) gateServer {
+		newGateServer: func(policy *agentgate.Policy, approver agentgate.Approver, auditor agentgate.Auditor, peerSource agentgate.PeerSourceLookup, channelID string, notifyFD int) gateServer {
 			f.gateServerPolicy = policy
 			f.gateServerApprover = approver
 			f.gateServerAuditor = auditor
+			f.gateServerPeerSource = peerSource
 			f.gateServerChannelID = channelID
 			f.gateServerNotifyFD = notifyFD
 			if f.gateServerReturned != nil {
@@ -855,7 +857,7 @@ func (s *ParentSuite) TestDefaultNewApproverNonNil() {
 func (s *ParentSuite) TestDefaultNewGateServerNonNil() {
 	p, err := agentgate.CompilePolicy(types.DecisionAllow, nil, nil, nil)
 	s.Require().NoError(err)
-	srv := defaultNewGateServer(p, stubApprover{}, agentgate.NopAuditor{}, "ch", -1)
+	srv := defaultNewGateServer(p, stubApprover{}, agentgate.NopAuditor{}, nil, "ch", -1)
 	s.Require().NotNil(srv)
 }
 

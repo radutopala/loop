@@ -22,11 +22,16 @@ type ConnectRequest struct {
 
 // ConnectHandler evaluates connect(2) traps against path_rules. Construct via
 // NewConnectHandler; the zero value is not ready to use.
+//
+// PeerSource maps the tracee PID to an approval-source identifier ("chat"
+// vs "terminal:<leafId>") so the server can route prompts to the right UI
+// surface. nil disables lookup and every prompt is attributed to chat.
 type ConnectHandler struct {
-	Policy   *Policy
-	Approver Approver
-	Auditor  Auditor
-	Now      func() time.Time
+	Policy     *Policy
+	Approver   Approver
+	Auditor    Auditor
+	PeerSource PeerSourceLookup
+	Now        func() time.Time
 }
 
 // NewConnectHandler wires a handler to its policy + approval source.
@@ -54,6 +59,7 @@ func (h *ConnectHandler) Handle(ctx context.Context, req ConnectRequest) Outcome
 			out = h.Approver.Request(ctx, req.ChannelID, ApprovalRequest{
 				Kind:     "connect",
 				Target:   req.Path,
+				Source:   sourceForPID(req.PID, h.PeerSource),
 				Message:  match.Message,
 				CacheKey: "connect:" + req.Path,
 			})

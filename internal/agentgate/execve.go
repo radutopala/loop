@@ -34,11 +34,16 @@ type ExecveRequest struct {
 
 // ExecveHandler evaluates execve/execveat traps against the policy. Construct
 // via NewExecveHandler; the zero value is not ready to use.
+//
+// PeerSource maps the tracee PID to an approval-source identifier ("chat"
+// vs "terminal:<leafId>") so the server can route prompts to the right UI
+// surface. nil disables lookup and every prompt is attributed to chat.
 type ExecveHandler struct {
-	Policy   *Policy
-	Approver Approver
-	Auditor  Auditor
-	Now      func() time.Time
+	Policy     *Policy
+	Approver   Approver
+	Auditor    Auditor
+	PeerSource PeerSourceLookup
+	Now        func() time.Time
 }
 
 // NewExecveHandler wires a handler to its policy + approval source.
@@ -90,6 +95,7 @@ func (h *ExecveHandler) Handle(ctx context.Context, req ExecveRequest) Outcome {
 			out = h.Approver.Request(ctx, req.ChannelID, ApprovalRequest{
 				Kind:     "execve",
 				Target:   target,
+				Source:   sourceForPID(req.PID, h.PeerSource),
 				Message:  match.Message,
 				CacheKey: execveCacheKey(effective),
 			})

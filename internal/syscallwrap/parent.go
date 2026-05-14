@@ -151,7 +151,7 @@ func (a *app) runParent() error {
 		return fmt.Errorf("open audit: %w", err)
 	}
 	approver := a.newApprover(apiURL, token)
-	srv := a.newGateServer(policy, approver, auditor, channelID, notifyFD)
+	srv := a.newGateServer(policy, approver, auditor, a.peerSource, channelID, notifyFD)
 
 	if err := a.sendAck(uc); err != nil {
 		_ = uc.Close()
@@ -353,8 +353,8 @@ func defaultNewApprover(apiURL, token string) agentgate.Approver {
 
 // defaultNewGateServer builds a production *agentgate.Server wrapped in
 // the gateServer interface so runParent can receive it uniformly.
-func defaultNewGateServer(policy *agentgate.Policy, approver agentgate.Approver, auditor agentgate.Auditor, channelID string, notifyFD int) gateServer {
-	return agentgate.NewServer(policy, approver, auditor, channelID, notifyFD)
+func defaultNewGateServer(policy *agentgate.Policy, approver agentgate.Approver, auditor agentgate.Auditor, peerSource agentgate.PeerSourceLookup, channelID string, notifyFD int) gateServer {
+	return agentgate.NewServer(policy, approver, auditor, peerSource, channelID, notifyFD)
 }
 
 // defaultOpenAuditor resolves the audit sink at parent startup. Empty dir →

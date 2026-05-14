@@ -232,6 +232,45 @@ func (s *SourceSuite) TestServeHTTPDefaultsSourceToChatWithoutPeer() {
 	require.Equal(s.T(), "chat", ap.calls[0].Source)
 }
 
+func (s *SourceSuite) TestServeHTTPDefaultPeerSourceWalksRealProc() {
+	// PeerSource left nil + a non-zero peer PID stamped on the request →
+	// server falls back to defaultPeerSource, which delegates to
+	// procsource.Lookup over real /proc. The PID is fake so the walk
+	// terminates with "" and sourceForPeer rolls up to "chat" — but the
+	// production binding is exercised so we don't ship dead code.
+	sock, stop := upstreamUnix(s.T(), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer stop()
+
+	policy, err := CompilePolicy(types.DecisionAllow,
+		[]types.HTTPServiceRule{
+			{Methods: []string{"POST"}, Paths: []string{"^/x$"}, Decision: types.DecisionApprove},
+		}, nil)
+	require.NoError(s.T(), err)
+
+	ap := &fakeApprover{outcome: agentgate.Outcome{Decision: types.DecisionAllow}}
+	srv, err := NewServer(ServerConfig{
+		CID:        "cid-1",
+		ChannelID:  "ch-1",
+		Policy:     policy,
+		Approver:   ap,
+		DockerSock: sock,
+		Now:        time.Now,
+		// PeerSource nil — server wires defaultPeerSource.
+	})
+	require.NoError(s.T(), err)
+
+	req := httptest.NewRequest(http.MethodPost, "/x", nil)
+	req = req.WithContext(context.WithValue(req.Context(), peerPIDKey{}, 999_999_999))
+	rr := httptest.NewRecorder()
+	srv.ServeHTTP(rr, req)
+
+	require.Equal(s.T(), http.StatusOK, rr.Code)
+	require.Len(s.T(), ap.calls, 1)
+	require.Equal(s.T(), "chat", ap.calls[0].Source)
+}
+
 func (s *SourceSuite) TestServeHTTPUsesPeerSourceLookup() {
 	sock, stop := upstreamUnix(s.T(), http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusOK)
