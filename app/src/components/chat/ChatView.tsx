@@ -58,7 +58,7 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
   const { colors, fontSizes } = useTheme();
   const styles = buildStyles(colors);
   const { items, liveTail, messages, loading, isRunning } = chatState;
-  const dismissCards = useCallback(() => { chatState.clearAskUser(); chatState.clearExitPlan(); chatState.clearGateApproval(); }, [chatState]);
+  const dismissCards = useCallback(() => { chatState.clearAskUser(); chatState.clearExitPlan(); chatState.clearGateApproval("chat"); }, [chatState]);
   const messagesRef = useRef<ChatMessagesHandle>(null);
   const [quotedMessage, setQuotedMessage] = useState<Message | null>(null);
   const clearQuote = useCallback(() => setQuotedMessage(null), []);
@@ -85,7 +85,7 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
           <WelcomeScreen />
         </div>
         <div style={styles.inputBar}>
-          <ChatInput channelId={channelId} messages={messages} roots={roots} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} quotedMessage={quotedMessage} onClearQuote={clearQuote} pendingGateReqId={chatState.gateApprovalSource === "chat" ? chatState.gateApproval?.req_id ?? null : null} />
+          <ChatInput channelId={channelId} messages={messages} roots={roots} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} quotedMessage={quotedMessage} onClearQuote={clearQuote} pendingGateReqId={chatState.gateApprovals["chat"]?.req_id ?? null} />
         </div>
 
         <div style={styles.isolationLabel}>
@@ -100,7 +100,7 @@ export function ChatView({ channelId, chatState, roots, scrollToMessageId, onScr
     <div style={{ ...styles.container, zoom: fontSizes.chat / 13 }}>
       <ChatMessages ref={messagesRef} channelId={channelId} chatState={chatState} scrollToMessageId={scrollToMessageId} onScrollComplete={onScrollComplete} onQuote={setQuotedMessage} />
       <div style={styles.inputBar}>
-        <ChatInput channelId={channelId} messages={messages} roots={roots} isRunning={isRunning} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} quotedMessage={quotedMessage} onClearQuote={clearQuote} pendingGateReqId={chatState.gateApprovalSource === "chat" ? chatState.gateApproval?.req_id ?? null : null} />
+        <ChatInput channelId={channelId} messages={messages} roots={roots} isRunning={isRunning} mode={chatState.mode} setMode={chatState.setMode} onDismissCards={dismissCards} onSent={scrollToBottom} quotedMessage={quotedMessage} onClearQuote={clearQuote} pendingGateReqId={chatState.gateApprovals["chat"]?.req_id ?? null} />
       </div>
       <div style={styles.isolationLabel}>
         <LoopInfinityIcon color={isRunning ? undefined : colors.textDim} animated={isRunning} isDark={colors.isDark} />

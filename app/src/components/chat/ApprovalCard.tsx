@@ -5,10 +5,15 @@ import type { GateDecision } from "../../api/gate";
 import { fonts } from "../../theme";
 import { useTheme } from "../../ThemeContext";
 
-export function ApprovalCard({ data, channelId, onResolved, style }: {
+export function ApprovalCard({ data, channelId, onResolved, onDenyWithPrompt, style }: {
   data: GateApprovalRequestedData;
   channelId: string;
   onResolved?: () => void;
+  /** When provided, "Deny with prompt" routes the typed text here instead of
+   * posting it as a chat message. Terminal panes use this to inject the prompt
+   * into the originating pane's stdin so the in-pane agent (e.g. Claude Code
+   * TUI) receives it, rather than the chat agent. */
+  onDenyWithPrompt?: (text: string) => void | Promise<void>;
   style?: React.CSSProperties;
 }) {
   const { colors } = useTheme();
@@ -36,10 +41,14 @@ export function ApprovalCard({ data, channelId, onResolved, style }: {
     setError(null);
     try {
       await resolveGateApproval(data.req_id, "deny");
-      // Cancel the now-resumed run and queue the prompt as the latest user
-      // message; the next run will see the deny tool result plus this new
-      // instruction at the top of the agent's context.
-      await sendMessage(channelId, text, undefined, true);
+      if (onDenyWithPrompt) {
+        await onDenyWithPrompt(text);
+      } else {
+        // Cancel the now-resumed run and queue the prompt as the latest user
+        // message; the next run will see the deny tool result plus this new
+        // instruction at the top of the agent's context.
+        await sendMessage(channelId, text, undefined, true);
+      }
       onResolved?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -114,12 +123,12 @@ export function ApprovalCard({ data, channelId, onResolved, style }: {
             value={prompt}
             onChange={(e) => setPrompt(e.target.value)}
             onKeyDown={(e) => {
-              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+              if (e.key === "Enter" && !e.shiftKey) {
                 e.preventDefault();
                 void denyWithPrompt();
               }
             }}
-            placeholder="Tell the agent what to do instead (⌘/Ctrl+Enter to send)…"
+            placeholder="Tell the agent what to do instead (Enter to send, Shift+Enter for newline)…"
             rows={3}
             disabled={sending !== null}
             style={{
