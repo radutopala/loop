@@ -960,8 +960,10 @@ func buildBaseClaudeCmd(cfg *config.Config, mcpConfigPath, sessionID, agentID st
 		}
 	}
 	// Enable MCP Channels when agent tools are configured, so the agent
-	// can receive push notifications from other agents.
-	if agentID != "" {
+	// can receive push notifications from other agents. Anthropic ships
+	// `--dangerously-load-development-channels` as a development-only flag,
+	// so it's opt-in via config (global → project → worktree).
+	if agentID != "" && cfg.ClaudeDangerouslyLoadDevelopmentChannels {
 		cmd = append(cmd, "--dangerously-load-development-channels", "server:loop")
 	}
 	for _, dir := range extraDirs {

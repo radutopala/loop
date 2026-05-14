@@ -94,6 +94,28 @@ func (s *ConfigSuite) TestLoadWorktreeProjectConfigMergesParentAndWorktree() {
 	require.Equal(s.T(), []string{"/Users/user/dev/loop"}, merged.ExtraDirs)
 }
 
+func (s *ConfigSuite) TestLoadWorktreeProjectConfigDevChannelsOverride() {
+	// Global=on, parent=off, worktree=on — worktree wins.
+	parentCfg := `{"claude_dangerously_load_development_channels": false}`
+	worktreeCfg := `{"claude_dangerously_load_development_channels": true}`
+	s.loader.readFile = func(path string) ([]byte, error) {
+		switch path {
+		case "/project/.worktrees/wt1/.loop/config.json":
+			return []byte(worktreeCfg), nil
+		case "/project/.loop/config.json":
+			return []byte(parentCfg), nil
+		default:
+			return nil, errors.New("unexpected path: " + path)
+		}
+	}
+
+	mainCfg := &Config{ClaudeDangerouslyLoadDevelopmentChannels: true}
+	merged, err := s.loader.loadWorktreeProjectConfig("/project/.worktrees/wt1", "/project", mainCfg)
+	require.NoError(s.T(), err)
+	require.True(s.T(), merged.ClaudeDangerouslyLoadDevelopmentChannels)
+	require.True(s.T(), mainCfg.ClaudeDangerouslyLoadDevelopmentChannels, "main config must not be mutated")
+}
+
 func (s *ConfigSuite) TestLoadWorktreeProjectConfigParentLoadError() {
 	// Parent config is invalid; should surface the error.
 	s.loader.readFile = func(path string) ([]byte, error) {

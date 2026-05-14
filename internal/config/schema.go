@@ -71,6 +71,14 @@ func buildSchema() *ConfigSchema {
 				XSection:    "Claude",
 				XOrder:      3,
 			},
+			"claude_dangerously_load_development_channels": {
+				Type:        "boolean",
+				Title:       "MCP Channels (dangerous)",
+				Description: "Pass --dangerously-load-development-channels to the Claude CLI so the agent can receive push notifications from other agents. Off by default — Anthropic ships the flag as development-only.",
+				Default:     false,
+				XSection:    "Claude",
+				XOrder:      4,
+			},
 
 			// ── Authentication section ──
 			"claude_code_oauth_token": {
