@@ -55,9 +55,12 @@ interface LeafNode {
   type: "leaf";
   id: string;        // unique identifier (e.g., "chat", "editor", "docker-agent-0", "host-shell-1")
   panel: PanelType;  // determines which component to render
-  flex: number;       // relative size weight within parent split
+  flex: number;      // relative size weight within parent split
+  openMode?: AgentOpenMode; // docker-agent only: "resume" | "fork" | "fresh"
 }
 ```
+
+`openMode` is persisted per leaf so that re-opening a layout boots each Docker Agent pane in the same session-handling mode the user originally picked. Legacy persisted leaves and built-in defaults (e.g. the **Swarm** layout) omit it and fall through to `"fork"` -- see [Agent Open Modes](#agent-open-modes).
 
 ### SplitNode
 
@@ -93,7 +96,7 @@ interface SplitNode {
 | Workflows | `workflows` | `"workflows"` | Yes | DAG workflow runs with interactive graph visualization (see [workflows.md](workflows.md)) |
 | Audit | `audit` | `"audit"` | Yes | Agent gate audit logs — file list on the left, `tail -f` via docker exec on the right (see [gates.md](gates.md)) |
 | Playground | `playground` | `"playground-N"` | No | Live interactive code sandbox (HTML/CSS/JS) |
-| Docker Agent | `docker-agent` | `"docker-agent-N"` | No | Docker-isolated terminal running Claude Code |
+| Docker Agent | `docker-agent` | `"docker-agent-N"` | No | Docker-isolated terminal running Claude Code. The pane-split menu and `EmptyLayoutPicker` expose three variants — **Resume**, **Resume with fork**, **Fresh session** — that choose how the pane boots Claude relative to the channel's stored session (see [Agent Open Modes](#agent-open-modes) below). |
 | Host Shell | `host-shell` | `"host-shell-N"` | No | Local machine shell session |
 | Docker Shell | `docker-shell` | `"docker-shell-N"` | No | Plain bash shell inside the Docker container (no Claude) |
 
@@ -287,6 +290,27 @@ function canAddPanel(tree: PaneNode | null, panel: PanelType): boolean {
 ```
 
 In the `PaneSplitMenu`, singleton panels that are already present and exclusive panels blocked by a sibling are rendered with `opacity: 0.35` and `disabled`.
+
+---
+
+## Agent Open Modes
+
+Docker Agent panes choose **up front** how Claude Code boots relative to the channel's stored session. The pane-split menu (`+` button on any pane header) and the `EmptyLayoutPicker` (shown when a Split layout has no tree) both expand the single "Docker Agent" entry into three labelled variants:
+
+| Label | `openMode` value | Behavior |
+|-------|------------------|----------|
+| **Docker Agent (Resume)** | `"resume"` | Resume the channel's existing Claude session in place. Falls back to a fresh session when the channel has no stored `session_id`. |
+| **Docker Agent (Resume with fork)** | `"fork"` | Resume the stored session with the fork flag set so the new run gets its own session id without losing the parent context. Auto-disabled (treated as `"resume"`) when the channel has no `session_id`. |
+| **Docker Agent (Fresh session)** | `"fresh"` | Ignore the stored `session_id` entirely — Claude starts a new conversation. |
+
+The picked mode is written to `LeafNode.openMode` and (for Canvas layouts) `CanvasTile.openMode`, then sent to the terminal WebSocket as the `open_mode` field on the `create` message (see [terminal.md](terminal.md#create)).
+
+```typescript
+// app/src/types/panels.ts
+type AgentOpenMode = "resume" | "fork" | "fresh";
+```
+
+**Default for layouts created before this feature** (and for the built-in Swarm layout, which spawns three Docker Agent leaves without explicit modes): `WorkspaceLayout` resolves `leaf.openMode ?? "fork"` when sending `create`, preserving the previous auto-fork behavior.
 
 ---
 

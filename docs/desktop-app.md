@@ -142,6 +142,7 @@ All IPC uses `ipcMain.handle` (invoke/handle pattern) for request-response commu
 | `get-update-status` | Renderer -> Main | Returns current `UpdateStatus` |
 | `download-update` | Renderer -> Main | Triggers `autoUpdater.downloadUpdate()` |
 | `install-update` | Renderer -> Main | Restarts daemon, then `quitAndInstall` |
+| `open-external` | Renderer -> Main | Calls `shell.openExternal(url)` to open an `http://` or `https://` URL in the OS default browser. Non-http(s) URLs are rejected. Used by the xterm `WebLinksAddon` so clicked terminal links never spawn an in-app Loop window. |
 
 ### Event Channels (Main -> Renderer)
 
@@ -202,6 +203,9 @@ interface LoopAPI {
   downloadUpdate?: () => Promise<void>;
   installUpdate?: () => Promise<void>;
   onUpdateStatus?: (callback: (status: UpdateStatus) => void) => void;
+
+  // External links
+  openExternal?: (url: string) => Promise<void>;
 }
 ```
 

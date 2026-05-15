@@ -33,7 +33,8 @@ Create a new terminal session. Detaches any currently attached session first.
   "cmd": ["/bin/bash", "-l"],
   "target": "host",
   "rows": 24,
-  "cols": 80
+  "cols": 80,
+  "open_mode": "fork"
 }
 ```
 
@@ -46,11 +47,16 @@ Create a new terminal session. Detaches any currently attached session first.
 | `target`       | string   | no       | `"host"` or `"agent"` (default) |
 | `rows`         | uint     | no       | Initial terminal rows; applied via resize after creation |
 | `cols`         | uint     | no       | Initial terminal columns |
+| `open_mode`    | string   | no       | Agent session boot mode: `"resume"`, `"fork"`, `"fresh"`. Empty preserves legacy auto-fork heuristic. |
 
 **Agent target behavior:**
 - If `container_id` is empty and `channel_id` is provided, resolves the container via `ContainerFinder.FindContainerByChannel`.
 - Looks up the channel's `dir_path` and `session_id` from the database.
-- For threads, detects if the thread uses the parent's Claude session and sets a fork flag.
+- `open_mode` selects how the channel's stored Claude session is consumed when launching the interactive command:
+  - `"resume"` — resume the channel session in place (no fork). Falls back to a fresh session if the channel has no `session_id`.
+  - `"fork"` — resume the channel session with the fork flag, so the new run gets its own session id. Auto-disabled (treated as `"resume"`) when the channel has no `session_id`.
+  - `"fresh"` — ignore the stored `session_id` entirely; Claude starts a new conversation.
+  - Empty / missing — preserves the legacy behavior: threads that share the parent's session set the fork flag automatically; channels resume in place.
 - When no explicit `cmd` is given and a `cmdBuilder` is configured, sends the interactive Claude command as shell input after session creation.
 - Maximum of 64 command arguments; empty arguments are rejected.
 
@@ -101,6 +107,10 @@ Send user input to the active terminal session.
 | `data` | string | yes      | Base64-encoded input bytes |
 
 **Errors:** Returns `no_session` if no active session; `invalid_input` if base64 decoding fails.
+
+**Client keybindings (xterm.js renderer):**
+- **Shift+Enter** in agent and host shell panes emits `\<CR>` (backslash + carriage return) via `input` instead of a plain `\r`. This matches Claude Code's `/terminal-setup` iTerm2 binding and bash readline line continuation, letting users compose multi-line prompts without submitting. A bare Enter still submits.
+- **Clicked URLs** (via the xterm `WebLinksAddon`) route through `window.loopAPI.openExternal` in Electron, which calls `shell.openExternal` on the main process and opens the link in the OS default browser only. In a plain web browser, links fall back to `window.open(url, "_blank", "noopener,noreferrer")`. The Electron main process also denies `about:blank` and non-http(s) popups via `setWindowOpenHandler`, so links never spawn an in-app Loop window.
 
 ---
 
