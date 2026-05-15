@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import type { SplitDirection, DropPosition } from "./types";
-import { SINGLETON_PANELS, EXCLUSIVE_PANELS, PANEL_OPTIONS, PANEL_LABELS, type PanelType } from "../types/panels";
+import { SINGLETON_PANELS, EXCLUSIVE_PANELS, PANEL_OPTIONS, PANEL_LABELS, AGENT_OPEN_MODE_OPTIONS, type PanelType, type AgentOpenMode } from "../types/panels";
 import { emitLayoutDragStart, emitLayoutDragEnd, DRAG_MIME } from "./DropZoneOverlay";
 import type { ColorPalette } from "../theme";
 import { useTheme } from "../ThemeContext";
@@ -49,7 +49,7 @@ interface PaneLeafHeaderProps {
   agentInfo?: AgentInfo;
   onRemove: () => void;
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
-  onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void;
+  onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection, meta?: { openMode?: AgentOpenMode }) => void;
   onToggleMaximize?: () => void;
   onToggleMinimize?: () => void;
 }
@@ -197,7 +197,7 @@ export function PaneLeafHeader({ leafId, panel, usedSingletons, isMaximized, isM
   );
 }
 
-function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf, hiddenPanels }: { leafId: string; usedSingletons: Set<PanelType>; onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void; hiddenPanels?: PanelType[] }) {
+function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf, hiddenPanels }: { leafId: string; usedSingletons: Set<PanelType>; onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection, meta?: { openMode?: AgentOpenMode }) => void; hiddenPanels?: PanelType[] }) {
   const { colors } = useTheme();
   const [open, setOpen] = useState(false);
   const btnRef = useRef<HTMLButtonElement>(null);
@@ -270,35 +270,37 @@ function PaneSplitMenu({ leafId, usedSingletons, onSplitLeaf, hiddenPanels }: { 
           gridTemplateColumns: "auto auto",
           gap: 2,
         }}>
-          {PANEL_OPTIONS.filter(({ panel: p }) => !hiddenPanels?.includes(p)).map(({ panel: p, label: l }) => {
+          {PANEL_OPTIONS.filter(({ panel: p }) => !hiddenPanels?.includes(p)).flatMap(({ panel: p, label: l }) => {
             const disabled = (SINGLETON_PANELS.includes(p) && usedSingletons.has(p))
               || EXCLUSIVE_PANELS.some((g) => g.includes(p) && g.some((x) => x !== p && usedSingletons.has(x)));
-            return (
-              <>
-                <button
-                  key={`${p}-v`}
-                  style={{ ...menuItemStyle, cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.35 : 1 }}
-                  disabled={disabled}
-                  onClick={() => { setOpen(false); onSplitLeaf(leafId, p, "vertical"); }}
-                  onMouseEnter={disabled ? undefined : menuHoverIn}
-                  onMouseLeave={disabled ? undefined : menuHoverOut}
-                >
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="3" y1="12" x2="21" y2="12" /></svg>
-                  {l} ↓
-                </button>
-                <button
-                  key={`${p}-h`}
-                  style={{ ...menuItemStyle, cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.35 : 1 }}
-                  disabled={disabled}
-                  onClick={() => { setOpen(false); onSplitLeaf(leafId, p, "horizontal"); }}
-                  onMouseEnter={disabled ? undefined : menuHoverIn}
-                  onMouseLeave={disabled ? undefined : menuHoverOut}
-                >
-                  <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="12" y1="3" x2="12" y2="21" /></svg>
-                  {l} →
-                </button>
-              </>
-            );
+            // Expand docker-agent into one row per AgentOpenMode so the user picks fork/resume/fresh at split time.
+            const variants: { key: string; label: string; openMode?: AgentOpenMode }[] = p === "docker-agent"
+              ? AGENT_OPEN_MODE_OPTIONS.map((m) => ({ key: `${p}-${m.mode}`, label: `${l} (${m.label})`, openMode: m.mode }))
+              : [{ key: p, label: l }];
+            return variants.flatMap(({ key, label, openMode }) => [
+              <button
+                key={`${key}-v`}
+                style={{ ...menuItemStyle, cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.35 : 1 }}
+                disabled={disabled}
+                onClick={() => { setOpen(false); onSplitLeaf(leafId, p, "vertical", openMode ? { openMode } : undefined); }}
+                onMouseEnter={disabled ? undefined : menuHoverIn}
+                onMouseLeave={disabled ? undefined : menuHoverOut}
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="3" y1="12" x2="21" y2="12" /></svg>
+                {label} ↓
+              </button>,
+              <button
+                key={`${key}-h`}
+                style={{ ...menuItemStyle, cursor: disabled ? "default" : "pointer", opacity: disabled ? 0.35 : 1 }}
+                disabled={disabled}
+                onClick={() => { setOpen(false); onSplitLeaf(leafId, p, "horizontal", openMode ? { openMode } : undefined); }}
+                onMouseEnter={disabled ? undefined : menuHoverIn}
+                onMouseLeave={disabled ? undefined : menuHoverOut}
+              >
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2" /><line x1="12" y1="3" x2="12" y2="21" /></svg>
+                {label} →
+              </button>,
+            ]);
           })}
         </div>,
         document.body

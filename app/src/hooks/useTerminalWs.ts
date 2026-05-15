@@ -1,5 +1,6 @@
 import { useCallback, useRef } from "react";
 import type { SessionStatus, TerminalTarget } from "../types";
+import type { AgentOpenMode } from "../types/panels";
 import { useWebSocketConnection } from "./useWebSocketConnection";
 import { useTerminalMessageDispatcher } from "./useTerminalMessageDispatcher";
 import { useSessionPersistence } from "./useSessionPersistence";
@@ -12,6 +13,8 @@ interface UseTerminalWsOptions {
   claudeSessionId?: string;
   /** Start a fresh session, ignoring the channel's stored session. */
   newSession?: boolean;
+  /** Agent terminal open mode (resume / fork / fresh). Sent verbatim to the BE create handler. */
+  openMode?: AgentOpenMode;
   /** Explicit command to run instead of the interactive Claude bootstrap. */
   cmd?: string[];
   onData: (data: ArrayBuffer) => void;
@@ -27,6 +30,7 @@ export function useTerminalWs({
   instanceId,
   claudeSessionId,
   newSession,
+  openMode,
   cmd,
   onData,
   onStatus,
@@ -36,7 +40,7 @@ export function useTerminalWs({
   const getTerminalSizeRef = useRef(getTerminalSize);
   getTerminalSizeRef.current = getTerminalSize;
 
-  const { sessionIdRef, setSessionId, killedRef, handleOpen, markKilled, getStartTime } = useSessionPersistence(channelId, target, getTerminalSizeRef, instanceId, claudeSessionId, newSession, cmd);
+  const { sessionIdRef, setSessionId, killedRef, handleOpen, markKilled, getStartTime } = useSessionPersistence(channelId, target, getTerminalSizeRef, instanceId, claudeSessionId, newSession, cmd, openMode);
 
   // Use a ref for send to break the circular dependency between
   // handleMessage (needs onSessionFailed) and send (needs handleMessage).
@@ -50,10 +54,10 @@ export function useTerminalWs({
       retriedRef.current = true;
       const size = getTerminalSizeRef.current?.();
       sendRef.current(
-        JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId, leaf_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...(cmd && cmd.length > 0 ? { cmd } : {}), ...size }),
+        JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId, leaf_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...(openMode ? { open_mode: openMode } : {}), ...(cmd && cmd.length > 0 ? { cmd } : {}), ...size }),
       );
     }
-  }, [channelId, target, instanceId, claudeSessionId, newSession, cmd, killedRef]);
+  }, [channelId, target, instanceId, claudeSessionId, newSession, openMode, cmd, killedRef]);
 
   /** When a session is confirmed, send the current terminal dimensions.
    *  This handles the race where xterm wasn't ready when the create message was sent. */
@@ -122,8 +126,8 @@ export function useTerminalWs({
     if (!channelId) return;
     killedRef.current = false;
     const size = getTerminalSizeRef.current?.();
-    send(JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId, leaf_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...(cmd && cmd.length > 0 ? { cmd } : {}), ...size }));
-  }, [channelId, target, instanceId, claudeSessionId, newSession, cmd, send, killedRef]);
+    send(JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId, leaf_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...(openMode ? { open_mode: openMode } : {}), ...(cmd && cmd.length > 0 ? { cmd } : {}), ...size }));
+  }, [channelId, target, instanceId, claudeSessionId, newSession, openMode, cmd, send, killedRef]);
 
   /** Close: stop the exec session but keep the container alive.
    *  Does NOT set killedRef — only explicit Kill should prevent auto-create. */

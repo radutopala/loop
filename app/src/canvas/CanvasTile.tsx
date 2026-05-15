@@ -104,6 +104,7 @@ export function CanvasTile({ tile, renderLeaf, agentInfo, onMove, onResize, onBr
     id: tile.id,
     panel: tile.panel,
     flex: 1,
+    ...(tile.openMode ? { openMode: tile.openMode } : {}),
   };
 
   return (

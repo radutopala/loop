@@ -2,8 +2,8 @@ import type { PaneNode, LeafNode, SplitDirection, DropPosition } from "./types";
 import type { PanelType } from "../types/panels";
 import { SINGLETON_PANELS, EXCLUSIVE_PANELS } from "../types/panels";
 
-export function makeLeaf(id: string, panel: PanelType, flex = 1): LeafNode {
-  return { type: "leaf", id, panel, flex };
+export function makeLeaf(id: string, panel: PanelType, flex = 1, openMode?: import("../types/panels").AgentOpenMode): LeafNode {
+  return { type: "leaf", id, panel, flex, ...(openMode ? { openMode } : {}) };
 }
 
 export function findLeafById(node: PaneNode, id: string): LeafNode | null {

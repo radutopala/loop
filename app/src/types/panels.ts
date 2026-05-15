@@ -39,11 +39,27 @@ export const PANEL_LABELS: Record<PanelType, string> = Object.fromEntries(
   PANEL_OPTIONS.map(({ panel, label }) => [panel, label]),
 ) as Record<PanelType, string>;
 
+/** How a docker-agent terminal should boot Claude relative to the channel's stored session.
+ *  - "resume": reuse the channel session in place (writes back to it).
+ *  - "fork":   resume the channel session and immediately fork to a new session id.
+ *  - "fresh":  start with no session at all.
+ *  Only meaningful when panel === "docker-agent". */
+export type AgentOpenMode = "resume" | "fork" | "fresh";
+
+export const AGENT_OPEN_MODE_OPTIONS: { mode: AgentOpenMode; label: string; description: string }[] = [
+  { mode: "resume", label: "Resume", description: "Continue the channel's session in place" },
+  { mode: "fork", label: "Resume with fork", description: "Branch a new session from the channel's" },
+  { mode: "fresh", label: "Fresh session", description: "Start with no prior context" },
+];
+
 export interface LeafNode {
   type: "leaf";
   id: string;       // unique per leaf (e.g. "chat", "editor", "docker-agent-0", "host-shell-1")
   panel: PanelType; // determines what component to render
   flex: number;
+  /** For docker-agent panes: how to handle the Claude session at boot.
+   *  Undefined on legacy persisted layouts → treated as "fork" (the historical default). */
+  openMode?: AgentOpenMode;
 }
 
 export interface SplitNode {

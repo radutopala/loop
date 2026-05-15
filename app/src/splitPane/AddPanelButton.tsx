@@ -1,4 +1,4 @@
-import { PANEL_OPTIONS, type PanelType } from "../types/panels";
+import { PANEL_OPTIONS, AGENT_OPEN_MODE_OPTIONS, type PanelType, type AgentOpenMode } from "../types/panels";
 import { useTheme } from "../ThemeContext";
 
 const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
@@ -146,7 +146,7 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
 };
 
 /** Centered picker for when layout is empty (no tree). */
-export function EmptyLayoutPicker({ onAdd, hiddenPanels }: { onAdd: (panel: PanelType) => void; hiddenPanels?: PanelType[] }) {
+export function EmptyLayoutPicker({ onAdd, hiddenPanels }: { onAdd: (panel: PanelType, meta?: { openMode?: AgentOpenMode }) => void; hiddenPanels?: PanelType[] }) {
   const { colors } = useTheme();
 
   const pickerBtnStyle: React.CSSProperties = {
@@ -162,13 +162,26 @@ export function EmptyLayoutPicker({ onAdd, hiddenPanels }: { onAdd: (panel: Pane
     gap: 8,
   };
 
+  // Expand "docker-agent" into one tile per AgentOpenMode so the user picks fork/resume/fresh up-front.
+  const entries: { key: string; panel: PanelType; label: string; description: string; openMode?: AgentOpenMode }[] = [];
+  for (const { panel, label } of PANEL_OPTIONS) {
+    if (hiddenPanels?.includes(panel)) continue;
+    if (panel === "docker-agent") {
+      for (const m of AGENT_OPEN_MODE_OPTIONS) {
+        entries.push({ key: `${panel}-${m.mode}`, panel, label: `${label} (${m.label})`, description: m.description, openMode: m.mode });
+      }
+    } else {
+      entries.push({ key: panel, panel, label, description: PANEL_DESCRIPTIONS[panel] });
+    }
+  }
+
   return (
     <div style={{ flex: 1, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 12 }}>
       <div style={{ display: "flex", flexWrap: "wrap", gap: 10, justifyContent: "center" }}>
-        {PANEL_OPTIONS.filter(({ panel }) => !hiddenPanels?.includes(panel)).map(({ panel, label }) => (
+        {entries.map(({ key, panel, label, description, openMode }) => (
           <button
-            key={panel}
-            onClick={() => onAdd(panel)}
+            key={key}
+            onClick={() => onAdd(panel, openMode ? { openMode } : undefined)}
             style={pickerBtnStyle}
             onMouseEnter={(e) => { e.currentTarget.style.borderColor = colors.textDim; e.currentTarget.style.color = colors.textLight; e.currentTarget.style.backgroundColor = colors.hoverBg; }}
             onMouseLeave={(e) => { e.currentTarget.style.borderColor = colors.border; e.currentTarget.style.color = colors.textDim; e.currentTarget.style.backgroundColor = "transparent"; }}
@@ -176,7 +189,7 @@ export function EmptyLayoutPicker({ onAdd, hiddenPanels }: { onAdd: (panel: Pane
             {PANEL_ICONS[panel]}
             <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-start" }}>
               <span>{label}</span>
-              <span style={{ fontSize: 10, opacity: 0.6 }}>{PANEL_DESCRIPTIONS[panel]}</span>
+              <span style={{ fontSize: 10, opacity: 0.6 }}>{description}</span>
             </div>
           </button>
         ))}
