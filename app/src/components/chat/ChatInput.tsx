@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../../types";
 import { resolveGateApproval, sendCommand, sendMessage } from "../../api/loopApi";
+import { resolvePlan } from "../../api/channels";
 import { fetchShortcuts, type PromptShortcut } from "../../api/configApi";
 import { searchFiles, type FileSearchResult, type RootEntry } from "../../api/files";
 import { fonts } from "../../theme";
@@ -216,13 +217,19 @@ export interface ChatInputProps {
   // gate, interrupts the resumed run, and queues the user's text — same flow
   // as ApprovalCard's "Deny with prompt".
   pendingGateReqId?: string | null;
+  // When an ExitPlanMode card is parked on this channel, sending a free-text
+  // message auto-denies the plan with the user's text as the deny prompt —
+  // same flow as ExitPlanCard's "Request changes". Without this, the FE
+  // dismisses the card locally but the backend stays parked forever and the
+  // drain loop never picks up the user's queued messages.
+  hasPendingExitPlan?: boolean;
 }
 
 function buildQuotePrefix(msg: Message): string {
   return msg.content.split("\n").map(l => `> ${l}`).join("\n") + "\n\n";
 }
 
-export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode, onDismissCards, onSent, quotedMessage, onClearQuote, pendingGateReqId }: ChatInputProps) {
+export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode, onDismissCards, onSent, quotedMessage, onClearQuote, pendingGateReqId, hasPendingExitPlan }: ChatInputProps) {
   const { colors } = useTheme();
   const styles = buildInputStyles(colors);
   const modeStyles = buildModeStyles(colors);
@@ -359,9 +366,16 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
         }
       } else {
         const content = quotedMessage ? buildQuotePrefix(quotedMessage) + trimmed : trimmed;
-        // When a gate approval popup is pending, auto-deny it and force
-        // interrupt — same shape as ApprovalCard's "Deny with prompt".
-        if (pendingGateReqId) {
+        // When the channel is parked on an ExitPlanMode card, route the send
+        // through `resolvePlan(deny, prompt)` so the backend clears the park
+        // flag, inserts the user's text as a priority-bumped continuation,
+        // and resumes the drain. `resolvePlan` already inserts the message,
+        // so skip the regular sendMessage call here.
+        if (hasPendingExitPlan) {
+          await resolvePlan(channelId, "deny", content, mode);
+        } else if (pendingGateReqId) {
+          // When a gate approval popup is pending, auto-deny it and force
+          // interrupt — same shape as ApprovalCard's "Deny with prompt".
           await resolveGateApproval(pendingGateReqId, "deny");
           await sendMessage(channelId, content, mode, true);
         } else {
@@ -385,7 +399,7 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
       // Re-focus after React re-enables the textarea on the next render.
       requestAnimationFrame(() => inputRef.current?.focus());
     }
-  }, [channelId, text, sending, mode, isLoopCommand, effectiveIsRunning, sendMode, quotedMessage, onClearQuote, onDismissCards, pendingGateReqId]);
+  }, [channelId, text, sending, mode, isLoopCommand, effectiveIsRunning, sendMode, quotedMessage, onClearQuote, onDismissCards, pendingGateReqId, hasPendingExitPlan]);
 
   const updateCommandDropdown = useCallback((val: string) => {
     const trimmed = val.trimStart();
