@@ -304,6 +304,7 @@ declare global {
       notifyApprovalResolved?: (reqId?: string) => void;
       setTheme?: (name: string) => void;
       onThemeChanged?: (callback: (name: string) => void) => void;
+      openExternal?: (url: string) => Promise<void>;
     };
   }
 }

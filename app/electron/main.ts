@@ -346,9 +346,14 @@ function createWindow(hash?: string): BrowserWindow {
   });
 
   // Open external links (http/https) in the native browser instead of Electron.
+  // Also deny `about:blank` popups so that any caller doing `window.open()` with
+  // no URL (e.g. the noopener trick) does not spawn an in-app Loop window.
   win.webContents.setWindowOpenHandler(({ url }) => {
     if (url.startsWith("http://") || url.startsWith("https://")) {
       shell.openExternal(url);
+      return { action: "deny" };
+    }
+    if (url === "" || url === "about:blank") {
       return { action: "deny" };
     }
     return { action: "allow" };
@@ -700,6 +705,16 @@ ipcMain.on("set-theme", (_event, themeName: string) => {
   for (const win of BrowserWindow.getAllWindows()) {
     win.webContents.send("theme-changed", themeName);
   }
+});
+
+// Open an http(s) URL in the OS default browser. Called from the renderer
+// for terminal link clicks so we never go through window.open (which the
+// xterm WebLinksAddon uses by default and which spawns an extra Electron
+// popup window before navigating).
+ipcMain.handle("open-external", async (_event, url: string) => {
+  if (typeof url !== "string") return;
+  if (!url.startsWith("http://") && !url.startsWith("https://")) return;
+  await shell.openExternal(url);
 });
 
 ipcMain.handle("get-update-status", () => updateStatus);

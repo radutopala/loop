@@ -24,6 +24,7 @@ contextBridge.exposeInMainWorld("loopAPI", {
   notifyApprovalNeeded: (reqId) => ipcRenderer.send("approval-needed", reqId),
   notifyApprovalResolved: (reqId) => ipcRenderer.send("approval-resolved", reqId),
   setTheme: (name) => ipcRenderer.send("set-theme", name),
+  openExternal: (url) => ipcRenderer.invoke("open-external", url),
   onThemeChanged: (callback) => {
     ipcRenderer.on("theme-changed", (_event, name) => callback(name));
   },
