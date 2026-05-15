@@ -23,7 +23,7 @@ interface SplitPaneLayoutProps {
   onUpdateFlex: (parentPath: number[], dividerIdx: number, flexA: number, flexB: number) => void;
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
   onRemoveLeaf: (id: string) => void;
-  onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void;
+  onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection, meta?: { openMode?: import("../types/panels").AgentOpenMode }) => void;
   onMaximize?: (leafId: string) => void;
   onToggleMinimize?: (leafId: string) => void;
   hiddenPanels?: PanelType[];
@@ -64,7 +64,7 @@ interface PaneTreeProps {
   onUpdateFlex: (parentPath: number[], dividerIdx: number, flexA: number, flexB: number) => void;
   onDrop: (dragId: string, dropId: string, position: DropPosition) => void;
   onRemoveLeaf: (id: string) => void;
-  onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection) => void;
+  onSplitLeaf: (leafId: string, panel: PanelType, direction: SplitDirection, meta?: { openMode?: import("../types/panels").AgentOpenMode }) => void;
   onMaximize?: (leafId: string) => void;
   onToggleMinimize?: (leafId: string) => void;
   hiddenPanels?: PanelType[];

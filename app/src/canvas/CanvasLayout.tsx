@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CanvasNode, CanvasTile as CanvasTileType } from "./types";
-import { SINGLETON_PANELS, EXCLUSIVE_PANELS, PANEL_OPTIONS, type LeafNode, type PanelType } from "../types/panels";
+import { SINGLETON_PANELS, EXCLUSIVE_PANELS, PANEL_OPTIONS, type LeafNode, type PanelType, type AgentOpenMode } from "../types/panels";
 import { CanvasTile } from "./CanvasTile";
 import { EmptyLayoutPicker } from "../splitPane/AddPanelButton";
 import { useTheme } from "../ThemeContext";
@@ -132,7 +132,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, onCanvasChange,
     };
   }, [vp]);
 
-  const handleAddTile = useCallback((panel: PanelType, position?: { x: number; y: number }) => {
+  const handleAddTile = useCallback((panel: PanelType, position?: { x: number; y: number }, meta?: { openMode?: AgentOpenMode }) => {
     // Default position: center of the visible viewport.
     let worldPos: { x: number; y: number };
     if (position) {
@@ -151,6 +151,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, onCanvasChange,
     const { w: tileW, h: tileH } = DEFAULT_TILE_SIZES[panel] ?? { w: 500, h: 400 };
     // Nudge position to avoid overlapping existing tiles.
     const adjusted = findNonOverlappingPosition(worldPos.x, worldPos.y, tileW, tileH, canvas.tiles);
+    const openMode = panel === "docker-agent" ? meta?.openMode : undefined;
     const newTile: CanvasTileType = {
       id,
       panel,
@@ -159,6 +160,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, onCanvasChange,
       width: tileW,
       height: tileH,
       zIndex: maxZ + 1,
+      ...(openMode ? { openMode } : {}),
     };
     const newTiles: CanvasTileType[] = [newTile];
     if (panel === "editor" && !canvas.tiles.some((t) => t.panel === "file-tree")) {
@@ -277,7 +279,7 @@ export function CanvasLayout({ canvas, renderLeaf, agentInfoMap, onCanvasChange,
       {/* Empty state */}
       {canvas.tiles.length === 0 && !showAddMenu && (
         <div style={{ position: "absolute", inset: 0, display: "flex" }}>
-          <EmptyLayoutPicker onAdd={(panel) => handleAddTile(panel)} hiddenPanels={hiddenPanels} />
+          <EmptyLayoutPicker onAdd={(panel, meta) => handleAddTile(panel, undefined, meta)} hiddenPanels={hiddenPanels} />
         </div>
       )}
 

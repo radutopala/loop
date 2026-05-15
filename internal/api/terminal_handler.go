@@ -79,7 +79,22 @@ type wsControlMessage struct {
 	Cols       uint     `json:"cols,omitempty"`
 	Target     string   `json:"target,omitempty"` // "host" or "agent" (default)
 	NewSession bool     `json:"new_session,omitempty"`
+	// OpenMode explicitly selects how an agent terminal boots Claude relative
+	// to the channel's stored session:
+	//   "resume" — continue the channel session in place (no fork).
+	//   "fork"   — resume the channel session and immediately fork to a new id.
+	//   "fresh"  — start with no session at all.
+	// When unset, falls back to the legacy NewSession/auto-fork behavior so
+	// older clients (and non-agent terminals) keep working unchanged.
+	OpenMode string `json:"open_mode,omitempty"`
 }
+
+// Valid OpenMode values. Anything else is treated as unset (legacy fallback).
+const (
+	openModeResume = "resume"
+	openModeFork   = "fork"
+	openModeFresh  = "fresh"
+)
 
 // wsStatusMessage represents a JSON status message sent to the client.
 type wsStatusMessage struct {
@@ -368,26 +383,40 @@ func (t *terminalWSConn) handleCreate(ctx context.Context, msg wsControlMessage)
 		if t.store != nil {
 			if ch, err := t.store.GetChannel(ctx, msg.ChannelID); err == nil && ch != nil {
 				dirPath = ch.DirPath
-				if msg.NewSession {
-					// Client explicitly requested a fresh session — skip all
-					// session inheritance (channel, parent thread, agent fork).
+				switch msg.OpenMode {
+				case openModeFresh:
+					// Explicit fresh — no session at all.
 					claudeSessionID = ""
-				} else {
+					forkSession = false
+				case openModeResume:
+					// Explicit resume — channel session, no fork.
 					claudeSessionID = ch.SessionID
-					// For threads still using the parent's session, fork so the thread
-					// gets its own session while inheriting the parent's context.
-					if ch.ParentID != "" {
-						if parent, err := t.store.GetChannel(ctx, ch.ParentID); err == nil && parent != nil && parent.SessionID != "" {
-							if claudeSessionID == "" || claudeSessionID == parent.SessionID {
-								claudeSessionID = parent.SessionID
-								forkSession = true
+					forkSession = false
+				case openModeFork:
+					// Explicit fork — channel session, branch a new one.
+					claudeSessionID = ch.SessionID
+					forkSession = claudeSessionID != ""
+				default:
+					// Legacy path: NewSession + auto-fork heuristic.
+					if msg.NewSession {
+						claudeSessionID = ""
+					} else {
+						claudeSessionID = ch.SessionID
+						// For threads still using the parent's session, fork so the thread
+						// gets its own session while inheriting the parent's context.
+						if ch.ParentID != "" {
+							if parent, err := t.store.GetChannel(ctx, ch.ParentID); err == nil && parent != nil && parent.SessionID != "" {
+								if claudeSessionID == "" || claudeSessionID == parent.SessionID {
+									claudeSessionID = parent.SessionID
+									forkSession = true
+								}
 							}
 						}
-					}
-					// Agent terminals fork from the channel session so each agent
-					// gets its own session while inheriting the shared context.
-					if msg.AgentID != "" && claudeSessionID != "" {
-						forkSession = true
+						// Agent terminals fork from the channel session so each agent
+						// gets its own session while inheriting the shared context.
+						if msg.AgentID != "" && claudeSessionID != "" {
+							forkSession = true
+						}
 					}
 				}
 				// For worktree channels, resolve the parent project dir so

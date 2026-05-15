@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { GateApprovalRequestedData, SessionStatus, TerminalTarget } from "../../types";
+import type { AgentOpenMode } from "../../types/panels";
 import { useTheme } from "../../ThemeContext";
 import { useTerminalWs } from "../../hooks/useTerminalWs";
 import { useElapsedTimer } from "../../hooks/useElapsedTimer";
@@ -30,6 +31,9 @@ interface TerminalProps {
   claudeSessionId?: string;
   /** Start a fresh session, ignoring the channel's stored session. */
   newSession?: boolean;
+  /** How the agent terminal should boot Claude relative to the channel's session.
+   *  Only meaningful when target === "agent" and no claudeSessionId override is set. */
+  openMode?: AgentOpenMode;
   /** Explicit command to run instead of the interactive Claude bootstrap. */
   cmd?: string[];
   /** Hide Kill/Restart from the toolbar (used when a parent provides these). */
@@ -46,7 +50,7 @@ interface TerminalProps {
   onGateApprovalResolved?: () => void;
 }
 
-export function Terminal({ channelId, target = "agent", instanceId, claudeSessionId, newSession, cmd, hideActions, killSignal, onStatusChange, onPaneStatus, onSessionEnd, gateApproval, onGateApprovalResolved }: TerminalProps) {
+export function Terminal({ channelId, target = "agent", instanceId, claudeSessionId, newSession, openMode, cmd, hideActions, killSignal, onStatusChange, onPaneStatus, onSessionEnd, gateApproval, onGateApprovalResolved }: TerminalProps) {
   const { colors, fontSizes } = useTheme();
   const terminalRef = useRef<HTMLDivElement>(null);
   const [status, setStatus] = useState<SessionStatus>("connecting");
@@ -112,6 +116,7 @@ export function Terminal({ channelId, target = "agent", instanceId, claudeSessio
     instanceId,
     claudeSessionId,
     newSession,
+    openMode,
     cmd,
     onData,
     onStatus,

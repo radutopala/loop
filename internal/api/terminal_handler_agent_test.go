@@ -147,6 +147,79 @@ func (s *TerminalHandlerSuite) TestNewSessionSkipsChannelSession() {
 	close(doneCh)
 }
 
+// --- Explicit OpenMode tests (resume / fork / fresh) ---
+//
+// These cover the new client-driven open-mode protocol where the FE picks the
+// fork/resume/fresh choice up-front. The legacy auto-fork heuristic stays as
+// the OpenMode="" fallback and is covered by TestAgentTerminalForksChannelSession
+// + TestNewSessionSkipsChannelSession above.
+
+func (s *TerminalHandlerSuite) sendCreateWithOpenMode(channelSession, openMode, wantSession string, wantFork bool, wantCmd string) {
+	store := new(MockChannelLister)
+	store.On("GetChannel", mock.Anything, "ch-mode").
+		Return(&db.Channel{ChannelID: "ch-mode", SessionID: channelSession}, nil)
+	s.srv.store = store
+
+	finder := new(mockContainerManager)
+	finder.On("FindOrCreateShell", mock.Anything, "ch-mode", mock.Anything, mock.Anything).Return("ctr-mode", nil)
+	s.srv.containerRegistry = finder
+
+	builder := new(MockInteractiveCmdBuilder)
+	builder.On("BuildInteractiveCmd", "ch-mode", "", "", wantSession, "agent-0", wantFork, mock.Anything).
+		Return(wantCmd)
+	s.srv.SetInteractiveCmdBuilder(builder)
+
+	outCh := make(chan []byte, 1)
+	doneCh := make(chan struct{})
+	s.terminal.On("CreateSession", mock.Anything, "ctr-mode", []string(nil)).
+		Return("sid-mode", (<-chan []byte)(outCh), []byte(nil), (<-chan struct{})(doneCh), nil)
+	inputSent := onSendInputCalled(s.terminal, "sid-mode", []byte(wantCmd+"\n"))
+	s.terminal.On("DetachSession", mock.Anything, mock.Anything).Return(nil).Maybe()
+	s.terminal.On("SendInput", "sid-mode", []byte("\r")).Return(nil).Maybe()
+
+	ws, ts := s.dialWS()
+	defer ts.Close()
+	defer ws.Close()
+
+	sendControl(s.T(), ws, wsControlMessage{
+		Type:      "create",
+		ChannelID: "ch-mode",
+		AgentID:   "agent-0",
+		OpenMode:  openMode,
+	})
+	msg := readStatusMsg(s.T(), ws)
+	require.Equal(s.T(), wsStatusCreated, msg.Type)
+
+	select {
+	case <-inputSent:
+	case <-time.After(time.Second):
+		s.T().Fatalf("timed out waiting for open_mode=%q SendInput", openMode)
+	}
+	builder.AssertExpectations(s.T())
+	close(doneCh)
+}
+
+// open_mode="resume" → reuse channel session, no fork.
+func (s *TerminalHandlerSuite) TestOpenModeResumeReusesChannelSession() {
+	s.sendCreateWithOpenMode("sess-main", "resume", "sess-main", false, "claude --resume sess-main")
+}
+
+// open_mode="fork" → reuse channel session, fork off it.
+func (s *TerminalHandlerSuite) TestOpenModeForkBranchesChannelSession() {
+	s.sendCreateWithOpenMode("sess-main", "fork", "sess-main", true, "claude --resume sess-main --fork-session")
+}
+
+// open_mode="fresh" → no session at all, ignore channel's stored session.
+func (s *TerminalHandlerSuite) TestOpenModeFreshIgnoresChannelSession() {
+	s.sendCreateWithOpenMode("sess-main", "fresh", "", false, "claude --dangerously-skip-permissions")
+}
+
+// open_mode="fork" on a channel with no session degrades gracefully — no fork
+// because there's nothing to fork from.
+func (s *TerminalHandlerSuite) TestOpenModeForkOnEmptyChannelDoesNotFork() {
+	s.sendCreateWithOpenMode("", "fork", "", false, "claude --dangerously-skip-permissions")
+}
+
 func (s *TerminalHandlerSuite) TestAutoAcceptScansOutput() {
 	s.terminal.On("SendInput", "sid-1", []byte("\r")).Return(nil)
 

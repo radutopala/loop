@@ -1,6 +1,7 @@
 import { useCallback, useRef } from "react";
 import type { RefObject } from "react";
 import type { TerminalTarget } from "../types";
+import type { AgentOpenMode } from "../types/panels";
 
 /** Module-level map so session IDs survive component remounts.
  *  Keyed by `${channelId}:${target}` so agent and host sessions are tracked independently. */
@@ -32,6 +33,8 @@ export function useSessionPersistence(
   newSession?: boolean,
   /** Explicit command to run instead of the interactive Claude bootstrap. */
   cmd?: string[],
+  /** Agent terminal open mode (resume / fork / fresh). */
+  openMode?: AgentOpenMode,
 ) {
   const key = channelId ? sessionKey(channelId, target, instanceId) : null;
   const sessionIdRef = useRef<string | null>(
@@ -79,10 +82,10 @@ export function useSessionPersistence(
         );
       } else if (channelId && !killedRef.current) {
         const size = getTerminalSizeRef?.current?.();
-        ws.send(JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId, leaf_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...(cmd && cmd.length > 0 ? { cmd } : {}), ...size }));
+        ws.send(JSON.stringify({ type: "create", channel_id: channelId, target, ...(target === "agent" && instanceId ? { agent_id: instanceId, leaf_id: instanceId } : {}), ...(claudeSessionId ? { session_id: claudeSessionId } : {}), ...(newSession ? { new_session: true } : {}), ...(openMode ? { open_mode: openMode } : {}), ...(cmd && cmd.length > 0 ? { cmd } : {}), ...size }));
       }
     },
-    [channelId, target, instanceId, claudeSessionId, newSession, cmd, getTerminalSizeRef],
+    [channelId, target, instanceId, claudeSessionId, newSession, openMode, cmd, getTerminalSizeRef],
   );
 
   return { sessionIdRef, killedRef, setSessionId, handleOpen, markKilled, getStartTime };

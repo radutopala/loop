@@ -1,4 +1,4 @@
-import type { PanelType, PaneNode } from "../types/panels";
+import type { PanelType, PaneNode, AgentOpenMode } from "../types/panels";
 
 export interface CanvasNode {
   type: "canvas";
@@ -14,6 +14,8 @@ export interface CanvasTile {
   width: number;
   height: number;
   zIndex: number;
+  /** For docker-agent tiles: how to boot the Claude session. Undefined → "fork" (legacy default). */
+  openMode?: AgentOpenMode;
 }
 
 /** Union type for both layout modes. */
