@@ -118,7 +118,22 @@ export function useXTerminal({
       const fitAddon = new FitAddon();
       fitAddonRef.current = fitAddon;
       term.loadAddon(fitAddon);
-      term.loadAddon(new WebLinksAddon());
+      // Custom click handler: open URLs in the OS default browser via the
+      // Electron preload bridge instead of WebLinksAddon's default, which
+      // calls window.open(). In Electron, window.open() opens an `about:blank`
+      // popup BrowserWindow first and then sets location.href, so the user
+      // sees both an in-app Loop window AND the external browser load the
+      // link. Going straight to shell.openExternal avoids the popup entirely.
+      // In a plain browser (dev mode at localhost:5173), fall back to
+      // window.open with noopener.
+      term.loadAddon(new WebLinksAddon((event, url) => {
+        if (event.defaultPrevented) return;
+        if (window.loopAPI?.openExternal) {
+          void window.loopAPI.openExternal(url);
+        } else {
+          window.open(url, "_blank", "noopener,noreferrer");
+        }
+      }));
 
       injectScrollbarStyle();
       term.open(containerRef.current!);
