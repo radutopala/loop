@@ -262,6 +262,15 @@ func (t *terminalWSConn) enableAutoAccept() {
 	t.autoAcceptRemaining = maxAutoAccepts
 }
 
+// disableAutoAccept zeroes the remaining budget. Called on first user input
+// so trigger text in later TUI screens (e.g. /model's footer) is ignored —
+// auto-accept is only intended for the boot prompts before the user types.
+func (t *terminalWSConn) disableAutoAccept() {
+	t.autoAcceptMu.Lock()
+	t.autoAcceptRemaining = 0
+	t.autoAcceptMu.Unlock()
+}
+
 // ansiEscapeRe matches ANSI escape sequences (CSI, OSC, etc.).
 var ansiEscapeRe = regexp.MustCompile(`\x1b\[[0-9;]*[a-zA-Z]|\x1b\][^\x1b]*(?:\x1b\\|\x07)|\x1b[()][0-9A-B]`)
 
@@ -548,6 +557,7 @@ func (t *terminalWSConn) handleInput(msg wsControlMessage) {
 		t.sendError("invalid base64 data", wsErrCodeInvalidInput)
 		return
 	}
+	t.disableAutoAccept()
 	if err := t.activeManager().SendInput(t.sessionID, data); err != nil {
 		t.logger.Error("terminal ws: send input failed", "session_id", t.sessionID, "error", err)
 		t.sendError(err.Error(), wsErrCodeSessionFailed)

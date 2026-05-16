@@ -290,3 +290,18 @@ func (s *TerminalHandlerSuite) TestAutoAcceptDisabledByDefault() {
 	time.Sleep(50 * time.Millisecond)
 	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
 }
+
+func (s *TerminalHandlerSuite) TestDisableAutoAcceptStopsTrigger() {
+	tc := &terminalWSConn{
+		manager:   s.terminal,
+		sessionID: "sid-1",
+		logger:    slog.Default(),
+	}
+	tc.enableAutoAccept()
+	tc.disableAutoAccept()
+
+	// After disable, the trigger string must be ignored even with budget previously armed.
+	tc.scanAutoAccept([]byte("Entertoconfirm · Esc to cancel"))
+	time.Sleep(700 * time.Millisecond)
+	s.terminal.AssertNotCalled(s.T(), "SendInput", mock.Anything, mock.Anything)
+}
