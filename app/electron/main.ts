@@ -640,6 +640,10 @@ let approvalBounceId: number | null = null;
 let approvalBounceInterval: NodeJS.Timeout | null = null;
 const APPROVAL_BOUNCE_INTERVAL_MS = 2000;
 
+function pendingSnapshot(): string {
+  return `[${[...pendingApprovals].join(",")}]`;
+}
+
 function startApprovalBounce() {
   if (pendingApprovals.size === 0) return;
   const wins = BrowserWindow.getAllWindows();
@@ -651,9 +655,15 @@ function startApprovalBounce() {
   }
 
   if (approvalBounceInterval) return;
+  console.log(`[bounce] starting approval bounce loop size=${pendingApprovals.size} pending=${pendingSnapshot()}`);
+  let tickCount = 0;
   const tick = () => {
     if (pendingApprovals.size === 0) return;
     if (BrowserWindow.getAllWindows().some((w) => w.isFocused())) return;
+    tickCount++;
+    if (tickCount === 1 || tickCount % 10 === 0) {
+      console.log(`[bounce] tick=${tickCount} size=${pendingApprovals.size} pending=${pendingSnapshot()}`);
+    }
     approvalBounceId = app.dock?.bounce("critical") ?? null;
   };
   tick();
@@ -662,6 +672,7 @@ function startApprovalBounce() {
 
 function stopApprovalBounce() {
   if (approvalBounceInterval) {
+    console.log(`[bounce] stopping approval bounce loop size=${pendingApprovals.size} pending=${pendingSnapshot()}`);
     clearInterval(approvalBounceInterval);
     approvalBounceInterval = null;
   }
@@ -676,17 +687,22 @@ function stopApprovalBounce() {
 }
 
 ipcMain.on("approval-needed", (_event, reqId?: string) => {
+  const had = reqId ? pendingApprovals.has(reqId) : false;
   if (reqId) pendingApprovals.add(reqId);
+  console.log(`[bounce] approval-needed reqId=${reqId ?? "<none>"} duplicate=${had} size=${pendingApprovals.size} pending=${pendingSnapshot()}`);
   startApprovalBounce();
 });
 
 ipcMain.on("approval-resolved", (_event, reqId?: string) => {
+  const had = reqId ? pendingApprovals.has(reqId) : false;
   if (reqId) pendingApprovals.delete(reqId);
+  console.log(`[bounce] approval-resolved reqId=${reqId ?? "<none>"} known=${had} size=${pendingApprovals.size} pending=${pendingSnapshot()}`);
   if (pendingApprovals.size === 0) stopApprovalBounce();
 });
 
 app.on("browser-window-focus", () => {
   if (approvalBounceInterval) {
+    console.log(`[bounce] window focused, clearing interval (pending size=${pendingApprovals.size} pending=${pendingSnapshot()})`);
     clearInterval(approvalBounceInterval);
     approvalBounceInterval = null;
   }
@@ -697,6 +713,9 @@ app.on("browser-window-focus", () => {
 app.on("browser-window-blur", () => {
   setTimeout(() => {
     if (BrowserWindow.getAllWindows().some((w) => w.isFocused())) return;
+    if (pendingApprovals.size > 0) {
+      console.log(`[bounce] window blurred, pending size=${pendingApprovals.size} pending=${pendingSnapshot()}`);
+    }
     startApprovalBounce();
   }, 50);
 });

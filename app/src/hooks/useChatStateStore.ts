@@ -258,11 +258,13 @@ export function useChatStateStore({
           const body = reqData.target ? `Approval needed: ${reqData.target}` : "Approval needed";
           new Notification(`Loop — ${name}`, { body });
         }
+        console.log("[bounce] notifyApprovalNeeded reqId=%s channelId=%s target=%s", reqData.req_id, channelId, reqData.target);
         window.loopAPI?.notifyApprovalNeeded?.(reqData.req_id);
       }
 
       if (wsEvent.type === "gate.approval_resolved") {
         const data = wsEvent.data as GateApprovalResolvedData;
+        console.log("[bounce] notifyApprovalResolved reqId=%s channelId=%s", data.req_id, channelId);
         window.loopAPI?.notifyApprovalResolved?.(data.req_id);
       }
 
