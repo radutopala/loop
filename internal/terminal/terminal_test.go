@@ -793,7 +793,7 @@ func (s *TerminalSuite) TestConcurrentAttachDetach() {
 	client.AssertExpectations(s.T())
 }
 
-func (s *TerminalSuite) TestSlowConsumerDrop() {
+func (s *TerminalSuite) TestSlowConsumerEvictsAboveCap() {
 	logBuf := &syncBuffer{}
 	logger := slog.New(slog.NewTextHandler(logBuf, nil))
 
@@ -805,19 +805,21 @@ func (s *TerminalSuite) TestSlowConsumerDrop() {
 	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
 
 	mgr := NewManager(client, logger)
+	// Tiny cap so the eviction path fires fast in-test.
+	mgr.SetClientMaxBytes(8)
+
 	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
 	require.NoError(s.T(), err)
 
 	// Attach a client but never read from the channel.
 	ch, _ := sess.Attach()
 
-	// Fill the channel buffer (capacity 64) then trigger a drop.
-	for i := 0; i < 65; i++ {
+	// Write well past the cap; eviction should kick in.
+	for range 200 {
 		_, _ = pw.Write([]byte("x"))
 		time.Sleep(time.Millisecond)
 	}
 
-	// Verify the warning was logged.
 	require.Eventually(s.T(), func() bool {
 		return logBuf.contains("slow consumer")
 	}, time.Second, 10*time.Millisecond)
@@ -826,6 +828,66 @@ func (s *TerminalSuite) TestSlowConsumerDrop() {
 	pw.Close()
 	<-sess.Done()
 
+	client.AssertExpectations(s.T())
+}
+
+func (s *TerminalSuite) TestBurstAbsorbedBelowCap() {
+	// Regression: previously a fast command's tail was dropped when the
+	// 64-slot per-client channel filled before the WS write goroutine
+	// drained it. The pump's slice-backed queue now absorbs the burst, so
+	// the consumer eventually receives every byte in order.
+	logBuf := &syncBuffer{}
+	logger := slog.New(slog.NewTextHandler(logBuf, nil))
+
+	client := new(mockExecClient)
+	pr, pw := io.Pipe()
+	conn := &mockConn{r: pr, w: io.Discard}
+
+	client.On("ExecCreate", mock.Anything, "ctr-1", mock.Anything, true).Return("exec-1", nil)
+	client.On("ExecAttach", mock.Anything, "exec-1").Return(conn, nil)
+
+	mgr := NewManager(client, logger)
+	// Cap large enough to hold the entire burst.
+	mgr.SetClientMaxBytes(64 * 1024)
+	sess, err := mgr.CreateSession(context.Background(), "ctr-1", nil)
+	require.NoError(s.T(), err)
+
+	ch, _ := sess.Attach()
+
+	const writes = 500 // > 64 (old channel buffer) but < cap
+	go func() {
+		for i := range writes {
+			_, _ = pw.Write([]byte{byte(i % 256)})
+		}
+	}()
+
+	// Read until we've seen every byte, in order. We close the channel
+	// ourselves via Detach so the range loop has a termination point even
+	// when no EOF closes the underlying pipe.
+	received := make([]byte, 0, writes)
+	require.Eventually(s.T(), func() bool {
+		for len(received) < writes {
+			select {
+			case chunk, ok := <-ch:
+				if !ok {
+					return false
+				}
+				received = append(received, chunk...)
+			case <-time.After(50 * time.Millisecond):
+				return false
+			}
+		}
+		return true
+	}, 3*time.Second, 10*time.Millisecond, "expected %d bytes, got %d", writes, len(received))
+
+	for i, b := range received {
+		require.Equal(s.T(), byte(i%256), b, "byte at index %d out of order", i)
+	}
+	require.False(s.T(), logBuf.contains("slow consumer"), "must not warn when burst stays under cap")
+
+	require.NoError(s.T(), sess.Detach(ch))
+	pw.Close()
+	<-sess.Done()
 	client.AssertExpectations(s.T())
 }
 
