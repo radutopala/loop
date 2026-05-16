@@ -19,8 +19,16 @@ import (
 // Default ring buffer size: 1 MB.
 const defaultRingBufSize = 1024 * 1024
 
-// clientChannelBuffer is the capacity of per-client output channels.
+// clientChannelBuffer is the capacity of per-client public output channels.
+// The pump keeps a separate unbounded slice queue behind this; the buffered
+// channel only smooths handoff between the drain goroutine and the consumer.
 const clientChannelBuffer = 64
+
+// defaultClientMaxBytes caps the per-client queued backlog. Above this size
+// the pump evicts oldest entries to keep memory bounded. 16 MB easily
+// absorbs the burst from a fast test runner or build command without
+// dropping output.
+const defaultClientMaxBytes = 16 * 1024 * 1024
 
 // readBufSize is the size of the temporary buffer used in readLoop.
 const readBufSize = 4096
@@ -68,18 +76,19 @@ func generateID(randRead func([]byte) (int, error)) string {
 // Session represents a single interactive terminal session backed by a
 // Docker exec instance with a PTY.
 type Session struct {
-	id          string
-	containerID string
-	execID      string
-	pidFile     string // path inside the container where the shell's PID is stored
-	conn        io.ReadWriteCloser
-	buf         *RingBuffer
-	logger      *slog.Logger
-	mu          sync.Mutex
-	clients     map[chan []byte]struct{}
-	done        chan struct{}
-	closeOnce   sync.Once
-	idleTimeout time.Duration
+	id             string
+	containerID    string
+	execID         string
+	pidFile        string // path inside the container where the shell's PID is stored
+	conn           io.ReadWriteCloser
+	buf            *RingBuffer
+	logger         *slog.Logger
+	mu             sync.Mutex
+	clients        map[*outputPump]struct{}
+	done           chan struct{}
+	closeOnce      sync.Once
+	idleTimeout    time.Duration
+	clientMaxBytes int
 }
 
 // ID returns the session identifier.
@@ -88,34 +97,35 @@ func (s *Session) ID() string { return s.id }
 // ContainerID returns the container this session runs in.
 func (s *Session) ContainerID() string { return s.containerID }
 
-// Attach registers a new client channel that receives a copy of all
-// subsequent output. The caller receives the current ring buffer
-// contents followed by a live stream. Close the returned channel by
-// calling Detach.
+// Attach registers a new client and returns the channel it should read from
+// along with a snapshot of the ring buffer (history replay). Each client
+// gets its own [outputPump] so a slow consumer cannot stall others or drop
+// bytes inside the read loop. Release the channel with Detach.
 func (s *Session) Attach() (<-chan []byte, []byte) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	history := s.buf.Bytes()
-	ch := make(chan []byte, clientChannelBuffer)
-	s.clients[ch] = struct{}{}
-	return ch, history
+	p := newOutputPump(s.logger, s.id, s.clientMaxBytes)
+	s.clients[p] = struct{}{}
+	return p.out, history
 }
 
 // ErrClientNotFound is returned when a detach is attempted with an
 // unrecognized client channel.
 var ErrClientNotFound = errors.New("client not found")
 
-// Detach removes a previously attached client channel.
+// Detach removes a previously attached client and shuts down its pump. The
+// pump's drain goroutine then closes the public channel so the reader
+// observes the detach as a normal channel close.
 func (s *Session) Detach(ch <-chan []byte) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	// Find the matching send channel.
-	for c := range s.clients {
-		if c == ch {
-			delete(s.clients, c)
-			close(c)
+	for p := range s.clients {
+		if (<-chan []byte)(p.out) == ch {
+			delete(s.clients, p)
+			p.close()
 			return nil
 		}
 	}
@@ -169,12 +179,8 @@ func (s *Session) readLoop() {
 				_, _ = s.buf.Write(res.data)
 
 				s.mu.Lock()
-				for c := range s.clients {
-					select {
-					case c <- res.data:
-					default:
-						s.logger.Warn("slow consumer, dropped output", "session_id", s.id, "bytes", len(res.data))
-					}
+				for p := range s.clients {
+					p.push(res.data)
 				}
 				s.mu.Unlock()
 
@@ -197,23 +203,25 @@ func (s *Session) readLoop() {
 
 // Manager manages terminal sessions.
 type Manager struct {
-	mu          sync.Mutex
-	sessions    map[string]*Session
-	client      ExecClient
-	logger      *slog.Logger
-	ringBufSize int
-	idleTimeout time.Duration
-	randRead    func([]byte) (int, error)
+	mu             sync.Mutex
+	sessions       map[string]*Session
+	client         ExecClient
+	logger         *slog.Logger
+	ringBufSize    int
+	idleTimeout    time.Duration
+	clientMaxBytes int
+	randRead       func([]byte) (int, error)
 }
 
 // NewManager creates a new terminal session manager.
 func NewManager(client ExecClient, logger *slog.Logger) *Manager {
 	return &Manager{
-		sessions:    make(map[string]*Session),
-		client:      client,
-		logger:      logger,
-		ringBufSize: defaultRingBufSize,
-		randRead:    rand.Read,
+		sessions:       make(map[string]*Session),
+		client:         client,
+		logger:         logger,
+		ringBufSize:    defaultRingBufSize,
+		clientMaxBytes: defaultClientMaxBytes,
+		randRead:       rand.Read,
 	}
 }
 
@@ -227,6 +235,14 @@ func (m *Manager) SetRingBufSize(size int) {
 // A zero value disables the timeout.
 func (m *Manager) SetIdleTimeout(d time.Duration) {
 	m.idleTimeout = d
+}
+
+// SetClientMaxBytes sets the per-client backlog cap for new sessions. When
+// a client's queued backlog exceeds this size, the pump evicts oldest
+// entries and logs a "slow consumer" warning. Exposed for tests that need
+// a small cap to exercise eviction; production code uses the default.
+func (m *Manager) SetClientMaxBytes(n int) {
+	m.clientMaxBytes = n
 }
 
 // pidFileDir is where session PID files are written inside containers.
@@ -280,16 +296,17 @@ func (m *Manager) CreateSessionWithEnv(ctx context.Context, containerID string, 
 	}
 
 	s := &Session{
-		id:          sessionID,
-		containerID: containerID,
-		execID:      execID,
-		pidFile:     pidFile,
-		conn:        conn,
-		buf:         NewRingBuffer(m.ringBufSize),
-		logger:      m.logger,
-		clients:     make(map[chan []byte]struct{}),
-		done:        make(chan struct{}),
-		idleTimeout: m.idleTimeout,
+		id:             sessionID,
+		containerID:    containerID,
+		execID:         execID,
+		pidFile:        pidFile,
+		conn:           conn,
+		buf:            NewRingBuffer(m.ringBufSize),
+		logger:         m.logger,
+		clients:        make(map[*outputPump]struct{}),
+		done:           make(chan struct{}),
+		idleTimeout:    m.idleTimeout,
+		clientMaxBytes: m.clientMaxBytes,
 	}
 
 	go s.readLoop()
@@ -354,11 +371,13 @@ func (m *Manager) StopSession(id string) (string, error) {
 
 	err := s.conn.Close()
 
-	// Close all client channels.
+	// Shut down all client pumps. Each pump's drain goroutine closes its
+	// public channel on exit, so consumers observe the stop as a normal
+	// channel close.
 	s.mu.Lock()
-	for ch := range s.clients {
-		delete(s.clients, ch)
-		close(ch)
+	for p := range s.clients {
+		delete(s.clients, p)
+		p.close()
 	}
 	s.mu.Unlock()
 
