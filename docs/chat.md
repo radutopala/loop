@@ -214,6 +214,8 @@ While a button is busy it shows a dim "…" label; failures are rendered below t
 
 While a gate prompt is pending **and** no Loop window is focused, the desktop app calls `app.dock.bounce("critical")` on macOS (or `flashFrame(true)` on Windows/Linux) on a 2-second interval until the user focuses Loop. The bounce is driven from the renderer via `approval-needed` / `approval-resolved` IPC messages keyed by `req_id`, so multiple concurrent gates all clear cleanly. Focus or resolution stops the loop and cancels any in-flight bounce. Turn-end bounces use `bounce("informational")` instead and fire only once per unfocused window session — a chain of agent turns or scheduled completions still nudges the dock just once.
 
+The bouncer's pending-id set is also reconciled on every WebSocket reconnect: `useChatStateStore`'s `onOpen` snapshots [`/api/gate/approvals`](api.md#get-apigateapprovals) and hands the canonical `req_id` list back to electron-main via the `reconcile-approvals` IPC. Any bouncer entry not present in the snapshot is dropped and the loop stops if the set is empty — this is what prevents an orphaned dock-bounce when a `gate.approval_resolved` event was missed (daemon restart, network blip, deny-by-timeout fired while the renderer was disconnected). See [Gates: WS-reconnect rehydration](gates.md#approval-ui) for the renderer-state half of the same reconciliation.
+
 ### Resolution
 
 Clicking a button calls `resolveGateApproval(reqId, decision)` which `POST`s to [`/api/gate/approvals/{id}`](api.md#post-apigateapprovalsid) with `{decision}`. On success the component calls its `onResolved` callback, which clears `gateApproval` on the chat state and scrolls to the bottom.
