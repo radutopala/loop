@@ -111,10 +111,12 @@ interface CodeEditorProps {
   onEditorContextMenu: (e: React.MouseEvent) => void;
   /** Pre-rendered preview HTML for markdown. */
   previewHtml: string;
+  /** When set, render the file as an image via this URL instead of the text editor. */
+  imageURL?: string | null;
 }
 
 export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function CodeEditor(
-  { fileContent, isBinary, binarySize, selectedRelPath, selectedPath, loading, error, previewMode, onDocChanged, onPreviewUpdate, editorMenu, onEditorMenuClose, onEditorContextMenu, previewHtml },
+  { fileContent, isBinary, binarySize, selectedRelPath, selectedPath, loading, error, previewMode, onDocChanged, onPreviewUpdate, editorMenu, onEditorMenuClose, onEditorContextMenu, previewHtml, imageURL },
   ref,
 ) {
   const { colors, fontSizes } = useTheme();
@@ -312,9 +314,28 @@ export const CodeEditor = forwardRef<CodeEditorHandle, CodeEditorProps>(function
       {error && (
         <div style={{ padding: 16, color: colors.error, fontSize: 13 }}>{error}</div>
       )}
-      {isBinary && (
+      {isBinary && !imageURL && (
         <div style={{ padding: 16, color: colors.textDim, fontSize: 13 }}>
           Binary file ({formatSize(binarySize)})
+        </div>
+      )}
+      {imageURL && (
+        <div
+          style={{
+            flex: 1,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            overflow: "auto",
+            padding: 16,
+            backgroundColor: colors.sidebar,
+          }}
+        >
+          <img
+            src={imageURL}
+            alt=""
+            style={{ maxWidth: "100%", maxHeight: "100%", objectFit: "contain" }}
+          />
         </div>
       )}
       {!selectedPath && !loading && (

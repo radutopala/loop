@@ -7,6 +7,8 @@ import {
   deleteFile,
   createDir,
   updateExtraDirs,
+  buildFileUrl,
+  isImagePath,
   type FileEntry,
   type RootEntry,
 } from "../api/loopApi";
@@ -60,6 +62,10 @@ export interface EditorStateApi {
   fileContent: string | null;
   isBinary: boolean;
   binarySize: number;
+  // For image files: the URL to render in <img src=...>. Null for text /
+  // generic binary tabs. Includes a cache-busting query param so agent edits
+  // reload the displayed bytes.
+  imageURL: string | null;
   loading: boolean;
   error: string | null;
 
@@ -122,6 +128,10 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [isBinary, setIsBinary] = useState(false);
   const [binarySize, setBinarySize] = useState(0);
+  const [imageURL, setImageURL] = useState<string | null>(null);
+  // Counter bumped on agent refresh of the active image tab; appended as `?t=`
+  // to the URL so the browser re-fetches instead of serving the cached image.
+  const imageVersionRef = useRef(0);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -193,8 +203,14 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
   // On mount, if a tab was persisted, fetch its content.
   useEffect(() => {
     if (!selectedPath) return;
-    setLoading(true);
     const { rootIndex: ri, relativePath: rp } = parsePathKey(selectedPath);
+    if (isImagePath(rp)) {
+      setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
+      setFileContent(null);
+      setIsBinary(false);
+      return;
+    }
+    setLoading(true);
     fetchFileContent(channelId, rp, ri).then((result) => {
       if (result.binary) {
         setIsBinary(true);
@@ -255,6 +271,14 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     setSelectedPath(pathKey);
     setError(null);
     setIsBinary(false);
+    const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+    if (isImagePath(rp)) {
+      setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
+      setFileContent(null);
+      setLoading(false);
+      return;
+    }
+    setImageURL(null);
     const cached = dirtyContentRef.current.get(pathKey);
     if (cached !== undefined) {
       setFileContent(cached);
@@ -262,7 +286,6 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     }
     setLoading(true);
     setFileContent(null);
-    const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
     fetchFileContent(channelId, rp, ri).then((result) => {
       if (result.binary) {
         setIsBinary(true);
@@ -356,6 +379,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
           setSelectedPath(null);
           setFileContent(null);
           setIsBinary(false);
+          setImageURL(null);
           setError(null);
         }
       }
@@ -377,8 +401,13 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     }
     const pathKey = selectedPathRef.current;
     if (pathKey) {
+      const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+      if (isImagePath(rp)) {
+        imageVersionRef.current++;
+        setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
+        return;
+      }
       try {
-        const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
         const result = await fetchFileContent(channelId, rp, ri);
         if (selectedPathRef.current !== pathKey || result.binary) return;
         const editor = codeEditorRef.current;
@@ -438,6 +467,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
             setSelectedPath(null);
             setFileContent(null);
             setIsBinary(false);
+            setImageURL(null);
             setError(null);
           }
         }
@@ -480,6 +510,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
             setSelectedPath(null);
             setFileContent(null);
             setIsBinary(false);
+            setImageURL(null);
             setError(null);
           }
         }
@@ -524,6 +555,11 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
       const pathKey = selectedPathRef.current;
       if (!pathKey) return;
       const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+      if (isImagePath(rp)) {
+        imageVersionRef.current++;
+        setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
+        return;
+      }
       fetchFileContent(channelId, rp, ri).then((result) => {
         if (selectedPathRef.current !== pathKey) return;
         if (result.binary) return;
@@ -546,6 +582,13 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
 
   const applyAgentRefresh = useCallback((pathKey: string) => {
     const { rootIndex: ri, relativePath: rp } = parsePathKey(pathKey);
+    if (isImagePath(rp)) {
+      if (pathKey === selectedPathRef.current) {
+        imageVersionRef.current++;
+        setImageURL(buildFileUrl(channelId, rp, ri, imageVersionRef.current));
+      }
+      return;
+    }
     fetchFileContent(channelId, rp, ri).then((result) => {
       if (result.binary) return;
       const isDirty = dirtyTabsRef.current.has(pathKey);
@@ -656,6 +699,7 @@ export function useEditorState(channelId: string, options?: UseEditorStateOption
     fileContent,
     isBinary,
     binarySize,
+    imageURL,
     loading,
     error,
     dirtyTabs,

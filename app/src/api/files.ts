@@ -67,6 +67,27 @@ export async function fetchFileContent(channelId: string, path: string, root?: n
   return { content: await res.text(), binary: false };
 }
 
+// Image extensions the editor renders inline via <img src=...>. Matches the
+// backend's imageMIMEByExt in internal/api/files_handler.go — keep in sync.
+const IMAGE_EXTS = new Set([".png", ".jpg", ".jpeg", ".gif", ".webp"]);
+
+export function isImagePath(path: string): boolean {
+  const dot = path.lastIndexOf(".");
+  if (dot < 0) return false;
+  return IMAGE_EXTS.has(path.slice(dot).toLowerCase());
+}
+
+// buildFileUrl returns the absolute /api URL for the file-read endpoint, with
+// the `path` (and optional `root`) query parameters set. Used as <img src> for
+// image tabs in the editor, where the browser does its own fetch instead of
+// routing through fetchFileContent.
+export function buildFileUrl(channelId: string, path: string, root?: number, cacheBust?: number): string {
+  const params = new URLSearchParams({ path });
+  if (root !== undefined && root > 0) params.set("root", String(root));
+  if (cacheBust !== undefined) params.set("t", String(cacheBust));
+  return `${getApiUrl()}/api/channels/${channelId}/file?${params}`;
+}
+
 export async function saveFileContent(channelId: string, path: string, content: string, root?: number): Promise<void> {
   const params = new URLSearchParams({ path });
   if (root !== undefined && root > 0) params.set("root", String(root));

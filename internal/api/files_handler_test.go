@@ -613,16 +613,48 @@ func (s *ServerSuite) TestReadFile_Success() {
 
 func (s *ServerSuite) TestReadFile_Binary() {
 	tmpDir := s.T().TempDir()
-	data := []byte{0x89, 0x50, 0x4E, 0x47, 0x00}
-	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "image.png"), data, 0644))
+	data := []byte{0x7F, 0x45, 0x4C, 0x46, 0x00}
+	require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, "thing.bin"), data, 0644))
 
 	s.store.On("GetChannel", mock.Anything, "ch-1").
 		Return(&db.Channel{ChannelID: "ch-1", DirPath: tmpDir}, nil)
 
-	rec := s.testRequest("GET", "/api/channels/ch-1/file?path=image.png", "")
+	rec := s.testRequest("GET", "/api/channels/ch-1/file?path=thing.bin", "")
 	require.Equal(s.T(), http.StatusOK, rec.Code)
 	require.Equal(s.T(), "true", rec.Header().Get("X-File-Binary"))
 	require.Empty(s.T(), rec.Body.String())
+}
+
+func (s *ServerSuite) TestReadFile_Image() {
+	cases := []struct {
+		name string
+		mime string
+	}{
+		{"image.png", "image/png"},
+		{"image.PNG", "image/png"},
+		{"image.jpg", "image/jpeg"},
+		{"image.jpeg", "image/jpeg"},
+		{"image.gif", "image/gif"},
+		{"image.webp", "image/webp"},
+	}
+
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			tmpDir := s.T().TempDir()
+			data := []byte{0x89, 0x50, 0x4E, 0x47, 0x00, 0x01, 0x02}
+			require.NoError(s.T(), os.WriteFile(filepath.Join(tmpDir, tc.name), data, 0644))
+
+			chID := "ch-" + tc.name
+			s.store.On("GetChannel", mock.Anything, chID).
+				Return(&db.Channel{ChannelID: chID, DirPath: tmpDir}, nil)
+
+			rec := s.testRequest("GET", "/api/channels/"+chID+"/file?path="+tc.name, "")
+			require.Equal(s.T(), http.StatusOK, rec.Code)
+			require.Equal(s.T(), tc.mime, rec.Header().Get("Content-Type"))
+			require.Empty(s.T(), rec.Header().Get("X-File-Binary"))
+			require.Equal(s.T(), data, rec.Body.Bytes())
+		})
+	}
 }
 
 func (s *ServerSuite) TestReadFile_LargeTextFile() {
