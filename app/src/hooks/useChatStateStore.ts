@@ -179,6 +179,29 @@ export function useChatStateStore({
     window.loopAPI?.reconcileApprovals?.([...valid]);
   }, []);
 
+  // Also rehydrate when the user returns to Loop. The WS-onOpen path covers
+  // reconnects and renderer reloads, but if a `gate.approval_requested`
+  // arrived followed by a missed `gate.approval_resolved` on an otherwise-
+  // healthy WS, the electron-main dock-bouncer set holds a stale req_id and
+  // bounces forever. Reconciling against the gate snapshot whenever the
+  // window regains focus or becomes visible self-heals that case without
+  // waiting for a WS drop.
+  //
+  // Both events fire because they cover slightly different cases:
+  // - `focus` fires on alt-tab back / click-into-window
+  // - `visibilitychange` covers the renderer-not-active-surface case (e.g.
+  //   DevTools focused or window occluded) where `focus` may not fire
+  useEffect(() => {
+    const rehydrate = () => { rehydrateGateApprovals(); };
+    const onVisibility = () => { if (!document.hidden) rehydrate(); };
+    window.addEventListener("focus", rehydrate);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.removeEventListener("focus", rehydrate);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [rehydrateGateApprovals]);
+
   // Compute subscription set: selectedId + all channels where isRunning.
   const subscribeChannels = useCallback(
     (send: (data: string) => void) => {
