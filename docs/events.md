@@ -717,6 +717,10 @@ The event type is declared but no cancel endpoint exists; the engine cannot be c
 
 A previously-broadcast approval was resolved (either through the UI, a Discord/Slack button click, or timeout). The UI should dismiss the matching approval card.
 
+Also fanned out on container teardown — `MultiManagerResolver.Remove` calls `Manager.Shutdown()`, which resolves every still-pending request with `decision: "deny"` and `actor: "shutdown"` so the FE card and the electron dock-bouncer clear when the agent container goes away mid-prompt.
+
+The renderer treats event delivery as best-effort: on every WebSocket reconnect it `GET`s [`/api/gate/approvals`](api.md#get-apigateapprovals) and locally synthesizes a resolved event (with `actor: "rehydrate"`) for any approval it had on file that's missing from the snapshot. A missed real `gate.approval_resolved` therefore self-heals on the next `onOpen` — see [Gates: WS-reconnect rehydration](gates.md#approval-ui).
+
 **Payload schema:**
 
 ```json

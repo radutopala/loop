@@ -2326,6 +2326,42 @@ Assign a worktree to a ticket. This performs an atomic multi-step operation:
 
 When the security gate is enabled, agent containers that trip an `approve` rule block waiting for a human decision. The gate broadcasts `gate.approval_requested` on WebSocket; the UI resolves it back with this endpoint. See [Security Gate](configuration.md#security-gate) for the rule model.
 
+### `GET /api/gate/approvals`
+
+Snapshot every pending approval the daemon currently knows about, aggregated across all live agent containers. The renderer calls this on every WebSocket `onOpen` (page reload, network blip, daemon restart) to reconcile its `gateApprovals` map and the electron dock-bouncer's pending set against the source of truth — any `req_id` the client thought was pending but is missing from the snapshot is treated as resolved, and any snapshot entry the client did not know about is added.
+
+**Response (200):**
+
+```json
+{
+  "approvals": [
+    {
+      "req_id": "gate-req-8f1c...",
+      "container_id": "ab12cd34ef56",
+      "channel_id": "C0123456",
+      "kind": "docker-http",
+      "target": "POST /containers/abc123/exec",
+      "source": "chat",
+      "message": "agent wants to exec into a container",
+      "details": { "cmd": "bash, -c, whoami", "user": "root" }
+    }
+  ]
+}
+```
+
+| Field          | Type   | Description |
+|----------------|--------|-------------|
+| `req_id`       | string | Correlation id, same one carried on `gate.approval_requested` and accepted by [`POST /api/gate/approvals/{id}`](#post-apigateapprovalsid) |
+| `container_id` | string | Docker container id that owns the request — useful for cross-referencing with audit logs |
+| `channel_id`   | string | Channel the approval is prompting on |
+| `kind`         | string | Same set as the event payload (`"connect"`, `"execve"`, `"file"`, `"docker-http"`, `"docker-body"`) |
+| `target`       | string | Human-readable target |
+| `source`       | string | Origin within the container — `"chat"` for the entrypoint agent, `"terminal:<leafId>"` for a specific terminal pane. Omitted when unknown |
+| `message`      | string | Rule's `message` field (omitted when empty) |
+| `details`      | object | Structured body summary (omitted when empty); same shape as `gate.approval_requested.details` |
+
+Returns an empty `approvals` array when nothing is pending. Returns `501` if the gate approval resolver is not configured (gate disabled).
+
 ### `POST /api/gate/approvals/{id}`
 
 Resolve a pending gate approval by request id. The `id` is the `req_id` from the `gate.approval_requested` event.
