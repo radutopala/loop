@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../../types";
 import { resolveGateApproval, sendCommand, sendMessage } from "../../api/loopApi";
-import { resolvePlan } from "../../api/channels";
+import { pasteImage, resolvePlan } from "../../api/channels";
 import { fetchShortcuts, type PromptShortcut } from "../../api/configApi";
 import { searchFiles, type FileSearchResult, type RootEntry } from "../../api/files";
 import { fonts } from "../../theme";
@@ -347,6 +347,59 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
   }, []);
 
   const isLoopCommand = useCallback((t: string) => t.trimStart().startsWith("/loop"), []);
+
+  const handlePaste = useCallback(async (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    // Find the first image item; if none, let the default text-paste happen.
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    let imageItem: DataTransferItem | null = null;
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      if (it && it.kind === "file" && it.type.startsWith("image/")) {
+        imageItem = it;
+        break;
+      }
+    }
+    if (!imageItem) return;
+    e.preventDefault();
+
+    const file = imageItem.getAsFile();
+    if (!file) return;
+
+    const buf = await file.arrayBuffer();
+    // Encode bytes → base64 without inflating to a giant string mid-conversion.
+    const bytes = new Uint8Array(buf);
+    let binary = "";
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+      binary += String.fromCharCode.apply(null, Array.from(bytes.subarray(i, i + chunk)));
+    }
+    const base64 = btoa(binary);
+
+    try {
+      const path = await pasteImage(channelId, base64, file.type);
+      const ta = inputRef.current;
+      if (!ta) {
+        setText((prev) => prev + path);
+        return;
+      }
+      const start = ta.selectionStart ?? text.length;
+      const end = ta.selectionEnd ?? text.length;
+      const next = text.slice(0, start) + path + text.slice(end);
+      setText(next);
+      draftText.set(channelId, next);
+      // Restore the caret just after the inserted path.
+      requestAnimationFrame(() => {
+        if (!inputRef.current) return;
+        const pos = start + path.length;
+        inputRef.current.selectionStart = pos;
+        inputRef.current.selectionEnd = pos;
+        inputRef.current.focus();
+      });
+    } catch (err) {
+      console.error("[paste-image] upload failed", err);
+    }
+  }, [channelId, text]);
 
   const handleStop = useCallback(async () => {
     setStoppedOptimistic(true);
@@ -834,6 +887,7 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
         value={text}
         onChange={handleChange}
         onKeyDown={handleKeyDown}
+        onPaste={handlePaste}
         placeholder={`Ask Loop anything, / for commands, @ for files${shortcuts.length > 0 ? ", # for shortcuts" : ""} — ${navigator.platform.includes("Mac") ? "⌘" : "Ctrl+"}Enter to ${sendMode === "interrupt" ? "queue" : "interrupt"}`}
         rows={3}
         disabled={sending}
