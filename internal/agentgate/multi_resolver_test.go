@@ -80,8 +80,48 @@ func TestMultiManagerRemove(t *testing.T) {
 
 	require.ErrorIs(t, r.Resolve("wanted", DecisionOnce, ""), ErrNoSuchRequest)
 
+	// Shutdown wiped the Manager's pending map too.
+	m.mu.Lock()
+	require.Empty(t, m.pending)
+	m.mu.Unlock()
+
 	// Remove of unknown id is a no-op.
 	r.Remove("does-not-exist")
+}
+
+// TestMultiManagerRemoveDrainsLivePending exercises the end-to-end shutdown
+// path: a live Request goroutine blocked on a click receives a deny resolution
+// when Remove tears down its container, and bot.RemoveApproval is invoked so
+// the FE gets a gate.approval_resolved broadcast.
+func TestMultiManagerRemoveDrainsLivePending(t *testing.T) {
+	fb := &fakeBot{}
+	m := NewManager(&fakeRouter{bot: fb}, types.RateLimits{})
+	m.idGen = func() string { return "live-id" }
+
+	r := NewMultiManagerResolver()
+	r.Add("c1", m)
+
+	outcome := make(chan Outcome, 1)
+	go func() {
+		outcome <- m.Request(context.Background(), "ch", ApprovalRequest{Target: "git push"})
+	}()
+
+	require.Eventually(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		_, ok := m.pending["live-id"]
+		return ok
+	}, time.Second, 5*time.Millisecond)
+
+	r.Remove("c1")
+
+	got := <-outcome
+	require.Equal(t, types.DecisionDeny, got.Decision)
+	require.Equal(t, "container-gone", got.Actor)
+
+	fb.mu.Lock()
+	defer fb.mu.Unlock()
+	require.Equal(t, 1, fb.removeCnt)
 }
 
 func TestMultiManagerAddWithTokenByTokenRoundTrip(t *testing.T) {

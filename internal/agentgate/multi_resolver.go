@@ -90,16 +90,24 @@ func (r *MultiManagerResolver) ByToken(token string) (string, *Manager, string, 
 }
 
 // Remove drops the Manager for containerID, along with any associated token
-// and channelID. Safe to call for an unknown ID.
+// and channelID. Safe to call for an unknown ID. The Manager's Shutdown is
+// invoked first so any pending approvals get a deny resolution + a
+// gate.approval_resolved broadcast — without this, the in-container HTTP
+// caller is already gone (its socket is dead) but the FE/electron bouncer
+// has no way to learn the request was abandoned.
 func (r *MultiManagerResolver) Remove(containerID string) {
 	r.mu.Lock()
-	defer r.mu.Unlock()
+	mgr := r.managers[containerID]
 	delete(r.managers, containerID)
 	delete(r.channels, containerID)
 	for tok, cid := range r.tokens {
 		if cid == containerID {
 			delete(r.tokens, tok)
 		}
+	}
+	r.mu.Unlock()
+	if mgr != nil {
+		mgr.Shutdown()
 	}
 }
 
