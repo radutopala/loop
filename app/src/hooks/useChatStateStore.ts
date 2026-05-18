@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { listPendingApprovals } from "../api/gate";
 import type {
   AgentActivityData,
   AgentStatusData,
@@ -109,6 +110,74 @@ export function useChatStateStore({
       }
     }
   }, [channels]);
+
+  // Pull the gate's current pending-approval list and reconcile both the
+  // renderer's gateApprovals map and the electron-main dock-bouncer set
+  // against it. Called from the WS onOpen callback so a reconnect (post
+  // daemon restart, post network blip, post page reload) doesn't leave
+  // either side desynced from the agentgate Managers.
+  //
+  // - Locally-known approvals with no matching server-side pending entry
+  //   are dropped (treated as a deny event with actor="rehydrate").
+  // - Server-side pendings we hadn't recorded yet are added.
+  // - The full valid req_id set is then handed to electron-main so any
+  //   bouncer entry that no longer corresponds to a live approval gets
+  //   cleared — this is the actual fix for orphaned dock-bounce loops.
+  const rehydrateGateApprovals = useCallback(async () => {
+    let approvals;
+    try {
+      approvals = await listPendingApprovals();
+    } catch (err) {
+      console.warn("[rehydrate] listPendingApprovals failed:", err);
+      return;
+    }
+    const valid = new Set<string>(approvals.map((a) => a.req_id));
+
+    const now = Date.now();
+    // 1. Synthesize a resolved event for any local entry missing from snapshot.
+    for (const [channelId, state] of storeRef.current) {
+      for (const entry of Object.values(state.gateApprovals)) {
+        if (!valid.has(entry.req_id)) {
+          const event: WSEvent = {
+            type: "gate.approval_resolved",
+            channel_id: channelId,
+            data: { req_id: entry.req_id, decision: "deny", actor: "rehydrate" },
+            timestamp: now,
+          };
+          applyEvent(state, event);
+          if (channelId === selectedIdRef.current) {
+            for (const listener of chatListenersRef.current) listener(event);
+          }
+        }
+      }
+    }
+
+    // 2. Add any server-side pendings we didn't have.
+    for (const pa of approvals) {
+      let state = storeRef.current.get(pa.channel_id);
+      if (!state) {
+        state = createEmptyState();
+        storeRef.current.set(pa.channel_id, state);
+      }
+      const already = Object.values(state.gateApprovals).some(
+        (v) => v.req_id === pa.req_id,
+      );
+      if (already) continue;
+      const event: WSEvent = {
+        type: "gate.approval_requested",
+        channel_id: pa.channel_id,
+        data: pa,
+        timestamp: now,
+      };
+      applyEvent(state, event);
+      if (pa.channel_id === selectedIdRef.current) {
+        for (const listener of chatListenersRef.current) listener(event);
+      }
+    }
+
+    // 3. Reconcile the dock-bouncer set.
+    window.loopAPI?.reconcileApprovals?.([...valid]);
+  }, []);
 
   // Compute subscription set: selectedId + all channels where isRunning.
   const subscribeChannels = useCallback(
@@ -298,6 +367,13 @@ export function useChatStateStore({
         ws.send(
           JSON.stringify({ type: "subscribe", channels: [...set] }),
         );
+        // After a (re)connect the renderer's in-memory gateApprovals and the
+        // electron-main dock-bouncer set may both be stale: WS drops + page
+        // reloads don't replay missed gate.approval_requested/_resolved
+        // events. Snapshot the gate to (a) refill gateApprovals per channel
+        // so cards reappear and (b) hand electron-main the canonical req_id
+        // list so it can drop bouncer entries with no live request.
+        rehydrateGateApprovals();
       },
       // eslint-disable-next-line react-hooks/exhaustive-deps
       [],

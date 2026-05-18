@@ -306,6 +306,7 @@ func (s *ServerSuite) SetupTest() {
 	s.mux.HandleFunc("DELETE /api/workflows/runs/{id}", s.srv.handleDeleteWorkflowRun)
 	s.mux.HandleFunc("POST /api/workflows/runs/{id}/retry", s.srv.handleRetryWorkflowRun)
 	s.mux.HandleFunc("POST /api/workflows/runs/{id}/resume", s.srv.handleResumeWorkflowRun)
+	s.mux.HandleFunc("GET /api/gate/approvals", s.srv.handleListGateApprovals)
 	s.mux.HandleFunc("POST /api/gate/approvals/{id}", s.srv.handleResolveGateApproval)
 	s.mux.HandleFunc("POST /api/gate/container-approval", s.srv.handleContainerApproval)
 	s.mux.HandleFunc("GET /api/workflows", s.srv.handleListWorkflows)

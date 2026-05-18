@@ -313,13 +313,53 @@ func (s *ApprovalSuite) TestShutdownIgnoresAlreadyResolvedChannel() {
 	ch := make(chan resolution, 1)
 	ch <- resolution{decision: DecisionOnce, actor: "preempt"} // saturate buffer
 	m.mu.Lock()
-	m.pending["x"] = ch
+	m.pending["x"] = &pendingEntry{ch: ch}
 	m.mu.Unlock()
 
 	m.Shutdown() // must not block on the full channel
 	m.mu.Lock()
 	require.Empty(s.T(), m.pending)
 	m.mu.Unlock()
+}
+
+// --- ListPending ---
+
+func (s *ApprovalSuite) TestListPendingEmpty() {
+	m := s.newManager(&fakeBot{}, types.RateLimits{})
+	require.Empty(s.T(), m.ListPending())
+}
+
+func (s *ApprovalSuite) TestListPendingReturnsSnapshot() {
+	bot := &fakeBot{}
+	m := s.newManager(bot, types.RateLimits{})
+
+	outCh := s.request(m, ApprovalRequest{
+		ID:      "p-1",
+		Kind:    "exec",
+		Target:  "git push",
+		Source:  "terminal:leaf-7",
+		Message: "Allow exec?",
+		Details: map[string]string{"cwd": "/work"},
+	})
+	s.waitForPending(m, 1)
+
+	got := m.ListPending()
+	require.Len(s.T(), got, 1)
+	require.Equal(s.T(), PendingApproval{
+		ReqID:     "p-1",
+		ChannelID: "chan1",
+		Kind:      "exec",
+		Target:    "git push",
+		Source:    "terminal:leaf-7",
+		Message:   "Allow exec?",
+		Details:   map[string]string{"cwd": "/work"},
+	}, got[0])
+
+	require.NoError(s.T(), m.Resolve("p-1", DecisionOnce, "u"))
+	<-outCh
+
+	// After resolve, snapshot is empty again.
+	require.Empty(s.T(), m.ListPending())
 }
 
 // --- ID generation ---

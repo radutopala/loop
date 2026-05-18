@@ -73,6 +73,20 @@ const (
 // already resolved).
 var ErrNoSuchRequest = errors.New("agentgate: no pending approval for request ID")
 
+// PendingApproval is the read-only view of an in-flight approval, returned by
+// Manager.ListPending. The FE uses these to rehydrate gateApprovals after a
+// WS reconnect or renderer reload, and the electron-main bouncer uses the
+// req_id set to reconcile its dock-bounce list.
+type PendingApproval struct {
+	ReqID     string
+	ChannelID string
+	Kind      string
+	Target    string
+	Source    string
+	Message   string
+	Details   map[string]string
+}
+
 // Manager coordinates approval prompts, per-container decision cache, and
 // rate limits. One Manager per container; lifecycle = container lifecycle.
 type Manager struct {
@@ -83,10 +97,19 @@ type Manager struct {
 
 	mu           sync.Mutex
 	cache        map[string]types.Decision
-	pending      map[string]chan resolution
+	pending      map[string]*pendingEntry
 	totalPrompts int
 	recent       []time.Time
 	totalTripped bool
+}
+
+// pendingEntry is the internal record of an in-flight approval — the
+// resolution channel plus the metadata needed to surface the request to a
+// reconnecting FE via ListPending.
+type pendingEntry struct {
+	ch        chan resolution
+	channelID string
+	req       ApprovalRequest
 }
 
 type resolution struct {
@@ -102,7 +125,7 @@ func NewManager(bots BotRouter, limits types.RateLimits) *Manager {
 		now:     time.Now,
 		idGen:   randomID,
 		cache:   map[string]types.Decision{},
-		pending: map[string]chan resolution{},
+		pending: map[string]*pendingEntry{},
 	}
 }
 
@@ -128,9 +151,10 @@ func (m *Manager) Request(ctx context.Context, channelID string, req ApprovalReq
 	}
 	req.ID = id
 	ch := make(chan resolution, 1)
+	entry := &pendingEntry{ch: ch, channelID: channelID, req: req}
 
 	m.mu.Lock()
-	m.pending[id] = ch
+	m.pending[id] = entry
 	m.totalPrompts++
 	m.mu.Unlock()
 
@@ -150,7 +174,7 @@ func (m *Manager) Request(ctx context.Context, channelID string, req ApprovalReq
 	}
 
 	select {
-	case r := <-ch:
+	case r := <-entry.ch:
 		_ = bot.RemoveApproval(ctx, channelID, msgID)
 		return m.applyResolution(req.CacheKey, r)
 	case <-ctx.Done():
@@ -175,11 +199,11 @@ func (m *Manager) Request(ctx context.Context, channelID string, req ApprovalReq
 func (m *Manager) Shutdown() {
 	m.mu.Lock()
 	pending := m.pending
-	m.pending = map[string]chan resolution{}
+	m.pending = map[string]*pendingEntry{}
 	m.mu.Unlock()
-	for _, ch := range pending {
+	for _, entry := range pending {
 		select {
-		case ch <- resolution{decision: DecisionDeny, actor: "container-gone"}:
+		case entry.ch <- resolution{decision: DecisionDeny, actor: "container-gone"}:
 		default:
 		}
 	}
@@ -194,7 +218,7 @@ func (m *Manager) Resolve(reqID, decision, actorID string) error {
 		return fmt.Errorf("agentgate: unknown decision %q", decision)
 	}
 	m.mu.Lock()
-	ch, ok := m.pending[reqID]
+	entry, ok := m.pending[reqID]
 	if ok {
 		delete(m.pending, reqID)
 	}
@@ -202,8 +226,29 @@ func (m *Manager) Resolve(reqID, decision, actorID string) error {
 	if !ok {
 		return ErrNoSuchRequest
 	}
-	ch <- resolution{decision: decision, actor: actorID}
+	entry.ch <- resolution{decision: decision, actor: actorID}
 	return nil
+}
+
+// ListPending returns a snapshot of all in-flight approvals on this Manager.
+// Result is a copy, safe to use without holding any lock. Order is not
+// stable across calls.
+func (m *Manager) ListPending() []PendingApproval {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	out := make([]PendingApproval, 0, len(m.pending))
+	for id, e := range m.pending {
+		out = append(out, PendingApproval{
+			ReqID:     id,
+			ChannelID: e.channelID,
+			Kind:      e.req.Kind,
+			Target:    e.req.Target,
+			Source:    e.req.Source,
+			Message:   e.req.Message,
+			Details:   e.req.Details,
+		})
+	}
+	return out
 }
 
 // checkLimits enforces rate caps. On block, returns (denial-outcome, false).

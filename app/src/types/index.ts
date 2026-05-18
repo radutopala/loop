@@ -302,6 +302,10 @@ declare global {
       notifyTurnEnd?: () => void;
       notifyApprovalNeeded?: (reqId?: string) => void;
       notifyApprovalResolved?: (reqId?: string) => void;
+      /** Replace the dock-bouncer's pending-approval set with this canonical
+       *  list of req_ids. Called on WS reconnect so the renderer's view of
+       *  reality wins over any stale entries left over from a prior session. */
+      reconcileApprovals?: (reqIds: string[]) => void;
       setTheme?: (name: string) => void;
       onThemeChanged?: (callback: (name: string) => void) => void;
       openExternal?: (url: string) => Promise<void>;
