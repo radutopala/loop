@@ -267,9 +267,9 @@ export const midnightColors: ColorPalette = {
   islandBorder: "1px solid rgba(255, 255, 255, 0.06)",
 };
 
-// VSCode — same accents/buttons as the default dark theme, only the panel
+// Dark+ — same accents/buttons as the default dark theme, only the panel
 // bg tokens are overridden with VSCode dark+ neutrals.
-export const vscodeColors: ColorPalette = {
+export const darkPlusColors: ColorPalette = {
   ...darkColors,
   bg: "#1f1f1f",
   surface: "#2a2a2a",
@@ -284,7 +284,7 @@ export const builtinThemes: Record<string, ColorPalette> = {
   light: lightColors,
   claude: claudeColors,
   midnight: midnightColors,
-  vscode: vscodeColors,
+  "dark+": darkPlusColors,
 };
 
 // Backward compat: keep `colors` as default export for gradual migration
