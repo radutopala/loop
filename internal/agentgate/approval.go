@@ -159,6 +159,32 @@ func (m *Manager) Request(ctx context.Context, channelID string, req ApprovalReq
 	}
 }
 
+// Shutdown drains every pending approval by pushing a deny resolution onto
+// its channel. Each blocked Request goroutine then runs its own deferred
+// cleanup — including bot.RemoveApproval, which broadcasts
+// gate.approval_resolved so the desktop UI can dismiss the card and the
+// electron-main dock-bounce loop can drop the request id.
+//
+// Called by MultiManagerResolver.Remove on container teardown. Without this
+// path, a container that exits while a prompt is open leaves the FE/electron
+// state stuck on a phantom approval until the user quits the app.
+//
+// Sends are non-blocking via select/default because each pending channel is
+// buffered (cap 1) and may already hold a pending resolution from a
+// concurrent click.
+func (m *Manager) Shutdown() {
+	m.mu.Lock()
+	pending := m.pending
+	m.pending = map[string]chan resolution{}
+	m.mu.Unlock()
+	for _, ch := range pending {
+		select {
+		case ch <- resolution{decision: DecisionDeny, actor: "container-gone"}:
+		default:
+		}
+	}
+}
+
 // Resolve records a user decision for reqID. decision must be one of
 // DecisionOnce, DecisionSession, DecisionDeny, DecisionDenySession.
 func (m *Manager) Resolve(reqID, decision, actorID string) error {

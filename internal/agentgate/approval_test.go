@@ -269,6 +269,59 @@ func (s *ApprovalSuite) TestContextCancelReturnsDeny() {
 	require.Equal(s.T(), 1, bot.removeCnt) // still removes the prompt
 }
 
+// --- Shutdown ---
+
+func (s *ApprovalSuite) TestShutdownDrainsPendingAndBroadcastsResolve() {
+	bot := &fakeBot{}
+	m := s.newManager(bot, types.RateLimits{})
+
+	outCh1 := s.request(m, ApprovalRequest{ID: "a"})
+	outCh2 := s.request(m, ApprovalRequest{ID: "b"})
+	s.waitForPending(m, 2)
+
+	m.Shutdown()
+
+	out1 := <-outCh1
+	out2 := <-outCh2
+	require.Equal(s.T(), types.DecisionDeny, out1.Decision)
+	require.Equal(s.T(), "container-gone", out1.Actor)
+	require.Equal(s.T(), types.DecisionDeny, out2.Decision)
+	require.Equal(s.T(), "container-gone", out2.Actor)
+
+	// Both prompts had their bot.RemoveApproval called, fanning out the
+	// gate.approval_resolved broadcast that clears the FE bouncer.
+	require.Equal(s.T(), 2, bot.removeCnt)
+
+	// pending map is reset so a follow-up Shutdown is a no-op.
+	m.mu.Lock()
+	require.Empty(s.T(), m.pending)
+	m.mu.Unlock()
+}
+
+func (s *ApprovalSuite) TestShutdownEmptyIsNoop() {
+	bot := &fakeBot{}
+	m := s.newManager(bot, types.RateLimits{})
+	m.Shutdown()
+	require.Equal(s.T(), 0, bot.removeCnt)
+}
+
+// TestShutdownIgnoresAlreadyResolvedChannel covers the select/default branch:
+// a pending entry whose buffered slot is already taken by a concurrent Resolve
+// must not block Shutdown.
+func (s *ApprovalSuite) TestShutdownIgnoresAlreadyResolvedChannel() {
+	m := s.newManager(&fakeBot{}, types.RateLimits{})
+	ch := make(chan resolution, 1)
+	ch <- resolution{decision: DecisionOnce, actor: "preempt"} // saturate buffer
+	m.mu.Lock()
+	m.pending["x"] = ch
+	m.mu.Unlock()
+
+	m.Shutdown() // must not block on the full channel
+	m.mu.Lock()
+	require.Empty(s.T(), m.pending)
+	m.mu.Unlock()
+}
+
 // --- ID generation ---
 
 func (s *ApprovalSuite) TestRequestIDAssignedWhenEmpty() {
