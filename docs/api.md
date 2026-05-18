@@ -891,9 +891,11 @@ Read a file's contents.
 
 **Response (200):**
 - **Text files:** `Content-Type: text/plain; charset=utf-8` with file contents as body.
-- **Binary files:** Empty body with `X-File-Binary: true` header and `Content-Length` set.
+- **Image files** (`.png`, `.jpg`/`.jpeg`, `.gif`, `.webp`): `Content-Type` set to the matching `image/*` MIME with the raw bytes as the body. No `X-File-Binary` header — the desktop app uses this endpoint directly as `<img src>` so the browser handles caching and decoding.
+- **Other binary files:** Empty body with `X-File-Binary: true` header and `Content-Length` set.
 
 **Behavior notes:**
+- The image branch is matched on extension and runs before null-byte binary detection.
 - Binary detection checks the first 512 bytes for null bytes.
 - Maximum file size is **5 MB** (5,242,880 bytes). Larger files return `413`.
 - Path validation rejects absolute paths, `..` traversal, and symlink escapes.
@@ -1029,6 +1031,40 @@ Fuzzy search for files across the channel's primary `dir_path` and any `extra_di
 - Walk stops once `limit` matches have accumulated across all roots.
 
 **Errors:** `400` if the channel's directory cannot be resolved.
+
+---
+
+### `POST /api/channels/{id}/paste-image`
+
+Persist an image pasted into the chat input. The desktop app calls this from `ChatInput`'s `onPaste` handler whenever the clipboard contains an image file (see [Chat: Paste Images](chat.md#paste-images)).
+
+**Request body:**
+```json
+{
+  "data": "<base64-encoded image bytes>",
+  "media_type": "image/png"
+}
+```
+
+| Field        | Type   | Required | Description |
+|--------------|--------|----------|-------------|
+| `data`       | string | yes      | Standard base64 (`+/=` alphabet) of the raw image bytes. |
+| `media_type` | string | yes      | One of `image/png`, `image/jpeg`, `image/gif`, `image/webp`. |
+
+**Response (200):**
+```json
+{"path": "/Users/me/dev/project/.loop/pastes/paste-20260518-112528-66a7b575.png"}
+```
+
+The returned `path` is **absolute**, so the agent's built-in `Read` tool (which requires absolute paths) can pick the file up directly. The renderer inserts the path at the caret position in the chat input.
+
+**Behavior notes:**
+- The file is written under `<workspace>/.loop/pastes/`; the directory is created with `MkdirAll` on first paste. `.loop/` should be gitignored.
+- Filename format: `paste-<YYYYMMDD>-<HHMMSS>-<8-hex>.<ext>` (UTC timestamp, 4-byte random suffix). Collisions within the same second are avoided by the random suffix.
+- Extension is derived from `media_type` — `.jpg` for `image/jpeg`, `.png`/`.gif`/`.webp` otherwise.
+- Request body is limited to **5 MB** of raw image bytes after base64 decoding. Larger payloads return `413`.
+
+**Errors:** `400` for malformed JSON, missing `data`, unsupported `media_type`, or invalid base64. `404` if the channel does not exist. `413` if the image exceeds 5 MB. `501` if file operations are not configured. `500` if the filesystem write fails.
 
 ---
 

@@ -278,6 +278,12 @@ While the agent is running, a small chip beside the send button selects what `En
 
 When the agent is **not** running, the send mode is irrelevant — every send is just a normal message.
 
+### Paste Images
+
+When the clipboard contains an image (file kind, `image/png|jpeg|gif|webp`), `ChatInput`'s `onPaste` handler intercepts the paste, base64-encodes the bytes, and POSTs them to [`/api/channels/{id}/paste-image`](api.md#post-apichannelsidpaste-image). The backend writes the image under `<workspace>/.loop/pastes/paste-<ts>-<rand>.<ext>` and returns the **absolute** path. The renderer inserts that path at the caret position so the next send carries it verbatim — the agent's built-in `Read` tool then picks the file up (it requires absolute paths). Non-image clipboard content falls through to the default textarea paste.
+
+This keeps the message body plain text — no multimodal payload is sent over the wire — and reuses the [editor's inline image rendering](editor.md#image-files) when the pasted path is clicked in the timeline.
+
 ### Quote Reply
 
 Clicking a quote button on a bot message stages it as a reply target above the input. The next send prepends the bot's content as block-quoted lines (`> …`) before the new prompt, then clears the quote. The staged quote can be dismissed without sending via the `×` button next to the preview.
