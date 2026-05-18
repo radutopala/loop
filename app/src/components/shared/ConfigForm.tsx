@@ -929,6 +929,8 @@ function ObjectMapKVProp({ label, value, onChange, colors, inputStyle }: {
 // Theme Picker (x-widget: "theme-picker")
 // ---------------------------------------------------------------------------
 
+const themeDisplayNames: Record<string, string> = { vscode: "VSCode" };
+
 function ThemePickerFieldRow({ field, value, onChange, colors }: {
   field: FieldDef; value: string; onChange: (v: string) => void; colors: ColorPalette;
 }) {
@@ -970,7 +972,7 @@ function ThemePickerFieldRow({ field, value, onChange, colors }: {
                 backgroundColor: colors.surface,
                 borderTop: `1px solid ${isSelected ? colors.active : colors.border}`,
               }}>
-                {t.charAt(0).toUpperCase() + t.slice(1)}
+                {themeDisplayNames[t] ?? t.charAt(0).toUpperCase() + t.slice(1)}
               </div>
             </button>
           );

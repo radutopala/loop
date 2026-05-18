@@ -215,11 +215,65 @@ export const claudeColors: ColorPalette = {
   islandBorder: "1px solid rgba(0, 0, 0, 0.05)",
 };
 
+// VSCode-style slate palette — cool dark grays with a blue accent, modelled on
+// the screenshot the user pasted (lighter than GitHub Dark; closer to Cursor).
+export const vscodeColors: ColorPalette = {
+  bg: "#22272e",
+  surface: "#2d333b",
+  sidebar: "#22272e",
+  sidebarNav: "#10141a",
+  border: "#2d333b",
+  selectedBg: "#373e47",
+  hoverBg: "#3a414b",
+  inputBorder: "#373e47",
+  text: "#cdd9e5",
+  textLight: "#e6edf3",
+  textMuted: "#909dab",
+  textDim: "#768390",
+  textDisabled: "#545d68",
+  cursor: "#cdd9e5",
+  active: "#539bf5",
+  error: "#f47067",
+  warning: "#daaa3f",
+  white: "#fff",
+  userBubble: "#2d333b",
+  codeBg: "rgba(205,217,229,0.08)",
+  codeBlockBg: "rgba(0,0,0,0.25)",
+  scrollThumb: "rgba(205,217,229,0.15)",
+  scrollThumbHover: "rgba(205,217,229,0.25)",
+  overlay: "rgba(0, 0, 0, 0.5)",
+  shadow: "rgba(0, 0, 0, 0.4)",
+  errorBannerBg: "#3b1e1c",
+  errorBannerText: "#ff9492",
+  dangerText: "#f47067",
+  dangerBg: "rgba(244, 112, 103, 0.15)",
+  dangerHoverBg: "#f47067",
+  pillActiveBg: "#316dca",
+  pillActiveText: "#fff",
+  hoverAlpha: "rgba(205,217,229,0.08)",
+  panelLabelBg: "rgba(205,217,229,0.05)",
+  dirSelectedBg: "rgba(83, 155, 245, 0.15)",
+  diffAddText: "#57ab5a",
+  diffDelText: "#f47067",
+  diffAddBg: "rgba(70, 149, 74, 0.15)",
+  diffAddNumBg: "rgba(70, 149, 74, 0.3)",
+  diffDelBg: "rgba(229, 83, 75, 0.15)",
+  diffDelNumBg: "rgba(229, 83, 75, 0.3)",
+  diffHunkBg: "rgba(83, 155, 245, 0.1)",
+  isDark: true,
+  canvas: "#10141a",
+  islandRadius: 10,
+  islandGap: 6,
+  islandShadow: "0 2px 8px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.04)",
+  islandBorder: "1px solid rgba(255, 255, 255, 0.06)",
+};
+
 // Built-in theme registry — extensible at runtime with custom themes
 export const builtinThemes: Record<string, ColorPalette> = {
   dark: darkColors,
   light: lightColors,
   claude: claudeColors,
+  vscode: vscodeColors,
 };
 
 // Backward compat: keep `colors` as default export for gradual migration
