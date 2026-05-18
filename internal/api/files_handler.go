@@ -441,6 +441,15 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Image files: serve the bytes with a real Content-Type so the editor's
+	// <img src=...> branch can render them directly.
+	if mime := imageMIMEByExt(absPath); mime != "" {
+		w.Header().Set("Content-Type", mime)
+		w.Header().Set("Content-Length", fmt.Sprintf("%d", info.Size()))
+		w.Write(data) //nolint:errcheck
+		return
+	}
+
 	// Binary detection: check first 512 bytes for null bytes.
 	checkLen := len(data)
 	if checkLen > 512 {
@@ -457,6 +466,23 @@ func (s *Server) handleReadFile(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 	w.Write(data) //nolint:errcheck
+}
+
+// imageMIMEByExt returns the MIME type for known image extensions, or "" for
+// non-image files. Extension match only — we don't sniff content because the
+// editor will trust whatever Content-Type the browser receives.
+func imageMIMEByExt(path string) string {
+	switch strings.ToLower(filepath.Ext(path)) {
+	case ".png":
+		return "image/png"
+	case ".jpg", ".jpeg":
+		return "image/jpeg"
+	case ".gif":
+		return "image/gif"
+	case ".webp":
+		return "image/webp"
+	}
+	return ""
 }
 
 type writeFileResponse struct {

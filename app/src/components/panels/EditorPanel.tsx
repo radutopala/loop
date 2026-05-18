@@ -30,6 +30,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
     fileContent,
     isBinary,
     binarySize,
+    imageURL,
     loading,
     error,
     dirtyTabs,
@@ -230,6 +231,7 @@ export function EditorPanel({ dirPath, branch, editorState, embedded, ...panelPr
           onEditorMenuClose={() => setEditorMenu(null)}
           onEditorContextMenu={handleEditorContextMenu}
           previewHtml={previewHtml}
+          imageURL={imageURL}
         />
       </div>
     </FilePanel>
