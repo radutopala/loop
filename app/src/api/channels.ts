@@ -201,6 +201,24 @@ export async function sendMessage(
   if (!res.ok) throw new Error(`Failed to send message: ${res.statusText}`);
 }
 
+export async function pasteImage(
+  channelId: string,
+  base64Data: string,
+  mediaType: string,
+): Promise<string> {
+  const res = await fetch(
+    `${getApiUrl()}/api/channels/${encodeURIComponent(channelId)}/paste-image`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ data: base64Data, media_type: mediaType }),
+    },
+  );
+  if (!res.ok) throw new Error(`Failed to paste image: ${res.statusText}`);
+  const data: { path: string } = await res.json();
+  return data.path;
+}
+
 export async function deleteQueuedMessage(
   channelId: string,
   msgId: string,
