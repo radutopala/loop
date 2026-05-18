@@ -213,6 +213,14 @@ All operations go through the Go backend API for security.
 
 The backend checks the first 512 bytes for null bytes. If detected, the response includes `X-File-Binary: true` header and the editor shows a "Binary file" message instead of attempting to render.
 
+### Image Files
+
+For files whose extension is `.png`, `.jpg`/`.jpeg`, `.gif`, or `.webp`, the backend skips the binary header and returns the raw bytes with a real `image/*` `Content-Type` (see [API: `GET /api/channels/{id}/file`](api.md#get-apichannelsidfile)). In the editor, `useEditorState` recognises the extension at every fetch site — initial mount, tab switch, refresh tree, window focus, and agent-driven refresh — and skips the text fetch entirely. Instead it exposes an `imageURL` pointing back at the same endpoint; `CodeEditor` renders it as `<img src={imageURL}>` (centered, `object-fit: contain`, scrollable container) in place of the CodeMirror surface.
+
+The URL carries an `imageVersionRef` cache-buster (`?t=<n>`). The counter bumps when the agent overwrites the file (`tool.use` for `Write`/`Edit`/`MultiEdit`), when the window regains focus, and on the manual refresh button — forcing the browser to re-fetch even though the URL would otherwise be byte-identical. `imageURL` is cleared on close or when switching to a non-image tab so the placeholder slot doesn't leak across tabs.
+
+Pairs with [Chat: Paste Images](chat.md#paste-images) — pasted images land under `.loop/pastes/` and their path renders as a clickable [file link](chat.md#file-links); clicking opens this image tab.
+
 ### Maximum File Size
 
 The backend enforces a **5MB** maximum file size (`maxFileSize = 5 * 1024 * 1024`). Files exceeding this limit return an error. The editor displays file sizes formatted as B, KB, or MB.
