@@ -23,6 +23,7 @@ contextBridge.exposeInMainWorld("loopAPI", {
   notifyTurnEnd: () => ipcRenderer.send("turn-ended"),
   notifyApprovalNeeded: (reqId) => ipcRenderer.send("approval-needed", reqId),
   notifyApprovalResolved: (reqId) => ipcRenderer.send("approval-resolved", reqId),
+  reconcileApprovals: (reqIds) => ipcRenderer.send("reconcile-approvals", reqIds),
   setTheme: (name) => ipcRenderer.send("set-theme", name),
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
   onThemeChanged: (callback) => {

@@ -480,6 +480,7 @@ func (a *app) serve() error {
 	if gateResolver != nil {
 		apiSrv.SetApprovalResolver(gateResolver)
 		apiSrv.SetContainerApprovalRouter(containerApprovalAdapter{gateResolver})
+		apiSrv.SetPendingApprovalLister(gateResolver)
 	}
 
 	execClient, err := a.newDockerExecClient()

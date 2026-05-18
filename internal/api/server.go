@@ -131,6 +131,7 @@ type Server struct {
 	ticketStoreOpener         func(dir string) TicketStore                                 // injectable for testing
 	approvalResolver          bot.ApprovalResolver                                         // gate approval dispatcher
 	containerApprovalRouter   ContainerApprovalRouter                                      // per-container bearer-token → Manager lookup
+	pendingApprovals          PendingApprovalLister                                        // snapshot of in-flight approvals for FE rehydration
 	auditDirResolver          AuditDirResolver                                             // per-channel host path to the gate audit jsonl dir
 	githubLookup              GitHubLookup                                                 // resolves PR for a channel's branch via `gh`
 
@@ -257,6 +258,12 @@ func (s *Server) SetContainerApprovalRouter(r ContainerApprovalRouter) {
 	s.containerApprovalRouter = r
 }
 
+// SetPendingApprovalLister wires the snapshot source used by
+// GET /api/gate/approvals. Typically backed by agentgate.MultiManagerResolver.
+func (s *Server) SetPendingApprovalLister(l PendingApprovalLister) {
+	s.pendingApprovals = l
+}
+
 // SetAuditDirResolver wires the per-channel gate-audit-dir resolver used by
 // /api/channels/{id}/audit endpoints. Typically backed by *container.DockerRunner.
 func (s *Server) SetAuditDirResolver(r AuditDirResolver) {
@@ -381,6 +388,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("DELETE /api/workflows/runs/{id}", s.handleDeleteWorkflowRun)
 	mux.HandleFunc("POST /api/workflows/runs/{id}/retry", s.handleRetryWorkflowRun)
 	mux.HandleFunc("POST /api/workflows/runs/{id}/resume", s.handleResumeWorkflowRun)
+	mux.HandleFunc("GET /api/gate/approvals", s.handleListGateApprovals)
 	mux.HandleFunc("POST /api/gate/approvals/{id}", s.handleResolveGateApproval)
 	mux.HandleFunc("POST /api/gate/container-approval", s.handleContainerApproval)
 	mux.HandleFunc("GET /api/workflows", s.handleListWorkflows)

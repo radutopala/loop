@@ -291,3 +291,75 @@ func (s *ServerSuite) TestSetContainerApprovalRouter() {
 func bytesReader(s string) *bytes.Reader {
 	return bytes.NewReader([]byte(s))
 }
+
+// ----------------------------------------------------------------------------
+// GET /api/gate/approvals
+// ----------------------------------------------------------------------------
+
+type fakePendingLister struct {
+	entries []agentgate.ContainerPendingApproval
+}
+
+func (f *fakePendingLister) ListPending() []agentgate.ContainerPendingApproval {
+	return f.entries
+}
+
+func (s *ServerSuite) TestListGateApprovalsNotConfigured() {
+	rec := s.testRequest(http.MethodGet, "/api/gate/approvals", "")
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
+func (s *ServerSuite) TestListGateApprovalsEmpty() {
+	s.srv.SetPendingApprovalLister(&fakePendingLister{})
+	rec := s.testRequest(http.MethodGet, "/api/gate/approvals", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp pendingApprovalsResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.NotNil(s.T(), resp.Approvals) // [] not null — FE iterates unconditionally
+	require.Empty(s.T(), resp.Approvals)
+}
+
+func (s *ServerSuite) TestListGateApprovalsEncodesFullEntry() {
+	s.srv.SetPendingApprovalLister(&fakePendingLister{
+		entries: []agentgate.ContainerPendingApproval{
+			{
+				ContainerID: "cid-1",
+				PendingApproval: agentgate.PendingApproval{
+					ReqID:     "bd446d95",
+					ChannelID: "ab6370970542",
+					Kind:      "exec",
+					Target:    "git push origin v2026.5.32",
+					Source:    "terminal:leaf-7",
+					Message:   "Allow exec?",
+					Details:   map[string]string{"cwd": "/work"},
+				},
+			},
+		},
+	})
+	rec := s.testRequest(http.MethodGet, "/api/gate/approvals", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	require.Equal(s.T(), "application/json", rec.Header().Get("Content-Type"))
+
+	var resp pendingApprovalsResponse
+	require.NoError(s.T(), json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Len(s.T(), resp.Approvals, 1)
+	require.Equal(s.T(), pendingApprovalJSON{
+		ReqID:       "bd446d95",
+		ContainerID: "cid-1",
+		ChannelID:   "ab6370970542",
+		Kind:        "exec",
+		Target:      "git push origin v2026.5.32",
+		Source:      "terminal:leaf-7",
+		Message:     "Allow exec?",
+		Details:     map[string]string{"cwd": "/work"},
+	}, resp.Approvals[0])
+}
+
+func (s *ServerSuite) TestSetPendingApprovalLister() {
+	srv := nilServer()
+	require.Nil(s.T(), srv.pendingApprovals)
+	l := &fakePendingLister{}
+	srv.SetPendingApprovalLister(l)
+	require.Same(s.T(), l, srv.pendingApprovals)
+}

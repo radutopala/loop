@@ -111,6 +111,46 @@ func (r *MultiManagerResolver) Remove(containerID string) {
 	}
 }
 
+// ContainerPendingApproval is a PendingApproval annotated with the
+// containerID under which the owning Manager is registered. Returned by
+// MultiManagerResolver.ListPending so callers (the /api/gate/approvals
+// handler, ultimately the FE/electron-main) can correlate pending approvals
+// with the container that produced them.
+type ContainerPendingApproval struct {
+	ContainerID string
+	PendingApproval
+}
+
+// ListPending returns every in-flight approval across every registered
+// Manager. The list is a snapshot; order is not stable. Used by
+// GET /api/gate/approvals so a reconnecting FE can rehydrate its
+// gateApprovals map and the electron-main bouncer can drop stale req_ids.
+func (r *MultiManagerResolver) ListPending() []ContainerPendingApproval {
+	r.mu.RLock()
+	pairs := make([]struct {
+		cid string
+		mgr *Manager
+	}, 0, len(r.managers))
+	for cid, m := range r.managers {
+		pairs = append(pairs, struct {
+			cid string
+			mgr *Manager
+		}{cid, m})
+	}
+	r.mu.RUnlock()
+
+	var out []ContainerPendingApproval
+	for _, p := range pairs {
+		for _, pa := range p.mgr.ListPending() {
+			out = append(out, ContainerPendingApproval{
+				ContainerID:     p.cid,
+				PendingApproval: pa,
+			})
+		}
+	}
+	return out
+}
+
 // Resolve routes the click to whichever Manager holds the pending request.
 // Returns ErrNoSuchRequest when no Manager owns the reqID.
 func (r *MultiManagerResolver) Resolve(reqID, decision, actorID string) error {

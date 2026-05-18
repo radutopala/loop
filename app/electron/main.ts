@@ -700,6 +700,29 @@ ipcMain.on("approval-resolved", (_event, reqId?: string) => {
   if (pendingApprovals.size === 0) stopApprovalBounce();
 });
 
+// reconcile-approvals replaces the bouncer's pending set with the canonical
+// list reported by the renderer (which just snapshotted GET /api/gate/approvals).
+// Used after a WS reconnect / page reload to drop orphaned req_ids whose
+// resolve broadcast we missed — the symptom that wedged the dock-bouncer
+// on bd446d95 even after the gate denied on timeout.
+ipcMain.on("reconcile-approvals", (_event, reqIds?: string[]) => {
+  const incoming = new Set<string>(Array.isArray(reqIds) ? reqIds : []);
+  const dropped: string[] = [];
+  for (const id of pendingApprovals) {
+    if (!incoming.has(id)) {
+      pendingApprovals.delete(id);
+      dropped.push(id);
+    }
+  }
+  for (const id of incoming) pendingApprovals.add(id);
+  console.log(`[bounce] reconcile-approvals incoming=${incoming.size} dropped=${dropped.length} size=${pendingApprovals.size} pending=${pendingSnapshot()}`);
+  if (pendingApprovals.size === 0) {
+    stopApprovalBounce();
+  } else {
+    startApprovalBounce();
+  }
+});
+
 app.on("browser-window-focus", () => {
   if (approvalBounceInterval) {
     console.log(`[bounce] window focused, clearing interval (pending size=${pendingApprovals.size} pending=${pendingSnapshot()})`);

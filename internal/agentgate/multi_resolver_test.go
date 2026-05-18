@@ -18,7 +18,11 @@ func managerWithPending(t *testing.T, reqID string) *Manager {
 	t.Helper()
 	m := NewManager(&fakeRouter{bot: &fakeBot{}}, types.RateLimits{})
 	m.mu.Lock()
-	m.pending[reqID] = make(chan resolution, 1)
+	m.pending[reqID] = &pendingEntry{
+		ch:        make(chan resolution, 1),
+		channelID: "ch-" + reqID,
+		req:       ApprovalRequest{ID: reqID},
+	}
 	m.mu.Unlock()
 	return m
 }
@@ -213,6 +217,31 @@ func TestMultiManagerByTokenScansAllTokens(t *testing.T) {
 	require.Equal(t, "c2", cid)
 	require.Same(t, m2, mgr)
 	require.Equal(t, "ch-2", channelID)
+}
+
+func TestMultiManagerListPendingEmpty(t *testing.T) {
+	r := NewMultiManagerResolver()
+	require.Empty(t, r.ListPending())
+}
+
+func TestMultiManagerListPendingAggregatesAcrossManagers(t *testing.T) {
+	r := NewMultiManagerResolver()
+	m1 := managerWithPending(t, "r1")
+	m2 := managerWithPending(t, "r2")
+	r.Add("c1", m1)
+	r.Add("c2", m2)
+
+	got := r.ListPending()
+	require.Len(t, got, 2)
+
+	byContainer := map[string]ContainerPendingApproval{}
+	for _, p := range got {
+		byContainer[p.ContainerID] = p
+	}
+	require.Equal(t, "r1", byContainer["c1"].ReqID)
+	require.Equal(t, "ch-r1", byContainer["c1"].ChannelID)
+	require.Equal(t, "r2", byContainer["c2"].ReqID)
+	require.Equal(t, "ch-r2", byContainer["c2"].ChannelID)
 }
 
 // Ensures Manager-through-Multi round-trip works end-to-end with a real
