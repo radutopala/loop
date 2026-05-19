@@ -112,6 +112,14 @@ func (m *MockStore) GetRecentMessages(ctx context.Context, channelID string, lim
 	return args.Get(0).([]*db.Message), args.Error(1)
 }
 
+func (m *MockStore) ListQueuedUserMessages(ctx context.Context, channelID string) ([]*db.Message, error) {
+	args := m.Called(ctx, channelID)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).([]*db.Message), args.Error(1)
+}
+
 func (m *MockStore) GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*db.Message, error) {
 	args := m.Called(ctx, channelID, cursor, limit)
 	if args.Get(0) == nil {

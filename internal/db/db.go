@@ -35,6 +35,7 @@ type Store interface {
 	MaxQueuedPriority(ctx context.Context, channelID string) (int, error)
 	ListPendingChannels(ctx context.Context) ([]string, error)
 	GetRecentMessages(ctx context.Context, channelID string, limit int) ([]*Message, error)
+	ListQueuedUserMessages(ctx context.Context, channelID string) ([]*Message, error)
 	GetMessagesCursor(ctx context.Context, channelID string, cursor int64, limit int) ([]*Message, error)
 	SearchMessages(ctx context.Context, query string, limit int) ([]*Message, error)
 	GetMessagesAround(ctx context.Context, channelID string, messageID int64, limit int) ([]*Message, error)
@@ -569,6 +570,24 @@ func (s *SQLiteStore) GetRecentMessages(ctx context.Context, channelID string, l
 	rows, err := s.db.QueryContext(ctx,
 		`SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND kind = 'message' ORDER BY created_at DESC LIMIT ?`,
 		channelID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanMessages(rows)
+}
+
+// ListQueuedUserMessages returns every user message on the channel that is
+// still unprocessed, ordered by the same (priority DESC, id ASC) rule the
+// processor uses to pick the next row. This is the canonical queue: the FE
+// should render it directly rather than filtering its paginated subset, which
+// can include stale unprocessed orphans from crashes that the in-memory
+// processor will never run.
+func (s *SQLiteStore) ListQueuedUserMessages(ctx context.Context, channelID string) ([]*Message, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT `+messageColumns+` FROM messages WHERE channel_id = ? AND kind = 'message' AND is_bot = 0 AND is_processed = 0 ORDER BY priority DESC, id ASC`,
+		channelID,
 	)
 	if err != nil {
 		return nil, err

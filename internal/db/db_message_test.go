@@ -143,6 +143,34 @@ func (s *StoreSuite) TestGetRecentMessagesError() {
 	require.Nil(s.T(), msgs)
 }
 
+func (s *StoreSuite) TestListQueuedUserMessages() {
+	now := time.Now().UTC()
+	rows := newMockMessageRows()
+	// id=2 with priority=1 should sort before id=1 (priority DESC). The SQL
+	// itself enforces this — the mock just returns rows in order.
+	rows = rows.AddRow(2, 1, "ch1", "msg-bump", "u1", "user1", "do this first", 0, 0, 1, 0, 1, "", now, "message", int64(0), "", "", 0, "")
+	rows = addMessageRow(rows, 1, 1, "ch1", "msg-first", "u1", "user1", "do this second", 0, 0, now)
+	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id = \? AND kind = 'message' AND is_bot = 0 AND is_processed = 0 ORDER BY priority DESC, id ASC`).
+		WithArgs("ch1").
+		WillReturnRows(rows)
+
+	msgs, err := s.store.ListQueuedUserMessages(context.Background(), "ch1")
+	require.NoError(s.T(), err)
+	require.Len(s.T(), msgs, 2)
+	require.Equal(s.T(), "msg-bump", msgs[0].MsgID)
+	require.Equal(s.T(), 1, msgs[0].Priority)
+	require.Equal(s.T(), "msg-first", msgs[1].MsgID)
+}
+
+func (s *StoreSuite) TestListQueuedUserMessagesError() {
+	s.mock.ExpectQuery(`SELECT .+ FROM messages WHERE channel_id = \? AND kind = 'message' AND is_bot = 0 AND is_processed = 0`).
+		WithArgs("ch1").
+		WillReturnError(sql.ErrConnDone)
+	msgs, err := s.store.ListQueuedUserMessages(context.Background(), "ch1")
+	require.Error(s.T(), err)
+	require.Nil(s.T(), msgs)
+}
+
 func (s *StoreSuite) TestGetMessagesCursor() {
 	now := time.Now().UTC()
 	rows := addMessageRow(newMockMessageRows(), 5, 1, "ch1", "msg5", "u1", "user1", "five", 0, 0, now)
