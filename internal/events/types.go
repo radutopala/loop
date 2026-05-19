@@ -23,6 +23,28 @@ type Broadcaster interface {
 	BroadcastImageUpdateAvailable(data ImageUpdateAvailableData)
 	BroadcastGateApprovalRequested(channelID string, data GateApprovalEventData)
 	BroadcastGateApprovalResolved(channelID string, data GateApprovalResolvedData)
+	BroadcastReviewComment(channelID string, data ReviewCommentEventData)
+	BroadcastReviewStatus(channelID string, data ReviewStatusEventData)
+}
+
+// ReviewCommentEventData is the payload for review.comment events. Sent
+// once per parsed `<review-comment>` block the agent emits during a
+// review run, deduplicated by Comment.ID upstream so each id arrives at
+// the FE at most once.
+type ReviewCommentEventData struct {
+	ID   string `json:"id"`
+	Path string `json:"path"`
+	Line int    `json:"line"`
+	Side string `json:"side"`
+	Body string `json:"body"`
+}
+
+// ReviewStatusEventData is the payload for review.status events. Sent on
+// every session status transition so the FE can swap between idle /
+// loading / ready / reviewing / error without re-fetching the session.
+type ReviewStatusEventData struct {
+	Status string `json:"status"`
+	Error  string `json:"error,omitempty"`
 }
 
 // MessageEventData is the payload for message.created events.

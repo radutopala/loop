@@ -151,6 +151,25 @@ type EmbeddingsConfig struct {
 	OllamaURL string `json:"ollama_url"` // default "http://localhost:11434"
 }
 
+// ReviewConfig configures the review-panel agent prompt. Either Prompt
+// (inline) or PromptPath ({loopDir}/review/{prompt_path}) may be set;
+// both empty means the daemon uses its built-in default prompt.
+type ReviewConfig struct {
+	Prompt     string `json:"prompt"`
+	PromptPath string `json:"prompt_path"`
+}
+
+// ResolvePrompt returns the configured prompt text. When neither field
+// is set returns ("", nil) so the caller can fall back to a built-in
+// default. When both are set returns an error (same exclusivity as
+// PromptShortcut).
+func (r *ReviewConfig) ResolvePrompt(loopDir string, readFile func(string) ([]byte, error)) (string, error) {
+	if r.Prompt == "" && r.PromptPath == "" {
+		return "", nil
+	}
+	return resolvePromptField("review", r.Prompt, r.PromptPath, filepath.Join(loopDir, "review"), readFile)
+}
+
 // BrowserConfig groups all browser-related settings.
 type BrowserConfig struct {
 	Enabled     bool
@@ -303,6 +322,7 @@ type Config struct {
 	Desktop                                  DesktopConfig
 	Gates                                    GatesConfig
 	GitHub                                   GitHubConfig
+	Review                                   ReviewConfig
 }
 
 // GitHubConfig holds GitHub integration settings. GHUser names a `gh` CLI
@@ -385,6 +405,7 @@ type jsonConfig struct {
 	Desktop                                  *DesktopConfig         `json:"desktop"`
 	Gates                                    *jsonGatesConfig       `json:"gates"`
 	GitHub                                   *GitHubConfig          `json:"github"`
+	Review                                   *ReviewConfig          `json:"review"`
 }
 
 // jsonMemoryConfig is the JSON representation of the memory block.
@@ -667,6 +688,10 @@ func (l *Loader) parse() (*Config, error) {
 
 	if jc.GitHub != nil {
 		cfg.GitHub = *jc.GitHub
+	}
+
+	if jc.Review != nil {
+		cfg.Review = *jc.Review
 	}
 
 	// Memory config: enabled must be explicitly true.

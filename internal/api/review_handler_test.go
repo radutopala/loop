@@ -9,12 +9,15 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/githubapi"
 	"github.com/radutopala/loop/internal/review"
@@ -565,4 +568,219 @@ func (s *ReviewHandlerSuite) TestPushAllReviewStoreNotConfigured() {
 
 func (s *ReviewHandlerSuite) TestErrorMessageNil() {
 	require.Equal(s.T(), "", errorMessage(nil))
+}
+
+// ---- run ----
+
+// mockReviewRunner stubs the agent run. The custom runFn lets each test
+// drive comment dispatch and the eventual return synchronously.
+type mockReviewRunner struct {
+	mu       sync.Mutex
+	calls    int
+	lastDir  string
+	lastSys  string
+	lastUser string
+	runFn    func(onComment func(*review.Comment)) (*agent.AgentResponse, error)
+	done     chan struct{} // closed after Run returns
+}
+
+func (m *mockReviewRunner) Run(_ context.Context, _, dirPath, systemPrompt, prompt string, onComment func(*review.Comment)) (*agent.AgentResponse, error) {
+	m.mu.Lock()
+	m.calls++
+	m.lastDir = dirPath
+	m.lastSys = systemPrompt
+	m.lastUser = prompt
+	fn := m.runFn
+	done := m.done
+	m.mu.Unlock()
+	defer func() {
+		if done != nil {
+			close(done)
+		}
+	}()
+	if fn != nil {
+		return fn(onComment)
+	}
+	return &agent.AgentResponse{}, nil
+}
+
+func (s *ReviewHandlerSuite) waitFor(cond func() bool) {
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	require.True(s.T(), cond(), "condition never satisfied")
+}
+
+func (s *ReviewHandlerSuite) wireReadySession() {
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 7},
+		HeadSHA:      "abc",
+		WorktreePath: "/repo/.worktrees/pr-7",
+		RawDiff:      "diff --git a/x b/x",
+		Status:       review.StatusReady,
+	})
+}
+
+func (s *ReviewHandlerSuite) TestRunReviewStoreNotConfigured() {
+	srv := newServerForReviewTests(s.T())
+	mux := srv.buildMux()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestRunRunnerNotConfigured() {
+	s.wireReadySession()
+	// No SetReviewAgent call.
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestRunNoSession() {
+	s.srv.SetReviewAgent(&mockReviewRunner{}, "", "")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusNotFound, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestRunNoWorktree() {
+	s.rs.Put("ch1", &review.Session{Status: review.StatusReady})
+	s.srv.SetReviewAgent(&mockReviewRunner{}, "", "")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusConflict, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestRunSessionNotReady() {
+	s.rs.Put("ch1", &review.Session{Status: review.StatusLoading, WorktreePath: "/wt"})
+	s.srv.SetReviewAgent(&mockReviewRunner{}, "", "")
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusConflict, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestRunHappyPathDispatchesCommentsAndStatus() {
+	s.wireReadySession()
+	hub := NewEventsHub(slog.Default())
+	s.srv.SetEventsHub(hub)
+
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	runner.runFn = func(onComment func(*review.Comment)) (*agent.AgentResponse, error) {
+		onComment(&review.Comment{ID: "a", Path: "x.go", Line: 1, Side: "RIGHT", Body: "issue"})
+		return &agent.AgentResponse{}, nil
+	}
+	s.srv.SetReviewAgent(runner, "sys", "review-prompt-body")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+
+	<-runner.done
+	s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusReady })
+
+	require.Equal(s.T(), 1, runner.calls)
+	require.Equal(s.T(), "/repo/.worktrees/pr-7", runner.lastDir)
+	require.Equal(s.T(), "sys", runner.lastSys)
+	require.Contains(s.T(), runner.lastUser, "review-prompt-body")
+	require.Contains(s.T(), runner.lastUser, "diff --git a/x b/x")
+
+	sess := s.rs.Get("ch1")
+	require.Len(s.T(), sess.Comments, 1)
+	require.Equal(s.T(), "x.go", sess.Comments[0].Path)
+}
+
+func (s *ReviewHandlerSuite) TestRunAgentErrorTransitionsToErrorStatus() {
+	s.wireReadySession()
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	runner.runFn = func(_ func(*review.Comment)) (*agent.AgentResponse, error) {
+		return nil, errors.New("agent boom")
+	}
+	s.srv.SetReviewAgent(runner, "", "")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	<-runner.done
+	s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusError })
+	require.Equal(s.T(), "agent boom", s.rs.Get("ch1").Error)
+}
+
+func (s *ReviewHandlerSuite) TestRunUsesDefaultPromptWhenUnconfigured() {
+	s.wireReadySession()
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	s.srv.SetReviewAgent(runner, "", "") // empty user prompt -> default
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	<-runner.done
+	require.Contains(s.T(), runner.lastUser, defaultReviewPrompt[:50])
+}
+
+func (s *ReviewHandlerSuite) TestRunSecondCallCoalescesWhileInFlight() {
+	s.wireReadySession()
+	gate := make(chan struct{})
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	runner.runFn = func(_ func(*review.Comment)) (*agent.AgentResponse, error) {
+		<-gate
+		return &agent.AgentResponse{}, nil
+	}
+	s.srv.SetReviewAgent(runner, "", "")
+
+	w1 := httptest.NewRecorder()
+	s.mux.ServeHTTP(w1, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w1.Code)
+
+	// Wait for the goroutine to enter Run (calls==1) so the in-flight
+	// marker is definitely set before we fire the second call.
+	s.waitFor(func() bool {
+		runner.mu.Lock()
+		defer runner.mu.Unlock()
+		return runner.calls == 1
+	})
+
+	w2 := httptest.NewRecorder()
+	s.mux.ServeHTTP(w2, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w2.Code)
+	require.Contains(s.T(), w2.Body.String(), "in_progress")
+	runner.mu.Lock()
+	require.Equal(s.T(), 1, runner.calls)
+	runner.mu.Unlock()
+
+	close(gate)
+	<-runner.done
+	s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusReady })
+}
+
+func (s *ReviewHandlerSuite) TestRunCommentDispatchSkippedWhenSessionDropped() {
+	s.wireReadySession()
+	gate := make(chan struct{})
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	runner.runFn = func(onComment func(*review.Comment)) (*agent.AgentResponse, error) {
+		<-gate
+		// Session was deleted in the meantime — AddComment returns false
+		// and the broadcast is skipped. We just confirm no panic.
+		onComment(&review.Comment{ID: "a", Path: "x.go", Line: 1, Body: "b"})
+		return &agent.AgentResponse{}, nil
+	}
+	s.srv.SetReviewAgent(runner, "", "")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	s.waitFor(func() bool { return s.rs.Get("ch1").Status == review.StatusReviewing })
+	s.rs.Delete("ch1")
+	close(gate)
+	<-runner.done
+	// Status update on a deleted session is a no-op; the unregister still happens.
+}
+
+func (s *ReviewHandlerSuite) TestBroadcastReviewStatusNoHubIsSafe() {
+	s.wireReadySession()
+	require.Nil(s.T(), s.srv.eventsHub)
+	s.srv.broadcastReviewStatus("ch1", review.StatusReady, "")
 }

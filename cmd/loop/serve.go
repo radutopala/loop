@@ -541,6 +541,12 @@ func (a *app) serve() error {
 		review.NewStore(),
 		&review.GitPRWorktree{Run: worktree.ExecCommandRunner},
 	)
+	reviewPrompt, reviewErr := cfg.Review.ResolvePrompt(cfg.LoopDir, os.ReadFile)
+	if reviewErr != nil {
+		logger.Warn("review prompt resolve failed, using built-in default", "error", reviewErr)
+		reviewPrompt = ""
+	}
+	apiSrv.SetReviewAgent(&review.Runner{Agent: runner}, "", reviewPrompt)
 	go api.NewBranchPoller(store, eventsHub, cfg.LoopDir, 0, logger).Run(ctx)
 	containerReg.SetBroadcaster(eventsHub)
 	if gateResolver != nil {

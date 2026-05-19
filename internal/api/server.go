@@ -138,6 +138,11 @@ type Server struct {
 	reviewClient              GitHubReview                                                 // gh ops for review panel (fetch diff, post comment)
 	reviewStore               *review.Store                                                // per-channel review session state
 	reviewWorktree            review.PRWorktree                                            // creates/removes PR worktrees
+	reviewRunner              ReviewRunner                                                 // drives the agent for /review/run
+	reviewSystemPrompt        string                                                       // resolved system prompt for review runs
+	reviewPrompt              string                                                       // resolved user prompt for review runs ("" -> built-in default)
+	reviewMu                  sync.Mutex                                                   // guards reviewActive
+	reviewActive              map[string]struct{}                                          // per-channel in-flight review runs
 
 	// Quality-scan wiring. All fields are nil by default — handlers
 	// return 501 until the daemon wires concrete implementations. Tests
@@ -346,6 +351,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/channels/{id}/review/load", s.handleReviewLoad)
 	mux.HandleFunc("GET /api/channels/{id}/review", s.handleReviewGet)
 	mux.HandleFunc("DELETE /api/channels/{id}/review", s.handleReviewDelete)
+	mux.HandleFunc("POST /api/channels/{id}/review/run", s.handleReviewRun)
 	mux.HandleFunc("POST /api/channels/{id}/review/comments/{cid}/push", s.handleReviewPushComment)
 	mux.HandleFunc("POST /api/channels/{id}/review/push-all", s.handleReviewPushAll)
 	mux.HandleFunc("GET /api/channels/{id}/branches", s.handleListBranches)
