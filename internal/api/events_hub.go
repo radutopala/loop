@@ -480,23 +480,32 @@ func (h *EventsHub) BroadcastWorkflowNodeCompleted(data events.WorkflowNodeEvent
 }
 
 // BroadcastGateApprovalRequested sends a gate.approval_requested event to
-// subscribers of the approving channel; the React ApprovalCard listens on
-// this and renders the three gate decision buttons.
+// every subscriber regardless of their channel filter. Global because the
+// electron-main dock-bouncer needs to learn about approvals on any channel
+// — without this, an approval requested on a channel the client isn't
+// subscribed to never triggers the dock bounce.
 func (h *EventsHub) BroadcastGateApprovalRequested(channelID string, data events.GateApprovalEventData) {
 	h.Broadcast(Event{
 		Type:      EventGateApprovalRequested,
 		ChannelID: channelID,
 		Data:      data,
+		Global:    true,
 	})
 }
 
-// BroadcastGateApprovalResolved sends a gate.approval_resolved event after a
-// decision is recorded, so any pending ApprovalCard can dismiss itself.
+// BroadcastGateApprovalResolved sends a gate.approval_resolved event to every
+// subscriber. Global because the shutdown-time resolve (from
+// MultiManagerResolver.Remove → Manager.Shutdown, see 6640278) typically
+// fires AFTER agent.status=completed has already removed the channel from
+// the renderer's isRunningMap and its WS subscription set. Channel-scoped
+// delivery would drop the event for the very clients that need to clear
+// their dock-bouncer entry for that req_id.
 func (h *EventsHub) BroadcastGateApprovalResolved(channelID string, data events.GateApprovalResolvedData) {
 	h.Broadcast(Event{
 		Type:      EventGateApprovalResolved,
 		ChannelID: channelID,
 		Data:      data,
+		Global:    true,
 	})
 }
 

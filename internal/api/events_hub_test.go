@@ -1247,7 +1247,9 @@ func (s *EventsHubSuite) TestBroadcastGateApprovalRequested() {
 		if err != nil {
 			return
 		}
-		hub.Register(conn, []string{"ch-1"})
+		// Subscribe to a different channel — Global:true should still deliver
+		// so the electron-main dock-bouncer fires for approvals on any channel.
+		hub.Register(conn, []string{"ch-other"})
 		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
@@ -1281,7 +1283,10 @@ func (s *EventsHubSuite) TestBroadcastGateApprovalResolved() {
 		if err != nil {
 			return
 		}
-		hub.Register(conn, []string{"ch-1"})
+		// Subscribe to a different channel — the shutdown-time resolve fires
+		// after the originating channel has left the client's subscription
+		// set, so Global:true is required to clear the bouncer.
+		hub.Register(conn, []string{"ch-other"})
 		holdUntilClientDisconnects(conn)
 	}))
 	defer srv.Close()
