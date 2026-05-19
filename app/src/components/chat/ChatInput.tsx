@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { Message } from "../../types";
 import { resolveGateApproval, sendCommand, sendMessage } from "../../api/loopApi";
-import { pasteImage, resolvePlan } from "../../api/channels";
+import { pasteImage, resolveAsk, resolvePlan } from "../../api/channels";
 import { fetchShortcuts, type PromptShortcut } from "../../api/configApi";
 import { searchFiles, type FileSearchResult, type RootEntry } from "../../api/files";
 import { fonts } from "../../theme";
@@ -223,13 +223,18 @@ export interface ChatInputProps {
   // dismisses the card locally but the backend stays parked forever and the
   // drain loop never picks up the user's queued messages.
   hasPendingExitPlan?: boolean;
+  // When an AskUserQuestion card is parked on this channel, sending a free-text
+  // message routes through `resolveAsk(answer)` so the backend clears the
+  // park flag and inserts the user's text as a priority-bumped continuation.
+  // Without this, the channel stays parked and queued messages never drain.
+  hasPendingAskUser?: boolean;
 }
 
 function buildQuotePrefix(msg: Message): string {
   return msg.content.split("\n").map(l => `> ${l}`).join("\n") + "\n\n";
 }
 
-export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode, onDismissCards, onSent, quotedMessage, onClearQuote, pendingGateReqId, hasPendingExitPlan }: ChatInputProps) {
+export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode, onDismissCards, onSent, quotedMessage, onClearQuote, pendingGateReqId, hasPendingExitPlan, hasPendingAskUser }: ChatInputProps) {
   const { colors } = useTheme();
   const styles = buildInputStyles(colors);
   const modeStyles = buildModeStyles(colors);
@@ -419,12 +424,19 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
         }
       } else {
         const content = quotedMessage ? buildQuotePrefix(quotedMessage) + trimmed : trimmed;
-        // When the channel is parked on an ExitPlanMode card, route the send
-        // through `resolvePlan(deny, prompt)` so the backend clears the park
-        // flag, inserts the user's text as a priority-bumped continuation,
-        // and resumes the drain. `resolvePlan` already inserts the message,
-        // so skip the regular sendMessage call here.
-        if (hasPendingExitPlan) {
+        // When the channel is parked on an AskUserQuestion card, route the
+        // send through `resolveAsk(answer)` so the backend clears the park
+        // flag and inserts the user's text as a priority-bumped continuation.
+        // `resolveAsk` already inserts the message, so skip the regular
+        // sendMessage call here.
+        if (hasPendingAskUser) {
+          await resolveAsk(channelId, "answer", content, mode);
+        } else if (hasPendingExitPlan) {
+          // When the channel is parked on an ExitPlanMode card, route the send
+          // through `resolvePlan(deny, prompt)` so the backend clears the park
+          // flag, inserts the user's text as a priority-bumped continuation,
+          // and resumes the drain. `resolvePlan` already inserts the message,
+          // so skip the regular sendMessage call here.
           await resolvePlan(channelId, "deny", content, mode);
         } else if (pendingGateReqId) {
           // When a gate approval popup is pending, auto-deny it and force
@@ -452,7 +464,7 @@ export function ChatInput({ channelId, messages, roots, isRunning, mode, setMode
       // Re-focus after React re-enables the textarea on the next render.
       requestAnimationFrame(() => inputRef.current?.focus());
     }
-  }, [channelId, text, sending, mode, isLoopCommand, effectiveIsRunning, sendMode, quotedMessage, onClearQuote, onDismissCards, pendingGateReqId, hasPendingExitPlan]);
+  }, [channelId, text, sending, mode, isLoopCommand, effectiveIsRunning, sendMode, quotedMessage, onClearQuote, onDismissCards, pendingGateReqId, hasPendingExitPlan, hasPendingAskUser]);
 
   const updateCommandDropdown = useCallback((val: string) => {
     const trimmed = val.trimStart();
