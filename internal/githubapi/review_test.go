@@ -11,14 +11,13 @@ import (
 )
 
 // dispatchRunner is a flexible fake that routes by the leading subcommand
-// keyword (pr view, pr diff, repo view, api). Each route can return
-// canned bytes or an error.
+// keyword (pr view, repo view, api). Each route can return canned bytes
+// or an error.
 type dispatchRunner struct {
 	calls []fakeCall
 
 	tokenOut, tokenErr       any // []byte or error
 	prViewOut, prViewErr     any
-	prDiffOut, prDiffErr     any
 	repoViewOut, repoViewErr any
 	apiOut, apiErr           any
 }
@@ -29,8 +28,6 @@ func (d *dispatchRunner) Run(_ context.Context, workdir string, env []string, ar
 	switch {
 	case len(args) >= 2 && args[0] == "auth" && args[1] == "token":
 		return asBytes(d.tokenOut), asErr(d.tokenErr)
-	case len(args) >= 2 && args[0] == "pr" && args[1] == "diff":
-		return asBytes(d.prDiffOut), asErr(d.prDiffErr)
 	case len(args) >= 2 && args[0] == "pr" && args[1] == "view":
 		return asBytes(d.prViewOut), asErr(d.prViewErr)
 	case len(args) >= 2 && args[0] == "repo" && args[1] == "view":
@@ -136,39 +133,6 @@ func (s *ReviewAPISuite) TestFetchPRByNumberTokenLookupFailure() {
 	r := &dispatchRunner{tokenErr: errors.New("nope")}
 	c := NewClientWithRunner(r)
 	_, err := c.FetchPRByNumber(context.Background(), "/tmp", "u", 1)
-	require.Error(s.T(), err)
-}
-
-// ── FetchPRDiff ──────────────────────────────────────────────────────────
-
-func (s *ReviewAPISuite) TestFetchPRDiffInvalidArgs() {
-	c := NewClientWithRunner(&dispatchRunner{})
-	_, err := c.FetchPRDiff(context.Background(), "", "", 1)
-	require.Error(s.T(), err)
-	_, err = c.FetchPRDiff(context.Background(), "/tmp", "", 0)
-	require.Error(s.T(), err)
-}
-
-func (s *ReviewAPISuite) TestFetchPRDiffHappyPath() {
-	r := &dispatchRunner{prDiffOut: []byte("diff --git a/x b/x\n@@\n-old\n+new\n")}
-	c := NewClientWithRunner(r)
-	got, err := c.FetchPRDiff(context.Background(), "/tmp", "", 1)
-	require.NoError(s.T(), err)
-	require.Contains(s.T(), string(got), "diff --git")
-	require.Equal(s.T(), []string{"pr", "diff", "1", "--patch"}, r.calls[0].args)
-}
-
-func (s *ReviewAPISuite) TestFetchPRDiffPropagatesError() {
-	r := &dispatchRunner{prDiffErr: errors.New("boom")}
-	c := NewClientWithRunner(r)
-	_, err := c.FetchPRDiff(context.Background(), "/tmp", "", 1)
-	require.Error(s.T(), err)
-}
-
-func (s *ReviewAPISuite) TestFetchPRDiffTokenFailure() {
-	r := &dispatchRunner{tokenErr: errors.New("no token")}
-	c := NewClientWithRunner(r)
-	_, err := c.FetchPRDiff(context.Background(), "/tmp", "u", 1)
 	require.Error(s.T(), err)
 }
 
