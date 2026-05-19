@@ -292,19 +292,22 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   }, [messages, items, liveTail]);
 
   // Decide which user message (if any) to quote in the floating banner.
-  // Priority 1: the in-flight run's triggering message when it's scrolled
-  //   away — keeps the user in context about what's running.
-  // Priority 2: when no user message is visible at all (we're parked in a
-  //   long stretch of bot output), surface the most recent user message
-  //   above the viewport so the user can jump back to it.
+  // - "bottom": the in-flight run's triggering message when it's scrolled
+  //   away — pins to the bottom near the live tail so the user keeps
+  //   context about what's currently running.
+  // - "top": when no run is in flight and no user message is visible at
+  //   all (parked deep in a stretch of bot output), surface the most
+  //   recent user message above the viewport, pinned to the top so it
+  //   reads as the prompt the visible content is replying to.
   const userMessages = useMemo(() => messages.filter((m) => !m.is_bot), [messages]);
-  const quoteAnchor: { msgId: string; content: string; time?: string } | null = (() => {
+  const quoteAnchor: { msgId: string; content: string; time?: string; position: "top" | "bottom" } | null = (() => {
     if (isRunning && effectiveProcessingMsgId && userMsgStates.get(effectiveProcessingMsgId) !== "visible") {
       const m = userMessages.find((u) => u.msg_id === effectiveProcessingMsgId);
       return {
         msgId: effectiveProcessingMsgId,
         content: triggerContent ?? m?.content ?? "",
         time: m?.created_at,
+        position: "bottom",
       };
     }
     const anyVisible = userMessages.some((m) => userMsgStates.get(m.msg_id) === "visible");
@@ -312,7 +315,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
       for (let i = userMessages.length - 1; i >= 0; i--) {
         const m = userMessages[i]!;
         if (userMsgStates.get(m.msg_id) === "above") {
-          return { msgId: m.msg_id, content: m.content, time: m.created_at };
+          return { msgId: m.msg_id, content: m.content, time: m.created_at, position: "top" };
         }
       }
     }
@@ -322,6 +325,20 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   return (
     <ChannelContext.Provider value={channelId}>
       <div ref={containerRef} style={styles.messages} onScroll={handleScroll}>
+        {quoteAnchor?.position === "top" && (
+          <div style={{ position: "sticky", top: 0, zIndex: 2, paddingBottom: 4, backgroundColor: "transparent" }}>
+            <div style={{ maxWidth: 768, margin: "0 auto" }}>
+              <TriggerQuote
+                content={quoteAnchor.content}
+                time={quoteAnchor.time}
+                onClick={() => {
+                  const target = containerRef.current?.querySelector(`[data-msg-uuid="${quoteAnchor.msgId}"]`);
+                  target?.scrollIntoView({ behavior: "smooth", block: "center" });
+                }}
+              />
+            </div>
+          </div>
+        )}
         <div style={styles.messageColumn}>
           {hasMore && (
             <button onClick={loadMore} style={styles.loadMore}>
@@ -386,7 +403,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
           )}
           <div ref={bottomRef} />
         </div>
-        {quoteAnchor && (
+        {quoteAnchor?.position === "bottom" && (
           <div style={{ position: "sticky", bottom: 0, zIndex: 2, paddingTop: 4 }}>
             <div style={{ maxWidth: 768, margin: "0 auto" }}>
               <TriggerQuote
