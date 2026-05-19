@@ -100,6 +100,17 @@ func (h *FileHandler) Handle(ctx context.Context, req FileRequest) Outcome {
 				Source:   sourceForPID(req.PID, h.PeerSource),
 				Message:  match.Message,
 				CacheKey: "file:" + req.Op + ":" + path,
+				OnPrompt: func() {
+					h.Auditor.Write(AuditEntry{
+						Ts:      h.Now(),
+						Channel: req.ChannelID,
+						PID:     req.PID,
+						Kind:    "file",
+						Target:  target,
+						RuleID:  match.RuleID,
+						Event:   "request",
+					})
+				},
 			})
 			if out.Decision == types.DecisionAllow && out.FromCache {
 				// Plumb through so handler cache agrees with approval cache.

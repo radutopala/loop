@@ -286,6 +286,27 @@ func (s *AuditSuite) TestFileAuditorVerboseKeepsSilentAllows() {
 	require.Len(s.T(), lines, 2)
 }
 
+func (s *AuditSuite) TestFileAuditorNonVerboseKeepsRequestEvents() {
+	// Pre-decision request events have an empty Decision field so they fall
+	// outside the silent-allow filter and must be written in non-verbose mode.
+	a, err := NewFileAuditor(s.dir, 0, false)
+	require.NoError(s.T(), err)
+	s.T().Cleanup(func() { _ = a.Close() })
+
+	ts := time.Date(2026, 4, 22, 10, 0, 0, 0, time.UTC)
+	a.now = func() time.Time { return ts }
+	require.NoError(s.T(), a.rotate(ts))
+
+	a.Write(AuditEntry{Kind: "execve", Target: "git push", RuleID: "cmd[0]", Event: "request"})
+
+	lines := s.readLines(filepath.Join(s.dir, "agentgate-2026-04-22.jsonl"))
+	require.Len(s.T(), lines, 1)
+	var e AuditEntry
+	require.NoError(s.T(), json.Unmarshal([]byte(lines[0]), &e))
+	require.Equal(s.T(), "request", e.Event)
+	require.Empty(s.T(), e.Decision)
+}
+
 func (s *AuditSuite) TestFileAuditorPruneDirReadError() {
 	a, err := NewFileAuditor(s.dir, 7, true)
 	require.NoError(s.T(), err)

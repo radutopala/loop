@@ -15,6 +15,13 @@ import (
 // Privacy: callers must strip secrets from Target / Extra; argv payloads
 // containing credentials should be fingerprinted (SHA-256) by the caller, not
 // logged verbatim.
+//
+// Event distinguishes the two flavors of record: empty means a decision record
+// (the existing shape, written after the gate resolves the outcome), and
+// "request" means a pre-decision record emitted the moment a prompt is handed
+// to the approver. Pre-decision records carry Ts, Kind, Target, RuleID, and
+// the request context; Decision/PromptedWho/Latency are zero because no
+// resolution has happened yet.
 type AuditEntry struct {
 	Ts          time.Time         `json:"ts"`
 	CID         string            `json:"cid,omitempty"`
@@ -24,6 +31,7 @@ type AuditEntry struct {
 	Target      string            `json:"target"`
 	RuleID      string            `json:"rule_id"`
 	Decision    string            `json:"decision"`
+	Event       string            `json:"event,omitempty"`
 	PromptedWho string            `json:"prompted_who,omitempty"`
 	Latency     time.Duration     `json:"latency_ns,omitempty"`
 	Extra       map[string]string `json:"extra,omitempty"`

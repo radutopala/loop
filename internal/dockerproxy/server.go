@@ -29,6 +29,13 @@ type Auditor interface {
 }
 
 // AuditEntry captures one proxied HTTP request's decision trail.
+//
+// Event distinguishes the two flavors of record: empty means a decision
+// record (existing shape, written after the gate resolves the outcome), and
+// "request" means a pre-decision record emitted the moment a prompt is
+// handed to the approver. Pre-decision records carry Ts, Method, Path,
+// RuleID, BodyRuleID; Decision/Actor/Latency are zero because no resolution
+// has happened yet.
 type AuditEntry struct {
 	Ts         time.Time
 	CID        string
@@ -37,6 +44,7 @@ type AuditEntry struct {
 	Path       string // canonical (post-version-strip)
 	RuleID     string
 	Decision   string        // "allow" | "deny" | "approve" | "cache-hit" | "rate-limit"
+	Event      string        // "" = decision record, "request" = pre-decision record
 	BodyRuleID string        // when a body rule fired
 	Latency    time.Duration // trap-to-decision
 	Actor      string        // user ID on approve
@@ -266,6 +274,18 @@ func (s *Server) runApprovalFlow(
 		Message:  message,
 		CacheKey: cacheKey,
 		Details:  extractApprovalDetails(r.Method, canonicalPath, decodedBody),
+		OnPrompt: func() {
+			s.audit(AuditEntry{
+				Ts:         s.cfg.Now(),
+				CID:        s.cfg.CID,
+				Channel:    s.cfg.ChannelID,
+				Method:     r.Method,
+				Path:       canonicalPath,
+				RuleID:     ruleID,
+				BodyRuleID: bodyRuleID,
+				Event:      "request",
+			})
+		},
 	})
 	decision := "approve"
 	if outcome.FromCache {

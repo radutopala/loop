@@ -20,7 +20,9 @@ func TestConnectSuite(t *testing.T) {
 }
 
 // stubApprover — minimal Approver for connect tests. Mirrors ExecveSuite's
-// fake.
+// fake: invokes OnPrompt only when the outcome would represent a real prompt
+// (not a cache hit, not rate-limited) so callers can assert request-audit
+// emission semantics.
 type stubApprover struct {
 	got ApprovalRequest
 	out Outcome
@@ -31,6 +33,9 @@ func (a *stubApprover) Request(_ context.Context, _ string, req ApprovalRequest)
 	a.got = req
 	if a.err != nil {
 		return Outcome{Decision: types.DecisionDeny, Reason: a.err.Error()}
+	}
+	if !a.out.FromCache && !a.out.RateLimited && req.OnPrompt != nil {
+		req.OnPrompt()
 	}
 	return a.out
 }
@@ -123,8 +128,22 @@ func (s *ConnectSuite) TestHandleEmitsAuditEntry() {
 	s.Require().Equal(types.DecisionAllow, got.Decision)
 
 	entries := rec.snapshot()
-	s.Require().Len(entries, 1)
-	e := entries[0]
+	s.Require().Len(entries, 2, "expect a pre-decision request entry + a decision entry")
+
+	req := entries[0]
+	s.Require().Equal("request", req.Event)
+	s.Require().Equal("connect", req.Kind)
+	s.Require().Equal("/var/run/docker.sock", req.Target)
+	s.Require().Equal("path[0]", req.RuleID)
+	s.Require().Empty(req.Decision)
+	s.Require().Empty(req.PromptedWho)
+	s.Require().Equal(time.Duration(0), req.Latency)
+	s.Require().Equal("c1", req.Channel)
+	s.Require().Equal(777, req.PID)
+	s.Require().False(req.Ts.IsZero())
+
+	e := entries[1]
+	s.Require().Empty(e.Event)
 	s.Require().Equal("connect", e.Kind)
 	s.Require().Equal("/var/run/docker.sock", e.Target)
 	s.Require().Equal("path[0]", e.RuleID)
@@ -134,6 +153,23 @@ func (s *ConnectSuite) TestHandleEmitsAuditEntry() {
 	s.Require().Equal("alice", e.PromptedWho)
 	s.Require().Greater(e.Latency, time.Duration(0))
 	s.Require().False(e.Ts.IsZero())
+}
+
+func (s *ConnectSuite) TestHandleAllowSkipsRequestAudit() {
+	policy := compileConnectPolicy(s.T(),
+		[]types.PathRule{{Pattern: "/var/run/loop.sock", Decision: types.DecisionAllow}},
+		types.DecisionDeny,
+	)
+	rec := &recordingAuditor{}
+	h := NewConnectHandler(policy, nil)
+	h.Auditor = rec
+
+	got := h.Handle(context.Background(), ConnectRequest{Path: "/var/run/loop.sock"})
+	s.Require().Equal(types.DecisionAllow, got.Decision)
+
+	entries := rec.snapshot()
+	s.Require().Len(entries, 1, "non-approve outcomes emit only the decision entry")
+	s.Require().Empty(entries[0].Event)
 }
 
 // --- ParseUnixSockaddr ---

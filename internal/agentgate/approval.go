@@ -40,6 +40,13 @@ type BotRouter interface {
 //     LOOP_TERMINAL_LEAF=<leafId> (set by the WS handler when the FE creates
 //     an agent-pane terminal). Multiple panes in the same container produce
 //     distinct leafIds, so each pane only shows its own approval cards.
+//
+// OnPrompt, when non-nil, is invoked by Manager.Request once it has cleared
+// the cache and rate-limit checks and is about to dispatch the prompt to the
+// bot. Callers (handlers and the dockerproxy) use this to emit the
+// pre-decision audit record only when a user is actually going to be asked
+// — cache hits and rate-limit denies short-circuit before this callback
+// fires, so they never produce a "request" audit entry.
 type ApprovalRequest struct {
 	ID       string
 	Kind     string
@@ -48,6 +55,7 @@ type ApprovalRequest struct {
 	Message  string
 	CacheKey string
 	Details  map[string]string
+	OnPrompt func()
 }
 
 // Outcome is what Request returns. Decision is always Allow or Deny.
@@ -167,6 +175,9 @@ func (m *Manager) Request(ctx context.Context, channelID string, req ApprovalReq
 	bot := m.bots.For(channelID)
 	if bot == nil {
 		return Outcome{Decision: types.DecisionDeny, Reason: "no-bot"}
+	}
+	if req.OnPrompt != nil {
+		req.OnPrompt()
 	}
 	msgID, err := bot.SendApproval(ctx, channelID, req)
 	if err != nil {

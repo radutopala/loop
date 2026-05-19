@@ -383,6 +383,92 @@ func (s *FileSuite) TestHandleAuditsOnlyFirstMissNotCacheHits() {
 	s.Require().Greater(entries[0].Latency, time.Duration(0))
 }
 
+func (s *FileSuite) TestHandleSuppressesRequestAuditOnCacheHit() {
+	// Approver returns FromCache=true (mimicking Manager.Request short-circuiting
+	// on its session cache). The handler must NOT emit a "request" audit entry
+	// because no user was actually prompted — only the decision entry survives.
+	policy := s.mustFilePolicy(types.DecisionAllow, types.FileRule{
+		Paths:      []string{"/work/*.txt"},
+		Operations: []string{"write"},
+		Decision:   types.DecisionApprove,
+	})
+	rec := &recordingAuditor{}
+	ap := &fakeApprover{outcome: Outcome{Decision: types.DecisionAllow, FromCache: true}}
+	h := NewFileHandler(policy, ap, 8)
+	h.Auditor = rec
+	h.Now = stepClock()
+
+	_ = h.Handle(context.Background(), FileRequest{ChannelID: "c1", Op: OpWrite, Path: "/work/a.txt"})
+
+	entries := rec.snapshot()
+	s.Require().Len(entries, 1, "cache hit short-circuits before the prompt — no request entry")
+	s.Require().Empty(entries[0].Event)
+	s.Require().Equal("allow", entries[0].Decision)
+}
+
+func (s *FileSuite) TestHandleSuppressesRequestAuditOnRateLimit() {
+	// Approver returns RateLimited=true. The handler must NOT emit a "request"
+	// audit entry because no user was actually prompted.
+	policy := s.mustFilePolicy(types.DecisionAllow, types.FileRule{
+		Paths:      []string{"/work/*.txt"},
+		Operations: []string{"write"},
+		Decision:   types.DecisionApprove,
+	})
+	rec := &recordingAuditor{}
+	ap := &fakeApprover{outcome: Outcome{Decision: types.DecisionDeny, RateLimited: true, Reason: "rate-limit-pending"}}
+	h := NewFileHandler(policy, ap, 8)
+	h.Auditor = rec
+	h.Now = stepClock()
+
+	_ = h.Handle(context.Background(), FileRequest{ChannelID: "c1", Op: OpWrite, Path: "/work/a.txt"})
+
+	entries := rec.snapshot()
+	s.Require().Len(entries, 1, "rate-limit deny short-circuits before the prompt — no request entry")
+	s.Require().Empty(entries[0].Event)
+	s.Require().Equal("deny", entries[0].Decision)
+}
+
+func (s *FileSuite) TestHandleEmitsRequestAuditEntryForApproveDispatch() {
+	policy := s.mustFilePolicy(types.DecisionAllow, types.FileRule{
+		Paths:      []string{"/work/*.txt"},
+		Operations: []string{"write"},
+		Decision:   types.DecisionApprove,
+		Message:    "workspace write",
+	})
+	rec := &recordingAuditor{}
+	ap := &fakeApprover{outcome: Outcome{Decision: types.DecisionAllow, Actor: "u7"}}
+	h := NewFileHandler(policy, ap, 8)
+	h.Auditor = rec
+	h.Now = stepClock()
+
+	out := h.Handle(context.Background(), FileRequest{
+		PID:       1337,
+		ChannelID: "c1",
+		Op:        OpWrite,
+		Path:      "/work/notes.txt",
+	})
+	s.Require().Equal(types.DecisionAllow, out.Decision)
+
+	entries := rec.snapshot()
+	s.Require().Len(entries, 2, "expect a pre-decision request entry + a decision entry")
+
+	req := entries[0]
+	s.Require().Equal("request", req.Event)
+	s.Require().Equal("file", req.Kind)
+	s.Require().Equal("write /work/notes.txt", req.Target)
+	s.Require().Equal("file[0]", req.RuleID)
+	s.Require().Empty(req.Decision)
+	s.Require().Empty(req.PromptedWho)
+	s.Require().Equal(time.Duration(0), req.Latency)
+	s.Require().Equal("c1", req.Channel)
+	s.Require().Equal(1337, req.PID)
+
+	decision := entries[1]
+	s.Require().Empty(decision.Event)
+	s.Require().Equal("allow", decision.Decision)
+	s.Require().Equal("u7", decision.PromptedWho)
+}
+
 // --- IsRemoveDir ---
 
 func (s *FileSuite) TestIsRemoveDir() {

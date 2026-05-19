@@ -34,6 +34,10 @@ func TestServerSuite(t *testing.T) {
 // --- helpers ---
 
 // fakeApprover captures Request calls and returns a pre-seeded Outcome.
+//
+// Request mirrors *agentgate.Manager.Request: OnPrompt is invoked only when
+// the outcome represents an actual user prompt (not a cache hit, not
+// rate-limited), so callers can assert request-audit emission semantics.
 type fakeApprover struct {
 	mu      sync.Mutex
 	calls   []agentgate.ApprovalRequest
@@ -44,6 +48,9 @@ func (f *fakeApprover) Request(_ context.Context, _ string, req agentgate.Approv
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, req)
+	if !f.outcome.FromCache && !f.outcome.RateLimited && req.OnPrompt != nil {
+		req.OnPrompt()
+	}
 	return f.outcome
 }
 
@@ -234,8 +241,13 @@ func (s *ServerSuite) TestApproveCallsApproverAndForwards() {
 	require.Len(s.T(), ap.calls, 1)
 	require.Equal(s.T(), "docker:DELETE:/containers/*", ap.calls[0].CacheKey)
 	require.Equal(s.T(), "DELETE /containers/abc123def456", ap.calls[0].Target)
-	require.Equal(s.T(), "approve", auditor.snapshot()[0].Decision)
-	require.Equal(s.T(), "user-42", auditor.snapshot()[0].Actor)
+	snap := auditor.snapshot()
+	require.Len(s.T(), snap, 2, "expect a pre-decision request entry + a decision entry")
+	require.Equal(s.T(), "request", snap[0].Event)
+	require.Empty(s.T(), snap[0].Decision)
+	require.Empty(s.T(), snap[1].Event)
+	require.Equal(s.T(), "approve", snap[1].Decision)
+	require.Equal(s.T(), "user-42", snap[1].Actor)
 }
 
 func (s *ServerSuite) TestApproveCacheHitReportedInAudit() {
@@ -255,7 +267,10 @@ func (s *ServerSuite) TestApproveCacheHitReportedInAudit() {
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/x", nil))
 	require.Equal(s.T(), http.StatusOK, rr.Code)
-	require.Equal(s.T(), "cache-hit", auditor.snapshot()[0].Decision)
+	snap := auditor.snapshot()
+	require.Len(s.T(), snap, 1, "cache hits short-circuit before the prompt, so no request audit is emitted")
+	require.Empty(s.T(), snap[0].Event)
+	require.Equal(s.T(), "cache-hit", snap[0].Decision)
 }
 
 func (s *ServerSuite) TestApproveDeniedBlocksForward() {
@@ -277,7 +292,10 @@ func (s *ServerSuite) TestApproveDeniedBlocksForward() {
 	srv.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/x", nil))
 	require.Equal(s.T(), http.StatusForbidden, rr.Code)
 	require.False(s.T(), upstreamHit)
-	require.Equal(s.T(), "user-denied", auditor.snapshot()[0].Reason)
+	snap := auditor.snapshot()
+	require.Len(s.T(), snap, 2)
+	require.Equal(s.T(), "request", snap[0].Event)
+	require.Equal(s.T(), "user-denied", snap[1].Reason)
 }
 
 func (s *ServerSuite) TestApproveRateLimitedDecisionInAudit() {
@@ -295,7 +313,10 @@ func (s *ServerSuite) TestApproveRateLimitedDecisionInAudit() {
 	rr := httptest.NewRecorder()
 	srv.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/x", nil))
 	require.Equal(s.T(), http.StatusForbidden, rr.Code)
-	require.Equal(s.T(), "rate-limit", auditor.snapshot()[0].Decision)
+	snap := auditor.snapshot()
+	require.Len(s.T(), snap, 1, "rate-limit denies short-circuit before the prompt, so no request audit is emitted")
+	require.Empty(s.T(), snap[0].Event)
+	require.Equal(s.T(), "rate-limit", snap[0].Decision)
 }
 
 // --- Body rules ---
@@ -545,7 +566,12 @@ func (s *ServerSuite) TestBodyRuleApprovePromptsAndForwards() {
 	require.Equal(s.T(), "docker:POST:body:body[0]", ap.calls[0].CacheKey)
 	require.Equal(s.T(), "container with docker.sock bind", ap.calls[0].Message)
 	require.Equal(s.T(), "alpine", ap.calls[0].Details["image"])
-	e := auditor.snapshot()[0]
+	snap := auditor.snapshot()
+	require.Len(s.T(), snap, 2)
+	require.Equal(s.T(), "request", snap[0].Event)
+	require.Equal(s.T(), "body[0]", snap[0].BodyRuleID)
+	e := snap[1]
+	require.Empty(s.T(), e.Event)
 	require.Equal(s.T(), "approve", e.Decision)
 	require.Equal(s.T(), "body[0]", e.BodyRuleID)
 	require.Equal(s.T(), "user-7", e.Actor)
@@ -583,7 +609,11 @@ func (s *ServerSuite) TestBodyRuleApproveDeniedBlocksForward() {
 
 	require.Equal(s.T(), http.StatusForbidden, rr.Code)
 	require.False(s.T(), upstreamHit)
-	e := auditor.snapshot()[0]
+	snap := auditor.snapshot()
+	require.Len(s.T(), snap, 2)
+	require.Equal(s.T(), "request", snap[0].Event)
+	e := snap[1]
+	require.Empty(s.T(), e.Event)
 	require.Equal(s.T(), "approve", e.Decision)
 	require.Equal(s.T(), "body[0]", e.BodyRuleID)
 	require.Equal(s.T(), "user-said-no", e.Reason)
@@ -619,7 +649,10 @@ func (s *ServerSuite) TestBodyRuleApproveCacheHit() {
 	srv.ServeHTTP(rr, req)
 
 	require.Equal(s.T(), http.StatusCreated, rr.Code)
-	require.Equal(s.T(), "cache-hit", auditor.snapshot()[0].Decision)
+	snap := auditor.snapshot()
+	require.Len(s.T(), snap, 1, "cache hits short-circuit before the prompt, so no request audit is emitted")
+	require.Empty(s.T(), snap[0].Event)
+	require.Equal(s.T(), "cache-hit", snap[0].Decision)
 }
 
 func (s *ServerSuite) TestBodyRuleApproveRateLimited() {
@@ -650,7 +683,10 @@ func (s *ServerSuite) TestBodyRuleApproveRateLimited() {
 	srv.ServeHTTP(rr, req)
 
 	require.Equal(s.T(), http.StatusForbidden, rr.Code)
-	require.Equal(s.T(), "rate-limit", auditor.snapshot()[0].Decision)
+	snap := auditor.snapshot()
+	require.Len(s.T(), snap, 1, "rate-limit denies short-circuit before the prompt, so no request audit is emitted")
+	require.Empty(s.T(), snap[0].Event)
+	require.Equal(s.T(), "rate-limit", snap[0].Decision)
 }
 
 func (s *ServerSuite) TestBodyRuleNoRulesNoBodyRead() {

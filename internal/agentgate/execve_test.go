@@ -27,9 +27,15 @@ type fakeApprover struct {
 	calls    int
 }
 
+// Request mirrors *Manager.Request: it invokes OnPrompt only on outcomes that
+// represent an actual user prompt, so cache hits and rate-limit denies stay
+// silent — matching the production contract handlers depend on.
 func (f *fakeApprover) Request(_ context.Context, _ string, req ApprovalRequest) Outcome {
 	f.calls++
 	f.captured = req
+	if !f.outcome.FromCache && !f.outcome.RateLimited && req.OnPrompt != nil {
+		req.OnPrompt()
+	}
 	return f.outcome
 }
 
@@ -374,6 +380,46 @@ func (s *ExecveSuite) TestHandleEmitsAuditEntryForRuleMatch() {
 	s.Require().Equal("c1", e.Channel)
 	s.Require().Equal(9001, e.PID, "requesting PID must be plumbed into audit")
 	s.Require().Greater(e.Latency, time.Duration(0))
+}
+
+func (s *ExecveSuite) TestHandleEmitsRequestAuditEntryForApproveDispatch() {
+	policy := s.mustPolicy(types.DecisionAllow, types.CommandRule{
+		Commands: []string{"git"},
+		Decision: types.DecisionApprove,
+		Message:  "git write-side op",
+	})
+	rec := &recordingAuditor{}
+	ap := &fakeApprover{outcome: Outcome{Decision: types.DecisionAllow, Actor: "u1"}}
+	h := NewExecveHandler(policy, ap)
+	h.Auditor = rec
+	h.Now = stepClock()
+
+	out := h.Handle(context.Background(), ExecveRequest{
+		PID:       4242,
+		ChannelID: "chan",
+		Filename:  "/usr/bin/git",
+		Argv:      []string{"/usr/bin/git", "push", "origin"},
+	})
+	s.Require().Equal(types.DecisionAllow, out.Decision)
+
+	entries := rec.snapshot()
+	s.Require().Len(entries, 2, "expect a pre-decision request entry + a decision entry")
+
+	req := entries[0]
+	s.Require().Equal("request", req.Event)
+	s.Require().Equal("execve", req.Kind)
+	s.Require().Equal("/usr/bin/git push origin", req.Target)
+	s.Require().Equal("cmd[0]", req.RuleID)
+	s.Require().Empty(req.Decision)
+	s.Require().Empty(req.PromptedWho)
+	s.Require().Equal(time.Duration(0), req.Latency)
+	s.Require().Equal("chan", req.Channel)
+	s.Require().Equal(4242, req.PID)
+
+	decision := entries[1]
+	s.Require().Empty(decision.Event)
+	s.Require().Equal("allow", decision.Decision)
+	s.Require().Equal("u1", decision.PromptedWho)
 }
 
 func (s *ExecveSuite) TestHandleEmitsAuditEntryForMemfdDeny() {
