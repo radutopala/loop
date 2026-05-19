@@ -30,6 +30,7 @@ import { KanbanPanel } from "../panels/KanbanPanel";
 import { WorkflowsLayoutPanel } from "../panels/WorkflowsLayoutPanel";
 import { AuditPanel } from "../panels/AuditPanel";
 import { QualityPanel } from "../panels/QualityPanel";
+import { ReviewPanel } from "../panels/ReviewPanel";
 import { killAgentContainer } from "../../api/loopApi";
 import { ChannelHeaderInfo } from "./ChannelHeaderInfo";
 import { HeaderBranchPicker } from "./HeaderBranchPicker";
@@ -902,11 +903,20 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               onClose={() => handleRemoveLeaf(leaf.id)}
             />
           );
+        case "review":
+          return (
+            <ReviewPanel
+              key={`layout-review-${channelId}`}
+              channelId={channelId}
+              subscribeChatEvents={subscribeChatEvents}
+              onClose={() => handleRemoveLeaf(leaf.id)}
+            />
+          );
         default:
           return null;
       }
     },
-    [channelId, chatState, editorState, dirPath, branch, scrollToMessageId, onScrollComplete, openMemoryFile, onStatusChange, handlePaneStatus, handleRemoveLeaf],
+    [channelId, chatState, editorState, dirPath, branch, scrollToMessageId, onScrollComplete, openMemoryFile, onStatusChange, handlePaneStatus, handleRemoveLeaf, subscribeChatEvents],
   );
 
   return (

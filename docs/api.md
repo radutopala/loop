@@ -1519,6 +1519,58 @@ Clone clusters from the cached graph. SimHash fingerprints over normalised funct
 
 ---
 
+## Review
+
+See [review.md](review.md) for the full lifecycle. Endpoints below return
+`501 review service not configured` if the daemon was started without
+`gh` available or without a worktree provider wired in.
+
+### `POST /api/channels/{id}/review/load`
+
+Load a PR's diff into a local worktree under the channel's `dir_path`.
+Body: `{"pr_number": 42}` (the FE parses both `#42` and PR URLs into a
+number client-side). Replaces any existing session for the channel.
+
+Response: `{"present": true, "session": { ... }}` — the full session, mirroring `review.Session` in `internal/review/session.go`.
+
+**Errors:** `400` on invalid `pr_number` or missing `dir_path`. `404` if the PR does not exist. `500` on `gh`/git failure.
+
+### `GET /api/channels/{id}/review`
+
+Return the channel's review session, or `{"present": false}` if none.
+
+### `DELETE /api/channels/{id}/review`
+
+Remove the channel's session and delete the on-disk worktree. Idempotent —
+`204` whether or not one exists.
+
+### `POST /api/channels/{id}/review/run`
+
+Start an agent review pass. Returns `202 {"status":"started"}` and the
+run continues in the background, streaming `review.comment` and
+`review.status` events over the WebSocket.
+
+A concurrent call while a run is in flight returns `202 {"status":"in_progress"}` without restarting.
+
+**Errors:** `404` if no session. `409` if the session is not in `ready` status. `501` if the review agent is not wired.
+
+### `POST /api/channels/{id}/review/comments/{cid}/push`
+
+Push one comment to the PR via `gh api /repos/{owner}/{repo}/pulls/{N}/comments`. Flips `pushed=true` on the in-memory session on success.
+
+Response: `{"pushed": true}` (or `{"pushed": true, "already": true}` if already pushed).
+
+**Errors:** `404` if session or comment id is unknown. `500` on `gh` failure.
+
+### `POST /api/channels/{id}/review/push-all`
+
+Push every unpushed comment in the session. Errors are accumulated rather
+than short-circuiting — one bad comment does not block the rest.
+
+Response: `{"pushed": N, "failed": M, "errors": ["id: msg", ...]}`.
+
+---
+
 ## Memory
 
 See [Memory System](memory.md) for the full architecture.
