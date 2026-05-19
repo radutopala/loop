@@ -546,10 +546,10 @@ Until the first `agent.status` event arrives (or after a hard reload while `isRu
 
 ### Trigger Quote
 
-`TriggerQuote` is a sticky floating banner anchored to the **bottom** of the scroll container. An `IntersectionObserver` tags every user-message DOM node (`[data-msg-uuid][data-is-user="true"]`) as `above`, `visible`, or `below` the viewport, and `ChatMessages` picks an anchor message to surface with this priority:
+`TriggerQuote` is a sticky floating banner pinned to either the top or bottom of the scroll container depending on which case fires. An `IntersectionObserver` tags every user-message DOM node (`[data-msg-uuid][data-is-user="true"]`) as `above`, `visible`, or `below` the viewport, and `ChatMessages` picks an anchor message to surface with this priority:
 
-1. **In-flight, off-screen.** If a run is in flight and the triggering user message is not currently visible (scrolled past or on a not-yet-loaded older page), the banner quotes that message. Content comes from the `trigger_content` field on the `agent.status` `running` event so it still works when the row hasn't been paginated in. The row itself already carries a `processing` label, so the banner stays hidden while the row is visible.
-2. **No user message visible.** If no user message is in the viewport at all (we're parked deep in a stretch of bot output, thinking blocks, or tool calls), the banner quotes the most recent user message *above* the viewport — a navigation aid so the user can jump back to whichever prompt produced what they're reading.
+1. **In-flight, off-screen → bottom.** If a run is in flight and the triggering user message is not currently visible (scrolled past or on a not-yet-loaded older page), the banner pins to the **bottom** and quotes that message — near the live tail so the user keeps context about what's currently running. Content comes from the `trigger_content` field on the `agent.status` `running` event so it still works when the row hasn't been paginated in. The row itself already carries a `processing` label, so the banner stays hidden while the row is visible.
+2. **No user message visible → top.** If no user message is in the viewport at all (we're parked deep in a stretch of bot output, thinking blocks, or tool calls) and no run is in flight, the banner pins to the **top** and quotes the most recent user message *above* the viewport — reads as the prompt the visible content is replying to, and acts as a navigation aid so the user can jump back to it.
 
 The banner displays:
 
