@@ -228,8 +228,19 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
         cursor = resp.next_cursor;
       }
 
+      // Preserve liveTail message entries that the fresh fetch didn't bridge —
+      // typically queued (unprocessed) user messages sent during/after the run.
+      // Drop non-message kinds (thinking/tool_use/tool_result/compacting) since
+      // they get backfilled into items by the same fetch.
+      const bridgedMsgIds = new Set<string>();
+      for (const it of collected) {
+        if (it.kind === "message") bridgedMsgIds.add(it.data.msg_id);
+      }
+      const pruneLive = (prev: TimelineItem[]): TimelineItem[] =>
+        prev.filter((it) => it.kind === "message" && !bridgedMsgIds.has(it.data.msg_id));
+
       if (collected.length === 0) {
-        setLiveTail([]);
+        setLiveTail(pruneLive);
         return;
       }
 
@@ -246,7 +257,7 @@ export function useTimeline(channelId: string | null): UseTimelineResult {
       });
       setHasMore(nextCursor !== null);
       cursorRef.current = nextCursor;
-      setLiveTail([]);
+      setLiveTail(pruneLive);
     };
 
     run().catch(() => {});
