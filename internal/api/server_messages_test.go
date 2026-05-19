@@ -260,6 +260,56 @@ func (s *ServerSuite) TestSetIncomingMessageHandler() {
 	require.Equal(s.T(), handler, s.srv.msgHandler)
 }
 
+// --- ListQueuedMessages tests ---
+
+func (s *ServerSuite) TestListQueuedMessagesSuccess() {
+	now := time.Now().UTC()
+	msgs := []*db.Message{
+		{ID: 12, ChannelID: "ch-1", MsgID: "m12", AuthorID: "u1", AuthorName: "alice", Content: "bumped", Priority: 1, CreatedAt: now},
+		{ID: 10, ChannelID: "ch-1", MsgID: "m10", AuthorID: "u1", AuthorName: "alice", Content: "first", CreatedAt: now},
+	}
+	s.store.On("ListQueuedUserMessages", mock.Anything, "ch-1").Return(msgs, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/queued", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp queuedMessagesResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp.Messages, 2)
+	require.Equal(s.T(), "m12", resp.Messages[0].MsgID)
+	require.Equal(s.T(), 1, resp.Messages[0].Priority)
+	require.Equal(s.T(), "m10", resp.Messages[1].MsgID)
+}
+
+func (s *ServerSuite) TestListQueuedMessagesEmpty() {
+	s.store.On("ListQueuedUserMessages", mock.Anything, "ch-1").Return([]*db.Message{}, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/queued", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp queuedMessagesResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Empty(s.T(), resp.Messages)
+}
+
+func (s *ServerSuite) TestListQueuedMessagesError() {
+	s.store.On("ListQueuedUserMessages", mock.Anything, "ch-1").Return(nil, errors.New("db error"))
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/queued", "")
+	require.Equal(s.T(), http.StatusInternalServerError, rec.Code)
+}
+
+func (s *ServerSuite) TestListQueuedMessagesNotConfigured() {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	srv := NewServer(nil, nil, nil, nil, nil, logger)
+	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/channels/{id}/queued", srv.handleListQueuedMessages)
+	req := httptest.NewRequest("GET", "/api/channels/ch-1/queued", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	require.Equal(s.T(), http.StatusNotImplemented, rec.Code)
+}
+
 // --- ListMessages tests ---
 
 func (s *ServerSuite) TestListMessagesSuccess() {

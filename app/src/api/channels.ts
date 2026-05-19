@@ -291,6 +291,23 @@ export async function fetchMessages(
   return res.json();
 }
 
+/**
+ * Fetches the canonical queue of unprocessed user messages for a channel,
+ * already ordered by (priority DESC, id ASC) on the backend. The FE uses this
+ * list — rather than filtering the loaded chat history — so the queue stays
+ * correct even when older pages are out of view.
+ */
+export async function fetchQueuedMessages(
+  channelId: string,
+): Promise<Message[]> {
+  const res = await fetch(
+    `${getApiUrl()}/api/channels/${channelId}/queued`,
+  );
+  if (!res.ok) throw new Error(`Failed to fetch queued messages: ${res.statusText}`);
+  const data: { messages: Message[] } = await res.json();
+  return data.messages ?? [];
+}
+
 export async function fetchTimeline(
   channelId: string,
   opts?: { limit?: number; cursorPosition?: number; cursorId?: number },

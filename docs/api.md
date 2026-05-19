@@ -464,6 +464,53 @@ List messages for a channel. Supports two modes: **cursor-based pagination** (de
 
 ---
 
+### `GET /api/channels/{id}/queued`
+
+Return the canonical queue of unprocessed user messages for a channel — every row with `kind = 'message'`, `is_bot = 0`, `is_processed = 0`, ordered by `priority DESC, id ASC` (the exact order the orchestrator drains in). The chat UI calls this on channel mount and after every event that could change the queue (`message.created`, `message.deleted`, `messages.processed`, `agent.status`) so the "queued"/"processing" labels and the queued-messages popup stay correct even when older pages of chat history are not loaded in the renderer.
+
+**Path Parameters:**
+
+| Param | Type   | Description |
+|-------|--------|-------------|
+| `id`  | string | Channel or thread ID |
+
+**Response (200):**
+```json
+{
+  "messages": [
+    {
+      "id": 51,
+      "channel_id": "abc123",
+      "msg_id": "msg-bumped",
+      "author_id": "user123",
+      "author_name": "Alice",
+      "content": "do this first instead",
+      "is_bot": false,
+      "is_processed": false,
+      "priority": 1,
+      "created_at": "2026-01-01T00:00:30Z"
+    },
+    {
+      "id": 49,
+      "channel_id": "abc123",
+      "msg_id": "msg-older",
+      "author_id": "user123",
+      "author_name": "Alice",
+      "content": "do this second",
+      "is_bot": false,
+      "is_processed": false,
+      "created_at": "2026-01-01T00:00:00Z"
+    }
+  ]
+}
+```
+
+The in-flight message (the one with `is_running = 1` on the row) is **included** in the response — clients use the [`agent.status`](events.md#agentstatus) event's `msg_id` to distinguish "processing" from "queued". Higher `priority` values sort first; `priority` is omitted when zero.
+
+**Errors:** `501` if message listing is not configured. `500` on database error.
+
+---
+
 ### `GET /api/channels/{id}/timeline`
 
 List the channel's interleaved timeline — chat messages plus persisted agent events (thinking blocks, tool calls, tool results) — in canonical chain order. Each row carries a `kind` discriminator and a per-channel `chain_position`.

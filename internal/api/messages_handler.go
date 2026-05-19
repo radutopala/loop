@@ -217,6 +217,34 @@ func (s *Server) handleListMessages(w http.ResponseWriter, r *http.Request) {
 	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
 }
 
+type queuedMessagesResponse struct {
+	Messages []messageResponse `json:"messages"`
+}
+
+// handleListQueuedMessages returns the canonical, backend-ordered list of
+// unprocessed user messages for a channel (kind='message', is_bot=0,
+// is_processed=0) sorted by priority DESC, id ASC. The FE uses this list to
+// render the "processing" / "queued" labels independently of how many pages of
+// chat history are currently loaded.
+func (s *Server) handleListQueuedMessages(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "queued message listing not configured") {
+		return
+	}
+
+	channelID := r.PathValue("id")
+	msgs, err := s.store.ListQueuedUserMessages(r.Context(), channelID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := queuedMessagesResponse{Messages: make([]messageResponse, 0, len(msgs))}
+	for _, m := range msgs {
+		resp.Messages = append(resp.Messages, toMessageResponse(m))
+	}
+	writeHTTPJSON(w, http.StatusOK, resp, s.logger)
+}
+
 const defaultSearchLimit = 20
 const maxSearchLimit = 50
 

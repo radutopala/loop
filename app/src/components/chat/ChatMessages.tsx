@@ -147,7 +147,7 @@ export interface ChatMessagesHandle {
 export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(function ChatMessages({ channelId, chatState, scrollToMessageId, onScrollComplete, onQuote }, ref) {
   const { colors } = useTheme();
   const styles = buildMessageStyles(colors);
-  const { items, liveTail, messages, loading, loadMore, hasMore, streamingContent, isRunning, agentActivity, askUserQuestions, exitPlanRequest, todos, completionInfo, triggerContent, gateApprovals, processingMsgId } = chatState;
+  const { items, liveTail, messages, loading, loadMore, hasMore, streamingContent, isRunning, agentActivity, askUserQuestions, exitPlanRequest, todos, completionInfo, triggerContent, gateApprovals, processingMsgId, queuedMessages: backendQueue } = chatState;
   // The approval card belongs to chat only when the gate is attributed to the
   // chat agent. Terminal-sourced gates ("terminal:<leafId>") render in the
   // matching terminal pane instead.
@@ -230,31 +230,29 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     }
   }, [hasMore, loading, loadMore]);
 
-  // The backend tells us which msg_id the agent is currently processing via
-  // agent.status. We must NOT infer from array position because priority-bumped
-  // messages (e.g. deny-with-prompt) can be processed out of chronological
-  // order. Fallback: during the brief startup window before the first
-  // agent.status event arrives, use the first-unprocessed heuristic.
-  const unprocessedUserMsgs = messages.filter((m) => !m.is_bot && !m.is_processed);
+  // Canonical queue and processing pointer both come from the backend:
+  //   - `processingMsgId` is set by agent.status (running) and cleared on
+  //     completion / messages.processed for that id.
+  //   - `backendQueue` is the GET /api/channels/{id}/queued response, already
+  //     ordered by (priority DESC, id ASC). It includes the in-flight row so
+  //     we filter it out for the "waiting behind" list.
+  // Fallback: during the brief startup window before the first agent.status
+  // event arrives, use the first backend-queued message as the processing one.
   const effectiveProcessingMsgId =
-    processingMsgId ?? (isRunning ? unprocessedUserMsgs[0]?.msg_id ?? null : null);
+    processingMsgId ?? (isRunning ? backendQueue[0]?.msg_id ?? null : null);
   // Messages waiting behind the currently-processing one; deletable from the popup.
-  const queuedMessages = unprocessedUserMsgs.filter((m) => m.msg_id !== effectiveProcessingMsgId);
+  const queuedMessages = backendQueue.filter((m) => m.msg_id !== effectiveProcessingMsgId);
 
-  // Queue position labels ("1/3" etc.) keyed by msg_id. The backend processes
-  // rows in (priority DESC, id ASC) order, so we sort by the same rule to
-  // match what the agent will actually run next. Higher priority lands on top
-  // (an interrupt becomes "1/N" and bumps existing rows down).
-  const queueOrdered = [...queuedMessages].sort((a, b) => {
-    const pa = a.priority ?? 0;
-    const pb = b.priority ?? 0;
-    if (pa !== pb) return pb - pa;
-    return a.id - b.id;
-  });
+  // Queue position labels ("1/3" etc.) keyed by msg_id. Backend order is
+  // already (priority DESC, id ASC), so positions are simply 1-indexed.
   const queuePositionByMsgId = new Map<string, string>();
-  queueOrdered.forEach((m, idx) => {
-    queuePositionByMsgId.set(m.msg_id, `${idx + 1}/${queueOrdered.length}`);
+  queuedMessages.forEach((m, idx) => {
+    queuePositionByMsgId.set(m.msg_id, `${idx + 1}/${queuedMessages.length}`);
   });
+  // Set of msg_ids the backend considers queued. Used to drive the per-bubble
+  // "queued" label so it stays synced with the popup even when the locally
+  // loaded message's is_processed field is stale.
+  const queuedMsgIdSet = new Set(queuedMessages.map((m) => m.msg_id));
 
   // Track the viewport status (above / visible / below) of every user
   // message in the chat. Used to decide which (if any) user message to
@@ -341,7 +339,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
                     key={`m-${msg.msg_id}`}
                     message={msg}
                     showProcessing={isRunning && !msg.is_bot && msg.msg_id === effectiveProcessingMsgId}
-                    showQueued={!msg.is_bot && !msg.is_processed && msg.msg_id !== effectiveProcessingMsgId}
+                    showQueued={!msg.is_bot && queuedMsgIdSet.has(msg.msg_id)}
                     queuePosition={queuePositionByMsgId.get(msg.msg_id)}
                     highlighted={msg.id === highlightedMsgId}
                     onQuote={onQuote}

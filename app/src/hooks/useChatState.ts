@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { fetchQueuedMessages } from "../api/channels";
 import type { AgentActivityData, AgentStatusData, AgentThinkingData, AskUserQuestionData, ExitPlanModeData, GateApprovalRequestedData, GateApprovalResolvedData, Message, MessageCreatedData, MessagesProcessedData, MessageStreamingData, TimelineItem, TodoWriteData, ToolResultData, ToolUseData, WSEvent } from "../types";
 import type { ActiveChatState, ChatEventListener } from "./useChatStateStore";
 import { useTimeline } from "./useTimeline";
@@ -34,6 +35,14 @@ export interface ChatState {
   clearGateApproval: (source: string) => void;
   /** msg_id of the message the agent is currently processing — driven by agent.status backend event. */
   processingMsgId: string | null;
+  /**
+   * Canonical queue of unprocessed user messages for the current channel,
+   * ordered by (priority DESC, id ASC). Sourced from
+   * GET /api/channels/{id}/queued so the UI doesn't lose track when older
+   * pages of chat history aren't loaded. Includes the message currently being
+   * processed — render code uses [[processingMsgId]] to distinguish it.
+   */
+  queuedMessages: Message[];
 }
 
 interface UseChatStateOptions {
@@ -93,6 +102,34 @@ export function useChatState(
   const [triggerContent, setTriggerContent] = useState<string | null>(initialState?.triggerContent ?? null);
   const [gateApprovals, setGateApprovals] = useState<Record<string, GateApprovalRequestedData>>(initialState?.gateApprovals ?? {});
   const [processingMsgId, setProcessingMsgId] = useState<string | null>(initialState?.processingMsgId ?? null);
+  const [queuedMessages, setQueuedMessages] = useState<Message[]>([]);
+
+  // Track the last channelId we fetched for, so an in-flight refresh that
+  // resolves after a channel switch doesn't write stale rows into the new
+  // channel's state.
+  const queueChannelRef = useRef<string | null>(channelId);
+  const refreshQueue = useCallback(() => {
+    if (!channelId) {
+      setQueuedMessages([]);
+      return;
+    }
+    const target = channelId;
+    fetchQueuedMessages(target)
+      .then((msgs) => {
+        if (queueChannelRef.current === target) {
+          setQueuedMessages(msgs);
+        }
+      })
+      .catch((err) => {
+        console.warn("[chat] fetchQueuedMessages failed:", err);
+      });
+  }, [channelId]);
+
+  // Fetch the queue whenever the selected channel changes.
+  useEffect(() => {
+    queueChannelRef.current = channelId;
+    refreshQueue();
+  }, [channelId, refreshQueue]);
 
   // Refs tracking latest values for the onUnmount snapshot.
   const streamingRef = useRef(streamingContent);
@@ -171,6 +208,9 @@ export function useChatState(
           priority: data.priority,
           created_at: new Date(event.timestamp).toISOString(),
         });
+        // A new user message may have just been queued (incl. priority-bumped
+        // interrupts) — refresh the canonical queue from the backend.
+        if (!data.is_bot) refreshQueue();
         return;
       }
       if (event.type === "messages.processed") {
@@ -179,11 +219,13 @@ export function useChatState(
         if (processingMsgIdRef.current && data.msg_ids.includes(processingMsgIdRef.current)) {
           setProcessingMsgId(null);
         }
+        refreshQueue();
         return;
       }
       if (event.type === "message.deleted") {
         const data = event.data as { msg_id: string };
         removeMessage(data.msg_id);
+        refreshQueue();
         return;
       }
       if (event.type === "tool.use") {
@@ -265,6 +307,7 @@ export function useChatState(
           setExitPlanRequest(null);
           setTriggerContent(data.trigger_content ?? null);
           setProcessingMsgId(data.msg_id ?? null);
+          refreshQueue();
         } else {
           // Only clear isRunning if the finishing run_id matches the one we're
           // tracking, or if either side has no run_id (backwards compat).
@@ -305,7 +348,7 @@ export function useChatState(
         return;
       }
     },
-    [appendLiveMessage, appendLiveThinking, appendLiveToolUse, appendLiveToolResult, appendLiveCompacting, refetchHead],
+    [appendLiveMessage, appendLiveThinking, appendLiveToolUse, appendLiveToolResult, appendLiveCompacting, markProcessed, removeMessage, refetchHead, refreshQueue],
   );
 
   // Subscribe to chat events from the app-level store (single WS).
@@ -354,5 +397,6 @@ export function useChatState(
       });
     }, []),
     processingMsgId,
+    queuedMessages,
   };
 }

@@ -527,11 +527,17 @@ History is stored in `useRef` arrays (`historyRef`, `historyIdxRef`, `draftRef`)
 
 When multiple messages are sent while the agent is running, unprocessed messages are tracked and annotated with status labels.
 
+### Canonical Queue Source
+
+`useChatState` keeps a `queuedMessages` slice sourced from [`GET /api/channels/{id}/queued`](api.md#get-apichannelsidqueued) — the backend returns every row with `kind = 'message' AND is_bot = 0 AND is_processed = 0` for the channel, already ordered by `(priority DESC, id ASC)`. The hook refetches the list on channel mount and on every event that could change it: `message.created` (non-bot), `message.deleted`, `messages.processed`, and `agent.status` (`running`). Pulling from the backend avoids the previous bug where the FE filtered the locally-loaded chat history — when many pages were paginated in, older orphan rows could leak into the popup, and when few pages were loaded, the in-flight row might not even be in scope.
+
+The processing-row pointer `processingMsgId` is still backend-driven: the [`agent.status`](events.md#agentstatus) event carries `msg_id` on `running`/`completed`/`error` transitions, and `useChatState` mirrors that into a single state field. `ChatMessages` filters `processingMsgId` out of the queue list to derive what the popup and per-row "queued" labels render.
+
 ### Processing State
 
-Each user message has an `is_processed` flag. The backend marks exactly one row as "currently running" via the [`agent.status`](events.md#agentstatus) event, which carries `msg_id` on `running`, `completed`, and `error` transitions. `useChatState` mirrors this into a `processingMsgId` field on the chat state; `ChatMessages` uses it to pick which row gets the `processing` label and which unprocessed rows fall into the `queued` bucket. This handles priority-bumped messages (e.g. the gate's "Deny with prompt" interrupt) that run ahead of older queued rows — the FE can't infer order from array position because chat history stays chronological.
+`ChatMessages` uses `processingMsgId` to pick which loaded user-message bubble gets the `processing` label. The `queued` label is driven by membership in `backendQueue` rather than the local message's `is_processed` field, so a row stays correctly annotated even if its `is_processed` flag hasn't yet been updated by a `messages.processed` event roundtrip. This handles priority-bumped messages (e.g. the gate's "Deny with prompt" interrupt) that run ahead of older queued rows — the FE can't infer order from array position because chat history stays chronological.
 
-Until the first `agent.status` event arrives (or after a hard reload while `isRunning` is still true), the FE falls back to "first unprocessed user message" so the indicator is never absent during the brief startup window.
+Until the first `agent.status` event arrives (or after a hard reload while `isRunning` is still true), the FE falls back to the first entry in `backendQueue` as the processing one so the indicator is never absent during the brief startup window.
 
 | State | Label | Style |
 |-------|-------|-------|
@@ -557,9 +563,10 @@ Clicking the banner scrolls the anchor message back into view. The state persist
 
 A `QueuedMessagesPopup` component (`src/components/chat/QueuedMessagesPopup.tsx`) renders above the chat input whenever there are one or more unprocessed user messages waiting behind the currently-running one. It is hidden when the queue is empty.
 
+- **List source** — the rows shown come from `chatState.queuedMessages`, which is the [`GET /api/channels/{id}/queued`](api.md#get-apichannelsidqueued) response with the in-flight `processingMsgId` row filtered out. The list is independent of how many pages of chat history are loaded.
 - **Collapsible header** — shows `N queued` with a chevron. Click to expand the list.
 - **Row layout** — one line per message, truncated with ellipsis. Clicking a row toggles an inline expanded view (full content, pre-wrapped).
-- **Delete button** — a `×` button on each row calls `DELETE /api/messages/{msg_id}?channel_id=...` via the `deleteQueuedMessage` API client. The row dims while the request is in flight; the server broadcasts a `message.deleted` WebSocket event and `useChatState` removes the message from local state. Deleting a queued row is safe even mid-run — `ClaimNextPending` only sees `is_running=0 AND is_processed=0` rows, so the deletion lands before the row can be claimed.
+- **Delete button** — a `×` button on each row calls `DELETE /api/messages/{msg_id}?channel_id=...` via the `deleteQueuedMessage` API client. The row dims while the request is in flight; the server broadcasts a `message.deleted` WebSocket event, which both removes the row from the local timeline and re-fetches the queue. Deleting a queued row is safe even mid-run — `ClaimNextPending` only sees `is_running=0 AND is_processed=0` rows, so the deletion lands before the row can be claimed.
 - **Safety** — the row identified by `processingMsgId` (see [Processing State](#processing-state)) is filtered out of the popup. Use the existing stop button to cancel an in-flight run, or "Deny with prompt" on a gate card to interrupt with a new prompt that runs ahead of the queue without dropping queued rows.
 
 ---
