@@ -11,30 +11,34 @@ import (
 
 // storeBotMessage generates an ID, persists a bot message in the database,
 // and broadcasts a message.created event. Either store or broadcaster may be nil.
-func storeBotMessage(ctx context.Context, store db.Store, broadcaster events.Broadcaster, channelID, content string) {
+// triggerMsgID is the msg_id of the user message that triggered the run that
+// produced this bot reply; pass "" for bot rows that aren't run-emitted.
+func storeBotMessage(ctx context.Context, store db.Store, broadcaster events.Broadcaster, channelID, content, triggerMsgID string) {
 	msgID := generateMessageID()
 	if store != nil {
 		ch, err := store.GetChannel(ctx, channelID)
 		if err == nil && ch != nil {
 			_ = store.InsertMessage(ctx, &db.Message{
-				ChatID:      ch.ID,
-				ChannelID:   channelID,
-				MsgID:       msgID,
-				AuthorName:  "agent",
-				Content:     content,
-				IsBot:       true,
-				IsProcessed: true,
-				CreatedAt:   time.Now().UTC(),
+				ChatID:       ch.ID,
+				ChannelID:    channelID,
+				MsgID:        msgID,
+				AuthorName:   "agent",
+				Content:      content,
+				IsBot:        true,
+				IsProcessed:  true,
+				TriggerMsgID: triggerMsgID,
+				CreatedAt:    time.Now().UTC(),
 			})
 		}
 	}
 	if broadcaster != nil {
 		broadcaster.BroadcastMessageCreated(channelID, events.MessageEventData{
-			MsgID:       msgID,
-			AuthorName:  "agent",
-			Content:     content,
-			IsBot:       true,
-			IsProcessed: true,
+			MsgID:        msgID,
+			AuthorName:   "agent",
+			Content:      content,
+			IsBot:        true,
+			IsProcessed:  true,
+			TriggerMsgID: triggerMsgID,
 		})
 	}
 }

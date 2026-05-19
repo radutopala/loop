@@ -262,6 +262,15 @@ var migrations = []migration{
 	sqlMigration(`ALTER TABLE messages ADD COLUMN mode TEXT NOT NULL DEFAULT ''`),
 	// Covers ClaimNextPending: filtered by channel + queue eligibility, ordered by priority DESC, id ASC.
 	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_messages_pending ON messages(channel_id, is_processed, is_triggered, is_running, priority DESC, id ASC)`),
+	// trigger_msg_id links every agent-emitted row (bot replies, thinking,
+	// tool_use, tool_result, compacting) back to the user message that
+	// triggered the run. Without this, reload-time grouping is purely
+	// positional and misattributes bot replies that landed after a newer
+	// queued user message. User-authored rows leave it as the zero value;
+	// legacy pre-migration rows do too and fall back to positional grouping
+	// in the FE.
+	sqlMigration(`ALTER TABLE messages ADD COLUMN trigger_msg_id TEXT NOT NULL DEFAULT ''`),
+	sqlMigration(`CREATE INDEX IF NOT EXISTS idx_messages_trigger_msg_id ON messages(channel_id, trigger_msg_id) WHERE trigger_msg_id != ''`),
 }
 
 // RunMigrations executes all pending schema migrations.

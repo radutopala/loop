@@ -288,7 +288,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 						ChannelID: task.ChannelID,
 						Content:   text,
 					})
-					storeBotMessage(ctx, e.store, e.events, task.ChannelID, text)
+					storeBotMessage(ctx, e.store, e.events, task.ChannelID, text, "")
 					return
 				}
 				threadID = id
@@ -348,7 +348,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 				}); err != nil {
 					e.logger.Error("streaming send failed", "error", err, "channel_id", targetID)
 				}
-				storeBotMessage(ctx, e.store, e.events, targetID, text)
+				storeBotMessage(ctx, e.store, e.events, targetID, text, "")
 			}
 		})
 		req.OnTurn = func(text string) {
@@ -526,7 +526,7 @@ func (e *TaskExecutor) ExecuteTask(ctx context.Context, task *db.ScheduledTask) 
 		}); err != nil {
 			e.logger.Error("sending task response", "error", err, "channel_id", task.ChannelID)
 		}
-		storeBotMessage(ctx, e.store, e.events, targetChannelID, resp.Response)
+		storeBotMessage(ctx, e.store, e.events, targetChannelID, resp.Response, "")
 	}
 
 	// Broadcast completed status. For subsequent runs, broadcast to both

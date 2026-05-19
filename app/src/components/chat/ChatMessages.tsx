@@ -240,7 +240,6 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     processingMsgId ?? (isRunning ? unprocessedUserMsgs[0]?.msg_id ?? null : null);
   // Messages waiting behind the currently-processing one; deletable from the popup.
   const queuedMessages = unprocessedUserMsgs.filter((m) => m.msg_id !== effectiveProcessingMsgId);
-  const hasQueuedMessages = queuedMessages.length > 0;
 
   // Queue position labels ("1/3" etc.) keyed by msg_id. The backend processes
   // rows in (priority DESC, id ASC) order, so we sort by the same rule to
@@ -257,16 +256,52 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     queuePositionByMsgId.set(m.msg_id, `${idx + 1}/${queueOrdered.length}`);
   });
 
-  // Track whether we ever had queued messages in this batch, so the trigger
-  // quote persists even when processing the last message of a multi-message batch.
-  const hadQueuedRef = useRef(false);
-  if (hasQueuedMessages) hadQueuedRef.current = true;
-  if (unprocessedUserMsgs.length === 0) hadQueuedRef.current = false;
-  const showTriggerQuote = isRunning && !!triggerContent && (hasQueuedMessages || hadQueuedRef.current);
+  // Track whether the currently-processing message's DOM node is inside the
+  // viewport. When it isn't (scrolled away, off-screen, or not rendered
+  // because it's on an older paginated page), we show the floating
+  // TriggerQuote so the user keeps context about what's running.
+  const [processingMsgVisible, setProcessingMsgVisible] = useState(true);
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container || !effectiveProcessingMsgId) {
+      setProcessingMsgVisible(true);
+      return;
+    }
+    const target = container.querySelector(`[data-msg-uuid="${effectiveProcessingMsgId}"]`);
+    if (!target) {
+      setProcessingMsgVisible(false);
+      return;
+    }
+    const observer = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) setProcessingMsgVisible(entry.isIntersecting);
+      },
+      { root: container, threshold: 0.01 },
+    );
+    observer.observe(target);
+    return () => observer.disconnect();
+  }, [effectiveProcessingMsgId, messages, items, liveTail]);
+
+  const showTriggerQuote = isRunning && !!triggerContent && !processingMsgVisible;
 
   return (
     <ChannelContext.Provider value={channelId}>
       <div ref={containerRef} style={styles.messages} onScroll={handleScroll}>
+        {showTriggerQuote && (
+          <div style={{ position: "sticky", top: 0, zIndex: 2, marginBottom: 8 }}>
+            <div style={{ maxWidth: 768, margin: "0 auto" }}>
+              <TriggerQuote
+                content={triggerContent!}
+                time={effectiveProcessingMsgId ? messages.find((m) => m.msg_id === effectiveProcessingMsgId)?.created_at : undefined}
+                onClick={() => {
+                  if (!effectiveProcessingMsgId) return;
+                  const target = containerRef.current?.querySelector(`[data-msg-uuid="${effectiveProcessingMsgId}"]`);
+                  target?.scrollIntoView({ behavior: "smooth", block: "center" });
+                }}
+              />
+            </div>
+          </div>
+        )}
         <div style={styles.messageColumn}>
           {hasMore && (
             <button onClick={loadMore} style={styles.loadMore}>
@@ -311,9 +346,6 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
               );
             });
           })()}
-          {showTriggerQuote && (
-            <TriggerQuote content={triggerContent} time={effectiveProcessingMsgId ? messages.find((m) => m.msg_id === effectiveProcessingMsgId)?.created_at : undefined} />
-          )}
           {isRunning && agentActivity && (
             <AgentActivityIndicator activity={agentActivity} />
           )}
@@ -349,24 +381,69 @@ type TimelineGroup =
   | { kind: "message"; data: Extract<TimelineItem, { kind: "message" }> }
   | { kind: "agent"; items: TimelineItem[] };
 
+// groupTimelineItems renders user messages together with the bot replies and
+// agent events their run produced (matched by trigger_msg_id). This survives
+// out-of-order processing: when a priority-bumped message runs ahead of older
+// queued ones, its events still group under it instead of attaching to a
+// neighbouring user row by array position. Orphans (events whose trigger isn't
+// in the current window, or pre-feature rows without trigger_msg_id) fall
+// through to positional grouping so reload of an older page still renders.
 function groupTimelineItems(items: TimelineItem[]): TimelineGroup[] {
+  const presentUserMsgIds = new Set<string>();
+  for (const it of items) {
+    if (it.kind === "message" && !it.data.is_bot) presentUserMsgIds.add(it.data.msg_id);
+  }
+  const byTrigger = new Map<string, TimelineItem[]>();
+  const isRouted = new Set<TimelineItem>();
+  for (const it of items) {
+    const trig = it.trigger_msg_id;
+    if (trig && presentUserMsgIds.has(trig)) {
+      const arr = byTrigger.get(trig) ?? [];
+      arr.push(it);
+      byTrigger.set(trig, arr);
+      isRouted.add(it);
+    }
+  }
+
   const out: TimelineGroup[] = [];
   let bucket: TimelineItem[] = [];
-  const flush = () => {
+  const flushBucket = () => {
     if (bucket.length) {
       out.push({ kind: "agent", items: bucket });
       bucket = [];
     }
   };
+  const emitTriggered = (userMsgId: string) => {
+    const triggered = byTrigger.get(userMsgId);
+    if (!triggered) return;
+    let agentBucket: TimelineItem[] = [];
+    const flushAgent = () => {
+      if (agentBucket.length) {
+        out.push({ kind: "agent", items: agentBucket });
+        agentBucket = [];
+      }
+    };
+    for (const t of triggered) {
+      if (t.kind === "message") {
+        flushAgent();
+        out.push({ kind: "message", data: t });
+      } else {
+        agentBucket.push(t);
+      }
+    }
+    flushAgent();
+  };
   for (const it of items) {
+    if (isRouted.has(it)) continue;
     if (it.kind === "message") {
-      flush();
+      flushBucket();
       out.push({ kind: "message", data: it });
+      if (!it.data.is_bot) emitTriggered(it.data.msg_id);
     } else {
       bucket.push(it);
     }
   }
-  flush();
+  flushBucket();
   return out;
 }
 
@@ -508,6 +585,7 @@ function MessageBubble({ message, showProcessing, showQueued, queuePosition, hig
   return (
     <div
       data-msg-id={message.id}
+      data-msg-uuid={message.msg_id}
       onContextMenu={handleContextMenu}
       style={{
         display: "flex",
@@ -600,21 +678,26 @@ function StreamingBubble({ content }: { content: string }) {
   );
 }
 
-function TriggerQuote({ content, time }: { content: string; time?: string }) {
+function TriggerQuote({ content, time, onClick }: { content: string; time?: string; onClick?: () => void }) {
   const { colors } = useTheme();
-  const text = content.length > 120 ? content.slice(0, 120) + "\u2026" : content;
+  const text = content.length > 120 ? content.slice(0, 120) + "…" : content;
   const timeStr = time ? new Date(time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
   return (
-    <div style={{
-      display: "flex",
-      alignItems: "center",
-      gap: 8,
-      padding: "6px 12px",
-      margin: "4px 0 8px",
-      borderRadius: 6,
-      backgroundColor: colors.surface,
-      border: `1px solid ${colors.border}`,
-    }}>
+    <div
+      onClick={onClick}
+      title={onClick ? "Jump to message" : undefined}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "6px 12px",
+        borderRadius: 6,
+        backgroundColor: colors.surface,
+        border: `1px solid ${colors.border}`,
+        boxShadow: "0 1px 3px rgba(0,0,0,0.08)",
+        cursor: onClick ? "pointer" : "default",
+      }}
+    >
       <svg width="12" height="12" viewBox="0 0 16 16" fill="none" style={{ flexShrink: 0, opacity: 0.5 }}>
         <path d="M14 10l-3 3-3-3" stroke={colors.textDim} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
         <path d="M11 13V6a3 3 0 0 0-3-3H2" stroke={colors.textDim} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>

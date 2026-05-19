@@ -388,11 +388,11 @@ func (s *SQLiteStore) InsertMessage(ctx context.Context, msg *Message) error {
 	// row sorts after every prior chat-or-event row. Single-writer SQLite
 	// serialises Exec calls, so this subselect can't race itself.
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO messages (chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, priority, mode, created_at, chain_position)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MAX(chain_position) FROM messages WHERE channel_id = ?), 0) + 1)`,
+		`INSERT INTO messages (chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, priority, mode, trigger_msg_id, created_at, chain_position)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE((SELECT MAX(chain_position) FROM messages WHERE channel_id = ?), 0) + 1)`,
 		msg.ChatID, msg.ChannelID, msg.MsgID, msg.AuthorID, msg.AuthorName, msg.Content,
 		boolToInt(msg.IsBot), boolToInt(msg.IsProcessed), boolToInt(msg.IsTriggered),
-		msg.Priority, msg.Mode, msg.CreatedAt, msg.ChannelID,
+		msg.Priority, msg.Mode, msg.TriggerMsgID, msg.CreatedAt, msg.ChannelID,
 	)
 	if err != nil {
 		return err
@@ -647,13 +647,13 @@ func (s *SQLiteStore) InsertAgentEvent(ctx context.Context, evt *Message) error 
 	evt.IsBot = true
 	evt.IsProcessed = true
 	result, err := s.db.ExecContext(ctx,
-		`INSERT INTO messages (chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, created_at,
+		`INSERT INTO messages (chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, trigger_msg_id, created_at,
 		                       kind, chain_position, tool_use_id, tool_name, is_error)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
 		         COALESCE((SELECT MAX(chain_position) FROM messages WHERE channel_id = ?), 0) + 1,
 		         ?, ?, ?)`,
 		evt.ChatID, evt.ChannelID, evt.MsgID, evt.AuthorID, evt.AuthorName, evt.Content,
-		boolToInt(evt.IsBot), boolToInt(evt.IsProcessed), evt.CreatedAt,
+		boolToInt(evt.IsBot), boolToInt(evt.IsProcessed), evt.TriggerMsgID, evt.CreatedAt,
 		string(evt.Kind),
 		evt.ChannelID,
 		evt.ToolUseID, evt.ToolName, boolToInt(evt.IsError),
@@ -1269,7 +1269,7 @@ func (s *SQLiteStore) DeleteWorkflowRun(ctx context.Context, id string) error {
 
 // Column lists for SELECT queries.
 const (
-	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, is_running, priority, mode, created_at, kind, chain_position, tool_use_id, tool_name, is_error`
+	messageColumns = `id, chat_id, channel_id, msg_id, author_id, author_name, content, is_bot, is_processed, is_triggered, is_running, priority, mode, created_at, kind, chain_position, tool_use_id, tool_name, is_error, trigger_msg_id`
 	taskColumns    = `id, channel_id, guild_id, schedule, type, prompt, enabled, next_run_at, created_at, updated_at, template_name, auto_delete_sec, thread_id, worktree, origin_branch, update_before_run, running, workflow_name, workflow_inputs`
 )
 
@@ -1343,6 +1343,7 @@ func scanMessageRow(scanner rowScanner) (*Message, error) {
 		&msg.CreatedAt,
 		&kind, &msg.ChainPosition,
 		&msg.ToolUseID, &msg.ToolName, &isError,
+		&msg.TriggerMsgID,
 	); err != nil {
 		return nil, err
 	}

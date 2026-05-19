@@ -260,5 +260,37 @@ func (s *ServerSuite) TestBuildTimelineItemEmptyKindFallsBackToMessage() {
 	require.Equal(s.T(), "legacy", item.Data.Content)
 }
 
+// trigger_msg_id is the link that lets the FE keep bot replies and agent
+// events grouped under the user message that triggered them when rows are
+// processed out of chronological order. Verify it survives the wire trip
+// for every agent-emitted row kind, and stays empty for unrelated rows.
+func (s *ServerSuite) TestHandleTimelineProjectsTriggerMsgID() {
+	now := time.Now().UTC()
+	rows := []*db.Message{
+		{ID: 10, ChannelID: "ch-1", MsgID: "user-1", AuthorName: "alice", Content: "do X", CreatedAt: now, Kind: db.MessageKindMessage, ChainPosition: 1},
+		{ID: 11, ChannelID: "ch-1", IsBot: true, CreatedAt: now, Kind: db.MessageKindThinking, Content: "ponder", ChainPosition: 2, TriggerMsgID: "user-1"},
+		{ID: 12, ChannelID: "ch-1", IsBot: true, CreatedAt: now, Kind: db.MessageKindToolUse, ToolUseID: "tu1", ToolName: "Read", Content: "{}", ChainPosition: 3, TriggerMsgID: "user-1"},
+		{ID: 13, ChannelID: "ch-1", IsBot: true, CreatedAt: now, Kind: db.MessageKindToolResult, ToolUseID: "tu1", Content: "ok", ChainPosition: 4, TriggerMsgID: "user-1"},
+		{ID: 14, ChannelID: "ch-1", IsBot: true, CreatedAt: now, Kind: db.MessageKindCompacting, ChainPosition: 5, TriggerMsgID: "user-1"},
+		{ID: 15, ChannelID: "ch-1", IsBot: true, MsgID: "bot-1", AuthorName: "agent", Content: "done", CreatedAt: now, Kind: db.MessageKindMessage, ChainPosition: 6, TriggerMsgID: "user-1"},
+	}
+	s.store.On("GetTimeline", mock.Anything, "ch-1", int64(0), int64(0), 51).Return(rows, nil)
+
+	rec := s.testRequest("GET", "/api/channels/ch-1/timeline", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+
+	var resp timelineResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp.Items, 6)
+	require.Empty(s.T(), resp.Items[0].TriggerMsgID, "user message itself has no trigger")
+	require.Equal(s.T(), "user-1", resp.Items[1].TriggerMsgID, "thinking")
+	require.Equal(s.T(), "user-1", resp.Items[2].TriggerMsgID, "tool_use")
+	require.Equal(s.T(), "user-1", resp.Items[3].TriggerMsgID, "tool_result")
+	require.Equal(s.T(), "user-1", resp.Items[4].TriggerMsgID, "compacting")
+	require.Equal(s.T(), "user-1", resp.Items[5].TriggerMsgID, "bot reply message")
+	require.NotNil(s.T(), resp.Items[5].Data)
+	require.Equal(s.T(), "user-1", resp.Items[5].Data.TriggerMsgID, "bot reply data carries it too")
+}
+
 // silence unused-import lint for testing
 var _ = testing.T{}
