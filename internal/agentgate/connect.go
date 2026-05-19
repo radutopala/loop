@@ -62,6 +62,17 @@ func (h *ConnectHandler) Handle(ctx context.Context, req ConnectRequest) Outcome
 				Source:   sourceForPID(req.PID, h.PeerSource),
 				Message:  match.Message,
 				CacheKey: "connect:" + req.Path,
+				OnPrompt: func() {
+					h.Auditor.Write(AuditEntry{
+						Ts:      h.Now(),
+						Channel: req.ChannelID,
+						PID:     req.PID,
+						Kind:    "connect",
+						Target:  req.Path,
+						RuleID:  match.RuleID,
+						Event:   "request",
+					})
+				},
 			})
 		}
 	} else {

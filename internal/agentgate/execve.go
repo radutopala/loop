@@ -98,6 +98,17 @@ func (h *ExecveHandler) Handle(ctx context.Context, req ExecveRequest) Outcome {
 				Source:   sourceForPID(req.PID, h.PeerSource),
 				Message:  match.Message,
 				CacheKey: execveCacheKey(effective),
+				OnPrompt: func() {
+					h.Auditor.Write(AuditEntry{
+						Ts:      h.Now(),
+						Channel: req.ChannelID,
+						PID:     req.PID,
+						Kind:    "execve",
+						Target:  target,
+						RuleID:  match.RuleID,
+						Event:   "request",
+					})
+				},
 			})
 		}
 	} else {

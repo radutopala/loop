@@ -110,11 +110,48 @@ func (s *ApprovalSuite) TestCacheHitSkipsPrompt() {
 	m := s.newManager(bot, types.RateLimits{})
 	m.cache["k1"] = types.DecisionAllow
 
-	out := m.Request(context.Background(), "chan1", ApprovalRequest{CacheKey: "k1"})
+	var promptFired bool
+	out := m.Request(context.Background(), "chan1", ApprovalRequest{
+		CacheKey: "k1",
+		OnPrompt: func() { promptFired = true },
+	})
 	require.Equal(s.T(), types.DecisionAllow, out.Decision)
 	require.True(s.T(), out.FromCache)
 	require.Equal(s.T(), "cache-hit", out.Reason)
 	require.Equal(s.T(), 0, bot.sendCount)
+	require.False(s.T(), promptFired, "OnPrompt must not fire when cache short-circuits")
+}
+
+func (s *ApprovalSuite) TestOnPromptFiresOnceOnRealPrompt() {
+	bot := &fakeBot{}
+	m := s.newManager(bot, types.RateLimits{})
+
+	var promptCount int
+	outCh := s.request(m, ApprovalRequest{
+		Kind:     "exec",
+		Target:   "x",
+		OnPrompt: func() { promptCount++ },
+	})
+	reqID := s.waitForPending(m, 1)
+	require.NoError(s.T(), m.Resolve(reqID, DecisionOnce, "u"))
+	<-outCh
+
+	require.Equal(s.T(), 1, promptCount, "OnPrompt fires exactly once when the bot is dispatched")
+}
+
+func (s *ApprovalSuite) TestOnPromptSkippedWhenRateLimited() {
+	bot := &fakeBot{}
+	m := s.newManager(bot, types.RateLimits{Total: 1})
+	m.totalPrompts = 1 // force the total-rate-limit short-circuit
+
+	var promptFired bool
+	out := m.Request(context.Background(), "chan1", ApprovalRequest{
+		OnPrompt: func() { promptFired = true },
+	})
+	require.Equal(s.T(), types.DecisionDeny, out.Decision)
+	require.True(s.T(), out.RateLimited)
+	require.Equal(s.T(), 0, bot.sendCount)
+	require.False(s.T(), promptFired, "OnPrompt must not fire when rate-limit short-circuits")
 }
 
 func (s *ApprovalSuite) TestEmptyCacheKeyBypassesCache() {
