@@ -326,7 +326,27 @@ func (s *TaskExecutorSuite) TestStoreBotMessage() {
 		return d.Content == "task done" && d.IsBot && d.AuthorName == "agent"
 	}))
 
-	storeBotMessage(s.ctx, s.store, eb, "ch1", "task done")
+	storeBotMessage(s.ctx, s.store, eb, "ch1", "task done", "")
+
+	s.store.AssertExpectations(s.T())
+	eb.AssertExpectations(s.T())
+}
+
+// TriggerMsgID links a bot reply back to the user message whose run produced
+// it. Verify it lands on both the persisted row and the SSE payload so the FE
+// can group reload-time timeline items by their trigger.
+func (s *TaskExecutorSuite) TestStoreBotMessageStampsTriggerMsgID() {
+	eb := new(MockEventBroadcaster)
+
+	s.store.On("GetChannel", s.ctx, "ch1").Return(&db.Channel{ID: 5, ChannelID: "ch1"}, nil)
+	s.store.On("InsertMessage", s.ctx, mock.MatchedBy(func(m *db.Message) bool {
+		return m.TriggerMsgID == "user-abc" && m.IsBot
+	})).Return(nil)
+	eb.On("BroadcastMessageCreated", "ch1", mock.MatchedBy(func(d events.MessageEventData) bool {
+		return d.TriggerMsgID == "user-abc" && d.IsBot
+	}))
+
+	storeBotMessage(s.ctx, s.store, eb, "ch1", "reply", "user-abc")
 
 	s.store.AssertExpectations(s.T())
 	eb.AssertExpectations(s.T())
@@ -338,7 +358,7 @@ func (s *TaskExecutorSuite) TestStoreBotMessageGetChannelError() {
 	s.store.On("GetChannel", s.ctx, "ch1").Return(nil, errors.New("db error"))
 	eb.On("BroadcastMessageCreated", "ch1", mock.Anything)
 
-	storeBotMessage(s.ctx, s.store, eb, "ch1", "task done")
+	storeBotMessage(s.ctx, s.store, eb, "ch1", "task done", "")
 
 	s.store.AssertNotCalled(s.T(), "InsertMessage", mock.Anything, mock.Anything)
 	eb.AssertExpectations(s.T())

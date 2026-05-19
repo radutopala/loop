@@ -76,6 +76,11 @@ type Message struct {
 	ToolUseID     string      `json:"tool_use_id,omitempty"`
 	ToolName      string      `json:"tool_name,omitempty"`
 	IsError       bool        `json:"is_error,omitempty"`
+	// TriggerMsgID is the msg_id of the user message that triggered the agent
+	// run that produced this row. Set on bot replies and agent-event rows
+	// (thinking, tool_use, tool_result, compacting). Empty for user-authored
+	// rows and for legacy pre-migration rows.
+	TriggerMsgID string `json:"trigger_msg_id,omitempty"`
 }
 
 // ScheduledTask represents a task scheduled for execution.

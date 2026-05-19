@@ -105,16 +105,17 @@ const defaultMessageLimit = 50
 const maxMessageLimit = 200
 
 type messageResponse struct {
-	ID          int64     `json:"id"`
-	ChannelID   string    `json:"channel_id"`
-	MsgID       string    `json:"msg_id"`
-	AuthorID    string    `json:"author_id"`
-	AuthorName  string    `json:"author_name"`
-	Content     string    `json:"content"`
-	IsBot       bool      `json:"is_bot"`
-	IsProcessed bool      `json:"is_processed"`
-	Priority    int       `json:"priority,omitempty"`
-	CreatedAt   time.Time `json:"created_at"`
+	ID           int64     `json:"id"`
+	ChannelID    string    `json:"channel_id"`
+	MsgID        string    `json:"msg_id"`
+	AuthorID     string    `json:"author_id"`
+	AuthorName   string    `json:"author_name"`
+	Content      string    `json:"content"`
+	IsBot        bool      `json:"is_bot"`
+	IsProcessed  bool      `json:"is_processed"`
+	Priority     int       `json:"priority,omitempty"`
+	TriggerMsgID string    `json:"trigger_msg_id,omitempty"`
+	CreatedAt    time.Time `json:"created_at"`
 }
 
 type messagesListResponse struct {
@@ -124,16 +125,17 @@ type messagesListResponse struct {
 
 func toMessageResponse(m *db.Message) messageResponse {
 	return messageResponse{
-		ID:          m.ID,
-		ChannelID:   m.ChannelID,
-		MsgID:       m.MsgID,
-		AuthorID:    m.AuthorID,
-		AuthorName:  m.AuthorName,
-		Content:     m.Content,
-		IsBot:       m.IsBot,
-		IsProcessed: m.IsProcessed,
-		Priority:    m.Priority,
-		CreatedAt:   m.CreatedAt,
+		ID:           m.ID,
+		ChannelID:    m.ChannelID,
+		MsgID:        m.MsgID,
+		AuthorID:     m.AuthorID,
+		AuthorName:   m.AuthorName,
+		Content:      m.Content,
+		IsBot:        m.IsBot,
+		IsProcessed:  m.IsProcessed,
+		Priority:     m.Priority,
+		TriggerMsgID: m.TriggerMsgID,
+		CreatedAt:    m.CreatedAt,
 	}
 }
 

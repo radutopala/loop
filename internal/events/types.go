@@ -36,6 +36,9 @@ type MessageEventData struct {
 	IsBot       bool   `json:"is_bot"`
 	IsProcessed bool   `json:"is_processed"`
 	Priority    int    `json:"priority,omitempty"`
+	// TriggerMsgID is the msg_id of the user message whose run produced this
+	// bot reply. Empty for user messages and bot rows not emitted by a run.
+	TriggerMsgID string `json:"trigger_msg_id,omitempty"`
 }
 
 // MessagesProcessedData is the payload for messages.processed events.

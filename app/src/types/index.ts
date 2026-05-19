@@ -30,6 +30,10 @@ export interface Message {
   // Priority governs processing order (higher first). Missing/0 = default.
   // Used by ChatMessages to render queue position ("1/3").
   priority?: number;
+  // For bot replies, the msg_id of the user message whose agent run produced
+  // this reply. Empty for user messages and pre-feature rows. Used to group
+  // agent events with their triggering user message at reload time.
+  trigger_msg_id?: string;
   created_at: string;
 }
 
@@ -39,11 +43,11 @@ export interface Message {
 // canonical order the user saw live. The `compacting` kind is a marker
 // (no payload fields) emitted whenever the runner reports a /compact pass.
 export type TimelineItem =
-  | { kind: "message"; position: number; id: number; data: Message }
-  | { kind: "thinking"; position: number; id: number; text: string; truncated?: boolean }
-  | { kind: "tool_use"; position: number; id: number; tool_use_id: string; tool_name: string; tool_input: string; truncated?: boolean }
-  | { kind: "tool_result"; position: number; id: number; tool_use_id: string; text: string; is_error?: boolean; truncated?: boolean }
-  | { kind: "compacting"; position: number; id: number };
+  | { kind: "message"; position: number; id: number; data: Message; trigger_msg_id?: string }
+  | { kind: "thinking"; position: number; id: number; text: string; truncated?: boolean; trigger_msg_id?: string }
+  | { kind: "tool_use"; position: number; id: number; tool_use_id: string; tool_name: string; tool_input: string; truncated?: boolean; trigger_msg_id?: string }
+  | { kind: "tool_result"; position: number; id: number; tool_use_id: string; text: string; is_error?: boolean; truncated?: boolean; trigger_msg_id?: string }
+  | { kind: "compacting"; position: number; id: number; trigger_msg_id?: string };
 
 export interface TimelineCursor {
   position: number;
@@ -71,6 +75,7 @@ export interface MessageCreatedData {
   is_bot: boolean;
   is_processed: boolean;
   priority?: number;
+  trigger_msg_id?: string;
 }
 
 export interface MessagesProcessedData {

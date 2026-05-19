@@ -24,7 +24,7 @@ func (o *Orchestrator) sendReply(ctx context.Context, channelID, content string)
 		ChannelID: channelID,
 		Content:   content,
 	})
-	storeBotMessage(ctx, o.store, o.events, channelID, content)
+	storeBotMessage(ctx, o.store, o.events, channelID, content, "")
 }
 
 // HandleInteraction processes a slash command interaction.

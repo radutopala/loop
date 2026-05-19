@@ -13,17 +13,22 @@ const timelineInlineCap = 8 * 1024
 
 // timelineItem is the discriminated union returned by /timeline. Its Kind
 // determines which sibling fields are populated; clients switch on Kind.
+// TriggerMsgID, when non-empty, is the msg_id of the user message whose
+// agent run produced this row. Set for bot messages and all agent-event
+// kinds; empty for user messages and pre-feature rows. The FE groups items
+// by this id to keep reply chains intact when messages process out of order.
 type timelineItem struct {
-	Kind      string           `json:"kind"`
-	Position  int64            `json:"position"`
-	ID        int64            `json:"id"`
-	Data      *messageResponse `json:"data,omitempty"`        // kind == "message"
-	Text      string           `json:"text,omitempty"`        // thinking, tool_result
-	Truncated bool             `json:"truncated,omitempty"`   // thinking, tool_result
-	ToolUseID string           `json:"tool_use_id,omitempty"` // tool_use, tool_result
-	ToolName  string           `json:"tool_name,omitempty"`   // tool_use
-	ToolInput string           `json:"tool_input,omitempty"`  // tool_use
-	IsError   bool             `json:"is_error,omitempty"`    // tool_result
+	Kind         string           `json:"kind"`
+	Position     int64            `json:"position"`
+	ID           int64            `json:"id"`
+	Data         *messageResponse `json:"data,omitempty"`        // kind == "message"
+	Text         string           `json:"text,omitempty"`        // thinking, tool_result
+	Truncated    bool             `json:"truncated,omitempty"`   // thinking, tool_result
+	ToolUseID    string           `json:"tool_use_id,omitempty"` // tool_use, tool_result
+	ToolName     string           `json:"tool_name,omitempty"`   // tool_use
+	ToolInput    string           `json:"tool_input,omitempty"`  // tool_use
+	IsError      bool             `json:"is_error,omitempty"`    // tool_result
+	TriggerMsgID string           `json:"trigger_msg_id,omitempty"`
 }
 
 type timelineCursor struct {
@@ -85,7 +90,7 @@ func (s *Server) handleTimeline(w http.ResponseWriter, r *http.Request) {
 // Content for agent-event rows lives inline on the row (Content, ToolName,
 // IsError) — written by the docker-stream callbacks at run time.
 func buildTimelineItem(m *db.Message) timelineItem {
-	base := timelineItem{Position: m.ChainPosition, ID: m.ID}
+	base := timelineItem{Position: m.ChainPosition, ID: m.ID, TriggerMsgID: m.TriggerMsgID}
 	switch m.Kind {
 	case db.MessageKindMessage, "":
 		resp := toMessageResponse(m)
