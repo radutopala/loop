@@ -221,10 +221,10 @@ This prevents duplicate messages: without dedup, the user would see the last str
 
 For the Electron app, streaming events are broadcast via the `EventsHub`:
 
-- `message.created` -- New message (user or bot)
+- `message.created` -- New message (user or bot). Bot replies and intermediate agent-event rows (`thinking`, `tool_use`, `tool_result`, `compacting`) carry a `trigger_msg_id` field pointing back at the user message whose run produced them; the FE uses it to group events under the correct user row on reload, surviving out-of-order processing of priority-bumped runs
 - `message.deleted` -- A queued user message was removed from the queue (via `DELETE /api/messages/{id}`)
 - `messages.processed` -- One or more user messages were marked processed; the FE clears their `processing`/`queued` labels. Emitted by `deliverResponse`, by `markTriggerProcessed` on run errors/stops, and by the daemon startup sweep when `ResetStaleRunningMessages` clears in-flight rows from a prior run
-- `agent.status` -- Status changes (running, completed, error) with metadata (duration, turns, model, run_id, msg_id of the triggering row so the FE can label the correct chat bubble as "processing" even when a priority-bumped row is processed out of chronological order)
+- `agent.status` -- Status changes (running, completed, error) with metadata (duration, turns, model, run_id, `msg_id` of the triggering row so the FE can label the correct chat bubble as "processing" even when a priority-bumped row is processed out of chronological order, and `trigger_content` on the `running` transition so the FE can render the floating `TriggerQuote` banner when the user has scrolled the triggering row off-screen)
 - `tool.use` -- Tool invocations with name and input summary
 - `agent.activity` -- Model detection and subagent progress
 - `agent.ask_user` -- Structured questions from AskUserQuestion tool
@@ -237,7 +237,7 @@ For the Electron app, streaming events are broadcast via the `EventsHub`:
 
 1. **Broadcast completion** -- Send `agent.status: completed` with run_id, duration, turn count, stop reason, and model info.
 2. **Update session** -- Store the new `SessionID` from the agent response.
-3. **Send response** -- Unless it duplicates the last streamed turn, send the response via `bot.SendMessage` with a reply-to reference. Also store the bot message in the database and broadcast via EventsHub.
+3. **Send response** -- Unless it duplicates the last streamed turn, send the response via `bot.SendMessage` with a reply-to reference. Also store the bot message in the database (stamped with `trigger_msg_id = msg.MessageID` so the FE can group the reply under its triggering user message) and broadcast via EventsHub.
 4. **Mark processed** -- Mark all recent messages as processed in the database. This prevents them from being included in future context windows unnecessarily.
 
 ## Thread Resolution

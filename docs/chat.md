@@ -175,6 +175,12 @@ When extended thinking is enabled and the agent emits a thinking block (`agent.t
 
 Each thinking and tool block is truncated server-side at 8 KiB; truncated rows render the prefix with a small "(truncated)" hint.
 
+### Reply Grouping
+
+On reload, `ChatMessages.groupTimelineItems` routes every bot reply and agent event (`thinking`, `tool_use`, `tool_result`, `compacting`) under the user message that triggered its run, using the `trigger_msg_id` field stamped on the row at insert time. This survives **out-of-order processing**: when a priority-bumped message (e.g. "Deny with prompt") runs ahead of older queued ones, its events still group under it instead of attaching by array position to whichever neighbouring user row happens to be next in the timeline.
+
+Orphans — events whose `trigger_msg_id` points outside the currently loaded window (e.g. paginated away) or pre-feature rows that pre-date the column — fall through to positional grouping so reloading an older page still renders cleanly.
+
 ---
 
 ## Completion Summary
@@ -534,13 +540,15 @@ Until the first `agent.status` event arrives (or after a hard reload while `isRu
 
 ### Trigger Quote
 
-When the agent is processing a message and there are queued messages (or there were queued messages in this batch), a `TriggerQuote` component is shown between the messages list and the agent activity indicators. It displays:
+`TriggerQuote` is a sticky floating banner anchored to the top of the scroll container. It is shown only when a run is in flight **and** the triggering user message is currently off-screen (scrolled past or on a not-yet-loaded older page). When the processing message is visible the banner hides — the row already carries its own `processing` label, so a second indicator would be redundant.
+
+The banner displays:
 
 - A reply-arrow icon (SVG)
 - The triggering message content (truncated to 120 characters)
 - A timestamp (HH:MM format)
 
-The trigger quote persists across channel switches via the chat state store and remains visible until all messages in the batch are processed.
+Clicking the banner scrolls the triggering message back into view. Content comes from the `trigger_content` field on the `agent.status` `running` event; visibility is tracked by an `IntersectionObserver` against the `data-msg-uuid` attribute on `MessageBubble`. The state persists across channel switches via the chat state store and is cleared when the agent run terminates (`completed` / `error`).
 
 ### Queued Messages Popup
 

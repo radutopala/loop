@@ -445,12 +445,15 @@ List messages for a channel. Supports two modes: **cursor-based pagination** (de
       "author_name": "Alice",
       "content": "Hello!",
       "is_bot": false,
+      "trigger_msg_id": "",
       "created_at": "2026-01-01T00:00:00Z"
     }
   ],
   "next_cursor": 41
 }
 ```
+
+`trigger_msg_id` is the `msg_id` of the user message whose agent run produced this row. Empty (and omitted in JSON via `omitempty`) for user messages and pre-feature bot rows.
 
 **Behavior notes:**
 - **Cursor mode:** Fetches `limit+1` messages to determine if more exist. If so, `next_cursor` is set to the last returned message's ID. Messages are ordered oldest-first.
@@ -490,7 +493,7 @@ List the channel's interleaved timeline — chat messages plus persisted agent e
       "data": {
         "id": 101,
         "channel_id": "abc123",
-        "msg_id": "discord_msg_id",
+        "msg_id": "user_msg_uuid",
         "author_id": "user123",
         "author_name": "Alice",
         "content": "Refactor the auth middleware",
@@ -504,7 +507,8 @@ List the channel's interleaved timeline — chat messages plus persisted agent e
       "position": 13,
       "id": 102,
       "text": "Let me check how the existing tests cover this path...",
-      "truncated": false
+      "truncated": false,
+      "trigger_msg_id": "user_msg_uuid"
     },
     {
       "kind": "tool_use",
@@ -512,7 +516,8 @@ List the channel's interleaved timeline — chat messages plus persisted agent e
       "id": 103,
       "tool_use_id": "toolu_017fNc...",
       "tool_name": "Read",
-      "tool_input": "{\"file_path\":\"/work/internal/api/auth.go\"}"
+      "tool_input": "{\"file_path\":\"/work/internal/api/auth.go\"}",
+      "trigger_msg_id": "user_msg_uuid"
     },
     {
       "kind": "tool_result",
@@ -521,7 +526,8 @@ List the channel's interleaved timeline — chat messages plus persisted agent e
       "tool_use_id": "toolu_017fNc...",
       "text": "package api\n\n// ...\n",
       "is_error": false,
-      "truncated": true
+      "truncated": true,
+      "trigger_msg_id": "user_msg_uuid"
     }
   ],
   "next_cursor": { "position": 12, "id": 101 }
@@ -533,13 +539,14 @@ List the channel's interleaved timeline — chat messages plus persisted agent e
 | `items[].kind`           | string   | One of `"message"`, `"thinking"`, `"tool_use"`, `"tool_result"` |
 | `items[].position`       | int64    | Per-channel monotonic chain position. `0` for legacy rows that pre-date the timeline feature. |
 | `items[].id`             | int64    | Row id; used as a stable tiebreaker for cursor pagination |
-| `items[].data`           | object   | Present when `kind == "message"`; same shape as `/messages` rows (`id`, `channel_id`, `msg_id`, `author_id`, `author_name`, `content`, `is_bot`, `is_processed`, `created_at`) |
+| `items[].data`           | object   | Present when `kind == "message"`; same shape as `/messages` rows (`id`, `channel_id`, `msg_id`, `author_id`, `author_name`, `content`, `is_bot`, `is_processed`, `trigger_msg_id`, `created_at`) |
 | `items[].text`           | string   | Present when `kind ∈ {"thinking", "tool_result"}`. Capped at 8 KiB inline; the full content was truncated server-side at the same cap when the run wrote it. |
 | `items[].truncated`      | bool     | `true` when the row's content was truncated to fit the inline cap |
 | `items[].tool_use_id`    | string   | Pairs `tool_use` rows with their matching `tool_result` row (and matching live `tool.use` / `tool.result` events) |
 | `items[].tool_name`      | string   | Present on `tool_use` rows |
 | `items[].tool_input`     | string   | Present on `tool_use` rows; serialised tool input (truncated to 8 KiB inline) |
 | `items[].is_error`       | bool     | Present on `tool_result` rows; `true` when the tool failed |
+| `items[].trigger_msg_id` | string   | The `msg_id` of the user message whose agent run produced this row. Present on bot replies and agent events (`thinking`, `tool_use`, `tool_result`, `compacting`). Empty/omitted on user messages and pre-feature rows. The FE uses it to group events under their triggering message, surviving out-of-order processing of priority-bumped messages. |
 | `next_cursor`            | object\|null | `{position, id}` to fetch the next page; `null` when there are no more rows |
 
 **Behavior notes:**
