@@ -1,6 +1,7 @@
 package review
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -39,6 +40,23 @@ func (s *SessionSuite) TestGetReturnsCopyWithIndependentCommentsSlice() {
 	// Mutating the returned slice header should not affect the store.
 	got.Comments = append(got.Comments, &Comment{ID: "z"})
 	require.Len(s.T(), store.Get("ch1").Comments, 1)
+}
+
+// Regression: Go marshals a nil slice as JSON null, and the renderer
+// reads `session.comments.length` directly — so Get must return a
+// non-nil empty slice and the JSON must serialize as `[]`.
+func (s *SessionSuite) TestGetEmptyCommentsMarshalsAsArrayNotNull() {
+	store := NewStore()
+	store.Put("ch1", &Session{Status: StatusReady})
+	got := store.Get("ch1")
+	require.NotNil(s.T(), got)
+	require.NotNil(s.T(), got.Comments)
+	require.Len(s.T(), got.Comments, 0)
+
+	b, err := json.Marshal(got)
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(b), `"comments":[]`)
+	require.NotContains(s.T(), string(b), `"comments":null`)
 }
 
 func (s *SessionSuite) TestDelete() {
