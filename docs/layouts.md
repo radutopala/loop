@@ -95,6 +95,8 @@ interface SplitNode {
 | Kanban | `kanban` | `"kanban"` | Yes | Ticket board with status columns (see [kanban.md](kanban.md)) |
 | Workflows | `workflows` | `"workflows"` | Yes | DAG workflow runs with interactive graph visualization (see [workflows.md](workflows.md)) |
 | Audit | `audit` | `"audit"` | Yes | Agent gate audit logs — file list on the left, `tail -f` via docker exec on the right (see [gates.md](gates.md)) |
+| Quality | `quality` | `"quality"` | Yes | Architectural quality signal (see [quality.md](quality.md)) |
+| Review | `review` | `"review"` | Yes | Load a GitHub PR into a local worktree, run an agent review pass, and push inline comments back to the PR (see [review.md](review.md)) |
 | Playground | `playground` | `"playground-N"` | No | Live interactive code sandbox (HTML/CSS/JS) |
 | Docker Agent | `docker-agent` | `"docker-agent-N"` | No | Docker-isolated terminal running Claude Code. The pane-split menu and `EmptyLayoutPicker` expose three variants — **Resume**, **Resume with fork**, **Fresh session** — that choose how the pane boots Claude relative to the channel's stored session (see [Agent Open Modes](#agent-open-modes) below). |
 | Host Shell | `host-shell` | `"host-shell-N"` | No | Local machine shell session |

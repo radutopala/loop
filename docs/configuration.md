@@ -224,6 +224,23 @@ See [Task Scheduling](scheduling.md) for full details.
 
 Shortcuts appear in the chat input when the user types `#`. Selecting a shortcut sends its resolved prompt as a message. The API endpoint `GET /api/shortcuts` returns all shortcuts with resolved prompts; pass `?channel_id=<id>` to merge project-level shortcuts. Agents can manage shortcuts via the `prompt_shortcut` MCP tool or the `POST /api/shortcuts` endpoint — add, update, or delete shortcuts in either global or project scope.
 
+#### Review
+
+Configures the prompt used by the Review panel's agent pass (see [review.md](review.md)).
+
+```jsonc
+"review": {
+  "prompt_path": "review.md"
+}
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `prompt` | `string` | Inline prompt text. Mutually exclusive with `prompt_path`. |
+| `prompt_path` | `string` | Path to a prompt file, resolved as `~/.loop/review/{prompt_path}`. Mutually exclusive with `prompt`. |
+
+Both empty (the default) uses the daemon's built-in default prompt, which instructs the agent to emit `<review-comment>` blocks for actionable issues only.
+
 #### Workflows
 
 ```jsonc

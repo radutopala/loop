@@ -405,6 +405,7 @@ const PANEL_COLORS: Record<PanelType, string> = {
   workflows: "#818cf8",
   audit: "#ef4444",
   quality: "#22c55e",
+  review: "#facc15",
 };
 
 function CanvasMinimap({ tiles, viewport: vp, containerRef, onPan, onZoom }: {

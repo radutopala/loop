@@ -122,6 +122,14 @@ const PANEL_ICONS: Record<PanelType, React.ReactNode> = {
       <path d="M8 12l3 3 5-6" />
     </svg>
   ),
+  review: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M6 3v12a3 3 0 0 0 3 3h9" />
+      <circle cx="6" cy="18" r="3" />
+      <circle cx="18" cy="6" r="3" />
+      <path d="M14 18h4" />
+    </svg>
+  ),
 };
 
 const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
@@ -143,6 +151,7 @@ const PANEL_DESCRIPTIONS: Record<PanelType, string> = {
   workflows: "Workflow runs and status",
   audit: "Agent gate audit logs",
   quality: "Architectural quality signal",
+  review: "Review a GitHub PR's diff",
 };
 
 /** Centered picker for when layout is empty (no tree). */

@@ -743,6 +743,53 @@ The renderer treats event delivery as best-effort: on every WebSocket reconnect 
 
 ---
 
+### `review.comment`
+
+Emitted once per `<review-comment>` block the review agent produces during a run. Deduplicated by comment id upstream so each id arrives at most once.
+
+**Payload schema:**
+
+```json
+{
+  "id": "rev-7f2a",
+  "path": "internal/api/foo.go",
+  "line": 42,
+  "side": "RIGHT",
+  "body": "This nil check looks redundant — the caller already validated `req`."
+}
+```
+
+| Field  | Type   | Description |
+|--------|--------|-------------|
+| `id`   | string | Stable per-comment id assigned at parse time |
+| `path` | string | Repo-relative file path |
+| `line` | int    | Line number on the indicated side of the diff |
+| `side` | string | `"RIGHT"` (added/modified) or `"LEFT"` (deleted) |
+| `body` | string | The agent's comment text |
+
+**Scope:** Channel (the channel that started the review).
+
+---
+
+### `review.status`
+
+Emitted on every review session status transition (`idle → loading → ready → reviewing → ready|error`). The FE swaps affordances based on this; no polling needed.
+
+**Payload schema:**
+
+```json
+{ "status": "reviewing", "error": "" }
+```
+
+| Field    | Type   | Description |
+|----------|--------|-------------|
+| `status` | string | `"idle" \| "loading" \| "ready" \| "reviewing" \| "error"` |
+| `error`  | string | Populated only when `status == "error"`; omitted otherwise |
+
+**Scope:** Channel.
+
+---
+
 ## Broadcast Flow
 
 1. **Event source** calls a typed broadcast method (e.g., `BroadcastMessageCreated`).
