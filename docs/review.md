@@ -64,6 +64,27 @@ Or, to keep the prompt out of the JSON file:
 The latter is read from `~/.loop/review/review.md`. Setting both is an
 error; setting neither uses the daemon's built-in default prompt.
 
+### Required output format
+
+The parser anchors comments by the tag attributes, so an override prompt
+must instruct the agent to emit blocks shaped exactly like:
+
+```xml
+<review-comment path="path/to/file" line="N" side="RIGHT">
+One paragraph describing the issue.
+</review-comment>
+```
+
+- `path` is repo-relative.
+- `line` is the line on the indicated side of the diff.
+- `side` is `"RIGHT"` for added/modified lines (the common case) or
+  `"LEFT"` for lines removed from the base. This matches GitHub's
+  `pulls/{N}/comments` API, so the value is forwarded as-is on push.
+
+Blocks that fail to parse are silently dropped, and the parser
+deduplicates by content hash so re-emitting the same block during
+streaming is safe.
+
 ## See also
 
 - [api.md](api.md) — full HTTP and event surface.
