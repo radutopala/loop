@@ -540,15 +540,18 @@ Until the first `agent.status` event arrives (or after a hard reload while `isRu
 
 ### Trigger Quote
 
-`TriggerQuote` is a sticky floating banner anchored to the top of the scroll container. It is shown only when a run is in flight **and** the triggering user message is currently off-screen (scrolled past or on a not-yet-loaded older page). When the processing message is visible the banner hides — the row already carries its own `processing` label, so a second indicator would be redundant.
+`TriggerQuote` is a sticky floating banner anchored to the **bottom** of the scroll container. An `IntersectionObserver` tags every user-message DOM node (`[data-msg-uuid][data-is-user="true"]`) as `above`, `visible`, or `below` the viewport, and `ChatMessages` picks an anchor message to surface with this priority:
+
+1. **In-flight, off-screen.** If a run is in flight and the triggering user message is not currently visible (scrolled past or on a not-yet-loaded older page), the banner quotes that message. Content comes from the `trigger_content` field on the `agent.status` `running` event so it still works when the row hasn't been paginated in. The row itself already carries a `processing` label, so the banner stays hidden while the row is visible.
+2. **No user message visible.** If no user message is in the viewport at all (we're parked deep in a stretch of bot output, thinking blocks, or tool calls), the banner quotes the most recent user message *above* the viewport — a navigation aid so the user can jump back to whichever prompt produced what they're reading.
 
 The banner displays:
 
 - A reply-arrow icon (SVG)
-- The triggering message content (truncated to 120 characters)
+- The anchor message content (truncated to 120 characters)
 - A timestamp (HH:MM format)
 
-Clicking the banner scrolls the triggering message back into view. Content comes from the `trigger_content` field on the `agent.status` `running` event; visibility is tracked by an `IntersectionObserver` against the `data-msg-uuid` attribute on `MessageBubble`. The state persists across channel switches via the chat state store and is cleared when the agent run terminates (`completed` / `error`).
+Clicking the banner scrolls the anchor message back into view. The state persists across channel switches via the chat state store; the `trigger_content`-sourced variant is cleared when the agent run terminates (`completed` / `error`).
 
 ### Queued Messages Popup
 

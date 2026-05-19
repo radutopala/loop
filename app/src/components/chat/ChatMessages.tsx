@@ -1,4 +1,4 @@
-import { createContext, forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { createContext, forwardRef, useCallback, useContext, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { AgentActivityData, AskUserQuestion, ExitPlanModeData, Message, TimelineItem, TodoItem } from "../../types";
 import type { ChatState } from "../../hooks/useChatState";
 import { resolveAsk, resolvePlan } from "../../api/channels";
@@ -256,52 +256,74 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     queuePositionByMsgId.set(m.msg_id, `${idx + 1}/${queueOrdered.length}`);
   });
 
-  // Track whether the currently-processing message's DOM node is inside the
-  // viewport. When it isn't (scrolled away, off-screen, or not rendered
-  // because it's on an older paginated page), we show the floating
-  // TriggerQuote so the user keeps context about what's running.
-  const [processingMsgVisible, setProcessingMsgVisible] = useState(true);
+  // Track the viewport status (above / visible / below) of every user
+  // message in the chat. Used to decide which (if any) user message to
+  // surface in the floating TriggerQuote banner: the in-flight one when
+  // it's scrolled away, otherwise the most recent user message above the
+  // viewport when no user message is currently visible.
+  const [userMsgStates, setUserMsgStates] = useState<Map<string, "above" | "visible" | "below">>(new Map());
   useEffect(() => {
     const container = containerRef.current;
-    if (!container || !effectiveProcessingMsgId) {
-      setProcessingMsgVisible(true);
-      return;
-    }
-    const target = container.querySelector(`[data-msg-uuid="${effectiveProcessingMsgId}"]`);
-    if (!target) {
-      setProcessingMsgVisible(false);
+    if (!container) return;
+    const nodes = container.querySelectorAll<HTMLElement>('[data-msg-uuid][data-is-user="true"]');
+    if (nodes.length === 0) {
+      setUserMsgStates(new Map());
       return;
     }
     const observer = new IntersectionObserver(
       (entries) => {
-        for (const entry of entries) setProcessingMsgVisible(entry.isIntersecting);
+        setUserMsgStates((prev) => {
+          const next = new Map(prev);
+          for (const e of entries) {
+            const id = (e.target as HTMLElement).dataset.msgUuid;
+            if (!id) continue;
+            if (e.isIntersecting) {
+              next.set(id, "visible");
+            } else {
+              const rootTop = e.rootBounds?.top ?? 0;
+              next.set(id, e.boundingClientRect.top < rootTop ? "above" : "below");
+            }
+          }
+          return next;
+        });
       },
       { root: container, threshold: 0.01 },
     );
-    observer.observe(target);
+    nodes.forEach((n) => observer.observe(n));
     return () => observer.disconnect();
-  }, [effectiveProcessingMsgId, messages, items, liveTail]);
+  }, [messages, items, liveTail]);
 
-  const showTriggerQuote = isRunning && !!triggerContent && !processingMsgVisible;
+  // Decide which user message (if any) to quote in the floating banner.
+  // Priority 1: the in-flight run's triggering message when it's scrolled
+  //   away — keeps the user in context about what's running.
+  // Priority 2: when no user message is visible at all (we're parked in a
+  //   long stretch of bot output), surface the most recent user message
+  //   above the viewport so the user can jump back to it.
+  const userMessages = useMemo(() => messages.filter((m) => !m.is_bot), [messages]);
+  const quoteAnchor: { msgId: string; content: string; time?: string } | null = (() => {
+    if (isRunning && effectiveProcessingMsgId && userMsgStates.get(effectiveProcessingMsgId) !== "visible") {
+      const m = userMessages.find((u) => u.msg_id === effectiveProcessingMsgId);
+      return {
+        msgId: effectiveProcessingMsgId,
+        content: triggerContent ?? m?.content ?? "",
+        time: m?.created_at,
+      };
+    }
+    const anyVisible = userMessages.some((m) => userMsgStates.get(m.msg_id) === "visible");
+    if (!anyVisible) {
+      for (let i = userMessages.length - 1; i >= 0; i--) {
+        const m = userMessages[i]!;
+        if (userMsgStates.get(m.msg_id) === "above") {
+          return { msgId: m.msg_id, content: m.content, time: m.created_at };
+        }
+      }
+    }
+    return null;
+  })();
 
   return (
     <ChannelContext.Provider value={channelId}>
       <div ref={containerRef} style={styles.messages} onScroll={handleScroll}>
-        {showTriggerQuote && (
-          <div style={{ position: "sticky", top: 0, zIndex: 2, marginBottom: 8 }}>
-            <div style={{ maxWidth: 768, margin: "0 auto" }}>
-              <TriggerQuote
-                content={triggerContent!}
-                time={effectiveProcessingMsgId ? messages.find((m) => m.msg_id === effectiveProcessingMsgId)?.created_at : undefined}
-                onClick={() => {
-                  if (!effectiveProcessingMsgId) return;
-                  const target = containerRef.current?.querySelector(`[data-msg-uuid="${effectiveProcessingMsgId}"]`);
-                  target?.scrollIntoView({ behavior: "smooth", block: "center" });
-                }}
-              />
-            </div>
-          </div>
-        )}
         <div style={styles.messageColumn}>
           {hasMore && (
             <button onClick={loadMore} style={styles.loadMore}>
@@ -366,6 +388,20 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
           )}
           <div ref={bottomRef} />
         </div>
+        {quoteAnchor && (
+          <div style={{ position: "sticky", bottom: 0, zIndex: 2, paddingTop: 4 }}>
+            <div style={{ maxWidth: 768, margin: "0 auto" }}>
+              <TriggerQuote
+                content={quoteAnchor.content}
+                time={quoteAnchor.time}
+                onClick={() => {
+                  const target = containerRef.current?.querySelector(`[data-msg-uuid="${quoteAnchor.msgId}"]`);
+                  target?.scrollIntoView({ behavior: "smooth", block: "center" });
+                }}
+              />
+            </div>
+          </div>
+        )}
       </div>
       {todos && (
         <TodoChecklist todos={todos.todos} />
@@ -586,6 +622,7 @@ function MessageBubble({ message, showProcessing, showQueued, queuePosition, hig
     <div
       data-msg-id={message.id}
       data-msg-uuid={message.msg_id}
+      data-is-user={isUser ? "true" : undefined}
       onContextMenu={handleContextMenu}
       style={{
         display: "flex",
