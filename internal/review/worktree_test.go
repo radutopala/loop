@@ -120,6 +120,55 @@ func (s *WorktreeSuite) TestAddWorktreeOtherErrorPropagates() {
 	require.ErrorContains(s.T(), err, "bad object")
 }
 
+func (s *WorktreeSuite) TestDiffRequiresInputs() {
+	g := &GitPRWorktree{Run: (&recordingRunner{}).run}
+	_, err := g.Diff(context.Background(), "", "/wt", "main")
+	require.Error(s.T(), err)
+	_, err = g.Diff(context.Background(), "/repo", "", "main")
+	require.Error(s.T(), err)
+	_, err = g.Diff(context.Background(), "/repo", "/wt", "")
+	require.Error(s.T(), err)
+}
+
+func (s *WorktreeSuite) TestDiffHappyPath() {
+	rr := &recordingRunner{
+		response: map[string]callResponse{
+			"git diff origin/main...HEAD": {out: []byte("diff --git a/x b/x\n")},
+		},
+	}
+	g := &GitPRWorktree{Run: rr.run}
+	out, err := g.Diff(context.Background(), "/repo", "/repo/.worktrees/pr-1", "main")
+	require.NoError(s.T(), err)
+	require.Contains(s.T(), string(out), "diff --git")
+	require.Len(s.T(), rr.calls, 2)
+	require.Equal(s.T(), "/repo", rr.calls[0].dir)
+	require.Equal(s.T(), []string{"fetch", "origin", "main"}, rr.calls[0].args)
+	require.Equal(s.T(), "/repo/.worktrees/pr-1", rr.calls[1].dir)
+	require.Equal(s.T(), []string{"diff", "origin/main...HEAD"}, rr.calls[1].args)
+}
+
+func (s *WorktreeSuite) TestDiffFetchError() {
+	rr := &recordingRunner{
+		response: map[string]callResponse{
+			"git fetch origin main": {out: []byte("bad ref"), err: errors.New("exit 1")},
+		},
+	}
+	g := &GitPRWorktree{Run: rr.run}
+	_, err := g.Diff(context.Background(), "/repo", "/wt", "main")
+	require.ErrorContains(s.T(), err, "bad ref")
+}
+
+func (s *WorktreeSuite) TestDiffDiffError() {
+	rr := &recordingRunner{
+		response: map[string]callResponse{
+			"git diff origin/main...HEAD": {out: []byte("bad object"), err: errors.New("exit 128")},
+		},
+	}
+	g := &GitPRWorktree{Run: rr.run}
+	_, err := g.Diff(context.Background(), "/repo", "/wt", "main")
+	require.ErrorContains(s.T(), err, "bad object")
+}
+
 func (s *WorktreeSuite) TestRemoveRequiresInputs() {
 	g := &GitPRWorktree{Run: (&recordingRunner{}).run}
 	require.Error(s.T(), g.Remove(context.Background(), "", "/x"))

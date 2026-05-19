@@ -38,12 +38,6 @@ func (m *mockGitHubReview) FetchPRByNumber(ctx context.Context, workdir, ghUser 
 	return pr, args.Error(1)
 }
 
-func (m *mockGitHubReview) FetchPRDiff(ctx context.Context, workdir, ghUser string, number int) ([]byte, error) {
-	args := m.Called(ctx, workdir, ghUser, number)
-	b, _ := args.Get(0).([]byte)
-	return b, args.Error(1)
-}
-
 func (m *mockGitHubReview) FetchPRHeadSHA(ctx context.Context, workdir, ghUser string, number int) (string, error) {
 	args := m.Called(ctx, workdir, ghUser, number)
 	return args.String(0), args.Error(1)
@@ -68,6 +62,12 @@ type mockPRWorktree struct {
 func (m *mockPRWorktree) Add(ctx context.Context, parentDir string, prNum int) (string, error) {
 	args := m.Called(ctx, parentDir, prNum)
 	return args.String(0), args.Error(1)
+}
+
+func (m *mockPRWorktree) Diff(ctx context.Context, parentDir, worktreePath, baseRef string) ([]byte, error) {
+	args := m.Called(ctx, parentDir, worktreePath, baseRef)
+	b, _ := args.Get(0).([]byte)
+	return b, args.Error(1)
 }
 
 func (m *mockPRWorktree) Remove(ctx context.Context, parentDir, worktreePath string) error {
@@ -176,23 +176,24 @@ func (s *ReviewHandlerSuite) TestLoadFetchSHAError() {
 	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
 }
 
-func (s *ReviewHandlerSuite) TestLoadFetchDiffError() {
+func (s *ReviewHandlerSuite) TestLoadWorktreeError() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
-	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(&githubapi.PRInfo{Number: 7}, nil)
+	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(&githubapi.PRInfo{Number: 7, BaseRef: "main"}, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("abc", nil)
-	s.gh.On("FetchPRDiff", mock.Anything, "/repo", "", 7).Return(nil, errors.New("diff failed"))
+	s.wt.On("Add", mock.Anything, "/repo", 7).Return("", errors.New("git failed"))
 	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
 	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
 }
 
-func (s *ReviewHandlerSuite) TestLoadWorktreeError() {
+func (s *ReviewHandlerSuite) TestLoadDiffError() {
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
-	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(&githubapi.PRInfo{Number: 7}, nil)
+	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(&githubapi.PRInfo{Number: 7, BaseRef: "main"}, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("abc", nil)
-	s.gh.On("FetchPRDiff", mock.Anything, "/repo", "", 7).Return([]byte("diff"), nil)
-	s.wt.On("Add", mock.Anything, "/repo", 7).Return("", errors.New("git failed"))
+	s.wt.On("Add", mock.Anything, "/repo", 7).Return("/repo/.worktrees/pr-7", nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main").Return(nil, errors.New("diff failed"))
 	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
 	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+	require.Equal(s.T(), review.StatusError, s.rs.Get("ch1").Status)
 }
 
 func (s *ReviewHandlerSuite) TestLoadHappyPath() {
@@ -200,8 +201,8 @@ func (s *ReviewHandlerSuite) TestLoadHappyPath() {
 	pr := &githubapi.PRInfo{Number: 7, URL: "https://github.com/x/y/pull/7", HeadRef: "feat-x", BaseRef: "main", State: "OPEN"}
 	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(pr, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("deadbeef", nil)
-	s.gh.On("FetchPRDiff", mock.Anything, "/repo", "", 7).Return([]byte("diff text"), nil)
 	s.wt.On("Add", mock.Anything, "/repo", 7).Return("/repo/.worktrees/pr-7", nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main").Return([]byte("diff text"), nil)
 	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
 	require.Equal(s.T(), http.StatusOK, w.Code)
 	var resp reviewSessionResponse
@@ -261,11 +262,11 @@ func (s *ReviewHandlerSuite) TestLoadLoopDirFallback() {
 	// synthesize <loopDir>/<channelID>/work.
 	s.srv.loopDir = "/loop"
 	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1"}, nil)
-	pr := &githubapi.PRInfo{Number: 7}
+	pr := &githubapi.PRInfo{Number: 7, BaseRef: "main"}
 	s.gh.On("FetchPRByNumber", mock.Anything, "/loop/ch1/work", "", 7).Return(pr, nil)
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/loop/ch1/work", "", 7).Return("abc", nil)
-	s.gh.On("FetchPRDiff", mock.Anything, "/loop/ch1/work", "", 7).Return([]byte("d"), nil)
 	s.wt.On("Add", mock.Anything, "/loop/ch1/work", 7).Return("/loop/ch1/work/.worktrees/pr-7", nil)
+	s.wt.On("Diff", mock.Anything, "/loop/ch1/work", "/loop/ch1/work/.worktrees/pr-7", "main").Return([]byte("d"), nil)
 	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
 	require.Equal(s.T(), http.StatusOK, w.Code)
 }

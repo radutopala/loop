@@ -12,9 +12,11 @@ import (
 
 // GitHubReview is the subset of githubapi.Client the review panel needs.
 // Kept as an interface so tests can stub gh shell-outs without a binary.
+// Diff is intentionally absent — the patch is produced locally from the
+// PR worktree instead of via `gh pr diff` so the review agent has direct
+// filesystem access to the actual code under review.
 type GitHubReview interface {
 	FetchPRByNumber(ctx context.Context, workdir, ghUser string, number int) (*githubapi.PRInfo, error)
-	FetchPRDiff(ctx context.Context, workdir, ghUser string, number int) ([]byte, error)
 	FetchPRHeadSHA(ctx context.Context, workdir, ghUser string, number int) (string, error)
 	FetchRepoSlug(ctx context.Context, workdir, ghUser string) (*githubapi.RepoSlug, error)
 	PostPRComment(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, prNum int, commitID, path, side string, line int, body string) error
@@ -114,14 +116,16 @@ func (s *Server) handleReviewLoad(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	diff, err := s.reviewClient.FetchPRDiff(r.Context(), dirPath, ghUser, req.PRNumber)
+	// Check out the PR head locally first so the diff (and the review
+	// agent) can read the actual files in their post-merge form.
+	worktreePath, err := s.reviewWorktree.Add(r.Context(), dirPath, req.PRNumber)
 	if err != nil {
 		s.reviewStore.UpdateStatus(channelID, review.StatusError, errorMessage(err))
-		respondReviewError(w, err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	worktreePath, err := s.reviewWorktree.Add(r.Context(), dirPath, req.PRNumber)
+	diff, err := s.reviewWorktree.Diff(r.Context(), dirPath, worktreePath, pr.BaseRef)
 	if err != nil {
 		s.reviewStore.UpdateStatus(channelID, review.StatusError, errorMessage(err))
 		http.Error(w, err.Error(), http.StatusInternalServerError)

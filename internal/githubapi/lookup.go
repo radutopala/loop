@@ -200,25 +200,6 @@ func (c *Client) FetchPRByNumber(ctx context.Context, workdir, ghUser string, nu
 	}, nil
 }
 
-// FetchPRDiff returns the unified patch for a PR via `gh pr diff <n> --patch`.
-// The returned bytes are the raw patch suitable for parseUnifiedDiff on the FE.
-func (c *Client) FetchPRDiff(ctx context.Context, workdir, ghUser string, number int) ([]byte, error) {
-	if workdir == "" || number <= 0 {
-		return nil, fmt.Errorf("workdir and number are required")
-	}
-	env, err := c.tokenEnv(ctx, workdir, ghUser)
-	if err != nil {
-		return nil, err
-	}
-	out, err := c.runner.Run(ctx, workdir, env,
-		"pr", "diff", fmt.Sprintf("%d", number), "--patch",
-	)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // RepoSlug is the owner+name pair gh resolves from the workdir's remote.
 type RepoSlug struct {
 	Owner string

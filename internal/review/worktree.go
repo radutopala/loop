@@ -15,9 +15,12 @@ type CommandRunner func(ctx context.Context, dir, name string, args ...string) (
 // PRWorktree adds and removes a git worktree that checks out a pull
 // request's head commit in detached HEAD mode. Detached avoids polluting
 // the user's branch list with one-off review branches — the worktree is
-// purely a read-only sandbox for the review agent.
+// purely a read-only sandbox for the review agent. Diff produces a
+// merge-base unified patch between origin/<baseRef> and the worktree's
+// HEAD — the same view GitHub shows on the PR.
 type PRWorktree interface {
 	Add(ctx context.Context, parentDir string, prNum int) (worktreePath string, err error)
+	Diff(ctx context.Context, parentDir, worktreePath, baseRef string) ([]byte, error)
 	Remove(ctx context.Context, parentDir, worktreePath string) error
 }
 
@@ -52,6 +55,25 @@ func (g *GitPRWorktree) Add(ctx context.Context, parentDir string, prNum int) (s
 		return "", fmt.Errorf("git worktree add: %s", msg)
 	}
 	return worktreePath, nil
+}
+
+// Diff computes the unified patch between origin/<baseRef> and the
+// worktree's HEAD using `git diff origin/<baseRef>...HEAD`. The base ref
+// is fetched first from the parent repo to ensure it's up to date — the
+// worktree shares the parent's git dir so the fetched ref is visible
+// from inside the worktree.
+func (g *GitPRWorktree) Diff(ctx context.Context, parentDir, worktreePath, baseRef string) ([]byte, error) {
+	if parentDir == "" || worktreePath == "" || baseRef == "" {
+		return nil, fmt.Errorf("parentDir, worktreePath, and baseRef are required")
+	}
+	if out, err := g.Run(ctx, parentDir, "git", "fetch", "origin", baseRef); err != nil {
+		return nil, fmt.Errorf("git fetch %s: %s", baseRef, strings.TrimSpace(string(out)))
+	}
+	out, err := g.Run(ctx, worktreePath, "git", "diff", fmt.Sprintf("origin/%s...HEAD", baseRef))
+	if err != nil {
+		return nil, fmt.Errorf("git diff: %s", strings.TrimSpace(string(out)))
+	}
+	return out, nil
 }
 
 // Remove tears down a worktree created by Add. Best-effort prune cleans
