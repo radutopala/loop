@@ -1,0 +1,165 @@
+// Package review owns the per-channel review session: which PR is loaded,
+// the worktree we checked it out into, the raw diff, and any review
+// comments — pending or already pushed — that the agent has produced.
+//
+// Sessions are in-memory and per channel: opening a Review panel for a
+// channel creates one, switching to a different PR replaces it, closing
+// the panel tears it down. They do not survive daemon restart, which
+// matches how the rest of the per-channel ephemeral state behaves.
+package review
+
+import (
+	"sync"
+	"time"
+
+	"github.com/radutopala/loop/internal/githubapi"
+)
+
+// Comment is a single inline review note the agent produced (or that
+// the user manually entered) against a specific (path, line) pair in
+// the PR diff. Pushed flips to true after PostPRComment succeeds.
+type Comment struct {
+	ID       string    `json:"id"`
+	Path     string    `json:"path"`
+	Line     int       `json:"line"`
+	Side     string    `json:"side"` // "RIGHT" added/modified, "LEFT" deleted
+	Body     string    `json:"body"`
+	Pushed   bool      `json:"pushed"`
+	PushedAt time.Time `json:"pushed_at,omitzero"`
+}
+
+// Status describes where the session is in its lifecycle so the FE
+// can render the right affordances (load button vs spinner vs diff).
+type Status string
+
+const (
+	StatusIdle      Status = "idle"
+	StatusLoading   Status = "loading"
+	StatusReady     Status = "ready"
+	StatusReviewing Status = "reviewing"
+	StatusError     Status = "error"
+)
+
+// Session is the per-channel review state. All mutations go through
+// Store so the mutex stays inside the package.
+type Session struct {
+	ChannelID    string            `json:"channel_id"`
+	PR           *githubapi.PRInfo `json:"pr,omitempty"`
+	HeadSHA      string            `json:"head_sha,omitempty"`
+	WorktreePath string            `json:"worktree_path,omitempty"`
+	RawDiff      string            `json:"raw_diff,omitempty"`
+	Comments     []*Comment        `json:"comments"`
+	Status       Status            `json:"status"`
+	Error        string            `json:"error,omitempty"`
+	UpdatedAt    time.Time         `json:"updated_at"`
+}
+
+// Store is the in-memory registry of active sessions keyed by channel id.
+type Store struct {
+	mu       sync.RWMutex
+	sessions map[string]*Session
+}
+
+// NewStore returns an empty store.
+func NewStore() *Store {
+	return &Store{sessions: make(map[string]*Session)}
+}
+
+// Get returns a copy of the session for channelID, or nil if there is
+// none. The copy is shallow: comment pointers are shared with the
+// store, but since comments are only mutated through Store methods that
+// take the write lock, that's safe for read-only consumption.
+func (s *Store) Get(channelID string) *Session {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sess, ok := s.sessions[channelID]
+	if !ok {
+		return nil
+	}
+	cp := *sess
+	cp.Comments = append([]*Comment(nil), sess.Comments...)
+	return &cp
+}
+
+// Put replaces (or creates) the session for channelID. The caller
+// owns construction; the store only stamps UpdatedAt.
+func (s *Store) Put(channelID string, sess *Session) {
+	sess.ChannelID = channelID
+	sess.UpdatedAt = time.Now()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessions[channelID] = sess
+}
+
+// Delete removes the session for channelID. No-op if none exists.
+func (s *Store) Delete(channelID string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.sessions, channelID)
+}
+
+// UpdateStatus transitions the session's status. Returns false if no
+// session exists for channelID.
+func (s *Store) UpdateStatus(channelID string, status Status, errMsg string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[channelID]
+	if !ok {
+		return false
+	}
+	sess.Status = status
+	sess.Error = errMsg
+	sess.UpdatedAt = time.Now()
+	return true
+}
+
+// AddComment appends a comment to the session. Returns false if no
+// session exists for channelID.
+func (s *Store) AddComment(channelID string, c *Comment) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[channelID]
+	if !ok {
+		return false
+	}
+	sess.Comments = append(sess.Comments, c)
+	sess.UpdatedAt = time.Now()
+	return true
+}
+
+// MarkPushed flips Pushed=true on the comment with the matching ID.
+// Returns false if no session or no matching comment.
+func (s *Store) MarkPushed(channelID, commentID string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	sess, ok := s.sessions[channelID]
+	if !ok {
+		return false
+	}
+	for _, c := range sess.Comments {
+		if c.ID == commentID {
+			c.Pushed = true
+			c.PushedAt = time.Now()
+			sess.UpdatedAt = time.Now()
+			return true
+		}
+	}
+	return false
+}
+
+// FindComment returns the comment with the matching ID (or nil) along
+// with the session it belongs to. Caller must not mutate either.
+func (s *Store) FindComment(channelID, commentID string) (*Comment, *Session) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	sess, ok := s.sessions[channelID]
+	if !ok {
+		return nil, nil
+	}
+	for _, c := range sess.Comments {
+		if c.ID == commentID {
+			return c, sess
+		}
+	}
+	return nil, sess
+}
