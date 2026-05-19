@@ -55,10 +55,21 @@ export function parsePRInput(input: string): number | null {
   return null;
 }
 
+// Normalize a session payload so callers can always rely on
+// `session.comments` being an array. Go marshals a nil slice as JSON
+// `null`, and the renderer reads `comments.length` directly — so anything
+// that hands a Session to setSession() must go through this.
+function normalizeSession(resp: ReviewSessionResponse): ReviewSessionResponse {
+  if (resp.session && !Array.isArray(resp.session.comments)) {
+    resp.session.comments = [];
+  }
+  return resp;
+}
+
 export async function getReviewSession(channelId: string): Promise<ReviewSessionResponse> {
   const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review`);
   if (!res.ok) throw new Error(`Failed to fetch review session: ${res.statusText}`);
-  return res.json();
+  return normalizeSession(await res.json());
 }
 
 export async function loadReviewPR(channelId: string, prNumber: number): Promise<ReviewSessionResponse> {
@@ -68,7 +79,7 @@ export async function loadReviewPR(channelId: string, prNumber: number): Promise
     body: JSON.stringify({ pr_number: prNumber }),
   });
   if (!res.ok) throw new Error(await res.text() || `Failed to load PR: ${res.statusText}`);
-  return res.json();
+  return normalizeSession(await res.json());
 }
 
 export async function deleteReviewSession(channelId: string): Promise<void> {

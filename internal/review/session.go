@@ -77,7 +77,10 @@ func (s *Store) Get(channelID string) *Session {
 		return nil
 	}
 	cp := *sess
-	cp.Comments = append([]*Comment(nil), sess.Comments...)
+	// Start from a non-nil zero-length slice so the JSON encoder emits `[]`
+	// instead of `null` when there are no comments yet — the renderer reads
+	// `session.comments.length` directly and crashes on null.
+	cp.Comments = append(make([]*Comment, 0, len(sess.Comments)), sess.Comments...)
 	return &cp
 }
 
