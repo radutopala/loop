@@ -434,6 +434,53 @@ func (s *ConfigSuite) TestPromptShortcutResolveInline() {
 	require.Equal(s.T(), "Review this code", prompt)
 }
 
+func (s *ConfigSuite) TestReviewConfigResolveEmptyReturnsEmpty() {
+	rc := &ReviewConfig{}
+	prompt, err := rc.ResolvePrompt("/loop", s.loader.readFile)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "", prompt)
+}
+
+func (s *ConfigSuite) TestReviewConfigResolveInline() {
+	rc := &ReviewConfig{Prompt: "custom review prompt"}
+	prompt, err := rc.ResolvePrompt("/loop", s.loader.readFile)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "custom review prompt", prompt)
+}
+
+func (s *ConfigSuite) TestReviewConfigResolveFromFile() {
+	s.loader.readFile = func(path string) ([]byte, error) {
+		if path == "/loop/review/team.md" {
+			return []byte("file-based review prompt"), nil
+		}
+		return nil, errors.New("not found")
+	}
+	rc := &ReviewConfig{PromptPath: "team.md"}
+	prompt, err := rc.ResolvePrompt("/loop", s.loader.readFile)
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "file-based review prompt", prompt)
+}
+
+func (s *ConfigSuite) TestReviewConfigResolveBothSetIsError() {
+	rc := &ReviewConfig{Prompt: "x", PromptPath: "y.md"}
+	_, err := rc.ResolvePrompt("/loop", s.loader.readFile)
+	require.Error(s.T(), err)
+}
+
+func (s *ConfigSuite) TestReviewConfigLoadFromJSON() {
+	s.loader.readFile = func(_ string) ([]byte, error) {
+		return []byte(`{
+			"platforms": ["discord"],
+			"discord_token": "t",
+			"discord_app_id": "a",
+			"review": { "prompt": "my prompt" }
+		}`), nil
+	}
+	cfg, err := s.loader.load()
+	require.NoError(s.T(), err)
+	require.Equal(s.T(), "my prompt", cfg.Review.Prompt)
+}
+
 func (s *ConfigSuite) TestPromptShortcutResolveFromFile() {
 	s.loader.readFile = func(path string) ([]byte, error) {
 		if path == "/loop/shortcuts/review.md" {

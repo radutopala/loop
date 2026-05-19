@@ -3,9 +3,12 @@ package api
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"path/filepath"
 
+	"github.com/radutopala/loop/internal/agent"
+	"github.com/radutopala/loop/internal/events"
 	"github.com/radutopala/loop/internal/githubapi"
 	"github.com/radutopala/loop/internal/review"
 )
@@ -29,6 +32,25 @@ func (s *Server) SetReviewService(client GitHubReview, store *review.Store, wt r
 	s.reviewClient = client
 	s.reviewStore = store
 	s.reviewWorktree = wt
+}
+
+// ReviewRunner kicks off a single review pass and streams the parsed
+// comments out through onComment. Satisfied by *review.Runner; held as
+// an interface so tests can drive the handler without a real agent
+// container.
+type ReviewRunner interface {
+	Run(ctx context.Context, channelID, dirPath, systemPrompt, prompt string, onComment func(*review.Comment)) (*agent.AgentResponse, error)
+}
+
+// SetReviewAgent wires the agent-run side of the review panel. runner
+// drives the agent; systemPrompt + userPrompt are the resolved prompt
+// pair (caller is expected to have read them out of config and applied
+// any defaulting). All three are required: nil/"" leaves
+// POST .../review/run returning 501.
+func (s *Server) SetReviewAgent(runner ReviewRunner, systemPrompt, userPrompt string) {
+	s.reviewRunner = runner
+	s.reviewSystemPrompt = systemPrompt
+	s.reviewPrompt = userPrompt
 }
 
 // reviewLoadRequest carries the PR number to load. The FE also accepts
@@ -284,6 +306,145 @@ func (s *Server) pushOneComment(ctx context.Context, channelID string, sess *rev
 	s.reviewStore.MarkPushed(channelID, c.ID)
 	return nil
 }
+
+// handleReviewRun kicks off an agent review pass for the channel's
+// current session. The session must already be in StatusReady (i.e.
+// /review/load has succeeded); a second concurrent run on the same
+// channel returns 202 with status "in_progress" without restarting.
+//
+// The handler returns 202 immediately and the run continues in a
+// background goroutine that streams review.comment + review.status
+// events through eventsHub. The FE consumes those over WS.
+func (s *Server) handleReviewRun(w http.ResponseWriter, r *http.Request) {
+	if s.reviewStore == nil {
+		http.Error(w, "review service not configured", http.StatusNotImplemented)
+		return
+	}
+	if s.reviewRunner == nil {
+		http.Error(w, "review service not configured", http.StatusNotImplemented)
+		return
+	}
+
+	channelID := r.PathValue("id")
+	sess := s.reviewStore.Get(channelID)
+	if sess == nil {
+		http.Error(w, "no review session for channel", http.StatusNotFound)
+		return
+	}
+	if sess.WorktreePath == "" {
+		http.Error(w, "session has no worktree", http.StatusConflict)
+		return
+	}
+
+	// In-flight check must come before the status guard: a second call
+	// while the first run is in flight should coalesce (202 "in_progress")
+	// rather than 409, since the session was already moved to Reviewing
+	// by the first call.
+	if !s.registerReviewRun(channelID) {
+		writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "in_progress"}, s.logger)
+		return
+	}
+	if sess.Status != review.StatusReady {
+		s.unregisterReviewRun(channelID)
+		http.Error(w, "session not ready (status="+string(sess.Status)+")", http.StatusConflict)
+		return
+	}
+
+	prompt := s.reviewPrompt
+	if prompt == "" {
+		prompt = defaultReviewPrompt
+	}
+	fullPrompt := fmt.Sprintf("%s\n\n<diff>\n%s\n</diff>\n", prompt, sess.RawDiff)
+	worktreePath := sess.WorktreePath
+	sysPrompt := s.reviewSystemPrompt
+
+	s.reviewStore.UpdateStatus(channelID, review.StatusReviewing, "")
+	s.broadcastReviewStatus(channelID, review.StatusReviewing, "")
+
+	go s.runReviewAsync(channelID, worktreePath, sysPrompt, fullPrompt)
+	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "started"}, s.logger)
+}
+
+// runReviewAsync executes the review run on the goroutine that
+// handleReviewRun spawns. It owns the in-flight registration cleanup
+// and the final status broadcast.
+func (s *Server) runReviewAsync(channelID, worktreePath, systemPrompt, prompt string) {
+	defer s.unregisterReviewRun(channelID)
+	onComment := func(c *review.Comment) {
+		if !s.reviewStore.AddComment(channelID, c) {
+			return
+		}
+		if hub := s.eventsHub; hub != nil {
+			hub.BroadcastReviewComment(channelID, events.ReviewCommentEventData{
+				ID:   c.ID,
+				Path: c.Path,
+				Line: c.Line,
+				Side: c.Side,
+				Body: c.Body,
+			})
+		}
+	}
+	_, err := s.reviewRunner.Run(context.Background(), channelID, worktreePath, systemPrompt, prompt, onComment)
+	if err != nil {
+		s.reviewStore.UpdateStatus(channelID, review.StatusError, err.Error())
+		s.broadcastReviewStatus(channelID, review.StatusError, err.Error())
+		return
+	}
+	s.reviewStore.UpdateStatus(channelID, review.StatusReady, "")
+	s.broadcastReviewStatus(channelID, review.StatusReady, "")
+}
+
+// registerReviewRun records that channelID has a review run in flight.
+// Returns false if one was already in flight, in which case the caller
+// should not start another goroutine — the existing one will continue
+// streaming events.
+func (s *Server) registerReviewRun(channelID string) bool {
+	s.reviewMu.Lock()
+	defer s.reviewMu.Unlock()
+	if s.reviewActive == nil {
+		s.reviewActive = make(map[string]struct{})
+	}
+	if _, ok := s.reviewActive[channelID]; ok {
+		return false
+	}
+	s.reviewActive[channelID] = struct{}{}
+	return true
+}
+
+// unregisterReviewRun drops the in-flight marker so a subsequent run
+// can register. Safe to call when no marker exists.
+func (s *Server) unregisterReviewRun(channelID string) {
+	s.reviewMu.Lock()
+	defer s.reviewMu.Unlock()
+	delete(s.reviewActive, channelID)
+}
+
+func (s *Server) broadcastReviewStatus(channelID string, status review.Status, errMsg string) {
+	hub := s.eventsHub
+	if hub == nil {
+		return
+	}
+	hub.BroadcastReviewStatus(channelID, events.ReviewStatusEventData{
+		Status: string(status),
+		Error:  errMsg,
+	})
+}
+
+// defaultReviewPrompt is the user-facing prompt sent to the review
+// agent when no override is configured. The system prompt (separately
+// configurable) is left empty in that case — the user prompt alone is
+// enough to drive the review.
+const defaultReviewPrompt = `You are reviewing a GitHub pull request. The PR head is checked out at your current working directory; you can read any file directly.
+
+For each actionable issue you find — bugs, security risks, breakage, regressions — emit exactly one block:
+
+<review-comment path="path/to/file" line="N" side="RIGHT">
+One paragraph describing the issue and what should change.
+</review-comment>
+
+side defaults to "RIGHT" (added/modified lines). Use side="LEFT" only when commenting on a line removed from the base.
+
+Do not emit blocks for style nits, formatting, or matters of taste. Only emit blocks for problems that should block the PR.`
 
 // respondReviewError maps gh-specific errors to the right HTTP status
 // before bubbling up the message, so the FE can distinguish gh-missing

@@ -241,6 +241,14 @@ func (m *MockEventBroadcaster) BroadcastGateApprovalResolved(channelID string, d
 	m.Called(channelID, data)
 }
 
+func (m *MockEventBroadcaster) BroadcastReviewComment(channelID string, data events.ReviewCommentEventData) {
+	m.Called(channelID, data)
+}
+
+func (m *MockEventBroadcaster) BroadcastReviewStatus(channelID string, data events.ReviewStatusEventData) {
+	m.Called(channelID, data)
+}
+
 type MockRunner struct {
 	mock.Mock
 }

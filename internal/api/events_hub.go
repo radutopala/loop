@@ -59,6 +59,8 @@ const (
 	EventQualityScanProgress       = "quality.scan_progress"
 	EventQualityScanCancelled      = "quality.scan_cancelled"
 	EventQualityRulesViolated      = "quality.rules_violated"
+	EventReviewComment             = "review.comment"
+	EventReviewStatus              = "review.status"
 )
 
 // Event represents a server-sent event to WebSocket clients.
@@ -193,6 +195,27 @@ func (h *EventsHub) BroadcastMessageDeleted(channelID string, data events.Messag
 func (h *EventsHub) BroadcastMessageStreaming(channelID string, data events.MessageStreamingData) {
 	h.Broadcast(Event{
 		Type:      EventMessageStreaming,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastReviewComment sends a review.comment event for a single
+// parsed comment. The FE attaches each comment to its (path, line) row
+// in the inline diff overlay.
+func (h *EventsHub) BroadcastReviewComment(channelID string, data events.ReviewCommentEventData) {
+	h.Broadcast(Event{
+		Type:      EventReviewComment,
+		ChannelID: channelID,
+		Data:      data,
+	})
+}
+
+// BroadcastReviewStatus sends a review.status event for a session
+// status transition.
+func (h *EventsHub) BroadcastReviewStatus(channelID string, data events.ReviewStatusEventData) {
+	h.Broadcast(Event{
+		Type:      EventReviewStatus,
 		ChannelID: channelID,
 		Data:      data,
 	})

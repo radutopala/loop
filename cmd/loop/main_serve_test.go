@@ -336,6 +336,30 @@ func filterMockCalls(calls []*mock.Call, drop ...string) []*mock.Call {
 	return out
 }
 
+// TestServeReviewPromptResolveError covers the warn-and-fallback branch when
+// ResolvePrompt returns an error (both inline + path set is mutually exclusive).
+// serve() should log a warning and continue with an empty prompt rather than
+// fail.
+func (s *MainSuite) TestServeReviewPromptResolveError() {
+	m := s.setupServeMocks()
+	m.cfg.Review = config.ReviewConfig{Prompt: "inline", PromptPath: "file.txt"}
+	m.setupHappyBot()
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- s.app.serve() }()
+	s.waitForServeReady(errCh)
+	p, err := os.FindProcess(os.Getpid())
+	require.NoError(s.T(), err)
+	require.NoError(s.T(), p.Signal(syscall.SIGINT))
+
+	select {
+	case err := <-errCh:
+		require.NoError(s.T(), err)
+	case <-time.After(5 * time.Second):
+		s.T().Fatal("serve() did not return in time")
+	}
+}
+
 func (s *MainSuite) TestServeHappyPathWithChannelService() {
 	m := s.setupServeMocks()
 	m.setupHappyBot()
