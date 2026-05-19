@@ -41,6 +41,7 @@ import (
 	"github.com/radutopala/loop/internal/quality/metrics"
 	"github.com/radutopala/loop/internal/quality/rules"
 	"github.com/radutopala/loop/internal/quality/snapshot"
+	"github.com/radutopala/loop/internal/review"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/terminal"
 	"github.com/radutopala/loop/internal/types"
@@ -533,7 +534,13 @@ func (a *app) serve() error {
 
 	eventsHub := api.NewEventsHub(logger)
 	apiSrv.SetEventsHub(eventsHub)
-	apiSrv.SetGitHubLookup(githubapi.NewClient())
+	ghClient := githubapi.NewClient()
+	apiSrv.SetGitHubLookup(ghClient)
+	apiSrv.SetReviewService(
+		ghClient,
+		review.NewStore(),
+		&review.GitPRWorktree{Run: worktree.ExecCommandRunner},
+	)
 	go api.NewBranchPoller(store, eventsHub, cfg.LoopDir, 0, logger).Run(ctx)
 	containerReg.SetBroadcaster(eventsHub)
 	if gateResolver != nil {

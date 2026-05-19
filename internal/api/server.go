@@ -18,6 +18,7 @@ import (
 	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/osutil"
+	"github.com/radutopala/loop/internal/review"
 	"github.com/radutopala/loop/internal/scheduler"
 	"github.com/radutopala/loop/internal/worktree"
 )
@@ -134,6 +135,9 @@ type Server struct {
 	pendingApprovals          PendingApprovalLister                                        // snapshot of in-flight approvals for FE rehydration
 	auditDirResolver          AuditDirResolver                                             // per-channel host path to the gate audit jsonl dir
 	githubLookup              GitHubLookup                                                 // resolves PR for a channel's branch via `gh`
+	reviewClient              GitHubReview                                                 // gh ops for review panel (fetch diff, post comment)
+	reviewStore               *review.Store                                                // per-channel review session state
+	reviewWorktree            review.PRWorktree                                            // creates/removes PR worktrees
 
 	// Quality-scan wiring. All fields are nil by default — handlers
 	// return 501 until the daemon wires concrete implementations. Tests
@@ -339,6 +343,11 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/channels/{id}/paste-image", s.handlePasteImage)
 	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
 	mux.HandleFunc("GET /api/channels/{id}/pr", s.handleChannelPR)
+	mux.HandleFunc("POST /api/channels/{id}/review/load", s.handleReviewLoad)
+	mux.HandleFunc("GET /api/channels/{id}/review", s.handleReviewGet)
+	mux.HandleFunc("DELETE /api/channels/{id}/review", s.handleReviewDelete)
+	mux.HandleFunc("POST /api/channels/{id}/review/comments/{cid}/push", s.handleReviewPushComment)
+	mux.HandleFunc("POST /api/channels/{id}/review/push-all", s.handleReviewPushAll)
 	mux.HandleFunc("GET /api/channels/{id}/branches", s.handleListBranches)
 	mux.HandleFunc("GET /api/channels/{id}/commits", s.handleListCommits)
 	mux.HandleFunc("POST /api/channels/{id}/branches/switch", s.handleSwitchBranch)

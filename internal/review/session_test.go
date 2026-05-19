@@ -1,0 +1,127 @@
+package review
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+	"github.com/stretchr/testify/suite"
+)
+
+type SessionSuite struct {
+	suite.Suite
+}
+
+func TestSessionSuite(t *testing.T) {
+	suite.Run(t, new(SessionSuite))
+}
+
+func (s *SessionSuite) TestGetMissingReturnsNil() {
+	store := NewStore()
+	require.Nil(s.T(), store.Get("nope"))
+}
+
+func (s *SessionSuite) TestPutThenGet() {
+	store := NewStore()
+	store.Put("ch1", &Session{Status: StatusReady, RawDiff: "diff"})
+	got := store.Get("ch1")
+	require.NotNil(s.T(), got)
+	require.Equal(s.T(), "ch1", got.ChannelID)
+	require.Equal(s.T(), StatusReady, got.Status)
+	require.Equal(s.T(), "diff", got.RawDiff)
+	require.False(s.T(), got.UpdatedAt.IsZero())
+}
+
+func (s *SessionSuite) TestGetReturnsCopyWithIndependentCommentsSlice() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	store.AddComment("ch1", &Comment{ID: "a", Path: "x", Line: 1, Body: "b"})
+	got := store.Get("ch1")
+	// Mutating the returned slice header should not affect the store.
+	got.Comments = append(got.Comments, &Comment{ID: "z"})
+	require.Len(s.T(), store.Get("ch1").Comments, 1)
+}
+
+func (s *SessionSuite) TestDelete() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	store.Delete("ch1")
+	require.Nil(s.T(), store.Get("ch1"))
+	// Delete on missing is a no-op.
+	store.Delete("ch1")
+}
+
+func (s *SessionSuite) TestUpdateStatusMissingReturnsFalse() {
+	store := NewStore()
+	require.False(s.T(), store.UpdateStatus("nope", StatusError, "x"))
+}
+
+func (s *SessionSuite) TestUpdateStatus() {
+	store := NewStore()
+	store.Put("ch1", &Session{Status: StatusIdle})
+	require.True(s.T(), store.UpdateStatus("ch1", StatusError, "boom"))
+	got := store.Get("ch1")
+	require.Equal(s.T(), StatusError, got.Status)
+	require.Equal(s.T(), "boom", got.Error)
+}
+
+func (s *SessionSuite) TestAddCommentMissingReturnsFalse() {
+	store := NewStore()
+	require.False(s.T(), store.AddComment("nope", &Comment{}))
+}
+
+func (s *SessionSuite) TestAddCommentAppends() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	require.True(s.T(), store.AddComment("ch1", &Comment{ID: "a"}))
+	require.True(s.T(), store.AddComment("ch1", &Comment{ID: "b"}))
+	got := store.Get("ch1")
+	require.Len(s.T(), got.Comments, 2)
+	require.Equal(s.T(), "a", got.Comments[0].ID)
+	require.Equal(s.T(), "b", got.Comments[1].ID)
+}
+
+func (s *SessionSuite) TestMarkPushedMissingSession() {
+	store := NewStore()
+	require.False(s.T(), store.MarkPushed("nope", "x"))
+}
+
+func (s *SessionSuite) TestMarkPushedMissingComment() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	require.False(s.T(), store.MarkPushed("ch1", "missing"))
+}
+
+func (s *SessionSuite) TestMarkPushedFlips() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	store.AddComment("ch1", &Comment{ID: "a"})
+	require.True(s.T(), store.MarkPushed("ch1", "a"))
+	got := store.Get("ch1")
+	require.True(s.T(), got.Comments[0].Pushed)
+	require.False(s.T(), got.Comments[0].PushedAt.IsZero())
+}
+
+func (s *SessionSuite) TestFindCommentMissingSession() {
+	store := NewStore()
+	c, sess := store.FindComment("nope", "x")
+	require.Nil(s.T(), c)
+	require.Nil(s.T(), sess)
+}
+
+func (s *SessionSuite) TestFindCommentMissingComment() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	c, sess := store.FindComment("ch1", "missing")
+	require.Nil(s.T(), c)
+	require.NotNil(s.T(), sess)
+}
+
+func (s *SessionSuite) TestFindCommentReturnsHit() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	store.AddComment("ch1", &Comment{ID: "a", Path: "x", Line: 1, Body: "b"})
+	c, sess := store.FindComment("ch1", "a")
+	require.NotNil(s.T(), c)
+	require.NotNil(s.T(), sess)
+	require.Equal(s.T(), "x", c.Path)
+}

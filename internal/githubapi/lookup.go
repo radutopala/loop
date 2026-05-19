@@ -153,6 +153,166 @@ func (c *Client) LookupPR(ctx context.Context, workdir, ghUser, branch string) (
 	}, nil
 }
 
+// FetchPRByNumber returns PR metadata for the given PR number (no branch
+// lookup). Same shape as LookupPR but addressed by number — used by the
+// review panel where the user types the PR number directly.
+func (c *Client) FetchPRByNumber(ctx context.Context, workdir, ghUser string, number int) (*PRInfo, error) {
+	if workdir == "" || number <= 0 {
+		return nil, nil
+	}
+	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	if err != nil {
+		return nil, err
+	}
+	out, err := c.runner.Run(ctx, workdir, env,
+		"pr", "view", fmt.Sprintf("%d", number),
+		"--json", "number,url,baseRefName,headRefName,state,title,isDraft",
+	)
+	if err != nil {
+		if errors.Is(err, ErrGhNotInstalled) {
+			return nil, err
+		}
+		return nil, err
+	}
+	var raw struct {
+		Number      int    `json:"number"`
+		URL         string `json:"url"`
+		BaseRefName string `json:"baseRefName"`
+		HeadRefName string `json:"headRefName"`
+		State       string `json:"state"`
+		Title       string `json:"title"`
+		IsDraft     bool   `json:"isDraft"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parsing gh pr view output: %w", err)
+	}
+	if raw.Number == 0 {
+		return nil, nil
+	}
+	return &PRInfo{
+		Number:  raw.Number,
+		URL:     raw.URL,
+		BaseRef: raw.BaseRefName,
+		HeadRef: raw.HeadRefName,
+		State:   raw.State,
+		Title:   raw.Title,
+		IsDraft: raw.IsDraft,
+	}, nil
+}
+
+// FetchPRDiff returns the unified patch for a PR via `gh pr diff <n> --patch`.
+// The returned bytes are the raw patch suitable for parseUnifiedDiff on the FE.
+func (c *Client) FetchPRDiff(ctx context.Context, workdir, ghUser string, number int) ([]byte, error) {
+	if workdir == "" || number <= 0 {
+		return nil, fmt.Errorf("workdir and number are required")
+	}
+	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	if err != nil {
+		return nil, err
+	}
+	out, err := c.runner.Run(ctx, workdir, env,
+		"pr", "diff", fmt.Sprintf("%d", number), "--patch",
+	)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// RepoSlug is the owner+name pair gh resolves from the workdir's remote.
+type RepoSlug struct {
+	Owner string
+	Name  string
+}
+
+// FetchRepoSlug runs `gh repo view --json owner,name` to discover the repo
+// the workdir's git remote points at. Needed for pushing review comments
+// via `gh api repos/{owner}/{name}/pulls/{n}/comments`.
+func (c *Client) FetchRepoSlug(ctx context.Context, workdir, ghUser string) (*RepoSlug, error) {
+	if workdir == "" {
+		return nil, fmt.Errorf("workdir is required")
+	}
+	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	if err != nil {
+		return nil, err
+	}
+	out, err := c.runner.Run(ctx, workdir, env, "repo", "view", "--json", "owner,name")
+	if err != nil {
+		return nil, err
+	}
+	var raw struct {
+		Owner struct {
+			Login string `json:"login"`
+		} `json:"owner"`
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parsing gh repo view output: %w", err)
+	}
+	if raw.Owner.Login == "" || raw.Name == "" {
+		return nil, fmt.Errorf("empty owner/name in gh repo view output")
+	}
+	return &RepoSlug{Owner: raw.Owner.Login, Name: raw.Name}, nil
+}
+
+// PostPRComment files a single-line review comment on a PR via the gh API.
+// commitID is the head SHA of the PR (required by the GitHub API to anchor
+// the comment to a specific revision). side is "RIGHT" for added/modified
+// lines, "LEFT" for deleted lines.
+func (c *Client) PostPRComment(ctx context.Context, workdir, ghUser string, slug RepoSlug, prNum int, commitID, path, side string, line int, body string) error {
+	if workdir == "" || prNum <= 0 || commitID == "" || path == "" || line <= 0 {
+		return fmt.Errorf("workdir, prNum, commitID, path, line are required")
+	}
+	if side == "" {
+		side = "RIGHT"
+	}
+	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	if err != nil {
+		return err
+	}
+	endpoint := fmt.Sprintf("repos/%s/%s/pulls/%d/comments", slug.Owner, slug.Name, prNum)
+	args := []string{
+		"api", endpoint, "--method", "POST",
+		"-f", "body=" + body,
+		"-f", "path=" + path,
+		"-F", fmt.Sprintf("line=%d", line),
+		"-f", "commit_id=" + commitID,
+		"-f", "side=" + side,
+	}
+	if _, err := c.runner.Run(ctx, workdir, env, args...); err != nil {
+		return err
+	}
+	return nil
+}
+
+// FetchPRHeadSHA returns the head commit SHA for a PR, required when
+// posting review comments anchored to a specific revision.
+func (c *Client) FetchPRHeadSHA(ctx context.Context, workdir, ghUser string, number int) (string, error) {
+	if workdir == "" || number <= 0 {
+		return "", fmt.Errorf("workdir and number are required")
+	}
+	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	if err != nil {
+		return "", err
+	}
+	out, err := c.runner.Run(ctx, workdir, env,
+		"pr", "view", fmt.Sprintf("%d", number), "--json", "headRefOid",
+	)
+	if err != nil {
+		return "", err
+	}
+	var raw struct {
+		HeadRefOid string `json:"headRefOid"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return "", fmt.Errorf("parsing gh pr view output: %w", err)
+	}
+	if raw.HeadRefOid == "" {
+		return "", fmt.Errorf("empty headRefOid")
+	}
+	return raw.HeadRefOid, nil
+}
+
 // tokenEnv resolves the GH_TOKEN env override for the configured ghUser.
 // Empty ghUser → no override (gh uses its currently-active account).
 func (c *Client) tokenEnv(ctx context.Context, workdir, ghUser string) ([]string, error) {
