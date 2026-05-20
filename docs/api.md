@@ -1525,11 +1525,22 @@ See [review.md](review.md) for the full lifecycle. Endpoints below return
 `501 review service not configured` if the daemon was started without
 `gh` available or without a worktree provider wired in.
 
+### `GET /api/channels/{id}/review/prs`
+
+List the open pull requests in the repo backing the channel's working
+directory. The FE renders these as a picker so the user can click a row to
+auto-load instead of pasting a PR number or URL.
+
+Response: `{"prs": [{"number": 42, "url": "...", "base_ref": "main", "head_ref": "feat-x", "state": "OPEN", "title": "Add X", "is_draft": false}, ...]}` — capped at 100.
+
+**Errors:** `400` if the channel has no `dir_path`. `404` if the channel does
+not exist. `500` on `gh` failure. `503` (`gh CLI not installed`) when the
+`gh` binary is missing. `501` if the review service is not configured.
+
 ### `POST /api/channels/{id}/review/load`
 
 Load a PR's diff into a local worktree under the channel's `dir_path`.
-Body: `{"pr_number": 42}` (the FE parses both `#42` and PR URLs into a
-number client-side). Replaces any existing session for the channel.
+Body: `{"pr_number": 42}`. Replaces any existing session for the channel.
 
 Response: `{"present": true, "session": { ... }}` — the full session, mirroring `review.Session` in `internal/review/session.go`.
 

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"strings"
 
 	"github.com/radutopala/loop/internal/agent"
 	"github.com/radutopala/loop/internal/events"
@@ -22,13 +23,14 @@ type GitHubReview interface {
 	FetchPRByNumber(ctx context.Context, workdir, ghUser string, number int) (*githubapi.PRInfo, error)
 	FetchPRHeadSHA(ctx context.Context, workdir, ghUser string, number int) (string, error)
 	FetchRepoSlug(ctx context.Context, workdir, ghUser string) (*githubapi.RepoSlug, error)
+	ListOpenPRs(ctx context.Context, workdir, ghUser string) ([]githubapi.PRInfo, error)
 	PostPRComment(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, prNum int, commitID, path, side string, line int, body string) error
 }
 
 // SetReviewService wires the dependencies for the /api/channels/{id}/review/*
 // endpoints. All three are required; passing nil for any of them leaves
 // the routes returning 501 (not configured).
-func (s *Server) SetReviewService(client GitHubReview, store *review.Store, wt review.PRWorktree) {
+func (s *Server) SetReviewService(client GitHubReview, store *review.Store, wt review.PR) {
 	s.reviewClient = client
 	s.reviewStore = store
 	s.reviewWorktree = wt
@@ -39,7 +41,7 @@ func (s *Server) SetReviewService(client GitHubReview, store *review.Store, wt r
 // an interface so tests can drive the handler without a real agent
 // container.
 type ReviewRunner interface {
-	Run(ctx context.Context, channelID, dirPath, systemPrompt, prompt string, onComment func(*review.Comment)) (*agent.AgentResponse, error)
+	Run(ctx context.Context, channelID, dirPath, parentDirPath, systemPrompt, prompt string, onComment func(*review.Comment)) (*agent.AgentResponse, error)
 }
 
 // SetReviewAgent wires the agent-run side of the review panel. runner
@@ -163,6 +165,50 @@ func (s *Server) handleReviewLoad(w http.ResponseWriter, r *http.Request) {
 	}
 	s.reviewStore.Put(channelID, sess)
 	writeHTTPJSON(w, http.StatusOK, reviewSessionResponse{Present: true, Session: s.reviewStore.Get(channelID)}, s.logger)
+}
+
+// handleReviewListPRs returns the list of open PRs in the repo backing the
+// channel's working directory. The FE renders these as a picker so the user
+// can click a row to auto-load instead of pasting a PR number or URL.
+func (s *Server) handleReviewListPRs(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel listing not configured") {
+		return
+	}
+	if !requireConfigured(w, s.reviewClient, "review service not configured") {
+		return
+	}
+
+	channelID := r.PathValue("id")
+	ch, err := s.store.GetChannel(r.Context(), channelID)
+	if err != nil {
+		http.Error(w, "failed to look up channel", http.StatusInternalServerError)
+		return
+	}
+	if ch == nil {
+		http.Error(w, "channel not found", http.StatusNotFound)
+		return
+	}
+	dirPath := ch.DirPath
+	if dirPath == "" && s.loopDir != "" {
+		dirPath = filepath.Join(s.loopDir, ch.ChannelID, "work")
+	}
+	if dirPath == "" {
+		http.Error(w, "channel has no dir_path", http.StatusBadRequest)
+		return
+	}
+
+	parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
+	ghUser := s.resolveGHUser(dirPath, parentDirPath)
+
+	prs, err := s.reviewClient.ListOpenPRs(r.Context(), dirPath, ghUser)
+	if err != nil {
+		respondReviewError(w, err)
+		return
+	}
+	if prs == nil {
+		prs = []githubapi.PRInfo{}
+	}
+	writeHTTPJSON(w, http.StatusOK, map[string]any{"prs": prs}, s.logger)
 }
 
 func (s *Server) handleReviewGet(w http.ResponseWriter, r *http.Request) {
@@ -350,25 +396,49 @@ func (s *Server) handleReviewRun(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// The PR worktree's `.git` is a pointer file referencing the *shared*
+	// gitdir, which only lives under the main repo. The container needs
+	// that mounted so the reference resolves inside the sandbox —
+	// otherwise the agent dies on startup and the run returns "no result
+	// event found". For a worktree-thread channel, the channel itself
+	// IS a worktree, so the shared gitdir lives under the *parent*
+	// channel's dir — resolveParentDirPath walks that chain. For a
+	// root channel, resolveParentDirPath returns "" and we fall back to
+	// the channel's own dir (which is the main repo).
+	parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
+	if parentDirPath == "" && s.store != nil {
+		if ch, err := s.store.GetChannel(r.Context(), channelID); err == nil && ch != nil {
+			parentDirPath = ch.DirPath
+			if parentDirPath == "" && s.loopDir != "" {
+				parentDirPath = filepath.Join(s.loopDir, ch.ChannelID, "work")
+			}
+		}
+	}
+
 	prompt := s.reviewPrompt
 	if prompt == "" {
 		prompt = defaultReviewPrompt
 	}
-	fullPrompt := fmt.Sprintf("%s\n\n<diff>\n%s\n</diff>\n", prompt, sess.RawDiff)
+	// Inlining the diff blew past Linux's MAX_ARG_STRLEN (~128KB per argv
+	// entry) on large PRs and killed the container with "argument list too
+	// long" before claude ever started. The worktree is already checked
+	// out at PR head with `origin/<base>` fetched, so the agent can run
+	// `git diff origin/<base>...HEAD` itself.
+	fullPrompt := prompt + "\n\n" + buildReviewContext(sess)
 	worktreePath := sess.WorktreePath
 	sysPrompt := s.reviewSystemPrompt
 
 	s.reviewStore.UpdateStatus(channelID, review.StatusReviewing, "")
 	s.broadcastReviewStatus(channelID, review.StatusReviewing, "")
 
-	go s.runReviewAsync(channelID, worktreePath, sysPrompt, fullPrompt)
+	go s.runReviewAsync(channelID, worktreePath, parentDirPath, sysPrompt, fullPrompt)
 	writeHTTPJSON(w, http.StatusAccepted, map[string]string{"status": "started"}, s.logger)
 }
 
 // runReviewAsync executes the review run on the goroutine that
 // handleReviewRun spawns. It owns the in-flight registration cleanup
 // and the final status broadcast.
-func (s *Server) runReviewAsync(channelID, worktreePath, systemPrompt, prompt string) {
+func (s *Server) runReviewAsync(channelID, worktreePath, parentDirPath, systemPrompt, prompt string) {
 	defer s.unregisterReviewRun(channelID)
 	onComment := func(c *review.Comment) {
 		if !s.reviewStore.AddComment(channelID, c) {
@@ -384,7 +454,7 @@ func (s *Server) runReviewAsync(channelID, worktreePath, systemPrompt, prompt st
 			})
 		}
 	}
-	_, err := s.reviewRunner.Run(context.Background(), channelID, worktreePath, systemPrompt, prompt, onComment)
+	_, err := s.reviewRunner.Run(context.Background(), channelID, worktreePath, parentDirPath, systemPrompt, prompt, onComment)
 	if err != nil {
 		s.reviewStore.UpdateStatus(channelID, review.StatusError, err.Error())
 		s.broadcastReviewStatus(channelID, review.StatusError, err.Error())
@@ -434,7 +504,7 @@ func (s *Server) broadcastReviewStatus(channelID string, status review.Status, e
 // agent when no override is configured. The system prompt (separately
 // configurable) is left empty in that case — the user prompt alone is
 // enough to drive the review.
-const defaultReviewPrompt = `You are reviewing a GitHub pull request. The PR head is checked out at your current working directory; you can read any file directly.
+const defaultReviewPrompt = `You are reviewing a GitHub pull request. You can read any file directly.
 
 For each actionable issue you find — bugs, security risks, breakage, regressions — emit exactly one block:
 
@@ -445,6 +515,41 @@ One paragraph describing the issue and what should change.
 side defaults to "RIGHT" (added/modified lines). Use side="LEFT" only when commenting on a line removed from the base.
 
 Do not emit blocks for style nits, formatting, or matters of taste. Only emit blocks for problems that should block the PR.`
+
+// buildReviewContext renders the per-PR context block appended to the
+// configured review prompt. Each known field gets its own labelled line so
+// the agent can quote it verbatim and so a missing field (e.g. empty Title)
+// just drops one line without breaking the rest.
+func buildReviewContext(sess *review.Session) string {
+	var b strings.Builder
+	b.WriteString("Pull request under review:\n")
+	if sess.PR != nil {
+		if sess.PR.Number > 0 {
+			fmt.Fprintf(&b, "- Number: #%d\n", sess.PR.Number)
+		}
+		if sess.PR.URL != "" {
+			fmt.Fprintf(&b, "- URL: %s\n", sess.PR.URL)
+		}
+		if sess.PR.Title != "" {
+			fmt.Fprintf(&b, "- Title: %s\n", sess.PR.Title)
+		}
+		if sess.PR.BaseRef != "" {
+			fmt.Fprintf(&b, "- Target branch (base): %s\n", sess.PR.BaseRef)
+		}
+		if sess.PR.HeadRef != "" {
+			fmt.Fprintf(&b, "- Source branch (head): %s\n", sess.PR.HeadRef)
+		}
+	}
+	if sess.HeadSHA != "" {
+		fmt.Fprintf(&b, "- Head SHA: %s\n", sess.HeadSHA)
+	}
+	b.WriteString("\nThe PR head is checked out at your current working directory.")
+	if sess.PR != nil && sess.PR.BaseRef != "" {
+		fmt.Fprintf(&b, " Run `git diff origin/%s...HEAD` to read the diff before commenting.", sess.PR.BaseRef)
+	}
+	b.WriteString("\n")
+	return b.String()
+}
 
 // respondReviewError maps gh-specific errors to the right HTTP status
 // before bubbling up the message, so the FE can distinguish gh-missing

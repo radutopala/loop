@@ -539,7 +539,7 @@ func (a *app) serve() error {
 	apiSrv.SetReviewService(
 		ghClient,
 		review.NewStore(),
-		&review.GitPRWorktree{Run: worktree.ExecCommandRunner},
+		&review.GitPR{Run: worktree.ExecCommandRunner},
 	)
 	reviewPrompt, reviewErr := cfg.Review.ResolvePrompt(cfg.LoopDir, os.ReadFile)
 	if reviewErr != nil {

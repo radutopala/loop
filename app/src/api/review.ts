@@ -45,16 +45,6 @@ export interface PushAllResult {
   errors?: string[];
 }
 
-// Parse a PR number out of either "42", "#42", or
-// "https://github.com/owner/repo/pull/42".
-export function parsePRInput(input: string): number | null {
-  const trimmed = input.trim().replace(/^#/, "");
-  if (/^\d+$/.test(trimmed)) return parseInt(trimmed, 10);
-  const m = trimmed.match(/\/pull\/(\d+)(?:[/?#]|$)/);
-  if (m && m[1]) return parseInt(m[1], 10);
-  return null;
-}
-
 // Normalize a session payload so callers can always rely on
 // `session.comments` being an array. Go marshals a nil slice as JSON
 // `null`, and the renderer reads `comments.length` directly — so anything
@@ -64,6 +54,13 @@ function normalizeSession(resp: ReviewSessionResponse): ReviewSessionResponse {
     resp.session.comments = [];
   }
   return resp;
+}
+
+export async function listReviewPRs(channelId: string): Promise<ReviewPR[]> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/prs`);
+  if (!res.ok) throw new Error((await res.text()) || `Failed to list PRs: ${res.statusText}`);
+  const body = (await res.json()) as { prs?: ReviewPR[] };
+  return Array.isArray(body.prs) ? body.prs : [];
 }
 
 export async function getReviewSession(channelId: string): Promise<ReviewSessionResponse> {

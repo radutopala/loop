@@ -208,7 +208,7 @@ func (s *CreatorSuite) TestRemoveSuccess() {
 
 	require.NoError(s.T(), err)
 	require.Len(s.T(), s.runArgs, 2)
-	require.Equal(s.T(), []string{"/proj", "git", "worktree", "remove", "--force", "/proj/.worktrees/wt-abc"}, s.runArgs[0])
+	require.Equal(s.T(), []string{"/proj", "git", "worktree", "remove", "--force", "--force", "/proj/.worktrees/wt-abc"}, s.runArgs[0])
 	require.Equal(s.T(), []string{"/proj", "git", "worktree", "prune"}, s.runArgs[1])
 }
 

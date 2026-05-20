@@ -7,17 +7,20 @@ at once.
 
 ## Lifecycle
 
-1. **Load** — the user pastes a PR number or URL. The backend:
+1. **Load** — the FE fetches open PRs (`GET /review/prs` → `gh pr list`)
+   and renders them as a clickable list; the user picks one. The backend:
    - Looks the PR up via `gh pr view <number>` for metadata and base/head refs.
    - Resolves the head SHA via `gh pr view --json headRefOid`.
    - Creates a worktree off the PR head branch under the channel's `dir_path`.
-   - Computes the diff locally (`git diff <base>...HEAD` inside the worktree)
-     so the agent later sees the actual file contents, not a freestanding
-     patch.
+   - Fetches the base ref into the parent repo (`git fetch origin <base>`) so
+     `origin/<base>` resolves locally for the Run step.
 2. **Run** — the user clicks **Run**. The backend launches a single agent
    run inside the worktree using the configured review prompt (`review.prompt`
    or `review.prompt_path` in `~/.loop/config.json`; falls back to a
-   built-in default). The agent emits `<review-comment path="..." line="N"
+   built-in default). The prompt tells the agent to compute the diff itself
+   with `git diff origin/<base>...HEAD` from the worktree — keeps the
+   container `argv` small and lets the agent read individual files for
+   context. The agent emits `<review-comment path="..." line="N"
    side="RIGHT|LEFT">...body...</review-comment>` blocks, which are parsed
    and streamed to the FE as they arrive.
 3. **Push** — each comment ships with **Push** (single) and a **Push all

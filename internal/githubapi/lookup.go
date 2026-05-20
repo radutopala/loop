@@ -266,6 +266,55 @@ func (c *Client) PostPRComment(ctx context.Context, workdir, ghUser string, slug
 	return nil
 }
 
+// ListOpenPRs returns all open pull requests in the repo backing workdir.
+// Drafts are included (the FE flags them visually). The list is capped
+// at 100 — repos with more open PRs are an edge case for a review-panel
+// picker and pagination would dwarf the rest of the UX.
+func (c *Client) ListOpenPRs(ctx context.Context, workdir, ghUser string) ([]PRInfo, error) {
+	if workdir == "" {
+		return nil, fmt.Errorf("workdir is required")
+	}
+	env, err := c.tokenEnv(ctx, workdir, ghUser)
+	if err != nil {
+		return nil, err
+	}
+	out, err := c.runner.Run(ctx, workdir, env,
+		"pr", "list", "--state", "open", "--limit", "100",
+		"--json", "number,url,baseRefName,headRefName,state,title,isDraft",
+	)
+	if err != nil {
+		if errors.Is(err, ErrGhNotInstalled) {
+			return nil, err
+		}
+		return nil, err
+	}
+	var raw []struct {
+		Number      int    `json:"number"`
+		URL         string `json:"url"`
+		BaseRefName string `json:"baseRefName"`
+		HeadRefName string `json:"headRefName"`
+		State       string `json:"state"`
+		Title       string `json:"title"`
+		IsDraft     bool   `json:"isDraft"`
+	}
+	if err := json.Unmarshal(out, &raw); err != nil {
+		return nil, fmt.Errorf("parsing gh pr list output: %w", err)
+	}
+	prs := make([]PRInfo, 0, len(raw))
+	for _, r := range raw {
+		prs = append(prs, PRInfo{
+			Number:  r.Number,
+			URL:     r.URL,
+			BaseRef: r.BaseRefName,
+			HeadRef: r.HeadRefName,
+			State:   r.State,
+			Title:   r.Title,
+			IsDraft: r.IsDraft,
+		})
+	}
+	return prs, nil
+}
+
 // FetchPRHeadSHA returns the head commit SHA for a PR, required when
 // posting review comments anchored to a specific revision.
 func (c *Client) FetchPRHeadSHA(ctx context.Context, workdir, ghUser string, number int) (string, error) {
