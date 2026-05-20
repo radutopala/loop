@@ -261,40 +261,55 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   const queuedMsgIdSet = new Set(queuedMessages.map((m) => m.msg_id));
 
   // Track the viewport status (above / visible / below) of every user
-  // message in the chat. Used to decide which (if any) user message to
-  // surface in the floating TriggerQuote banner: the in-flight one when
-  // it's scrolled away, otherwise the most recent user message above the
-  // viewport when no user message is currently visible.
+  // message in the chat. "visible" means the user can still read the
+  // message header — i.e. the bubble's top edge is inside the viewport.
+  // A long message that's scrolled so far up that only its trailing lines
+  // remain is "above" because the content (which lives at the top) is
+  // gone. IntersectionObserver can't reliably fire on this top-edge
+  // crossing without changing the intersection ratio, so we recompute
+  // states on every scroll/resize via rAF instead.
   const [userMsgStates, setUserMsgStates] = useState<Map<string, "above" | "visible" | "below">>(new Map());
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
-    const nodes = container.querySelectorAll<HTMLElement>('[data-msg-uuid][data-is-user="true"]');
-    if (nodes.length === 0) {
-      setUserMsgStates(new Map());
-      return;
-    }
-    const observer = new IntersectionObserver(
-      (entries) => {
-        setUserMsgStates((prev) => {
-          const next = new Map(prev);
-          for (const e of entries) {
-            const id = (e.target as HTMLElement).dataset.msgUuid;
-            if (!id) continue;
-            if (e.isIntersecting) {
-              next.set(id, "visible");
-            } else {
-              const rootTop = e.rootBounds?.top ?? 0;
-              next.set(id, e.boundingClientRect.top < rootTop ? "above" : "below");
-            }
-          }
-          return next;
+    let rafId = 0;
+    const recompute = () => {
+      rafId = 0;
+      const rect = container.getBoundingClientRect();
+      const nodes = container.querySelectorAll<HTMLElement>('[data-msg-uuid][data-is-user="true"]');
+      setUserMsgStates((prev) => {
+        const next = new Map<string, "above" | "visible" | "below">();
+        nodes.forEach((n) => {
+          const id = n.dataset.msgUuid;
+          if (!id) return;
+          const r = n.getBoundingClientRect();
+          if (r.top < rect.top) next.set(id, "above");
+          else if (r.top > rect.bottom) next.set(id, "below");
+          else next.set(id, "visible");
         });
-      },
-      { root: container, threshold: 0.01 },
-    );
-    nodes.forEach((n) => observer.observe(n));
-    return () => observer.disconnect();
+        if (prev.size === next.size) {
+          let same = true;
+          for (const [k, v] of next) {
+            if (prev.get(k) !== v) { same = false; break; }
+          }
+          if (same) return prev;
+        }
+        return next;
+      });
+    };
+    const schedule = () => {
+      if (rafId) return;
+      rafId = requestAnimationFrame(recompute);
+    };
+    recompute();
+    container.addEventListener("scroll", schedule, { passive: true });
+    const ro = new ResizeObserver(schedule);
+    ro.observe(container);
+    return () => {
+      container.removeEventListener("scroll", schedule);
+      ro.disconnect();
+      if (rafId) cancelAnimationFrame(rafId);
+    };
   }, [messages, items, liveTail]);
 
   // Decide which user message (if any) to quote in the floating banner.
