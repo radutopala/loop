@@ -1,6 +1,6 @@
 # Loop
 
-[![Go](https://img.shields.io/badge/Go-1.26-blue)](https://go.dev/) [![CI](https://github.com/radutopala/loop/actions/workflows/ci.yaml/badge.svg)](https://github.com/radutopala/loop/actions/workflows/ci.yaml) [![coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/radutopala/loop/actions/workflows/ci.yaml) [![release](https://img.shields.io/github/v/release/radutopala/loop)](https://github.com/radutopala/loop/releases/latest) [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
+[![Go](https://img.shields.io/badge/Go-1.26-blue)](https://go.dev/) [![CI](https://github.com/radutopala/loop/actions/workflows/ci.yaml/badge.svg)](https://github.com/radutopala/loop/actions/workflows/ci.yaml) [![coverage](https://img.shields.io/badge/coverage-100%25-brightgreen)](https://github.com/radutopala/loop/actions/workflows/ci.yaml) [![release](https://img.shields.io/github/v/release/radutopala/loop)](https://github.com/radutopala/loop/releases/latest) [![docs](https://img.shields.io/badge/docs-radutopala.github.io%2Floop-blue)](https://radutopala.github.io/loop/) [![license](https://img.shields.io/badge/license-Apache--2.0-blue)](LICENSE)
 
 AI agents powered by Claude, running in Docker containers. Use the **desktop app** for a local-first experience, or connect to **Slack** / **Discord** for team collaboration — or run all three at once.
 
@@ -1208,7 +1208,7 @@ Both suites create temporary channels, run all tests, and clean up on teardown. 
 
 ## Documentation
 
-Full documentation is available in the [docs/](docs/README.md) directory. For common issues such as LaunchAgents permissions or corporate proxy TLS errors during Docker builds, see the [Troubleshooting Guide](docs/troubleshooting.md).
+Full documentation is published at **<https://radutopala.github.io/loop/>** (source in [docs/](docs/README.md)). For common issues such as LaunchAgents permissions or corporate proxy TLS errors during Docker builds, see the [Troubleshooting Guide](https://radutopala.github.io/loop/troubleshooting/).
 
 ## License
 
