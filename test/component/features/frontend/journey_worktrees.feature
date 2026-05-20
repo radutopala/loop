@@ -118,6 +118,31 @@ Feature: Worktrees Journey
     When I click button "Delete" in the tasks panel
     Then I wait for text "0 tasks" to appear
 
+  @wt-lock
+  Scenario: Lock and unlock an imported worktree hides and restores Delete
+    Given I set up a test channel via API for git repo "bdd-wt-lock"
+    And I set up a worktree "lock-wt" on branch "main" under the current channel via API
+    And I open the app in a browser
+    And I wait for text "bdd-wt-lock" to appear
+
+    # Navigate to parent channel and open Git panel → Worktrees tab
+    When I click on "bdd-wt-lock" in the sidebar
+    And I wait for "textarea" to be visible
+    When I add a "Git" panel
+    And I click button "Worktrees" in the git panel
+    Then I wait for text "Lock" to appear
+    And the page should contain text "Delete"
+
+    # Lock the worktree — Delete hides, button flips to Unlock
+    When I click button "Lock" in the worktrees panel
+    Then I wait for text "Unlock" to appear
+    And the page should not contain text "Delete"
+
+    # Unlock — Delete returns, button flips back to Lock
+    When I click button "Unlock" in the worktrees panel
+    Then I wait for text "Lock" to appear
+    And the page should contain text "Delete"
+
   Scenario: Branches panel lists branches and deletes with confirmation
     Given I set up a test channel via API for git repo "bdd-branches-del"
     And I create a branch "feature/bdd-del-target" via API

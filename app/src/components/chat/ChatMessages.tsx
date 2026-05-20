@@ -774,6 +774,7 @@ function TriggerQuote({ content, time, onClick }: { content: string; time?: stri
   const timeStr = time ? new Date(time).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : null;
   return (
     <div
+      data-testid="trigger-quote"
       onClick={onClick}
       title={onClick ? "Jump to message" : undefined}
       style={{
