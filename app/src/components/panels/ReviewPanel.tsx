@@ -402,6 +402,7 @@ export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps
           <ReviewDiffView
             rawDiff={session.raw_diff ?? ""}
             comments={session.comments}
+            worktreePath={session.worktree_path}
             onPushComment={onPushOne}
             onDeleteComment={onDeleteOne}
           />

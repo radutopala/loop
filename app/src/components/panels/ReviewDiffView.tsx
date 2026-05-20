@@ -2,12 +2,14 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { fonts } from "../../theme";
 import type { ColorPalette } from "../../theme";
 import { useTheme } from "../../ThemeContext";
+import { ContextMenu } from "../shared/ContextMenu";
 import { computeSegments, parseUnifiedDiff, type HunkLine, type ParsedFile } from "./DiffViewer";
 import type { ReviewComment } from "../../api/review";
 
 interface ReviewDiffViewProps {
   rawDiff: string;
   comments: ReviewComment[];
+  worktreePath?: string;
   onPushComment: (c: ReviewComment) => void | Promise<void>;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
 }
@@ -47,8 +49,14 @@ function summarize(parsed: ParsedFile, fileComments: ReviewComment[]): FileSumma
   return { path: parsed.path, additions, deletions, parsed, agentCount, ghCount };
 }
 
-export function ReviewDiffView({ rawDiff, comments, onPushComment, onDeleteComment }: ReviewDiffViewProps) {
+export function ReviewDiffView({ rawDiff, comments, worktreePath, onPushComment, onDeleteComment }: ReviewDiffViewProps) {
   const { colors } = useTheme();
+  const [fileContextMenu, setFileContextMenu] = useState<{ x: number; y: number; path: string } | null>(null);
+
+  const handleFileContextMenu = useCallback((e: React.MouseEvent, path: string) => {
+    e.preventDefault();
+    setFileContextMenu({ x: e.clientX, y: e.clientY, path });
+  }, []);
 
   const parsedFiles = useMemo(() => parseUnifiedDiff(rawDiff), [rawDiff]);
 
@@ -214,6 +222,7 @@ export function ReviewDiffView({ rawDiff, comments, onPushComment, onDeleteComme
               expanded={expanded.has(sum.path)}
               colors={colors}
               onToggle={() => { setFocusedIdx(idx); toggle(sum.path); }}
+              onContextMenu={handleFileContextMenu}
               onPushComment={onPushComment}
               onDeleteComment={onDeleteComment}
             />
@@ -223,11 +232,23 @@ export function ReviewDiffView({ rawDiff, comments, onPushComment, onDeleteComme
           <OrphanCommentsSection
             comments={orphans}
             colors={colors}
+            onContextMenu={handleFileContextMenu}
             onPushComment={onPushComment}
             onDeleteComment={onDeleteComment}
           />
         )}
       </div>
+      {fileContextMenu && (
+        <ContextMenu
+          x={fileContextMenu.x}
+          y={fileContextMenu.y}
+          items={[
+            { label: "Copy relative path", onClick: () => void navigator.clipboard.writeText(fileContextMenu.path) },
+            { label: "Copy absolute path", onClick: () => void navigator.clipboard.writeText((worktreePath ?? "") + "/" + fileContextMenu.path) },
+          ]}
+          onClose={() => setFileContextMenu(null)}
+        />
+      )}
     </div>
   );
 }
@@ -363,6 +384,7 @@ function FileSection({
   expanded,
   colors,
   onToggle,
+  onContextMenu,
   onPushComment,
   onDeleteComment,
 }: {
@@ -371,6 +393,7 @@ function FileSection({
   expanded: boolean;
   colors: ColorPalette;
   onToggle: () => void;
+  onContextMenu: (e: React.MouseEvent, path: string) => void;
   onPushComment: (c: ReviewComment) => void | Promise<void>;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
 }) {
@@ -396,6 +419,7 @@ function FileSection({
     <div data-testid={`review-diff-file-${summary.path}`}>
       <button
         onClick={onToggle}
+        onContextMenu={(e) => onContextMenu(e, summary.path)}
         style={{
           display: "flex",
           alignItems: "center",
@@ -729,11 +753,13 @@ function InlineComment({
 function OrphanCommentsSection({
   comments,
   colors,
+  onContextMenu,
   onPushComment,
   onDeleteComment,
 }: {
   comments: ReviewComment[];
   colors: ColorPalette;
+  onContextMenu: (e: React.MouseEvent, path: string) => void;
   onPushComment: (c: ReviewComment) => void | Promise<void>;
   onDeleteComment: (c: ReviewComment) => void | Promise<void>;
 }) {
@@ -754,6 +780,7 @@ function OrphanCommentsSection({
       {comments.map((c) => (
         <div key={c.id} style={{ padding: "0 8px" }}>
           <div
+            onContextMenu={(e) => onContextMenu(e, c.path)}
             style={{
               fontSize: 11,
               color: colors.textDim,
