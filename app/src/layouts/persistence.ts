@@ -271,6 +271,26 @@ export function renameLayout(channelId: string, oldName: string, newName: string
   saveAll(all);
 }
 
+/**
+ * Move the layout tab at index `from` to index `to`, shifting the rest.
+ * No-op when either index is out of range or both are equal.
+ * Persists immediately so reload preserves the new order.
+ */
+export function reorderLayout(channelId: string, from: number, to: number): void {
+  if (from === to) return;
+  const all = loadAll();
+  const ch = all[channelId];
+  if (!ch) return;
+  if (from < 0 || from >= ch.order.length) return;
+  if (to < 0 || to >= ch.order.length) return;
+  const next = ch.order.slice();
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved!);
+  ch.order = next;
+  all[channelId] = ch;
+  saveAll(all);
+}
+
 export function clearLayout(channelId: string, layoutName: string): void {
   const all = loadAll();
   const ch = all[channelId];
