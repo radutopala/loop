@@ -1,3 +1,7 @@
+---
+title: Agent Types
+---
+
 # Agent Types
 
 Core request/response types and message structures for agent execution. Serves as the data model layer between the orchestrator and the container runner.

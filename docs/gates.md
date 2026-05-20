@@ -1,3 +1,7 @@
+---
+title: Security Gate
+---
+
 # Security Gate
 
 The security gate is a seccomp `RET_USER_NOTIF` filter plus a Docker HTTP proxy that sit between the agent process inside each container and the kernel / Docker daemon. It exists because agent containers run `claude` with `--dangerously-skip-permissions`: Claude's in-process tool approvals are disabled, so every `Bash`, `Edit`, `Write`, and `docker` call reaches the syscall layer with no human in the loop. The gate is the sole source of human-in-the-loop approval for anything touching the host.

@@ -1,3 +1,7 @@
+---
+title: Terminal WebSocket System
+---
+
 # Terminal WebSocket System
 
 The terminal system provides interactive PTY sessions inside Docker containers or directly on the host machine, accessible via a WebSocket connection at `GET /api/ws/terminal`.

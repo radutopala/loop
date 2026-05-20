@@ -1,3 +1,7 @@
+---
+title: Semantic Memory System
+---
+
 # Semantic Memory System
 
 The memory system provides semantic search over Markdown files using vector embeddings. It indexes `.md` files by chunking content, generating embeddings via Ollama, storing vectors in SQLite, and performing brute-force cosine similarity search.

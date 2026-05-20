@@ -1,3 +1,7 @@
+---
+title: Desktop App (Electron)
+---
+
 # Desktop App (Electron)
 
 The Loop desktop app is an Electron application that wraps the React-based frontend and manages the Loop daemon lifecycle. It provides native OS integration including window management, deep linking, auto-updates, and system menus.

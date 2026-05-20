@@ -1,3 +1,7 @@
+---
+title: Real-Time Events System
+---
+
 # Real-Time Events System
 
 The events system provides real-time delivery of server events to connected clients via WebSocket at `GET /api/ws`. Clients subscribe to specific channels and receive JSON-encoded events for message creation, agent status changes, tool usage, and channel lifecycle.

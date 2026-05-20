@@ -1,3 +1,7 @@
+---
+title: Multi-Agent Workspaces
+---
+
 # Multi-Agent Workspaces
 
 Loop supports running multiple Claude Code agents in parallel within the same channel, with real-time agent discovery and push-based inter-agent messaging via MCP Channels.

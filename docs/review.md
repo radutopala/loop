@@ -1,3 +1,7 @@
+---
+title: Review Panel
+---
+
 # Review Panel
 
 The Review panel loads a GitHub pull request into a local git worktree,
