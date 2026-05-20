@@ -62,12 +62,18 @@ func (g *GitPR) Add(ctx context.Context, parentDir string, prNum int) (string, e
 // re-fetching `refs/pull/<n>/head` and running `git checkout --detach
 // FETCH_HEAD` inside the worktree. Used by the sync button to pick up
 // new commits pushed to the PR without tearing the worktree down.
+//
+// The fetch runs inside worktreePath, not parentDir: since git 2.5
+// FETCH_HEAD is per-worktree, so fetching from the parent would leave
+// the worktree's FETCH_HEAD stale and the checkout would treat the
+// literal string "FETCH_HEAD" as a pathspec ("--detach does not take
+// a path argument 'FETCH_HEAD'").
 func (g *GitPR) Refresh(ctx context.Context, parentDir, worktreePath string, prNum int) error {
 	if parentDir == "" || worktreePath == "" || prNum <= 0 {
 		return fmt.Errorf("parentDir, worktreePath, and prNum are required")
 	}
 	fetchSpec := fmt.Sprintf("refs/pull/%d/head", prNum)
-	if out, err := g.Run(ctx, parentDir, "git", "fetch", "origin", fetchSpec); err != nil {
+	if out, err := g.Run(ctx, worktreePath, "git", "fetch", "origin", fetchSpec); err != nil {
 		return fmt.Errorf("git fetch %s: %s", fetchSpec, strings.TrimSpace(string(out)))
 	}
 	if out, err := g.Run(ctx, worktreePath, "git", "checkout", "--detach", "FETCH_HEAD"); err != nil {

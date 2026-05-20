@@ -33,6 +33,7 @@ type Comment struct {
 	URL       string    `json:"url,omitempty"`        // html_url for source=github
 	CreatedAt string    `json:"created_at,omitempty"` // GitHub createdAt for source=github
 	Outdated  bool      `json:"outdated,omitempty"`   // true when GH could not anchor to current head
+	Resolved  bool      `json:"resolved,omitempty"`   // true when the GH review thread is marked resolved
 	// GitHubID is the numeric comment id assigned by GitHub. Set when we
 	// load existing GH comments (parsed from PRReviewComment.ID) or when
 	// we successfully push an agent comment (captured from the POST

@@ -16,6 +16,7 @@ export interface Channel {
   locked: boolean;
   diff_additions: number;
   diff_deletions: number;
+  review_enabled: boolean;
 }
 
 export interface Message {

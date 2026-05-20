@@ -453,10 +453,16 @@ func (s *ReviewAPISuite) TestFetchPRReviewCommentsInvalidArgs() {
 }
 
 func (s *ReviewAPISuite) TestFetchPRReviewCommentsHappyPath() {
-	r := &dispatchRunner{apiOut: []byte(`[
-		{"id":1,"path":"a.go","line":10,"side":"RIGHT","body":"fix me","html_url":"u1","created_at":"2026-01-01T00:00:00Z","user":{"login":"alice"}},
-		{"id":2,"path":"b.go","original_line":5,"line":null,"body":"old","html_url":"u2","user":{"login":"bob"}}
-	]`)}
+	r := &dispatchRunner{apiOut: []byte(`{
+		"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [
+			{"isResolved": false, "diffSide": "RIGHT", "comments": {"nodes": [
+				{"databaseId":1,"path":"a.go","line":10,"originalLine":null,"body":"fix me","url":"u1","createdAt":"2026-01-01T00:00:00Z","outdated":false,"author":{"login":"alice"}}
+			]}},
+			{"isResolved": true, "diffSide": "", "comments": {"nodes": [
+				{"databaseId":2,"path":"b.go","line":null,"originalLine":5,"body":"old","url":"u2","createdAt":"","outdated":false,"author":{"login":"bob"}}
+			]}}
+		]}}}}
+	}`)}
 	c := NewClientWithRunner(r)
 	comments, err := c.FetchPRReviewComments(context.Background(), "/tmp", "", RepoSlug{Owner: "acme", Name: "widgets"}, 7)
 	require.NoError(s.T(), err)
@@ -467,16 +473,38 @@ func (s *ReviewAPISuite) TestFetchPRReviewCommentsHappyPath() {
 	require.Equal(s.T(), "RIGHT", comments[0].Side)
 	require.Equal(s.T(), "alice", comments[0].Author)
 	require.False(s.T(), comments[0].Outdated)
+	require.False(s.T(), comments[0].Resolved)
 	require.Equal(s.T(), 5, comments[1].Line)
 	require.True(s.T(), comments[1].Outdated)
+	require.True(s.T(), comments[1].Resolved)
 	require.Equal(s.T(), "RIGHT", comments[1].Side) // default
 	args := r.calls[len(r.calls)-1].args
 	require.Equal(s.T(), "api", args[0])
-	require.Equal(s.T(), "repos/acme/widgets/pulls/7/comments?per_page=100", args[1])
+	require.Equal(s.T(), "graphql", args[1])
+	require.Contains(s.T(), args, "owner=acme")
+	require.Contains(s.T(), args, "name=widgets")
+	require.Contains(s.T(), args, "number=7")
+}
+
+func (s *ReviewAPISuite) TestFetchPRReviewCommentsResolvedThreadFlagsAllComments() {
+	r := &dispatchRunner{apiOut: []byte(`{
+		"data": {"repository": {"pullRequest": {"reviewThreads": {"nodes": [
+			{"isResolved": true, "diffSide": "RIGHT", "comments": {"nodes": [
+				{"databaseId":11,"path":"x.go","line":1,"body":"first","author":{"login":"a"}},
+				{"databaseId":12,"path":"x.go","line":1,"body":"reply","author":{"login":"b"}}
+			]}}
+		]}}}}
+	}`)}
+	c := NewClientWithRunner(r)
+	comments, err := c.FetchPRReviewComments(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), comments, 2)
+	require.True(s.T(), comments[0].Resolved)
+	require.True(s.T(), comments[1].Resolved)
 }
 
 func (s *ReviewAPISuite) TestFetchPRReviewCommentsEmpty() {
-	r := &dispatchRunner{apiOut: []byte(`[]`)}
+	r := &dispatchRunner{apiOut: []byte(`{"data":{"repository":{"pullRequest":{"reviewThreads":{"nodes":[]}}}}}`)}
 	c := NewClientWithRunner(r)
 	comments, err := c.FetchPRReviewComments(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1)
 	require.NoError(s.T(), err)

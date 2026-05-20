@@ -355,6 +355,10 @@ func (c *Client) ListOpenPRs(ctx context.Context, workdir, ghUser string) ([]PRI
 // view. Line is the right-side line number (or original_line if the
 // comment is outdated against the current head); Line is 0 when GitHub
 // could not anchor the comment to any line on the latest commit.
+// Resolved reflects whether the comment's review thread has been resolved
+// on GitHub — derived from the parent thread, not from the comment row
+// itself (the REST /pulls/{n}/comments endpoint omits this field, which
+// is why we fetch via GraphQL).
 type PRReviewComment struct {
 	ID        int64  `json:"id"`
 	Path      string `json:"path"`
@@ -365,12 +369,49 @@ type PRReviewComment struct {
 	URL       string `json:"url,omitempty"`
 	CreatedAt string `json:"created_at,omitempty"`
 	Outdated  bool   `json:"outdated,omitempty"`
+	Resolved  bool   `json:"resolved,omitempty"`
 }
 
+// reviewCommentsGraphQLQuery fetches every review thread on a PR and the
+// comments within each thread. We need the GraphQL path (not the REST
+// pulls/{n}/comments endpoint) because thread resolution status is a
+// property of PullRequestReviewThread, not of the individual comment row.
+// diffSide lives on PullRequestReviewThread, not on the individual
+// PullRequestReviewComment row — every comment in a thread shares the
+// same side, so the schema models it once at the thread level. Earlier
+// versions of this query asked for diffSide on the comment node and
+// the entire call failed with `Field 'diffSide' doesn't exist on type
+// 'PullRequestReviewComment'`.
+const reviewCommentsGraphQLQuery = `query($owner:String!,$name:String!,$number:Int!){
+  repository(owner:$owner,name:$name){
+    pullRequest(number:$number){
+      reviewThreads(first:100){
+        nodes{
+          isResolved
+          diffSide
+          comments(first:100){
+            nodes{
+              databaseId
+              path
+              line
+              originalLine
+              body
+              url
+              createdAt
+              outdated
+              author{login}
+            }
+          }
+        }
+      }
+    }
+  }
+}`
+
 // FetchPRReviewComments lists existing inline review comments on a PR via
-// `gh api /repos/{owner}/{name}/pulls/{n}/comments`. The list is capped
-// at 100 to keep the panel responsive — reviews larger than that are an
-// edge case and the user can always view the PR on GitHub.
+// `gh api graphql`. The list is capped at 100 threads × 100 comments per
+// thread — beyond that a PR review is unwieldy enough that the user is
+// better served on github.com directly.
 func (c *Client) FetchPRReviewComments(ctx context.Context, workdir, ghUser string, slug RepoSlug, prNum int) ([]PRReviewComment, error) {
 	if workdir == "" || prNum <= 0 || slug.Owner == "" || slug.Name == "" {
 		return nil, fmt.Errorf("workdir, slug, and prNum are required")
@@ -379,54 +420,82 @@ func (c *Client) FetchPRReviewComments(ctx context.Context, workdir, ghUser stri
 	if err != nil {
 		return nil, err
 	}
-	endpoint := fmt.Sprintf("repos/%s/%s/pulls/%d/comments?per_page=100", slug.Owner, slug.Name, prNum)
-	out, err := c.runner.Run(ctx, workdir, env, "api", endpoint)
+	args := []string{
+		"api", "graphql",
+		"-F", "owner=" + slug.Owner,
+		"-F", "name=" + slug.Name,
+		"-F", fmt.Sprintf("number=%d", prNum),
+		"-f", "query=" + reviewCommentsGraphQLQuery,
+	}
+	out, err := c.runner.Run(ctx, workdir, env, args...)
 	if err != nil {
 		if errors.Is(err, ErrGhNotInstalled) {
 			return nil, err
 		}
 		return nil, err
 	}
-	var raw []struct {
-		ID           int64  `json:"id"`
-		Path         string `json:"path"`
-		Line         *int   `json:"line"`
-		OriginalLine *int   `json:"original_line"`
-		Side         string `json:"side"`
-		Body         string `json:"body"`
-		HTMLURL      string `json:"html_url"`
-		CreatedAt    string `json:"created_at"`
-		User         struct {
-			Login string `json:"login"`
-		} `json:"user"`
+	var raw struct {
+		Data struct {
+			Repository struct {
+				PullRequest struct {
+					ReviewThreads struct {
+						Nodes []struct {
+							IsResolved bool   `json:"isResolved"`
+							DiffSide   string `json:"diffSide"`
+							Comments   struct {
+								Nodes []struct {
+									DatabaseID   int64  `json:"databaseId"`
+									Path         string `json:"path"`
+									Line         *int   `json:"line"`
+									OriginalLine *int   `json:"originalLine"`
+									Body         string `json:"body"`
+									URL          string `json:"url"`
+									CreatedAt    string `json:"createdAt"`
+									Outdated     bool   `json:"outdated"`
+									Author       struct {
+										Login string `json:"login"`
+									} `json:"author"`
+								} `json:"nodes"`
+							} `json:"comments"`
+						} `json:"nodes"`
+					} `json:"reviewThreads"`
+				} `json:"pullRequest"`
+			} `json:"repository"`
+		} `json:"data"`
 	}
 	if err := json.Unmarshal(out, &raw); err != nil {
-		return nil, fmt.Errorf("parsing gh api pulls/%d/comments output: %w", prNum, err)
+		return nil, fmt.Errorf("parsing gh api graphql reviewThreads output: %w", err)
 	}
-	comments := make([]PRReviewComment, 0, len(raw))
-	for _, r := range raw {
-		line, outdated := 0, false
-		if r.Line != nil {
-			line = *r.Line
-		} else if r.OriginalLine != nil {
-			line = *r.OriginalLine
-			outdated = true
+	var comments []PRReviewComment
+	for _, t := range raw.Data.Repository.PullRequest.ReviewThreads.Nodes {
+		for _, r := range t.Comments.Nodes {
+			line, outdated := 0, r.Outdated
+			if r.Line != nil {
+				line = *r.Line
+			} else if r.OriginalLine != nil {
+				line = *r.OriginalLine
+				// The GraphQL outdated flag already covers "line is null"
+				// cases, but force it true here too so callers don't have to
+				// reason about the two paths.
+				outdated = true
+			}
+			side := t.DiffSide
+			if side == "" {
+				side = "RIGHT"
+			}
+			comments = append(comments, PRReviewComment{
+				ID:        r.DatabaseID,
+				Path:      r.Path,
+				Line:      line,
+				Side:      side,
+				Body:      r.Body,
+				Author:    r.Author.Login,
+				URL:       r.URL,
+				CreatedAt: r.CreatedAt,
+				Outdated:  outdated,
+				Resolved:  t.IsResolved,
+			})
 		}
-		side := r.Side
-		if side == "" {
-			side = "RIGHT"
-		}
-		comments = append(comments, PRReviewComment{
-			ID:        r.ID,
-			Path:      r.Path,
-			Line:      line,
-			Side:      side,
-			Body:      r.Body,
-			Author:    r.User.Login,
-			URL:       r.HTMLURL,
-			CreatedAt: r.CreatedAt,
-			Outdated:  outdated,
-		})
 	}
 	return comments, nil
 }

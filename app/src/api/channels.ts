@@ -30,6 +30,7 @@ interface ChannelAPIResponse {
   locked?: boolean;
   diff_additions?: number;
   diff_deletions?: number;
+  review_enabled?: boolean;
 }
 
 export async function fetchChannels(): Promise<Channel[]> {
@@ -51,6 +52,7 @@ export async function fetchChannels(): Promise<Channel[]> {
     locked: c.locked ?? false,
     diff_additions: c.diff_additions ?? 0,
     diff_deletions: c.diff_deletions ?? 0,
+    review_enabled: c.review_enabled ?? false,
   }));
 }
 
@@ -170,6 +172,7 @@ export async function ensureChannel(dirPath: string): Promise<Channel> {
     locked: data.locked ?? false,
     diff_additions: data.diff_additions ?? 0,
     diff_deletions: data.diff_deletions ?? 0,
+    review_enabled: data.review_enabled ?? false,
   };
 }
 

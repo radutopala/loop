@@ -25,6 +25,7 @@ export interface ReviewComment {
   url?: string;
   created_at?: string;
   outdated?: boolean;
+  resolved?: boolean;
   github_id?: number;
 }
 

@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/container"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/types"
@@ -622,6 +623,41 @@ func (s *ServerSuite) TestSearchChannelsBranch() {
 	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
 	require.Len(s.T(), resp, 1)
 	require.NotEmpty(s.T(), resp[0].Branch)
+}
+
+// Worktree channel resolves its parent's dir from the in-memory channel
+// list (not via a second GetChannel call) when computing review_enabled.
+func (s *ServerSuite) TestSearchChannelsReviewEnabledWorktreeUsesParentDir() {
+	channels := []*db.Channel{
+		{ChannelID: "parent", Name: "p", DirPath: "/proj", Platform: types.PlatformLocal},
+		{ChannelID: "wt", Name: "w", DirPath: "/proj/.worktrees/wt", ParentID: "parent", Worktree: true, Platform: types.PlatformLocal},
+	}
+	s.store.On("ListChannels", mock.Anything).Return(channels, nil)
+	s.srv.loadConfig = func() (*config.Config, error) {
+		return &config.Config{Review: config.ReviewConfig{Enabled: false}}, nil
+	}
+	s.srv.loadWorktreeProjectConfig = func(workdir, parent string, c *config.Config) (*config.Config, error) {
+		require.Equal(s.T(), "/proj/.worktrees/wt", workdir)
+		require.Equal(s.T(), "/proj", parent)
+		out := *c
+		out.Review.Enabled = true
+		return &out, nil
+	}
+
+	rec := s.testRequest("GET", "/api/channels", "")
+	require.Equal(s.T(), http.StatusOK, rec.Code)
+	var resp []channelResponse
+	require.NoError(s.T(), json.NewDecoder(rec.Body).Decode(&resp))
+	require.Len(s.T(), resp, 2)
+	// Parent: global Enabled=false, no project layer → false.
+	// Worktree: worktree loader flips it to true.
+	for _, r := range resp {
+		if r.ChannelID == "parent" {
+			require.False(s.T(), r.ReviewEnabled)
+		} else {
+			require.True(s.T(), r.ReviewEnabled)
+		}
+	}
 }
 
 func (s *ServerSuite) TestSearchChannelsDiffStats() {

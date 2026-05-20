@@ -126,3 +126,40 @@ func (s *Server) resolveGHUser(workdir, parentDirPath string) string {
 	}
 	return merged.GitHub.GHUser
 }
+
+// resolveReviewEnabled mirrors resolveGHUser for the review.enabled flag.
+// The layering is global → project → worktree; the worktree's own
+// .loop/config.json wins, falling through to the parent project and then
+// to global when an inner layer doesn't set Enabled explicitly. Returns
+// false on any config-load error so a broken config doesn't silently
+// expose the panel.
+func (s *Server) resolveReviewEnabled(workdir, parentDirPath string) bool {
+	loadConfig := s.loadConfig
+	if loadConfig == nil {
+		loadConfig = config.Load
+	}
+	cfg, err := loadConfig()
+	if err != nil || cfg == nil {
+		return false
+	}
+	merged := cfg
+	switch {
+	case workdir != "" && parentDirPath != "":
+		loadWorktree := s.loadWorktreeProjectConfig
+		if loadWorktree == nil {
+			loadWorktree = config.LoadWorktreeProjectConfig
+		}
+		if pc, perr := loadWorktree(workdir, parentDirPath, cfg); perr == nil && pc != nil {
+			merged = pc
+		}
+	case workdir != "":
+		loadProjectConfig := s.loadProjectConfig
+		if loadProjectConfig == nil {
+			loadProjectConfig = config.LoadProjectConfig
+		}
+		if pc, perr := loadProjectConfig(workdir, cfg); perr == nil && pc != nil {
+			merged = pc
+		}
+	}
+	return merged.Review.Enabled
+}

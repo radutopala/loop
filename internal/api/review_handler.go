@@ -38,6 +38,38 @@ func (s *Server) SetReviewService(client GitHubReview, store *review.Store, wt r
 	s.reviewWorktree = wt
 }
 
+// requireReviewEnabled writes a 403 and returns false when review.enabled
+// is false in the merged config (global → project → worktree) for the
+// given (dirPath, parentDirPath). All review endpoints that touch the
+// PR or run the agent gate on this so the panel can't be reached when
+// the project hasn't opted in, even if the FE forgets to hide it.
+//
+// The caller is responsible for resolving dirPath/parentDirPath itself
+// (typically via the GetChannel + resolveParentDirPath dance the handler
+// already does for FetchPR/ListOpenPRs). Pushing that resolution into
+// the caller — rather than fetching the channel here — keeps the gate
+// out of the way of tests that exercise pre-channel-lookup validation
+// (e.g. malformed JSON / empty PR number) without forcing every such
+// test to add a GetChannel mock just to satisfy this check.
+//
+// Read-only / cleanup endpoints (handleReviewGet, handleReviewDelete) do
+// NOT call this — once a session exists in memory the FE may legitimately
+// inspect or tear it down. Disabling the feature flag mid-session blocks
+// new loads / runs but doesn't strand an existing session.
+func (s *Server) requireReviewEnabled(w http.ResponseWriter, dirPath, parentDirPath string) bool {
+	if !s.resolveReviewEnabled(dirPath, parentDirPath) {
+		http.Error(w, "review panel disabled for this project", http.StatusForbidden)
+		return false
+	}
+	return true
+}
+
+// errReviewDisabled is the sentinel returned from helpers (pushOneComment,
+// the GH-side branch of handleReviewDeleteComment) when the merged config
+// disables review for the channel's project. Handlers translate it to a
+// 403; other errors bubble up as 500.
+var errReviewDisabled = errors.New("review panel disabled for this project")
+
 // ReviewRunner kicks off a single review pass and streams the parsed
 // comments out through onComment. Satisfied by *review.Runner; held as
 // an interface so tests can drive the handler without a real agent
@@ -117,6 +149,9 @@ func (s *Server) handleReviewLoad(w http.ResponseWriter, r *http.Request) {
 	}
 
 	parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
+	if !s.requireReviewEnabled(w, dirPath, parentDirPath) {
+		return
+	}
 	ghUser := s.resolveGHUser(dirPath, parentDirPath)
 
 	// Refuse to Load over an in-flight run. The async run goroutine would
@@ -255,6 +290,9 @@ func (s *Server) handleReviewSync(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
+	if !s.requireReviewEnabled(w, dirPath, parentDirPath) {
+		return
+	}
 	ghUser := s.resolveGHUser(dirPath, parentDirPath)
 
 	prNum := sess.PR.Number
@@ -331,6 +369,7 @@ func (s *Server) fetchExistingReviewComments(ctx context.Context, dirPath, ghUse
 			URL:       c.URL,
 			CreatedAt: c.CreatedAt,
 			Outdated:  c.Outdated,
+			Resolved:  c.Resolved,
 			GitHubID:  c.ID,
 		})
 	}
@@ -368,6 +407,9 @@ func (s *Server) handleReviewListPRs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
+	if !s.requireReviewEnabled(w, dirPath, parentDirPath) {
+		return
+	}
 	ghUser := s.resolveGHUser(dirPath, parentDirPath)
 
 	prs, err := s.reviewClient.ListOpenPRs(r.Context(), dirPath, ghUser)
@@ -451,6 +493,10 @@ func (s *Server) handleReviewPushComment(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	if err := s.pushOneComment(r.Context(), channelID, sess, c); err != nil {
+		if errors.Is(err, errReviewDisabled) {
+			http.Error(w, err.Error(), http.StatusForbidden)
+			return
+		}
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -489,6 +535,10 @@ func (s *Server) handleReviewPushAll(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		if err := s.pushOneComment(r.Context(), channelID, sess, c); err != nil {
+			if errors.Is(err, errReviewDisabled) {
+				http.Error(w, err.Error(), http.StatusForbidden)
+				return
+			}
 			result.Failed++
 			result.Errors = append(result.Errors, c.ID+": "+err.Error())
 			continue
@@ -541,6 +591,9 @@ func (s *Server) handleReviewDeleteComment(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
+		if !s.requireReviewEnabled(w, ch.DirPath, parentDirPath) {
+			return
+		}
 		ghUser := s.resolveGHUser(ch.DirPath, parentDirPath)
 		// GitHub-source comments are only deletable when their author
 		// matches the configured gh user — GH would reject anyone else's
@@ -582,6 +635,9 @@ func (s *Server) pushOneComment(ctx context.Context, channelID string, sess *rev
 		return errors.New("channel has no dir_path")
 	}
 	parentDirPath := s.resolveParentDirPath(ctx, channelID)
+	if !s.resolveReviewEnabled(ch.DirPath, parentDirPath) {
+		return errReviewDisabled
+	}
 	ghUser := s.resolveGHUser(ch.DirPath, parentDirPath)
 	slug, err := s.reviewClient.FetchRepoSlug(ctx, ch.DirPath, ghUser)
 	if err != nil {
@@ -673,6 +729,11 @@ func (s *Server) handleReviewRun(w http.ResponseWriter, r *http.Request) {
 				channelDirPath = filepath.Join(s.loopDir, ch.ChannelID, "work")
 			}
 		}
+	}
+	if !s.resolveReviewEnabled(channelDirPath, parentDirPath) {
+		s.unregisterReviewRun(channelID)
+		http.Error(w, "review panel disabled for this project", http.StatusForbidden)
+		return
 	}
 	ghUser := s.resolveGHUser(channelDirPath, parentDirPath)
 	// Inlining the diff blew past Linux's MAX_ARG_STRLEN (~128KB per argv

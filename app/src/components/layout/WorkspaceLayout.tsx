@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useMemo, useRef, useState } from "react";
 import type { Channel } from "../../types";
 import type { SessionStatus } from "../../types";
 import type { PaneNode, LeafNode, PanelType, AgentOpenMode } from "../../types/panels";
@@ -701,7 +701,12 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
 
   const dirPath = channel.dir_path || "";
   const branch = channel.branch || "";
-  const hiddenPanels = channel.parent_id ? CHANNEL_ONLY_PANELS : undefined;
+  const hiddenPanels = useMemo<PanelType[] | undefined>(() => {
+    const hidden: PanelType[] = [];
+    if (channel.parent_id) hidden.push(...CHANNEL_ONLY_PANELS);
+    if (!channel.review_enabled) hidden.push("review");
+    return hidden.length > 0 ? hidden : undefined;
+  }, [channel.parent_id, channel.review_enabled]);
 
   const renderLeaf = useCallback(
     (leaf: LeafNode): React.ReactNode => {
