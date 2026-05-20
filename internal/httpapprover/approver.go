@@ -90,6 +90,20 @@ func (a *Approver) Request(ctx context.Context, channelID string, req agentgate.
 	httpReq.Header.Set("Authorization", "Bearer "+a.Token)
 	httpReq.Header.Set("Content-Type", "application/json")
 
+	// Fire the pre-decision audit hook before crossing the HTTP boundary —
+	// the server-side Manager runs in a separate process so its in-memory
+	// OnPrompt is never our closure. This is the only place the container
+	// can stamp an "event=request" record into its own audit file.
+	//
+	// Trade-off: this fires even when the server short-circuits on cache or
+	// rate-limit. The matching decision entry may then be filtered out by
+	// FileAuditor's silent-allow rule, so a cache-hit looks like a lone
+	// request line. That is still strictly more visibility than today, where
+	// the agent's intent to prompt vanishes entirely.
+	if req.OnPrompt != nil {
+		req.OnPrompt()
+	}
+
 	resp, err := a.Client.Do(httpReq)
 	if err != nil {
 		if ctx.Err() != nil {

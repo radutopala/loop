@@ -145,6 +145,69 @@ func (s *ApproverSuite) TestBadURLReturnsDeny() {
 	s.Contains(out.Reason, "request-build-error:")
 }
 
+func (s *ApproverSuite) TestOnPromptFiresBeforeHTTPCall() {
+	// The callback must run before the HTTP request is dispatched so the
+	// container's audit file gets a pre-decision "request" entry; the
+	// server-side Manager runs in another process and can't reach our closure.
+	var order []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		order = append(order, "http")
+		_ = json.NewEncoder(w).Encode(ResponseBody{Decision: "allow", Actor: "u", Reason: "ok"})
+	}))
+	defer srv.Close()
+
+	a := New(srv.URL, "tok", srv.Client(), nil)
+	out := a.Request(context.Background(), "ch", agentgate.ApprovalRequest{
+		OnPrompt: func() { order = append(order, "onprompt") },
+	})
+	s.Equal(types.DecisionAllow, out.Decision)
+	s.Equal([]string{"onprompt", "http"}, order)
+}
+
+func (s *ApproverSuite) TestOnPromptFiresEvenWhenServerErrors() {
+	// Cache hits or rate-limits short-circuit on the server side, so the
+	// container can't know whether an actual prompt happened. We still fire
+	// OnPrompt — losing visibility on the agent's intent is worse than a
+	// spurious "request" entry the operator can correlate against the
+	// decision line that follows.
+	var fired bool
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	a := New(srv.URL, "tok", srv.Client(), nil)
+	out := a.Request(context.Background(), "ch", agentgate.ApprovalRequest{
+		OnPrompt: func() { fired = true },
+	})
+	s.True(fired, "OnPrompt should fire even when the server returns non-200")
+	s.Equal(types.DecisionDeny, out.Decision)
+}
+
+func (s *ApproverSuite) TestOnPromptSkippedWhenRequestBuildFails() {
+	// If we can't even build the request, the agent never actually got close
+	// to prompting — no audit entry should fire.
+	var fired bool
+	a := New("://no-scheme", "tok", &http.Client{}, nil)
+	out := a.Request(context.Background(), "ch", agentgate.ApprovalRequest{
+		OnPrompt: func() { fired = true },
+	})
+	s.False(fired, "OnPrompt should not fire when NewRequestWithContext errors")
+	s.Equal(types.DecisionDeny, out.Decision)
+}
+
+func (s *ApproverSuite) TestOnPromptNilIsSafe() {
+	// Default zero-value ApprovalRequest has OnPrompt=nil; calling must not panic.
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(ResponseBody{Decision: "allow"})
+	}))
+	defer srv.Close()
+
+	a := New(srv.URL, "tok", srv.Client(), nil)
+	out := a.Request(context.Background(), "ch", agentgate.ApprovalRequest{})
+	s.Equal(types.DecisionAllow, out.Decision)
+}
+
 func (s *ApproverSuite) TestNewDefaultsClientAndLogger() {
 	a := New("http://x", "tok", nil, nil)
 	s.NotNil(a.Client)
