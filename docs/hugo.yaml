@@ -30,6 +30,7 @@ module:
         - README.md
         - public/**
         - resources/**
+        - layouts/**
 
 markup:
   goldmark:
