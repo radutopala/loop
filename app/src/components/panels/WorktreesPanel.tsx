@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import { useTheme } from "../../ThemeContext";
 import { useEventStream } from "../../hooks/useEventStream";
 import { fetchBranches, type WorktreeInfo } from "../../api/git";
-import { removeWorktree } from "../../api/channels";
+import { removeWorktree, setChannelLocked, setWorktreeLocked } from "../../api/channels";
 import { fonts } from "../../theme";
 
 interface WorktreesPanelProps {
@@ -22,6 +22,7 @@ export function WorktreesPanel({ channelId, isWorktree, hasBranch, onImportWorkt
   const [removingPath, setRemovingPath] = useState<string | null>(null);
   const [confirmingPath, setConfirmingPath] = useState<string | null>(null);
   const [importingPath, setImportingPath] = useState<string | null>(null);
+  const [togglingLockKey, setTogglingLockKey] = useState<string | null>(null);
   // Close confirm popover on outside click.
   useEffect(() => {
     if (!confirmingId && !confirmingPath) return;
@@ -106,6 +107,25 @@ export function WorktreesPanel({ channelId, isWorktree, hasBranch, onImportWorkt
     }
   };
 
+  const handleToggleLock = async (wt: WorktreeInfo) => {
+    const key = wt.thread_id ?? wt.path;
+    setTogglingLockKey(key);
+    try {
+      if (wt.thread_id) {
+        // Imported: update DB + git via the channel lock endpoint.
+        await setChannelLocked(wt.thread_id, !wt.locked);
+      } else {
+        // Non-imported: hit git directly via the path-based endpoint.
+        await setWorktreeLocked(channelId, wt.path, !wt.locked);
+      }
+      await loadWorktrees();
+    } catch {
+      // ignore
+    } finally {
+      setTogglingLockKey(null);
+    }
+  };
+
   if (isWorktree) {
     return (
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", color: colors.textDim, fontSize: fontSizes.panels }}>
@@ -158,6 +178,9 @@ export function WorktreesPanel({ channelId, isWorktree, hasBranch, onImportWorkt
         const imported = !!wt.thread_id;
         const isDeleting = deletingId === wt.thread_id;
         const isImporting = importingPath === wt.path;
+        const isLocked = !!wt.locked;
+        const lockKey = wt.thread_id ?? wt.path;
+        const isTogglingLock = togglingLockKey === lockKey;
 
         return (
           <div
@@ -171,12 +194,31 @@ export function WorktreesPanel({ channelId, isWorktree, hasBranch, onImportWorkt
               borderBottom: `1px solid ${colors.border}`,
             }}
           >
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div style={{ fontSize: fontSizes.panels, color: colors.textLight, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {wt.branch || "detached"}
-              </div>
-              <div style={{ fontSize: 10, color: colors.textDim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                {basename}
+            <div style={{ minWidth: 0, flex: 1, display: "flex", alignItems: "center", gap: 6 }}>
+              {isLocked && (
+                <svg
+                  width="11"
+                  height="11"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke={colors.warning}
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  style={{ flexShrink: 0 }}
+                  aria-label="locked"
+                >
+                  <rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+                  <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+                </svg>
+              )}
+              <div style={{ minWidth: 0, flex: 1 }}>
+                <div style={{ fontSize: fontSizes.panels, color: colors.textLight, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {wt.branch || "detached"}
+                </div>
+                <div style={{ fontSize: 10, color: colors.textDim, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                  {basename}
+                </div>
               </div>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginLeft: 12, flexShrink: 0 }}>
@@ -186,13 +228,23 @@ export function WorktreesPanel({ channelId, isWorktree, hasBranch, onImportWorkt
                     Go
                   </button>
                   <button
-                    style={{ ...btnStyle, color: isDeleting ? colors.textDim : "#ef4444" }}
-                    onClick={() => setConfirmingId(wt.thread_id!)}
-                    disabled={isDeleting}
-                    title="Remove worktree from disk and delete thread"
+                    style={btnStyle}
+                    onClick={() => handleToggleLock(wt)}
+                    disabled={isTogglingLock}
+                    title={isLocked ? "Unlock worktree" : "Lock worktree"}
                   >
-                    {isDeleting ? "..." : "Delete"}
+                    {isTogglingLock ? "..." : isLocked ? "Unlock" : "Lock"}
                   </button>
+                  {!isLocked && (
+                    <button
+                      style={{ ...btnStyle, color: isDeleting ? colors.textDim : "#ef4444" }}
+                      onClick={() => setConfirmingId(wt.thread_id!)}
+                      disabled={isDeleting}
+                      title="Remove worktree from disk and delete thread"
+                    >
+                      {isDeleting ? "..." : "Delete"}
+                    </button>
+                  )}
                 </>
               ) : (
                 <>
@@ -205,13 +257,23 @@ export function WorktreesPanel({ channelId, isWorktree, hasBranch, onImportWorkt
                     {isImporting ? "..." : "Import"}
                   </button>
                   <button
-                    style={{ ...btnStyle, color: removingPath === wt.path ? colors.textDim : "#ef4444" }}
-                    onClick={() => setConfirmingPath(wt.path)}
-                    disabled={removingPath === wt.path}
-                    title="Remove worktree from disk"
+                    style={btnStyle}
+                    onClick={() => handleToggleLock(wt)}
+                    disabled={isTogglingLock}
+                    title={isLocked ? "Unlock worktree" : "Lock worktree"}
                   >
-                    {removingPath === wt.path ? "..." : "Delete"}
+                    {isTogglingLock ? "..." : isLocked ? "Unlock" : "Lock"}
                   </button>
+                  {!isLocked && (
+                    <button
+                      style={{ ...btnStyle, color: removingPath === wt.path ? colors.textDim : "#ef4444" }}
+                      onClick={() => setConfirmingPath(wt.path)}
+                      disabled={removingPath === wt.path}
+                      title="Remove worktree from disk"
+                    >
+                      {removingPath === wt.path ? "..." : "Delete"}
+                    </button>
+                  )}
                 </>
               )}
             </div>

@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"io"
@@ -359,6 +360,102 @@ func (s *ServerSuite) TestSetChannelLockedSuccess() {
 
 	require.Equal(s.T(), http.StatusNoContent, rec.Code)
 	s.store.AssertExpectations(s.T())
+}
+
+func (s *ServerSuite) TestSetChannelLockedWorktreeCallsGitLock() {
+	var ranArgs [][]string
+	s.srv.worktreeCreator.Run = func(_ context.Context, dir, name string, args ...string) ([]byte, error) {
+		ranArgs = append(ranArgs, append([]string{dir, name}, args...))
+		return nil, nil
+	}
+
+	s.store.On("GetChannel", mock.Anything, "thread-wt").
+		Return(&db.Channel{ChannelID: "thread-wt", ParentID: "parent-1", Worktree: true, DirPath: "/proj/.worktrees/wt-1"}, nil)
+	s.store.On("GetChannel", mock.Anything, "parent-1").
+		Return(&db.Channel{ChannelID: "parent-1", DirPath: "/proj"}, nil)
+	s.store.On("UpdateChannelLocked", mock.Anything, "thread-wt", true).Return(nil)
+
+	rec := s.testRequest("PATCH", "/api/channels/thread-wt/lock", `{"locked":true}`)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	require.Len(s.T(), ranArgs, 1)
+	require.Equal(s.T(), []string{"/proj", "git", "worktree", "lock", "/proj/.worktrees/wt-1", "--reason", "locked from Loop UI"}, ranArgs[0])
+}
+
+func (s *ServerSuite) TestSetChannelLockedWorktreeCallsGitUnlock() {
+	var ranArgs [][]string
+	s.srv.worktreeCreator.Run = func(_ context.Context, dir, name string, args ...string) ([]byte, error) {
+		ranArgs = append(ranArgs, append([]string{dir, name}, args...))
+		return nil, nil
+	}
+
+	s.store.On("GetChannel", mock.Anything, "thread-wt").
+		Return(&db.Channel{ChannelID: "thread-wt", ParentID: "parent-1", Worktree: true, DirPath: "/proj/.worktrees/wt-1"}, nil)
+	s.store.On("GetChannel", mock.Anything, "parent-1").
+		Return(&db.Channel{ChannelID: "parent-1", DirPath: "/proj"}, nil)
+	s.store.On("UpdateChannelLocked", mock.Anything, "thread-wt", false).Return(nil)
+
+	rec := s.testRequest("PATCH", "/api/channels/thread-wt/lock", `{"locked":false}`)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	require.Len(s.T(), ranArgs, 1)
+	require.Equal(s.T(), []string{"/proj", "git", "worktree", "unlock", "/proj/.worktrees/wt-1"}, ranArgs[0])
+}
+
+func (s *ServerSuite) TestSetChannelLockedWorktreeGitErrorLogsAndSucceeds() {
+	s.srv.worktreeCreator.Run = func(_ context.Context, _, _ string, _ ...string) ([]byte, error) {
+		return []byte("fatal: not a worktree"), errors.New("exit status 128")
+	}
+
+	s.store.On("GetChannel", mock.Anything, "thread-wt").
+		Return(&db.Channel{ChannelID: "thread-wt", ParentID: "parent-1", Worktree: true, DirPath: "/proj/.worktrees/wt-1"}, nil)
+	s.store.On("GetChannel", mock.Anything, "parent-1").
+		Return(&db.Channel{ChannelID: "parent-1", DirPath: "/proj"}, nil)
+	s.store.On("UpdateChannelLocked", mock.Anything, "thread-wt", true).Return(nil)
+
+	rec := s.testRequest("PATCH", "/api/channels/thread-wt/lock", `{"locked":true}`)
+
+	// HTTP response succeeds — the git-side failure is logged but does not
+	// override the user's intent recorded in the DB.
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+}
+
+func (s *ServerSuite) TestSetChannelLockedWorktreeNoParentSkipsGit() {
+	var called bool
+	s.srv.worktreeCreator.Run = func(_ context.Context, _, _ string, _ ...string) ([]byte, error) {
+		called = true
+		return nil, nil
+	}
+
+	// Worktree but ParentID is empty — can't resolve parent dir, so the git
+	// call is skipped (DB update still applies).
+	s.store.On("GetChannel", mock.Anything, "thread-wt").
+		Return(&db.Channel{ChannelID: "thread-wt", Worktree: true, DirPath: "/proj/.worktrees/wt-1"}, nil)
+	s.store.On("UpdateChannelLocked", mock.Anything, "thread-wt", true).Return(nil)
+
+	rec := s.testRequest("PATCH", "/api/channels/thread-wt/lock", `{"locked":true}`)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	require.False(s.T(), called, "expected git worktree lock to be skipped when parent dir is unresolvable")
+}
+
+func (s *ServerSuite) TestSetChannelLockedWorktreeParentLookupErrorSkipsGit() {
+	var called bool
+	s.srv.worktreeCreator.Run = func(_ context.Context, _, _ string, _ ...string) ([]byte, error) {
+		called = true
+		return nil, nil
+	}
+
+	s.store.On("GetChannel", mock.Anything, "thread-wt").
+		Return(&db.Channel{ChannelID: "thread-wt", ParentID: "parent-missing", Worktree: true, DirPath: "/proj/.worktrees/wt-1"}, nil)
+	s.store.On("GetChannel", mock.Anything, "parent-missing").
+		Return((*db.Channel)(nil), errors.New("db error"))
+	s.store.On("UpdateChannelLocked", mock.Anything, "thread-wt", true).Return(nil)
+
+	rec := s.testRequest("PATCH", "/api/channels/thread-wt/lock", `{"locked":true}`)
+
+	require.Equal(s.T(), http.StatusNoContent, rec.Code)
+	require.False(s.T(), called)
 }
 
 func (s *ServerSuite) TestSetChannelLockedNotFound() {

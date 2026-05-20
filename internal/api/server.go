@@ -371,6 +371,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("POST /api/worktrees", s.handleCreateWorktree)
 	mux.HandleFunc("POST /api/worktrees/import", s.handleImportWorktree)
 	mux.HandleFunc("DELETE /api/worktrees", s.handleRemoveWorktree)
+	mux.HandleFunc("POST /api/worktrees/lock", s.handleSetWorktreeLocked)
 	mux.HandleFunc("POST /api/browser/action", s.handleBrowserAction)
 	mux.HandleFunc("POST /api/browser/mode", s.handleBrowserMode)
 	mux.HandleFunc("PUT /api/playground", s.handlePlaygroundUpdate)

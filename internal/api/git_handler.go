@@ -27,6 +27,7 @@ type worktreeEntry struct {
 	Path     string `json:"path"`
 	Branch   string `json:"branch"`
 	ThreadID string `json:"thread_id,omitempty"`
+	Locked   bool   `json:"locked,omitempty"`
 }
 
 // validBranchName matches safe git branch names (alphanumeric, slashes, hyphens, dots, underscores).
@@ -82,17 +83,26 @@ func (s *Server) handleListBranches(w http.ResponseWriter, r *http.Request) {
 
 	worktrees := parseWorktrees(string(wtOut), dirPath)
 
-	// Enrich worktrees with thread IDs for worktrees already imported as threads.
+	// Enrich worktrees with thread IDs (and DB-side locked state) for worktrees
+	// already imported as threads. DB locked OR git locked → Locked=true so the
+	// UI sees a single consolidated state.
 	if allChannels, err := s.store.ListChannels(r.Context()); err == nil {
-		wtPathToThread := make(map[string]string)
+		type info struct {
+			threadID string
+			locked   bool
+		}
+		wtPathToInfo := make(map[string]info)
 		for _, ch := range allChannels {
 			if ch.ParentID == channelID && ch.Worktree && ch.DirPath != "" {
-				wtPathToThread[realPath(ch.DirPath)] = ch.ChannelID
+				wtPathToInfo[realPath(ch.DirPath)] = info{threadID: ch.ChannelID, locked: ch.Locked}
 			}
 		}
 		for i := range worktrees {
-			if tid, ok := wtPathToThread[realPath(worktrees[i].Path)]; ok {
-				worktrees[i].ThreadID = tid
+			if v, ok := wtPathToInfo[realPath(worktrees[i].Path)]; ok {
+				worktrees[i].ThreadID = v.threadID
+				if v.locked {
+					worktrees[i].Locked = true
+				}
 			}
 		}
 	}
@@ -129,15 +139,18 @@ func parseWorktrees(output, mainDir string) []worktreeEntry {
 	worktrees := []worktreeEntry{}
 	var current worktreeEntry
 	for _, line := range strings.Split(output, "\n") {
-		if strings.HasPrefix(line, "worktree ") {
+		switch {
+		case strings.HasPrefix(line, "worktree "):
 			if current.Path != "" && realPath(current.Path) != realMain {
 				worktrees = append(worktrees, current)
 			}
 			current = worktreeEntry{Path: strings.TrimPrefix(line, "worktree ")}
-		} else if strings.HasPrefix(line, "branch ") {
+		case strings.HasPrefix(line, "branch "):
 			ref := strings.TrimPrefix(line, "branch ")
 			// Convert refs/heads/foo to foo.
 			current.Branch = strings.TrimPrefix(ref, "refs/heads/")
+		case line == "locked" || strings.HasPrefix(line, "locked "):
+			current.Locked = true
 		}
 	}
 	// Flush last entry.
@@ -694,6 +707,52 @@ func (s *Server) handleRemoveWorktree(w http.ResponseWriter, r *http.Request) {
 		if s.eventsHub != nil {
 			s.eventsHub.BroadcastChannelDeleted(body.ThreadID)
 		}
+	}
+
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// ── Lock / Unlock Worktree (path-based, for non-imported worktrees) ──
+
+// handleSetWorktreeLocked toggles `git worktree lock`/`unlock` for a worktree
+// path that is NOT imported as a Loop thread. For imported worktrees the
+// caller should PATCH /api/channels/{id}/lock instead, which updates DB +
+// git in one go via handleSetChannelLocked.
+//
+// Body: { channel_id, worktree_path, locked }
+func (s *Server) handleSetWorktreeLocked(w http.ResponseWriter, r *http.Request) {
+	if !requireConfigured(w, s.store, "channel store not configured") {
+		return
+	}
+	if s.worktreeCreator == nil {
+		http.Error(w, "worktree operations not configured", http.StatusNotImplemented)
+		return
+	}
+
+	var body struct {
+		ChannelID    string `json:"channel_id"`
+		WorktreePath string `json:"worktree_path"`
+		Locked       bool   `json:"locked"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&body); err != nil || body.ChannelID == "" || body.WorktreePath == "" {
+		http.Error(w, "channel_id and worktree_path required", http.StatusBadRequest)
+		return
+	}
+
+	ch, err := s.store.GetChannel(r.Context(), body.ChannelID)
+	if err != nil || ch == nil || ch.DirPath == "" {
+		http.Error(w, "channel not found or has no dir_path", http.StatusBadRequest)
+		return
+	}
+
+	if body.Locked {
+		err = s.worktreeCreator.Lock(r.Context(), ch.DirPath, body.WorktreePath, "locked from Loop UI")
+	} else {
+		err = s.worktreeCreator.Unlock(r.Context(), ch.DirPath, body.WorktreePath)
+	}
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 
 	w.WriteHeader(http.StatusNoContent)

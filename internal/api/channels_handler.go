@@ -353,11 +353,41 @@ func (s *Server) handleSetChannelLocked(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
+	// If this is an imported worktree thread, mirror the lock state into git
+	// so `git worktree remove` and external tooling see the same truth.
+	if ch.Worktree && ch.DirPath != "" && s.worktreeCreator != nil {
+		parentDir := s.resolveWorktreeParentDir(r.Context(), ch)
+		if parentDir != "" {
+			var gitErr error
+			if req.Locked {
+				gitErr = s.worktreeCreator.Lock(r.Context(), parentDir, ch.DirPath, "locked from Loop UI")
+			} else {
+				gitErr = s.worktreeCreator.Unlock(r.Context(), parentDir, ch.DirPath)
+			}
+			if gitErr != nil {
+				s.logger.Warn("git worktree lock/unlock", "channel_id", channelID, "locked", req.Locked, "error", gitErr)
+			}
+		}
+	}
+
 	if s.eventsHub != nil {
 		s.eventsHub.BroadcastChannelLocked(channelID, req.Locked)
 	}
 
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// resolveWorktreeParentDir returns the parent project dir_path for an imported
+// worktree thread. Falls back to "" if the parent can't be resolved.
+func (s *Server) resolveWorktreeParentDir(ctx context.Context, ch *db.Channel) string {
+	if ch.ParentID == "" {
+		return ""
+	}
+	parent, err := s.store.GetChannel(ctx, ch.ParentID)
+	if err != nil || parent == nil {
+		return ""
+	}
+	return parent.DirPath
 }
 
 type ensureAllChannelsRequest struct {
