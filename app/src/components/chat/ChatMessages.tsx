@@ -323,10 +323,16 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
   const userMessages = useMemo(() => messages.filter((m) => !m.is_bot), [messages]);
   const quoteAnchor: { msgId: string; content: string; time?: string; position: "top" | "bottom" } | null = (() => {
     if (isRunning && effectiveProcessingMsgId && userMsgStates.get(effectiveProcessingMsgId) !== "visible") {
-      const m = userMessages.find((u) => u.msg_id === effectiveProcessingMsgId);
+      // userMessages only spans the locally loaded window; for runs whose
+      // trigger row predates the loaded pages, the backend queue (which
+      // includes the in-flight row) still has the full Message.
+      const m = userMessages.find((u) => u.msg_id === effectiveProcessingMsgId)
+        ?? backendQueue.find((b) => b.msg_id === effectiveProcessingMsgId);
+      const content = triggerContent ?? m?.content ?? "";
+      if (!content) return null;
       return {
         msgId: effectiveProcessingMsgId,
-        content: triggerContent ?? m?.content ?? "",
+        content,
         time: m?.created_at,
         position: "bottom",
       };
@@ -335,7 +341,7 @@ export const ChatMessages = forwardRef<ChatMessagesHandle, ChatMessagesProps>(fu
     if (!anyVisible) {
       for (let i = userMessages.length - 1; i >= 0; i--) {
         const m = userMessages[i]!;
-        if (userMsgStates.get(m.msg_id) === "above") {
+        if (userMsgStates.get(m.msg_id) === "above" && m.content) {
           return { msgId: m.msg_id, content: m.content, time: m.created_at, position: "top" };
         }
       }

@@ -305,7 +305,11 @@ export function useChatState(
           setCompletionInfo(null);
           setAskUserQuestions(null);
           setExitPlanRequest(null);
-          setTriggerContent(data.trigger_content ?? null);
+          // Treat an empty string the same as missing — a continuation/queue-
+          // drain agent.status running can ship trigger_content="" which, left
+          // as-is, masks the per-message fallback in the trigger-quote banner
+          // and renders an empty card.
+          setTriggerContent(data.trigger_content ? data.trigger_content : null);
           setProcessingMsgId(data.msg_id ?? null);
           refreshQueue();
         } else {
