@@ -1,0 +1,24 @@
+{{- /*
+  Custom link render hook.
+
+  Rewrites internal `*.md` markdown links to their built page permalink so
+  README-style links (e.g. `[Configuration](configuration.md)`) keep working
+  on GitHub and resolve correctly on the deployed Hugo site (`/loop/`).
+*/ -}}
+{{- $url := .Destination -}}
+{{- $isRemote := or (hasPrefix $url "http://") (hasPrefix $url "https://") (hasPrefix $url "mailto:") (hasPrefix $url "//") -}}
+{{- $isAnchor := hasPrefix $url "#" -}}
+{{- if and (not $isRemote) (not $isAnchor) -}}
+  {{- $parts := split $url "#" -}}
+  {{- $path := index $parts 0 -}}
+  {{- $anchor := "" -}}
+  {{- if gt (len $parts) 1 -}}
+    {{- $anchor = printf "#%s" (index $parts 1) -}}
+  {{- end -}}
+  {{- if strings.HasSuffix $path ".md" -}}
+    {{- with .Page.GetPage $path -}}
+      {{- $url = printf "%s%s" .RelPermalink $anchor -}}
+    {{- end -}}
+  {{- end -}}
+{{- end -}}
+<a href="{{ $url | safeURL }}"{{ with .Title }} title="{{ . }}"{{ end }}{{ if $isRemote }} target="_blank" rel="noopener"{{ end }}>{{ .Text | safeHTML }}</a>
