@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -194,6 +195,14 @@ func registerFrontendSteps(ctx *godog.ScenarioContext, tc *TestContext) {
 	// Panel interaction
 	ctx.Step(`^I add a "([^"]*)" panel$`, tc.addPanel)
 	ctx.Step(`^I click the task create button$`, tc.clickTaskCreateButton)
+
+	// Layout tab drag/drop + chat scroll (synthesized via JS — chromedp's
+	// real mouse can't deliver an HTML5 DataTransfer payload).
+	ctx.Step(`^I drag layout tab "([^"]*)" onto layout tab "([^"]*)"$`, tc.dragLayoutTab)
+	ctx.Step(`^the layout tabs should be in order "([^"]*)"$`, tc.assertLayoutTabOrder)
+	ctx.Step(`^I scroll the chat messages to bottom$`, tc.scrollChatMessagesToBottom)
+	ctx.Step(`^I inject (\d+) bot messages with content "([^"]*)"$`, tc.injectBotMessages)
+	ctx.Step(`^I inject a user message with content "([^"]*)"$`, tc.injectUserMessage)
 
 	// Event injection (chromedp dispatches a CustomEvent that the chat store
 	// listens for; routes through the same handler as a real WS message).
@@ -952,6 +961,162 @@ func (tc *TestContext) dumpPageText() error {
 	}
 	fmt.Printf("[DUMP PAGE TEXT] %.2000s\n", body)
 	return nil
+}
+
+// dragLayoutTab synthesizes an HTML5 drag+drop between two layout tabs.
+// Real chromedp mouse events can't carry a DataTransfer payload, and React's
+// drop handler reads dataTransfer.getData(TAB_DRAG_MIME) to decide what to
+// reorder. We bypass that by dispatching a synthetic drop event whose
+// dataTransfer is a plain object exposing the same shape (getData / types).
+func (tc *TestContext) dragLayoutTab(fromName, toName string) error {
+	js := fmt.Sprintf(`
+		(function() {
+			const MIME = 'application/x-loop-layout-tab';
+			const src = document.querySelector('[data-testid="layout-tab-%s"]');
+			const dst = document.querySelector('[data-testid="layout-tab-%s"]');
+			if (!src || !dst) return 'tab not found';
+			const dt = {
+				_data: {[MIME]: %q},
+				types: [MIME],
+				effectAllowed: 'move',
+				dropEffect: 'move',
+				getData(m) { return this._data[m] || ''; },
+				setData(m, v) { this._data[m] = v; },
+			};
+			function fire(target, type) {
+				const e = new Event(type, {bubbles: true, cancelable: true});
+				Object.defineProperty(e, 'dataTransfer', {value: dt});
+				target.dispatchEvent(e);
+			}
+			fire(src, 'dragstart');
+			fire(dst, 'dragenter');
+			fire(dst, 'dragover');
+			fire(dst, 'drop');
+			fire(src, 'dragend');
+			return 'ok';
+		})()
+	`, fromName, toName, fromName)
+	var result string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &result)); err != nil {
+		return fmt.Errorf("dragLayoutTab %q→%q: %w", fromName, toName, err)
+	}
+	if result != "ok" {
+		return fmt.Errorf("dragLayoutTab %q→%q: %s", fromName, toName, result)
+	}
+	return nil
+}
+
+// assertLayoutTabOrder verifies the layout tab strip's left-to-right order
+// matches the comma-separated list of tab names.
+func (tc *TestContext) assertLayoutTabOrder(expected string) error {
+	js := `(() => Array.from(document.querySelectorAll('[data-testid^="layout-tab-"]'))
+		.map(el => el.getAttribute('data-testid').replace('layout-tab-', ''))
+		.join(','))()`
+	var actual string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &actual)); err != nil {
+		return err
+	}
+	want := strings.Join(strings.Split(strings.ReplaceAll(expected, " ", ""), ","), ",")
+	got := strings.ReplaceAll(actual, " ", "")
+	if got != want {
+		return fmt.Errorf("layout tab order: want %q, got %q", want, got)
+	}
+	return nil
+}
+
+// scrollChatMessagesToBottom finds the chat messages scroll container and
+// snaps it to the bottom synchronously. Used to drive the trigger-quote
+// banner: the banner appears when no user message bubble is visible in the
+// container and at least one is above it.
+func (tc *TestContext) scrollChatMessagesToBottom() error {
+	js := `(() => {
+		// The messages container is the only element with overflowY:auto
+		// inside the chat view. Its first child is the sticky banner slot;
+		// next is the messageColumn carrying [data-msg-uuid] bubbles.
+		const bubble = document.querySelector('[data-msg-uuid]');
+		if (!bubble) return 'no message bubble';
+		let el = bubble.parentElement;
+		while (el && getComputedStyle(el).overflowY !== 'auto') el = el.parentElement;
+		if (!el) return 'no scroll container';
+		el.scrollTop = el.scrollHeight;
+		el.dispatchEvent(new Event('scroll'));
+		return 'ok';
+	})()`
+	var result string
+	if err := chromedp.Run(tc.chromeTab.ctx, chromedp.Evaluate(js, &result)); err != nil {
+		return err
+	}
+	if result != "ok" {
+		return fmt.Errorf("scrollChatMessagesToBottom: %s", result)
+	}
+	return nil
+}
+
+// injectUserMessage seeds a single user message.created event into the chat
+// store with a stable msg_id so subsequent bot messages stack after it.
+func (tc *TestContext) injectUserMessage(content string) error {
+	if tc.ChannelID == "" {
+		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
+	}
+	if err := tc.ensureChromeTab(); err != nil {
+		return err
+	}
+	payload, err := json.Marshal(map[string]any{
+		"type":       "message.created",
+		"channel_id": tc.ChannelID,
+		"timestamp":  1,
+		"data": map[string]any{
+			"msg_id":       "bdd-user-1",
+			"author_id":    "user",
+			"author_name":  "tester",
+			"content":      content,
+			"is_bot":       false,
+			"is_processed": true,
+			"priority":     0,
+		},
+	})
+	if err != nil {
+		return err
+	}
+	return tc.dispatchTestEvents(payload)
+}
+
+// injectBotMessages dispatches N synthetic bot message.created events so the
+// chat container grows tall enough to push the prior user message above the
+// viewport when scrolled to bottom.
+func (tc *TestContext) injectBotMessages(countStr, content string) error {
+	if tc.ChannelID == "" {
+		return fmt.Errorf("no channel_id set; use 'I set up a test channel via API' step first")
+	}
+	if err := tc.ensureChromeTab(); err != nil {
+		return err
+	}
+	n, err := strconv.Atoi(countStr)
+	if err != nil {
+		return fmt.Errorf("invalid count %q: %w", countStr, err)
+	}
+	payloads := make([][]byte, 0, n)
+	for i := 0; i < n; i++ {
+		p, err := json.Marshal(map[string]any{
+			"type":       "message.created",
+			"channel_id": tc.ChannelID,
+			"timestamp":  2 + i,
+			"data": map[string]any{
+				"msg_id":       fmt.Sprintf("bdd-bot-%d", i),
+				"author_id":    "bot",
+				"author_name":  "bot",
+				"content":      content,
+				"is_bot":       true,
+				"is_processed": true,
+				"priority":     0,
+			},
+		})
+		if err != nil {
+			return err
+		}
+		payloads = append(payloads, p)
+	}
+	return tc.dispatchTestEvents(payloads...)
 }
 
 // seedChatTimeline injects a synthetic message.created event so
