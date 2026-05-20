@@ -18,6 +18,13 @@ function buildMessageStyles(colors: ColorPalette): Record<string, React.CSSPrope
       flex: 1,
       overflowY: "auto",
       padding: "16px 24px",
+      // Reserve scrollbar gutter on BOTH sides so the centered children
+      // (messageColumn and the sticky TriggerQuote) stay on the same
+      // vertical axis as the chat input below — which sits in a sibling
+      // container with no scrollbar. Without this, the 8px webkit
+      // scrollbar consumes inline-end width only, shifting our centered
+      // content ~4px left of the input.
+      scrollbarGutter: "stable both-edges",
     },
     messageColumn: {
       maxWidth: 768,
