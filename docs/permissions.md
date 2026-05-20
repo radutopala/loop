@@ -1,3 +1,7 @@
+---
+title: Permission & RBAC System
+---
+
 # Permission & RBAC System
 
 Loop uses a role-based access control (RBAC) system to control who can interact with the bot and manage its configuration. The system is intentionally simple -- two roles, two sources of truth, and a bootstrap mechanism for first-time setup.

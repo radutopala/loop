@@ -1,3 +1,7 @@
+---
+title: Settings & Command Palette
+---
+
 # Settings & Command Palette
 
 This document covers the Settings panel and the Command Palette, the two main overlay interfaces in the Loop desktop app.

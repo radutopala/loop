@@ -1,3 +1,7 @@
+---
+title: Architectural Quality
+---
+
 # Architectural Quality
 
 The quality engine reduces a workspace to one continuous `quality_signal` in the 0–10000 band, computed as the geometric mean of six graph- and function-level metrics. Scans run on demand from the desktop panel, the `loop quality scan` CLI, the `quality_scan` MCP tool, or — when enabled — automatically after each agent file edit.

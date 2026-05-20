@@ -1,3 +1,7 @@
+---
+title: Task Scheduling
+---
+
 # Task Scheduling
 
 Loop includes a built-in task scheduler that executes agent prompts or workflow runs on a recurring or one-time basis. Tasks are stored in the database, polled on a timer, and executed inside Docker containers.

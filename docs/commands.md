@@ -1,3 +1,7 @@
+---
+title: Slash Commands & Interactions
+---
+
 # Slash Commands & Interactions
 
 Loop provides slash commands for task management, bot control, and permission management. Commands are available on all platforms but are invoked differently depending on the platform.

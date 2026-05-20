@@ -1,3 +1,7 @@
+---
+title: Configuration Reference
+---
+
 # Configuration Reference
 
 Loop is configured via HJSON files (JSON with comments and trailing commas). This document covers all configuration fields, their defaults, and the merge rules for project-level overrides.
