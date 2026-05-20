@@ -61,6 +61,8 @@ interface SidebarProps {
   isRunningMapRef?: React.RefObject<Map<string, string>>;
   /** Channels with unread agent completions. */
   unreadIdsRef?: React.RefObject<Set<string>>;
+  /** Channels with at least one pending gate approval (chat or terminal). */
+  gateChannelIdsRef?: React.RefObject<Set<string>>;
   unreadCount?: number;
   onMarkAllRead?: () => void;
   imageBuildStatus?: ImageBuildStatusData | null;
@@ -91,6 +93,7 @@ export function Sidebar({
   onInstallUpdate,
   isRunningMapRef,
   unreadIdsRef,
+  gateChannelIdsRef,
   unreadCount,
   onMarkAllRead,
   imageBuildStatus,
@@ -386,6 +389,7 @@ export function Sidebar({
         onToggleCheck={toggleSelected}
         isRunningMapRef={isRunningMapRef}
         unreadIdsRef={unreadIdsRef}
+        gateChannelIdsRef={gateChannelIdsRef}
       />
 
       {/* Spacer to push footer to bottom */}

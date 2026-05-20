@@ -21,6 +21,7 @@ interface ChannelListProps {
   onToggleCheck: (id: string) => void;
   isRunningMapRef?: React.RefObject<Map<string, string>>;
   unreadIdsRef?: React.RefObject<Set<string>>;
+  gateChannelIdsRef?: React.RefObject<Set<string>>;
 }
 
 export function ChannelList({
@@ -43,6 +44,7 @@ export function ChannelList({
   onToggleCheck,
   isRunningMapRef,
   unreadIdsRef,
+  gateChannelIdsRef,
 }: ChannelListProps) {
   return (
     <>
@@ -69,6 +71,7 @@ export function ChannelList({
           onToggleCheck={onToggleCheck}
           isRunningMapRef={isRunningMapRef}
           unreadIdsRef={unreadIdsRef}
+          gateChannelIdsRef={gateChannelIdsRef}
         />
       )}
       {topLevel.map((channel) => (
@@ -93,6 +96,7 @@ export function ChannelList({
           onToggleCheck={onToggleCheck}
           isRunningMapRef={isRunningMapRef}
           unreadIdsRef={unreadIdsRef}
+          gateChannelIdsRef={gateChannelIdsRef}
         />
       ))}
     </>
