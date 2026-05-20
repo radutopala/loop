@@ -9,6 +9,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/radutopala/loop/internal/agent"
+	"github.com/radutopala/loop/internal/config"
 	"github.com/radutopala/loop/internal/db"
 	"github.com/radutopala/loop/internal/githubapi"
 	"github.com/radutopala/loop/internal/review"
@@ -63,6 +65,12 @@ func (m *mockGitHubReview) PostPRComment(ctx context.Context, workdir, ghUser st
 	return args.Error(0)
 }
 
+func (m *mockGitHubReview) FetchPRReviewComments(ctx context.Context, workdir, ghUser string, slug githubapi.RepoSlug, prNum int) ([]githubapi.PRReviewComment, error) {
+	args := m.Called(ctx, workdir, ghUser, slug, prNum)
+	cs, _ := args.Get(0).([]githubapi.PRReviewComment)
+	return cs, args.Error(1)
+}
+
 // mockPR is a testify mock for review.PR.
 type mockPR struct {
 	mock.Mock
@@ -71,6 +79,11 @@ type mockPR struct {
 func (m *mockPR) Add(ctx context.Context, parentDir string, prNum int) (string, error) {
 	args := m.Called(ctx, parentDir, prNum)
 	return args.String(0), args.Error(1)
+}
+
+func (m *mockPR) Refresh(ctx context.Context, parentDir, worktreePath string, prNum int) error {
+	args := m.Called(ctx, parentDir, worktreePath, prNum)
+	return args.Error(0)
 }
 
 func (m *mockPR) Diff(ctx context.Context, parentDir, worktreePath, baseRef string) ([]byte, error) {
@@ -105,6 +118,11 @@ func (s *ReviewHandlerSuite) SetupTest() {
 	s.wt = new(mockPR)
 	s.rs = review.NewStore()
 	s.srv.SetReviewService(s.gh, s.rs, s.wt)
+	// Stub config loaders so resolveGHUser is deterministic in tests
+	// (otherwise it shells out to the user's actual ~/.loop/config.json).
+	s.srv.loadConfig = func() (*config.Config, error) { return &config.Config{}, nil }
+	s.srv.loadProjectConfig = func(string, *config.Config) (*config.Config, error) { return nil, nil }
+	s.srv.loadWorktreeProjectConfig = func(string, string, *config.Config) (*config.Config, error) { return nil, nil }
 	s.mux = s.srv.buildMux()
 }
 
@@ -212,6 +230,9 @@ func (s *ReviewHandlerSuite) TestLoadHappyPath() {
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("deadbeef", nil)
 	s.wt.On("Add", mock.Anything, "/repo", 7).Return("/repo/.worktrees/pr-7", nil)
 	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main").Return([]byte("diff text"), nil)
+	// No pre-existing GH comments — slug fetch fails so the best-effort
+	// path short-circuits and Load still succeeds.
+	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
 	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
 	require.Equal(s.T(), http.StatusOK, w.Code)
 	var resp reviewSessionResponse
@@ -222,6 +243,58 @@ func (s *ReviewHandlerSuite) TestLoadHappyPath() {
 	require.Equal(s.T(), "diff text", resp.Session.RawDiff)
 	require.Equal(s.T(), "/repo/.worktrees/pr-7", resp.Session.WorktreePath)
 	require.Equal(s.T(), 7, resp.Session.PR.Number)
+	require.Empty(s.T(), resp.Session.Comments)
+}
+
+func (s *ReviewHandlerSuite) TestLoadSeedsGitHubComments() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	pr := &githubapi.PRInfo{Number: 7, BaseRef: "main"}
+	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(pr, nil)
+	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("deadbeef", nil)
+	s.wt.On("Add", mock.Anything, "/repo", 7).Return("/repo/.worktrees/pr-7", nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main").Return([]byte("diff"), nil)
+	slug := &githubapi.RepoSlug{Owner: "acme", Name: "widgets"}
+	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return(slug, nil)
+	s.gh.On("FetchPRReviewComments", mock.Anything, "/repo", "", *slug, 7).Return([]githubapi.PRReviewComment{
+		{ID: 1, Path: "a.go", Line: 10, Side: "RIGHT", Body: "fix me", Author: "alice", URL: "u1", CreatedAt: "2026-01-01T00:00:00Z"},
+		{ID: 2, Path: "b.go", Line: 0}, // unanchored — should be dropped
+		{ID: 3, Path: "c.go", Line: 5, Side: "RIGHT", Body: "stale", Outdated: true},
+	}, nil)
+
+	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	var resp reviewSessionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Len(s.T(), resp.Session.Comments, 2)
+	c0 := resp.Session.Comments[0]
+	require.Equal(s.T(), "gh-1", c0.ID)
+	require.Equal(s.T(), "github", c0.Source)
+	require.Equal(s.T(), "alice", c0.Author)
+	require.True(s.T(), c0.Pushed)
+	require.False(s.T(), c0.Outdated)
+	c1 := resp.Session.Comments[1]
+	require.Equal(s.T(), "gh-3", c1.ID)
+	require.True(s.T(), c1.Outdated)
+}
+
+func (s *ReviewHandlerSuite) TestLoadCommentFetchFailureIsNonFatal() {
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	pr := &githubapi.PRInfo{Number: 7, BaseRef: "main"}
+	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 7).Return(pr, nil)
+	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("deadbeef", nil)
+	s.wt.On("Add", mock.Anything, "/repo", 7).Return("/repo/.worktrees/pr-7", nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main").Return([]byte("d"), nil)
+	slug := &githubapi.RepoSlug{Owner: "o", Name: "n"}
+	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return(slug, nil)
+	s.gh.On("FetchPRReviewComments", mock.Anything, "/repo", "", *slug, 7).
+		Return(([]githubapi.PRReviewComment)(nil), errors.New("api fail"))
+
+	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	var resp reviewSessionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.True(s.T(), resp.Present)
+	require.Empty(s.T(), resp.Session.Comments)
 }
 
 func (s *ReviewHandlerSuite) TestLoadStoreNotConfigured() {
@@ -276,8 +349,195 @@ func (s *ReviewHandlerSuite) TestLoadLoopDirFallback() {
 	s.gh.On("FetchPRHeadSHA", mock.Anything, "/loop/ch1/work", "", 7).Return("abc", nil)
 	s.wt.On("Add", mock.Anything, "/loop/ch1/work", 7).Return("/loop/ch1/work/.worktrees/pr-7", nil)
 	s.wt.On("Diff", mock.Anything, "/loop/ch1/work", "/loop/ch1/work/.worktrees/pr-7", "main").Return([]byte("d"), nil)
+	s.gh.On("FetchRepoSlug", mock.Anything, "/loop/ch1/work", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
 	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
 	require.Equal(s.T(), http.StatusOK, w.Code)
+}
+
+// ---- sync ----
+
+func (s *ReviewHandlerSuite) wireSyncSession() {
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main"},
+		HeadSHA:      "old",
+		WorktreePath: "/repo/.worktrees/pr-7",
+		RawDiff:      "old-diff",
+		Comments: []*review.Comment{
+			{ID: "a", Path: "x.go", Line: 1, Body: "agent-emitted", Source: "agent"},
+			{ID: "gh-1", Path: "y.go", Line: 2, Body: "stale gh", Source: "github"},
+		},
+		Status: review.StatusReady,
+	})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
+}
+
+func (s *ReviewHandlerSuite) TestSyncStoreNotConfigured() {
+	srv := newServerForReviewTests(s.T())
+	srv.store = nil
+	mux := srv.buildMux()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestSyncReviewClientNotConfigured() {
+	srv := newServerForReviewTests(s.T())
+	mux := srv.buildMux()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestSyncReviewStoreNotConfigured() {
+	srv := newServerForReviewTests(s.T())
+	srv.reviewClient = s.gh
+	srv.reviewWorktree = s.wt
+	mux := srv.buildMux()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestSyncReviewWorktreeNotConfigured() {
+	srv := newServerForReviewTests(s.T())
+	srv.reviewClient = s.gh
+	srv.reviewStore = review.NewStore()
+	mux := srv.buildMux()
+	w := httptest.NewRecorder()
+	mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
+	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestSyncNoSession() {
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
+	require.Equal(s.T(), http.StatusNotFound, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestSyncSessionMissingPRRejected() {
+	s.rs.Put("ch1", &review.Session{Status: review.StatusReady, WorktreePath: "/wt"})
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
+	require.Equal(s.T(), http.StatusConflict, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestSyncSessionBusyRejected() {
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main"},
+		WorktreePath: "/wt",
+		Status:       review.StatusReviewing,
+	})
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
+	require.Equal(s.T(), http.StatusConflict, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestSyncChannelLookupError() {
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main"},
+		WorktreePath: "/wt",
+		Status:       review.StatusReady,
+	})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(nil, errors.New("db"))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestSyncChannelNotFound() {
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main"},
+		WorktreePath: "/wt",
+		Status:       review.StatusReady,
+	})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return((*db.Channel)(nil), nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
+	require.Equal(s.T(), http.StatusNotFound, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestSyncChannelMissingDirPath() {
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main"},
+		WorktreePath: "/wt",
+		Status:       review.StatusReady,
+	})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1"}, nil)
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
+	require.Equal(s.T(), http.StatusBadRequest, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestSyncLoopDirFallback() {
+	s.srv.loopDir = "/loop"
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main"},
+		WorktreePath: "/loop/ch1/work/.worktrees/pr-7",
+		Status:       review.StatusReady,
+	})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1"}, nil)
+	s.gh.On("FetchPRHeadSHA", mock.Anything, "/loop/ch1/work", "", 7).Return("new", nil)
+	s.wt.On("Refresh", mock.Anything, "/loop/ch1/work", "/loop/ch1/work/.worktrees/pr-7", 7).Return(nil)
+	s.wt.On("Diff", mock.Anything, "/loop/ch1/work", "/loop/ch1/work/.worktrees/pr-7", "main").Return([]byte("d"), nil)
+	s.gh.On("FetchRepoSlug", mock.Anything, "/loop/ch1/work", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
+	require.Equal(s.T(), http.StatusOK, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestSyncHeadFetchError() {
+	s.wireSyncSession()
+	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("", errors.New("api boom"))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestSyncRefreshError() {
+	s.wireSyncSession()
+	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("new", nil)
+	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7).Return(errors.New("checkout failed"))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+}
+
+func (s *ReviewHandlerSuite) TestSyncDiffError() {
+	s.wireSyncSession()
+	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("new", nil)
+	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7).Return(nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main").Return(([]byte)(nil), errors.New("diff blew up"))
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
+	require.Equal(s.T(), http.StatusInternalServerError, w.Code)
+}
+
+// Happy path: agent comment survives, github comment is replaced with
+// the fresh snapshot, head + diff are updated.
+func (s *ReviewHandlerSuite) TestSyncHappyPath() {
+	s.wireSyncSession()
+	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 7).Return("new-sha", nil)
+	s.wt.On("Refresh", mock.Anything, "/repo", "/repo/.worktrees/pr-7", 7).Return(nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-7", "main").Return([]byte("new-diff"), nil)
+	slug := &githubapi.RepoSlug{Owner: "o", Name: "n"}
+	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return(slug, nil)
+	s.gh.On("FetchPRReviewComments", mock.Anything, "/repo", "", *slug, 7).Return([]githubapi.PRReviewComment{
+		{ID: 42, Path: "z.go", Line: 9, Side: "RIGHT", Body: "fresh", Author: "alice"},
+	}, nil)
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/sync", nil))
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	var resp reviewSessionResponse
+	require.NoError(s.T(), json.Unmarshal(w.Body.Bytes(), &resp))
+	require.Equal(s.T(), "new-sha", resp.Session.HeadSHA)
+	require.Equal(s.T(), "new-diff", resp.Session.RawDiff)
+	require.Len(s.T(), resp.Session.Comments, 2)
+	require.Equal(s.T(), "a", resp.Session.Comments[0].ID)
+	require.Equal(s.T(), "agent", resp.Session.Comments[0].Source)
+	require.Equal(s.T(), "gh-42", resp.Session.Comments[1].ID)
+	require.Equal(s.T(), "github", resp.Session.Comments[1].Source)
 }
 
 // ---- get ----
@@ -824,6 +1084,58 @@ func (s *ReviewHandlerSuite) TestRunHappyPathDispatchesCommentsAndStatus() {
 	sess := s.rs.Get("ch1")
 	require.Len(s.T(), sess.Comments, 1)
 	require.Equal(s.T(), "x.go", sess.Comments[0].Path)
+}
+
+// When a gh_user is configured, the run prompt includes a switch hint so
+// the agent can `gh auth switch -u <user>` before running gh commands.
+func (s *ReviewHandlerSuite) TestRunPromptIncludesConfiguredGHUser() {
+	s.wireReadySession()
+	s.srv.loadConfig = func() (*config.Config, error) {
+		return &config.Config{GitHub: config.GitHubConfig{GHUser: "alice"}}, nil
+	}
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	s.srv.SetReviewAgent(runner, "", "")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	<-runner.done
+	require.Contains(s.T(), runner.lastUser, "GitHub CLI account: alice")
+	require.Contains(s.T(), runner.lastUser, "gh auth switch -u alice")
+}
+
+// When the session already carries comments (from a prior run or from
+// the GH-seed on load), the run prompt lists them so the agent can dedup.
+func (s *ReviewHandlerSuite) TestRunPromptListsExistingCommentsForDedup() {
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 7, BaseRef: "main"},
+		HeadSHA:      "abc",
+		WorktreePath: "/repo/.worktrees/pr-7",
+		RawDiff:      "diff",
+		Comments: []*review.Comment{
+			{ID: "gh-1", Path: "a.go", Line: 5, Side: "RIGHT", Body: "nit body", Source: "github", Author: "bob"},
+			{ID: "a", Path: "b.go", Line: 9, Side: "LEFT", Body: "issue body", Source: "agent"},
+			// no author -> bare "github" label; empty side -> defaults to RIGHT;
+			// body > 240 chars -> truncated with ellipsis.
+			{ID: "gh-2", Path: "c.go", Line: 3, Side: "", Body: strings.Repeat("x", 300), Source: "github"},
+			nil, // defensive: nil entries are skipped without panicking.
+		},
+		Status: review.StatusReady,
+	})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil).Maybe()
+	runner := &mockReviewRunner{done: make(chan struct{})}
+	s.srv.SetReviewAgent(runner, "", "")
+
+	w := httptest.NewRecorder()
+	s.mux.ServeHTTP(w, httptest.NewRequest("POST", "/api/channels/ch1/review/run", nil))
+	require.Equal(s.T(), http.StatusAccepted, w.Code)
+	<-runner.done
+	require.Contains(s.T(), runner.lastUser, "do NOT re-emit")
+	require.Contains(s.T(), runner.lastUser, "[github @bob] a.go:L5 (RIGHT): nit body")
+	require.Contains(s.T(), runner.lastUser, "[agent] b.go:L9 (LEFT): issue body")
+	// authorless github comment falls back to bare "github" label and empty side
+	// defaults to RIGHT; long body is truncated with ellipsis.
+	require.Contains(s.T(), runner.lastUser, "[github] c.go:L3 (RIGHT): "+strings.Repeat("x", 240)+"...")
 }
 
 func (s *ReviewHandlerSuite) TestRunAgentErrorTransitionsToErrorStatus() {

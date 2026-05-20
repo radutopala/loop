@@ -120,6 +120,44 @@ func (s *PRSuite) TestAddWorktreeOtherErrorPropagates() {
 	require.ErrorContains(s.T(), err, "bad object")
 }
 
+func (s *PRSuite) TestRefreshRequiresInputs() {
+	g := &GitPR{Run: (&recordingRunner{}).run}
+	require.Error(s.T(), g.Refresh(context.Background(), "", "/wt", 1))
+	require.Error(s.T(), g.Refresh(context.Background(), "/repo", "", 1))
+	require.Error(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 0))
+}
+
+func (s *PRSuite) TestRefreshHappyPath() {
+	rr := &recordingRunner{}
+	g := &GitPR{Run: rr.run}
+	require.NoError(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 7))
+	require.Len(s.T(), rr.calls, 2)
+	require.Equal(s.T(), "/repo", rr.calls[0].dir)
+	require.Equal(s.T(), []string{"fetch", "origin", "refs/pull/7/head"}, rr.calls[0].args)
+	require.Equal(s.T(), "/wt", rr.calls[1].dir)
+	require.Equal(s.T(), []string{"checkout", "--detach", "FETCH_HEAD"}, rr.calls[1].args)
+}
+
+func (s *PRSuite) TestRefreshFetchError() {
+	rr := &recordingRunner{
+		response: map[string]callResponse{
+			"git fetch origin refs/pull/7/head": {out: []byte("net down"), err: errors.New("fail")},
+		},
+	}
+	g := &GitPR{Run: rr.run}
+	require.ErrorContains(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 7), "net down")
+}
+
+func (s *PRSuite) TestRefreshCheckoutError() {
+	rr := &recordingRunner{
+		response: map[string]callResponse{
+			"git checkout --detach FETCH_HEAD": {out: []byte("conflict"), err: errors.New("exit 1")},
+		},
+	}
+	g := &GitPR{Run: rr.run}
+	require.ErrorContains(s.T(), g.Refresh(context.Background(), "/repo", "/wt", 7), "conflict")
+}
+
 func (s *PRSuite) TestDiffRequiresInputs() {
 	g := &GitPR{Run: (&recordingRunner{}).run}
 	_, err := g.Diff(context.Background(), "", "/wt", "main")

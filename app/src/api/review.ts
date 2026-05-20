@@ -20,6 +20,11 @@ export interface ReviewComment {
   body: string;
   pushed: boolean;
   pushed_at?: string;
+  source?: "agent" | "github";
+  author?: string;
+  url?: string;
+  created_at?: string;
+  outdated?: boolean;
 }
 
 export interface ReviewSession {
@@ -76,6 +81,12 @@ export async function loadReviewPR(channelId: string, prNumber: number): Promise
     body: JSON.stringify({ pr_number: prNumber }),
   });
   if (!res.ok) throw new Error(await res.text() || `Failed to load PR: ${res.statusText}`);
+  return normalizeSession(await res.json());
+}
+
+export async function syncReviewSession(channelId: string): Promise<ReviewSessionResponse> {
+  const res = await fetch(`${getApiUrl()}/api/channels/${channelId}/review/sync`, { method: "POST" });
+  if (!res.ok) throw new Error(await res.text() || `Failed to sync review: ${res.statusText}`);
   return normalizeSession(await res.json());
 }
 

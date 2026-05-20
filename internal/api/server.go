@@ -349,6 +349,7 @@ func (s *Server) buildMux() *http.ServeMux {
 	mux.HandleFunc("GET /api/channels/{id}/diff", s.handleGitDiff)
 	mux.HandleFunc("GET /api/channels/{id}/pr", s.handleChannelPR)
 	mux.HandleFunc("POST /api/channels/{id}/review/load", s.handleReviewLoad)
+	mux.HandleFunc("POST /api/channels/{id}/review/sync", s.handleReviewSync)
 	mux.HandleFunc("GET /api/channels/{id}/review/prs", s.handleReviewListPRs)
 	mux.HandleFunc("GET /api/channels/{id}/review", s.handleReviewGet)
 	mux.HandleFunc("DELETE /api/channels/{id}/review", s.handleReviewDelete)

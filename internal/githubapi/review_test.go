@@ -368,3 +368,75 @@ func (s *ReviewAPISuite) TestFetchPRHeadSHATokenFailure() {
 	_, err := c.FetchPRHeadSHA(context.Background(), "/tmp", "u", 1)
 	require.Error(s.T(), err)
 }
+
+// ── FetchPRReviewComments ────────────────────────────────────────────────
+
+func (s *ReviewAPISuite) TestFetchPRReviewCommentsInvalidArgs() {
+	c := NewClientWithRunner(&dispatchRunner{})
+	_, err := c.FetchPRReviewComments(context.Background(), "", "", RepoSlug{Owner: "o", Name: "n"}, 1)
+	require.Error(s.T(), err)
+	_, err = c.FetchPRReviewComments(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 0)
+	require.Error(s.T(), err)
+	_, err = c.FetchPRReviewComments(context.Background(), "/tmp", "", RepoSlug{Owner: "", Name: "n"}, 1)
+	require.Error(s.T(), err)
+}
+
+func (s *ReviewAPISuite) TestFetchPRReviewCommentsHappyPath() {
+	r := &dispatchRunner{apiOut: []byte(`[
+		{"id":1,"path":"a.go","line":10,"side":"RIGHT","body":"fix me","html_url":"u1","created_at":"2026-01-01T00:00:00Z","user":{"login":"alice"}},
+		{"id":2,"path":"b.go","original_line":5,"line":null,"body":"old","html_url":"u2","user":{"login":"bob"}}
+	]`)}
+	c := NewClientWithRunner(r)
+	comments, err := c.FetchPRReviewComments(context.Background(), "/tmp", "", RepoSlug{Owner: "acme", Name: "widgets"}, 7)
+	require.NoError(s.T(), err)
+	require.Len(s.T(), comments, 2)
+	require.Equal(s.T(), int64(1), comments[0].ID)
+	require.Equal(s.T(), "a.go", comments[0].Path)
+	require.Equal(s.T(), 10, comments[0].Line)
+	require.Equal(s.T(), "RIGHT", comments[0].Side)
+	require.Equal(s.T(), "alice", comments[0].Author)
+	require.False(s.T(), comments[0].Outdated)
+	require.Equal(s.T(), 5, comments[1].Line)
+	require.True(s.T(), comments[1].Outdated)
+	require.Equal(s.T(), "RIGHT", comments[1].Side) // default
+	args := r.calls[len(r.calls)-1].args
+	require.Equal(s.T(), "api", args[0])
+	require.Equal(s.T(), "repos/acme/widgets/pulls/7/comments?per_page=100", args[1])
+}
+
+func (s *ReviewAPISuite) TestFetchPRReviewCommentsEmpty() {
+	r := &dispatchRunner{apiOut: []byte(`[]`)}
+	c := NewClientWithRunner(r)
+	comments, err := c.FetchPRReviewComments(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1)
+	require.NoError(s.T(), err)
+	require.Empty(s.T(), comments)
+}
+
+func (s *ReviewAPISuite) TestFetchPRReviewCommentsGhNotInstalled() {
+	r := &dispatchRunner{apiErr: ErrGhNotInstalled}
+	c := NewClientWithRunner(r)
+	_, err := c.FetchPRReviewComments(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1)
+	require.ErrorIs(s.T(), err, ErrGhNotInstalled)
+}
+
+func (s *ReviewAPISuite) TestFetchPRReviewCommentsRunError() {
+	r := &dispatchRunner{apiErr: errors.New("boom")}
+	c := NewClientWithRunner(r)
+	_, err := c.FetchPRReviewComments(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1)
+	require.Error(s.T(), err)
+}
+
+func (s *ReviewAPISuite) TestFetchPRReviewCommentsMalformedJSON() {
+	r := &dispatchRunner{apiOut: []byte(`{nope`)}
+	c := NewClientWithRunner(r)
+	_, err := c.FetchPRReviewComments(context.Background(), "/tmp", "", RepoSlug{Owner: "o", Name: "n"}, 1)
+	require.Error(s.T(), err)
+	require.Contains(s.T(), err.Error(), "parsing gh api")
+}
+
+func (s *ReviewAPISuite) TestFetchPRReviewCommentsTokenFailure() {
+	r := &dispatchRunner{tokenErr: errors.New("no token")}
+	c := NewClientWithRunner(r)
+	_, err := c.FetchPRReviewComments(context.Background(), "/tmp", "u", RepoSlug{Owner: "o", Name: "n"}, 1)
+	require.Error(s.T(), err)
+}

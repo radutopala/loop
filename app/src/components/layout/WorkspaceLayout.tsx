@@ -909,7 +909,6 @@ export const WorkspaceLayout = forwardRef<WorkspaceLayoutRef, WorkspaceLayoutPro
               key={`layout-review-${channelId}`}
               channelId={channelId}
               subscribeChatEvents={subscribeChatEvents}
-              onClose={() => handleRemoveLeaf(leaf.id)}
             />
           );
         default:
