@@ -199,10 +199,13 @@ export function ReviewPanel({ channelId, subscribeChatEvents }: ReviewPanelProps
     setBusy(true); setError(null);
     try {
       const result = await pushAllReviewComments(channelId);
-      setSession((prev) => prev ? {
-        ...prev,
-        comments: prev.comments.map((x) => x.pushed ? x : { ...x, pushed: true }),
-      } : prev);
+      // The backend's PushAllResult only reports aggregate counts, not
+      // per-id outcomes — and a partial failure leaves some comments
+      // still pending server-side. Refetch the session so the FE
+      // reflects the authoritative pushed/unpushed split and the user
+      // can retry just the ones that actually failed.
+      const resp = await getReviewSession(channelId);
+      if (resp.present && resp.session) setSession(resp.session);
       if (result.failed > 0) {
         setError(`${result.failed} comment(s) failed to push: ${(result.errors ?? []).join("; ")}`);
       }
