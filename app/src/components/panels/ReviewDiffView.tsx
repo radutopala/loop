@@ -9,6 +9,7 @@ interface ReviewDiffViewProps {
   rawDiff: string;
   comments: ReviewComment[];
   onPushComment: (c: ReviewComment) => void | Promise<void>;
+  onDeleteComment: (c: ReviewComment) => void | Promise<void>;
 }
 
 interface FileSummary {
@@ -46,7 +47,7 @@ function summarize(parsed: ParsedFile, fileComments: ReviewComment[]): FileSumma
   return { path: parsed.path, additions, deletions, parsed, agentCount, ghCount };
 }
 
-export function ReviewDiffView({ rawDiff, comments, onPushComment }: ReviewDiffViewProps) {
+export function ReviewDiffView({ rawDiff, comments, onPushComment, onDeleteComment }: ReviewDiffViewProps) {
   const { colors } = useTheme();
 
   const parsedFiles = useMemo(() => parseUnifiedDiff(rawDiff), [rawDiff]);
@@ -151,12 +152,22 @@ export function ReviewDiffView({ rawDiff, comments, onPushComment }: ReviewDiffV
 
   // Prev/Next jump only between files that carry comments — uncommented
   // files (large, refactored, generated, etc.) are usually not what a
-  // reviewer wants to flip through. Position-in-set ("3 / 7 commented")
-  // also tracks just the commented subset.
+  // reviewer wants to flip through. The denominator includes ALL files
+  // with any comment regardless of source: agent-emitted from the
+  // current run, plus GH comments loaded on Load or refreshed on Sync.
+  // We also fold in unique orphan paths (GH comments whose file is no
+  // longer in the diff) so "n / m commented" reflects every commented
+  // entity the user can see, not just what's nav-able.
   const commentedIndices = useMemo(
     () => summaries.flatMap((s, i) => (s.agentCount + s.ghCount > 0 ? [i] : [])),
     [summaries],
   );
+  const orphanPathCount = useMemo(() => {
+    const paths = new Set<string>();
+    for (const c of orphans) paths.add(c.path);
+    return paths.size;
+  }, [orphans]);
+  const totalCommented = commentedIndices.length + orphanPathCount;
   const prevCommentedIdx = useMemo(() => {
     for (let i = commentedIndices.length - 1; i >= 0; i--) {
       if (commentedIndices[i]! < clampedIdx) return commentedIndices[i]!;
@@ -178,7 +189,7 @@ export function ReviewDiffView({ rawDiff, comments, onPushComment }: ReviewDiffV
           colors={colors}
           focusedPath={focusedPath}
           index={positionInCommented >= 0 ? positionInCommented : -1}
-          total={commentedIndices.length}
+          total={totalCommented}
           canPrev={prevCommentedIdx >= 0}
           canNext={nextCommentedIdx >= 0}
           onExpandAll={expandAll}
@@ -204,11 +215,17 @@ export function ReviewDiffView({ rawDiff, comments, onPushComment }: ReviewDiffV
               colors={colors}
               onToggle={() => { setFocusedIdx(idx); toggle(sum.path); }}
               onPushComment={onPushComment}
+              onDeleteComment={onDeleteComment}
             />
           </div>
         ))}
         {orphans.length > 0 && (
-          <OrphanCommentsSection comments={orphans} colors={colors} onPushComment={onPushComment} />
+          <OrphanCommentsSection
+            comments={orphans}
+            colors={colors}
+            onPushComment={onPushComment}
+            onDeleteComment={onDeleteComment}
+          />
         )}
       </div>
     </div>
@@ -347,6 +364,7 @@ function FileSection({
   colors,
   onToggle,
   onPushComment,
+  onDeleteComment,
 }: {
   summary: FileSummary;
   comments: ReviewComment[];
@@ -354,6 +372,7 @@ function FileSection({
   colors: ColorPalette;
   onToggle: () => void;
   onPushComment: (c: ReviewComment) => void | Promise<void>;
+  onDeleteComment: (c: ReviewComment) => void | Promise<void>;
 }) {
   const segments = computeSegments(summary.parsed);
   // Group comments by (line, side) so multiple comments on the same line
@@ -476,6 +495,7 @@ function FileSection({
                           comment={c}
                           colors={colors}
                           onPush={onPushComment}
+                          onDelete={onDeleteComment}
                         />
                       ))}
                     </div>
@@ -564,10 +584,12 @@ function InlineComment({
   comment,
   colors,
   onPush,
+  onDelete,
 }: {
   comment: ReviewComment;
   colors: ColorPalette;
   onPush: (c: ReviewComment) => void | Promise<void>;
+  onDelete: (c: ReviewComment) => void | Promise<void>;
 }) {
   const isGitHub = comment.source === "github";
   const headerLabel = isGitHub
@@ -647,6 +669,23 @@ function InlineComment({
             Push
           </button>
         )}
+        <button
+          data-testid={`review-comment-delete-${comment.id}`}
+          onClick={() => void onDelete(comment)}
+          style={{
+            background: "transparent",
+            color: colors.textDim,
+            border: `1px solid ${colors.border}`,
+            borderRadius: 3,
+            padding: "1px 6px",
+            fontSize: 10,
+            fontFamily: fonts.sans,
+            cursor: "pointer",
+          }}
+          title={comment.github_id ? "Delete this comment from GitHub" : "Discard this comment"}
+        >
+          Delete
+        </button>
       </div>
       <div
         style={{
@@ -671,10 +710,12 @@ function OrphanCommentsSection({
   comments,
   colors,
   onPushComment,
+  onDeleteComment,
 }: {
   comments: ReviewComment[];
   colors: ColorPalette;
   onPushComment: (c: ReviewComment) => void | Promise<void>;
+  onDeleteComment: (c: ReviewComment) => void | Promise<void>;
 }) {
   return (
     <div data-testid="review-diff-orphans">
@@ -702,7 +743,7 @@ function OrphanCommentsSection({
           >
             {c.path}:{c.line}
           </div>
-          <InlineComment comment={c} colors={colors} onPush={onPushComment} />
+          <InlineComment comment={c} colors={colors} onPush={onPushComment} onDelete={onDeleteComment} />
         </div>
       ))}
     </div>

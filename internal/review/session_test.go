@@ -100,23 +100,71 @@ func (s *SessionSuite) TestAddCommentAppends() {
 
 func (s *SessionSuite) TestMarkPushedMissingSession() {
 	store := NewStore()
-	require.False(s.T(), store.MarkPushed("nope", "x"))
+	require.False(s.T(), store.MarkPushed("nope", "x", 0))
 }
 
 func (s *SessionSuite) TestMarkPushedMissingComment() {
 	store := NewStore()
 	store.Put("ch1", &Session{})
-	require.False(s.T(), store.MarkPushed("ch1", "missing"))
+	require.False(s.T(), store.MarkPushed("ch1", "missing", 0))
 }
 
 func (s *SessionSuite) TestMarkPushedFlips() {
 	store := NewStore()
 	store.Put("ch1", &Session{})
 	store.AddComment("ch1", &Comment{ID: "a"})
-	require.True(s.T(), store.MarkPushed("ch1", "a"))
+	require.True(s.T(), store.MarkPushed("ch1", "a", 0))
 	got := store.Get("ch1")
 	require.True(s.T(), got.Comments[0].Pushed)
 	require.False(s.T(), got.Comments[0].PushedAt.IsZero())
+	require.Equal(s.T(), int64(0), got.Comments[0].GitHubID)
+}
+
+func (s *SessionSuite) TestMarkPushedStampsGitHubIDWhenPositive() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	store.AddComment("ch1", &Comment{ID: "a"})
+	require.True(s.T(), store.MarkPushed("ch1", "a", 99))
+	require.Equal(s.T(), int64(99), store.Get("ch1").Comments[0].GitHubID)
+}
+
+func (s *SessionSuite) TestMarkPushedZeroGitHubIDDoesNotClearExisting() {
+	// Edge case: a pushed agent comment with a known id should not have
+	// its GitHubID zeroed by a subsequent MarkPushed call that passes 0.
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	store.AddComment("ch1", &Comment{ID: "a", GitHubID: 7})
+	require.True(s.T(), store.MarkPushed("ch1", "a", 0))
+	require.Equal(s.T(), int64(7), store.Get("ch1").Comments[0].GitHubID)
+}
+
+func (s *SessionSuite) TestRemoveCommentMissingSession() {
+	store := NewStore()
+	c, ok := store.RemoveComment("nope", "x")
+	require.Nil(s.T(), c)
+	require.False(s.T(), ok)
+}
+
+func (s *SessionSuite) TestRemoveCommentMissingCommentSessionExists() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	c, ok := store.RemoveComment("ch1", "missing")
+	require.Nil(s.T(), c)
+	require.True(s.T(), ok)
+}
+
+func (s *SessionSuite) TestRemoveCommentDropsAndReturnsIt() {
+	store := NewStore()
+	store.Put("ch1", &Session{})
+	store.AddComment("ch1", &Comment{ID: "a", Path: "p", GitHubID: 11})
+	store.AddComment("ch1", &Comment{ID: "b", Path: "q"})
+	c, ok := store.RemoveComment("ch1", "a")
+	require.True(s.T(), ok)
+	require.NotNil(s.T(), c)
+	require.Equal(s.T(), int64(11), c.GitHubID)
+	remaining := store.Get("ch1").Comments
+	require.Len(s.T(), remaining, 1)
+	require.Equal(s.T(), "b", remaining[0].ID)
 }
 
 func (s *SessionSuite) TestFindCommentMissingSession() {
