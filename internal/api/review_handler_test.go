@@ -345,6 +345,66 @@ func (s *ReviewHandlerSuite) TestLoadReviewWorktreeNotConfigured() {
 	require.Equal(s.T(), http.StatusNotImplemented, w.Code)
 }
 
+func (s *ReviewHandlerSuite) TestLoadRefusedWhileRunActive() {
+	// A run goroutine is in flight for ch1 — Loading a new PR over it
+	// would let the background run stomp the new session on completion.
+	// Reject with 409 so the user is forced to wait or close the session.
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	require.True(s.T(), s.srv.registerReviewRun("ch1"))
+	s.T().Cleanup(func() { s.srv.unregisterReviewRun("ch1") })
+
+	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 7})
+	require.Equal(s.T(), http.StatusConflict, w.Code)
+	// No PR fetch should have happened — the guard short-circuits before
+	// any gh shell-out.
+	s.gh.AssertNotCalled(s.T(), "FetchPRByNumber", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func (s *ReviewHandlerSuite) TestLoadRemovesPreviousWorktreeOnOverwrite() {
+	// Existing session for ch1 with a worktree on disk. Loading a new PR
+	// must Remove the previous worktree first so the parent repo's
+	// worktree metadata doesn't accumulate a dangling .worktrees/pr-N
+	// per Load.
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 100, BaseRef: "main"},
+		WorktreePath: "/repo/.worktrees/pr-100",
+		Status:       review.StatusError,
+	})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	s.wt.On("Remove", mock.Anything, "/repo", "/repo/.worktrees/pr-100").Return(nil).Once()
+	pr := &githubapi.PRInfo{Number: 200, BaseRef: "main", State: "OPEN"}
+	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 200).Return(pr, nil)
+	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 200).Return("sha", nil)
+	s.wt.On("Add", mock.Anything, "/repo", 200).Return("/repo/.worktrees/pr-200", nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-200", "main").Return([]byte("d"), nil)
+	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
+
+	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 200})
+	require.Equal(s.T(), http.StatusOK, w.Code)
+	s.wt.AssertExpectations(s.T())
+}
+
+func (s *ReviewHandlerSuite) TestLoadPreviousWorktreeRemoveErrorIsNonFatal() {
+	// Same as above but the Remove call fails — the new Load must still
+	// succeed (the error is logged, not propagated).
+	s.rs.Put("ch1", &review.Session{
+		PR:           &githubapi.PRInfo{Number: 100, BaseRef: "main"},
+		WorktreePath: "/repo/.worktrees/pr-100",
+		Status:       review.StatusError,
+	})
+	s.store.On("GetChannel", mock.Anything, "ch1").Return(&db.Channel{ChannelID: "ch1", DirPath: "/repo"}, nil)
+	s.wt.On("Remove", mock.Anything, "/repo", "/repo/.worktrees/pr-100").Return(errors.New("stale ref"))
+	pr := &githubapi.PRInfo{Number: 200, BaseRef: "main"}
+	s.gh.On("FetchPRByNumber", mock.Anything, "/repo", "", 200).Return(pr, nil)
+	s.gh.On("FetchPRHeadSHA", mock.Anything, "/repo", "", 200).Return("sha", nil)
+	s.wt.On("Add", mock.Anything, "/repo", 200).Return("/repo/.worktrees/pr-200", nil)
+	s.wt.On("Diff", mock.Anything, "/repo", "/repo/.worktrees/pr-200", "main").Return([]byte("d"), nil)
+	s.gh.On("FetchRepoSlug", mock.Anything, "/repo", "").Return((*githubapi.RepoSlug)(nil), errors.New("no slug"))
+
+	w := s.postJSON("/api/channels/ch1/review/load", map[string]any{"pr_number": 200})
+	require.Equal(s.T(), http.StatusOK, w.Code)
+}
+
 func (s *ReviewHandlerSuite) TestLoadLoopDirFallback() {
 	// Channel has no DirPath but loopDir is set — the handler should
 	// synthesize <loopDir>/<channelID>/work.

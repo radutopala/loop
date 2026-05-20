@@ -119,6 +119,26 @@ func (s *Server) handleReviewLoad(w http.ResponseWriter, r *http.Request) {
 	parentDirPath := s.resolveParentDirPath(r.Context(), channelID)
 	ghUser := s.resolveGHUser(dirPath, parentDirPath)
 
+	// Refuse to Load over an in-flight run. The async run goroutine would
+	// otherwise stomp the new StatusLoading session on completion, and
+	// emit comments from the previous PR into the new session.
+	if s.isReviewRunActive(channelID) {
+		http.Error(w, "review run in flight for this channel", http.StatusConflict)
+		return
+	}
+
+	// If we're replacing an existing session, drop its on-disk worktree
+	// first — otherwise the parent repo's worktree metadata grows a
+	// dangling `.worktrees/pr-N` entry for every PR the user loaded but
+	// never explicitly closed. Best-effort: a remove failure is logged
+	// but does not block the new Load.
+	if prev := s.reviewStore.Get(channelID); prev != nil && prev.WorktreePath != "" {
+		if err := s.reviewWorktree.Remove(r.Context(), dirPath, prev.WorktreePath); err != nil {
+			s.logger.Warn("review worktree remove failed on load overwrite",
+				"channel_id", channelID, "path", prev.WorktreePath, "err", err)
+		}
+	}
+
 	// Mark loading early so the GET endpoint can show a spinner while the
 	// gh + git work runs.
 	s.reviewStore.Put(channelID, &review.Session{Status: review.StatusLoading})
@@ -723,6 +743,16 @@ func (s *Server) unregisterReviewRun(channelID string) {
 	s.reviewMu.Lock()
 	defer s.reviewMu.Unlock()
 	delete(s.reviewActive, channelID)
+}
+
+// isReviewRunActive reports whether a review run is currently in flight
+// for channelID. Used by /review/load to refuse overwriting a session
+// while its run goroutine is still executing.
+func (s *Server) isReviewRunActive(channelID string) bool {
+	s.reviewMu.Lock()
+	defer s.reviewMu.Unlock()
+	_, ok := s.reviewActive[channelID]
+	return ok
 }
 
 func (s *Server) broadcastReviewStatus(channelID string, status review.Status, errMsg string) {
